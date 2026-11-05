@@ -484,6 +484,15 @@ same("polyder: of a polynomial, of a product, and [q, d] of a quotient (q = a'b 
 W, _ = run("a = sscanf('1,2,3,4', '%d,'); [d, n] = sscanf('1,2,3,4', '%d,', [2 2]); f = sscanf('10:20:30', '%d:');")
 same("sscanf: literal text after the last conversion matched before the format starts again", (v(W['a']).tolist(), v(W['d']).tolist(), float(v(W['n'])), v(W['f']).tolist()),
      ([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], 4.0, [10.0, 20.0, 30.0]))
+with open(os.path.join(TMP, 'nameOf.m'), 'w') as fh:
+    fh.write("function nameOf(a, b)\nfprintf('[%s][%s]\\n', inputname(1), inputname(2));\nend\n")
+R.bump_epoch()
+_, o1 = run("data = 1:3; nameOf(data, data + 1)")
+_, o2 = run("p = 1; nameOf(p, 2), nameOf(3, p)")
+_, o3 = run("x = [1 2]; display(x)")
+_, o4 = run("disp('before'); s = evalc('disp(1)'); disp('after')")
+same("inputname: a variable's name, '' for an expression and where a line has the call twice; display(x) names x; evalc keeps the output before it",
+     (o1.strip(), o2.split(), o3.split('\n')[0], o4.split()), ('[data][]', ['[][]', '[][]'], 'x =', ['before', 'after']))
 W, _ = run("o = optimoptions('fminunc', 'MaxIterations', 50); o = resetoptions(o, 'MaxIterations'); m = o.MaxIterations; e = optimoptions('fmincon').MaxFunctionEvaluations;")
 same("an option's default number reaches the workspace as a double", (type(W['m']).__name__ != 'int', type(W['e']).__name__ != 'int', float(v(W['m'])), float(v(W['e']))), (True, True, 400.0, 3000.0))
 

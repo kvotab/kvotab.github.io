@@ -210,6 +210,8 @@ def run_example(code, where='?'):
     finally:
         os.chdir(old)
         shutil.rmtree(work, ignore_errors=True)
+    # links the Command Window shows (help's See also, lookfor's names) as their text: the page shows the output as text
+    text = re.sub('\x01[^\x02]*\x02([^\x03]*)\x03', r'\1', text)
     lines = text.split('\n')
     while lines and not lines[-1].strip():
         lines.pop()

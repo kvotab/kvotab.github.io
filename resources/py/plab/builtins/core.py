@@ -41,7 +41,12 @@ def disp(nargout, *args):
 @bi('display', ws=True)
 def display_(W, nargout, *args):
     nargchk(args, 1, 2, 'display')
-    name = py_str(args[1]) if len(args) > 1 else 'ans'
+    if len(args) > 1:
+        name = py_str(args[1])
+    else:
+        # the name of the variable given, read from the call (display(x) shows x = ...)
+        frames = _plab_frames(sys._getframe(1))
+        name = (_call_arg(frames[0][0], frames[0][2], 'display', 1) if frames else None) or 'ans'
     R.write(D.display(name, args[0]))
     return None
 
@@ -922,6 +927,9 @@ async def evalc(W, nargout, *args):
         text = R.take_output()
     finally:
         R.OUT_HOOK[0] = hook
+        if hook is None:
+            # nothing took the output written before (no page): it stays, ahead of what comes after
+            R._out[:0] = saved
     # links (to a file's line, to a function's help) as their text
     return Char.of(re.sub('\x01[^\x02]*\x02', '', text).replace('\x03', ''))
 
@@ -1229,9 +1237,71 @@ def setenv(nargout, *args):
     return None
 
 
+def _plab_frames(f):
+    """The compiled code running, innermost first: (module, function name, source line) for each frame."""
+    out = []
+    while f is not None:
+        fn = f.f_code.co_filename
+        mod = R.MODULES.get(fn) if fn.startswith('<plab:') else None
+        nm = f.f_code.co_name
+        if mod is not None and (nm.startswith('LF_') or nm == 'SCRIPT'):
+            ln = mod.linemap[f.f_lineno - 1] if 0 < f.f_lineno <= len(mod.linemap) else 0
+            out.append((mod, nm[3:] if nm.startswith('LF_') else mod.name, ln))
+        f = f.f_back
+    return out
+
+
+def _call_arg(mod, ln, fname, k):
+    """The text of input k of the first call fname(...) on source line ln of a module, or None."""
+    from ..lexer import tokenize, KEYWORDS
+    lines = (mod.text or '').split('\n')
+    if not 0 < ln <= len(lines):
+        return None
+    line = lines[ln - 1]
+    try:
+        toks = tokenize(line)
+    except Exception:  # noqa: BLE001 (a line that does not tokenize names nothing)
+        return None
+    calls = [i for i, t in enumerate(toks[:-1]) if t.k == 'id' and t.v == fname and toks[i + 1].v == '(' and toks[i + 1].pos == t.end]
+    if len(calls) != 1:
+        # none, or several on the line: which one is running cannot be told from the line
+        return None
+    for i, t in enumerate(toks[:-1]):
+        if i == calls[0]:
+            depth, start, parts = 0, toks[i + 1].end, []
+            for u in toks[i + 1:]:
+                if u.k != 'op':
+                    continue
+                if u.v in ('(', '[', '{'):
+                    depth += 1
+                elif u.v in (')', ']', '}'):
+                    depth -= 1
+                    if depth == 0:
+                        parts.append(line[start:u.pos])
+                        break
+                elif u.v == ',' and depth == 1:
+                    parts.append(line[start:u.pos])
+                    start = u.end
+            if k <= len(parts):
+                a = parts[k - 1].strip()
+                return a if re.fullmatch(r'[A-Za-z]\w*', a) and a not in KEYWORDS else ''
+            return None
+    return None
+
+
 @bi('inputname')
 def inputname(nargout, *args):
-    return Char.of('')
+    """The name of the variable the caller gave as input k of the function calling inputname, read from the call on
+    the caller's line; '' for an expression (or where the call cannot be found)."""
+    nargchk(args, 1, 2, 'inputname')
+    k = ival(args[0])
+    frames = _plab_frames(sys._getframe(1))
+    if len(frames) < 2:
+        return Char.of('')
+    _, fname, _ = frames[0]
+    mod, _, ln = frames[1]
+    name = _call_arg(mod, ln, fname, k)
+    return Char.of(name or '')
 
 
 @bi('mfilename')

@@ -1,0 +1,414 @@
+@ format
+How the Command Window shows numbers.
+
+`short` (the default) shows about 5 significant digits, `long` 15; `shortE` and `longE` always in exponent form, `shortG` and `longG` whichever is shorter; `rat` as ratios; `hex` the bits. `compact` leaves out the blank lines around results and `loose` puts them back. The values themselves are never changed, only how they show.
+
+# Syntax
+format style
+    `short`, `long`, `shortE`, `longE`, `shortG`, `longG`, `rat` or `hex`.
+format compact
+    Fewer blank lines (`loose` back).
+format
+    Back to the defaults.
+# Examples
+## One number, several ways
+x = pi*1000;
+format long
+x
+format shortE
+x
+format rat
+0.75
+format
+x
+# See also
+disp fprintf vpa
+
+@ clc, more, echo
+The Command Window emptied; and two commands kept for programs that use them.
+
+`clc` clears the Command Window's text (the variables stay). `more` and `echo` are accepted and do nothing here: the Command Window does not page its output, and programs are not echoed.
+
+# Syntax
+clc
+    The text cleared.
+more on | off
+    No effect.
+echo on | off
+    No effect.
+# Examples
+## Cleared, and the variables kept
+x = 42;
+clc
+x
+# See also
+clear diary
+
+@ diary
+The Command Window's commands and output copied to a file.
+
+`diary` alone turns it on or off; `diary filename` copies to that file (`diary` in the current folder unless named), adding to what is there. Links are written as their text.
+
+# Syntax
+diary filename
+    Into a file.
+diary on | off
+    On or off.
+# Examples
+## A session's output kept in a file
+diary('session.txt')
+disp('first line')
+x = 2 + 2
+diary off
+type session.txt
+# See also
+fprintf save
+
+@ beep, sound, soundsc
+A short tone, and samples played through the page's sound.
+
+`beep` plays a short tone (`beep off` silences it). `sound(y, fs)` plays samples between -1 and 1 at fs samples a second (8192 unless given), one channel as a vector or two as a matrix of two columns; `soundsc` first scales the data to fill that range. The program goes on while it plays.
+
+# Syntax
+beep
+    A tone.
+sound(y, fs)
+    Samples played.
+soundsc(y, fs)
+    Scaled to fill the range.
+# Examples
+## A chord of half a second
+> Run it in the page to hear it.
+fs = 8192;
+t = (0:1/fs:0.5)';
+y = sin(2*pi*440*t) + sin(2*pi*550*t) + sin(2*pi*660*t);
+soundsc(y, fs)
+[min(y) max(y)]
+# See also
+audioplayer audiowrite
+
+@ profile
+The time spent in each function and line of programs.
+
+`profile on` starts measuring afresh (`resume` goes on adding), `profile off` stops; `profile viewer` shows each function's calls, total and own time and its slowest lines, and `profile('info')` gives the numbers as a structure. Built-in functions count in the lines that call them; programs run slower while profiled.
+
+# Syntax
+profile on
+    Start.
+profile off
+    Stop.
+profile viewer
+    The report.
+p = profile('info')
+    The numbers.
+# Examples
+## A function profiled
+lines = {'function s = slowSum(n)', 's = 0;', 'for k = 1:n', '    s = s + sqrt(k);', 'end', 'end'};
+fid = fopen('slowSum.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+profile on
+slowSum(2000);
+profile off
+p = profile('info');
+names = {p.FunctionTable.FunctionName};
+ismember('slowSum', names)
+# See also
+tic timeit
+
+@ help, lookfor
+A function's help, and the functions whose help has a word in it.
+
+`help name` shows a function's summary, forms and how it works, or a program file's first block of comments, so that programs carry their own help. `lookfor topic` searches the first line of every function's help (all of it with `-all`).
+
+# Syntax
+help name
+    The help.
+text = help(name)
+    As text.
+lookfor topic
+    Functions about a topic.
+names = lookfor(topic)
+    Their names.
+# Examples
+## A program with its own help
+lines = {
+    'function a = ringArea(r1, r2)'
+    '% RINGAREA  The area between two circles of radii r1 and r2.'
+    '%   a = ringArea(r1, r2) with r2 > r1.'
+    'a = pi*(r2^2 - r1^2);'
+    'end'};
+fid = fopen('ringArea.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+help ringArea
+## Functions about a topic
+lookfor hyperbolic
+# See also
+doc which
+
+@ version, ver, computer, ispc, ismac, isunix, isdeployed, usejava, matlabroot, userpath
+What runs the programs: the interpreter, the computer, and its folders.
+
+Programs run in Python in the browser (Pyodide): `computer` is `'PYODIDE'`, `isunix` true (its file system is a Unix one), `ispc`, `ismac`, `isdeployed` and `usejava` false whatever the computer. `version` gives the interpreter's version, `ver` the interpreter and the Python, NumPy and SciPy that run it (with an output, as a struct array, nothing printed). `matlabroot` is the folder of the interpreter's files and `userpath` the home folder of your files.
+
+# Syntax
+v = version
+    The version.
+v = ver
+    The parts and their versions.
+c = computer
+    The kind of computer.
+tf = isunix
+    And ispc, ismac, isdeployed, usejava(feature).
+p = matlabroot
+    The interpreter's folder.
+p = userpath
+    The home folder.
+# Examples
+## Where the programs run
+computer
+[ispc ismac isunix isdeployed usejava('jvm')]
+v = ver;
+{v.Name}
+# See also
+getenv
+
+@ getenv, setenv
+Environment variables of the Python process that runs the programs.
+
+`setenv(name, value)` sets one, `getenv(name)` reads it ('' when it is not set).
+
+# Syntax
+v = getenv(name)
+    A value.
+setenv(name, value)
+    Set.
+# Examples
+## Set and read back
+setenv('PYLAB_DEMO', 'on');
+getenv('PYLAB_DEMO')
+isempty(getenv('SURELY_NOT_SET'))
+# See also
+computer
+
+@ web, exit, quit
+A web address opened in a new tab; and a program stopped.
+
+`web(url)` opens the address in a new browser tab. `exit` and `quit` stop the running program; the page itself closes with its tab.
+
+# Syntax
+web(url)
+    Opened.
+exit
+    The program stopped (`quit` the same).
+# Examples
+## A program that stops on a bad input
+> The function stops everything when given a negative number; called with 3 it carries on.
+lines = {'function check(x)', 'if x < 0', '    disp(''negative: stopping'');', '    exit', 'end', 'fprintf(''%g is fine\n'', x);', 'end'};
+fid = fopen('check.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+check(3)
+# See also
+return error
+
+@ dbstop, dbclear, dbstatus, dbstack
+Breakpoints set and cleared by command, the breakpoints listed, and the functions running.
+
+`dbstop in file at line` makes a program stop before that line with the `K>>` prompt, where variables can be looked at; `dbstop if error` stops where an error is raised. `dbclear` takes breakpoints away and `dbstatus` lists them (the Editor shows them in its margin). `dbstack` lists the functions running, the innermost first, each with its line.
+
+# Syntax
+dbstop in file at line
+    A breakpoint.
+dbstop if error
+    Stop at errors.
+dbclear all
+    All cleared.
+s = dbstatus
+    The breakpoints.
+[ST, I] = dbstack
+    The functions running.
+# Examples
+## None set yet
+> Breakpoints belong to the page's debugger, so they are set in the Command Window (see the notes below); here the list is empty.
+s = dbstatus;
+isempty(s)
+## Who called whom
+lines = {'function outer()', 'inner();', 'end', 'function inner()', 'st = dbstack;', 'disp({st.name})', 'end'};
+fid = fopen('outer.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+outer()
+# Notes
+A session: with a function file `twice.m` holding `y = 2*x;` on line 2, `dbstop in twice at 2` and then `twice(3)` stop before that line at `K>>`, where `x` can be shown or changed; `dbcont` runs on, `dbquit` stops, and `dbclear all` takes the breakpoint away.
+# See also
+keyboard
+
+@ checkcode, mlint
+What the code checker finds in program files.
+
+Syntax errors, and in functions: values assigned but never used, inputs never used, outputs never set, results not ended by a semicolon, and a function named unlike its file. Each message has its line and columns; with an output, a struct array with `message`, `line` and `column`.
+
+# Syntax
+checkcode(filename)
+    The messages.
+info = checkcode(filename)
+    As a struct array.
+s = checkcode(filename, '-string')
+    As text.
+# Examples
+## A function with two faults
+lines = {'function out = tally(x, unused)', 'total = 0;', 'out = sum(x)', 'end'};
+fid = fopen('tally.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+checkcode tally.m
+# See also
+dbstop
+
+@ clipboard
+Text to and from the system's clipboard.
+
+Data that is not text is copied as `mat2str` writes it. In the page the browser may ask whether it may read the clipboard.
+
+# Syntax
+clipboard('copy', data)
+    Copied.
+str = clipboard('paste')
+    Pasted.
+# Examples
+## A matrix copied as text
+clipboard('copy', [1 2; 3 4]);
+clipboard('paste')
+# See also
+mat2str
+
+@ memoize, clearCache, clearAllMemoizedCaches, stats
+A function that keeps its results for inputs it has had.
+
+`memoize(fh)` gives a memoized function: called again with the same inputs, it gives the kept result instead of computing. The last 10 results are kept (`CacheSize`); `Enabled` turns it off. `stats` tells how the kept results were used, `clearCache` forgets one function's, `clearAllMemoizedCaches` every one's.
+
+# Syntax
+mf = memoize(fh)
+    A memoized function, called as `y = mf(x)`.
+s = stats(mf)
+    Hits and misses.
+clearCache(mf)
+    Forgotten.
+# Examples
+## The second call kept
+f = memoize(@(n) sum(1:n));
+f(100);
+f(100);
+f(200);
+s = stats(f);
+s.Cache
+clearCache(f);
+s = stats(f);
+s.Cache.Size
+# See also
+persistent
+
+@ timeit
+The typical time a function takes, in seconds.
+
+The function takes no inputs (`@() myfun(x)`); it is run once to warm up and then several times, and the median is given, which is steadier than one timing with `tic` and `toc`.
+
+# Syntax
+t = timeit(f)
+    Seconds.
+t = timeit(f, numOutputs)
+    Asking for that many outputs.
+# Examples
+## A time in seconds
+> Times depend on the computer, so the example shows only that it is a short positive time; run it to see the number.
+x = rand(1, 1e5);
+t = timeit(@() sum(x));
+t > 0 && t < 1
+# See also
+tic toc profile
+
+@ setpref, addpref, getpref, ispref, rmpref
+Preferences kept from one session to the next, in groups.
+
+`setpref(group, pref, value)` keeps a value (in the home folder); `getpref` reads it, or with a default sets it when it is not there yet; `ispref` tells whether a group or preference is there; `addpref` adds one (an error if it is there) and `rmpref` removes a preference or a whole group.
+
+# Syntax
+setpref(group, pref, value)
+    Kept.
+value = getpref(group, pref, default)
+    Read, with a default.
+tf = ispref(group, pref)
+    Whether it is there.
+rmpref(group)
+    The group removed.
+# Examples
+## A setting kept, read, and removed
+setpref('plotting', 'lineWidth', 2);
+getpref('plotting', 'lineWidth')
+getpref('plotting', 'color', 'blue')
+ispref('plotting', 'color')
+rmpref('plotting');
+ispref('plotting')
+# See also
+save
+
+@ subsref, subsasgn, substruct
+Indexing and assignment written out as a list of steps.
+
+`substruct('()', {2}, '.', 'f')` describes `A(2).f`: a struct array of steps, each with a `type` (`'()'`, `'{}'` or `'.'`) and `subs` (a cell of indices, or a name). `subsref(A, S)` indexes by them and `subsasgn(A, S, B)` assigns, giving the changed A: indexing chosen at run time, and what a class's own indexing receives.
+
+# Syntax
+S = substruct(type1, subs1, type2, subs2, ...)
+    The steps.
+B = subsref(A, S)
+    Indexed.
+A = subsasgn(A, S, B)
+    Assigned.
+# Examples
+## A(2).f read and set
+A = struct('f', {10, 20, 30});
+S = substruct('()', {2}, '.', 'f');
+subsref(A, S)
+A = subsasgn(A, S, 99);
+[A.f]
+subsref(magic(4), substruct('()', {2, ':'}))
+# See also
+getfield setfield
+
+@ namedargs2cell
+A struct's fields as name-value pairs.
+
+`{name1, value1, name2, value2, ...}` from a scalar struct, to pass options on: `f(x, C{:})`.
+
+# Syntax
+C = namedargs2cell(s)
+    The pairs.
+# Examples
+## Options passed on
+opts = struct('LineWidth', 2, 'Color', 'r');
+C = namedargs2cell(opts)
+# See also
+struct fieldnames
+
+@ isMATLABReleaseOlderThan, verLessThan
+Whether the language release, or a toolbox, is older than a given one: always false here.
+
+PyLAB follows the language as it is now, so programs that test for an old release take their paths for current ones.
+
+# Syntax
+tf = isMATLABReleaseOlderThan(release)
+    A release like `"R2024b"`.
+tf = verLessThan(toolbox, version)
+    A version like `'9.14'`.
+# Examples
+## A program choosing its path
+if isMATLABReleaseOlderThan("R2020a")
+    disp('the old way')
+else
+    disp('the current way')
+end
+verLessThan('matlab', '9.0')
+# See also
+ver version

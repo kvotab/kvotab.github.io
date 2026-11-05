@@ -1,0 +1,419 @@
+@ display
+A value shown with its name, as a statement without a semicolon shows it.
+
+Called by the Command Window for every result left unsuppressed; a class can define its own `display` (or `disp`) to change how its objects show. `disp` shows the value without the name.
+
+# Syntax
+display(x)
+    With its name.
+# Examples
+## Shown with and without the name
+x = [1 2 3];
+display(x)
+disp(x)
+# See also
+disp fprintf
+
+@ input, keyboard
+Input asked for in the Command Window, and a program stopped there to be looked at.
+
+`input(prompt)` writes the prompt and waits for an answer, evaluated as an expression (`'s'` keeps it as text). `keyboard` stops the program at that point with the `K>>` prompt: variables can be looked at and changed, and `dbcont` goes on, `dbquit` stops. Both need someone at the Command Window, so they run in the page and not where these examples are run; the example writes a program that uses input, to run there.
+
+# Syntax
+x = input(prompt)
+    The answer, evaluated.
+s = input(prompt, 's')
+    The answer as text.
+keyboard
+    Stop here until dbcont or dbquit.
+# Examples
+## A program that asks until it gets a positive number
+lines = {
+    'function n = askCount()'
+    'n = input(''How many? '');'
+    'while ~isscalar(n) || n < 1'
+    '    n = input(''A positive number, please: '');'
+    'end'
+    'end'};
+fid = fopen('askCount.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type askCount
+# See also
+inputdlg dbstop
+
+@ error
+An error thrown: the program stops, unless a try block catches it.
+
+The message may be a format with values (as `sprintf`); an identifier (`'component:mnemonic'`) before it lets a catch tell errors apart. `error(struct)` throws from a struct with fields `message` and `identifier`; an empty message throws nothing.
+
+# Syntax
+error(msg)
+    With a message.
+error(format, a1, a2, ...)
+    A formatted message.
+error(identifier, format, a1, ...)
+    With an identifier.
+# Examples
+## Caught, with its identifier
+try
+    error('shape:badSide', 'A side of %g is not allowed.', -2);
+catch e
+    disp(e.identifier)
+    disp(e.message)
+end
+# See also
+try MException assert warning
+
+@ warning, lastwarn, lasterr
+Warnings shown, turned off and on, and the last warning and error.
+
+`warning(msg)` writes the message and goes on. An identifier lets a warning be turned off (`warning('off', id)`) and on again; `warning('off', 'all')` turns all off. `lastwarn` gives the last warning's message and identifier, `lasterr` the last error's message.
+
+# Syntax
+warning(msg)
+    A warning.
+warning(identifier, format, a1, ...)
+    With an identifier.
+warning('off', identifier)
+    Turned off (`'on'` again).
+[msg, id] = lastwarn
+    The last warning.
+msg = lasterr
+    The last error's message.
+# Examples
+## A warning shown, then silenced
+warning('calc:slow', 'This may take %d seconds.', 5)
+[msg, id] = lastwarn
+warning('off', 'calc:slow')
+warning('calc:slow', 'Not shown.')
+warning('on', 'calc:slow')
+# See also
+error
+
+@ MException, throw, rethrow, throwAsCaller, addCause, getReport
+Exception objects: made, thrown, thrown again, given causes, and reported.
+
+`MException(id, format, ...)` makes an exception without throwing it; `throw` throws it. A caught exception (`catch e`) can be thrown again with `rethrow`, keeping its stack, or `throwAsCaller` as if from the calling function. `addCause` attaches another exception as a cause; `getReport` gives the text the Command Window would show.
+
+# Syntax
+ME = MException(identifier, format, a1, ...)
+    An exception.
+throw(ME)
+    Thrown.
+rethrow(ME)
+    Thrown again as caught.
+ME = addCause(ME, causeME)
+    With a cause.
+s = getReport(ME)
+    Its text.
+# Examples
+## An error with its cause
+try
+    try
+        x = [1 2 3];
+        y = x(5);
+    catch inner
+        outer = MException('data:read', 'Could not read the record.');
+        outer = addCause(outer, inner);
+        throw(outer)
+    end
+catch e
+    e.message
+    e.cause{1}.message
+end
+# See also
+error try
+
+@ assert
+An error unless a condition holds.
+
+For checks that should never fail: the error says the assertion failed, or gives the message (a format, with an identifier) when given.
+
+# Syntax
+assert(cond)
+    An error when false.
+assert(cond, msg)
+    With a message.
+assert(cond, identifier, format, a1, ...)
+    With an identifier and formatted message.
+# Examples
+## Checks that pass and one that does not
+x = [1 2 3];
+assert(all(x > 0))
+try
+    assert(numel(x) == 4, 'size:wrong', 'Expected 4 elements, got %d.', numel(x))
+catch e
+    disp(e.message)
+end
+# See also
+error validateattributes
+
+@ onCleanup
+An object that runs a function when it is cleared or goes out of scope.
+
+Kept in a variable of a function, it runs its function when the function returns, whether normally or by an error: the way to close a file or restore a setting whatever happens.
+
+# Syntax
+c = onCleanup(fun)
+    `fun()` runs when `c` goes.
+# Examples
+## A setting restored when a function ends
+lines = {
+    'function work()'
+    'old = digits(50);'
+    'c = onCleanup(@() digits(old));'
+    'fprintf(''inside: %d digits\n'', digits);'
+    'end'};
+fid = fopen('work.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+work()
+fprintf('after: %d digits\n', digits);
+# See also
+try fclose
+
+@ exist
+Whether a name is a variable, a file, a built-in function or a folder.
+
+1 for a variable in the workspace, 2 for a file (a program file on the path or any file), 5 for a built-in function, 7 for a folder, and 0 when there is none; a second input asks about one kind only.
+
+# Syntax
+n = exist(name)
+    What the name is.
+n = exist(name, kind)
+    `'var'`, `'file'`, `'dir'` or `'builtin'`.
+# Examples
+## Four kinds of name
+x = 1;
+mkdir('results');
+[exist('x') exist('sin') exist('results') exist('nothingHere')]
+exist('x', 'var')
+# See also
+isvarname which isfile isfolder
+
+@ clear, clearvars
+Variables removed from the workspace (or functions, globals, everything).
+
+`clear` alone removes all variables; names (with `*` wildcards) remove those; `clear -regexp` matches patterns; `clear global` the globals; `clear all` and `clear functions` also forget compiled functions. `clearvars -except` keeps some and removes the rest.
+
+# Syntax
+clear name1 name2
+    Some variables.
+clear
+    All of them.
+clear -regexp pattern
+    By regular expression.
+clearvars -except name1 name2
+    All but some.
+# Examples
+## Removing some, keeping some
+a = 1; b = 2; temp1 = 3; temp2 = 4;
+clear temp*
+who
+clearvars -except a
+who
+# See also
+who whos exist
+
+@ who, whos
+The variables listed: by name, or with their sizes, bytes and classes.
+
+Names (with `*` wildcards) list only those; `-file` lists the variables of a MAT-file. With an output, `who` gives a cell of names and `whos` a struct array with fields `name`, `size`, `bytes` and `class`.
+
+# Syntax
+who
+    The names.
+whos
+    With sizes, bytes and classes.
+s = whos(...)
+    As a struct array.
+whos -file filename
+    Of a MAT-file.
+# Examples
+## A few variables
+x = magic(3);
+name = 'data';
+c = {1, 2};
+who
+whos
+s = whos('x');
+s.bytes
+# See also
+clear exist save
+
+@ eval, evalc
+Text run as code; and run with what it writes captured.
+
+`eval` runs a statement or evaluates an expression for its value; with a second text, that runs if the first fails. `evalc` returns what the code would have written to the Command Window as text. Code in text is harder to read and check than code written out, so they are best kept for what cannot be written otherwise.
+
+# Syntax
+eval(expression)
+    Run.
+x = eval(expression)
+    An expression's value.
+eval(try_expression, catch_expression)
+    The second if the first fails.
+s = evalc(expression)
+    What it wrote, as text.
+# Examples
+## Run, evaluated, and captured
+eval('a = 2 + 3;')
+a
+x = eval('a^2')
+eval('error(''boom'')', 'disp(''recovered'')')
+s = evalc('disp(pi)')
+# See also
+feval evalin str2func
+
+@ evalin, assignin, inputname
+Code run, and variables set, in the caller's or the base workspace; and the name of a variable passed in.
+
+From inside a function, `evalin('caller', expr)` evaluates in the workspace that called it and `evalin('base', expr)` in the Command Window's; `assignin` sets a variable there. `inputname(k)` gives the name of the variable passed as the kth input, or '' for an expression.
+
+# Syntax
+x = evalin(where, expression)
+    `'base'` or `'caller'`.
+assignin(where, name, value)
+    A variable set there.
+s = inputname(k)
+    The kth input's name.
+# Examples
+## A function that reports what it was given and leaves a result
+lines = {
+    'function report(v)'
+    'fprintf(''%s has %d elements\n'', inputname(1), numel(v));'
+    'assignin(''base'', ''lastCount'', numel(v));'
+    'end'};
+fid = fopen('report.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+data = 1:7;
+report(data)
+lastCount
+# See also
+eval
+
+@ mfilename
+The name of the program file that is running; '' in the Command Window.
+
+`mfilename('fullpath')` gives its folder and name without `.m`. Useful to find files kept beside a program.
+
+# Syntax
+name = mfilename
+    The file's name.
+p = mfilename('fullpath')
+    With its folder.
+# Examples
+## A function that names itself
+lines = {'function whoAmI()', 'fprintf(''running %s\n'', mfilename);', 'end'};
+fid = fopen('whoAmI.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+whoAmI()
+isempty(mfilename)
+# See also
+dbstack which
+
+@ nargin, nargout, narginchk, nargoutchk
+The number of inputs and outputs a function was called with, and errors unless they are within bounds.
+
+Inside a function, `nargin` and `nargout` count the inputs given and outputs asked for, so that missing inputs can take defaults and work can be skipped for outputs not wanted. `nargin(fun)` gives how many inputs a function takes (negative with `varargin`). `narginchk` and `nargoutchk` raise the language's errors when the counts are out of bounds.
+
+# Syntax
+n = nargin
+    Inputs given.
+n = nargout
+    Outputs asked for.
+n = nargin(fun)
+    Inputs a function takes.
+narginchk(minArgs, maxArgs)
+    An error unless within bounds.
+nargoutchk(minArgs, maxArgs)
+    The same for outputs.
+# Examples
+## Defaults for missing inputs
+lines = {
+    'function y = scaled(x, factor, offset)'
+    'narginchk(1, 3);'
+    'if nargin < 2, factor = 2; end'
+    'if nargin < 3, offset = 0; end'
+    'y = factor*x + offset;'
+    'end'};
+fid = fopen('scaled.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+[scaled(5) scaled(5, 3) scaled(5, 3, 1)]
+nargin('scaled')
+try, scaled(), catch e, disp(e.message), end
+# See also
+nargchk validateattributes
+
+@ validateattributes
+An error unless a value has the classes and attributes given.
+
+Classes are names (`'double'`, `'char'`, ...) or `'numeric'`, `'float'`, `'integer'`; attributes include `'scalar'`, `'vector'`, `'row'`, `'nonempty'`, `'real'`, `'finite'`, `'integer'`, `'positive'`, `'nonnegative'`, `'increasing'`, and, with a value, `'size'`, `'numel'`, `'>'`, `'<='` and the like. The message names the function and input when given.
+
+# Syntax
+validateattributes(x, classes, attributes)
+    Checked.
+validateattributes(x, classes, attributes, funcName, varName, argIndex)
+    With names for the message.
+# Examples
+## A check that passes and one that does not
+validateattributes([1 2 3], {'numeric'}, {'positive', 'increasing'})
+try
+    validateattributes(-1, {'numeric'}, {'positive'}, 'grow', 'rate', 2)
+catch e
+    disp(e.message)
+end
+# See also
+assert narginchk mustBePositive
+
+@ isvarname, iskeyword, genvarname, matlab.lang.makeValidName, matlab.lang.makeUniqueStrings, namelengthmax
+Valid variable names: tested, made from text, and made unique.
+
+A name starts with a letter, holds letters, digits and underscores, is at most `namelengthmax` (63) characters and is not a keyword (`iskeyword` lists them). `matlab.lang.makeValidName` makes valid names from any text (spaces and other characters replaced, a prefix where needed); `matlab.lang.makeUniqueStrings` adds `_1`, `_2`, ... to make names unique; `genvarname` does both for one name.
+
+# Syntax
+tf = isvarname(s)
+    Valid.
+tf = iskeyword(s)
+    A keyword.
+names = matlab.lang.makeValidName(s)
+    Made valid.
+U = matlab.lang.makeUniqueStrings(S, exclude)
+    Made unique.
+name = genvarname(s, exclusions)
+    Both.
+n = namelengthmax
+    63.
+# Examples
+## Column headings made into names
+[isvarname('rate2') isvarname('2rate') iskeyword('end')]
+names = matlab.lang.makeValidName({'Flow rate', '2nd value', 'for'})
+matlab.lang.makeUniqueStrings({'x', 'x', 'y', 'x'})
+genvarname('x', {'x', 'x1'})
+# See also
+exist
+
+@ builtin
+The built-in function of a name called, even when a file of that name shadows it.
+
+A program file named like a built-in function (`disp.m`) takes its place; `builtin('disp', x)` still reaches the original, as the shadowing function itself often needs to.
+
+# Syntax
+[y1, ...] = builtin(name, x1, ...)
+    The built-in function's outputs.
+# Examples
+## A shadowing function that calls the original
+> The example writes the file and calls it at once, so the call goes through feval, which looks the name up as it runs; a call typed after the file exists finds it as well.
+lines = {'function y = max(varargin)', 'disp(''my max'');', 'y = builtin(''max'', varargin{:});', 'end'};
+fid = fopen('max.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+y = feval('max', [3 9 2])
+builtin('max', [3 9 2])
+delete('max.m');
+# See also
+feval which

@@ -1,0 +1,117 @@
+@ parfor
+A for loop whose passes run in parallel, on the workers of a pool.
+
+The passes run in blocks on the workers, in no set order, and the results are put together in the order of the passes: what the loop gives is what it would give run one pass at a time. A variable only read goes to every worker; one indexed by the loop variable (`y(k)`, `A(:, k)`, `c{k}`) is a slice each pass sets; one set only as `s = s + e` (or with `*`, `&`, `|`, `min`, `max`, concatenation) is reduced; one set in a pass before it is read belongs to that pass. A loop that breaks these rules, or uses `break`, `return`, `eval` or global variables, runs one pass at a time with a warning. The pool starts with the first parfor if there is none; figures and `input` stay with the main engine.
+
+# Syntax
+parfor k = 1:n, statements, end
+    Passes in parallel.
+parfor (k = 1:n, M), statements, end
+    On at most M workers (0: one pass at a time here).
+# Examples
+## A slice, and a sum
+> Without a pool here, the passes run one at a time; run in the page, the first parfor starts one.
+n = 8;
+y = zeros(1, n);
+total = 0;
+parfor k = 1:n
+    y(k) = k^2;
+    total = total + k;
+end
+y
+total
+# See also
+parpool for parfeval
+
+@ parpool, gcp, getCurrentTask
+The pool of workers for parfor: started, found, and asked from a worker which one it is.
+
+`parpool(n)` starts n workers (a worker for each processor core but one, at most 8, unless given); each is a Python engine of its own in the browser tab, taking a few seconds to start and memory of its own. `gcp` gives the pool, starting one if there is none, or `[]` with `'nocreate'`; `delete(gcp)` stops it. On a worker, `getCurrentTask()` gives its task (`t.ID` the worker's number); elsewhere `[]`.
+
+# Syntax
+p = parpool(n)
+    A pool of `n` workers.
+p = gcp
+    The pool, started if needed.
+p = gcp('nocreate')
+    The pool, or [] if there is none.
+t = getCurrentTask()
+    On a worker, its task.
+# Examples
+## Whether a pool is running
+> There are no workers where these examples are run, so the pool is not started here; in the page, gcp starts one.
+p = gcp('nocreate');
+isempty(p)
+isempty(getCurrentTask())
+# See also
+parfor parfeval
+
+@ spmd, labindex, spmdIndex, numlabs, spmdSize
+A block for parallel workers; here its body runs once, as worker 1 of 1.
+
+Inside `spmd ... end`, `spmdIndex` (`labindex`) is the worker's number and `spmdSize` (`numlabs`) how many there are: here the block runs once, so they are 1 and 1, and code written for several workers runs as on one.
+
+# Syntax
+spmd, statements, end
+    The block.
+k = spmdIndex
+    The worker's number (also `labindex`).
+n = spmdSize
+    The number of workers (also `numlabs`).
+# Examples
+## The block, run once
+spmd
+    fprintf('worker %d of %d\n', spmdIndex, spmdSize);
+end
+# See also
+parfor
+
+@ parfeval, parfevalOnAll, backgroundPool
+A function run for its outputs, kept in a future; run once on each worker; and the pool parfeval runs in.
+
+`parfeval(fcn, nout, x1, ...)` runs `fcn(x1, ...)` asking for `nout` outputs and gives a future, `F`; `fetchOutputs(F)` gives the outputs, `F.State` and `F.Error` how it went. `parfevalOnAll` runs a function once for each worker of the pool. `backgroundPool` is the pool parfeval runs in when none is given.
+
+# Syntax
+F = parfeval(fcn, nout, X1, ..., Xm)
+    A future.
+F = parfeval(pool, fcn, nout, ...)
+    In a given pool.
+F = parfevalOnAll(fcn, nout, X1, ...)
+    Once on each worker.
+pool = backgroundPool
+    The background pool.
+# Examples
+## Two outputs from a future
+F = parfeval(@max, 2, [3 9 2]);
+F.State
+[m, i] = fetchOutputs(F)
+# See also
+fetchOutputs afterEach parfor
+
+@ fetchOutputs, fetchNext, afterEach, afterAll, cancel
+Futures' outputs fetched, the next one read, functions run on their outputs, and futures stopped.
+
+`fetchOutputs` gives the outputs of one future or of several (put together down them, or in a cell with `'UniformOutput', false`); an error in a future is raised. `fetchNext` gives the next future not yet read and its outputs (a future fetched is read, and `fetchNext` passes it by). `afterEach(F, fcn, nout)` runs a function on each future's outputs and `afterAll` once on all of them, each giving a new future. `cancel` stops futures.
+
+# Syntax
+[B1, ..., Bn] = fetchOutputs(F)
+    The outputs.
+[idx, B1, ..., Bn] = fetchNext(F)
+    The next one read.
+F2 = afterEach(F, fcn, nout)
+    A function on each.
+F2 = afterAll(F, fcn, nout)
+    A function on all.
+cancel(F)
+    Stopped.
+# Examples
+## Several futures, read one by one and together
+for k = 1:3
+    F(k) = parfeval(@(n) n^2, 1, k);
+end
+[idx, v] = fetchNext(F)
+fetchOutputs(F)'
+G = afterAll(F, @(r) sum(r), 1);
+fetchOutputs(G)
+# See also
+parfeval

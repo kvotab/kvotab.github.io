@@ -1,0 +1,246 @@
+@ class, isa
+The class of a value, and whether a value is of a class or a category of classes.
+
+`class` gives the name: `'double'`, `'char'`, `'cell'`, `'struct'`, `'int8'`, `'logical'`, `'function_handle'`, a class of your own, .... `isa(x, name)` is true when x is of that class, or of one derived from it, or of a category: `'numeric'` (the number classes), `'float'` (double and single) or `'integer'` (the integer classes).
+
+# Syntax
+c = class(x)
+    The class name.
+tf = isa(x, classname)
+    Of a class or category.
+# Examples
+## Several values
+class(pi)
+class('text')
+class({1})
+class(@sin)
+[isa(int8(5), 'integer') isa(int8(5), 'numeric') isa(int8(5), 'float') isa(5, 'float')]
+# See also
+isnumeric isobject cast
+
+@ isnumeric, isfloat, isinteger, islogical, ischar, isstring
+Tests of a value's class: a number, a floating-point number, an integer class, logical, a character array, a string array.
+
+`isinteger` is about the class, not the value: `isinteger(5)` is false, since 5 is a double. Logical values and characters are not numeric.
+
+# Syntax
+tf = isnumeric(x)
+    double, single or an integer class.
+tf = isfloat(x)
+    double or single.
+tf = isinteger(x)
+    An integer class.
+tf = islogical(x)
+    Logical.
+tf = ischar(x)
+    A character array.
+tf = isstring(x)
+    A string array.
+# Examples
+## The same tests on five values
+v = {5, single(5), int8(5), true, 'a'};
+cellfun(@isnumeric, v)
+cellfun(@isfloat, v)
+cellfun(@isinteger, v)
+cellfun(@islogical, v)
+[ischar('a') ischar("a") isstring("a")]
+# See also
+class isa
+
+@ single
+Values converted to single precision: 32-bit floating point, about 7 significant digits.
+
+Half the memory of double and less precise: `eps('single')` is about 1.2e-7. Arithmetic of single with double gives single.
+
+# Syntax
+y = single(x)
+    In single precision.
+# Examples
+## Precision lost and kept
+x = single(1/3)
+double(x) - 1/3
+eps('single')
+class(single(2) * 3)
+# See also
+double eps cast
+
+@ int8, uint8, int16, uint16, int32, uint32, int64, uint64
+Values converted to integer classes: rounded to the nearest whole number, and held within the class's range.
+
+Signed classes (`int8` to `int64`) hold negative numbers, unsigned (`uint8` to `uint64`) do not; the number gives the bits. A value outside the range saturates at its end (`intmin`, `intmax`), NaN becomes 0, and halves round away from zero. Integer arithmetic stays in the class, rounding each result, and integers combine only with doubles and the same class.
+
+# Syntax
+y = int8(x)
+    8-bit signed: -128 to 127.
+y = uint8(x)
+    8-bit unsigned: 0 to 255 (and so on for 16, 32 and 64 bits).
+# Examples
+## Rounding and saturation
+uint8([-5 2.5 3.4 300])
+int8(200)
+[intmin('int16') intmax('int16')]
+## Arithmetic stays in the class
+a = uint8(200);
+a + 100
+a / 3
+class(a * 2.5)
+# See also
+intmax intmin cast double
+
+@ logical
+Numbers converted to logical values: nonzero is true.
+
+Logical values index arrays by position (`x(logical([1 0 1]))` picks the first and third). NaN cannot be converted.
+
+# Syntax
+tf = logical(x)
+    True where x is nonzero.
+# Examples
+## Conversion, and indexing by it
+tf = logical([2 0 -1 0.5])
+x = [10 20 30 40];
+x(tf)
+# See also
+true false islogical
+
+@ cast, typecast, swapbytes
+Values converted to a class by name, numbers' bytes read as another class, and the bytes of each element reversed.
+
+`cast(x, classname)` converts as the class's own function does (`'like', p` takes p's class). `typecast` keeps the bytes and reads them as another numeric class: four uint8 values become one uint32, a double becomes eight bytes. `swapbytes` reverses each element's bytes, between big-endian and little-endian.
+
+# Syntax
+y = cast(x, classname)
+    Converted.
+y = cast(x, 'like', p)
+    To p's class.
+y = typecast(x, classname)
+    The same bytes, another class.
+Y = swapbytes(X)
+    Bytes reversed.
+# Examples
+## Converted, reinterpreted, and swapped
+cast(3.7, 'int16')
+cast(5, 'like', single(1))
+typecast(uint8([1 0 0 0]), 'uint32')
+typecast(single(1), 'uint32')
+swapbytes(uint16(1))
+# See also
+int8 single class
+
+@ func2str, str2func, functions
+Function handles as text and from text, and what a handle holds.
+
+`func2str` gives the handle's text (`'sin'`, or `'@(x)x.^2'` for an anonymous function); `str2func` makes a handle from a name or the text of an anonymous function. `functions` gives a struct describing the handle: its function, its type, and for an anonymous function the values it captured.
+
+# Syntax
+s = func2str(fh)
+    The text.
+fh = str2func(text)
+    A handle.
+s = functions(fh)
+    What it holds.
+# Examples
+## Both ways, and a captured value
+h = str2func('@(x) x.^2');
+h(3)
+func2str(@sin)
+a = 3;
+g = @(x) a*x + 1;
+func2str(g)
+s = functions(g);
+s.workspace{1}
+# See also
+feval
+
+@ symvar
+The variables an expression uses, sorted.
+
+The names in a text expression, other than the functions there are and the constants `i`, `j`, `pi`, `Inf`, `NaN` and `eps`; for a symbolic expression, its symbolic variables.
+
+# Syntax
+names = symvar(expr)
+    A cell column of names.
+# Examples
+## Names in text
+symvar('a*x + exp(-k*t) + pi')
+# See also
+str2func sym
+
+@ feval
+A function called by handle or by name.
+
+`feval(f, x1, x2)` is `f(x1, x2)`; the function may be given as text, which is how a function chosen at run time is called. A fit from `fit` is evaluated at x.
+
+# Syntax
+[y1, y2, ...] = feval(fun, x1, x2, ...)
+    The outputs.
+y = feval(f, x)
+    A fit evaluated.
+# Examples
+## By name, by handle, and several outputs
+feval('max', [3 9 2])
+feval(@(x, y) x + y, 2, 3)
+[m, i] = feval('max', [3 9 2])
+names = {'sin', 'cos'};
+cellfun(@(n) feval(n, 0), names)
+# See also
+func2str str2func
+
+@ enumeration
+The members of an enumeration class.
+
+A class with an `enumeration` block has a fixed set of members, each an object: `Color.Red`, `Color.Green`. They compare with `==` (and with their names as text), work in `switch` and `ismember`, and give their names with `char` and `string`. A class based on a number class (`classdef Level < uint8`) has members that are those numbers.
+
+# Syntax
+enumeration ClassName
+    The members listed.
+m = enumeration('ClassName')
+    The members, as an array.
+[m, names] = enumeration(obj)
+    With their names.
+# Examples
+## A small enumeration, written to its file
+lines = {
+    'classdef Light'
+    '    enumeration'
+    '        Red, Amber, Green'
+    '    end'
+    'end'};
+fid = fopen('Light.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+[m, names] = enumeration('Light');
+names'
+c = Light.Amber;
+[c == Light.Amber, c == 'Red']
+switch c
+    case Light.Amber
+        disp('slow down')
+end
+# See also
+classdef
+
+@ import
+A package's functions and classes called by their short names.
+
+A package is a folder whose name starts with `+`: `+geo/dist.m` is the function `geo.dist`, `+geo/+util/f.m` is `geo.util.f`. `import geo.*` lets the code that follows call `dist` alone; `import geo.dist` that one name. An import in a function lasts for that call; one in the Command Window until it is restarted. `import` alone lists them.
+
+# Syntax
+import pkg.*
+    All of a package.
+import pkg.name
+    One name.
+list = import
+    The imports.
+# Examples
+## A package made, called by full and short names
+mkdir('+geo');
+lines = {'function d = dist(p, q)', 'd = hypot(p(1) - q(1), p(2) - q(2));', 'end'};
+fid = fopen(fullfile('+geo', 'dist.m'), 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+geo.dist([0 0], [3 4])
+import geo.*
+dist([1 1], [4 5])
+# See also
+which addpath
