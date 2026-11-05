@@ -1047,9 +1047,25 @@
           clip();
           continue;
         }
+        // (series that draw their own markers, stem and the like, step out of the clip for them: markersByMiddle)
+        this._clipBox = clipped ? r : null;
         this.child2(ctx, ax, fr, c);
+        this._clipBox = null;
       }
       if (clipped) ctx.restore();
+    }
+
+    /* A series' markers, drawn whole where their middles are in the box the
+       children are clipped to (and not at all elsewhere). */
+    markersByMiddle(ctx, pts, ...style) {
+      const r = this._clipBox;
+      if (!r) { drawMarkers(ctx, pts, ...style); return; }
+      ctx.restore();
+      drawMarkers(ctx, pts.filter(([px, py]) => px >= r.x - 0.5 && px <= r.x + r.w + 0.5 && py >= r.y - 0.5 && py <= r.y + r.h + 0.5), ...style);
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(r.x, r.y, r.w, r.h);
+      ctx.clip();
     }
 
     draw2(ctx, ax, fr) {
@@ -1564,7 +1580,7 @@
         }
         ctx.stroke();
         ctx.restore();
-        if (c.marker !== 'none') { const k = markerInk(c, rgb(c.color)); drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
+        if (c.marker !== 'none') { const k = markerInk(c, rgb(c.color)); this.markersByMiddle(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
         return;
       }
       if (k === 'stem') {
@@ -1585,7 +1601,7 @@
         ctx.stroke();
         ctx.restore();
         const mk = markerInk(c, col);
-        drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, mk.edge, mk.face, c.lineWidth);
+        this.markersByMiddle(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, mk.edge, mk.face, c.lineWidth);
         return;
       }
       if (k === 'errorbar') {
@@ -1611,7 +1627,7 @@
           ctx.stroke();
         }
         ctx.restore();
-        if (c.marker !== 'none') { const k = markerInk(c, col); drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
+        if (c.marker !== 'none') { const k = markerInk(c, col); this.markersByMiddle(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
         return;
       }
       if (k === 'scatter' || k === 'bubblechart') {

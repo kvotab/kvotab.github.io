@@ -367,11 +367,41 @@ W, out = run("""S = speye(2);
 try, mustBeNonsparse(S); catch e, m1 = e.message; end
 try, validateattributes(S, {'double'}, {'nonsparse'}); catch e, m2 = e.message; end
 mustBeNonsparse(eye(2)); ok = 1;
-f = figure('Visible', 'off'); h = spy(sparse([1 0 1; 0 1 0])); t = get(get(gca, 'XLabel'), 'String'); xd = get(h, 'XData'); yd = get(h, 'YData'); close(f);""")
+f = figure('Visible', 'off'); h = spy(sparse([1 0 1; 0 1 0])); t = get(get(gca, 'XLabel'), 'String'); xd = get(h, 'XData'); yd = get(h, 'YData');
+dar = get(gca, 'DataAspectRatio'); xl = get(gca, 'XLim'); yl = get(gca, 'YLim'); close(f);""")
 C('mustBeNonsparse refuses a sparse matrix', 'sparse' in text(W.get('m1', '')), W.get('m1'))
 C("validateattributes 'nonsparse' refuses a sparse matrix", 'nonsparse' in text(W.get('m2', '')), W.get('m2'))
 C('a full matrix passes mustBeNonsparse', W.get('ok') == 1, W.get('ok'))
 C('spy: a marker at each nonzero, nz under the axes', text(W.get('t')) == 'nz = 3' and sorted(zip(full(W['xd']).reshape(-1), full(W['yd']).reshape(-1))) == [(1, 1), (2, 2), (3, 1)],
   (W.get('t'), W.get('xd'), W.get('yd')))
+C('spy draws with equal axes over the whole matrix', full(W['dar']).tolist() == [[1, 1, 1]] and full(W['xl']).tolist() == [[0, 4]] and full(W['yl']).tolist() == [[0, 3]],
+  (W.get('dar'), W.get('xl'), W.get('yl')))
+
+# ---- planerot, linsolve's options, and solvers that break down -----------------------------------------
+W, out = run("""[G, y] = planerot([3; 4]); G1 = givens(3, 4);
+R = [2 1 3; 0 4 1; 0 0 5]; b = [1; 2; 5]; M = R + [0 0 0; 9 0 0; 9 9 0];
+x1 = linsolve(M, b, struct('UT', true)); x2 = linsolve(R, b, struct('UT', true, 'TRANSA', true));
+x3 = linsolve(R', b, struct('LT', true)); C1 = [2 1i; 0 3]; x4 = linsolve(C1, [1; 1], struct('UT', true, 'TRANSA', true));
+try, linsolve(R, b, struct('ut', true)); catch e, m1 = e.message; end
+try, linsolve(R, b, 3); catch e, m2 = e.message; end
+n = 200; e1 = ones(n, 1); A = spdiags([-1.5*e1 3*e1 -0.5*e1], -1:1, n, n); bb = ones(n, 1);
+[xb, fb, rb, ib, vb] = bicg(A, bb, 1e-10, 200); [xc, fc, rc, ic, vc] = cgs(A, bb, 1e-10, 200);
+tb = norm(bb - A*xb)/norm(bb); tc = norm(bb - A*xc)/norm(bb);""")
+near('planerot gives the rotation', W['G'], [[0.6, 0.8], [-0.8, 0.6]], 1e-12)
+near('planerot gives the rotated vector', W['y'], [[5], [0]], 1e-12)
+near('planerot agrees with givens', W['G'], W['G1'], 0)
+R_ = np.array([[2, 1, 3], [0, 4, 1], [0, 0, 5.0]]); b_ = np.array([[1], [2], [5.0]])
+near("linsolve with UT reads only the upper triangle", W['x1'], np.linalg.solve(R_, b_), 1e-12)
+near("linsolve with TRANSA solves with A'", W['x2'], np.linalg.solve(R_.T, b_), 1e-12)
+near("linsolve with LT", W['x3'], np.linalg.solve(R_.T, b_), 1e-12)
+near("linsolve with TRANSA takes the conjugate transpose", W['x4'], np.linalg.solve(np.array([[2, 1j], [0, 3]]).conj().T, np.ones((2, 1))), 1e-12)
+C('linsolve refuses an unknown option and opts that are not a struct', 'UT' in text(W.get('m1', '')) and 'structure' in text(W.get('m2', '')), (W.get('m1'), W.get('m2')))
+for k, lab in (('b', 'bicg'), ('c', 'cgs')):
+    x, fl, rr, it, tr = W['x' + k], W['f' + k], W['r' + k], W['i' + k], W['t' + k]
+    vec = full(W['v' + k]).reshape(-1)
+    C(f'{lab} after a breakdown: a finite x, relres its own residual, the smallest reached, flag 0 only within the tolerance',
+      bool(np.all(np.isfinite(full(x)))) and abs(rr - tr) <= 1e-12 * max(1, tr) and rr <= vec.min() / vec[0] * (1 + 1e-9)
+      and (fl == 0) == (rr <= 1e-10 * (1 + 1e-8)) and (fl == 0 or float(it) == float(np.argmin(vec))),
+      (fl, rr, tr, it, int(np.argmin(vec))))
 
 sys.exit(C.done())

@@ -1,0 +1,395 @@
+@ gamma, gammaln
+The gamma function, and its logarithm.
+
+`gamma(x)` is the integral from 0 to infinity of `t^(x-1)*exp(-t)`; for whole numbers `gamma(n+1)` is `n!`, and it fills in the values between them. It has poles at 0 and the negative whole numbers, and overflows above about 171; `gammaln` gives `log(gamma(x))` for positive `x` without overflowing, for ratios of large factorials.
+
+# Syntax
+y = gamma(x)
+    The gamma function of each element.
+y = gammaln(x)
+    Its logarithm, for x > 0.
+# Examples
+## Factorials, and a half-integer
+gamma(1:6)
+[gamma(0.5)^2 pi]
+## The curve and its poles
+x = linspace(-4, 5, 2000);
+y = gamma(x);
+y(abs(y) > 10) = NaN;
+plot(x, y, 1:5, factorial(0:4), 'o')
+ylim([-10 10]), grid on
+## Where gamma overflows
+[gamma(200) gammaln(200) sum(log(1:199))]
+# See also
+factorial beta psi gammainc
+
+@ gammainc, gammaincinv
+The regularized incomplete gamma function, and its inverse.
+
+`gammainc(x, a)` is the integral of `t^(a-1)*exp(-t)` from 0 to `x`, divided by `gamma(a)`: the cumulative distribution function of the gamma distribution with shape `a`, rising from 0 to 1. `'upper'` gives `1 - gammainc(x, a)` accurately in the tail; the scaled forms multiply by `gamma(a+1)*exp(x)/x^a`. Note the order: `x` first, then `a`. `gammaincinv(y, a)` gives the `x` with `gammainc(x, a) = y`.
+
+# Syntax
+y = gammainc(x, a)
+    The lower function.
+y = gammainc(x, a, 'upper')
+    The upper function.
+y = gammainc(x, a, 'scaledlower')
+    Scaled (also `'scaledupper'`).
+x = gammaincinv(y, a)
+    The inverse (also with `'upper'`).
+# Examples
+## Curves for three shapes
+x = linspace(0, 10, 200);
+plot(x, gammainc(x, 1), x, gammainc(x, 2), x, gammainc(x, 5))
+legend('a = 1', 'a = 2', 'a = 5', 'Location', 'southeast'), grid on
+## A Poisson probability, and a median
+> The probability of at most 3 events when 2 are expected is the upper function at x = 2, a = 4.
+[gammainc(2, 4, 'upper') poisscdf(3, 2)]
+m = gammaincinv(0.5, 3)
+gammainc(m, 3)
+# See also
+gamma gamcdf betainc
+
+@ beta, betaln
+The beta function, and its logarithm.
+
+`beta(z, w)` is the integral from 0 to 1 of `t^(z-1)*(1-t)^(w-1)`, equal to `gamma(z)*gamma(w)/gamma(z+w)`. For large arguments it underflows to 0; `betaln` gives its logarithm.
+
+# Syntax
+y = beta(z, w)
+    The beta function.
+y = betaln(z, w)
+    Its logarithm.
+# Examples
+## The function and its relation to gamma
+[beta(2, 3) gamma(2)*gamma(3)/gamma(5)]
+[beta(500, 600) betaln(500, 600)]
+# See also
+gamma betainc
+
+@ betainc, betaincinv
+The regularized incomplete beta function, and its inverse.
+
+`betainc(x, z, w)` is the integral of `t^(z-1)*(1-t)^(w-1)` from 0 to `x`, divided by `beta(z, w)`: the cumulative distribution function of the beta distribution. `'upper'` gives `1 - betainc(x, z, w)` accurately; `betaincinv(y, z, w)` gives the `x` with `betainc(x, z, w) = y`.
+
+# Syntax
+y = betainc(x, z, w)
+    The lower function.
+y = betainc(x, z, w, 'upper')
+    The upper function.
+x = betaincinv(y, z, w)
+    The inverse.
+# Examples
+## A binomial tail, and a median
+> The chance of at least 7 successes in 10 trials with p = 0.5 is betainc(0.5, 7, 4).
+[betainc(0.5, 7, 4) 1 - binocdf(6, 10, 0.5)]
+m = betaincinv(0.5, 2, 3)
+## Curves for three shapes
+x = linspace(0, 1, 200);
+plot(x, betainc(x, 2, 5), x, betainc(x, 2, 2), x, betainc(x, 5, 2))
+legend('2, 5', '2, 2', '5, 2', 'Location', 'southeast'), grid on
+# See also
+beta betacdf gammainc
+
+@ erf, erfc, erfcx
+The error function, its complement, and the scaled complement.
+
+`erf(x)` is `2/sqrt(pi)` times the integral of `exp(-t^2)` from 0 to `x`: the chance that a normal value lies within `x*sqrt(2)` standard deviations of the mean. `erfc(x)` is `1 - erf(x)`, computed so that it stays accurate where `erf(x)` is nearly 1; `erfcx(x)` is `exp(x^2)*erfc(x)`, which neither overflows nor underflows for large `x`.
+
+# Syntax
+y = erf(x)
+    The error function.
+y = erfc(x)
+    The complementary error function.
+y = erfcx(x)
+    The scaled complementary error function.
+# Examples
+## Within one, two and three standard deviations
+erf((1:3)/sqrt(2))
+## In the tail
+x = [3 6 10];
+fprintf('1 - erf: %10.3e %10.3e %10.3e\n', 1 - erf(x))
+fprintf('erfc:    %10.3e %10.3e %10.3e\n', erfc(x))
+[erfcx(30) exp(30^2)*erfc(30)]
+## The curves
+x = linspace(-3, 3, 200);
+plot(x, erf(x), x, erfc(x)), grid on
+legend('erf', 'erfc', 'Location', 'east')
+# See also
+erfinv normcdf
+
+@ erfinv, erfcinv
+The inverse error function, and the inverse complementary error function.
+
+`erfinv(y)` gives the `x` with `erf(x) = y` for y in [-1, 1]; `erfcinv(y)` the `x` with `erfc(x) = y` for y in [0, 2], accurate when `y` is tiny, where `1 - y` would round to 1. Times `sqrt(2)`, they give normal quantiles.
+
+# Syntax
+x = erfinv(y)
+    The inverse error function.
+x = erfcinv(y)
+    The inverse complementary error function.
+# Examples
+## The normal 95% bounds, two ways
+[sqrt(2)*erfinv(0.95) sqrt(2)*erfcinv(0.05)]
+## Far in the tail
+[erfinv(1 - 1e-20) erfcinv(1e-20)]
+# See also
+erf norminv
+
+@ expint
+The exponential integral E1(x).
+
+The integral of `exp(-t)/t` from `x` to infinity: large near 0 and falling off like `exp(-x)/x`. Negative and complex arguments give the analytic continuation, complex on the negative axis. In groundwater hydraulics it is the well function of the Theis solution.
+
+# Syntax
+y = expint(x)
+    E1 of each element.
+# Examples
+## A few values
+expint([0.1 1 5])
+expint(-1)
+## Drawdown around a pumped well (Theis)
+> s = Q/(4πT)·E1(r²S/(4Tt)), here 10 m from a well pumped at 10 L/s, transmissivity 1e-3 m²/s, storativity 1e-4.
+Q = 0.01; T = 1e-3; S = 1e-4; r = 10;
+t = logspace(1, 6, 100);
+s = Q/(4*pi*T)*expint(r^2*S./(4*T*t));
+semilogx(t, s), grid on
+xlabel('time (s)'), ylabel('drawdown (m)')
+# See also
+sinint cosint gammainc
+
+@ psi
+The digamma function (the derivative of gammaln), or its higher derivatives.
+
+`psi(x)` is `gamma'(x)/gamma(x)`; `psi(k, x)` is its k-th derivative (the trigamma function for k = 1). At whole numbers, `psi(n+1)` is the harmonic number `1 + 1/2 + ... + 1/n` minus Euler's constant.
+
+# Syntax
+y = psi(x)
+    The digamma function.
+y = psi(k, x)
+    Its k-th derivative.
+# Examples
+## Euler's constant, a harmonic number, and pi^2/6
+-psi(1)
+psi(5) - psi(1)
+[psi(1, 1) pi^2/6]
+# See also
+gamma gammaln
+
+@ besselj, bessely
+Bessel functions of the first and second kind, J and Y.
+
+The solutions of Bessel's equation `x^2*y'' + x*y' + (x^2 - nu^2)*y = 0`, which appear in waves and diffusion in circles and cylinders. `J` is finite at 0; `Y` goes to minus infinity there. Both oscillate and decay like `1/sqrt(x)`. The order `nu` need not be whole, and a row of orders with a column of points gives a table; with 1 as the third input, the result is scaled by `exp(-abs(imag(z)))`.
+
+# Syntax
+J = besselj(nu, z)
+    The first kind.
+J = besselj(nu, z, 1)
+    Scaled.
+Y = bessely(nu, z)
+    The second kind.
+# Examples
+## J0, J1 and J2
+x = linspace(0, 20, 400);
+plot(x, besselj(0, x), x, besselj(1, x), x, besselj(2, x)), grid on
+legend('J_0', 'J_1', 'J_2')
+## Y0 and Y1
+x = linspace(0.1, 20, 400);
+plot(x, bessely(0, x), x, bessely(1, x)), grid on
+ylim([-2 1]), legend('Y_0', 'Y_1', 'Location', 'southeast')
+## The first zero of J0, where a drumhead's lowest mode has its rim
+fzero(@(x) besselj(0, x), [2 3])
+# See also
+besseli besselk besselh airy
+
+@ besseli, besselk
+Modified Bessel functions of the first and second kind, I and K.
+
+The solutions of `x^2*y'' + x*y' - (x^2 + nu^2)*y = 0`: `I` grows like `exp(x)/sqrt(x)` and `K` decays like `exp(-x)/sqrt(x)`, as in heat conduction and diffusion around cylinders. With 1 as the third input they are scaled, `I` by `exp(-abs(real(z)))` and `K` by `exp(z)`, to stay finite far out.
+
+# Syntax
+I = besseli(nu, z)
+    The first kind.
+K = besselk(nu, z)
+    The second kind.
+I = besseli(nu, z, 1)
+    Scaled (also for `besselk`).
+# Examples
+## The two kinds
+x = linspace(0.05, 3, 300);
+plot(x, besseli(0, x), x, besseli(1, x), x, besselk(0, x), x, besselk(1, x)), grid on
+ylim([0 5]), legend('I_0', 'I_1', 'K_0', 'K_1')
+## Scaled where the plain one overflows
+[besseli(0, 800) besseli(0, 800, 1)]
+# See also
+besselj bessely
+
+@ besselh
+The Hankel functions, Bessel functions of the third kind.
+
+`H1 = J + iY` and `H2 = J - iY`, waves travelling outward and inward from a cylinder. `besselh(nu, z)` is the first kind; `besselh(nu, k, z)` takes the kind `k` (1 or 2).
+
+# Syntax
+H = besselh(nu, z)
+    The first kind.
+H = besselh(nu, k, z)
+    The kind `k`.
+# Examples
+## Built from J and Y
+besselh(0, 1, 2)
+besselj(0, 2) + 1i*bessely(0, 2)
+besselh(0, 2, 2)
+# See also
+besselj bessely
+
+@ airy
+The Airy functions Ai and Bi, and their derivatives.
+
+The solutions of `y'' = x*y`: oscillating for negative `x`, and for positive `x` decaying (`Ai`) or growing (`Bi`). They describe light near a caustic and a quantum particle in a uniform field. `k` selects 0 for Ai, 1 for Ai', 2 for Bi and 3 for Bi'; with 1 as the third input the results are scaled.
+
+# Syntax
+W = airy(z)
+    Ai.
+W = airy(k, z)
+    Ai, Ai', Bi or Bi'.
+W = airy(k, z, 1)
+    Scaled.
+# Examples
+## Ai and Bi
+x = linspace(-10, 2, 400);
+plot(x, airy(0, x), x, airy(2, x)), grid on
+ylim([-0.6 1.2]), legend('Ai', 'Bi', 'Location', 'northwest')
+## Values at zero
+[airy(0, 0) airy(1, 0) airy(2, 0) airy(3, 0)]
+# See also
+besselj
+
+@ ellipke
+Complete elliptic integrals of the first and second kind, K(m) and E(m).
+
+`K(m)` is the integral from 0 to `pi/2` of `1/sqrt(1 - m*sin(t)^2)` and `E(m)` of `sqrt(1 - m*sin(t)^2)`, for the parameter m in [0, 1]. They give a pendulum's period at any amplitude and the perimeter of an ellipse.
+
+# Syntax
+K = ellipke(m)
+    The first kind.
+[K, E] = ellipke(m)
+    Both kinds.
+# Examples
+## A pendulum's period, against the small-swing period
+> A pendulum swinging out to θ0 takes 2K(m)/π times the small-swing period, with m = sin²(θ0/2).
+theta0 = [10 30 60 90 120 150];
+ratio = 2*ellipke(sind(theta0/2).^2)/pi
+## The perimeter of an ellipse
+> With semi-axes a and b, the perimeter is 4a·E(1 - b²/a²).
+a = 2; b = 1;
+[~, E] = ellipke(1 - b^2/a^2);
+P = 4*a*E
+# See also
+ellipj
+
+@ ellipj
+The Jacobi elliptic functions sn, cn and dn.
+
+For the parameter m in [0, 1]: `sn(u)` and `cn(u)` are the sine and cosine of the amplitude `phi` where the incomplete elliptic integral of the first kind reaches `u`, and `dn = sqrt(1 - m*sn^2)`. With m = 0 they are `sin`, `cos` and 1; they have period `4K(m)`, and describe the swing of a pendulum at large amplitude.
+
+# Syntax
+[sn, cn, dn] = ellipj(u, m)
+    The three functions.
+# Examples
+## One period at m = 0.9
+m = 0.9;
+K = ellipke(m);
+u = linspace(0, 4*K, 400);
+[sn, cn, dn] = ellipj(u, m);
+plot(u, sn, u, cn, u, dn), grid on
+legend('sn', 'cn', 'dn', 'Location', 'southwest')
+## Identities
+[sn, cn, dn] = ellipj(0.7, 0.4);
+[sn^2 + cn^2, dn^2 + 0.4*sn^2]
+# See also
+ellipke
+
+@ legendre
+Associated Legendre functions of degree n, for each order m from 0 to n.
+
+A row for each order m = 0, 1, ..., n and a column for each `x` in [-1, 1]: `P(1, :)` is the Legendre polynomial of degree n. `'sch'` gives the Schmidt semi-normalized functions, used for geomagnetic fields, and `'norm'` the fully normalized ones.
+
+# Syntax
+P = legendre(n, x)
+    The functions of degree `n`.
+P = legendre(n, x, 'sch')
+    Schmidt semi-normalized (also `'norm'`).
+# Examples
+## The orders of degree 2
+legendre(2, [0 0.5 1])
+## The Legendre polynomials P0 to P4
+x = linspace(-1, 1, 200);
+hold on
+for n = 0:4
+    P = legendre(n, x);
+    plot(x, P(1, :))
+end
+hold off, grid on, ylim([-1 1.2])
+legend('P_0', 'P_1', 'P_2', 'P_3', 'P_4', 'Location', 'south')
+# See also
+polyval
+
+@ sinint, cosint
+The sine and cosine integrals.
+
+`sinint(x)` is the integral from 0 to `x` of `sin(t)/t`, tending to `pi/2`; `cosint(x)` is Euler's constant plus `log(x)` plus the integral from 0 to `x` of `(cos(t) - 1)/t`, tending to 0, and complex for negative `x`. Symbolic input gives the symbolic functions.
+
+# Syntax
+Y = sinint(X)
+    The sine integral.
+Y = cosint(X)
+    The cosine integral.
+# Examples
+## The curves
+x = linspace(0.05, 20, 400);
+plot(x, sinint(x), x, cosint(x), x, pi/2*ones(size(x)), ':'), grid on
+legend('Si', 'Ci', '\pi/2', 'Location', 'east')
+## The overshoot of a square wave's Fourier series
+> Near a jump, the partial sums overshoot to 2/π·Si(π) times the step, however many terms are summed.
+2/pi*sinint(pi)
+# See also
+expint fresnels
+
+@ dawson
+Dawson's integral.
+
+`exp(-x^2)` times the integral from 0 to `x` of `exp(t^2)`. It rises to a maximum of about 0.541 near x = 0.924 and then falls like `1/(2x)`; it appears in the line shapes of spectroscopy and in plasma physics.
+
+# Syntax
+Y = dawson(X)
+    Dawson's integral of each element.
+# Examples
+## The curve and its maximum
+x = linspace(0, 6, 300);
+plot(x, dawson(x), x(20:end), 1./(2*x(20:end)), ':'), grid on
+legend('dawson', '1/(2x)')
+[xm, fneg] = fminbnd(@(x) -dawson(x), 0, 2);
+[xm -fneg]
+# See also
+erf erfcx
+
+@ fresnels, fresnelc
+The Fresnel sine and cosine integrals.
+
+`fresnels(x)` is the integral from 0 to `x` of `sin(pi*t^2/2)` and `fresnelc(x)` of `cos(pi*t^2/2)`; both tend to 1/2. Drawn against each other they make the Euler (Cornu) spiral, a curve whose curvature grows in step with its length, used for road and railway transitions and in diffraction at an edge.
+
+# Syntax
+Y = fresnels(X)
+    The Fresnel sine integral.
+Y = fresnelc(X)
+    The Fresnel cosine integral.
+# Examples
+## The Euler spiral
+t = linspace(-5, 5, 1000);
+plot(fresnelc(t), fresnels(t)), axis equal, grid on
+## Slowly toward one half
+> Far out they oscillate within about 1/(πx) of 1/2.
+x = [10 100 1000];
+[fresnelc(x); fresnels(x)]
+# See also
+sinint cosint

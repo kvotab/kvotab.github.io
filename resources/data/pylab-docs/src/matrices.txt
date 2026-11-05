@@ -1,0 +1,999 @@
+@ trace
+The sum of the diagonal of a square matrix.
+
+The trace is also the sum of the eigenvalues, and `trace(A*B)` equals `trace(B*A)`.
+
+# Syntax
+t = trace(A)
+    The sum of `A`'s diagonal.
+# Examples
+## The diagonal's sum, and the eigenvalues'
+A = magic(4);
+trace(A)
+sum(eig(A))
+# See also
+diag eig det
+
+@ vecnorm
+The norm of each column of a matrix, or along another dimension.
+
+The 2-norm (length) of each column by default; `p` gives another norm (1, Inf, or any positive number) and `dim` the direction: 2 for the norm of each row.
+
+# Syntax
+n = vecnorm(A)
+    The 2-norm of each column.
+n = vecnorm(A, p)
+    The p-norm.
+n = vecnorm(A, p, dim)
+    Along dimension `dim`.
+# Examples
+## Columns and rows
+A = [3 -2; 4 0; 0 6];
+vecnorm(A)
+vecnorm(A, 1)
+vecnorm(A, 2, 2)
+## Points' distances from the origin
+P = [1 1; 3 4; -2 0; 0.5 -0.5];
+d = vecnorm(P, 2, 2)'
+# See also
+norm hypot
+
+@ cond
+The condition number of a matrix: how much solving with it can magnify errors.
+
+The ratio of the largest to the smallest singular value (the 2-norm), or `norm(A, p)*norm(inv(A), p)` for p = 1, Inf or `'fro'`. A condition number near 10^k means about k digits may be lost when solving `A*x = b`; a singular matrix has `Inf`.
+
+# Syntax
+c = cond(A)
+    In the 2-norm.
+c = cond(A, p)
+    In the 1-, Inf- or Frobenius norm.
+# Examples
+## Two nearly parallel equations
+> A change of 0.001 in the right-hand side moves the solution by 2: about four of the digits are lost, as the condition number says.
+A = [1 2; 2 4.001];
+cond(A)
+x = A \ [3; 6.001]
+x2 = A \ [3; 6.002]
+## Hilbert matrices grow ill-conditioned fast
+n = 2:12;
+c = arrayfun(@(k) cond(hilb(k)), n);
+semilogy(n, c, 'o-')
+xlabel('n'), ylabel('cond(hilb(n))'), grid on
+# See also
+rcond condest norm svd
+
+@ rcond, condest
+Estimates of the condition number in the 1-norm: its reciprocal (`rcond`) and the number itself (`condest`).
+
+Cheaper than `cond`, which needs the singular values. `rcond` is near 1 for a well-conditioned matrix and near `eps` (or 0) for a nearly singular one; `condest` works on large sparse matrices too, without forming the inverse.
+
+# Syntax
+r = rcond(A)
+    The reciprocal condition number estimate.
+c = condest(A)
+    The condition number estimate.
+# Examples
+## The estimates beside the exact numbers
+A = hilb(6);
+[rcond(A) 1/cond(A, 1)]
+[condest(A) cond(A, 1)]
+## A singular matrix
+rcond(magic(4))
+# See also
+cond normest1
+
+@ normest, normest1
+Estimates of a matrix's 2-norm and 1-norm.
+
+For a large sparse matrix, where `norm` would need the singular values: `normest` runs the power method on `A'*A` until the estimate settles within `tol` (1e-6); `normest1` uses a block method that looks at a few columns at a time.
+
+# Syntax
+n = normest(S)
+    The 2-norm estimate.
+[n, count] = normest(S, tol)
+    Within a tolerance, with the number of iterations.
+c = normest1(A)
+    The 1-norm estimate.
+[c, v, w] = normest1(A, t)
+    With `t` columns, and a vector `v` with `w = A*v` that attains it.
+# Examples
+## A sparse matrix's norms
+rng default
+A = sprand(300, 300, 0.02);
+[normest(A) norm(full(A))]
+[normest1(A) norm(A, 1)]
+# See also
+norm condest
+
+@ eigs
+A few eigenvalues of a large (often sparse) matrix: the largest in magnitude by default.
+
+When only some eigenvalues are wanted, `eigs` finds them by an iterative (Krylov) method without the cost of `eig` on the whole matrix. `sigma` says which: `'smallestabs'` (by factoring the matrix), `'largestreal'` and the like, or a number for those nearest it. With a matrix `B`, the generalized problem `A*v = lambda*B*v`; with a function handle, a matrix given only by what it does to a vector.
+
+# Syntax
+d = eigs(A)
+    The 6 largest in magnitude.
+d = eigs(A, k)
+    The `k` largest in magnitude.
+d = eigs(A, k, sigma)
+    Others: `'smallestabs'`, `'largestreal'`, `'smallestreal'`, ... or the `k` nearest a number.
+[V, D, flag] = eigs(A, k, sigma)
+    With the eigenvectors; `flag` 0 when all converged.
+d = eigs(Afun, n, k, sigma)
+    Of an `n`-by-`n` matrix given as a function.
+# Examples
+## The lowest modes of a sparse Laplacian
+> The 400-by-400 five-point Laplacian on a 20-by-20 grid has eigenvalues 4 - 2cos(iπ/21) - 2cos(jπ/21).
+A = gallery('poisson', 20);
+d = eigs(A, 4, 'smallestabs')'
+[i, j] = meshgrid(1:20);
+exact = sort(4 - 2*cos(i(:)*pi/21) - 2*cos(j(:)*pi/21));
+exact(1:4)'
+## Vectors, and how well they satisfy A*V = V*D
+A = gallery('poisson', 20);
+[V, D, flag] = eigs(A, 3);
+diag(D)'
+flag
+norm(A*V - V*D)
+# See also
+eig svds
+
+@ svds
+A few singular values of a large matrix: the largest by default.
+
+The partial counterpart of `svd`: the `k` largest singular values (or the smallest, or those nearest a number), with their vectors if asked.
+
+# Syntax
+s = svds(A)
+    The 6 largest singular values.
+s = svds(A, k)
+    The `k` largest.
+s = svds(A, k, sigma)
+    `'smallest'`, `'smallestnz'` (the smallest not zero) or those nearest a number.
+[U, S, V, flag] = svds(...)
+    With the singular vectors.
+# Examples
+## The largest three, against the full decomposition
+rng default
+A = rand(200, 50);
+s = svds(A, 3)'
+sAll = svd(A);
+sAll(1:3)'
+# See also
+svd eigs
+
+@ chol
+The Cholesky factorization of a symmetric positive definite matrix: A = R'*R.
+
+`R` is upper triangular (`L = chol(A, 'lower')` gives `A = L*L'`). It takes half the work of LU and needs no pivoting, and it exists only when the matrix is positive definite: with two outputs, `p` is 0 when it is and otherwise the column where it failed, so `chol` is also the quickest test of positive definiteness.
+
+# Syntax
+R = chol(A)
+    Upper triangular, `A = R'*R`.
+L = chol(A, 'lower')
+    Lower triangular, `A = L*L'`.
+[R, p] = chol(A)
+    `p` 0 when `A` is positive definite (no error otherwise).
+# Examples
+## A factor, and the test
+A = [4 2 2; 2 5 3; 2 3 6];
+R = chol(A)
+norm(R'*R - A)
+[~, p] = chol([1 2; 2 1])
+## Samples with a given covariance
+> If z has independent standard normal entries, L*z has covariance L*L'.
+rng default
+Sigma = [1 0.8; 0.8 2];
+L = chol(Sigma, 'lower');
+X = L*randn(2, 5000);
+cov(X')
+# See also
+cholupdate lu ichol
+
+@ schur, ordschur, rsf2csf
+The Schur decomposition A = U*T*U', its reordering, and the real form turned complex.
+
+`U` is unitary and `T` upper triangular with the eigenvalues on its diagonal; for a real matrix the real form keeps complex pairs as 2-by-2 blocks on the diagonal (quasi-triangular), and `'complex'` or `rsf2csf` makes it triangular. Unlike the eigenvector matrix, `U` is always well conditioned. `ordschur` reorders `U` and `T` so the eigenvalues picked by `select` (true at their positions on `T`'s diagonal) come first.
+
+# Syntax
+T = schur(A)
+    The Schur form.
+[U, T] = schur(A)
+    With `A = U*T*U'`.
+[U, T] = schur(A, 'complex')
+    Triangular, complex where needed.
+[US, TS] = ordschur(U, T, select)
+    The chosen eigenvalues first.
+[U, T] = rsf2csf(Ur, Tr)
+    A real Schur form made complex triangular.
+# Examples
+## The form and its eigenvalues
+A = magic(3);
+[U, T] = schur(A)
+norm(U*T*U' - A)
+## The negative eigenvalue moved first
+A = magic(3);
+[U, T] = schur(A);
+[US, TS] = ordschur(U, T, diag(T) < 0);
+diag(TS)'
+norm(US*TS*US' - A)
+## A rotation: real blocks, then complex
+A = [0 2; -2 0];
+[Ur, Tr] = schur(A)
+[U, T] = rsf2csf(Ur, Tr)
+# See also
+eig qz ordeig hess
+
+@ qz, ordqz, ordeig
+The generalized Schur (QZ) factorization of a pair of matrices, its reordering, and eigenvalues in diagonal order.
+
+For the generalized problem `A*v = lambda*B*v`: `Q*A*Z = AA` and `Q*B*Z = BB` with `AA` and `BB` upper triangular (quasi-triangular with `'real'`), and the eigenvalues are `diag(AA)./diag(BB)`; `B` may be singular, which gives infinite eigenvalues. `ordqz` moves chosen eigenvalues first: by a logical `select`, or `'lhp'`, `'rhp'` (left or right half-plane), `'udi'`, `'udo'` (inside or outside the unit disk). `ordeig` gives the eigenvalues of a (quasi-)triangular form in the order of its diagonal.
+
+# Syntax
+[AA, BB, Q, Z] = qz(A, B)
+    The factorization.
+[AA, BB, Q, Z, V, W] = qz(A, B, 'real')
+    Real, with the right and left eigenvectors.
+[AAS, BBS, QS, ZS] = ordqz(AA, BB, Q, Z, keyword)
+    Reordered.
+e = ordeig(T)
+    A Schur form's eigenvalues, in order.
+e = ordeig(AA, BB)
+    A QZ form's eigenvalues, in order.
+# Examples
+## The pair's eigenvalues
+A = [1 2; 3 4];
+B = [2 0; 0 1];
+[AA, BB, Q, Z] = qz(A, B);
+ordeig(AA, BB)
+eig(A, B)
+norm(Q*A*Z - AA) + norm(Q*B*Z - BB)
+## Eigenvalues outside the unit disk first
+A = [1 2; 3 4];
+B = [2 0; 0 1];
+[AA, BB, Q, Z] = qz(A, B);
+[AAS, BBS] = ordqz(AA, BB, Q, Z, 'udo');
+ordeig(AAS, BBS)
+# See also
+eig schur polyeig gsvd
+
+@ hess
+The Hessenberg form of a matrix: A = P*H*P', zero below the first subdiagonal.
+
+A unitary similarity, so `H` keeps `A`'s eigenvalues; it is the first step of the eigenvalue algorithms, and a symmetric matrix becomes tridiagonal.
+
+# Syntax
+H = hess(A)
+    The Hessenberg form.
+[P, H] = hess(A)
+    With the unitary `P`.
+# Examples
+## A matrix brought to Hessenberg form
+A = magic(4);
+[P, H] = hess(A)
+norm(P*H*P' - A)
+# See also
+schur eig
+
+@ pinv
+The Moore-Penrose pseudoinverse.
+
+Defined for any matrix, square or not, singular or not, through the singular values: those above `tol` are inverted, the rest set to zero. `pinv(A)*b` is the least-squares solution with the smallest norm; for an invertible matrix `pinv` is `inv`.
+
+# Syntax
+B = pinv(A)
+    The pseudoinverse.
+B = pinv(A, tol)
+    With singular values at or below `tol` treated as zero.
+# Examples
+## A rank-one matrix
+A = [1 2; 2 4; 3 6];
+B = pinv(A)
+x = B*[1; 2; 3]
+A*x
+# See also
+lsqminnorm mldivide svd inv
+
+@ null, orth
+Orthonormal bases of a matrix's null space and range.
+
+`null(A)` has a column for each independent `x` with `A*x = 0`; `orth(A)` a column for each independent direction `A*x` can take. Both come from the singular value decomposition, so the columns are orthonormal; their numbers add up to the number of `A`'s columns.
+
+# Syntax
+Z = null(A)
+    The null space.
+Q = orth(A)
+    The range.
+# Examples
+## A singular matrix
+A = [1 2 3; 4 5 6; 7 8 9];
+Z = null(A)
+norm(A*Z)
+Q = orth(A);
+size(Q)
+# See also
+rank svd rref
+
+@ rref
+The reduced row echelon form, by Gauss-Jordan elimination.
+
+Each pivot is 1 with zeros above and below it. For an augmented matrix `[A b]` it shows the solutions of `A*x = b`; the pivot columns `p` (from `[R, p]`) are a basis of the range, and `length(p)` is the rank. For solving systems numerically, `\` is more accurate.
+
+# Syntax
+R = rref(A)
+    The reduced row echelon form.
+[R, p] = rref(A)
+    With the pivot columns.
+# Examples
+## A system with a free variable
+> x + 2y + z = 4, 2x + 4y = 2, 3x + 6y + z = 6. The row of zeros says one equation follows from the others; the rest say x = 1 - 2y and z = 3, for any y.
+A = [1 2 1; 2 4 0; 3 6 1];
+b = [4; 2; 6];
+[R, p] = rref([A b])
+# See also
+rank null mldivide
+
+@ expm
+The matrix exponential, e^A.
+
+The sum `I + A + A^2/2! + A^3/3! + ...`, computed by scaling and squaring. The solution of the linear system `x' = A*x` from `x(0)` is `expm(A*t)*x(0)`. Not the same as `exp(A)`, which takes the exponential of each element.
+
+# Syntax
+Y = expm(A)
+    The matrix exponential.
+# Examples
+## Not the elementwise exponential
+A = [0 1; -2 -3];
+expm(A)
+exp(A)
+## A damped oscillator, x'' + 0.4x' + 4x = 0
+A = [0 1; -4 -0.4];
+t = linspace(0, 10, 200);
+X = zeros(2, numel(t));
+for k = 1:numel(t)
+    X(:, k) = expm(A*t(k))*[1; 0];
+end
+plot(t, X)
+legend('x', 'dx/dt'), xlabel('t')
+# See also
+logm sqrtm funm exp
+
+@ logm, sqrtm
+The matrix logarithm and the principal matrix square root.
+
+`L = logm(A)` satisfies `expm(L) = A`; `X = sqrtm(A)` satisfies `X*X = A`, the square root whose eigenvalues have positive real parts. Both act on the matrix as a whole, not on each element.
+
+# Syntax
+L = logm(A)
+    The matrix logarithm.
+X = sqrtm(A)
+    The principal square root.
+# Examples
+## Each undoes its inverse
+A = [4 1; 1 3];
+X = sqrtm(A)
+norm(X*X - A)
+L = logm(A);
+norm(expm(L) - A)
+# See also
+expm funm
+
+@ funm
+A function of a matrix, from an elementwise function.
+
+`funm(A, @cos)` is the matrix cosine: the function applied to the eigenvalues, carried back to the matrix (not `cos` of each element). `funm(A, @exp)` is `expm(A)`.
+
+# Syntax
+F = funm(A, @fun)
+    The matrix function of `fun`.
+# Examples
+## The matrix cosine and exponential
+A = [2 1; 1 2];
+C = funm(A, @cos)
+cos(A)
+norm(funm(A, @exp) - expm(A))
+# See also
+expm logm sqrtm
+
+@ cross
+The cross product of 3-element vectors.
+
+A vector perpendicular to both, whose length is the area of the parallelogram they span; it changes sign when they swap. For matrices, the product of each pair of columns (or along `dim`).
+
+# Syntax
+C = cross(a, b)
+    The cross product.
+C = cross(A, B, dim)
+    Along a dimension of length 3.
+# Examples
+## Perpendicular, and an area
+a = [1 2 0];
+b = [3 1 0];
+c = cross(a, b)
+[dot(c, a) dot(c, b)]
+area = norm(c)/2
+# See also
+dot norm
+
+@ dot
+The dot product.
+
+`sum(conj(a).*b)`: for real vectors, the sum of the products of the elements. For matrices, the dot product of each pair of columns (or along `dim`).
+
+# Syntax
+d = dot(a, b)
+    The dot product.
+d = dot(A, B, dim)
+    Along a dimension.
+# Examples
+## Vectors, columns, and complex numbers
+dot([1 2 3], [4 5 6])
+A = [1 2; 3 4];
+B = [5 6; 7 8];
+dot(A, B)
+dot([1i 2], [1i 2])
+## The angle between two vectors
+a = [1 0 1];
+b = [0 1 1];
+theta = acosd(dot(a, b)/(norm(a)*norm(b)))
+# See also
+cross norm mtimes
+
+@ linsolve
+Solve A*x = b, told what kind of matrix A is.
+
+Without options, the same as `\`. With an options struct saying the matrix is upper triangular (`UT`), lower triangular (`LT`), symmetric positive definite (`POSDEF`), symmetric (`SYM`) and so on, the checks are skipped and the right method used directly; `TRANSA` solves `A'*x = b`.
+
+# Syntax
+x = linsolve(A, b)
+    The solution.
+x = linsolve(A, b, opts)
+    With the matrix's kind given.
+# Examples
+## An upper triangular system
+R = [2 1 3; 0 4 1; 0 0 5];
+b = [1; 2; 5];
+opts.UT = true;
+x = linsolve(R, b, opts)
+opts = struct('UT', true, 'TRANSA', true);
+x2 = linsolve(R, b, opts);
+norm(R'*x2 - b)
+# See also
+mldivide decomposition
+
+@ balance
+A matrix balanced to make its eigenvalues more accurate.
+
+A diagonal similarity `B = T\A*T` that makes the rows and columns of `B` close in norm. The eigenvalues stay the same, and for a badly scaled matrix they come out more accurately. `T` has powers of 2 on its diagonal (permuted when the matrix has isolated eigenvalues), so balancing adds no rounding.
+
+# Syntax
+B = balance(A)
+    The balanced matrix.
+[T, B] = balance(A)
+    With the similarity.
+# Examples
+## A badly scaled matrix
+A = [1 1e4; 1e-4 1];
+[T, B] = balance(A)
+[norm(A) norm(B)]
+# See also
+eig
+
+@ issymmetric, ishermitian
+True when a matrix equals its transpose (or conjugate transpose).
+
+With `'skew'`, true when it equals minus it; with `tol`, when it is that close (in the 1-norm sense of `norm(A - A', 1)`). A complex matrix can be Hermitian without being symmetric.
+
+# Syntax
+tf = issymmetric(A)
+    `A` equal to `A.'`.
+tf = ishermitian(A)
+    `A` equal to `A'`.
+tf = issymmetric(A, 'skew')
+    `A` equal to `-A.'`.
+tf = issymmetric(A, tol)
+    Within a tolerance.
+# Examples
+## Symmetric, skew and Hermitian
+issymmetric([1 2; 2 1])
+issymmetric([0 1; -1 0], 'skew')
+C = [1 1i; -1i 2];
+[issymmetric(C) ishermitian(C)]
+## Close enough
+A = [1 2; 2 + 1e-12 1];
+[issymmetric(A) issymmetric(A, 1e-10)]
+# See also
+istril isdiag
+
+@ istril, istriu, isdiag, isbanded, bandwidth
+Tests of where a matrix's nonzeros are: below the diagonal, above it, on it, or within a band.
+
+`istril` is true when every element above the diagonal is zero, `istriu` below it, `isdiag` both. `bandwidth` gives how far the nonzeros reach below and above the diagonal, and `isbanded(A, lower, upper)` is true when they stay within those numbers of diagonals. For a dynamic system, `bandwidth(sys)` is instead the first frequency where the gain falls 3 dB below its DC gain.
+
+# Syntax
+tf = istril(A)
+    Lower triangular.
+tf = istriu(A)
+    Upper triangular.
+tf = isdiag(A)
+    Diagonal.
+tf = isbanded(A, lower, upper)
+    Within a band.
+[lower, upper] = bandwidth(A)
+    The band's reach below and above.
+b = bandwidth(A, 'lower')
+    One of them.
+# Examples
+## Triangles and a band
+A = tril(magic(4));
+[istril(A) istriu(A) isdiag(A)]
+T = diag(4*ones(1, 5)) + diag(-ones(1, 4), 1) + diag(-ones(1, 3), -2);
+[lo, up] = bandwidth(T)
+[isbanded(T, 2, 1) isbanded(T, 1, 1)]
+# See also
+tril triu diag
+
+@ pcg
+Solve A*x = b by preconditioned conjugate gradients, for a symmetric positive definite A.
+
+An iterative method for large sparse systems: each step needs only a product `A*x`, and the residual of a symmetric positive definite system falls until it is within `tol` (1e-6 relative) or `maxit` steps (20) run out. A preconditioner `M = M1*M2` close to `A` but easy to solve with, such as an incomplete Cholesky factor, cuts the number of steps. `A` and the preconditioners may be function handles.
+
+# Syntax
+x = pcg(A, b)
+    The solution.
+x = pcg(A, b, tol, maxit, M1, M2, x0)
+    With a tolerance, a limit on the steps, a preconditioner and a start.
+[x, flag, relres, iter, resvec] = pcg(...)
+    With `flag` (0 converged, 1 out of steps, ...), the relative residual, the steps and the residual at each.
+# Examples
+## With and without a preconditioner
+A = gallery('poisson', 30);
+b = ones(900, 1);
+[x, flag, relres, iter, rv] = pcg(A, b, 1e-8, 300);
+L = ichol(A);
+[x2, flag2, relres2, iter2, rv2] = pcg(A, b, 1e-8, 300, L, L');
+[iter iter2]
+semilogy(0:iter, rv/norm(b), 0:iter2, rv2/norm(b))
+legend('pcg', 'pcg with ichol'), xlabel('step'), ylabel('relative residual')
+# See also
+minres gmres ichol mldivide
+
+@ gmres
+Solve A*x = b by the generalized minimum residual method, with restarts.
+
+For any square matrix, symmetric or not: each step adds a direction and takes the `x` with the smallest residual among all those reachable. The directions are stored, so after `restart` of them the method starts again from where it is (no restart by default). `iter` is the outer and inner step.
+
+# Syntax
+x = gmres(A, b)
+    The solution.
+x = gmres(A, b, restart, tol, maxit, M1, M2, x0)
+    Restarted, with a tolerance, limits, preconditioner and start.
+[x, flag, relres, iter, resvec] = gmres(...)
+    With the flag, relative residual, steps ([outer inner]) and residuals.
+# Examples
+## A nonsymmetric system
+n = 200;
+e = ones(n, 1);
+A = spdiags([-1.5*e 3*e -0.5*e], -1:1, n, n);
+b = ones(n, 1);
+[x, flag, relres, iter] = gmres(A, b, 20, 1e-10, 50);
+flag, relres, iter
+# See also
+bicgstab pcg ilu
+
+@ bicg, bicgstab, bicgstabl, cgs, qmr, tfqmr
+Solve A*x = b for a nonsymmetric A by biconjugate gradient methods.
+
+Short-recurrence alternatives to `gmres`: each step costs the same however many have been taken, at the price of a residual that need not fall at every step. `bicg` and `qmr` also need products with `A'`; `bicgstab`, `bicgstabl`, `cgs` and `tfqmr` do not. All take `(A, b, tol, maxit, M1, M2, x0)` and return `[x, flag, relres, iter, resvec]`; a function handle for `A` in `bicg` and `qmr` is called as `afun(x, 'notransp')` and `afun(x, 'transp')`.
+
+# Syntax
+x = bicgstab(A, b)
+    The solution.
+[x, flag, relres, iter, resvec] = bicgstab(A, b, tol, maxit, M1, M2, x0)
+    With the flag, relative residual, steps and residuals; the same for `bicg`, `bicgstabl`, `cgs`, `qmr` and `tfqmr`.
+# Examples
+## The same system, six ways
+n = 200;
+e = ones(n, 1);
+A = spdiags([-1.5*e 3*e -0.5*e], -1:1, n, n);
+b = ones(n, 1);
+solvers = {@bicg, @bicgstab, @bicgstabl, @cgs, @qmr, @tfqmr};
+for k = 1:numel(solvers)
+    [x, flag, relres, iter] = solvers{k}(A, b, 1e-8, 200);
+    fprintf('%-10s flag %d  steps %5.1f  residual %.1e\n', func2str(solvers{k}), flag, iter, relres);
+end
+# See also
+gmres pcg ilu
+
+@ minres, symmlq
+Solve A*x = b for a symmetric A, which need not be positive definite.
+
+Where `pcg` needs a positive definite matrix, `minres` (smallest residual at each step) and `symmlq` (from the LQ factorization) work for any symmetric one. A preconditioner must be positive definite. Both take `(A, b, tol, maxit, M1, M2, x0)`.
+
+# Syntax
+x = minres(A, b)
+    The solution.
+[x, flag, relres, iter, resvec] = minres(A, b, tol, maxit, M1, M2, x0)
+    With the flag, relative residual, steps and residuals.
+[x, flag, relres, iter] = symmlq(A, b, tol, maxit, M1, M2, x0)
+    By SYMMLQ.
+# Examples
+## A symmetric matrix with negative eigenvalues
+A = gallery('poisson', 10) - 2*speye(100);
+b = ones(100, 1);
+[x, flag, relres, iter] = minres(A, b, 1e-10, 200);
+fprintf('minres: flag %d, %d steps, residual %.1e\n', flag, iter, relres)
+[x, flag, relres, iter] = symmlq(A, b, 1e-10, 200);
+fprintf('symmlq: flag %d, %d steps, residual %.1e\n', flag, iter, relres)
+# See also
+pcg gmres
+
+@ lsqr
+The least-squares solution of A*x = b by LSQR.
+
+For a large sparse (or rectangular) `A`: the iterative counterpart of `A\b` for a tall system, minimizing `norm(b - A*x)`, with products by `A` and `A'` only.
+
+# Syntax
+x = lsqr(A, b)
+    The least-squares solution.
+[x, flag, relres, iter, resvec] = lsqr(A, b, tol, maxit, M1, M2, x0)
+    With a tolerance, limits, preconditioner and start, and the flag, residual and steps.
+# Examples
+## A tall system
+rng default
+A = rand(300, 40);
+b = rand(300, 1);
+[x, flag, relres, iter] = lsqr(A, b, 1e-12, 200);
+[flag iter]
+norm(x - A\b)
+# See also
+mldivide lsqminnorm
+
+@ cholupdate
+The Cholesky factor updated after a rank-one change.
+
+When `R` is the factor of `A`, `cholupdate(R, x)` is the factor of `A + x*x'`, and `cholupdate(R, x, '-')` of `A - x*x'` (if that is still positive definite; `p` says when it is not). An update takes O(n²) work where factoring again takes O(n³).
+
+# Syntax
+R1 = cholupdate(R, x)
+    The factor of `A + x*x'`.
+[R1, p] = cholupdate(R, x, '-')
+    The factor of `A - x*x'`, `p` 0 when it exists.
+# Examples
+## Up and down again
+A = [4 2 2; 2 5 3; 2 3 6];
+R = chol(A);
+x = [1; 0; 2];
+R1 = cholupdate(R, x);
+norm(R1 - chol(A + x*x'))
+R2 = cholupdate(R1, x, '-');
+norm(R2 - R)
+# See also
+chol qrupdate
+
+@ qrupdate, qrinsert, qrdelete
+A QR factorization updated after a change of the matrix.
+
+When `A = Q*R`: `qrupdate` gives the factors of `A + u*v'`; `qrinsert` of `A` with a column (or, with `'row'`, a row) `x` inserted before position `j`; `qrdelete` of `A` with column (or row) `j` removed. Cheaper than factoring again, as in methods that add and drop variables one at a time.
+
+# Syntax
+[Q1, R1] = qrupdate(Q, R, u, v)
+    After adding `u*v'`.
+[Q1, R1] = qrinsert(Q, R, j, x)
+    After inserting column `x` before column `j`.
+[Q1, R1] = qrinsert(Q, R, j, x, 'row')
+    After inserting a row.
+[Q1, R1] = qrdelete(Q, R, j)
+    After deleting column `j`.
+[Q1, R1] = qrdelete(Q, R, j, 'row')
+    After deleting row `j`.
+# Examples
+## A column in, a column out
+A = [1 2; 3 4; 5 6; 7 9];
+[Q, R] = qr(A);
+x = [1; 0; 1; 0];
+[Q1, R1] = qrinsert(Q, R, 2, x);
+norm(Q1*R1 - [A(:, 1) x A(:, 2)])
+[Q2, R2] = qrdelete(Q1, R1, 1);
+norm(Q2*R2 - [x A(:, 2)])
+[Q3, R3] = qrupdate(Q, R, [1; 1; 1; 1], [0; 1]);
+norm(Q3*R3 - (A + [0 1; 0 1; 0 1; 0 1]))
+# See also
+qr cholupdate
+
+@ polyeig
+Eigenvalues of a matrix polynomial: (A0 + e*A1 + ... + e^p*Ap)*x = 0.
+
+The quadratic case comes from vibrations: for `M*x'' + C*x' + K*x = 0`, solutions `x = v*exp(e*t)` need `(K + e*C + e^2*M)*v = 0`, so `polyeig(K, C, M)` gives the modes, damped where the real parts are negative. There are `p*n` eigenvalues for `n`-by-`n` matrices; `s` gives their condition numbers.
+
+# Syntax
+e = polyeig(A0, A1, ..., Ap)
+    The eigenvalues.
+[X, e] = polyeig(...)
+    With the eigenvectors as columns.
+[X, e, s] = polyeig(...)
+    With the condition numbers.
+# Examples
+## Two masses on springs, with damping
+M = eye(2);
+C = [0.4 -0.1; -0.1 0.4];
+K = [2 -1; -1 2];
+[X, e] = polyeig(K, C, M);
+e
+norm((K + e(1)*C + e(1)^2*M)*X(:, 1))
+# See also
+eig qz roots
+
+@ givens, planerot
+Plane (Givens) rotations that zero an element.
+
+`G = givens(x, y)` is the 2-by-2 rotation with `G*[x; y] = [r; 0]`, `r` the length of `[x; y]`; `planerot` takes the vector and returns the rotated vector too. They are the steps of QR factorizations that zero one element at a time.
+
+# Syntax
+G = givens(x, y)
+    The rotation.
+[G, y] = planerot(x)
+    The rotation and `G*x`.
+# Examples
+## A 3-4-5 triangle
+G = givens(3, 4)
+G*[3; 4]
+[G, y] = planerot([3; 4])
+# See also
+qr
+
+@ gsvd
+The generalized singular value decomposition of a pair of matrices.
+
+`A = U*C*X'` and `B = V*S*X'` with `U` and `V` unitary, `C` and `S` nonnegative diagonal and `C'*C + S'*S = I`. The generalized singular values `sqrt(diag(C'*C)./diag(S'*S))`, in increasing order, are the square roots of the eigenvalues of the pair `A'*A`, `B'*B`. They appear in regularized least squares (Tikhonov), where `B` is the penalty.
+
+# Syntax
+sigma = gsvd(A, B)
+    The generalized singular values.
+[U, V, X, C, S] = gsvd(A, B)
+    The decomposition.
+[U, V, X, C, S] = gsvd(A, B, 0)
+    The economy size.
+# Examples
+## The values, and where they come from
+A = [1 2; 3 4; 5 6];
+B = [1 0; 1 1];
+sigma = gsvd(A, B)
+sqrt(sort(eig(A'*A, B'*B)))
+[U, V, X, C, S] = gsvd(A, B);
+norm(U*C*X' - A) + norm(V*S*X' - B)
+# See also
+svd qz
+
+@ gallery
+Test matrices, by name.
+
+Matrices with known properties for trying out algorithms: ill-conditioned (`'lotkin'`, `'kahan'`), with known eigenvalues (`'tridiag'`, `'clement'`), with sensitive eigenvalues (`'grcar'`, `'frank'`), sparse (`'poisson'`, `'tridiag'`, `'wathen'`), random with set properties (`'randsvd'`, `'rando'`), and many more: `binomial`, `cauchy`, `chebspec`, `chebvand`, `chow`, `circul`, `cycol`, `dorr`, `fiedler`, `forsythe`, `gcdmat`, `gearmat`, `hanowa`, `house`, `invhess`, `invol`, `ipjfact`, `jordbloc`, `kms`, `krylov`, `lauchli`, `lehmer`, `leslie`, `lesp`, `minij`, `moler`, `neumann`, `orthog`, `parter`, `pei`, `prolate`, `randhess`, `redheff`, `riemann`, `ris`, `smoke`, `toeppd`, `toeppen`, `triw`, `wilk`, and the data sets `integerdata`, `uniformdata` and `normaldata`.
+
+# Syntax
+A = gallery(name, n)
+    An `n`-by-`n` test matrix.
+A = gallery(name, n, ...)
+    With the matrix's own parameters.
+[c, d, e] = gallery('dorr', n, theta)
+    The diagonals of a tridiagonal matrix.
+[A, b] = gallery('wilk', n)
+    A matrix and a right-hand side.
+# Examples
+## A few small ones
+gallery('minij', 4)
+gallery('lehmer', 4)
+full(gallery('tridiag', 4))
+## The eigenvalues of the Grcar matrix
+> A Toeplitz matrix whose eigenvalues are very sensitive to rounding.
+e = eig(gallery('grcar', 100));
+plot(real(e), imag(e), '.')
+axis equal, grid on
+# See also
+magic hilb rand
+
+@ lsqminnorm
+The least-squares solution with the smallest norm.
+
+Like `A\b`, it minimizes `norm(A*x - b)`; when `A` is rank deficient there are many such `x`, and `lsqminnorm` returns the shortest (as `pinv(A)*b` does), through a complete orthogonal decomposition. It warns when `A` is rank deficient unless given `'nowarn'`; with `'RegularizationFactor'`, `lambda^2*norm(x)^2` is added to what is minimized.
+
+# Syntax
+X = lsqminnorm(A, B)
+    The minimum-norm least-squares solution.
+X = lsqminnorm(A, B, tol)
+    With the rank decided by a tolerance.
+X = lsqminnorm(..., 'nowarn')
+    Without the warning.
+X = lsqminnorm(..., 'RegularizationFactor', lambda)
+    Regularized.
+# Examples
+## A rank-deficient system
+A = [1 2; 2 4; 3 6];
+b = [1; 2; 3];
+x = lsqminnorm(A, b, 'nowarn')
+norm(x - pinv(A)*b)
+# See also
+pinv mldivide lsqr
+
+@ decomposition, isIllConditioned
+A matrix factored once, to solve with many times.
+
+`decomposition` picks a factorization by the matrix (diagonal, triangular, Cholesky, LDL or LU for a square one, QR otherwise), or takes one by name, and keeps it: `dA\b` then solves without factoring again. `dA'` solves with `A'`, and `rcond(dA)`, `rank(dA)` and `isIllConditioned(dA)` ask about the matrix. Solving with an ill-conditioned matrix warns unless `'CheckCondition'` is false.
+
+# Syntax
+dA = decomposition(A)
+    The factorization, chosen by the matrix; `x = dA \ b` then solves `A*x = b`.
+dA = decomposition(A, type)
+    `'lu'`, `'qr'`, `'chol'`, `'ldl'`, `'cod'`, `'triangular'`, `'banded'`, `'diagonal'`, `'hermitian'`, ...
+tf = isIllConditioned(dA)
+    Whether the matrix is ill conditioned.
+# Examples
+## Factored once, solved twice
+A = [4 1 0; 1 4 1; 0 1 4];
+dA = decomposition(A)
+x1 = dA \ [1; 2; 3]
+x2 = dA \ [0; 1; 0]
+## Asked whether it is ill conditioned
+isIllConditioned(decomposition(magic(4)))
+isIllConditioned(decomposition(magic(5)))
+# See also
+mldivide linsolve lu chol
+
+@ sylvester
+The solution of the Sylvester equation A*X + X*B = C.
+
+`A` is m-by-m, `B` n-by-n and `C` m-by-n; the solution is unique when `A` and `-B` share no eigenvalue. With `B = A'` it is the Lyapunov equation of control theory.
+
+# Syntax
+X = sylvester(A, B, C)
+    The solution.
+# Examples
+## Solved and checked
+A = [1 2; 0 3];
+B = [4 0; 1 5];
+C = [1 0; 0 1];
+X = sylvester(A, B, C)
+norm(A*X + X*B - C)
+# See also
+lyap mldivide
+
+@ lscov
+Weighted or generalized least squares.
+
+Minimizes `(b - A*x)'*W*(b - A*x)`, with `W = diag(w)` for weights or `inv(V)` for a covariance matrix `V` of the observations; with neither it is ordinary least squares. The other outputs are the coefficients' standard errors, the weighted mean squared error and their covariance.
+
+# Syntax
+x = lscov(A, b)
+    Ordinary least squares.
+x = lscov(A, b, w)
+    Weighted.
+x = lscov(A, b, V)
+    With a covariance matrix.
+[x, stdx, mse, S] = lscov(...)
+    With standard errors, mean squared error and covariance.
+# Examples
+## The last points trusted less
+x = (1:8)';
+y = [2.1 3.9 6.2 7.9 10.1 12.0 12.5 14.0]';
+A = [ones(8, 1) x];
+w = [1 1 1 1 1 1 0.1 0.1]';
+[coef, se] = lscov(A, y, w)
+lscov(A, y)
+# See also
+mldivide fitlm regress
+
+@ subspace
+The angle between two subspaces.
+
+The largest principal angle between the column spaces of `A` and `B`, in radians: 0 when one contains the other, `pi/2` when some direction of one is perpendicular to all of the other.
+
+# Syntax
+theta = subspace(A, B)
+    The angle, in radians.
+# Examples
+## A line and a plane
+subspace([1; 0; 0], [1; 1; 0])
+subspace([1; 1; 1], [1 0; 0 1; 0 0])
+subspace([1; 1; 0], [1 0; 0 1; 0 0])
+# See also
+orth null
+
+@ condeig
+The condition numbers of the eigenvalues.
+
+How much each eigenvalue can move for a small change of the matrix: 1 for every eigenvalue of a symmetric (normal) matrix, large when eigenvectors are nearly parallel.
+
+# Syntax
+c = condeig(A)
+    The condition number of each eigenvalue.
+[V, D, s] = condeig(A)
+    With the eigenvectors and eigenvalues of `eig`.
+# Examples
+## Normal, and nearly defective
+> A symmetric matrix's eigenvalues have condition number 1. In the second matrix a change of 1e-6 in one element moves the nearly equal eigenvalues by about 0.006: their condition numbers are near 10^4.
+condeig([2 1; 1 2])
+A = [1 100; 0 1.01];
+c = condeig(A)
+eig(A + [0 0; 1e-6 0])'
+# See also
+eig cond
+
+@ cdf2rdf
+Eigenvalues from complex diagonal form to real block diagonal form.
+
+For a real matrix with complex eigenvalues, `eig` gives complex `V` and `D`. `cdf2rdf` turns each conjugate pair `a ± bi` into a 2-by-2 block `[a b; -b a]` and its eigenvectors into their real and imaginary parts, so `A*V = V*D` still holds with real `V` and `D`.
+
+# Syntax
+[V, D] = cdf2rdf(V, D)
+    The real form.
+# Examples
+## A rotation and a stretch
+A = [1 2 0; -2 1 0; 0 0 3];
+[V, D] = eig(A);
+[V, D] = cdf2rdf(V, D)
+norm(A*V - V*D)
+# See also
+eig rsf2csf
+
+@ hadamard
+A Hadamard matrix: entries 1 and -1, its columns orthogonal.
+
+`H'*H = n*I`. Defined here for `n`, `n/12` or `n/20` a power of 2.
+
+# Syntax
+H = hadamard(n)
+    The `n`-by-`n` Hadamard matrix.
+H = hadamard(n, classname)
+    As `'double'` or `'single'`.
+# Examples
+## Orthogonal columns
+H = hadamard(4)
+H'*H
+# See also
+magic gallery
+
+@ charpoly, minpoly
+The characteristic and minimal polynomials of a matrix, computed exactly.
+
+`charpoly` gives the coefficients of `det(x*I - A)`, highest power first; its roots are the eigenvalues. `minpoly` gives the monic polynomial of lowest degree with `p(A) = 0`, which divides it. With a symbolic `x`, the polynomials in `x`.
+
+# Syntax
+p = charpoly(A)
+    The characteristic polynomial's coefficients.
+p = charpoly(A, x)
+    As a polynomial in a symbolic `x`.
+p = minpoly(A)
+    The minimal polynomial's coefficients.
+p = minpoly(A, x)
+    In a symbolic `x`.
+# Examples
+## They differ when an eigenvalue repeats
+A = 2*eye(3);
+charpoly(A)
+minpoly(A)
+B = [2 1 0; 0 2 0; 0 0 3];
+charpoly(B)
+minpoly(B)
+syms x
+charpoly(B, x)
+# See also
+poly eig jordan
+
+@ jordan
+The Jordan form of a matrix, computed exactly.
+
+`A*V = V*J` with `J` block diagonal: each block has an eigenvalue on its diagonal and ones just above it, and a block bigger than 1-by-1 means the matrix lacks a full set of eigenvectors. The form is computed in exact arithmetic, since rounding destroys it.
+
+# Syntax
+J = jordan(A)
+    The Jordan form.
+[V, J] = jordan(A)
+    With the similarity.
+# Examples
+## A defective eigenvalue
+A = [3 1 0; -1 1 0; 0 0 2];
+[V, J] = jordan(A)
+A*V - V*J
+# See also
+eig minpoly charpoly

@@ -1713,7 +1713,7 @@ for _n in ('true', 'false'):
 
 @bi('spy', arr=False)
 def spy(nargout, *args):
-    """spy(S): a marker at each nonzero, row down and column across (axis ij),
+    """spy(S): a marker at each nonzero, row down and column across (axis ij, equal),
     and nz = the count under the axes."""
     nargchk(args, 1, 3, 'spy')
     s = SPM.to_sparse(args[0])
@@ -1734,5 +1734,6 @@ def spy(nargout, *args):
     r, c = s.shape
     R.BUILTINS['axis'].fn(0, out(np.array([[0.0, c + 1.0, 0.0, r + 1.0]])))
     R.BUILTINS['axis'].fn(0, Char.of('ij'))
+    R.BUILTINS['axis'].fn(0, Char.of('equal'))
     R.BUILTINS['xlabel'].fn(0, Char.of(f'nz = {s.nnz}'))
     return h if nargout else None

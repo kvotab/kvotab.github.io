@@ -1,0 +1,389 @@
+@ sparse
+A sparse matrix: only the nonzero elements stored, with their places.
+
+Most elements of the matrices from networks, grids and finite elements are zero; a sparse matrix stores just the others, so a matrix with a million rows and a few nonzeros in each fits easily, and products and solves skip the zeros. `sparse(i, j, v)` puts `v(k)` at row `i(k)`, column `j(k)`, adding the values given for one place. Sparse results stay sparse where zeros stay zero: sums and products of sparse matrices, `S'`, indexing, comparisons, and functions such as `abs`, `sqrt`, `sum` and `kron`. Combined with a full matrix (`S + A`, `S*A`, `S\b`) or a nonzero number (`S + 1`), the result is full.
+
+# Syntax
+S = sparse(A)
+    A full matrix made sparse.
+S = sparse(i, j, v)
+    From row indices, column indices and values.
+S = sparse(i, j, v, m, n)
+    Of size m-by-n.
+S = sparse(m, n)
+    All zeros, m-by-n.
+# Examples
+## From triplets
+i = [1 2 3 3];
+j = [1 2 1 3];
+v = [10 20 30 40];
+S = sparse(i, j, v)
+full(S)
+## Repeated places add up
+> Counting pairs: the pair (1, 2) appears three times.
+i = [1 1 2 3 1];
+j = [2 2 3 1 2];
+C = sparse(i, j, 1, 3, 3);
+full(C)
+## A large matrix with few nonzeros
+n = 1e5;
+e = ones(n, 1);
+S = spdiags([e -2*e e], -1:1, n, n);
+fprintf('%d nonzeros of %d elements\n', nnz(S), numel(S))
+x = S \ ones(n, 1);
+x(1:3)'
+# See also
+full spdiags speye nnz find
+
+@ full, issparse
+A sparse matrix as a full one, and the test for sparse storage.
+
+`full` stores every element, zeros included; it leaves a full matrix as it is. `issparse` is true for sparse storage, whatever the number of zeros.
+
+# Syntax
+A = full(S)
+    The full matrix.
+tf = issparse(S)
+    True for a sparse matrix.
+# Examples
+## Which results stay sparse
+S = speye(3);
+[issparse(S) issparse(full(S))]
+[issparse(2*S) issparse(S + 1) issparse(S*ones(3))]
+# See also
+sparse
+
+@ speye, spzeros, spones
+The sparse identity, an all-zero sparse matrix, and ones where a matrix has nonzeros.
+
+`spones` keeps a matrix's pattern and replaces each nonzero by 1, which is how to count or draw the structure.
+
+# Syntax
+S = speye(n)
+    The n-by-n identity.
+S = speye(m, n)
+    m-by-n, ones on the diagonal.
+S = spzeros(m, n)
+    All zeros.
+R = spones(S)
+    Ones at `S`'s nonzeros.
+# Examples
+## Three small ones
+full(speye(2, 3))
+spzeros(2, 3)
+A = sparse([0 5 0; -2 0 7]);
+full(spones(A))
+# See also
+sparse eye zeros
+
+@ nzmax, spalloc
+The room for nonzero elements, and an all-zero matrix with room for some.
+
+Here a sparse matrix grows its storage as elements are added, so `spalloc(m, n, nz)` is an all-zero m-by-n matrix (`nz`, the number of nonzeros expected, is taken but not needed) and `nzmax` is the number of nonzeros (at least 1).
+
+# Syntax
+S = spalloc(m, n, nz)
+    An m-by-n all-zero sparse matrix.
+n = nzmax(S)
+    The room for nonzeros.
+# Examples
+## Filled in afterwards
+S = spalloc(4, 4, 10);
+S(1, 1) = 5;
+S(2, 3) = 7;
+[nnz(S) nzmax(S)]
+# See also
+sparse nnz
+
+@ sprand, sprandn, sprandsym
+Random sparse matrices with a given density of nonzeros.
+
+`sprand` draws the nonzeros from the uniform distribution on (0, 1), `sprandn` from the standard normal; `density` is the share of nonzero elements (somewhat fewer when random places coincide). `sprandsym` makes a symmetric one with normal values, or one with the pattern of a given matrix.
+
+# Syntax
+R = sprand(m, n, density)
+    Uniform nonzeros.
+R = sprandn(m, n, density)
+    Normal nonzeros.
+R = sprandsym(n, density)
+    Symmetric, normal nonzeros.
+R = sprandsym(S)
+    Symmetric, with `S`'s pattern.
+# Examples
+## Their densities and values
+rng default
+R = sprand(1000, 1000, 0.01);
+nnz(R)/numel(R)
+[min(nonzeros(R)) max(nonzeros(R))]
+S = sprandsym(200, 0.05);
+issymmetric(S)
+# See also
+sparse rand randn
+
+@ spdiags
+A sparse matrix built from diagonals, or the diagonals taken out of a matrix.
+
+`spdiags(B, d, m, n)` puts column k of `B` on diagonal `d(k)` (0 the main one, positive above, negative below). When m >= n, as for a square matrix, a diagonal above the main one takes the last elements of its column and one below takes the first. `spdiags(B, d, A)` replaces diagonals of `A`; `[B, d] = spdiags(A)` gives back every nonzero diagonal.
+
+# Syntax
+S = spdiags(B, d, m, n)
+    An m-by-n matrix from the columns of `B`.
+A = spdiags(B, d, A)
+    `A` with diagonals replaced.
+[B, d] = spdiags(A)
+    The nonzero diagonals and their numbers.
+B = spdiags(A, d)
+    The diagonals `d`.
+# Examples
+## A tridiagonal matrix
+n = 5;
+e = ones(n, 1);
+A = spdiags([e -2*e e], -1:1, n, n);
+full(A)
+## Which elements of a column land on the diagonal
+B = [11 21 31; 12 22 32; 13 23 33];
+full(spdiags(B, -1:1, 3, 3))
+## The diagonals taken out
+A = [1 2 0; 3 4 5; 0 6 7];
+[B, d] = spdiags(A)
+# See also
+diag sparse gallery
+
+@ spfun
+A function applied to the nonzero elements of a sparse matrix only.
+
+The zeros stay zero and the result stays sparse, which matters for functions such as `exp` that would turn every zero into something else.
+
+# Syntax
+S = spfun(fun, A)
+    `fun` of each nonzero.
+# Examples
+## Against the elementwise function
+S = sparse([1 0 2; 0 0 3]);
+full(spfun(@exp, S))
+full(exp(S))
+# See also
+sparse nonzeros
+
+@ spconvert
+A sparse matrix from rows of [i j v] (or [i j re im] for complex values).
+
+The form sparse matrices are often written to text files in: a row for each nonzero, with its row, column and value. A last row `[m n 0]` sets the size.
+
+# Syntax
+S = spconvert(D)
+    From the rows of `D`.
+# Examples
+## Read from rows, with the size set by the last
+D = [1 1 5; 2 3 -1; 4 4 0];
+S = spconvert(D);
+full(S)
+# See also
+sparse find
+
+@ spaugment
+The augmented matrix [c*I A; A' 0] of a least-squares problem.
+
+Least squares as one square sparse system: `[c*I A; A' 0]*[r/c; x] = [b; 0]` gives the residual `r = b - A*x` and the least-squares solution `x`. `c` is 1 unless given.
+
+# Syntax
+S = spaugment(A)
+    With `c` = 1.
+S = spaugment(A, c)
+    With another `c`.
+# Examples
+## Least squares through the augmented system
+A = sparse([1 2; 3 4; 5 6]);
+b = [1; 2; 4];
+S = spaugment(A);
+y = S \ [b; 0; 0];
+x = y(4:5)
+A \ b
+# See also
+mldivide lsqr
+
+@ spparms
+The sparse solvers' settings, kept and read back.
+
+The settings (such as `'spumoni'`, `'thr_rel'`, `'umfpack'`) can be set, read and reset as a whole, but the sparse solvers here keep their own: changing them changes no result.
+
+# Syntax
+spparms
+    Shows the settings.
+v = spparms(key)
+    One setting.
+[keys, values] = spparms
+    All of them.
+spparms(key, value)
+    Sets one.
+spparms('default')
+    Back to the defaults.
+# Examples
+## Set, read back and reset
+spparms('spumoni', 1);
+spparms('spumoni')
+spparms('default');
+spparms('spumoni')
+# See also
+sparse
+
+@ spy
+A dot at each nonzero element of a matrix: its sparsity pattern.
+
+The rows run down and the columns across, as the matrix is written; the x-label gives the number of nonzeros.
+
+# Syntax
+spy(S)
+    The pattern.
+spy(S, markersize)
+    With a marker size.
+spy(S, linespec, markersize)
+    With a color and marker.
+# Examples
+## The five-point Laplacian on an 8-by-8 grid
+spy(gallery('poisson', 8))
+# See also
+symrcm amd nnz
+
+@ symrcm, amd, symamd
+Orderings of a symmetric matrix that keep its Cholesky factor sparse.
+
+Reordering the rows and columns together, `S(p, p)`, changes how much fill a factorization creates. `symrcm` (reverse Cuthill-McKee) brings the nonzeros close to the diagonal, giving a narrow band; `amd` and `symamd` (approximate minimum degree) aim at the fewest nonzeros in the factor.
+
+# Syntax
+p = symrcm(S)
+    Reverse Cuthill-McKee.
+p = amd(S)
+    Approximate minimum degree.
+p = symamd(S)
+    Symmetric approximate minimum degree.
+# Examples
+## A shuffled grid matrix, reordered
+rng default
+A = gallery('poisson', 12);
+s = randperm(144);
+B = A(s, s);
+r = symrcm(B);
+q = amd(B);
+[nnz(chol(B)) nnz(chol(B(r, r))) nnz(chol(B(q, q)))]
+subplot(1, 3, 1), spy(B), title('shuffled')
+subplot(1, 3, 2), spy(B(r, r)), title('symrcm')
+subplot(1, 3, 3), spy(B(q, q)), title('amd')
+# See also
+colamd chol spy etree
+
+@ colamd, colperm
+Column orderings for sparse LU and QR factorizations.
+
+For a factorization of `A(:, q)`, the fill depends on the order of the columns. `colamd` orders them by approximate minimum degree on the pattern of `A'*A` (whose Cholesky factor is the R of QR); `colperm` simply puts the columns with fewest nonzeros first.
+
+# Syntax
+q = colamd(S)
+    Approximate minimum degree.
+j = colperm(S)
+    By the number of nonzeros in each column.
+# Examples
+## Fewer nonzeros in R
+rng default
+A = [sprand(300, 100, 0.03); speye(100)];
+q = colamd(A);
+j = colperm(A);
+[nnz(chol(A'*A)) nnz(chol(A(:, q)'*A(:, q))) nnz(chol(A(:, j)'*A(:, j)))]
+# See also
+symamd qr lu
+
+@ dmperm, sprank
+A maximum matching of columns to rows, and the structural rank.
+
+From the pattern alone, not the values: `dmperm(A)` gives for each column the row matched to it (0 for none), as many as possible with no row used twice; `sprank` is the number matched, an upper bound on the rank that the values may lower.
+
+# Syntax
+p = dmperm(A)
+    The row matched to each column.
+r = sprank(A)
+    The structural rank.
+# Examples
+## Two columns compete for one row
+A = sparse([1 0 0; 1 0 0; 0 1 1]);
+p = dmperm(A)
+[sprank(A) rank(full(A))]
+## Full structure, lower rank
+B = sparse([1 1; 1 1]);
+[sprank(B) rank(full(B))]
+# See also
+rank
+
+@ etree, symbfact
+The elimination tree of a symmetric matrix, and the structure of its Cholesky factor.
+
+Without factoring: `etree(A)` gives the parent of each column in the tree that says which columns of the Cholesky factor depend on which (0 for a root); `symbfact` gives the number of nonzeros in each row of the factor, the tree's height, the parents, a postorder and the factor's pattern. They tell in advance how much room and work a factorization takes.
+
+# Syntax
+p = etree(A)
+    The parent of each column.
+[p, q] = etree(A)
+    With a postorder.
+count = symbfact(A)
+    The nonzeros in each row of the factor.
+[count, h, parent, post, R] = symbfact(A)
+    With the height, parents, postorder and pattern.
+# Examples
+## The tree of a grid matrix, and the factor's counts
+A = gallery('poisson', 3);
+p = etree(A)
+count = symbfact(A)'
+full(sum(chol(A) ~= 0, 2))'
+treeplot(p)
+# See also
+chol amd treeplot
+
+@ ichol
+The incomplete Cholesky factorization: L*L' close to A, with L kept sparse.
+
+A full Cholesky factor of a sparse matrix fills in; the incomplete one keeps `L` to `A`'s pattern (`'nofill'`), or drops the entries smaller than a tolerance (`'ict'` with `droptol`), so that `L*L'` is only close to `A`. It is a preconditioner: `pcg(A, b, tol, maxit, L, L')` converges in far fewer steps. `A` must be symmetric positive definite (read from its lower triangle); `michol` makes `L*L'` keep `A`'s row sums, and `diagcomp` factors `A + alpha*diag(diag(A))` when the plain one breaks down.
+
+# Syntax
+L = ichol(A)
+    No fill.
+L = ichol(A, opts)
+    With options: `type` (`'nofill'` or `'ict'`), `droptol`, `michol`, `diagcomp`, `shape`.
+# Examples
+## No fill against the full factor
+A = gallery('poisson', 20);
+L = ichol(A);
+R = chol(A);
+[nnz(L) nnz(R)]
+norm(L*L' - A, 'fro')/norm(A, 'fro')
+## A drop tolerance
+A = gallery('poisson', 20);
+opts = struct('type', 'ict', 'droptol', 1e-3);
+L = ichol(A, opts);
+nnz(L)
+norm(L*L' - A, 'fro')/norm(A, 'fro')
+# See also
+pcg chol ilu
+
+@ ilu
+The incomplete LU factorization: L*U close to A, with L and U kept sparse.
+
+The preconditioner for nonsymmetric systems, as `ichol` is for symmetric ones: `'nofill'` keeps `A`'s pattern, `'crout'` and `'ilutp'` drop the entries smaller than `droptol` (relative to each column's norm), and `'ilutp'` also pivots. Given to `gmres` or `bicgstab` as `M1 = L` and `M2 = U`. With one output, `L + U - I` in one matrix.
+
+# Syntax
+W = ilu(A)
+    `L + U - I`, no fill.
+[L, U] = ilu(A, opts)
+    The factors, with options: `type`, `droptol`, `milu`, `udiag`, `thresh`.
+[L, U, P] = ilu(A, opts)
+    With pivoting, `P*A` close to `L*U`.
+# Examples
+## A preconditioner for gmres
+e = ones(400, 1);
+A = gallery('poisson', 20) + spdiags([-0.8*e 0.8*e], [-1 1], 400, 400);
+b = ones(400, 1);
+[L, U] = ilu(A);
+[~, flag0, ~, ~, rv0] = gmres(A, b, 30, 1e-8, 50);
+[~, flag1, ~, ~, rv1] = gmres(A, b, 30, 1e-8, 50, L, U);
+fprintf('without: flag %d after %d steps\n', flag0, numel(rv0) - 1)
+fprintf('with ilu: flag %d after %d steps\n', flag1, numel(rv1) - 1)
+# See also
+gmres bicgstab ichol lu

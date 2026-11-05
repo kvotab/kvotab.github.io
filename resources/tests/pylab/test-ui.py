@@ -1303,14 +1303,20 @@ async def docs(page):
     ink = await page.ev(DOC_INK)
     check('docs: a surface kept in single precision is drawn', (len(ink) >= 3, len(ink) >= 3 and ink[1] > 0.05), (True, True))
     await shot(page, 'doc-surf.png')
-    await command(page, "doc besselj")
-    await until(page, "document.querySelector('.pl-help h2')?.textContent === 'besselj'", 20)
-    old = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [!!h.querySelector('pre'), h.querySelectorAll('.pl-doc-ex').length]; })()")
-    check('docs: a function without a page keeps its summary page', old, [True, 0])
+    # the lists first: a name in them without a page (the last, which the rounds of pages reach last)
     await command(page, "doc")
     await until(page, "document.querySelector('.pl-help .pl-fnlist a.has-doc')", 20)
-    bold = await page.ev("(() => { const q = (n) => document.querySelector(`.pl-help .pl-fnlist a[data-fn='${n}']`); return [q('plot').classList.contains('has-doc'), q('besselj').classList.contains('has-doc')]; })()")
-    check('docs: the function lists mark the names that have pages', bold, [True, False])
+    marks = await page.ev("(() => { const a = [...document.querySelectorAll('.pl-help .pl-fnlist a')]; return [a.filter(e => e.classList.contains('has-doc')).map(e => e.dataset.fn), a.filter(e => !e.classList.contains('has-doc')).map(e => e.dataset.fn)]; })()")
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'data', 'pylab-docs', 'index.json'), encoding='utf-8') as fh:
+        paged = set(json.load(fh)['names'])
+    marked, unmarked = marks
+    check('docs: the function lists mark the names that have pages',
+          ('plot' in marked, all(n in paged for n in marked), bool(unmarked) and not any(n in paged for n in unmarked)), (True, True, True))
+    bare = unmarked[-1] if unmarked else 'plot'
+    await command(page, f"doc {bare}")
+    await until(page, f"document.querySelector('.pl-help h2')?.textContent === '{bare}'", 20)
+    old = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [!!h.querySelector('pre'), h.querySelectorAll('.pl-doc-ex').length]; })()")
+    check('docs: a function without a page keeps its summary page', old, [True, 0])
     await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.kind === 'help')); 1")
     await command(page, "clear; clc; close all force")
     check('docs: no script errors', page.errors, [])

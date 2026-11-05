@@ -561,11 +561,32 @@ def dot(nargout, *args):
     return out(np.sum(np.conj(a) * b, axis=dim, keepdims=True))
 
 
+_LINSOLVE_OPTS = ('LT', 'UT', 'UHESS', 'SYM', 'POSDEF', 'RECT', 'TRANSA')
+
+
 @bi('linsolve', nout=2)
 def linsolve(nargout, *args):
-    x = O.mldivide(args[0], args[1])
+    """A\\b; with opts, UT or LT take only that triangle of A and TRANSA solves with A' (the other kinds
+    only say what A\\b finds for itself)."""
+    nargchk(args, 2, 3, 'linsolve')
+    A = args[0]
+    if len(args) == 3:
+        o = args[2]
+        if not isinstance(o, Struct) or numel(o) != 1:
+            raise err('MATLAB:linsolve:OptsNotStruct', 'opts must be a scalar structure.', 'linsolve')
+        flags = {}
+        for k in o.keys:
+            if k not in _LINSOLVE_OPTS:
+                raise err('MATLAB:linsolve:UnknownOption', f"Unknown option '{k}': the options are {', '.join(_LINSOLVE_OPTS)}.", 'linsolve')
+            flags[k] = bool(num(o.get1(k)))
+        if flags.get('UT') or flags.get('LT'):
+            a = _mat(A, 'linsolve')
+            A = out(np.triu(a) if flags.get('UT') else np.tril(a))
+        if flags.get('TRANSA'):
+            A = O.ctranspose(A)
+    x = O.mldivide(A, args[1])
     if nargout >= 2:
-        a = _mat(args[0], 'linsolve')
+        a = _mat(A, 'linsolve')
         rc = _rcond(a)[0] if a.shape[0] == a.shape[1] else float(np.linalg.matrix_rank(a))
         return x, rc
     return x
@@ -580,14 +601,17 @@ def balance(nargout, *args):
     return (out(T), out(B)) if nargout >= 2 else out(B)
 
 
-@bi('givens')
-def givens(nargout, *args):
-    x, y = num(args[0]), num(args[1])
+def _givens(x, y):
     r = math.hypot(x, y)
     if r == 0:
-        return out(np.eye(2))
+        return np.eye(2)
     c, s = x / r, y / r
-    return out(np.array([[c, s], [-s, c]]))
+    return np.array([[c, s], [-s, c]])
+
+
+@bi('givens')
+def givens(nargout, *args):
+    return out(_givens(num(args[0]), num(args[1])))
 
 
 @bi('planerot', nout=2)
@@ -595,7 +619,7 @@ def planerot(nargout, *args):
     x = darr(args[0]).reshape(-1)
     if x.size != 2:
         raise err('MATLAB:planerot:InvalidInput', 'x must have two elements.', 'planerot')
-    G = darr(givens(1, x[0], x[1]))
+    G = _givens(float(x[0]), float(x[1]))
     return (out(G), out((G @ x).reshape(-1, 1))) if nargout >= 2 else out(G)
 
 
@@ -893,10 +917,15 @@ def _iterative(name):
             return res[0] if nargout <= 1 else res[:nargout]
         resvec = [float(np.linalg.norm(b - Ax(x0)))]
         count = [0]
+        best = [resvec[0], x0.copy(), 0]    # the iterate with the smallest residual, and its step
 
         def cb(xk):
             count[0] += 1
-            resvec.append(float(np.linalg.norm(b - Ax(np.asarray(xk).reshape(-1)))))
+            xk = np.asarray(xk).reshape(-1)
+            r = float(np.linalg.norm(b - Ax(xk)))
+            resvec.append(r)
+            if r < best[0]:
+                best[:] = [r, xk.copy(), count[0]]
         if name == 'qmr':
             # SciPy's qmr takes a left and a right preconditioner together: the right one is I
             from scipy.sparse.linalg import LinearOperator
@@ -911,16 +940,21 @@ def _iterative(name):
             # a singular or not finite preconditioner stops the method: flag 2
             x, info = x0.copy(), -2
         inner = [len(resvec) - 1]           # gmres: its inner steps, one residual each
+        it = float(count[0])
+        if not isinstance(x, np.ndarray):
+            x, it = best[1], float(best[2])  # SciPy 1.13's bicg and cgs give back a function, not x, when they break down
         x = np.asarray(x).reshape(-1)
         if not np.all(np.isfinite(x)):
             x, info = x0.copy(), -2
         relres = float(np.linalg.norm(b - Ax(x)) / nb)
-        flag = 0.0 if info == 0 and relres <= tol * (1 + 1e-8) else (1.0 if info >= 0 else (2.0 if info == -2 else 4.0))
+        if name != 'gmres' and relres > tol * (1 + 1e-8) and best[0] / nb < relres:
+            # stopped short of the tolerance: the iterate with the smallest residual, and the step that made it
+            x, relres, it = best[1], best[0] / nb, float(best[2])
+        # a breakdown just after the residual fell within the tolerance still leaves a solution
+        flag = 0.0 if info != -2 and relres <= tol * (1 + 1e-8) else (1.0 if info >= 0 else (2.0 if info == -2 else 4.0))
         if name == 'gmres':
             k = inner[0]
             it = out(np.array([[float(max(1, math.ceil(k / restart)) if k else 0), float((k - 1) % restart + 1) if k else 0.0]]))
-        else:
-            it = float(count[0])
         res = (out(x.reshape(-1, 1)), flag, relres, it, out(np.array(resvec).reshape(-1, 1)))
         return res[0] if nargout <= 1 else res[:nargout]
     return f

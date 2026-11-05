@@ -1,0 +1,579 @@
+@ fitlm
+A linear regression model: least squares of a response on its predictors.
+
+Fits the response as a linear combination of terms of the predictors, by least squares, and returns a model object: shown, it gives the coefficients with their standard errors, t statistics and p-values, and the R². The terms come from a name (`'linear'`, `'interactions'`, `'quadratic'`, `'polyN'`) or a formula such as `'y ~ x1 + x2*x3'`, where `*` adds the products and `-1` drops the intercept. A table's variables give the names; a categorical predictor becomes a dummy for each level but the first. The model goes to `predict`, `coefCI`, `coefTest`, `anova` and `plotResiduals`.
+
+# Syntax
+mdl = fitlm(X, y)
+    A linear model of the columns of `X`, with an intercept.
+mdl = fitlm(X, y, modelspec)
+    With other terms: `'constant'`, `'linear'`, `'interactions'`, `'purequadratic'`, `'quadratic'`, `'polyN'`.
+mdl = fitlm(tbl, 'y ~ x1 + x2*x3')
+    From a table, by a formula.
+mdl = fitlm(..., 'Intercept', false, 'Weights', w, 'RobustOpts', 'on')
+    Without an intercept, weighted, or robust.
+# Examples
+## A straight line, and the model's numbers
+x = (1:10)';
+y = [3.1 4.9 7.2 8.8 11.1 13.2 14.8 17.1 19.0 21.2]';
+mdl = fitlm(x, y)
+mdl.Rsquared.Ordinary
+## Two predictors from a table, with an interaction
+rng default
+x1 = rand(40, 1);
+x2 = rand(40, 1);
+y = 1 + 2*x1 - 3*x2 + 4*x1.*x2 + 0.05*randn(40, 1);
+tbl = table(x1, x2, y);
+mdl = fitlm(tbl, 'y ~ x1*x2');
+mdl.Coefficients
+# See also
+predict fitglm fitnlm regress anova
+
+@ fitglm
+A generalized linear model: a response from the normal, binomial, Poisson, gamma or inverse Gaussian distribution, its mean a function of the linear predictor.
+
+When the response is a count, a proportion or a positive skewed quantity, its mean is linked to a linear combination of the predictors through a link function: the log for Poisson counts, the logit for binomial proportions (logistic regression). The coefficients are fitted by maximum likelihood; the model shows them with their tests and the deviance.
+
+# Syntax
+mdl = fitglm(X, y)
+    A normal model (the same as `fitlm`).
+mdl = fitglm(X, y, modelspec, 'Distribution', 'poisson')
+    Counts, with the log link.
+mdl = fitglm(X, [k n], 'linear', 'Distribution', 'binomial')
+    Successes out of trials, with the logit link.
+mdl = fitglm(tbl, 'y ~ x1 + x2', 'Distribution', 'binomial', 'Link', 'probit')
+    From a table, with another link.
+# Examples
+## Poisson counts
+rng default
+x = linspace(0, 2, 60)';
+y = poissrnd(exp(0.5 + 1.2*x));
+mdl = fitglm(x, y, 'linear', 'Distribution', 'poisson');
+mdl.Coefficients
+## Logistic regression of passes out of trials
+dose = [1 2 3 4 5]';
+passed = [2 5 11 16 19]';
+n = 20*ones(5, 1);
+mdl = fitglm(dose, [passed n], 'linear', 'Distribution', 'binomial');
+b = mdl.Coefficients.Estimate'
+predict(mdl, 3.5)
+# See also
+glmfit fitlm predict
+
+@ fitnlm
+A nonlinear regression model: least squares of a model function's coefficients.
+
+The model function `modelfun(b, X)` gives the fitted values for coefficients `b`; starting from `beta0`, the coefficients that make the squared residuals smallest are found. The model object shows them with standard errors and p-values, and goes to `predict`.
+
+# Syntax
+mdl = fitnlm(X, y, modelfun, beta0)
+    Fitted from the starting coefficients `beta0`.
+mdl = fitnlm(tbl, modelfun, beta0)
+    From a table (the last variable the response).
+mdl = fitnlm(..., 'Weights', w, 'CoefficientNames', names)
+    Weighted, or with names for the coefficients.
+# Examples
+## Exponential decay to a level
+rng default
+t = (0:0.5:6)';
+y = 5*exp(-0.7*t) + 1 + 0.05*randn(size(t));
+model = @(b, t) b(1)*exp(-b(2)*t) + b(3);
+mdl = fitnlm(t, y, model, [1 1 0]);
+mdl.Coefficients
+# See also
+nlinfit fit fitlm
+
+@ predict
+Predictions of a fitted model, with confidence bounds.
+
+For a linear, generalized linear or nonlinear model: the fitted curve at new predictor values, with bounds for the curve (the default) or, with `'Prediction', 'observation'`, for one new observation, which are wider. Other kinds of models (classification and regression models, mixed-effects and identified models) give their own predictions.
+
+# Syntax
+ypred = predict(mdl, Xnew)
+    The predictions.
+[ypred, yci] = predict(mdl, Xnew)
+    With 95% bounds.
+[ypred, yci] = predict(mdl, Xnew, 'Alpha', alpha, 'Prediction', 'observation', 'Simultaneous', true)
+    Other levels, bounds for a new observation, or simultaneous bounds.
+# Examples
+## A line, its bounds and a new observation's
+x = (1:10)';
+y = [3.1 4.9 7.2 8.8 11.1 13.2 14.8 17.1 19.0 21.2]';
+mdl = fitlm(x, y);
+[yp, ci] = predict(mdl, [5.5; 12])
+[~, obs] = predict(mdl, [5.5; 12], 'Prediction', 'observation')
+## The bands drawn
+rng default
+x = linspace(0, 10, 30)';
+y = 3 + 0.8*x + randn(30, 1);
+mdl = fitlm(x, y);
+xs = linspace(0, 12, 100)';
+[yp, ci] = predict(mdl, xs);
+[~, obs] = predict(mdl, xs, 'Prediction', 'observation');
+plot(x, y, 'o', xs, yp, '-', xs, ci, 'b:', xs, obs, 'r--')
+# See also
+fitlm fitglm coefCI
+
+@ coefCI, coefTest
+Confidence intervals of a model's coefficients, and a linear hypothesis test on them.
+
+`coefCI` gives an interval for each coefficient (95% unless `alpha` is given), a row each. `coefTest` tests `H*b = c`: with no `H`, that every coefficient but the intercept is zero (the model's F test).
+
+# Syntax
+ci = coefCI(mdl)
+    95% intervals, a row for each coefficient.
+ci = coefCI(mdl, alpha)
+    At level 1 - alpha.
+p = coefTest(mdl)
+    Are all coefficients but the intercept zero?
+[p, F, r] = coefTest(mdl, H, c)
+    Is `H*b` equal to `c`?
+# Examples
+## Intervals, and two coefficients tested equal
+rng default
+X = rand(50, 2);
+y = 1 + 2*X(:, 1) + 2*X(:, 2) + 0.1*randn(50, 1);
+mdl = fitlm(X, y);
+coefCI(mdl)
+p = coefTest(mdl, [0 1 -1])
+# See also
+fitlm anova
+
+@ anova
+The analysis of variance of a linear model.
+
+For each term of the model, its sum of squares, degrees of freedom, mean square, F statistic and p-value, then the error; with `'summary'`, the total split into the model and the residual.
+
+# Syntax
+tbl = anova(mdl)
+    The table by term.
+tbl = anova(mdl, 'summary')
+    The total, the model and the residual.
+# Examples
+## The terms of a model
+rng default
+x1 = rand(40, 1);
+x2 = rand(40, 1);
+y = 1 + 3*x1 + 0.05*randn(40, 1);
+mdl = fitlm([x1 x2], y);
+tbl = anova(mdl)
+# See also
+fitlm coefTest anova1
+
+@ plotResiduals
+The residuals of a fitted model, plotted.
+
+A histogram of the residuals by default; against the fitted values (`'fitted'`), in the order of the observations (`'caseorder'`), against the residual before (`'lagged'`), or on a normal probability plot (`'probability'`). Patterns in them show where the model is wrong.
+
+# Syntax
+plotResiduals(mdl)
+    A histogram.
+plotResiduals(mdl, plottype)
+    `'histogram'`, `'fitted'`, `'caseorder'`, `'lagged'` or `'probability'`.
+# Examples
+## A curve fitted by a line leaves a pattern
+x = linspace(0, 4, 40)';
+y = x.^2;
+mdl = fitlm(x, y);
+plotResiduals(mdl, 'fitted')
+# See also
+fitlm normplot
+
+@ regress
+Multiple linear regression: least squares of y on the columns of X.
+
+The coefficients of `y` on the columns of `X`, with their intervals; add a column of ones for an intercept. The other outputs are the residuals, their intervals (one that misses 0 marks an outlier) and `stats` = [R², F, its p-value, the error variance].
+
+# Syntax
+b = regress(y, X)
+    The coefficients.
+[b, bint, r, rint, stats] = regress(y, X)
+    With intervals, residuals and statistics.
+[...] = regress(y, X, alpha)
+    At level 1 - alpha.
+# Examples
+## A plane with an intercept
+rng default
+x1 = rand(30, 1);
+x2 = rand(30, 1);
+y = 2 + 3*x1 - x2 + 0.1*randn(30, 1);
+[b, bint, ~, ~, stats] = regress(y, [ones(30, 1) x1 x2]);
+b, bint
+R2 = stats(1)
+pF = stats(3)
+# See also
+fitlm mldivide robustfit
+
+@ robustfit
+Robust linear regression: iteratively reweighted least squares.
+
+Outliers pull a least-squares fit; a robust fit weighs each point by how well it agrees with the rest, again and again, so that wild points count for little (bisquare weights by default). The intercept comes first.
+
+# Syntax
+b = robustfit(X, y)
+    The coefficients, intercept first.
+[b, stats] = robustfit(X, y, wfun, tune, const)
+    With another weight function, tuning or no intercept, and statistics (the weights among them).
+# Examples
+## An outlier, ignored
+x = (1:10)';
+y = 2*x + 1;
+y(9) = 40;
+bOLS = [ones(10, 1) x] \ y
+bRobust = robustfit(x, y)
+# See also
+regress fitlm
+
+@ ridge
+Ridge regression.
+
+Least squares with a penalty `k` on the size of the coefficients, which steadies them when predictors are nearly collinear. A column of coefficients for each value of `k`; by default for predictors centred and scaled, without an intercept (`scaled` 0 gives them on the data's scale, intercept first).
+
+# Syntax
+b = ridge(y, X, k)
+    The coefficients for each `k`, of standardized predictors.
+b = ridge(y, X, k, scaled)
+    With `scaled` 0: on the data's scale, with the intercept.
+# Examples
+## Coefficients shrinking as k grows
+rng default
+x1 = randn(50, 1);
+x2 = x1 + 0.05*randn(50, 1);
+y = x1 + x2 + 0.5*randn(50, 1);
+b = ridge(y, [x1 x2], [0 1 10 100])
+# See also
+regress lasso
+
+@ glmfit, glmval
+A generalized linear model's coefficients, and its predictions.
+
+The function forms of generalized linear models: `glmfit` returns the coefficients (intercept first), the deviance and statistics for a distribution and link; `glmval` evaluates the fitted mean at new predictors, with bounds when given `glmfit`'s statistics.
+
+# Syntax
+b = glmfit(X, y, distr)
+    The coefficients for `'normal'`, `'binomial'`, `'poisson'`, `'gamma'` or `'inverse gaussian'`.
+[b, dev, stats] = glmfit(X, y, distr, 'link', link)
+    With the deviance and statistics, and another link.
+yhat = glmval(b, X, link)
+    The fitted mean.
+[yhat, dylo, dyhi] = glmval(b, X, link, stats)
+    With the bounds.
+# Examples
+## Poisson counts, the function way
+rng default
+x = linspace(0, 2, 60)';
+y = poissrnd(exp(0.5 + 1.2*x));
+b = glmfit(x, y, 'poisson')
+glmval(b, [0; 1; 2], 'log')
+# See also
+fitglm
+
+@ nlinfit, nlparci, nlpredci
+Nonlinear least squares, and the intervals of its coefficients and predictions.
+
+`nlinfit` fits the coefficients of `modelfun(b, X)` from a start `beta0`, returning the residuals, Jacobian, covariance and residual variance besides. `nlparci` gives the coefficients' intervals and `nlpredci` the predictions with the half-widths of their intervals.
+
+# Syntax
+beta = nlinfit(X, y, modelfun, beta0)
+    The coefficients.
+[beta, R, J, CovB, MSE] = nlinfit(X, y, modelfun, beta0)
+    With residuals, Jacobian, covariance and residual variance.
+ci = nlparci(beta, R, 'Jacobian', J)
+    The coefficients' 95% intervals.
+[ypred, delta] = nlpredci(modelfun, X, beta, R, 'Jacobian', J)
+    Predictions and their half-widths.
+# Examples
+## A saturating curve
+rng default
+x = (0:10)';
+y = 8*x ./ (3 + x) + 0.1*randn(11, 1);
+f = @(b, x) b(1)*x ./ (b(2) + x);
+[beta, R, J] = nlinfit(x, y, f, [5 1]);
+beta
+ci = nlparci(beta, R, 'Jacobian', J)
+[yp, d] = nlpredci(f, 20, beta, R, 'Jacobian', J)
+# See also
+fitnlm lsqcurvefit
+
+@ partialcorr
+Partial correlations: each pair of variables with the others (or z) held fixed.
+
+The correlation of two variables after the linear effects of the controlling variables are taken out of both. Two variables that move together only because both follow a third have a small partial correlation once the third is held.
+
+# Syntax
+rho = partialcorr(X)
+    Each pair of columns of `X`, with the other columns held.
+rho = partialcorr(x, z)
+    The columns of `x` with `z` held.
+rho = partialcorr(x, y, z)
+    `x` with `y`, `z` held.
+[rho, pval] = partialcorr(..., 'Type', 'Spearman')
+    With p-values, or of ranks.
+# Examples
+## A correlation that a third variable explains
+rng default
+z = randn(200, 1);
+x = z + 0.3*randn(200, 1);
+y = z + 0.3*randn(200, 1);
+[corr(x, y) partialcorr(x, y, z)]
+# See also
+corr pcc
+
+@ fit
+A curve fitted to data.
+
+Fits a library model (`'poly1'` to `'poly9'`, `'exp1'`, `'exp2'`, `'power1'`, `'gauss1'`…, `'sin1'`…, `'fourier1'`…, `'rat11'`…), an expression in x, an interpolant or a smoothing spline. A model linear in its coefficients is solved directly; others start from the model's own guess (or `'StartPoint'`) and are fitted by nonlinear least squares within `'Lower'` and `'Upper'`. The fit object is called like a function (`f(x)`), shown with its coefficients and intervals, and drawn with `plot(f, x, y)`. With two predictors it fits a surface.
+
+# Syntax
+f = fit(x, y, fitType)
+    The fit.
+[f, gof, output] = fit(x, y, fitType)
+    With its goodness of fit (`sse`, `rsquare`, `rmse` and more).
+f = fit(x, y, 'a*exp(-b*x) + c', 'StartPoint', [1 1 0])
+    An expression, with a start.
+f = fit(x, y, fitType, 'Lower', lb, 'Upper', ub, 'Weights', w, 'Exclude', out, 'Robust', 'Bisquare')
+    With bounds, weights, points left out, or a robust fit.
+f = fit(x, y, 'smoothingspline', 'SmoothingParam', p)
+    A smoothing spline.
+sf = fit([x y], z, fitType)
+    A surface.
+# Examples
+## A library model, its numbers and its plot
+rng default
+x = linspace(0, 3, 40)';
+y = 2*exp(-1.3*x) + 0.05*randn(40, 1);
+[f, gof] = fit(x, y, 'exp1')
+gof.rsquare
+plot(f, x, y)
+## An expression of your own
+x = (0:8)';
+y = [9.1 6.8 5.3 4.4 3.6 3.2 2.9 2.7 2.6]';
+f = fit(x, y, 'a*exp(-b*x) + c', 'StartPoint', [7 0.5 2]);
+coeffvalues(f)
+f(10)
+# See also
+fittype confint predint polyfit
+
+@ fittype
+A model to fit, from the library, an expression, terms or a function.
+
+An expression's coefficients are its names other than the independent variable (`x` unless given) and the functions it calls. A cell array of terms makes a model linear in a coefficient for each. A fittype can be evaluated with its coefficients and goes to `fit`.
+
+# Syntax
+ft = fittype(libraryName)
+    A library model, such as `'poly2'` or `'exp1'`.
+ft = fittype('a*exp(-b*x) + c')
+    An expression.
+ft = fittype('a*u + b', 'independent', 'u', 'coefficients', {'a', 'b'})
+    With the names said.
+ft = fittype({'x', 'sin(x)', '1'})
+    A linear combination of terms.
+ft = fittype(@(a, b, x) a*exp(b*x))
+    From a function.
+# Examples
+## An expression, its coefficients, and a value
+ft = fittype('a*exp(-b*x) + c')
+coeffnames(ft)
+ft(2, 0.5, 1, 0)
+## Terms fitted to data
+x = linspace(0, 2*pi, 30)';
+y = 1 + 2*sin(x) + 0.5*x;
+f = fit(x, y, fittype({'x', 'sin(x)', '1'}));
+coeffvalues(f)
+# See also
+fit fitoptions
+
+@ fitoptions
+Options for fit, as a struct.
+
+The method, start point, bounds and other settings `fit` takes, gathered once to pass to several fits.
+
+# Syntax
+opts = fitoptions('Method', 'NonlinearLeastSquares', 'StartPoint', s, 'Lower', lb, 'Upper', ub)
+    Options set by name.
+opts = fitoptions(fitType)
+    The options of a model.
+opts = fitoptions(fitType, 'Name', value, ...)
+    With settings of your own.
+# Examples
+## Bounds for a fit
+x = (0:8)';
+y = [9.1 6.8 5.3 4.4 3.6 3.2 2.9 2.7 2.6]';
+opts = fitoptions('Method', 'NonlinearLeastSquares', 'StartPoint', [7 0.5 2], 'Lower', [0 0 0]);
+f = fit(x, y, 'a*exp(-b*x) + c', opts);
+coeffvalues(f)
+# See also
+fit fittype
+
+@ confint, predint
+Confidence bounds of a fit's coefficients, and prediction bounds of the fit.
+
+`confint` gives a column for each coefficient, the lower bound above the upper. `predint` gives bounds at new points: for a new observation (the default) or for the fitted curve (`'functional'`).
+
+# Syntax
+ci = confint(f)
+    95% bounds of the coefficients.
+ci = confint(f, level)
+    At another level.
+ci = predint(f, x)
+    Bounds for new observations at `x`.
+[ci, y] = predint(f, x, level, intopt, simopt)
+    With the fit's values; `'observation'` or `'functional'`; each point alone or all together.
+# Examples
+## A quadratic, its coefficients' and its predictions' bounds
+rng default
+x = linspace(-2, 2, 30)';
+y = 1 + 0.5*x + 2*x.^2 + 0.2*randn(30, 1);
+f = fit(x, y, 'poly2');
+confint(f)
+predint(f, [0; 2.5])
+# See also
+fit predict
+
+@ coeffvalues, coeffnames, numcoeffs
+A fit's coefficients, their names, and how many there are.
+
+The values come as a row in the order of the names; the names as a column. `numcoeffs` works for fittypes too.
+
+# Syntax
+c = coeffvalues(f)
+    The coefficients, as a row.
+names = coeffnames(f)
+    Their names, as a column.
+n = numcoeffs(f)
+    How many.
+# Examples
+## A fitted line
+f = fit((1:5)', [2.1 3.9 6.1 8.0 9.9]', 'poly1');
+coeffvalues(f)
+coeffnames(f)'
+numcoeffs(f)
+# See also
+fit confint
+
+@ differentiate, integrate
+The derivatives of a fit, and its integral.
+
+`differentiate` gives the first (and second) derivative of a fitted curve at points, or a surface's partial derivatives; `integrate` the integral of a fitted curve from `x0` to each `x`.
+
+# Syntax
+fx = differentiate(f, x)
+    The first derivative at `x`.
+[fx, fxx] = differentiate(f, x)
+    With the second.
+[fx, fy] = differentiate(sf, x, y)
+    A surface's partial derivatives.
+y = integrate(f, x, x0)
+    The integral from `x0` to each `x`.
+# Examples
+## A quadratic's slope and area
+x = (0:5)';
+f = fit(x, x.^2, 'poly2');
+[fx, fxx] = differentiate(f, [1; 2; 3])
+integrate(f, 3, 0)
+# See also
+fit diff trapz
+
+@ smooth
+Smoothed data, as a column.
+
+A moving average of 5 points by default (narrowing at the ends), or local regression (`'lowess'`, `'loess'`), Savitzky-Golay filtering (`'sgolay'`), or the robust local regressions (`'rlowess'`, `'rloess'`) that outliers do not pull. A span below 1 is a share of the data.
+
+# Syntax
+yy = smooth(y)
+    A 5-point moving average.
+yy = smooth(y, span, method)
+    With a span and method.
+yy = smooth(y, span, 'sgolay', degree)
+    Savitzky-Golay of a degree.
+yy = smooth(x, y, ...)
+    At the points `x`.
+# Examples
+## Noisy data, three ways
+rng default
+x = linspace(0, 10, 100)';
+y = sin(x) + 0.3*randn(100, 1);
+y(50) = 3.2;
+plot(x, y, '.', x, smooth(y, 9), x, smooth(x, y, 0.15, 'rloess'))
+legend('data', 'moving', 'rloess')
+# See also
+smoothdata movmean filter
+
+@ fitlme, fixedEffects, randomEffects, covarianceParameters, fitted, residuals, response
+A linear mixed-effects model, and what it holds.
+
+Data in groups (patients, schools, plots) often share an offset or a slope within each group. A mixed-effects model has fixed effects, as a linear model does, and random effects: a term `(1 | g)` gives each group of `g` its own intercept, `(1 + x | g)` its own intercept and slope. They are fitted by maximum likelihood (or REML). `fixedEffects` gives the coefficients, `randomEffects` each group's predicted effects, `covarianceParameters` their covariance and the residual variance, and `fitted`, `residuals` and `response` the values.
+
+# Syntax
+lme = fitlme(tbl, formula)
+    Fitted by maximum likelihood.
+lme = fitlme(tbl, formula, 'FitMethod', 'REML')
+    By restricted maximum likelihood.
+beta = fixedEffects(lme)
+    The fixed effects.
+B = randomEffects(lme)
+    The predicted random effects.
+psi = covarianceParameters(lme)
+    The random terms' covariance matrices.
+yfit = fitted(lme)
+    The fitted values (with the random effects).
+r = residuals(lme)
+    The residuals.
+y = response(lme)
+    The response.
+# Examples
+## Groups with their own offsets
+rng default
+g = repelem((1:6)', 8);
+x = repmat((1:8)', 6, 1);
+offset = 2*randn(6, 1);
+y = 1 + 0.5*x + offset(g) + 0.3*randn(48, 1);
+tbl = table(categorical(g), x, y, 'VariableNames', {'g', 'x', 'y'});
+lme = fitlme(tbl, 'y ~ x + (1 | g)');
+fixedEffects(lme)'
+[randomEffects(lme) offset - mean(offset)]
+# See also
+fitlm
+
+@ sfit, cfit
+A surface fit or a curve fit, from a fittype and its coefficients.
+
+`fit` makes these from data; `cfit` and `sfit` make them from known coefficients, to evaluate and draw a model as a fit is.
+
+# Syntax
+cf = cfit(fittype, coef1, coef2, ...)
+    A curve fit.
+sf = sfit(fittype, coef1, coef2, ...)
+    A surface fit.
+# Examples
+## A known model, evaluated
+cf = cfit(fittype('a*exp(-b*x)'), 2, 0.5);
+cf([0 1 2])
+sf = sfit(fittype('poly11'), 1, 2, 3);
+sf(1, 1)
+# See also
+fit fittype
+
+@ excludedata
+The points to leave out of a fit.
+
+True for the points outside a box, a domain of x or a range of y, or at given indices: the mask to pass to `fit` as `'Exclude'`.
+
+# Syntax
+tf = excludedata(x, y, 'box', [xmin xmax ymin ymax])
+    Outside a box.
+tf = excludedata(x, y, 'domain', [xmin xmax])
+    Outside a domain of x.
+tf = excludedata(x, y, 'range', [ymin ymax])
+    Outside a range of y.
+tf = excludedata(x, y, 'indices', idx)
+    At the indices.
+# Examples
+## An outlier left out of a line
+x = (1:8)';
+y = [3 5 7 9 30 13 15 17]';
+out = excludedata(x, y, 'range', [0 20]);
+f = fit(x, y, 'poly1', 'Exclude', out);
+coeffvalues(f)
+# See also
+fit
