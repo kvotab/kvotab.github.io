@@ -196,6 +196,48 @@ const YEAR = M.YEAR_S;
   const want = Math.exp(-Math.LN2 * (M.yearMs(2075) - M.yearMs(2045)) / 1000 / (ND.get('Cs-137').T * YEAR));
   check('a reference decays to a later year', near(later.mol.get('Cs-137') / same.mol.get('Cs-137'), want, 1e-10));
   check('a year before a reference’s own is refused', M.referenceAt(ref, ND, null, 2040).ok === false);
+  /* Becquerels become moles with the half-lives they were worked out with, then decay with those in use. */
+  const ni = { values: new Map([['Ni-59', 1e12]]), unit: 'Bq', year: 2045 };
+  const given = new Map([['Ni-59', 76000]]);
+  const own = M.referenceAt(ni, ND, null, 2045, ni.values, given);
+  check('a reference’s becquerels become moles with its own half-lives', near(own.mol.get('Ni-59'), 1e12 / (M.NA * Math.LN2 / (76000 * YEAR)), 1e-12));
+  const own1000 = M.referenceAt(ni, ND, null, 3045, ni.values, given);
+  check('and decay with the half-lives in use', near(own1000.mol.get('Ni-59') / own.mol.get('Ni-59'), Math.exp(-Math.LN2 * (M.yearMs(3045) - M.yearMs(2045)) / 1000 / (ND.get('Ni-59').T * YEAR)), 1e-10));
+  check('without its own, the half-life in use', near(M.referenceAt(ni, ND, null, 2045).mol.get('Ni-59'), 1e12 / (M.NA * Math.LN2 / (ND.get('Ni-59').T * YEAR)), 1e-12));
+}
+
+/* ------------------------------------------------- planned elements */
+{
+  /* Elements named PLAN... are planned, the others discharged; most share a canister. */
+  const src = {
+    1: { packing_date: '2050-01-01', decay_heat_W: 300, declared_heat_W: 290, fuel_elements: {
+      A1: { reactor: 'Forsmark 1', reactor_type: 'BWR', fuel: { cs137: 1, sr90: 2 }, decay_heat_W: 100 },
+      'PLAN-ELEMENT-1': { reactor: 'Forsmark 1', reactor_type: 'BWR', fuel: { cs137: 10, sr90: 20 }, decay_heat_W: 200 } } },
+    2: { packing_date: '2051-01-01', decay_heat_W: 50, declared_heat_W: 45, fuel_elements: {
+      B1: { reactor: 'Ringhals 3', reactor_type: 'PWR', fuel: { cs137: 3, sr90: 4 }, decay_heat_W: 50 } } },
+    3: { packing_date: '2052-01-01', decay_heat_W: 70, declared_heat_W: 65, fuel_elements: {
+      'plan-element-2': { reactor: 'Ringhals 3', reactor_type: 'PWR', fuel: { cs137: 7, sr90: 8 }, decay_heat_W: 70 } } },
+  };
+  const dp = await J.readInventory(source(new TextEncoder().encode(JSON.stringify(src))));
+  const ip = new M.Inventory(dp, ND);
+  const kCs = dp.nuclides.indexOf('cs137'), S = ip.P * ip.N;
+  check('planned elements told by their names', ip.nPlanned === 2 && Array.from(ip.planned).join() === '0,1,0,1');
+  check('all of them count at first', ip.pick === 'all' && Array.from(ip.select()).join() === '0,1,2' && ip.packed()[kCs] === 11);
+  ip.setPick('planned');
+  check('planned only: a canister sums its planned elements, and one holding none is left out', Array.from(ip.select()).join() === '0,2' && ip.packed()[kCs] === 10 && ip.packed()[2 * S + kCs] === 7);
+  check('planned only: its elements and how many', ip.elementsOf(0).join() === '1' && ip.nIn(0) === 1 && ip.nIn(0, 'all') === 2);
+  check('planned only: a canister’s heat from the file is its planned elements’', ip.canNum('decay_heat_W')[0] === 200 && Number.isNaN(ip.canNum('declared_heat_W')[0]));
+  check('planned only: elements counted by reactor', [...ip.countBy('reactor', ip.select())].join() === 'Forsmark 1,1,Ringhals 3,1');
+  const sysP = M.decaySystem(ND, ip.names());
+  const atP = ip.canistersAt(sysP, null, 'p');
+  check('planned only: a canister’s amounts as packed', atP.amounts[kCs] === 10);
+  ip.setPick('discharged');
+  check('discharged only', Array.from(ip.select()).join() === '0,1' && ip.packed()[kCs] === 1 && ip.canNum('decay_heat_W')[0] === 100);
+  check('one pick asked for beside another', ip.canistersAt(sysP, null, 'p', 'planned').amounts[kCs] === 10 && ip.canistersAt(sysP, null, 'p').amounts[kCs] === 1);
+  ip.setPick('all');
+  check('all again: the canister’s own heat from the file', ip.canNum('decay_heat_W')[0] === 300 && ip.packed()[kCs] === 11);
+  ip.setPick('nonsense');
+  check('a pick it does not know is all', ip.pick === 'all');
 }
 
 /* ---------------------------------------------------------- inventory */

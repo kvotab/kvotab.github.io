@@ -163,6 +163,10 @@
 
   const GONE = 36;
 
+  /* An element named PLAN... is planned: the reactors' forecast. */
+  const PLANNED = /^plan/i;
+  const PICKS = ['all', 'discharged', 'planned'];
+
   /**
    * Amounts (N, mol) and activities (A, mol/s) of every member at each of
    * `times` (seconds), as decayAt() gives them, except where it cannot tell
@@ -355,26 +359,75 @@
       /* The first 1 January every canister has been packed by. */
       this.minYear = Number.isFinite(last) ? new Date(last).getUTCFullYear() + (last > yearMs(new Date(last).getUTCFullYear()) ? 1 : 0) : null;
       this.undated = can.date.reduce((s, ms) => s + (Number.isFinite(ms) ? 0 : 1), 0);
+      /* Planned elements: named PLAN..., the reactors' forecast of fuel not
+         yet discharged. Most share a canister with discharged fuel. */
+      this.planned = Uint8Array.from(el.id, (id) => (PLANNED.test(id) ? 1 : 0));
+      this.nPlanned = this.planned.reduce((s, x) => s + x, 0);
+      /* Which elements count: 'all', 'discharged' or 'planned'. A canister's
+         sums are of the elements that count, and a canister holding none of
+         them is left out of every selection. */
+      this.pick = 'all';
       this.cache = new Map();
+    }
+
+    /** Set which elements count: 'all', 'discharged' or 'planned'. */
+    setPick(pick) { this.pick = PICKS.includes(pick) ? pick : 'all'; }
+
+    /** Whether element e counts under a pick. */
+    picks(e, pick = this.pick) { return pick === 'all' || (pick === 'planned') === (this.planned[e] === 1); }
+
+    /** How many of canister c's elements count under a pick. */
+    nIn(c, pick = this.pick) {
+      const can = this.data.canisters;
+      if (pick === 'all') return can.nEl[c];
+      let n = 0;
+      for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) if (this.picks(e, pick)) n++;
+      return n;
+    }
+
+    /**
+     * A number the file gives each canister (decay_heat_W ...), for the
+     * elements that count: the canister's own for all of them, else the sum
+     * of its elements' where they give it (NaN where they do not).
+     */
+    canNum(field, pick = this.pick) {
+      const own = this.data.canisters.num[field];
+      if (!own) return null;
+      if (pick === 'all') return own;
+      const ck = `num|${field}|${pick}`;
+      if (this.cache.has(ck)) return this.cache.get(ck);
+      const elv = this.data.elements.num[field], can = this.data.canisters;
+      const out = new Float64Array(this.nCan).fill(NaN);
+      if (elv) {
+        for (let c = 0; c < this.nCan; c++) {
+          let s = 0, any = false;
+          for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) if (this.picks(e, pick) && Number.isFinite(elv[e])) { s += elv[e]; any = true; }
+          if (any) out[c] = s;
+        }
+      }
+      this.cache.set(ck, out);
+      return out;
     }
 
     /** Every nuclide name the inventory lists, for decaySystem(). */
     names() { return this.nuclides.map((u) => u.name); }
 
-    /** Sums over each canister's elements: [canister][part][nuclide], moles as packed. */
-    packed() {
-      if (this.cache.has('packed')) return this.cache.get('packed');
+    /** Sums over each canister's elements that count: [canister][part][nuclide], moles as packed. */
+    packed(pick = this.pick) {
+      const ck = `packed|${pick}`;
+      if (this.cache.has(ck)) return this.cache.get(ck);
       const { amounts, canisters: can } = this.data;
       const S = this.P * this.N;
       const out = new Float64Array(this.nCan * S);
       for (let c = 0; c < this.nCan; c++) {
         const o = c * S;
         for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) {
+          if (!this.picks(e, pick)) continue;
           const b = e * S;
           for (let i = 0; i < S; i++) out[o + i] += amounts[b + i];
         }
       }
-      this.cache.set('packed', out);
+      this.cache.set(ck, out);
       return out;
     }
 
@@ -393,11 +446,11 @@
      *   time (ms since 1970) to bring every canister to; a canister packed
      *   later is left as packed and counted in `later`
      */
-    canistersAt(sys, ms, key) {
-      const ck = `can|${key}|${ms}`;
+    canistersAt(sys, ms, key, pick = this.pick) {
+      const ck = `can|${key}|${ms}|${pick}`;
       if (this.cache.has(ck)) return this.cache.get(ck);
       const S = this.P * this.N, N = this.N, P = this.P;
-      const packed = this.packed();
+      const packed = this.packed(pick);
       const pos = this.positions(sys);
       const m = sys.members.length;
       const amounts = ms === null ? packed : new Float64Array(this.nCan * S);
@@ -592,21 +645,22 @@
       return out;
     }
 
-    /** The canisters of a type (index into typeNames), or all of them for -1. */
-    select(type = -1) {
+    /** The canisters of a type (index into typeNames), or all of them for -1, that hold elements that count. */
+    select(type = -1, pick = this.pick) {
       const out = [];
-      for (let c = 0; c < this.nCan; c++) if (type < 0 || this.canType[c] === type) out.push(c);
+      for (let c = 0; c < this.nCan; c++) if ((type < 0 || this.canType[c] === type) && (pick === 'all' || this.nIn(c, pick) > 0)) out.push(c);
       return Int32Array.from(out);
     }
 
-    /** Elements per value of a text field (reactor, fuel type ...), in a set of canisters. */
-    countBy(field, sel) {
+    /** Elements that count per value of a text field (reactor, fuel type ...), in a set of canisters. */
+    countBy(field, sel, pick = this.pick) {
       const col = this.data.elements.text[field];
       const counts = new Map();
       if (!col) return counts;
       const can = this.data.canisters;
       for (const c of sel) {
         for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) {
+          if (!this.picks(e, pick)) continue;
           const v = col.codes[e] >= 0 ? col.values[col.codes[e]] : '';
           counts.set(v, (counts.get(v) || 0) + 1);
         }
@@ -614,10 +668,10 @@
       return counts;
     }
 
-    /** A canister's elements, as indices. */
-    elementsOf(c) {
+    /** A canister's elements that count, as indices. */
+    elementsOf(c, pick = this.pick) {
       const can = this.data.canisters;
-      return Array.from({ length: can.nEl[c] }, (_, i) => can.el0[c] + i);
+      return Array.from({ length: can.nEl[c] }, (_, i) => can.el0[c] + i).filter((e) => this.picks(e, pick));
     }
   }
 
@@ -644,22 +698,29 @@
 
   /**
    * A reference's values in moles at a time, decayed from its own year.
+   * Activities become moles with the half-lives they were worked out with
+   * (`given`, an assessment's own: N = A / lambda), so that the moles are
+   * the assessment's; from there they decay with the half-lives in use.
    *
    * @param {{values: Map<string, number>, unit: string, year: number}} ref
    * @param {Map} nd
-   * @param {Map} [halfLives]
+   * @param {Map} [halfLives] - years, for the decay
    * @param {number|null} year - null for the reference's own year
+   * @param {Map<string, number>} [values]
+   * @param {Map<string, number>} [given] - years, for turning becquerels
+   *   into moles; a nuclide it lacks takes the half-life in use
    * @returns {{mol: Map<string, number>, sys: Object, ok: boolean}} ok is
    *   false when the year is before the reference's own
    */
-  function referenceAt(ref, nd, halfLives, year, values = ref.values) {
+  function referenceAt(ref, nd, halfLives, year, values = ref.values, given = null) {
     const names = [...values.keys()];
     const sys = decaySystem(nd, names, halfLives);
     const n = new Float64Array(sys.members.length);
     for (const [name, v] of values) {
       const i = sys.index.get(name);
       if (i === undefined || !Number.isFinite(v)) continue;
-      n[i] = ref.unit === 'Bq' ? (sys.lambda[i] > 0 ? v / (NA * sys.lambda[i]) : 0) : ref.unit === 'g' ? v / sys.mass[i] : v;
+      const lambda = given && given.get(name) > 0 ? LN2 / (given.get(name) * YEAR_S) : sys.lambda[i];
+      n[i] = ref.unit === 'Bq' ? (lambda > 0 ? v / (NA * lambda) : 0) : ref.unit === 'g' ? v / sys.mass[i] : v;
     }
     const target = year === null || year === undefined ? ref.year : year;
     const t = (yearMs(target) - yearMs(ref.year)) / 1000;

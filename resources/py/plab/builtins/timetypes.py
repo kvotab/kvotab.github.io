@@ -1806,6 +1806,10 @@ def wrap_plots(reg):
                 # the axes drawn into: those given, or the result's (gca would make a figure when they are in a uifigure)
                 ax = _target_axes(args, result)
                 if ax is None:
+                    from ..graphics_base import GObj, HArr
+                    if result is not None and not isinstance(result, (GObj, HArr)):
+                        # a value, not a drawing (area of a polyshape): no axes to mark, and none to make
+                        return
                     try:
                         ax = G.gca_()
                     except Exception:

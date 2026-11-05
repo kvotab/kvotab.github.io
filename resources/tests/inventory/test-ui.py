@@ -280,7 +280,8 @@ async def main():
     icrp = icrp107_halflives()
     canisters = make_inventory(tmp / INV)
     make_workbook(tmp / BOOK)
-    make_report(tmp / REPORT, [icrp[n] for n in D1])
+    # (Ni-59 as PSAR has it, so that its own half-lives can be told from ICRP 107's)
+    make_report(tmp / REPORT, [76000 if n == 'Ni-59' else icrp[n] for n in D1])
     (tmp / 'broken.json').write_text('{"1": {"packing_date": "2040-01-01", "fuel_elements": {', encoding='utf-8')
     (tmp / 'notes.txt').write_text('nothing', encoding='utf-8')
     n_el = sum(len(c['fuel_elements']) for c in canisters.values())
@@ -299,7 +300,7 @@ async def main():
         await p.send('Page.navigate', url=URL)
         await p.wait('typeof InventoryPage !== "undefined"')
         # the page keeps its views' settings: start from none, and light
-        await p.ev('localStorage.removeItem("kvot.inventory"); localStorage.setItem("kvot-theme", "light"); window.__before = true; location.reload()')
+        await p.ev('localStorage.removeItem("kvot.inventory"); localStorage.removeItem("kvot.inventory.full"); localStorage.setItem("kvot-theme", "light"); window.__before = true; location.reload()')
         await p.wait('typeof InventoryPage !== "undefined" && !window.__before')
         check('the page starts with its drop zone', await p.ev('!document.getElementById("invStart").hidden && !!document.getElementById("invDrop")'))
         check('seven tabs', await p.ev('[...document.querySelectorAll(".inv-tabs [role=tab]")].map(b => b.textContent).join("|")'),
@@ -330,7 +331,27 @@ async def main():
         check('Overview: PSAR’s canisters', 'PSAR: 50' in tiles[0])
         check('Overview: the fuel elements and the planned ones', tiles[1].split('\n')[1].replace('\u202f', '') == str(n_el) and '40 planned' in tiles[1])
         check('Overview: three charts drawn', await p.ev('["invChartYears", "invChartReactors", "invChartHeat"].every(id => document.querySelector("#" + id + " .main-svg"))'))
+        # planned fuel: one planned element in every canister of the made-up inventory
+        check('Overview: the canisters holding planned elements', 'with planned elements' in tiles[0] and '40 with planned' in tiles[0].replace('\u202f', ''))
+        check('Overview: the planned share of the elements, the activity and the heat', '(10.0 %)' in tiles[1] and all('in planned elements' in x for x in (tiles[4], tiles[5])))
+        check('Overview: planned fuel hatched in the charts', await p.ev('["invChartYears", "invChartReactors", "invChartHeat"].every(id => document.getElementById(id).data.some(t => t.marker && t.marker.pattern && t.marker.pattern.shape === "/"))'))
+        check('Fuel offered, all at first', await p.ev('!document.getElementById("invFuel").disabled && document.getElementById("invFuel").value === "all"'))
+        await p.change('#invFuel', 'planned')
+        await asyncio.sleep(0.6)
+        tiles_p = await p.ev('[...document.querySelectorAll(".inv-tile")].map(t => t.innerText)')
+        check('Fuel planned: every canister holds one, the 40 planned elements alone', (tiles_p[0].split('\n')[1], tiles_p[1].split('\n')[1]), ('40', '40'))
+        check('Fuel planned: the subtitle says so, and that PSAR’s are all its fuel', 'planned elements only' in await p.ev('document.getElementById("invOverviewSub").textContent'))
+        await p.change('#invFuel', 'discharged')
+        await asyncio.sleep(0.6)
+        tiles_d = await p.ev('[...document.querySelectorAll(".inv-tile")].map(t => t.innerText)')
+        check('Fuel discharged: the others', tiles_d[1].split('\n')[1].replace('\u202f', ''), str(n_el - 40))
+        await p.change('#invFuel', 'all')
+        await asyncio.sleep(0.5)
         check('PSAR’s half-lives can be chosen', await p.ev('!document.querySelector("#invHalf option[value=report]").disabled'))
+        own = await p.ev('''(() => { const r = InventoryPage.refs().find((x) => x.id === "workbook:average:all");
+            const mol = InventoryPage.refValues(r, 2045, "mol").values.get("Ni-59");
+            return mol * 6.02214076e23 * Math.LN2 / (76000 * 365.242196 * 86400) / r.values.get("Ni-59"); })()''')
+        check('PSAR’s becquerels made moles with its own half-lives (Table D-1), ICRP 107’s chosen', abs(own - 1) < 1e-9)
         check('ENSDF on the site offered under Half-lives', bool(await p.wait('[...document.querySelectorAll("#invHalf option")].some(o => o.value.startsWith("ensdf:"))', 15)))
 
         await p.ev('''window.__saved = []; URL.createObjectURL = (b) => { window.__saved.push(b); return 'blob:t'; }; URL.revokeObjectURL = () => {};
@@ -366,6 +387,7 @@ async def main():
         await asyncio.sleep(0.8)
         check('Nuclides: a row per nuclide', await p.ev('document.querySelectorAll("#invNucTable tbody tr").length'), len(NUCLIDES))
         check('Nuclides: the chart', await p.ev('!!document.querySelector("#invChartNuc .main-svg")'))
+        check('Nuclides: each nuclide’s planned share', await p.ev('[...document.querySelectorAll("#invNucTable th")].some(t => t.textContent === "Planned") && /\\d/.test([...document.querySelectorAll("#invNucTable tbody tr")][0].children[[...document.querySelectorAll("#invNucTable th")].findIndex(t => t.textContent === "Planned")].textContent)'))
         check('Nuclides: PSAR’s average canister beside it', await p.ev('[...document.querySelectorAll("#invNucTable th")].some(t => /PSAR, 2060/.test(t.textContent))'))
         await p.change('#invUnit', 'Bq')
         await asyncio.sleep(0.5)
@@ -400,6 +422,7 @@ async def main():
         await p.ev('InventoryPage.showTab("canisters")')
         await asyncio.sleep(0.8)
         check('Canisters: a row per canister', await p.ev('document.querySelectorAll("#invCanTable tbody tr").length'), 40)
+        check('Canisters: those holding planned elements as rings, how many planned in the table', await p.ev('document.getElementById("invChartScatter").data.some(t => t.marker && t.marker.symbol === "circle-open" && /planned/.test(t.name)) && [...document.querySelectorAll("#invCanTable th")].some(t => t.textContent === "Planned")'))
         await p.ev('document.querySelector("[data-on-click=\'inv:canExcel\']").click()')
         n_saved += 1
         wb = sheets_of((await p.saved(n_saved))[-1][1])
@@ -429,7 +452,7 @@ async def main():
         await p.ev('InventoryPage.showTab("time")')
         await asyncio.sleep(0.8)
         n_tr = await p.ev('document.getElementById("invChartTime").data.length')
-        check('Over time: eight nuclides and their total', n_tr, 9)
+        check('Over time: eight nuclides, their total, and the planned part of it dotted', (n_tr, await p.ev('document.getElementById("invChartTime").data.some(t => t.line && t.line.dash === "dot" && /planned/.test(t.name))')), (10, True))
         await p.ev('{ const s = document.getElementById("invTimeRef"); s.value = s.options[1].value; s.dispatchEvent(new Event("change", {bubbles: true})); }')
         await asyncio.sleep(0.8)
         check('Over time: PSAR beside it', await p.ev('document.getElementById("invChartTime").data.some(t => t.line && t.line.dash === "dash")'))
@@ -437,7 +460,7 @@ async def main():
         n_saved += 1
         wb = sheets_of((await p.saved(n_saved))[-1][1])
         rows = list(wb['Over time'].iter_rows(values_only=True))
-        check('Over time Excel: every nuclide at every time, and PSAR', (wb.sheetnames, len(rows[0]) - 3, len(rows) - 1), (['Over time', 'PSAR beside it', 'About'], len(NUCLIDES), 145))
+        check('Over time Excel: every nuclide at every time, the planned part, and PSAR', (wb.sheetnames, len(rows[0]) - 4, len(rows) - 1, rows[0][3].startswith('Of it in planned elements')), (['Over time', 'PSAR beside it', 'About'], len(NUCLIDES), 145, True))
         choices = 'JSON.stringify([...document.getElementById("invTimeRef").options].slice(1).map(o => o.textContent))'
         check('Over time: beside the average canister, PSAR’s average canisters, each named by its document',
               json.loads(await p.ev(choices)), ['PSAR average canister — workbook, Totalt radionuklidinventarium (2045)'])
@@ -458,6 +481,7 @@ async def main():
         await p.ev('InventoryPage.showTab("psar")')
         await asyncio.sleep(1)
         check('the ratio chart in 2060, against the workbook’s average canister', await p.ev('!document.getElementById("invChartRatio").hidden && /Totalt/.test(document.getElementById("invRef").selectedOptions[0].textContent)'))
+        check('Compare: PSAR’s moles from its own half-lives, said', 'its own half-lives (its report’s Table D-1)' in await p.ev('document.getElementById("invPsarHow").textContent'))
         cats = await p.ev('[...document.querySelectorAll("#invCatTable tbody tr td:first-child")].map(t => t.textContent)')
         check('totals by kind of fuel', all(k in cats for k in ('BWR', 'PWR', 'Ågesta', 'Swap MOX', 'Rod skeletons')), )
         check('elements by reactor, codes read as names', await p.ev('[...document.querySelectorAll("#invReactorTable td")].some(t => t.textContent === "Ringhals 4")'))
@@ -500,7 +524,7 @@ async def main():
         # canisters: Forsmark 2's elements, not the planned ones, Cs-137 of every part summed, as CSV
         await p.ev('document.querySelector("input[name=invRawLevel][value=can]").click()')
         await p.change('#invRawApart', 'sum')
-        await p.change('#invRawPlanned', 'without')
+        await p.change('#invFuel', 'discharged')
         await p.change('#invRawNuc', 'picked')
         await p.ev('document.querySelector("[data-on-click=\'inv:rawNone\'][data-list=invRawNucList]").click()')
         await p.ev('[...document.querySelectorAll("#invRawNucList input")].find(i => i.parentElement.textContent.trim() === "Cs-137").click()')
@@ -513,7 +537,7 @@ async def main():
         name, data = (await p.saved(n_saved, 120))[-1]
         rows = list(csvlib.reader([line for line in data.decode('utf-8-sig').split('\r\n') if line and not line.startswith('#')]))
         check('Raw CSV: a canister a row, the elements chosen summed', (len(rows) - 1, rows[0][:6], rows[0][-1]),
-              (30, ['Canister', 'Type', 'Packed', 'Elements chosen', 'Elements', 'Reactors of those chosen'], 'Cs-137 (mol)'))
+              (30, ['Canister', 'Type', 'Packed', 'Elements chosen', 'Planned among them', 'Elements'], 'Cs-137 (mol)'))
         r101 = next(r for r in rows[1:] if r[0] == '101')
         want = sum(sum(el[part]['cs137'] for part in ('fuel', 'crud', 'structural_material'))
                    for nm, el in canisters['101']['fuel_elements'].items() if el['reactor'] == 'Forsmark 2' and not nm.startswith('PLAN'))
@@ -528,6 +552,8 @@ async def main():
         await p.change('#invRawFrom', '20x5')
         await asyncio.sleep(0.5)
         check('Raw data: no year marked, the one before kept', await p.ev('document.getElementById("invRawFrom").getAttribute("aria-invalid") === "true"') and (await p.ev(count)).startswith('20 canisters'))
+        await p.change('#invFuel', 'all')
+        await asyncio.sleep(0.4)
 
         # -- a drop, the dark theme, a phone
         for kind in ('dragEnter', 'dragOver', 'drop'):
@@ -551,6 +577,30 @@ async def main():
                 wide.append(f'{tab}: {what}')
         check('phone: no sideways scroll on any tab', wide, [])
         check('phone: fields of 16 px', await p.ev('getComputedStyle(document.getElementById("invUnit")).fontSize'), '16px')
+        # -- the full window: no site header or footer, the mark and the theme switch in the tab row
+        await p.send('Emulation.clearDeviceMetricsOverride')
+        await p.send('Emulation.setTouchEmulationEnabled', enabled=False)
+        await p.ev('InventoryPage.showTab("overview")')
+        check('not in the full window at first', await p.ev('!document.documentElement.classList.contains("inv-full") && getComputedStyle(document.querySelector(".inv-homelink")).display === "none"'))
+        await p.ev('document.getElementById("invFull").click()')
+        await asyncio.sleep(0.5)
+        check('full window: no site header or footer', await p.ev('document.documentElement.classList.contains("inv-full") && getComputedStyle(document.querySelector("body > header")).display === "none" && getComputedStyle(document.querySelector("body > footer")).display === "none"'))
+        check('full window: the page from the top of the window to its bottom', await p.ev('(() => { const r = document.getElementById("inv").getBoundingClientRect(); return Math.abs(r.top) < 1 && Math.abs(r.bottom - innerHeight) < 2; })()'))
+        check('full window: the kvot mark (a new tab) and the theme switch in the row, the button pressed', await p.ev('getComputedStyle(document.querySelector(".inv-homelink")).display !== "none" && document.querySelector(".inv-homelink").target === "_blank" && getComputedStyle(document.querySelector(".inv-tabend .theme-toggle")).display !== "none" && document.getElementById("invFull").getAttribute("aria-pressed") === "true"'))
+        check('full window: kept for the next visit', await p.ev('localStorage.getItem("kvot.inventory.full")'), '1')
+        await p.ev('document.querySelector("[data-info-key=\'set:half\'] button, [data-info=\'set:half\']").click()')
+        await asyncio.sleep(0.4)
+        check('full window: an (i) panel the height of the window', await p.ev('(() => { const el = document.getElementById("kvot-info-panel"); if (!el) return false; const r = el.getBoundingClientRect(); return r.top < 2 && Math.abs(r.bottom - innerHeight) < 2; })()'))
+        await p.ev('document.querySelector("#kvot-info-panel .info-panel-close") && document.querySelector("#kvot-info-panel .info-panel-close").click()')
+        before = await p.ev('document.documentElement.getAttribute("data-theme")')
+        await p.ev('document.querySelector(".inv-tabend .theme-toggle").click()')
+        await asyncio.sleep(0.3)
+        check('full window: its switch changes the theme', await p.ev('document.documentElement.getAttribute("data-theme")'), 'light' if before == 'dark' else 'dark')
+        await p.ev('document.querySelector(".inv-tabend .theme-toggle").click()')
+        await p.ev('document.getElementById("invFull").click()')
+        await asyncio.sleep(0.4)
+        check('and back: the header and footer, the button not pressed, kept', await p.ev('!document.documentElement.classList.contains("inv-full") && getComputedStyle(document.querySelector("body > header")).display !== "none" && document.getElementById("invFull").getAttribute("aria-pressed") === "false" && localStorage.getItem("kvot.inventory.full") === "0"'))
+        await p.ev('localStorage.removeItem("kvot.inventory.full")')
         check('no errors on the page', p.errors, [])
     finally:
         await p.close()

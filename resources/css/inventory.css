@@ -157,17 +157,52 @@
 .inv-btn:focus-visible, .inv-chip button:focus-visible, .inv-tabs button:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: 1px; }
 
 /* ---- tabs and panes ---------------------------------------------------- */
-.inv-tabs {
+/* The row: the kvot mark (in the full window), the tabs, and the buttons at
+   its end. The tabs scroll sideways when they do not fit; the buttons stay. */
+.inv-tabbar {
   display: flex;
-  gap: 2px;
-  padding: 6px 12px 0 14px;
+  align-items: stretch;
+  min-width: 0;
   /* the line under the tabs is drawn inside the row, so that the open tab
      covers it without reaching out of the row */
   background: linear-gradient(var(--border-color), var(--border-color)) left bottom / 100% 1px no-repeat, var(--bg-secondary);
+}
+.inv-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: 2px;
+  padding: 6px 12px 0 14px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  /* a tab cut off where the buttons begin fades out (only the padding when all fit) */
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 12px);
+  mask-image: linear-gradient(to left, transparent, #000 12px);
 }
+.inv-tabs::-webkit-scrollbar { display: none; }
+.inv-tabend { display: flex; flex: none; align-items: center; gap: 2px; padding: 3px 8px 1px 2px; }
+.inv-tabend > button {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 28px; height: 26px; padding: 0 6px;
+  border: 0; border-radius: 5px; background: none; color: var(--text-secondary); cursor: pointer;
+}
+.inv-tabend > button:hover { background: var(--bg-primary); color: var(--text-primary); }
+.inv-tabend > button:focus-visible { outline: 2px solid var(--color-kvot-bright); outline-offset: -2px; }
+.inv-tabend > .theme-toggle { font-size: 14px; line-height: 1; }
+.inv-tabend > .theme-toggle:hover { transform: none; }
+.inv-homelink { flex: none; align-items: center; padding: 3px 0 1px 10px; }
+.inv-homelink img { display: block; width: 20px; height: 20px; }
+
+/* The full window (the button at the end of the tab row): the page without
+   the site's header and footer, the kvot mark and the theme switch in the
+   row instead. The page's head sets the class before the first paint when it
+   was left on. */
+:root.inv-full { --header-height: 0px; --footer-height: 0px; }
+:root.inv-full body > header, :root.inv-full body > footer, :root.inv-full body > .nav-toggle, :root.inv-full body > #menu { display: none; }
+.inv-tabbar .inv-fullonly { display: none; }
+:root.inv-full .inv-tabbar .inv-fullonly { display: inline-flex; }
+.inv-fullbtn .inv-full-in, :root.inv-full .inv-fullbtn .inv-full-out { display: none; }
+:root.inv-full .inv-fullbtn .inv-full-in { display: inline; }
 .inv-tabs button {
   padding: 6px 13px;
   border: 1px solid transparent;
@@ -180,6 +215,8 @@
   cursor: pointer;
 }
 .inv-tabs button:hover { color: var(--text-primary); }
+/* inside the row, which would clip a ring drawn outside the tab */
+.inv-tabs button:focus-visible { outline-offset: -2px; }
 .inv-tabs button[aria-selected="true"] {
   /* the open tab has the colour of the pane under it */
   background: var(--bg-primary);
@@ -429,5 +466,5 @@
 @media print {
   .inv { display: block; height: auto; overflow: visible; }
   .inv-pane { overflow: visible; }
-  .inv-bar, .inv-tabs { display: none; }
+  .inv-bar, .inv-tabbar { display: none; }
 }

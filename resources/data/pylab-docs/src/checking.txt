@@ -1,0 +1,227 @@
+@ inputParser, addRequired, addOptional, addParameter, addParamValue, parse
+An object that checks a function's inputs and gives their values by name.
+
+A function makes an `inputParser`, says what inputs it takes, and parses `varargin`: `addRequired` for inputs that must come first, `addOptional` for positional ones with defaults, `addParameter` for name-value pairs with defaults (`addParamValue` is the older name). Each may have a validation function, true for a good value (or an error for a bad one). After `parse`, `p.Results` holds every value by name and `p.UsingDefaults` lists those not given. `KeepUnmatched`, `CaseSensitive` and `PartialMatching` (on: `'Col'` matches `'Color'`) set how names are matched.
+
+# Syntax
+p = inputParser
+    A parser.
+addRequired(p, name, validationFcn)
+    A required input.
+addOptional(p, name, default, validationFcn)
+    An optional positional input.
+addParameter(p, name, default, validationFcn)
+    A name-value input.
+parse(p, varargin{:})
+    The inputs parsed into `p.Results`.
+# Examples
+## A function with a required, an optional and a named input
+lines = {
+    'function out = greet(name, varargin)'
+    'p = inputParser;'
+    'addRequired(p, ''name'', @ischar);'
+    'addOptional(p, ''times'', 1, @(x) isnumeric(x) && x >= 1);'
+    'addParameter(p, ''Punctuation'', ''.'', @ischar);'
+    'parse(p, name, varargin{:});'
+    'r = p.Results;'
+    'out = repmat([''Hello, '' r.name r.Punctuation '' ''], 1, r.times);'
+    'end'};
+fid = fopen('greet.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+greet('Ada')
+greet('Ada', 2, 'Punct', '!')
+try, greet('Ada', 0), catch e, disp(e.message), end
+# See also
+validateattributes narginchk mustBePositive
+
+@ nargchk
+The message for a number of inputs outside a range: the older form of narginchk.
+
+Empty when `n` is within `[low, high]`, else the message (or a struct with the message and identifier), for a function to pass to `error`.
+
+# Syntax
+msg = nargchk(low, high, n)
+    The message, or empty.
+s = nargchk(low, high, n, 'struct')
+    As a struct.
+# Examples
+## Within the range, and not
+isempty(nargchk(1, 3, 2))
+nargchk(1, 3, 5)
+# See also
+narginchk
+
+@ mustBePositive, mustBeNonnegative, mustBeNegative, mustBeNonpositive, mustBeNonzero
+Validation functions for signs: an error unless every element is positive, nonnegative, negative, nonpositive, or nonzero.
+
+They give nothing when the value is fine and an error saying what was wanted when it is not; written in an `arguments` block after an input, or called directly. NaN fails all of them.
+
+# Syntax
+mustBePositive(A)
+    Every element > 0.
+mustBeNonnegative(A)
+    Every element >= 0.
+mustBeNegative(A)
+    Every element < 0.
+mustBeNonpositive(A)
+    Every element <= 0.
+mustBeNonzero(A)
+    No element 0.
+# Examples
+## Checked in a function's arguments block
+lines = {
+    'function a = boxArea(w, h)'
+    'arguments'
+    '    w (1,1) double {mustBePositive}'
+    '    h (1,1) double {mustBePositive}'
+    'end'
+    'a = w*h;'
+    'end'};
+fid = fopen('boxArea.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+boxArea(2, 3)
+try, boxArea(2, -1), catch e, disp(e.message), end
+## Called directly
+mustBeNonnegative([0 1 2])
+try, mustBeNonzero([1 0 2]), catch e, disp(e.message), end
+# See also
+validateattributes mustBeInRange
+
+@ mustBeInteger, mustBeNumeric, mustBeNumericOrLogical, mustBeFloat, mustBeReal, mustBeFinite, mustBeNonNan, mustBeNonmissing
+Validation functions for kinds of numbers: whole, numeric, numeric or logical, floating point, real, finite, not NaN, not missing.
+
+`mustBeInteger` is about the values (whole numbers, of any numeric class); `mustBeNumeric` and `mustBeFloat` about the class; `mustBeNonmissing` also rejects missing strings.
+
+# Syntax
+mustBeInteger(A)
+    Whole numbers.
+mustBeNumeric(A)
+    A numeric class.
+mustBeNumericOrLogical(A)
+    Numeric or logical.
+mustBeFloat(A)
+    double or single.
+mustBeReal(A)
+    No imaginary parts.
+mustBeFinite(A)
+    No Inf or NaN.
+mustBeNonNan(A)
+    No NaN.
+mustBeNonmissing(A)
+    Nothing missing.
+# Examples
+## Values that pass and one that fails each
+mustBeInteger([1 2 3])
+try, mustBeInteger(2.5), catch e, disp(e.message), end
+try, mustBeFinite([1 Inf]), catch e, disp(e.message), end
+try, mustBeNumeric('7'), catch e, disp(e.message), end
+# See also
+isinteger isnumeric
+
+@ mustBeGreaterThan, mustBeGreaterThanOrEqual, mustBeLessThan, mustBeLessThanOrEqual, mustBeInRange, mustBeMember
+Validation functions by comparison: above or below a number, within bounds, or one of a set.
+
+`mustBeInRange(A, lower, upper)` includes the bounds unless `'exclusive'`, `'exclude-lower'` or `'exclude-upper'` says otherwise; `mustBeMember(A, S)` takes numbers or texts.
+
+# Syntax
+mustBeGreaterThan(A, c)
+    Every element > c.
+mustBeGreaterThanOrEqual(A, c)
+    Every element >= c.
+mustBeLessThan(A, c)
+    Every element < c.
+mustBeLessThanOrEqual(A, c)
+    Every element <= c.
+mustBeInRange(A, lower, upper, boundaries)
+    Within bounds.
+mustBeMember(A, S)
+    Each one of `S`.
+# Examples
+## Bounds and a set
+mustBeInRange([0 0.5 1], 0, 1)
+try, mustBeInRange(1, 0, 1, 'exclusive'), catch e, disp(e.message), end
+mustBeMember('red', {'red', 'green'})
+try, mustBeMember(4, [1 2 3]), catch e, disp(e.message), end
+# See also
+mustBePositive validatestring
+
+@ mustBeNonempty, mustBeNonsparse, mustBeVector, mustBeScalarOrEmpty
+Validation functions for shape: not empty, not sparse, a row or column, at most one element.
+
+`mustBeVector(A, 'allow-all-empties')` also lets empty arrays through.
+
+# Syntax
+mustBeNonempty(A)
+    Not empty.
+mustBeNonsparse(A)
+    Not sparse.
+mustBeVector(A)
+    A row or a column.
+mustBeScalarOrEmpty(A)
+    At most one element.
+# Examples
+## A row passes, a matrix does not
+mustBeVector([1 2 3])
+try, mustBeVector(magic(3)), catch e, disp(e.message), end
+try, mustBeScalarOrEmpty([1 2]), catch e, disp(e.message), end
+# See also
+isvector isscalar
+
+@ mustBeText, mustBeTextScalar, mustBeNonzeroLengthText, mustBeValidVariableName
+Validation functions for text: any text, a single text, text with characters in every element, and a valid variable name.
+
+Text is a character vector, a string array or (for `mustBeText`) a cell array of character vectors.
+
+# Syntax
+mustBeText(A)
+    Text of any kind.
+mustBeTextScalar(A)
+    One text: a character vector or a string scalar.
+mustBeNonzeroLengthText(A)
+    No empty texts.
+mustBeValidVariableName(name)
+    A valid variable name.
+# Examples
+## Texts checked
+mustBeText({'a', 'b'})
+try, mustBeTextScalar(["a" "b"]), catch e, disp(e.message), end
+try, mustBeValidVariableName('2fast'), catch e, disp(e.message), end
+# See also
+istext isvarname
+
+@ mustBeA, mustBeUnderlyingType
+Validation functions for class: one of the classes named.
+
+`mustBeA` takes class names, and `'numeric'`, `'float'` and `'integer'` for groups of classes; a class derived from one named passes. `mustBeUnderlyingType` checks the class itself.
+
+# Syntax
+mustBeA(A, classNames)
+    Of one of the classes.
+mustBeUnderlyingType(A, typeNames)
+    Of one of the types.
+# Examples
+## Classes and groups
+mustBeA(int8(3), 'integer')
+mustBeA('text', {'char', 'string'})
+try, mustBeA(3, 'integer'), catch e, disp(e.message), end
+# See also
+isa class
+
+@ mustBeFile, mustBeFolder
+Validation functions for paths: each name an existing file, or an existing folder.
+
+# Syntax
+mustBeFile(path)
+    Existing files.
+mustBeFolder(path)
+    Existing folders.
+# Examples
+## A file made, and one that is not there
+fid = fopen('notes.txt', 'w'); fclose(fid);
+mustBeFile('notes.txt')
+mustBeFolder('.')
+try, mustBeFile('missing.txt'), catch e, disp(e.message), end
+# See also
+isfile isfolder exist

@@ -32,7 +32,7 @@
     psar: { workbook: null, report: null },
     raw: null,                      // the Raw data view's choices, for one inventory
     busy: new Map(),                // file name -> what is being done
-    settings: { at: 'packed', year: '', unit: 'mol', half: 'icrp', type: -1 },
+    settings: { at: 'packed', year: '', unit: 'mol', half: 'icrp', type: -1, fuel: 'all' },
     tab: 'overview',
     view: {
       nucShow: 'average', nucCan: '', nucSet: 'all', nucOrder: 'chain',
@@ -201,6 +201,12 @@
   function selection() { return state.inv.select(Number(state.settings.type)); }
   const typeName = (t) => (t >= 0 && state.inv ? state.inv.typeNames[t] : null);
   const selType = () => typeName(Number(state.settings.type));
+  /** Which elements count (the bar's Fuel): 'all', 'discharged' or 'planned'. */
+  const fuel = () => (state.inv ? state.inv.pick : 'all');
+  const FUEL_WORDS = { all: '', discharged: 'discharged elements only', planned: 'planned elements only (the reactors’ forecast)' };
+  const fuelWords = () => FUEL_WORDS[fuel()] || '';
+  /** A share as a percentage, for the planned part of a whole. */
+  const shareText = (part, whole) => (whole > 0 ? pctText(part / whole) : '–');
 
   /* ---------------------------------------------------------------------
      PSAR: what is open, merged
@@ -229,12 +235,23 @@
   const simulation = () => (state.psar.workbook && state.psar.workbook.canisters) || null;
 
   /**
+   * The half-lives PSAR worked its activities out with, its report's Table
+   * D-1 (the workbook's are the same calculation), or null without the report.
+   */
+  const psarHalfLives = () => (state.psar.report && state.psar.report.halfLives ? state.psar.report.halfLives.values : null);
+  /** How PSAR's becquerels became moles, in a sentence. */
+  const psarMolesWords = () => (psarHalfLives()
+    ? 'PSAR’s becquerels are turned into moles with its own half-lives (its report’s Table D-1), as it worked them out, and decay from there with the half-lives chosen above.'
+    : 'PSAR’s becquerels are turned into moles with the half-lives chosen above; open its report for those it worked them out with (Table D-1).');
+
+  /**
    * A reference's values (by nuclide) in the unit and at the time shown:
    * {values: Map, year, ok}. As packed, at the reference's own year. A year
-   * before its own cannot be reached; ok is then false.
+   * before its own cannot be reached; ok is then false. Its becquerels are
+   * moles first, by PSAR's own half-lives where its report is open.
    */
   function refValues(ref, y = year(), unit = state.settings.unit, values = ref.values) {
-    const at = M.referenceAt(ref, nd(), halfLives(), y, values);
+    const at = M.referenceAt(ref, nd(), halfLives(), y, values, psarHalfLives());
     const out = new Map();
     for (const [name, mol] of at.mol) {
       const i = at.sys.index.get(name);
@@ -262,6 +279,9 @@
     };
   }
   const typeColour = (t, th = theme()) => (/pwr/i.test(t || '') ? th.pwr : th.bwr);
+  /* Planned fuel is the colour of its kind, hatched: one direction, the
+     page's only texture, so that no colour stands for planned alone. */
+  const hatched = (color, th = theme()) => ({ color, pattern: { shape: '/', fillmode: 'overlay', fgcolor: th.bg, size: 7, solidity: 0.4 } });
   const partColour = (key, th = theme()) => ({ fuel: th.fuel, crud: th.crud, structural_material: th.structural, structural: th.structural, control_rods: th.rods }[key] || th.muted);
 
   function base(th = theme()) {
@@ -404,10 +424,12 @@
       ['Unit', state.settings.unit],
       ['Half-lives', halfWords()],
       ['Canisters', selType() ? `${selType()} only` : 'all'],
+      ['Fuel', fuelWords() || (state.inv && state.inv.nPlanned ? 'all elements, discharged and planned (PLAN…)' : 'all elements')],
       ['Decay', decayWords()],
     ];
     if (p.workbook) rows.push(['PSAR workbook', p.workbook.source]);
     if (p.report) rows.push(['PSAR report', p.report.source]);
+    if (p.workbook || p.report) rows.push(['PSAR’s moles', psarHalfLives() ? 'its becquerels with its own half-lives (Table D-1), then decayed with those above' : 'its becquerels with the half-lives above (its report, with Table D-1, not open)']);
     return { name: 'About', columns: [{ label: 'What', width: 16 }, { label: 'Value', width: 100 }], rows };
   }
 
@@ -508,6 +530,12 @@
     if (!type.value) type.value = '-1';
     s.type = Number(type.value);
     type.disabled = !state.inv || state.inv.typeNames.length < 2;
+    /* Fuel: only where the inventory holds planned elements and others. */
+    const fuelBox = $('invFuel');
+    const mixes = !!state.inv && state.inv.nPlanned > 0 && state.inv.nPlanned < state.inv.nEl;
+    fuelBox.disabled = !mixes;
+    fuelBox.value = mixes ? fuel() : 'all';
+    fuelBox.title = state.inv && !mixes ? 'No element of this inventory is named PLAN…' : '';
   }
 
   /* ---------------------------------------------------------------------
@@ -560,6 +588,29 @@
     }
   }
 
+  /* The full window: the page without the site's header and footer, kept in
+     localStorage apart from the views' settings, so that the head can set it
+     before the first paint. */
+  const FULL_KEY = 'kvot.inventory.full';
+  function setFull(on) {
+    document.documentElement.classList.toggle('inv-full', !!on);
+    try { localStorage.setItem(FULL_KEY, on ? '1' : '0'); } catch (e) { /* storage unavailable: for this visit only */ }
+    fullState();
+    /* The charts follow their boxes only when told. */
+    if (typeof Plotly !== 'undefined') {
+      requestAnimationFrame(() => {
+        for (const el of $(`invPane-${state.tab}`).querySelectorAll('.js-plotly-plot')) if (el.offsetParent !== null) Plotly.Plots.resize(el);
+      });
+    }
+  }
+  function fullState() {
+    const on = document.documentElement.classList.contains('inv-full');
+    const b = $('invFull');
+    b.setAttribute('aria-pressed', String(on));
+    b.title = on ? 'Show the site’s header and footer again' : 'Full window: the page without the site’s header and footer';
+    b.setAttribute('aria-label', on ? 'Leave the full window' : 'Full window');
+  }
+
   /** Something changed: drop what was kept for it, and redraw. */
   function changed(what) {
     if (what === 'psar') {
@@ -598,26 +649,36 @@
     nw.textContent = notes.length ? `Read with notes: ${notes.join('; ')}.` : '';
     show(nw, notes.length > 0);
 
-    $('invOverviewSub').textContent = `${state.invFile.name}: ${intText(inv.nCan)} canisters with ${intText(inv.nEl)} fuel elements, ${inv.N} nuclides in ${inv.P} parts (${inv.parts.map((p) => p.label.toLowerCase()).join(', ')}). Shown ${timeWords()}${st ? `, ${st} canisters only` : ''}.`;
+    $('invOverviewSub').textContent = `${state.invFile.name}: ${intText(inv.nCan)} canisters with ${intText(inv.nEl)} fuel elements, ${inv.N} nuclides in ${inv.P} parts (${inv.parts.map((p) => p.label.toLowerCase()).join(', ')}). Shown ${timeWords()}${st ? `, ${st} canisters only` : ''}${fuelWords() ? `, ${fuelWords()}; PSAR’s numbers beside them are of all its fuel` : ''}.`;
 
     /* Tiles. */
     const typeCounts = new Map();
     for (const c of sel) { const t = typeName(inv.canType[c]) || 'other'; typeCounts.set(t, (typeCounts.get(t) || 0) + 1); }
-    const elCount = sel.reduce((s, c) => s + d.canisters.nEl[c], 0);
+    const elCount = sel.reduce((s, c) => s + inv.nIn(c), 0);
     const planned = plannedCount(sel);
+    /* What is planned, beside the whole, when the whole is shown. */
+    const split = fuel() === 'all' && planned > 0;
+    const atP = split ? inv.canistersAt(system(), targetMs(), halfKey(), 'planned') : null;
+    let withPlanned = 0, onlyPlanned = 0;
+    if (split) for (const c of sel) { const k = inv.nIn(c, 'planned'); if (k) { withPlanned++; if (k === d.canisters.nEl[c]) onlyPlanned++; } }
     const elTypes = inv.fields.type ? inv.countBy(inv.fields.type, sel) : new Map();
     const first = Math.min(...Array.from(sel, (c) => d.canisters.date[c]).filter(Number.isFinite));
     const last = Math.max(...Array.from(sel, (c) => d.canisters.date[c]).filter(Number.isFinite));
     const sys = system();
     const full = inv.fullSum(at, sel);
-    const mass = (sym) => {
+    const fullP = atP ? inv.fullSum(atP, sel) : null;
+    const massIn = (f, sym) => {
       let g = 0;
-      sys.members.forEach((name, i) => { if (name.split('-')[0] === sym) g += full[i] * sys.mass[i]; });
+      sys.members.forEach((name, i) => { if (name.split('-')[0] === sym) g += f[i] * sys.mass[i]; });
       return g;
     };
+    const mass = (sym) => massIn(full, sym);
     let act = 0, heat = 0, heatFile = 0, decl = 0, maxHeat = 0, maxFile = 0, maxDecl = 0;
-    const fileHeat = d.canisters.num.decay_heat_W, declared = d.canisters.num.declared_heat_W;
+    let actP = 0, heatP = 0, heatFileP = 0;
+    const fileHeat = inv.canNum('decay_heat_W'), declared = inv.canNum('declared_heat_W');
+    const fileHeatP = split ? inv.canNum('decay_heat_W', 'planned') : null;
     for (const c of sel) {
+      if (atP) { actP += atP.activity[c]; heatP += atP.heat[c]; if (fileHeatP && Number.isFinite(fileHeatP[c])) heatFileP += fileHeatP[c]; }
       act += at.activity[c];
       heat += at.heat[c];
       maxHeat = Math.max(maxHeat, at.heat[c]);
@@ -628,13 +689,14 @@
     const tiles = [];
     const scope = st ? `${st} ` : '';
     tiles.push({
-      label: `${scope}Canisters`, value: intText(sel.length), sub: typeCounts.size > 1 ? typesLine(typeCounts) : '',
+      label: `${scope}Canisters`, value: intText(sel.length),
+      sub: [typeCounts.size > 1 ? typesLine(typeCounts) : '', split ? `${intText(withPlanned)} with planned elements${onlyPlanned ? ` (${intText(onlyPlanned)} only planned)` : ''}` : ''].filter(Boolean).join(' · '),
       ref: Number.isFinite(pc.canisters.all) ? `PSAR: ${intText(st ? pc.canisters[st] : pc.canisters.all)}${!st && Number.isFinite(pc.canisters.BWR) ? ` (${intText(pc.canisters.BWR)} BWR · ${intText(pc.canisters.PWR)} PWR)` : ''}` : '',
     });
     const simEls = sim ? sim.filter((c) => !st || c.type === st).reduce((s, c) => s + c.n, 0) : null;
     tiles.push({
       label: 'Fuel elements', value: intText(elCount),
-      sub: [elTypes.size > 1 ? typesLine(elTypes) : '', planned ? `${intText(planned)} planned` : ''].filter(Boolean).join(' · '),
+      sub: [elTypes.size > 1 ? typesLine(elTypes) : '', split ? `${intText(planned)} planned (${shareText(planned, elCount)})` : fuel() === 'planned' ? 'all planned' : ''].filter(Boolean).join(' · '),
       ref: simEls ? `PSAR’s simulation: ${intText(simEls)}` : '',
     });
     const simYears = sim ? sim.filter((c) => !st || c.type === st).map((c) => c.year).filter(Number.isFinite) : [];
@@ -644,19 +706,20 @@
       ref: simYears.length ? `PSAR deposited ${Math.min(...simYears)}–${Math.max(...simYears)}` : '',
     });
     const u = mass('U'), pu = mass('Pu');
-    tiles.push({ label: 'Uranium', value: `${numHtml(u / 1e6)} <small>t</small>`, sub: `plutonium ${numHtml(pu / 1e6)} t, americium ${numHtml(mass('Am') / 1e3)} kg; ${timeWords()}`, html: true });
+    const uP = fullP ? massIn(fullP, 'U') : 0;
+    tiles.push({ label: 'Uranium', value: `${numHtml(u / 1e6)} <small>t</small>`, sub: `plutonium ${numHtml(pu / 1e6)} t, americium ${numHtml(mass('Am') / 1e3)} kg; ${timeWords()}${split ? `; ${shareText(uP, u)} of the uranium in planned elements` : ''}`, html: true });
     const psarAct = psarActivity(st);
     tiles.push({
       label: `Activity, ${timeWords()}`, value: `${numHtml(act)} <small>Bq</small>`, html: true,
-      sub: `the ${inv.N} nuclides listed; ${numHtml(act / sel.length)} Bq per canister`,
+      sub: `the ${inv.N} nuclides listed; ${numHtml(act / sel.length)} Bq per canister${split ? `; ${shareText(actP, act)} in planned elements` : ''}`,
       ref: psarAct ? `PSAR: ${numHtml(psarAct.total)} Bq ${psarAct.when}` : '',
     });
     const heatTile = year() === null && fileHeat
       ? { label: 'Decay heat when packed', value: `${numHtml(heatFile / 1e6)} <small>MW</small>`, html: true,
-          sub: `${intText(heatFile / sel.length)} W per canister, at most ${intText(maxFile)} W`,
+          sub: `${intText(heatFile / sel.length)} W per canister, at most ${intText(maxFile)} W${split ? `; ${shareText(heatFileP, heatFile)} in planned elements` : ''}`,
           ref: declared ? `declared: ${intText(decl / sel.length)} W per canister, at most ${intText(maxDecl)} W` : '' }
       : { label: `Decay heat, ${timeWords()}`, value: `${numHtml(heat / 1e6)} <small>MW</small>`, html: true,
-          sub: `${numHtml(heat / sel.length)} W per canister, at most ${numHtml(maxHeat)} W; from the nuclides listed`, ref: '' };
+          sub: `${numHtml(heat / sel.length)} W per canister, at most ${numHtml(maxHeat)} W; from the nuclides listed${split ? `; ${shareText(heatP, heat)} in planned elements` : ''}`, ref: '' };
     if (sim && year() === null) {
       const sh = sim.filter((c) => !st || c.type === st).map((c) => c.heat);
       heatTile.ref += `${heatTile.ref ? '<br>' : ''}PSAR’s simulation: ${intText(sh.reduce((a, b) => a + b, 0) / sh.length)} W per canister, at most ${intText(Math.max(...sh))} W`;
@@ -673,6 +736,7 @@
       ['Fuel elements', elCount, '', simEls, simEls ? 'PSAR: its encapsulation simulation' : ''],
       ...[...elTypes].map(([t, k]) => [`Fuel elements, ${t}`, k, '', null, '']),
       ['Fuel elements, planned', planned, '', null, 'named PLAN…: the reactors’ forecast'],
+      ...(split ? [['Canisters with planned elements', withPlanned, '', null, ''], ['Canisters with only planned elements', onlyPlanned, '', null, '']] : []),
       ['First packed', Number.isFinite(first) ? dateText(first) : '', '', simYears.length ? String(Math.min(...simYears)) : null, simYears.length ? 'PSAR: first year deposited' : ''],
       ['Last packed', Number.isFinite(last) ? dateText(last) : '', '', simYears.length ? String(Math.max(...simYears)) : null, simYears.length ? 'PSAR: last year deposited' : ''],
       [`Uranium, ${w}`, u / 1e6, 't', null, ''],
@@ -680,6 +744,7 @@
       [`Americium, ${w}`, mass('Am') / 1e3, 'kg', null, ''],
       [`Activity of the ${inv.N} nuclides, ${w}`, act, 'Bq', psarAct ? psarAct.total : null, psarAct ? `PSAR ${psarAct.when}` : ''],
       [`Activity per canister, ${w}`, act / sel.length, 'Bq', null, ''],
+      ...(split ? [[`Uranium in planned elements, ${w}`, uP / 1e6, 't', null, ''], [`Activity in planned elements, ${w}`, actP, 'Bq', null, ''], [`Decay heat from the nuclides in planned elements, ${w}`, heatP, 'W', null, '']] : []),
     ];
     if (fileHeat) summary.push(['Decay heat when packed (file), all canisters', heatFile, 'W', null, ''], ['Decay heat when packed (file), per canister', heatFile / sel.length, 'W', simHeat.length ? simHeat.reduce((a, b) => a + b, 0) / simHeat.length : null, simHeat.length ? 'PSAR: its simulation, when deposited' : ''], ['Decay heat when packed (file), largest', maxFile, 'W', simHeat.length ? Math.max(...simHeat) : null, '']);
     if (declared) summary.push(['Declared heat, per canister', decl / sel.length, 'W', null, ''], ['Declared heat, largest', maxDecl, 'W', null, '']);
@@ -694,29 +759,44 @@
       return el;
     }));
 
-    /* Canisters packed each year. */
-    const years = new Map();
+    /* Canisters packed each year: of each type, those holding planned elements hatched. */
+    const years = new Map(), yearsP = new Map();
     for (const c of sel) {
       const ms = d.canisters.date[c];
       if (!Number.isFinite(ms)) continue;
       const y = new Date(ms).getUTCFullYear();
       const t = typeName(inv.canType[c]) || 'other';
-      if (!years.has(t)) years.set(t, new Map());
-      years.get(t).set(y, (years.get(t).get(y) || 0) + 1);
+      for (const [m, on] of [[years, true], [yearsP, split && inv.nIn(c, 'planned') > 0]]) {
+        if (!on) continue;
+        if (!m.has(t)) m.set(t, new Map());
+        m.get(t).set(y, (m.get(t).get(y) || 0) + 1);
+      }
     }
-    const traces = [...years].sort((a, b) => a[0].localeCompare(b[0])).map(([t, m]) => ({
-      type: 'bar', name: plain(t), x: [...m.keys()], y: [...m.values()], marker: { color: typeColour(t, th) },
-      hovertemplate: `%{y} ${plain(t)} canisters packed in %{x}<extra></extra>`,
-    }));
+    const traces = [];
+    for (const [t, m] of [...years].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const mp = yearsP.get(t) || new Map();
+      const xs = [...m.keys()];
+      traces.push({
+        type: 'bar', name: split ? `${plain(t)}, discharged only` : plain(t), x: xs, y: xs.map((y) => m.get(y) - (mp.get(y) || 0)), marker: { color: typeColour(t, th) },
+        hovertemplate: `%{y} ${plain(t)} canisters${split ? ' of discharged fuel only' : ''} packed in %{x}<extra></extra>`,
+      });
+      if (mp.size) {
+        traces.push({
+          type: 'bar', name: `${plain(t)}, with planned elements`, x: [...mp.keys()], y: [...mp.values()], marker: hatched(typeColour(t, th), th),
+          hovertemplate: `%{y} ${plain(t)} canisters holding planned elements packed in %{x}<extra></extra>`,
+        });
+      }
+    }
     const dep = new Map();
     if (sim) {
       for (const c of sim) if (!st || c.type === st) dep.set(c.year, (dep.get(c.year) || 0) + 1);
       const xs = [...dep.keys()].sort((a, b) => a - b);
       traces.push({ type: 'scatter', mode: 'lines+markers', name: 'PSAR, deposited', x: xs, y: xs.map((y) => dep.get(y)), line: { color: th.ref, width: 2, shape: 'hvh' }, marker: { size: 5, color: th.ref }, hovertemplate: '%{y} canisters deposited in %{x} (PSAR)<extra></extra>' });
     }
-    state.ovExport.years = { types: [...years.keys()].sort(), byType: years, dep: sim ? dep : null };
+    state.ovExport.years = { types: [...years.keys()].sort(), byType: years, withPlanned: split ? yearsP : null, dep: sim ? dep : null };
     plot('invChartYears', traces, { barmode: 'stack', xaxis: { title: { text: 'year packed' }, dtick: 5 }, yaxis: { title: { text: 'canisters' } } });
-    $('invYearsNote').textContent = sim ? 'PSAR’s line is its encapsulation simulation: the canisters deposited each year.' : '';
+    $('invYearsNote').textContent = [split ? `Hatched: the canisters holding planned elements (named PLAN…, the reactors’ forecast), ${intText(withPlanned)} of ${intText(sel.length)}; solid: those of discharged fuel only.` : '',
+      sim ? 'PSAR’s line is its encapsulation simulation: the canisters deposited each year.' : ''].filter(Boolean).join(' ');
 
     /* Fuel elements by reactor. */
     renderReactorChart(sel, th);
@@ -725,10 +805,11 @@
     renderHeatChart(sel, th);
   }
 
+  /** The planned elements among those that count, in a set of canisters. */
   function plannedCount(sel) {
-    const d = state.inv.data;
+    const inv = state.inv, can = inv.data.canisters;
     let n = 0;
-    for (const c of sel) for (let e = d.canisters.el0[c], end = e + d.canisters.nEl[c]; e < end; e++) if (/^plan/i.test(d.elements.id[e])) n++;
+    for (const c of sel) for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) if (inv.planned[e] && inv.picks(e)) n++;
     return n;
   }
 
@@ -754,6 +835,9 @@
     const el = $('invChartReactors');
     if (!f) { el.textContent = 'The elements name no reactor.'; return; }
     const counts = inv.countBy(f, sel);
+    /* Of each reactor, the planned elements hatched, when the whole is shown. */
+    const split = fuel() === 'all' && inv.nPlanned > 0;
+    const planned = split ? inv.countBy(f, sel, 'planned') : new Map();
     /* Each reactor's type: that of most of its elements. */
     const tf = inv.fields.type ? inv.data.elements.text[inv.fields.type] : null;
     const rf = inv.data.elements.text[f];
@@ -766,17 +850,23 @@
     const names = rows.map(([r]) => r);
     for (const r of simCounts.keys()) if (!counts.has(r)) names.unshift(r);
     const traces = [{
-      type: 'bar', orientation: 'h', name: 'this inventory', y: names.map(plain), x: names.map((r) => counts.get(r) || 0),
+      type: 'bar', orientation: 'h', name: split ? 'discharged' : 'this inventory', y: names.map(plain), x: names.map((r) => (counts.get(r) || 0) - (planned.get(r) || 0)),
       marker: { color: names.map((r) => typeColour(typeOf.get(r), th)) },
-      hovertemplate: '%{x} elements from %{y}<extra></extra>', showlegend: false,
+      hovertemplate: `%{x}${split ? ' discharged' : ''} elements from %{y}<extra></extra>`, showlegend: split,
     }];
+    if (split && planned.size) {
+      traces.push({
+        type: 'bar', orientation: 'h', name: 'planned', y: names.map(plain), x: names.map((r) => planned.get(r) || 0),
+        marker: hatched(names.map((r) => typeColour(typeOf.get(r), th)), th), hovertemplate: '%{x} planned elements from %{y}<extra></extra>',
+      });
+    }
     if (sim) {
       traces.push({ type: 'scatter', mode: 'markers', name: 'PSAR’s simulation', y: names.map(plain), x: names.map((r) => simCounts.get(r) ?? null), marker: { symbol: 'circle-open', size: 9, color: th.ref, line: { width: 2 } }, hovertemplate: '%{x} elements from %{y} in PSAR’s simulation<extra></extra>' });
     }
-    plot('invChartReactors', traces, { margin: { l: 150, t: 22 }, height: Math.max(300, names.length * 21 + 70), xaxis: { title: { text: 'fuel elements' } }, yaxis: { automargin: true, tickfont: { size: 11 } }, showlegend: !!sim });
+    plot('invChartReactors', traces, { barmode: 'stack', margin: { l: 150, t: 22 }, height: Math.max(300, names.length * 21 + 70), xaxis: { title: { text: 'fuel elements' } }, yaxis: { automargin: true, tickfont: { size: 11 } }, showlegend: !!sim || split });
     el.style.height = `${Math.max(300, names.length * 21 + 70)}px`;
-    $('invReactorsNote').textContent = `Blue: BWR, orange: PWR.${sim ? ' Rings: the elements of each reactor in PSAR’s encapsulation simulation.' : ''}`;
-    if (state.ovExport) state.ovExport.reactors = names.slice().reverse().map((r) => [r, typeOf.get(r) || '', counts.get(r) || 0, sim ? simCounts.get(r) || 0 : null]);
+    $('invReactorsNote').textContent = `Blue: BWR, orange: PWR.${split ? ' Hatched: the planned elements, the reactors’ forecast of fuel not yet discharged.' : ''}${sim ? ' Rings: the elements of each reactor in PSAR’s encapsulation simulation.' : ''}`;
+    if (state.ovExport) state.ovExport.reactors = names.slice().reverse().map((r) => [r, typeOf.get(r) || '', counts.get(r) || 0, split ? planned.get(r) || 0 : null, sim ? simCounts.get(r) || 0 : null]);
   }
 
   /** The Overview's numbers, its canisters each year and its reactors, as sheets. */
@@ -796,17 +886,19 @@
       sheets.push({
         name: 'Canisters each year',
         columns: [{ label: 'Year', width: 8 }, ...x.years.types.map((t) => ({ label: `${t}, packed`, fmt: 'int', width: 12 })), { label: 'All, packed', fmt: 'int', width: 12 },
+          ...(x.years.withPlanned ? x.years.types.map((t) => ({ label: `${t}, with planned elements`, fmt: 'int', width: 16 })) : []),
           ...(x.years.dep ? [{ label: 'PSAR, deposited', fmt: 'int', width: 16 }] : [])],
         rows: list.map((y) => {
           const per = x.years.types.map((t) => x.years.byType.get(t).get(y) || 0);
-          return [y, ...per, per.reduce((a, b) => a + b, 0), ...(x.years.dep ? [x.years.dep.get(y) || 0] : [])];
+          const planned = x.years.withPlanned ? x.years.types.map((t) => (x.years.withPlanned.get(t) || new Map()).get(y) || 0) : [];
+          return [y, ...per, per.reduce((a, b) => a + b, 0), ...planned, ...(x.years.dep ? [x.years.dep.get(y) || 0] : [])];
         }),
       });
     }
     if (x.reactors) {
       sheets.push({
         name: 'Elements by reactor',
-        columns: [{ label: 'Reactor', width: 28 }, { label: 'Type', width: 7 }, { label: 'Fuel elements', fmt: 'int', width: 14 }, { label: 'PSAR’s simulation', fmt: 'int', width: 18 }],
+        columns: [{ label: 'Reactor', width: 28 }, { label: 'Type', width: 7 }, { label: 'Fuel elements', fmt: 'int', width: 14 }, { label: 'Of them planned', fmt: 'int', width: 15 }, { label: 'PSAR’s simulation', fmt: 'int', width: 18 }],
         rows: x.reactors,
       });
     }
@@ -814,9 +906,9 @@
   }
 
   function renderHeatChart(sel, th) {
-    const d = state.inv.data;
-    const fileHeat = d.canisters.num.decay_heat_W, declared = d.canisters.num.declared_heat_W;
     const inv = state.inv;
+    const fileHeat = inv.canNum('decay_heat_W'), declared = inv.canNum('declared_heat_W');
+    const split = fuel() === 'all' && inv.nPlanned > 0;
     const traces = [];
     const packed = inv.canistersAt(system(), null, halfKey());
     /* One set of 25 W bins for all: the types stack, the declared heat is a
@@ -828,15 +920,19 @@
     const nb = Math.max(1, Math.round((end - start) / BIN));
     const centres = Array.from({ length: nb }, (_, i) => start + (i + 0.5) * BIN);
     const count = (vals) => { const n = new Array(nb).fill(0); for (const x of vals) if (Number.isFinite(x)) n[Math.min(nb - 1, Math.max(0, Math.floor((x - start) / BIN)))]++; return n; };
+    /* Of each type, the canisters holding planned elements hatched, when the whole is shown. */
     const byType = new Map();
     for (const c of sel) {
       const t = typeName(inv.canType[c]) || 'other';
-      if (!byType.has(t)) byType.set(t, []);
-      byType.get(t).push(fileHeat ? fileHeat[c] : packed.heat[c]);
+      const key = `${t}|${split && inv.nIn(c, 'planned') > 0 ? 'p' : ''}`;
+      if (!byType.has(key)) byType.set(key, []);
+      byType.get(key).push(fileHeat ? fileHeat[c] : packed.heat[c]);
     }
     const rangeText = centres.map((x) => `${intText(x - BIN / 2)}–${intText(x + BIN / 2)}`);
-    for (const [t, v] of [...byType].sort((a, b) => a[0].localeCompare(b[0]))) {
-      traces.push({ type: 'bar', name: `${plain(t)}${fileHeat ? '' : ', from the nuclides'}`, x: centres, y: count(v), width: BIN * 0.92, marker: { color: typeColour(t, th) }, customdata: rangeText, hovertemplate: `%{y} ${plain(t)} canisters at %{customdata} W<extra></extra>` });
+    for (const [key, v] of [...byType].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const [t, p] = key.split('|');
+      const what = p ? `${plain(t)} canisters holding planned elements` : `${plain(t)} canisters${split ? ' of discharged fuel only' : ''}`;
+      traces.push({ type: 'bar', name: `${plain(t)}${p ? ', with planned elements' : split ? ', discharged only' : ''}${fileHeat ? '' : ', from the nuclides'}`, x: centres, y: count(v), width: BIN * 0.92, marker: p ? hatched(typeColour(t, th), th) : { color: typeColour(t, th) }, customdata: rangeText, hovertemplate: `%{y} ${what} at %{customdata} W<extra></extra>` });
     }
     if (declared) {
       const n = count(Array.from(sel, (c) => declared[c]));
@@ -851,7 +947,8 @@
     if (fileHeat) {
       const over = Array.from(sel).filter((c) => fileHeat[c] > LIMIT_W).length;
       const overD = declared ? Array.from(sel).filter((c) => declared[c] > LIMIT_W).length : 0;
-      $('invHeatNote').innerHTML = esc(`The bars are the decay heat the file gives each canister, the line the heat declared for it. `)
+      const of = fuel() === 'all' ? '' : ` A canister’s heat is that of its ${fuel()} elements alone, the sum of theirs in the file, and is no canister’s whole heat.`;
+      $('invHeatNote').innerHTML = esc(`The bars are the decay heat the file gives each canister, the line the heat declared for it.${split ? ' Hatched: the canisters holding planned elements.' : ''}${of} `)
         + esc(`${intText(over)} canisters (${pctText(over / sel.length)}) are over 1 700 W by the first${declared ? `, ${intText(overD)} by the second` : ''}. `)
         + esc('From the nuclides listed the page works out ') + numHtml(median(Array.from(sel, (c) => packed.heat[c] / fileHeat[c])), 4)
         + esc(' of the file’s decay heat for the median canister; fuel packed soon after discharge still has heat from nuclides the file does not list.');
@@ -949,7 +1046,9 @@
     const ref = havePsar() ? refForSubject(sub) : null;
     const rv = ref ? refValues(ref) : null;
     const refOk = rv && rv.ok;
-    $('invNucSub').textContent = `${unit}${sub.total ? '' : ' per canister'}, ${timeWords()}${sub.sel.length > 1 && !sub.total ? `; ${intText(sub.sel.length)} canisters` : ''}`;
+    $('invNucSub').textContent = `${unit}${sub.total ? '' : ' per canister'}, ${timeWords()}${sub.sel.length > 1 && !sub.total ? `; ${intText(sub.sel.length)} canisters` : ''}${fuelWords() ? `; ${fuelWords()}` : ''}`;
+    /* The planned elements' part of each nuclide, when the whole is shown. */
+    const sumsP = fuel() === 'all' && inv.nPlanned > 0 ? inv.sumOver(inv.canistersAt(system(), targetMs(), halfKey(), 'planned').amounts, sub.sel) : null;
 
     /* The chart: values on the left, the parts' shares on the right. */
     const names = ks.map((k) => inv.nuclides[k].name);
@@ -999,6 +1098,7 @@
     const notes = [];
     if (ref && !refOk) notes.push(`${ref.label} holds for ${ref.year}; choose a year from ${ref.year} to see it here.`);
     if (ref && refOk && year() === null) notes.push(`PSAR’s values hold for ${rv.year}, the inventory’s for each canister’s packing date: choose a year under Time for the same time.`);
+    if (ref && refOk) notes.push(psarMolesWords());
     if (!ref && havePsar()) notes.push(sub.total && selType() ? 'PSAR’s totals are by kind of fuel, not by canister type: see Compare with PSAR.' : 'No PSAR value of this kind is open.');
     $('invNucNote').textContent = notes.join(' ');
     const key = [h('span', null, h('i', { class: 'dot', style: `background:${th.s[0]}` }), 'this inventory')];
@@ -1016,12 +1116,15 @@
       ...inv.parts.map((p, pi) => ({ label: p.label, html: (k) => (sums.total[k] > 0 ? numHtml(sums.parts[pi][k] / sums.total[k] * 100, 3) + NNBSP + '%' : '–') })),
     ];
     if (spread.size) cols.push({ label: '5th pct', html: (k) => sp(k, 'p5') }, { label: 'median', html: (k) => sp(k, 'p50') }, { label: '95th pct', html: (k) => sp(k, 'p95') }, { label: 'largest', html: (k) => sp(k, 'max') });
+    if (sumsP) cols.push({ label: 'Planned', html: (k) => (sums.total[k] > 0 ? numHtml(sumsP.total[k] / sums.total[k] * 100, 3) + NNBSP + '%' : '–') });
     if (refOk) {
       cols.push({ label: `PSAR, ${rv.year}`, html: (k) => numHtml(rv.values.get(inv.nuclides[k].name)) });
       cols.push({ label: 'this / PSAR', html: (k) => { const r = rv.values.get(inv.nuclides[k].name); return r > 0 ? numHtml(value(k) / r) : '–'; } });
     }
     $('invNucTable').replaceChildren(buildTable(cols, ks));
-    state.nucExport = { ks, value, sub, unit, spread, ref: refOk ? { label: ref.label, year: rv.year, values: rv.values } : null, parts: sums, at };
+    if (sumsP) notes.unshift('Planned: the share of each nuclide in the planned elements (named PLAN…, the reactors’ forecast).');
+    $('invNucNote').textContent = notes.join(' ');
+    state.nucExport = { ks, value, sub, unit, spread, ref: refOk ? { label: ref.label, year: rv.year, values: rv.values } : null, parts: sums, planned: sumsP, at };
   }
 
   /** The Nuclides table with every digit, for CSV and Excel alike. */
@@ -1033,6 +1136,7 @@
     const columns = [{ label: 'Nuclide', width: 10 }, { label: 'Half-life (y)', fmt: 'sci', width: 13 }, { label: per, fmt: 'sci', width: 17 },
       ...inv.parts.map((p) => ({ label: `${p.label} (${x.unit})`, fmt: 'sci', width: 18 }))];
     if (x.spread.size) columns.push(...['5th percentile', 'median', '95th percentile', 'largest'].map((label) => ({ label: `${label} (${x.unit})`, fmt: 'sci', width: 16 })));
+    if (x.planned) columns.push({ label: `In planned elements (${per})`, fmt: 'sci', width: 22 }, { label: 'Planned share', fmt: 'pct', width: 13 });
     if (x.ref) columns.push({ label: `${x.ref.label}, ${x.ref.year} (${x.unit})`, fmt: 'sci', width: 24 }, { label: 'this / PSAR', width: 12 });
     const rows = x.ks.map((k) => {
       const u = inv.nuclides[k];
@@ -1040,10 +1144,11 @@
       const f = factorOf(u.name);
       const r = [u.name, i === undefined ? null : sys.T[i], x.value(k), ...inv.parts.map((p, pi) => x.parts.parts[pi][k] / x.sub.per * f)];
       if (x.spread.size) { const s = x.spread.get(k); r.push(s.p5, s.p50, s.p95, s.max); }
+      if (x.planned) r.push(x.planned.total[k] / x.sub.per * f, x.parts.total[k] > 0 ? x.planned.total[k] / x.parts.total[k] : null);
       if (x.ref) { const v = x.ref.values.get(u.name); r.push(v ?? null, v > 0 ? x.value(k) / v : null); }
       return r;
     });
-    return { title: `Nuclides of ${x.sub.label}, ${timeWords()}, ${per}`, columns, rows };
+    return { title: `Nuclides of ${x.sub.label}, ${timeWords()}, ${per}${fuelWords() ? `, ${fuelWords()}` : ''}`, columns, rows };
   }
   const csvHead = (title) => [title, `From ${state.invFile.name}; half-lives: ${$('invHalf').selectedOptions[0].textContent}`];
   const fileTag = () => `${baseName()}-${year() ?? 'packed'}`;
@@ -1083,13 +1188,13 @@
     const inv = state.inv, d = inv.data;
     if (level === 'can') {
       const at = canAt();
-      if (q.id === 'heatFile') return Float64Array.from(sel, (c) => d.canisters.num.decay_heat_W[c]);
-      if (q.id === 'declared') return Float64Array.from(sel, (c) => d.canisters.num.declared_heat_W[c]);
+      if (q.id === 'heatFile') { const a = inv.canNum('decay_heat_W'); return Float64Array.from(sel, (c) => a[c]); }
+      if (q.id === 'declared') { const a = inv.canNum('declared_heat_W'); return Float64Array.from(sel, (c) => a[c]); }
       if (q.id === 'heatCalc') return Float64Array.from(sel, (c) => at.heat[c]);
       if (q.id === 'activity') return Float64Array.from(sel, (c) => at.activity[c]);
-      if (q.id === 'elements') return Float64Array.from(sel, (c) => d.canisters.nEl[c]);
+      if (q.id === 'elements') return Float64Array.from(sel, (c) => inv.nIn(c));
       if (q.id === 'date') return Float64Array.from(sel, (c) => d.canisters.date[c]);
-      if (q.id.startsWith('num:')) { const a = d.canisters.num[q.id.slice(4)]; return Float64Array.from(sel, (c) => a[c]); }
+      if (q.id.startsWith('num:')) { const a = inv.canNum(q.id.slice(4)); return Float64Array.from(sel, (c) => a[c]); }
       const k = q.k;
       const f = factorOf(inv.nuclides[k].name);
       return Float64Array.from(inv.perCanister(at.amounts, sel, k), (x) => x * f);
@@ -1107,10 +1212,11 @@
     const f = factorOf(inv.nuclides[k].name);
     return Float64Array.from(els, (e) => at.amounts[e * inv.N + k] * f);
   }
+  /** The elements that count, of a set of canisters. */
   function elementsOf(sel) {
-    const can = state.inv.data.canisters;
+    const inv = state.inv, can = inv.data.canisters;
     const out = [];
-    for (const c of sel) for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) out.push(e);
+    for (const c of sel) for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) if (inv.picks(e)) out.push(e);
     return Int32Array.from(out);
   }
 
@@ -1136,22 +1242,31 @@
     $('invScatterTitle').textContent = `Each ${what}: ${q.label} against ${qa.label}`;
     $('invHistTitle').textContent = `How the ${what}s spread`;
 
-    /* Scatter, one trace per type. */
+    /* Scatter, one trace per type; planned elements (or canisters holding
+       them) as rings of the same colour, when the whole is shown. */
     const many = ids.length > 6000;
     const traces = [];
     const label = (i) => (level === 'el' ? `${d.elements.id[i]} (canister ${d.canisters.id[d.elements.can[i]]})` : `canister ${d.canisters.id[i]}`);
     const typesPresent = [...new Set(types)].sort((a, b) => a - b);
+    const split = fuel() === 'all' && inv.nPlanned > 0;
+    const isP = (i) => (level === 'el' ? inv.planned[ids[i]] === 1 : inv.nIn(ids[i], 'planned') > 0);
     for (const t of typesPresent) {
-      const idx = [];
-      for (let i = 0; i < ids.length; i++) if (types[i] === t && Number.isFinite(yv[i]) && Number.isFinite(xv[i])) idx.push(i);
-      const tn = typeName(t) || 'other';
-      traces.push({
-        type: many ? 'scattergl' : 'scatter', mode: 'markers', name: plain(tn),
-        x: idx.map((i) => (qa.id === 'date' ? new Date(xv[i]).toISOString().slice(0, 10) : xv[i])), y: idx.map((i) => yv[i]),
-        text: idx.map((i) => plain(label(ids[i]))), customdata: idx.map((i) => ids[i]),
-        marker: { size: many ? 4 : 6, color: typeColour(tn, th), opacity: many ? 0.5 : 0.75, line: { width: 0 } },
-        hovertemplate: `%{text}<br>${plain(q.label)}: <b>%{y:.4g}</b>${esc(q.unit ? ` ${q.unit}` : '')}<br>${plain(qa.label)}: %{x${qa.id === 'date' ? '' : ':.4g'}}<extra></extra>`,
-      });
+      for (const p of split ? [false, true] : [false]) {
+        const idx = [];
+        for (let i = 0; i < ids.length; i++) if (types[i] === t && Number.isFinite(yv[i]) && Number.isFinite(xv[i]) && (!split || isP(i) === p)) idx.push(i);
+        if (!idx.length) continue;
+        const tn = typeName(t) || 'other';
+        const name = !split ? plain(tn) : p ? `${plain(tn)}, ${level === 'el' ? 'planned' : 'with planned elements'}` : `${plain(tn)}, discharged${level === 'el' ? '' : ' only'}`;
+        traces.push({
+          type: many ? 'scattergl' : 'scatter', mode: 'markers', name,
+          x: idx.map((i) => (qa.id === 'date' ? new Date(xv[i]).toISOString().slice(0, 10) : xv[i])), y: idx.map((i) => yv[i]),
+          text: idx.map((i) => plain(label(ids[i]))), customdata: idx.map((i) => ids[i]),
+          marker: p
+            ? { size: many ? 5 : 7, symbol: 'circle-open', color: typeColour(tn, th), opacity: many ? 0.6 : 0.85, line: { width: 1.5 } }
+            : { size: many ? 4 : 6, color: typeColour(tn, th), opacity: many ? 0.5 : 0.75, line: { width: 0 } },
+          hovertemplate: `%{text}${p ? (level === 'el' ? ', planned' : ', holding planned elements') : ''}<br>${plain(q.label)}: <b>%{y:.4g}</b>${esc(q.unit ? ` ${q.unit}` : '')}<br>${plain(qa.label)}: %{x${qa.id === 'date' ? '' : ':.4g'}}<extra></extra>`,
+        });
+      }
     }
     const logY = wantsLog(yv), logX = qa.id !== 'date' && wantsLog(xv);
     const shapes = [], ann = [];
@@ -1176,7 +1291,8 @@
       const i = pt.customdata;
       pick(level === 'el' ? d.elements.can[i] : i);
     });
-    $('invScatterNote').textContent = `${intText(ids.length)} ${what}s${many ? ' (drawn with WebGL)' : ''}. Click one for its ${level === 'el' ? 'canister' : 'elements and nuclides'}.${ref ? ` Dashed: ${ref.label}.` : ''}`;
+    const nP = split ? Array.from(ids.keys()).filter(isP).length : 0;
+    $('invScatterNote').textContent = `${intText(ids.length)} ${what}s${many ? ' (drawn with WebGL)' : ''}${fuelWords() ? `, ${fuelWords()}` : ''}. ${split ? `Rings: the ${intText(nP)} ${level === 'el' ? 'planned elements (named PLAN…, the reactors’ forecast)' : 'canisters holding planned elements (named PLAN…, the reactors’ forecast)'}. ` : ''}Click one for its ${level === 'el' ? 'canister' : 'elements and nuclides'}.${ref ? ` Dashed: ${ref.label}.` : ''}`;
 
     /* How they spread: a histogram per type, with the means and PSAR. */
     renderHistogram(q, level, ids, yv, types, typesPresent, th);
@@ -1285,8 +1401,9 @@
     const inv = state.inv, d = inv.data;
     const order = Array.from(ids.keys());
     const sort = state.sort.can;
-    const fileHeat = (level === 'el' ? d.elements : d.canisters).num.decay_heat_W;
-    const declared = (level === 'el' ? d.elements : d.canisters).num.declared_heat_W;
+    const fileHeat = level === 'el' ? d.elements.num.decay_heat_W : inv.canNum('decay_heat_W');
+    const declared = level === 'el' ? d.elements.num.declared_heat_W : inv.canNum('declared_heat_W');
+    const hasPlanned = inv.nPlanned > 0 && fuel() === 'all';
     const rf = inv.fields.reactor ? d.elements.text[inv.fields.reactor] : null;
     const ff = inv.fields.fuel ? d.elements.text[inv.fields.fuel] : null;
     const txt = (col, e) => (col && col.codes[e] >= 0 ? col.values[col.codes[e]] : '');
@@ -1297,12 +1414,14 @@
         { label: 'Reactor', cls: 'text', text: (i) => txt(rf, ids[i]), sort: (i) => txt(rf, ids[i]) },
         { label: 'Fuel type', cls: 'text', text: (i) => txt(ff, ids[i]), sort: (i) => txt(ff, ids[i]) },
         { label: 'Packed', cls: 'text', text: (i) => dateText(d.canisters.date[d.elements.can[ids[i]]]), sort: (i) => d.canisters.date[d.elements.can[ids[i]]] },
+        ...(hasPlanned ? [{ label: 'Planned', cls: 'text', text: (i) => (inv.planned[ids[i]] ? 'yes' : ''), sort: (i) => inv.planned[ids[i]] }] : []),
       ]
       : [
         { label: 'Canister', cls: 'text', text: (i) => d.canisters.id[ids[i]], sort: (i) => Number(d.canisters.id[ids[i]]) || d.canisters.id[ids[i]] },
         { label: 'Type', cls: 'text', text: (i) => typeName(inv.canType[ids[i]]) || '', sort: (i) => inv.canType[ids[i]] },
         { label: 'Packed', cls: 'text', text: (i) => dateText(d.canisters.date[ids[i]]), sort: (i) => d.canisters.date[ids[i]] },
-        { label: 'Elements', html: (i) => String(d.canisters.nEl[ids[i]]), sort: (i) => d.canisters.nEl[ids[i]] },
+        { label: 'Elements', html: (i) => String(inv.nIn(ids[i])), sort: (i) => inv.nIn(ids[i]) },
+        ...(hasPlanned ? [{ label: 'Planned', html: (i) => String(inv.nIn(ids[i], 'planned')), sort: (i) => inv.nIn(ids[i], 'planned') }] : []),
         { label: 'Reactors', cls: 'text', text: (i) => reactorsOf(ids[i]), sort: (i) => reactorsOf(ids[i]) },
       ];
     const qCol = cols.length;
@@ -1338,7 +1457,7 @@
     if (!inv.fields.reactor) return '';
     const col = d.elements.text[inv.fields.reactor];
     const m = new Map();
-    for (let e = d.canisters.el0[c], end = e + d.canisters.nEl[c]; e < end; e++) { const r = col.values[col.codes[e]]; m.set(r, (m.get(r) || 0) + 1); }
+    for (let e = d.canisters.el0[c], end = e + d.canisters.nEl[c]; e < end; e++) { if (!inv.picks(e)) continue; const r = col.values[col.codes[e]]; m.set(r, (m.get(r) || 0) + 1); }
     return [...m].sort((a, b) => b[1] - a[1]).map(([r, n]) => (n > 1 ? `${r} ×${n}` : r)).join(', ');
   }
 
@@ -1373,16 +1492,17 @@
       }
     } else {
       const at = canAt();
-      const text = Object.entries(d.canisters.text), num = Object.entries(d.canisters.num);
+      const text = Object.entries(d.canisters.text), num = Object.keys(d.canisters.num).map((k) => [k, inv.canNum(k)]);
       columns.push({ label: 'Canister', width: 10 }, { label: 'Type', width: 7 }, { label: 'Packed', fmt: 'date', width: 11 }, { label: 'Fuel elements', fmt: 'int', width: 9 },
+        ...(inv.nPlanned ? [{ label: 'Of them planned', fmt: 'int', width: 10 }] : []),
         { label: 'Reactors', width: 44 }, ...text.map(([k]) => ({ label: fieldLabel(k), width: 16 })), ...num.map(([k]) => ({ label: fieldLabel(k), fmt: 'fixed', width: 15 })), ...tail);
       for (const c of ids) {
         const amounts = nuc.map((k, j) => { let s = 0; for (let p = 0; p < inv.P; p++) s += at.amounts[(c * inv.P + p) * inv.N + k]; return s * f[j]; });
-        rows.push([d.canisters.id[c], typeName(inv.canType[c]) || '', d.canisters.date[c], d.canisters.nEl[c], reactorsOf(c),
+        rows.push([d.canisters.id[c], typeName(inv.canType[c]) || '', d.canisters.date[c], inv.nIn(c), ...(inv.nPlanned ? [inv.nIn(c, 'planned') * (fuel() === 'discharged' ? 0 : 1)] : []), reactorsOf(c),
           ...text.map(([, col]) => (col.codes[c] >= 0 ? col.values[col.codes[c]] : null)), ...num.map(([, a]) => a[c]), at.heat[c], at.activity[c], ...amounts]);
       }
     }
-    return { level: x.level, title: `${x.level === 'el' ? 'Fuel elements' : 'Canisters'}${selType() ? ` (${selType()})` : ''}, ${w}; amounts in ${unit}`, columns, rows };
+    return { level: x.level, title: `${x.level === 'el' ? 'Fuel elements' : 'Canisters'}${selType() ? ` (${selType()})` : ''}, ${w}; amounts in ${unit}${fuelWords() ? `; ${fuelWords()}` : ''}`, columns, rows };
   }
 
   /** A table's rows for a CSV file: dates as text. */
@@ -1417,6 +1537,9 @@
     const facts = [
       ['Type', type || '–'], ['Packed', d.canisters.dateText[c] || '–'], ['Fuel elements', String(d.canisters.nEl[c])],
     ];
+    const nPl = inv.nIn(c, 'planned');
+    if (inv.nPlanned) facts.push(['Planned', `${nPl} of them`]);
+    if (fuel() !== 'all') facts.push(['Shown', `its ${inv.nIn(c)} ${fuel()} elements`]);
     if (d.canisters.num.decay_heat_W) facts.push(['Decay heat when packed', `${numText(d.canisters.num.decay_heat_W[c], 4)} W`]);
     if (d.canisters.num.declared_heat_W) facts.push(['Declared', `${numText(d.canisters.num.declared_heat_W[c], 4)} W`]);
     facts.push([`From the nuclides, ${timeWords()}`, `${numText(at.heat[c], 4)} W`], [`Activity, ${timeWords()}`, `${numText(at.activity[c])} Bq`]);
@@ -1424,11 +1547,12 @@
     for (const [k, col] of Object.entries(d.canisters.text)) facts.push([k.replace(/_/g, ' '), col.codes[c] >= 0 ? col.values[col.codes[c]] : '–']);
     $('invDetailFacts').replaceChildren(...facts.map(([a, b]) => h('div', null, h('dt', { text: a }), h('dd', { text: b }))));
 
-    /* Its elements. */
-    const els = inv.elementsOf(c);
+    /* Its elements, every one, the planned ones said. */
+    const els = inv.elementsOf(c, 'all');
     const textCols = Object.entries(d.elements.text);
     const numCols = Object.entries(d.elements.num);
     const cols = [{ label: 'Element', cls: 'text', text: (e) => d.elements.id[e] },
+      ...(inv.nPlanned ? [{ label: 'planned', cls: 'text', text: (e) => (inv.planned[e] ? 'yes' : '') }] : []),
       ...textCols.map(([k, col]) => ({ label: k.replace(/_/g, ' '), cls: 'text', text: (e) => (col.codes[e] >= 0 ? col.values[col.codes[e]] : '') })),
       ...numCols.map(([k, a]) => ({ label: k.replace(/_W$/, ' (W)').replace(/_/g, ' '), html: (e) => numHtml(a[e], 4) }))];
     $('invDetailElements').replaceChildren(buildTable(cols, els));
@@ -1510,6 +1634,17 @@
       hovertemplate: `${s.u.name}: <b>%{y:.3e} ${unit}</b> after %{x:.3g} years<extra></extra>`,
     }));
     traces.push({ type: 'scatter', mode: 'lines', name: v.timeQty === 'heat' ? 'all of it' : `all ${listed.length}`, x: times, y: total.map(shown), line: { color: th.ref, width: 2.5 }, hovertemplate: `all: <b>%{y:.3e} ${unit}</b> after %{x:.3g} years<extra></extra>` });
+    /* The planned elements' part of the total, dotted, when the whole is shown. */
+    let totalP = null;
+    if (fuel() === 'all' && inv.nPlanned > 0) {
+      const n0P = inv.fullSum(inv.canistersAt(sys, M.yearMs(y0), halfKey(), 'planned'), sub.sel);
+      for (let i = 0; i < n0P.length; i++) n0P[i] /= sub.per;
+      const NP = M.decayTimes(sys, n0P, times.map((t) => t * M.YEAR_S)).N;
+      totalP = v.timeQty === 'heat' ? NP.map((Nt) => M.heatOf(sys, Nt)) : NP.map((Nt) => listed.reduce((s2, u) => s2 + curve(u, Nt), 0));
+      if (totalP.some((x) => x > 0)) {
+        traces.push({ type: 'scatter', mode: 'lines', name: 'of it in planned elements', x: times, y: totalP.map(shown), line: { color: th.ref, width: 2, dash: 'dot' }, hovertemplate: `planned elements: <b>%{y:.3e} ${unit}</b> after %{x:.3g} years<extra></extra>` });
+      } else totalP = null;
+    }
 
     /* PSAR beside it: only its values of the same kind as the line drawn.
        Another kind drawn takes the same document's of that kind. */
@@ -1546,7 +1681,7 @@
       traces.push({ type: 'scatter', mode: 'lines', name: `${ref.label}`, x: rtimes, y: rtotal.map(shown), line: { color: th.ref, width: 2, dash: 'dash' }, hovertemplate: `PSAR, all: <b>%{y:.3e} ${unit}</b> after %{x:.3g} years<extra></extra>` });
       const from = ref.year < y0 ? `given for 1 January ${ref.year} and brought to ${y0} by decay and ingrowth through the whole chains`
         : ref.year > y0 ? `given for ${ref.year}, so its line begins ${ref.year - y0} years in` : `given for ${ref.year}`;
-      notes.push(`Dashed: ${refName(ref)}, ${from}, with the same half-lives as this inventory; from there both decay alike${ref.values.size < listed.length ? `. PSAR’s total is of its ${ref.values.size} nuclides` : ''}.`);
+      notes.push(`Dashed: ${refName(ref)}, ${from}, with the same half-lives as this inventory, its becquerels made moles with ${psarHalfLives() ? 'its own half-lives (Table D-1)' : 'those half-lives'}; from there both decay alike${ref.values.size < listed.length ? `. PSAR’s total is of its ${ref.values.size} nuclides` : ''}.`);
       refExport = { label: `${ref.label} (${ref.where}, ${ref.year})`, times: rtimes, total: rtotal, series: [...ref.values.keys()].map((name) => ({ name, y: rres.N.map((Nt) => rcurve(name, Nt)) })) };
     }
     $('invTimeSub').textContent = `${unit}${sub.total ? '' : ' per canister'}; years after 1 January ${y0}`;
@@ -1558,8 +1693,10 @@
     });
     if (v.timeQty === 'heat') notes.unshift('A nuclide’s line counts its short-lived daughters with it; the black line is the heat of everything, from ICRP 107’s energies.');
     else notes.unshift(`The eight nuclides that make the largest share of the total at some time in the span, and the total of all ${listed.length}.`);
+    if (totalP) notes.splice(1, 0, `Dotted: the part of the total in the planned elements (named PLAN…, the reactors’ forecast), ${shareText(totalP[0], total[0])} of it at the start.`);
+    if (fuelWords()) notes.splice(1, 0, `Of the ${fuelWords()}.`);
     $('invTimeNote').textContent = notes.join(' ');
-    state.timeExport = { times, top, series, total, unit, sub, y0, what: QWORD[v.timeQty], ref: refExport };
+    state.timeExport = { times, top, series, total, totalP, unit, sub, y0, what: QWORD[v.timeQty], ref: refExport };
   }
 
   /** Every nuclide over time, not only the eight drawn. */
@@ -1568,9 +1705,10 @@
     if (!x) return null;
     const per = `${x.unit}${x.sub.total ? '' : ' per canister'}`;
     const columns = [{ label: `Years after 1 January ${x.y0}`, width: 14 }, { label: 'Year', width: 10 }, { label: `Total (${per})`, fmt: 'sci', width: 18 },
+      ...(x.totalP ? [{ label: `Of it in planned elements (${per})`, fmt: 'sci', width: 22 }] : []),
       ...x.series.map((s) => ({ label: `${s.u.name} (${x.unit})`, fmt: 'sci', width: 13 }))];
-    const rows = x.times.map((t, j) => [t, x.y0 + t, x.total[j], ...x.series.map((s) => s.y[j])]);
-    return { title: `${x.what} of ${x.sub.label}, from 1 January ${x.y0}, ${per}`, columns, rows };
+    const rows = x.times.map((t, j) => [t, x.y0 + t, x.total[j], ...(x.totalP ? [x.totalP[j]] : []), ...x.series.map((s) => s.y[j])]);
+    return { title: `${x.what} of ${x.sub.label}, from 1 January ${x.y0}, ${per}${fuelWords() ? `, ${fuelWords()}` : ''}`, columns, rows };
   }
   function timeCsv() {
     const t = timeTable();
@@ -1602,6 +1740,7 @@
     show($('invPsarEmpty'), !has);
     show($('invPsar'), has);
     if (!has) return;
+    $('invPsarHow').textContent = `This inventory${fuelWords() ? `, ${fuelWords()},` : ''} beside PSAR’s${fuelWords() ? ', all of its fuel' : ''}, at one time and in one unit. ${psarMolesWords()}`;
     const th = theme();
     const inv = state.inv;
     /* The comparison needs one time for both. Until a reference is chosen,
@@ -1747,7 +1886,10 @@
     const elCount = new Map();
     const kSel = isAct ? -1 : inv.nuclides.findIndex((x) => x.name === v.catNuc);
     const fk = kSel >= 0 ? factorOf(v.catNuc, u) : 1;
+    let nCounted = 0;
     for (let e = 0; e < inv.nEl; e++) {
+      if (!inv.picks(e)) continue;
+      nCounted++;
       const name = inv.categoryNames[inv.elCategory[e]];
       const x = isAct ? at.activity[e] : at.amounts[e * inv.N + kSel] * fk;
       cat.set(name, (cat.get(name) || 0) + x);
@@ -1768,7 +1910,7 @@
     const order = ['BWR', 'PWR', 'Ågesta', 'Swap MOX', 'Studsvik', 'Rod skeletons'];
     const names = [...new Set([...order.filter((n) => cat.has(n) || psar.has(n)), ...cat.keys(), ...psar.keys()])];
     const rows = names.map((n) => ({ n, el: elCount.get(n), pel: pCounts[n], mine: cat.get(n), theirs: psar.get(n) }));
-    const foot = { n: 'All', el: inv.nEl, pel: Object.values(pCounts).reduce((s, a) => s + (a || 0), 0) || NaN, mine: [...cat.values()].reduce((s, a) => s + a, 0), theirs: [...psar.values()].reduce((s, a) => s + a, 0) };
+    const foot = { n: 'All', el: nCounted, pel: Object.values(pCounts).reduce((s, a) => s + (a || 0), 0) || NaN, mine: [...cat.values()].reduce((s, a) => s + a, 0), theirs: [...psar.values()].reduce((s, a) => s + a, 0) };
     state.psarExport.cats = { rows, foot, u, what: isAct ? 'the activity of the nuclides each lists' : v.catNuc, mineWhen: timeWords(), psarWhen: pYear };
     const maxV = Math.max(...rows.map((r) => Math.max(r.mine || 0, r.theirs || 0)));
     const bar = (x) => (x > 0 ? `<span style="width:${Math.max(1, x / maxV * 80)}px"></span>` : '');
@@ -1792,7 +1934,7 @@
   function renderCanCmp(sim, th) {
     const inv = state.inv, d = inv.data;
     const pc = psarCounts();
-    const fileHeat = d.canisters.num.decay_heat_W, declared = d.canisters.num.declared_heat_W;
+    const fileHeat = inv.canNum('decay_heat_W'), declared = inv.canNum('declared_heat_W');
     const types = ['all', ...inv.typeNames];
     const row = (t) => {
       const sel = t === 'all' ? inv.select(-1) : inv.select(inv.typeNames.indexOf(t));
@@ -1801,7 +1943,7 @@
       const years = Array.from(sel, (c) => d.canisters.date[c]).filter(Number.isFinite);
       return {
         t, n: sel.length, pn: t === 'all' ? pc.canisters.all : pc.canisters[t],
-        el: sel.reduce((s, c) => s + d.canisters.nEl[c], 0), pel: sc ? sc.reduce((s, c) => s + c.n, 0) : NaN,
+        el: sel.reduce((s, c) => s + inv.nIn(c), 0), pel: sc ? sc.reduce((s, c) => s + c.n, 0) : NaN,
         heat: fileHeat ? mean(Array.from(sel, (c) => fileHeat[c])) : NaN, decl: declared ? mean(Array.from(sel, (c) => declared[c])) : NaN,
         pheat: sc ? mean(sc.map((c) => c.heat)) : NaN,
         span: years.length ? `${new Date(Math.min(...years)).getUTCFullYear()}–${new Date(Math.max(...years)).getUTCFullYear()}` : '–',
@@ -1939,7 +2081,7 @@
     if (!state.raw || state.raw.inv !== inv) {
       state.raw = {
         inv, built: false, level: 'el', qty: state.settings.unit, parts: inv.parts.map(() => true), apart: true,
-        nucSet: 'all', picked: inv.nuclides.map(() => true), from: null, to: null, planned: 'with', reactors: null, fuels: null,
+        nucSet: 'all', picked: inv.nuclides.map(() => true), from: null, to: null, reactors: null, fuels: null,
       };
     }
     return state.raw;
@@ -1969,7 +2111,6 @@
     $('invRawQty').value = r.qty;
     $('invRawApart').value = r.apart ? 'apart' : 'sum';
     $('invRawNuc').value = r.nucSet;
-    $('invRawPlanned').value = r.planned;
     $('invRawFrom').value = '';
     $('invRawTo').value = '';
     r.built = true;
@@ -1982,7 +2123,6 @@
     r.qty = $('invRawQty').value;
     r.apart = $('invRawApart').value === 'apart';
     r.nucSet = $('invRawNuc').value;
-    r.planned = $('invRawPlanned').value;
     for (const [key, list] of [['parts', 'invRawParts'], ['picked', 'invRawNucList'], ['reactors', 'invRawReactorList'], ['fuels', 'invRawFuelList']]) {
       if (r[key]) for (const el of $(list).querySelectorAll('input')) r[key][Number(el.value)] = el.checked;
     }
@@ -2013,8 +2153,7 @@
         if ((r.from !== null && !(y >= r.from)) || (r.to !== null && !(y <= r.to))) continue;
       }
       for (let e = can.el0[c], end = e + can.nEl[c]; e < end; e++) {
-        const planned = isPlanned(d.elements.id[e]);
-        if ((r.planned === 'without' && planned) || (r.planned === 'only' && !planned)) continue;
+        if (!inv.picks(e)) continue;
         if (rc && !(rc.codes[e] >= 0 && r.reactors[rc.codes[e]])) continue;
         if (fc && !(fc.codes[e] >= 0 && r.fuels[fc.codes[e]])) continue;
         chosen[e] = 1;
@@ -2059,7 +2198,9 @@
     } else {
       const chosenIn = (c) => { let s = 0; for (let e = d.canisters.el0[c], end = e + d.canisters.nEl[c]; e < end; e++) s += x.chosen[e]; return s; };
       fields.push(col('Canister', 'text', 10, (c) => d.canisters.id[c]), col('Type', 'text', 7, (c) => typeName(inv.canType[c]) || ''),
-        col('Packed', 'date', 11, (c) => d.canisters.date[c]), col('Elements chosen', 'int', 9, chosenIn), col('Elements', 'int', 9, (c) => d.canisters.nEl[c]),
+        col('Packed', 'date', 11, (c) => d.canisters.date[c]), col('Elements chosen', 'int', 9, chosenIn),
+        ...(inv.nPlanned ? [col('Planned among them', 'int', 9, (c) => { let n = 0; for (let e = d.canisters.el0[c], end = e + d.canisters.nEl[c]; e < end; e++) n += x.chosen[e] & inv.planned[e]; return n; })] : []),
+        col('Elements', 'int', 9, (c) => d.canisters.nEl[c]),
         col('Reactors of those chosen', 'text', 40, (c) => rawReactors(c, x.chosen)));
       for (const [k, c] of Object.entries(d.canisters.text)) fields.push(col(fieldLabel(k), 'text', 16, (i) => (c.codes[i] >= 0 ? c.values[c.codes[i]] : null)));
       for (const [k, a] of Object.entries(d.canisters.num)) fields.push(col(`${fieldLabel(k)}, in the file`, 'fixed', 15, (i) => a[i]));
@@ -2089,7 +2230,7 @@
       ['Half-lives', halfWords()],
       ['Canisters', selType() ? `${selType()} only` : 'all'],
       ['Packed', r.from === null && r.to === null ? 'any year' : `${r.from ?? 'the first'} to ${r.to ?? 'the last'}`],
-      ['Planned elements', { with: 'with the others', without: 'left out', only: 'only these' }[r.planned]],
+      ['Fuel', fuelWords() || (inv.nPlanned ? 'all elements, discharged and planned (PLAN…)' : 'all elements')],
       ['Reactors', inv.fields.reactor ? listed('reactors', inv.fields.reactor) : '–'],
       ['Fuel types', inv.fields.fuel ? listed('fuels', inv.fields.fuel) : '–'],
       ['Fields', 'as the file gives them; its heats are at packing'],
@@ -2105,7 +2246,7 @@
     $('invRawNucSum').textContent = `Nuclides picked: ${count('picked')}`;
     $('invRawReactorSum').textContent = `Reactors: ${count('reactors')}`;
     $('invRawFuelSum').textContent = `Fuel types: ${count('fuels')}`;
-    $('invRawSub').textContent = `${year() === null ? 'As packed: the file’s own values, each canister at its packing date' : `In ${year()}: each canister decayed to 1 January ${year()} from its packing date`}; half-lives ${$('invHalf').selectedOptions[0].textContent}; ${selType() ? `${selType()} canisters only` : 'all canisters'}. Time, half-lives and canisters are chosen above.`;
+    $('invRawSub').textContent = `${year() === null ? 'As packed: the file’s own values, each canister at its packing date' : `In ${year()}: each canister decayed to 1 January ${year()} from its packing date`}; half-lives ${$('invHalf').selectedOptions[0].textContent}; ${selType() ? `${selType()} canisters only` : 'all canisters'}${fuelWords() ? `, ${fuelWords()}` : ''}. Time, half-lives, canisters and fuel are chosen above.`;
     const x = rawPlan(r);
     const n = x.plan.rows.length, nv = x.plan.cols.length;
     const sample = new Float64Array(Math.min(PREVIEW_ROWS, n) * nv);
@@ -2304,6 +2445,7 @@
       const done = (data) => {
         state.reading = null;
         state.inv = new M.Inventory(data, ND, { name: label, size: opt.size || file.size });
+        state.inv.setPick(state.inv.nPlanned && state.inv.nPlanned < state.inv.nEl ? state.settings.fuel : 'all');
         state.invFile = { name: label, size: opt.size || file.size };
         state.systems.clear();
         state.detail = null;
@@ -2435,6 +2577,8 @@
         (err) => { showError([`ENSDF could not be read: ${err.message}`]); renderBar(); });
     } else s.half = half;
     s.type = Number($('invType').value);
+    s.fuel = $('invFuel').value || 'all';
+    if (state.inv) state.inv.setPick(state.inv.nPlanned ? s.fuel : 'all');
     if (s.at === 'year') {
       const field = $('invYear');
       const t = field.value.trim();
@@ -2496,6 +2640,7 @@
     'inv:detailClose': () => { state.detail = null; renderCanisters(); },
     'inv:detailPrev': () => stepDetail(-1),
     'inv:detailNext': () => stepDetail(1),
+    'inv:full': () => setFull(!document.documentElement.classList.contains('inv-full')),
     'inv:raw': () => readRaw(),
     'inv:rawAll': (ev, el) => rawToggle(el.dataset.list, true),
     'inv:rawNone': (ev, el) => rawToggle(el.dataset.list, false),
@@ -2552,9 +2697,16 @@
       }),
       'set:half': () => ({
         kicker: 'Setting', title: 'Half-lives',
-        lead: 'ICRP Publication 107’s by default. PSAR’s own, once its report (Table D-1) is open, replace ICRP 107’s for the nuclides they list, in decay and in turning moles into becquerels; the chains stay ICRP 107’s. An ENSDF release on the site gives its own half-lives, branches, chains and energies in their place; the atomic masses stay ICRP 107’s.',
+        lead: 'What everything decays with and turns moles into becquerels with: ICRP Publication 107’s by default; PSAR’s own, once its report (Table D-1) is open, for the nuclides they list (the chains stay ICRP 107’s); or an ENSDF release on the site, with its own branches, chains and energies (the atomic masses stay ICRP 107’s). PSAR’s becquerels become moles with its own half-lives whatever is chosen, once its report is open.',
         facts: [['Ni-59', 'ICRP 107: 101 000 y; PSAR and ENSDF 2026: 76 000 y'], ['Se-79', 'ICRP 107 and PSAR: 295 000 y; ENSDF 2026: 327 000 y']],
         more: more('help-half', 'Half-lives'),
+      }),
+      'set:fuel': () => ({
+        kicker: 'Setting', title: 'Fuel',
+        lead: 'All fuel elements, the discharged only, or the planned only: those named PLAN…, the reactors’ forecast of fuel not yet discharged. Every view counts only the elements chosen; a canister’s sums are of its elements of that kind, and a canister holding none is left out.',
+        facts: state.inv && state.inv.nPlanned ? [['Planned', `${intText(state.inv.nPlanned)} of ${intText(state.inv.nEl)} elements`], ['Canisters holding them', intText(state.inv.select(-1, 'planned').length)]] : [],
+        sections: [{ heading: 'With all of them shown', list: ['Overview: the planned share of the elements, uranium, activity and heat; planned fuel hatched in the charts', 'Canisters: planned elements, or canisters holding them, as rings', 'Nuclides: each nuclide’s planned share', 'Over time: the planned part of the total, dotted'] }],
+        more: more('help-fuel', 'Fuel'),
       }),
       'set:type': () => ({
         kicker: 'Setting', title: 'Canisters',
@@ -2611,9 +2763,10 @@
      --------------------------------------------------------------------- */
   load();
   KvotInfo.mount(document);
+  fullState();
   showTab(state.tab);
   offerEnsdf();
 
   /* For tests and the console. */
-  window.InventoryPage = { state, openFiles, render: renderTab, system, canAt, refs, setYear, showTab };
+  window.InventoryPage = { state, openFiles, render: renderTab, system, canAt, refs, refValues, setYear, showTab };
 })();

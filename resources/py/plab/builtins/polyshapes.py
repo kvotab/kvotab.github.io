@@ -146,7 +146,19 @@ class PolyShape(Obj):
         return np.vstack(parts)
 
     def regions_list(self):
-        return _polys(self.geom())
+        """The regions, in the order of their outer boundaries in Vertices (so sortregions shows in regions and in
+        isinterior's region numbers), not the order the geometry library leaves them in."""
+        polys = _polys(self.geom())
+        if len(polys) < 2:
+            return polys
+        from shapely.geometry import Point
+
+        def first(poly):
+            for i, (r, h) in enumerate(zip(self.rings, self.holes)):
+                if not h and len(r) and poly.distance(Point(r[0])) <= 1e-9 * (1 + float(np.max(np.abs(r[0])))):
+                    return i
+            return len(self.rings)
+        return sorted(polys, key=first)
 
     def getprop(self, name):
         k = name.lower()
@@ -589,7 +601,7 @@ def _isinterior(nargout, P, *args):
     inside = shp.contains(g, pts) | on if not g.is_empty else on
     if nargout > 2:
         idx = np.full(len(Q), np.nan)
-        for k, poly in enumerate(_polys(g)):
+        for k, poly in enumerate(p.regions_list()):
             hit = shp.covers(poly, pts) & np.isnan(idx)
             idx[hit] = k + 1
         return inside.reshape(shape), on.reshape(shape), out(idx.reshape(shape))
@@ -787,7 +799,7 @@ def _sortregions(nargout, P, *args):
 @pmethod('regions')
 def _regions(nargout, P, *args):
     p = _items(P)[0][0]
-    polys = _polys(p.geom())
+    polys = p.regions_list()
     items = [PolyShape.from_geom(x) for x in polys]
     if not items:
         return HArr(np.empty((0, 1), object))
@@ -966,7 +978,16 @@ def _draw(p, args):
 @pmethod('plot')
 def _plot(nargout, P, *args):
     items, shape = _items(P)
-    hs = [_draw(p, args) for p in items]
+    # an array of shapes in the same axes: held after the first, as it was after the last
+    hs, ax, keep = [], None, None
+    for p in items:
+        hs.append(_draw(p, args))
+        if ax is None:
+            ax = hs[-1].parent
+            keep = ax.props['NextPlot']
+            ax.props['NextPlot'] = 'add'
+    if ax is not None:
+        ax.props['NextPlot'] = keep
     if not nargout:
         return None
     return hs[0] if len(hs) == 1 else HArr.of(hs, col=False)

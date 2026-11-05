@@ -21,12 +21,14 @@
         var t = localStorage.getItem('kvot-theme');
         if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
         document.documentElement.setAttribute('data-theme', t);
+        // the full window (the tab row's button): no site header or footer, from the first paint
+        if (localStorage.getItem('kvot.inventory.full') === '1') document.documentElement.classList.add('inv-full');
       } catch (e) { /* storage unavailable — site.js will apply the default */ }
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/inventory.css?v=20261102">
+  <link rel="stylesheet" href="./resources/css/inventory.css?v=20261105">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -79,10 +81,25 @@
             </select>
             <span class="kvot-info-slot" data-info-key="set:type"></span>
           </span>
+          <span class="inv-setting">
+            <label for="invFuel">Fuel</label>
+            <select id="invFuel" data-on-change="inv:settings">
+              <option value="all">all</option>
+              <option value="discharged">discharged</option>
+              <option value="planned">planned</option>
+            </select>
+            <span class="kvot-info-slot" data-info-key="set:fuel"></span>
+          </span>
         </div>
       </div>
 
-      <!-- ============================ tabs ============================ -->
+      <!-- ============================ tabs ============================
+           The row: in the full window the kvot mark (the home page, in a new
+           tab, as the files opened here would be lost) and the site's theme
+           switch, then the tabs, and the full-window button at the end. The
+           buttons are outside the tablist, which holds only the tabs. -->
+      <div class="inv-tabbar">
+      <a class="inv-homelink inv-fullonly" href="./index.html" target="_blank" rel="noopener" title="kvot ab: the home page, in a new tab"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
       <div class="inv-tabs" role="tablist" aria-label="Views">
         <button type="button" role="tab" id="invTab-overview" aria-selected="true" aria-controls="invPane-overview" data-tab="overview" data-on-click="inv:tab">Overview</button>
         <button type="button" role="tab" id="invTab-nuclides" aria-selected="false" aria-controls="invPane-nuclides" data-tab="nuclides" data-on-click="inv:tab">Nuclides</button>
@@ -91,6 +108,14 @@
         <button type="button" role="tab" id="invTab-psar" aria-selected="false" aria-controls="invPane-psar" data-tab="psar" data-on-click="inv:tab">Compare with PSAR</button>
         <button type="button" role="tab" id="invTab-raw" aria-selected="false" aria-controls="invPane-raw" data-tab="raw" data-on-click="inv:tab">Raw data</button>
         <button type="button" role="tab" id="invTab-help" aria-selected="false" aria-controls="invPane-help" data-tab="help" data-on-click="inv:tab">Help</button>
+      </div>
+      <span class="inv-tabend">
+        <button type="button" class="theme-toggle inv-fullonly" data-on-click="kvot:toggleTheme" title="Switch to dark mode" aria-label="Switch to dark mode">🌙</button>
+        <button type="button" class="inv-fullbtn" id="invFull" data-on-click="inv:full" aria-pressed="false" aria-label="Full window" title="Full window: the page without the site's header and footer">
+          <!-- four corners: out to the full window, or in again (the stylesheet shows the one that fits) -->
+          <svg viewBox="0 0 16 16" width="15" height="15" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path class="inv-full-out" d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/><path class="inv-full-in" d="M6 2v4H2M10 2v4h4M14 10h-4v4M2 10h4v4"/></svg>
+        </button>
+      </span>
       </div>
 
       <!-- ========================== overview ========================== -->
@@ -285,7 +310,7 @@
         </div>
         <div id="invPsar" hidden>
           <div class="inv-toolbar">
-            <span class="inv-sub" style="margin:0">This inventory beside PSAR’s, at one time and in one unit.</span>
+            <span class="inv-sub" style="margin:0" id="invPsarHow">This inventory beside PSAR’s, at one time and in one unit.</span>
             <span class="inv-spacer"></span>
             <button type="button" class="inv-btn secondary small" data-on-click="inv:psarExcel">Excel</button>
           </div>
@@ -381,13 +406,6 @@
                 <label>from <input type="text" id="invRawFrom" inputmode="numeric" autocomplete="off" placeholder="first" data-on-change="inv:raw"></label>
                 <label>to <input type="text" id="invRawTo" inputmode="numeric" autocomplete="off" placeholder="last" data-on-change="inv:raw"></label>
               </div>
-              <div class="inv-raw-row"><label class="inv-raw-label" for="invRawPlanned">Planned elements</label>
-                <select id="invRawPlanned" data-on-change="inv:raw">
-                  <option value="with">with the others</option>
-                  <option value="without">left out</option>
-                  <option value="only">only these</option>
-                </select>
-              </div>
               <details class="inv-raw-pick" id="invRawReactorPick">
                 <summary id="invRawReactorSum">Reactors</summary>
                 <div class="inv-raw-tools"><button type="button" class="inv-btn secondary small" data-on-click="inv:rawAll" data-list="invRawReactorList">All</button><button type="button" class="inv-btn secondary small" data-on-click="inv:rawNone" data-list="invRawReactorList">None</button></div>
@@ -420,6 +438,8 @@
           <h2 id="help-what">What it does</h2>
           <p>The page reads a spent-fuel radionuclide inventory given canister by canister and fuel element by fuel element, and shows it: the amount of each nuclide, how it is shared between the parts of the fuel, how it spreads from canister to canister, where the fuel came from, how much heat it gives off and how it decays. Every view can show the inventory as packed or as it will be in any later year, in moles, becquerels or grams. Opened beside it, SKB’s inventory for PSAR is brought to the same time and unit, so that the two can be compared nuclide by nuclide.</p>
 
+          <p>The four corners at the right end of the tab row show the page in the full window, without the site’s header and footer; the kvot mark at the row’s left end then opens the home page in a new tab, beside it the site’s light and dark switch. The corners again bring the header and footer back. The page remembers which it was.</p>
+
           <h2 id="help-files">Opening files</h2>
           <p>Drop files anywhere on the page, or use <b>Open files…</b>. A file is recognised by what it holds, so names do not matter, and several can be opened at once. The inventory takes the place of any opened before it; PSAR’s files are added beside it. Each shows as a chip in the bar, with × to close it. Everything is read in the browser; nothing is sent anywhere or kept after the page is closed.</p>
           <h3 id="help-zip">Zipped files</h3>
@@ -427,7 +447,7 @@
           <h3 id="help-json">The inventory</h3>
           <p>A JSON file with one member per canister. A canister holds its packing date (as <code>YYYY-MM-DD</code>), its fuel elements, and whatever else it is given (decay heat, declared heat). An element holds its parts, each a map from nuclide to amount, and its properties: reactor, reactor type, fuel type, decay heat, declared heat. Names are not fixed: an element’s parts are the members that map nuclide names (<code>cs137</code>, <code>Cs-137</code>, <code>am242m</code>) to numbers, its properties its other numbers and texts. An array of canisters, or of elements, does as well. Amounts are taken to be moles, at the date each canister was packed.</p>
           <p>The file is read a piece at a time, so its size is no matter: an inventory of 47 000 elements is read in a few seconds. Missing amounts (<code>null</code>, or <code>NaN</code> as Python writes it) count as none, and the bar says how many there were.</p>
-          <p>Elements whose name begins with PLAN are the fuel the reactors are expected to discharge in future, and the page counts them apart as <b>planned</b>.</p>
+          <p>Elements whose name begins with PLAN are the fuel the reactors are expected to discharge in future, the reactors’ forecast, and the page counts them apart as <b>planned</b>; the others are <b>discharged</b>. Most planned elements share a canister with discharged ones, so the page tells them apart element by element, not canister by canister.</p>
           <h3 id="help-psar-files">PSAR’s files</h3>
           <ul>
             <li><b>The workbook</b> (“Data för radionuklidinventariet PSAR”, SKBdoc 1668003): the total activity of each kind of fuel, the average canister over all of them, the average BWR and PWR canister with their spread, each part of an element, and the encapsulation simulation, every element with its reactor, design, canister, deposition year, decay heat and burnup. Its activities are taken to hold for 2045, the year the report gives.</li>
@@ -443,14 +463,18 @@
           <h3 id="help-unit">Unit</h3>
           <p>Moles as the file gives them, becquerels (A = λN), or grams (by the atomic mass in ICRP Publication 107). A conversion to or from becquerels depends on the half-life, so it changes with <b>Half-lives</b>.</p>
           <h3 id="help-half">Half-lives</h3>
-          <p>ICRP Publication 107 by default. PSAR worked with half-lives of its own, those of its report’s Table D-1, used to turn ORIGEN’s results into becquerels. Once the report is open they can be chosen here; they then replace ICRP 107’s half-life for each nuclide they list, both in decay and in converting between moles and becquerels, and the chains stay ICRP 107’s. The choice matters: PSAR’s Ni-59 lives 76 000 years and ICRP 107’s 101 000, so the same activity is a third more moles by ICRP 107.</p>
+          <p>The half-lives everything decays with, and turns moles into becquerels with: ICRP Publication 107’s by default. PSAR worked with half-lives of its own, those of its report’s Table D-1, with which it turned ORIGEN’s moles into becquerels. Once the report is open they can be chosen here; they then replace ICRP 107’s half-life for each nuclide they list, and the chains stay ICRP 107’s. The choice matters: PSAR’s Ni-59 lives 76 000 years and ICRP 107’s 101 000, so the same activity is a third more moles by ICRP 107.</p>
+          <p>PSAR’s becquerels are turned back into moles with its own half-lives, whatever is chosen here, so that they are the moles PSAR had and compare with the moles of the inventory; from there they decay with the half-lives chosen. Only the report gives them: with the workbook alone, the half-lives chosen here are used, and the comparison says so.</p>
           <p>An ENSDF release on the site, the one the Chart of Nuclides reads, can be chosen too. Its half-lives, its branches and so its chains, and the energy each decay gives off then take the place of ICRP 107’s, the chains built as Radionuclide Decay Chains builds them: every branch, isomers living under a second passed through. The atomic masses stay ICRP 107’s, as ENSDF gives none. A nuclide of the inventory is the state of that nuclide whose half-life in ENSDF is closest to ICRP 107’s (the inventory’s Am-242m is ENSDF’s Am-242m1). The release is read when it is first chosen. With ENSDF 2026, Ni-59 lives 76 000 years, as in PSAR, Se-79 327 000 and Th-229 7 907.</p>
           <h3 id="help-type">Canisters</h3>
           <p>All canisters, or those of one reactor type. A canister’s type is that of most of its elements; in practice a canister holds one type only. Every view shows the canisters chosen here, except the comparison of the average canister with PSAR’s, which compares like with like (BWR with BWR, PWR with PWR, all with all).</p>
 
+          <h3 id="help-fuel">Fuel</h3>
+          <p>All elements, the discharged only, or the planned only (named PLAN…). Every view then counts only those elements: a canister’s amounts, activity and heat are those of its elements of that kind, and a canister holding none is left out. A canister’s heat from the file is then the sum of those elements’ heats, which is no canister’s whole heat, so the 1 700 W limit says little of it. PSAR’s numbers beside them stay those of all its fuel. With all elements shown, the views tell the planned part apart: the Overview’s numbers give its share, its charts hatch it, the Canisters view draws planned elements (or canisters holding them) as rings, the Nuclides table gives each nuclide’s planned share, and Over time draws the planned part of the total dotted.</p>
+
           <h2 id="help-views">The views</h2>
           <h3 id="help-overview">Overview</h3>
-          <p>The number of canisters and fuel elements, when they were packed, the uranium and plutonium in them, their activity and decay heat; PSAR’s numbers below where they are open. The charts show the canisters packed each year (PSAR’s deposited each year as a line), the elements from each reactor (PSAR’s as rings), and the decay heat of each canister when packed, from the file, with the declared heat beside it and the limit of 1 700 W.</p>
+          <p>The number of canisters and fuel elements, when they were packed, the uranium and plutonium in them, their activity and decay heat; PSAR’s numbers below where they are open. The charts show the canisters packed each year (PSAR’s deposited each year as a line), the elements from each reactor (PSAR’s as rings), and the decay heat of each canister when packed, from the file, with the declared heat beside it and the limit of 1 700 W. Planned fuel is hatched in the colour of its type: the canisters holding planned elements, and each reactor’s planned elements; the numbers above say how many, and what share of the uranium, the activity and the heat is in them.</p>
           <h3 id="help-decay-heat">Decay heat</h3>
           <p>The file gives each element and canister two heats: its decay heat and its declared heat. The page shows both as given. In a later year it works out the heat itself, from the nuclides listed and their short-lived daughters. For fuel packed soon after discharge that is less than the file’s heat, because nuclides the file does not list (Cs-134, Co-60, Eu-154, Kr-85) still give off heat; within a few decades of packing they have decayed, and the two agree to within a per cent.</p>
           <h3 id="help-nuclides">Nuclides</h3>
@@ -465,7 +489,7 @@
           <p>The tables of elements by reactor and of canisters, the canisters each year and the decay heat per canister set this inventory beside PSAR’s encapsulation simulation, from its workbook.</p>
 
           <h3 id="help-raw">Raw data</h3>
-          <p>The inventory’s own values, row by row, for use elsewhere: a row for each fuel element, or for each canister with the elements chosen in it summed, and a column for each part and nuclide (or for each nuclide, the parts summed), in moles, becquerels, grams or decay heat. The rows can be narrowed to the years the canisters were packed in, to planned elements or the others, and to some reactors and fuel types; the canister type, the time and the half-lives are those chosen above. With <b>Time</b> as packed the values are the file’s own, unchanged; in a year, each canister is decayed to 1 January of it from its own packing date, each part on its own. Each row keeps the file’s fields, its heats among them, as the file gives them. The table below the choices shows the first rows; Excel and CSV save them all, every digit, with what they are (an <b>About</b> sheet in Excel, lines beginning with # at the top of the CSV file).</p>
+          <p>The inventory’s own values, row by row, for use elsewhere: a row for each fuel element, or for each canister with the elements chosen in it summed, and a column for each part and nuclide (or for each nuclide, the parts summed), in moles, becquerels, grams or decay heat. The rows can be narrowed to the years the canisters were packed in, and to some reactors and fuel types; the canister type, the fuel (all, discharged or planned), the time and the half-lives are those chosen above. A fuel element’s row says whether it is planned, a canister’s how many of its elements chosen are. With <b>Time</b> as packed the values are the file’s own, unchanged; in a year, each canister is decayed to 1 January of it from its own packing date, each part on its own. Each row keeps the file’s fields, its heats among them, as the file gives them. The table below the choices shows the first rows; Excel and CSV save them all, every digit, with what they are (an <b>About</b> sheet in Excel, lines beginning with # at the top of the CSV file).</p>
           <h2 id="help-saving">Saving</h2>
           <p>Every view saves as an Excel workbook (<b>Excel</b>), and the Nuclides, Canisters, Over time and Raw data views as CSV too. The numbers keep every digit; Excel only shows them in a format (amounts as 1.234E-05, dates as dates), with a filter on each table’s headings. Each workbook ends with a sheet <b>About</b> naming the files, the time, the unit, the half-lives and the canisters the numbers are for.</p>
           <ul>
@@ -527,7 +551,7 @@
   <script src="./resources/js/ensdf-sources.js?v=20261006"></script>
   <script src="./resources/js/rdc-ensdf.js?v=20261006"></script>
   <script src="./resources/js/inventory-ensdf.js?v=20261102a"></script>
-  <script src="./resources/js/kvot-info.js?v=20261004"></script>
+  <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/inventory-ui.js?v=20261102d"></script>
 </body>
 </html>

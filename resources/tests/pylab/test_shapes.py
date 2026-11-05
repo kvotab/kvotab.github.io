@@ -196,5 +196,10 @@ for k in range(3):
     near(f'random polygons {k + 1}: areas of the Booleans as Shapely gives them', W['r'],
          [[ga.area, gb.area, ga.union(gb).area, ga.intersection(gb).area, ga.difference(gb).area, ga.symmetric_difference(gb).area]], 1e-9)
 raises("polyshape([0 1 1], [0 0 1], 'SolidBoundaryOrientation', 'up')", "'auto', 'cw' or 'ccw'")
+W, _ = run("p = polyshape({[0 1 1 0], [3 6 6 3]}, {[0 0 1 1], [0 0 3 3]}); q = sortregions(p, 'area', 'descend'); "
+           "a1 = arrayfun(@area, regions(q)); [~, ~, id] = isinterior(q, [0.5 4], [0.5 1]);")
+near("regions, and isinterior's region numbers, follow the polyshape's own order (sortregions)", (W['a1'], W['id']), [9, 1, 2, 1])
+W, _ = run("f = figure('Visible', 'off'); plot([polyshape([0 1 1 0], [0 0 1 1]) nsidedpoly(6, 'Center', [3 0])]); n = numel(get(gca, 'Children')); np = get(gca, 'NextPlot'); close(f)")
+same('plot of a polyshape array draws every shape in the same axes, and leaves hold as it was', (float(W['n'][0, 0]) if hasattr(W['n'], 'shape') else float(W['n']), W['np'].str()), (2.0, 'replace'))
 
 sys.exit(C.done())

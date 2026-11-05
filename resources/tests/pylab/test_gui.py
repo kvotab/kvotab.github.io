@@ -1003,6 +1003,10 @@ run("uf = uifigure; s1 = uislider(uf, 'Limits', [0 10]); t1 = s1.MajorTicks; s2 
 check('ticks follow Limits (nice steps) until set by hand', (np.asarray(val('t1')).reshape(-1).tolist(), np.asarray(val('t2')).reshape(-1).tolist(), np.asarray(val('t3')).reshape(-1).tolist()),
       ([0, 2, 4, 6, 8, 10], [0, 50, 100], [-1, -0.5, 0, 0.5, 1]))
 
+# a plotting function's name that a class also has (area of a polyshape) makes no figure when it gives a value
+run("close all force; pg = polyshape([0 2 2 0], [0 0 2 2]); pa = area(pg); nf0 = numel(findall(groot, 'Type', 'figure')); area([1 2 3]); nf1 = numel(findall(groot, 'Type', 'figure')); close all force")
+check('area of a polyshape is a number and makes no figure; the area chart still draws', (val('pa'), val('nf0'), val('nf1')), (4, 0, 1))
+
 # optimplotx draws the point the solver ends at
 run("close all force; po = optimoptions('fminunc', 'Display', 'off', 'PlotFcn', @optimplotx); px = fminunc(@(x) (x(1) - 1)^2 + (x(2) + 2)^2, [3 3], po); pf = gcf;")
 check('optimplotx: the bars end at the solution', bar_tops(val('pf')), [1.0, -2.0])

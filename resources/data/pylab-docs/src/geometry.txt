@@ -1,0 +1,147 @@
+@ delaunay, delaunayn
+The Delaunay triangulation of points: triangles (or tetrahedra, or simplices in n dimensions) whose circumcircles hold no other point.
+
+Of all triangulations of the points it avoids thin triangles as far as possible. `delaunay` gives a row of point indices for each triangle (tetrahedron in 3-D); `delaunayn` works in any number of dimensions, with Qhull options. `delaunayTriangulation` gives the same as an object to query.
+
+# Syntax
+T = delaunay(x, y)
+    Triangles.
+T = delaunay(x, y, z)
+    Tetrahedra.
+T = delaunayn(X)
+    Simplices in n dimensions.
+T = delaunayn(X, options)
+    With Qhull options.
+# Examples
+## Random points triangulated
+rng default
+x = rand(30, 1);
+y = rand(30, 1);
+T = delaunay(x, y);
+size(T)
+triplot(T, x, y), axis equal
+## The simplices of a cube's corners
+[a, b, c] = ndgrid(0:1);
+T = delaunayn([a(:) b(:) c(:)]);
+size(T)
+# See also
+delaunayTriangulation triplot convhull
+
+@ convhull, convhulln
+The convex hull of points: the smallest convex region holding them, and its area or volume.
+
+In 2-D, `convhull` gives a closed loop of point indices, counterclockwise, and the area; in 3-D the hull's triangles and the volume. `convhulln` works in any number of dimensions, a row of indices for each facet.
+
+# Syntax
+K = convhull(x, y)
+    The hull.
+[K, A] = convhull(x, y)
+    With its area.
+[K, V] = convhull(x, y, z)
+    In 3-D, with its volume.
+[K, V] = convhulln(X)
+    In n dimensions.
+# Examples
+## A hull round random points
+rng default
+x = randn(40, 1);
+y = randn(40, 1);
+[K, A] = convhull(x, y);
+A
+plot(x, y, '.', x(K), y(K), '-'), axis equal
+## The unit cube's volume
+[a, b, c] = ndgrid(0:1);
+[~, V] = convhulln([a(:) b(:) c(:)])
+# See also
+convexHull boundary polyarea
+
+@ voronoi, voronoin
+The Voronoi diagram of points: the regions of the plane closer to each point than to any other.
+
+`voronoi(x, y)` draws its edges (with the points), or with outputs gives the edges' ends to draw. `voronoin` works in any number of dimensions and gives the vertices and, for each point, the indices of its cell's vertices; the first vertex is at infinity, so a cell holding index 1 is unbounded.
+
+# Syntax
+voronoi(x, y)
+    Drawn.
+[vx, vy] = voronoi(x, y)
+    The edges.
+[V, C] = voronoin(X)
+    The vertices and cells.
+# Examples
+## The diagram of a few points
+rng default
+x = rand(12, 1);
+y = rand(12, 1);
+voronoi(x, y), axis equal, axis([0 1 0 1])
+## Cells in numbers
+[V, C] = voronoin([0 0; 1 0; 0 1; 1 1; 0.5 0.5]);
+C{5}
+V(C{5}, :)
+# See also
+delaunay voronoiDiagram
+
+@ tsearchn, dsearchn
+The simplex enclosing each point, and the nearest point of a set.
+
+`tsearchn` finds, for each query point, the triangle (simplex) of a triangulation that holds it (NaN outside) and its barycentric coordinates there. `dsearchn` gives the index of the nearest point of a set, and the distance.
+
+# Syntax
+[t, p] = tsearchn(X, T, XI)
+    The enclosing simplex and barycentric coordinates.
+[k, d] = dsearchn(X, XI)
+    The nearest point and its distance.
+k = dsearchn(X, T, XI, outval)
+    With `outval` for points outside the hull.
+# Examples
+## In which triangle, and nearest to what
+X = [0 0; 1 0; 0 1; 1 1];
+T = delaunay(X(:, 1), X(:, 2));
+[t, p] = tsearchn(X, T, [0.2 0.2; 2 2])
+[k, d] = dsearchn(X, [0.9 0.2; 0.4 0.6])
+# See also
+pointLocation nearestNeighbor
+
+@ rectint
+The areas where rectangles overlap.
+
+Rectangles are rows `[x y width height]`; the result has a row for each rectangle of A and a column for each of B.
+
+# Syntax
+area = rectint(A, B)
+    The overlaps.
+# Examples
+## Two rectangles against two
+A = [0 0 2 2; 1 1 3 1];
+B = [1 1 2 2; 5 5 1 1];
+rectint(A, B)
+# See also
+polyshape intersect
+
+@ triplot, trisurf, trimesh
+Triangles drawn: their edges in the plane, a surface over them, or a mesh.
+
+`triplot(T, x, y)` draws the edges of the triangles; `trisurf(T, x, y, z)` fills the triangles as a surface coloured by z (or `c`); `trimesh` draws them as a mesh of coloured edges.
+
+# Syntax
+triplot(TRI, x, y, spec)
+    Edges in the plane.
+trisurf(TRI, x, y, z, c)
+    A surface.
+trimesh(TRI, x, y, z, c)
+    A mesh.
+# Examples
+## A surface over scattered points
+rng default
+x = 4*rand(150, 1) - 2;
+y = 4*rand(150, 1) - 2;
+z = x.*exp(-x.^2 - y.^2);
+T = delaunay(x, y);
+trisurf(T, x, y, z)
+## The same triangles as a mesh
+rng default
+x = 4*rand(150, 1) - 2;
+y = 4*rand(150, 1) - 2;
+z = x.*exp(-x.^2 - y.^2);
+trimesh(delaunay(x, y), x, y, z)
+# See also
+delaunay triangulation surf
