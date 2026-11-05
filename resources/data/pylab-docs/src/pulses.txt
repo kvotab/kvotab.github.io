@@ -1,0 +1,138 @@
+@ snr, thd, sinad, sfdr
+Measures of a tone's purity: signal to noise, harmonic distortion, signal to noise and distortion, and the spurious-free dynamic range.
+
+Each looks at the spectrum of a signal holding one main tone (through a Kaiser window of beta 38). `snr` gives the tone's power against the noise, with DC and the first n harmonics (6) left out; `thd` the power of harmonics 2 to n against the fundamental's (in dBc, so negative); `sinad` the tone's power against everything else but DC, harmonics included; `sfdr` the tone's power against the largest other component. A tone's power is that of its spectral lobe. `snr(x, y)` is simply 10 log10 of the powers of a signal and its noise.
+
+# Syntax
+r = snr(x)
+    In dB.
+[r, noisepow] = snr(x, fs, n)
+    With the noise's power, n harmonics left out.
+r = snr(x, y)
+    A signal against its noise.
+[r, harmpow, harmfreq] = thd(x, fs, n)
+    Harmonic distortion, with each harmonic's power and frequency.
+[r, totdistpow] = sinad(x, fs)
+    Signal to noise and distortion.
+[r, spurpow, spurfreq] = sfdr(x, fs)
+    The spurious-free dynamic range.
+# Examples
+## A tone with a second and third harmonic, in noise
+fs = 48000;
+t = (0:4799)'/fs;
+x = sin(2*pi*1000*t) + 0.01*sin(2*pi*2000*t) + 0.003*sin(2*pi*3000*t) + 1e-3*randn(size(t));
+round([snr(x, fs), thd(x, fs), sinad(x, fs), sfdr(x, fs)], 1)
+[~, hp, hf] = thd(x, fs, 3);
+round(hf')
+round(hp', 1)
+thd(x, fs)
+# See also
+pspectrum bandpower
+
+@ statelevels, midcross
+A two-state signal's two levels, and where it crosses midway between them.
+
+`statelevels` finds the low and high levels from a histogram of the signal (100 bins): in each half of the range, the average of the samples in its fullest bin. `midcross` gives the times at which each transition crosses the mid-reference level (50% of the way, `'MidPercentReferenceLevel'`), found by linear interpolation; a transition runs from one state's band (`'Tolerance'`, 2% of the levels' difference) to the other's. Times come from fs (the first sample at 0) or the samples' times t. Without outputs, both draw.
+
+# Syntax
+levels = statelevels(x)
+    The low and high levels.
+[levels, histogram, bins] = statelevels(x, nbins)
+    With the histogram.
+c = midcross(x, fs)
+    The mid-reference crossings.
+[c, midlev] = midcross(x, t, 'MidPercentReferenceLevel', p, 'StateLevels', lv)
+    At another reference, with levels given.
+# Examples
+## A clock signal with slow edges
+fs = 1000;
+t = (0:999)'/fs;
+x = 1.5 + 1.5*tanh(20*sin(2*pi*5*t)) + 0.02*randn(size(t));
+round(statelevels(x), 2)
+c = midcross(x, fs);
+round(c(1:4)', 3)
+midcross(x, fs)
+# See also
+risetime pulsewidth
+
+@ risetime, falltime, slewrate
+How fast a two-state signal's transitions are.
+
+`risetime` gives the time each rising transition takes from the lower reference level to the upper (10% and 90% of the way between the state levels, `'PercentReferenceLevels'`); `falltime` the same for falling transitions; `slewrate` the difference of the reference levels over each transition's duration, negative when falling. The further outputs give the crossing times and the reference levels. Without outputs, each draws.
+
+# Syntax
+r = risetime(x, fs)
+    Rise times.
+[r, lowercross, uppercross, lowerref, upperref] = risetime(x, t, 'PercentReferenceLevels', [lo hi])
+    With the crossings and references.
+f = falltime(x, fs)
+    Fall times.
+s = slewrate(x, fs)
+    Slew rates.
+# Examples
+## A trapezoidal pulse
+t = (0:0.01:10)';
+x = interp1([0 2 3 6 8 10], [0 0 5 5 0 0], t);
+r = risetime(x, t)
+f = falltime(x, t)
+round(slewrate(x, t)', 2)
+risetime(x, t)
+# See also
+statelevels overshoot settlingtime
+
+@ pulsewidth, pulsesep, pulseperiod, dutycycle
+The widths, separations and periods of a two-state signal's pulses, and their duty cycles.
+
+A positive pulse rises then falls (`'Polarity'`, `'negative'` for the opposite). Its width runs between its mid-reference crossings; the separation from its end to the next pulse's start; the period from its start to the next one's; the duty cycle is the width over the period. The further outputs give the crossing times. Without outputs, each draws.
+
+# Syntax
+w = pulsewidth(x, fs)
+    Widths.
+[w, initcross, finalcross, midlev] = pulsewidth(x, t, 'Polarity', p)
+    With the crossings.
+s = pulsesep(x, fs)
+    Separations.
+p = pulseperiod(x, fs)
+    Periods.
+d = dutycycle(x, fs)
+    Duty cycles.
+# Examples
+## A pulse train at 30% duty
+fs = 1000;
+t = (0:1999)'/fs;
+x = double(square(2*pi*4*t, 30) > 0);
+x = filter(ones(5, 1)/5, 1, x);
+w = pulsewidth(x, fs);
+[numel(w), numel(pulsesep(x, fs))]
+round([mean(w), mean(pulsesep(x, fs)), mean(pulseperiod(x, fs)), mean(dutycycle(x, fs))], 4)
+pulsewidth(x, fs)
+# See also
+midcross statelevels
+
+@ overshoot, undershoot, settlingtime
+How a two-state signal's transitions overshoot, undershoot and settle.
+
+`overshoot` gives, in percent of the levels' difference, the largest excursion beyond the final state after each transition (within `'SeekFactor'` times the transition's duration after it reaches the state's band; `'Region', 'preshoot'` looks before the transition instead); `undershoot` the excursion back towards the other state; `settlingtime` the time from each mid-reference crossing until the signal stays within `'Tolerance'` percent of its final state, looked for over D after the crossing (NaN when it has not settled by then). The further outputs give the levels and the times. Without outputs, each draws.
+
+# Syntax
+os = overshoot(x, fs)
+    Overshoots, in percent.
+[os, oslev, osinst] = overshoot(x, t, 'Region', r, 'SeekFactor', k)
+    With the levels and times.
+us = undershoot(x, fs)
+    Undershoots.
+s = settlingtime(x, fs, D)
+    Settling times.
+[s, slev, sinst, tolerance] = settlingtime(x, t, D, 'Tolerance', tol)
+    With the levels and times.
+# Examples
+## A second-order system's step
+sys = tf(1, [1 0.6 1]);
+t = (0:0.05:30)';
+y = [zeros(20, 1); step(sys, t(1:end - 20))];
+os = overshoot(y, t)
+round(100*exp(-0.3*pi/sqrt(1 - 0.09)), 2)
+s = settlingtime(y, t, 25)
+overshoot(y, t)
+# See also
+step risetime statelevels

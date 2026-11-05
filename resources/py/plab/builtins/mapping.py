@@ -497,7 +497,7 @@ def antipode(nargout, *args):
     lat, lon = darr(args[0]), darr(args[1])
     half = math.pi if rad else 180.0
     lo = (lon + 2 * half) % (2 * half) - half
-    return out(-lat), out(lo)
+    return (out(-lat), out(lo)) if nargout > 1 else out(-lat)
 
 
 @bi('areaint')

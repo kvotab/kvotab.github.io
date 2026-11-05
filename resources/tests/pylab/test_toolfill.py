@@ -150,6 +150,10 @@ near('midcross and slewrate', (W['m'], W['sr']), [0.55, 1.2, 1.65, 2.3, 10, -5, 
 near('overshoot: 10% past the high state, none after the others', a(W['os']).reshape(-1), [10, 0, 0, 0], 1e-9)
 near('settlingtime: from the mid crossing into the 2% band', W['st'], [[0.08], [0.1], [0.05], [0.1]], 1e-9)
 near('undershoot: none here', W['us'], np.zeros((4, 1)))
+W, _ = run("close all; fs = 100; t = (0:299)/fs; x = interp1([0 0.5 0.6 1.1 1.3 1.6 1.7 2.2 2.4 3], [0 0 1 1 0 0 1 1 0 0], t); "
+           "risetime(x, fs); yl = ylim; L = findobj(gca, 'Type', 'constantline'); v = sort(cell2mat(get(L, 'Value')))';")
+near('risetime drawn: room above and below the levels, the state levels and the 10% and 90% references marked', (W['yl'], W['v']),
+     ([[-0.1, 1.1]], [[0, 0.1, 0.9, 1]]), 1e-9)
 
 # ---- delays, warping --------------------------------------------------------------------------------------------------------------------
 

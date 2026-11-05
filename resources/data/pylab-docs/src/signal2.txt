@@ -1,0 +1,356 @@
+@ xcorr, xcov
+Cross-correlation and cross-covariance of signals, at every lag.
+
+`xcorr` gives r(m), the sum of x(n+m) conj(y(n)), at lags -(N-1) to N-1 (or up to maxlag), the shorter signal padded with zeros; with one signal, its autocorrelation, and with a matrix every pair of columns. `'biased'` divides by N, `'unbiased'` by N - |m|, `'normalized'` makes the autocorrelation 1 at lag 0. `xcov` does the same with the signals' means taken off first. The lag of the largest value is the delay between two signals.
+
+# Syntax
+r = xcorr(x, y)
+    The cross-correlation.
+r = xcorr(x)
+    The autocorrelation.
+[r, lags] = xcorr(x, y, maxlag, scaleopt)
+    Up to a lag, scaled.
+[c, lags] = xcov(x, y, maxlag, scaleopt)
+    The cross-covariance.
+# Examples
+## An echo found
+x = randn(400, 1);
+y = [zeros(25, 1); 0.6*x(1:end - 25)] + 0.2*randn(400, 1);
+[r, lags] = xcorr(y, x, 60);
+[~, k] = max(r);
+lags(k)
+stem(lags, r, '.'), xlabel('lag')
+## A periodic signal's autocorrelation
+t = (0:199)';
+[c, lags] = xcov(sin(2*pi*t/20), 45, 'normalized');
+round(c(lags == 10 | lags == 20)', 2)
+# See also
+finddelay alignsignals autocorr
+
+@ finddelay, alignsignals
+The delay between two signals, and the signals lined up.
+
+`finddelay` gives the delay of y behind x in samples (negative when y is ahead): where their normalized cross-correlation is largest in absolute value, the smallest delay on a tie, column by column for matrices. `alignsignals` delays the earlier signal by leading zeros so that the two line up (`'truncate'` keeps it at its length), and gives the delay.
+
+# Syntax
+D = finddelay(x, y)
+    The delay of y behind x.
+D = finddelay(x, y, maxlag)
+    Looked for up to maxlag.
+[xa, ya, D] = alignsignals(x, y, maxlag, 'truncate')
+    The signals lined up.
+# Examples
+## A pulse that arrives late
+x = [zeros(5, 1); 1; 2; 3; 2; 1; zeros(10, 1)];
+y = [zeros(8, 1); x(1:end - 8)];
+finddelay(x, y)
+[xa, ya] = alignsignals(x, y);
+isequal(xa(1:numel(y)), y)
+# See also
+xcorr
+
+@ resample, decimate, interp, downsample, upsample
+Signals at other sampling rates.
+
+`resample` changes the rate by p/q through a polyphase lowpass filter. `decimate` lowpass filters (a Chebyshev type I filter of order 8 run both ways, or `'fir'`) and keeps every r-th sample from the first; `interp` puts r - 1 samples between each pair by lowpass interpolation, keeping the signal's own. `downsample` and `upsample` only take samples out or put zeros in, without filtering, so that `downsample` lets higher frequencies fold back (alias).
+
+# Syntax
+y = resample(x, p, q)
+    At p/q times the rate.
+y = decimate(x, r)
+    Filtered, then every r-th sample.
+y = interp(x, r)
+    r times as many samples.
+y = downsample(x, n, phase)
+    Every n-th sample.
+y = upsample(x, n, phase)
+    Zeros in between.
+# Examples
+## From 48 to 32 samples a cycle, and back
+t = (0:47)'/48;
+x = sin(2*pi*t);
+y = resample(x, 2, 3);
+numel(y)
+z = interp(downsample(x, 2), 2);
+round(max(abs(z(9:40) - x(9:40))), 3)
+## Aliasing, and none
+fs = 100;
+t = (0:199)'/fs;
+x = sin(2*pi*4*t) + sin(2*pi*40*t);
+plot(t(1:4:end), downsample(x, 4), 'o-', t(1:4:end), decimate(x, 4), 's-', t, sin(2*pi*4*t), ':')
+legend('downsample', 'decimate', '4 Hz part')
+upsample([1 2 3], 3)
+# See also
+upfirdn buffer
+
+@ buffer
+A signal cut into frames, overlapping or with gaps.
+
+Columns of n samples, each overlapping the one before by p (or skipping -p samples between them when p is negative); with p > 0 the first frame starts with p zeros. The last frame is padded with zeros, or with a second output, left out and given back as the samples that did not fill it.
+
+# Syntax
+y = buffer(x, n)
+    Frames of n.
+y = buffer(x, n, p)
+    Overlapping by p.
+[y, z] = buffer(x, n, p)
+    The rest given back.
+# Examples
+## Ten samples, three ways
+buffer(1:10, 4)
+buffer(1:10, 4, 2)
+[y, z] = buffer(1:10, 4, -1)
+# See also
+reshape spectrogram
+
+@ findpeaks
+Local maxima of a signal: their heights, places, widths and prominences.
+
+A peak is higher than both its neighbours (a flat one counts where it starts; the ends never do). The options keep the peaks at least `'MinPeakHeight'` high, `'MinPeakProminence'` above the higher of the lowest points on either side before a higher peak, `'MinPeakDistance'` apart (the highest kept first), or `'Threshold'` above their neighbours; `'NPeaks'` and `'SortStr'` choose and order them. Widths are measured at half the prominence (or half the height), between linear crossings. With x or fs the places are in those units. Without outputs the signal is drawn with the peaks marked.
+
+# Syntax
+pks = findpeaks(y)
+    The heights.
+[pks, locs, w, p] = findpeaks(y, x)
+    With places, widths and prominences.
+[...] = findpeaks(..., 'MinPeakProminence', p, 'MinPeakDistance', d, 'SortStr', 'descend')
+    Chosen.
+findpeaks(y)
+    Drawn.
+# Examples
+## The prominent peaks of a bumpy signal
+x = linspace(0, 10, 501)';
+y = exp(-(x - 2).^2) + 0.6*exp(-(x - 5).^2/0.5) + 0.8*exp(-(x - 8).^2/2) + 0.05*sin(20*x);
+[pks, locs, w, p] = findpeaks(y, x, 'MinPeakProminence', 0.2);
+round([locs pks w p], 2)
+findpeaks(y, x, 'MinPeakProminence', 0.2, 'Annotate', 'extents')
+# See also
+islocalmax max
+
+@ hilbert, envelope, instfreq
+The analytic signal, the envelope, and the instantaneous frequency.
+
+`hilbert` gives x + i H(x), H the Hilbert transform (by the FFT, n points if given): its magnitude is the envelope and its angle the instantaneous phase. `envelope` gives upper and lower envelopes: from the analytic signal of x less its mean (the default), or (`'peak'`) splines through local maxima and minima at least np samples apart; without outputs it draws them. `instfreq` gives the instantaneous frequency: by default the mean frequency of each time slice of `pspectrum`'s spectrogram, or (`'Method', 'hilbert'`) the derivative of the analytic signal's phase at each sample.
+
+# Syntax
+y = hilbert(x, n)
+    The analytic signal.
+[up, lo] = envelope(x)
+    Envelopes from the analytic signal.
+[up, lo] = envelope(x, np, 'peak')
+    Through peaks.
+[ifq, t] = instfreq(x, fs)
+    The instantaneous frequency.
+[ifq, t] = instfreq(x, fs, 'Method', 'hilbert')
+    From the phase.
+# Examples
+## A modulated tone's envelope and frequency
+fs = 1000;
+t = (0:999)'/fs;
+x = (1 + 0.5*sin(2*pi*2*t)).*cos(2*pi*(50*t + 20*t.^2));
+z = hilbert(x);
+plot(t, x, t, abs(z), 'LineWidth', 1)
+f = instfreq(x, fs, 'Method', 'hilbert');
+round(f([250 500 750])')
+50 + 40*t([250 500 750])'
+# See also
+pspectrum unwrap angle
+
+@ hamming, hann, hanning, blackman, flattopwin, blackmanharris, nuttallwin, kaiser
+Spectral windows: tapers that trade a wider main lobe for lower side lobes.
+
+Each gives a column of n weights. Hamming and Hann are raised cosines (Hann reaching 0 at its ends; `hanning` leaves the zero ends off); Blackman, Blackman-Harris and Nuttall add more cosine terms for lower side lobes; the flat-top window measures amplitudes accurately; Kaiser's beta (0.5) trades lobe width for side lobes continuously. `'periodic'` makes a window for spectral analysis, one point longer and the last left off, so that it repeats.
+
+# Syntax
+w = hamming(n, 'periodic')
+    Hamming.
+w = hann(n, 'periodic')
+    Hann.
+w = hanning(n)
+    Hann without its zero ends.
+w = blackman(n, 'periodic')
+    Blackman.
+w = flattopwin(n)
+    Flat top.
+w = blackmanharris(n)
+    Blackman-Harris.
+w = nuttallwin(n)
+    Nuttall.
+w = kaiser(n, beta)
+    Kaiser.
+# Examples
+## Shapes and side lobes
+n = 64;
+W = [hamming(n) hann(n) blackmanharris(n) kaiser(n, 8)];
+subplot(1, 2, 1), plot(W), legend('hamming', 'hann', 'blackmanharris', 'kaiser 8')
+F = mag2db(abs(fft(W./sum(W), 2048)));
+subplot(1, 2, 2), plot(linspace(0, 2, 2048), F), xlim([0 0.5]), ylim([-120 0]), xlabel('\times\pi rad/sample')
+round(hann(5)', 3)
+round(hanning(3)', 3)
+# See also
+window periodogram fir1
+
+@ bartlett, triang, rectwin, gausswin, tukeywin, chebwin, barthannwin, bohmanwin, parzenwin, window
+More windows, and windows by their functions.
+
+Bartlett's triangle reaches 0 at its ends, `triang` does not; `rectwin` is ones; `gausswin` a Gaussian with alpha (2.5) the reciprocal of its standard deviation; `tukeywin` a tapered cosine, r (0.5) the part tapered (0 a rectangle, 1 a Hann window); `chebwin` has every side lobe r dB (100) down; the modified Bartlett-Hann, Bohman and Parzen windows are smooth tapers of their own. `window` calls a window's function with n and its other inputs.
+
+# Syntax
+w = bartlett(n)
+    Bartlett.
+w = triang(n)
+    Triangular.
+w = rectwin(n)
+    Rectangular.
+w = gausswin(n, alpha)
+    Gaussian.
+w = tukeywin(n, r)
+    Tapered cosine.
+w = chebwin(n, r)
+    Chebyshev.
+w = barthannwin(n)
+    Bartlett-Hann.
+w = bohmanwin(n)
+    Bohman.
+w = parzenwin(n)
+    Parzen.
+w = window(@fcn, n, ...)
+    By its function.
+# Examples
+## Triangles and tapers
+[bartlett(5) triang(5)]
+round(tukeywin(7, 0.5)', 3)
+isequal(window(@gausswin, 7, 3), gausswin(7, 3))
+plot([gausswin(64) tukeywin(64, 0.3) chebwin(64, 60) parzenwin(64)]), legend('gausswin', 'tukeywin 0.3', 'chebwin 60', 'parzenwin')
+# See also
+hamming kaiser
+
+@ periodogram, pwelch, bandpower
+Power spectral densities, and the power in a band.
+
+`periodogram` takes the squared magnitude of the whole signal's FFT (through a window if given, rectangular by default), at max(256, the next power of 2) frequencies, one-sided for real signals; `pwelch` averages the periodograms of windowed segments (8 Hamming segments half overlapping by default), smoother but coarser. Frequencies are in rad/sample, or in Hz with fs. Without outputs each is drawn in dB. `bandpower` gives the average power of a signal, or of the part in a band, from the signal or from a density.
+
+# Syntax
+[pxx, f] = periodogram(x, window, nfft, fs)
+    The periodogram.
+[pxx, f] = pwelch(x, window, noverlap, nfft, fs)
+    Welch's estimate.
+pwelch(x)
+    Drawn.
+p = bandpower(x, fs, freqrange)
+    The power in a band.
+p = bandpower(pxx, f, freqrange, 'psd')
+    From a density.
+# Examples
+## Two tones in noise
+fs = 1000;
+t = (0:4095)'/fs;
+x = sin(2*pi*100*t) + 0.5*sin(2*pi*230*t) + randn(size(t));
+[p1, f1] = periodogram(x, [], [], fs);
+[p2, f2] = pwelch(x, 512, 256, 512, fs);
+plot(f1, pow2db(p1), f2, pow2db(p2), 'LineWidth', 1), legend('periodogram', 'pwelch'), xlabel('Hz'), ylabel('dB/Hz')
+round([bandpower(x, fs, [90 110]), bandpower(x, fs, [220 240]), bandpower(x)], 2)
+# See also
+pspectrum spectrogram cpsd
+
+@ cpsd, mscohere, tfestimate
+Two signals' cross spectrum, their coherence, and the transfer function from one to the other.
+
+By Welch's method: `cpsd` gives the cross power spectral density; `mscohere` the magnitude-squared coherence, from 0 to 1 at each frequency (1 where y is a linear function of x); `tfestimate` the transfer function from x to y, their cross spectrum over the spectrum of x.
+
+# Syntax
+[pxy, f] = cpsd(x, y, window, noverlap, nfft, fs)
+    The cross spectrum.
+[cxy, f] = mscohere(x, y, window, noverlap, nfft, fs)
+    The coherence.
+[txy, f] = tfestimate(x, y, window, noverlap, nfft, fs)
+    The transfer function.
+# Examples
+## A filter found from its input and output
+x = randn(8192, 1);
+[b, a] = butter(2, 0.25);
+y = filter(b, a, x) + 0.01*randn(8192, 1);
+[txy, w] = tfestimate(x, y, 512, 256, 512);
+h = freqz(b, a, w);
+plot(w/pi, abs(txy), w/pi, abs(h), '--'), legend('estimated', 'true'), xlabel('\times\pi rad/sample')
+c = mscohere(x, y, 512, 256, 512);
+round(mean(c(w/pi < 0.2)), 3)
+# See also
+pwelch freqz
+
+@ spectrogram, stft, istft
+Short-time Fourier transforms: spectra of windowed segments, and the signal back from them.
+
+`spectrogram` gives a spectrum for each segment (8 Hamming segments half overlapping by default), the frequencies, the segments' middle times, and the power spectral density; without outputs it draws an image in dB. `stft` takes a periodic Hann window of 128 with 75% overlap unless given, the frequencies centred (from -fs/2 to fs/2) unless `'FrequencyRange'` says `'twosided'` or `'onesided'`; `istft` overlaps and adds the segments' inverse FFTs back into the signal, given the same options; a sample is back exactly when some segment's window is not 0 there, and the result is real for `'onesided'` transforms or with `'ConjugateSymmetric'`.
+
+# Syntax
+[s, f, t] = spectrogram(x, window, noverlap, nfft, fs)
+    Spectra of segments.
+spectrogram(x, window, noverlap, nfft, fs, 'yaxis')
+    Drawn.
+[s, f, t] = stft(x, fs, 'Window', win, 'OverlapLength', n, 'FFTLength', nfft)
+    The short-time Fourier transform.
+[x, t] = istft(s, fs, 'Window', win, 'OverlapLength', n, 'FFTLength', nfft)
+    Back.
+# Examples
+## A chirp's spectrogram
+fs = 1000;
+t = (0:1999)'/fs;
+x = chirp(t, 50, 2, 400);
+spectrogram(x, 128, 112, 256, fs, 'yaxis')
+## There and back
+> A window with no zeros, so that every sample is carried by some segment; the last samples, short of a whole segment, are left off.
+x = randn(1000, 1);
+win = hamming(128, 'periodic');
+s = stft(x, 'Window', win, 'OverlapLength', 96, 'FFTLength', 128);
+y = istft(s, 'Window', win, 'OverlapLength', 96, 'FFTLength', 128, 'ConjugateSymmetric', true);
+[size(s), numel(y)]
+max(abs(y - x(1:numel(y)))) < 1e-10
+# See also
+pspectrum pwelch wvd
+
+@ pspectrum
+The power spectrum, or a spectrogram, with sensible choices made.
+
+A Kaiser window of beta 40(1 - Leakage) (Leakage 0.5) over the signal, scaled so that a sinusoid of amplitude A peaks at A²/2: the power of each tone can be read off. The `'power'` spectrum comes at at least 4096 frequencies from 0 to fs/2; the `'spectrogram'` in windows of about an eighth of the signal (or `'TimeResolution'` seconds), half overlapping unless `'OverlapPercent'` says. `'FrequencyLimits'` keeps a band, and `'MinThreshold'` sets values below it to 0. Without outputs it is drawn.
+
+# Syntax
+[p, f] = pspectrum(x, fs)
+    The power spectrum.
+[p, f, t] = pspectrum(x, fs, 'spectrogram')
+    A spectrogram.
+pspectrum(x, fs, 'FrequencyLimits', [f1 f2], 'Leakage', l)
+    Drawn, within a band.
+# Examples
+## Tones whose power can be read off
+fs = 1000;
+t = (0:999)'/fs;
+x = 2*sin(2*pi*60*t) + sin(2*pi*150*t);
+[p, f] = pspectrum(x, fs);
+[pk, loc] = findpeaks(p, f, 'NPeaks', 2, 'SortStr', 'descend');
+[loc round(pk, 2)]
+pspectrum(x, fs)
+# See also
+periodogram spectrogram instfreq
+
+@ wvd
+The Wigner-Ville distribution: time and frequency at once, as sharply as one signal allows.
+
+At each time n, the FFT over lags m of z(n+m) conj(z(n-m)), z the analytic signal of x (x itself when complex). A single chirp shows as a sharp line; several components make cross terms between them, which `'smoothedPseudo'` smooths away in time and frequency (with Kaiser windows, or twin and fwin), at some cost in sharpness.
+
+# Syntax
+[d, f, t] = wvd(x, fs)
+    The distribution.
+[d, f, t] = wvd(x, fs, 'smoothedPseudo', twin, fwin)
+    Smoothed.
+# Examples
+## A chirp, sharp
+fs = 200;
+t = (0:199)'/fs;
+x = chirp(t, 10, 1, 90);
+[d, f, tt] = wvd(x, fs);
+imagesc(tt, f, d), axis xy, xlabel('s'), ylabel('Hz')
+[~, k] = max(d(:, 100));
+round(f(k))
+# See also
+spectrogram pspectrum

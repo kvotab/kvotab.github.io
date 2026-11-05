@@ -189,6 +189,19 @@ near('findpeaks: locations in x, or in time for a sampling rate; a column for a 
 yv = np.array([0, 2, 1, 3, 1, 4, 4, 1, 0], float)
 wd = S.peak_widths(yv, [1, 3, 5], rel_height=0.5)[0]
 near('findpeaks: widths at half the prominence', W['w'], row(wd))
+W, _ = run("close all; x = linspace(0, 10, 501)'; y = exp(-(x - 2).^2) + 0.6*exp(-(x - 5).^2/0.5); [pk, lc, wq, pq] = findpeaks(y, x); "
+           "findpeaks(y, x, 'Annotate', 'extents'); L = findobj(gca, 'Type', 'line'); xs = get(L, 'XData'); ys = get(L, 'YData'); lg = findobj(gcf, 'Type', 'legend'); ls = lg.String;")
+_lines = sorted(zip([a(v).reshape(-1) for v in W['xs'].items()], [a(v).reshape(-1) for v in W['ys'].items()]), key=lambda t: t[0].size)
+_prom = next(t for t in _lines if t[0].size == 6 and np.allclose(t[0][[0, 1]], t[0][[0, 0]]))
+_wid = next(t for t in _lines if t[0].size == 6 and t is not _prom)
+_pk, _pq = a(W['pk']).reshape(-1), a(W['pq']).reshape(-1)
+near("findpeaks 'Annotate' 'extents': each prominence a line down from its peak", (_prom[1][[0, 1, 3, 4]]), np.array([_pk[0], _pk[0] - _pq[0], _pk[1], _pk[1] - _pq[1]]), 1e-12)
+near('... each width a line across, as long as the width', (_wid[0][1] - _wid[0][0], _wid[0][4] - _wid[0][3]), tuple(a(W['wq']).reshape(-1)), 1e-12)
+C('... and a legend naming them', [v.str() for v in W['ls'].items()] == ['signal', 'peak', 'prominence', 'width (half-prominence)'], W['ls'])
+W, _ = run("n4 = [buttord(0.2, 0.3, 1, 60), cheb1ord(0.2, 0.3, 1, 60), cheb2ord(0.2, 0.3, 1, 60), ellipord(0.2, 0.3, 1, 60)]; "
+           "z1 = tf2zp([1 2], [1 3 2]); b1 = zp2tf([1; 2], [3; 4], 2); b2 = sos2tf([1 2 1 1 0.5 0.1]);")
+near('one output asked for, one value: the orders side by side, the zeros, the numerators', (W['n4'], W['z1'], W['b1'], W['b2']),
+     (row([17, 9, 9, 6]), -2.0, row([2, -6, 4]), row([1, 2, 1])))
 
 # ---- windows -------------------------------------------------------------------------------------------------------------------
 W, _ = run("w1 = hamming(5); w2 = hann(4); w3 = hanning(3); w4 = blackman(5); w5 = kaiser(6, 3); w6 = gausswin(5); w7 = tukeywin(9, 0.4); w8 = chebwin(7, 60); "

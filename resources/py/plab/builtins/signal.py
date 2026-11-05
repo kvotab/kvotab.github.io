@@ -178,7 +178,8 @@ def _ord(fn, scipy_fn, args, nargout):
     gp, gs = float(darr(rest[2]).flat[0]), float(darr(rest[3]).flat[0])
     n, wn = scipy_fn(wp if wp.size > 1 else wp[0], ws if ws.size > 1 else ws[0], gp, gs, analog=analog)
     wn = np.atleast_1d(wn)
-    return float(n), (_rowv(wn) if wn.size > 1 else float(wn[0]))
+    wn = _rowv(wn) if wn.size > 1 else float(wn[0])
+    return (float(n), wn) if nargout > 1 else float(n)
 
 
 @bi('buttord', nout=2)
@@ -757,11 +758,14 @@ def findpeaks(nargout, *args):
         # widths in the units of x (interpolated between samples)
         xi = lambda pos: np.interp(pos, np.arange(y.size), x)  # noqa: E731
         width = xi(wl[3]) - xi(wl[2])
+        # where each width was measured: its ends and its height (drawn by 'Annotate', 'extents')
+        ext = np.column_stack([xi(wl[2]), xi(wl[3]), wl[1]])
     else:
         width = np.zeros(0)
+        ext = np.zeros((0, 3))
     lo_w, hi_w = num('MinPeakWidth', 0.0), num('MaxPeakWidth', np.inf)
     sel = (width >= lo_w) & (width <= hi_w)
-    locs, prom, width = locs[sel], prom[sel], width[sel]
+    locs, prom, width, ext = locs[sel], prom[sel], width[sel], ext[sel]
     md = num('MinPeakDistance', 0.0)
     if md > 0 and locs.size > 1:
         # the highest first; each later one kept only when far enough from those kept
@@ -771,17 +775,29 @@ def findpeaks(nargout, *args):
             if all(abs(x[locs[i]] - x[locs[j]]) >= md for j in kept):
                 kept.append(i)
         kept = np.sort(np.array(kept, int))
-        locs, prom, width = locs[kept], prom[kept], width[kept]
+        locs, prom, width, ext = locs[kept], prom[kept], width[kept], ext[kept]
     srt = py_str(opts['SortStr']).lower() if 'SortStr' in opts else 'none'
     if srt in ('ascend', 'descend'):
         o = np.argsort(y[locs] if srt == 'ascend' else -y[locs], kind='stable')
-        locs, prom, width = locs[o], prom[o], width[o]
+        locs, prom, width, ext = locs[o], prom[o], width[o], ext[o]
     if 'NPeaks' in opts:
         k = int(num('NPeaks', locs.size))
-        locs, prom, width = locs[:k], prom[:k], width[:k]
+        locs, prom, width, ext = locs[:k], prom[:k], width[:k], ext[:k]
     pks, xl = y[locs], x[locs]
     if nargout == 0:
         xx = x.reshape(-1, 1)
+        ann = py_str(opts['Annotate']).lower() if 'Annotate' in opts else 'peaks'
+        if ann not in ('peaks', 'extents'):
+            raise err('MATLAB:findpeaks:Annotate', "Annotate is 'peaks' or 'extents'.", 'findpeaks')
+        if ann == 'extents' and locs.size:
+            # each prominence a line down from its peak, each width a line across at the height it was measured
+            gap = np.full(locs.size, np.nan)
+            px, py = np.column_stack([xl, xl, gap]).reshape(-1, 1), np.column_stack([pks, pks - prom, gap]).reshape(-1, 1)
+            wx, wy = np.column_stack([ext[:, 0], ext[:, 1], gap]).reshape(-1, 1), np.column_stack([ext[:, 2], ext[:, 2], gap]).reshape(-1, 1)
+            _b('plot', xx, y.reshape(-1, 1), xl.reshape(-1, 1), pks.reshape(-1, 1), Char.of('v'), px, py, wx, wy)
+            _b('legend', Char.of('signal'), Char.of('peak'), Char.of('prominence'),
+               Char.of('width (half-height)' if ref == 'halfheight' else 'width (half-prominence)'))
+            return None
         _b('plot', xx, y.reshape(-1, 1), xl.reshape(-1, 1), pks.reshape(-1, 1), Char.of('v'))
         return None
     shape = (lambda v: _rowv(v)) if row else (lambda v: _col(v))
@@ -1043,7 +1059,7 @@ def tf2zp(nargout, *args):
     """[z, p, k] = tf2zp(b, a)."""
     nargchk(args, 2, 2, 'tf2zp')
     z, p, k = _S().tf2zpk(_coef(args[0], 'tf2zp'), _coef(args[1], 'tf2zp'))
-    return _col(z), _col(p), float(k)
+    return (_col(z), _col(p), float(k)) if nargout > 1 else _col(z)
 
 
 @bi('zp2tf', nout=2)
@@ -1051,7 +1067,7 @@ def zp2tf(nargout, *args):
     """[b, a] = zp2tf(z, p, k)."""
     nargchk(args, 3, 3, 'zp2tf')
     b, a = _S().zpk2tf(_coef(args[0], 'zp2tf'), _coef(args[1], 'zp2tf'), float(darr(args[2]).flat[0]))
-    return _rowv(np.real_if_close(b)), _rowv(np.real_if_close(a))
+    return (_rowv(np.real_if_close(b)), _rowv(np.real_if_close(a))) if nargout > 1 else _rowv(np.real_if_close(b))
 
 
 @bi('tf2sos', nout=2)
@@ -1087,7 +1103,7 @@ def sos2tf(nargout, *args):
     nargchk(args, 1, 2, 'sos2tf')
     b, a = _S().sos2tf(darr(args[0], 'sos2tf'))
     g = float(np.prod(darr(args[1]))) if len(args) > 1 else 1.0
-    return _rowv(b * g), _rowv(a)
+    return (_rowv(b * g), _rowv(a)) if nargout > 1 else _rowv(b * g)
 
 
 @bi('sos2zp', nout=3)

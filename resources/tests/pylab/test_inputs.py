@@ -1,6 +1,7 @@
 """Every built-in called with inputs it may not take (none, too few, text,
 a number, matrices, logical values, sparse matrices) ends in the
-language's error, never in a Python exception. And the built-ins listed in
+language's error, never in a Python exception; asked for one output, one
+that returns gives one value, never a Python tuple. And the built-ins listed in
 builtins/arity.py refuse a call with fewer inputs than their shortest form
 with "Not enough input arguments."
 
@@ -69,7 +70,9 @@ def call(info, args):
         signal.alarm(5)
         r = info.fn(*(((R.BASE,) if info.ws else ()) + (1,) + args))
         if inspect.isawaitable(r):
-            asyncio.run(r)
+            r = asyncio.run(r)
+        if isinstance(r, tuple):
+            return TypeError(f'one output asked for, {len(r)} values given')
         return None
     except (MError, Timeout):
         return None

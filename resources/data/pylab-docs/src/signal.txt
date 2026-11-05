@@ -1,0 +1,375 @@
+@ butter, cheby1, cheby2, ellip
+IIR filters of the classic kinds: Butterworth, Chebyshev types I and II, and elliptic.
+
+Each gives an order-n lowpass filter with its edge at Wn (1 being half the sampling rate), or `'high'`, `'bandpass'` and `'stop'` filters (two edges, order 2n). Butterworth is maximally flat in the passband; Chebyshev type I allows Rp dB of ripple in the passband for a steeper fall, type II keeps the passband flat and the stopband Rs dB down; elliptic allows both and is the steepest for its order. The outputs are the transfer function's coefficients, or zeros, poles and gain (better for high orders), or a state-space model; `'s'` designs an analog filter, its edge in rad/s.
+
+# Syntax
+[b, a] = butter(n, Wn, ftype)
+    A Butterworth filter.
+[b, a] = cheby1(n, Rp, Wp, ftype)
+    Chebyshev type I.
+[b, a] = cheby2(n, Rs, Ws, ftype)
+    Chebyshev type II.
+[b, a] = ellip(n, Rp, Rs, Wp, ftype)
+    Elliptic.
+[z, p, k] = butter(...)
+    Zeros, poles and gain.
+[A, B, C, D] = butter(...)
+    State space.
+[b, a] = butter(n, Wn, 's')
+    An analog filter.
+# Examples
+## Four kinds of order 5, edge at 0.3
+[b1, a1] = butter(5, 0.3);
+[b2, a2] = cheby1(5, 1, 0.3);
+[b3, a3] = cheby2(5, 40, 0.3);
+[b4, a4] = ellip(5, 1, 40, 0.3);
+[h1, w] = freqz(b1, a1);
+h2 = freqz(b2, a2); h3 = freqz(b3, a3); h4 = freqz(b4, a4);
+plot(w/pi, mag2db(abs([h1 h2 h3 h4]))), ylim([-80 5]), grid on
+legend('butter', 'cheby1', 'cheby2', 'ellip'), xlabel('frequency (\times\pi rad/sample)'), ylabel('dB')
+## A noisy signal smoothed without delay
+t = (0:499)'/500;
+x = sin(2*pi*3*t) + 0.4*randn(500, 1);
+[b, a] = butter(4, 10/250);
+plot(t, x, t, filtfilt(b, a, x), 'LineWidth', 1.5)
+# See also
+buttord freqz filtfilt designfilt besself
+
+@ besself
+An analog Bessel filter: the flattest group delay, so that pulses keep their shape.
+
+A lowpass filter whose delay is nearly the same at every frequency in its passband, at the cost of a slow fall; Wo in rad/s; `'high'`, `'bandpass'` and `'stop'` too (Wo two frequencies for the last two). The phase reaches its midpoint at Wo, the magnitude's asymptotes those of a Butterworth filter with that cutoff.
+
+# Syntax
+[b, a] = besself(n, Wo)
+    A lowpass filter.
+[b, a] = besself(n, Wo, ftype)
+    Of a kind.
+[z, p, k] = besself(...)
+    Zeros, poles and gain.
+# Examples
+## Delay against Butterworth's
+[bb, ab] = besself(5, 1);
+[bu, au] = butter(5, 1, 's');
+w = linspace(0.01, 3, 300);
+gd = @(b, a) -gradient(unwrap(angle(freqs(b, a, w))), w);
+plot(w, gd(bb, ab), w, gd(bu, au)), legend('Bessel', 'Butterworth'), xlabel('rad/s'), ylabel('group delay (s)')
+# See also
+butter freqs
+
+@ buttord, cheb1ord, cheb2ord, ellipord
+The lowest order of each kind of filter that meets a specification.
+
+The passband edge Wp, the stopband edge Ws (1 being half the sampling rate; two each for bandpass and bandstop), at most Rp dB of loss in the passband and at least Rs dB in the stopband: each gives the lowest order that meets them, and the edge to design with.
+
+# Syntax
+[n, Wn] = buttord(Wp, Ws, Rp, Rs)
+    Butterworth.
+[n, Wp] = cheb1ord(Wp, Ws, Rp, Rs)
+    Chebyshev type I.
+[n, Ws] = cheb2ord(Wp, Ws, Rp, Rs)
+    Chebyshev type II.
+[n, Wp] = ellipord(Wp, Ws, Rp, Rs)
+    Elliptic.
+[n, Wn] = buttord(Wp, Ws, Rp, Rs, 's')
+    Analog.
+# Examples
+## One specification, four orders
+> Pass up to 0.2 with at most 1 dB loss, stop from 0.3 at least 60 dB down.
+[buttord(0.2, 0.3, 1, 60), cheb1ord(0.2, 0.3, 1, 60), cheb2ord(0.2, 0.3, 1, 60), ellipord(0.2, 0.3, 1, 60)]
+[n, Wn] = buttord(0.2, 0.3, 1, 60);
+[b, a] = butter(n, Wn);
+h = freqz(b, a, [0.2 0.3]*pi);
+-mag2db(abs(h))
+# See also
+butter ellip kaiserord
+
+@ fir1, fir2, kaiserord
+FIR filters by the window method: from cutoffs, from a frequency response, and by a Kaiser window.
+
+`fir1` designs an order-n lowpass (or `'high'`, `'bandpass'`, `'stop'`, or several bands) filter: the ideal response's impulse response, cut to n + 1 taps by a window (Hamming unless given), scaled to 1 in its first passband. A highpass or bandstop filter's odd order is made one higher. `fir2` follows a piecewise linear magnitude m at frequencies f (from 0 to 1). `kaiserord` gives the order, cutoff and Kaiser beta that meet band edges, amplitudes and deviations, for `fir1(n, Wn, ftype, kaiser(n+1, beta), 'noscale')`. FIR filters are always stable and can have exactly linear phase.
+
+# Syntax
+b = fir1(n, Wn, ftype, window)
+    From cutoffs.
+b = fir2(n, f, m)
+    From a response.
+[n, Wn, beta, ftype] = kaiserord(f, a, dev, fs)
+    The Kaiser window's design.
+# Examples
+## A lowpass by fir1, a ramp by fir2
+b1 = fir1(40, 0.3);
+b2 = fir2(40, [0 0.5 0.5 1], [0 1 0 0]);
+[h1, w] = freqz(b1, 1);
+h2 = freqz(b2, 1);
+plot(w/pi, abs([h1 h2])), legend('fir1 lowpass', 'fir2 ramp then nothing'), xlabel('\times\pi rad/sample')
+## Kaiser's order for 1% ripple and 60 dB
+[n, Wn, beta, ftype] = kaiserord([1000 1500], [1 0], [0.01 0.001], 8000)
+b = fir1(n, Wn, ftype, kaiser(n + 1, beta), 'noscale');
+h = freqz(b, 1, [1000 1500], 8000);
+round(mag2db(abs(h)), 1)
+# See also
+firls firpm freqz kaiser
+
+@ firls, firpm, remez
+FIR filters by optimization: least squares, and equiripple (Parks-McClellan).
+
+Both take the order n and bands as pairs of edges f (from 0 to 1) with amplitudes a at those edges, and weights w per band. `firls` minimizes the weighted squared error over the bands (its order must be even here); `firpm` minimizes the largest weighted error, so that the error ripples evenly (each band one amplitude here), and also designs Hilbert transformers and differentiators. `remez` is the name `firpm` had before.
+
+# Syntax
+b = firls(n, f, a, w)
+    Least squares.
+b = firpm(n, f, a, w)
+    Equiripple.
+b = firpm(n, f, a, 'hilbert')
+    A Hilbert transformer.
+b = remez(n, f, a)
+    The same as firpm.
+# Examples
+## The same bands, two criteria
+f = [0 0.3 0.4 1];
+a = [1 1 0 0];
+bl = firls(30, f, a);
+bp = firpm(30, f, a);
+[hl, w] = freqz(bl, 1, 1024);
+hp = freqz(bp, 1, 1024);
+plot(w/pi, mag2db(abs([hl hp]))), ylim([-70 5]), legend('firls', 'firpm'), xlabel('\times\pi rad/sample'), ylabel('dB')
+[max(abs(hl(w/pi >= 0.4))), max(abs(hp(w/pi >= 0.4)))]
+# See also
+fir1 freqz
+
+@ designfilt
+A digital filter designed from its response and specifications.
+
+The response is `'lowpassfir'`, `'lowpassiir'`, `'highpassfir'`, `'highpassiir'`, `'bandpassfir'`, `'bandpassiir'`, `'bandstopfir'` or `'bandstopiir'`, with specifications by name: an order and cutoffs, or passband and stopband edges with ripple and attenuation, at a sample rate. FIR filters come by the window method (or a Kaiser window from the edges); IIR filters by Butterworth (`'DesignMethod'` `'cheby1'`, `'cheby2'` or `'ellip'` instead), kept as second-order sections. `filter`, `filtfilt`, `freqz`, `impz`, `zplane` and `filtord` take the filter; `d.Coefficients` holds them.
+
+# Syntax
+d = designfilt('lowpassfir', 'FilterOrder', n, 'CutoffFrequency', fc, 'SampleRate', fs)
+    An FIR filter of an order.
+d = designfilt('lowpassiir', 'FilterOrder', n, 'HalfPowerFrequency', f3db, 'SampleRate', fs)
+    An IIR filter of an order.
+d = designfilt('bandpassiir', 'FilterOrder', n, 'HalfPowerFrequency1', f1, 'HalfPowerFrequency2', f2, 'SampleRate', fs)
+    A band.
+d = designfilt('highpassfir', 'PassbandFrequency', fp, 'StopbandFrequency', fst, 'StopbandAttenuation', a, 'SampleRate', fs)
+    From edges.
+# Examples
+## Mains hum taken out of a slow signal
+fs = 1000;
+t = (0:1999)'/fs;
+x = sin(2*pi*2*t) + 0.5*sin(2*pi*50*t);
+d = designfilt('lowpassiir', 'FilterOrder', 6, 'HalfPowerFrequency', 20, 'SampleRate', fs);
+y = filtfilt(d, x);
+plot(t, x, t, y)
+filtord(d)
+k = 200:1800;
+round(max(abs(y(k) - sin(2*pi*2*t(k)))), 3)
+# See also
+butter fir1 filtfilt freqz
+
+@ filtfilt, sosfilt, fftfilt, filtic
+Filtering: with no delay, by second-order sections, by the FFT, and from given initial conditions.
+
+`filtfilt` filters forward and then backward, so that nothing is delayed and the magnitude response is the filter's squared; the ends are extended by odd reflection and the filter starts in its steady state. `sosfilt` filters by second-order sections (rows b0 b1 b2 a0 a1 a2), which keeps high-order IIR filters accurate. `fftfilt` gives what `filter(b, 1, x)` gives, by the FFT (overlap-add), faster for long filters. `filtic` gives the initial conditions for `filter` from past outputs y and inputs x, the latest first.
+
+# Syntax
+y = filtfilt(b, a, x)
+    Zero-phase filtering.
+y = filtfilt(sos, g, x)
+    By sections.
+y = sosfilt(sos, x)
+    By second-order sections.
+y = fftfilt(b, x)
+    By the FFT.
+zi = filtic(b, a, y, x)
+    Initial conditions.
+# Examples
+## A delay, and none
+t = (0:199)'/200;
+x = double(t > 0.3 & t < 0.6);
+b = fir1(30, 0.1);
+plot(t, x, t, filter(b, 1, x), t, filtfilt(b, 1, x)), legend('pulse', 'filter', 'filtfilt')
+## The same output three ways
+[b, a] = butter(6, 0.2);
+x = randn(1000, 1);
+y1 = filter(b, a, x);
+y2 = sosfilt(tf2sos(b, a), x);
+max(abs(y1 - y2)) < 1e-10
+h = fir1(64, 0.25);
+max(abs(fftfilt(h, x) - filter(h, 1, x))) < 1e-10
+## A filter carried on from where it stopped
+[b, a] = butter(2, 0.3);
+x = randn(20, 1);
+y = filter(b, a, x);
+zi = filtic(b, a, flipud(y(9:10)), flipud(x(9:10)));
+y2 = filter(b, a, x(11:20), zi);
+max(abs(y2 - y(11:20)))
+# See also
+filter designfilt tf2sos
+
+@ upfirdn, medfilt1, sgolay, sgolayfilt
+Upsampling with filtering, median filtering, and Savitzky-Golay smoothing.
+
+`upfirdn` upsamples by p (zeros between the samples), filters by the FIR filter h and downsamples by q: the core of rate changes. `medfilt1` replaces each sample by the median of the n about it (3), which removes spikes and keeps edges; beyond the ends the signal is zeros, or the windows are cut short (`'truncate'`). `sgolayfilt` replaces each sample by the value of a polynomial of the given order fitted by least squares over a frame about it, smoothing while keeping the heights of peaks; `sgolay` gives the projection matrix and the differentiation filters.
+
+# Syntax
+y = upfirdn(x, h, p, q)
+    Upsampled, filtered, downsampled.
+y = medfilt1(x, n)
+    A median filter.
+y = sgolayfilt(x, order, framelen)
+    Savitzky-Golay smoothing.
+[B, G] = sgolay(order, framelen)
+    Its matrix and differentiators.
+# Examples
+## Spikes, and a peak kept
+x = sin(2*pi*(0:99)'/50);
+x([20 47 81]) = [3 -3 2];
+subplot(2, 1, 1), plot([x medfilt1(x, 5)]), legend('spiky', 'medfilt1')
+t = linspace(-1, 1, 101)';
+y = exp(-t.^2/0.01) + 0.05*randn(101, 1);
+subplot(2, 1, 2), plot(t, [y sgolayfilt(y, 3, 11) movmean(y, 11)]), legend('noisy', 'sgolayfilt', 'movmean')
+## A derivative by Savitzky-Golay
+[~, G] = sgolay(2, 7);
+t = (0:0.1:3)';
+d = conv(t.^2, -G(:, 2), 'same')/0.1;
+d(5:8)'
+2*t(5:8)'
+# See also
+filter smoothdata movmedian
+
+@ lowpass, highpass, bandpass, bandstop
+A signal filtered, its filter's delay taken back.
+
+Each designs a Kaiser-window FIR filter (the stopband 60 dB down, the transition band 15% of the way from the passband edge to half the sampling rate, `'Steepness'` 0.85) and filters with it, compensating its delay so that the result lines up with the signal. Edges are fractions of half the sampling rate, or hertz with fs. The second output is the filter.
+
+# Syntax
+y = lowpass(x, fpass, fs)
+    Lower frequencies kept.
+y = highpass(x, fpass, fs)
+    Higher frequencies kept.
+y = bandpass(x, [f1 f2], fs)
+    A band kept.
+y = bandstop(x, [f1 f2], fs)
+    A band taken out.
+[y, d] = lowpass(..., 'Steepness', s, 'StopbandAttenuation', a)
+    With the filter, and its steepness and attenuation.
+# Examples
+## Three tones separated
+fs = 1000;
+t = (0:999)'/fs;
+x = sin(2*pi*10*t) + sin(2*pi*60*t) + sin(2*pi*200*t);
+y = bandpass(x, [40 80], fs);
+plot(t, sin(2*pi*60*t), t, y, '--'), xlim([0.4 0.6]), legend('60 Hz alone', 'bandpass')
+k = 200:800;
+round(max(abs(y(k) - sin(2*pi*60*t(k)))), 3)
+# See also
+designfilt filtfilt
+
+@ freqz, freqs, impz, stepz, grpdelay
+A filter's frequency response, impulse and step responses, and group delay.
+
+`freqz` gives a digital filter's response at n points (512) from 0 up to half the sampling rate (pi rad/sample, or fs/2 Hz with fs), or at frequencies given; `freqs` an analog filter's at rad/s. `impz` and `stepz` give the impulse and step responses (an FIR filter's length, or an IIR filter's until it dies away); `grpdelay` the delay in samples of each frequency, the negative slope of the phase. Without outputs each is drawn (`freqz` as magnitude in dB and phase in degrees). Second-order sections and digital filters from `designfilt` are taken too.
+
+# Syntax
+[h, w] = freqz(b, a, n)
+    The response at n frequencies.
+[h, f] = freqz(b, a, n, fs)
+    In hertz.
+freqz(b, a)
+    Drawn.
+[h, w] = freqs(b, a, w)
+    An analog filter's.
+[h, t] = impz(b, a, n)
+    The impulse response.
+[s, t] = stepz(b, a, n)
+    The step response.
+[gd, w] = grpdelay(b, a, n)
+    The group delay.
+# Examples
+## A Chebyshev filter's responses
+[b, a] = cheby1(4, 1, 0.25);
+freqz(b, a)
+## Its impulse response, step response and delay
+[b, a] = cheby1(4, 1, 0.25);
+[h, n] = impz(b, a, 40);
+s = stepz(b, a, 40);
+[gd, w] = grpdelay(b, a);
+subplot(1, 2, 1), stem(n, h), hold on, plot(n, s), hold off, legend('impulse', 'step')
+subplot(1, 2, 2), plot(w/pi, gd), xlabel('\times\pi rad/sample'), ylabel('samples')
+round(s(end), 3)
+# See also
+zplane filtord butter
+
+@ zplane, filtord
+A filter's zeros and poles in the complex plane, and its order.
+
+`zplane` marks the zeros (o) and poles (x) with the unit circle: a stable digital filter's poles are inside it. Rows give a transfer function's coefficients, columns zeros and poles. `filtord` gives the order, the larger of the degrees of b and a.
+
+# Syntax
+zplane(b, a)
+    From the coefficients.
+zplane(z, p)
+    From zeros and poles, as columns.
+n = filtord(b, a)
+    The order.
+n = filtord(d)
+    Of a designed filter.
+# Examples
+## An elliptic filter's zeros on the circle
+[b, a] = ellip(4, 1, 40, 0.3);
+zplane(b, a)
+filtord(b, a)
+max(abs(roots(a))) < 1
+# See also
+freqz tf2zp
+
+@ tf2zp, zp2tf, tf2sos, zp2sos, sos2tf, sos2zp
+A filter's forms: transfer function, zeros-poles-gain, and second-order sections.
+
+A filter is the same in any form: coefficients of b(z)/a(z), zeros, poles and a gain, or second-order sections (rows b0 b1 b2 a0 a1 a2, with a gain), which keep high orders accurate. Each converts one form to another; the sections pair poles with the zeros nearest them.
+
+# Syntax
+[z, p, k] = tf2zp(b, a)
+    Zeros, poles and gain.
+[b, a] = zp2tf(z, p, k)
+    Coefficients.
+[sos, g] = tf2sos(b, a)
+    Sections.
+[sos, g] = zp2sos(z, p, k)
+    Sections from zeros and poles.
+[b, a] = sos2tf(sos, g)
+    Coefficients from sections.
+[z, p, k] = sos2zp(sos, g)
+    Zeros and poles from sections.
+# Examples
+## One filter in three forms
+[b, a] = butter(4, 0.3);
+[z, p, k] = tf2zp(b, a);
+abs(p)'
+[sos, g] = tf2sos(b, a);
+size(sos)
+[b2, a2] = sos2tf(sos, g);
+max(abs([b2 - b, a2 - a])) < 1e-12
+# See also
+residuez zplane sosfilt
+
+@ residuez
+The partial fractions of a z-transform, and back.
+
+b(z)/a(z), in powers of 1/z, as the sum of r(i)/(1 - p(i)/z) and direct terms k; repeated poles in groups, the poles by decreasing magnitude. With r, p and k given, the coefficients again. Each term is a geometric sequence r(i) p(i)^n in time, so that the impulse response can be written down.
+
+# Syntax
+[r, p, k] = residuez(b, a)
+    The partial fractions.
+[b, a] = residuez(r, p, k)
+    Back.
+# Examples
+## An impulse response written down
+b = [1 0.5];
+a = [1 -0.9 0.2];
+[r, p, k] = residuez(b, a)
+n = (0:5)';
+[r(1)*p(1).^n + r(2)*p(2).^n, impz(b, a, 6)]
+# See also
+residue impz tf2zp

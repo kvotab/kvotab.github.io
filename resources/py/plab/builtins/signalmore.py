@@ -704,10 +704,16 @@ def _edge_plot(T, fn, marks):
     _b('hold', Char.of('on'))
     for lv in T.lv:
         _b('yline', lv, Char.of('--'))
+    # the levels the times are measured at: the reference levels for edges, the mid level for the rest
+    for lv in (T.ref if fn in ('risetime', 'falltime', 'slewrate') else [T.mid]):
+        _b('yline', float(lv), Char.of(':'))
     if marks:
         m = np.asarray(marks, float)
         _b('plot', out(m.reshape(-1, 1)), out(np.interp(m, T.t, T.x).reshape(-1, 1)), Char.of('o'))
     _b('hold', Char.of('off'))
+    # room above and below, so that a level the signal sits on is not drawn on the box
+    pad = 0.1 * T.amp
+    _b('ylim', out(np.array([[min(np.nanmin(T.x), T.lv[0]) - pad, max(np.nanmax(T.x), T.lv[1]) + pad]])))
     _b('title', Char.of(fn))
     return None
 

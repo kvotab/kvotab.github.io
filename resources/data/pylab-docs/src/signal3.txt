@@ -1,0 +1,221 @@
+@ chirp
+A cosine whose frequency sweeps from f0 at time 0 to f1 at time t1.
+
+The frequency changes linearly (the default), quadratically or logarithmically (by equal ratios), and goes on changing past t1; phi is the initial phase in degrees. Chirps test how a system answers across a band, and show what a spectrogram resolves.
+
+# Syntax
+y = chirp(t, f0, t1, f1)
+    A linear sweep.
+y = chirp(t, f0, t1, f1, method)
+    'linear', 'quadratic' or 'logarithmic'.
+y = chirp(t, f0, t1, f1, method, phi)
+    From a phase.
+# Examples
+## Three sweeps from 10 to 100 Hz
+fs = 1000;
+t = (0:999)'/fs;
+y = [chirp(t, 10, 1, 100), chirp(t, 10, 1, 100, 'quadratic'), chirp(t, 10, 1, 100, 'logarithmic')];
+for k = 1:3, subplot(3, 1, k), plot(t, y(:, k)), end
+f = instfreq(chirp(t, 10, 1, 100), fs, 'Method', 'hilbert');
+round(f(500))
+# See also
+spectrogram gauspuls
+
+@ sawtooth, square, rectpuls, tripuls, gauspuls, diric
+Periodic waves and single pulses.
+
+`sawtooth` rises from -1 to 1 over each period of 2 pi (xmax, 1 unless given, is where in the period it peaks: 0.5 makes a triangle wave); `square` is 1 for duty percent (50) of each period and -1 after. `rectpuls` is a rectangular pulse of width w (1) about t = 0, `tripuls` a triangular one, its peak at s w/2; `gauspuls` a Gaussian-modulated cosine of centre frequency fc (1000 Hz) and relative bandwidth bw (0.5), with its quadrature part and envelope. `diric` is the Dirichlet (periodic sinc) function sin(n x/2)/(n sin(x/2)).
+
+# Syntax
+x = sawtooth(t, xmax)
+    A sawtooth or triangle wave.
+x = square(t, duty)
+    A square wave.
+y = rectpuls(t, w)
+    A rectangular pulse.
+y = tripuls(t, w, s)
+    A triangular pulse.
+[yi, yq, ye] = gauspuls(t, fc, bw)
+    A Gaussian pulse, its quadrature part and envelope.
+y = diric(x, n)
+    The Dirichlet function.
+# Examples
+## Waves and pulses
+t = linspace(0, 4*pi, 400);
+subplot(2, 2, 1), plot(t, sawtooth(t), t, sawtooth(t, 0.5)), title('sawtooth')
+subplot(2, 2, 2), plot(t, square(t, 25)), ylim([-1.2 1.2]), title('square, 25%')
+tp = linspace(-1, 1, 401);
+subplot(2, 2, 3), plot(tp, rectpuls(tp, 0.8), tp, tripuls(tp, 1, -0.5)), ylim([-0.1 1.1]), title('pulses')
+tg = linspace(-3e-3, 3e-3, 601);
+[yi, ~, ye] = gauspuls(tg, 1000, 0.5);
+subplot(2, 2, 4), plot(tg, yi, tg, ye), title('gauspuls')
+diric([0 pi/4 pi/2], 3)
+# See also
+pulstran chirp
+
+@ pulstran
+A train of pulses: one pulse shape at each of a list of delays.
+
+With a function (a name such as `'rectpuls'` or `'gauspuls'`, or a handle), it is called at t - d(k) for each delay and the results summed, with any further inputs passed on; d may have a second column of amplitudes. With a sampled pulse p (at fs, 1 unless given), the pulse is interpolated (`'linear'` unless said) at each delay, zero outside it.
+
+# Syntax
+y = pulstran(t, d, func, p1, p2, ...)
+    A pulse function at each delay.
+y = pulstran(t, d, p, fs, method)
+    A sampled pulse at each delay.
+# Examples
+## Pulses of falling height, and a sampled shape repeated
+t = (0:0.001:1)';
+d = [(0.1:0.2:0.9)', 0.8.^(0:4)'];
+y = pulstran(t, d, 'tripuls', 0.1);
+p = [0 1 0.5 0.25 0];
+z = pulstran(t, [0.2 0.6], p, 100);
+plot(t, y, t, z)
+max(y)
+# See also
+rectpuls gauspuls
+
+@ db2mag, mag2db, pow2db, db2pow
+Decibels and back: of magnitudes (amplitudes) and of powers.
+
+Magnitudes: 20 log10 y, and back 10^(ydb/20); powers: 10 log10 y, and back 10^(ydb/10). Doubling a magnitude adds about 6 dB, doubling a power about 3 dB.
+
+# Syntax
+ydb = mag2db(y)
+    A magnitude in dB.
+y = db2mag(ydb)
+    Back.
+ydb = pow2db(y)
+    A power in dB.
+y = db2pow(ydb)
+    Back.
+# Examples
+## The same ratio, as amplitude and as power
+round([mag2db(2), pow2db(2)], 2)
+db2mag(-20)
+db2pow(-20)
+# See also
+log10
+
+@ peak2peak, peak2rms
+The range of a signal, and its crest factor.
+
+`peak2peak` is the largest value less the smallest; `peak2rms` the largest magnitude over the root mean square (√2 for a sine, 1 for a square wave), along the first non-singleton dimension or dim.
+
+# Syntax
+y = peak2peak(x, dim)
+    The range.
+y = peak2rms(x, dim)
+    The crest factor.
+# Examples
+## A sine and a square wave
+t = linspace(0, 2*pi, 10001)';
+x = [sin(t), square(t)];
+round(peak2peak(x), 3)
+round(peak2rms(x), 3)
+sqrt(2)
+# See also
+rms range
+
+@ rceps, cceps, icceps
+Cepstra: the spectrum of the log spectrum, where echoes and pitch show as peaks.
+
+`rceps` gives the real cepstrum, real(ifft(log(abs(fft(x))))), and the minimum-phase signal with the same magnitude spectrum. `cceps` gives the complex cepstrum, the inverse FFT of the log magnitude plus i times the unwrapped phase (its linear part, nd samples of delay, taken out); `icceps` goes back. An echo delayed by d samples makes peaks at multiples of d. The complex cepstrum needs the phase unwrapped consistently: for noise-like signals whose phase jumps by nearly pi between bins, `icceps` may not give the signal back exactly.
+
+# Syntax
+y = rceps(x)
+    The real cepstrum.
+[y, ym] = rceps(x)
+    With the minimum-phase signal.
+[xhat, nd] = cceps(x)
+    The complex cepstrum and its delay.
+x = icceps(xhat, nd)
+    Back.
+# Examples
+## An echo found in the cepstrum, and the signal back
+> A smooth signal: its phase unwraps cleanly, which the complex cepstrum needs to give the signal back exactly.
+x = 0.95.^(0:511)'.*cos(0.3*(0:511)');
+y = x + 0.5*[zeros(40, 1); x(1:end - 40)];
+c = rceps(y);
+[~, k] = max(c(20:200));
+k + 18
+[xh, nd] = cceps(y);
+max(abs(icceps(xh, nd) - y)) < 1e-9
+# See also
+fft hilbert
+
+@ dct, idct
+The discrete cosine transform and its inverse.
+
+The orthonormal DCT of type II (types 1 to 4 with `'Type'`), along the first non-singleton dimension or dim, padded or cut to n: a smooth signal's energy gathers in its first coefficients, which is why compression uses it. `idct` inverts it.
+
+# Syntax
+y = dct(x, n, dim)
+    The transform.
+y = dct(..., 'Type', k)
+    Of type k.
+x = idct(y, n, dim)
+    The inverse.
+# Examples
+## A smooth signal in a few coefficients
+x = cos(linspace(0, pi, 64))'.^3 + 0.1*linspace(0, 1, 64)';
+c = dct(x);
+c(abs(c) < 0.1) = 0;
+nnz(c)
+round(max(abs(idct(c) - x)), 3)
+round(sum(dct(x).^2) - sum(x.^2), 10)
+# See also
+fft mfcc
+
+@ dtw, edr
+Distances between signals that may be stretched in time: dynamic time warping and the edit distance on real signals.
+
+`dtw` finds the path of steps (1, 0), (0, 1) and (1, 1) from the first pair of samples to the last with the smallest sum of distances, so that x(ix) and y(iy) line up; maxsamp keeps the path near the straight line, and the metric is `'euclidean'` (the default), `'absolute'`, `'squared'` or `'symmkl'`. Without outputs it draws the signals before and after. `edr` counts the fewest insertions, deletions and substitutions, two samples matching when their distance is at most tol, so that outliers count once.
+
+# Syntax
+dist = dtw(x, y)
+    The distance.
+[dist, ix, iy] = dtw(x, y, maxsamp, metric)
+    With the alignment.
+dtw(x, y)
+    Drawn.
+dist = edr(x, y, tol)
+    The edit distance.
+# Examples
+## A slow and a fast version of one shape
+x = sin(2*pi*(0:0.02:1));
+y = sin(2*pi*(0:0.05:1).^1.5);
+[d, ix, iy] = dtw(x, y);
+round(d, 3)
+round(sum(abs(x(ix) - y(iy))), 3) == round(d, 3)
+dtw(x, y)
+de = edr([1 2 3 10 4 5], [1 2 3 4 5], 0.5)
+# See also
+finddelay alignsignals
+
+@ emd, vmd
+Signals taken apart into modes: empirical and variational mode decomposition.
+
+`emd` sifts out intrinsic mode functions one by one, the fastest first: each sifting takes off the mean of the spline envelopes through the maxima and the minima until it changes little, and the last residual is the slow trend; x is the sum of the modes and the residual. Without outputs it draws them. `vmd` finds a given number of modes (5) at once, each narrow around a central frequency, from the highest down.
+
+# Syntax
+[imf, residual] = emd(x)
+    Empirical modes.
+[imf, residual, info] = emd(x, 'MaxNumIMF', k)
+    At most k.
+emd(x)
+    Drawn.
+[imf, residual] = vmd(x, 'NumIMF', k)
+    Variational modes.
+# Examples
+## A fast tone, a slow one and a trend
+t = (0:999)'/1000;
+x = sin(2*pi*40*t) + 0.8*sin(2*pi*5*t) + 2*t;
+[imf, res] = emd(x, 'MaxNumIMF', 3);
+size(imf)
+round(max(abs(sum(imf, 2) + res - x)), 10)
+emd(x, 'MaxNumIMF', 3)
+[m, r] = vmd(x, 'NumIMF', 2);
+round(corr(m(:, 1), sin(2*pi*40*t)), 2)
+# See also
+hilbert pspectrum
