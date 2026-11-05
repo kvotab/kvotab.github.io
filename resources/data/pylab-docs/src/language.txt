@@ -1,0 +1,222 @@
+@ if
+Run a block when a condition holds, with optional elseif and else branches.
+
+The branches are tried in order and the first whose condition holds runs; `else` runs when none does. A condition holds when it is not empty and every one of its elements is nonzero, so `if [1 1 0]` does not run its block, and `if []` never does. Use `any` or `all` to say which is meant for an array.
+
+# Syntax
+if condition, statements, end
+    Runs the statements when the condition holds.
+if condition, statements, elseif other, statements, else, statements, end
+    Tries each condition in turn; `else` takes everything left.
+# Inputs
+condition — an expression
+    Usually a comparison (`x > 0`), a test such as `isempty(s)`, or a combination with `&&` and `||`, which stop as soon as the answer is known.
+# Examples
+## Three branches
+x = -3;
+if x > 0
+    disp('positive')
+elseif x < 0
+    disp('negative')
+else
+    disp('zero')
+end
+## A condition on an array holds only if every element holds
+> `all` and `any` say which of the two you mean.
+v = [2 5 -1];
+if v > 0
+    disp('all positive')
+else
+    disp('not all positive')
+end
+if any(v < 0)
+    fprintf('%d of them negative\n', nnz(v < 0))
+end
+## Short-circuit tests
+> `&&` does not evaluate its right side when the left is false, so the index is only tried when there is an element.
+s = [];
+if ~isempty(s) && s(1) == 0
+    disp('starts with zero')
+else
+    disp('empty, or does not start with zero')
+end
+# See also
+switch for while any all isempty
+
+@ for
+Repeat a block once for each column of an array.
+
+The loop variable takes each column of the array in turn: for a row vector such as `1:n`, each element. Changing the loop variable inside the block does not change the next pass, and after the loop it keeps its last value. `break` leaves the loop and `continue` goes on to the next pass.
+
+# Syntax
+for k = first:last, statements, end
+    `k` takes the values first, first+1, …, last.
+for k = first:step:last, statements, end
+    Steps of `step`, which may be negative or not whole.
+for column = A, statements, end
+    Each column of `A` in turn (a column vector of a matrix; a cell of a cell row).
+# Examples
+## A running total
+total = 0;
+for k = 1:5
+    total = total + k^2;
+end
+total
+## Counting down in steps
+for t = 1:-0.25:0
+    fprintf('%.2f ', t)
+end
+fprintf('\n')
+## The columns of a matrix
+> Each pass gets a whole column.
+A = [1 2 3; 4 5 6];
+for c = A
+    disp(c')
+end
+## Growing a result row by row
+n = 6;
+F = zeros(1, n);
+F(1:2) = 1;
+for k = 3:n
+    F(k) = F(k-1) + F(k-2);
+end
+F
+# See also
+while break continue colon end
+
+@ while
+Repeat a block for as long as a condition holds.
+
+The condition is tested before each pass, so the block may never run. As with `if`, an array condition holds only when every element is nonzero. Make sure something in the block changes the condition, or use `break`; Ctrl+C stops a loop that runs on.
+
+# Syntax
+while condition, statements, end
+    Runs the statements again and again while the condition holds.
+# Examples
+## Halving until small
+x = 1;
+n = 0;
+while x > 1e-3
+    x = x / 2;
+    n = n + 1;
+end
+n, x
+## Newton's method for a square root
+> The loop stops when a step changes the answer by less than a tolerance.
+a = 10;
+x = a;
+step = Inf;
+while abs(step) > 1e-12
+    step = (x^2 - a) / (2*x);
+    x = x - step;
+end
+fprintf('%.15f\n', x)
+# See also
+for break continue if
+
+@ switch
+Pick a block by comparing a value with cases (numbers or text).
+
+The value is compared with each `case` in turn and the first that matches runs; `otherwise` runs when none does. Numbers match when they are equal, text when it is the same text. A case given as a cell array, such as `{'png', 'jpg'}`, matches any of its members. Only one block runs: there is no falling through to the next case.
+
+# Syntax
+switch value, case a, statements, case {b, c}, statements, otherwise, statements, end
+    Runs the block of the first case that matches `value`.
+# Examples
+## Cases of text
+ext = 'jpg';
+switch ext
+    case {'png', 'jpg', 'gif'}
+        disp('an image')
+    case 'txt'
+        disp('text')
+    otherwise
+        disp('something else')
+end
+## Cases of numbers
+for n = 1:4
+    switch mod(n, 3)
+        case 0
+            fprintf('%d: divisible by 3\n', n)
+        case 1
+            fprintf('%d: one more than a multiple of 3\n', n)
+        otherwise
+            fprintf('%d: two more\n', n)
+    end
+end
+# See also
+if strcmp
+
+@ try
+Run a block, and another block if the first one throws an error.
+
+When a statement in the `try` block throws an error, the rest of that block is skipped and the `catch` block runs; without an error the `catch` block is passed over. Named after `catch`, the error is an exception whose `message`, `identifier` and `stack` say what went wrong. `rethrow` passes it on, and `error` throws one of your own.
+
+# Syntax
+try, statements, catch, statements, end
+    Runs the catch block if the try block fails.
+try, statements, catch err, statements, end
+    The same, with the error in `err`.
+# Examples
+## Catching an error and reading its message
+try
+    x = [1 2 3];
+    y = x(5);
+catch err
+    disp(err.message)
+end
+## A fallback when something fails
+> `str2double` gives `NaN` for text that is not a number; `error` makes the failure explicit, and the catch block supplies a default.
+s = 'twelve';
+try
+    v = str2double(s);
+    if isnan(v)
+        error('Not a number: %s', s);
+    end
+catch err
+    fprintf('%s; using 0\n', err.message)
+    v = 0;
+end
+v
+# See also
+error rethrow MException warning
+
+@ function
+Start a function: in a function file, or after the code of a script file.
+
+A function has its own workspace: it sees only its inputs, and the caller sees only its outputs. A file whose first code is a function is a function file, called by the file's name; more functions after the first are local to the file. A script file may end with local functions too, as may the code typed at the prompt. Each function ends with `end`, or with the next function line when no function in the file uses `end`.
+
+# Syntax
+function y = name(x)
+    One input and one output.
+function [a, b] = name(x, y)
+    Several outputs, in brackets; the caller takes as many as it asks for (`nargout` says how many).
+function name(varargin)
+    Any number of inputs, in the cell array `varargin` (`nargin` counts them).
+# Examples
+## A function after the code that calls it
+r = hyp(3, 4)
+
+function c = hyp(a, b)
+    c = sqrt(a^2 + b^2);
+end
+## Two outputs
+[lo, hi] = bounds2([4 -2 9 1])
+
+function [lo, hi] = bounds2(v)
+    lo = min(v);
+    hi = max(v);
+end
+## A default for an input left out
+> `nargin` is how many inputs the call gave.
+greet('Ada')
+greet()
+
+function greet(name)
+    if nargin < 1
+        name = 'world';
+    end
+    fprintf('Hello, %s!\n', name)
+end
+# See also
+nargin nargout return end

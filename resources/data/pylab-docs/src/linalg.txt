@@ -1,0 +1,244 @@
+@ mldivide
+Left matrix division, A \ b: the solution of A*x = b (least squares when A is not square).
+
+The usual way to solve a system of linear equations: faster and more accurate than `inv(A)*b`. For a square matrix it solves exactly (with LU factorization, or Cholesky for a symmetric positive definite one), and warns when the matrix is close to singular. For a matrix with more rows than columns it gives the least-squares solution, the `x` that makes `norm(A*x - b)` smallest. `b` may have several columns, one system each.
+
+# Syntax
+x = A \ b
+    The solution of `A*x = b`.
+x = mldivide(A, b)
+    The same, as a function.
+# Inputs
+A — matrix
+    The coefficients: square for an exact solution, tall for least squares.
+b — vector or matrix
+    The right-hand sides, with as many rows as `A`.
+# Outputs
+x — vector or matrix
+    The solution, with a column for each column of `b`.
+# Examples
+## Three equations, three unknowns
+> 2x + y - z = 8, -3x - y + 2z = -11, -2x + y + 2z = -3.
+A = [2 1 -1; -3 -1 2; -2 1 2];
+b = [8; -11; -3];
+x = A \ b
+residual = norm(A*x - b)
+## A straight line by least squares
+> More points than unknowns: `\` finds the line closest to all of them.
+x = (0:5)';
+y = [1.1; 2.9; 5.2; 7.1; 8.8; 11.0];
+coef = [x ones(size(x))] \ y
+plot(x, y, 'o', x, [x ones(size(x))]*coef, '-')
+legend('data', 'fit', 'Location', 'northwest')
+## Several right-hand sides at once
+A = [4 1; 2 3];
+B = [1 0; 0 1];
+X = A \ B
+# See also
+inv lsqminnorm lu chol pinv
+
+@ inv
+The inverse of a square matrix.
+
+`inv(A)` is the matrix that gives the identity when multiplied by `A`. To solve `A*x = b`, `A \ b` is faster and more accurate than `inv(A)*b`; the inverse itself is mostly wanted when its entries matter. A matrix close to singular gives a warning, and a singular one an inverse of `Inf`.
+
+# Syntax
+Y = inv(A)
+    The inverse of the square matrix `A`.
+# Examples
+## An inverse, and a check
+A = [4 7; 2 6];
+Ainv = inv(A)
+A * Ainv
+## A matrix that has none
+S = [1 2; 2 4];
+det(S)
+rank(S)
+# See also
+mldivide pinv det rank
+
+@ det
+The determinant.
+
+Of a 2-by-2 matrix `[a b; c d]` it is `a*d - b*c`; in general it is the product of the eigenvalues, and the factor by which the matrix scales areas or volumes. A matrix is singular when its determinant is 0, but a small determinant is a poor test of near-singularity: use `cond` or `rank` for that.
+
+# Syntax
+d = det(A)
+    The determinant of the square matrix `A`.
+# Examples
+## A small matrix, and the product of eigenvalues
+A = [2 1; 7 4];
+det(A)
+B = [1 2 3; 0 4 5; 1 0 6];
+det(B)
+prod(eig(B))
+# See also
+inv rank cond eig
+
+@ eig
+Eigenvalues and eigenvectors.
+
+An eigenvector `v` of a square matrix `A` keeps its direction under it: `A*v = lambda*v` for its eigenvalue `lambda`. With one output, the eigenvalues as a column; with two, the eigenvectors as the columns of `V` and the eigenvalues on the diagonal of `D`, so that `A*V = V*D`. A symmetric matrix has real eigenvalues, given in increasing order, and orthonormal eigenvectors. `eig(A, B)` solves the generalized problem `A*v = lambda*B*v`.
+
+# Syntax
+e = eig(A)
+    The eigenvalues, as a column.
+[V, D] = eig(A)
+    Eigenvectors as columns of `V`, eigenvalues on the diagonal of `D`.
+e = eig(A, B)
+    The generalized eigenvalues.
+[V, D] = eig(A, B)
+    With the generalized eigenvectors.
+# Examples
+## A symmetric matrix
+A = [2 1; 1 2];
+[V, D] = eig(A)
+check = A*V - V*D
+## Complex eigenvalues of a rotation
+theta = pi/4;
+R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
+e = eig(R)
+abs(e)
+## Modes of a spring chain
+> The eigenvalues of the stiffness matrix are the squared frequencies of the chain's modes; the eigenvectors are their shapes.
+n = 6;
+K = 2*eye(n) - diag(ones(1, n-1), 1) - diag(ones(1, n-1), -1);
+[V, D] = eig(K);
+frequencies = sqrt(diag(D))'
+plot(1:n, V(:, 1:3), '-o')
+legend('mode 1', 'mode 2', 'mode 3')
+# See also
+svd eigs det trace
+
+@ svd
+The singular value decomposition, A = U*S*V'.
+
+Every matrix factors into an orthogonal `U`, a diagonal `S` of nonnegative singular values in decreasing order, and an orthogonal `V`. The singular values say how much the matrix stretches along its principal directions: their number above zero is the rank, the largest is the 2-norm, and the largest over the smallest is the condition number. Keeping only the largest ones gives the best low-rank approximation.
+
+# Syntax
+s = svd(A)
+    The singular values, as a column.
+[U, S, V] = svd(A)
+    The full decomposition.
+[U, S, V] = svd(A, 'econ')
+    The economy size: only as many columns of `U` (or `V`) as there are singular values.
+# Examples
+## Singular values, rank and norm
+A = [3 2 2; 2 3 -2];
+s = svd(A)
+[norm(A) s(1)]
+## The decomposition and a check
+A = [1 2; 3 4; 5 6];
+[U, S, V] = svd(A, 'econ')
+norm(U*S*V' - A)
+## The best rank-1 approximation
+A = magic(4);
+[U, S, V] = svd(A);
+A1 = S(1,1) * U(:,1) * V(:,1)';
+relativeError = norm(A - A1) / norm(A)
+# See also
+eig rank norm pinv cond
+
+@ norm
+The norm of a vector or a matrix.
+
+Of a vector, by default its length, `sqrt(sum(abs(v).^2))`; with `p`, the p-norm `sum(abs(v).^p)^(1/p)`, the largest absolute value for `Inf`. Of a matrix, by default the 2-norm (its largest singular value); `1` gives the largest column sum of absolute values, `Inf` the largest row sum, and `'fro'` the Frobenius norm.
+
+# Syntax
+n = norm(v)
+    The length of a vector.
+n = norm(v, p)
+    The p-norm of a vector (`Inf` for the largest absolute value).
+n = norm(A)
+    The 2-norm of a matrix.
+n = norm(A, 1 | 2 | Inf | 'fro')
+    Another matrix norm.
+# Examples
+## Lengths of a vector
+v = [3 -4 12];
+norm(v)
+norm(v, 1)
+norm(v, Inf)
+## Norms of a matrix
+A = [1 -2; 3 4];
+[norm(A) norm(A, 1) norm(A, Inf) norm(A, 'fro')]
+## The distance between two points
+p = [1 2 3];
+q = [4 6 3];
+d = norm(p - q)
+# See also
+vecnorm abs svd cond
+
+@ rank
+The number of linearly independent rows or columns.
+
+Counted from the singular values: those above a tolerance (by default `max(size(A))*eps(norm(A))`) count. A square matrix of full rank has an inverse; a lower rank means some columns are combinations of others.
+
+# Syntax
+r = rank(A)
+    The rank of `A`.
+r = rank(A, tol)
+    With singular values above `tol` counted.
+# Examples
+## Full and lower rank
+rank(magic(4))
+A = [1 2 3; 2 4 6; 1 0 1];
+rank(A)
+> The second row of `A` is twice the first, so the rank is 2.
+# See also
+svd null orth det
+
+@ lu
+The LU decomposition with row pivoting.
+
+Writes a square matrix as a lower triangular `L` times an upper triangular `U`, with the rows reordered for stability: `P*A = L*U`. Two systems with triangular matrices are then quick to solve, for many right-hand sides. With two outputs the row order is folded into `L`, which is then a permuted lower triangle.
+
+# Syntax
+[L, U] = lu(A)
+    `A = L*U`, `L` a lower triangle with its rows permuted.
+[L, U, P] = lu(A)
+    `P*A = L*U` with a permutation matrix `P`.
+[L, U, P] = lu(A, 'vector')
+    The permutation as a vector: `A(P, :) = L*U`.
+# Examples
+## The factors and a check
+A = [1 2 4; 3 8 14; 2 6 13];
+[L, U, P] = lu(A)
+norm(P*A - L*U)
+## Solving with the factors
+A = [1 2 4; 3 8 14; 2 6 13];
+[L, U, P] = lu(A);
+b = [3; 13; 4];
+y = L \ (P*b);
+x = U \ y
+# See also
+mldivide qr chol det
+
+@ qr
+The QR decomposition, A = Q*R.
+
+Writes a matrix as an orthogonal `Q` times an upper triangular `R`. It is the stable way to solve least-squares problems and to find an orthonormal basis for the columns of a matrix. The economy size keeps only as many columns of `Q` as `A` has.
+
+# Syntax
+[Q, R] = qr(A)
+    The full decomposition.
+[Q, R] = qr(A, 'econ')
+    The economy size, for a tall `A`.
+[Q, R, P] = qr(A)
+    With column pivoting, `A*P = Q*R`.
+R = qr(A)
+    The triangular factor alone.
+# Examples
+## A tall matrix
+A = [1 2; 3 4; 5 6];
+[Q, R] = qr(A, 'econ')
+norm(Q*R - A)
+Q' * Q
+## Least squares through the factors
+A = [1 2; 3 4; 5 6];
+b = [1; 2; 2];
+[Q, R] = qr(A, 'econ');
+x = R \ (Q' * b)
+x2 = A \ b
+# See also
+lu svd mldivide orth

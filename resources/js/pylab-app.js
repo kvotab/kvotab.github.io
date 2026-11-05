@@ -609,6 +609,9 @@
         const name = t.split(/\s+/)[1] || '';
         const h = await PL.engine.call('help_text', name).catch(() => null);
         if (h) this.cmd.write(`${h.linked || h.text}\n`, 'out');
+        // a function with a page of its own: a link to it
+        const idx = name && PL.helpDocs ? await PL.helpDocs.names().catch(() => null) : null;
+        if (h && idx && idx.names[name]) this.cmd.write(`\n    Documentation, with examples: \x01doc:${name}\x02doc ${name}\x03\n`, 'out');
         return null;
       }
       let res = null;

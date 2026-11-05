@@ -1,0 +1,155 @@
+@ cell
+A cell array of empty matrices.
+
+A cell array holds values of any kinds and sizes, one in each cell: numbers, text, other cell arrays. Curly braces reach the contents (`C{2}`), round brackets select cells and give a smaller cell array (`C(2)`). `cell(m, n)` makes room for `m`-by-`n` cells, each holding `[]`, to be filled in later; cell arrays are also written directly, as `{1, 'two', [3 4]}`.
+
+# Syntax
+C = cell(n)
+    An n-by-n cell array of empty matrices.
+C = cell(m, n)
+    An m-by-n cell array.
+# Examples
+## Making room, then filling in
+C = cell(1, 3);
+C{1} = 42;
+C{2} = 'text';
+C{3} = magic(3);
+C
+## Braces and brackets
+C = {10, 'abc', [1 2 3]};
+x = C{3}
+sub = C(1:2)
+class(sub)
+## Texts of different lengths
+names = {'Ann', 'Bartholomew', 'Cy'};
+for k = 1:numel(names)
+    fprintf('%-12s %d letters\n', names{k}, length(names{k}))
+end
+# See also
+cellfun num2cell iscell struct
+
+@ struct
+A struct, from field names and values; a cell value makes a struct array.
+
+A struct groups values under names, its fields: `s.name` reads or sets one. Fields can also be added one at a time by assignment, without `struct`. A cell array as a value makes a struct array with an element for each cell, so to store a cell array itself in a field, wrap it in another pair of braces.
+
+# Syntax
+s = struct('field1', value1, 'field2', value2, ...)
+    A struct with those fields.
+s = struct()
+    A struct with no fields.
+s = struct([])
+    An empty struct array.
+# Examples
+## Fields by name, and by assignment
+s = struct('name', 'Ada', 'year', 1815)
+s.field = 'mathematics';
+s.year
+## A struct array from cells
+people = struct('name', {'Ann', 'Bo'}, 'age', {31, 27});
+size(people)
+people(2).name
+ages = [people.age]
+## A cell array as one value
+t = struct('tags', {{'red', 'blue'}});
+t.tags
+# See also
+fieldnames isfield rmfield setfield cell
+
+@ fieldnames
+The names of a struct's fields, as a cell column.
+
+In the order the fields were added. With dynamic field names, `s.(name)`, the fields can be visited one by one.
+
+# Syntax
+names = fieldnames(s)
+    The field names of `s`.
+# Examples
+## The names, and visiting each field
+s = struct('width', 3, 'height', 4, 'unit', 'cm');
+f = fieldnames(s)
+for k = 1:numel(f)
+    v = s.(f{k});
+    if isnumeric(v)
+        fprintf('%s = %g\n', f{k}, v)
+    end
+end
+# See also
+isfield struct rmfield orderfields
+
+@ isfield
+True when a struct has a field (or which of several it has).
+
+With one name, true or false; with a cell array of names, an answer for each. Often used to give a default for an option a caller left out.
+
+# Syntax
+tf = isfield(s, name)
+    Whether `s` has the field `name`.
+tf = isfield(s, names)
+    For each name of a cell array.
+# Examples
+## One field and several
+s = struct('a', 1, 'b', 2);
+isfield(s, 'a')
+isfield(s, {'a', 'c', 'b'})
+## A default for a missing option
+opts = struct('tol', 1e-6);
+if ~isfield(opts, 'maxIter')
+    opts.maxIter = 100;
+end
+opts
+# See also
+fieldnames struct rmfield
+
+@ cellfun
+Call a function on the contents of every cell.
+
+Calls the function once for each cell and collects the results. When every result is a scalar they make an array of the cell array's size; otherwise ask for `'UniformOutput', false` and the results come back in a cell array. Several cell arrays of the same size give the function several inputs.
+
+# Syntax
+A = cellfun(fun, C)
+    `fun(C{k})` for each cell, as an array.
+A = cellfun(fun, C1, C2, ...)
+    `fun(C1{k}, C2{k}, ...)`.
+B = cellfun(fun, C, 'UniformOutput', false)
+    The results in a cell array.
+[A, B] = cellfun(fun, C)
+    Two outputs of `fun` for each cell.
+# Examples
+## The length of each text, and which are empty
+C = {'one', '', 'three', 'four'};
+lengths = cellfun(@length, C)
+empty = cellfun(@isempty, C)
+## Results that are not scalars
+C = {[1 2 3], [4 5], 6};
+doubled = cellfun(@(x) 2*x, C, 'UniformOutput', false);
+doubled{1}
+## Two inputs
+cellfun(@(a, b) a + b, {1, 2, 3}, {10, 20, 30})
+# See also
+arrayfun cell num2cell structfun
+
+@ arrayfun
+Call a function on every element of arrays.
+
+Like `cellfun`, but over the elements of ordinary arrays (or struct arrays). Element-wise operators are faster where they apply; `arrayfun` helps when the function works only on one value at a time, such as one that builds text or calls a solver.
+
+# Syntax
+A = arrayfun(fun, X)
+    `fun(X(k))` for each element, as an array.
+A = arrayfun(fun, X1, X2, ...)
+    `fun(X1(k), X2(k), ...)`.
+B = arrayfun(fun, X, 'UniformOutput', false)
+    The results in a cell array.
+# Examples
+## A function of one value at a time
+f = @(n) sum(1:n);
+arrayfun(f, 1:6)
+## Text for each element
+labels = arrayfun(@(t) sprintf('%.1f s', t), [0.5 1 2], 'UniformOutput', false)
+## A root for each parameter
+> `fzero` solves for one value at a time.
+c = [1 2 3];
+x = arrayfun(@(ci) fzero(@(x) x.^3 + x - ci, 1), c)
+# See also
+cellfun structfun

@@ -911,6 +911,9 @@
       if (cbar && cbar.visible && (cbar.location || 'eastoutside') === 'eastoutside') w -= Math.min(70, w * 0.16);
       if (cbar && cbar.visible && cbar.location === 'southoutside') h -= Math.min(54, h * 0.18);
       if (legend && legend.visible && /outside$/.test(legend.location) && legend.location.startsWith('northeast')) w -= Math.min(120, w * 0.25);
+      // a title (with its subtitle) that would rise past the top of the figure, or of its panel: the box comes down to make room
+      const room = this.titleRoom(ax);
+      if (room > y - b.y && h > 2 * room) { const d = room - (y - b.y); y += d; h -= d; }
       if (ax.kind === 'polar') {
         const s = Math.min(w, h);
         return { x: x + (w - s) / 2, y: y + (h - s) / 2, w: s, h: s };
@@ -929,6 +932,30 @@
         }
       }
       return { x, y, w, h };
+    }
+
+    /* The height the title and subtitle take above the box, as titles() draws them. */
+    titleRoom(ax) {
+      const lines = (s) => (Array.isArray(s) ? s.length : String(s ?? '').split('\n').length);
+      let h = 0;
+      if (ax.title && ax.title.string && ax.title.visible !== false) h += lines(ax.title.string) * ax.title.fontSize * PT * (ax.titleSize ?? 1.1) * 1.2;
+      if (ax.subtitle && ax.subtitle.string && ax.subtitle.visible !== false) h += Math.max(lines(ax.subtitle.string) * ax.subtitle.fontSize * PT * 1.2, ax.subtitle.fontSize * PT * 1.3);
+      return h ? h + 8 : 0;
+    }
+
+    /* Bars at a few whole-number places (bar(y), up to 15 of them): a tick at
+       each, so that tick labels name the bars. */
+    barTicks(ax, which, lim) {
+      let xs = null;
+      for (const c of ax.children || []) {
+        if (c.type !== 'series' || c.kind !== 'bar' || !c.xData || (which === 'y') !== !!c.horizontal) continue;
+        xs = (xs || []).concat(Array.from(vec(decode(c.xData))));
+      }
+      if (!xs || !xs.length) return null;
+      const u = [...new Set(xs)].sort((a, b) => a - b);
+      if (u.length > 15 || !u.every((v) => Number.isInteger(v))) return null;
+      const t = u.filter((v) => v >= Math.min(lim[0], lim[1]) && v <= Math.max(lim[0], lim[1]));
+      return t.length ? t : null;
     }
 
     drawAxes(ctx, fig, ax, W, H, legend, cbar) {
@@ -982,7 +1009,7 @@
         if (kind.startsWith('categorical:')) return Object.assign(categoryTicks(lim[0], lim[1], kind.slice(12)), { exp: null });
         return Object.assign(kind === 'datetime' ? dateTicks(lim[0], lim[1], n) : durationTicks(lim[0], lim[1], n, kind.split(':')[1]), { exp: null });
       }
-      let ticks = given || (log ? logTicks(lim[0], lim[1]) : niceTicks(lim[0], lim[1], maxTicks(px, is3d)));
+      let ticks = given || (log ? logTicks(lim[0], lim[1]) : (!is3d && this.barTicks(ax, which, lim)) || niceTicks(lim[0], lim[1], maxTicks(px, is3d)));
       ticks = ticks.filter((t) => t >= Math.min(lim[0], lim[1]) - 1e-12 * Math.abs(lim[1] - lim[0]) && t <= Math.max(lim[0], lim[1]) + 1e-12 * Math.abs(lim[1] - lim[0]));
       const manual = ax[`${which}ticklabel`];
       const fmt = ax[`${which}tickformat`];
@@ -999,12 +1026,13 @@
 
     /* The axes' children in their order, each kept inside the axes' box
        unless its Clipping is off (text's is, unless set). Bubbles are kept
-       by their middles instead (series2). */
+       by their middles instead (series2), and a pie's labels lie outside
+       its wedges, beyond the box. */
     children2(ctx, ax, fr, r) {
       let clipped = false;
       for (const c of ax.children) {
         if (c.visible === false) continue;
-        const want = c.clip !== false && c.kind !== 'bubblechart';
+        const want = c.clip !== false && c.kind !== 'bubblechart' && c.kind !== 'pie';
         if (want !== clipped) {
           if (clipped) ctx.restore();
           else { ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip(); }

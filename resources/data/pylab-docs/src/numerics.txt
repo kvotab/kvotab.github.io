@@ -1,0 +1,329 @@
+@ polyfit
+Fit a polynomial by least squares; coefficients from the highest power down.
+
+Finds the polynomial of degree `n` that passes closest to the points, in the sense of the smallest sum of squared differences. The coefficients come highest power first, ready for `polyval` and `roots`. With `mu`, x is centred and scaled first (`(x - mu(1))/mu(2)`), which keeps a high degree well conditioned; `S` holds what `polyval` needs for error estimates.
+
+# Syntax
+p = polyfit(x, y, n)
+    The coefficients of the degree `n` polynomial.
+[p, S] = polyfit(x, y, n)
+    With a structure for `polyval`'s error estimates.
+[p, S, mu] = polyfit(x, y, n)
+    Fitted to centred and scaled x: `mu` is `[mean(x); std(x)]`.
+# Inputs
+x, y — vectors of the same length
+    The points.
+n — nonnegative integer
+    The degree. With `n + 1` points the polynomial passes through every one.
+# Outputs
+p — row vector
+    `n + 1` coefficients, highest power first.
+# Examples
+## A straight line
+x = 1:5;
+y = [2.2 4.1 6.2 7.9 10.1];
+p = polyfit(x, y, 1)
+> The slope is close to 2 and the intercept close to 0.
+## A curve through noisy data
+rng default
+x = linspace(0, 4, 25);
+y = x.^2 - 3*x + 1 + 0.3*randn(size(x));
+p = polyfit(x, y, 2)
+xf = linspace(0, 4, 200);
+plot(x, y, 'o', xf, polyval(p, xf), '-')
+legend('data', 'quadratic fit', 'Location', 'north')
+# See also
+polyval roots fit mldivide
+
+@ polyval
+Evaluate a polynomial.
+
+The polynomial `p(1)*x^n + p(2)*x^(n-1) + … + p(n+1)` at each element of `x`, by Horner's rule. The coefficients come highest power first, as `polyfit` gives them.
+
+# Syntax
+y = polyval(p, x)
+    The polynomial at each element of `x`.
+y = polyval(p, x, [], mu)
+    For coefficients fitted to centred and scaled x (`polyfit`'s `mu`).
+[y, delta] = polyval(p, x, S)
+    With the standard error of each prediction, from `polyfit`'s `S`.
+# Examples
+## 3x^2 - 2x + 1 at some points
+p = [3 -2 1];
+polyval(p, [0 1 2 3])
+## A fit and its error band
+rng(4)
+x = 0:10;
+y = 0.5*x + 1 + randn(size(x));
+[p, S] = polyfit(x, y, 1);
+[yf, delta] = polyval(p, x, S);
+plot(x, y, 'o', x, yf, '-', x, yf + 2*delta, ':', x, yf - 2*delta, ':')
+# See also
+polyfit roots conv
+
+@ roots
+The roots of a polynomial.
+
+The values where the polynomial is zero, found as the eigenvalues of its companion matrix: a column of `n` roots for a polynomial of degree `n`, complex where they are. The coefficients come highest power first; `poly` goes the other way.
+
+# Syntax
+r = roots(p)
+    The roots of `p(1)*x^n + … + p(n+1)`.
+# Examples
+## A quadratic with real roots, and one with complex roots
+roots([1 -3 2])
+roots([1 0 4])
+## From roots back to coefficients
+r = [1 2 3];
+p = poly(r)
+roots(p)
+# See also
+poly polyval fzero
+
+@ conv
+Convolution, or polynomial multiplication.
+
+Each element of the result is a sum of products of `u` and `v` slid past each other. For coefficient vectors this multiplies the polynomials; for a signal and a filter's weights it filters the signal. The full result has `length(u) + length(v) - 1` elements; `'same'` keeps the central part the size of `u`.
+
+# Syntax
+w = conv(u, v)
+    The full convolution.
+w = conv(u, v, 'same' | 'valid')
+    The central part the size of `u`, or only the parts computed without padding.
+# Examples
+## Multiplying two polynomials
+> (x + 1)(x^2 - 2x + 3) = x^3 - x^2 + x + 3
+conv([1 1], [1 -2 3])
+## A moving average
+x = [2 4 6 8 10 12];
+w = ones(1, 3) / 3;
+conv(x, w, 'valid')
+# See also
+deconv filter polyval
+
+@ interp1
+Interpolation in one dimension.
+
+Given values `v` at points `x`, estimates the values at other points `xq`. `'linear'` (the default) joins the points with straight lines; `'spline'`, `'pchip'` and `'makima'` use smooth cubic pieces (pchip and makima do not overshoot the data); `'nearest'`, `'previous'` and `'next'` copy a neighbour's value. Points outside the data give `NaN` unless `'extrap'` or a value is given.
+
+# Syntax
+vq = interp1(x, v, xq)
+    Linear interpolation.
+vq = interp1(x, v, xq, method)
+    With another method.
+vq = interp1(x, v, xq, method, 'extrap')
+    Extending the method beyond the data.
+vq = interp1(x, v, xq, method, extrapval)
+    With `extrapval` outside the data.
+# Inputs
+x — vector
+    The points, all different (sorted or not).
+v — vector or matrix
+    The values; a matrix has a column for each set of values.
+xq — array
+    Where to estimate.
+method — text
+    `'linear'`, `'nearest'`, `'next'`, `'previous'`, `'pchip'`, `'cubic'`, `'makima'` or `'spline'`.
+# Examples
+## Between and beyond the points
+x = [1 2 3 4];
+v = [10 20 15 5];
+interp1(x, v, [1.5 2.5 5])
+interp1(x, v, 5, 'linear', 'extrap')
+## The methods side by side
+x = 0:5;
+v = [0 1 0.5 3 2.5 2];
+xq = linspace(0, 5, 200);
+plot(x, v, 'ko', xq, interp1(x, v, xq), xq, interp1(x, v, xq, 'spline'), xq, interp1(x, v, xq, 'pchip'))
+legend('data', 'linear', 'spline', 'pchip', 'Location', 'northwest')
+# See also
+spline pchip interp2 griddedInterpolant
+
+@ spline
+A cubic spline (not-a-knot ends, or clamped when two more values are given).
+
+A smooth curve of cubic pieces through the points, with continuous first and second derivatives. At its ends the first two pieces (and the last two) are one cubic (not-a-knot), unless `y` has two more values than `x`: then the first and last are the slopes at the ends (clamped). With two inputs it gives the piecewise polynomial for `ppval`.
+
+# Syntax
+yq = spline(x, y, xq)
+    The spline at the points `xq`.
+pp = spline(x, y)
+    The spline as a piecewise polynomial.
+# Examples
+## Through a few points of a sine
+x = 0:pi/4:2*pi;
+y = sin(x);
+xq = linspace(0, 2*pi, 100);
+maxError = max(abs(spline(x, y, xq) - sin(xq)))
+plot(x, y, 'o', xq, spline(x, y, xq))
+## Clamped ends
+> Two extra values give the slopes at the ends: here zero at both. The curve leaves its first point flat instead of rising steeply.
+x = [0 1 2 3];
+y = [0 1 0 1];
+xq = linspace(0, 3, 100);
+plot(x, y, 'o', xq, spline(x, y, xq), xq, spline(x, [0 y 0], xq))
+legend('data', 'not-a-knot', 'clamped', 'Location', 'south')
+# See also
+interp1 pchip ppval csaps
+
+@ trapz
+An integral by the trapezoidal rule.
+
+Sums the areas of trapezoids under the points: for points `x` and values `y`, `sum(diff(x) .* (y(1:end-1) + y(2:end)) / 2)`. It integrates sampled data, such as measurements; for a function that can be evaluated anywhere, `integral` is more accurate. Without `x` the spacing is 1.
+
+# Syntax
+Q = trapz(y)
+    With unit spacing.
+Q = trapz(x, y)
+    At the points `x` (or with the scalar spacing `x`).
+Q = trapz(..., dim)
+    Along dimension `dim`.
+# Examples
+## The area under a sampled curve
+x = linspace(0, pi, 50);
+Q = trapz(x, sin(x))
+> The exact value is 2.
+## Measurements at uneven times
+t = [0 1 2.5 4 6];
+speed = [0 3 5 5.5 6];
+distance = trapz(t, speed)
+# See also
+integral cumtrapz sum
+
+@ integral
+A definite integral, by adaptive quadrature.
+
+Integrates a function from `a` to `b` to about ten significant digits, splitting the interval where the function is hard. The function must accept a vector and return a vector of the same size, so write it with element-wise operators (`.*`, `./`, `.^`). The limits may be `Inf`.
+
+# Syntax
+q = integral(fun, a, b)
+    The integral of `fun` from `a` to `b`.
+q = integral(fun, a, b, 'RelTol', r, 'AbsTol', t)
+    With other tolerances.
+q = integral(fun, a, b, 'ArrayValued', true)
+    For a function that returns an array for a scalar.
+q = integral(fun, a, b, 'Waypoints', w)
+    Splitting the interval at `w` (for jumps or kinks).
+# Inputs
+fun — function handle
+    The function, such as `@(x) x.^2`.
+a, b — numbers
+    The limits; `-Inf` and `Inf` are allowed.
+# Examples
+## A polynomial and a Gaussian
+integral(@(x) x.^2, 0, 3)
+q = integral(@(x) exp(-x.^2), -Inf, Inf)
+sqrt(pi)
+## A function with a parameter
+> An anonymous function captures `c` when it is made.
+c = 2;
+integral(@(x) 1 ./ (x.^2 + c), 0, 1)
+# See also
+trapz integral2 quadgk
+
+@ fzero
+A root of a function of one variable.
+
+Finds a point where the function crosses zero, starting from a guess `x0` or from an interval `[a b]` where the function changes sign (then a root inside it is certain). It needs a sign change: a root where the function only touches zero, as `x^2` at 0, is not found.
+
+# Syntax
+x = fzero(fun, x0)
+    A root near `x0`.
+x = fzero(fun, [a b])
+    A root in an interval where `fun(a)` and `fun(b)` have opposite signs.
+x = fzero(fun, x0, options)
+    With options from `optimset`, such as `'TolX'` or `'Display'`.
+[x, fval, exitflag, output] = fzero(...)
+    With the value there, how it ended (1 when it found a root) and a summary.
+# Examples
+## Where cos(x) equals x
+x = fzero(@(x) cos(x) - x, 0.5)
+## A root in an interval, and the value there
+[x, fval] = fzero(@(x) x.^3 - 2*x - 5, [2 3])
+# See also
+roots fminbnd fsolve
+
+@ fminsearch
+The minimum of a function of several variables, by the Nelder-Mead simplex (no derivatives).
+
+Searches from the start point `x0` by moving a simplex of points downhill. It needs no derivatives and copes with a function that is not smooth, but it finds a local minimum, close to the start, and is slow for many variables. The function takes a vector the shape of `x0` and returns a number.
+
+# Syntax
+x = fminsearch(fun, x0)
+    A minimum near `x0`.
+x = fminsearch(fun, x0, options)
+    With options from `optimset` (`'TolX'`, `'TolFun'`, `'MaxIter'`, `'Display'`).
+[x, fval, exitflag, output] = fminsearch(...)
+    With the function's value at the minimum, how it ended and a summary.
+# Examples
+## Rosenbrock's banana function
+banana = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+[x, fval] = fminsearch(banana, [-1.2 1])
+## Fitting a model to data
+> The parameters of y = a*exp(-b*t) that make the squared misfit smallest.
+t = 0:0.5:3;
+y = [5.0 3.1 1.8 1.1 0.7 0.4 0.25];
+misfit = @(p) sum((p(1)*exp(-p(2)*t) - y).^2);
+p = fminsearch(misfit, [1 1])
+# See also
+fminbnd fminunc fmincon optimset
+
+@ fminbnd
+The minimum of a function of one variable on an interval.
+
+Searches between `a` and `b` by golden section and parabolic steps. It finds a local minimum inside the interval (or an end, if the function falls toward it).
+
+# Syntax
+x = fminbnd(fun, a, b)
+    The minimum of `fun` on [a, b].
+x = fminbnd(fun, a, b, options)
+    With options from `optimset`.
+[x, fval, exitflag, output] = fminbnd(...)
+    With the function's value there, how it ended and a summary.
+# Examples
+## The lowest point of a curve
+f = @(x) x.^2 - 4*x + 7;
+[x, fval] = fminbnd(f, 0, 5)
+## The largest area of a rectangle in a semicircle
+> Minimizing the negative area maximizes the area: a rectangle of half-width x under the unit semicircle has area 2*x*sqrt(1 - x^2).
+[x, negArea] = fminbnd(@(x) -2*x.*sqrt(1 - x.^2), 0, 1);
+x, area = -negArea
+# See also
+fminsearch fzero fminunc
+
+@ ode45
+Solve a nonstiff ODE system y' = f(t, y) by the Dormand-Prince Runge-Kutta pair of orders 5 and 4: the first solver to try.
+
+Steps from the initial values `y0` over `tspan`, choosing step sizes to keep the estimated error within tolerances. `odefun(t, y)` returns the derivatives as a column. With `tspan` of two values the solution comes at the steps taken; with more values, at those times. For stiff problems (very different time scales) use `ode15s`.
+
+# Syntax
+[t, y] = ode45(odefun, tspan, y0)
+    Times as a column, and the solution with a row for each time.
+[t, y] = ode45(odefun, tspan, y0, options)
+    With options from `odeset`, such as `'RelTol'` and `'AbsTol'`.
+sol = ode45(...)
+    The solution as a structure for `deval`.
+# Inputs
+odefun — function handle
+    `@(t, y) ...` returning a column the length of `y0`.
+tspan — vector
+    `[t0 tf]`, or the times wanted.
+y0 — vector
+    The initial values.
+# Examples
+## Exponential decay, against the exact solution
+[t, y] = ode45(@(t, y) -2*y, [0 3], 1);
+maxError = max(abs(y - exp(-2*t)))
+plot(t, y, 'o-')
+xlabel('t')
+ylabel('y')
+## A pendulum: two equations
+> The state is the angle and its rate of change; the solution is asked for at 200 times.
+f = @(t, y) [y(2); -9.81*sin(y(1))];
+t = linspace(0, 5, 200);
+[t, y] = ode45(f, t, [pi/3; 0]);
+plot(t, y(:, 1), t, y(:, 2))
+legend('angle', 'angular velocity')
+xlabel('t (s)')
+# See also
+ode23 ode15s odeset deval

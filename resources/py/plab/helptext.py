@@ -4528,8 +4528,10 @@ printpreview: Print a figure, with the browser's printing.
     printpreview(fig)
 helpwin: Show the help of a function in the Help panel.
     helpwin name
-doc: Show the help of a function in the Help panel.
+doc: Show a function's page in the Help panel: what it does, its forms, and examples with what they print and draw.
     doc name
+    doc
+    * A function without a page of its own shows its summary, forms and how PyLAB computes it; doc alone opens the Help panel's list of every function.
 timer: A timer that runs a callback after a delay, and again as often as asked.
     t = timer('TimerFcn', @tick, 'Period', 1, 'ExecutionMode', 'fixedRate')
     start(t)

@@ -86,6 +86,106 @@
     ['Colormaps', 'parula viridis turbo jet gray hot cool spring summer autumn winter bone copper pink hsv lines prism flag white colorcube brighten rgbplot spinmap validatecolor rgb2hex hex2rgb'],
   ];
 
+  /* ---- function pages -------------------------------------------------------------
+     Written in resources/data/pylab-docs/src and built by
+     resources/tests/pylab/pylab_docs.py, which ran each example in PyLAB:
+     its output and its figures (as figure windows get them) are stored with
+     it, and the figures are drawn here by the figure windows' renderer. */
+  const DOCS = 'resources/data/pylab-docs/';
+  let docIndex = null;
+  const docFiles = new Map();
+
+  function docJson(path) {
+    const v = document.documentElement.dataset.build || '';
+    return fetch(`${DOCS}${path}?v=${encodeURIComponent(v)}`).then((r) => {
+      if (!r.ok) throw new Error(`${path}: ${r.status}`);
+      return r.json();
+    });
+  }
+
+  // arrays most figures share (the default colormap) are kept once in index.json;
+  // arrays kept in single precision are widened to the doubles the renderer reads
+  function single(o) {
+    const bin = atob(o.$);
+    const u8 = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    return { data: Float64Array.from(new Float32Array(u8.buffer)), shape: o.shape };
+  }
+
+  function withShared(o, shared) {
+    if (Array.isArray(o)) return o.map((v) => withShared(v, shared));
+    if (o && typeof o === 'object') {
+      if (typeof o.$ref === 'string') return shared[o.$ref] || null;
+      if (typeof o.$ === 'string' && o.dt === 'f4') return single(o);
+      const out = {};
+      for (const k of Object.keys(o)) out[k] = withShared(o[k], shared);
+      return out;
+    }
+    return o;
+  }
+
+  function docNames() {
+    if (!docIndex) docIndex = docJson('index.json').catch(() => ({ names: {}, shared: {} }));
+    return docIndex;
+  }
+
+  async function docPage(name) {
+    const idx = await docNames();
+    const slug = idx.names[name];
+    if (!slug) return null;
+    if (!docFiles.has(slug)) docFiles.set(slug, docJson(`${slug}.json`).then((d) => withShared(d, idx.shared)));
+    const d = await docFiles.get(slug).catch(() => null);
+    return d ? d.pages.find((p) => p.names.includes(name)) || null : null;
+  }
+
+  // text with `code` in it: a function's name in backticks links to its help
+  function inline(text, known) {
+    const out = [];
+    text.split(/(`[^`]*`)/).forEach((part) => {
+      if (part.length > 1 && part[0] === '`' && part.endsWith('`')) {
+        const s = part.slice(1, -1);
+        const code = el('code', null, s);
+        out.push(/^[A-Za-z]\w*$/.test(s) && known.has(s) ? el('a', { href: '#', class: 'pl-helplink', 'data-help': s }, code) : code);
+      } else if (part) out.push(part);
+    });
+    return out;
+  }
+
+  function codeBlock(code, cls) {
+    const pre = el('pre', { class: cls });
+    pre.innerHTML = PL.lang.highlight(code);
+    return pre;
+  }
+
+  /* A stored figure on a canvas the width of its place (at most its own),
+     drawn again when that changes. */
+  function figureCanvas(fig) {
+    const canvas = el('canvas', { class: 'pl-doc-fig', role: 'img', 'aria-label': fig.name || `Figure ${fig.number}` });
+    const box = el('div', { class: 'pl-doc-figbox', style: { maxWidth: `${Math.round(fig.width) || 560}px` } }, canvas);
+    let lastW = 0;
+    const draw = () => {
+      const avail = box.clientWidth;
+      if (!avail || !fig.width) return;
+      const w = Math.min(fig.width, avail);
+      if (Math.abs(w - lastW) < 1) return;
+      lastW = w;
+      const h = Math.round(w * fig.height / fig.width);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      const ctx = canvas.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const before = PL.figureCtx;
+      PL.figureCtx = ctx;
+      try { new PL.FigureRenderer().draw(ctx, fig, w, h); } finally { PL.figureCtx = before; }
+    };
+    if (typeof ResizeObserver === 'function') new ResizeObserver(draw).observe(box);
+    requestAnimationFrame(draw);
+    return box;
+  }
+
   class HelpView {
     constructor(app) {
       this.app = app;
@@ -144,20 +244,32 @@
           el('li', null, 'Statistics: probability distributions (their functions, fits and distribution objects), descriptive statistics, hypothesis tests and statistical plots, computed with SciPy. The lists below have them all.'),
           el('li', null, 'MAT-files of versions 4 to 7 load and save; version 7.3 files load.')),
         el('h3', null, 'Functions'),
+        el('p', { class: 'pl-doc-legend' }, 'Names in bold have a page of their own, with examples and what they give; the others show their summary, forms and how PyLAB computes them.'),
         ...lists.flat(),
         el('p', { class: 'pl-notice' }, 'MATLAB is a registered trademark of The MathWorks, Inc. PyLAB is not made by The MathWorks and is not affiliated with or endorsed by it; it runs programs written in the same language.'),
       );
       this.el.scrollTop = 0;
+      docNames().then((idx) => {
+        for (const a of this.el.querySelectorAll('.pl-fnlist a[data-fn]')) if (idx.names[a.dataset.fn]) a.classList.add('has-doc');
+      });
     }
 
     async show(name) {
       let h;
-      try { h = await PL.engine.call('help_text', name); } catch (e) { h = { text: `${name}: ${e.message}` }; }
+      const [got, page] = await Promise.all([
+        PL.engine.call('help_text', name).catch((e) => ({ text: `${name}: ${e.message}` })),
+        docPage(name).catch(() => null),
+      ]);
+      h = got;
       const back = el('button', { class: 'pl-btn', type: 'button' }, '← All functions');
       back.addEventListener('click', () => this.home());
-      const pre = el('pre');
-      PL.appendLinked(pre, h.base_linked || h.linked || h.base || h.text);
-      const parts = [back, el('h2', null, name), pre];
+      let parts;
+      if (page) parts = [back, ...await this.docParts(name, page)];
+      else {
+        const pre = el('pre');
+        PL.appendLinked(pre, h.base_linked || h.linked || h.base || h.text);
+        parts = [back, el('h2', null, name), pre];
+      }
       // how PyLAB computes it, as paragraphs (the Command Window has them wrapped into its text)
       const how = h.how_linked || h.how;
       if (how && how.length) {
@@ -170,7 +282,8 @@
         }
         parts.push(sec);
       }
-      // related functions, each a link
+      // related functions, each a link (a page's own list first)
+      if (page && page.see.length) h.see = page.see;
       if (h.see && h.see.length) {
         const see = el('p', { class: 'pl-see' }, el('strong', null, 'See also: '));
         h.see.forEach((n, i) => {
@@ -187,7 +300,57 @@
       this.el.replaceChildren(...parts);
       this.el.scrollTop = 0;
     }
+
+    /* A function's page: what it does, its forms, inputs and outputs, and
+       examples with what they print and draw (Run, Open in Editor, Copy). */
+    async docParts(name, page) {
+      const known = new Set([...Object.keys((await docNames()).names), ...CATEGORIES.flatMap(([, n]) => n.split(' '))]);
+      const parts = [el('h2', null, page.names.join(', ')), el('p', { class: 'pl-doc-summary' }, ...inline(page.summary, known))];
+      for (const b of page.body) parts.push(el('p', { class: 'pl-doc-p' }, ...inline(b, known)));
+      if (page.syntax.length) {
+        const box = el('div', { class: 'pl-doc-syntax' });
+        for (const [code, text] of page.syntax) box.append(el('div', { class: 'pl-doc-form' }, codeBlock(code, 'pl-doc-sig'), text ? el('p', null, ...inline(text, known)) : ''));
+        parts.push(el('h3', null, 'Syntax'), box);
+      }
+      for (const [title, items] of [['Inputs', page.inputs], ['Outputs', page.outputs]]) {
+        if (!items.length) continue;
+        const dl = el('dl', { class: 'pl-doc-args' });
+        // (an argument's name is no function's, even when it is spelt as one: format)
+        for (const [head, text] of items) dl.append(el('dt', null, ...inline(head.replace(/^([^—]+?)(\s+—)/, '`$1`$2'), new Set())), el('dd', null, ...inline(text, known)));
+        parts.push(el('h3', null, title), dl);
+      }
+      if (page.examples.length) {
+        parts.push(el('h3', null, 'Examples'));
+        for (const ex of page.examples) parts.push(this.example(ex, known));
+      }
+      if (page.notes.length) {
+        parts.push(el('h3', null, 'Notes'));
+        for (const n of page.notes) parts.push(el('p', { class: 'pl-doc-p' }, ...inline(n, known)));
+      }
+      return parts;
+    }
+
+    example(ex, known) {
+      const btn = (label, title, fn) => {
+        const b = el('button', { class: 'pl-btn', type: 'button', title }, label);
+        b.addEventListener('click', fn);
+        return b;
+      };
+      const tools = el('div', { class: 'pl-doc-tools' },
+        btn('Run', 'Run the example in the Command Window', () => { this.app.activePanel?.(this.app.pCmd); this.app.runCommand(ex.code); }),
+        btn('Open in Editor', 'Open the example as a new script', () => this.app.newScript(`${ex.code}\n`)),
+        btn('Copy', 'Copy the code', () => { navigator.clipboard?.writeText(ex.code); U().toast('Copied.'); }));
+      const sec = el('section', { class: 'pl-doc-ex' }, el('h4', null, ex.title));
+      if (ex.intro) sec.append(el('p', { class: 'pl-doc-p' }, ...inline(ex.intro, known)));
+      sec.append(el('div', { class: 'pl-doc-codebox' }, codeBlock(ex.code, 'pl-doc-code'), tools));
+      if (ex.output) sec.append(el('pre', { class: 'pl-doc-out', 'aria-label': 'What it prints' }, ex.output));
+      if (ex.figures && ex.figures.length) sec.append(el('div', { class: 'pl-doc-figs' }, ...ex.figures.map(figureCanvas)));
+      if (ex.after) sec.append(el('p', { class: 'pl-doc-p' }, ...inline(ex.after, known)));
+      return sec;
+    }
   }
+
+  const U = () => PL.util;
 
   function keysTable(k) {
     const rows = [
@@ -206,5 +369,6 @@
   }
 
   PL.HelpView = HelpView;
+  PL.helpDocs = { names: docNames, page: docPage };
   PL.helpCategories = CATEGORIES;
 })(window);

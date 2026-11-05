@@ -1,0 +1,257 @@
+@ sqrt
+The square root (complex for negative numbers).
+
+Works element by element. The square root of a negative number is imaginary: `sqrt(-4)` is `0 + 2i`. For the matrix square root, a matrix `X` with `X*X` equal to `A`, use `sqrtm`.
+
+# Syntax
+y = sqrt(x)
+    The square root of each element of `x`.
+# Examples
+## Squares, non-squares and a negative number
+y = sqrt([4 9 2])
+z = sqrt(-4)
+## The length of a vector
+v = [3 4 12];
+len = sqrt(sum(v.^2))
+# See also
+power nthroot sqrtm hypot
+
+@ exp
+The exponential, e^x.
+
+Works element by element; `exp(1)` is Euler's number e. Of an imaginary argument it gives a point on the unit circle: `exp(1i*theta)` is `cos(theta) + 1i*sin(theta)`. For the matrix exponential use `expm`.
+
+# Syntax
+y = exp(x)
+    e raised to each element of `x`.
+# Examples
+## e, and its powers
+e = exp(1)
+exp([0 1 2])
+## Exponential decay
+t = linspace(0, 5, 100);
+plot(t, exp(-t), t, exp(-t/2))
+legend('e^{-t}', 'e^{-t/2}')
+xlabel('t')
+## A point on the unit circle
+z = exp(1i*pi/3)
+abs(z)
+# See also
+log expm power
+
+@ log
+The natural logarithm (complex for negative numbers).
+
+The inverse of `exp`: `log(exp(x))` is `x`. Works element by element; `log(0)` is `-Inf`, and the logarithm of a negative number is complex, with imaginary part pi. For other bases use `log10`, `log2`, or `log(x)/log(b)`.
+
+# Syntax
+y = log(x)
+    The natural logarithm of each element.
+# Examples
+## Logarithms of some numbers
+log([1 exp(1) 10])
+log(0)
+log(-1)
+## The logarithm in another base
+b = 3;
+log(81) / log(b)
+# See also
+exp log10 log2 log1p
+
+@ log10
+The base 10 logarithm.
+
+`log10(1000)` is 3. Useful for orders of magnitude and decibels: a power ratio `r` is `10*log10(r)` decibels.
+
+# Syntax
+y = log10(x)
+    The base 10 logarithm of each element.
+# Examples
+## Orders of magnitude
+log10([1 10 1000 0.01])
+## Decibels
+ratio = [1 2 10 100];
+dB = 10*log10(ratio)
+# See also
+log log2 semilogy loglog
+
+@ abs
+The absolute value; the modulus of a complex number.
+
+Of a real number its size without the sign; of a complex number its distance from 0, `sqrt(real(z)^2 + imag(z)^2)`. Works element by element.
+
+# Syntax
+y = abs(x)
+    The absolute value of each element.
+# Examples
+## Real and complex numbers
+abs([-3 0 2.5])
+abs(3 + 4i)
+## The largest deviation from a value
+v = [9.8 10.4 9.1 10.2];
+maxDev = max(abs(v - 10))
+# See also
+sign angle norm
+
+@ round
+Round to the nearest integer (halves away from zero), or to a number of digits.
+
+A half is rounded away from zero: `round(2.5)` is 3 and `round(-2.5)` is -3. With `n`, it rounds to `n` digits after the decimal point (or before it, for negative `n`), or to `n` significant digits with `'significant'`.
+
+# Syntax
+y = round(x)
+    The nearest integer to each element.
+y = round(x, n)
+    To `n` decimal places (to tens, hundreds, … for negative `n`).
+y = round(x, n, 'significant')
+    To `n` significant digits.
+# Examples
+## Halves go away from zero
+round([2.5 -2.5 1.4 -1.6])
+## Decimal places, tens and hundreds, and significant digits
+round(pi, 2)
+round(1234.5678, -2)
+round(98765, 2, 'significant')
+# See also
+floor ceil fix
+
+@ floor, ceil, fix
+Round toward minus infinity, plus infinity or zero.
+
+`floor` gives the largest integer not above each value, `ceil` the smallest not below it, and `fix` drops the fraction (toward zero). They differ only for negative numbers and fractions: `floor(-2.5)` is -3 while `fix(-2.5)` is -2.
+
+# Syntax
+y = floor(x)
+    Toward minus infinity.
+y = ceil(x)
+    Toward plus infinity.
+y = fix(x)
+    Toward zero.
+# Examples
+## The three side by side
+x = [-2.5 -1.2 1.2 2.5];
+[floor(x); ceil(x); fix(x)]
+## Whole hours and minutes
+minutes = 135;
+hours = floor(minutes/60)
+rest = minutes - 60*hours
+## How many boxes of 12 hold 50 things
+boxes = ceil(50/12)
+# See also
+round mod rem idivide
+
+@ mod, rem
+The remainder after division.
+
+Both give `a - q.*b` for a whole number `q`; they differ in which way `q` is rounded. `mod` rounds down (`floor`), so its result has the sign of `b`; `rem` rounds toward zero (`fix`), so its result has the sign of `a`. For positive numbers they agree. `mod(a, 0)` is `a`.
+
+# Syntax
+r = mod(a, b)
+    `a - floor(a./b).*b`: the remainder with the sign of the divisor.
+r = rem(a, b)
+    `a - fix(a./b).*b`: the remainder with the sign of the dividend.
+# Examples
+## The same for positive numbers, different for negative ones
+a = [7 -7 7 -7];
+b = [3 3 -3 -3];
+[mod(a, b); rem(a, b)]
+## Even and odd, and wrapping round
+n = 1:6;
+isEven = mod(n, 2) == 0
+hour = mod(22 + 5, 24)
+## Angles brought into [0, 360)
+mod([370 -30 720], 360)
+# See also
+floor fix idivide
+
+@ sin, cos, tan
+The sine, cosine and tangent of angles in radians.
+
+Each works element by element. For angles in degrees use `sind`, `cosd` and `tand`, or convert with `deg2rad`. The inverses are `asin`, `acos`, `atan` and, for a full turn of angles, `atan2`.
+
+# Syntax
+y = sin(x)
+    The sine of each element.
+y = cos(x)
+    The cosine of each element.
+y = tan(x)
+    The tangent of each element.
+# Examples
+## Some angles
+x = [0 pi/6 pi/4 pi/2];
+s = sin(x)
+c = cos(x)
+## The three curves
+x = linspace(-pi, pi, 200);
+plot(x, sin(x), x, cos(x))
+hold on
+plot(x, tan(x), ':')
+hold off
+ylim([-2 2])
+legend('sin', 'cos', 'tan')
+grid on
+## A point on a circle
+r = 2;
+theta = pi/3;
+[x, y] = deal(r*cos(theta), r*sin(theta))
+# See also
+asin acos atan atan2 sind deg2rad
+
+@ times, mtimes
+Multiplication: element by element (A .* B) or matrix multiplication (A * B).
+
+`A .* B` multiplies matching elements, and needs arrays of the same size or sizes that expand (a scalar, or a row with a column). `A * B` is the matrix product: element (i, j) is row i of `A` times column j of `B`, summed, so the columns of `A` must match the rows of `B`. With a scalar on either side, the two are the same.
+
+# Syntax
+C = A .* B
+    The products of matching elements.
+C = A * B
+    The matrix product.
+C = times(A, B)
+    The same as `A .* B`.
+C = mtimes(A, B)
+    The same as `A * B`.
+# Examples
+## Element by element and matrix product
+A = [1 2; 3 4];
+B = [5 6; 7 8];
+E = A .* B
+M = A * B
+## A row times a column, and a column times a row
+r = [1 2 3];
+c = [4; 5; 6];
+dot = r * c
+outer = c * r
+## Implicit expansion: a column against a row
+t = (1:3)' .* (1:4)
+# See also
+rdivide mldivide power dot kron
+
+@ power, mpower
+Powers: element by element (A .^ B) or of a square matrix (A ^ p).
+
+`A .^ B` raises each element to a power: `B` may be a scalar or an array of matching size. `A ^ p` is the matrix power, `A*A*…*A` for a whole number `p`, and needs a square matrix. A negative number to a fractional power is complex: `(-8)^(1/3)` is not -2 (use `nthroot` for the real root).
+
+# Syntax
+C = A .^ B
+    Each element of `A` to the power of the matching element of `B`.
+C = A ^ p
+    The matrix power of a square matrix.
+C = power(A, B)
+    The same as `A .^ B`.
+C = mpower(A, p)
+    The same as `A ^ p`.
+# Examples
+## Squares and the matrix square
+A = [1 2; 3 4];
+elementwise = A .^ 2
+matrixSquare = A ^ 2
+## Powers of two, and a polynomial at many points
+p2 = 2 .^ (0:8)
+x = 0:0.5:2;
+y = 3*x.^2 - 2*x + 1
+## A real cube root
+(-8)^(1/3)
+nthroot(-8, 3)
+# See also
+times mtimes sqrt nthroot exp

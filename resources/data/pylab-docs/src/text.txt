@@ -1,0 +1,266 @@
+@ disp
+Show a value without its name.
+
+Shows a value as the Command Window shows a variable, but without the `name =` line and the blank lines around it. Text is shown as it is, without quotes. To mix text and numbers on one line, build the text with `sprintf`, `num2str` or string concatenation, or use `fprintf`.
+
+# Syntax
+disp(x)
+    Shows `x`.
+# Examples
+## Numbers, a matrix and text
+disp(pi)
+disp([1 2; 3 4])
+disp('Done.')
+## Text and a number together
+n = 42;
+disp(['The answer is ' num2str(n)])
+disp("Strings join with +: " + n)
+# See also
+fprintf sprintf num2str display
+
+@ fprintf
+Write formatted text to the Command Window or to a file.
+
+The format is text with conversions that the values fill in turn: `%d` an integer, `%f` a fixed-point number (`%.2f` with two decimals), `%e` exponential notation, `%g` the shorter of the two, `%s` text, `%%` a percent sign; `\n` ends a line and `\t` is a tab. A width before the letter pads the field (`%8.3f`). When there are more values than conversions, the format is used again, which prints a table from a matrix (its columns in turn). With a file identifier from `fopen` first, the text goes to that file.
+
+# Syntax
+fprintf(format, a1, a2, ...)
+    Writes the formatted values to the Command Window.
+fprintf(fid, format, a1, a2, ...)
+    Writes to the file `fid` (1 is the Command Window).
+n = fprintf(...)
+    With the number of bytes written.
+# Inputs
+format — text
+    The format, with conversions such as `%d`, `%.3f`, `%s` and `\n`.
+a1, a2, ... — numbers or text
+    The values, used in order.
+# Examples
+## Numbers with a chosen number of decimals
+fprintf('pi is about %.4f\n', pi)
+fprintf('%d apples and %d pears\n', 3, 5)
+## A table from a matrix
+> The format is used for each pair of values, taken down the columns of the matrix.
+x = 1:4;
+T = [x; x.^2];
+fprintf('%2d squared is %3d\n', T)
+## Text, widths and exponential notation
+names = {'small', 'large'};
+vals = [0.00042, 61000];
+for k = 1:2
+    fprintf('%-6s|%10.3e|%g\n', names{k}, vals(k), vals(k))
+end
+# See also
+sprintf disp num2str fopen
+
+@ sprintf
+Format data as text.
+
+Takes the same formats as `fprintf` but returns the text instead of showing it. The format is used again until every value is written: `sprintf('%d,', 1:3)` is `'1,2,3,'`.
+
+# Syntax
+s = sprintf(format, a1, a2, ...)
+    The formatted text, as a character vector.
+# Examples
+## Text with numbers in it
+s = sprintf('%d of %d done (%.1f%%)', 3, 8, 37.5)
+## A label for each value
+labels = arrayfun(@(k) sprintf('Run %02d', k), 1:3, 'UniformOutput', false)
+## A list joined by the format
+list = sprintf('%d, ', [4 8 15]);
+list = list(1:end-2)
+# See also
+fprintf num2str string compose
+
+@ num2str
+A number as text, with about four significant decimals by default.
+
+Turns numbers into a character vector for display: integers as they are, others with up to four decimals (about five significant digits). A precision gives that many significant digits, and a format string works as in `sprintf`. A matrix gives a row of text for each row.
+
+# Syntax
+s = num2str(x)
+    Text for `x`.
+s = num2str(x, precision)
+    With `precision` significant digits.
+s = num2str(x, format)
+    With a `sprintf` format such as `'%10.5f'`.
+# Examples
+## Default, precision and format
+num2str(pi)
+num2str(pi, 10)
+num2str(pi, '%8.3f')
+## A message with a number in it
+r = 2.5;
+msg = ['Radius ' num2str(r) ', area ' num2str(pi*r^2)]
+## A vector and a matrix
+num2str([1 2 3])
+num2str([1.5 2; 3 4])
+# See also
+sprintf str2double mat2str string
+
+@ str2double
+Text as a double; NaN when it is not a number.
+
+Reads text such as `'3.14'`, `'-2e5'` or `'Inf'` as a number. Text that is not a number gives `NaN`, so the result can be checked with `isnan`. A cell array or string array of texts gives an array of numbers.
+
+# Syntax
+x = str2double(s)
+    The number in the text `s` (or each text of a cell or string array).
+# Examples
+## Numbers in text, and text that is not one
+str2double('3.14')
+str2double('-2.5e3')
+str2double('abc')
+## A cell array of numbers
+v = str2double({'1', '2.5', 'x', '10'})
+## Checking user input
+s = '12a';
+x = str2double(s);
+if isnan(x)
+    fprintf('''%s'' is not a number\n', s)
+end
+# See also
+num2str str2num sscanf
+
+@ strcat
+Join text; trailing spaces of char arrays are dropped.
+
+Joins its arguments end to end. Trailing spaces of character arrays are removed first (those of strings and cells are kept), which is why `['abc ', 'def']` keeps the space and `strcat('abc ', 'def')` does not. With a cell array, each cell is joined to the others; with a string, the result is a string.
+
+# Syntax
+s = strcat(s1, s2, ...)
+    The texts joined.
+# Examples
+## Joining, and trailing spaces
+strcat('data', '_', '2024')
+strcat('abc ', 'def')
+['abc ', 'def']
+## A name for each file
+files = strcat('run', {'1', '2', '3'}, '.mat')
+# See also
+horzcat strjoin plus append
+
+@ strsplit
+Split text at a separator (white space by default).
+
+The pieces between the separators, as a cell row. Without a separator the text is split at white space; a cell array of separators splits at any of them. Separators next to each other count as one, unless `'CollapseDelimiters'` is false: then an empty piece lies between them.
+
+# Syntax
+C = strsplit(s)
+    Split at white space.
+C = strsplit(s, delimiter)
+    Split at `delimiter` (a text, or a cell array of texts).
+C = strsplit(s, delimiter, 'CollapseDelimiters', false)
+    With an empty piece between separators next to each other.
+# Examples
+## Words, and comma-separated values
+words = strsplit('the quick brown fox')
+parts = strsplit('a,b,,c', ',')
+kept = strsplit('a,b,,c', ',', 'CollapseDelimiters', false)
+## Several separators, and numbers from text
+fields = strsplit('2024-03-15 12:30', {'-', ' ', ':'});
+nums = str2double(fields)
+# See also
+strjoin split regexp strtok
+
+@ strjoin
+Join the text of a cell array with a separator (a space by default).
+
+The opposite of `strsplit`: the cells' texts joined, with the separator between each pair.
+
+# Syntax
+s = strjoin(C)
+    Joined with spaces.
+s = strjoin(C, delimiter)
+    Joined with `delimiter`.
+# Examples
+## Spaces and commas
+C = {'one', 'two', 'three'};
+strjoin(C)
+strjoin(C, ', ')
+## Numbers as a list
+strjoin(string(1:5), ' + ')
+# See also
+strsplit strcat join sprintf
+
+@ strrep
+Replace every occurrence of a substring.
+
+Finds `old` in the text and puts `new` in its place, every time it occurs. The match is exact and case-sensitive; for patterns use `regexprep`. Works on each element of a cell or string array.
+
+# Syntax
+t = strrep(s, old, new)
+    `s` with each `old` replaced by `new`.
+# Examples
+## Replacing words and characters
+strrep('the cat sat on the mat', 'at', 'og')
+strrep('2024/03/15', '/', '-')
+## In each cell
+strrep({'a_b', 'c_d_e'}, '_', ' ')
+# See also
+regexprep replace strfind
+
+@ upper, lower
+Text in capitals or in small letters.
+
+Changes the case of letters and leaves other characters as they are. Works on character arrays, cell arrays of text and string arrays. Case-insensitive comparisons often lower both sides first, or use `strcmpi`.
+
+# Syntax
+t = upper(s)
+    In capitals.
+t = lower(s)
+    In small letters.
+# Examples
+## Both ways
+upper('Hello, World 2')
+lower({'ABC', 'MiXeD'})
+## Comparing without regard to case
+answer = 'Yes';
+if strcmp(lower(answer), 'yes')
+    disp('confirmed')
+end
+# See also
+strcmpi
+
+@ contains
+True when text contains a pattern.
+
+Whether a pattern occurs anywhere in the text. For a cell or string array it answers for each element; a cell array of patterns asks whether any of them occurs. `'IgnoreCase'` makes it case-insensitive.
+
+# Syntax
+tf = contains(s, pattern)
+    True where `s` contains `pattern`.
+tf = contains(s, pattern, 'IgnoreCase', true)
+    Without regard to case.
+# Examples
+## One text, and several
+contains('data_2024.csv', '2024')
+files = {'a.csv', 'b.txt', 'c.csv'};
+isCsv = contains(files, '.csv')
+## Any of several patterns, and case
+contains("Report FINAL", "final", 'IgnoreCase', true)
+contains({'apple pie', 'banana', 'cherry tart'}, {'pie', 'tart'})
+# See also
+startsWith endsWith strfind regexp
+
+@ string
+A string array, from text, numbers or cells.
+
+A string holds a piece of text as one element, so an array of strings is an array of texts, each of its own length. Strings are written in double quotes, join with `+`, and compare with `==`. `string` makes them from character vectors, numbers (with up to about five significant digits) and cell arrays of text.
+
+# Syntax
+s = string(x)
+    `x` as strings.
+# Examples
+## From numbers and from a cell array
+s = string([1 2.5 1e6])
+t = string({'red', 'green'})
+## Joining with +, comparing with ==
+name = "PyLAB";
+greeting = "Hello, " + name + "!"
+greeting == "Hello, PyLAB!"
+## Each string of its own length
+words = ["a", "bb", "cccc"];
+strlength(words)
+# See also
+char strings strlength join

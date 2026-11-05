@@ -482,13 +482,14 @@ def nexttile(nargout, *args):
     for a in f.axes_list():
         if getattr(a, 'layout_cell', None) == idx:
             set_current_axes(a)
-            return a
+            return a if nargout else None
     a = Axes(f)
     a.layout_cell = idx
     a.props['Position'] = np.array([pos])
     set_current_axes(a)
     a.touch()
-    return a
+    # (the axes only when asked for, as subplot gives them: a bare nexttile shows nothing)
+    return a if nargout else None
 
 
 def _relayout_tiles(f):

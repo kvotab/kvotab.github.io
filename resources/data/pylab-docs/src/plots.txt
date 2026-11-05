@@ -1,0 +1,331 @@
+@ plot
+Lines and markers through points in 2-D.
+
+`plot` draws in the current axes, making a figure and axes first if there are none. Each call replaces what the axes show, unless `hold on` keeps it. Lines take the colours of the axes' colour order in turn.
+
+# Syntax
+plot(y)
+    The values of `y` against their positions 1, 2, …, n. A matrix gives a line for each column.
+plot(x, y)
+    The points (x(i), y(i)) joined in order. If `y` is a matrix, a line for each column (or row) that matches the length of `x`.
+plot(x, y, LineSpec)
+    Lines with a style, marker and colour given together as text, such as `'r--o'`.
+plot(x1, y1, x2, y2, ...)
+    Several lines in one call, each pair with a line spec of its own if wanted.
+plot(..., Name, Value)
+    Line properties for all the lines: `'LineWidth'`, `'Color'`, `'Marker'`, `'MarkerSize'`, `'MarkerFaceColor'`, `'DisplayName'` and the rest.
+h = plot(...)
+    The lines made, to change them later with `set` or dot notation.
+# Inputs
+x, y — vectors or matrices of numbers
+    The points. Values that are `NaN` leave a gap in the line.
+LineSpec — text
+    A line style (`-` solid, `--` dashed, `:` dotted, `-.` dash-dot), a marker (`o + * . x s d ^ v > < p h`) and a colour (`r g b c m y k w`), in any order. A marker without a line style draws markers alone.
+# Outputs
+h — line objects
+    One for each line drawn.
+# Examples
+## A sine wave
+x = linspace(0, 2*pi, 100);
+y = sin(x);
+plot(x, y)
+## Two lines with styles of their own
+> Each x, y pair takes its own line spec; `legend` names the lines in order.
+x = linspace(0, 2*pi, 50);
+plot(x, sin(x), 'b-', x, cos(x), 'r--o')
+legend('sin', 'cos')
+## Properties of the lines
+> Name-value pairs apply to every line of the call; the handle changes one line afterwards.
+t = 0:0.1:4;
+h = plot(t, exp(-t), t, exp(-2*t), 'LineWidth', 2);
+h(2).Color = [0.85 0.33 0.10];
+xlabel('t')
+ylabel('e^{-t} and e^{-2t}')
+## The columns of a matrix
+> A matrix gives a line for each column, against the row numbers.
+Y = magic(4)
+plot(Y)
+# See also
+plot3 scatter line hold legend xlabel
+
+@ scatter
+Markers at points, with sizes and colours of their own.
+
+Unlike `plot` with a marker, each point of a scatter plot may have its own size and colour: a size in points squared (36 by default) and a colour as an RGB triplet, or a number mapped through the colormap. Markers are hollow unless `'filled'` is given.
+
+# Syntax
+scatter(x, y)
+    Circles at the points.
+scatter(x, y, sz)
+    With a marker size for all, or one for each point.
+scatter(x, y, sz, c)
+    With a colour: an RGB triplet or name for all, or a value for each point (through the colormap).
+scatter(..., 'filled')
+    Filled markers.
+# Examples
+## A cloud of points
+rng default
+x = randn(1, 200);
+y = 0.5*x + 0.4*randn(1, 200);
+scatter(x, y)
+xlabel('x')
+ylabel('y')
+## Size and colour from the data
+> The colour of each point is its value mapped through the colormap; `colorbar` shows the scale.
+rng(1)
+x = rand(1, 60);
+y = rand(1, 60);
+v = x + y;
+scatter(x, y, 30 + 120*v, v, 'filled')
+colorbar
+# See also
+plot scatter3 bubblechart colormap
+
+@ bar
+A bar chart; a matrix gives groups (or stacks) of bars.
+
+A bar for each value of a vector, at the positions 1, 2, … or at `x`. A matrix gives a group of bars for each row, one bar per column, coloured by column; `'stacked'` stacks a row's values instead. The width is a fraction of the space between bars (0.8 by default).
+
+# Syntax
+bar(y)
+    A bar for each element of `y`.
+bar(x, y)
+    At the positions `x`.
+bar(..., width)
+    With bars `width` wide (1 makes them touch).
+bar(..., 'stacked')
+    The columns of a matrix stacked.
+# Examples
+## Values in bars
+sales = [12 18 9 15];
+bar(sales)
+xticklabels({'Q1', 'Q2', 'Q3', 'Q4'})
+ylabel('units')
+## Groups and stacks
+Y = [3 5 2; 4 1 6; 2 4 3];
+subplot(1, 2, 1)
+bar(Y)
+title('grouped')
+subplot(1, 2, 2)
+bar(Y, 'stacked')
+title('stacked')
+# See also
+barh histogram bar3
+
+@ histogram
+A histogram of data.
+
+Sorts the data into bins and draws a bar for each with its count. The bins are chosen from the data unless their number or their edges are given. `'Normalization'` scales the bars: `'probability'` to fractions that sum to 1, `'pdf'` to a density whose area is 1 (comparable with a probability density function). For the counts without drawing, use `histcounts`.
+
+# Syntax
+histogram(X)
+    Bins chosen from the data.
+histogram(X, nbins)
+    In `nbins` bins of equal width.
+histogram(X, edges)
+    In bins with the given edges.
+histogram(..., 'Normalization', 'probability' | 'pdf' | 'count')
+    Scaled counts.
+h = histogram(...)
+    The histogram object, whose `Values` and `BinEdges` hold the counts and bins.
+# Examples
+## Normal data, and the counts drawn
+rng default
+x = randn(1, 1000);
+h = histogram(x);
+nBins = h.NumBins
+## A density against its curve
+rng default
+x = 2 + 0.5*randn(1, 5000);
+histogram(x, 40, 'Normalization', 'pdf')
+hold on
+t = linspace(0, 4, 200);
+plot(t, exp(-(t - 2).^2 / (2*0.25)) / sqrt(2*pi*0.25), 'LineWidth', 2)
+hold off
+# See also
+histcounts bar histogram2
+
+@ errorbar
+Lines with error bars.
+
+Draws the line through the points with a vertical bar at each, `err` above and below (or `neg` below and `pos` above). The usual way to show measurements with their uncertainty.
+
+# Syntax
+errorbar(y, err)
+    At the positions 1, 2, ….
+errorbar(x, y, err)
+    At the positions `x`, the bars `err` long each way.
+errorbar(x, y, neg, pos)
+    With different lengths below and above.
+# Examples
+## Means with their standard errors
+x = 1:5;
+y = [2.1 3.4 3.9 5.2 5.8];
+err = [0.3 0.4 0.2 0.5 0.3];
+errorbar(x, y, err, 'o-')
+xlim([0 6])
+## Uneven bars
+x = 1:4;
+y = [10 12 9 14];
+errorbar(x, y, [1 2 1 3], [2 1 3 1], 's')
+xlim([0 5])
+# See also
+plot bar
+
+@ area
+Filled areas under lines; a matrix gives stacked areas.
+
+Like `plot`, but filled down to the axis. With a matrix, the columns are stacked: each area sits on top of the ones before it, so the top line is their total.
+
+# Syntax
+area(y)
+    The area under `y`, at the positions 1, 2, ….
+area(x, y)
+    At the positions `x`; a matrix `y` stacks its columns.
+# Examples
+## A filled curve
+x = linspace(0, 2*pi, 100);
+area(x, sin(x).^2)
+## Parts of a whole over time
+years = 2018:2023;
+parts = [3 4 4 5 6 6; 2 2 3 3 3 4; 1 1 2 2 3 4]';
+area(years, parts)
+legend('A', 'B', 'C', 'Location', 'northwest')
+# See also
+plot fill bar
+
+@ stairs
+A stairstep plot.
+
+Holds each value until the next point, drawing a horizontal step and then a vertical jump: the shape of a signal that changes only at certain moments, such as a sampled or quantized one.
+
+# Syntax
+stairs(y)
+    Steps at the positions 1, 2, ….
+stairs(x, y)
+    Steps at the positions `x`.
+# Examples
+## A sampled signal held between samples
+t = 0:0.5:5;
+stairs(t, round(2*sin(t)))
+hold on
+tt = linspace(0, 5, 200);
+plot(tt, 2*sin(tt), ':')
+hold off
+# See also
+plot stem bar
+
+@ stem
+Values as stems from the axis, with markers at their ends.
+
+Each value is a line from zero to the point with a marker on top: the usual picture of a discrete signal or a sequence.
+
+# Syntax
+stem(y)
+    At the positions 1, 2, ….
+stem(x, y)
+    At the positions `x`.
+stem(..., 'filled')
+    Filled markers.
+# Examples
+## A decaying sequence
+n = 0:15;
+stem(n, 0.8.^n .* cos(n))
+xlabel('n')
+## Filled markers
+stem(1:6, [3 -1 2 0 -2 1], 'filled')
+# See also
+plot stairs bar
+
+@ pie
+A pie chart.
+
+A slice for each value, its angle in proportion to the value's share of the sum. When the values sum to less than 1, they are taken as fractions and the pie is left incomplete. Labels name the slices; `explode` pulls slices out (a nonzero element for each one to pull).
+
+# Syntax
+pie(x)
+    A slice for each element, labelled with its percentage.
+pie(x, explode)
+    With the slices marked by nonzero elements of `explode` pulled out.
+pie(x, labels)
+    With labels of your own.
+# Examples
+## Shares labelled by name
+pie([45 25 20 10], {'rent', 'food', 'travel', 'other'})
+## One slice pulled out
+pie([3 2 5], [0 1 0])
+# See also
+bar piechart
+
+@ semilogx, semilogy, loglog
+Plots with a logarithmic x axis, y axis, or both.
+
+They take the same inputs as `plot`. A logarithmic axis spaces powers of ten evenly: on `semilogy` an exponential is a straight line, and on `loglog` a power law is one. Values that are zero or negative cannot be shown on a logarithmic axis.
+
+# Syntax
+semilogx(x, y, ...)
+    The x axis logarithmic.
+semilogy(x, y, ...)
+    The y axis logarithmic.
+loglog(x, y, ...)
+    Both axes logarithmic.
+# Examples
+## Exponential decay is straight on semilogy
+t = 0:0.5:10;
+semilogy(t, exp(-t), 'o-')
+grid on
+## Power laws are straight on loglog
+x = logspace(0, 3, 50);
+loglog(x, x.^2, x, x.^0.5, x, 1./x)
+legend('x^2', 'x^{1/2}', 'x^{-1}', 'Location', 'northwest')
+grid on
+# See also
+plot logspace
+
+@ fplot
+Plot a function of one variable over an interval.
+
+Evaluates the function at many points of the interval (-5 to 5 unless given) and draws it. The function is a handle, such as `@(x) sin(x)./x`, or a symbolic expression. Two functions draw a curve given by its parameter.
+
+# Syntax
+fplot(f)
+    Over -5 to 5.
+fplot(f, [xmin xmax])
+    Over the interval given.
+fplot(..., LineSpec)
+    With a line style, marker and colour.
+# Examples
+## A function handle
+fplot(@(x) sin(3*x) .* exp(-x/3), [0 10])
+grid on
+## Two functions on one axes
+fplot(@(x) x.^2, [-2 2])
+hold on
+fplot(@(x) 2 - x.^2, [-2 2], 'r--')
+hold off
+legend('x^2', '2 - x^2')
+# See also
+plot fplot3 fimplicit
+
+@ polarplot
+Lines in polar coordinates.
+
+Draws points given by an angle `theta` (in radians) and a radius `rho` in polar axes, with circles of constant radius and spokes of constant angle. A line spec works as in `plot`.
+
+# Syntax
+polarplot(theta, rho)
+    The points (theta, rho) joined in order.
+polarplot(theta, rho, LineSpec)
+    With a line style, marker and colour.
+# Examples
+## A rose
+theta = linspace(0, 2*pi, 400);
+polarplot(theta, abs(cos(3*theta)))
+## A spiral, and markers
+theta = linspace(0, 4*pi, 200);
+polarplot(theta, theta, 'm')
+hold on
+polarplot([0 pi/2 pi], [5 8 11], 'ko')
+hold off
+# See also
+plot fpolarplot polarscatter polaraxes

@@ -356,6 +356,12 @@
         i = c + 1;
         continue;
       }
+      if (target.startsWith('doc:')) {
+        // a function's page in the Help panel
+        parent.append(el('a', { href: '#', class: 'pl-helplink', 'data-run': `doc ${target.slice(4)}` }, text.slice(b + 1, c)));
+        i = c + 1;
+        continue;
+      }
       const k = target.lastIndexOf(':');
       const path = target.slice(0, k), line = target.slice(k + 1);
       const link = el('a', { href: '#', 'data-path': path, 'data-line': line }, text.slice(b + 1, c));

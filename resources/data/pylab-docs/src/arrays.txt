@@ -1,0 +1,487 @@
+@ zeros
+An array of zeros.
+
+The usual way to make room for a result before a loop fills it in: an array made at its final size is faster than one that grows a column at a time. A single size `n` gives a square n-by-n matrix; give `1, n` for a row.
+
+# Syntax
+Z = zeros(n)
+    An n-by-n matrix.
+Z = zeros(m, n, ...)
+    An m-by-n (by …) array.
+Z = zeros([m n ...])
+    The sizes as one vector, such as the result of `size`.
+Z = zeros(..., classname)
+    Zeros of another class: `'single'`, `'int32'`, `'uint8'` and the other integer classes, or `'logical'`.
+Z = zeros(..., 'like', p)
+    Zeros of the class (and complexity) of `p`.
+# Inputs
+n, m — nonnegative integers
+    The sizes. A size of 0 gives an empty array.
+classname — text
+    The class of the result; `'double'` when not given.
+# Outputs
+Z — array
+    All zeros.
+# Examples
+## A row, a column and a matrix
+r = zeros(1, 4)
+c = zeros(3, 1)
+M = zeros(2)
+## Room for a result filled in a loop
+y = zeros(1, 5);
+for k = 1:5
+    y(k) = k^2;
+end
+y
+## Another class
+z = zeros(2, 3, 'int8')
+class(z)
+## The size of another array
+A = magic(3);
+B = zeros(size(A))
+# See also
+ones eye rand cell repmat
+
+@ ones
+An array of ones.
+
+Often a starting point to scale: `5*ones(2, 3)` is a 2-by-3 array of fives (as is `repmat(5, 2, 3)`). A single size `n` gives a square matrix.
+
+# Syntax
+X = ones(n)
+    An n-by-n matrix of ones.
+X = ones(m, n, ...)
+    An m-by-n (by …) array of ones.
+X = ones(..., classname)
+    Ones of another class, such as `'single'` or `'uint8'`.
+# Examples
+## Ones, and a constant made from them
+a = ones(2, 3)
+b = 7 * ones(1, 4)
+## A column of ones beside data, for a straight-line fit
+> The least-squares line through the points is the solution of `[x 1] \ y`.
+x = [1; 2; 3; 4];
+y = [2.1; 3.9; 6.2; 7.8];
+X = [x ones(4, 1)];
+coef = X \ y
+# See also
+zeros eye repmat mldivide
+
+@ eye
+The identity matrix: ones on the diagonal, zeros elsewhere.
+
+`eye(n)` leaves any n-by-n matrix unchanged under multiplication: `A*eye(n)` is `A`. It also starts many matrix expressions, such as `A - lambda*eye(n)`.
+
+# Syntax
+I = eye(n)
+    The n-by-n identity.
+I = eye(m, n)
+    An m-by-n matrix with ones on its main diagonal.
+I = eye(..., classname)
+    Of another class.
+# Examples
+## The identity, and a rectangular one
+I = eye(3)
+R = eye(2, 4)
+## Shifting the diagonal of a matrix
+A = [2 1; 1 3];
+B = A - 2*eye(2)
+det(B)
+# See also
+zeros ones diag
+
+@ rand
+Random numbers drawn evenly from the open interval (0, 1).
+
+Every value between 0 and 1 is equally likely. For another interval scale and shift: `a + (b - a)*rand(...)` is even on (a, b). The numbers come from a Mersenne Twister generator; `rng` sets its seed, so that a run can be repeated. `rng default` gives the generator's usual first numbers.
+
+# Syntax
+X = rand
+    One number.
+X = rand(n)
+    An n-by-n matrix.
+X = rand(m, n, ...)
+    An m-by-n (by …) array.
+X = rand(..., 'single')
+    Single precision.
+# Examples
+## Numbers that can be repeated
+rng default
+x = rand(1, 5)
+## Even on another interval
+rng(1)
+a = 10;
+b = 20;
+y = a + (b - a)*rand(1, 4)
+## Estimating pi from random points
+> The share of points in the unit square that fall inside the quarter circle is close to pi/4.
+rng(0)
+n = 1e5;
+p = rand(n, 2);
+inside = sum(p(:, 1).^2 + p(:, 2).^2 <= 1);
+piEstimate = 4 * inside / n
+## A histogram of many draws
+rng default
+histogram(rand(1, 5000), 20)
+# See also
+randn randi rng histogram
+
+@ randn
+Random numbers from the standard normal distribution (mean 0, standard deviation 1).
+
+For a normal distribution with mean `mu` and standard deviation `sigma`, scale and shift: `mu + sigma*randn(...)`. The generator is the one `rand` and `randi` use, and `rng` seeds it.
+
+# Syntax
+X = randn(n)
+    An n-by-n matrix.
+X = randn(m, n, ...)
+    An m-by-n (by …) array.
+# Examples
+## A few draws
+rng default
+z = randn(1, 5)
+## Mean and spread of a large sample
+rng(2)
+x = 5 + 2*randn(1, 1e5);
+[mean(x) std(x)]
+## The bell shape
+rng default
+histogram(randn(1, 5000), 30)
+# See also
+rand randi rng normrnd histogram
+
+@ randi
+Random integers drawn evenly from a range.
+
+Every integer of the range is equally likely: 1 to `imax`, or `imin` to `imax`. Useful for dice, random indices and shuffles (see also `randperm`).
+
+# Syntax
+X = randi(imax)
+    One integer from 1 to `imax`.
+X = randi(imax, m, n)
+    An m-by-n array of them.
+X = randi([imin imax], m, n)
+    Integers from `imin` to `imax`.
+# Examples
+## Ten rolls of a die
+rng default
+rolls = randi(6, 1, 10)
+## Integers in a range
+rng(3)
+r = randi([-5 5], 2, 6)
+## Picking random elements
+rng default
+names = {'ant', 'bee', 'cat', 'dog', 'eel'};
+pick = names(randi(numel(names), 1, 3))
+# See also
+rand randn randperm rng
+
+@ rng
+Seed the random number generator, or read and restore its state.
+
+`rand`, `randn`, `randi` and `randperm` share one generator. Setting its seed makes the numbers that follow the same each time a program runs; saving its state with `s = rng` and restoring it with `rng(s)` repeats a stretch of numbers.
+
+# Syntax
+rng(seed)
+    Start the generator from a nonnegative integer seed.
+rng('default')
+    Start from the default seed (0), as a fresh session does.
+rng('shuffle')
+    Seed from the clock, for numbers that differ from run to run.
+s = rng
+    The generator's settings and state, as a struct.
+rng(s)
+    Put back a state saved earlier.
+# Examples
+## The same numbers again
+rng(42)
+a = rand(1, 3)
+rng(42)
+b = rand(1, 3)
+isequal(a, b)
+## Saving and restoring the state
+rng default
+s = rng;
+x1 = randn(1, 2)
+rng(s)
+x2 = randn(1, 2)
+# See also
+rand randn randi randperm
+
+@ linspace
+Points evenly spaced between two values, both ends included.
+
+Unlike the colon operator, which is given a step, `linspace` is given the number of points and always reaches the end exactly. It is the usual way to make the x values of a smooth plot.
+
+# Syntax
+y = linspace(a, b)
+    100 points from `a` to `b`.
+y = linspace(a, b, n)
+    `n` points; the step is (b - a)/(n - 1).
+# Inputs
+a, b — numbers
+    The first and last points; `b` may be less than `a`.
+n — nonnegative integer
+    How many points. With `n` 1 the result is `b`.
+# Outputs
+y — row vector
+    The points.
+# Examples
+## Five points from 0 to 1
+y = linspace(0, 1, 5)
+## Descending, and many points for a smooth curve
+d = linspace(10, 0, 6)
+x = linspace(-2, 2, 200);
+plot(x, x.^3 - 2*x)
+grid on
+# See also
+colon logspace meshgrid
+
+@ colon
+Vectors of evenly stepped values: a:b and a:step:b.
+
+`a:b` counts from `a` up to `b` in steps of 1; `a:step:b` uses another step, which may be negative or not whole. The vector stops at the last value that does not pass `b`, so `b` itself appears only when the steps land on it. Inside an index a lone `:` means every element (`A(:, 2)` is the second column), and `A(:)` is every element as one column.
+
+# Syntax
+v = a:b
+    a, a+1, …, up to `b`.
+v = a:step:b
+    a, a+step, …, up to `b` (down to it when `step` is negative).
+v = colon(a, b)
+    The same as `a:b`, as a function.
+v = colon(a, step, b)
+    The same as `a:step:b`.
+# Examples
+## Counting up, in steps and down
+a = 1:5
+b = 0:0.25:1
+c = 10:-3:0
+## A range that does not land on its end, and an empty one
+d = 1:2:8
+e = 5:1
+## The colon in an index
+A = magic(4);
+secondColumn = A(:, 2)'
+lastTwoRows = A(end-1:end, :)
+# See also
+linspace end reshape
+
+@ repmat
+Repeat an array as tiles.
+
+`repmat(A, m, n)` lays `m` copies of `A` down and `n` across. For arithmetic with a row or a column, implicit expansion often makes copies unnecessary: `A - mean(A)` subtracts each column's mean without `repmat`.
+
+# Syntax
+B = repmat(A, n)
+    An n-by-n grid of copies.
+B = repmat(A, m, n, ...)
+    `m` copies down, `n` across (and more along further dimensions).
+B = repmat(A, [m n ...])
+    The counts as one vector.
+# Examples
+## Tiles of a small matrix
+A = [1 2; 3 4];
+B = repmat(A, 2, 3)
+## A constant array, and repeated text
+c = repmat(7, 2, 4)
+s = repmat('-=', 1, 6)
+# See also
+kron ones cat
+
+@ meshgrid
+Coordinate arrays for a grid: x varies along the rows, y down the columns.
+
+Given the x values of the grid's columns and the y values of its rows, `meshgrid` gives two matrices of the same size holding each point's x and y. A function of x and y can then be computed at every point at once, element by element, and drawn with `surf`, `mesh` or `contour`.
+
+# Syntax
+[X, Y] = meshgrid(x, y)
+    `X` repeats the row `x` down `length(y)` rows; `Y` repeats the column `y` across `length(x)` columns.
+[X, Y] = meshgrid(x)
+    The same as `meshgrid(x, x)`.
+[X, Y, Z] = meshgrid(x, y, z)
+    Three-dimensional grids, for volume functions.
+# Examples
+## A small grid
+[X, Y] = meshgrid(1:3, 10:10:20)
+## A function over a grid, as a surface
+[X, Y] = meshgrid(linspace(-2, 2, 30));
+Z = X .* exp(-X.^2 - Y.^2);
+surf(X, Y, Z)
+# See also
+ndgrid linspace surf contour
+
+@ size
+The length of each dimension.
+
+The size of a matrix is its number of rows and its number of columns; arrays of more dimensions have a length for each. A scalar is 1-by-1, and an empty matrix has at least one length of 0.
+
+# Syntax
+sz = size(A)
+    A row: the length of each dimension.
+n = size(A, dim)
+    The length of one dimension.
+[m, n] = size(A)
+    The rows and columns as two outputs (the last output takes the product of any dimensions left over).
+[m, n, p, ...] = size(A)
+    One output per dimension.
+# Examples
+## Rows and columns
+A = rand(3, 5);
+sz = size(A)
+[m, n] = size(A)
+## One dimension, and more dimensions
+B = zeros(2, 3, 4);
+size(B, 3)
+size(B)
+## Looping over the rows of a matrix
+M = magic(3);
+for r = 1:size(M, 1)
+    fprintf('row %d sums to %d\n', r, sum(M(r, :)))
+end
+# See also
+numel length ndims reshape
+
+@ numel
+The number of elements.
+
+The product of the lengths of all dimensions: the number of values in a numeric array, of cells in a cell array, of structs in a struct array.
+
+# Syntax
+n = numel(A)
+    How many elements `A` has.
+# Examples
+## Matrices, text and cells
+numel(magic(4))
+numel('hello')
+numel({1, 'two', [3 4 5]})
+## Looping over every element
+v = [3 1 4 1 5];
+s = 0;
+for k = 1:numel(v)
+    s = s + v(k);
+end
+s
+# See also
+size length isempty
+
+@ length
+The length of the largest dimension (0 for an empty array).
+
+For a vector it is the number of elements. For a matrix it is the larger of its row and column counts, which is rarely what is wanted: use `size` with a dimension there.
+
+# Syntax
+n = length(A)
+    `max(size(A))`, or 0 when `A` is empty.
+# Examples
+## Vectors, matrices and empty arrays
+length([7 8 9 10])
+length(zeros(3, 8))
+length([])
+# See also
+size numel isempty
+
+@ isempty
+True when an array has no elements.
+
+An array is empty when one of its lengths is 0: `[]`, `''`, `{}`, `zeros(0, 3)`. A string `""` is not empty (it is one string, of no characters); test it with `strlength`.
+
+# Syntax
+tf = isempty(A)
+    `true` when `numel(A)` is 0.
+# Examples
+## Empty and not
+isempty([])
+isempty(zeros(0, 3))
+isempty(0)
+isempty('')
+## Searching, and what comes back when nothing is found
+v = [4 8 15];
+k = find(v > 20);
+if isempty(k)
+    disp('none above 20')
+end
+# See also
+numel size find
+
+@ reshape
+The same elements, in the same column order, in another shape.
+
+The elements are taken in column order (down the first column, then the next) and laid out again in the new shape, so the number of elements must stay the same. One size may be given as `[]`, and is then worked out from the others.
+
+# Syntax
+B = reshape(A, m, n, ...)
+    An m-by-n (by …) array of the elements of `A`.
+B = reshape(A, [m n ...])
+    The sizes as one vector.
+B = reshape(A, m, [])
+    `m` rows, and as many columns as the elements fill.
+# Examples
+## A vector as a matrix
+v = 1:6;
+A = reshape(v, 2, 3)
+B = reshape(v, 3, [])
+## Column order
+> The elements fill the columns first, so a transpose gives them by rows.
+C = reshape(1:6, 3, 2)'
+## Every element as one column
+M = [1 2; 3 4];
+M(:)'
+# See also
+size colon permute squeeze
+
+@ cat, horzcat, vertcat
+Join arrays along a dimension.
+
+`[A, B]` (or `[A B]`) joins side by side, as `horzcat` does, and needs the same number of rows; `[A; B]` joins one under the other, as `vertcat` does, and needs the same number of columns. `cat(3, A, B)` stacks matrices along the third dimension. Text joins the same way: `['abc', 'de']` is `'abcde'`.
+
+# Syntax
+C = cat(dim, A, B, ...)
+    Joined along dimension `dim`.
+C = horzcat(A, B, ...)
+    Side by side: `[A, B, ...]`.
+C = vertcat(A, B, ...)
+    One under the other: `[A; B; ...]`.
+# Examples
+## Side by side and one under the other
+A = [1 2; 3 4];
+B = [5; 6];
+H = [A, B]
+V = [A; 10 20]
+## Pages of a three-dimensional array
+P = cat(3, [1 2; 3 4], [5 6; 7 8]);
+size(P)
+P(:, :, 2)
+## Building a result row by row
+rows = [];
+for k = 1:3
+    rows = [rows; k, k^2];
+end
+rows
+# See also
+repmat reshape horzcat vertcat
+
+@ diag
+Make a diagonal matrix from a vector, or take a diagonal of a matrix.
+
+Given a vector, `diag` builds a square matrix with the vector on a diagonal and zeros elsewhere; given a matrix, it reads a diagonal out as a column. `k` picks the diagonal: 0 is the main one, positive values are above it and negative values below.
+
+# Syntax
+D = diag(v)
+    A square matrix with `v` on its main diagonal.
+D = diag(v, k)
+    With `v` on diagonal `k`.
+d = diag(A)
+    The main diagonal of `A`, as a column.
+d = diag(A, k)
+    Diagonal `k` of `A`.
+# Examples
+## Building and reading diagonals
+D = diag([1 2 3])
+U = diag([7 8], 1)
+A = magic(4);
+d = diag(A)'
+## A tridiagonal matrix
+n = 5;
+T = diag(2*ones(1, n)) + diag(-ones(1, n-1), 1) + diag(-ones(1, n-1), -1)
+# See also
+eye trace tril triu

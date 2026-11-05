@@ -1535,7 +1535,7 @@ movegui:
 uistack:
     Python: uifun.py. Moves the object up, down, to the top or to the bottom of its parent's list of children, the order in which the page draws and stacks them.
 helpwin, doc:
-    Python: uifun.py. Opens the name in the page's Help browser.
+    Python: uifun.py. Opens the name in the page's Help browser. A function's page there (resources/data/pylab-docs) was built by running each of its examples in PyLAB in a fresh workspace: what an example prints is stored beside its code, and the figures it leaves are drawn by the figure windows' own renderer from their stored data.
 msgbox, errordlg, warndlg, helpdlg:
     Python: uifun.py. A figure made as a dialog, centred and without menus: the message's lines broken at spaces to at most 75 characters, an icon drawn in Python as a 32-by-32 picture (or the one given), and an OK button that deletes it. It returns at once, without waiting for the OK; uiwait waits for it. With 'modal' the figure is modal, as dialog describes.
 dialog:

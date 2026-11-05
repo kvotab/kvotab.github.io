@@ -210,17 +210,18 @@ async def desktop(page):
     await page.ev("(() => { const a = [...PL.app.cmd.out.querySelectorAll('a.pl-helplink')].find((e) => e.dataset.help === 'prod'); a.click(); return 1; })()")
     out2 = await until(page, "(() => { const t = PL.app.cmd.out.textContent; return t.includes(' prod - ') ? t : null; })()")
     check('a click on a link in help shows that function\'s help', bool(out2) and '>> help prod' in out2, True)
-    await page.ev("PL.app.openHelp('ode45'); 1")
+    # (a function without a page of its own: its summary, forms and how it is computed; the docs section has the pages)
+    await page.ev("PL.app.openHelp('ode23s'); 1")
     help_text = await until(page, "document.querySelector('.pl-help pre')?.textContent")
-    check('the Help panel shows a function', 'ode45 - Solve a nonstiff ODE system' in (help_text or ''), True)
+    check('the Help panel shows a function', 'ode23s - Solve a stiff ODE system' in (help_text or ''), True)
     how = await page.ev("(() => { const s = document.querySelector('.pl-help .pl-how'); "
                         "return !!s && s.querySelector('h3').textContent === 'How it works' && s.querySelectorAll('p').length >= 2 "
                         "&& !document.querySelector('.pl-help pre').textContent.includes('How it works'); })()")
     check('and how PyLAB computes it, as paragraphs after the call forms', how, True)
     see = await page.ev("[...document.querySelectorAll('.pl-help .pl-see a[data-help]')].map((a) => a.dataset.help)")
-    check('the Help panel ends with See also, each a link', bool(see) and 'ode23' in see, True)
-    await page.ev("document.querySelector('.pl-help .pl-see a[data-help=\"ode23\"]').click(); 1")
-    shown = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); return p && p.textContent.includes('ode23 - ') ? p.textContent : null; })()")
+    check('the Help panel ends with See also, each a link', bool(see) and 'ode15s' in see, True)
+    await page.ev("document.querySelector('.pl-help .pl-see a[data-help=\"ode15s\"]').click(); 1")
+    shown = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); return p && p.textContent.includes('ode15s - ') ? p.textContent : null; })()")
     check('a click there shows that function in the Help panel', bool(shown), True)
     await page.ev("PL.app.openHelp(); 1")
     n_links = await page.ev("document.querySelectorAll('.pl-help [data-fn]').length")
@@ -1256,6 +1257,65 @@ async def symbolic(page):
     check('symbolic: no script errors', page.errors, [])
 
 
+DOC_INK = ("(() => [...document.querySelectorAll('.pl-help canvas.pl-doc-fig')].map((c) => { const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; "
+           "let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++; return n / (d.length / 4); }))()")
+
+
+async def docs(page):
+    """Function pages in the Help panel: doc opens one, its examples' stored figures drawn by the figure renderer (single
+    precision ones too), Run runs an example in the Command Window, Open in Editor makes a script of it, help links to the
+    page, the function lists mark the names with pages, and a function without one keeps its summary page."""
+    await command(page, "clear; clc; close all force")
+    await command(page, "doc plot")
+    ok = await until(page, "document.querySelectorAll('.pl-help .pl-doc-ex').length >= 3", 20)
+    head = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [h.querySelector('h2').textContent, h.querySelector('.pl-doc-summary').textContent, "
+                         "[...h.querySelectorAll('h3')].map((e) => e.textContent).join('|')]; })()")
+    check('docs: doc plot shows its page: summary, forms, inputs, outputs and examples', (ok, head[0], head[1].startswith('Lines and markers'),
+          all(s in head[2] for s in ('Syntax', 'Inputs', 'Outputs', 'Examples'))), (True, 'plot', True, True))
+    for k in range(4):
+        await page.ev(f"document.querySelectorAll('.pl-help canvas.pl-doc-fig')[{k}]?.scrollIntoView(); 1")
+        await asyncio.sleep(0.2)
+    ink = await page.ev(DOC_INK)
+    check("docs: each example's stored figure is drawn on the page", (len(ink) >= 4, all(v > 0.003 for v in ink)), (True, True))
+    await page.ev("document.querySelector('.pl-help .pl-doc-tools button').click(); 1")
+    await idle(page)
+    out = await page.ev(OUTPUT)
+    check('docs: Run runs the example in the Command Window, drawing its figure',
+          ('x = linspace(0, 2*pi, 100);' in out, await drawn(page, 1) > 0.003), (True, True))
+    n0 = await page.ev("PL.app.docs.length")
+    await page.ev("document.querySelectorAll('.pl-help .pl-doc-tools button')[1].click(); 1")
+    got = await until(page, f"PL.app.docs.length > {n0} && PL.app.current && PL.app.current.editor && PL.app.current.editor.value.includes('plot(x, y)')", 20)
+    check('docs: Open in Editor makes a new script of the example', bool(got), True)
+    made = await page.ev("PL.app.current.key")
+    await page.ev("PL.app.current.setDirty(false); PL.app.closeDoc(PL.app.current); 1")
+    await command(page, f"delete('{made}')")
+    await command(page, "close all force; clc")
+    out = await command(page, "help linspace")
+    link = await page.ev("(() => { const a = [...PL.app.cmd.out.querySelectorAll('a[data-run]')].pop(); return a ? a.dataset.run : ''; })()")
+    check('docs: help ends with a link to the page', ('Documentation, with examples: doc linspace' in out, link), (True, 'doc linspace'))
+    await page.ev("[...PL.app.cmd.out.querySelectorAll('a[data-run]')].pop().click(); 1")
+    got = await until(page, "document.querySelector('.pl-help h2')?.textContent === 'linspace'", 20)
+    check('docs: the link opens the page', bool(got), True)
+    await command(page, "doc surf")
+    await until(page, "document.querySelectorAll('.pl-help canvas.pl-doc-fig').length >= 3", 20)
+    await page.ev("document.querySelectorAll('.pl-help canvas.pl-doc-fig')[1].scrollIntoView(); 1")
+    await asyncio.sleep(0.3)
+    ink = await page.ev(DOC_INK)
+    check('docs: a surface kept in single precision is drawn', (len(ink) >= 3, len(ink) >= 3 and ink[1] > 0.05), (True, True))
+    await shot(page, 'doc-surf.png')
+    await command(page, "doc besselj")
+    await until(page, "document.querySelector('.pl-help h2')?.textContent === 'besselj'", 20)
+    old = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [!!h.querySelector('pre'), h.querySelectorAll('.pl-doc-ex').length]; })()")
+    check('docs: a function without a page keeps its summary page', old, [True, 0])
+    await command(page, "doc")
+    await until(page, "document.querySelector('.pl-help .pl-fnlist a.has-doc')", 20)
+    bold = await page.ev("(() => { const q = (n) => document.querySelector(`.pl-help .pl-fnlist a[data-fn='${n}']`); return [q('plot').classList.contains('has-doc'), q('besselj').classList.contains('has-doc')]; })()")
+    check('docs: the function lists mark the names that have pages', bold, [True, False])
+    await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.kind === 'help')); 1")
+    await command(page, "clear; clc; close all force")
+    check('docs: no script errors', page.errors, [])
+
+
 async def mapping(page):
     """Maps in the page: a world map with a route on it, geographic axes labelled in degrees, a shapefile written and read."""
     await command(page, "clear; clc; close all force; worldmap('Europe');\nplotm([59.33 48.86 41.9], [18.07 2.35 12.5], 'r-o', 'LineWidth', 2)")
@@ -2269,6 +2329,7 @@ async def main():
         await series_kinds(page)
         await optimization(page)
         await symbolic(page)
+        await docs(page)
         await mapping(page)
         await apps(page)
         await full_window(page)

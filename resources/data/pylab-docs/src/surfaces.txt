@@ -1,0 +1,194 @@
+@ surf
+A surface of coloured faces.
+
+Draws the heights `Z` over a grid as a surface of four-sided faces, coloured by height through the colormap. The grid is given by `X` and `Y` (matrices from `meshgrid`, or vectors along the columns and rows), or is the row and column numbers when only `Z` is given. Drag in the figure to turn the view; `shading interp` smooths the colours and hides the edges, and `view` sets the angle.
+
+# Syntax
+surf(Z)
+    Heights over the row and column numbers.
+surf(X, Y, Z)
+    Heights over the grid `X`, `Y`.
+surf(X, Y, Z, C)
+    Coloured by `C` instead of by height.
+h = surf(..., 'Name', value)
+    With surface properties, such as `'EdgeColor'`, `'FaceAlpha'` and `'FaceColor'`.
+# Inputs
+X, Y — matrices or vectors
+    The grid: matrices the size of `Z`, or vectors whose lengths match its columns and rows.
+Z — matrix
+    The heights.
+# Examples
+## A function over a grid
+[X, Y] = meshgrid(linspace(-2, 2, 40));
+Z = X .* exp(-X.^2 - Y.^2);
+surf(X, Y, Z)
+xlabel('x')
+ylabel('y')
+zlabel('z')
+## Smooth shading and a colour scale
+surf(peaks(40))
+shading interp
+colorbar
+## See-through faces, seen from above at an angle
+[X, Y] = meshgrid(-3:0.25:3);
+Z = sin(sqrt(X.^2 + Y.^2));
+surf(X, Y, Z, 'FaceAlpha', 0.6, 'EdgeColor', 'none')
+view(30, 60)
+# See also
+mesh contour meshgrid shading view colormap
+
+@ mesh
+A wire-frame surface.
+
+Like `surf`, but draws only the edges of the faces, coloured by height, so that the parts behind show through the net.
+
+# Syntax
+mesh(Z)
+    Heights over the row and column numbers.
+mesh(X, Y, Z)
+    Heights over the grid `X`, `Y`.
+# Examples
+## A saddle as a net
+[X, Y] = meshgrid(-1:0.1:1);
+mesh(X, Y, X.^2 - Y.^2)
+## A ripple
+[X, Y] = meshgrid(linspace(-8, 8, 41));
+R = sqrt(X.^2 + Y.^2) + eps;
+mesh(X, Y, sin(R) ./ R)
+# See also
+surf meshgrid waterfall
+
+@ contour
+Contour lines of a matrix.
+
+Draws lines along which `Z` has the same value, as a map shows heights: close lines mean steep slopes. Without levels, the levels are chosen from the data; `n` asks for about that many, and a vector gives the levels themselves. `clabel` writes the levels on the lines.
+
+# Syntax
+contour(Z)
+    Over the row and column numbers.
+contour(X, Y, Z)
+    Over the grid `X`, `Y`.
+contour(..., n)
+    About `n` levels.
+contour(..., levels)
+    The given levels (`[v v]` for the one level `v`).
+[C, h] = contour(...)
+    With the contour matrix `C` (for `clabel`) and the contour object.
+# Examples
+## Levels of a function, labelled
+[X, Y] = meshgrid(linspace(-2, 2, 60));
+Z = X.^2 + 2*Y.^2;
+[C, h] = contour(X, Y, Z, [0.5 1 2 4]);
+clabel(C, h)
+axis equal
+## Many levels of peaks
+contour(peaks(60), 20)
+colorbar
+# See also
+contourf clabel surf meshgrid
+
+@ contourf
+Filled contours.
+
+Like `contour`, with the spaces between the levels filled in the colours of the colormap.
+
+# Syntax
+contourf(Z)
+    Over the row and column numbers.
+contourf(X, Y, Z, n)
+    Over the grid, with about `n` levels.
+# Examples
+## A filled map with a colour scale
+[X, Y] = meshgrid(linspace(-3, 3, 80));
+Z = peaks(X, Y);
+contourf(X, Y, Z, 15)
+colorbar
+axis equal tight
+# See also
+contour colorbar imagesc
+
+@ imagesc
+Show a matrix as an image, its values scaled to the colormap.
+
+Each element is a coloured cell: the smallest value takes the first colour of the colormap and the largest the last (or the colour limits `clims`). Row 1 is at the top, as in the matrix. With `x` and `y`, the cells are placed at those coordinates.
+
+# Syntax
+imagesc(C)
+    The matrix `C` as an image.
+imagesc(x, y, C)
+    With the cells' centres at `x` (across) and `y` (down).
+imagesc(..., clims)
+    With the colour limits `[cmin cmax]`.
+# Examples
+## A matrix as a picture
+imagesc(magic(8))
+colorbar
+axis equal tight
+## A correlation matrix with fixed limits
+rng default
+X = randn(200, 5);
+X(:, 2) = X(:, 1) + 0.5*X(:, 2);
+X(:, 4) = -X(:, 3) + 0.3*X(:, 4);
+imagesc(corrcoef(X), [-1 1])
+colorbar
+axis square
+# See also
+image colormap colorbar pcolor
+
+@ quiver
+Arrows for a 2-D vector field.
+
+Draws an arrow with components `(u, v)` at each point `(x, y)`. The arrows are scaled so that the longest is about as long as the grid's spacing; a scale factor changes that, and `0` or `'off'` draws them at their own length.
+
+# Syntax
+quiver(x, y, u, v)
+    Arrows `(u, v)` at the points `(x, y)`.
+quiver(u, v)
+    At the grid of row and column numbers.
+quiver(..., scale)
+    Scaled by `scale` after the automatic scaling (0 for none).
+quiver(..., LineSpec, 'Name', value, ...)
+    With a line style and colour, and properties.
+# Examples
+## A rotating field
+[X, Y] = meshgrid(-2:0.4:2);
+quiver(X, Y, -Y, X)
+axis equal
+## The gradient of a function over its contours
+[X, Y] = meshgrid(linspace(-2, 2, 20));
+Z = X .* exp(-X.^2 - Y.^2);
+[DX, DY] = gradient(Z, X(1, 2) - X(1, 1));
+contour(X, Y, Z, 15)
+hold on
+quiver(X, Y, DX, DY, 'k')
+hold off
+axis equal
+# See also
+quiver3 gradient streamline
+
+@ plot3
+Lines and markers in 3-D.
+
+Like `plot`, with a third coordinate. Drag in the figure to turn the view; `grid on` helps to read depth.
+
+# Syntax
+plot3(x, y, z)
+    The points (x, y, z) joined in order.
+plot3(x, y, z, LineSpec)
+    With a line style, marker and colour.
+# Examples
+## A helix
+t = linspace(0, 6*pi, 300);
+plot3(cos(t), sin(t), t/(2*pi))
+grid on
+xlabel('x')
+ylabel('y')
+zlabel('turns')
+## Markers in space
+rng default
+P = randn(50, 3);
+plot3(P(:, 1), P(:, 2), P(:, 3), 'o')
+grid on
+view(40, 25)
+# See also
+plot scatter3 surf view
