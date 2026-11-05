@@ -485,6 +485,12 @@ class Figure(GObj):
         if k == 'CurrentAxes':
             self.props[k] = value
             return
+        if k == 'WindowStyle':
+            s = py_str(value).lower() if isinstance(value, (str, Char, Str)) else None
+            if s not in ('normal', 'modal', 'docked', 'alwaysontop'):
+                raise gerr("WindowStyle is 'normal', 'modal', 'docked' or 'alwaysontop'.", 'MATLAB:hg:figure:WindowStyle')
+            self.props[k] = s
+            return
         if k == 'Colormap':
             from .colormaps import as_colormap
             self.props[k] = as_colormap(value)

@@ -364,7 +364,7 @@ async def desktop(page):
     check('close all closes the windows', await until(page, 'PL.app.figures.wins.size === 0', 5), True)
 
 
-EDITOR = "document.querySelector('.pl-edview.is-shown .ple')._editor"
+EDITOR = "PL.app.current.view.querySelector('.ple')._editor"
 
 # The rows a 4x screenshot of a strip covers, worked out by the page: the
 # letters (darker or lighter than the strip's top-left pixel) and, given a
@@ -1316,6 +1316,116 @@ async def docs(page):
     check('docs: no script errors', page.errors, [])
 
 
+LAYOUT = "JSON.stringify(PL.app.dock.layout((t) => t.id).root)"
+GROUP_OF = "((k) => PL.app.dock.groups.indexOf(PL.app.toolTabs[k].group))"
+
+
+async def windows(page):
+    """The desktop's windows as tabs in groups: the default layout, a file over the Command Window, a tab dragged onto a
+    strip (stacked) and onto a group's edge (split), a bar resizing two groups, Layout hiding and showing a window, a figure
+    docked by its button and undocked again (the program told its WindowStyle and its docked size), a program's docked
+    figure, a docked figure's tab closing it, docking every new figure, and the layout kept for the next visit."""
+    await command(page, "clear; clc; close all force")
+    await page.ev("PL.app.docs.slice().forEach((d) => { d.setDirty(false); PL.app.closeDoc(d); }); PL.app.resetLayout(); 1")
+    await asyncio.sleep(0.4)
+    lay = json.loads(await page.ev(LAYOUT))
+    check('windows: the default layout: Current Folder over Details, the Command Window, the Workspace over the Command History',
+          lay, {'split': 'row', 'sizes': lay.get('sizes'), 'parts': [
+              {'split': 'col', 'sizes': [0.65, 0.35], 'parts': [{'tabs': ['tool:folder'], 'shown': 'tool:folder'}, {'tabs': ['tool:details'], 'shown': 'tool:details'}]},
+              {'tabs': ['tool:cmd'], 'shown': 'tool:cmd'},
+              {'split': 'col', 'sizes': [0.6, 0.4], 'parts': [{'tabs': ['tool:ws'], 'shown': 'tool:ws'}, {'tabs': ['tool:hist'], 'shown': 'tool:hist'}]}]})
+    await command(page, "edit dockwin.m")
+    above = await page.ev("(() => { const d = PL.app.docs.find((x) => x.key.endsWith('dockwin.m')); const a = d.group.el.getBoundingClientRect(), "
+                          "b = PL.app.toolTabs.cmd.group.el.getBoundingClientRect(); return d.group !== PL.app.toolTabs.cmd.group && a.bottom <= b.top + 2 && Math.abs(a.left - b.left) < 3; })()")
+    check('windows: a file opens in a group of its own over the Command Window', above, True)
+    # a drag onto another strip: the Workspace stacked with the Command History
+    x0, y0 = await middle(page, 'PL.app.toolTabs.ws.btn')
+    x1, y1 = await page.ev("(() => { const r = PL.app.toolTabs.hist.group.strip.getBoundingClientRect(); return [r.right - 20, r.top + r.height / 2]; })()")
+    began = await page.drag_to(x0, y0, x1, y1)
+    await asyncio.sleep(0.3)
+    stacked = await page.ev("(() => { const g = PL.app.toolTabs.hist.group; return [g === PL.app.toolTabs.ws.group, g.tabs.map((t) => t.key), g.active.key]; })()")
+    check('windows: a tab dragged onto another strip stacks there, shown', (began, stacked), (True, [True, ['hist', 'ws'], 'ws']))
+    # a drag onto a group's edge: the Workspace in a new group right of the Command Window
+    x0, y0 = await middle(page, 'PL.app.toolTabs.ws.btn')
+    x1, y1 = await page.ev("(() => { const r = PL.app.toolTabs.cmd.group.views.getBoundingClientRect(); return [r.right - 12, r.top + r.height / 2]; })()")
+    began = await page.drag_to(x0, y0, x1, y1)
+    await asyncio.sleep(0.3)
+    beside = await page.ev("(() => { const w = PL.app.toolTabs.ws.group, c = PL.app.toolTabs.cmd.group; const a = w.el.getBoundingClientRect(), b = c.el.getBoundingClientRect(); "
+                           "return [w !== c, w.tabs.length, a.left >= b.right - 2, Math.abs(a.top - b.top) < 3, PL.app.toolTabs.hist.group.tabs.length]; })()")
+    check("windows: a tab dragged onto a group's edge splits it off on that side", (began, beside), (True, [True, 1, True, True, 1]))
+    # the bar between the Command Window and the Workspace
+    sash = await page.ev("(() => { const s = PL.app.toolTabs.ws.group.el.previousElementSibling; const r = s.getBoundingClientRect(); return s.classList.contains('pl-dk-sash') ? [r.left + r.width / 2, r.top + r.height / 2] : null; })()")
+    w0 = await page.ev("PL.app.toolTabs.ws.group.el.getBoundingClientRect().width")
+    if sash:
+        await page.mouse('mouseMoved', sash[0], sash[1])
+        await page.mouse('mousePressed', sash[0], sash[1])
+        for k in range(1, 6):
+            await page.mouse('mouseMoved', sash[0] - 16 * k, sash[1])
+        await page.mouse('mouseReleased', sash[0] - 80, sash[1])
+    w1 = await page.ev("PL.app.toolTabs.ws.group.el.getBoundingClientRect().width")
+    check('windows: the bar between two groups resizes them', bool(sash) and 60 < w1 - w0 < 100, True)
+    # Layout: a window closed and shown again, beside its partner
+    await page.ev("PL.app.hideTool('details'); 1")
+    gone = await page.ev("[PL.app.toolShown('details'), PL.app.pDetails.isConnected, PL.app.dock.tabs.some((t) => t.key === 'details')]")
+    await page.ev("PL.app.showTab(PL.app.toolTabs.details); 1")
+    back = await page.ev("(() => { const a = PL.app.toolTabs.folder.group.el.getBoundingClientRect(), b = PL.app.toolTabs.details.group.el.getBoundingClientRect(); "
+                         "return [PL.app.toolShown('details'), b.top >= a.bottom - 2, Math.abs(a.left - b.left) < 3]; })()")
+    check('windows: a window closed from Layout, then shown again under its partner', (gone, back), ([False, True, False], [True, True, True]))
+    # a figure docked by its button, and undocked
+    await command(page, "close all force; x = linspace(0, 2*pi); plot(x, sin(x))")
+    await asyncio.sleep(0.3)
+    await page.ev(f"{WIN}.btnDock.click(); 1")
+    await asyncio.sleep(0.8)
+    docked = await page.ev(f"(() => {{ const w = {WIN}; return [w.docked, !!w.el.closest('.pl-dk-views'), PL.app.figTabs.size, !!PL.app.figTabs.get(w.id).group]; }})()")
+    out = await command(page, "s = get(gcf, 'WindowStyle')")
+    check('windows: a figure docked by its button is a tab, and the program hears its WindowStyle', (docked, out.rstrip().endswith("'docked'")), ([True, True, 1, True], True))
+    await asyncio.sleep(0.6)
+    ink = await page.ev(INK)
+    sz = await page.ev(f"(() => {{ const r = {WIN}.stage.getBoundingClientRect(); return [Math.floor(r.width), Math.floor(r.height)]; }})()")
+    out = await command(page, "p = get(gcf, 'Position'); disp(p(3:4))")
+    nums = [float(v) for v in out.strip().split('\n')[-1].split()] if out.strip() else []
+    check("windows: a docked figure draws at its tab's size, the size the program sees", (ink > 0.003, nums == [float(v) for v in sz]), (True, True))
+    await page.ev(f"{WIN}.btnDock.click(); 1")
+    await asyncio.sleep(0.6)
+    undocked = await page.ev(f"(() => {{ const w = {WIN}; return [w.docked, w.el.parentNode === PL.app.figLayer, PL.app.figTabs.size, !w.titlebar.hidden]; }})()")
+    out = await command(page, "s = get(gcf, 'WindowStyle')")
+    check('windows: undocked, it is a window again, and the program hears it', (undocked, out.rstrip().endswith("'normal'")), ([False, True, 0, True], True))
+    # a figure the program docks, and closed from its tab
+    await command(page, "close all force; f = figure('WindowStyle', 'docked'); bar([3 1 2])")
+    await asyncio.sleep(0.6)
+    n = await page.ev("PL.app.figTabs.size")
+    await page.ev("[...PL.app.figTabs.values()][0].btn.querySelector('.x').click(); 1")
+    await asyncio.sleep(0.4)
+    out = await command(page, "n = numel(findobj('Type', 'figure'))")
+    check("windows: a program's docked figure opens as a tab, and its tab's × closes it", (n, out.rstrip().endswith('0'), await page.ev("PL.app.figTabs.size")), (1, True, 0))
+    # every new figure docked
+    await page.ev("PL.app.figures.setDockNew(true); 1")
+    await command(page, "figure; plot(1:5); figure; plot(5:-1:1)")
+    await asyncio.sleep(0.6)
+    both = await page.ev("(() => { const t = [...PL.app.figTabs.values()]; return [t.length, t.length === 2 && t[0].group === t[1].group]; })()")
+    out = await command(page, "s = get(gcf, 'WindowStyle')")
+    await page.ev("PL.app.figures.setDockNew(false); 1")
+    check('windows: with docking of new figures on, each opens as a tab, together', (both, out.rstrip().endswith("'docked'")), ([2, True], True))
+    await command(page, "close all force")
+    # the layout kept for the next visit
+    await asyncio.sleep(0.6)
+    before = json.loads(await page.ev("JSON.stringify(PL.app.dock.layout((t) => PL.app.tabRef(t)).root)"))
+    other = await open_page(f'{BASE}/pylab.html')
+    try:
+        await wait_engine(other)
+        await until(other, "PL.app.docs.some((d) => d.key.endsWith('dockwin.m'))", 20)
+        await asyncio.sleep(0.6)
+        after = json.loads(await other.ev("JSON.stringify(PL.app.dock.layout((t) => PL.app.tabRef(t)).root)"))
+    finally:
+        await other.close()
+    strip = lambda n: {'tabs': n['tabs']} if 'tabs' in n else {'split': n['split'], 'parts': [strip(q) for q in n['parts']]}
+    check('windows: the layout is kept for the next visit, the file in its group', strip(after), strip(before))
+    await shot(page, 'windows.png')
+    await page.ev("PL.app.docs.slice().forEach((d) => { d.setDirty(false); PL.app.closeDoc(d); }); PL.app.resetLayout(); 1")
+    await command(page, "delete dockwin.m; clear; clc")
+    check('windows: no script errors', page.errors, [])
+
+
 async def mapping(page):
     """Maps in the page: a world map with a route on it, geographic axes labelled in degrees, a shapefile written and read."""
     await command(page, "clear; clc; close all force; worldmap('Europe');\nplotm([59.33 48.86 41.9], [18.07 2.35 12.5], 'r-o', 'LineWidth', 2)")
@@ -2145,11 +2255,12 @@ async def core_fillins(page):
     datastores with tall arrays and mapreduce, a surface fit drawn, the ez plots."""
     await page.ev('PL.app.setPanels(false, false); 1')
     await command(page, 'workspace')
-    shown = await page.ev("!PL.app.right.hidden && PL.app.pWs.classList.contains('is-active')")
+    # (each the tab its group shows, Layout's hiding undone)
+    shown = await page.ev("PL.app.toolShown('ws') && !PL.app.pWs.hidden")
     await command(page, 'commandhistory')
-    hist = await page.ev("PL.app.pHist.classList.contains('is-active')")
+    hist = await page.ev("PL.app.toolShown('hist') && !PL.app.pHist.hidden")
     await command(page, 'filebrowser')
-    files = await page.ev("!PL.app.left.hidden && PL.app.pFolder.classList.contains('is-active')")
+    files = await page.ev("PL.app.toolShown('folder') && !PL.app.pFolder.hidden")
     check('workspace, commandhistory and filebrowser open their hidden sides and show their panels', [shown, hist, files], [True, True, True])
     await command(page, 'cfv = magic(3); openvar(\'cfv\')')
     opened = await until(page, "PL.app.docs.some(d => d.key === 'var:cfv') && PL.app.current && PL.app.current.key === 'var:cfv'", 10)
@@ -2330,6 +2441,7 @@ async def main():
         await optimization(page)
         await symbolic(page)
         await docs(page)
+        await windows(page)
         await mapping(page)
         await apps(page)
         await full_window(page)
@@ -2363,7 +2475,7 @@ async def main():
         await page.key('Escape')
         await page.ev("PL.util.closeMenu && PL.util.closeMenu(); PL.app.togglePanel('right'); 1")
         await asyncio.sleep(0.4)
-        check('phone: the Workspace shows', await page.ev("getComputedStyle(PL.app.right).display !== 'none' && PL.app.right.getBoundingClientRect().height > 100"), True)
+        check('phone: the Workspace shows', await page.ev("PL.app.toolShown('ws') && !PL.app.pWs.hidden && PL.app.pWs.getBoundingClientRect().height > 100"), True)
         check('phone: with the variable', await page.ev("PL.app.ws.rows.some(r => r.name === 'x')"), True)
         check('phone: still no sideways scroll', await page.ev('document.documentElement.scrollWidth <= innerWidth'), True)
         await shot(page, 'phone.png')

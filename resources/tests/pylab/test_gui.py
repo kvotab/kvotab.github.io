@@ -958,4 +958,16 @@ check('v = ver prints nothing and gives a struct array of Name, Version, Release
       ('', (1, 4) if 'scipy' in sys.modules else (1, 3), ['Name', 'Version', 'Release', 'Date'], 'PyLAB'))
 check("ver(name) keeps that element; an unknown name gives an empty struct", (val('vn').shape, text('vn.Name'), val('ve').shape), ((1, 1), 'NumPy', (0, 0)))
 
+# WindowStyle: its four values, any case; the page docking a figure into the desktop and taking it out
+out = run("close all force; wf = figure; set(wf, 'WindowStyle', 'Docked'); ws1 = get(wf, 'WindowStyle');")
+check("WindowStyle takes 'docked' (in any case) and is shown as given", text('ws1'), 'docked')
+check('WindowStyle refuses other values', "WindowStyle is 'normal', 'modal', 'docked' or 'alwaysontop'" in run("set(wf, 'WindowStyle', 'floating')"), True)
+W.figure_event(json.dumps({'type': 'windowstyle', 'id': idof('wf'), 'style': 'normal'}))
+ws2 = text("get(wf, 'WindowStyle')")
+W.figure_event(json.dumps({'type': 'windowstyle', 'id': idof('wf'), 'style': 'docked'}))
+check("the page's docking reaches WindowStyle (normal, then docked), and the figure's data says so",
+      (ws2, text("get(wf, 'WindowStyle')"), serialize_figure(val('wf'))['windowStyle']), ('normal', 'docked', 'docked'))
+run("set(groot, 'DefaultFigureWindowStyle', 'docked'); wg = figure; ws3 = get(wg, 'WindowStyle'); set(groot, 'DefaultFigureWindowStyle', 'normal'); close all force")
+check('DefaultFigureWindowStyle docks new figures', text('ws3'), 'docked')
+
 sys.exit(check.done())

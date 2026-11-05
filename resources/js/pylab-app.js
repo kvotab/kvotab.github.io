@@ -80,26 +80,32 @@
       this.key = key;
       this.title = title;
       this.view = el('div', { class: 'pl-edview' });
-      this.tab = el('div', { class: `pl-edtab${kind === 'var' ? ' is-var' : ''}`, role: 'tab', tabindex: '0', title: key, draggable: 'false' },
+      this.tab = el('div', { class: `pl-edtab${kind === 'var' ? ' is-var' : ''}`, role: 'tab', tabindex: '0', title: key },
         el('span', { class: 't' }, title));
       const x = el('button', { class: 'x', type: 'button', title: 'Close', 'aria-label': `Close ${title}` }, '×');
       x.addEventListener('click', (ev) => { ev.stopPropagation(); app.closeDoc(this); });
       this.tab.append(x);
       this.tab.addEventListener('click', () => app.showDoc(this));
       this.tab.addEventListener('auxclick', (ev) => { if (ev.button === 1) app.closeDoc(this); });
-      this.tab.addEventListener('contextmenu', (ev) => {
-        ev.preventDefault();
-        U.menu(ev.clientX, ev.clientY, [
-          { label: 'Close', action: () => app.closeDoc(this) },
-          { label: 'Close the others', action: () => app.docs.filter((d) => d !== this).forEach((d) => app.closeDoc(d)) },
-          kind === 'file' ? '-' : null,
-          kind === 'file' ? { label: 'Save', action: () => app.save(this) } : null,
-          kind === 'file' ? { label: 'Run', action: () => { app.showDoc(this); app.runCurrent(); } } : null,
-          kind === 'file' ? { label: 'Show in the Current Folder', action: () => app.cd(U.dirname(this.key)) } : null,
-          kind === 'file' ? { label: 'Copy the path', action: () => navigator.clipboard?.writeText(this.key) } : null,
-        ]);
-      });
+      this.tab.addEventListener('contextmenu', (ev) => { ev.preventDefault(); app.tabMenu(this, ev); });
       this.dirty = false;
+    }
+
+    // as a tab of the desktop (pylab-dock.js)
+    get btn() { return this.tab; }
+    get id() { return `doc:${this.key}`; }
+
+    menuItems() {
+      const app = this.app, file = this.kind === 'file';
+      return [
+        { label: 'Close', action: () => app.closeDoc(this) },
+        { label: 'Close the others', action: () => app.docs.filter((d) => d !== this).forEach((d) => app.closeDoc(d)) },
+        file ? '-' : null,
+        file ? { label: 'Save', action: () => app.save(this) } : null,
+        file ? { label: 'Run', action: () => { app.showDoc(this); app.runCurrent(); } } : null,
+        file ? { label: 'Show in the Current Folder', action: () => app.cd(U.dirname(this.key)) } : null,
+        file ? { label: 'Copy the path', action: () => navigator.clipboard?.writeText(this.key) } : null,
+      ];
     }
 
     setTitle(t) { this.title = t; this.tab.querySelector('.t').textContent = t; }
@@ -171,51 +177,45 @@
       this.ws = new PL.WorkspacePanel(this);
       this.histPanel = new PL.HistoryPanel(this.history, this);
       this.cmd = new PL.CommandWindow({ history: this.history });
-      this.edTabs = el('div', { class: 'pl-edtabs', role: 'tablist', 'aria-label': 'Open files' });
-      this.edBody = el('div', { class: 'pl-edbody' });
 
+      // a window's actions (its tab's menu, and the ⋮ of its group)
       const panel = (key, title, body, menu) => {
         const head = el('div', { class: 'pl-panel-head' }, el('span', { class: 'pl-ptitle' }, title));
-        if (menu) head.append(this.iconBtn('more', `${title} actions`, (b, ev) => menu(ev)));
+        if (menu) head.append(this.iconBtn('more', `${title} actions`, (b, ev) => U.menu(ev.clientX, ev.clientY, menu())));
         const p = el('section', { class: `pl-panel pl-p-${key}`, 'aria-label': title }, head, el('div', { class: 'pl-panel-body' }, body));
-        p.addEventListener('pointerdown', () => this.activePanel(p), true);
+        p._menu = menu || null;
         return p;
       };
-      this.pFolder = panel('folder', 'Current Folder', this.folder.el, (ev) => this.folder.folderMenu(ev.clientX, ev.clientY));
+      this.pFolder = panel('folder', 'Current Folder', this.folder.el, () => this.folder.folderItems());
       this.pDetails = panel('details', 'Details', this.details.el);
-      this.pEditor = el('section', { class: 'pl-panel pl-p-editor', 'aria-label': 'Editor' },
-        el('div', { style: { display: 'contents' } }, this.edTabs), this.edBody);
-      this.pEditor.style.gridTemplateRows = 'auto minmax(0, 1fr)';
-      this.pEditor.addEventListener('pointerdown', () => { this.activePanel(this.pEditor); if (this.current && this.current.kind === 'file') this.showStrip('editor'); }, true);
-      this.pCmd = panel('cmd', 'Command Window', this.cmd.el, (ev) => U.menu(ev.clientX, ev.clientY, [
+      this.pCmd = panel('cmd', 'Command Window', this.cmd.el, () => [
         { label: 'Clear Command Window', kbd: 'clc', action: () => this.cmd.clear() },
         { label: 'Copy all', action: () => navigator.clipboard?.writeText(this.cmd.out.textContent) },
         { label: 'Stop the program', kbd: 'Ctrl+C', disabled: !PL.engine.busy, action: () => this.interrupt() },
         { label: 'Restart Python…', action: () => this.restartEngine() },
         ...(this.isPhone() ? ['-',
-          { label: 'Current Folder', checked: this.main.classList.contains('show-files'), action: () => this.togglePanel('left') },
-          { label: 'Workspace and Command History', checked: this.main.classList.contains('show-vars'), action: () => this.togglePanel('right') }] : []),
-      ]));
+          { label: 'Current Folder', checked: this.toolShown('folder'), action: () => this.togglePanel('left') },
+          { label: 'Workspace and Command History', checked: this.toolShown('ws'), action: () => this.togglePanel('right') }] : []),
+      ]);
       this.pCmd.querySelector('.pl-panel-body').style.overflow = 'hidden';
-      this.pWs = panel('ws', 'Workspace', this.ws.el, (ev) => U.menu(ev.clientX, ev.clientY, [
+      this.pWs = panel('ws', 'Workspace', this.ws.el, () => [
         { label: 'New variable…', action: () => this.newVariable() },
         { label: 'Save workspace…', action: () => this.saveWorkspace() },
         { label: 'Load MAT-file…', action: () => this.importData() },
         { label: 'Clear workspace', action: () => this.runCommand('clear') },
-      ]));
-      this.pHist = panel('hist', 'Command History', this.histPanel.el, (ev) => U.menu(ev.clientX, ev.clientY, [
+      ]);
+      this.pHist = panel('hist', 'Command History', this.histPanel.el, () => [
         { label: 'Clear Command History…', action: async () => { if (await U.confirm('Clear Command History', 'Remove every command from the history?', 'Clear')) this.history.clear(); } },
-      ]));
+      ]);
 
-      const sash = (dir, onDrag, onEnd) => {
-        const s = el('div', { class: `pl-sash ${dir}`, role: 'separator', tabindex: '0', 'aria-orientation': dir === 'v' ? 'vertical' : 'horizontal' });
-        this.sashDrag(s, dir, onDrag, onEnd);
-        return s;
-      };
-      this.left = el('div', { class: 'pl-colstack pl-left' }, this.pFolder, sash('h', (d, st) => this.splitRows('left', st, d)), this.pDetails);
-      this.center = el('div', { class: 'pl-colstack pl-center no-editor' }, this.pEditor, sash('h', (d, st) => this.splitRows('center', st, d)), this.pCmd);
-      this.right = el('div', { class: 'pl-colstack pl-right' }, this.pWs, sash('h', (d, st) => this.splitRows('right', st, d)), this.pHist);
-      this.main = el('div', { class: 'pl-main' }, this.left, sash('v', (d, st) => this.setCol('side', st, d)), this.center, sash('v', (d, st) => this.setCol('right', st, -d)), this.right);
+      // the windows: tabs in groups, the groups in splits (pylab-dock.js)
+      this.main = el('div', { class: 'pl-main pl-dock' });
+      this.dock = new PL.Dock(this, this.main);
+      this.toolTabs = {};
+      for (const [key, p] of [['folder', this.pFolder], ['details', this.pDetails], ['cmd', this.pCmd], ['ws', this.pWs], ['hist', this.pHist]]) {
+        this.toolTabs[key] = this.toolTab(key, p.getAttribute('aria-label'), p);
+      }
+      this.figTabs = new Map();
 
       // status bar
       this.stateEl = el('span', { class: 'pl-state is-busy' }, el('span', { class: 'pl-dot' }), el('span', { class: 'txt' }, 'Starting'));
@@ -230,15 +230,19 @@
 
       this.figLayer = el('div', { class: 'pl-figlayer' });
       this.figures = new PL.Figures(this.figLayer);
+      this.figures.on('dock', (w) => this.dockFigure(w));
+      this.figures.on('undock', (w) => this.dropFigureTab(w.id));
+      this.figures.on('closed', (id) => this.dropFigureTab(id));
+      this.figures.on('show', (w) => { const tb = this.figTabs.get(w.id); if (tb && tb.group) this.dock.show(tb, { focus: false }); });
+      this.figures.on('retitle', (w) => { const tb = this.figTabs.get(w.id); if (tb) tb.setTitle(w.title.textContent); });
       r.replaceChildren(this.tabsEl, this.stripEl, this.address, this.main, this.status, this.figLayer);
       this.wireDrops();
       this.figLayer.style.top = '0';
       this.restoreLayout();
+      // at phone width the groups stack and the side windows wait to be asked for; wider, the saved layout comes back
       window.matchMedia('(max-width: 760px)').addEventListener('change', (ev) => {
-        if (ev.matches) return;
-        this.main.classList.remove('show-files', 'show-vars');
-        this.left.hidden = this.main.classList.contains('no-left');
-        this.right.hidden = this.main.classList.contains('no-right');
+        if (ev.matches) this.phoneLayout();
+        else this.restoreLayout();
       });
       this.showStrip('home');
       this.renderCrumbs();
@@ -287,7 +291,7 @@
             this.small('clearws', 'Clear Workspace', 'Remove every variable (clear)', () => this.runCommand('clear')),
             this.small('clear', 'Clear Commands', 'Empty the Command Window (clc)', () => this.cmd.clear()))),
         this.group('Environment',
-          this.big('layout', 'Layout', 'Show or hide panels', (b) => this.layoutMenu(b)),
+          this.big('layout', 'Layout', 'Show, hide and arrange the windows', (b) => this.layoutMenu(b)),
           this.big('prefs', 'Preferences', 'Number format and fonts', () => this.preferences())),
         this.group('Resources',
           this.big('help', 'Help', 'How the desktop works, and every function', () => this.openHelp()),
@@ -351,123 +355,222 @@
       this.updateRunButtons();
     }
 
-    /* ---- layout --------------------------------------------------------------------- */
-    sashDrag(s, dir, onDrag, onEnd) {
-      let st = null;
-      s.addEventListener('pointerdown', (ev) => {
-        ev.preventDefault();
-        s.setPointerCapture(ev.pointerId);
-        s.classList.add('is-drag');
-        st = { x: ev.clientX, y: ev.clientY, base: this.layoutState() };
-      });
-      s.addEventListener('pointermove', (ev) => {
-        if (!st) return;
-        onDrag(dir === 'v' ? ev.clientX - st.x : ev.clientY - st.y, st.base);
-      });
-      const end = () => { if (!st) return; st = null; s.classList.remove('is-drag'); this.saveLayout(); this.figures.redrawAll(); };
-      s.addEventListener('pointerup', end);
-      s.addEventListener('pointercancel', end);
-      s.addEventListener('keydown', (ev) => {
-        const d = { ArrowLeft: -16, ArrowRight: 16, ArrowUp: -16, ArrowDown: 16 }[ev.key];
-        if (d === undefined) return;
-        ev.preventDefault();
-        onDrag(d, this.layoutState());
-        this.saveLayout();
-      });
+    /* ---- the windows: tabs in groups (pylab-dock.js) ---------------------------------
+       The Command Window, Workspace, Command History, Current Folder and
+       Details are tabs as the open files, Help, variables and docked
+       figures are; Layout shows and hides them, and the layout is kept. */
+    toolTab(key, title, view) {
+      const x = el('button', { class: 'x', type: 'button', title: `Close ${title}`, 'aria-label': `Close ${title}` }, '×');
+      const btn = el('div', { class: 'pl-edtab pl-tooltab', role: 'tab', tabindex: '0', title }, el('span', { class: 't' }, title), x);
+      const tab = { id: `tool:${key}`, key, kind: 'tool', title, btn, view, menuItems: view._menu };
+      x.addEventListener('click', (ev) => { ev.stopPropagation(); this.hideTool(key); });
+      btn.addEventListener('click', () => this.showTab(tab));
+      btn.addEventListener('contextmenu', (ev) => { ev.preventDefault(); this.tabMenu(tab, ev); });
+      return tab;
     }
 
-    layoutState() {
-      const cs = getComputedStyle(this.root);
-      const px = (v, d) => parseFloat(cs.getPropertyValue(v)) || d;
+    /* A tab's menu: its window's actions, then where the tab can go. */
+    tabMenu(tab, ev, at) {
+      const items = tab.menuItems ? tab.menuItems().filter(Boolean) : [];
+      if (tab.kind === 'tool') items.push(...(items.length ? ['-'] : []), { label: `Close ${tab.title}`, action: () => this.hideTool(tab.key) });
+      const dk = this.dock.menuFor(tab);
+      if (dk.length) items.push('-', ...dk);
+      const r = at ? at.getBoundingClientRect() : null;
+      U.menu(r ? r.left : ev.clientX, r ? r.bottom + 2 : ev.clientY, items);
+    }
+
+    showTab(tab) {
+      if (tab instanceof Doc) { this.showDoc(tab); return; }
+      if (tab.kind === 'tool' && !tab.group) this.showTool(tab.key);
+      this.dock.show(tab);
+      if (tab.kind === 'figure') this.figures.focus(tab.win);
+      if (tab.key === 'cmd') this.cmd.focus();
+    }
+
+    // the dock's calls: a group came into use, a tab into view, the layout changed
+    _activate(tab) {
+      if (tab instanceof Doc) this.setCurrentDoc(tab);
+      else if (tab.kind === 'figure') this.figures.focus(tab.win);
+    }
+
+    _shown(tab) {
+      if (tab instanceof Doc) {
+        if (tab.editor) requestAnimationFrame(() => tab.editor._gutterDraw());
+        if (tab.kind === 'var' && tab.vv) tab.vv.refresh();
+      } else if (tab.kind === 'figure') tab.win.redrawSoon();
+    }
+
+    _changed() {
+      // (a layout being put back is saved once it is back, not halfway)
+      if (this._restoring) return;
+      clearTimeout(this._layoutTimer);
+      this._layoutTimer = setTimeout(() => { this.saveLayout(); this.figures.redrawAll(); }, 250);
+    }
+
+    toolShown(key) { return !!(this.toolTabs[key] && this.toolTabs[key].group); }
+
+    hideTool(key) {
+      const t = this.toolTabs[key];
+      if (!t || !t.group) return;
+      this.dock.remove(t);
+      this.dock.park(t.view);
+    }
+
+    /* A window shown again: beside its partner (Current Folder and Details,
+       Workspace and Command History), else at its side of the desktop. */
+    showTool(key) {
+      const t = this.toolTabs[key];
+      if (!t || t.group) return t;
+      const partner = { folder: 'details', details: 'folder', ws: 'hist', hist: 'ws' }[key];
+      const p = partner && this.toolTabs[partner].group;
+      if (p) this.dock.place(t, p, key === 'details' || key === 'hist' ? 'bottom' : 'top', 0.4);
+      else if (key === 'cmd') {
+        const d = this.docGroup();
+        this.dock.place(t, d || this.dock.root, 'bottom', d ? 0.45 : 0.5);
+      } else if (!this.dock.tabs.length) this.dock.add(t, { group: this.dock.groups[0] });
+      else this.dock.place(t, this.dock.root, key === 'folder' || key === 'details' ? 'left' : 'right', key === 'folder' || key === 'details' ? 0.18 : 0.24);
+      return t;
+    }
+
+    // the references a saved layout keeps: the windows, files and Help (variables and figures do not outlast the page)
+    tabRef(t) {
+      if (t.kind === 'tool') return t.id;
+      if (t instanceof Doc) return t.kind === 'file' ? `file:${t.key}` : t.kind === 'help' ? 'help' : null;
+      return null;
+    }
+
+    tabByRef(r) {
+      if (typeof r !== 'string') return null;
+      if (r.startsWith('tool:')) return this.toolTabs[r.slice(5)] || null;
+      if (r.startsWith('file:')) return this.docs.find((d) => d.kind === 'file' && d.key === r.slice(5)) || null;
+      if (r === 'help') return this.docs.find((d) => d.kind === 'help') || null;
+      return null;
+    }
+
+    /* The default layout: the Current Folder over Details at the left, the
+       open files over the Command Window in the middle (docked figures at
+       their right), the Workspace over the Command History at the right. */
+    defaultTree() {
+      const ids = (pred) => this.dock.tabs.filter(pred).map((t) => t.id);
+      const docs = ids((t) => t instanceof Doc), figs = ids((t) => t.kind === 'figure');
+      let center = { tabs: ['tool:cmd'] };
+      if (docs.length) center = { split: 'col', sizes: [0.55, 0.45], parts: [{ tabs: docs, shown: this.current ? this.current.id : null }, center] };
+      if (figs.length) center = { split: 'row', sizes: [0.58, 0.42], parts: [center, { tabs: figs }] };
       return {
-        side: this.left.getBoundingClientRect().width || px('--pl-side-w', 230),
-        right: this.right.getBoundingClientRect().width || px('--pl-right-w', 300),
-        left: [this.pFolder.getBoundingClientRect().height, this.pDetails.getBoundingClientRect().height],
-        center: [this.pEditor.getBoundingClientRect().height, this.pCmd.getBoundingClientRect().height],
-        rightRows: [this.pWs.getBoundingClientRect().height, this.pHist.getBoundingClientRect().height],
+        root: { split: 'row', sizes: [0.18, 0.58, 0.24], parts: [
+          { split: 'col', sizes: [0.65, 0.35], parts: [{ tabs: ['tool:folder'] }, { tabs: ['tool:details'] }] },
+          center,
+          { split: 'col', sizes: [0.6, 0.4], parts: [{ tabs: ['tool:ws'] }, { tabs: ['tool:hist'] }] }] },
+        active: docs.length ? 2 : 2,
       };
     }
 
-    setCol(which, base, d) {
-      const w = Math.max(120, Math.min(window.innerWidth * 0.45, (which === 'side' ? base.side : base.right) + d));
-      this.root.style.setProperty(which === 'side' ? '--pl-side-w' : '--pl-right-w', `${Math.round(w)}px`);
+    arrangeDefault() {
+      this.dock.arrange(this.defaultTree(), (r) => this.dock.tabs.find((t) => t.id === r) || null);
     }
 
-    splitRows(col, base, d) {
-      const [a, b] = col === 'left' ? base.left : col === 'center' ? base.center : base.rightRows;
-      const total = a + b;
-      const na = Math.max(40, Math.min(total - 40, a + d));
-      const names = { left: ['--pl-left-top', '--pl-left-bot'], center: ['--pl-center-top', '--pl-center-bot'], right: ['--pl-right-top', '--pl-right-bot'] }[col];
-      this.root.style.setProperty(names[0], `${na}fr`);
-      this.root.style.setProperty(names[1], `${total - na}fr`);
+    /* A saved layout put back; the tabs it does not name (a file opened
+       since, a figure) go where their kind goes, not into its first group. */
+    arrangeSaved(tree) {
+      const named = new Set();
+      const walk = (n) => {
+        if (!n || typeof n !== 'object') return;
+        if (Array.isArray(n.parts)) n.parts.forEach(walk);
+        else for (const r of Array.isArray(n.tabs) ? n.tabs : []) { const tb = this.tabByRef(r); if (tb) named.add(tb); }
+      };
+      walk(tree.root);
+      const strays = this.dock.tabs.filter((tb) => !named.has(tb));
+      this.dock.arrange(tree, (r) => this.tabByRef(r));
+      for (const tb of strays) {
+        this.dock.remove(tb);
+        if (tb.kind === 'tool') { this.dock.park(tb.view); this.showTool(tb.key); continue; }
+        const isDoc = tb instanceof Doc;
+        const mate = isDoc ? this.docs.find((d) => d !== tb && d.group) : [...this.figTabs.values()].find((f) => f !== tb && f.group);
+        if (mate) this.dock.add(tb, { group: mate.group });
+        else if (isDoc && this.toolTabs.cmd.group) this.dock.place(tb, this.toolTabs.cmd.group, 'top', 0.55);
+        else if (!isDoc) this.dock.place(tb, this.docGroup() || this.toolTabs.cmd.group || this.dock.groups[0], 'right', 0.45);
+        else this.dock.add(tb, { group: this.dock.groups[0] });
+        this.dock.show(tb, { focus: false });
+      }
     }
 
     saveLayout() {
-      const s = this.root.style;
-      const keep = {};
-      for (const v of ['--pl-side-w', '--pl-right-w', '--pl-left-top', '--pl-left-bot', '--pl-center-top', '--pl-center-bot', '--pl-right-top', '--pl-right-bot']) {
-        const x = s.getPropertyValue(v);
-        if (x) keep[v] = x;
-      }
-      keep.hide = { left: this.main.classList.contains('no-left'), right: this.main.classList.contains('no-right') };
-      U.store.set('layout', keep);
+      if (this.isPhone() || this._restoring) return;
+      U.store.set('dock', {
+        tree: this.dock.layout((t) => this.tabRef(t)),
+        hidden: Object.keys(this.toolTabs).filter((k) => !this.toolTabs[k].group),
+      });
     }
 
+    /* The layout last left (the windows shown, the groups and their sizes),
+       or the default one; at phone width the side windows wait. */
     restoreLayout() {
-      const keep = U.store.get('layout', {});
-      for (const [k, v] of Object.entries(keep)) if (k.startsWith('--')) this.root.style.setProperty(k, v);
-      if (keep.hide) {
-        this.main.classList.toggle('no-left', !!keep.hide.left);
-        this.main.classList.toggle('no-right', !!keep.hide.right);
-        this.left.hidden = !!keep.hide.left;
-        this.right.hidden = !!keep.hide.right;
+      const saved = U.store.get('dock', null);
+      let hidden = saved && Array.isArray(saved.hidden) ? saved.hidden.slice() : [];
+      if (!saved) {
+        // the sides hidden before the windows were tabs stay hidden
+        const old = U.store.get('layout', {});
+        if (old.hide && old.hide.left) hidden.push('folder', 'details');
+        if (old.hide && old.hide.right) hidden.push('ws', 'hist');
       }
+      this._restoring = true;
+      try {
+        for (const [k, t] of Object.entries(this.toolTabs)) {
+          if (hidden.includes(k)) this.hideTool(k);
+          else if (!t.group) this.dock.add(t, { group: this.dock.groups[0] });
+        }
+        this.arrangeDefault();
+        if (saved && saved.tree) this.arrangeSaved(saved.tree);
+      } finally { this._restoring = false; }
+      if (this.isPhone()) this.phoneLayout();
+    }
+
+    /* At phone width: one group under another, the Current Folder and the
+       Workspace hidden until asked for (not kept as the wide layout). */
+    phoneLayout() {
+      this._restoring = true;
+      try { for (const k of ['folder', 'details', 'ws', 'hist']) this.hideTool(k); } finally { this._restoring = false; }
     }
 
     layoutMenu(b) {
       const r = b.getBoundingClientRect();
-      const phone = this.isPhone();
-      const hasLeft = phone ? this.main.classList.contains('show-files') : !this.main.classList.contains('no-left');
-      const hasRight = phone ? this.main.classList.contains('show-vars') : !this.main.classList.contains('no-right');
+      const tool = (k, label) => ({ label, checked: this.toolShown(k), action: () => (this.toolShown(k) ? this.hideTool(k) : this.showTab(this.toolTabs[k])) });
+      const wins = [...this.figures.wins.values()].filter((w) => !w.fig.dialog && w.fig.windowStyle !== 'modal');
       U.menu(r.left, r.bottom + 2, [
         { heading: 'Show' },
-        { label: 'Current Folder and Details', checked: hasLeft, action: () => this.togglePanel('left') },
-        { label: 'Workspace and Command History', checked: hasRight, action: () => this.togglePanel('right') },
+        tool('cmd', 'Command Window'), tool('ws', 'Workspace'), tool('hist', 'Command History'), tool('folder', 'Current Folder'), tool('details', 'Details'),
+        '-',
+        { heading: 'Figures' },
+        { label: 'Dock new figures in the desktop', checked: this.figures.dockNew, action: () => this.figures.setDockNew(!this.figures.dockNew) },
+        { label: 'Dock all figures', disabled: !wins.some((w) => !w.docked), action: () => wins.forEach((w) => this.figures.dock(w)) },
+        { label: 'Undock all figures', disabled: !wins.some((w) => w.docked), action: () => wins.forEach((w) => this.figures.undock(w)) },
         '-',
         { label: 'Default layout', action: () => this.resetLayout() },
-        { label: 'Command Window only', action: () => { this.setPanels(false, false); } },
+        { label: 'Command Window only', action: () => { for (const k of ['folder', 'details', 'ws', 'hist']) this.hideTool(k); this.showTab(this.toolTabs.cmd); } },
+        { label: 'Join all groups', disabled: this.dock.groups.length < 2, action: () => this.dock.join() },
       ]);
     }
 
-    /* At phone width the columns stack and the side panels are hidden until
-       asked for (show-files, show-vars); the wide layout's choice is kept. */
     isPhone() { return window.matchMedia('(max-width: 760px)').matches; }
 
+    /* The left side (Current Folder and Details) or the right (Workspace
+       and Command History) shown or hidden together. */
     togglePanel(which) {
-      const side = which === 'left' ? this.left : this.right;
-      if (this.isPhone()) {
-        const on = this.main.classList.toggle(which === 'left' ? 'show-files' : 'show-vars');
-        side.hidden = on ? false : this.main.classList.contains(which === 'left' ? 'no-left' : 'no-right');
-        if (on) side.scrollIntoView({ block: 'start' });
-        return;
+      const keys = which === 'left' ? ['folder', 'details'] : ['ws', 'hist'];
+      if (keys.some((k) => this.toolShown(k))) keys.forEach((k) => this.hideTool(k));
+      else {
+        keys.forEach((k) => this.showTool(k));
+        if (this.isPhone()) this.toolTabs[keys[0]].view.closest('.pl-dk-group').scrollIntoView({ block: 'start' });
       }
-      const on = this.main.classList.toggle(which === 'left' ? 'no-left' : 'no-right');
-      side.hidden = on;
-      this.saveLayout();
-      this.figures.redrawAll();
     }
 
     setPanels(left, right) {
-      this.main.classList.toggle('no-left', !left);
-      this.main.classList.toggle('no-right', !right);
-      this.left.hidden = !left;
-      this.right.hidden = !right;
-      this.saveLayout();
+      for (const [keys, on] of [[['folder', 'details'], left], [['ws', 'hist'], right]]) keys.forEach((k) => (on ? this.showTool(k) : this.hideTool(k)));
     }
 
     resetLayout() {
-      for (const v of ['--pl-side-w', '--pl-right-w', '--pl-left-top', '--pl-left-bot', '--pl-center-top', '--pl-center-bot', '--pl-right-top', '--pl-right-bot']) this.root.style.removeProperty(v);
-      this.setPanels(true, true);
+      for (const k of Object.keys(this.toolTabs)) this.showTool(k);
+      this.arrangeDefault();
       U.store.set('figplaces', {});
       this.figures.places = {};
     }
@@ -480,8 +583,60 @@
       setTimeout(() => this.figures.redrawAll(), 50);
     }
 
+    /* A window to the front: shown (Layout's way, if it was closed) in its group. */
     activePanel(p) {
-      for (const x of this.root.querySelectorAll('.pl-panel')) x.classList.toggle('is-active', x === p);
+      const t = Object.values(this.toolTabs).find((x) => x.view === p);
+      if (t) { this.showTool(t.key); this.dock.show(t); }
+    }
+
+    // where the Editor's files are (the group of the file shown last), for drops and for new files
+    get pEditor() { const g = this.docGroup(); return g ? g.el : this.main; }
+
+    docGroup() {
+      if (this.current && this.current.group) return this.current.group;
+      const d = this.docs.find((x) => x.group);
+      return d ? d.group : null;
+    }
+
+    figGroup() {
+      const t = [...this.figTabs.values()].reverse().find((x) => x.group);
+      return t ? t.group : null;
+    }
+
+    /* A figure docked (Figures' 'dock'): a tab of its own, with the other
+       docked figures, or in a new group beside the files or the Command Window. */
+    dockFigure(w) {
+      let tb = this.figTabs.get(w.id);
+      if (!tb) {
+        const title = w.title.textContent || `Figure ${w.fig.number}`;
+        const x = el('button', { class: 'x', type: 'button', title: 'Close the figure', 'aria-label': `Close ${title}` }, '×');
+        const btn = el('div', { class: 'pl-edtab pl-figtab', role: 'tab', tabindex: '0', title }, icon('figure', 'pl-tabicon'), el('span', { class: 't' }, title), x);
+        tb = { id: `fig:${w.id}`, kind: 'figure', title, btn, view: el('div', { class: 'pl-figdock' }), win: w };
+        tb.menuItems = () => [
+          { label: 'Undock', action: () => this.figures.undock(w) },
+          { label: 'Close the figure', action: () => this.figures.requestClose(w) },
+        ];
+        tb.setTitle = (s) => { tb.title = s; btn.title = s; btn.querySelector('.t').textContent = s; };
+        x.addEventListener('click', (ev) => { ev.stopPropagation(); this.figures.requestClose(w); });
+        btn.addEventListener('click', () => this.showTab(tb));
+        btn.addEventListener('contextmenu', (ev) => { ev.preventDefault(); this.tabMenu(tb, ev); });
+        this.figTabs.set(w.id, tb);
+      }
+      tb.view.append(w.el);
+      if (!tb.group) {
+        const g = this.figGroup();
+        if (g) this.dock.add(tb, { group: g });
+        else this.dock.place(tb, this.docGroup() || (this.toolTabs.cmd.group) || this.dock.groups[0], 'right', 0.45);
+      }
+      this.dock.show(tb, { focus: false });
+    }
+
+    dropFigureTab(id) {
+      const tb = this.figTabs.get(id);
+      if (!tb) return;
+      if (tb.group) this.dock.remove(tb);
+      tb.view.remove();
+      this.figTabs.delete(id);
     }
 
     /* ---- the engine ------------------------------------------------------------------- */
@@ -1123,25 +1278,28 @@
       return doc;
     }
 
+    /* An open file (or Help, a variable, ...) as a tab: with the files, or
+       the first of them over the Command Window. */
     addDoc(doc) {
       this.docs.push(doc);
-      this.edTabs.append(doc.tab);
-      this.edBody.append(doc.view);
-      this.renderEdTabs();
+      const g = this.docGroup();
+      if (g) this.dock.add(doc, { group: g });
+      else if (this.toolTabs.cmd.group) this.dock.place(doc, this.toolTabs.cmd.group, 'top', 0.55);
+      else this.dock.add(doc, { group: this.dock.active });
       this.saveDocs();
     }
 
     showDoc(doc) {
-      this.current = doc;
-      for (const d of this.docs) {
-        d.view.classList.toggle('is-shown', d === doc);
-        d.tab.setAttribute('aria-selected', String(d === doc));
-      }
-      doc.tab.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      this.setCurrentDoc(doc);
+      if (doc.group) this.dock.show(doc);
       if (doc.editor) { requestAnimationFrame(() => { doc.editor._gutterDraw(); doc.editor.focus(); }); }
       if (doc.kind === 'var' && doc.vv) doc.vv.refresh();
+    }
+
+    // the document the EDITOR tab, Save and Run work on
+    setCurrentDoc(doc) {
+      this.current = doc;
       if (doc.kind === 'file') this.showStrip('editor');
-      this.renderEdTabs();
       this.updateRunButtons();
       this.saveDocs();
     }
@@ -1158,23 +1316,20 @@
       }
       const i = this.docs.indexOf(doc);
       this.docs.splice(i, 1);
-      doc.tab.remove();
+      const g = doc.group;
+      this.dock.remove(doc);
       doc.view.remove();
       if (this.current === doc) {
         this.current = null;
-        const next = this.docs[Math.min(i, this.docs.length - 1)];
+        // the file next to it in its group, or another
+        const next = g && g.active instanceof Doc ? g.active : this.docs[Math.min(i, this.docs.length - 1)];
         if (next) this.showDoc(next);
       }
-      this.renderEdTabs();
       this.saveDocs();
       this.updateRunButtons();
     }
 
-    renderEdTabs() {
-      const empty = !this.docs.length;
-      this.center.classList.toggle('no-editor', empty);
-      this.pEditor.hidden = empty;
-    }
+    renderEdTabs() { /* the dock shows the tabs */ }
 
     withEditor(fn) {
       const d = this.current;
@@ -1482,10 +1637,17 @@
     async restoreDocs() {
       const o = U.store.get('open', null);
       if (!o) return;
-      for (const p of o.files || []) {
-        const exists = await PL.engine.fs('exists', { path: p }).catch(() => false);
-        if (exists === 'file') await this.openFile(p);
-      }
+      // (the layout they were in, read before reopening them changes it)
+      const saved = U.store.get('dock', null);
+      this._restoring = true;
+      try {
+        for (const p of o.files || []) {
+          const exists = await PL.engine.fs('exists', { path: p }).catch(() => false);
+          if (exists === 'file') await this.openFile(p);
+        }
+        // the files back in the groups they were in
+        if (saved && saved.tree && !this.isPhone()) this.arrangeSaved(saved.tree);
+      } finally { this._restoring = false; }
       const cur = this.docs.find((d) => d.key === o.current);
       if (cur) this.showDoc(cur);
       this.cmd.focus();
@@ -1582,8 +1744,8 @@
       if (document.querySelector('.pl-modal-back, .pl-figveil')) return;
       if (mod && (ev.key === 'n' || ev.key === 'N') && !ev.shiftKey && !ev.altKey) { ev.preventDefault(); this.newFile('script'); return; }
       if (mod && (ev.key === 'o' || ev.key === 'O') && !ev.shiftKey) { ev.preventDefault(); this.openDialog(); return; }
-      if (mod && ev.key === '0' && !ev.shiftKey) { ev.preventDefault(); this.cmd.focus(); return; }
-      if (mod && (ev.key === ')' || (ev.key === '0' && ev.shiftKey))) { ev.preventDefault(); if (this.current && this.current.editor) this.current.editor.focus(); return; }
+      if (mod && ev.key === '0' && !ev.shiftKey) { ev.preventDefault(); this.activePanel(this.pCmd); this.cmd.focus(); return; }
+      if (mod && (ev.key === ')' || (ev.key === '0' && ev.shiftKey))) { ev.preventDefault(); if (this.current && this.current.editor) this.showDoc(this.current); return; }
       if (mod && (ev.key === 's' || ev.key === 'S')) { ev.preventDefault(); this.save(); return; }
       if (ev.key === 'F5' && this.debug) { ev.preventDefault(); this.dbg('continue'); return; }
       if (ev.key === 'F10' && this.debug) { ev.preventDefault(); this.dbg('step'); }
@@ -1592,15 +1754,10 @@
     /* commandwindow, commandhistory, workspace, filebrowser and openvar: a
        program shows a part of the desktop (a hidden side opened first). */
     desktopAsk(m) {
-      const showSide = (which) => {
-        const hidden = this.isPhone() ? !this.main.classList.contains(which === 'left' ? 'show-files' : 'show-vars')
-          : this.main.classList.contains(which === 'left' ? 'no-left' : 'no-right');
-        if (hidden) this.togglePanel(which);
-      };
       if (m.what === 'commandwindow') { this.activePanel(this.pCmd); this.cmd.focus(); }
-      else if (m.what === 'history') { showSide('right'); this.activePanel(this.pHist); }
-      else if (m.what === 'workspace') { showSide('right'); this.activePanel(this.pWs); }
-      else if (m.what === 'files') { showSide('left'); this.activePanel(this.pFolder); }
+      else if (m.what === 'history') this.activePanel(this.pHist);
+      else if (m.what === 'workspace') this.activePanel(this.pWs);
+      else if (m.what === 'files') this.activePanel(this.pFolder);
       else if (m.what === 'openvar' && m.name) this.openVariable(m.name);
     }
 
@@ -1618,7 +1775,7 @@
     }
 
     refreshVariableViews() {
-      for (const d of this.docs) if (d.kind === 'var' && d.vv && d.view.classList.contains('is-shown')) d.vv.refresh();
+      for (const d of this.docs) if (d.kind === 'var' && d.vv && d.group && !d.view.hidden) d.vv.refresh();
     }
 
     async openVariableAsk() {

@@ -2511,7 +2511,9 @@
       };
       this.btnClose = tb('close', 'Close the figure', () => this.mgr.requestClose(this));
       this.btnSave = tb('image', 'Save as a picture or a drawing (PNG, SVG, PDF, EPS, JPEG)', () => this.saveMenu());
-      this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnSave, this.btnClose);
+      this.btnDock = tb('dock', 'Dock the figure in the desktop, as a tab', () => this.mgr.toggleDock(this));
+      this.docked = false;
+      this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnDock, this.btnSave, this.btnClose);
       this.toolBtns = {
         edit: tb('editplot', 'Edit the plot: click a part of it to see and change its properties', () => this.setTool('edit'), true),
         zoomin: tb('zoomin', 'Zoom in (drag a box, or click)', (b) => this.setTool('zoomin'), true),
@@ -2562,7 +2564,10 @@
       // (edit mode stays: plotedit turns it on in a program's own window too)
       if (!this.plotTools && this.tool && this.tool !== 'edit') this.setTool(this.tool);
       this.btnSave.hidden = !!fig.dialog;
+      // dialogs and modal windows stay windows
+      this.btnDock.hidden = !!fig.dialog || fig.windowStyle === 'modal';
       this.grip.hidden = fig.resize === false;
+      if (this.docked && this.title.textContent !== this._tabTitle) { this._tabTitle = this.title.textContent; this.mgr.emit('retitle', this); }
       this.el.classList.toggle('is-dialog', !!fig.dialog);
       if (!this.sized) {
         this.sized = true;
@@ -2591,6 +2596,8 @@
     }
 
     setSize(w, h) {
+      // a docked figure takes the size of its tab
+      if (this.docked) return;
       // the rows above the canvas: title, and menus and tools when there are
       let chrome = 26;
       for (const row of [this.ui.menubar, this.ui.toolbars, this.tools]) if (!row.hidden) chrome += row.offsetHeight || (row === this.tools ? 27 : row === this.ui.menubar ? 25 : 30 * row.childElementCount);
@@ -2605,6 +2612,8 @@
     }
 
     canvasSize() {
+      // a docked figure whose tab is not shown: the size it had (or its own)
+      if (this.docked && !this.stage.offsetParent) return this.figSize || { w: Math.round(this.fig.width), h: Math.round(this.fig.height) };
       const r = this.stage.getBoundingClientRect();
       return { w: Math.max(10, Math.floor(r.width)), h: Math.max(10, Math.floor(r.height)) };
     }
@@ -3243,7 +3252,40 @@
       };
       this.grip.addEventListener('pointerup', up);
       this.grip.addEventListener('pointercancel', up);
-      new ResizeObserver(() => { cancelAnimationFrame(this._rz2); this._rz2 = requestAnimationFrame(() => this.redraw()); }).observe(this.stage);
+      new ResizeObserver(() => {
+        cancelAnimationFrame(this._rz2);
+        this._rz2 = requestAnimationFrame(() => this.redraw());
+        // a docked figure's size is its tab's: the program hears it, as after a resize by hand
+        if (this.docked) { clearTimeout(this._dz); this._dz = setTimeout(() => this.tellSize(), 250); }
+      }).observe(this.stage);
+    }
+
+    tellSize() {
+      if (!this.stage.offsetParent) return;
+      const { w, h } = this.canvasSize();
+      if (this.figSize && this.figSize.w === w && this.figSize.h === h) return;
+      this.figSize = { w, h };
+      const fl = this.fig.flags || {};
+      if (fl.size || fl.resize) this.mgr.ui({ type: 'resize', id: this.id, width: w, height: h });
+      else this.mgr.send({ type: 'resize', id: this.id, width: w, height: h });
+    }
+
+    /* Docked into the desktop (as a tab, pylab-app.js puts it there) or a window again. */
+    setDocked(on) {
+      this.docked = on;
+      this.el.classList.toggle('is-docked', on);
+      // docked, its tab names it: the title bar goes, its buttons join the tools (the tab closes it)
+      if (on) this.tools.append(this.btnDock, this.btnSave);
+      else {
+        this.titlebar.insertBefore(this.btnSave, this.btnClose);
+        this.titlebar.insertBefore(this.btnDock, this.btnSave);
+      }
+      this.titlebar.hidden = on;
+      this.btnDock.replaceChildren(icon(on ? 'undock' : 'dock'));
+      const t = on ? 'Undock the figure: a window of its own' : 'Dock the figure in the desktop, as a tab';
+      this.btnDock.title = t;
+      this.btnDock.setAttribute('aria-label', t);
+      this._tabTitle = this.title.textContent;
     }
   }
 
@@ -3258,6 +3300,35 @@
       this.engineCurrent = null;     // gcf as the engine last told it
       this.ginput = null;
       this.places = PL.util.store.get('figplaces', {});
+      this.dockNew = !!PL.util.store.get('dockFigures', false);
+    }
+
+    /* Figures docked into the desktop (WindowStyle 'docked'): the desktop
+       (pylab-app.js) hears 'dock' and 'undock' and gives each a tab; tell:
+       the program is told the figure's WindowStyle. */
+    dock(w, tell = true) {
+      if (w.docked || w.fig.dialog || w.fig.windowStyle === 'modal') return;
+      w.setDocked(true);
+      if (tell) this.send({ type: 'windowstyle', id: w.id, style: 'docked' });
+      this.emit('dock', w);
+      this.focus(w, false);
+      w.redrawSoon();
+    }
+
+    undock(w, tell = true) {
+      if (!w.docked) return;
+      w.setDocked(false);
+      this.layer.append(w.el);
+      this.place(w);
+      if (tell) this.send({ type: 'windowstyle', id: w.id, style: 'normal' });
+      this.emit('undock', w);
+    }
+
+    toggleDock(w) { if (w.docked) this.undock(w); else this.dock(w); }
+
+    setDockNew(on) {
+      this.dockNew = !!on;
+      PL.util.store.set('dockFigures', this.dockNew);
     }
 
     send(ev) { this.emit('event', ev); }
@@ -3293,7 +3364,7 @@
     /* movegui: a window to the middle (or an edge) of the desktop. */
     move(id, where) {
       const w = this.wins.get(id);
-      if (!w) return;
+      if (!w || w.docked) return;
       const L = this.layer.getBoundingClientRect();
       const ww = w.el.offsetWidth, wh = w.el.offsetHeight;
       let l = w.el.offsetLeft, t = w.el.offsetTop;
@@ -3327,7 +3398,19 @@
           this.place(w);
           opened.add(fig.id);
           this.emit('opened', w);
-        } else w.update(fig);
+          // docked by the program (WindowStyle 'docked'), or by the desktop's choice for new figures
+          w.engineStyle = fig.windowStyle;
+          if (fig.windowStyle === 'docked') this.dock(w, false);
+          else if (this.dockNew && fig.windowStyle === 'normal' && !fig.dialog) this.dock(w, true);
+        } else {
+          w.update(fig);
+          // the program changed WindowStyle (a drawing sent before the page's own change says what it was, and is passed over)
+          if (fig.windowStyle !== w.engineStyle) {
+            w.engineStyle = fig.windowStyle;
+            if (fig.windowStyle === 'docked' && !w.docked) this.dock(w, false);
+            else if (fig.windowStyle !== 'docked' && w.docked) this.undock(w, false);
+          }
+        }
       }
       // gcf comes to the front when it changes (figure(h) raises it on its own),
       // not with every drawing, and a window just opened is already stacked in
@@ -3419,7 +3502,7 @@
 
     savePlaces() {
       for (const w of this.wins.values()) {
-        if (w.fig.dialog) continue;
+        if (w.fig.dialog || w.docked) continue;
         this.places[w.fig.number] = { l: w.el.offsetLeft, t: w.el.offsetTop, w: w.el.offsetWidth, h: w.el.offsetHeight };
       }
       PL.util.store.set('figplaces', this.places);
@@ -3441,7 +3524,7 @@
 
     raise(id) {
       const w = this.wins.get(id);
-      if (w) { w.el.hidden = false; this.focus(w, false); }
+      if (w) { w.el.hidden = false; this.focus(w, false); if (w.docked) this.emit('show', w); }
     }
 
     requestClose(w) {

@@ -102,10 +102,19 @@
       const W = Math.min(320, Math.max(240, L.width - 16)), H = Math.min(560, Math.max(240, L.height - 16));
       this.el.style.width = `${W}px`;
       this.el.style.height = `${H}px`;
+      if (f.classList.contains('is-docked')) {
+        // a figure docked in a tab: over the right part of it
+        const r = f.getBoundingClientRect();
+        const l = Math.max(0, Math.min(r.right - L.left - W - 4, L.width - W - 4));
+        const t = Math.max(0, Math.min(r.top - L.top + 30, L.height - H - 4));
+        this.el.style.left = `${l}px`;
+        this.el.style.top = `${t}px`;
+        return;
+      }
       let l = f.offsetLeft + f.offsetWidth + 8;
-      if (f.classList.contains('is-docked') || l + W > L.width) l = f.offsetLeft - W - 8;
+      if (l + W > L.width) l = f.offsetLeft - W - 8;
       if (l < 0) l = Math.max(0, L.width - W - 4);
-      const t = Math.max(0, Math.min(f.classList.contains('is-docked') ? 8 : f.offsetTop, L.height - H - 4));
+      const t = Math.max(0, Math.min(f.offsetTop, L.height - H - 4));
       this.el.style.left = `${l}px`;
       this.el.style.top = `${t}px`;
     }

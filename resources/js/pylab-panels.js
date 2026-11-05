@@ -299,15 +299,19 @@
       this.zoneTimer = setTimeout(() => this.dropTarget(false), 250);
     }
 
-    folderMenu(x, y) {
-      U().menu(x, y, [
+    folderItems() {
+      return [
         { label: 'New script', action: () => this.app.newFile('script', this.path) },
         { label: 'New function', action: () => this.app.newFile('function', this.path) },
         { label: 'New folder…', action: () => this.app.newFolder(this.path) },
         '-',
         { label: 'Upload files…', action: () => this.app.pickUpload(this.path) },
         { label: 'Refresh', action: () => this.refresh() },
-      ]);
+      ];
+    }
+
+    folderMenu(x, y) {
+      U().menu(x, y, this.folderItems());
     }
 
     async show(path) {

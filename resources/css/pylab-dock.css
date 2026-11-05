@@ -1,0 +1,91 @@
+/* ==========================================================================
+   PYLAB.HTML: THE DESKTOP'S WINDOWS (pylab-dock.js)
+
+   A tree of splits whose leaves are groups: a strip of tabs (with the
+   actions of the window shown) over the windows' views, one shown at a
+   time. A bar between two parts resizes them. The group in use has an
+   accent over its tab.
+   ========================================================================== */
+.pl-main.pl-dock { display: flex; min-height: 0; min-width: 0; background: var(--pl-chrome); padding: 2px; }
+.pl-dock > .pl-dk-group, .pl-dock > .pl-dk-split { flex: 1 1 0; }
+.pl-dk-split { display: flex; min-width: 0; min-height: 0; }
+.pl-dk-split.is-row { flex-direction: row; }
+.pl-dk-split.is-col { flex-direction: column; }
+.pl-dk-split > .pl-dk-group, .pl-dk-split > .pl-dk-split { min-width: 0; min-height: 0; }
+.pl-dk-group {
+  display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; min-height: 0; overflow: hidden;
+  background: var(--pl-panel); border: 1px solid var(--pl-border); border-radius: var(--radius-sm); margin: 1px;
+}
+.pl-dk-head { display: flex; align-items: flex-end; background: var(--pl-chrome); border-bottom: 1px solid var(--pl-border); min-height: 28px; }
+.pl-dk-tabs {
+  flex: 1; min-width: 0; display: flex; align-items: flex-end; gap: 1px; padding: 3px 4px 0;
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
+}
+.pl-dk-tabs::-webkit-scrollbar { display: none; }
+.pl-dk-more { align-self: center; width: 22px; height: 20px; margin: 0 3px; flex: none; }
+.pl-dk-more svg { width: 14px; height: 14px; }
+.pl-dk-views { position: relative; min-height: 0; overflow: hidden; }
+/* every view fills the group; one shows at a time (hidden), each its own stacking context under the drop box */
+.pl-dk-views > :not(.pl-dk-dropzone):not(.pl-dk-empty) { position: absolute; inset: 0; z-index: 0; }
+.pl-dk-views > [hidden] { display: none !important; }
+.pl-dk-views > .pl-edview { display: block; }
+.pl-dk-empty { position: absolute; inset: 0; display: grid; place-content: center; padding: 12px; color: var(--pl-muted); font-size: 12.5px; text-align: center; }
+.pl-dk-shelf { display: none !important; }
+/* a window that was a panel: its own head gives way to its tab */
+.pl-dk-views > .pl-panel { border: none; margin: 0; border-radius: 0; grid-template-rows: minmax(0, 1fr); }
+.pl-dk-views > .pl-panel > .pl-panel-head { display: none; }
+
+/* the tabs: as the Editor's */
+.pl-dk-tabs .pl-edtab { position: relative; user-select: none; -webkit-user-select: none; }
+.pl-dk-tabs .pl-edtab.is-active { background: var(--pl-panel); border-color: var(--pl-border); color: var(--pl-text); }
+.pl-dk-tabs .pl-edtab.is-active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 1px; background: var(--pl-panel); }
+.pl-dk-tabs .pl-tooltab .t { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; }
+.pl-dk-tabs .pl-figtab .pl-tabicon { width: 13px; height: 13px; flex: none; color: var(--pl-muted); margin-right: -2px; }
+.pl-figwin.is-docked .pl-figtools .gap ~ .pl-iconbtn:nth-last-child(2) { margin-left: 8px; }
+.pl-split-many .pl-dk-group.is-focused .pl-edtab.is-active, .pl-dk-split .pl-dk-group.is-focused .pl-edtab.is-active { box-shadow: inset 0 2px 0 var(--accent-line); }
+
+/* The bar between two parts: a line, with room either side to take hold of. */
+.pl-dk-sash { flex: none; position: relative; z-index: 7; touch-action: none; }
+.pl-dk-sash.is-row { width: 3px; cursor: col-resize; }
+.pl-dk-sash.is-col { height: 3px; cursor: row-resize; }
+.pl-dk-sash::before { content: ''; position: absolute; inset: 0 -3px; }
+.pl-dk-sash.is-col::before { inset: -3px 0; }
+.pl-dk-sash:hover, .pl-dk-sash.is-moving, .pl-dk-sash:focus-visible { outline: none; background: color-mix(in oklab, var(--accent-line) 55%, transparent); }
+.pl-dock.is-resizing { user-select: none; -webkit-user-select: none; }
+.pl-dock.is-resizing.is-row { cursor: col-resize; }
+.pl-dock.is-resizing.is-col { cursor: row-resize; }
+.pl-dock.is-resizing .pl-dk-views { pointer-events: none; }
+
+/* ---- dragging a tab ---- */
+.pl-edtab.is-dragged { opacity: 0.45; }
+.pl-edtab.drop-before::before, .pl-edtab.drop-after::after { content: ''; position: absolute; top: 2px; bottom: 0; width: 3px; border-radius: 1.5px; background: var(--color-kvot-accent); pointer-events: none; }
+.pl-edtab.drop-before::before { left: 0; }
+.pl-edtab.drop-after::after { right: 0; left: auto; height: auto; }
+.pl-dk-tabs.is-dropping { background-color: color-mix(in oklab, var(--color-kvot-accent) 14%, var(--pl-chrome)); }
+.pl-dk-dropzone { position: absolute; z-index: 30; pointer-events: none; box-sizing: border-box; border: 2px solid color-mix(in oklab, var(--color-kvot-accent) 55%, transparent); border-radius: 4px; background: color-mix(in oklab, var(--color-kvot-accent) 16%, transparent); transition: inset 0.09s ease-out; }
+.pl-dk-dropzone[hidden] { display: none; }
+.pl-dk-dropzone.is-center { inset: 4px; }
+.pl-dk-dropzone.is-left { inset: 4px 50% 4px 4px; }
+.pl-dk-dropzone.is-right { inset: 4px 4px 4px 50%; }
+.pl-dk-dropzone.is-top { inset: 4px 4px 50% 4px; }
+.pl-dk-dropzone.is-bottom { inset: 50% 4px 4px 4px; }
+@media (prefers-reduced-motion: reduce) { .pl-dk-dropzone { transition: none; } }
+:root[data-theme="dark"] .pl-dk-dropzone { border-color: color-mix(in oklab, var(--color-kvot-accent) 85%, transparent); background: color-mix(in oklab, var(--color-kvot-accent) 28%, transparent); }
+
+/* a figure docked into the desktop fills its tab */
+.pl-figdock { overflow: hidden; background: var(--pl-fig-bg); }
+.pl-figdock > .pl-figwin.is-docked { position: absolute; inset: 0; width: auto !important; height: auto !important; min-width: 0; min-height: 0; border: none; border-radius: 0; box-shadow: none; z-index: auto !important; }
+.pl-figwin.is-docked .pl-figgrip { display: none; }
+
+/* At phone width the groups stack, each tall enough to use, and the page scrolls. */
+@media (max-width: 760px) {
+  .pl-main.pl-dock { overflow: auto; display: block; }
+  .pl-dock .pl-dk-split, .pl-dock .pl-dk-split.is-row { flex-direction: column; }
+  .pl-dock .pl-dk-group { min-height: calc(60dvh); }
+  .pl-dock .pl-dk-sash { display: none; }
+  .pl-dock > .pl-dk-group, .pl-dock > .pl-dk-split { min-height: calc(100dvh - var(--header-height) - var(--footer-height) - 160px); }
+}
+@media print {
+  .pl-dk-split, .pl-dk-group { display: block !important; height: auto !important; min-height: 0 !important; overflow: visible !important; position: static !important; }
+  .pl-dk-sash, .pl-dk-dropzone, .pl-dk-more { display: none !important; }
+}

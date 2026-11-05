@@ -590,6 +590,10 @@ def figure_event(ev_json):
         if isinstance(obj, Axes) and obj.valid:
             f = obj.figure()
             f.props['CurrentAxes'] = obj if obj.yy_owner is None else obj.yy_owner
+    elif t == 'windowstyle':
+        # docked into the desktop, or taken out of it, on the page
+        if isinstance(obj, Figure) and obj.valid and ev.get('style') in ('normal', 'docked'):
+            obj.props['WindowStyle'] = ev['style']
     return True
 
 
