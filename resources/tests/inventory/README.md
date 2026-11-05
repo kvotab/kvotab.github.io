@@ -41,9 +41,15 @@ the page's readers against it, and says so; without it, it skips them.
   from Pu-241 against the two-member Bateman solution (to 1e-10), the decay
   heat of Cs-137 with Ba-137m in equilibrium from ICRP 107's energies, A = λN
   and the atomic mass for the units, PSAR's half-life replacing ICRP 107's,
-  a reference brought to a later year and refused for an earlier one; below
+  a reference brought to a later year and refused for an earlier one, its
+  becquerels made moles with the half-lives it was worked out with and
+  decayed with those in use; below
   the solver's round-off, H-3 a thousand years on as exp(−λt), and what
   Am-242m feeds 0 once Am-242m has run down.
+- **Planned elements** (named PLAN...): told by their names; with planned or
+  discharged elements only, a canister's sums, its elements, its count and
+  its heat from the file are of those alone, and a canister holding none is
+  left out; one choice asked for beside another.
 - **The inventory**: canister types from their elements, PSAR's categories
   from the reactors' names, the first year after the last packing, a
   canister's part as the sum of its elements', each canister decaying from
@@ -80,7 +86,11 @@ The start (drop zone, tabs, Help); a broken JSON and a file of another kind
 reported in the bar; the three files opened together from one zip archive (in
 a folder, beside macOS's own files and a text file, passed over quietly) and
 shown as chips, the inventory named by its archive; the Overview's numbers
-and charts with PSAR's beside them; PSAR's half-lives offered; a year from
+and charts with PSAR's beside them; the planned part (a planned element
+in every made-up canister) in the Overview's numbers, its charts hatched,
+the Fuel setting narrowing every view to planned or discharged elements;
+PSAR's half-lives offered, and PSAR's becquerels made moles with them
+(the made-up Table D-1 gives Ni-59 PSAR's 76 000 years); a year from
 the last packing, a year too early marked while the one in use stays; the
 Nuclides table, chart and unit, CSV saved; every canister and element, Show more, an element name that
 is markup kept as text, a click opening its canister; the curves over time
@@ -90,8 +100,10 @@ each named by its document, and the note saying PSAR's were brought to the
 year shown; the ratio chart only when both hold for one
 year, the button that sets it, the totals by kind of fuel, the reactors; a
 gzipped inventory dropped (CDP's `Input.dispatchDragEvent`); the dark theme;
-a 390 px phone with no sideways scroll and 16 px fields; no error on the
-page.
+a 390 px phone with no sideways scroll and 16 px fields; the full window
+(no site header or footer, the page the window's height, the kvot mark and
+the theme switch in the tab row, an (i) panel the window's height, kept and
+undone); no error on the page.
 
 Every view's Excel file is saved and read back by openpyxl: the Overview's
 sheets with the canisters beside PSAR's and an About sheet naming the
