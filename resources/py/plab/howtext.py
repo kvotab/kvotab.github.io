@@ -562,7 +562,7 @@ readgeoraster, geotiffread, geotiffinfo:
 
 # ---- symmath.py and symbolic.py: symbolic math on SymPy --------------------------------------------------------
 sym, syms:
-    Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py. The names syms makes are variables of the code from that line on, even a name that is also a function's (syms gamma).
+    Python: symbolic.py and symmath.py. A symbolic value holds a 2-D array of SymPy expressions (a symbolic function also its arguments). The first one made imports SymPy, which Pyodide loads then. Each name's current sympy.Symbol is kept with its assumptions (complex unless real, positive, integer or rational is given), and expressions are brought up to date with it before they are worked on. A double is matched against p/q (fractions.Fraction.limit_denominator), p*pi/q and sqrt(p)/q, kept when it is that double exactly, else taken as its binary fraction. The operators, indexing, concatenation and display reach SymPy through hooks in ops.py, index.py and display.py; a function that numbers have too (sin, diff, sum, det, ...) hands a symbolic argument to symmath.py. The names syms makes are variables of the code from that line on, even a name that is also a function's (syms gamma). An operator with an equation works on each side ((a == b)/m is a/m == b/m, (a == b) + (c == d) is a + c == b + d; + and - go through inequalities too), and so do the elementwise functions (sin, exp, log, sqrt, ...), collect, combine, expand, diff, int, partfrac, horner, simplifyFraction, rewrite and the transforms.
 str2sym:
     Python: symbolic.py. The text's operators and function names translated to SymPy's (^ to **, ~= to !=, 2i to 2*I, ...) and read by sympy.parsing.sympy_parser.parse_expr, every other name a symbol; a single ==, ~=, <, <=, > or >= makes an equation or inequality, and a chain of them (0 < x < 1) the conjunction of each neighbouring pair.
 symfun, argnames, formula:
@@ -596,7 +596,7 @@ partfrac, numden, coeffs:
 children, has, lhs, rhs, isolate, finverse:
     Python: symmath.py. The expression's args; SymPy's has; an equation's two sides; sympy.solve for the variable or the expression to isolate (a derivative, sin(x), ...) (finverse solves y = f(x) for x and calls y x).
 subs:
-    Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace.
+    Python: symmath.py. SymPy's subs with simultaneous=True, for each element, or for each value of an array of values; subs(e) looks the expression's variable names up in the caller's workspace. An initial value such as subs(diff(x(t), t), t, 0) (a sympy.Subs, which SymPy's subs passes over) is replaced by xreplace. A symbolic function stays one.
 solve:
     Python: symmath.py. sympy.solve with dict=True on the equations as expression == 0 (cubics solved by radicals, quartics only with 'MaxDegree' 4), solutions kept when they agree with the variables' assumptions and the inequalities assumed; 'Real' solves for real symbols. 'ReturnConditions' uses sympy.solveset: a family k*pi + c (an ImageSet) becomes a solution in k with the condition in(k, 'integer'). Inequalities go to sympy.solve as they are. solve of an ode object: odemore.py, the solver its Solver selects. solve of an optimization or equation problem: optimprob.py (see optimproblem).
 vpasolve:
@@ -604,7 +604,7 @@ vpasolve:
 dsolve:
     Python: symmath.py. sympy.dsolve on the equations with the unknown functions they hold; conditions y(a) == b and Dy(a) == b go to it as ics. The answers are the right sides.
 laplace, ilaplace:
-    Python: symmath.py. sympy.laplace_transform with noconds=True, the time variable taken positive; sympy.inverse_laplace_transform into a positive t, so that no heaviside(t) is left.
+    Python: symmath.py. sympy.laplace_transform with noconds=True, the time variable taken positive and given back as it was (inside initial values too); sympy.inverse_laplace_transform into a positive t, so that no heaviside(t) is left.
 fourier, ifourier:
     Python: symmath.py. sympy.fourier_transform, which uses exp(-2*pi*1i*k*x), at k = w/(2*pi); the integral itself (sympy.integrate) when it gives none. The inverse likewise from sympy.inverse_fourier_transform.
 ztrans, iztrans:
@@ -1375,6 +1375,8 @@ plot, plot3, semilogx, semilogy, loglog:
     Python: graphics.py. The arguments are split into groups of x, y (and z) and a line specification; each column of the data (or row, to match the other's length) becomes a line object holding XData, YData and ZData, coloured from the axes' ColorOrder in turn. semilogx, semilogy and loglog set XScale or YScale to 'log'. The page draws each line through its points, a NaN breaking it. plot of a graph or digraph: graphs.py (see layout).
 line:
     Python: graphics.py. Line objects made in the current axes as they are, not cleared whatever hold says, from the data and properties given.
+fpolarplot:
+    Python: graphics.py. The function evaluated at 1000 evenly spaced angles of the interval ([0 2*pi] unless given), once with the whole vector or point by point when that does not give one value for each, then drawn by polarplot with the line spec and name-value pairs given; a symbolic expression becomes a function handle of its variable first (symmath.py).
 fplot, ezplot:
     Python: graphics.py. The function evaluated at 400 evenly spaced points of the interval ([-5 5] unless given): once with the whole vector, or point by point when that does not give one value for each; then plotted, with the x-limits set to the interval. Two functions give a parametric curve.
 scatter, scatter3:

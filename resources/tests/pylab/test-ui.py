@@ -1241,6 +1241,15 @@ async def symbolic(page):
     out = await command(page, "syms x(t) m c k F(t)\neq = m*diff(x,t,t) + c*diff(x,t) + k*x == F;\nsyms gamma omega_0\n"
                               "eq = subs(eq,[c k],[m*gamma m*omega_0^2])")
     check('symbolic: syms gamma makes a variable in the same command', out.rstrip().endswith('gamma*m*diff(x(t), t) + m*omega_0^2*x(t) + m*diff(x(t), t, 2) == F(t)'), True)
+    out = await command(page, "eq = collect(eq,m)/m")
+    check('symbolic: collect and division work on each side of an equation',
+          out.rstrip().endswith('eq(t) =\n\ngamma*diff(x(t), t) + omega_0^2*x(t) + diff(x(t), t, 2) == F(t)/m'), True)
+    await command(page, "close all force; syms x y\nu = sin(x^2 + y^2);\nv = cos(x*y);\n[X,Y] = meshgrid(-1:.1:1,-1:.1:1);\n"
+                        "U = subs(u,[x y],{X,Y});\nV = subs(v,[x y],{X,Y});\nquiver(X,Y,U,V)")
+    check('symbolic: quiver of symbolic numbers draws', await drawn(page, 1) > 0.003, True)
+    await command(page, "close all force; syms t\nfpolarplot(sin(6*t))")
+    check('symbolic: fpolarplot of an expression draws', await drawn(page, 1) > 0.003, True)
+    await command(page, "close all force")
     out = await command(page, "syms m a g theta(t) r\neqn = subs(m*a == -m*g*sin(theta), a, r*diff(theta,2));\neqn = isolate(eqn,diff(theta,2))")
     check('symbolic: isolate a derivative', out.rstrip().endswith('diff(theta(t), t, 2) == -g*sin(theta(t))/r'), True)
     await command(page, 'close all force; clear; clc')

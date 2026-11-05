@@ -366,6 +366,18 @@ def _printer():
         _print_Max = _print_Min = _print_binomial = _print_LambertW = _print_KroneckerDelta = _print_Function
         _print_factorial = _print_gamma = _print_Function
 
+        def _print_LaplaceTransform(self, e):
+            return f"laplace({', '.join(self._print(a) for a in e.args[:3])})"
+
+        def _print_InverseLaplaceTransform(self, e):
+            return f"ilaplace({', '.join(self._print(a) for a in e.args[:3])})"
+
+        def _print_FourierTransform(self, e):
+            return f"fourier({', '.join(self._print(a) for a in e.args[:3])})"
+
+        def _print_InverseFourierTransform(self, e):
+            return f"ifourier({', '.join(self._print(a) for a in e.args[:3])})"
+
         def _print_Mod(self, e):
             return f'mod({self._print(e.args[0])}, {self._print(e.args[1])})'
 
@@ -565,24 +577,44 @@ def _boolean(e):
     return s.Ne(e, 0, evaluate=False)
 
 
+def _sides(fn, kinds=None):
+    """fn of two expressions, applied to each side of an equation: (a == b)/m is a/m == b/m, and
+    (a == b) + (c == d) is a + c == b + d. kinds: the relations it goes through (equations unless given)."""
+    s = sp()
+    kinds = kinds or (s.Eq,)
+
+    def f(x, y):
+        kx, ky = isinstance(x, kinds), isinstance(y, kinds)
+        if kx and ky and type(x) is type(y):
+            return type(x)(fn(x.lhs, y.lhs), fn(x.rhs, y.rhs), evaluate=False)
+        if kx and not isinstance(y, s.core.relational.Relational):
+            return type(x)(fn(x.lhs, y), fn(x.rhs, y), evaluate=False)
+        if ky and not isinstance(x, s.core.relational.Relational):
+            return type(y)(fn(x, y.lhs), fn(x, y.rhs), evaluate=False)
+        return fn(x, y)
+    return f
+
+
 def binop(op, a, b):
     s = sp()
     A, B = arr_of(a), arr_of(b)
     fa = _fargs(a, b)
     if op in ('+', '-', '.*', './', '.\\', '.^', '==', '~=', '<', '<=', '>', '>=', '&', '|'):
         X, Y = _bcast(A, B, op)
+        # adding to both sides keeps an inequality too
+        both = (s.Eq, s.Ne, s.StrictLessThan, s.LessThan, s.StrictGreaterThan, s.GreaterThan)
         if op == '+':
-            r = _each(lambda x, y: x + y, X, Y)
+            r = _each(_sides(lambda x, y: x + y, both), X, Y)
         elif op == '-':
-            r = _each(lambda x, y: x - y, X, Y)
+            r = _each(_sides(lambda x, y: x - y, both), X, Y)
         elif op == '.*':
-            r = _each(lambda x, y: x * y, X, Y)
+            r = _each(_sides(lambda x, y: x * y), X, Y)
         elif op == './':
-            r = _each(lambda x, y: x / y, X, Y)
+            r = _each(_sides(lambda x, y: x / y), X, Y)
         elif op == '.\\':
-            r = _each(lambda x, y: y / x, X, Y)
+            r = _each(_sides(lambda x, y: y / x), X, Y)
         elif op == '.^':
-            r = _each(lambda x, y: x ** y, X, Y)
+            r = _each(_sides(lambda x, y: x ** y), X, Y)
         elif op in ('&', '|'):
             f = s.And if op == '&' else s.Or
             r = _each(lambda x, y: f(_boolean(x), _boolean(y)), X, Y)
@@ -613,7 +645,7 @@ def binop(op, a, b):
         return _lsq('\\', A, B, fa)
     if op == '^':
         if A.size == 1 and B.size == 1:
-            return Sym(_each(lambda x, y: x ** y, A, B), fa)
+            return Sym(_each(_sides(lambda x, y: x ** y), A, B), fa)
         if A.shape[0] == A.shape[1] and B.size == 1:
             return Sym(_np(s.Matrix(A.tolist()) ** B[0, 0]), fa)
         raise MError('MATLAB:mpower', 'Incorrect dimensions for raising a matrix to a power: the matrix must be square and the power a scalar.')
@@ -643,7 +675,7 @@ def unop(op, a):
     A = arr_of(a)
     fa = a.fargs if type(a) is Sym else None
     if op == '-':
-        return Sym(_each(lambda x: -x, A), fa)
+        return Sym(_each(lambda x: type(x)(-x.lhs, -x.rhs, evaluate=False) if isinstance(x, (s.Eq, s.Ne)) else -x, A), fa)
     if op == '+':
         return Sym(A, fa)
     if op == '~':

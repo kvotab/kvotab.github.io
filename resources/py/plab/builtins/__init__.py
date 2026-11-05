@@ -56,6 +56,8 @@ def load(target):
     vobj.install()
     vobj.wrap_builtins(REG, timetypes.classes() + categoricals.classes() + tables.classes() + gsa.classes() + missingdata.classes())
     timetypes.wrap_plots(REG)
+    from . import symmath
+    symmath.wrap_plots(REG)
     from . import arity
     arity.apply(REG)
     target.update(REG)

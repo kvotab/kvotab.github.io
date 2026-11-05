@@ -35,6 +35,11 @@ def _is(v):
     return type(v) is Sym
 
 
+def _fa(v):
+    """A symbolic function's arguments, kept by what rewrites its formula."""
+    return v.fargs if type(v) is Sym else None
+
+
 def ex(v):
     """A value's expressions, brought up to date with the assumptions."""
     a = arr_of(v)
@@ -640,7 +645,7 @@ def simplify(nargout, *args):
 @bi('simplifyFraction', arr=False)
 def simplifyFraction(nargout, *args):
     s = sp()
-    return Sym(_each(lambda e: s.cancel(s.together(e)), ex(args[0])))
+    return Sym(_each(lambda e: s.cancel(s.together(e)), ex(args[0])), _fa(args[0]))
 
 
 @bi('expand', arr=False)
@@ -689,7 +694,7 @@ def collect(nargout, *args):
     f = args[0]
     A = ex(f)
     x = _vars_arg(args[1]) if len(args) > 1 else [_default_var(A.reshape(-1))]
-    return Sym(_each(lambda e: s.collect(s.expand(e), x), A))
+    return Sym(_each(lambda e: s.collect(s.expand(e), x), A), _fa(f))
 
 
 @bi('combine', arr=False)
@@ -707,14 +712,14 @@ def combine(nargout, *args):
     if target == 'sincos':
         from sympy.simplify.fu import TR8
         g = lambda e: TR8(e)
-    return Sym(_each(g, ex(args[0])))
+    return Sym(_each(g, ex(args[0])), _fa(args[0]))
 
 
 @bi('horner', arr=False)
 def horner(nargout, *args):
     s = sp()
     xs = _vars_arg(args[1]) if len(args) > 1 else None
-    return Sym(_each(lambda e: s.horner(e, *(xs or [])), ex(args[0])))
+    return Sym(_each(lambda e: s.horner(e, *(xs or [])), ex(args[0])), _fa(args[0]))
 
 
 _REWRITE = {'exp': 'exp', 'log': 'log', 'sin': 'sin', 'cos': 'cos', 'tan': 'tan', 'cot': 'cot', 'sqrt': 'sqrt', 'heaviside': 'Heaviside',
@@ -733,8 +738,8 @@ def rewrite(nargout, *args):
         def sc(e):
             return e.replace(s.tan, lambda u: s.sin(u) / s.cos(u)).replace(s.cot, lambda u: s.cos(u) / s.sin(u)) \
                     .replace(s.sec, lambda u: 1 / s.cos(u)).replace(s.csc, lambda u: 1 / s.sin(u))
-        return Sym(_each(sc, ex(args[0])))
-    return Sym(_each(lambda e: e.rewrite(fn), ex(args[0])))
+        return Sym(_each(sc, ex(args[0])), _fa(args[0]))
+    return Sym(_each(lambda e: e.rewrite(fn), ex(args[0])), _fa(args[0]))
 
 
 @bi('partfrac', arr=False)
@@ -744,7 +749,7 @@ def partfrac(nargout, *args):
     A = ex(args[0])
     x = _var(args[1]) if len(args) > 1 else _default_var(A.reshape(-1))
     full = 'factormode' in o and opt_str(o['factormode']) and opt_lower(o['factormode']) in ('full', 'complex')
-    return Sym(_each(lambda e: s.apart(e, x, full=bool(full)).doit() if full else s.apart(e, x), A))
+    return Sym(_each(lambda e: s.apart(e, x, full=bool(full)).doit() if full else s.apart(e, x), A), _fa(args[0]))
 
 
 @bi('numden', nout=2, arr=False)
@@ -931,16 +936,23 @@ def subs(W, nargout, *args):
         shape = big[0].shape
         out_ = np.empty(shape, object)
         for i in np.ndindex(shape):
-            rep = {o: (n[i] if n.size != 1 else n[0, 0]) for o, n in pairs}
-            out_[i] = A[0, 0].subs(rep, simultaneous=True)
+            out_[i] = _subs_one(A[0, 0], {o: (n[i] if n.size != 1 else n[0, 0]) for o, n in pairs})
         return Sym(out_)
     if big and any(n.shape != A.shape for n in big):
         raise err('symbolic:subs:Size', 'The values must be scalars, or arrays the size of the expression.', 'subs')
     out_ = np.empty(A.shape, object)
     for i in np.ndindex(A.shape):
-        rep = {o: (n[i] if n.size != 1 else n[0, 0]) for o, n in pairs}
-        out_[i] = Y.settle(A[i].subs(rep, simultaneous=True))
+        out_[i] = _subs_one(A[i], {o: (n[i] if n.size != 1 else n[0, 0]) for o, n in pairs})
     return Sym(out_, f.fargs if _is(f) else None)
+
+
+def _subs_one(e, rep):
+    s = sp()
+    # SymPy's subs passes over a Subs (an initial value such as subs(diff(x(t), t), t, 0)): xreplace finds it
+    held = {o: v for o, v in rep.items() if isinstance(o, s.Subs)}
+    if held:
+        e = e.xreplace(held)
+    return Y.settle(e.subs({o: v for o, v in rep.items() if o not in held}, simultaneous=True))
 
 
 # ---- equations -------------------------------------------------------------------------------------------------------------
@@ -1240,7 +1252,8 @@ def laplace(nargout, *args):
     tp = s.Symbol(t.name, positive=True)
 
     def lt(e):
-        return _tidy(s.laplace_transform(e.subs(t, tp), tp, z, noconds=True))
+        # the variable back as it was, inside the initial values too (subs(diff(x(t), t), t, 0))
+        return _tidy(s.laplace_transform(e.subs(t, tp), tp, z, noconds=True)).xreplace({tp: t})
     return Sym(_each(lt, A))
 
 
@@ -1250,7 +1263,7 @@ def ilaplace(nargout, *args):
     A = ex(args[0])
     z, t = _tvars(args, A, 's', 't', 'x')
     tp = s.Symbol(t.name, positive=True)
-    return Sym(_each(lambda e: _tidy(s.inverse_laplace_transform(e, z, tp)).subs(tp, t), A))
+    return Sym(_each(lambda e: _tidy(s.inverse_laplace_transform(e, z, tp)).xreplace({tp: t}), A))
 
 
 @bi('fourier', arr=False)
@@ -1711,6 +1724,11 @@ def fplot_(nargout, *args):
     return OVERLOADS['_orig_fplot'](nargout, *_with_fhs('fplot', nv, args))
 
 
+@_over('fpolarplot')
+def fpolarplot_(nargout, *args):
+    return OVERLOADS['_orig_fpolarplot'](nargout, *_with_fhs('fpolarplot', 1, args))
+
+
 @_over('ezplot')
 def ezplot_(nargout, *args):
     vars_ = symvars([e for a in args if _is(a) for e in ex(a).reshape(-1)])
@@ -2157,7 +2175,7 @@ def install():
         orig = info.fn
         if getattr(orig, '_sym', False):
             continue
-        if name in ('fplot', 'ezplot'):
+        if name in ('fplot', 'ezplot', 'fpolarplot'):
             OVERLOADS['_orig_' + name] = orig
         if name in ('fsurf', 'fmesh', 'fcontour'):
             fn = (lambda o: lambda nargout, *args: o(nargout, *_with_fhs('fsurf', 2, args)))(orig)
@@ -2230,3 +2248,63 @@ def _sympy_input_errors():
 
 
 _sympy_input_errors()
+
+
+# plots of symbolic numbers (subs of an expression at a grid): drawn as doubles
+_PLOTS = ('plot plot3 line scatter scatter3 stairs stem stem3 bar barh bar3 bar3h area errorbar semilogx semilogy loglog fill fill3 '
+          'patch histogram histogram2 quiver quiver3 feather compass surf surfc mesh meshc meshz waterfall contour contourf contour3 '
+          'pcolor image imagesc polarplot polarscatter polarhistogram comet comet3 ribbon pie pie3 text xline yline').split()
+
+
+def wrap_plots(reg):
+    """Called once every module is loaded: a plotting function given a symbolic value with no variables
+    left draws its numbers."""
+    def numbers(args):
+        if not any(type(a) is Sym for a in args):
+            return args
+        return tuple(double_(1, a) if type(a) is Sym and not any(getattr(e, 'free_symbols', None) for e in a.a.flat) else a
+                     for a in args)
+
+    for name in _PLOTS:
+        info = reg.get(name)
+        if info is None:
+            continue
+        orig, k = info.fn, 2 if info.ws else 1
+        if info.aw:
+            async def f(*a, orig=orig, k=k):
+                return await orig(*a[:k], *numbers(a[k:]))
+        else:
+            def f(*a, orig=orig, k=k):
+                return orig(*a[:k], *numbers(a[k:]))
+        f.__name__ = getattr(orig, '__name__', name)
+        info.fn = f
+
+
+# applied to each side of an equation: log(a == b) is log(a) == log(b), diff(a == b, x) is diff(a, x) == diff(b, x)
+_SIDEWISE = ('sin cos tan cot sec csc asin acos atan sinh cosh tanh asinh acosh atanh exp log log2 log10 sqrt nthroot '
+             'collect combine expand diff int partfrac horner simplifyFraction rewrite laplace ilaplace fourier ifourier ztrans iztrans').split()
+
+
+def _sidewise(fn):
+    def f(nargout, *args):
+        a = args[0] if args else None
+        if type(a) is Sym and a.a.size:
+            s = sp()
+            if all(isinstance(e, s.Eq) for e in a.a.flat):
+                L = fn(1, Sym(_each(lambda e: e.lhs, a.a), a.fargs), *args[1:])
+                Rr = fn(1, Sym(_each(lambda e: e.rhs, a.a), a.fargs), *args[1:])
+                la, ra = arr_of(L), arr_of(Rr)
+                if la.shape == ra.shape:
+                    out_ = np.empty(la.shape, object)
+                    for i in np.ndindex(la.shape):
+                        out_[i] = s.Eq(la[i], ra[i], evaluate=False)
+                    return Sym(out_, L.fargs if _is(L) else a.fargs)
+        return fn(nargout, *args)
+    f._sym = getattr(fn, '_sym', False)
+    f.__name__ = getattr(fn, '__name__', 'f')
+    return f
+
+
+for _n in _SIDEWISE:
+    if _n in REG and not REG[_n].aw and not getattr(REG[_n], 'ws', False):
+        REG[_n].fn = _sidewise(REG[_n].fn)

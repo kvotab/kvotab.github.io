@@ -3753,6 +3753,11 @@ fplot: Plot a function of one variable over an interval.
     fplot(f)
     fplot(f, [xmin xmax])
     fplot(..., LineSpec)
+fpolarplot: Plot r = f(theta) in polar axes, theta from 0 to 2*pi unless given.
+    fpolarplot(f)
+    fpolarplot(f, [thetamin thetamax])
+    fpolarplot(..., LineSpec)
+    h = fpolarplot(...)
 ezplot: Plot a function of one variable (older; fplot is preferred).
     ezplot(f)
     ezplot(f, [xmin xmax])

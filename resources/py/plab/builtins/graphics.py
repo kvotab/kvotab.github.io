@@ -761,6 +761,32 @@ def fplot(nargout, *args):
     return r
 
 
+@bi('fpolarplot', arr=False)
+def fpolarplot(nargout, *args):
+    """fpolarplot(f), fpolarplot(f, [a b]), then a line spec and name-value pairs: the curve r = f(theta) in polar axes."""
+    ax, rest = split_axes_arg(args)
+    _need(rest, 1, 'fpolarplot')
+    f = rest[0]
+    if not isinstance(f, FH):
+        raise err('MATLAB:fpolarplot:InvalidFunction', 'The first input must be a function handle or a symbolic expression.', 'fpolarplot')
+    rest = list(rest[1:])
+    lims = [0.0, 2 * math.pi]
+    if rest and opt_str(rest[0]) is None:
+        v = darr(rest[0]).reshape(-1)
+        if v.size != 2 or not np.all(np.isfinite(v.real)) or v.dtype.kind == 'c' or v[0] >= v[1]:
+            raise err('MATLAB:fpolarplot:InvalidInterval', 'The interval is [thetamin thetamax], increasing and finite.', 'fpolarplot')
+        lims = [float(v[0]), float(v[1])]
+        rest = rest[1:]
+    t = np.linspace(lims[0], lims[1], 1000)
+    try:
+        r = arr(f.scall(1, out(t.reshape(1, -1)))).astype(float).reshape(-1)
+        if r.size != t.size:
+            raise MError('', 'scalar')
+    except MError:
+        r = np.array([float(arr(f.scall(1, float(v))).reshape(-1)[0]) for v in t])
+    return polarplot(nargout, *(([ax] if ax else []) + [out(t.reshape(1, -1)), out(r.reshape(1, -1))] + rest))
+
+
 # ---- scatter, bar, histogram and other series ------------------------------------------------------------
 
 def _series_color(ax, given=None):

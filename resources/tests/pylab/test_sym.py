@@ -326,4 +326,38 @@ same('isolate a derivative, an expression', [shows("syms m a g theta(t) r; eqn =
      ['diff(theta(t), t, 2) == -g*sin(theta(t))/r', 'sin(y) == 3 - x^2'])
 raises('isolate refuses a number', "syms x; isolate(x == 1, 2)", 'isolate takes a variable or an expression')
 
+# equations: operators and functions work on each side
+EQ = "syms x y m a; e = m*x + m*y == a*m;"
+same('operators on an equation work on each side', [shows(EQ + " r = e/m", 'r'), shows(EQ + " r = 2*e", 'r'), shows(EQ + " r = e + 1", 'r'),
+                                                    shows(EQ + " r = -e", 'r'), shows(EQ + " r = e - e", 'r'), shows("syms x y; r = (x < y) + 1", 'r')],
+     ['(m*x + m*y)/m == a', '2*m*x + 2*m*y == 2*a*m', 'm*x + m*y + 1 == a*m + 1', '-m*x - m*y == -a*m', '0 == 0', 'x + 1 < y + 1'])
+same('functions of an equation work on each side', [shows(EQ + " r = collect(e, m)", 'r'), shows(EQ + " r = log(e)", 'r'),
+                                                    shows("syms x m; r = diff(x^2 == m*x, x)", 'r'), shows("syms x m; r = int(x == m, x)", 'r')],
+     ['m*(x + y) == a*m', 'log(m*x + m*y) == log(a*m)', '2*x == m', 'x^2/2 == m*x'])
+GM = ("syms x(t) m c k F(t)\neq = m*diff(x,t,t) + c*diff(x,t) + k*x == F;\nsyms gamma omega_0\n"
+      "eq = subs(eq,[c k],[m*gamma m*omega_0^2]);\neq = collect(eq,m)/m\n")
+W, out = run(GM)
+C('collect(eq, m)/m of a symbolic function', 'eq(t) =' in out and 'gamma*diff(x(t), t) + omega_0^2*x(t) + diff(x(t), t, 2) == F(t)/m' in out, out)
+same('collect, combine, partfrac, simplifyFraction and rewrite keep a symbolic function',
+     [run("syms m t; syms f(t); f(t) = m*t + m*t^2 + 1/(t^2-1); r = " + c + "; n = numel(argnames(r));")[0]['n']
+      for c in ("collect(f, m)", "combine(f)", "partfrac(f, t)", "simplifyFraction(f)", "rewrite(sin(t)*f, 'exp')")], [1.0] * 5)
+W, out = run(GM + "syms X s\neqL = laplace(eq);\neqL = subs(eqL, laplace(x(t), t, s), X);\n"
+                  "eqL = subs(eqL, [x(0) subs(diff(x(t), t), t, 0)], [0 0]);\nXs = solve(eqL, X); r = char(Xs); q = char(laplace(diff(x, t)));")
+same('laplace of an equation, its initial values replaced, solved', (W['r'].str(), W['q'].str()),
+     ('laplace(F(t), t, s)/(gamma*m*s + m*omega_0^2 + m*s^2)', 's*laplace(x(t), t, s) - x(0)'))
+
+# plots: symbolic numbers drawn as doubles; fpolarplot
+W, _ = run("close all force; syms x y; u = sin(x^2 + y^2); v = cos(x*y); [X,Y] = meshgrid(-1:.1:1,-1:.1:1); "
+           "U = subs(u,[x y],{X,Y}); V = subs(v,[x y],{X,Y}); quiver(X,Y,U,V); h = get(gca, 'Children'); c = class(h.UData); "
+           "d = max(abs([h.UData(:) - sin(X(:).^2 + Y(:).^2); h.VData(:) - cos(X(:).*Y(:))])); close all force;")
+C('quiver of symbolic numbers draws their values', W['c'].str() == 'double' and W['d'] < 1e-15, (W['c'].str(), W['d']))
+W, _ = run("close all force; syms t; fpolarplot(sin(6*t)); h = get(gca, 'Children'); n = numel(h.YData); "
+           "m = max(abs(h.YData - sin(6*h.XData))); lim = [min(h.XData) max(h.XData)]; close all force;")
+near('fpolarplot of an expression: r = f(theta) over [0 2*pi]', [W['n'], W['m']] + list(np.asarray(W['lim']).reshape(-1)), [1000, 0, 0, 2 * math.pi], 1e-12)
+W, _ = run("close all force; p = fpolarplot(@(th) 1 + cos(th), [0 pi], 'r--', 'LineWidth', 2); w = p.LineWidth; c = p.Color; "
+           "lim = [min(p.XData) max(p.XData)]; close all force;")
+near('fpolarplot of a handle over an interval, with a line spec and width', [W['w']] + list(np.asarray(W['c']).reshape(-1)) + list(np.asarray(W['lim']).reshape(-1)),
+     [2, 1, 0, 0, 0, math.pi], 1e-12)
+raises('fpolarplot refuses an interval that does not increase', "fpolarplot(@(th) th, [1 0])", 'increasing')
+
 sys.exit(C.done())
