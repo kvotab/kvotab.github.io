@@ -59,8 +59,9 @@ known = set(HELP) | set(R.BUILTINS)
 everything = [(slug, p) for slug in pages for p in pages[slug]]
 C('every page names functions PyLAB has', all(n in known for _, p in everything for n in p['names']),
   [n for _, p in everything for n in p['names'] if n not in known])
-C('every page has a summary sentence', all(p['summary'].endswith('.') for _, p in everything),
-  [p['names'][0] for _, p in everything if not p['summary'].endswith('.')])
+# (a test's summary may end in the question it asks)
+C('every page has a summary sentence', all(p['summary'].endswith(('.', '?')) for _, p in everything),
+  [p['names'][0] for _, p in everything if not p['summary'].endswith(('.', '?'))])
 C('every page has its forms and an example', all(p['syntax'] and p['examples'] for _, p in everything),
   [p['names'][0] for _, p in everything if not (p['syntax'] and p['examples'])])
 # an operator's page may give its forms as the operator (a:b, A*B, A\\b, [A, B]); the imaginary unit's as 3 + 4i;

@@ -1,0 +1,440 @@
+@ lhsdesign
+A Latin hypercube sample in the unit hypercube.
+
+Each of the `p` columns has one point in each of `n` equal slices of 0 to 1, the slices in random order: every input is spread evenly over its range, with fewer runs than a random sample needs. By default the best of five samples is kept (the one whose closest two points are farthest apart). To sample a distribution, map a column through its inverse cdf.
+
+# Syntax
+X = lhsdesign(n, p)
+    `n` points in `p` dimensions.
+X = lhsdesign(n, p, 'criterion', c, 'iterations', k)
+    With `'maximin'`, `'correlation'` or `'none'`, of `k` tries.
+X = lhsdesign(n, p, 'smooth', 'off')
+    Each point in the middle of its slice.
+# Examples
+## One point in each slice of each column
+rng default
+X = lhsdesign(5, 2)
+sort(floor(X * 5))
+## Sampling two distributions
+rng default
+U = lhsdesign(1000, 2);
+a = norminv(U(:, 1), 10, 2);
+b = icdf(makedist('Lognormal', 'mu', 0, 'sigma', 0.5), U(:, 2));
+[mean(a) std(a); mean(b) median(b)]
+# See also
+lhsnorm sobolset rand
+
+@ lhsnorm
+A Latin hypercube sample of a multivariate normal distribution.
+
+A sample of the normal distribution with mean `mu` and covariance `Sigma` whose columns are each spread over `n` slices of equal probability, keeping their correlations.
+
+# Syntax
+X = lhsnorm(mu, Sigma, n)
+    `n` rows of the multivariate normal distribution.
+X = lhsnorm(mu, Sigma, n, 'off')
+    The middle of each slice.
+[X, Z] = lhsnorm(...)
+    With the plain normal sample it was made from.
+# Examples
+## Correlated inputs, spread evenly
+rng default
+X = lhsnorm([0 5], [1 0.6; 0.6 2], 500);
+mean(X)
+corrcoef(X)
+# See also
+lhsdesign mvnrnd
+
+@ sobolset, haltonset, net, scramble
+Low-discrepancy point sets: Sobol's and Halton's sequences, their first points, and scrambling.
+
+The points of a low-discrepancy sequence fill the unit hypercube more evenly than random points, so averages over them converge faster (quasi-Monte Carlo). A point set is read with `net(p, n)` (or by indexing `p(rows, cols)`); `scramble` randomizes it while keeping its evenness, for error estimates from several scrambles. `'Skip'` leaves out the first points and `'Leap'` takes every (l+1)-th.
+
+# Syntax
+p = sobolset(d)
+    Sobol's sequence in `d` dimensions.
+p = haltonset(d)
+    Halton's sequence.
+p = sobolset(d, 'Skip', k, 'Leap', l)
+    Without the first `k` points, every (l+1)-th point.
+X = net(p, n)
+    The first `n` points, a row each.
+p2 = scramble(p, 'MatousekAffineOwen')
+    A scrambled Sobol set (`'RR2'` for Halton's; `'clear'` undoes it).
+# Examples
+## The first points
+p = sobolset(2);
+net(p, 4)
+h = haltonset(2);
+net(h, 4)
+## An integral by quasi-Monte Carlo
+> The mean of x1*x2 over the unit square is 1/4.
+X = net(sobolset(2, 'Skip', 1), 4096);
+estimate = mean(X(:, 1) .* X(:, 2))
+## Evenly spread, against random
+rng default
+subplot(1, 2, 1)
+R = rand(256, 2);
+plot(R(:, 1), R(:, 2), '.')
+axis square
+title('rand')
+subplot(1, 2, 2)
+S = net(sobolset(2), 256);
+plot(S(:, 1), S(:, 2), '.')
+axis square
+title('sobolset')
+# See also
+qrandstream lhsdesign
+
+@ qrandstream, qrand, reset
+A stream of quasi-random points, read a batch at a time and started over.
+
+A stream remembers where it is in a Sobol or Halton sequence: `qrand` reads the next points, and `reset` starts it over (`reset` also starts a datastore over).
+
+# Syntax
+q = qrandstream(type, d)
+    A stream of `'sobol'` or `'halton'` points in `d` dimensions.
+q = qrandstream(p)
+    From a point set.
+x = qrand(q, n)
+    The next `n` points.
+reset(q)
+    Back to the start.
+# Examples
+## Batches, and starting over
+q = qrandstream('sobol', 2);
+a = qrand(q, 2)
+b = qrand(q, 2)
+reset(q);
+isequal(qrand(q, 2), a)
+# See also
+sobolset haltonset
+
+@ src, srrc
+Standardized regression coefficients, and the same of ranks.
+
+A linear regression of the output on the inputs, each standardized: `src` says by how many standard deviations the output moves when an input moves by one, the others held. The R² of the regression says whether that picture is trustworthy (below about 0.7 the model is too far from linear). `srrc` does the same with ranks, for a model that is monotone but not linear.
+
+# Syntax
+S = src(X, Y)
+    A row per input (a column per output).
+[S, R2] = src(X, Y)
+    With the regression's R².
+S = srrc(X, Y)
+    Of the ranks.
+# Examples
+## Three inputs, one of little weight
+rng default
+X = rand(500, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+[S, R2] = src(X, Y)
+srrc(X, Y)'
+# See also
+pcc prcc sobolindices
+
+@ pcc, prcc
+Partial correlation coefficients, and the same of ranks.
+
+The correlation of the output with each input after the other inputs' linear effects are taken out of both: how strongly the output follows that input on its own. `prcc` does it with ranks.
+
+# Syntax
+P = pcc(X, Y)
+    A row per input.
+P = prcc(X, Y)
+    Of the ranks.
+# Examples
+## Partial correlations of three inputs
+rng default
+X = rand(500, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3) + 0.05*randn(500, 1);
+[pcc(X, Y) prcc(X, Y)]
+# See also
+src partialcorr corr
+
+@ firstorderindex, easi
+First-order Sobol indices read off any sample.
+
+Each input's first-order index is the share of the output's variance its own effect explains. These two read it from an ordinary sample, without a special design: `firstorderindex` by sorting the runs by the input and comparing the means of bins of them, `easi` by the spectrum of the output along each input. `easi` also gives the index with the bias of a random sample taken off.
+
+# Syntax
+S1 = firstorderindex(X, Y)
+    By bins (their number from the runs, or `'Bins'`).
+[S1c, S1] = easi(X, Y)
+    By EASI, corrected and as computed.
+# Examples
+## Against the exact indices
+> For Y = 4 x1 + 2 x2^2 with uniform inputs, the exact first-order indices are about 0.79 and 0.21 (the variances 16/12 and 4(1/5 - 1/9) over their sum).
+rng default
+X = rand(2000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2;
+[firstorderindex(X, Y) easi(X, Y)]
+# See also
+sobolindices rbdfastindices
+
+@ deltamoment
+Borgonovo's moment-independent δ: how far knowing an input moves the output's whole distribution.
+
+For each input, the average distance between the output's distribution and its distribution once the input is known, measured over its whole density, not just its variance. A table gives δ, δ with the bias a bootstrap measures taken off, and its interval.
+
+# Syntax
+T = deltamoment(X, Y)
+    A table with a row per input.
+T = deltamoment(X, Y, 'Resamples', r, 'Confidence', c, 'Names', names)
+    With the bootstrap's size and level, and the inputs' names.
+# Examples
+## Three inputs
+rng default
+X = rand(1000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = deltamoment(X, Y, 'Names', {'x1', 'x2', 'x3'})
+# See also
+pawn mutualinfo
+
+@ mutualinfo
+The mutual information between each input and the output, and how much of it chance would give.
+
+How much knowing an input tells about the output, in bits (on ranks), with the level the output shuffled at random gives and the part above it.
+
+# Syntax
+T = mutualinfo(X, Y)
+    A table of MI, Chance and Above, a row per input.
+T = mutualinfo(X, Y, 'Shuffles', s, 'Confidence', c)
+    With the number of shuffles and their level.
+# Examples
+## Three inputs
+rng default
+X = rand(1000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = mutualinfo(X, Y)
+# See also
+deltamoment pawn
+
+@ pawn
+PAWN: how much the output's distribution changes when an input is held to a slice of its range.
+
+Each input's range is cut into slices of equal count; within each slice the output's distribution is compared with its overall distribution by the Kolmogorov-Smirnov distance. The table gives those distances' minimum, mean, median (the index usually reported), maximum and spread.
+
+# Syntax
+T = pawn(X, Y)
+    A table with a row per input.
+T = pawn(X, Y, 'Slides', s)
+    With `s` slices (10 by default).
+# Examples
+## Three inputs
+rng default
+X = rand(1000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = pawn(X, Y)
+# See also
+deltamoment rsa
+
+@ discrepancyshares
+Each input's share of the discrepancy of the points (input, output).
+
+An input the output does not depend on leaves the points (input, output) as evenly spread as the input itself; one that drives the output gathers them along a curve, raising their discrepancy. The shares compare that across inputs. The cost grows with the square of the number of runs.
+
+# Syntax
+S = discrepancyshares(X, Y)
+    A share per input (the wrap-around discrepancy).
+S = discrepancyshares(X, Y, 'Method', m)
+    With `'WD'`, `'CD'`, `'MD'` or `'L2-star'`.
+# Examples
+## Three inputs
+rng default
+X = rand(400, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+discrepancyshares(X, Y)'
+# See also
+pawn src
+
+@ rsa
+Regional sensitivity analysis: which inputs separate the runs whose output is high from the rest.
+
+The runs are split at a threshold of the output (its mean unless given), and each input's distribution among the high runs is compared with the rest by the Kolmogorov-Smirnov test. Inputs whose two distributions differ are the ones that decide whether the output is high. Random dummy inputs give the level of distance chance produces.
+
+# Syntax
+T = rsa(X, Y)
+    Split at the mean of `Y`.
+T = rsa(X, Y, threshold)
+    Split at the threshold given.
+[T, chance] = rsa(X, Y, threshold, 'Dummies', d)
+    With the distance's mean and spread for `d` random inputs.
+# Examples
+## Which inputs make the output exceed 4
+rng default
+X = rand(1000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+[T, chance] = rsa(X, Y, 4)
+# See also
+pawn kstest2
+
+@ morrisdesign, morrisindices
+Morris's elementary effects: the runs, and the effects computed from them.
+
+An elementary effect is the change of the output when one input alone takes a step. `morrisdesign` lays out runs in which every input takes many such steps (random walks on a grid, or Morris's own trajectories); the model is run at each row, and `morrisindices` summarizes each input's effects: MuStar, the mean of their sizes (how much the input matters), Mu their mean (which way), and Sigma their spread (a curved effect or an interaction). It screens many inputs with few runs.
+
+# Syntax
+[X, D] = morrisdesign(K)
+    Runs for `K` inputs in the unit hypercube, and the design for `morrisindices`.
+[X, D] = morrisdesign(K, 'Trajectories', r, 'Points', m, 'Levels', p)
+    With the number of walks, their length and the grid's levels.
+T = morrisindices(D, Y)
+    A table of MuStar, MuStarConf, Mu, Sigma and Count, a row per input.
+# Examples
+## Screening three inputs
+rng default
+[X, D] = morrisdesign(3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = morrisindices(D, Y)
+# See also
+sobolindices radialindices
+
+@ soboldesign, sobolindices
+Sobol's first-order and total indices, by Saltelli's design.
+
+The first-order index S1 is the share of the output's variance an input explains alone; the total index ST the share it has a hand in, interactions included. `soboldesign` makes two samples and, for each input, one sample with that input's column taken from the other: (K + 2)N runs. The model is run at each row and `sobolindices` estimates the indices with their intervals.
+
+# Syntax
+[X, D] = soboldesign(N, K)
+    Runs for `K` inputs, `N` per sample.
+[X, D] = soboldesign(N, K, 'Second', true, 'Blocks', b, 'Sampling', s)
+    With second-order indices, blocks for intervals, and `'lhs'`, `'random'` or `'sobol'` sampling.
+T = sobolindices(D, Y)
+    A table of S1, S1Conf, ST and STConf, a row per input.
+[T, S2, S2conf] = sobolindices(D, Y, 'Estimator', e)
+    With every pair's index, and another estimator.
+# Examples
+## A model with an interaction
+> In Y = x1 + x2 + 4 x1 x3 the product makes x1 and x3 interact: their total indices are above their first-order ones, while x2's two are the same.
+rng default
+[X, D] = soboldesign(2000, 3);
+Y = X(:, 1) + X(:, 2) + 4*X(:, 1).*X(:, 3);
+T = sobolindices(D, Y)
+# See also
+efastindices morrisindices shapleyindices
+
+@ efastdesign, efastindices
+The extended Fourier amplitude sensitivity test: first-order and total indices.
+
+For each input, a curve of runs along which that input oscillates at a high frequency and the others slowly; the output's spectrum along the curve gives the input's first-order index (its own frequency and harmonics) and total index. K·N runs in all.
+
+# Syntax
+[X, D] = efastdesign(N, K)
+    `N` runs for each of `K` inputs.
+[X, D] = efastdesign(N, K, 'Harmonics', m)
+    With `m` harmonics.
+T = efastindices(D, Y)
+    A table of S1 and ST.
+# Examples
+## The interaction model again
+rng default
+[X, D] = efastdesign(1000, 3);
+Y = X(:, 1) + X(:, 2) + 4*X(:, 1).*X(:, 3);
+T = efastindices(D, Y)
+# See also
+sobolindices rbdfastindices
+
+@ rbdfastdesign, rbdfastindices
+Random balance design (RBD-FAST): first-order indices from one curve of runs.
+
+All inputs move along one periodic curve, each in its own random order; sorting the runs by an input and reading the spectrum gives its first-order index. N runs give every input's index, however many inputs there are.
+
+# Syntax
+[X, D] = rbdfastdesign(N, K)
+    `N` runs for `K` inputs.
+T = rbdfastindices(D, Y)
+    A table of S1, and S1Corrected with the bias of a random design taken off.
+# Examples
+## First-order indices from 1000 runs
+rng default
+[X, D] = rbdfastdesign(1000, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = rbdfastindices(D, Y)
+# See also
+efastindices easi
+
+@ ffdesign, ffindices
+A two-level fractional factorial design and its main effects.
+
+Each input is set low or high (probabilities 0.05 and 0.95 unless given) in a resolution IV design of twice the power of two at or above K runs: very few runs to find which of many inputs matter. Each main effect is half the difference between the output's mean with the input high and with it low; the pairs' interactions are aliased with others.
+
+# Syntax
+[X, D] = ffdesign(K)
+    The runs for `K` inputs.
+[X, D] = ffdesign(K, 'Low', lo, 'High', hi)
+    With other levels.
+T = ffindices(D, Y)
+    A table of each input's main effect and its square.
+[T, I] = ffindices(D, Y)
+    With the pairs' interaction effects.
+# Examples
+## Eight runs for four inputs
+[X, D] = ffdesign(4);
+size(X)
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = ffindices(D, Y)
+# See also
+morrisindices fracfact
+
+@ dgsmdesign, dgsmindices
+Derivative-based sensitivity measures.
+
+The mean squared derivative of the output along each input (per unit probability), from N points each moved a small step along every input. It bounds the total Sobol index from above, so a small measure shows an input that can be left fixed.
+
+# Syntax
+[X, D] = dgsmdesign(N, K)
+    N(K + 1) runs.
+[X, D] = dgsmdesign(N, K, 'Step', h, 'Crossed', true)
+    With the step, and every pair for second derivatives.
+T = dgsmindices(D, Y)
+    A table of Nu, its interval, the bound on the total index, and more.
+# Examples
+## Three inputs
+rng default
+[X, D] = dgsmdesign(500, 3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = dgsmindices(D, Y)
+# See also
+sobolindices morrisindices
+
+@ radialdesign, radialindices
+The radial one-at-a-time design: elementary effects and total indices.
+
+N base points, each moved one input at a time to the value of a second point: N(K + 1) runs, from which both Morris's elementary effects and Jansen's total indices are read.
+
+# Syntax
+[X, D] = radialdesign(N, K)
+    N(K + 1) runs.
+T = radialindices(D, Y)
+    A table of ST, MuStar, Mu and Sigma, with intervals.
+# Examples
+## The interaction model
+rng default
+[X, D] = radialdesign(500, 3);
+Y = X(:, 1) + X(:, 2) + 4*X(:, 1).*X(:, 3);
+T = radialindices(D, Y)
+# See also
+morrisindices sobolindices
+
+@ shapleydesign, shapleyindices
+Shapley effects: each input's fair share of the output's variance.
+
+Shapley effects share the variance among the inputs, interactions and correlations included, so that they add up to one even when the inputs are correlated (where Sobol indices are hard to read). The design draws runs over random orders of the inputs; with a correlation matrix the inputs are drawn from a Gaussian copula.
+
+# Syntax
+[X, D] = shapleydesign(K)
+    The runs for `K` inputs.
+[X, D] = shapleydesign(K, 'Orders', m, 'NVar', nv, 'NOuter', no, 'NInner', ni, 'Correlation', C)
+    With the design's sizes, and correlated inputs.
+T = shapleyindices(D, Y)
+    A table of each input's effect, its standard error and interval.
+# Examples
+## Effects that add up to one
+rng default
+[X, D] = shapleydesign(3);
+Y = 4*X(:, 1) + 2*X(:, 2).^2 + 0.1*X(:, 3);
+T = shapleyindices(D, Y);
+T
+sum(T{:, 1})
+# See also
+sobolindices

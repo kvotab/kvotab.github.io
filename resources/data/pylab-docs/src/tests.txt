@@ -1,0 +1,406 @@
+@ ttest
+The one-sample or paired t-test: is the mean m (0 unless given)?
+
+Tests whether normal data could have the mean `m`, from their sample mean and standard deviation. Given two samples of the same length, it tests the differences x - y (a paired test). `h` is 1 when the test rejects the mean at the level alpha (5%), `p` is the p-value, `ci` the confidence interval of the mean, and `stats` holds the t statistic, its degrees of freedom and the standard deviation. A matrix is tested column by column.
+
+# Syntax
+h = ttest(x)
+    Is the mean 0?
+h = ttest(x, m)
+    Is the mean `m`?
+h = ttest(x, y)
+    Is the mean of `x - y` 0 (paired data)?
+[h, p, ci, stats] = ttest(..., 'Alpha', alpha, 'Tail', 'both' | 'right' | 'left')
+    With the p-value, interval and statistics; another level, or a one-sided test.
+# Examples
+## A sample against a mean
+x = [5.1 4.9 5.6 5.8 6.0 5.4 5.7 5.3];
+[h, p, ci, stats] = ttest(x, 5)
+## Before and after, paired
+before = [72 80 68 75 90 66];
+after = [70 76 69 71 84 64];
+[h, p] = ttest(before, after)
+# See also
+ttest2 ztest signrank tinv
+
+@ ttest2
+The two-sample t-test: do two samples have the same mean?
+
+Compares the means of two independent normal samples. By default the variances are taken to be equal; `'Vartype', 'unequal'` gives Welch's test, which does not. `ci` is the interval of mean(x) - mean(y).
+
+# Syntax
+h = ttest2(x, y)
+    Do the means differ?
+[h, p, ci, stats] = ttest2(x, y, 'Alpha', alpha, 'Tail', tail, 'Vartype', 'equal' | 'unequal')
+    With the p-value, interval and statistics, and the options.
+# Examples
+## Two groups
+a = [12.1 11.8 12.6 12.4 11.9 12.2];
+b = [12.9 13.1 12.5 13.4 12.8];
+[h, p, ci] = ttest2(a, b)
+[~, pWelch] = ttest2(a, b, 'Vartype', 'unequal')
+# See also
+ttest ranksum anova1
+
+@ ztest
+The z-test: is the mean m, for data whose standard deviation sigma is known?
+
+Like the t-test, with the standard deviation known instead of estimated, so the normal distribution gives the p-value.
+
+# Syntax
+h = ztest(x, m, sigma)
+    Is the mean `m`?
+[h, p, ci, zval] = ztest(x, m, sigma, 'Alpha', alpha, 'Tail', tail)
+    With the p-value, interval and z statistic.
+# Examples
+## A process with a known spread
+x = [10.3 10.1 10.6 10.4 10.2 10.5];
+[h, p, ci, z] = ztest(x, 10, 0.3)
+# See also
+ttest normcdf
+
+@ vartest, vartest2
+Tests of variances: is the variance of normal data v, and do two normal samples have the same variance?
+
+`vartest` uses the chi-square distribution of the sample variance; `vartest2` the F distribution of the ratio of two variances. Both depend on the data being normal.
+
+# Syntax
+h = vartest(x, v)
+    Is the variance `v`?
+[h, p, ci, stats] = vartest(x, v, 'Alpha', alpha, 'Tail', tail)
+    With the p-value, the interval of the variance and the statistic.
+h = vartest2(x, y)
+    Are the two variances equal?
+[h, p, ci, stats] = vartest2(x, y, 'Alpha', alpha, 'Tail', tail)
+    With the p-value and the interval of var(x)/var(y).
+# Examples
+## A variance, and two
+rng default
+x = normrnd(0, 1.3, 40, 1);
+[h, p, ci] = vartest(x, 1)
+y = normrnd(0, 1, 40, 1);
+[h2, p2] = vartest2(x, y)
+# See also
+vartestn ttest2
+
+@ vartestn
+A test of equal variances in several groups.
+
+Bartlett's test by default (for normal data); Levene's and the Brown-Forsythe test are less sensitive to departures from normality. The groups are the columns of a matrix, or the values of a vector by a grouping variable. A summary of the groups is shown unless `'Display'` is `'off'`.
+
+# Syntax
+p = vartestn(X)
+    The columns of `X` as the groups.
+p = vartestn(x, group)
+    The values of `x` by group.
+[p, stats] = vartestn(..., 'TestType', type, 'Display', 'off')
+    `'Bartlett'`, `'LeveneAbsolute'`, `'LeveneQuadratic'`, `'BrownForsythe'` or `'OBrien'`.
+# Examples
+## Three groups, two tests
+rng default
+X = [normrnd(0, 1, 30, 1), normrnd(0, 1, 30, 1), normrnd(0, 2, 30, 1)];
+p = vartestn(X, 'Display', 'off')
+p2 = vartestn(X, 'TestType', 'BrownForsythe', 'Display', 'off')
+# See also
+vartest2 anova1
+
+@ signtest, signrank
+Tests of a median: the sign test and Wilcoxon's signed rank test.
+
+Both ask whether the median is `m` (0 unless given), or for paired data whether the median of x - y is 0, without assuming normal data. The sign test counts the values above and below; the signed rank test also uses how far they lie, and is more powerful for symmetric data. The p-value comes first, then `h`.
+
+# Syntax
+p = signtest(x, m)
+    The sign test.
+p = signrank(x, m)
+    The signed rank test.
+p = signrank(x, y)
+    Paired data.
+[p, h, stats] = signrank(..., 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    With `h`, the statistics and options (and the same for `signtest`).
+# Examples
+## A median, both ways
+x = [1.8 2.4 2.9 3.1 3.6 4.0 4.4 5.2 6.1];
+[signtest(x, 2) signrank(x, 2)]
+## Paired data
+before = [72 80 68 75 90 66 71];
+after = [70 76 69 71 84 64 70];
+[p, h, stats] = signrank(before, after)
+# See also
+ttest ranksum
+
+@ ranksum
+The Wilcoxon rank sum test (Mann-Whitney U): do two samples come from distributions with the same median?
+
+Ranks all the values together and asks whether one sample's ranks are higher than chance would give: a test of two independent samples without assuming normal data. Exact for small samples, a normal approximation otherwise.
+
+# Syntax
+p = ranksum(x, y)
+    The p-value.
+[p, h, stats] = ranksum(x, y, 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    With `h` and the statistics.
+# Examples
+## Two small samples
+a = [3.1 2.7 4.0 3.5 2.9];
+b = [4.6 3.9 5.2 4.8 4.4 5.0];
+[p, h, stats] = ranksum(a, b)
+# See also
+ttest2 kruskalwallis signrank
+
+@ kstest, kstest2
+Kolmogorov-Smirnov tests: do data come from a given continuous distribution, and do two samples come from the same one?
+
+The statistic is the largest distance between distribution functions: the sample's and the given one (the standard normal unless given), or the two samples'. The given distribution's parameters must not be estimated from the same data (for that, `lillietest`).
+
+# Syntax
+h = kstest(x)
+    Against the standard normal.
+[h, p, ksstat, cv] = kstest(x, 'CDF', pd, 'Alpha', alpha, 'Tail', tail)
+    Against a distribution object.
+h = kstest2(x1, x2)
+    Two samples.
+[h, p, ks2stat] = kstest2(x1, x2, 'Alpha', alpha, 'Tail', tail)
+    With the p-value and statistic.
+# Examples
+## Normal, and not
+rng default
+x = randn(100, 1);
+[h, p] = kstest(x)
+[h2, p2] = kstest(exprnd(1, 100, 1), 'CDF', makedist('Normal', 'mu', 1, 'sigma', 1))
+## Two samples
+rng default
+[h, p] = kstest2(randn(80, 1), 0.5 + randn(80, 1))
+# See also
+lillietest adtest chi2gof
+
+@ lillietest
+The Lilliefors test: are the data normal (or exponential, or extreme value), with the parameters estimated from them?
+
+The Kolmogorov-Smirnov statistic against the normal distribution with the sample's own mean and standard deviation, with the critical values that estimating them requires.
+
+# Syntax
+h = lillietest(x)
+    Are the data normal?
+[h, p, kstat, cv] = lillietest(x, 'Alpha', alpha, 'Distr', 'norm' | 'exp' | 'ev')
+    With the p-value, statistic and critical value; another family.
+# Examples
+## Normal and skewed data
+rng default
+[h, p] = lillietest(normrnd(5, 2, 60, 1))
+[h, p] = lillietest(exprnd(2, 60, 1))
+# See also
+kstest jbtest adtest
+
+@ jbtest
+The Jarque-Bera test of normality, from the sample's skewness and kurtosis.
+
+Normal data have skewness 0 and kurtosis 3; the statistic measures how far the sample's are from these.
+
+# Syntax
+h = jbtest(x)
+    Are the data normal?
+[h, p, jbstat, critval] = jbtest(x, alpha)
+    With the p-value, statistic and critical value.
+# Examples
+## Normal and heavy-tailed data
+rng default
+[h, p] = jbtest(randn(200, 1))
+[h, p] = jbtest(trnd(2, 200, 1))
+# See also
+lillietest skewness kurtosis
+
+@ adtest
+The Anderson-Darling test: do the data come from a family of distributions, or from one distribution?
+
+Like the Kolmogorov-Smirnov test, but weighting the tails more, so it is more sensitive to departures there. With a family's name the parameters are estimated from the data; with a distribution object they are known.
+
+# Syntax
+h = adtest(x)
+    Are the data normal?
+[h, p, adstat, cv] = adtest(x, 'Distribution', 'norm' | 'exp' | 'ev' | 'logn' | 'weibull' | pd, 'Alpha', alpha)
+    Another family, or a distribution object.
+# Examples
+## Lognormal data tested as normal and as lognormal
+rng default
+x = lognrnd(0, 0.6, 100, 1);
+[h1, p1] = adtest(x)
+[h2, p2] = adtest(x, 'Distribution', 'logn')
+# See also
+lillietest kstest
+
+@ chi2gof
+The chi-square goodness-of-fit test, on the data counted in bins.
+
+Compares the counts in bins with the counts a distribution expects. Without a distribution the data are tested for normality, the mean and standard deviation estimated from them; bins expected to hold fewer than 5 values join their neighbours. `stats` has the statistic, its degrees of freedom, the bins and the observed and expected counts.
+
+# Syntax
+h = chi2gof(x)
+    Are the data normal?
+[h, p, stats] = chi2gof(x, 'CDF', pd, 'NBins', n, 'Edges', edges, 'Alpha', alpha)
+    Against a distribution, with bins of your own.
+[...] = chi2gof(x, 'Ctrs', c, 'Frequency', f, 'Expected', E, 'NParams', k)
+    Counts given with their expected values, a bin centred on each value of `c`.
+# Examples
+## Is a die fair?
+> 120 rolls, counted by face, against 20 each.
+counts = [25 18 21 14 23 19];
+[h, p, stats] = chi2gof(1:6, 'Ctrs', 1:6, 'Frequency', counts, 'Expected', 20*ones(1, 6));
+[h p stats.chi2stat stats.df]
+## Normal data
+rng default
+[h, p] = chi2gof(randn(300, 1))
+# See also
+kstest crosstab
+
+@ runstest
+The runs test: do the values above and below a reference (their median unless given) come in random order?
+
+A run is a stretch of values on one side of the reference. Too few runs mean values cluster (a trend or a cycle); too many mean they alternate. Values equal to the reference are left out.
+
+# Syntax
+h = runstest(x)
+    About the median.
+h = runstest(x, v)
+    About the value `v`.
+[h, p, stats] = runstest(..., 'Alpha', alpha, 'Tail', tail, 'Method', 'exact' | 'approximate')
+    With the p-value and the counts of runs.
+# Examples
+## Random order, and a trend
+rng default
+[h, p] = runstest(randn(50, 1))
+[h, p, stats] = runstest((1:50)' + 5*randn(50, 1))
+# See also
+signtest autocorr
+
+@ anova1
+One-way analysis of variance: do several groups have the same mean?
+
+Splits the variation of the data into the part between the groups' means and the part within the groups, and tests their ratio with the F distribution. The groups are the columns of a matrix, or the values of a vector by group. The table is shown in the Command Window and the groups' box plots in a figure, unless the last input is `'off'`; `stats` goes to `multcompare` to see which groups differ.
+
+# Syntax
+p = anova1(X)
+    The columns of `X` as the groups.
+p = anova1(x, group)
+    The values of `x` by group.
+[p, tbl, stats] = anova1(..., 'off')
+    The table and statistics, nothing shown.
+# Examples
+## Three groups, the table and the box plots
+y = [5.2 5.8 6.1 5.5 6.6 7.1 6.8 7.4 5.1 4.9 5.4 5.0];
+g = {'A' 'A' 'A' 'A' 'B' 'B' 'B' 'B' 'C' 'C' 'C' 'C'};
+p = anova1(y, g)
+# See also
+multcompare anova2 kruskalwallis ttest2
+
+@ anova2
+Two-way analysis of variance of a balanced layout: the columns are one factor, the rows (in blocks of reps) the other.
+
+Tests the column factor, the row factor and, with more than one replicate per cell (`reps`), their interaction. The p-values come in that order.
+
+# Syntax
+p = anova2(Y)
+    One observation per cell.
+p = anova2(Y, reps)
+    `reps` rows per level of the row factor.
+[p, tbl, stats] = anova2(Y, reps, 'off')
+    The table and statistics, nothing shown.
+# Examples
+## Two factors with two replicates
+> Columns: three fertilizers; rows: two soils, two plots each.
+Y = [20 24 26; 21 25 27; 18 23 29; 17 22 30];
+p = anova2(Y, 2, 'off')
+# See also
+anova1 friedman
+
+@ kruskalwallis
+The Kruskal-Wallis test: do several groups come from distributions with the same median?
+
+The one-way analysis of variance of ranks, for groups whose data may not be normal. The statistic is corrected for ties and tested with the chi-square distribution. Shown as a table and box plots unless the last input is `'off'`.
+
+# Syntax
+p = kruskalwallis(X)
+    The columns of `X` as the groups.
+p = kruskalwallis(x, group)
+    The values of `x` by group.
+[p, tbl, stats] = kruskalwallis(..., 'off')
+    Nothing shown; `stats` for `multcompare`.
+# Examples
+## Three skewed groups
+rng default
+X = [exprnd(1, 20, 1), exprnd(1, 20, 1), exprnd(2.5, 20, 1)];
+p = kruskalwallis(X, [], 'off')
+# See also
+anova1 ranksum friedman
+
+@ friedman
+Friedman's test: do the columns differ, the rows (blocks) taken out?
+
+The two-way analysis of variance of ranks within blocks: each row (a judge, a subject, a day) ranks the columns (the treatments), and the test asks whether some columns rank higher throughout.
+
+# Syntax
+p = friedman(X)
+    One observation per cell.
+p = friedman(X, reps)
+    `reps` rows per block.
+[p, tbl, stats] = friedman(X, reps, 'off')
+    Nothing shown.
+# Examples
+## Four judges rank three wines
+X = [7 9 8; 6 8 7; 5 9 6; 6 7 8];
+p = friedman(X, 1, 'off')
+# See also
+kruskalwallis anova2
+
+@ multcompare
+Which pairs of groups differ, after anova1, kruskalwallis or friedman.
+
+Each row of the result compares two groups: their numbers, the interval of the difference (lower end, estimate, upper end) and the p-value, adjusted for the number of comparisons (Tukey-Kramer by default). The figure shows each group's estimate with an interval: groups whose intervals do not overlap differ.
+
+# Syntax
+c = multcompare(stats)
+    The comparisons, and the figure.
+[c, m, h, gnames] = multcompare(stats, 'Alpha', alpha, 'CType', type, 'Display', 'off')
+    With the groups' means and names; another adjustment; no figure.
+# Examples
+## After a one-way analysis of variance
+y = [5.2 5.8 6.1 5.5 6.6 7.1 6.8 7.4 5.1 4.9 5.4 5.0];
+g = {'A' 'A' 'A' 'A' 'B' 'B' 'B' 'B' 'C' 'C' 'C' 'C'};
+[~, ~, stats] = anova1(y, g, 'off');
+c = multcompare(stats, 'Display', 'off')
+# See also
+anova1 kruskalwallis
+
+@ crosstab
+A table of counts by two or more grouping variables, with the chi-square test of their independence.
+
+`tbl(i, j)` counts the observations in group i of the first variable and group j of the second. The chi-square statistic and its p-value test whether the two are independent; `labels` names the groups.
+
+# Syntax
+tbl = crosstab(g1, g2)
+    The table of counts.
+[tbl, chi2, p, labels] = crosstab(g1, g2, ...)
+    With the test and the groups' names.
+# Examples
+## Two variables of eight people
+smoker = {'yes' 'no' 'no' 'yes' 'no' 'no' 'yes' 'no'};
+cough = {'yes' 'no' 'yes' 'yes' 'no' 'no' 'yes' 'no'};
+[tbl, chi2, p, labels] = crosstab(smoker, cough)
+# See also
+fishertest chi2gof tabulate
+
+@ fishertest
+Fisher's exact test of independence in a 2-by-2 table of counts.
+
+Exact, so it suits small counts where the chi-square test's approximation fails. `stats` has the odds ratio and its confidence interval.
+
+# Syntax
+h = fishertest(x)
+    Are the rows and columns independent?
+[h, p, stats] = fishertest(x, 'Alpha', alpha, 'Tail', tail)
+    With the p-value and the odds ratio.
+# Examples
+## A small table
+x = [8 2; 1 5];
+[h, p, stats] = fishertest(x)
+# See also
+crosstab hygepdf

@@ -1,0 +1,323 @@
+@ trimmean
+The mean of the data left when a share of the smallest and the largest values is set aside.
+
+`percent` is the share set aside in all, half from each end: `trimmean(x, 20)` leaves out the lowest 10% and the highest 10% and averages the rest. Between the mean (0%) and the median (nearly 100%), it resists outliers while still using most of the data. When the share is not a whole number of values, `flag` says how to round it, or `'weighted'` gives the values on the edge partial weight.
+
+# Syntax
+m = trimmean(X, percent)
+    The trimmed mean of each column (or of a vector).
+m = trimmean(X, percent, flag)
+    With `'round'` (the default), `'floor'` or `'weighted'`.
+m = trimmean(X, percent, flag, dim)
+    Along dimension `dim`.
+# Examples
+## An outlier, and three averages
+x = [4.1 3.9 4.0 4.2 3.8 4.1 40];
+[mean(x) median(x) trimmean(x, 30)]
+# See also
+mean median
+
+@ geomean, harmmean
+The geometric mean and the harmonic mean.
+
+The geometric mean is the n-th root of the product of n values, the right average for growth factors and ratios; the harmonic mean is the number of values divided by the sum of their reciprocals, the right average for rates over equal distances. For positive data, harmonic ≤ geometric ≤ arithmetic mean.
+
+# Syntax
+m = geomean(X)
+    The geometric mean of each column (or of a vector).
+m = geomean(X, dim)
+    Along dimension `dim`.
+m = harmmean(X)
+    The harmonic mean (and the same forms).
+# Examples
+## Growth factors, and speeds over equal distances
+growth = [1.10 0.95 1.20];
+geomean(growth)
+speeds = [60 40];
+harmmean(speeds)
+[harmmean([2 8]) geomean([2 8]) mean([2 8])]
+# See also
+mean trimmean
+
+@ mad
+The mean absolute deviation from the mean, or the median absolute deviation from the median.
+
+With `flag` 0 (the default), the average distance of the values from their mean; with 1, the median distance from their median, which hardly moves however wild a few values are. `NaN` values are left out. For normal data, `1.4826*mad(x, 1)` estimates the standard deviation robustly.
+
+# Syntax
+d = mad(X)
+    The mean absolute deviation of each column (or of a vector).
+d = mad(X, flag)
+    With `flag` 1, the median absolute deviation.
+d = mad(X, flag, dim)
+    Along dimension `dim`.
+d = mad(X, flag, 'all')
+    Of every element.
+# Examples
+## Both kinds, and an outlier
+x = [2 3 3 4 5 5 6 50];
+[mad(x) mad(x, 1) std(x)]
+## A robust standard deviation
+rng default
+y = randn(1, 1000);
+y(1:20) = 30;
+[std(y) 1.4826*mad(y, 1)]
+# See also
+std iqr median
+
+@ rms
+The root mean square.
+
+`sqrt(mean(abs(x).^2))`: the size of a signal, such as the effective value of an alternating current. Down the columns by default.
+
+# Syntax
+y = rms(x)
+    The root mean square of each column (or of a vector).
+y = rms(x, dim)
+    Along dimension `dim`.
+y = rms(x, 'all')
+    Of every element.
+y = rms(..., 'omitnan')
+    With `NaN` values left out.
+# Examples
+## A sine wave of amplitude 1
+t = linspace(0, 1, 10001);
+rms(sin(2*pi*5*t))
+1/sqrt(2)
+# See also
+mean norm std
+
+@ moment
+A central moment of a sample: the mean of (X - mean(X)).^order.
+
+The second central moment is the variance normalized by N; the third and fourth, divided by the right power of the standard deviation, give the skewness and kurtosis.
+
+# Syntax
+m = moment(X, order)
+    The central moment of that order, for each column (or of a vector).
+m = moment(X, order, dim)
+    Along dimension `dim`.
+# Examples
+## The second moment is the variance normalized by N
+x = [2 4 4 4 5 5 7 9];
+[moment(x, 2) var(x, 1)]
+moment(x, 3) / moment(x, 2)^1.5
+skewness(x)
+# See also
+var skewness kurtosis
+
+@ zscore
+Standardized data: the values less their mean, divided by their standard deviation.
+
+Each value becomes the number of standard deviations it lies from the mean, so data in different units can be compared. Down the columns by default; the extra outputs give the mean and standard deviation used. With `flag` 1 the standard deviation is normalized by N.
+
+# Syntax
+Z = zscore(X)
+    The z-scores of each column (or of a vector).
+Z = zscore(X, flag)
+    With `flag` 1, normalized by N.
+Z = zscore(X, flag, dim)
+    Along dimension `dim`.
+[Z, mu, sigma] = zscore(...)
+    With the means and standard deviations.
+# Examples
+## Two columns in different units
+A = [170 65; 180 80; 160 55; 175 75];
+[Z, mu, sigma] = zscore(A)
+# See also
+normalize mean std
+
+@ nanmean, nanmedian, nanstd, nanvar, nansum, nanmax, nanmin
+Statistics of the values that are not NaN.
+
+The same as the plain functions with `NaN` values left out: `nanmean(x)` is `mean(x, 'omitnan')`. `nanmax` and `nanmin` are the same as `max` and `min`, which leave `NaN` out already.
+
+# Syntax
+m = nanmean(X)
+    The mean of the values that are not `NaN`.
+m = nanmean(X, dim)
+    Along dimension `dim` (and the same for `nanmedian` and `nansum`).
+s = nanstd(X, flag, dim)
+    The standard deviation, normalized by N-1 or (with `flag` 1) N (and the same for `nanvar`).
+m = nanmax(X)
+    The largest values (and `nanmin` the smallest).
+[m, i] = nanmax(X, [], dim)
+    With where they are, along dimension `dim`.
+# Examples
+## Statistics with missing values
+x = [3 NaN 7 1 NaN 5];
+[nanmean(x) nanmedian(x) nansum(x)]
+[nanstd(x) nanmax(x) nanmin(x)]
+mean(x)
+# See also
+mean ismissing rmmissing
+
+@ tabulate
+How often each value occurs: the value, its count and its percentage.
+
+Without an output it prints a table; with one, it returns it, a matrix for numbers (value, count, percent) or a cell array for text. For whole numbers from 1 up, every value from 1 to the largest is listed, those that do not occur with the count 0.
+
+# Syntax
+tabulate(x)
+    Prints the table.
+T = tabulate(x)
+    Returns it.
+# Examples
+## Dice and colours
+tabulate([1 3 3 6 3 1])
+T = tabulate({'red', 'blue', 'red', 'red'})
+# See also
+histcounts unique groupcounts
+
+@ grp2idx
+The groups of a grouping variable: a group number for each observation, and the groups' names.
+
+Turns a grouping variable (numbers, text in a cell or string array, a categorical array) into group numbers 1, 2, …, and the names of the groups as text. Numbers make groups in increasing order, text in the order it first appears. Missing values get the number `NaN`.
+
+# Syntax
+[g, names] = grp2idx(group)
+    The group numbers and names.
+[g, names, levels] = grp2idx(group)
+    With the groups' values.
+# Examples
+## Text and numbers as groups
+[g, names] = grp2idx({'b', 'a', 'b', 'c'})
+[g, names] = grp2idx([30 10 30 20])
+# See also
+grpstats findgroups unique
+
+@ grpstats
+Statistics of each group of the data.
+
+The data's rows are split by the grouping variable and each statistic computed for each group: by default the means. Several statistics are named in a cell array, and each comes out as its own output, a row per group.
+
+# Syntax
+means = grpstats(X, group)
+    The mean of each column for each group.
+[s1, s2, ...] = grpstats(X, group, {'stat1', 'stat2', ...})
+    The statistics named: `'mean'`, `'sem'`, `'numel'`, `'gname'`, `'std'`, `'var'`, `'min'`, `'max'`, `'range'`, `'median'`, `'meanci'`, `'predci'`.
+[...] = grpstats(X, group, whichstats, 'Alpha', alpha)
+    With the level of the intervals.
+# Examples
+## Means and counts by group
+x = [5.1 4.9 6.2 6.0 7.3 7.1 6.9]';
+g = {'a'; 'a'; 'b'; 'b'; 'c'; 'c'; 'c'};
+[m, n, name] = grpstats(x, g, {'mean', 'numel', 'gname'})
+# See also
+grp2idx splitapply accumarray
+
+@ ecdf
+The empirical distribution function of a sample, with confidence bounds.
+
+`f(i)` is the share of the data at or below `x(i)`: the step function that rises by 1/n at each value. The bounds (Greenwood's) give a confidence band. Without outputs it draws the steps, which can be compared with a fitted distribution's cdf.
+
+# Syntax
+[f, x] = ecdf(y)
+    The function and its points.
+[f, x, flo, fup] = ecdf(y)
+    With the lower and upper confidence bounds.
+[...] = ecdf(y, 'Function', 'survivor' | 'cumulative hazard', 'Alpha', alpha)
+    Another function, or another level.
+ecdf(y)
+    Draws it.
+# Examples
+## A small sample
+[f, x] = ecdf([3 1 2 2 5]);
+[x f]
+## Against the distribution the sample came from
+rng default
+y = randn(1, 100);
+ecdf(y)
+hold on
+t = linspace(-3, 3, 200);
+plot(t, normcdf(t))
+hold off
+legend('empirical', 'normal', 'Location', 'northwest')
+# See also
+cdf ksdensity histogram
+
+@ ksdensity
+A kernel estimate of the density (or the distribution function) a sample comes from.
+
+A smooth bump (by default a normal curve) is put at each data point and the bumps averaged: a smooth estimate of the density, without choosing bins. The bandwidth sets how smooth it is; by default it suits normal data. Without outputs it draws the estimate.
+
+# Syntax
+[f, xi] = ksdensity(x)
+    The estimate at 100 points over the data.
+f = ksdensity(x, pts)
+    At the points given.
+[f, xi, bw] = ksdensity(..., 'Bandwidth', bw, 'Kernel', kernel)
+    With a bandwidth or kernel of your own, and the bandwidth used.
+[...] = ksdensity(..., 'Function', 'cdf' | 'survivor' | 'cumhazard' | 'icdf', 'Support', 'positive' | [lo hi])
+    Another function, or a bounded support.
+ksdensity(x)
+    Draws it.
+# Examples
+## Two bumps found in a sample
+rng default
+x = [randn(1, 300), 4 + 0.7*randn(1, 200)];
+[f, xi] = ksdensity(x);
+histogram(x, 30, 'Normalization', 'pdf')
+hold on
+plot(xi, f, 'LineWidth', 2)
+hold off
+## The bandwidth used
+rng default
+[~, ~, bw] = ksdensity(randn(1, 500))
+# See also
+histogram ecdf fitdist
+
+@ corr
+Correlations between the columns of matrices, with p-values.
+
+Pearson's linear correlation by default; Spearman's (of ranks) and Kendall's tau measure any monotone relation. The p-values test the hypothesis of no correlation. With two matrices, every column of the first is paired with every column of the second. `'Rows', 'pairwise'` uses for each pair the rows where both are present.
+
+# Syntax
+rho = corr(X)
+    The correlations between the columns of `X`.
+rho = corr(X, Y)
+    Between the columns of `X` and those of `Y`.
+[rho, p] = corr(..., 'Type', 'Pearson' | 'Spearman' | 'Kendall', 'Rows', 'all' | 'complete' | 'pairwise')
+    Another kind, rows with missing values handled, and p-values.
+# Examples
+## A curved relation: linear and rank correlation
+x = (1:10)';
+y = exp(x / 2);
+[corr(x, y) corr(x, y, 'Type', 'Spearman')]
+## With p-values
+rng default
+a = randn(30, 1);
+b = a + randn(30, 1);
+[r, p] = corr(a, b)
+# See also
+corrcoef cov partialcorr
+
+@ bootstrp, jackknife
+A statistic of samples drawn from the data with replacement, or of the data with each observation left out.
+
+`bootstrp` draws `nboot` samples of the data's size with replacement and computes the statistic of each: their spread estimates the statistic's standard error, and their quantiles a confidence interval. `jackknife` computes it with each observation left out in turn. Several data arrays are sampled by the same rows.
+
+# Syntax
+stats = bootstrp(nboot, @fun, data)
+    `fun` of `nboot` resamples, a row each.
+stats = bootstrp(nboot, @fun, data1, data2, ...)
+    Of several arrays sampled by the same rows.
+[stats, samples] = bootstrp(...)
+    With the indices drawn.
+stats = jackknife(@fun, data)
+    `fun` of the data without each row in turn.
+# Examples
+## The standard error of a median
+rng default
+x = exprnd(2, 50, 1);
+m = bootstrp(1000, @median, x);
+[median(x) std(m)]
+prctile(m, [2.5 97.5])
+## The standard error of a mean, by the jackknife
+x = [3 5 4 6 8 5 7];
+jm = jackknife(@mean, x');
+n = numel(x);
+seJack = sqrt((n - 1)/n * sum((jm - mean(jm)).^2))
+std(x) / sqrt(n)
+# See also
+datasample randsample prctile

@@ -818,6 +818,9 @@ async def chi2gof(nargout, *args):
     nparams = int(num(opts['nparams'])) if 'nparams' in opts else None
     if 'expected' in opts:
         E = darr(opts['expected']).real.astype(float).reshape(-1)
+        if E.size != O.size:
+            raise err('stats:chi2gof:BadExpected', f'Expected has {E.size} counts for {O.size} bins: give the bins too '
+                      "('Ctrs' or 'Edges'), one for each expected count.", 'chi2gof')
         nparams = nparams or 0
     else:
         if 'cdf' in opts:

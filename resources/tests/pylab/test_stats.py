@@ -768,4 +768,11 @@ new = [n for n, i in R.BUILTINS.items() if i.fn.__module__.split('.')[-1] in ('s
 C('help: every statistics function has an entry', all(n in HELP for n in new), sorted(n for n in new if n not in HELP))
 C('help: the distribution functions say their parameters', 'sigma, the standard deviation (1 when left out)' in HELP['normpdf'][2])
 
+# chi2gof given expected counts for bins it was not given: said so, not a NumPy error
+W, _ = run("try, chi2gof(1:6, 'Frequency', [25 18 21 14 23 19], 'Expected', 20*ones(1, 6)); m = ''; catch e, m = e.message; end;"
+           "[h, p, s] = chi2gof(1:6, 'Ctrs', 1:6, 'Frequency', [25 18 21 14 23 19], 'Expected', 20*ones(1, 6));")
+C('chi2gof: expected counts without their bins are refused, saying why', W['m'].str().startswith('Expected has 6 counts for 10 bins'), W['m'].str())
+near("chi2gof: a die's counts against 20 each, with the bins given (statistic and df)", [W['s'].get1('chi2stat'), W['s'].get1('df'), W['p']],
+     [3.8, 5.0, st.chi2.sf(3.8, 5)], rtol=1e-12)
+
 sys.exit(C.done())

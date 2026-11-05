@@ -1,0 +1,1322 @@
+@ makedist
+A probability distribution object with the parameters given.
+
+The object holds a distribution and its parameters, and goes to the functions that work on any distribution: `pdf`, `cdf`, `icdf`, `random`, `mean`, `median`, `std`, `var`, `iqr` and `truncate`. Its parameters are its properties, so they can be read and changed by name. Parameters left out keep their defaults (the normal's `mu` 0 and `sigma` 1). `makedist` with no input lists the distributions it knows.
+
+# Syntax
+pd = makedist(name)
+    The distribution with its default parameters.
+pd = makedist(name, 'param', value, ...)
+    With parameters given by name.
+names = makedist
+    The names of the distributions.
+# Inputs
+name — text
+    `'Normal'`, `'Lognormal'`, `'Exponential'`, `'Gamma'`, `'Weibull'`, `'Beta'`, `'Uniform'`, `'Poisson'`, `'Binomial'`, `'Triangular'`, `'Logistic'` and the others `makedist` lists.
+# Examples
+## A normal distribution and its numbers
+pd = makedist('Normal', 'mu', 10, 'sigma', 2)
+[mean(pd) std(pd)]
+cdf(pd, 12) - cdf(pd, 8)
+icdf(pd, 0.975)
+## Its parameters as properties
+pd = makedist('Weibull', 'A', 2, 'B', 1.5);
+pd.B = 3;
+median(pd)
+## Densities of three distributions
+x = linspace(0, 6, 300);
+plot(x, pdf(makedist('Exponential', 'mu', 1), x), ...
+     x, pdf(makedist('Gamma', 'a', 3, 'b', 0.7), x), ...
+     x, pdf(makedist('Lognormal', 'mu', 0.5, 'sigma', 0.4), x))
+legend('exponential', 'gamma', 'lognormal')
+# See also
+fitdist pdf cdf random truncate
+
+@ fitdist
+A probability distribution object fitted to data.
+
+Estimates the distribution's parameters from the data by maximum likelihood (the normal's and lognormal's sigma being the unbiased estimate), and returns an object that knows its data: `paramci` gives the parameters' confidence intervals and `negloglik` the likelihood. `'Kernel'` gives a smooth nonparametric fit instead. With `'By'`, a fit for each group.
+
+# Syntax
+pd = fitdist(x, name)
+    The named distribution fitted to the data `x`.
+pd = fitdist(x, 'Kernel', 'Kernel', kernel, 'Bandwidth', bw)
+    A kernel density fit.
+[pds, names] = fitdist(x, name, 'By', group)
+    A fit for each group, in a cell array.
+# Examples
+## A Weibull fit and its intervals
+rng default
+x = wblrnd(2, 1.5, 200, 1);
+pd = fitdist(x, 'Weibull')
+paramci(pd)
+## The fit against the data
+rng default
+x = gamrnd(3, 1, 500, 1);
+pd = fitdist(x, 'Gamma');
+histogram(x, 'Normalization', 'pdf')
+hold on
+t = linspace(0, max(x), 200);
+plot(t, pdf(pd, t), 'LineWidth', 2)
+hold off
+# See also
+makedist mle paramci negloglik
+
+@ mle
+Maximum likelihood estimates of a distribution's parameters, with confidence intervals.
+
+The parameters that make the data most probable. Without a distribution the data are taken to be normal, and sigma is the likelihood's own (normalized by N, not N-1). The intervals are in two rows, lower ends first.
+
+# Syntax
+phat = mle(x)
+    The normal mean and standard deviation.
+[phat, pci] = mle(x, 'Distribution', name, 'Alpha', alpha)
+    For a named distribution, with confidence intervals.
+phat = mle(x, 'Distribution', 'Binomial', 'NTrials', n)
+    For the binomial, with the number of trials.
+# Examples
+## Normal and exponential estimates
+x = [4.2 5.1 3.8 4.9 5.5 4.4];
+phat = mle(x)
+[std(x, 1) std(x)]
+rng default
+[phat, pci] = mle(exprnd(3, 100, 1), 'Distribution', 'Exponential')
+# See also
+fitdist normfit expfit
+
+@ pdf, cdf, icdf, random
+The density, distribution function, quantiles and random numbers of any distribution.
+
+Given a distribution object (from `makedist` or `fitdist`), or a distribution's name and its parameters in the order its own function takes them (`normpdf(x, mu, sigma)` becomes `pdf('Normal', x, mu, sigma)`). For a discrete distribution, `pdf` gives the probabilities. `cdf` with `'upper'` gives the probability above `x`.
+
+# Syntax
+y = pdf(pd, x)
+    The density of the distribution object at `x`.
+y = pdf(name, x, A, B, C)
+    Of a named distribution with its parameters.
+p = cdf(pd, x)
+    The probability at or below `x`.
+p = cdf(..., 'upper')
+    The probability above `x`.
+x = icdf(pd, p)
+    The quantiles for the probabilities `p`.
+r = random(pd, m, n)
+    An m-by-n array of random numbers (one number without a size).
+r = random(name, A, B, C, m, n)
+    From a named distribution.
+# Examples
+## By name and by object
+pdf('Normal', 0, 0, 1)
+cdf('Poisson', 2, 3)
+pd = makedist('Exponential', 'mu', 2);
+[cdf(pd, 1) cdf(pd, 1, 'upper')]
+icdf('t', 0.975, 10)
+## Random numbers
+rng default
+r = random('Binomial', 10, 0.5, 1, 8)
+# See also
+makedist normpdf normcdf norminv normrnd
+
+@ truncate
+A distribution object limited to an interval, its probability there scaled up to 1.
+
+The truncated distribution keeps the shape of the original between `lower` and `upper` and has no probability outside: a normal measurement that cannot be negative, for one. Its random numbers fall in the interval.
+
+# Syntax
+t = truncate(pd, lower, upper)
+    `pd` limited to [lower, upper].
+# Examples
+## A normal distribution kept positive
+pd = makedist('Normal', 'mu', 1, 'sigma', 2);
+t = truncate(pd, 0, Inf);
+[mean(pd) mean(t)]
+[cdf(t, 0) pdf(t, 1) / pdf(pd, 1)]
+x = linspace(-4, 6, 300);
+plot(x, pdf(pd, x), x, pdf(t, x))
+legend('normal', 'truncated at 0')
+# See also
+makedist pdf random
+
+@ paramci, negloglik
+The confidence intervals of a fitted distribution object's parameters, and its negative log-likelihood.
+
+`paramci` gives an interval for each parameter, lower ends in the first row; `negloglik` the negative log-likelihood of the fit for its data, smaller for a better fit (for comparing distributions fitted to the same data, as with an information criterion).
+
+# Syntax
+ci = paramci(pd)
+    95% intervals, a column for each parameter.
+ci = paramci(pd, 'Alpha', alpha)
+    At another level.
+nll = negloglik(pd)
+    The negative log-likelihood.
+# Examples
+## Which of two distributions fits better
+rng default
+x = lognrnd(1, 0.5, 300, 1);
+pdL = fitdist(x, 'Lognormal');
+pdG = fitdist(x, 'Gamma');
+[negloglik(pdL) negloglik(pdG)]
+paramci(pdL)
+# See also
+fitdist mle
+
+@ mvnpdf, mvncdf, mvnrnd
+The multivariate normal distribution: its density, its distribution function, and random vectors.
+
+Each row of `X` is a point, `mu` the mean (a row) and `Sigma` the covariance matrix; left out, the means are zero and the covariance is the identity. `mvncdf` gives the probability that every component is below the point's, by numerical integration (good to about 1e-5). `mvnrnd` gives a row for each random vector.
+
+# Syntax
+y = mvnpdf(X, mu, Sigma)
+    The density at each row of `X`.
+p = mvncdf(X, mu, Sigma)
+    The probability below each row of `X`.
+R = mvnrnd(mu, Sigma, n)
+    `n` random vectors, a row each.
+# Examples
+## Correlated normal vectors
+rng default
+mu = [0 0];
+Sigma = [1 0.8; 0.8 1];
+R = mvnrnd(mu, Sigma, 2000);
+corrcoef(R)
+mvncdf([0 0], mu, Sigma)
+## The density as contours
+[X1, X2] = meshgrid(linspace(-3, 3, 60));
+Y = reshape(mvnpdf([X1(:) X2(:)], [0 0], [1 0.8; 0.8 1]), size(X1));
+contour(X1, X2, Y, 10)
+axis equal
+# See also
+normpdf mvtpdf cov
+
+@ mvtpdf, mvtcdf, mvtrnd
+The multivariate t distribution: its density, its distribution function, and random vectors.
+
+Like the multivariate normal, with heavier tails set by the degrees of freedom `df`; `C` is the correlation matrix. As `df` grows, it becomes the multivariate normal.
+
+# Syntax
+y = mvtpdf(X, C, df)
+    The density at each row of `X`.
+p = mvtcdf(X, C, df)
+    The probability below each row of `X`.
+R = mvtrnd(C, df, n)
+    `n` random vectors, a row each.
+# Examples
+## Heavier tails than the normal
+C = [1 0.5; 0.5 1];
+[mvtpdf([2 2], C, 3) mvnpdf([2 2], [0 0], C)]
+[mvtcdf([1 1], C, 5) mvncdf([1 1], [0 0], C)]
+# See also
+mvnpdf tpdf
+
+@ randsample, datasample
+Random samples: of numbers or values, without replacement unless asked; of the elements or rows of data.
+
+`randsample(n, k)` draws `k` of the numbers 1 to n without replacement; given a population, it draws from its values, with replacement when asked and with weights. `datasample` draws elements of a vector or rows of a matrix, with replacement unless `'Replace'` is false, and also returns their indices.
+
+# Syntax
+y = randsample(n, k)
+    `k` different numbers from 1 to n.
+y = randsample(population, k, replace, w)
+    From the population's values, with or without replacement, with weights `w`.
+y = datasample(data, k)
+    `k` elements (or rows), with replacement.
+[y, idx] = datasample(..., 'Replace', false, 'Weights', w)
+    Without replacement or with weights, and the indices drawn.
+# Examples
+## Draws without and with replacement
+rng default
+randsample(10, 4)'
+randsample({'a', 'b', 'c'}, 5, true)
+## Weighted draws, counted
+rng default
+y = randsample([1 2 3], 1000, true, [0.6 0.3 0.1]);
+histcounts(y, 0.5:3.5)
+## Rows of a matrix
+rng default
+A = magic(5);
+[rows, idx] = datasample(A, 2, 'Replace', false)
+# See also
+randperm randi bootstrp
+
+@ normpdf, normcdf, norminv, normrnd, normstat, normfit, normlike
+The normal (Gaussian) distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The bell curve with mean `mu` and standard deviation `sigma`. About 68% of its probability lies within one standard deviation of the mean and 95% within 1.96 of them. Sums of many small independent effects tend to it, and measurement errors are often taken to follow it.
+
+# Syntax
+y = normpdf(x, mu, sigma)
+    The density at `x`.
+p = normcdf(x, mu, sigma)
+    The probability at or below `x`.
+q = normcdf(x, mu, sigma, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = norminv(p, mu, sigma)
+    The quantiles: the values below which the probabilities `p` lie.
+r = normrnd(mu, sigma)
+    Random numbers, one for each element of the parameters.
+r = normrnd(mu, sigma, m, n)
+    An m-by-n array of random numbers.
+r = normrnd(mu, sigma, [m n ...])
+    With the size as one vector.
+[m, v] = normstat(mu, sigma)
+    The mean and the variance.
+[muhat, sigmahat] = normfit(x)
+    Estimates of the parameters from the data `x`.
+[muhat, sigmahat, muci, sigmaci] = normfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = normlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = normlike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+mu — number or array
+    The mean (0 when left out).
+sigma — number or array
+    The standard deviation (1 when left out).
+# Examples
+## Probabilities and quantiles
+normcdf(1.96) - normcdf(-1.96)
+norminv([0.025 0.975])
+normcdf(130, 100, 15, 'upper')
+## Densities of three widths
+x = linspace(-6, 6, 300);
+plot(x, normpdf(x, 0, 0.5), x, normpdf(x, 0, 1), x, normpdf(x, 0, 2))
+legend('\sigma = 0.5', '\sigma = 1', '\sigma = 2')
+## Estimates from data, with intervals
+> `normfit` gives the sample standard deviation (normalized by N-1) and intervals from the t and chi-square distributions.
+rng default
+x = normrnd(10, 2, 200, 1);
+[muhat, sigmahat, muci, sigmaci] = normfit(x)
+# See also
+makedist fitdist randn lognpdf
+
+@ lognpdf, logncdf, logninv, lognrnd, lognstat, lognfit, lognlike
+The lognormal distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+A positive quantity whose logarithm is normal, with mean `mu` and standard deviation `sigma`. It is skewed to the right, and arises as the product of many positive factors: sizes, concentrations, incomes. Its median is exp(mu), and its mean exp(mu + sigma^2/2).
+
+# Syntax
+y = lognpdf(x, mu, sigma)
+    The density at `x`.
+p = logncdf(x, mu, sigma)
+    The probability at or below `x`.
+q = logncdf(x, mu, sigma, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = logninv(p, mu, sigma)
+    The quantiles: the values below which the probabilities `p` lie.
+r = lognrnd(mu, sigma)
+    Random numbers, one for each element of the parameters.
+r = lognrnd(mu, sigma, m, n)
+    An m-by-n array of random numbers.
+r = lognrnd(mu, sigma, [m n ...])
+    With the size as one vector.
+[m, v] = lognstat(mu, sigma)
+    The mean and the variance.
+phat = lognfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = lognfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = lognlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = lognlike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+mu — number or array
+    The mean of log(x) (0 when left out).
+sigma — number or array
+    The standard deviation of log(x) (1 when left out).
+# Examples
+## Mean, variance and median
+[m, v] = lognstat(0, 0.5)
+exp(0)
+logninv(0.5, 0, 0.5)
+## Densities
+x = linspace(0, 5, 300);
+plot(x, lognpdf(x, 0, 0.25), x, lognpdf(x, 0, 0.5), x, lognpdf(x, 0, 1))
+legend('\sigma = 0.25', '\sigma = 0.5', '\sigma = 1')
+## A fit
+rng default
+x = lognrnd(1, 0.4, 500, 1);
+[phat, pci] = lognfit(x)
+# See also
+normpdf makedist fitdist
+
+@ exppdf, expcdf, expinv, exprnd, expstat, expfit, explike
+The exponential distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The waiting time between events that happen at random at a steady rate, with mean `mu` (the rate is 1/mu). It has no memory: having waited already does not shorten the wait still to come.
+
+# Syntax
+y = exppdf(x, mu)
+    The density at `x`.
+p = expcdf(x, mu)
+    The probability at or below `x`.
+q = expcdf(x, mu, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = expinv(p, mu)
+    The quantiles: the values below which the probabilities `p` lie.
+r = exprnd(mu)
+    Random numbers, one for each element of the parameters.
+r = exprnd(mu, m, n)
+    An m-by-n array of random numbers.
+r = exprnd(mu, [m n ...])
+    With the size as one vector.
+[m, v] = expstat(mu)
+    The mean and the variance.
+phat = expfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = expfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = explike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = explike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+mu — number or array
+    The mean (1 when left out).
+# Examples
+## Waiting times
+> With 2 minutes between buses on average, the chance of waiting less than 1 minute, and more than 5:
+expcdf(1, 2)
+expcdf(5, 2, 'upper')
+expinv(0.5, 2)
+## A fit to simulated waits
+rng default
+x = exprnd(3, 400, 1);
+[muhat, muci] = expfit(x)
+# See also
+gampdf wblpdf poisspdf
+
+@ gampdf, gamcdf, gaminv, gamrnd, gamstat, gamfit, gamlike, randg
+The gamma distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+With shape `a` and scale `b`: for a whole number `a`, the sum of `a` exponential waiting times of mean `b`. Its mean is a*b and its variance a*b^2. The exponential is the gamma with `a` = 1, and the chi-square with nu degrees of freedom is the gamma with `a` = nu/2 and `b` = 2. `randg` gives gamma random numbers of scale 1.
+
+# Syntax
+y = gampdf(x, a, b)
+    The density at `x`.
+p = gamcdf(x, a, b)
+    The probability at or below `x`.
+q = gamcdf(x, a, b, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = gaminv(p, a, b)
+    The quantiles: the values below which the probabilities `p` lie.
+r = gamrnd(a, b)
+    Random numbers, one for each element of the parameters.
+r = gamrnd(a, b, m, n)
+    An m-by-n array of random numbers.
+r = gamrnd(a, b, [m n ...])
+    With the size as one vector.
+[m, v] = gamstat(a, b)
+    The mean and the variance.
+phat = gamfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = gamfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = gamlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = gamlike(params, x)
+    With the approximate covariance of the estimates.
+r = randg
+    One gamma random number of shape 1 and scale 1.
+r = randg(a)
+    Gamma random numbers of shape `a` and scale 1, the size of `a`.
+r = randg(a, n)
+    An array of the size given.
+r = randg(a, m, n, ...)
+    An array of the size given.
+r = randg(a, [m n ...])
+    An array of the size given.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+a — number or array
+    The shape.
+b — number or array
+    The scale (1 when left out).
+# Examples
+## Densities of three shapes
+x = linspace(0, 12, 300);
+plot(x, gampdf(x, 1, 2), x, gampdf(x, 2, 2), x, gampdf(x, 5, 1))
+legend('a = 1, b = 2', 'a = 2, b = 2', 'a = 5, b = 1')
+## Mean and variance, and a fit
+[m, v] = gamstat(3, 2)
+rng default
+x = gamrnd(3, 2, 1000, 1);
+phat = gamfit(x)
+## Unit-scale random numbers
+rng default
+r = randg(2, 1, 5)
+# See also
+exppdf chi2pdf makedist
+
+@ betapdf, betacdf, betainv, betarnd, betastat, betafit, betalike
+The beta distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+A distribution on the interval from 0 to 1, with two shapes `a` and `b`: the usual model for a proportion or a probability. Its mean is a/(a + b); with `a` = `b` = 1 it is uniform.
+
+# Syntax
+y = betapdf(x, a, b)
+    The density at `x`.
+p = betacdf(x, a, b)
+    The probability at or below `x`.
+q = betacdf(x, a, b, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = betainv(p, a, b)
+    The quantiles: the values below which the probabilities `p` lie.
+r = betarnd(a, b)
+    Random numbers, one for each element of the parameters.
+r = betarnd(a, b, m, n)
+    An m-by-n array of random numbers.
+r = betarnd(a, b, [m n ...])
+    With the size as one vector.
+[m, v] = betastat(a, b)
+    The mean and the variance.
+phat = betafit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = betafit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = betalike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = betalike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+a — number or array
+    The first shape.
+b — number or array
+    The second shape.
+# Examples
+## Densities of four shapes
+x = linspace(0, 1, 300);
+plot(x, betapdf(x, 1, 1), x, betapdf(x, 2, 5), x, betapdf(x, 5, 2), x, betapdf(x, 0.5, 0.5))
+legend('1, 1', '2, 5', '5, 2', '0.5, 0.5', 'Location', 'north')
+ylim([0 3])
+## A proportion: interval and fit
+betainv([0.025 0.975], 8, 4)
+rng default
+phat = betafit(betarnd(2, 3, 300, 1))
+# See also
+binopdf unifpdf
+
+@ wblpdf, wblcdf, wblinv, wblrnd, wblstat, wblfit, wbllike
+The Weibull distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+With scale `A` and shape `B`: the usual model of lifetimes and wind speeds. A shape below 1 gives a failure rate that falls with age, 1 the exponential (a constant rate) and above 1 a rate that rises (wear).
+
+# Syntax
+y = wblpdf(x, A, B)
+    The density at `x`.
+p = wblcdf(x, A, B)
+    The probability at or below `x`.
+q = wblcdf(x, A, B, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = wblinv(p, A, B)
+    The quantiles: the values below which the probabilities `p` lie.
+r = wblrnd(A, B)
+    Random numbers, one for each element of the parameters.
+r = wblrnd(A, B, m, n)
+    An m-by-n array of random numbers.
+r = wblrnd(A, B, [m n ...])
+    With the size as one vector.
+[m, v] = wblstat(A, B)
+    The mean and the variance.
+phat = wblfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = wblfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = wbllike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = wbllike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+A — number or array
+    The scale (1 when left out).
+B — number or array
+    The shape (1 when left out).
+# Examples
+## Densities of three shapes
+x = linspace(0, 3, 300);
+plot(x, wblpdf(x, 1, 0.8), x, wblpdf(x, 1, 1), x, wblpdf(x, 1, 3))
+legend('B = 0.8', 'B = 1', 'B = 3')
+ylim([0 2])
+## The chance of lasting, and a fit
+> Lifetimes in thousands of hours: the chance of lasting past 1000 hours, and a fit to 200 lifetimes.
+wblcdf(1, 1.5, 2, 'upper')
+rng default
+x = wblrnd(1.5, 2, 200, 1);
+[phat, pci] = wblfit(x)
+# See also
+exppdf evpdf makedist
+
+@ unifpdf, unifcdf, unifinv, unifrnd, unifstat, unifit
+The continuous uniform distribution: density, distribution function, quantiles, random numbers, mean and variance, and the limits of data.
+
+Every value between `a` and `b` equally likely. Its mean is (a + b)/2 and its variance (b - a)^2/12. `unifit` estimates the limits from data: their smallest and largest values, with intervals.
+
+# Syntax
+y = unifpdf(x, a, b)
+    The density at `x`.
+p = unifcdf(x, a, b)
+    The probability at or below `x`.
+q = unifcdf(x, a, b, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = unifinv(p, a, b)
+    The quantiles: the values below which the probabilities `p` lie.
+r = unifrnd(a, b)
+    Random numbers, one for each element of the parameters.
+r = unifrnd(a, b, m, n)
+    An m-by-n array of random numbers.
+r = unifrnd(a, b, [m n ...])
+    With the size as one vector.
+[m, v] = unifstat(a, b)
+    The mean and the variance.
+[ahat, bhat] = unifit(x)
+    Estimates of the parameters from the data `x`.
+[ahat, bhat, aci, bci] = unifit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+a — number or array
+    The lower limit (0 when left out).
+b — number or array
+    The upper limit (1 when left out).
+# Examples
+## Probabilities and moments
+unifcdf(0.3, 0, 2)
+unifinv(0.9, 10, 20)
+[m, v] = unifstat(0, 12)
+## The limits of data
+rng default
+x = unifrnd(3, 7, 50, 1);
+[ahat, bhat, aci, bci] = unifit(x)
+# See also
+rand unidpdf
+
+@ unidpdf, unidcdf, unidinv, unidrnd, unidstat
+The discrete uniform distribution on 1 to N: probabilities, distribution function, quantiles, random numbers, mean and variance.
+
+Each of the whole numbers 1, 2, …, N equally likely: a fair die has N = 6.
+
+# Syntax
+y = unidpdf(x, N)
+    The probabilities of the values `x`.
+p = unidcdf(x, N)
+    The probability at or below `x`.
+q = unidcdf(x, N, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = unidinv(p, N)
+    The smallest values whose cumulative probability reaches `p`.
+r = unidrnd(N)
+    Random numbers, one for each element of the parameters.
+r = unidrnd(N, m, n)
+    An m-by-n array of random numbers.
+r = unidrnd(N, [m n ...])
+    With the size as one vector.
+[m, v] = unidstat(N)
+    The mean and the variance.
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+N — number or array
+    The largest value (the values are 1 to N).
+# Examples
+## A die
+unidpdf(3, 6)
+unidcdf(4, 6)
+[m, v] = unidstat(6)
+rng default
+rolls = unidrnd(6, 1, 10)
+# See also
+randi unifpdf
+
+@ binopdf, binocdf, binoinv, binornd, binostat, binofit
+The binomial distribution: probabilities, distribution function, quantiles, random numbers, mean and variance, and the estimate of a probability of success.
+
+The number of successes in `N` independent trials, each a success with probability `p`. Its mean is N*p and its variance N*p*(1 - p). `binofit` estimates `p` from a count, with an exact (Clopper-Pearson) interval.
+
+# Syntax
+y = binopdf(x, N, p)
+    The probabilities of the values `x`.
+p = binocdf(x, N, p)
+    The probability at or below `x`.
+q = binocdf(x, N, p, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = binoinv(p, N, p)
+    The smallest values whose cumulative probability reaches `p`.
+r = binornd(N, p)
+    Random numbers, one for each element of the parameters.
+r = binornd(N, p, m, n)
+    An m-by-n array of random numbers.
+r = binornd(N, p, [m n ...])
+    With the size as one vector.
+[m, v] = binostat(N, p)
+    The mean and the variance.
+phat = binofit(x, n)
+    The probability of success from `x` successes in `n` trials.
+[phat, pci] = binofit(x, n, alpha)
+    With a confidence interval (95% unless `alpha` is given).
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+N — number or array
+    The number of trials.
+p — number or array
+    The probability of success.
+# Examples
+## Ten coin tosses
+binopdf(5, 10, 0.5)
+binocdf(2, 10, 0.5)
+stem(0:10, binopdf(0:10, 10, 0.5), 'filled')
+xlabel('heads')
+## A probability estimated from a count
+> 17 successes in 50 trials:
+[phat, pci] = binofit(17, 50)
+# See also
+poisspdf hygepdf nbinpdf
+
+@ poisspdf, poisscdf, poissinv, poissrnd, poissstat, poissfit
+The Poisson distribution: probabilities, distribution function, quantiles, random numbers, mean and variance, and fit.
+
+The number of events in a fixed interval when they happen at random at a steady rate, with mean (and variance) `lambda`: calls in an hour, decays in a second.
+
+# Syntax
+y = poisspdf(x, lambda)
+    The probabilities of the values `x`.
+p = poisscdf(x, lambda)
+    The probability at or below `x`.
+q = poisscdf(x, lambda, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = poissinv(p, lambda)
+    The smallest values whose cumulative probability reaches `p`.
+r = poissrnd(lambda)
+    Random numbers, one for each element of the parameters.
+r = poissrnd(lambda, m, n)
+    An m-by-n array of random numbers.
+r = poissrnd(lambda, [m n ...])
+    With the size as one vector.
+[m, v] = poissstat(lambda)
+    The mean and the variance.
+phat = poissfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = poissfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+lambda — number or array
+    The mean.
+# Examples
+## Counts with a mean of 3
+poisspdf(0:5, 3)
+poisscdf(5, 3, 'upper')
+bar(0:10, poisspdf(0:10, 3))
+## A rate estimated from counts
+rng default
+x = poissrnd(4.5, 100, 1);
+[lambdahat, lambdaci] = poissfit(x)
+# See also
+binopdf exppdf nbinpdf
+
+@ geopdf, geocdf, geoinv, geornd, geostat
+The geometric distribution: probabilities, distribution function, quantiles, random numbers, mean and variance.
+
+The number of failures before the first success in independent trials, each a success with probability `p`. Its mean is (1 - p)/p.
+
+# Syntax
+y = geopdf(x, p)
+    The probabilities of the values `x`.
+p = geocdf(x, p)
+    The probability at or below `x`.
+q = geocdf(x, p, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = geoinv(p, p)
+    The smallest values whose cumulative probability reaches `p`.
+r = geornd(p)
+    Random numbers, one for each element of the parameters.
+r = geornd(p, m, n)
+    An m-by-n array of random numbers.
+r = geornd(p, [m n ...])
+    With the size as one vector.
+[m, v] = geostat(p)
+    The mean and the variance.
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+p — number or array
+    The probability of success (x counts the failures before the first success).
+# Examples
+## Waiting for a six
+geopdf(0:4, 1/6)
+geocdf(5, 1/6)
+[m, v] = geostat(1/6)
+# See also
+nbinpdf exppdf
+
+@ nbinpdf, nbincdf, nbininv, nbinrnd, nbinstat, nbinfit, nbinlike
+The negative binomial distribution: probabilities, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The number of failures before the `R`-th success in independent trials with probability of success `p`. With `R` not a whole number it is the usual model of counts that vary more than a Poisson distribution allows (overdispersed): its variance R(1 - p)/p^2 exceeds its mean R(1 - p)/p.
+
+# Syntax
+y = nbinpdf(x, R, p)
+    The probabilities of the values `x`.
+p = nbincdf(x, R, p)
+    The probability at or below `x`.
+q = nbincdf(x, R, p, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = nbininv(p, R, p)
+    The smallest values whose cumulative probability reaches `p`.
+r = nbinrnd(R, p)
+    Random numbers, one for each element of the parameters.
+r = nbinrnd(R, p, m, n)
+    An m-by-n array of random numbers.
+r = nbinrnd(R, p, [m n ...])
+    With the size as one vector.
+[m, v] = nbinstat(R, p)
+    The mean and the variance.
+phat = nbinfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = nbinfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = nbinlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = nbinlike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+R — number or array
+    The number of successes.
+p — number or array
+    The probability of success (x counts the failures before the Rth success).
+# Examples
+## Probabilities, and a mean below the variance
+nbinpdf(0:4, 3, 0.5)
+[m, v] = nbinstat(3, 0.5)
+## A fit to overdispersed counts
+rng default
+x = nbinrnd(2, 0.3, 500, 1);
+[mean(x) var(x)]
+phat = nbinfit(x)
+# See also
+poisspdf geopdf binopdf
+
+@ hygepdf, hygecdf, hygeinv, hygernd, hygestat
+The hypergeometric distribution: probabilities, distribution function, quantiles, random numbers, mean and variance.
+
+The number of successes in `N` draws without replacement from a population of `M` that holds `K` successes: cards dealt, items inspected from a batch.
+
+# Syntax
+y = hygepdf(x, M, K, N)
+    The probabilities of the values `x`.
+p = hygecdf(x, M, K, N)
+    The probability at or below `x`.
+q = hygecdf(x, M, K, N, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = hygeinv(p, M, K, N)
+    The smallest values whose cumulative probability reaches `p`.
+r = hygernd(M, K, N)
+    Random numbers, one for each element of the parameters.
+r = hygernd(M, K, N, m, n)
+    An m-by-n array of random numbers.
+r = hygernd(M, K, N, [m n ...])
+    With the size as one vector.
+[m, v] = hygestat(M, K, N)
+    The mean and the variance.
+# Inputs
+x — array
+    The values (whole numbers).
+p — array
+    Probabilities, between 0 and 1.
+M — number or array
+    The size of the population.
+K — number or array
+    The number of successes in it.
+N — number or array
+    The number drawn.
+# Examples
+## Hearts in a hand of five cards
+hygepdf(0:5, 52, 13, 5)
+hygecdf(1, 52, 13, 5, 'upper')
+[m, v] = hygestat(52, 13, 5)
+# See also
+binopdf fishertest
+
+@ chi2pdf, chi2cdf, chi2inv, chi2rnd, chi2stat
+The chi-square distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The sum of the squares of `nu` independent standard normal numbers. Its mean is nu and its variance 2nu. It gives the critical values of tests of variances and of goodness of fit.
+
+# Syntax
+y = chi2pdf(x, nu)
+    The density at `x`.
+p = chi2cdf(x, nu)
+    The probability at or below `x`.
+q = chi2cdf(x, nu, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = chi2inv(p, nu)
+    The quantiles: the values below which the probabilities `p` lie.
+r = chi2rnd(nu)
+    Random numbers, one for each element of the parameters.
+r = chi2rnd(nu, m, n)
+    An m-by-n array of random numbers.
+r = chi2rnd(nu, [m n ...])
+    With the size as one vector.
+[m, v] = chi2stat(nu)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu — number or array
+    The degrees of freedom.
+# Examples
+## Critical values
+chi2inv(0.95, 1:5)
+chi2cdf(3.84, 1)
+## Densities
+x = linspace(0, 15, 300);
+plot(x, chi2pdf(x, 1), x, chi2pdf(x, 3), x, chi2pdf(x, 6))
+legend('\nu = 1', '\nu = 3', '\nu = 6')
+ylim([0 0.5])
+# See also
+ncx2pdf gampdf chi2gof
+
+@ ncx2pdf, ncx2cdf, ncx2inv, ncx2rnd, ncx2stat
+The noncentral chi-square distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The sum of the squares of `nu` independent normal numbers of standard deviation 1 whose means' squares add up to the noncentrality `delta`. It gives the power of chi-square tests.
+
+# Syntax
+y = ncx2pdf(x, nu, delta)
+    The density at `x`.
+p = ncx2cdf(x, nu, delta)
+    The probability at or below `x`.
+q = ncx2cdf(x, nu, delta, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = ncx2inv(p, nu, delta)
+    The quantiles: the values below which the probabilities `p` lie.
+r = ncx2rnd(nu, delta)
+    Random numbers, one for each element of the parameters.
+r = ncx2rnd(nu, delta, m, n)
+    An m-by-n array of random numbers.
+r = ncx2rnd(nu, delta, [m n ...])
+    With the size as one vector.
+[m, v] = ncx2stat(nu, delta)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu — number or array
+    The degrees of freedom.
+delta — number or array
+    The noncentrality.
+# Examples
+## Moments, and the power of a test
+[m, v] = ncx2stat(3, 2)
+power = ncx2cdf(chi2inv(0.95, 3), 3, 6, 'upper')
+# See also
+chi2pdf ncfpdf
+
+@ tpdf, tcdf, tinv, trnd, tstat
+Student's t distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The ratio of a standard normal number to the square root of an independent chi-square number divided by its `nu` degrees of freedom. It is the distribution of the t statistic of a normal sample's mean, with heavier tails than the normal; as `nu` grows it becomes the normal.
+
+# Syntax
+y = tpdf(x, nu)
+    The density at `x`.
+p = tcdf(x, nu)
+    The probability at or below `x`.
+q = tcdf(x, nu, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = tinv(p, nu)
+    The quantiles: the values below which the probabilities `p` lie.
+r = trnd(nu)
+    Random numbers, one for each element of the parameters.
+r = trnd(nu, m, n)
+    An m-by-n array of random numbers.
+r = trnd(nu, [m n ...])
+    With the size as one vector.
+[m, v] = tstat(nu)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu — number or array
+    The degrees of freedom.
+# Examples
+## Critical values approach the normal
+tinv(0.975, [2 5 10 30 1000])
+norminv(0.975)
+## Heavier tails
+x = linspace(-5, 5, 300);
+plot(x, normpdf(x), x, tpdf(x, 2), x, tpdf(x, 10))
+legend('normal', '\nu = 2', '\nu = 10')
+# See also
+nctpdf normpdf ttest
+
+@ nctpdf, nctcdf, nctinv, nctrnd, nctstat
+The noncentral t distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The t statistic when the mean is not the one tested: a normal number of mean `delta` divided by the square root of an independent chi-square number over its degrees of freedom `nu`. It gives the power of t-tests.
+
+# Syntax
+y = nctpdf(x, nu, delta)
+    The density at `x`.
+p = nctcdf(x, nu, delta)
+    The probability at or below `x`.
+q = nctcdf(x, nu, delta, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = nctinv(p, nu, delta)
+    The quantiles: the values below which the probabilities `p` lie.
+r = nctrnd(nu, delta)
+    Random numbers, one for each element of the parameters.
+r = nctrnd(nu, delta, m, n)
+    An m-by-n array of random numbers.
+r = nctrnd(nu, delta, [m n ...])
+    With the size as one vector.
+[m, v] = nctstat(nu, delta)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu — number or array
+    The degrees of freedom.
+delta — number or array
+    The noncentrality.
+# Examples
+## The power of a one-sample t-test
+> With 20 values, a true difference of half a standard deviation, and a two-sided test at the 5% level:
+n = 20;
+delta = 0.5*sqrt(n);
+tc = tinv(0.975, n - 1);
+power = nctcdf(tc, n - 1, delta, 'upper') + nctcdf(-tc, n - 1, delta)
+# See also
+tpdf ttest
+
+@ fpdf, fcdf, finv, frnd, fstat
+The F distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The ratio of two independent chi-square numbers, each divided by its degrees of freedom `nu1` and `nu2`. It gives the critical values of analyses of variance and of tests of two variances.
+
+# Syntax
+y = fpdf(x, nu1, nu2)
+    The density at `x`.
+p = fcdf(x, nu1, nu2)
+    The probability at or below `x`.
+q = fcdf(x, nu1, nu2, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = finv(p, nu1, nu2)
+    The quantiles: the values below which the probabilities `p` lie.
+r = frnd(nu1, nu2)
+    Random numbers, one for each element of the parameters.
+r = frnd(nu1, nu2, m, n)
+    An m-by-n array of random numbers.
+r = frnd(nu1, nu2, [m n ...])
+    With the size as one vector.
+[m, v] = fstat(nu1, nu2)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu1 — number or array
+    The numerator degrees of freedom.
+nu2 — number or array
+    The denominator degrees of freedom.
+# Examples
+## Critical values and a p-value
+finv(0.95, 2, 12)
+fcdf(4.5, 2, 12, 'upper')
+## Densities
+x = linspace(0, 4, 300);
+plot(x, fpdf(x, 2, 10), x, fpdf(x, 5, 10), x, fpdf(x, 10, 50))
+legend('2, 10', '5, 10', '10, 50')
+# See also
+ncfpdf anova1 vartest2
+
+@ ncfpdf, ncfcdf, ncfinv, ncfrnd, ncfstat
+The noncentral F distribution: density, distribution function, quantiles, random numbers, mean and variance.
+
+The F ratio when the numerator chi-square is noncentral, with noncentrality `delta`. It gives the power of F tests.
+
+# Syntax
+y = ncfpdf(x, nu1, nu2, delta)
+    The density at `x`.
+p = ncfcdf(x, nu1, nu2, delta)
+    The probability at or below `x`.
+q = ncfcdf(x, nu1, nu2, delta, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = ncfinv(p, nu1, nu2, delta)
+    The quantiles: the values below which the probabilities `p` lie.
+r = ncfrnd(nu1, nu2, delta)
+    Random numbers, one for each element of the parameters.
+r = ncfrnd(nu1, nu2, delta, m, n)
+    An m-by-n array of random numbers.
+r = ncfrnd(nu1, nu2, delta, [m n ...])
+    With the size as one vector.
+[m, v] = ncfstat(nu1, nu2, delta)
+    The mean and the variance.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+nu1 — number or array
+    The numerator degrees of freedom.
+nu2 — number or array
+    The denominator degrees of freedom.
+delta — number or array
+    The noncentrality.
+# Examples
+## The power of an F test
+fc = finv(0.95, 3, 20);
+power = ncfcdf(fc, 3, 20, 10, 'upper')
+[m, v] = ncfstat(3, 20, 10)
+# See also
+fpdf ncx2pdf
+
+@ evpdf, evcdf, evinv, evrnd, evstat, evfit, evlike
+The type 1 extreme value distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The limit of the smallest of many values, with location `mu` and scale `sigma`; its long tail is to the left. The logarithm of a Weibull variable follows it. For the largest values, take the negative of the data, or use the generalized extreme value distribution.
+
+# Syntax
+y = evpdf(x, mu, sigma)
+    The density at `x`.
+p = evcdf(x, mu, sigma)
+    The probability at or below `x`.
+q = evcdf(x, mu, sigma, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = evinv(p, mu, sigma)
+    The quantiles: the values below which the probabilities `p` lie.
+r = evrnd(mu, sigma)
+    Random numbers, one for each element of the parameters.
+r = evrnd(mu, sigma, m, n)
+    An m-by-n array of random numbers.
+r = evrnd(mu, sigma, [m n ...])
+    With the size as one vector.
+[m, v] = evstat(mu, sigma)
+    The mean and the variance.
+phat = evfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = evfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = evlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = evlike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+mu — number or array
+    The location (0 when left out).
+sigma — number or array
+    The scale (1 when left out).
+# Examples
+## The tail to the left
+[m, v] = evstat(0, 1)
+x = linspace(-6, 3, 300);
+plot(x, evpdf(x, 0, 1))
+## A fit
+rng default
+x = evrnd(5, 2, 300, 1);
+phat = evfit(x)
+# See also
+gevpdf wblpdf
+
+@ gevpdf, gevcdf, gevinv, gevrnd, gevstat, gevfit, gevlike
+The generalized extreme value distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The limit of the largest of many values (block maxima, such as yearly highest floods or winds), with shape `k`, scale `sigma` and location `mu`. A shape of 0 is the Gumbel type, a positive one a heavy upper tail (Fréchet), a negative one a bounded tail (Weibull type).
+
+# Syntax
+y = gevpdf(x, k, sigma, mu)
+    The density at `x`.
+p = gevcdf(x, k, sigma, mu)
+    The probability at or below `x`.
+q = gevcdf(x, k, sigma, mu, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = gevinv(p, k, sigma, mu)
+    The quantiles: the values below which the probabilities `p` lie.
+r = gevrnd(k, sigma, mu)
+    Random numbers, one for each element of the parameters.
+r = gevrnd(k, sigma, mu, m, n)
+    An m-by-n array of random numbers.
+r = gevrnd(k, sigma, mu, [m n ...])
+    With the size as one vector.
+[m, v] = gevstat(k, sigma, mu)
+    The mean and the variance.
+phat = gevfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = gevfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = gevlike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = gevlike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+k — number or array
+    The shape.
+sigma — number or array
+    The scale.
+mu — number or array
+    The location.
+# Examples
+## Three shapes
+x = linspace(-3, 6, 300);
+plot(x, gevpdf(x, -0.3, 1, 0), x, gevpdf(x, 0, 1, 0), x, gevpdf(x, 0.3, 1, 0))
+legend('k = -0.3', 'k = 0', 'k = 0.3')
+## A 100-year level from yearly maxima
+rng default
+maxima = gevrnd(0.1, 2, 20, 60, 1);
+phat = gevfit(maxima)
+level100 = gevinv(1 - 1/100, phat(1), phat(2), phat(3))
+# See also
+evpdf gppdf
+
+@ gppdf, gpcdf, gpinv, gprnd, gpstat, gpfit, gplike
+The generalized Pareto distribution: density, distribution function, quantiles, random numbers, mean and variance, fit and likelihood.
+
+The excesses of values over a high threshold `theta` (the peaks-over-threshold model of extremes), with shape `k` and scale `sigma`. A shape of 0 is the exponential; a positive one a heavy tail.
+
+# Syntax
+y = gppdf(x, k, sigma, theta)
+    The density at `x`.
+p = gpcdf(x, k, sigma, theta)
+    The probability at or below `x`.
+q = gpcdf(x, k, sigma, theta, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = gpinv(p, k, sigma, theta)
+    The quantiles: the values below which the probabilities `p` lie.
+r = gprnd(k, sigma, theta)
+    Random numbers, one for each element of the parameters.
+r = gprnd(k, sigma, theta, m, n)
+    An m-by-n array of random numbers.
+r = gprnd(k, sigma, theta, [m n ...])
+    With the size as one vector.
+[m, v] = gpstat(k, sigma, theta)
+    The mean and the variance.
+phat = gpfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = gpfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+nlogL = gplike(params, x)
+    The negative log-likelihood of the parameters `params` for the data `x`.
+[nlogL, acov] = gplike(params, x)
+    With the approximate covariance of the estimates.
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+k — number or array
+    The shape.
+sigma — number or array
+    The scale (1 when left out).
+theta — number or array
+    The threshold (0 when left out).
+# Examples
+## Densities
+x = linspace(0, 5, 300);
+plot(x, gppdf(x, -0.2, 1, 0), x, gppdf(x, 0, 1, 0), x, gppdf(x, 0.5, 1, 0))
+legend('k = -0.2', 'k = 0', 'k = 0.5')
+## A fit to excesses over a threshold
+rng default
+x = gprnd(0.2, 1.5, 0, 400, 1);
+phat = gpfit(x)
+# See also
+gevpdf exppdf
+
+@ raylpdf, raylcdf, raylinv, raylrnd, raylstat, raylfit
+The Rayleigh distribution: density, distribution function, quantiles, random numbers, mean and variance, and fit.
+
+The length of a two-dimensional vector whose components are independent normal numbers of mean 0 and standard deviation `B`: the model of wind speeds and of the amplitude of noise.
+
+# Syntax
+y = raylpdf(x, B)
+    The density at `x`.
+p = raylcdf(x, B)
+    The probability at or below `x`.
+q = raylcdf(x, B, 'upper')
+    The probability above `x`, computed as such (accurate far into the tail).
+x = raylinv(p, B)
+    The quantiles: the values below which the probabilities `p` lie.
+r = raylrnd(B)
+    Random numbers, one for each element of the parameters.
+r = raylrnd(B, m, n)
+    An m-by-n array of random numbers.
+r = raylrnd(B, [m n ...])
+    With the size as one vector.
+[m, v] = raylstat(B)
+    The mean and the variance.
+phat = raylfit(x)
+    Estimates of the parameters from the data `x`.
+[phat, pci] = raylfit(x, alpha)
+    With confidence intervals (95% unless `alpha` is given).
+# Inputs
+x — array
+    The values.
+p — array
+    Probabilities, between 0 and 1.
+B — number or array
+    The scale (1 when left out).
+# Examples
+## From two normal components
+rng default
+B = 2;
+r = hypot(normrnd(0, B, 5000, 1), normrnd(0, B, 5000, 1));
+[mean(r) raylstat(B)]
+phat = raylfit(r)
+# See also
+wblpdf normpdf
