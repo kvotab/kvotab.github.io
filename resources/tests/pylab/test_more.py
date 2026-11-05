@@ -221,6 +221,11 @@ same('read with options: the selected variables, typed, missing numbers filled',
 same('the delimiter found; DataLines take rows 2 to 3 of the data', (texts(W['dlm']), a(W['x2']).reshape(-1).tolist()), ([';'], [1.0, 3.0]))
 near('readvars gives the columns; readmatrix with options', (W['a'], W['M']), ([[31], [42], [np.nan]], [[1, 2], [3, 4]]))
 C('the options are shown in their groups', 'Variable Import Properties' in out and 'SelectedVariableNames' in out and 'DataLines' in out, out)
+write('codes.csv', 'id,code,score\n1,007,4.5\n\n2,012,3.8\n')
+W, _ = run("o = setvartype(detectImportOptions('codes.csv'), 'code', 'string'); T = readtable('codes.csv', o); c = T.code; "
+           "o2 = setvartype(detectImportOptions('codes.csv'), 'code', 'categorical'); T2 = readtable('codes.csv', o2); k = categories(T2.code);")
+same('a column of numbers read as text keeps the text as written (007 stays 007), a blank line skipped', (texts(W['c']), texts(W['k'])),
+     (['007', '012'], ['007', '012']))
 
 # ---- XML documents ----------------------------------------------------------------------------------------------------------------
 write('b.xml', '<?xml version="1.0"?>\n<lib name="home"><book id="1"><title>A</title></book><book id="2"><title>B</title><note>n</note></book></lib>\n')

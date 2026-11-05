@@ -1,0 +1,179 @@
+@ affine2d, projective2d, affinetform2d, projtform2d
+Geometric transformations of the plane: affine and projective, by row-vector or column-vector matrices.
+
+An affine transformation maps lines to lines and keeps parallels parallel (rotation, scaling, shear, translation); a projective one maps lines to lines but not parallels to parallels (a perspective view). `affine2d` and `projective2d` hold T for row vectors, [u v 1] = [x y 1] T; `affinetform2d` and `projtform2d` hold A = T' for column vectors, [u; v; 1] = A [x; y; 1]. `transformPointsForward` and `transformPointsInverse` take points through them, `invert` gives the inverse, `outputLimits` where a rectangle goes, and `imwarp` transforms images.
+
+# Syntax
+tform = affine2d(T)
+    Affine, row vectors.
+tform = projective2d(T)
+    Projective, row vectors.
+tform = affinetform2d(A)
+    Affine, column vectors.
+tform = projtform2d(A)
+    Projective, column vectors.
+# Examples
+## A shear and a perspective
+t1 = affinetform2d([1 0.5 0; 0 1 0; 0 0 1]);
+t2 = projtform2d([1 0 0; 0 1 0; 0.002 0 1]);
+x = [0 100 100 0 0]; y = [0 0 100 100 0];
+[u1, v1] = transformPointsForward(t1, x, y);
+[u2, v2] = transformPointsForward(t2, x, y);
+plot(x, y, u1, v1, u2, v2), axis equal ij, axis([-10 160 -10 110]), legend('square', 'sheared', 'in perspective')
+isequal(affine2d(t1.A').T, t1.A')
+# See also
+rigidtform2d imwarp fitgeotform2d
+
+@ rigidtform2d, simtform2d, transltform2d, isTranslation, isRigid, isSimilarity
+Transformations of fewer kinds: rigid motions, similarities and translations, and tests for the kind.
+
+`rigidtform2d` is a rotation (theta degrees, counterclockwise as the axes go: x right, y down) and a translation; `simtform2d` adds a scale; `transltform2d` is a translation alone. Their properties give the angle, scale and translation directly. `isTranslation`, `isRigid` and `isSimilarity` test any transformation.
+
+# Syntax
+tform = rigidtform2d(theta, t)
+    A rotation and translation.
+tform = simtform2d(scale, theta, t)
+    With a scale.
+tform = transltform2d(tx, ty)
+    A translation.
+tf = isTranslation(tform)
+    A translation only.
+tf = isRigid(tform)
+    Rigid.
+tf = isSimilarity(tform)
+    A similarity.
+# Examples
+## Kinds told apart
+r = rigidtform2d(30, [5 0]);
+s = simtform2d(2, 30, [5 0]);
+t = transltform2d(3, 4);
+round(r.A, 3)
+[isRigid(r), isRigid(s), isSimilarity(s), isTranslation(t), isTranslation(r)]
+[s.Scale, s.RotationAngle]
+# See also
+affinetform2d invert
+
+@ transformPointsForward, transformPointsInverse, invert, outputLimits
+Points taken through a transformation and back, its inverse, and where a rectangle goes.
+
+`transformPointsForward` gives the points u, v a transformation takes x, y to (as two arrays, or as rows of a matrix); `transformPointsInverse` takes them back. `invert` gives the inverse transformation. `outputLimits` gives the bounding box of a rectangle's image (its edges sampled for a projective transformation), which is where `imwarp` puts its output.
+
+# Syntax
+[u, v] = transformPointsForward(tform, x, y)
+    Forward.
+U = transformPointsForward(tform, X)
+    Rows of points.
+[x, y] = transformPointsInverse(tform, u, v)
+    Back.
+tinv = invert(tform)
+    The inverse.
+[xLimitsOut, yLimitsOut] = outputLimits(tform, xLimitsIn, yLimitsIn)
+    Where a rectangle goes.
+# Examples
+## There and back
+t = rigidtform2d(90, [10 0]);
+U = transformPointsForward(t, [1 0; 0 1])
+transformPointsInverse(t, U)
+ti = invert(t);
+transformPointsForward(ti, U)
+[xl, yl] = outputLimits(t, [0 4], [0 2])
+# See also
+affinetform2d imwarp
+
+@ imref2d, intrinsicToWorld, worldToSubscript, sizesMatch
+Where an image lies in world coordinates.
+
+By default pixel (r, c) is at x = c, y = r: the image spans [0.5, n + 0.5] by [0.5, m + 0.5]. Given world limits or a pixel size, each pixel has a place in world units (metres, say). `worldToIntrinsic` and `intrinsicToWorld` convert between the two, `worldToSubscript` gives the row and column holding a point (NaN outside), and `sizesMatch` tests an image's size. `imwarp` and `imshow` take a reference.
+
+# Syntax
+R = imref2d(imageSize)
+    Pixel coordinates.
+R = imref2d(imageSize, xWorldLimits, yWorldLimits)
+    Within world limits.
+R = imref2d(imageSize, pixelExtentInWorldX, pixelExtentInWorldY)
+    By the pixel size.
+[xw, yw] = intrinsicToWorld(R, xi, yi)
+    Intrinsic to world.
+[r, c] = worldToSubscript(R, xw, yw)
+    World to subscripts.
+tf = sizesMatch(R, A)
+    The size matches.
+# Examples
+## An image of 0.5 m pixels
+R = imref2d([40 60], 0.5, 0.5)
+[xw, yw] = intrinsicToWorld(R, 60, 40)
+[r, c] = worldToSubscript(R, [10 100], [5 5])
+[xi, yi] = worldToIntrinsic(R, 10, 5)
+sizesMatch(R, zeros(40, 60))
+# See also
+imwarp worldToIntrinsic
+
+@ imwarp
+An image transformed geometrically.
+
+Each output pixel takes the value at the inverse image of its centre (`'linear'` interpolation by default, `'nearest'` or `'cubic'`), `'FillValues'` (0) outside. The output covers the whole transformed image at the input's pixel size, with its own reference (the second output), unless `'OutputView'` gives one, for instance the input's, to keep the frame. A displacement field D (m-by-n-by-2) instead moves each pixel by its own amount.
+
+# Syntax
+[B, RB] = imwarp(A, tform)
+    Transformed, with where it lies.
+B = imwarp(A, tform, interp, 'OutputView', Rout, 'FillValues', v)
+    Into a given frame.
+B = imwarp(A, D)
+    By a displacement field.
+# Examples
+## A phantom turned, sheared, and warped by a field
+P = phantom(64);
+[B, RB] = imwarp(P, rigidtform2d(20, [0 0]));
+C = imwarp(P, affinetform2d([1 0.3 0; 0 1 0; 0 0 1]), 'OutputView', imref2d(size(P)));
+[x, y] = meshgrid(1:64);
+D = cat(3, 3*sin(2*pi*y/32), zeros(64));
+W = imwarp(P, D);
+subplot(1, 3, 1), imshow(B, RB), subplot(1, 3, 2), imshow(C), subplot(1, 3, 3), imshow(W)
+RB.ImageSize
+# See also
+imrotate imtranslate imref2d
+
+@ fitgeotrans, fitgeotform2d
+A transformation fitted to pairs of matching points.
+
+By least squares from the moving points onto the fixed ones: `fitgeotform2d` fits `'rigid'`, `'similarity'`, `'affine'` or `'projective'` transformations (the column-vector kinds); `fitgeotrans` fits `'nonreflectivesimilarity'`, `'similarity'` (a reflection allowed), `'affine'` or `'projective'` (the row-vector kinds). A projective fit needs at least four pairs, an affine one three, a similarity two.
+
+# Syntax
+tform = fitgeotform2d(movingPoints, fixedPoints, type)
+    Column-vector kinds.
+tform = fitgeotrans(movingPoints, fixedPoints, type)
+    Row-vector kinds.
+# Examples
+## A known motion recovered from noisy points
+moving = [10 10; 90 15; 80 70; 20 80; 50 45];
+truth = simtform2d(1.2, 15, [5 -3]);
+fixed = transformPointsForward(truth, moving) + 0.2*randn(5, 2);
+t = fitgeotform2d(moving, fixed, 'similarity');
+round([t.Scale, t.RotationAngle, t.Translation], 2)
+t2 = fitgeotrans(moving, fixed, 'affine');
+class(t2)
+# See also
+imwarp imregcorr
+
+@ imregcorr
+Images registered by phase correlation: the transformation that takes one onto another.
+
+The normalized cross power spectrum of the two images peaks at their relative shift (`'translation'`, to a fraction of a pixel); for `'rigid'` and `'similarity'` (the default) the rotation and scale come first from the log-polar magnitude spectra (Fourier-Mellin). The images are tapered first unless `'Window'` is false. The result takes the moving image onto the fixed one, as `imwarp` uses it.
+
+# Syntax
+tform = imregcorr(moving, fixed)
+    A similarity.
+[tform, peakcorr] = imregcorr(moving, fixed, transformType)
+    Of a kind, with the peak's height.
+# Examples
+## A shifted and turned copy found
+> The transformation found takes the copy back onto the original: its inverse is the motion that made the copy.
+fixed = phantom(128);
+moving = imwarp(fixed, rigidtform2d(10, [6 -4]), 'OutputView', imref2d(size(fixed)));
+t = imregcorr(moving, fixed, 'rigid');
+ti = invert(t);
+round([ti.RotationAngle, ti.Translation], 1)
+t2 = imregcorr(imtranslate(fixed, [3.5 -2]), fixed, 'translation');
+round(t2.Translation, 1)
+# See also
+imwarp fitgeotform2d

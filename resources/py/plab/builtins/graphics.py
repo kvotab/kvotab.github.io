@@ -2098,16 +2098,34 @@ def imagesc(nargout, *args):
 
 @bi('imshow', arr=False)
 def imshow(nargout, *args):
+    # imshow(I, R) and imshow(I, [low high], R): the image placed where an imref2d says, its axes in world coordinates
+    ref = next((v for v in args[1:] if getattr(v, 'cls', None) == 'imref2d'), None)
+    args = tuple(v for v in args if v is not ref)
     a = arr(args[0])
     rng = None
+    if len(args) > 1 and opt_str(args[1]) is None and a.ndim == 2:
+        cmap = darr(args[1])
+        if cmap.ndim == 2 and cmap.shape[1] == 3 and cmap.shape[0] >= 1 and cmap.size != 2:
+            # imshow(X, map): an indexed image shown in its colours (indices from 0 in integer classes, from 1 in floating ones)
+            k = a.astype(float) - (0.0 if a.dtype.kind in 'iub' else 1.0)
+            k = np.clip(np.nan_to_num(np.floor(k), nan=0.0), 0, cmap.shape[0] - 1).astype(int)
+            args = (out(np.asarray(cmap, float)[k]),) + tuple(args[2:])
+            a = arr(args[0])
     if len(args) > 1 and opt_str(args[1]) is None:
         r = darr(args[1]).reshape(-1)
         rng = list(r) if r.size == 2 else None
         if r.size == 0:
             fin = a[np.isfinite(a)] if a.dtype.kind == 'f' else a
             rng = [float(fin.min()), float(fin.max())]
+    if ref is not None:
+        if tuple(a.shape[:2]) != tuple(ref.size):
+            raise err('MATLAB:imshow:SizeMismatch', "The image's size is not the size the spatial reference was made for.", 'imshow')
+        # the first and last pixels' centres
+        place = [out(np.array([[ref.xl[0] + ref.dx / 2, ref.xl[1] - ref.dx / 2]])), out(np.array([[ref.yl[0] + ref.dy / 2, ref.yl[1] - ref.dy / 2]]))]
+    else:
+        place = []
     if a.ndim == 3:
-        h = _image([out(a.astype(float) / (255.0 if a.dtype == np.uint8 else 1.0)) if a.dtype != np.float64 else args[0]], 1, False)
+        h = _image(place + [out(a.astype(float) / (255.0 if a.dtype == np.uint8 else 1.0)) if a.dtype != np.float64 else args[0]], 1, False)
     else:
         if a.dtype == np.uint8:
             rng = rng or [0.0, 255.0]
@@ -2115,7 +2133,7 @@ def imshow(nargout, *args):
             rng = [0.0, 1.0]
         else:
             rng = rng or [0.0, 1.0]
-        h = _image([out(a.astype(float))], 1, True)
+        h = _image(place + [out(a.astype(float))], 1, True)
         ax = gca_()
         ax.props['CLim'] = np.array([rng])
         ax.props['CLimMode'] = 'manual'
@@ -2123,7 +2141,7 @@ def imshow(nargout, *args):
     ax = gca_()
     ax.props['DataAspectRatio'] = np.array([[1.0, 1.0, 1.0]])
     ax.props['DataAspectRatioMode'] = 'manual'
-    ax.props['Visible'] = False
+    ax.props['Visible'] = ref is not None
     ax.touch()
     return h if nargout else None
 

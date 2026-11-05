@@ -294,6 +294,17 @@ def _fill(v, vo):
     return v
 
 
+def _raw_column(path, io, k, base, rows):
+    """Column k of a text file's data rows as written (base: the file's row of the table's first; blank lines skipped),
+    for a variable read as text whose values look like numbers ('007' stays '007')."""
+    import csv
+    with open(path, newline='', encoding='utf-8-sig') as f:
+        lines = [r for r in csv.reader(f, delimiter=io.delimiter or ',')]
+    head, body = lines[:base], [r for r in lines[base:] if any(c.strip() for c in r)]
+    del head
+    return [body[r][k].strip() if r < len(body) and k < len(body[r]) else '' for r in rows]
+
+
 def _read_with(path, io):
     """The table the import options read: the rows from DataLines, the variables renamed, typed and selected."""
     from .tables import Table, _take_rows
@@ -314,6 +325,10 @@ def _read_with(path, io):
         if newname not in io.selected:
             continue
         v = _take_rows(T.vars[k], rows) if len(rows) != T.n else T.vars[k]
+        if io.kind == 'text' and io.types[k] in ('string', 'char', 'categorical', 'datetime', 'duration') and _kind_of(v) in ('double', 'logical'):
+            # read as numbers but wanted as text: the text as the file has it
+            raw = _raw_column(path, io, k, header + (1 if readnames else 0), rows)
+            v = Str(np.array(raw, dtype=object).reshape(-1, 1))
         vo = io.varopts.get(newname, {})
         v = _fill(_convert(v, io.types[k], vo), vo)
         vars_.append(v)

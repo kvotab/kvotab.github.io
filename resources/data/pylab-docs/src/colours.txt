@@ -1,0 +1,187 @@
+@ imshow
+An image shown, with square pixels and no axes.
+
+A gray image is shown through a gray colormap, from 0 (black) to 1 (white) for doubles, over the class's range for integers, or over [low high] (`[]` for the image's own range); a logical image in black and white; an m-by-n-by-3 array as colours; an indexed image with its colormap in those colours. With a spatial reference (`imref2d`) the image lies where it says, and the axes are shown in world coordinates.
+
+# Syntax
+imshow(I)
+    Shown.
+imshow(I, [low high])
+    Over a range of values.
+imshow(X, map)
+    An indexed image in its colours.
+imshow(I, R)
+    Where a reference places it.
+# Examples
+## Three kinds of image
+[x, y] = meshgrid(linspace(-1, 1, 64));
+G = exp(-(x.^2 + y.^2)*3);
+subplot(1, 3, 1), imshow(G)
+subplot(1, 3, 2), imshow(G > 0.5)
+subplot(1, 3, 3), imshow(cat(3, G, 1 - G, 0.5*ones(64)))
+## In world units, and over a range
+imshow(10*rand(20, 30), [0 10], imref2d([20 30], [0 3], [0 2]))
+# See also
+image imagesc imref2d
+
+@ im2double, im2single, im2uint8, im2uint16, im2int16
+Images converted between classes, their ranges mapped.
+
+Each maps the class's range onto the other's: integers to 0 to 1 for `im2double` and `im2single` (uint8 divided by 255, int16 shifted first), and 0 to 1 onto 0 to 255, 0 to 65535 or -32768 to 32767 for the integer ones (clipped and rounded). Logical images become 0 and 1. `'indexed'` converts colour indices, which count from 0 in integer classes and from 1 in floating ones.
+
+# Syntax
+D = im2double(I)
+    To double, 0 to 1.
+S = im2single(I)
+    To single.
+U = im2uint8(I)
+    To uint8, 0 to 255.
+U = im2uint16(I)
+    To uint16.
+J = im2int16(I)
+    To int16.
+D = im2double(X, 'indexed')
+    Colour indices.
+# Examples
+## The same gray levels in five classes
+I = [0 0.25 0.5 1];
+u8 = im2uint8(I)
+im2uint16(u8)
+im2int16(I)
+im2double(u8)
+class(im2single(u8))
+im2double(uint8([0 1 2]), 'indexed')
+# See also
+double uint8 mat2gray
+
+@ rgb2gray, im2gray, cmap2gray, mat2gray
+Images and colormaps made gray, and a matrix scaled to a gray image.
+
+`rgb2gray` gives each pixel's luma, 0.2989 R + 0.5870 G + 0.1140 B, in the class of the image; for a colormap, a colormap of the gray levels. `im2gray` does the same for an RGB image and leaves a gray image as it is; `cmap2gray` makes a colormap gray. `mat2gray` scales any matrix to 0 to 1, its least value (or amin) to 0 and its largest (or amax) to 1.
+
+# Syntax
+I = rgb2gray(RGB)
+    The gray levels.
+I = im2gray(A)
+    Gray, whatever A is.
+newmap = cmap2gray(map)
+    A gray colormap.
+I = mat2gray(A, [amin amax])
+    Scaled to 0 to 1.
+# Examples
+## Colours and their gray levels
+rgb = cat(3, [1 0 0], [0 1 0], [0 0 1]);
+squeeze(rgb2gray(rgb))'
+round(cmap2gray(parula(3)), 3)
+mat2gray([10 20 40])
+mat2gray([10 20 40], [0 50])
+# See also
+rgb2hsv rgb2lightness
+
+@ rgb2hsv, hsv2rgb, rgb2lightness
+Colours as hue, saturation and value, and back; and their lightness.
+
+Hue goes round the colour circle from 0 (red) through yellow (1/6), green (1/3), cyan (1/2), blue (2/3) and magenta (5/6) back to 1; saturation from 0 (gray) to 1 (pure); value from 0 (black) to 1 (brightest). Images (m-by-n-by-3) and colormaps (c-by-3) are both taken; integers are scaled to 0 to 1 first. `rgb2lightness` gives the perceived lightness L*, 0 for black to 100 for white.
+
+# Syntax
+HSV = rgb2hsv(RGB)
+    Hue, saturation and value.
+RGB = hsv2rgb(HSV)
+    Back.
+[R, G, B] = hsv2rgb(H, S, V)
+    By channels.
+L = rgb2lightness(RGB)
+    The lightness.
+# Examples
+## A colour wheel's hues, and a colour made paler
+hsv = rgb2hsv([1 0 0; 1 1 0; 0 1 0; 0 0 1])
+p = hsv2rgb([2/3 0.4 1])
+round(rgb2lightness([0 0 1; 1 1 0; 0.5 0.5 0.5]), 1)
+[h, s] = meshgrid(linspace(0, 1, 120), linspace(0, 1, 40));
+imshow(hsv2rgb(cat(3, h, s, ones(40, 120))))
+# See also
+rgb2lab hsv colormap
+
+@ ind2rgb, ind2gray, gray2ind, rgb2ind
+Indexed images: colour indices into a colormap, to and from RGB and gray images.
+
+An indexed image holds indices into a colormap, counting from 1 in floating classes and from 0 in integer ones. `ind2rgb` gives the colours (as double), `ind2gray` the gray level of each colour. `gray2ind` makes a gray image indexed with n gray levels (64); `rgb2ind` chooses at most n colours (by minimum variance quantization), or a colour grid by a tolerance, or the colours of a given map, dithering unless `'nodither'` so that areas keep their average colour.
+
+# Syntax
+RGB = ind2rgb(X, map)
+    The colours.
+I = ind2gray(X, map)
+    The gray levels.
+[X, map] = gray2ind(I, n)
+    A gray image indexed.
+[X, map] = rgb2ind(RGB, n, 'nodither')
+    An RGB image indexed.
+# Examples
+## Four colours, there and back
+map = [0 0 0; 1 0 0; 0 1 0; 1 1 1];
+X = [1 2; 3 4];
+RGB = ind2rgb(X, map);
+squeeze(RGB(1, 2, :))'
+ind2gray(X, map)
+[Y, m2] = rgb2ind(RGB, 4, 'nodither');
+isequal(ind2rgb(double(Y) + 1, m2), RGB)
+[G, gm] = gray2ind([0 0.5 1], 3)
+## A gradient in eight colours, with and without dithering
+[x, y] = meshgrid(linspace(0, 1, 96), linspace(0, 1, 32));
+rgb = cat(3, x, y, 1 - x);
+[A, ma] = rgb2ind(rgb, 8);
+[B, mb] = rgb2ind(rgb, 8, 'nodither');
+subplot(3, 1, 1), imshow(rgb), subplot(3, 1, 2), imshow(A, ma), subplot(3, 1, 3), imshow(B, mb)
+# See also
+imread colormap
+
+@ imsplit
+The channels of an image, each as an array of its own.
+
+For an RGB image the red, green and blue planes; for any image of k planes along the third dimension, k outputs.
+
+# Syntax
+[c1, c2, c3] = imsplit(RGB)
+    Three channels.
+[c1, ..., ck] = imsplit(I)
+    k channels.
+# Examples
+## Red, green and blue
+rgb = cat(3, [1 0; 0 1], [0 1; 0 0], [0 0; 1 1]);
+[r, g, b] = imsplit(rgb);
+r, b
+# See also
+cat rgb2gray
+
+@ rgb2lab, lab2rgb, rgb2xyz, xyz2rgb, rgb2ycbcr, ycbcr2rgb
+Colour spaces: CIE L*a*b* and XYZ, and Y'CbCr.
+
+`rgb2xyz` converts sRGB (or Adobe RGB, or linear RGB) to CIE 1931 XYZ, white's Y being 1; `rgb2lab` goes on to L*a*b*, where L* is lightness (0 to 100), a* runs from green to red and b* from blue to yellow, and equal distances are roughly equal differences to the eye; the white point is D65 unless named. `rgb2ycbcr` gives the ITU-R BT.601 luma and colour differences (Y from 16 to 235, Cb and Cr from 16 to 240, over 255 for doubles). Each has its inverse; the inverses keep out-of-gamut values in doubles and clip in other output types.
+
+# Syntax
+lab = rgb2lab(RGB, 'ColorSpace', cs, 'WhitePoint', w)
+    L*a*b*.
+RGB = lab2rgb(lab, 'OutputType', type)
+    Back.
+XYZ = rgb2xyz(RGB, 'ColorSpace', cs)
+    XYZ.
+RGB = xyz2rgb(XYZ, 'OutputType', type)
+    Back.
+YCBCR = rgb2ycbcr(RGB)
+    Y'CbCr.
+RGB = ycbcr2rgb(YCBCR)
+    Back.
+# Examples
+## White, red and a gray in three spaces
+c = [1 1 1; 1 0 0; 0.5 0.5 0.5];
+round(rgb2lab(c), 2)
+round(rgb2xyz(c), 4)
+round(255*rgb2ycbcr(c))
+max(abs(lab2rgb(rgb2lab(c)) - c), [], 'all') < 1e-10
+## Equal steps in RGB, unequal to the eye
+> The same step of 0.05 in one channel: in L*a*b* the step in the green is half again as large as the step in the purple.
+a = rgb2lab([0.2 0.6 0.2; 0.2 0.65 0.2]);
+b = rgb2lab([0.6 0.2 0.6; 0.65 0.2 0.6]);
+round([norm(diff(a)), norm(diff(b))], 2)
+# See also
+rgb2hsv rgb2lightness

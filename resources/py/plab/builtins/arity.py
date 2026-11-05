@@ -9,8 +9,8 @@ MIN_INPUTS = {}
 for _n in """
 allchild and area argnames array2table assume assumeAlso balance bar barh bin2dec blanks builtin categorical
 categories ceil cell2table children cmap2gray coeffs collect combine compan compose cond condest contour contour3
-contourc contourf countcats createCallbackFcn csvread csvwrite ctranspose cummax cummin curl datevec deg2km deg2nm
-deg2sm degrees2dm degrees2dms detrend dirac divergence dlmread dlmwrite dm2degrees dms2degrees eigs ellipke etime
+contourc contourf countcats createCallbackFcn csvread ctranspose cummax cummin curl datevec deg2km deg2nm
+deg2sm degrees2dm degrees2dms detrend dirac divergence dlmread dm2degrees dms2degrees eigs ellipke etime
 expand expm ezcontour ezmesh ezplot ezsurf factor fcontour feof ffdesign fft2 fftn fftshift fgetl fgets fileparts
 fileread fimplicit finverse fix floor fmesh formula fourier fplot fread frewind fscanf fseek fsurf ftell functions
 fwrite genpath genvarname geographicToIntrinsic geoshow geotiffinfo geotiffread getenv getfield getm getReport
@@ -34,7 +34,7 @@ wrapTo2Pi wrapTo360 wrapToPi writecell writematrix writetable yyaxis zeta ztrans
 """.split():
     MIN_INPUTS[_n] = 1
 for _n in """
-addcats addCause addlistener addvars ancestor antipode areaint atan2d azimuth base2dec besselh beta betaln contourm
+addcats addCause addlistener addvars ancestor csvwrite dlmwrite antipode areaint atan2d azimuth base2dec besselh beta betaln contourm
 count deconv deltamoment deval dgsmdesign dgsmindices discrepancyshares discretize distance easi efastdesign
 efastindices ellipj endsWith erase extractAfter extractBefore ffindices filter2 firstorderindex funm geobubble
 geoplot geoscatter givens groupsummary has histogram2 ind2gray ind2rgb innerjoin ipermute iscategory isKey ismethod

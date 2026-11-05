@@ -430,10 +430,11 @@ def what(nargout, *args):
     if nargout:
         return Struct.scalar({'path': Char.of(p), 'm': Cell.of_list([Char.of(n) for n in m], (len(m), 1)),
                               'mat': Cell.of_list([Char.of(n) for n in mat], (len(mat), 1))})
-    lines = ['', f'MATLAB Code files in the current folder {p}' if False else f'Program files in the current folder {p}', '']
+    where = 'the current folder' if not args else 'the folder'
+    lines = ['', f'Program files in {where} {p}', '']
     lines.append('  '.join(os.path.splitext(n)[0] for n in m))
     if mat:
-        lines += ['', f'MAT-files in the current folder {p}', '', '  '.join(mat)]
+        lines += ['', f'MAT-files in {where} {p}', '', '  '.join(mat)]
     lines.append('')
     R.write('\n'.join(lines) + '\n')
     return None
@@ -543,6 +544,9 @@ def addpath(nargout, *args):
 def rmpath(nargout, *args):
     for a in args:
         for p in sval(a, 'folder', 'rmpath').split(':'):
+            if not p:
+                # the empty piece after genpath's last separator
+                continue
             ap = abspath(p)
             if ap in R.STATE['path']:
                 R.STATE['path'].remove(ap)
@@ -935,10 +939,27 @@ def readlines(nargout, *args):
 
 @bi('writelines')
 def writelines(nargout, *args):
+    """writelines(lines, filename, 'WriteMode', 'overwrite' or 'append', 'LineEnding', e): one line per string."""
+    nargchk(args, 2, 6, 'writelines')
     lines = text_list(args[0])
     p = abspath(sval(args[1], 'file name', 'writelines'))
-    with open(p, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(lines) + '\n')
+    mode, ending = 'w', '\n'
+    rest = list(args[2:])
+    if len(rest) % 2:
+        raise err('MATLAB:writelines:NameValue', 'Options come as names with values.', 'writelines')
+    for k, v in zip(rest[::2], rest[1::2]):
+        name = sval(k, 'option', 'writelines').lower()
+        if name == 'writemode':
+            m = sval(v, 'WriteMode', 'writelines').lower()
+            if m not in ('overwrite', 'append'):
+                raise err('MATLAB:writelines:WriteMode', "WriteMode is 'overwrite' or 'append'.", 'writelines')
+            mode = 'a' if m == 'append' else 'w'
+        elif name == 'lineending':
+            ending = unescape(sval(v, 'LineEnding', 'writelines'))
+        else:
+            raise err('MATLAB:writelines:option', f"'{name}' is not an option of writelines.", 'writelines')
+    with open(p, mode, encoding='utf-8', newline='') as f:
+        f.write(''.join(ln + ending for ln in lines))
     files_changed(os.path.dirname(p))
     return None
 
@@ -1577,7 +1598,7 @@ def readmatrix(nargout, *args):
     return out(a) if type(a) is np.ndarray else a
 
 
-@bi('writematrix', 'csvwrite', 'dlmwrite')
+@bi('writematrix')
 def writematrix(nargout, *args):
     a = args[0]
     p = abspath(sval(args[1], 'file name', 'writematrix')) if len(args) > 1 else abspath('matrix.txt')
@@ -1610,6 +1631,61 @@ def writematrix(nargout, *args):
             f.write(delim.join(row) + '\n')
     files_changed(os.path.dirname(p))
     return None
+
+
+def _legacy_write(fn, args):
+    """csvwrite(filename, M, row, col) and dlmwrite(filename, M, delimiter, row, col, '-append', 'precision', p):
+    the file name first; offsets put empty rows and fields before the numbers."""
+    nargchk(args, 2, 12, fn)
+    p = abspath(sval(args[0], 'file name', fn))
+    A = arr(args[1])
+    A = A.reshape(1, -1) if A.ndim == 1 else A
+    delim, append, prec, offs = ',', False, None, []
+    rest = list(args[2:])
+    i = 0
+    while i < len(rest):
+        k = opt_str(rest[i])
+        if k is None:
+            offs.append(int(num(rest[i])))
+            i += 1
+        elif k.lower() == '-append':
+            append = True
+            i += 1
+        elif k.lower() in ('delimiter', 'precision', 'newline', 'roffset', 'coffset') and i + 1 < len(rest):
+            v = rest[i + 1]
+            if k.lower() == 'delimiter':
+                delim = unescape(py_str(v))
+            elif k.lower() == 'precision':
+                prec = py_str(v) if opt_str(v) is not None else f'%.{int(num(v))}g'
+            elif k.lower() == 'roffset':
+                offs[0:1] = [int(num(v))]
+            elif k.lower() == 'coffset':
+                offs = (offs + [0])[:1] + [int(num(v))]
+            i += 2
+        elif fn == 'dlmwrite' and i == 0:
+            delim = unescape(k)
+            i += 1
+        else:
+            raise err(f'MATLAB:{fn}:option', f"'{k}' is not an option of {fn}.", fn)
+    r0, c0 = (offs + [0, 0])[:2]
+    cell = (lambda x: prec % float(x)) if prec else _num_cell
+    lines = [''] * r0 + [delim * c0 + delim.join(cell(x) for x in row) for row in A]
+    with open(p, 'a' if append else 'w', encoding='utf-8') as f:
+        f.write(''.join(ln + '\n' for ln in lines))
+    files_changed(os.path.dirname(p))
+    return None
+
+
+@bi('csvwrite')
+def csvwrite(nargout, *args):
+    """csvwrite(filename, M, row, col): a matrix written comma-separated (older; writematrix is preferred)."""
+    return _legacy_write('csvwrite', args)
+
+
+@bi('dlmwrite')
+def dlmwrite(nargout, *args):
+    """dlmwrite(filename, M, delimiter, row, col): a matrix written with a delimiter (older; writematrix is preferred)."""
+    return _legacy_write('dlmwrite', args)
 
 
 def _num_cell(x):

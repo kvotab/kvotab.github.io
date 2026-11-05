@@ -1,0 +1,275 @@
+@ pwd, cd
+The current folder, and changing it.
+
+Files named without a folder are read and written in the current folder, and functions there are found before those on the path. `cd` with no input gives the current folder; `cd ..` goes up one.
+
+# Syntax
+p = pwd
+    The current folder.
+cd folder
+    Changed.
+cd ..
+    Up one.
+p = cd
+    The current folder.
+# Examples
+## Into a folder and back
+mkdir work
+cd work
+[~, here] = fileparts(pwd)
+cd ..
+isfolder('work')
+# See also
+dir mkdir fullfile
+
+@ dir, ls, what
+What a folder holds.
+
+`dir` lists a folder (or the files a pattern with `*` matches) with dates and sizes, or gives a struct array of name, folder, date, bytes, isdir and datenum; `ls` lists only the names; `what` the program files and MAT-files.
+
+# Syntax
+dir folder
+    Listed.
+listing = dir(name)
+    As a struct array.
+ls folder
+    The names.
+what folder
+    The program files and MAT-files.
+# Examples
+## A folder of a few files
+mkdir proj
+fclose(fopen('proj/a.m', 'w'));
+fclose(fopen('proj/b.txt', 'w'));
+x = 1; save proj/c.mat x
+ls proj
+L = dir('proj/*.m');
+{L.name}
+d = dir('proj');
+sum(~[d.isdir])
+what proj
+# See also
+isfile fileparts
+
+@ which, type
+Where a function or file is found, and the text of a file.
+
+`which` says whether a name is a built-in function, or where its file is on the path (the current folder first); with an output it gives that as text. `type` shows a file's text (a name without an extension looks for a program file).
+
+# Syntax
+which name
+    Where it is.
+p = which(name)
+    As text.
+type filename
+    The file's text.
+# Examples
+## A built-in and a file of one's own
+which sqrt
+fid = fopen('twice.m', 'w');
+fprintf(fid, 'function y = twice(x)\ny = 2*x;\nend\n');
+fclose(fid);
+[~, f, e] = fileparts(which('twice'))
+type twice
+# See also
+exist addpath
+
+@ edit, open, run
+Files opened in the Editor, opened by their kind, and scripts run.
+
+`edit` opens a file in the Editor (a new script if it does not exist). `open` opens a file by its kind: program files in the Editor, MAT-files into the workspace (or a struct with an output), figure files as figures. `run` runs a script by its file name, from its own folder; it also runs test suites and global optimization searches.
+
+# Syntax
+edit filename
+    In the Editor.
+open filename
+    By its kind.
+s = open('data.mat')
+    A MAT-file as a struct.
+run filename
+    A script run.
+# Examples
+## A script written and run, a MAT-file opened
+> Run in the page, `edit setup.m` opens the script in the Editor.
+fid = fopen('setup.m', 'w');
+fprintf(fid, 'a = 3;\nb = a^2;\n');
+fclose(fid);
+run setup.m
+b
+c = [1 2 3]; save saved.mat c
+s = open('saved.mat')
+# See also
+type load runtests
+
+@ mkdir, rmdir, delete, copyfile, movefile
+Folders made and removed, and files deleted, copied and moved.
+
+`mkdir` makes a folder (with the folders above it), saying so if it exists; `rmdir` removes an empty folder, or with `'s'` the folder and everything in it; `delete` deletes files (patterns with `*` too), and graphics objects. `copyfile` and `movefile` copy and move (or rename) files and folders. The functions give a status and a message when asked, instead of an error.
+
+# Syntax
+mkdir folder
+    Made.
+[status, msg] = mkdir(parent, folder)
+    Made in a parent, with the result.
+rmdir(folder, 's')
+    Removed with its contents.
+delete filename
+    Deleted.
+copyfile(source, destination)
+    Copied.
+movefile(source, destination)
+    Moved or renamed.
+# Examples
+## A folder's life
+mkdir('box/inner')
+fclose(fopen('box/one.txt', 'w'));
+copyfile('box/one.txt', 'box/two.txt')
+movefile('box/two.txt', 'box/inner/three.txt')
+ls box
+ls box/inner
+delete box/one.txt
+rmdir('box', 's')
+isfolder('box')
+# See also
+dir isfolder
+
+@ zip, unzip, gzip, gunzip, tar, untar
+Archives: zip files, gzip files and tar files made and unpacked.
+
+`zip` packs files and folders (names, a cell of names, or patterns) into a zip file, each entry named by its path from a root folder; `unzip` unpacks it, leaving out any entry that would land outside the folder. `gzip` compresses each file into a .gz file of its own and `gunzip` unpacks them. `tar` packs into a tar file, compressed when its name ends in .tgz or .tar.gz, and `untar` unpacks it. Each gives the names when asked.
+
+# Syntax
+entries = zip(zipfile, files, rootfolder)
+    Zipped.
+files = unzip(zipfile, outputfolder)
+    Unzipped.
+names = gzip(files, outputfolder)
+    Each file gzipped.
+names = gunzip(files, outputfolder)
+    Unpacked.
+entries = tar(tarfile, files, rootfolder)
+    Into a tar file.
+files = untar(tarfile, outputfolder)
+    Unpacked.
+# Examples
+## A folder there and back three ways
+mkdir notes
+writelines(["alpha"; "beta"], 'notes/a.txt');
+writelines("gamma", 'notes/b.txt');
+zip('notes.zip', 'notes')
+u = unzip('notes.zip', 'copy1')'
+tar('notes.tgz', 'notes');
+t = untar('notes.tgz', 'copy2');
+numel(t)
+g = gzip('notes/a.txt')
+h = gunzip(g{1}, 'copy3');
+readlines(h{1})
+# See also
+dir fileread
+
+@ fullfile, fileparts, filesep, pathsep
+Paths from their parts, and paths taken apart.
+
+`fullfile` joins folders and a file name with the separator `/` (`filesep`), without doubling it; `fileparts` splits a path into its folder, name and extension (the last dot's). `pathsep` is the separator of the search path, `:`.
+
+# Syntax
+p = fullfile(part1, part2, ...)
+    Joined.
+[folder, name, ext] = fileparts(p)
+    Split.
+c = filesep
+    The folder separator.
+c = pathsep
+    The search path's separator.
+# Examples
+## Built and taken apart
+p = fullfile('data', 'raw/', 'run1.csv')
+[f, n, e] = fileparts(p)
+[~, n2, e2] = fileparts('archive.tar.gz')
+[filesep pathsep]
+# See also
+dir isfile
+
+@ tempdir, tempname, isfile, isfolder, isdir
+Temporary names, and whether files and folders exist.
+
+`tempdir` gives a folder for temporary files and `tempname` a name in it that no file has yet (made of random characters). `isfile` is true for a file that exists, `isfolder` for a folder (`isdir` is its older name); both take arrays of names.
+
+# Syntax
+p = tempdir
+    The temporary folder.
+p = tempname
+    A fresh name.
+tf = isfile(name)
+    True for a file.
+tf = isfolder(name)
+    True for a folder.
+tf = isdir(name)
+    The older form.
+# Examples
+## A scratch file that comes and goes
+f = [tempname '.txt'];
+isfile(f)
+writelines("scratch", f);
+isfile(f)
+delete(f)
+[isfolder(tempdir), isfile(tempdir), isdir(tempdir)]
+isfolder(["." "no such folder"])
+# See also
+exist delete
+
+@ addpath, rmpath, path, genpath, rehash
+The search path: the folders where functions are looked for.
+
+A function is looked for in the current folder, then in the folders of the path in order. `addpath` puts folders at the front (or with `'-end'` at the back), `rmpath` takes them off; `path` gives the path (or sets it); `genpath` gives a folder and every folder under it, ready for `addpath`. `rehash` looks again for program files, which here happens by itself whenever files change.
+
+# Syntax
+addpath(folder1, folder2, ..., '-end')
+    Folders added.
+rmpath(folder)
+    Removed.
+p = path
+    The path.
+path(newpath)
+    Set.
+p = genpath(folder)
+    A folder and those under it.
+rehash
+    Looked again.
+# Examples
+## A function in a folder of its own
+mkdir tools/more
+fid = fopen('tools/more/thrice.m', 'w'); fprintf(fid, 'function y = thrice(x)\ny = 3*x;\nend\n'); fclose(fid);
+exist('thrice')
+addpath(genpath('tools'))
+thrice(5)
+rmpath(genpath('tools'))
+exist('thrice')
+numel(strsplit(genpath('tools'), pathsep))
+# See also
+which exist
+
+@ fileattrib, recycle
+A file's attributes, and whether deleted files go to a recycle bin.
+
+`fileattrib` gives a file's or folder's attributes as a struct (read, write and execute for the user, group and others, whether it is a folder), or changes them by a mode such as `'+w'` or `'-x'`; a `*` in the name matches several. `recycle` says whether deleted files go to a recycle bin; there is none here, so `delete` removes files for good.
+
+# Syntax
+[status, values] = fileattrib(name)
+    The attributes.
+fileattrib(name, mode, users, 's')
+    Changed.
+state = recycle
+    The recycle bin's setting.
+# Examples
+## A file made read-only and back
+writelines("keep", 'keep.txt');
+[~, v] = fileattrib('keep.txt');
+[v.UserRead v.UserWrite v.directory]
+fileattrib('keep.txt', '-w');
+[~, v] = fileattrib('keep.txt');
+v.UserWrite
+fileattrib('keep.txt', '+w');
+recycle
+# See also
+isfile delete

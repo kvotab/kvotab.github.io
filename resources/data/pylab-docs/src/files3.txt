@@ -1,0 +1,223 @@
+@ load, save, matfile, importdata
+Variables saved to MAT-files and loaded back.
+
+`save` writes the workspace's variables (or those named, `*` matching several) to a MAT-file of version 7, compressed (or 6, 4 or 7.3 when asked), `-append` adding to what the file holds; with `-ascii`, a text file of numbers. `load` reads them back into the workspace, or into a struct with an output; a text file of numbers loads as a variable named after the file. Tables, datetimes, categoricals, strings and the like are kept. `matfile` gives the file's variables as a struct; `importdata` the data of a file, a MAT-file's variables or a text file's numbers.
+
+# Syntax
+save filename x y
+    Variables saved.
+save(filename, 'x', 'y', '-append')
+    Added to the file.
+save filename x -ascii
+    As text.
+load filename x y
+    Loaded.
+S = load(filename)
+    Into a struct.
+m = matfile(filename)
+    The variables as a struct.
+A = importdata(filename)
+    A file's data.
+# Examples
+## A session's results kept and brought back
+T = table([1; 2], ["a"; "b"]);
+when = datetime(2026, 11, 5);
+v = magic(3);
+save results.mat T when v
+clear
+whos -file results.mat
+S = load('results.mat', 'v', 'when')
+load results.mat T
+class(T)
+## Numbers as text
+x = [1.5 2; 3 4];
+save nums.txt x -ascii
+load nums.txt
+nums
+importdata('nums.txt')
+# See also
+whos matfile h5write
+
+@ jsondecode, jsonencode
+JSON text to values, and values to JSON text.
+
+`jsondecode` turns JSON objects into structs, arrays of numbers into numeric arrays (arrays of arrays of the same length into matrices), arrays of objects with the same fields into struct arrays, other arrays into cells, strings into character vectors, true and false into logicals and null into []. `jsonencode` goes the other way, a matrix as an array of rows; `'PrettyPrint'` lays it out on lines, and NaN and Inf become null unless `'ConvertInfAndNaN'` is false.
+
+# Syntax
+value = jsondecode(text)
+    Decoded.
+text = jsonencode(value)
+    Encoded.
+text = jsonencode(value, 'PrettyPrint', true)
+    Laid out.
+# Examples
+## A settings file read and written
+s = jsondecode('{"name": "run 4", "steps": [10, 20, 40], "ok": true, "grid": [[1, 2], [3, 4]], "note": null}')
+s.grid
+t = jsonencode(struct('a', [1 2 3], 'b', 'text', 'c', NaN))
+disp(jsonencode(struct('x', 1, 'y', {{'p', 'q'}}), 'PrettyPrint', true))
+# See also
+readstruct webread
+
+@ h5create, h5write, h5read, h5readatt, h5writeatt, h5info, h5disp
+HDF5 files: datasets made, written and read, their attributes, and what a file holds.
+
+HDF5 holds arrays (datasets) in a tree of groups, with attributes. `h5create` makes a dataset of a size and type (and the file when there is none); Inf lets a dimension grow, and chunking and compression can be asked for. `h5write` writes it, or a part from a start with a count and stride; `h5read` reads it, or a part. Sizes are in the language's order, the reverse of the file's. `h5writeatt` and `h5readatt` handle attributes of groups and datasets; `h5info` gives the file's tree as a struct and `h5disp` shows it.
+
+# Syntax
+h5create(filename, ds, size, 'Datatype', class, 'ChunkSize', c, 'Deflate', level)
+    A dataset.
+h5write(filename, ds, data, start, count, stride)
+    Written.
+data = h5read(filename, ds, start, count, stride)
+    Read.
+h5writeatt(filename, loc, attr, value)
+    An attribute written.
+value = h5readatt(filename, loc, attr)
+    Read.
+info = h5info(filename, loc)
+    The tree.
+h5disp(filename, loc)
+    Shown.
+# Examples
+## A grid of readings with its units
+h5create('grid.h5', '/run1/temp', [4 6], 'Datatype', 'single');
+h5write('grid.h5', '/run1/temp', single(reshape(1:24, 4, 6)));
+h5writeatt('grid.h5', '/run1/temp', 'units', 'degC');
+h5read('grid.h5', '/run1/temp', [2 3], [2 2])
+h5readatt('grid.h5', '/run1/temp', 'units')
+info = h5info('grid.h5', '/run1');
+info.Datasets(1).Name, info.Datasets(1).Dataspace.Size
+h5disp('grid.h5')
+# See also
+ncread save
+
+@ readstruct, writestruct
+Structs read from XML and JSON files, and written to them.
+
+Each child element becomes a field: text alone a number or a string, repeated elements an array or a struct array, attributes fields ending in `Attribute`, and text beside them the field `Text`. `writestruct` writes a struct the same way (the root element named `struct` unless `'StructNodeName'` says), as XML or (`'FileType', 'json'`) JSON.
+
+# Syntax
+S = readstruct(filename)
+    From XML.
+S = readstruct(filename, 'FileType', 'json')
+    From JSON.
+writestruct(S, filename, 'StructNodeName', name)
+    To XML.
+writestruct(S, filename, 'FileType', 'json')
+    To JSON.
+# Examples
+## A small catalogue there and back
+c.title = "Catalogue";
+c.item(1).name = "pump"; c.item(1).mass = 4.5;
+c.item(2).name = "valve"; c.item(2).mass = 0.8;
+writestruct(c, 'cat.xml', 'StructNodeName', 'catalogue');
+type cat.xml
+S = readstruct('cat.xml');
+[S.item.mass]
+# See also
+xmlread jsondecode
+
+@ xmlread, xmlwrite, com.mathworks.xml.XMLUtils.createDocument
+XML files read as document objects, changed, made and written.
+
+`xmlread` gives the document object of an XML file. Its methods read it: `getDocumentElement`, `getElementsByTagName` (a list with `getLength` and `item(k)` from 0), `getAttribute`, `getTextContent`, `getNodeName`, `getChildNodes`, `getFirstChild`, `getParentNode`; and change it: `createElement`, `createTextNode`, `setAttribute`, `appendChild`, `removeChild`, `setTextContent`. The second form below makes a new document with a root element. `xmlwrite` writes a document to a file, or gives its text.
+
+# Syntax
+DOMnode = xmlread(filename)
+    Read.
+docNode = com.mathworks.xml.XMLUtils.createDocument(rootName)
+    A new document.
+xmlwrite(filename, DOMnode)
+    Written.
+str = xmlwrite(DOMnode)
+    As text.
+# Examples
+## A document made, written and read
+doc = com.mathworks.xml.XMLUtils.createDocument('sensors');
+root = doc.getDocumentElement;
+for k = 1:2
+    e = doc.createElement('sensor');
+    e.setAttribute('id', sprintf('S%d', k));
+    e.appendChild(doc.createTextNode(sprintf('%g', 10*k)));
+    root.appendChild(e);
+end
+xmlwrite('sensors.xml', doc);
+d = xmlread('sensors.xml');
+list = d.getElementsByTagName('sensor');
+list.getLength
+for k = 0:list.getLength - 1
+    s = list.item(k);
+    fprintf('%s: %s\n', char(s.getAttribute('id')), char(s.getTextContent));
+end
+# See also
+readstruct writestruct
+
+@ xlsread, xlswrite, xlsfinfo
+Spreadsheets read and written, the older way.
+
+`xlsread` gives the block holding the numbers (NaN where other cells are), the texts, and every cell, of a sheet (a name or a number) or a range like `'B2:D10'`; `xlswrite` writes a matrix or cell array into a sheet from a range's corner, keeping the file's other sheets and cells; `xlsfinfo` says whether a file is a spreadsheet and gives its sheets. `readtable`, `readmatrix` and `writetable` are the newer forms.
+
+# Syntax
+[num, txt, raw] = xlsread(filename, sheet, range)
+    Read.
+xlswrite(filename, A, sheet, range)
+    Written.
+[status, sheets] = xlsfinfo(filename)
+    Its sheets.
+# Examples
+## A sheet with a header
+xlswrite('book.xlsx', {'x', 'y'; 1, 10; 2, 20}, 'Data');
+xlswrite('book.xlsx', magic(3), 'Other', 'B2');
+[status, sheets] = xlsfinfo('book.xlsx')
+[num, txt] = xlsread('book.xlsx', 'Data')
+xlsread('book.xlsx', 'Other')
+# See also
+readtable writetable readmatrix
+
+@ readtimetable
+A timetable read from a text or spreadsheet file.
+
+The first datetime (or duration) column becomes the row times unless `'RowTimes'` names another; otherwise as `readtable` reads.
+
+# Syntax
+TT = readtimetable(filename)
+    Read.
+TT = readtimetable(filename, 'RowTimes', var)
+    The row times named.
+# Examples
+## Hourly readings
+writelines(["time,temp,wind"; "2026-11-05 08:00,4.1,3"; "2026-11-05 09:00,5.3,4"; "2026-11-05 10:00,6.0,6"], 'w.csv');
+TT = readtimetable('w.csv')
+isregular(TT)
+# See also
+writetimetable readtable
+
+@ detectImportOptions, setvartype, setvaropts, getvaropts, readvars
+How a file will be read, chosen before reading it.
+
+`detectImportOptions` looks at a file and gives the options `readtable` would use: the variables' names and types, the delimiter, where the names and data are. Change them, with `opts.SelectedVariableNames`, `opts.DataLines`, `setvartype` (the types variables are read as) and `setvaropts` (a variable's fill value, input format and the like; `getvaropts` shows them), and give them to `readtable`, `readmatrix`, `readcell` or `readvars`. `readvars` reads each column into a variable of its own.
+
+# Syntax
+opts = detectImportOptions(filename)
+    The options.
+opts = setvartype(opts, vars, type)
+    Variables' types.
+opts = setvaropts(opts, vars, Name, Value)
+    Their options.
+vopts = getvaropts(opts, var)
+    One's options.
+[Var1, ..., VarN] = readvars(filename, opts)
+    A variable for each column.
+# Examples
+## Codes kept as text, a column skipped
+writelines(["id,code,score"; "1,007,4.5"; "2,012,3.8"], 'codes.csv');
+opts = detectImportOptions('codes.csv');
+opts.VariableNames
+opts = setvartype(opts, 'code', 'string');
+opts.SelectedVariableNames = {'id', 'code'};
+T = readtable('codes.csv', opts)
+[id, code, score] = readvars('codes.csv');
+score'
+# See also
+readtable readmatrix

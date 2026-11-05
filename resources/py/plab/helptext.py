@@ -4040,6 +4040,9 @@ imagesc: Show a matrix as an image, its values scaled to the colormap.
 imshow: Show an image, with equal axes and no ticks.
     imshow(I)
     imshow(I, [low high])
+    imshow(X, map)
+    imshow(I, R)
+    * [] for [low high] spans the image's own range. With a colormap, X is an indexed image (from 0 for integer classes, from 1 for floating ones). With an imref2d R the image lies where R says and the axes, in world coordinates, are shown.
 peaks: A sample function of two variables with peaks and valleys.
     Z = peaks
     Z = peaks(n)

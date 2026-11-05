@@ -426,6 +426,9 @@ case('a function in a file of another name', 'x = rightname();', shows=[f'\x01{o
 case('try/catch gets the message alone', 'try, tucked_fn, catch e, m = e.message; end', want={'m': "Unrecognized function or variable 'tucked_fn'."})
 case('a name no file has gets no more', 'nothing_named_so', shows="Unrecognized function or variable 'nothing_named_so'.\n")
 case('the folder on the path', "addpath(fullfile(pwd, 'tucked')); tucked_fn; rmpath(fullfile(pwd, 'tucked'));", shows=None)
+_W, _out = run("mkdir('gp/inner'); n0 = numel(path); addpath(genpath('gp')); n1 = numel(strsplit(path, pathsep)); rmpath(genpath('gp')); n2 = numel(path);")
+C('rmpath(genpath(folder)) takes the folders off again without a warning for the empty end of the list',
+  'not found in path' not in _out and _W['n2'] == _W['n0'], (_out, _W['n0'], _W['n2']))
 del R.STATE['home']
 
 # ---- workspace and session ----------------------------------------------------------------------
@@ -547,10 +550,20 @@ case('archives: gzip and gunzip, tar and untar', "gzip('za/one.txt', 'gz'); g = 
      "tar('t.tgz', 'za'); mkdir('tout'); r = untar('t.tgz', 'tout'); b = fileread('tout/za/one.txt');",
      want={'a': 'hello', 'b': 'hello'})
 case('archives: a name that is not there', "zip('x.zip', 'nothere.txt')", error="'nothere.txt' not found")
+case("writelines: 'WriteMode' 'append' adds to the file, 'LineEnding' sets the line ends",
+     "writelines([\"milk\"; \"bread\"], 'l.txt'); writelines(\"eggs\", 'l.txt', 'WriteMode', 'append'); t = fileread('l.txt'); "
+     "writelines({'a', 'b'}, 'w.txt', 'LineEnding', '\\r\\n'); w = double(fileread('w.txt'));",
+     want={'t': 'milk\nbread\neggs\n', 'w': [[97, 13, 10, 98, 13, 10]]})
+case('csvwrite and dlmwrite: the file name first; a delimiter, offsets, -append and a precision',
+     "dlmwrite('t.txt', [1 2; 3 4], '\\t'); a = dlmread('t.txt', '\\t'); csvwrite('c.csv', [5 6.5]); dlmwrite('c.csv', [7 8], '-append', 'precision', '%.2f'); "
+     "c = fileread('c.csv'); csvwrite('o.csv', [1 2], 1, 2); o = fileread('o.csv'); b = csvread('o.csv', 1, 2);",
+     want={'a': [[1, 2], [3, 4]], 'c': '5,6.5\n7.00,8.00\n', 'o': '\n,,1,2\n', 'b': [[1, 2]]})
 case('dir of a name that is not there says so', "dir('nothere'); s = dir('nothere'); n = numel(s);",
      shows='Warning: Name is nonexistent or not a directory: nothere', want={'n': 0})
 _W, _out = run("dir('*.nomatch');")
 C('dir of a pattern that matches nothing prints nothing', _out.strip() == '', _out)
+_W, _out = run("mkdir('wsub'); fid = fopen('wsub/f1.m', 'w'); fclose(fid); what wsub")
+C("what of a folder names that folder, not the current one", 'Program files in the folder' in _out and _out.rstrip().endswith('f1'), _out)
 
 case('ode15i', "[t, y] = ode15i(@(t, y, yp) yp + y, [0 1], 1, -1); e = abs(y(end) - exp(-1)) < 1e-3; "
      "[t, y] = ode15i(@(t, y, yp) yp.^3 + yp + y, [0 2], 1, -0.6823278); n = abs(y(end) - 0.18267339) < 1e-3;",

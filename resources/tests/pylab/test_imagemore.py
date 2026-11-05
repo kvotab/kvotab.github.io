@@ -177,6 +177,13 @@ r = rigidtform2d(30, [1 2]); ang = r.RotationAngle; s = simtform2d(2, 45, [0 0])
 it = [isTranslation(transltform2d(1, 2)) isRigid(r) isSimilarity(s) isRigid(s)];""")
 near('affine2d forward and back; invert; rigidtform2d and simtform2d properties; outputLimits; imref2d', (W['u'], W['v'], W['P'], W['Ti'], W['ang'], W['sc'], W['xl'], W['yl'], W['dx'], W['rr'], W['cc'], W['it']),
      ([[7, 9]], [[10, 10]], [[1, 1], [2, 1]], np.linalg.inv(np.array([[2, 0, 0], [0, 3, 0], [5, 7, 1.0]])), 30, 2, [[-20.5, -0.5]], [[0.5, 10.5]], 2, [[1, 1]], [[1, 5]], [[1, 1, 1, 0]]), 1e-12)
+W, _ = run("close all; R3 = imref2d([4 6], [0 3], [10 12]); imshow(rand(4, 6), R3); ax = gca; vis = ax.Visible; im = findobj(ax, 'Type', 'image'); "
+           "xd = im.XData; yd = im.YData; lim = axis; try, imshow(rand(3), R3); e = ''; catch ex, e = ex.message; end")
+near('imshow(I, R): the pixel centres where the reference puts them, the axes over its world limits', (W['xd'], W['yd'], W['lim']), ([[0.25, 2.75]], [[10.25, 11.75]], [[0, 3, 10, 12]]), 1e-12)
+C('... the axes shown (world coordinates to read), and an image of another size refused', W['vis'].str() == 'on' and 'not the size the spatial reference' in W['e'].str(), (W['vis'], W['e']))
+W, _ = run("close all; map = [0 0 0; 1 0 0; 0 1 0]; imshow(uint8([0 1; 2 1]), map); im = findobj(gca, 'Type', 'image'); c1 = squeeze(im.CData(1, 2, :))'; "
+           "figure; imshow([1 2; 3 3], map); im = findobj(gca, 'Type', 'image'); c2 = squeeze(im.CData(2, 1, :))';")
+near('imshow(X, map): an indexed image in its colours, indices from 0 for integers and from 1 for doubles', (W['c1'], W['c2']), ([[1, 0, 0]], [[0, 1, 0]]))
 W, _ = run(f"I = {IMG}; [B, RB] = imwarp(I, affinetform2d(eye(3))); sm = isequal(B, I); t = affinetform2d([1 0 3; 0 1 2; 0 0 1]); [B2, RB2] = imwarp(I, t); xw = RB2.XWorldLimits; "
            f"B3 = imwarp(I, t, 'OutputView', imref2d(size(I))); D = zeros([size(I) 2]); D(:,:,1) = 1; B4 = imwarp(I, D);")
 near('imwarp: identity unchanged; a translation moves the output limits; OutputView shifts the pixels; a displacement field',
