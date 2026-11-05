@@ -1,0 +1,303 @@
+@ interp2
+Interpolation on a 2-D grid.
+
+`V` holds values on a grid laid out as `meshgrid` makes it: `X` varies across the columns and `Y` down the rows. `interp2` gives values at query points `(Xq, Yq)`, by `'linear'` interpolation unless another method is given (`'nearest'`, `'cubic'`, `'spline'`, `'makima'`, `'pchip'`). A row `Xq` with a column `Yq` makes a grid. Points outside the grid give `NaN` unless `extrapval` is given. `interp2(V, k)` refines the grid k times, halving the spacing each time.
+
+# Syntax
+Vq = interp2(X, Y, V, Xq, Yq)
+    At query points.
+Vq = interp2(V, Xq, Yq)
+    With the grid 1:n by 1:m.
+Vq = interp2(V, k)
+    Refined k times.
+Vq = interp2(..., method, extrapval)
+    With a method, and a value outside the grid.
+# Examples
+## Between four values
+V = [1 2; 3 4];
+interp2(V, 1.5, 1.5)
+interp2(V, 2, 1.5)
+interp2(V, 3, 1)
+interp2(V, 3, 1, 'linear', 0)
+## A coarse surface made smooth
+[X, Y] = meshgrid(-3:1:3);
+V = peaks(X, Y);
+[Xq, Yq] = meshgrid(-3:0.2:3);
+Vq = interp2(X, Y, V, Xq, Yq, 'cubic');
+surf(Xq, Yq, Vq), hold on
+plot3(X, Y, V, 'ko', 'MarkerFaceColor', 'k'), hold off
+# See also
+interp1 interp3 interpn griddedInterpolant griddata
+
+@ interp3, interpn
+Interpolation on a grid in three or any number of dimensions.
+
+`interp3` takes the grid as `meshgrid` lays it out (x across the columns, y down the rows, z the pages); `interpn` takes it as `ndgrid` does (the first coordinate down the rows, the second across, and so on), in any number of dimensions. Query vectors of different sizes make a grid for `interpn`. Methods and `extrapval` as for `interp2`.
+
+# Syntax
+Vq = interp3(X, Y, Z, V, Xq, Yq, Zq)
+    In three dimensions, meshgrid's layout.
+Vq = interp3(V, Xq, Yq, Zq)
+    With the grid 1:n in each.
+Vq = interpn(X1, X2, ..., V, Xq1, Xq2, ...)
+    In any number of dimensions, ndgrid's layout.
+Vq = interpn(V, k)
+    Refined k times.
+Vq = interpn(..., method, extrapval)
+    With a method, and a value outside.
+# Examples
+## A linear function is reproduced exactly
+[X, Y, Z] = meshgrid(0:2);
+V = X + 2*Y + 3*Z;
+interp3(X, Y, Z, V, 0.5, 1.5, 1)
+## ndgrid's layout, and a grid of queries
+[X1, X2] = ndgrid(0:2, 0:3);
+V = X1.^2 + X2;
+interpn(X1, X2, V, 1.5, 2)
+interpn(X1, X2, V, [0.5 1.5], [1 2 3])
+# See also
+interp2 ndgrid meshgrid griddedInterpolant
+
+@ griddata, griddatan
+Values at scattered points interpolated onto a grid, or at other points.
+
+The points are joined into triangles (Delaunay), and the value at a query point comes from the triangle that holds it: `'linear'` by default, or `'nearest'`, `'natural'`, `'cubic'`, `'v4'` for `griddata`. Query points outside the points' convex hull give `NaN`. `griddatan` does the same in any number of dimensions, a point to each row.
+
+# Syntax
+vq = griddata(x, y, v, xq, yq)
+    At the query points.
+vq = griddata(x, y, v, xq, yq, method)
+    With a method.
+vq = griddatan(X, v, xq)
+    In n dimensions, points as rows.
+vq = griddatan(X, v, xq, method)
+    `'linear'` or `'nearest'`.
+# Examples
+## Scattered samples onto a grid
+rng default
+x = 4*rand(150, 1) - 2;
+y = 4*rand(150, 1) - 2;
+v = x.*exp(-x.^2 - y.^2);
+[xq, yq] = meshgrid(-2:0.1:2);
+vq = griddata(x, y, v, xq, yq);
+mesh(xq, yq, vq), hold on
+plot3(x, y, v, 'k.', 'MarkerSize', 10), hold off
+## In three dimensions
+rng default
+X = rand(60, 3);
+v = X(:, 1) + 2*X(:, 2) - X(:, 3);
+griddatan(X, v, [0.5 0.5 0.5])
+# See also
+scatteredInterpolant interp2 delaunay
+
+@ griddedInterpolant
+An interpolant of values on a grid, evaluated like a function.
+
+Made once from the grid and the values, then called as `F(xq)` (or `F(xq1, xq2)`, or `F({xg1, xg2})` for a grid of queries) as often as needed. `Method` is `'linear'` unless given (also `'nearest'`, `'next'`, `'previous'`, `'pchip'`, `'cubic'`, `'spline'`, `'makima'`). Outside the grid it extrapolates by the method it was made with, unless `ExtrapolationMethod` says otherwise (`'none'` gives `NaN`). Both are properties that can be changed on the object; changing `Method` leaves `ExtrapolationMethod` as it was.
+
+# Syntax
+F = griddedInterpolant(x, v)
+    In one dimension; `vq = F(xq)` gives values at query points.
+F = griddedInterpolant({x1, x2}, V)
+    On a grid given by its vectors; `F(xq1, xq2)` at points, `F({xg1, xg2})` on a grid.
+F = griddedInterpolant(X1, X2, V, method, extrapolation)
+    From ndgrid arrays, with a method and extrapolation.
+# Examples
+## Methods, and extrapolation
+x = 0:5;
+F = griddedInterpolant(x, x.^2);
+F(2.5)
+F.Method = 'spline';
+F(2.5)
+G = griddedInterpolant(x, x.^2, 'spline');
+G(7)
+## Two dimensions
+x1 = 0:3;
+x2 = 0:4;
+[X1, X2] = ndgrid(x1, x2);
+F = griddedInterpolant({x1, x2}, X1.*X2);
+F(1.5, 2.5)
+F({[0.5 1.5], [1 2]})
+# See also
+interpn scatteredInterpolant interp1
+
+@ scatteredInterpolant
+An interpolant of values at scattered points, evaluated like a function.
+
+Made once from points and values (triangulated by Delaunay) and called as `F(xq, yq)`. `Method` is `'linear'` (the default), `'nearest'` or `'natural'` (computed as linear here); outside the convex hull it extrapolates linearly unless `ExtrapolationMethod` is `'nearest'` or `'none'`.
+
+# Syntax
+F = scatteredInterpolant(x, y, v)
+    From points and values; `vq = F(xq, yq)` gives values at query points.
+F = scatteredInterpolant(P, v, method, extrapolation)
+    From the points as rows, with a method and extrapolation.
+# Examples
+## A plane through scattered points, and nearest values
+rng default
+x = rand(30, 1);
+y = rand(30, 1);
+F = scatteredInterpolant(x, y, 3*x - y);
+F(0.5, 0.5)
+F.Method = 'nearest';
+F(0.5, 0.5)
+## Contours from scattered samples
+> Near the edge of the points the triangles grow long and thin, and linear interpolation there is poor, so the grid stays a little inside.
+rng default
+x = 4*rand(200, 1) - 2;
+y = 4*rand(200, 1) - 2;
+F = scatteredInterpolant(x, y, sin(x).*cos(y));
+[xq, yq] = meshgrid(-1.8:0.05:1.8);
+contourf(xq, yq, F(xq, yq), 12), colorbar
+# See also
+griddata griddedInterpolant
+
+@ pchip, makima
+Piecewise cubic interpolation that keeps the shape of the data.
+
+Where `spline` makes the smoothest curve and can overshoot between points, `pchip` (piecewise cubic Hermite) keeps the curve monotone wherever the data are and never overshoots a step; `makima` (modified Akima) lies between them, smooth but with little overshoot. With a third input, the values at `xq`; with two, the piecewise polynomial for `ppval`.
+
+# Syntax
+yq = pchip(x, y, xq)
+    Values at `xq`.
+pp = pchip(x, y)
+    The piecewise polynomial.
+yq = makima(x, y, xq)
+    Values by modified Akima.
+pp = makima(x, y)
+    Its piecewise polynomial.
+# Examples
+## A step: spline overshoots, pchip does not
+x = 1:8;
+y = [0 0 0 0 1 1 1 1];
+xq = linspace(1, 8, 300);
+plot(x, y, 'ko', xq, spline(x, y, xq), xq, pchip(x, y, xq), xq, makima(x, y, xq))
+legend('data', 'spline', 'pchip', 'makima', 'Location', 'northwest'), grid on
+# See also
+spline interp1 ppval
+
+@ ppval, mkpp, unmkpp
+Piecewise polynomials: evaluated, made from their pieces, and taken apart.
+
+A piecewise polynomial (pp-form) has breaks `b(1) < b(2) < ...` and, for each piece, the coefficients of a polynomial in `x - b(i)`, highest power first. `spline`, `pchip`, `makima` and `csaps` make them; `mkpp` builds one by hand, `unmkpp` gives back the breaks, coefficients, number of pieces, order and dimension, and `ppval` evaluates.
+
+# Syntax
+v = ppval(pp, xq)
+    Values at `xq`.
+pp = mkpp(breaks, coefs)
+    From breaks and a row of coefficients for each piece.
+[breaks, coefs, l, k, d] = unmkpp(pp)
+    The parts.
+# Examples
+## A hat function by hand
+pp = mkpp([0 1 2], [1 0; -1 1]);
+ppval(pp, 0:0.5:2)
+## A spline taken apart
+pp = spline(0:3, [0 1 0 1]);
+[breaks, coefs, l, k] = unmkpp(pp)
+# See also
+spline pchip fnval
+
+@ interpft
+Resampling by the Fourier transform.
+
+The data are taken as one period of a periodic signal: their Fourier coefficients are padded with zeros, and the inverse transform gives `n` points over the same period. For a smooth periodic signal it is exact up to the frequencies the data can hold.
+
+# Syntax
+y = interpft(x, n)
+    `n` points over the period.
+y = interpft(x, n, dim)
+    Along a dimension.
+# Examples
+## Eight samples of a sine, made 32
+x = sin(2*pi*(0:7)/8);
+y = interpft(x, 32);
+plot((0:7)/8, x, 'o', (0:31)/32, y, '.-')
+max(abs(y - sin(2*pi*(0:31)/32)))
+# See also
+fft resample interp1
+
+@ csaps, spaps
+Smoothing splines: a cubic spline that follows noisy data without going through every point.
+
+`csaps(x, y, p)` minimizes `p*sum((y - f(x)).^2) + (1 - p)*integral(f''^2)`: p = 1 interpolates, p = 0 is the least-squares line, and without `p` a value is chosen from the spacing of `x`. `spaps(x, y, tol)` instead asks for the roughest-least spline whose sum of squared errors is at most `tol`. Both return a piecewise polynomial for `fnval`, `ppval` or `fnplt`; with points `xx`, `csaps` gives values.
+
+# Syntax
+pp = csaps(x, y)
+    With a smoothing parameter chosen.
+pp = csaps(x, y, p)
+    With smoothing parameter `p` in [0, 1].
+values = csaps(x, y, p, xx)
+    Values at `xx`.
+sp = spaps(x, y, tol)
+    Within an error `tol`.
+[sp, values, rho] = spaps(x, y, tol)
+    With the values at `x` and the weight of the error.
+# Examples
+## Noise smoothed two ways
+> With noise of standard deviation 0.2 at 60 points, a tolerance of 60*0.2^2 asks the curve to miss by about the noise.
+rng default
+x = linspace(0, 2*pi, 60);
+y = sin(x) + 0.2*randn(size(x));
+pp = csaps(x, y, 0.9);
+sp = spaps(x, y, 60*0.2^2);
+xx = linspace(0, 2*pi, 300);
+plot(x, y, '.', xx, fnval(pp, xx), xx, fnval(sp, xx), xx, sin(xx), 'k:')
+legend('data', 'csaps, p = 0.9', 'spaps', 'sin', 'Location', 'southwest')
+# See also
+spline smooth fnval
+
+@ spapi, spmak
+Splines in B-form: interpolating of any order, or made from knots and coefficients.
+
+A B-form spline is a sum of B-splines on a knot sequence, each scaled by a coefficient; the order k is the degree plus 1. `spapi(k, x, y)` interpolates the data with a spline of order k; `spmak(knots, coefs)` builds one from its knots and coefficients. Evaluate them with `fnval`, draw them with `fnplt`.
+
+# Syntax
+sp = spapi(k, x, y)
+    An interpolating spline of order `k`.
+values = spapi(k, x, y, xx)
+    Its values at `xx`.
+sp = spmak(knots, coefs)
+    From knots and coefficients.
+# Examples
+## A cubic interpolant, and a single B-spline
+x = 0:5;
+sp = spapi(4, x, x.^3);
+fnval(sp, 2.5)
+b = spmak(0:4, 1);
+fnval(b, [1 2 3])
+fnplt(b), grid on
+# See also
+fnval fnplt spline
+
+@ fnval, fnder, fnint, fnbrk, fnplt
+A spline's values, derivative, integral and parts, and its plot.
+
+These work on splines in pp-form (from `spline`, `csaps`, `mkpp`) or B-form (`spmak`, `spapi`), and give results in the same form. `fnder` differentiates (a negative order integrates), `fnint` integrates from the left end of the spline's interval, `fnbrk` gives its parts (`'breaks'`, `'coefs'`, `'pieces'`, `'order'`, `'interval'`, ...), and `fnplt` draws it over its interval.
+
+# Syntax
+v = fnval(f, x)
+    Values at `x`.
+fprime = fnder(f, dorder)
+    The derivative of order `dorder` (1 unless given).
+intgrf = fnint(f, value)
+    The integral, `value` at the left end (0 unless given).
+part = fnbrk(f, name)
+    A part.
+fnplt(f, symbol, interval, linewidth)
+    The plot.
+points = fnplt(f, ...)
+    The plotted points, not drawn.
+# Examples
+## A spline of x^2, its slope and its area
+pp = spline(0:4, (0:4).^2);
+fnval(pp, 2.5)
+fnval(fnder(pp), 2.5)
+fnval(fnint(pp), 4)
+fnbrk(pp, 'breaks')
+## A spline and its derivative drawn
+pp = spline(0:6, [0 1 0 -1 0 1 0]);
+fnplt(pp), hold on
+fnplt(fnder(pp), 'r--'), hold off
+grid on, legend('spline', 'derivative')
+# See also
+ppval spline csaps spapi

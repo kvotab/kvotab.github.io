@@ -2878,6 +2878,7 @@ ischar: True for a character array.
 isstring: True for a string array.
     tf = isstring(x)
 isobject: True for an object of a class (a map, an exception).
+    tf = isobject(x)
 properties: The public properties of an object or class.
     properties(obj)
     properties('ClassName')
@@ -2898,7 +2899,6 @@ notify: Raise an event of an object: its listeners' callbacks run.
     notify(obj, 'EventName', eventData)
 plabSuperCall: What a class's obj@Super(args) and method@Super(obj, args) become (PyLAB writes it; not called by hand).
     obj = plabSuperCall('Super', obj, args)
-    tf = isobject(x)
 double: Convert to double precision.
     y = double(x)
     * double(p) of a Python object (see pyrun): its numbers (a list, tuple, range or NumPy array; a 1-D one a row).

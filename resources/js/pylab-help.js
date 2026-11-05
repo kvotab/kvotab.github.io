@@ -162,6 +162,18 @@
   function figureCanvas(fig) {
     const canvas = el('canvas', { class: 'pl-doc-fig', role: 'img', 'aria-label': fig.name || `Figure ${fig.number}` });
     const box = el('div', { class: 'pl-doc-figbox', style: { maxWidth: `${Math.round(fig.width) || 560}px` } }, canvas);
+    // an app's components are HTML over the canvas, as in a figure window (pylab-ui.js); here only to be looked at
+    let layer = null;
+    if ((fig.controls || []).length && PL.FigureUI) {
+      const ui = new PL.FigureUI({ canvas, el: box, mgr: { ui() {} }, redrawSoon() {} });
+      layer = ui.layer;
+      layer.classList.add('pl-doc-uilayer');
+      layer.setAttribute('inert', '');
+      layer.style.width = `${fig.width}px`;
+      layer.style.height = `${fig.height}px`;
+      box.append(layer);
+      ui.update(fig);
+    }
     let lastW = 0;
     const draw = () => {
       const avail = box.clientWidth;
@@ -180,6 +192,7 @@
       const before = PL.figureCtx;
       PL.figureCtx = ctx;
       try { new PL.FigureRenderer().draw(ctx, fig, w, h); } finally { PL.figureCtx = before; }
+      if (layer) layer.style.transform = `scale(${w / fig.width})`;
     };
     if (typeof ResizeObserver === 'function') new ResizeObserver(draw).observe(box);
     requestAnimationFrame(draw);

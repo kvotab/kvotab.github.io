@@ -551,6 +551,7 @@ class MapObj(Obj):
     __slots__ = ('d', 'keytype', 'valuetype')
     cls = 'containers.Map'
     is_handle = True
+    METHODS = ('isKey', 'keys', 'length', 'remove', 'size', 'values')    # what methods and ismethod name
 
     def __init__(self, keytype='char', valuetype='any'):
         self.d = {}

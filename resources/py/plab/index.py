@@ -1143,7 +1143,8 @@ def asgn_chain(A, steps, V):
     if sub is not NOVAL and is_shared(A):
         share(sub)
     new = asgn_chain(sub, steps[1:], V)
-    if isinstance(A, Obj) and kind == '.' and getattr(A, 'is_handle', False) and new is sub:
+    if isinstance(A, Obj) and kind == '.' and getattr(A, 'is_handle', False) and new is sub and getattr(sub, 'is_handle', False):
+        # a handle in a handle's property, changed in place; a value there (a struct, an array) is set back, through the setter
         return A
     if kind == '()' and type(A) is Struct and type(new) is Struct and steps[1][0] == '.':
         # s(k).f = v with a field the struct array lacks: every element gets it (empty but there)

@@ -355,6 +355,12 @@ bs = BSpline(np.array([0, 0, 0, 1, 2, 3, 3, 3.0]), np.array([1, 2, 3, 2, 1.0]), 
 near("spmak: SciPy's BSpline with those knots", W['v'], bs(np.array([0, 1.5, 3.0])).reshape(1, -1), 1e-12)
 near('fnbrk: order, interval, breaks', (W['o'], W['iv'], W['br']), [3, 0, 3, 0, 1, 2, 3])
 near('fnint of a B-form: the integral over its interval', W['ib'], bs.integrate(0, 3), 1e-12)
+W, _ = run("b = spmak(0:4, 1); v = fnval(b, [0 0.5 1 2 3 3.5 4]); dv = fnval(fnder(b), [0.5 1 2 3]); iv = fnval(fnint(b), [0 2 4]); "
+           "bi = fnbrk(b, 'interval'); x = 0:5; sp = spapi(4, x, x.^3); dk = fnbrk(fnder(sp), 'knots'); kk = fnbrk(sp, 'knots');")
+near('a single cubic B-spline (spmak(0:4, 1)) over its whole knot span: x^3/6 at the ends, 2/3 in the middle',
+     (W['v'], W['bi']), [0, 0.5 ** 3 / 6, 1 / 6, 2 / 3, 1 / 6, 0.5 ** 3 / 6, 0, 0, 4], 1e-12)
+near("its derivative (x^2/2 at the start) and its integral (area 1, half of it by the middle)", (W['dv'], W['iv']), [0.125, 0.5, 0, -0.5, 0, 0.5, 1], 1e-12)
+near("fnder of a clamped spline keeps its inner knots", W['dk'], a(W['kk'])[:, 1:-1])
 
 # ---- refusals --------------------------------------------------------------------------------------------------------------------------------
 

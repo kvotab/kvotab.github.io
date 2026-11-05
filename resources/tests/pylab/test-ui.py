@@ -1317,6 +1317,11 @@ async def docs(page):
     await until(page, f"document.querySelector('.pl-help h2')?.textContent === '{bare}'", 20)
     old = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [!!h.querySelector('pre'), h.querySelectorAll('.pl-doc-ex').length]; })()")
     check('docs: a function without a page keeps its summary page', old, [True, 0])
+    # an app's components are HTML over its stored figure, only to be looked at
+    await command(page, "doc uibutton")
+    await until(page, "document.querySelector('.pl-help .pl-doc-uilayer .pl-uictl')", 20)
+    comps = await page.ev("(() => { const l = document.querySelector('.pl-help .pl-doc-uilayer'); return [l.querySelectorAll('.pl-uictl').length, l.hasAttribute('inert'), [...l.querySelectorAll('button')].map(b => b.textContent.trim())]; })()")
+    check("docs: an app's components drawn over its figure, inert", comps, [2, True, ['Run', 'Hold']])
     await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.kind === 'help')); 1")
     await command(page, "clear; clc; close all force")
     check('docs: no script errors', page.errors, [])

@@ -717,7 +717,8 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-help .pl-doc-tools .pl-iconbtn svg { width: 15px; height: 15px; }
 .pl-help pre.pl-doc-out { margin: 6px 0 0; max-width: 100ch; background: transparent; border: 1px solid var(--pl-border); white-space: pre; }
 .pl-help .pl-doc-figs { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 0; }
-.pl-help .pl-doc-figbox { width: 100%; }
+.pl-help .pl-doc-figbox { width: 100%; position: relative; }
+.pl-help .pl-doc-uilayer { inset: auto; left: 1px; top: 1px; transform-origin: 0 0; }
 .pl-help canvas.pl-doc-fig { display: block; border: 1px solid var(--pl-border); border-radius: var(--radius-sm); }
 
 /* ---- narrow windows and phones --------------------------------------------------------------------- */

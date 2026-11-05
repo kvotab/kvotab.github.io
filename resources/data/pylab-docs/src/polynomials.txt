@@ -1,0 +1,370 @@
+@ poly
+The polynomial with given roots, or the characteristic polynomial of a matrix.
+
+A polynomial is a row of coefficients, the highest power first. `poly(r)` multiplies out `(x - r(1))*(x - r(2))*...`; for a square matrix, `poly(A)` gives `det(x*I - A)`, whose roots are the eigenvalues. `roots` goes the other way.
+
+# Syntax
+p = poly(r)
+    The polynomial whose roots are the elements of `r`.
+p = poly(A)
+    The characteristic polynomial of the square matrix `A`.
+# Examples
+## From roots and back
+p = poly([1 2 3])
+roots(p)'
+## A matrix's characteristic polynomial
+A = [1 2; 3 4];
+p = poly(A)
+[sort(roots(p)) sort(eig(A))]
+# See also
+roots polyval polyvalm charpoly
+
+@ polyvalm
+A polynomial of a matrix: p(1)*A^n + ... + p(n)*A + p(n+1)*I.
+
+The matrix powers, not the elements' (that is `polyval`). By the Cayley-Hamilton theorem, a matrix put into its own characteristic polynomial gives zero.
+
+# Syntax
+Y = polyvalm(p, X)
+    The polynomial `p` of the square matrix `X`.
+# Examples
+## A matrix satisfies its characteristic polynomial
+A = [1 2; 3 4];
+p = poly(A);
+polyvalm(p, A)
+polyval(p, A)
+# See also
+polyval poly expm
+
+@ deconv
+Polynomial division, or undoing a convolution.
+
+`[q, r] = deconv(u, v)` divides the polynomial `u` by `v`: `u = conv(v, q) + r`, with the remainder `r` of lower degree than `v`. For signals, `deconv` undoes `conv` when the second factor is known.
+
+# Syntax
+[q, r] = deconv(u, v)
+    Quotient and remainder.
+# Examples
+## Division by a factor
+[q, r] = deconv([1 -6 11 -6], [1 -1])
+## With a remainder
+[q, r] = deconv([1 0 0 1], [1 1 1])
+conv([1 1 1], q) + r
+# See also
+conv polyder residue
+
+@ polyder, polyint
+The derivative and the integral of a polynomial.
+
+`polyder(p)` differentiates; with two polynomials it gives the derivative of their product, or with two outputs of their quotient `a/b` as `q/d`. `polyint(p)` integrates with constant 0, or `k`.
+
+# Syntax
+k = polyder(p)
+    The derivative.
+k = polyder(a, b)
+    The derivative of `a*b`.
+[q, d] = polyder(a, b)
+    The derivative of `a/b`, as `q/d`.
+q = polyint(p)
+    The integral, its constant 0.
+q = polyint(p, k)
+    With constant `k`.
+# Examples
+## Both ways
+p = [3 2 1];
+polyder(p)
+polyint(p)
+polyder(polyint(p))
+## The area under a curve
+p = [3 2 1];
+P = polyint(p);
+area = polyval(P, 2) - polyval(P, 0)
+## A product and a quotient
+polyder([1 1], [1 -1])
+[q, d] = polyder([1 0], [1 1])
+# See also
+polyval diff integral
+
+@ residue
+Partial fractions of a ratio of polynomials, and back.
+
+`b(s)/a(s)` written as `r(1)/(s - p(1)) + ... + r(n)/(s - p(n)) + k(s)`: the residues `r`, the poles `p` and the direct term `k` (a polynomial, empty when `b` is of lower degree than `a`). A repeated pole gets terms in rising powers. Given `r`, `p` and `k`, `residue` puts the fractions back together. This is how a Laplace transform is inverted by hand.
+
+# Syntax
+[r, p, k] = residue(b, a)
+    The partial fractions.
+[b, a] = residue(r, p, k)
+    Back to a ratio of polynomials.
+# Examples
+## (2s + 3)/(s^2 + 3s + 2) = 1/(s + 2) + 1/(s + 1)
+[r, p, k] = residue([2 3], [1 3 2])
+[b, a] = residue(r, p, k)
+## With a direct term
+[r, p, k] = residue([1 0 0], [1 0 -1])
+# See also
+deconv roots poly
+
+@ filter
+A rational transfer function applied to data: an IIR or FIR filter.
+
+`y = filter(b, a, x)` computes `a(1)*y(n) = b(1)*x(n) + b(2)*x(n-1) + ... - a(2)*y(n-1) - ...` along the first dimension that is not 1 (or `dim`). With `a = 1` it is a moving weighted sum (FIR); otherwise earlier outputs feed back (IIR). `zi` and `zf` carry the filter's state, so data can be filtered in pieces.
+
+# Syntax
+y = filter(b, a, x)
+    Filtered data.
+[y, zf] = filter(b, a, x, zi)
+    From an initial state, with the final one.
+y = filter(b, a, x, zi, dim)
+    Along a dimension.
+# Examples
+## A moving average and exponential smoothing
+rng default
+t = (1:200)';
+x = sin(t/20) + 0.3*randn(200, 1);
+ma = filter(ones(1, 9)/9, 1, x);
+ex = filter(0.15, [1 -0.85], x);
+plot(t, x, '.', t, ma, t, ex)
+legend('data', 'moving average of 9', 'exponential', 'Location', 'southwest')
+## In two pieces, as at once
+rng default
+x = randn(100, 1);
+b = 0.15; a = [1 -0.85];
+[y1, z] = filter(b, a, x(1:60));
+y2 = filter(b, a, x(61:end), z);
+norm([y1; y2] - filter(b, a, x))
+# See also
+conv filter2 smoothdata
+
+@ conv2, filter2, convn
+Two-dimensional convolution and filtering, and convolution in any number of dimensions.
+
+`conv2(A, B)` slides `B` over `A`, flipped, summing products: the full result is larger than `A`; `'same'` keeps `A`'s size and `'valid'` only the places where `B` fits entirely. `filter2(h, X)` does the same without flipping (a correlation), with `'same'` by default. `conv2(u, v, A)` convolves the columns with `u` and the rows with `v`. `convn` works in any number of dimensions.
+
+# Syntax
+C = conv2(A, B)
+    The full convolution.
+C = conv2(A, B, shape)
+    `'full'`, `'same'` or `'valid'`.
+C = conv2(u, v, A)
+    Separable: the columns by `u`, then the rows by `v`.
+Y = filter2(h, X)
+    Correlation, `X`'s size.
+Y = filter2(h, X, shape)
+    With a shape.
+C = convn(A, B)
+    In any number of dimensions.
+C = convn(A, B, shape)
+    With a shape.
+# Examples
+## Sums over 2-by-2 blocks
+A = magic(4);
+conv2(A, ones(2), 'valid')
+## Flipped or not
+A = magic(4);
+conv2(A, [1 -1], 'same')
+filter2([1 -1], A, 'same')
+## Edges of a surface by a Sobel kernel
+Z = peaks(60);
+E = conv2(Z, [1 0 -1; 2 0 -2; 1 0 -1], 'same');
+imagesc(E), axis image, colorbar
+## In three dimensions
+B = convn(ones(3, 3, 3), ones(2, 2, 2));
+size(B)
+B(:, :, 2)
+# See also
+conv filter imfilter
+
+@ fft, ifft
+The discrete Fourier transform, and its inverse.
+
+`Y = fft(X)` gives `Y(k) = sum of X(j)*exp(-2*pi*1i*(j-1)*(k-1)/n)` for each column (or along `dim`), by the fast Fourier transform. For a signal sampled at rate `fs`, element `k` is the frequency `(k-1)*fs/n`, and the second half mirrors the first for real data. `fft(X, n)` pads with zeros or cuts to `n` points; `ifft` inverts, and `'symmetric'` makes the result real.
+
+# Syntax
+Y = fft(X)
+    The transform.
+Y = fft(X, n)
+    Of `n` points.
+Y = fft(X, n, dim)
+    Along a dimension.
+X = ifft(Y)
+    The inverse.
+X = ifft(Y, 'symmetric')
+    The inverse of conjugate-symmetric data, real.
+# Examples
+## The amplitude spectrum of a noisy signal
+> Two tones, 50 Hz at 1 and 120 Hz at 0.5, sampled at 1 kHz for one second.
+rng default
+fs = 1000;
+t = (0:999)/fs;
+x = sin(2*pi*50*t) + 0.5*sin(2*pi*120*t) + 0.5*randn(size(t));
+n = numel(x);
+P = abs(fft(x)/n);
+P1 = P(1:n/2 + 1);
+P1(2:end-1) = 2*P1(2:end-1);
+f = fs*(0:n/2)/n;
+plot(f, P1), xlabel('frequency (Hz)'), ylabel('amplitude')
+## There and back
+x = [1 2 3 4];
+Y = fft(x)
+ifft(Y)
+# See also
+fft2 fftshift nufft periodogram
+
+@ fft2, ifft2, fftn, ifftn
+The Fourier transform in two or more dimensions, and the inverses.
+
+`fft2` transforms the columns and then the rows; `fftn` every dimension. The inverses undo them. With `fftshift`, the zero frequency comes to the middle, where the spectrum of an image is usually shown.
+
+# Syntax
+Y = fft2(X)
+    The 2-D transform.
+Y = fft2(X, m, n)
+    Padded or cut to m-by-n.
+X = ifft2(Y)
+    Its inverse.
+Y = fftn(X)
+    In every dimension.
+X = ifftn(Y)
+    Its inverse.
+# Examples
+## The spectrum of a square
+X = zeros(64);
+X(29:36, 29:36) = 1;
+F = fftshift(abs(fft2(X)));
+imagesc(log(1 + F)), axis image, colorbar
+## Inverses, and fftn of a matrix
+X = magic(4);
+norm(ifft2(fft2(X)) - X)
+norm(fftn(X) - fft2(X))
+# See also
+fft fftshift
+
+@ fftshift, ifftshift
+The zero frequency moved to the middle of a spectrum, and back.
+
+`fftshift` swaps the halves of each dimension (or of `dim`), so a spectrum runs from the negative frequencies through zero to the positive ones; `ifftshift` undoes it, also for an odd length, where `fftshift` twice does not.
+
+# Syntax
+Y = fftshift(X)
+    Swapped halves.
+Y = fftshift(X, dim)
+    Along one dimension.
+X = ifftshift(Y)
+    Undone.
+# Examples
+## Even and odd lengths
+fftshift(0:5)
+fftshift(0:4)
+ifftshift(fftshift(0:4))
+## A centred spectrum
+fs = 100;
+t = (0:99)/fs;
+x = cos(2*pi*10*t);
+n = numel(x);
+f = (-n/2:n/2 - 1)*fs/n;
+plot(f, abs(fftshift(fft(x)))/n), xlabel('frequency (Hz)')
+# See also
+fft fft2
+
+@ detrend
+Data with a trend removed: a straight line by default, a constant, or a polynomial.
+
+The least-squares line (or polynomial of degree `n`) through the data is subtracted, for each column. Done before a Fourier transform or a correlation, it stops a drift from dominating.
+
+# Syntax
+y = detrend(x)
+    The linear trend removed.
+y = detrend(x, n)
+    A polynomial of degree `n` removed.
+y = detrend(x, 'constant')
+    The mean removed.
+# Examples
+## A drift removed
+t = (1:100)';
+x = 0.05*t + sin(t/5);
+plot(t, x, t, detrend(x))
+legend('data', 'detrended', 'Location', 'northwest')
+# See also
+polyfit mean
+
+@ gradient
+The numerical gradient: central differences inside, one-sided at the ends.
+
+For a vector, the slope at each point; for a matrix, the slopes across (`gx`, along the second dimension) and down (`gy`, along the first), and so on in more dimensions. The spacing `h` is a number, or the coordinates of the points.
+
+# Syntax
+g = gradient(f)
+    With unit spacing.
+g = gradient(f, h)
+    With spacing (or coordinates) `h`.
+[gx, gy] = gradient(F)
+    Of a matrix.
+[gx, gy] = gradient(F, hx, hy)
+    With spacings.
+# Examples
+## The slope of x^2
+> Inside, central differences give 2x exactly for a quadratic; the ends are one-sided and less accurate.
+x = 0:0.25:1;
+gradient(x.^2, 0.25)
+2*x
+## Arrows up a surface's slope
+[X, Y] = meshgrid(-2:0.25:2);
+Z = X.*exp(-X.^2 - Y.^2);
+[gx, gy] = gradient(Z, 0.25);
+contour(X, Y, Z, 12), hold on
+quiver(X, Y, gx, gy), hold off
+axis equal
+# See also
+diff del2
+
+@ del2
+The discrete Laplacian, divided by 2N in N dimensions (by 4 for a vector).
+
+`del2(U)` is a quarter of the sum of second differences in two dimensions: for `U` sampled from a smooth function, `4*del2(U, h)` is close to its Laplacian (and `4*del2` of a vector to its second derivative). At the edges the differences are extended linearly from inside.
+
+# Syntax
+L = del2(U)
+    With unit spacing.
+L = del2(U, h)
+    With spacing `h`.
+L = del2(U, hx, hy, ...)
+    A spacing for each dimension.
+# Examples
+## x^2 + y^2 has Laplacian 4
+h = 0.5;
+[X, Y] = meshgrid(-2:h:2);
+L = 4*del2(X.^2 + Y.^2, h);
+[min(L(:)) max(L(:))]
+# See also
+gradient diff
+
+@ nufft, nufftn
+The Fourier transform of data at any times, or at any frequencies.
+
+`nufft(X, t, f)` sums `X(j)*exp(-2*pi*1i*t(j)*f(k))` for sample times `t` and frequencies `f`: data sampled unevenly, or a spectrum at chosen frequencies. With the defaults (`t = 0:n-1`, `f = (0:n-1)/n`) it equals `fft`. `nufftn` does the same in several dimensions. The sums are computed directly.
+
+# Syntax
+Y = nufft(X)
+    As `fft`.
+Y = nufft(X, t)
+    At sample times `t`.
+Y = nufft(X, t, f)
+    At frequencies `f`.
+Y = nufftn(X, t, f)
+    In several dimensions.
+# Examples
+## A tone sampled at random times
+rng default
+t = sort(20*rand(1, 300));
+x = cos(2*pi*1.5*t);
+f = 0:0.01:3;
+Y = nufft(x, t, f);
+plot(f, abs(Y)/numel(x)), xlabel('frequency')
+## The defaults give fft
+rng default
+x = rand(1, 8);
+norm(nufft(x) - fft(x))
+X = rand(4, 5);
+norm(nufftn(X) - fftn(X))
+# See also
+fft fftn

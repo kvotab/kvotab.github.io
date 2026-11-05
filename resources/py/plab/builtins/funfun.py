@@ -1618,11 +1618,23 @@ def deconv(nargout, *args):
     return qq
 
 
+def _pder(p):
+    return np.polyder(p) if p.size > 1 else np.zeros(1)
+
+
 @bi('polyder', nout=2)
 def polyder(nargout, *args):
-    if len(args) == 2 and nargout < 2:
-        p = np.convolve(darr(args[0]).reshape(-1), darr(args[1]).reshape(-1))
-        return out(np.polyder(p).reshape(1, -1))
+    """polyder(p); polyder(a, b) of the product a*b; [q, d] = polyder(a, b) of the quotient a/b,
+    q = a'*b - a*b' (leading zeros dropped) over d = b*b."""
+    nargchk(args, 1, 2, 'polyder')
+    if len(args) == 2:
+        a, b = darr(args[0]).reshape(-1), darr(args[1]).reshape(-1)
+        if nargout < 2:
+            return out(_pder(np.convolve(a, b)).reshape(1, -1))
+        q = np.polysub(np.convolve(_pder(a), b), np.convolve(a, _pder(b)))
+        q = np.trim_zeros(np.atleast_1d(q), 'f')
+        q = q if q.size else np.zeros(1)
+        return out(q.reshape(1, -1)), out(np.convolve(b, b).reshape(1, -1))
     p = darr(args[0]).reshape(-1)
     if p.size <= 1:
         return 0.0

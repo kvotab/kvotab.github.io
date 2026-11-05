@@ -200,6 +200,8 @@ class OptimOptions(Obj):
             algs = _SOLVERS[self.solver][0]
             return Char.of(algs[0]) if algs else None
         d = _SOLVERS[self.solver][1].get(k, _COMMON[k][0] if k in _COMMON else None)
+        if isinstance(d, int) and not isinstance(d, bool):
+            d = float(d)            # a number, as the language holds them (a Python int displays apart)
         return Char.of(d) if isinstance(d, str) else d
 
     def get(self, k):
@@ -1752,9 +1754,10 @@ def _plot_point(name, x, y, ylabel, title, state, color=(0.0, 0.447, 0.741), bar
         line.props['XData'] = X.reshape(1, -1)
         line.props['YData'] = Y.reshape(1, -1)
     elif bars:
+        # through set_value, so the bars are laid out again (setting props alone left the start's bars drawn)
         yy = np.atleast_1d(np.asarray(y, float)).reshape(1, -1)
-        line.props['XData'] = np.arange(1, yy.size + 1, dtype=float).reshape(1, -1)
-        line.props['YData'] = yy
+        line.set_value('XData', np.arange(1, yy.size + 1, dtype=float).reshape(1, -1))
+        line.set_value('YData', yy)
     ax.title.props['String'] = title
     ax.touch()
     return line

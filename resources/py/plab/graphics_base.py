@@ -407,7 +407,14 @@ class Root(GObj):
 
     def getprop(self, name):
         if name.lower() == 'currentfigure':
-            return STORE.current if STORE.current is not None and STORE.current.valid else EMPTY()
+            # as gcf finds it (a figure whose handle is hidden is not current outside its callbacks), but making none
+            from .builtins.graphics import shown_test
+            shown = shown_test()
+            f = STORE.current
+            if f is not None and f.valid and shown(f):
+                return f
+            rest = sorted((g for g in STORE.figures.values() if g.valid and shown(g)), key=lambda g: -g.order)
+            return rest[0] if rest else EMPTY()
         if name.lower() == 'children':
             from .builtins.graphics import shown_test
             shown = shown_test()

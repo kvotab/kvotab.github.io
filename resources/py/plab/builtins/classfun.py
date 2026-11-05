@@ -6,8 +6,8 @@ runStartupFcn.
 import numpy as np
 
 from . import bi, REG
-from ._util import err, opt_str, is_str, sval
-from ..values import MError, Char, Cell, Struct, FH, Obj, NOVAL, EMPTY, py_str, share
+from ._util import err, nargchk, opt_str, is_str, sval
+from ..values import MError, Char, Cell, Struct, FH, Obj, NOVAL, EMPTY, py_str, share, class_of
 from .. import runtime as R
 from .. import classdef as CD
 
@@ -44,9 +44,17 @@ async def plabSuperCall(nargout, *args):
     return await CD.construct(ci, 1, rest[1:], obj)
 
 
+_FUNDAMENTAL = {'double', 'single', 'logical', 'char', 'string', 'cell', 'struct', 'function_handle',
+                'int8', 'uint8', 'int16', 'uint16', 'int32', 'uint32', 'int64', 'uint64'}
+
+
 @bi('isobject')
 def isobject(nargout, *args):
-    return type(args[0]) is CD.UObj
+    """True for an object of a class: one of your own, a map, an exception, a datetime, a graphics object; false
+    for the fundamental types (numbers, logical, text, cells, structs, function handles)."""
+    nargchk(args, 1, 1, 'isobject')
+    v = args[0]
+    return type(v) is CD.UObj or (isinstance(v, Obj) and class_of(v) not in _FUNDAMENTAL)
 
 
 @bi('properties', arr=False)
@@ -86,12 +94,16 @@ def _all_methods(ci):
 def methods_(nargout, *args):
     v = args[0]
     ci = v.ci if type(v) is CD.UObj else (CD.load_class(py_str(v), R) if is_str(v) else None)
-    if ci is None:
+    if ci is None and isinstance(v, Obj) and getattr(type(v), 'METHODS', None):
+        # a built-in class that names its methods (containers.Map, MException)
+        cname, names = class_of(v), sorted(type(v).METHODS, key=str.lower)
+    elif ci is None:
         raise err('MATLAB:class:NotFound', 'methods takes an object or a class name.', 'methods')
-    names = sorted(_all_methods(ci) + [ci.name])
+    else:
+        cname, names = ci.name, sorted(_all_methods(ci) + [ci.name])
     if nargout:
         return Cell.of_list([Char.of(n) for n in names], (len(names), 1))
-    R.write(f'\nMethods for class {ci.name}:\n\n' + '  '.join(names) + '\n\n')
+    R.write(f'\nMethods for class {cname}:\n\n' + '  '.join(names) + '\n\n')
     return None
 
 
@@ -141,7 +153,9 @@ def enumeration(nargout, *args):
 def ismethod(nargout, *args):
     v = args[0]
     name = sval(args[1], 'method name', 'ismethod')
-    return type(v) is CD.UObj and v.ci.find_method(name) is not None
+    if type(v) is CD.UObj:
+        return v.ci.find_method(name) is not None
+    return name in getattr(type(v), 'METHODS', ())
 
 
 _orig_isvalid = REG['isvalid'].fn if 'isvalid' in REG else None

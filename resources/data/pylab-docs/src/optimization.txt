@@ -1,0 +1,337 @@
+@ fminunc
+The minimum of a smooth function of several variables, without constraints.
+
+From the start `x0`, a quasi-Newton method (BFGS) follows the gradient, estimated by finite differences unless the function gives it, and builds up the curvature as it goes. It stops when the gradient is small (exitflag 1) or the steps become too small to go on (2); the result is a local minimum, the one the start leads to. With `'SpecifyObjectiveGradient'` the function returns `[f, g]`, and the `'trust-region'` algorithm can be used.
+
+# Syntax
+x = fminunc(fun, x0)
+    A local minimum.
+x = fminunc(fun, x0, options)
+    With options from `optimoptions`.
+[x, fval, exitflag, output, grad, hessian] = fminunc(...)
+    With the value, how it ended, a summary, and the gradient and Hessian there.
+# Examples
+## Rosenbrock's valley
+fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+[x, fval, exitflag] = fminunc(fun, [-1 2])
+## The gradient given, no messages
+fun = @(x) deal(sum(x.^2) + x(1), 2*x + [1 0]);
+opts = optimoptions('fminunc', 'SpecifyObjectiveGradient', true, 'Display', 'off');
+[x, fval, exitflag, output] = fminunc(fun, [3 -2], opts);
+x, output.iterations
+# See also
+fminsearch fmincon optimoptions
+
+@ fmincon
+The minimum of a function under bounds and linear or nonlinear constraints.
+
+Minimizes `fun(x)` subject to `A*x <= b`, `Aeq*x = beq`, `lb <= x <= ub` and the nonlinear constraints `[c, ceq] = nonlcon(x)` with `c <= 0` and `ceq = 0`; give `[]` for those that do not apply. `lambda` holds the Lagrange multipliers: how much the minimum would fall if each constraint were loosened a little. exitflag -2 means no feasible point was found.
+
+# Syntax
+x = fmincon(fun, x0, A, b)
+    Under linear inequalities.
+x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub)
+    With equalities and bounds.
+x = fmincon(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    With nonlinear constraints and options.
+[x, fval, exitflag, output, lambda, grad, hessian] = fmincon(...)
+    With the value, how it ended, a summary, the multipliers, gradient and Hessian.
+# Examples
+## The largest rectangle with a perimeter of 20
+> Its multiplier, 2.5, is how much area one more unit of perimeter buys.
+opts = optimoptions('fmincon', 'Display', 'off');
+[x, fval, ~, ~, lambda] = fmincon(@(x) -x(1)*x(2), [1 2], [2 2], 20, [], [], [0 0], [], [], opts);
+x, area = -fval, lambda.ineqlin
+## Rosenbrock's valley inside the unit circle
+fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+circle = @(x) deal(x(1)^2 + x(2)^2 - 1, []);
+opts = optimoptions('fmincon', 'Display', 'off');
+x = fmincon(fun, [0 0], [], [], [], [], [], [], circle, opts)
+norm(x)
+# See also
+fminunc linprog quadprog optimoptions
+
+@ fsolve
+Solve a system of nonlinear equations F(x) = 0.
+
+From the start `x0`, a trust-region dogleg method (or `'levenberg-marquardt'`) drives the residuals to zero; with several solutions, the start decides which is found. exitflag 1 means solved; -2 that it stopped where `F` is not zero. With `'SpecifyObjectiveGradient'` the function returns `[F, J]`, the Jacobian.
+
+# Syntax
+x = fsolve(fun, x0)
+    A solution.
+x = fsolve(fun, x0, options)
+    With options.
+[x, fval, exitflag, output, jacobian] = fsolve(...)
+    With the residuals there, how it ended, a summary and the Jacobian.
+# Examples
+## A circle meets a hyperbola
+> x² + y² = 4 and xy = 1 cross at four points; two starts find two of them.
+fun = @(p) [p(1)^2 + p(2)^2 - 4; p(1)*p(2) - 1];
+opts = optimoptions('fsolve', 'Display', 'off');
+s1 = fsolve(fun, [2 0], opts)
+s2 = fsolve(fun, [0 2], opts)
+fimplicit(@(x, y) x.^2 + y.^2 - 4), hold on
+fimplicit(@(x, y) x.*y - 1)
+plot([s1(1) s2(1)], [s1(2) s2(2)], 'ko', 'MarkerFaceColor', 'k'), hold off
+axis equal, grid on
+# See also
+fzero lsqnonlin optimoptions
+
+@ lsqcurvefit
+Fit a model's parameters to data by nonlinear least squares.
+
+`fun(x, xdata)` is the model with parameters `x`; `lsqcurvefit` finds the `x` that makes `sum((fun(x, xdata) - ydata).^2)` smallest, from the start `x0`, within bounds if given. `resnorm` is that sum, `residual` the misfit at each point.
+
+# Syntax
+x = lsqcurvefit(fun, x0, xdata, ydata)
+    The parameters.
+x = lsqcurvefit(fun, x0, xdata, ydata, lb, ub, options)
+    Within bounds, with options.
+[x, resnorm, residual, exitflag, output, lambda, jacobian] = lsqcurvefit(...)
+    With the sum of squares, the residuals and more.
+# Examples
+## Decay to a level
+rng default
+t = (0:0.5:6)';
+y = 5*exp(-0.7*t) + 1 + 0.1*randn(size(t));
+model = @(p, t) p(1)*exp(-p(2)*t) + p(3);
+opts = optimoptions('lsqcurvefit', 'Display', 'off');
+[p, resnorm] = lsqcurvefit(model, [1 1 0], t, y, [0 0 0], [], opts)
+tt = linspace(0, 6, 200);
+plot(t, y, 'o', tt, model(p, tt))
+# See also
+lsqnonlin fitnlm fit
+
+@ lsqnonlin
+Nonlinear least squares: the x that makes sum(fun(x).^2) smallest.
+
+`fun` returns a vector of residuals; `lsqnonlin` minimizes the sum of their squares from `x0`, within bounds `lb` and `ub` if given (and under linear and nonlinear constraints in the longest form). For fitting a model to data, `lsqcurvefit` is the same with the data apart.
+
+# Syntax
+x = lsqnonlin(fun, x0)
+    The minimum.
+x = lsqnonlin(fun, x0, lb, ub, options)
+    Within bounds, with options.
+[x, resnorm, residual, exitflag, output, lambda, jacobian] = lsqnonlin(...)
+    With the sum of squares, the residuals and more.
+# Examples
+## A circle through noisy points
+rng default
+th = 2*pi*rand(40, 1);
+x = 3 + 2*cos(th) + 0.1*randn(40, 1);
+y = -1 + 2*sin(th) + 0.1*randn(40, 1);
+res = @(c) hypot(x - c(1), y - c(2)) - c(3);
+opts = optimoptions('lsqnonlin', 'Display', 'off');
+c = lsqnonlin(res, [0 0 1], [], [], opts)
+a = linspace(0, 2*pi, 200);
+plot(x, y, 'o', c(1) + c(3)*cos(a), c(2) + c(3)*sin(a)), axis equal
+# See also
+lsqcurvefit fsolve
+
+@ lsqlin, lsqnonneg
+Linear least squares under constraints: bounds and linear (in)equalities, or x >= 0.
+
+`lsqlin` minimizes `norm(C*x - d)` subject to `A*x <= b`, `Aeq*x = beq` and `lb <= x <= ub`; `lsqnonneg` subject to `x >= 0` only, the common case of amounts that cannot be negative. Without constraints both are `C\d`.
+
+# Syntax
+x = lsqlin(C, d, A, b)
+    Under linear inequalities.
+x = lsqlin(C, d, A, b, Aeq, beq, lb, ub)
+    With equalities and bounds.
+[x, resnorm, residual, exitflag, output, lambda] = lsqlin(...)
+    With the sum of squares, the residuals and more.
+x = lsqnonneg(C, d)
+    With x >= 0.
+[x, resnorm, residual, exitflag, output, lambda] = lsqnonneg(C, d)
+    With the rest.
+# Examples
+## Free, nonnegative, and shares that add to one
+C = [1 0; 0 1; 1 1];
+d = [2; -1; 1];
+C \ d
+lsqnonneg(C, d)
+opts = optimoptions('lsqlin', 'Display', 'off');
+lsqlin(C, d, [], [], [1 1], 1, [0 0], [1 1], [], opts)
+# See also
+mldivide lsqnonlin quadprog
+
+@ linprog
+Linear programming: minimize f'*x under linear constraints and bounds.
+
+The minimum of a linear function over the region the constraints `A*x <= b`, `Aeq*x = beq` and `lb <= x <= ub` mark out, found at a corner of it. To maximize, minimize `-f`. exitflag 1 is optimal, -2 infeasible, -3 unbounded; `lambda.ineqlin` gives each constraint's shadow price.
+
+# Syntax
+x = linprog(f, A, b)
+    Under inequalities.
+x = linprog(f, A, b, Aeq, beq, lb, ub)
+    With equalities and bounds.
+x = linprog(f, A, b, Aeq, beq, lb, ub, options)
+    With options.
+[x, fval, exitflag, output, lambda] = linprog(...)
+    With the value, how it ended, a summary and the multipliers.
+# Examples
+## Two products, three limited resources
+> Profit 3 and 5 per unit; the resources allow x ≤ 4, 2y ≤ 12 and 3x + 2y ≤ 18.
+f = [-3 -5];
+A = [1 0; 0 2; 3 2];
+b = [4; 12; 18];
+opts = optimoptions('linprog', 'Display', 'off');
+[x, fval, exitflag, ~, lambda] = linprog(f, A, b, [], [], [0 0], [], opts);
+x, profit = -fval, lambda.ineqlin'
+fill([0 4 4 2 0], [0 0 3 6 6], [0.85 0.9 1]), hold on
+plot(x(1), x(2), 'ko', 'MarkerFaceColor', 'k'), hold off
+xlabel('x'), ylabel('y'), grid on
+# See also
+intlinprog quadprog fmincon
+
+@ intlinprog
+Mixed-integer linear programming: linprog with some variables whole numbers.
+
+As `linprog`, with the variables listed in `intcon` required to be integers, by branch and bound. Binary choices are integers with bounds 0 and 1. exitflag 1 is optimal, 2 stopped at a limit with a feasible point, -2 infeasible.
+
+# Syntax
+x = intlinprog(f, intcon, A, b)
+    Under inequalities.
+x = intlinprog(f, intcon, A, b, Aeq, beq, lb, ub)
+    With equalities and bounds.
+[x, fval, exitflag, output] = intlinprog(...)
+    With the value, how it ended and a summary.
+# Examples
+## A knapsack
+> Five items of these values and weights; the bag holds 14.
+value = [10 13 7 8 9];
+weight = [5 6 3 4 5];
+opts = optimoptions('intlinprog', 'Display', 'off');
+x = intlinprog(-value, 1:5, weight, 14, [], [], zeros(1, 5), ones(1, 5), opts)';
+x, total = value*x', load = weight*x'
+# See also
+linprog
+
+@ quadprog
+Quadratic programming: the x that minimizes 1/2*x'*H*x + f'*x under linear constraints and bounds.
+
+For a positive semidefinite `H` the problem is convex and the minimum found is the global one; exitflag -6 says `H` is not. Constraints as for `linprog`.
+
+# Syntax
+x = quadprog(H, f)
+    Without constraints.
+x = quadprog(H, f, A, b, Aeq, beq, lb, ub)
+    With constraints.
+x = quadprog(H, f, A, b, Aeq, beq, lb, ub, x0, options)
+    With a start and options.
+[x, fval, exitflag, output, lambda] = quadprog(...)
+    With the value, how it ended, a summary and the multipliers.
+# Examples
+## The least risky portfolio for a return of 9%
+> Three assets with expected returns 6%, 10% and 14% and this covariance; the shares add to 1, none negative.
+Sigma = [0.04 0.006 0.01; 0.006 0.09 0.02; 0.01 0.02 0.16];
+mu = [0.06 0.10 0.14];
+opts = optimoptions('quadprog', 'Display', 'off');
+w = quadprog(2*Sigma, zeros(3, 1), -mu, -0.09, ones(1, 3), 1, zeros(3, 1), [], [], opts)'
+risk = sqrt(w*Sigma*w')
+# See also
+lsqlin fmincon linprog
+
+@ fminimax, fgoalattain
+Several objectives at once: the smallest worst case, or goals reached as nearly as possible.
+
+`fminimax` makes the largest of `fun`'s values as small as it can (with `'AbsoluteMaxObjectiveCount'`, the first ones by their absolute values). `fgoalattain` finds the smallest `gamma` with `fun(x) - weight*gamma <= goal`: a negative `gamma` means every goal is beaten, a positive one how far the best compromise falls short. Constraints as for `fmincon`.
+
+# Syntax
+x = fminimax(fun, x0)
+    The smallest largest value.
+[x, fval, maxfval, exitflag] = fminimax(fun, x0, A, b, Aeq, beq, lb, ub, nonlcon, options)
+    With constraints and options.
+x = fgoalattain(fun, x0, goal, weight)
+    Goals reached as nearly as possible.
+[x, fval, attainfactor, exitflag] = fgoalattain(...)
+    With the values and gamma.
+# Examples
+## The line with the smallest largest error
+> The minimax line for exp on [0, 2]: its errors at three points are equal in size and alternate in sign.
+x = 0:0.25:2;
+y = exp(x);
+opts = optimoptions('fminimax', 'AbsoluteMaxObjectiveCount', numel(x), 'Display', 'off');
+[p, err, maxerr] = fminimax(@(p) p(1) + p(2)*x - y, [0 1], [], [], [], [], [], [], [], opts);
+p, maxerr
+## Two goals that cannot both be met
+> Squared distances to two points 2 apart, each wanted at most 0.5: no point manages both, and the best compromise, midway, misses each goal by the same 0.5.
+fun = @(x) [x(1)^2 + x(2)^2; (x(1) - 2)^2 + x(2)^2];
+opts = optimoptions('fgoalattain', 'Display', 'off');
+[x, fval, gamma] = fgoalattain(fun, [0 0], [0.5 0.5], [1 1], [], [], [], [], [], [], [], opts)
+# See also
+fmincon gamultiobj paretosearch
+
+@ optimoptions, resetoptions
+Options for a solver, by name and value.
+
+`optimoptions('fmincon')` gives the solver's options at their defaults; names and values given change them. Shown without a semicolon, it lists those set and the defaults. `options.Name` reads or sets one; `resetoptions` puts options back to their defaults. Common ones: `Display` (`'off'`, `'iter'`, `'final'`), `MaxIterations`, `OptimalityTolerance`, `StepTolerance`, `Algorithm`, `SpecifyObjectiveGradient`, `OutputFcn` and `PlotFcn`. The global solvers take theirs the same way.
+
+# Syntax
+options = optimoptions(solver)
+    The defaults.
+options = optimoptions(solver, 'Name', value, ...)
+    With some set.
+options = optimoptions(oldoptions, 'Name', value, ...)
+    Changed.
+options = resetoptions(options, 'Name')
+    One back to its default (or a cell of names).
+# Examples
+## Set, changed, reset
+opts = optimoptions('fminunc', 'Display', 'iter', 'MaxIterations', 50);
+opts.MaxIterations
+opts.OptimalityTolerance = 1e-8;
+opts = resetoptions(opts, 'MaxIterations');
+opts.MaxIterations
+## Each step shown
+fun = @(x) (x(1) - 1)^2 + 3*(x(2) + 2)^2;
+opts = optimoptions('fminunc', 'Display', 'iter');
+x = fminunc(fun, [0 0], opts);
+# See also
+optimset fminunc fmincon
+
+@ optimset, optimget
+A structure of options for the solvers, and an option's value from it.
+
+The older way to give options, used by `fminsearch`, `fminbnd`, `fzero` and `lsqnonneg` among others: `optimset('TolX', 1e-8, 'Display', 'off')`. `optimget` reads one, with a default when it is not set.
+
+# Syntax
+options = optimset('Name', value, ...)
+    Options by name.
+options = optimset(oldopts, 'Name', value, ...)
+    Changed.
+options = optimset(solver)
+    The solver's defaults.
+v = optimget(options, 'Name', default)
+    An option's value, or `default`.
+# Examples
+## A tolerance for fminsearch
+opts = optimset('TolX', 1e-10, 'Display', 'off');
+x = fminsearch(@(x) (x - 2)^2 + 1, 0, opts)
+optimget(opts, 'TolX')
+optimget(opts, 'MaxIter', 400)
+# See also
+optimoptions fminsearch fzero
+
+@ optimplotfval, optimplotx, optimplotfirstorderopt, optimplotfunccount, optimplotconstrviolation, optimplotstepsize, optimplotresnorm
+Plot functions for the solvers: the progress drawn as it goes.
+
+Given as `'PlotFcn'` in the options, they draw at each iteration: the objective's value (`optimplotfval`), the current point as bars (`optimplotx`), the first-order optimality, the function evaluations so far, the largest constraint violation, the length of each step, or the sum of squares of a least-squares solver (`optimplotresnorm`). Several in a cell share one window, a plot each.
+
+# Syntax
+options = optimoptions(solver, 'PlotFcn', @optimplotfval)
+    One plot.
+options = optimoptions(solver, 'PlotFcn', {@optimplotfval, @optimplotx, ...})
+    Several.
+# Examples
+## Four views of a minimization
+fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+opts = optimoptions('fminunc', 'Display', 'off', 'PlotFcn', {@optimplotfval, @optimplotx, @optimplotfirstorderopt, @optimplotstepsize});
+x = fminunc(fun, [-1 2], opts)
+## A constrained solve
+fun = @(x) 100*(x(2) - x(1)^2)^2 + (1 - x(1))^2;
+circle = @(x) deal(x(1)^2 + x(2)^2 - 1, []);
+opts = optimoptions('fmincon', 'Display', 'off', 'PlotFcn', {@optimplotfval, @optimplotconstrviolation});
+x = fmincon(fun, [0 0], [], [], [], [], [], [], circle, opts);
+# See also
+optimoptions

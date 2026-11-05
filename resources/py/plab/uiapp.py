@@ -10,6 +10,8 @@ drop-down's Value among its Items). The page draws them (pylab-ui.js) and
 reports pushes and changed values, which set Value and queue the
 callbacks with their event data (uievents.py calls component_event).
 """
+import math
+
 import numpy as np
 
 from .values import MError, Char, Cell, Str, Struct, FH, EMPTY, numel, py_str
@@ -61,13 +63,13 @@ KINDS = {
                                          'Editable': True, 'ValueChangedFcn': '', 'ValueChangingFcn': '', 'BackgroundColor': (1.0, 1.0, 1.0),
                                          'HorizontalAlignment': 'right'}),
     'knob': ('uiknob', 'Knob', {'Value': 0.0, 'Limits': lambda: np.array([[0.0, 100.0]]), 'MajorTicks': lambda: np.array([[0, 20, 40, 60, 80, 100.0]]),
-                                'MajorTickLabels': None, 'ValueChangedFcn': '', 'ValueChangingFcn': '', 'Style': 'continuous',
+                                'MajorTicksMode': 'auto', 'MajorTickLabels': None, 'ValueChangedFcn': '', 'ValueChangingFcn': '', 'Style': 'continuous',
                                 'Position': lambda: np.array([[100.0, 100.0, 60.0, 60.0]])}),
     'discreteknob': ('uidiscreteknob', 'DiscreteKnob', {'Items': lambda: _cells(['Off', 'Low', 'Medium', 'High']), 'ItemsData': lambda: EMPTY(),
                                                         'Value': lambda: Char.of('Off'), 'ValueChangedFcn': '',
                                                         'Position': lambda: np.array([[100.0, 100.0, 60.0, 60.0]])}),
     'gauge': ('uigauge', 'Gauge', {'Value': 0.0, 'Limits': lambda: np.array([[0.0, 100.0]]), 'MajorTicks': lambda: np.array([[0, 20, 40, 60, 80, 100.0]]),
-                                   'MajorTickLabels': None, 'ScaleColors': lambda: EMPTY(), 'ScaleColorLimits': lambda: EMPTY(),
+                                   'MajorTicksMode': 'auto', 'MajorTickLabels': None, 'ScaleColors': lambda: EMPTY(), 'ScaleColorLimits': lambda: EMPTY(),
                                    'ScaleDirection': 'clockwise', 'Style': 'circular', 'BackgroundColor': (1.0, 1.0, 1.0),
                                    'Position': lambda: np.array([[100.0, 100.0, 120.0, 120.0]])}),
     'lamp': ('uilamp', 'Lamp', {'Color': (0.0, 1.0, 0.0), 'Position': lambda: np.array([[100.0, 100.0, 20.0, 20.0]])}),
@@ -161,6 +163,12 @@ class UIComp(_Placed):
             if a.size != 2 or not a[0] < a[1]:
                 raise gerr("'Limits' must be a 1-by-2 vector of increasing numbers.", 'MATLAB:ui:Limits')
             self.props[k] = a.reshape(1, 2)
+            if 'MajorTicks' in self.props and self.props.get('MajorTicksMode', 'auto') == 'auto' and np.all(np.isfinite(a)):
+                # ticks not set by hand follow the limits
+                major, minor = _nice_ticks(a[0], a[1])
+                self.props['MajorTicks'] = major.reshape(1, -1)
+                if 'MinorTicks' in self.props and self.props.get('MinorTicksMode', 'auto') == 'auto':
+                    self.props['MinorTicks'] = minor.reshape(1, -1)
             v = self.props.get('Value')
             if isinstance(v, float) and kind in ('slider', 'knob', 'spinner', 'numericeditfield'):
                 self.props['Value'] = float(min(max(v, a[0]), a[1]))
@@ -168,8 +176,8 @@ class UIComp(_Placed):
             return
         if k in ('MajorTicks', 'MinorTicks', 'ScaleColorLimits'):
             self.props[k] = np.asarray(value, float).reshape(1, -1) if numel(value) else EMPTY()
-            if k == 'MajorTicks':
-                self.props['MajorTicksMode'] = 'manual'
+            if k in ('MajorTicks', 'MinorTicks'):
+                self.props[k + 'Mode'] = 'manual'
             self.touch()
             return
         if k == 'MajorTickLabels':
@@ -592,6 +600,17 @@ def _image_url(src):
             chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
         return 'data:image/png;base64,' + base64.b64encode(png).decode('ascii')
     return None
+
+
+def _nice_ticks(lo, hi):
+    """About five major ticks over [lo, hi] at a step of 1, 2 or 5 times a power of ten (0:20:100 for [0 100]),
+    and minor ones at a quarter of a step of 2, a fifth of a step of 1 or 5."""
+    raw = (hi - lo) / 5
+    p = 10.0 ** math.floor(math.log10(raw))
+    m = next(m for m in (1, 2, 5, 10) if m * p >= raw * (1 - 1e-12))
+    step = m * p
+    ticks = lambda s: np.arange(math.ceil(lo / s - 1e-9), math.floor(hi / s + 1e-9) + 1) * s
+    return ticks(step), ticks(step / (4 if m == 2 else 5))
 
 
 def grid_json(g, base, w, h):

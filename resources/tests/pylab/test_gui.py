@@ -970,4 +970,42 @@ check("the page's docking reaches WindowStyle (normal, then docked), and the fig
 run("set(groot, 'DefaultFigureWindowStyle', 'docked'); wg = figure; ws3 = get(wg, 'WindowStyle'); set(groot, 'DefaultFigureWindowStyle', 'normal'); close all force")
 check('DefaultFigureWindowStyle docks new figures', text('ws3'), 'docked')
 
+# plotting into a uifigure's axes makes no figure of its own, and a hidden figure is not the root's CurrentFigure
+run("close all force; uf = uifigure; uax = uiaxes(uf); plot(uax, 1:3); line(uax, [1 2], [2 1]); nfig = numel(findall(groot, 'Type', 'figure')); "
+    "nl = numel(uax.Children); cf0 = isempty(get(groot, 'CurrentFigure')); hf = figure; cf1 = isequal(get(groot, 'CurrentFigure'), hf); "
+    "set(hf, 'HandleVisibility', 'off'); cf2 = isempty(get(groot, 'CurrentFigure')); delete(uf); close all force")
+check('plot and line into uiaxes draw there and make no other figure; CurrentFigure skips hidden handles as gcf does',
+      (val('nfig'), val('nl'), val('cf0'), val('cf1'), val('cf2')), (1, 2, True, True, True))
+
+# a value in a handle's property changed in place goes back through the setter: a grid child's Layout, a bar's YData
+run("close all force; uf = uifigure('Position', [100 100 360 200]); g = uigridlayout(uf, [3 2]); ta = uitextarea(g); ta.Layout.Row = 3; ta.Layout.Column = [1 2]; "
+    "lr = ta.Layout.Row; lc = ta.Layout.Column; tw = ta.Position(3); "
+    "bf = figure('Visible', 'off'); bh = bar([1 2 3]); bh.YData(2) = 5; delete(uf); ")
+
+
+def bar_tops(fig):
+    """The laid-out tops of the first bar series in a figure, as the page gets them."""
+    ser = serialize_figure(fig)
+    t = [c for c in ser['axes'][0]['children'] if c.get('kind') == 'bar'][0]['top']
+    if isinstance(t, dict) and '$' in t:
+        import base64
+        t = np.frombuffer(base64.b64decode(t['$']), {'f4': np.float32, 'f8': np.float64}[t['dt']])
+    return np.round(np.asarray(t, float).reshape(-1), 4).tolist()
+
+
+check("nested assignment into a handle's struct or array property: a grid child spans its columns, and the bars are laid out again",
+      (val('lr'), np.asarray(val('lc')).reshape(-1).tolist(), val('tw') > 300, bar_tops(val('bf'))), (3, [1, 2], True, [1, 5, 3]))
+run("close all force")
+
+# a slider's, knob's and gauge's ticks follow Limits until they are set
+run("uf = uifigure; s1 = uislider(uf, 'Limits', [0 10]); t1 = s1.MajorTicks; s2 = uislider(uf, 'MajorTicks', [0 50 100]); s2.Limits = [0 200]; t2 = s2.MajorTicks; "
+    "gg = uigauge(uf, 'Limits', [-1 1]); t3 = gg.MajorTicks; delete(uf)")
+check('ticks follow Limits (nice steps) until set by hand', (np.asarray(val('t1')).reshape(-1).tolist(), np.asarray(val('t2')).reshape(-1).tolist(), np.asarray(val('t3')).reshape(-1).tolist()),
+      ([0, 2, 4, 6, 8, 10], [0, 50, 100], [-1, -0.5, 0, 0.5, 1]))
+
+# optimplotx draws the point the solver ends at
+run("close all force; po = optimoptions('fminunc', 'Display', 'off', 'PlotFcn', @optimplotx); px = fminunc(@(x) (x(1) - 1)^2 + (x(2) + 2)^2, [3 3], po); pf = gcf;")
+check('optimplotx: the bars end at the solution', bar_tops(val('pf')), [1.0, -2.0])
+run("close all force")
+
 sys.exit(check.done())

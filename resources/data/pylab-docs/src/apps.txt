@@ -1,0 +1,382 @@
+@ appdesigner
+The app designer: lay out an app's window with the mouse, and get its class written.
+
+Components are added from the palette (a click, or a drag onto the window), moved and resized with the mouse or the arrow keys, and set in the inspector, where a callback gets its name and code. Save writes `Name.m` in the current folder, a class derived from `matlab.apps.AppBase` (with the layout kept in a comment at its end, so the designer can open it again); Run saves and runs it; Code opens the file in the Editor, where the callbacks can be written too. The designer writes the rest of the class again each time, so changes made outside the callbacks are not kept.
+
+# Syntax
+appdesigner
+    A new app.
+appdesigner('Name')
+    The app in `Name.m`, or a new one of that name.
+# Examples
+## A new app of a name
+> Opens the designer beside the Editor; nothing is written until Save.
+appdesigner('TipCalculator')
+# Notes
+To go back from the code to the layout: Design App on the Editor's tab with the app's file open, or Open in App Designer on the file in the Current Folder.
+# See also
+uifigure createCallbackFcn classdef
+
+@ uifigure
+A window for an app: no number, its handle hidden, no menus or tools.
+
+Components, panels, grid layouts and `uiaxes` go in it. Its `Position` is in pixels, `[left bottom width height]`. A uifigure is never the current figure, so plotting into it needs the axes given: `plot(ax, ...)`.
+
+# Syntax
+fig = uifigure
+    A window of 640 by 480 pixels.
+fig = uifigure(Name, Value, ...)
+    With properties: `Name`, `Position`, `Color`, `Resize`, `CloseRequestFcn`, ...
+# Examples
+## A small window with three components
+fig = uifigure('Name', 'Greeting', 'Position', [100 100 300 140]);
+uilabel(fig, 'Text', 'Your name:', 'Position', [20 90 80 22]);
+ed = uieditfield(fig, 'Position', [100 90 180 22], 'Value', 'Ada');
+uibutton(fig, 'Text', 'Greet', 'Position', [100 40 100 30], ...
+    'ButtonPushedFcn', @(b, e) disp(['Hello, ' ed.Value]));
+# See also
+uigridlayout uiaxes uibutton figure
+
+@ uibutton
+A push button, or a state button that stays pressed.
+
+A push button runs its `ButtonPushedFcn` when pushed; a state button (`'state'`) toggles its `Value` between true and false and runs its `ValueChangedFcn`. `Text`, `Icon` and `IconAlignment` set its face.
+
+# Syntax
+b = uibutton(parent)
+    A push button.
+b = uibutton(parent, 'state')
+    A state button.
+b = uibutton(..., Name, Value)
+    With properties.
+# Examples
+## Two kinds of button
+fig = uifigure('Position', [100 100 260 120]);
+b = uibutton(fig, 'Text', 'Run', 'Position', [20 50 100 30], 'ButtonPushedFcn', @(src, evt) disp('pushed'));
+s = uibutton(fig, 'state', 'Text', 'Hold', 'Position', [140 50 100 30], 'Value', true);
+s.Value
+# See also
+uifigure uitogglebutton
+
+@ uilabel, uieditfield, uitextarea
+Text in an app: a label, a field to type in (text or a number), and a field of several lines.
+
+A numeric field (`uieditfield(parent, 'numeric')`) keeps its `Value` a number within `Limits`, shown by `ValueDisplayFormat`: a number typed outside the limits is not taken, and one set from code is an error. `ValueChangedFcn` runs when the typing is done (Enter, or leaving the field), and `ValueChangingFcn` as a text field is typed in. A text area's `Value` is a column cell of its lines.
+
+# Syntax
+l = uilabel(parent, 'Text', 'Name:')
+    A label.
+e = uieditfield(parent)
+    A text field.
+e = uieditfield(parent, 'numeric')
+    A number field.
+t = uitextarea(parent, 'Value', {'line 1'; 'line 2'})
+    Several lines.
+# Examples
+## A small form
+fig = uifigure('Position', [100 100 320 200]);
+uilabel(fig, 'Text', 'Title', 'Position', [20 160 60 22]);
+uieditfield(fig, 'Position', [90 160 210 22], 'Value', 'Field notes');
+uilabel(fig, 'Text', 'Depth (m)', 'Position', [20 125 70 22]);
+n = uieditfield(fig, 'numeric', 'Position', [90 125 80 22], 'Limits', [0 500], 'Value', 120);
+uitextarea(fig, 'Position', [20 20 280 90], 'Value', {'Core taken at noon.'; 'Water at 3 m.'});
+try, n.Value = 600; catch err, disp(err.message), end
+n.Value
+# See also
+uifigure uidropdown
+
+@ uidropdown, uilistbox
+Lists to choose from: one that opens to choose one item, and one that shows its items.
+
+`Items` are the texts shown. `Value` is the chosen item, or its element of `ItemsData` when that is set. A list box takes several with `'Multiselect', 'on'` (its `Value` is then a cell); a drop-down with `'Editable', 'on'` also takes typed text.
+
+# Syntax
+d = uidropdown(parent, 'Items', {'a', 'b', 'c'})
+    A drop-down.
+d = uidropdown(..., 'ItemsData', [1 2 3])
+    With data for each item.
+l = uilistbox(parent, 'Items', {'a', 'b', 'c'})
+    A list box.
+l = uilistbox(..., 'Multiselect', 'on')
+    Several chosen.
+# Examples
+## Chosen by text or by data
+fig = uifigure('Position', [100 100 300 160]);
+d = uidropdown(fig, 'Items', {'Red', 'Green', 'Blue'}, 'ItemsData', [1 2 3], 'Position', [20 110 120 22]);
+d.Value = 3;
+l = uilistbox(fig, 'Items', {'Sand', 'Clay', 'Silt', 'Gravel'}, 'Multiselect', 'on', 'Position', [160 20 120 110]);
+l.Value = {'Clay', 'Gravel'};
+d.Value, l.Value
+# See also
+uiradiobutton uicheckbox
+
+@ uicheckbox, uiswitch
+A check box, and a switch between two items.
+
+A check box's `Value` is true or false. A switch (slider, `'rocker'` or `'toggle'`) has two `Items`, `Off` and `On` unless given, and its `Value` is one of them. Both run `ValueChangedFcn` when changed.
+
+# Syntax
+c = uicheckbox(parent, 'Text', 'Show grid')
+    A check box.
+s = uiswitch(parent)
+    A slider switch.
+s = uiswitch(parent, 'rocker')
+    A rocker (also `'toggle'`).
+# Examples
+## On and off
+fig = uifigure('Position', [100 100 300 140]);
+c = uicheckbox(fig, 'Text', 'Show grid', 'Value', true, 'Position', [20 90 120 22]);
+s = uiswitch(fig, 'Items', {'Manual', 'Auto'}, 'Value', 'Auto', 'Position', [170 90 45 20]);
+r = uiswitch(fig, 'rocker', 'Position', [60 20 20 45]);
+c.Value, s.Value, r.Value
+# See also
+uibutton uitogglebutton
+
+@ uislider, uispinner, uiknob
+Numbers chosen with the mouse: a slider, a field with arrows, and a knob.
+
+All three keep their `Value` within `Limits`. A slider has `MajorTicks` and `MajorTickLabels`; its `ValueChangingFcn` runs as it is dragged and `ValueChangedFcn` when it is let go. A spinner steps by `Step`. A knob turns continuously, or among `Items` when `'discrete'`.
+
+# Syntax
+s = uislider(parent, 'Limits', [0 10])
+    A slider.
+p = uispinner(parent, 'Step', 0.5, 'Limits', [0 10])
+    A spinner.
+k = uiknob(parent)
+    A continuous knob.
+k = uiknob(parent, 'discrete')
+    A knob among items.
+# Examples
+## Three ways to set a number
+fig = uifigure('Position', [100 100 420 180]);
+uislider(fig, 'Limits', [0 10], 'Value', 3, 'Position', [20 140 180 3]);
+p = uispinner(fig, 'Step', 0.5, 'Limits', [0 10], 'Value', 2.5, 'Position', [20 40 100 22]);
+k = uiknob(fig, 'discrete', 'Position', [260 40 80 80]);
+p.Value = p.Value + p.Step;
+p.Value, k.Items, k.Value
+# See also
+uigauge uieditfield
+
+@ uigauge, uilamp
+Indicators: a gauge showing a value, and a lamp of a colour.
+
+A gauge is `'circular'` unless given (also `'linear'`, `'ninetydegree'`, `'semicircular'`); `ScaleColors` with `ScaleColorLimits` colour parts of its scale. A lamp shows a `Color`, for a state such as ready or failed.
+
+# Syntax
+g = uigauge(parent)
+    A circular gauge.
+g = uigauge(parent, 'linear')
+    Another style.
+l = uilamp(parent, 'Color', [1 0 0])
+    A lamp.
+# Examples
+## A reading and a warning
+fig = uifigure('Position', [100 100 360 200]);
+g = uigauge(fig, 'Value', 72, 'Position', [20 30 150 150], ...
+    'ScaleColors', {'green', 'red'}, 'ScaleColorLimits', [0 60; 60 100]);
+uilamp(fig, 'Color', [1 0 0], 'Position', [220 110 30 30]);
+uilabel(fig, 'Text', 'Over 60', 'Position', [260 110 80 30]);
+g.Value
+# See also
+uislider uiknob
+
+@ uiradiobutton, uitogglebutton
+Buttons in a button group, one chosen at a time.
+
+Made in a `uibuttongroup`: choosing a radio button clears the group's others, and pressing a toggle button releases them. The group's `SelectedObject` is the chosen one, and its `SelectionChangedFcn` runs with `OldValue` and `NewValue` when the choice changes.
+
+# Syntax
+r = uiradiobutton(bg, 'Text', 'Fast')
+    A radio button in group `bg`.
+t = uitogglebutton(bg, 'Text', 'A')
+    A toggle button in group `bg`.
+# Examples
+## One of three, twice
+fig = uifigure('Position', [100 100 360 150]);
+bg = uibuttongroup(fig, 'Title', 'Speed', 'Position', [20 20 150 110]);
+uiradiobutton(bg, 'Text', 'Slow', 'Position', [10 60 100 22]);
+fast = uiradiobutton(bg, 'Text', 'Fast', 'Position', [10 30 100 22]);
+fast.Value = true;
+tg = uibuttongroup(fig, 'Title', 'View', 'Position', [190 20 150 110]);
+uitogglebutton(tg, 'Text', 'Map', 'Position', [10 50 60 30]);
+uitogglebutton(tg, 'Text', 'Table', 'Position', [75 50 60 30]);
+bg.SelectedObject.Text
+# See also
+uibuttongroup uicheckbox
+
+@ uiimage, uihyperlink
+A picture in an app, and a link.
+
+An image's `ImageSource` is a file name or an RGB array; `ScaleMethod` (`'fit'` unless given, or `'fill'`, `'none'`, `'scaledown'`, `'stretch'`) fits it into its `Position`, and `ImageClickedFcn` runs when it is clicked. A hyperlink shows `Text` and opens its `URL` when clicked.
+
+# Syntax
+im = uiimage(parent, 'ImageSource', source)
+    A picture.
+h = uihyperlink(parent, 'Text', 'Help', 'URL', 'https://...')
+    A link.
+# Examples
+## A picture made in code, and a link
+[x, y] = meshgrid(linspace(-1, 1, 64));
+rgb = cat(3, (x + 1)/2, (y + 1)/2, 0.5*ones(64));
+fig = uifigure('Position', [100 100 300 200]);
+uiimage(fig, 'ImageSource', rgb, 'Position', [20 50 120 120]);
+uihyperlink(fig, 'Text', 'About colour spaces', 'URL', 'https://en.wikipedia.org/wiki/RGB_color_model', 'Position', [160 100 130 22]);
+# See also
+image uilabel
+
+@ uigridlayout
+Rows and columns that place the components put in them, filling the parent.
+
+`RowHeight` and `ColumnWidth` are pixels, `'fit'` (as much as the content needs), or weights such as `'1x'` and `'2x'` that share what is left; `Padding` and `RowSpacing`, `ColumnSpacing` set the gaps. A component's `Layout.Row` and `Layout.Column` (a number, or `[first last]` to span) say where it goes; without them it takes the next free cell. When the window is resized, the grid follows.
+
+# Syntax
+g = uigridlayout(parent)
+    Two rows and two columns.
+g = uigridlayout(parent, [rows cols])
+    Of a size.
+# Examples
+## A form that keeps its shape
+fig = uifigure('Position', [100 100 360 200]);
+g = uigridlayout(fig, [3 2]);
+g.ColumnWidth = {'fit', '1x'};
+g.RowHeight = {'fit', 'fit', '1x'};
+uilabel(g, 'Text', 'Site');
+uieditfield(g, 'Value', 'North field');
+uilabel(g, 'Text', 'Samples');
+uispinner(g, 'Value', 12);
+notes = uitextarea(g, 'Value', {'Spans both columns.'});
+notes.Layout.Row = 3;
+notes.Layout.Column = [1 2];
+# See also
+uifigure uipanel
+
+@ uiaxes
+Axes in an app.
+
+Plotting functions draw into them when given them: `plot(ax, x, y)`, `title(ax, '...')`, `xlabel(ax, '...')`, since a uifigure is never the current figure. Their `Position` is the box of the plot itself; the tick labels, axis labels and title go outside it, so leave room around it.
+
+# Syntax
+ax = uiaxes(parent)
+    Axes in a uifigure or a container.
+ax = uiaxes(parent, Name, Value)
+    With properties.
+# Examples
+## A plot in an app's window
+fig = uifigure('Position', [100 100 420 300]);
+ax = uiaxes(fig, 'Position', [55 45 340 215]);
+t = linspace(0, 10, 200);
+plot(ax, t, exp(-t/4).*cos(2*t))
+title(ax, 'Damped oscillation')
+xlabel(ax, 't'), grid(ax, 'on')
+# See also
+uifigure axes plot
+
+@ uialert, uiconfirm
+A message in an app's window, and a question whose chosen option is returned.
+
+`uialert` shows a message with an OK button, an icon (`'error'` unless given; `'warning'`, `'info'`, `'success'`, `'none'`), and goes on at once. `uiconfirm` waits until an option is chosen and returns it: `OK` and `Cancel` unless `'Options'` gives up to three; `'DefaultOption'` and `'CancelOption'` say which Enter and Escape pick, and `CloseFcn` runs when it closes.
+
+# Syntax
+uialert(fig, message, title)
+    A message.
+uialert(fig, message, title, 'Icon', 'warning')
+    With an icon.
+choice = uiconfirm(fig, message, title)
+    A question, OK or Cancel.
+choice = uiconfirm(fig, message, title, 'Options', {'Save', 'Discard', 'Cancel'})
+    With options.
+# Examples
+## A message
+fig = uifigure('Position', [100 100 360 200]);
+uialert(fig, 'The file could not be read.', 'Open', 'Icon', 'warning');
+## A question
+> Run, it waits for a choice. The stored output came without one, which counts as the cancel option (the last, unless 'CancelOption' says).
+fig = uifigure('Position', [100 100 360 200]);
+choice = uiconfirm(fig, 'Save the changes?', 'Close', 'Options', {'Save', 'Discard', 'Cancel'})
+# See also
+uiprogressdlg msgbox questdlg
+
+@ uiprogressdlg
+A progress bar for a long task, over an app's window.
+
+Its `Value` (0 to 1) and `Message` are set by the program as the work goes on; `close(d)` removes it. `'Indeterminate', 'on'` shows work without a measure of how much is done.
+
+# Syntax
+d = uiprogressdlg(fig, 'Title', 'Working', 'Message', 'Reading files')
+    The progress bar.
+# Examples
+## A loop that reports
+fig = uifigure('Position', [100 100 360 200]);
+d = uiprogressdlg(fig, 'Title', 'Working', 'Message', 'Starting');
+files = {'a.csv', 'b.csv', 'c.csv', 'd.csv'};
+for k = 1:numel(files)
+    d.Value = k/numel(files);
+    d.Message = ['Reading ' files{k}];
+end
+d.Value
+# See also
+uialert waitbar
+
+@ createCallbackFcn, registerApp, runStartupFcn
+What an app's class uses to tie its components, window and startup to itself.
+
+An app is a class derived from `matlab.apps.AppBase`, as the app designer writes it. `createCallbackFcn(app, @method, true)` gives a component a callback that calls the app's own method with the app and the event data; `registerApp(app, app.UIFigure)` ties the app to its window, so that closing the window deletes the app; `runStartupFcn(app, @startupFcn)` runs the startup method once the window is made.
+
+# Syntax
+comp.ButtonPushedFcn = createCallbackFcn(app, @MethodName, true)
+    A callback that calls a method of the app.
+registerApp(app, app.UIFigure)
+    The app tied to its window.
+runStartupFcn(app, @startupFcn)
+    The startup method run.
+# Examples
+## A converter, as the designer would write it
+> The class is written to its file here so that the example runs on its own. The callback is then called as a change of the field would call it.
+lines = {
+    'classdef Converter < matlab.apps.AppBase'
+    '    properties (Access = public)'
+    '        UIFigure      matlab.ui.Figure'
+    '        CelsiusField  matlab.ui.control.NumericEditField'
+    '        Result        matlab.ui.control.Label'
+    '    end'
+    '    methods (Access = private)'
+    '        function startupFcn(app)'
+    '            app.CelsiusField.Value = 20;'
+    '            show(app)'
+    '        end'
+    '        function CelsiusChanged(app, event)'
+    '            show(app)'
+    '        end'
+    '        function show(app)'
+    '            app.Result.Text = sprintf(''%g °F'', app.CelsiusField.Value*9/5 + 32);'
+    '        end'
+    '        function createComponents(app)'
+    '            app.UIFigure = uifigure(''Position'', [100 100 260 110], ''Name'', ''Converter'');'
+    '            uilabel(app.UIFigure, ''Text'', ''°C'', ''Position'', [20 60 30 22]);'
+    '            app.CelsiusField = uieditfield(app.UIFigure, ''numeric'', ''Position'', [50 60 80 22]);'
+    '            app.CelsiusField.ValueChangedFcn = createCallbackFcn(app, @CelsiusChanged, true);'
+    '            app.Result = uilabel(app.UIFigure, ''Position'', [150 60 100 22]);'
+    '        end'
+    '    end'
+    '    methods (Access = public)'
+    '        function app = Converter'
+    '            createComponents(app)'
+    '            registerApp(app, app.UIFigure)'
+    '            runStartupFcn(app, @startupFcn)'
+    '        end'
+    '        function delete(app)'
+    '            delete(app.UIFigure)'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Converter.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+app = Converter;
+app.Result.Text
+app.CelsiusField.Value = 100;
+cb = app.CelsiusField.ValueChangedFcn;
+cb(app.CelsiusField, []);
+app.Result.Text
+# See also
+appdesigner classdef uifigure

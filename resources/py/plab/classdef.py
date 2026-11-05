@@ -628,6 +628,10 @@ def _super_calls(ftext, ctor_out):
             has_args = j + 1 < len(toks) and toks[j + 1].k == 'op' and toks[j + 1].v == '(' and toks[j + 1].pos == end
             if ctor_out and a.v == ctor_out:
                 rep = f"plabSuperCall('{sup}', {a.v}" + (', ' if has_args else ')')
+                before = ftext[:a.pos].rsplit('\n', 1)[-1].strip()
+                if before == '' or before.endswith((';', ',')):
+                    # obj@Super(args); as a statement: the object made by it, as obj = obj@Super(args) (a value class too)
+                    rep = f'{a.v} = ' + rep
             else:
                 rep = f"plabSuperCall('{sup}.{a.v}'" + (', ' if has_args else ')')
             edits.append((a.pos, end + (1 if has_args else 0), rep))

@@ -1700,6 +1700,19 @@ _PLOTS = {'plot': None, 'line': None, 'scatter': None, 'stairs': None, 'stem': N
           'xline': 'x', 'yline': 'y', 'xlim': 'x', 'ylim': 'y', 'zlim': 'z', 'text': None}
 
 
+def _target_axes(args, result):
+    """The axes a plotting call drew into, from the axes given first or the handles it returned (None when neither says)."""
+    from ..graphics_base import Axes, GObj, HArr
+    for v in (args[0] if args else None, result):
+        if isinstance(v, HArr):
+            v = next((x for x in v.a.flat if isinstance(x, GObj)), None)
+        while isinstance(v, GObj) and not isinstance(v, Axes):
+            v = v.parent
+        if isinstance(v, Axes):
+            return v
+    return None
+
+
 def _axes_of(name, ndata):
     kind = _PLOTS[name]
     if kind in ('x', 'y', 'z'):
@@ -1788,13 +1801,15 @@ def wrap_plots(reg):
                         kinds[axes[k]] = kind
                 return tuple(new), kinds
 
-            def mark(kinds, result):
+            def mark(kinds, result, args=()):
                 from . import graphics as G
-                ax = None
-                try:
-                    ax = G.gca_()
-                except Exception:
-                    return
+                # the axes drawn into: those given, or the result's (gca would make a figure when they are in a uifigure)
+                ax = _target_axes(args, result)
+                if ax is None:
+                    try:
+                        ax = G.gca_()
+                    except Exception:
+                        return
                 cur = getattr(ax, 'kinds', None) or {}
                 if ax.props.get('NextPlot') == 'replace' and name not in ('xlim', 'ylim', 'zlim', 'xline', 'yline', 'text'):
                     cur = {}
@@ -1809,11 +1824,11 @@ def wrap_plots(reg):
                     cat = _categorical_histogram(reg, a[len(pre):])
                     if cat is not None:
                         r, kinds = cat
-                        mark(kinds, r)
+                        mark(kinds, r, a[len(pre):])
                         return r
                     args, kinds = convert(a[len(pre):])
                     r = orig_hist(*pre, *args)
-                    mark(kinds, r)
+                    mark(kinds, r, args)
                     return r
                 return f
             if aw:
@@ -1822,7 +1837,7 @@ def wrap_plots(reg):
                     args, kinds = convert(a[len(pre):])
                     r = await orig(*pre, *args)
                     if kinds or name not in ('xlim', 'ylim', 'zlim'):
-                        mark(kinds, r)
+                        mark(kinds, r, args)
                     return r
             else:
                 def f(*a):
@@ -1830,7 +1845,7 @@ def wrap_plots(reg):
                     args, kinds = convert(a[len(pre):])
                     r = orig(*pre, *args)
                     if kinds or (len(args) > 0 and name not in ('xlim', 'ylim', 'zlim', 'xline', 'yline', 'text')):
-                        mark(kinds, r)
+                        mark(kinds, r, args)
                     return r
             return f
         reg[name] = Info(info.name, make(name, info.fn, info.ws, info.aw), info.ws, info.aw, info.nout, info.arr)

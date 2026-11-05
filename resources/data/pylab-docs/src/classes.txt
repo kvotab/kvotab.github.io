@@ -1,0 +1,262 @@
+@ properties, methods
+The public properties of an object or class, and its methods.
+
+Without an output, they list the names under a heading; with one, they return them as a column cell. Either takes an object or a class name. Only what is public shows: private properties and methods stay hidden.
+
+# Syntax
+properties(obj)
+    The properties listed.
+p = properties('ClassName')
+    As a cell.
+methods(obj)
+    The methods listed.
+m = methods('ClassName')
+    As a cell.
+# Examples
+## A class of your own
+> The class is written to its file here so that the example runs on its own.
+lines = {
+    'classdef Account < handle'
+    '    properties'
+    '        Owner = '''''
+    '        Balance = 0'
+    '    end'
+    '    properties (Access = private)'
+    '        Log = {}'
+    '    end'
+    '    methods'
+    '        function deposit(a, x)'
+    '            a.Balance = a.Balance + x;'
+    '            a.Log{end + 1} = x;'
+    '        end'
+    '        function withdraw(a, x)'
+    '            a.Balance = a.Balance - x;'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Account.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+properties('Account')
+m = methods('Account');
+m(ismember(m, {'deposit', 'withdraw'}))'
+## A built-in class
+k = containers.Map({'a', 'b'}, {1, 2});
+properties(k)
+# See also
+isprop ismethod metaclass classdef
+
+@ ismethod, isprop, isobject
+Tests on objects: has it a method of a name, a property of a name, and is it an object of a class at all.
+
+`isobject` is true for objects of classes (your own, maps, exceptions), and false for numbers, text, structs and cells, which are values of built-in types.
+
+# Syntax
+tf = ismethod(obj, 'name')
+    A method of that name.
+tf = isprop(obj, 'name')
+    A property of that name.
+tf = isobject(x)
+    An object of a class.
+# Examples
+## A map, and some values that are not objects
+k = containers.Map({'a', 'b'}, {1, 2});
+[ismethod(k, 'keys') ismethod(k, 'sort') isprop(k, 'Count')]
+[isobject(k) isobject(MException('my:id', 'text'))]
+[isobject(5) isobject('text') isobject(struct('a', 1)) isobject({1})]
+# See also
+properties methods isa class
+
+@ isvalid
+True for handle objects that have not been deleted.
+
+Deleting a handle object (a figure closed, `delete(h)`) leaves the variables holding it pointing at nothing; `isvalid` tells them apart, element by element for an array of handles.
+
+# Syntax
+tf = isvalid(h)
+    For each handle, whether it is still there.
+# Examples
+## Before and after
+f = figure('Visible', 'off');
+g = figure('Visible', 'off');
+h = plot(1:3);
+isvalid([f g])
+close(f)
+delete(h)
+[isvalid([f g]) isvalid(h)]
+close all
+# See also
+delete ishandle isgraphics
+
+@ addlistener, listener, notify, events
+Events of handle objects: raised by notify, heard by listeners.
+
+A handle class lists its events in an `events` block, and its methods raise them with `notify(obj, 'EventName')`. `addlistener` attaches a callback, which is given the object and the event data (`Source`, `EventName`, and any fields given to `notify`); its listener's `Enabled` turns it off and on, and `delete(L)` removes it. `listener` makes one too. `events` lists a class's events; every handle class also has `ObjectBeingDestroyed`, raised by `delete`.
+
+# Syntax
+L = addlistener(obj, 'EventName', callback)
+    A listener.
+L = listener(obj, 'EventName', callback)
+    The same.
+notify(obj, 'EventName')
+    The event raised.
+notify(obj, 'EventName', eventData)
+    With event data.
+events(obj)
+    The events listed.
+names = events('ClassName')
+    As a cell.
+# Examples
+## A tank that warns when it overflows
+lines = {
+    'classdef Tank < handle'
+    '    properties'
+    '        Level = 0'
+    '    end'
+    '    events'
+    '        Overflow'
+    '    end'
+    '    methods'
+    '        function fill(t, amount)'
+    '            t.Level = t.Level + amount;'
+    '            if t.Level > 100'
+    '                notify(t, ''Overflow'');'
+    '            end'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Tank.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+t = Tank;
+L = addlistener(t, 'Overflow', @(src, evt) fprintf('%s at level %g\n', evt.EventName, src.Level));
+fill(t, 60)
+fill(t, 60)
+L.Enabled = false;
+fill(t, 10)
+events(t)
+# See also
+classdef delete
+
+@ metaclass, meta.class.fromName
+The description of a class: its name, properties, methods, events and superclasses.
+
+`metaclass(obj)`, `?ClassName` and `meta.class.fromName('ClassName')` give a `meta.class` object. Its lists describe the class, inherited parts included: `PropertyList` (each with `Name`, `GetAccess`, `SetAccess`, `Dependent`, `Constant`, `DefaultValue`, ...), `MethodList` (`Name`, `Access`, `Static`, ...), `EventList` and `SuperclassList`. `?A < ?B` is true when class A derives from B.
+
+# Syntax
+mc = metaclass(obj)
+    The class of an object; `?ClassName` gives a class by its name.
+mc = meta.class.fromName('ClassName')
+    By name, as text.
+# Examples
+## A class and its subclass described
+lines = {
+    'classdef Shape'
+    '    properties'
+    '        Name = ''shape'''
+    '    end'
+    '    properties (Constant)'
+    '        Sides = 0'
+    '    end'
+    'end'};
+fid = fopen('Shape.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+lines = {
+    'classdef Square < Shape'
+    '    properties'
+    '        Side = 1'
+    '    end'
+    'end'};
+fid = fopen('Square.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+mc = ?Square;
+mc.Name
+{mc.PropertyList.Name}
+mc.SuperclassList(1).Name
+[?Square < ?Shape, ?Shape < ?Square]
+mc2 = meta.class.fromName('Shape');
+p = mc2.PropertyList(strcmp({mc2.PropertyList.Name}, 'Sides'));
+[p.Constant p.DefaultValue]
+# See also
+properties methods class isa
+
+@ copy
+A copy of a handle object, for classes that derive from matlab.mixin.Copyable (and of a datastore).
+
+Assigning a handle object to another variable shares it; `copy` makes a second object with the same property values. The copy is shallow: handles held in its properties are shared, not copied, unless the class overrides `copyElement` (starting from `copyElement@matlab.mixin.Copyable(obj)`); properties marked `NonCopyable` get their defaults.
+
+# Syntax
+b = copy(a)
+    A copy.
+# Examples
+## Shared, and copied
+lines = {
+    'classdef Note < matlab.mixin.Copyable'
+    '    properties'
+    '        Text = '''''
+    '    end'
+    'end'};
+fid = fopen('Note.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+a = Note;
+a.Text = 'first';
+b = a;
+c = copy(a);
+a.Text = 'changed';
+{b.Text, c.Text}
+# See also
+classdef isvalid
+
+@ plabSuperCall
+What a class's calls to its superclass become: obj@Super(args) in a constructor and method@Super(obj, args) in a method.
+
+In a subclass's constructor, `obj = obj@Super(args)` (or the call alone, `obj@Super(args);`) runs the superclass's constructor on the object being made; in a method, `method@Super(obj, args)` runs the superclass's version of a method the subclass overrides. PyLAB writes these as calls to `plabSuperCall` when it reads the class; the function is not called by hand, and the `@` forms are what is written in a class.
+
+# Syntax
+obj = plabSuperCall('Super', obj, args)
+    What `obj@Super(args)` becomes.
+# Examples
+## A constructor and a method that build on the superclass's
+lines = {
+    'classdef Animal'
+    '    properties'
+    '        Name'
+    '    end'
+    '    methods'
+    '        function a = Animal(name)'
+    '            a.Name = name;'
+    '        end'
+    '        function s = describe(a)'
+    '            s = [''an animal called '' a.Name];'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Animal.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+lines = {
+    'classdef Dog < Animal'
+    '    properties'
+    '        Breed'
+    '    end'
+    '    methods'
+    '        function d = Dog(name, breed)'
+    '            d@Animal(name);'
+    '            d.Breed = breed;'
+    '        end'
+    '        function s = describe(d)'
+    '            s = [describe@Animal(d) '', a '' d.Breed];'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Dog.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+d = Dog('Rex', 'collie');
+describe(d)
+isa(d, 'Animal')
+# See also
+classdef metaclass

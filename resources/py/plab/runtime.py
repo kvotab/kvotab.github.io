@@ -1100,6 +1100,7 @@ class MExc(Obj):
     """An MException value: identifier, message, stack, cause."""
     __slots__ = ('err',)
     cls = 'MException'
+    METHODS = ('addCause', 'addCorrection', 'getReport', 'rethrow', 'throw', 'throwAsCaller')
 
     def __init__(self, err):
         self.err = err

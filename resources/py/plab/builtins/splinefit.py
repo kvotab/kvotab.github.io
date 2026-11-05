@@ -33,6 +33,18 @@ def _outs(nargout, *vals):
     return vals[:max(nargout, 1)] if nargout > 1 else vals[0]
 
 
+def _padded(t, c, k):
+    """Knots and coefficients with the end knots repeated to multiplicity k + 1 (k the degree), the B-splines added
+    given zero coefficients: the same spline, and SciPy's base interval [t(k), t(n)] is then the whole knot span,
+    where a B-form lives (a single B-spline, spmak(0:4, 1), has too few knots for SciPy otherwise)."""
+    t = np.asarray(t, float).reshape(-1)
+    c = np.asarray(c, float)
+    p0 = max(0, k + 1 - int(np.sum(t == t[0])))
+    p1 = max(0, k + 1 - int(np.sum(t == t[-1])))
+    t = np.concatenate([np.full(p0, t[0]), t, np.full(p1, t[-1])])
+    return t, np.pad(c, [(p0, p1)] + [(0, 0)] * (c.ndim - 1))
+
+
 class BForm(Obj):
     """A spline in B-form: knots, coefs (dim components by number), order."""
     __slots__ = ('knots', 'coefs', 'order', 'dim')
@@ -49,7 +61,7 @@ class BForm(Obj):
 
     def bspline(self):
         from scipy.interpolate import BSpline
-        return BSpline(self.knots, self.coefs.T, self.order - 1, extrapolate=True)
+        return BSpline(*_padded(self.knots, self.coefs.T, self.order - 1), self.order - 1, extrapolate=True)
 
     def getprop(self, name):
         if name == 'form':
@@ -83,8 +95,7 @@ class BForm(Obj):
         return v
 
     def interval(self):
-        k = self.order
-        return self.knots[k - 1], self.knots[-k]
+        return self.knots[0], self.knots[-1]
 
 
 def _form(v, fn):
@@ -103,7 +114,7 @@ def _to_pp(f):
     k, D = f.order, f.dim
     coefs = np.zeros(((br.size - 1) * D, k))
     for d in range(D):
-        bs = BSpline(f.knots, f.coefs[d], k - 1)
+        bs = BSpline(*_padded(f.knots, f.coefs[d], k - 1), k - 1)
         for m in range(k):
             coefs[d::D, k - 1 - m] = (bs.derivative(m) if m else bs)(br[:-1]) / math.factorial(m)
     return PP(br, coefs, (D,))
@@ -294,15 +305,23 @@ def fnder(nargout, *args):
             f = _integral(f, 0.0)
         return f
     if isinstance(f, BForm):
-        from scipy.interpolate import BSpline
-        rows = []
-        bs = None
-        for c in f.coefs:
-            bs = BSpline(f.knots, c, f.order - 1).derivative(d) if d < f.order else None
-            rows.append(bs.c[:bs.t.size - bs.k - 1] if bs is not None else None)
-        if bs is None:
+        if d >= f.order:
             return BForm(f.knots[[0, -1]], np.zeros((f.dim, 1)), 1, f.dim)
-        return BForm(bs.t, np.vstack(rows), f.order - d, f.dim)
+        t, c, k = f.knots, f.coefs, f.order
+        for _ in range(d):
+            # on the same knots: d_j = (k-1)*(c_j - c_(j-1))/(t_(j+k-1) - t_j), j = 0..n, with c_(-1) = c_n = 0
+            n = c.shape[1]
+            dc = np.diff(np.pad(c, [(0, 0), (1, 1)]), axis=1)
+            den = t[k - 1:k + n] - t[:n + 1]
+            with np.errstate(divide='ignore', invalid='ignore'):
+                c = np.where(den > 0, (k - 1) * dc / np.where(den > 0, den, 1), 0.0)
+            k -= 1
+            # an end B-spline on knots all equal is no function at all: dropped, with its knot
+            if den[0] <= 0:
+                t, c = t[1:], c[:, 1:]
+            if den[-1] <= 0:
+                t, c = t[:-1], c[:, :-1]
+        return BForm(t, c, k, f.dim)
     c = f.coefs.astype(float)
     k = f.order
     for _ in range(d):
@@ -320,7 +339,7 @@ def _integral(f, value):
         rows = []
         bs = None
         for c in f.coefs:
-            bs = BSpline(f.knots, c, f.order - 1).antiderivative(1)
+            bs = BSpline(*_padded(f.knots, c, f.order - 1), f.order - 1).antiderivative(1)
             a = f.interval()[0]
             rows.append(bs.c[:bs.t.size - bs.k - 1] - bs(a) + value)
         return BForm(bs.t, np.vstack(rows), f.order + 1, f.dim)

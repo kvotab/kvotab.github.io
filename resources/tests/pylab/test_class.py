@@ -447,6 +447,21 @@ same('import of one name, and import listing what is imported', (val(W['a']), [x
 refused('import refuses what is no package name', 'import bad', "'bad' is not a name to import")
 
 # ---- the Editor's check of a class file ---------------------------------------------------------------------------
+# ---- a value subclass's bare superclass constructor call; isobject, ismethod and methods of built-in classes ------------------------
+write('VAnimal.m', "classdef VAnimal\n    properties\n        Name\n    end\n    methods\n        function a = VAnimal(name)\n            a.Name = name;\n        end\n"
+      "        function s = describe(a)\n            s = ['animal ' a.Name];\n        end\n    end\nend\n")
+write('VDog.m', "classdef VDog < VAnimal\n    properties\n        Breed\n    end\n    methods\n        function d = VDog(name, breed)\n            d@VAnimal(name);\n"
+      "            d.Breed = breed;\n        end\n        function s = describe(d)\n            s = [describe@VAnimal(d) ', ' d.Breed];\n        end\n    end\nend\n")
+W, _ = run("d = VDog('Rex', 'collie'); nm = d.Name; ds = describe(d);")
+same("obj@Super(args); alone in a value class's constructor makes the object (as obj = obj@Super(args))", (val(W['nm']), val(W['ds'])), ('Rex', 'animal Rex, collie'))
+W, _ = run("k = containers.Map({'a'}, {1}); e = MException('my:id', 'text'); o1 = [isobject(k) isobject(e) isobject(datetime(2026, 1, 1))]; "
+           "o2 = [isobject(5) isobject('t') isobject(struct('a', 1)) isobject({1}) isobject(@sin) isobject(int8(1)) isobject(true)]; "
+           "m1 = [ismethod(k, 'keys') ismethod(k, 'sort') ismethod(e, 'getReport') ismethod(e, 'keys')]; mk = methods(k);")
+same('isobject: true for objects of classes (a map, an exception, a datetime), false for the fundamental types',
+     (val(W['o1']), val(W['o2'])), ([[True, True, True]], [[False] * 7]))
+same("ismethod and methods know a map's and an exception's methods",
+     (val(W['m1']), [val(x) for x in W['mk'].a.reshape(-1)]), ([[True, False, True, False]], ['isKey', 'keys', 'length', 'remove', 'size', 'values']))
+
 from plab import worker_api as API  # noqa: E402
 GOOD = "classdef T < handle\n    properties\n        a = 1\n    end\n    methods\n        function obj = T(x)\n            obj.a = x;\n        end\n        function r = twice(obj)\n            r = 2 * obj.a;\n        end\n    end\nend\n"
 same("the Editor's check finds nothing wrong with a class", json.loads(API.lint(GOOD)), [])

@@ -476,4 +476,12 @@ near('hot(3), jet(2), bone(1), pink(1)', (W['a'], W['b'], W['c'], W['d']),
 W, _ = run("rng(3); rand(1, 5); s = rng; a = rand(1, 3); randn(2); rng(s); b = rand(1, 3); st = rand('state'); c = rand(1, 2); rand('state', st); d = rand(1, 2);")
 same("rng(s) brings back the state s was taken in; so does rand('state', st)", (np.array_equal(W['a'], W['b']), np.array_equal(W['c'], W['d'])), (True, True))
 
+# ---- found writing the function pages ------------------------------------------------------------------
+W, _ = run("k = polyder([1 2 3]); kp = polyder([1 1], [1 -1]); [q, d] = polyder([1 2 3], [1 0 1]); [q0, d0] = polyder([2 2], [1 1]); k0 = polyder(5);")
+same("polyder: of a polynomial, of a product, and [q, d] of a quotient (q = a'b - ab' over b^2, leading zeros dropped)",
+     (v(W['k']).tolist(), v(W['kp']).tolist(), v(W['q']).tolist(), v(W['d']).tolist(), v(W['q0']).tolist(), v(W['d0']).tolist(), v(W['k0']).tolist()),
+     ([2.0, 2.0], [2.0, 0.0], [-2.0, -4.0, 2.0], [1.0, 0.0, 2.0, 0.0, 1.0], [0.0], [1.0, 2.0, 1.0], [0.0]))
+W, _ = run("o = optimoptions('fminunc', 'MaxIterations', 50); o = resetoptions(o, 'MaxIterations'); m = o.MaxIterations; e = optimoptions('fmincon').MaxFunctionEvaluations;")
+same("an option's default number reaches the workspace as a double", (type(W['m']).__name__ != 'int', type(W['e']).__name__ != 'int', float(v(W['m'])), float(v(W['e']))), (True, True, 400.0, 3000.0))
+
 sys.exit(C.done())
