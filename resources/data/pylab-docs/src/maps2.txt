@@ -1,0 +1,529 @@
+@ projcrs, geocrs, projfwd, projinv
+Coordinate reference systems by EPSG code, and latitude and longitude projected to x and y and back.
+
+`projcrs(code)` is a projected system: the national grids SWEREF 99 TM (3006) and its local zones, UTM zones (326xx north, 327xx south, ETRS89 258xx), Web Mercator (3857), LAEA Europe (3035), the British National Grid (27700) and others; other codes are looked up with PROJ when it is installed. `geocrs(4326)` is a geographic one. `projfwd` and `projinv` convert with a `projcrs` or a map projection structure.
+
+# Syntax
+p = projcrs(code)
+    A projected system.
+g = geocrs(code)
+    A geographic system.
+[x, y] = projfwd(proj, lat, lon)
+    Projected coordinates.
+[lat, lon] = projinv(proj, x, y)
+    Back.
+# Examples
+## Stockholm in SWEREF 99 TM and in UTM zone 33
+> SWEREF 99 TM uses the projection of UTM zone 33, so the two give the same coordinates.
+p = projcrs(3006);
+p.Name
+[x, y] = projfwd(p, 59.3294, 18.0686);
+fprintf('SWEREF 99 TM: %.2f E, %.2f N\n', x, y)
+[lat, lon] = projinv(p, x, y)
+[xu, yu] = projfwd(projcrs(32633), 59.3294, 18.0686);
+fprintf('UTM zone 33:  %.2f E, %.2f N\n', xu, yu)
+# See also
+geocrs axesm mfwdtran
+
+@ axesm
+Map axes with a projection: the frame, graticule and labels drawn in it, and data given in latitude and longitude.
+
+The projection is a name: cylindrical (`'mercator'`, `'eqdcylin'`, `'miller'`, `'pcarree'`), conic (`'lambert'`, `'eqaconic'`, `'eqdconic'`), azimuthal (`'ortho'`, `'stereo'`, `'gnomonic'`, `'eqdazim'`, `'eqaazim'`), transverse (`'tranmerc'`, `'utm'`) and whole-world ones (`'robinson'`, `'mollweid'`, `'hammer'`, `'sinusoid'`, `'equalearth'`). Properties set the region (`MapLatLimit`, `MapLonLimit`), the `Origin`, the frame (`Frame`), the graticule (`Grid`, `MLineLocation`, `PLineLocation`) and its labels. `plotm`, `geoshow` and the other map functions draw into it.
+
+# Syntax
+axesm(projection)
+    Map axes.
+axesm(projection, Name, Value, ...)
+    With properties.
+# Examples
+## The world in Robinson's projection, with a route
+axesm('robinson', 'Frame', 'on', 'Grid', 'on')
+[lat, lon] = track2(59.33, 18.07, 35.68, 139.69);
+plotm(lat, lon, 'r', 'LineWidth', 1.5)
+plotm([59.33 35.68], [18.07 139.69], 'ko', 'MarkerFaceColor', 'k')
+## An orthographic view from above Scandinavia
+axesm('ortho', 'Origin', [60 15 0], 'Frame', 'on', 'Grid', 'on')
+[lat, lon] = track2(59.33, 18.07, 40.71, -74.01);
+plotm(lat, lon, 'r', 'LineWidth', 1.5)
+# See also
+worldmap setm plotm framem gridm
+
+@ worldmap
+Map axes for a region, the projection and limits chosen to suit it.
+
+A region by name (`'World'`, `'Europe'`, `'Africa'`, `'North America'`, `'Sweden'`, `'Scandinavia'`, `'Nordic'`, ...) or by latitude and longitude limits. A region near the equator gets a cylindrical projection, one at middle latitudes a conic, a polar one an azimuthal; the frame, graticule and labels are on.
+
+# Syntax
+worldmap(region)
+    A named region.
+worldmap(latlim, lonlim)
+    A region by its limits.
+# Examples
+## Sweden, with three cities
+worldmap('Sweden')
+lat = [59.33 57.71 55.60];
+lon = [18.07 11.97 13.00];
+plotm(lat, lon, 'ro', 'MarkerFaceColor', 'r')
+textm(lat + 0.4, lon, {'Stockholm', 'Gothenburg', 'Malmö'})
+# See also
+axesm geolimits
+
+@ setm, getm, gcm, defaultm, ismap
+Map axes' properties: set, read, all of them as a structure, a projection's defaults, and the test for map axes.
+
+`setm` changes the map axes' properties as `axesm` sets them (the projection, origin, limits, frame and graticule); `getm` reads one; `gcm` gives them all as a map projection structure, which `projfwd`, `mfwdtran` and `minvtran` take. `defaultm` makes such a structure for a projection without any axes. `ismap` is true for map axes.
+
+# Syntax
+setm(ax, Name, Value, ...)
+    Change properties.
+v = getm(ax, name)
+    One property.
+mstruct = gcm
+    The current map axes' structure.
+mstruct = defaultm(projection)
+    A projection's defaults.
+tf = ismap(ax)
+    Whether `ax` is map axes.
+# Examples
+## A map's properties
+axesm('mercator', 'MapLatLimit', [50 72], 'MapLonLimit', [0 35]);
+getm(gca, 'MapProjection')
+setm(gca, 'MapLatLimit', [54 70])
+getm(gca, 'MapLatLimit')
+m = gcm;
+m.mapprojection
+ismap(gca)
+close all
+# See also
+axesm gcm
+
+@ framem, gridm, mlabel, plabel, tightmap, showaxes
+Parts of map axes turned on and off: the frame, the graticule, the meridian and parallel labels; the axes fitted to the frame; and the plain axes shown.
+
+Each takes `'on'` or `'off'` (alone, it toggles), and `framem` and `gridm` also take the properties of the frame (`FEdgeColor`, `FFaceColor`, `FLineWidth`) and graticule (`GColor`, `GLineStyle`, `MLineLocation`, `PLineLocation`). `tightmap` fits the axes' limits to the frame; `showaxes` shows the axes' own box, ticks and labels in projected units.
+
+# Syntax
+framem('on' | 'off')
+    The frame.
+gridm('on' | 'off')
+    The graticule.
+gridm(Name, Value, ...)
+    The graticule's look.
+mlabel('on' | 'off')
+    Meridian labels.
+plabel('on' | 'off')
+    Parallel labels.
+tightmap
+    Limits fitted to the frame.
+showaxes('on' | 'off')
+    The axes' box, ticks and labels.
+# Examples
+## A conic map with a dense blue graticule
+axesm('lambert', 'MapLatLimit', [40 75], 'MapLonLimit', [-20 40]);
+framem on
+gridm('GColor', [0 0.3 0.8], 'MLineLocation', 10, 'PLineLocation', 5)
+mlabel on, plabel on
+tightmap
+# See also
+axesm setm
+
+@ mfwdtran, minvtran
+Latitude and longitude as x and y in a map's projection, and back.
+
+With the current map axes, or a map projection structure (`gcm`, `defaultm`). The x and y are in the units of the map's geoid: a unit sphere unless another is given, so x and y are then fractions of the Earth's radius.
+
+# Syntax
+[x, y] = mfwdtran(lat, lon)
+    In the current map's projection.
+[x, y] = mfwdtran(mstruct, lat, lon)
+    In a structure's projection.
+[lat, lon] = minvtran(x, y)
+    Back (also with a structure).
+# Examples
+## Through a Mercator map and back
+axesm('mercator');
+[x, y] = mfwdtran([0 60], [0 30])
+[lat, lon] = minvtran(x, y)
+close all
+# See also
+projfwd gcm defaultm
+
+@ plotm, linem
+Lines and markers on map axes, from latitude and longitude.
+
+As `plot`, with latitude first: the points are projected, and a line that crosses the edge of the map is broken there. Points are joined straight on the map, so a curve (a parallel on a polar map) needs points along it. `linem` draws a line with name-value properties.
+
+# Syntax
+plotm(lat, lon)
+    A line.
+plotm(lat, lon, LineSpec)
+    With a line specification.
+plotm([lat lon], ...)
+    From a two-column matrix.
+h = linem(lat, lon, Name, Value, ...)
+    A line with properties.
+# Examples
+## A loxodrome and a parallel on a stereographic map
+axesm('stereo', 'Origin', [90 0 0], 'MapLatLimit', [30 90], 'Frame', 'on', 'Grid', 'on');
+lon = linspace(0, 1080, 400);
+lat = 30 + lon/1080*55;
+plotm(lat, lon, 'r', 'LineWidth', 1.5)
+linem(45*ones(1, 361), -180:180, 'Color', 'b', 'LineStyle', '--')
+# See also
+axesm scatterm geoshow
+
+@ scatterm, textm
+Markers with sizes and colours, and text, on map axes.
+
+`scatterm` draws a marker at each point, its area and colour from `sz` and `c` (one each, or one for each point); `textm` writes text at latitude and longitude.
+
+# Syntax
+h = scatterm(lat, lon, sz, c)
+    Markers.
+h = textm(lat, lon, txt)
+    Text.
+# Examples
+## Cities sized by population
+worldmap('Nordic')
+lat = [59.33 59.91 55.68 60.17 64.15];
+lon = [18.07 10.75 12.57 24.94 -21.94];
+pop = [1.0 0.7 0.65 0.66 0.14];
+scatterm(lat, lon, 300*pop, pop, 'filled')
+textm(lat, lon + 1.5, {'Stockholm', 'Oslo', 'Copenhagen', 'Helsinki', 'Reykjavik'})
+# See also
+plotm geoscatter
+
+@ patchm, fillm
+Filled polygons on map axes, from latitude and longitude.
+
+The vertices are projected and the polygon filled with a colour; `fillm` is the same as `patchm`.
+
+# Syntax
+h = patchm(lat, lon, color)
+    A filled polygon.
+h = fillm(lat, lon, color)
+    The same.
+# Examples
+## A quadrangle and a triangle
+axesm('eqdcylin', 'MapLatLimit', [40 70], 'MapLonLimit', [0 40], 'Frame', 'on', 'Grid', 'on');
+patchm([50 50 60 60], [5 20 20 5], [0.6 0.8 1])
+fillm([45 65 45], [25 30 35], 'y')
+# See also
+geoshow plotm
+
+@ surfm, pcolorm, contourm
+Grids of values on map axes: coloured cells and contour lines.
+
+The grid's latitudes and longitudes (vectors or matrices) are projected and the values coloured through the colormap (`surfm` and `pcolorm` the same here) or drawn as contour lines. `contourm` also takes a raster and its reference, `contourm(Z, R)`.
+
+# Syntax
+h = surfm(lat, lon, Z)
+    Coloured cells.
+h = pcolorm(lat, lon, Z)
+    The same.
+contourm(lat, lon, Z, levels)
+    Contour lines.
+contourm(Z, R, ...)
+    Of a raster with its reference.
+[C, h] = contourm(...)
+    With the contour matrix.
+# Examples
+## A field over the world, coloured and contoured
+axesm('robinson', 'Frame', 'on', 'Grid', 'on');
+[lon, lat] = meshgrid(-180:5:180, -90:5:90);
+Z = cosd(lat).*cosd(2*lon) + 0.5*sind(lat);
+pcolorm(lat, lon, Z)
+contourm(lat, lon, Z, -1:0.5:1, 'k')
+colorbar
+# See also
+geoshow contourm
+
+@ geoshow, mapshow
+Geographic data drawn: lines, points, polygons, shapefile features or rasters.
+
+`geoshow` takes latitude and longitude (projected on map axes; on other axes longitude is x and latitude y), a struct array of features as `shaperead` gives, a file name, or a raster with its reference. `DisplayType` says how to draw coordinates: `'line'`, `'point'` or `'polygon'`. `mapshow` does the same with projected x and y.
+
+# Syntax
+geoshow(lat, lon)
+    A line.
+geoshow(lat, lon, 'DisplayType', 'polygon')
+    A filled polygon (or `'point'`).
+geoshow(S)
+    Features from a struct array.
+geoshow(Z, R)
+    A raster with its reference.
+mapshow(x, y)
+    In projected coordinates.
+mapshow(S)
+    Features in x and y.
+# Examples
+## A raster and a polygon on a map
+worldmap([50 72], [0 35])
+R = georefcells([50 72], [0 35], [44 70]);
+[lon, lat] = meshgrid(linspace(0.25, 34.75, 70), linspace(50.25, 71.75, 44));
+Z = sind(8*lat).*cosd(10*lon);
+geoshow(Z, R, 'DisplayType', 'texturemap')
+geoshow([55 62 66 58 55], [12 8 20 25 12], 'DisplayType', 'polygon', 'FaceColor', 'none', 'EdgeColor', 'r', 'LineWidth', 2)
+# See also
+shaperead mapshow worldmap
+
+@ geoaxes, geolimits
+Geographic axes: longitude across, latitude up, with ticks in degrees and hemispheres; and their limits.
+
+The aspect is that of the middle latitude, so shapes look right near it. `geoplot`, `geoscatter` and `geobubble` draw into them. There is no basemap until one is named (`geobasemap`). `geolimits` sets or reads the latitude and longitude limits; `'auto'` fits them to the data again.
+
+# Syntax
+gx = geoaxes
+    Geographic axes.
+gx = geoaxes(Name, Value, ...)
+    With properties.
+geolimits(latlim, lonlim)
+    Set the limits.
+[latlim, lonlim] = geolimits
+    Read them.
+geolimits('auto')
+    Fitted to the data.
+# Examples
+## Limits set and read
+gx = geoaxes;
+geoplot(gx, [59.33 57.71], [18.07 11.97], 'b-o')
+geolimits([55 62], [10 20])
+[latlim, lonlim] = geolimits
+# See also
+geoplot geobasemap
+
+@ geoplot
+Lines in geographic axes, from latitude and longitude.
+
+As `plot`, latitude first, in geographic axes (made if there are none). Long lines are drawn straight in longitude and latitude; `track2` gives the great circle to draw instead.
+
+# Syntax
+geoplot(lat, lon)
+    A line.
+geoplot(lat, lon, LineSpec)
+    With a line specification.
+h = geoplot(gx, ...)
+    In given axes.
+# Examples
+## A flight, straight and along the great circle
+[lat, lon] = track2(59.65, 17.92, 51.47, -0.45);
+geoplot([59.65 51.47], [17.92 -0.45], 'b--', lat, lon, 'r', 'LineWidth', 1.5)
+# See also
+geoaxes geoscatter plotm
+
+@ geoscatter
+Markers in geographic axes, from latitude and longitude, with sizes and colours.
+
+As `scatter`: a size and colour for all the markers or one for each, `'filled'`, and the marker shape.
+
+# Syntax
+geoscatter(lat, lon)
+    Markers.
+geoscatter(lat, lon, sz, c)
+    With sizes and colours.
+h = geoscatter(...)
+    With its handle.
+# Examples
+## Weather stations coloured by temperature
+rng default
+lat = 55 + 14*rand(40, 1);
+lon = 11 + 13*rand(40, 1);
+temp = 20 - 0.8*(lat - 55) + randn(40, 1);
+geoscatter(lat, lon, 40, temp, 'filled')
+colorbar
+# See also
+geobubble geoplot scatterm
+
+@ geobubble
+Bubbles in geographic axes, their areas growing with sizes, coloured by categories.
+
+The size data scale the bubbles' areas between `BubbleWidthRange`; `colordata`, a categorical, colours them by category with a legend. With `'Basemap'` a basemap is named.
+
+# Syntax
+geobubble(lat, lon, sizedata)
+    Bubbles.
+geobubble(lat, lon, sizedata, colordata)
+    Coloured by category.
+# Examples
+## Capitals by population
+lat = [59.33 59.91 55.68 60.17 64.15];
+lon = [18.07 10.75 12.57 24.94 -21.94];
+pop = [1.0 0.7 0.65 0.66 0.14];
+kind = categorical({'large', 'mid', 'mid', 'mid', 'small'});
+geobubble(lat, lon, pop, kind)
+# See also
+geoscatter
+
+@ geobasemap, addCustomBasemap, removeCustomBasemap
+The basemap under geographic axes, and basemaps of your own.
+
+Geographic axes have none (`'none'`) until a program names one; only then are its map tiles fetched, only for what the axes show, and kept for the session. The basemaps: `'streets'` (OpenStreetMap), `'streets-light'`, `'streets-dark'`, `'topographic'` (OpenTopoMap), `'satellite'` (Sentinel-2 cloudless by EOX), `'colorterrain'`, `'grayterrain'`, `'landcover'` (NASA GIBS), and `'darkwater'`, `'grayland'`, `'bluegreen'` (Natural Earth's land and lakes). Each is drawn with its attribution in the corner. `addCustomBasemap` adds tiles from a web address with `{z}`, `{x}` and `{y}` in it (the server must allow other sites to use them).
+
+# Syntax
+geobasemap(name)
+    The basemap of the current geographic axes.
+name = geobasemap
+    Its name.
+addCustomBasemap(name, url, 'Attribution', text, 'MaxZoomLevel', z)
+    A basemap from a tile server.
+removeCustomBasemap(name)
+    Removed again.
+# Examples
+## A basemap named, without fetching any
+> The example tile server is a placeholder: nothing is fetched until axes draw it.
+gx = geoaxes;
+geobasemap(gx)
+addCustomBasemap('mytiles', 'https://tiles.example.org/{z}/{x}/{y}.png', 'Attribution', 'My tiles');
+removeCustomBasemap('mytiles')
+close all
+# See also
+geoaxes geoplot
+
+@ georefcells, georefpostings, georasterref
+References for rasters in latitude and longitude: where each cell or sample lies.
+
+A raster of cells covers its limits, each cell an area; a raster of postings has samples at its corners and edges. `ColumnsStartFrom` says whether the first row is at the south (the default) or the north, as a GeoTIFF file's is. `georasterref` makes one from its properties by name. The reference gives `CellExtentInLatitude` and the like, and goes to `geointerp`, `geoshow` and `geographicToIntrinsic`.
+
+# Syntax
+R = georefcells(latlim, lonlim, rasterSize)
+    Cells.
+R = georefpostings(latlim, lonlim, rasterSize)
+    Postings.
+R = georasterref('RasterSize', [m n], 'LatitudeLimits', latlim, 'LongitudeLimits', lonlim, 'ColumnsStartFrom', 'north')
+    From properties.
+# Examples
+## Cells and postings over the same limits
+Rc = georefcells([55 70], [10 25], [15 30]);
+[Rc.CellExtentInLatitude Rc.CellExtentInLongitude]
+Rp = georefpostings([55 70], [10 25], [16 31]);
+[Rp.SampleSpacingInLatitude Rp.SampleSpacingInLongitude]
+Rn = georasterref('RasterSize', [15 30], 'LatitudeLimits', [55 70], 'LongitudeLimits', [10 25], 'ColumnsStartFrom', 'north');
+Rn.ColumnsStartFrom
+# See also
+maprefcells geointerp geotiffwrite
+
+@ maprefcells, maprefpostings
+References for rasters in projected x and y.
+
+As the geographic references, with world limits in x and y (meters of a projected system, say) and `ColumnsStartFrom` south unless set.
+
+# Syntax
+R = maprefcells(xlim, ylim, rasterSize)
+    Cells.
+R = maprefpostings(xlim, ylim, rasterSize)
+    Postings.
+# Examples
+## A grid of 100 m cells
+R = maprefcells([600000 605000], [6600000 6603000], [30 50]);
+[R.CellExtentInWorldX R.CellExtentInWorldY]
+R.RasterSize
+# See also
+georefcells worldToIntrinsic
+
+@ geographicToIntrinsic, worldToIntrinsic
+Coordinates as fractional column and row of a raster.
+
+Intrinsic coordinates count columns (x) and rows (y) from 1 at the centre of the first cell (or the first posting): a point halfway across the second cell is at 2. `geographicToIntrinsic` takes latitude and longitude, `worldToIntrinsic` projected x and y.
+
+# Syntax
+[xi, yi] = geographicToIntrinsic(R, lat, lon)
+    For a geographic raster.
+[xi, yi] = worldToIntrinsic(R, x, y)
+    For a projected one.
+# Examples
+## Where two points fall
+R = georefcells([55 70], [10 25], [15 30]);
+[xi, yi] = geographicToIntrinsic(R, [55.5 69.5], [10.25 24.75])
+M = maprefcells([0 1000], [0 500], [5 10]);
+[xw, yw] = worldToIntrinsic(M, 150, 450)
+# See also
+georefcells geointerp
+
+@ geointerp
+Values of a geographic raster at latitudes and longitudes.
+
+By `'linear'` interpolation between the cells' centres (or the postings), or `'nearest'` or `'cubic'`; NaN outside the raster.
+
+# Syntax
+v = geointerp(A, R, lat, lon)
+    Interpolated values.
+v = geointerp(A, R, lat, lon, method)
+    With a method.
+# Examples
+## A smooth field sampled between its cells
+R = georefcells([55 70], [10 25], [15 30]);
+[lon, lat] = meshgrid(10.25:0.5:24.75, 55.5:1:69.5);
+A = lat + lon/10;
+v = geointerp(A, R, [60 62.3], [15 20.1])
+[60 62.3] + [15 20.1]/10
+geointerp(A, R, 50, 15)
+# See also
+interp2 georefcells
+
+@ shaperead, shapeinfo, shapewrite
+Shapefiles: features read as a struct array, what a file holds, and features written.
+
+A shapefile (.shp with its .shx index and .dbf table) holds points, lines or polygons, each with attributes. `shaperead` gives a struct array, one element per feature: `Geometry`, `BoundingBox`, `X` and `Y` (or `Lon` and `Lat` with `'UseGeoCoords'`), NaN after each part, and the attributes as fields; it can select by record number, bounding box or attribute. `shapewrite` writes a struct array of one geometry, its numeric and text fields as attributes. The names `landareas`, `worldlakes`, `worldrivers` and `worldcities` read Natural Earth's world data, fetched the first time a program asks.
+
+# Syntax
+S = shaperead(filename)
+    The features.
+S = shaperead(filename, 'UseGeoCoords', true)
+    As Lat and Lon.
+S = shaperead(filename, 'Selector', {@(v) v > 10, 'Field'})
+    Some of them (also `'RecordNumbers'`, `'BoundingBox'`).
+info = shapeinfo(filename)
+    What it holds.
+shapewrite(S, filename)
+    Features written.
+# Examples
+## Three wells written, read and selected
+S = struct('Geometry', 'Point', 'X', {652000, 654500, 651200}, 'Y', {6580000, 6583100, 6579000}, ...
+    'Name', {'W1', 'W2', 'W3'}, 'Depth', {42, 118, 67});
+shapewrite(S, 'wells.shp')
+info = shapeinfo('wells.shp');
+info.ShapeType, info.NumFeatures
+T = shaperead('wells.shp');
+{T.Name}
+deep = shaperead('wells.shp', 'Selector', {@(d) d > 50, 'Depth'});
+{deep.Name}
+## A polygon with a hole, drawn
+S = struct('Geometry', 'Polygon', 'X', [0 0 10 10 0 NaN 3 6 6 3 3], 'Y', [0 10 10 0 0 NaN 3 3 6 6 3], 'Name', 'field');
+shapewrite(S, 'field.shp')
+mapshow(shaperead('field.shp'), 'FaceColor', [0.6 0.85 0.6])
+axis equal
+# See also
+geoshow mapshow
+
+@ readgeoraster, geotiffread, geotiffinfo, geotiffwrite
+GeoTIFF files: values and their raster reference read and written, and what a file holds.
+
+A GeoTIFF is a TIFF image with tags that place it on the Earth: the size of a pixel, the position of a corner, and keys saying whether it is geographic or projected (and in which system), and whether pixels are areas (cells) or points (postings). `readgeoraster` gives the values and a raster reference (rows from the north, as in the file); `geotiffinfo` gives the size, model type and system; `geotiffwrite` writes values with a reference, doubles as singles.
+
+# Syntax
+[A, R] = readgeoraster(filename)
+    Values and reference.
+[A, R] = geotiffread(filename)
+    The same.
+info = geotiffinfo(filename)
+    What it holds.
+geotiffwrite(filename, A, R)
+    Written.
+geotiffwrite(filename, A, R, 'CoordRefSysCode', code)
+    With a coordinate system's EPSG code.
+# Examples
+## A geographic raster written and read back
+R = georefcells([55 69], [10 25], [14 15]);
+[lon, lat] = meshgrid(10.5:24.5, 55.5:68.5);
+A = lat + lon/100;
+geotiffwrite('field.tif', A, R)
+[B, RB] = readgeoraster('field.tif');
+class(B), RB.ColumnsStartFrom
+max(abs(double(B(:)) - reshape(flipud(A), [], 1)))
+## A projected grid with its system
+R = maprefcells([650000 660000], [6578000 6584000], [6 10]);
+geotiffwrite('grid.tif', uint8(magic(10)(1:6, :)), R, 'CoordRefSysCode', 3006)
+info = geotiffinfo('grid.tif');
+info.ModelType, info.PCS, [info.Height info.Width]
+# See also
+georefcells maprefcells geointerp

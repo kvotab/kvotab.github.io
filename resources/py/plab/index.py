@@ -347,12 +347,26 @@ def fld(A, name):
     raise MError('MATLAB:structRefFromNonStruct', 'Dot indexing is not supported for variables of this type.')
 
 
+def _plain(v):
+    """A property's value as the language holds it: a NumPy scalar (np.float64 from a getter's arithmetic)
+    becomes a double, a logical or a complex number, so it shows and concatenates as one."""
+    if isinstance(v, np.generic):
+        if isinstance(v, np.bool_):
+            return bool(v)
+        if v.dtype == np.float64 or isinstance(v, np.integer):
+            return float(v)
+        if v.dtype == np.complex128:
+            return complex(v)
+        return np.asarray(v).reshape(1, 1)
+    return v
+
+
 def _called(v):
     """obj.name without parentheses calls a method (a bound one; a function
     handle kept in a property, a callback, stays a value)."""
     if isinstance(v, FH) and type(v).__name__ in ('BoundMethod', 'BoundBuiltin', 'BoundStatic'):
         return v.scall(1)
-    return v
+    return _plain(v)
 
 
 def fld1(A, name):
@@ -362,7 +376,7 @@ def fld1(A, name):
             raise MError('MATLAB:nonExistentField', f'Unrecognized field name "{name}".')
         return a.item(0)
     if isinstance(A, Obj):
-        return A.getprop(name)
+        return _plain(A.getprop(name))
     return one(fld(A, name), 'curly brace')
 
 
@@ -1067,7 +1081,7 @@ def _sub_for_assign(A, kind, key):
             a = A.f.get(key)
             return NOVAL if a is None else a.item(0)
         if isinstance(A, Obj):
-            return A.getprop(key)
+            return _plain(A.getprop(key))
         raise MError('MATLAB:structAssToNonStruct', 'Unable to perform assignment because dot indexing is not supported for variables of this type.')
     if kind == '{}':
         if t is not Cell:

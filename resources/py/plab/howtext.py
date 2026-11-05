@@ -557,8 +557,8 @@ georefcells, georefpostings, georasterref, maprefcells, maprefpostings, geograph
 shaperead, shapeinfo, shapewrite:
     Python: mapping.py. PyLAB's own reader and writer of the shapefile layout: the 100-byte header (file code 9994, big-endian lengths, little-endian shape type and bounding box), records of points, multipoints, polylines and polygons (with their part indices), the .shx index, and the dBASE III table of attributes (numbers, text and logicals). Record lengths are checked against the file.
     landareas, worldlakes, worldrivers and worldcities, when no such file is found: geodata.py fetches Natural Earth's GeoJSON (pyfetch, once a session) and turns its features into the same records, polygons' outer rings clockwise and holes anticlockwise (by the sign of the shoelace area), the name attribute as Name.
-readgeoraster, geotiffread, geotiffinfo:
-    Python: mapping.py. The TIFF read by Pillow (loaded by Pyodide the first time); the GeoTIFF tags ModelPixelScale (33550), ModelTiepoint (33922) and the GeoKeyDirectory (34735: geographic or projected, pixel is area or point, the projected system's EPSG code) give the raster reference.
+readgeoraster, geotiffread, geotiffinfo, geotiffwrite:
+    Python: mapping.py. The TIFF read by Pillow (loaded by Pyodide the first time); the GeoTIFF tags ModelPixelScale (33550), ModelTiepoint (33922) and the GeoKeyDirectory (34735: geographic or projected, pixel is area or point, the projected system's EPSG code) give the raster reference. geotiffwrite writes the same three tags through Pillow's ImageFileDirectory_v2 (the scale and the tie point of the north-west corner as doubles, the keys as shorts), the rows turned to run from the north.
 
 # ---- symmath.py and symbolic.py: symbolic math on SymPy --------------------------------------------------------
 sym, syms:

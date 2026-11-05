@@ -1840,17 +1840,51 @@ def patchm(nargout, *args):
     return h if nargout else None
 
 
-def _grid_xy(st, lat, lon):
+def _grid_xy(st, lat, lon, full=False):
     lat, lon = darr(lat), darr(lon)
     if lat.ndim == 2 and min(lat.shape) == 1 and lon.ndim == 2 and min(lon.shape) == 1 and lat.size != lon.size or (lat.shape != lon.shape):
         LO, LA = np.meshgrid(lon.reshape(-1), lat.reshape(-1))
     else:
         LA, LO = lat, lon
     if st is None:
-        return LO, LA
+        return (LO, LA, LA, LO) if full else (LO, LA)
+    # a grid's east edge 180 degrees from the centre stays on the right of the map (the projection's wrap would put it on
+    # the left, and the faces of its last column across the whole map)
+    d = np.asarray(LO, float) - float(getattr(st.proj, 'lon0', 0.0))
+    LO = np.where((d > 0) & np.isclose((d + 180.0) % 360.0, 0.0), LO - 1e-9, LO)
     x, y = st.proj.fwd(LA, LO)
     keep = np.isfinite(st.project(LA.reshape(-1), LO.reshape(-1), cut=False)[0]).reshape(LA.shape)
-    return np.where(keep, x, np.nan), np.where(keep, y, np.nan)
+    X, Y = np.where(keep, x, np.nan), np.where(keep, y, np.nan)
+    return (X, Y, LA, LO) if full else (X, Y)
+
+
+def _grid_surface(st, lat, lon, C, *extra):
+    """A grid of values on map (or plain) axes as a flat-coloured surface. Where its rows cross the map's edge (180
+    degrees from the centre), columns at the east edge, NaN and the west edge go in, so that no face spans the map."""
+    X, Y, LA, LO = _grid_xy(st, lat, lon, full=True)
+    C = np.asarray(C, float)
+    if st is not None and X.ndim == 2 and X.shape[1] > 1:
+        lo0 = float(getattr(st.proj, 'lon0', 0.0))
+        rel = (np.asarray(LO, float) - lo0 + 180.0) % 360.0 - 180.0
+        js = np.nonzero(np.diff(rel[rel.shape[0] // 2]) < -180.0)[0]
+        if js.size == 1:
+            j = int(js[0])
+            m = X.shape[0]
+            xr, yr = st.proj.fwd(LA[:, j], np.full(m, lo0 + 180.0 - 1e-9))
+            xl, yl = st.proj.fwd(LA[:, j + 1], np.full(m, lo0 - 180.0))
+            nan = np.full(m, np.nan)
+
+            def ins(A, a, b, c):
+                return np.concatenate([A[:, :j + 1], a[:, None], b[:, None], c[:, None], A[:, j + 1:]], axis=1)
+            X, Y = ins(X, xr, nan, xl), ins(Y, yr, nan, yl)
+            if C.ndim == 3:
+                C = np.concatenate([C[:, :j + 1], C[:, j:j + 1], np.full((m, 1, C.shape[2]), np.nan), C[:, j:j + 1], C[:, j + 1:]], axis=1)
+            else:
+                C = ins(C, C[:, j], nan, C[:, j])
+    h = REG['surface'].fn(1, out(X), out(Y), np.zeros(X.shape), out(C), *extra)
+    h.props['EdgeColor'] = 'none'
+    h.props['FaceColor'] = 'flat'
+    return h
 
 
 @bi('surfm', 'pcolorm', arr=False)
@@ -1858,10 +1892,7 @@ def surfm(nargout, *args):
     ax = _cur_axes()
     st = _map_of(ax, 'surfm')
     lat, lon, Z = args[0], args[1], darr(args[2])
-    X, Y = _grid_xy(st, lat, lon)
-    h = REG['surface'].fn(1, out(X), out(Y), np.zeros(Z.shape), out(Z), *args[3:])
-    h.props['EdgeColor'] = 'none'
-    h.props['FaceColor'] = 'flat'
+    h = _grid_surface(st, lat, lon, Z, *args[3:])
     ax.touch()
     return h if nargout else None
 
@@ -1903,6 +1934,15 @@ def contourm(nargout, *args):
         ys += list(y) + [np.nan]
         levels.append(L)
         k += n + 1
+    if rest and is_str(rest[0]) and len(rest) % 2 == 1:
+        # a LineSpec ('k', 'r--'): line takes it as properties
+        from ..graphics_base import parse_linespec
+        spec = parse_linespec(py_str(rest[0]))
+        if spec is not None:
+            col, ls, mk = spec
+            pairs = ([Char.of('Color'), out(np.array([col], float))] if col else []) + ([Char.of('LineStyle'), Char.of(ls)] if ls else []) \
+                + ([Char.of('Marker'), Char.of(mk)] if mk else [])
+            rest = pairs + list(rest[1:])
     h = REG['line'].fn(1, out(np.array([xs], float)), out(np.array([ys], float)), *rest)
     return (out(C), h) if nargout > 1 else (out(C) if nargout else None)
 
@@ -1937,7 +1977,10 @@ def _show(kind, x, y, pairs, polygon_color=(0.95, 0.9, 0.6)):
         if not np.any(np.isfinite(x) & np.isfinite(y)):
             return None
         fc = to_color(names['facecolor'], ('none', 'flat')) if 'facecolor' in names else polygon_color
-        h = REG['patch'].fn(1, out(x.reshape(-1, 1)), out(y.reshape(-1, 1)), np.array([list(fc)]) if not isinstance(fc, str) else Char.of(fc))
+        h = REG['patch'].fn(1, out(x.reshape(-1, 1)), out(y.reshape(-1, 1)), np.array([list(fc if not isinstance(fc, str) else polygon_color)]))
+        if isinstance(fc, str):
+            # 'none' (an outline only) or 'flat': a FaceColor, not a colour for patch's third input
+            REG['set'].fn(0, h, Char.of('FaceColor'), Char.of(fc))
         h.rings = True
         h.props['EdgeColor'] = (0.0, 0.0, 0.0)
         for k, v in pairs:
@@ -1996,13 +2039,7 @@ async def geoshow(nargout, *args):
     if len(args) >= 2 and isinstance(args[1], RasterRef):
         Z, Rr = darr(args[0]), args[1]
         lat, lon = Rr.grid_latlon(Z.shape[:2])
-        X, Y = _grid_xy(st, lat, lon)
-        if Z.ndim == 3:
-            h = REG['surface'].fn(1, out(X), out(Y), np.zeros(Z.shape[:2]), out(Z / (255.0 if Z.max() > 1 else 1.0)))
-        else:
-            h = REG['surface'].fn(1, out(X), out(Y), np.zeros(Z.shape), out(Z))
-        h.props['EdgeColor'] = 'none'
-        h.props['FaceColor'] = 'flat'
+        h = _grid_surface(st, lat, lon, Z / (255.0 if Z.max() > 1 else 1.0) if Z.ndim == 3 else Z)
         ax.touch()
         return h if nargout else None
     if len(args) < 2 or is_str(args[1]):
@@ -2013,10 +2050,7 @@ async def geoshow(nargout, *args):
     kind, pairs = _style(args[2:])
     if lat.ndim == 2 and min(lat.shape) > 1 and len(args) > 2 and not is_str(args[2]):
         Z = darr(args[2])
-        X, Y = _grid_xy(st, lat, lon)
-        h = REG['surface'].fn(1, out(X), out(Y), np.zeros(Z.shape), out(Z))
-        h.props['EdgeColor'] = 'none'
-        h.props['FaceColor'] = 'flat'
+        h = _grid_surface(st, lat, lon, Z)
         ax.touch()
         return h if nargout else None
     if st is None:
@@ -2148,8 +2182,16 @@ def _geo_finish(ax):
 @bi('geoplot', arr=False)
 def geoplot(nargout, *args):
     ax, rest = _geo_target(args)
-    lat, lon = rest[0], rest[1]
-    h = REG['plot'].fn(1, ax, lon, lat, *rest[2:])
+    # each group lat, lon (, LineSpec) as plot's x, y: longitude across; the name-value pairs after them as they are
+    from ..graphics_base import parse_linespec
+    rest, swapped, k = list(rest), [], 0
+    while k + 1 < len(rest) and not is_str(rest[k]) and not is_str(rest[k + 1]):
+        swapped += [rest[k + 1], rest[k]]
+        k += 2
+        if k < len(rest) and is_str(rest[k]) and parse_linespec(py_str(rest[k])) is not None:
+            swapped.append(rest[k])
+            k += 1
+    h = REG['plot'].fn(1, ax, *swapped, *rest[k:])
     _geo_finish(ax)
     return h if nargout else None
 
@@ -2163,6 +2205,13 @@ def geoscatter(nargout, *args):
     return h if nargout else None
 
 
+def _geo_bubble_range(ax):
+    """geobubble's bubbles are 5 to 20 points across (a bubble chart's start at 1), unless the range was set."""
+    r = np.asarray(ax.props.get('BubbleSizeRange', np.zeros((1, 2))), float).reshape(-1)
+    if r.size == 2 and r[0] == 1.0 and r[1] == 20.0:
+        ax.props['BubbleSizeRange'] = np.array([[5.0, 20.0]])
+
+
 @bi('geobubble', arr=False)
 def geobubble(nargout, *args):
     args, bm = _pop_basemap(args)
@@ -2172,7 +2221,35 @@ def geobubble(nargout, *args):
     extra = rest[3:] if len(rest) > 3 and not is_str(rest[2]) else rest[2:]
     if extra and not is_str(extra[0]):
         extra = [extra[0]] + list(extra[1:])
+    from .categoricals import Categorical
+    if extra and isinstance(extra[0], Categorical):
+        # colours by category: a bubble chart for each (the sizes on the axes' one scale), named in a legend
+        cat, opts = extra[0], extra[1:]
+        la, lo = darr(lat).reshape(-1), darr(lon).reshape(-1)
+        s = np.broadcast_to(darr(sz).reshape(-1), la.shape) if np.size(darr(sz)) in (1, la.size) else darr(sz).reshape(-1)
+        codes = np.asarray(cat.a, float).reshape(-1)
+        if codes.size != la.size:
+            raise err('MATLAB:geobubble:ColorDataSize', 'The color data must have one category for each bubble.', 'geobubble')
+        keep = ax.props['NextPlot']
+        hs = []
+        for k, name in enumerate(cat.cats, 1):
+            sel = codes == k
+            if not sel.any():
+                continue
+            hk = REG['bubblechart'].fn(1, ax, out(lo[sel].reshape(1, -1)), out(la[sel].reshape(1, -1)), out(np.array(s[sel], float).reshape(1, -1)), *opts)
+            hk.props['DisplayName'] = name
+            hs.append(hk)
+            ax.props['NextPlot'] = 'add'
+        ax.props['NextPlot'] = keep
+        _geo_bubble_range(ax)
+        _geo_finish(ax)
+        REG['legend'].fn(0, ax, Cell.of_list([Char.of(x.props['DisplayName']) for x in hs], (1, len(hs))))
+        if bm is not None:
+            set_basemap(ax, bm)
+        from ..graphics_base import HArr
+        return HArr(np.array(hs, object).reshape(1, -1)) if nargout else None
     h = REG['bubblechart'].fn(1, ax, lon, lat, sz, *extra)
+    _geo_bubble_range(ax)
     _geo_finish(ax)
     if bm is not None:
         set_basemap(ax, bm)
@@ -2922,3 +2999,64 @@ async def geotiffinfo(nargout, *args):
 @bi('geotiffread', nout=3, aw=True, arr=False)
 async def geotiffread(nargout, *args):
     return await readgeoraster(nargout, *args)
+
+
+@bi('geotiffwrite', aw=True, arr=False)
+async def geotiffwrite(nargout, *args):
+    """geotiffwrite(filename, A, R): A (m-by-n, or m-by-n-by-3 for RGB) as a GeoTIFF with R's georeference: the
+    pixel scale, the tie point of the north-west corner and the GeoKeys (geographic or projected, cells as PixelIsArea,
+    postings as PixelIsPoint, and the EPSG code: 'CoordRefSysCode', else 4326 or the projcrs of R). Doubles are
+    written as singles (TIFF's float), logical values as uint8."""
+    if len(args) not in (3, 5):
+        raise err('map:geotiffwrite:nargin', "geotiffwrite takes a file name, the values and their raster reference (and 'CoordRefSysCode', code).", 'geotiffwrite')
+    fname = sval(args[0], 'file name', 'geotiffwrite')
+    Rr = args[2]
+    if not isinstance(Rr, RasterRef):
+        raise err('map:geotiffwrite:invalidReference', 'The third input must be a raster reference (georefcells, georefpostings, maprefcells, ...).', 'geotiffwrite')
+    code = None
+    if len(args) == 5:
+        if (opt_lower(args[3]) or '') != 'coordrefsyscode':
+            raise err('map:geotiffwrite:invalidOption', "The option is 'CoordRefSysCode'.", 'geotiffwrite')
+        code = int(num(args[4]))
+    A = np.asarray(args[1].a if hasattr(args[1], 'a') else args[1])
+    if A.ndim == 0:
+        A = A.reshape(1, 1)
+    if A.shape[:2] != Rr.size or A.ndim > 3 or (A.ndim == 3 and A.shape[2] != 3):
+        raise err('map:geotiffwrite:sizeMismatch', f'The values are {"x".join(map(str, A.shape))}; the raster reference is for {Rr.size[0]}x{Rr.size[1]} (m-by-n, or m-by-n-by-3).', 'geotiffwrite')
+    if A.dtype == bool:
+        A = A.astype(np.uint8)
+    elif A.dtype == np.float64:
+        A = A.astype(np.float32)
+    modes = {np.dtype(np.uint8): 'L', np.dtype(np.uint16): 'I;16', np.dtype(np.int16): 'I;16S', np.dtype(np.int32): 'I', np.dtype(np.float32): 'F'}
+    if A.ndim == 3:
+        if A.dtype != np.uint8:
+            raise err('map:geotiffwrite:rgbClass', 'An RGB raster is written as uint8.', 'geotiffwrite')
+        mode = 'RGB'
+    elif A.dtype in modes:
+        mode = modes[A.dtype]
+    else:
+        raise err('map:geotiffwrite:class', f'Values of class {A.dtype} are not written; give uint8, uint16, int16, int32, single, double or logical.', 'geotiffwrite')
+    # the file's rows run from the north, its columns from the west
+    if Rr.col_dir != 'south':
+        A = A[::-1]
+    if Rr.row_dir == 'west':
+        A = A[:, ::-1]
+    (y0, y1), (x0, x1) = (Rr.lim1, Rr.lim2) if Rr.geo else (Rr.lim2, Rr.lim1)
+    m, n = Rr.size
+    sx = (x1 - x0) / (n if Rr.cells else max(n - 1, 1))
+    sy = (y1 - y0) / (m if Rr.cells else max(m - 1, 1))
+    if code is None:
+        code = 4326 if Rr.geo else (Rr.crs.code if Rr.crs is not None else 32767)
+    keys = [1, 1, 0, 3, 1024, 0, 1, 2 if Rr.geo else 1, 1025, 0, 1, 1 if Rr.cells else 2, 2048 if Rr.geo else 3072, 0, 1, code]
+    Image = await _pillow()
+    from PIL.TiffImagePlugin import ImageFileDirectory_v2
+    ifd = ImageFileDirectory_v2()
+    for tag, typ, val in ((33550, 12, (float(sx), float(sy), 0.0)), (33922, 12, (0.0, 0.0, 0.0, float(x0), float(y1), 0.0)), (34735, 3, tuple(keys))):
+        ifd.tagtype[tag] = typ
+        ifd[tag] = val
+    im = Image.fromarray(np.ascontiguousarray(A), mode)
+    path = _resolve(fname, 'geotiffwrite')
+    im.save(path, format='TIFF', tiffinfo=ifd)
+    from .iofun import files_changed
+    files_changed()
+    return None

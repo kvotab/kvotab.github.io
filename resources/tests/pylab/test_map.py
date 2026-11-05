@@ -335,6 +335,30 @@ raises("addCustomBasemap('streets', 'https://t.example.org/${z}/${x}/${y}.png')"
 W, _ = run("removeCustomBasemap('mymap'); try, geoplot(1, 2); geobasemap mymap; e = ''; catch ex, e = ex.message; end")
 C('removeCustomBasemap: the name is gone', 'is not a basemap' in text(W['e']), text(W['e']))
 
+W, _ = run("h = geobubble([59.33 59.91 55.68 60.17], [18.07 10.75 12.57 24.94], [1 0.7 0.65 0.66], categorical({'large', 'mid', 'mid', 'mid'})); "
+           "n = numel(h); d = {h.DisplayName}; nm = numel(h(2).XData); l = findobj(gcf, 'Type', 'legend'); ls = l.String; br = get(gca, 'BubbleSizeRange'); close all")
+same('geobubble with categories: a bubble chart for each, named in the legend, bubbles 5 to 20 points',
+     (float(W['n']), [text(x) for x in W['d'].a.reshape(-1)], float(W['nm']), [text(x) for x in W['ls'].a.reshape(-1)], v(W['br']).tolist()),
+     (2.0, ['large', 'mid'], 3.0, ['large', 'mid'], [5.0, 20.0]))
+
+W, _ = run("Rc = georefcells([55 70], [10 25], [15 30]); c = [Rc.CellExtentInLatitude Rc.CellExtentInLongitude]; k = class(Rc.CellExtentInLatitude);")
+same("a raster reference's numbers are doubles that concatenate", (v(W['c']).tolist(), text(W['k'])), ([1.0, 0.5], 'double'))
+
+W, _ = run("[lon, lat] = meshgrid(-180:90:180, -90:90:90); Z = lat + lon/1000; axesm('eqdcylin'); h = pcolorm(lat, lon, Z); x1 = h.XData(1, :); close all; "
+           "axesm('eqdcylin', 'Origin', [0 100 0]); h2 = pcolorm(lat, lon, Z); x2 = h2.XData(2, :); c2 = h2.CData(2, :); close all")
+x1, x2, c2 = v(W['x1']), v(W['x2']), v(W['c2'])
+same("a world grid on a map: its east edge on the right, and a grid crossing the map's edge parted there (no face across the map)",
+     (np.round(x1, 4).tolist(), int(np.isnan(x2).sum()), bool(np.all(np.diff(x2[np.isfinite(x2)][:2]) > 0)), int(np.isnan(c2).sum())),
+     ([-3.1416, -1.5708, 0.0, 1.5708, 3.1416], 1, True, 1))
+seg = np.split(x2, np.nonzero(np.isnan(x2))[0])
+C('each part of the parted grid runs west to east', all(np.all(np.diff(p[np.isfinite(p)]) > 0) for p in seg), x2.tolist())
+W, _ = run("axesm('robinson'); [lon, lat] = meshgrid(-180:30:180, -90:30:90); [C, hc] = contourm(lat, lon, lat, 3, 'k--'); cc = hc.Color; cs = hc.LineStyle; "
+           "p = geoshow([55 62 66 58 55], [12 8 20 25 12], 'DisplayType', 'polygon', 'FaceColor', 'none', 'EdgeColor', 'r'); pf = p.FaceColor; close all; "
+           "g = geoplot([59.65 51.47], [17.92 -0.45], 'b--', [50 55 60], [0 5 10], 'r', 'LineWidth', 1.5); gx = g(2).XData; gy = g(2).YData; gw = [g.LineWidth]; close all")
+same("contourm takes a LineSpec; geoshow's FaceColor 'none' leaves a polygon open; geoplot turns each group of lat, lon",
+     (v(W['cc']).tolist(), text(W['cs']), text(W['pf']), v(W['gx']).tolist(), v(W['gy']).tolist(), v(W['gw']).tolist()),
+     ([0.0, 0.0, 0.0], '--', 'none', [0.0, 5.0, 10.0], [50.0, 55.0, 60.0], [1.5, 1.5]))
+
 # ---- GeoTIFF ------------------------------------------------------------------------------------------------------------------------
 try:
     from PIL import Image, TiffImagePlugin
@@ -351,6 +375,16 @@ try:
     near('readgeoraster: size, limits and cells from the GeoTIFF tags', (W['s'], W['la'], W['lo'], W['c']), [20, 30, 55, 60, 10, 25, 0.25])
     near('the first row is the north; geointerp at cell centres; NaN outside', (W['v1'], W['v2']), [0, 599], 1e-9)
     C('geointerp outside the raster is NaN', math.isnan(float(W['v3'])), str(W['v3']))
+    W, _ = run("R = georefcells([55 69], [10 25], [14 15]); [lon, lat] = meshgrid(10.5:24.5, 55.5:68.5); A = lat + lon/100; geotiffwrite('w.tif', A, R); "
+               "[B, R2] = readgeoraster('w.tif'); kb = class(B); dB = max(max(abs(double(B) - flipud(A)))); la = R2.LatitudeLimits; lo = R2.LongitudeLimits; "
+               "g1 = geointerp(A, R, 60.2, 15.3); g2 = geointerp(double(B), R2, 60.2, 15.3); "
+               "P = maprefpostings([500000 510000], [6400000 6405000], [6 11]); M = uint16(reshape(1:66, 6, 11)); geotiffwrite('p.tif', M, P, 'CoordRefSysCode', 3006); "
+               "[Cm, R3] = readgeoraster('p.tif'); same = isequal(Cm, flipud(M)); xl = R3.XWorldLimits; yl = R3.YWorldLimits; ri = R3.RasterInterpretation; pn = R3.ProjectedCRS.Name;")
+    same('geotiffwrite and back: single values, rows from the north, the same limits, geointerp agrees', (text(W['kb']), float(W['dB']) < 1e-5, v(W['la']).tolist(), v(W['lo']).tolist(), abs(float(W['g1']) - float(W['g2'])) < 1e-5),
+         ('single', True, [55.0, 69.0], [10.0, 25.0], True))
+    same('a projected raster of postings with its EPSG code: values, limits, interpretation and system kept',
+         (bool(W['same']), v(W['xl']).tolist(), v(W['yl']).tolist(), text(W['ri']), text(W['pn'])), (True, [500000.0, 510000.0], [6400000.0, 6405000.0], 'postings', 'SWEREF99 TM'))
+    raises("geotiffwrite('x.tif', ones(3), georefcells([0 1], [0 1], [2 2]))", 'raster reference is for 2x2')
 except ImportError:
     print('(Pillow is not installed: the GeoTIFF checks are skipped)')
 

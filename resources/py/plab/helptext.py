@@ -2100,6 +2100,10 @@ geotiffread: Read a GeoTIFF file (as readgeoraster).
     [A, R] = geotiffread(filename)
 geotiffinfo: What a GeoTIFF file holds: its size, model type and spatial reference.
     info = geotiffinfo(filename)
+geotiffwrite: Write values and their raster reference to a GeoTIFF file.
+    geotiffwrite(filename, A, R)
+    geotiffwrite(filename, A, R, 'CoordRefSysCode', code)
+    * The file's rows run from the north, as GeoTIFF readers expect. Doubles are written as singles and logical values as uint8; an RGB raster is m-by-n-by-3 uint8. The EPSG code is 4326 for a geographic reference unless given.
 
 # ---- symbolic math ------------------------------------------------------------------------------------------
 sym: A symbolic number, variable or matrix.

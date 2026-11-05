@@ -2334,7 +2334,8 @@
       entries.forEach((e, i) => {
         const col = i % cols, row = Math.floor(i / cols);
         const ex = x + pad + col * colW, ey = y + pad + titleH + row * rowH + rowH / 2;
-        const isPatch = e.type === 'patch' || e.type === 'surface' || (e.type === 'series' && ['bar', 'histogram', 'area', 'pie'].includes(e.kind));
+        // an entry's type is its object's (bubblechart, scatter, bar, ...), its kind the series' kind
+        const isPatch = e.type === 'patch' || e.type === 'surface' || ['bar', 'histogram', 'area', 'pie'].includes(e.kind);
         if (isPatch) {
           const fc = Array.isArray(e.faceColor) ? rgb(e.faceColor, e.faceAlpha ?? 1) : 'rgb(0,114,189)';
           ctx.fillStyle = fc;
@@ -2344,16 +2345,16 @@
           ctx.strokeRect(ex + 2, ey - fs * 0.4, sample - 6, fs * 0.8);
         } else {
           const col = rgb(e.color || [0, 0.447, 0.741]);
-          if (e.type === 'series' && e.kind === 'bubblechart') {
+          if (e.kind === 'bubblechart') {
             this.bubble(ctx, ex + (sample - 4) / 2, ey, fs * 0.8, col, { mfc: e.markerFaceColor, mec: e.markerEdgeColor, markerFaceAlpha: e.markerFaceAlpha, lineWidth: e.lineWidth });
-          } else if (e.lineStyle !== 'none' && !(e.type === 'series' && e.kind === 'scatter')) {
+          } else if (e.lineStyle !== 'none' && e.kind !== 'scatter') {
             ctx.strokeStyle = col;
             ctx.lineWidth = e.lineWidth || 0.5;
             dash(ctx, e.lineStyle, e.lineWidth || 0.5);
             ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex + sample - 4, ey); ctx.stroke();
             ctx.setLineDash([]);
           }
-          const mk = e.type === 'series' && e.kind === 'scatter' ? (e.marker === 'none' ? 'o' : e.marker) : e.type === 'series' && e.kind === 'bubblechart' ? 'none' : e.marker;
+          const mk = e.kind === 'scatter' ? (e.marker === 'none' ? 'o' : e.marker) : e.kind === 'bubblechart' ? 'none' : e.marker;
           if (mk && mk !== 'none') drawMarkers(ctx, [[ex + (sample - 4) / 2, ey]], mk, e.markerSize || 6, e.markerEdgeColor === 'auto' || e.markerEdgeColor === 'flat' || !e.markerEdgeColor ? col : rgb(e.markerEdgeColor), e.markerFaceColor === 'none' || !e.markerFaceColor ? null : (e.markerFaceColor === 'auto' || e.markerFaceColor === 'flat' ? col : rgb(e.markerFaceColor)));
         }
         drawText(ctx, e.name, ex + sample + 2, ey, { size: fs, color: rgb(lg.textColor), valign: 'middle', interpreter: lg.interpreter });

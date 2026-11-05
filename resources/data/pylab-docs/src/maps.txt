@@ -1,0 +1,451 @@
+@ deg2km, km2deg, deg2nm, nm2deg, deg2sm, sm2deg, km2rad, rad2km
+Arcs of a great circle: degrees or radians of arc as lengths, and back.
+
+On a sphere of radius r, an arc of θ radians is r·θ long. These use the Earth's mean radius, 6371 km, unless a radius (in the length's unit) or a body's name (`'moon'`, `'mars'`, ...) is given: kilometers, nautical miles (one minute of arc is close to one nautical mile) and statute miles.
+
+# Syntax
+km = deg2km(deg)
+    Degrees of arc as kilometers.
+km = deg2km(deg, radius)
+    On a sphere of another radius (or a body's name).
+deg = km2deg(km)
+    Kilometers as degrees of arc.
+nm = deg2nm(deg)
+    As nautical miles (`nm2deg` back).
+sm = deg2sm(deg)
+    As statute miles (`sm2deg` back).
+rad = km2rad(km)
+    Kilometers as radians of arc (`rad2km` back).
+# Examples
+## One degree, and a minute of arc
+deg2km(1)
+deg2nm(1/60)
+deg2km(1, 'moon')
+## A distance in degrees as kilometers
+d = distance(59.33, 18.07, 40.71, -74.01)
+km = deg2km(d)
+# See also
+distance unitsratio km2nm
+
+@ km2nm, nm2km, km2sm, sm2km, nm2sm, sm2nm, unitsratio
+Lengths from one unit to another, and the factor between any two units.
+
+A nautical mile is 1852 m and a statute mile 1609.344 m. `unitsratio(to, from)` gives the number of `to` units in one `from` unit for lengths (`meter`, `kilometer`, `centimeter`, `millimeter`, `nauticalmile`, `foot`, `surveyfoot`, `mile`, `yard`, `inch`) and angles (`degree`, `radian`).
+
+# Syntax
+nm = km2nm(km)
+    Kilometers as nautical miles (and so on for each pair).
+r = unitsratio(to, from)
+    The factor from `from` units to `to` units.
+# Examples
+## Pairs, and any two units
+[km2nm(100) km2sm(100) nm2sm(1)]
+unitsratio('foot', 'meter')
+unitsratio('degree', 'radian')
+# See also
+deg2km
+
+@ dms2degrees, degrees2dms, dm2degrees, degrees2dm
+Degrees, minutes and seconds as decimal degrees, and back.
+
+A row `[d m s]` (or `[d m]`) is `d + m/60 + s/3600` degrees, the sign on the first part that is not zero; the other way, each angle becomes a row of parts, the sign again on the first part that is not zero, so -0.5 degrees is `[0 -30 0]`.
+
+# Syntax
+deg = dms2degrees([d m s])
+    Rows of degrees, minutes and seconds as degrees.
+dms = degrees2dms(deg)
+    Degrees as rows of three.
+deg = dm2degrees([d m])
+    Degrees and minutes as degrees.
+dm = degrees2dm(deg)
+    Degrees as rows of two.
+# Examples
+## A position written both ways
+dms2degrees([59 19 46])
+degrees2dms(18.0686)
+degrees2dms(-0.5)
+degrees2dm(59.3294)
+# See also
+wrapTo180
+
+@ wrapTo180, wrapTo360, wrapToPi, wrapTo2Pi
+Angles brought into one turn: degrees into [-180, 180] or [0, 360], radians into [-π, π] or [0, 2π].
+
+Longitudes that have gone past the date line come back into range; a positive multiple of a full turn stays a full turn (360, or 2π) rather than becoming 0, and an odd multiple of a half turn keeps its sign.
+
+# Syntax
+lon = wrapTo180(lon)
+    Into [-180, 180].
+lon = wrapTo360(lon)
+    Into [0, 360].
+a = wrapToPi(a)
+    Into [-π, π].
+a = wrapTo2Pi(a)
+    Into [0, 2π].
+# Examples
+## Longitudes past the date line
+wrapTo180([170 190 360 -190 540])
+wrapTo360([-10 0 360 725])
+wrapToPi(3*pi/2)
+# See also
+mod
+
+@ referenceEllipsoid, wgs84Ellipsoid, referenceSphere, earthRadius
+Reference ellipsoids and spheres: the shape of the Earth (or another body) for the geodesy and projection functions.
+
+An ellipsoid has a semimajor axis a and a flattening f, the semiminor axis b = a(1 - f); its properties include `Eccentricity`, `MeanRadius`, `SurfaceArea` and `Volume`, all in its `LengthUnit` (meters unless given, and settable). By name (`'wgs84'`, `'grs80'`, `'clarke66'`, `'bessel'`, `'international'`, ...) or EPSG code. `referenceSphere` gives a body's mean sphere, `earthRadius` the Earth's mean radius, 6371 km.
+
+# Syntax
+E = referenceEllipsoid('wgs84')
+    By name, in meters.
+E = referenceEllipsoid('grs80', 'kilometer')
+    In another unit.
+E = referenceEllipsoid(7030)
+    By EPSG code.
+E = wgs84Ellipsoid(unit)
+    WGS 84.
+S = referenceSphere('moon', 'kilometer')
+    A body's sphere.
+r = earthRadius(unit)
+    The Earth's mean radius.
+# Examples
+## WGS 84 and its numbers
+E = wgs84Ellipsoid('kilometer');
+fprintf('a = %.3f km, b = %.4f km, 1/f = %.9f\n', E.SemimajorAxis, E.SemiminorAxis, E.InverseFlattening)
+E.Eccentricity
+fprintf('mean radius %.4f km; earthRadius %.0f km\n', E.MeanRadius, earthRadius('kilometer'))
+S = referenceSphere('moon', 'kilometer');
+S.Radius
+# See also
+distance geodetic2ecef
+
+@ distance, azimuth
+The distance and the azimuth between points: along a great circle, or along a rhumb line of constant heading.
+
+Without an ellipsoid the distance is in degrees of arc on a sphere (`deg2km` makes it kilometers); with one, the geodesic length on it, in its units. Azimuths are clockwise from north. `'rh'` measures along a rhumb line instead, which crosses every meridian at the same angle and is longer except along a meridian or the equator.
+
+# Syntax
+d = distance(lat1, lon1, lat2, lon2)
+    In degrees of arc.
+[d, az] = distance(lat1, lon1, lat2, lon2, ellipsoid)
+    The geodesic on an ellipsoid, with the azimuth.
+d = distance('rh', lat1, lon1, lat2, lon2)
+    Along a rhumb line.
+az = azimuth(lat1, lon1, lat2, lon2)
+    The azimuth at the first point.
+# Examples
+## Stockholm to New York
+[d, az] = distance(59.33, 18.07, 40.71, -74.01);
+km = deg2km(d), az
+km_wgs84 = distance(59.33, 18.07, 40.71, -74.01, wgs84Ellipsoid('kilometer'))
+km_rhumb = deg2km(distance('rh', 59.33, 18.07, 40.71, -74.01))
+# See also
+reckon track2 deg2km
+
+@ reckon
+The point at a distance and azimuth from another.
+
+The other half of `distance`: from a start, go a distance (degrees of arc on a sphere, or the ellipsoid's units) in a direction (clockwise from north), along a great circle, or with `'rh'` a rhumb line.
+
+# Syntax
+[lat2, lon2] = reckon(lat, lon, arclen, az)
+    On a sphere.
+[lat2, lon2] = reckon(lat, lon, arclen, az, ellipsoid)
+    On an ellipsoid.
+[lat2, lon2] = reckon('rh', ...)
+    Along a rhumb line.
+# Examples
+## 1000 km west from Stockholm
+[lat, lon] = reckon(59.33, 18.07, km2deg(1000), 270)
+[lat2, lon2] = reckon('rh', 59.33, 18.07, km2deg(1000), 270)
+# See also
+distance track1
+
+@ track1, track2, gcwaypts
+Points along a great circle or a rhumb line: from a point in a direction, between two points, or as waypoints for rhumb-line legs.
+
+`track2` gives points along the great circle (or the geodesic, with an ellipsoid, or `'rh'` a rhumb line) between two points, 100 unless `npts` says; `track1` from a point in a direction, as far as `arclen`. `gcwaypts` gives points along the great circle that rhumb-line legs between them follow closely, as a ship's route is planned.
+
+# Syntax
+[lat, lon] = track2(lat1, lon1, lat2, lon2)
+    Between two points.
+[lat, lon] = track2(lat1, lon1, lat2, lon2, ellipsoid, units, npts)
+    On an ellipsoid, with a number of points.
+[lat, lon] = track2('rh', ...)
+    Along a rhumb line.
+[lat, lon] = track1(lat, lon, az, arclen)
+    From a point in a direction.
+[lat, lon] = gcwaypts(lat1, lon1, lat2, lon2, nlegs)
+    Waypoints for `nlegs` legs.
+# Examples
+## The great circle and the rhumb line
+> On a plain plot of longitude and latitude the great circle bulges toward the pole; it is the shorter way.
+[lat1, lon1] = track2(59.33, 18.07, 40.71, -74.01);
+[lat2, lon2] = track2('rh', 59.33, 18.07, 40.71, -74.01);
+[latw, lonw] = gcwaypts(59.33, 18.07, 40.71, -74.01, 5);
+plot(lon1, lat1, lon2, lat2, '--', lonw, latw, 'ko')
+legend('great circle', 'rhumb line', 'waypoints', 'Location', 'south')
+xlabel('longitude'), ylabel('latitude'), grid on
+# See also
+distance interpm plotm
+
+@ meridianarc
+The distance along a meridian between two latitudes on an ellipsoid.
+
+The latitudes are in radians; the result is in the ellipsoid's units. On an ellipsoid a degree of latitude is longer near the poles, where the surface is flatter.
+
+# Syntax
+s = meridianarc(phi1, phi2, ellipsoid)
+    The length along the meridian.
+# Examples
+## A degree of latitude at the equator and at the pole
+E = wgs84Ellipsoid('kilometer');
+[meridianarc(0, deg2rad(1), E) meridianarc(deg2rad(89), deg2rad(90), E)]
+# See also
+distance
+
+@ antipode
+The point on the other side of the globe.
+
+The latitude changes sign and the longitude moves by 180 degrees.
+
+# Syntax
+[lat2, lon2] = antipode(lat, lon)
+    The antipode.
+# Examples
+## Through the Earth from Stockholm
+[lat, lon] = antipode(59.33, 18.07)
+deg2km(distance(59.33, 18.07, lat, lon))
+# See also
+distance
+
+@ areaint, areaquad
+Areas on the sphere or ellipsoid: of polygons, and of quadrangles between parallels and meridians.
+
+Without an ellipsoid the area is a fraction of the whole surface; with one, in its units squared. `areaint` takes polygons whose edges are great circles (parts separated by NaN); `areaquad` the region between two parallels and two meridians.
+
+# Syntax
+a = areaint(lat, lon)
+    A polygon's area as a fraction of the sphere.
+a = areaint(lat, lon, ellipsoid)
+    In the ellipsoid's units squared.
+a = areaquad(lat1, lon1, lat2, lon2)
+    A quadrangle's area as a fraction.
+a = areaquad(lat1, lon1, lat2, lon2, ellipsoid)
+    In its units squared.
+# Examples
+## A hemisphere, an octant, and a quadrangle in square kilometers
+areaquad(0, -180, 90, 180)
+areaint([0 0 90 0], [0 90 0 0])
+E = referenceSphere('earth', 'kilometer');
+areaquad(55, 10, 69, 25, E)
+# See also
+polyarea areaquad
+
+@ interpm
+More points along a line in latitude and longitude, none farther apart than a step.
+
+Where two points are farther apart than `maxdiff` degrees, points are put between them: evenly in latitude and longitude, or along the great circle with `'gc'`, so the line can be drawn as a smooth curve on a map.
+
+# Syntax
+[lat, lon] = interpm(lat, lon, maxdiff)
+    Points in between, linearly.
+[lat, lon] = interpm(lat, lon, maxdiff, 'gc')
+    Along great circles.
+# Examples
+## A long segment filled in
+[lat, lon] = interpm([0 0], [0 10], 2.5)
+# See also
+track2
+
+@ geodetic2ecef, ecef2geodetic
+Latitude, longitude and height as Earth-centred, Earth-fixed (ECEF) x, y and z, and back.
+
+ECEF has its origin at the Earth's centre, z toward the north pole and x toward longitude 0 on the equator. The ellipsoid (a `referenceEllipsoid`) comes first; its unit is the unit of heights and coordinates.
+
+# Syntax
+[x, y, z] = geodetic2ecef(spheroid, lat, lon, h)
+    ECEF coordinates.
+[x, y, z] = geodetic2ecef(spheroid, lat, lon, h, 'radians')
+    With angles in radians.
+[lat, lon, h] = ecef2geodetic(spheroid, x, y, z)
+    Back.
+# Examples
+## A point and back again
+E = wgs84Ellipsoid;
+[x, y, z] = geodetic2ecef(E, 59.33, 18.07, 30)
+[lat, lon, h] = ecef2geodetic(E, x, y, z)
+# See also
+geodetic2enu ecef2enu
+
+@ geodetic2enu, enu2geodetic, geodetic2ned, ned2geodetic, geodetic2aer, aer2geodetic
+A point seen from a local origin: as east, north and up, as north, east and down, or as azimuth, elevation and slant range; and back.
+
+The local frames sit at an origin `(lat0, lon0, h0)` on the ellipsoid: ENU and NED are flat, tangent to the ellipsoid there, and AER gives the direction (azimuth clockwise from north, elevation above the horizon) and the straight-line distance. The ellipsoid comes last; lengths are in its unit.
+
+# Syntax
+[xEast, yNorth, zUp] = geodetic2enu(lat, lon, h, lat0, lon0, h0, spheroid)
+    East, north and up.
+[lat, lon, h] = enu2geodetic(xEast, yNorth, zUp, lat0, lon0, h0, spheroid)
+    Back.
+[xNorth, yEast, zDown] = geodetic2ned(lat, lon, h, lat0, lon0, h0, spheroid)
+    North, east and down (`ned2geodetic` back).
+[az, elev, slantRange] = geodetic2aer(lat, lon, h, lat0, lon0, h0, spheroid)
+    Azimuth, elevation and range (`aer2geodetic` back).
+# Examples
+## An aircraft seen from a tower
+> The tower at 59.65 N, 17.92 E, 40 m; the aircraft at 59.70 N, 18.00 E, 1500 m.
+E = wgs84Ellipsoid;
+[e, n, u] = geodetic2enu(59.70, 18.00, 1500, 59.65, 17.92, 40, E)
+[az, elev, r] = geodetic2aer(59.70, 18.00, 1500, 59.65, 17.92, 40, E)
+[lat, lon, h] = aer2geodetic(az, elev, r, 59.65, 17.92, 40, E)
+# See also
+ecef2enu enu2aer geodetic2ecef
+
+@ ecef2enu, enu2ecef, ecef2ned, ned2ecef, ecef2aer, aer2ecef
+ECEF coordinates seen from a local origin, as east, north and up, north, east and down, or azimuth, elevation and range; and back.
+
+As the geodetic forms, with the point given in Earth-centred, Earth-fixed x, y and z.
+
+# Syntax
+[xEast, yNorth, zUp] = ecef2enu(x, y, z, lat0, lon0, h0, spheroid)
+    East, north and up.
+[x, y, z] = enu2ecef(xEast, yNorth, zUp, lat0, lon0, h0, spheroid)
+    Back.
+[xNorth, yEast, zDown] = ecef2ned(x, y, z, lat0, lon0, h0, spheroid)
+    North, east and down (`ned2ecef` back).
+[az, elev, slantRange] = ecef2aer(x, y, z, lat0, lon0, h0, spheroid)
+    Azimuth, elevation and range (`aer2ecef` back).
+# Examples
+## The same point by either road
+E = wgs84Ellipsoid;
+[x, y, z] = geodetic2ecef(E, 59.70, 18.00, 1500);
+[e1, n1, u1] = ecef2enu(x, y, z, 59.65, 17.92, 40, E);
+[e2, n2, u2] = geodetic2enu(59.70, 18.00, 1500, 59.65, 17.92, 40, E);
+[e1 n1 u1] - [e2 n2 u2]
+# See also
+geodetic2enu enu2aer
+
+@ enu2aer, aer2enu, ned2aer, aer2ned
+Local coordinates as azimuth, elevation and slant range, and back.
+
+Within one local frame: east, north and up (or north, east and down) as a direction and a distance. The azimuth is clockwise from north, the elevation above the horizontal.
+
+# Syntax
+[az, elev, slantRange] = enu2aer(xEast, yNorth, zUp)
+    From east, north and up.
+[xEast, yNorth, zUp] = aer2enu(az, elev, slantRange)
+    Back.
+[az, elev, slantRange] = ned2aer(xNorth, yEast, zDown)
+    From north, east and down (`aer2ned` back).
+# Examples
+## North-east and up
+[az, elev, r] = enu2aer(100, 100, 100)
+[e, n, u] = aer2enu(45, 30, 1000)
+# See also
+geodetic2aer
+
+@ inpolygon
+Which points lie inside a polygon, or on its edge.
+
+`in` is true for the points inside or on the edge, `on` for those on the edge. A polygon of several parts has them separated by NaN; a part inside another is a hole.
+
+# Syntax
+in = inpolygon(xq, yq, xv, yv)
+    Inside or on the edge.
+[in, on] = inpolygon(xq, yq, xv, yv)
+    With the points on the edge.
+# Examples
+## Random points in a star
+rng default
+t = linspace(0, 2*pi, 11);
+r = repmat([1 0.4], 1, 6);
+xv = r(1:11).*sin(t);
+yv = r(1:11).*cos(t);
+x = 2*rand(300, 1) - 1;
+y = 2*rand(300, 1) - 1;
+in = inpolygon(x, y, xv, yv);
+plot(xv, yv, x(in), y(in), 'r.', x(~in), y(~in), 'b.')
+axis equal
+sum(in)
+# See also
+polyarea isinterior
+
+@ polyarea
+The area of a polygon in the plane.
+
+By the shoelace formula, half the sum of the cross products of successive vertices; the vertices go round in either direction, and the polygon closes itself.
+
+# Syntax
+a = polyarea(x, y)
+    The area.
+# Examples
+## A triangle and a regular hexagon
+polyarea([0 4 0], [0 0 3])
+t = (0:5)*pi/3;
+[polyarea(cos(t), sin(t)) 3*sqrt(3)/2]
+# See also
+areaint inpolygon
+
+@ ispolycw, poly2cw, poly2ccw
+Whether a polygon's parts run clockwise, and its parts made to run one way.
+
+Outer boundaries and holes are often told apart by direction (shapefiles want outer rings clockwise and holes counterclockwise). Parts are separated by NaN and each is tested or turned on its own.
+
+# Syntax
+tf = ispolycw(x, y)
+    For each part, whether it runs clockwise.
+[x, y] = poly2cw(x, y)
+    Clockwise.
+[x, y] = poly2ccw(x, y)
+    Counterclockwise.
+# Examples
+## A square turned
+x = [0 1 1 0 0];
+y = [0 0 1 1 0];
+ispolycw(x, y)
+[xc, yc] = poly2cw(x, y);
+ispolycw(xc, yc)
+xc
+# See also
+polysplit polyarea
+
+@ polysplit, polyjoin
+The NaN-separated parts of a polygon or line as cells, and cells joined back.
+
+Map data keep several parts in one vector, NaN between them; `polysplit` gives a cell for each part (a column each), and `polyjoin` makes one column of them again.
+
+# Syntax
+[xc, yc] = polysplit(x, y)
+    The parts as cells.
+[x, y] = polyjoin(xc, yc)
+    One vector, NaN between the parts.
+# Examples
+## Two parts and back
+x = [0 1 1 NaN 3 4];
+y = [0 0 1 NaN 3 3];
+[xc, yc] = polysplit(x, y)
+[x2, y2] = polyjoin(xc, yc);
+isequaln(x2, x(:))
+# See also
+ispolycw
+
+@ polyxpoly
+Where two polylines cross.
+
+The intersection points of two lines (or polygon boundaries) in the plane; `ii` gives, for each, the segments of the first and the second line that cross there.
+
+# Syntax
+[xi, yi] = polyxpoly(x1, y1, x2, y2)
+    The crossings.
+[xi, yi, ii] = polyxpoly(x1, y1, x2, y2)
+    With the segments.
+# Examples
+## A sine wave crossing a line
+x = linspace(0, 10, 200);
+y = sin(x);
+[xi, yi] = polyxpoly(x, y, [0 10], [-0.2 0.6]);
+xi'
+plot(x, y, [0 10], [-0.2 0.6], xi, yi, 'ko')
+# See also
+inpolygon
