@@ -1,0 +1,112 @@
+@ heatmap
+Values as coloured cells, each labelled with its number.
+
+From a matrix (with labels for its columns and rows), or from a table: how many rows fall in each pair of groups of two variables, or the mean (sum, median, max, min) of a colour variable in each. Missing cells are dark gray. Setting a property of the chart (`h.Title`, `h.ColorLimits`, `h.Colormap`, `h.CellLabelFormat`) draws it again.
+
+# Syntax
+h = heatmap(cdata)
+    A matrix.
+h = heatmap(xvalues, yvalues, cdata)
+    With labels.
+h = heatmap(tbl, xvar, yvar)
+    Counts of a table's groups.
+h = heatmap(tbl, xvar, yvar, 'ColorVariable', cvar, 'ColorMethod', 'mean')
+    A statistic of a variable.
+h = heatmap(..., 'Title', t, 'Colormap', cm, 'ColorLimits', [lo hi], 'CellLabelFormat', '%.2f')
+    Its appearance.
+# Examples
+## Mean temperatures by month and site
+T = table(categorical({'Lund'; 'Lund'; 'Umeå'; 'Umeå'; 'Lund'; 'Umeå'}), categorical({'Jan'; 'Jul'; 'Jan'; 'Jul'; 'Jan'; 'Jul'}), [1; 18; -9; 15; 3; 16], ...
+    'VariableNames', {'Site', 'Month', 'Temp'});
+h = heatmap(T, 'Month', 'Site', 'ColorVariable', 'Temp', 'ColorMethod', 'mean');
+h.Title = 'Mean temperature';
+h.ColorData
+# See also
+imagesc corrcoef
+
+@ piechart, donutchart
+Pie charts and donut charts, their wedges labelled.
+
+Each wedge's share of the total, labelled by `'LabelStyle'`: `'percent'`, `'name'`, `'namepercent'`, `'data'`, `'namedata'`, `'datapercent'` or `'none'`; a categorical array (or a table's variable) is counted. The wedges start at `'StartAngle'` and run counterclockwise unless `'Direction'` says. A donut chart has a hole (`'InnerRadius'`, 0.6) with room for a label in the middle.
+
+# Syntax
+p = piechart(data, names)
+    A pie chart.
+p = piechart(tbl, var)
+    Of a table's variable, counted.
+p = piechart(..., 'LabelStyle', s, 'StartAngle', a, 'Direction', d)
+    Labelled and placed.
+d = donutchart(data, names, 'InnerRadius', r, 'CenterLabel', s)
+    A donut chart.
+# Examples
+## Energy sources two ways
+share = [40 30 17 9 4];
+names = {'hydro', 'nuclear', 'wind', 'bio', 'other'};
+subplot(1, 2, 1), piechart(share, names, 'LabelStyle', 'namepercent');
+subplot(1, 2, 2), donutchart(share, names, 'CenterLabel', 'TWh');
+# See also
+pie pie3
+
+@ stackedplot
+Each variable in an axes of its own, stacked, sharing x.
+
+For a table, each variable (or those named) in its axes, one above another, sharing the x-axis: a timetable's row times, or `'XVariable'`; for a matrix, each column. Variables of different scales stay readable side by side in time.
+
+# Syntax
+s = stackedplot(tbl, vars)
+    A table's variables.
+s = stackedplot(X, Y)
+    A matrix's columns.
+s = stackedplot(..., 'Title', t, 'DisplayLabels', labels)
+    Titled and labelled.
+# Examples
+## A day of weather
+TT = timetable(datetime(2026, 11, 5) + hours(0:23)', 5 + 4*sin(pi*(0:23)'/12), 1010 - (0:23)'/3, 3 + rand(24, 1), ...
+    'VariableNames', {'Temp', 'Pressure', 'Wind'});
+stackedplot(TT, 'Title', 'Station A');
+# See also
+timetable plot subplot
+
+@ polarhistogram
+A histogram of angles in polar axes.
+
+Angles in radians are binned over 0 to 2 pi (in nbins bins, at given edges, or of `'BinWidth'`), each bin drawn as a wedge out to its count (or `'probability'`, `'pdf'`); `'DisplayStyle', 'stairs'` draws the outline only. `h.Values` and `h.BinCounts` give the counts.
+
+# Syntax
+h = polarhistogram(theta, nbins)
+    In nbins bins.
+h = polarhistogram(theta, edges)
+    At given edges.
+h = polarhistogram(..., 'BinWidth', w, 'Normalization', 'probability', 'DisplayStyle', 'stairs')
+    By a width, normalized, as an outline.
+# Examples
+## Two headings
+theta = [pi/3 + 0.3*randn(200, 1); 4*pi/3 + 0.5*randn(100, 1)];
+h = polarhistogram(theta, 24, 'FaceColor', [0.3 0.6 0.8]);
+sum(h.BinCounts)
+[~, k] = max(h.Values);
+round(rad2deg(mean(h.BinEdges(k:k+1))))
+# See also
+rose histogram polarscatter
+
+@ wordcloud
+Words drawn at sizes by how often they come, or by sizes given.
+
+Text is split into words and counted (short common words left out), or words come with sizes, from arrays or a table; a categorical array is counted. The most frequent are drawn largest, the largest tenth in a highlight colour. `'MaxDisplayWords'` limits how many.
+
+# Syntax
+wc = wordcloud(words, sizeData)
+    Words and their sizes.
+wc = wordcloud(tbl, wordVar, sizeVar)
+    From a table.
+wc = wordcloud(str)
+    From text, counted.
+wc = wordcloud(..., 'MaxDisplayWords', n, 'Color', c, 'HighlightColor', c)
+    Fewer, coloured.
+# Examples
+## A short text's words
+str = "river water flows over stones; water carries sand, and the river carries water to the sea. sand and stones settle where the water slows.";
+wc = wordcloud(str);
+[wc.WordData; string(wc.SizeData)]
+# See also
+histogram categorical

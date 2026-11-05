@@ -1372,6 +1372,14 @@
       const cmap = ax._cmap;
       for (const [pi, poly] of polys.entries()) {
         if (poly.pts.length < 2) continue;
+        const interp = c.faceColor === 'interp' && !poly.open && !c.rings && poly.vals && poly.vals.length === poly.pts.length
+          && poly.pts.length >= 3 && poly.vals.every(Number.isFinite);
+        if (interp) {
+          const P = poly.pts.map(([x, y]) => [fr.fx(x), fr.fy(y)]);
+          for (let k = 1; k + 1 < P.length; k++) {
+            this.interpTri(ctx, P[0], P[k], P[k + 1], poly.vals[0], poly.vals[k], poly.vals[k + 1], cmap, ax.clim, c.faceAlpha, (col) => col);
+          }
+        }
         ctx.beginPath();
         if (c.rings) {
           // a map's polygon (geoshow): rings parted by NaN, filled even-odd so that holes stay open
@@ -1394,7 +1402,7 @@
           ctx.closePath();
         }
         let fill = null;
-        if (poly.open) fill = null;
+        if (poly.open || interp) fill = null;
         else if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
         else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, c.faceAlpha);
         if (fill) {
@@ -2270,7 +2278,13 @@
     /* Interpolated colour over a quad: two triangles, each filled with a
        linear gradient along the direction its value changes most. */
     interpQuad(ctx, q, vals, cmap, clim, alpha, shade) {
-      const tri = (a, b, cc, va, vb, vc) => {
+      this.interpTri(ctx, q[0], q[1], q[2], vals[0], vals[1], vals[2], cmap, clim, alpha, shade);
+      this.interpTri(ctx, q[0], q[2], q[3], vals[0], vals[2], vals[3], cmap, clim, alpha, shade);
+    }
+
+    /* A triangle filled with a linear gradient of the colormap along the direction its value changes most. */
+    interpTri(ctx, a, b, cc, va, vb, vc, cmap, clim, alpha, shade) {
+      {
         // solve v = p*x + r*y + s through the three points
         const det = (b[0] - a[0]) * (cc[1] - a[1]) - (cc[0] - a[0]) * (b[1] - a[1]);
         ctx.save();
@@ -2295,9 +2309,7 @@
         ctx.strokeStyle = gr;
         ctx.stroke();
         ctx.restore();
-      };
-      tri(q[0], q[1], q[2], vals[0], vals[1], vals[2]);
-      tri(q[0], q[2], q[3], vals[0], vals[2], vals[3]);
+      }
     }
 
     /* ---- legends and colorbars ---------------------------------------------------------- */
@@ -2504,7 +2516,9 @@
           const cs = idx.map(colorOf);
           col = width === 3 ? [0, 1, 2].map((q) => cs.reduce((t, v) => t + v[q], 0) / cs.length) : cs.reduce((t, v) => t + v, 0) / cs.length;
         } else if (fvc) col = colorOf(Math.min(i, rows - 1));
-        out.push({ pts, c: col, open });
+        // a value at each vertex, for a face whose colour is interpolated
+        const vals = fvc && perVertex && width === 1 && idx.length ? idx.map(colorOf) : null;
+        out.push({ pts, c: col, open, vals });
       }
       return out;
     }
@@ -2515,9 +2529,15 @@
     for (let j = 0; j < cols; j++) {
       const pts = [];
       for (let i = 0; i < rows; i++) pts.push([X.data[i * cols + j], Y.data[i * cols + j], Z ? Z.data[i * cols + j] : null]);
-      let cv = null;
+      let cv = null, vals = null;
       if (C) cv = C.data.length === cols ? C.data[j] : C.data[0];
-      out.push({ pts, c: cv });
+      if (C && C.data.length === rows * cols && rows > 1) {
+        // a value at each vertex: the face's colour interpolated between them ('interp'), or its first vertex's ('flat')
+        vals = [];
+        for (let i = 0; i < rows; i++) vals.push(C.data[i * cols + j]);
+        cv = vals[0];
+      }
+      out.push({ pts, c: cv, vals });
     }
     return out;
   }

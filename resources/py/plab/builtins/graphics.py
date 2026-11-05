@@ -720,7 +720,7 @@ def line(nargout, *args):
     return handles_out(hs) if nargout else None
 
 
-@bi('fplot', 'ezplot', arr=False)
+@bi('fplot', arr=False)
 def fplot(nargout, *args):
     ax, rest = split_axes_arg(args)
     _need(rest, 1, 'fplot')

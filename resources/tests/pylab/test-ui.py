@@ -2000,6 +2000,17 @@ async def charts_and_more(page):
     check('stackedplot draws an axes for each variable', await page.ev(f'{WIN}.fig.axes.length'), 2)
     await canvas_shot(page, 'charts-4.png')
     await command(page, 'close all')
+    await command(page, "figure('Position', [80 80 500 400]); patch([0 10 5], [0 0 8], [1 2 3]); colormap(parula); axis([0 10 0 8]);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    px = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                       "const at = (x, y) => {{ const d = c.getContext('2d').getImageData(Math.round(f.fx(x) * k), Math.round(f.fy(y) * k), 1, 1).data; return [d[0], d[1], d[2]]; }}; "
+                       "return [at(1.5, 0.5), at(5, 6.5)]; })()")
+    shaded = bool(px) and px[0][2] > px[0][0] and px[1][0] > px[1][2] and px[1][1] > px[1][2]
+    check("a patch with a value at each vertex shades between them ('interp'): bluish by the first corner, yellowish by the third",
+          True if shaded else px, True)
+    await command(page, 'close all')
 
     await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
     snd = await page.ev('PL.app.lastSound || null')

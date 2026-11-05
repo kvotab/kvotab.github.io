@@ -1,6 +1,7 @@
 """Every built-in called with inputs it may not take (none, too few, text,
 a number, matrices, logical values, sparse matrices) ends in the
-language's error, never in a Python exception; asked for one output, one
+language's error, never in a Python exception (the inputs read-only, as a
+variable's shared array is); asked for one output, one
 that returns gives one value, never a Python tuple. And the built-ins listed in
 builtins/arity.py refuse a call with fewer inputs than their shortest form
 with "Not enough input arguments."
@@ -46,6 +47,8 @@ help helpwin return gtext spinmap'''.split())
 M = np.array([[2.0, 0, 1], [0, 0, 3], [4, 0, 0]])
 V = np.array([[1.0, 0, 2]])
 L = np.array([[True, False], [False, True]])
+for _a in (M, V, L):
+    _a.flags.writeable = False   # as a variable's array is (shared): a built-in that writes into its input fails here
 S = SPM.make(sps.csc_matrix(M))
 SL = SPM.make(sps.csc_matrix(L), logical=True)
 INPUTS = [(), (M,), (V,), (L,), (M, M), (M, 1.0), (1.0, M), (V, V), (M, 2.0, 1.0), (Char.of('abc'),), (2.5,),

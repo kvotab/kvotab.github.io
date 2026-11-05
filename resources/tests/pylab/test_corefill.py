@@ -334,6 +334,11 @@ W, _ = run("figure; h = ezsurfc('x^2 - y^2', [-1 1 -1 1], 20); tt = get(gca, 'Ti
 near("ezsurfc: f(x, y) of text on the grid asked for", W['z'], a(W['xl']) ** 2 - np.linspace(-1, 1, 20).reshape(-1, 1) ** 2, 1e-12)
 C('ez functions: titled with the function', text(W['t1']) == 'x^2 - y^2' and text(W['t2']) == 'x = cos(t), y = sin(t), z = t' and text(W['t3']) == 'r = 1 + cos(t)')
 near('ezsurf: -2*pi to 2*pi on a 60-by-60 grid unless given', (W['lim'], W['nz']), ([-2 * math.pi, 2 * math.pi], [60, 60]), 1e-12)
+W, _ = run("close all; ezplot('x^2 - 2', [-2 2]); tt = get(gca, 'Title'); e1 = tt.String; l1 = xlim; ln = findobj(gca, 'Type', 'functionline'); "
+           "figure; ezplot('x^2 + y^2 - 4'); tt = get(gca, 'Title'); e2 = tt.String; figure; ezplot(@(x) sin(x)); l3 = xlim;")
+C('ezplot: text as well as handles; one variable over its interval, two as the curve where f is 0, titled with it',
+  text(W['e1']) == 'x^2 - 2' and text(W['e2']) == 'x^2 + y^2 - 4 = 0', (W['e1'], W['e2']))
+near('... -2*pi to 2*pi unless given', (W['l1'], W['l3']), ([[-2, 2]], [[-2 * math.pi, 2 * math.pi]]), 1e-12)
 W, _ = run("figure; [X, Y, Z] = peaks(20); surf(X, Y, Z); hold on; p = plot3([0 1], [0 1], [2 4], 'o'); camlookat(p); va = camva; tg = camtarget; md = get(gca, 'CameraViewAngleMode');"
            "camlookat(gca); md2 = get(gca, 'CameraViewAngleMode');")
 near('camlookat: the target the middle of the objects', W['tg'], [[0.5, 0.5, 3]])

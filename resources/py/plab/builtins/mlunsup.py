@@ -413,7 +413,8 @@ def _condensed(v, fn):
         m = (1 + math.sqrt(1 + 8 * a.size)) / 2
         if m != int(m):
             raise err(f'stats:{fn}:distances', 'A row of distances has m(m-1)/2 values (pdist).', fn)
-        return a.reshape(-1)
+        # a copy: SciPy's linkage writes into its input, and a variable's array is shared (read-only)
+        return a.reshape(-1).copy()
     return None
 
 
@@ -432,7 +433,7 @@ def linkage(nargout, *args):
             name, kw, fh = _metric(args[2:], X, 'linkage')
             y = _pdist(X, name, kw, fh)
         elif method in ('centroid', 'median', 'ward'):
-            Z = sp_link(X, method)
+            Z = sp_link(np.array(X, dtype=float), method)
             return out(np.column_stack([Z[:, :2] + 1, Z[:, 2]]))
         else:
             y = _pdist(X, 'euclidean', {}, None)
@@ -712,6 +713,9 @@ class GMM(Obj):
     def log_comp(self, X):
         """log(p_j N(x; mu_j, Sigma_j)) for each row and component."""
         from scipy.stats import multivariate_normal
+        X = np.asarray(X, float)
+        if X.ndim != 2 or X.shape[1] != self.d:
+            raise MError('stats:gmdistribution:XColumns', f'X has a column for each of the mixture\'s {self.d} dimensions (it has {X.shape[-1] if X.ndim else 1}).')
         return np.column_stack([np.log(self.p[j]) + multivariate_normal.logpdf(X, self.mu[j], self.Sigma[j], allow_singular=True).reshape(-1)
                                 for j in range(self.k)])
 
@@ -932,7 +936,6 @@ def silhouette(nargout, *args):
     s = _silhouette_values(X, lab, name, kw, fh)
     if nargout == 0 or nargout > 1:
         from .graphics import newplot
-        from ..graphics_base import Series
         ax = newplot(None)
         order = []
         ticks = []
@@ -947,15 +950,13 @@ def silhouette(nargout, *args):
             members = np.flatnonzero(lab == c)
             ypos += list(pos + 1 + np.arange(members.size))
             pos += members.size + 2
-        h = Series(ax, 'bar')
-        h.props['XData'] = np.array(ypos, float).reshape(1, -1)
-        h.props['YData'] = s[order].reshape(1, -1)
-        h.props['Horizontal'] = True
-        h.props['BarWidth'] = 1.0
+        # drawn by barh, so that the bars are laid out as bars are
+        h = REG['barh'].fn(1, ax, out(np.array(ypos, float).reshape(-1, 1)), out(s[order].reshape(-1, 1)), 1.0, Char.of('EdgeColor'), Char.of('none'))
         ax.set_value('YDir', Char.of('reverse'))
         ax.set_value('YTick', np.array(ticks, float).reshape(1, -1))
         ax.set_value('YTickLabel', Cell.of_list([Char.of(x) for x in labels]))
-        ax.xlabel_text = 'Silhouette Value'
+        REG['xlabel'].fn(0, ax, Char.of('Silhouette Value'))
+        REG['ylabel'].fn(0, ax, Char.of('Cluster'))
         ax.touch()
         if nargout == 0:
             return None

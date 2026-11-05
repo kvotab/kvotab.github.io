@@ -1,0 +1,353 @@
+@ line
+A line added to the current axes, without clearing them.
+
+Unlike `plot`, `line` is a low-level function: it adds to the axes as they are, whatever hold says, and takes no line spec, only names and values. It gives the line object when asked.
+
+# Syntax
+line(x, y)
+    A line in 2-D.
+line(x, y, z)
+    In 3-D.
+h = line(..., 'Name', value)
+    With properties.
+# Examples
+## Lines added to a plot
+x = linspace(0, 2*pi, 100);
+plot(x, sin(x))
+line(x, cos(x), 'Color', 'r', 'LineStyle', '--')
+h = line([0 2*pi], [0 0], 'Color', [0.5 0.5 0.5]);
+numel(get(gca, 'Children'))
+# See also
+plot xline
+
+@ ezplot, ezplot3, ezpolar
+Functions plotted from text or handles, the older way.
+
+`ezplot` plots f(x) over an interval (-2 pi to 2 pi unless given), or an implicit curve f(x, y) = 0; `ezplot3` a curve x(t), y(t), z(t) in 3-D (t from 0 to 2 pi), marking its end with `'animate'`; `ezpolar` a curve r = f(theta) in polar axes. The functions are text such as `'cos(t)'` or function handles. `fplot`, `fimplicit`, `fplot3` and `fpolarplot` are the newer forms.
+
+# Syntax
+ezplot(f, [xmin xmax])
+    A function of x.
+ezplot3(x, y, z, [tmin tmax])
+    A curve in 3-D.
+ezpolar(f, [a b])
+    In polar axes.
+# Examples
+## Three older plots
+subplot(1, 3, 1), ezplot('x^2 - 2', [-2 2])
+subplot(1, 3, 2), ezplot3('cos(t)', 'sin(t)', 't/5', [0 4*pi])
+subplot(1, 3, 3), ezpolar('1 + cos(t)')
+# See also
+fplot fpolarplot
+
+@ scatter3, swarmchart, swarmchart3
+Markers in 3-D, and scatter plots with points of the same x spread sideways.
+
+`scatter3` places markers at points in 3-D, with sizes and colours of their own. `swarmchart` spreads the points of each x sideways so that they do not hide each other: by density (wider where they are many, the default), at random (`'rand'`), or not at all; `swarmchart3` spreads in x and y.
+
+# Syntax
+scatter3(x, y, z, sz, c)
+    Markers in 3-D.
+s = swarmchart(x, y, sz, c, 'filled', 'XJitter', 'density', 'XJitterWidth', w)
+    A swarm chart.
+s = swarmchart3(x, y, z, sz, c)
+    In 3-D.
+# Examples
+## Three groups as a swarm, and a cloud in 3-D
+g = [ones(60, 1); 2*ones(60, 1); 3*ones(60, 1)];
+y = [randn(60, 1); randn(60, 1) + 1; 0.5*randn(60, 1) - 1];
+subplot(1, 2, 1), swarmchart(g, y, 12, 'filled'), xticks(1:3)
+t = linspace(0, 4*pi, 150)';
+subplot(1, 2, 2), scatter3(cos(t), sin(t), t, 15, t, 'filled'), view(-30, 25)
+# See also
+scatter boxchart
+
+@ bubblechart, bubblechart3, polarbubblechart, bubblesize, bubblelim
+Bubbles at points, their areas growing with a size; in 2-D, 3-D and polar axes.
+
+The smallest size in the axes gets the smallest bubble and the largest the largest: `bubblesize` sets their diameters in points (1 and 20 to begin with), `bubblelim` the sizes they stand for (the data's range unless set). Colours are one for all, a row for each bubble, or values through the colormap; the faces are partly see-through, so that overlapping bubbles show.
+
+# Syntax
+bubblechart(x, y, sz, c)
+    Bubbles.
+bubblechart3(x, y, z, sz, c)
+    In 3-D.
+polarbubblechart(theta, rho, sz, c)
+    In polar axes.
+bubblesize([dmin dmax])
+    The bubbles' diameters.
+bubblelim([lo hi])
+    The sizes they stand for.
+# Examples
+## Cities as bubbles
+lon = [18.07 11.97 13.00 17.64 20.26];
+lat = [59.33 57.71 55.61 59.86 63.83];
+pop = [984 590 362 242 130];
+bubblechart(lon, lat, pop, pop)
+bubblesize([5 30])
+xlabel('longitude'), ylabel('latitude')
+bubblelim
+# See also
+scatter geobubble
+
+@ barh, bar3, bar3h, pareto
+Bars sideways and in 3-D, and bars in order with their running percentage.
+
+`barh` draws horizontal bars; `bar3` and `bar3h` bars as blocks in 3-D (a matrix's columns side by side, or `'grouped'` and `'stacked'`). `pareto` sorts bars from the largest down and draws their cumulative percentage over them, on a second axis: which few causes make up most of the total.
+
+# Syntax
+barh(x, y)
+    Horizontal bars.
+bar3(y, Z, width)
+    Bars in 3-D.
+bar3h(Z)
+    Along the x-axis.
+[H, ax] = pareto(y, names, threshold)
+    Sorted, with the running percentage.
+# Examples
+## Faults by cause
+counts = [12 45 7 30 6];
+names = {'seal', 'valve', 'wiring', 'pump', 'other'};
+subplot(1, 2, 1), barh(counts), yticklabels(names)
+subplot(1, 2, 2), pareto(counts, names)
+## Blocks in 3-D
+bar3(magic(4))
+# See also
+bar histogram
+
+@ hist, histogram2, rose
+Histograms the older way, of two variables, and of angles.
+
+`hist` draws a histogram of y in nbins bins (10), or with outputs gives the counts and the bin centres without drawing. `histogram2` bins pairs of values on a grid and draws the counts as bars in 3-D. `rose` is an angle histogram in polar axes (`polarhistogram` is the newer form).
+
+# Syntax
+[counts, centers] = hist(y, nbins)
+    Counts and centres.
+hist(y, nbins)
+    Drawn.
+histogram2(X, Y, nbins)
+    Of pairs.
+rose(theta, nbins)
+    Of angles.
+# Examples
+## Counts, a joint histogram and directions
+y = randn(500, 1);
+[n, c] = hist(y, 5);
+[n; round(c, 2)]
+x2 = randn(2000, 1);
+y2 = 0.6*x2 + 0.8*randn(2000, 1);
+subplot(1, 2, 1), histogram2(x2, y2, [12 12])
+subplot(1, 2, 2), rose(pi/4 + 0.4*randn(300, 1), 24)
+# See also
+histogram histcounts polarhistogram
+
+@ fill, fill3, patch
+Filled polygons.
+
+`fill` and `fill3` draw polygons from the columns of x, y (and z), each filled with a colour (or interpolated from colours at its vertices), clearing the axes unless held. `patch` adds a polygon object to the axes as they are, from points or from faces and vertices (as `isosurface` gives), with properties such as `'FaceColor'`, `'FaceAlpha'` and `'EdgeColor'`.
+
+# Syntax
+fill(x, y, c)
+    Polygons.
+fill3(x, y, z, c)
+    In 3-D.
+patch(x, y, c)
+    A polygon object.
+patch('Faces', F, 'Vertices', V, 'FaceColor', c)
+    From faces and vertices.
+# Examples
+## A hexagon, a coloured triangle, a see-through square
+t = (0:5)*pi/3;
+fill(cos(t), sin(t), [0.3 0.6 0.9]), axis equal, hold on
+patch([1.5 3 2.2], [-1 -0.5 1], [1 2 3])
+patch('Faces', [1 2 3 4], 'Vertices', [0 -0.5; 2 -0.5; 2 0.5; 0 0.5], 'FaceColor', 'r', 'FaceAlpha', 0.3)
+hold off
+# See also
+area polyshape
+
+@ polarscatter, polaraxes, polar
+Markers in polar coordinates, polar axes, and the older polar plot.
+
+`polarscatter` places markers at angles theta (radians) and radii rho, with sizes and colours of their own. `polaraxes` makes polar axes (angles round a circle, radii out from the middle), alone or in a tile of `subplot`, with properties such as `ThetaZeroLocation`, `ThetaDir` and `RLim`. `polar` is the older form of `polarplot`.
+
+# Syntax
+polarscatter(theta, rho, sz, c, 'filled')
+    Markers.
+pax = polaraxes('Name', value, ...)
+    Polar axes.
+polar(theta, rho)
+    The older plot.
+# Examples
+## Wind directions and speeds, north at the top, clockwise
+dir = deg2rad([10 40 45 80 200 220 230 250 260 300]);
+speed = [3 5 4 6 8 9 7 10 6 4];
+pax = polaraxes('ThetaZeroLocation', 'top', 'ThetaDir', 'clockwise');
+polarscatter(pax, dir, speed, 40, speed, 'filled')
+pax.RLim = [0 12];
+# See also
+polarplot polarhistogram
+
+@ quiver3, compass, feather
+Arrows in 3-D, from the origin, and along an axis.
+
+`quiver3` draws an arrow from each point (x, y, z) along (u, v, w), scaled so that they do not overlap unless the scale is 0 or `'off'`. `compass` draws arrows from the origin in polar axes, one for each pair (U, V) or complex number; `feather` draws them from evenly spaced points along the x-axis, a time series of directions.
+
+# Syntax
+quiver3(x, y, z, u, v, w, scale)
+    Arrows in 3-D.
+compass(U, V)
+    From the origin.
+compass(Z)
+    Of complex numbers.
+feather(U, V)
+    Along the x-axis.
+# Examples
+## Normals of a surface, and a day's wind
+[x, y] = meshgrid(-1:0.5:1);
+z = x.^2 - y.^2;
+[nx, ny, nz] = surfnorm(x, y, z);
+subplot(1, 3, 1), surf(x, y, z), hold on, quiver3(x, y, z, nx, ny, nz, 0.5), hold off
+w = 3*exp(1i*linspace(0, pi, 8));
+subplot(1, 3, 2), compass(w)
+subplot(1, 3, 3), feather(real(w), imag(w))
+# See also
+quiver surfnorm
+
+@ stem3, ribbon, pie3
+Stems in 3-D, columns as ribbons, and a pie in 3-D.
+
+`stem3` draws stems from z = 0 up to each value, with markers at their ends; `ribbon` draws each column of Y as a ribbon of a width (0.75); `pie3` draws a pie chart as a solid.
+
+# Syntax
+stem3(X, Y, Z, 'filled')
+    Stems in 3-D.
+ribbon(X, Y, width)
+    Ribbons.
+pie3(x, explode, labels)
+    A solid pie.
+# Examples
+## Three 3-D charts
+[X, Y] = meshgrid(1:5);
+subplot(1, 3, 1), stem3(X, Y, exp(-((X - 3).^2 + (Y - 3).^2)/4), 'filled')
+subplot(1, 3, 2), ribbon(peaks(20))
+subplot(1, 3, 3), pie3([3 2 1], [0 1 0])
+# See also
+stem pie
+
+@ comet, comet3
+The path of a point, with its head.
+
+The path is drawn with a marker at its end, the point's position at the last time. Here it is drawn whole at once: the figure shows the path as it ends.
+
+# Syntax
+comet(x, y)
+    In 2-D.
+comet3(x, y, z)
+    In 3-D.
+# Examples
+## A spiral's path
+t = linspace(0, 6*pi, 300);
+subplot(1, 2, 1), comet(t.*cos(t), t.*sin(t))
+subplot(1, 2, 2), comet3(cos(t), sin(t), t)
+# See also
+animatedline plot
+
+@ animatedline, addpoints, clearpoints, getpoints
+A line that points are added to as a program runs.
+
+An animated line starts empty (or with points); `addpoints` adds points, drawn at the next `drawnow`, the oldest dropped beyond `'MaximumNumPoints'`; `clearpoints` takes them all off; `getpoints` gives them. It takes a line's properties, so that colour, width and markers can be set.
+
+# Syntax
+an = animatedline('Color', c, 'MaximumNumPoints', n)
+    An animated line.
+addpoints(an, x, y)
+    Points added.
+clearpoints(an)
+    Points taken off.
+[x, y] = getpoints(an)
+    Its points.
+# Examples
+## A trace that keeps its last 50 points
+an = animatedline('Color', 'b', 'MaximumNumPoints', 50);
+axis([0 10 -1.2 1.2])
+for t = linspace(0, 10, 200)
+    addpoints(an, t, sin(2*t));
+    drawnow limitrate
+end
+[x, y] = getpoints(an);
+[numel(x), round(x(1), 2), x(end)]
+# See also
+drawnow plot
+
+@ xline, yline, xregion, yregion
+Lines and shaded bands across the whole axes.
+
+`xline` draws vertical lines at x values and `yline` horizontal ones, reaching across the axes whatever the limits become and not changing them, with a line spec and labels. `xregion` and `yregion` shade bands between pairs of values. Each gives its objects, whose `Value` moves them.
+
+# Syntax
+xl = xline(x, LineSpec, label)
+    Vertical lines.
+yl = yline(y, LineSpec, label)
+    Horizontal lines.
+xr = xregion(x1, x2, 'FaceColor', c)
+    A vertical band.
+yr = yregion(y1, y2)
+    A horizontal band.
+# Examples
+## Limits and an interval marked
+t = linspace(0, 10, 300);
+y = sin(t) + 0.1*t;
+plot(t, y), hold on
+yline([-0.5 1.5], '--', {'low', 'high'});
+xline(5, 'r', 'event');
+xregion(2, 3.5);
+yregion(0.9, 1.1, 'FaceColor', 'g');
+hold off
+# See also
+line patch
+
+@ plotyy
+Two plots with a y axis each, the older way.
+
+The first plot uses the left axis and the second the right, both sharing x; each may be drawn by its own function (`'plot'`, `'semilogy'` and the like). The outputs are both axes and both plots. `yyaxis` does the same in steps.
+
+# Syntax
+[ax, h1, h2] = plotyy(x1, y1, x2, y2)
+    Two plots.
+[ax, h1, h2] = plotyy(x1, y1, x2, y2, fun1, fun2)
+    By functions of their own.
+# Examples
+## A temperature and a pressure
+t = 0:0.5:12;
+[ax, h1, h2] = plotyy(t, 20 + 5*sin(t/2), t, 1000*exp(-t/8), 'plot', 'semilogy');
+ylabel(ax(1), 'temperature'), ylabel(ax(2), 'pressure'), xlabel('hours')
+numel(ax)
+# See also
+yyaxis
+
+@ gplot, treelayout, treeplot, etreeplot
+Graphs and trees drawn from matrices and parent lists.
+
+`gplot` draws an edge for each nonzero A(i, j) between the points in rows i and j of xy (or gives the lines' coordinates). `treelayout` gives positions for drawing a tree from its parent list (parent(k) is node k's parent, 0 for a root): leaves evenly across, each parent above its children. `treeplot` draws the tree; `etreeplot` the elimination tree of a sparse matrix.
+
+# Syntax
+gplot(A, xy, LineSpec)
+    A graph.
+[x, y, h, s] = treelayout(parent)
+    A tree's layout.
+treeplot(parent, nodeSpec, edgeSpec)
+    A tree.
+etreeplot(A)
+    An elimination tree.
+# Examples
+## A ring of six, and a small family tree
+k = (0:5)';
+xy = [cos(2*pi*k/6), sin(2*pi*k/6)];
+A = diag(ones(5, 1), 1) + diag(1, -5);
+subplot(1, 2, 1), gplot(A + A', xy, 'o-'), axis equal
+parent = [0 1 1 2 2 3 3 3];
+[x, y, h] = treelayout(parent);
+h
+subplot(1, 2, 2), treeplot(parent)
+# See also
+graph plot etree

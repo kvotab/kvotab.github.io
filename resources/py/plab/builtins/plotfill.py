@@ -178,6 +178,40 @@ def ezplot3(nargout, *args):
     return r if nargout else None
 
 
+@bi('ezplot', arr=False)
+def ezplot(nargout, *args):
+    """ezplot(f), ezplot(f, [a b]), ezplot(f, [xmin xmax ymin ymax]): f(x) over -2*pi to 2*pi, or the curve
+    f(x, y) = 0 for a function of two variables; f as text or a handle, the plot titled with it."""
+    G = _g()
+    ax, rest = G.split_axes_arg(args)
+    nargchk(rest, 1, 2, 'ezplot')
+    f = rest[0]
+    if isinstance(f, FH):
+        m = re.match(r'^@\(([^)]*)\)', f.text())
+        nv = len([v for v in m.group(1).split(',') if v.strip()]) if m else 1
+    elif is_str(f):
+        nv = 2 if len(_vars_of(py_str(f))) == 2 else 1
+    else:
+        nv = 1
+    pre = [ax] if ax is not None else []
+    if nv == 2:
+        h, text = _func(f, 2, 'ezplot', ('x', 'y'))
+        lim = _domain(rest, 1, 4, 'ezplot')
+        r = REG['fimplicit'].fn(1, *(pre + [h, out(np.array([lim]))]))
+        title = f'{text} = 0'
+    else:
+        h, text = _func(f, 1, 'ezplot', ('x',))
+        lim = _domain(rest, 1, 2, 'ezplot')
+        r = REG['fplot'].fn(1, *(pre + [h, out(np.array([lim]))]))
+        title = text
+    a = ax if ax is not None else G.gca_()
+    _title(a, title)
+    REG['xlabel'].fn(0, a, Char.of('x'))
+    if nv == 2:
+        REG['ylabel'].fn(0, a, Char.of('y'))
+    return r if nargout else None
+
+
 @bi('ezpolar', arr=False)
 def ezpolar(nargout, *args):
     """ezpolar(f), ezpolar(f, [a b]): the curve r = f(theta) in polar axes, theta from 0 to 2*pi."""

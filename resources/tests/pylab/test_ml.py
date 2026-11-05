@@ -133,6 +133,9 @@ for method in ('single', 'complete', 'average', 'weighted', 'ward', 'centroid', 
     W, _ = run(f"Z = linkage({Xs}, '{method}');")
     Zs = sch.linkage(X, method)
     near(f'linkage {method} (scipy)', W['Z'], np.column_stack([Zs[:, :2] + 1, Zs[:, 2]]))
+W, _ = run(f"X = {Xs}; Y = pdist(X); Z1 = linkage(Y, 'single'); Z2 = linkage(Y, 'average'); Zw = linkage(X, 'ward');")
+near('linkage of a variable (pdist\'s row, the data) twice over: SciPy given a copy, not the shared array',
+     (W['Z1'], W['Z2'], W['Zw']), tuple(np.column_stack([z[:, :2] + 1, z[:, 2]]) for z in (sch.linkage(ssd.pdist(X), 'single'), sch.linkage(ssd.pdist(X), 'average'), sch.linkage(X, 'ward'))))
 W, _ = run(f"X = {Xs}; Z = linkage(X, 'average'); T = cluster(Z, 'MaxClust', 3); T2 = cluster(Z, 'Cutoff', 1.2); Td = cluster(Z, 'Cutoff', 3, 'Criterion', 'distance'); "
            "[c, dd] = cophenet(Z, pdist(X)); Y = inconsistent(Z); o = optimalleaforder(Z, pdist(X)); T3 = clusterdata(X, 'MaxClust', 3, 'Linkage', 'average'); "
            "f = figure('Visible', 'off'); [H, TT, perm] = dendrogram(Z, 0); nh = numel(H); [H2, T30, p30] = dendrogram(Z);")
@@ -173,6 +176,13 @@ pdf_ref = sum(w[k] * multivariate_normal.pdf(X[:3], mu[k], S[:, :, k]) for k in 
 near('pdf of the mixture; posteriors sum to one', (W['p'], a(W['P']).sum(1)), (pdf_ref.reshape(-1, 1), np.ones(75)), 1e-10)
 near('AIC and BIC from the parameter count (3 means, 3 full covariances, 2 proportions)', (W['aic'], W['bic']),
      (2 * W['nll'] + 2 * 29, 2 * W['nll'] + 29 * math.log(75)), 1e-9)
+raises("gm = gmdistribution([0 0; 4 3], eye(2)); pdf(gm, [1 2 3])", "a column for each of the mixture's 2 dimensions")
+W, _ = run("close all; X = [randn(20, 2); randn(20, 2) + 6]; idx = [ones(20, 1); 2*ones(20, 1)]; silhouette(X, idx); b = findobj(gca, 'Type', 'bar'); "
+           "nb = numel(b.YData); hz = b.Horizontal; xl = get(get(gca, 'XLabel'), 'String'); yd = get(gca, 'YDir');")
+C('silhouette drawn: horizontal bars laid out by barh, a bar for each point, its axis labelled, clusters from the top',
+  W['nb'] == 40 and W['hz'].str() == 'on' and W['xl'].str() == 'Silhouette Value' and W['yd'].str() == 'reverse', (W['nb'], W['hz'], W['xl'], W['yd']))
+W, _ = run("close all; gm = gmdistribution([0 0; 4 3], eye(2)); fcontour(@(x, y) pdf(gm, [x y]), [-3 7 -4 8]); nk = numel(get(gca, 'Children'));")
+C('fcontour of a function not written for arrays (pdf of a mixture at [x y]): evaluated point by point, drawn', W['nk'] >= 1, W['nk'])
 W, _ = run("gm = gmdistribution([0 0; 5 5], cat(3, eye(2), 2*eye(2)), [0.3 0.7]); p = pdf(gm, [0 0; 5 5]); rng(1); r = random(gm, 2000); m = mean(r);")
 near('gmdistribution made by hand: its pdf', W['p'], (0.3 * multivariate_normal.pdf([[0, 0], [5, 5]], [0, 0], np.eye(2)) + 0.7 * multivariate_normal.pdf([[0, 0], [5, 5]], [5, 5], 2 * np.eye(2))).reshape(-1, 1))
 near('random from it: the mean near 0.3*0 + 0.7*5', W['m'], [[3.5, 3.5]], 0.15)

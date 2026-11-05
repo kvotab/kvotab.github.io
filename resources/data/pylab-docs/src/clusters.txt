@@ -1,0 +1,437 @@
+@ pdist, pdist2, squareform
+Distances between the rows of matrices.
+
+`pdist` gives the distance between each pair of rows of X, as a row in the order (1,2), (1,3), ..., (2,3), ...; `squareform` turns that row into the symmetric matrix and back. `pdist2` gives the distance from each row of X to each row of Y, or only the K smallest (or largest) in each column with the rows they come from. The distance is Euclidean unless named: `'squaredeuclidean'`, `'seuclidean'` (scaled by each column's standard deviation), `'cityblock'`, `'minkowski'`, `'chebychev'`, `'mahalanobis'`, `'cosine'`, `'correlation'`, `'spearman'`, `'hamming'`, `'jaccard'`, or a function of one's own.
+
+# Syntax
+D = pdist(X, distance)
+    Between the rows of X.
+Z = squareform(y)
+    As a square matrix.
+y = squareform(Z)
+    Back to a row.
+D = pdist2(X, Y, distance)
+    From X's rows to Y's.
+[D, I] = pdist2(X, Y, distance, 'Smallest', K)
+    The K nearest.
+# Examples
+## Four points, three distances
+X = [0 0; 3 4; 6 0; 3 0];
+d = pdist(X)
+squareform(d)
+pdist(X, 'cityblock')
+[D, I] = pdist2(X, [3 1; 0 5], 'euclidean', 'Smallest', 2)
+# See also
+knnsearch linkage mahal
+
+@ knnsearch, rangesearch, createns, KDTreeSearcher, ExhaustiveSearcher
+Nearest neighbours: the k nearest points, and all points within a distance.
+
+`knnsearch` gives, for each row of Y, the k rows of X nearest it (nearest first) and their distances; `rangesearch` gives, as cells, the rows within r. Distances are Euclidean unless named. A searcher made once (`createns`, or `KDTreeSearcher` and `ExhaustiveSearcher` directly) holds X and its distance for many searches; the answers are the same either way.
+
+# Syntax
+[Idx, D] = knnsearch(X, Y, 'K', k, 'Distance', distance)
+    The k nearest.
+[Idx, D] = rangesearch(X, Y, r)
+    Within r.
+ns = createns(X, 'NSMethod', m, 'Distance', d)
+    A searcher.
+ns = KDTreeSearcher(X)
+    A Kd-tree searcher.
+ns = ExhaustiveSearcher(X, 'Distance', d)
+    One that measures every distance.
+# Examples
+## Shops near two homes
+shops = [1 1; 2 5; 4 2; 6 6; 7 1; 5 4];
+homes = [3 3; 6 2];
+[idx, d] = knnsearch(shops, homes, 'K', 2)
+r = rangesearch(shops, homes, 2.5);
+r{1}, r{2}
+ns = createns(shops, 'Distance', 'cityblock');
+knnsearch(ns, homes)
+# See also
+pdist2 dbscan
+
+@ mahal
+The squared Mahalanobis distance of points from a sample.
+
+(y - mu) inv(C) (y - mu)', mu and C the mean and covariance of the sample's rows: distance measured in standard deviations along the sample's own directions, so that a point off a correlated cloud's axis is far even when it is near in plain distance. For a Gaussian mixture, a column for each component.
+
+# Syntax
+d = mahal(Y, X)
+    From the sample X.
+D = mahal(gm, X)
+    From each component of a mixture.
+# Examples
+## Two points at the same plain distance
+X = mvnrnd([0 0], [1 0.9; 0.9 1], 1000);
+Y = [1 1; 1 -1];
+[vecnorm(Y, 2, 2), mahal(Y, X)]
+# See also
+pdist gmdistribution
+
+@ kmeans, kmedoids
+k clusters, each about its centroid, or about one of its own points.
+
+`kmeans` repeats: each row to its nearest centroid, each centroid to the middle of its rows (the mean for the squared Euclidean distance, the median for city block), from k-means++ starts (`'Replicates'` runs it several times and keeps the best). It gives each row's cluster, the centroids, each cluster's total distance and each row's distances. `kmedoids` keeps the centres among the rows themselves (the medoids), which suits any distance and resists outliers.
+
+# Syntax
+idx = kmeans(X, k)
+    The clusters.
+[idx, C, sumd, D] = kmeans(X, k, 'Distance', d, 'Replicates', r)
+    With centroids and distances.
+[idx, C, sumd, D, midx] = kmedoids(X, k, 'Distance', d)
+    About medoids.
+# Examples
+## Three groups found
+X = [randn(50, 2); randn(50, 2) + [5 0]; randn(50, 2) + [2.5 4]];
+[idx, C] = kmeans(X, 3, 'Replicates', 5);
+sortrows(round(C, 1))
+accumarray(idx, 1)'
+gscatter(X(:, 1), X(:, 2), idx), hold on, plot(C(:, 1), C(:, 2), 'kx', 'MarkerSize', 12, 'LineWidth', 2), hold off
+[~, M, ~, ~, midx] = kmedoids(X, 3);
+isequal(M, X(midx, :))
+# See also
+linkage dbscan fitgmdist silhouette
+
+@ linkage, clusterdata, dendrogram
+Hierarchical clustering: a tree of merges, cut into clusters, and drawn.
+
+`linkage` joins the two nearest clusters again and again: each row of Z joins two (the points numbered 1 to m, the merged clusters m+1, m+2, ...) at a height. How near is measured by the method: `'single'` (the closest pair, unless given), `'complete'`, `'average'`, `'weighted'`, `'centroid'`, `'median'` or `'ward'`. `cluster` cuts the tree into at most n clusters, or where links are inconsistent or high; `clusterdata` does both in one step. `dendrogram` draws the tree.
+
+# Syntax
+Z = linkage(X, method, distance)
+    The tree.
+T = clusterdata(X, 'MaxClust', n, 'Linkage', method)
+    In one step.
+[H, T, outperm] = dendrogram(Z, P, 'ColorThreshold', t, 'Labels', names)
+    Drawn.
+# Examples
+## Six cities by their coordinates
+cities = {'Lund', 'Malmö', 'Göteborg', 'Borås', 'Umeå', 'Luleå'};
+xy = [13.2 55.7; 13.0 55.6; 12.0 57.7; 12.9 57.7; 20.3 63.8; 22.2 65.6];
+Z = linkage(xy, 'average');
+T = cluster(Z, 'MaxClust', 3)'
+dendrogram(Z, 'Labels', cities, 'ColorThreshold', 3)
+clusterdata(xy, 'MaxClust', 2, 'Linkage', 'average')'
+# See also
+cluster cophenet inconsistent kmeans
+
+@ cophenet, inconsistent, optimalleaforder
+How well a tree keeps the distances, how inconsistent its links are, and the best order of its leaves.
+
+`cophenet` gives the correlation between the original distances and the heights at which the tree first joins each pair (near 1 when the tree keeps them well). `inconsistent` compares each link's height with the links within d levels below it: a large coefficient marks a natural cut. `optimalleaforder` finds, among the orders the tree allows, the one with the least sum of distances between neighbouring leaves, for a dendrogram that reads better.
+
+# Syntax
+[c, d] = cophenet(Z, Y)
+    The correlation, and the tree's distances.
+Y = inconsistent(Z, d)
+    Each link's inconsistency.
+order = optimalleaforder(Z, D)
+    The leaves' order.
+# Examples
+## Two methods compared
+X = [randn(10, 2); randn(10, 2) + 4];
+Y = pdist(X);
+[cophenet(linkage(Y, 'single'), Y), cophenet(linkage(Y, 'average'), Y)]
+Z = linkage(Y, 'average');
+I = inconsistent(Z);
+round(I(end, :), 2)
+numel(optimalleaforder(Z, Y))
+# See also
+linkage dendrogram
+
+@ dbscan, spectralcluster
+Clusters by density, and by the eigenvectors of a similarity graph.
+
+`dbscan` grows clusters from core points, those with at least minpts points within epsilon, through their neighbours; points near no core point are noise (-1). It finds clusters of any shape and needs no number of them. `spectralcluster` joins each point to its nearest neighbours, weights the links by distance, and clusters the graph Laplacian's k eigenvectors of the smallest eigenvalues with k-means: it separates groups that are connected rather than round.
+
+# Syntax
+idx = dbscan(X, epsilon, minpts)
+    Density-based clusters.
+[idx, corepts] = dbscan(X, epsilon, minpts, 'Distance', d)
+    With the core points.
+idx = spectralcluster(X, k)
+    Spectral clusters.
+[idx, V, D] = spectralcluster(X, k, 'NumNeighbors', n)
+    With the eigenvectors and eigenvalues.
+# Examples
+## Two rings that k-means cannot part
+t = 2*pi*rand(400, 1);
+r = [ones(200, 1); 3*ones(200, 1)] + 0.1*randn(400, 1);
+X = [r.*cos(t), r.*sin(t)];
+i1 = dbscan(X, 0.6, 5);
+i2 = spectralcluster(X, 2);
+i3 = kmeans(X, 2);
+numel(unique(i1))
+crosstab(i1, r > 2)
+subplot(1, 3, 1), gscatter(X(:, 1), X(:, 2), i1), title('dbscan'), legend off
+subplot(1, 3, 2), gscatter(X(:, 1), X(:, 2), i2), title('spectralcluster'), legend off
+subplot(1, 3, 3), gscatter(X(:, 1), X(:, 2), i3), title('kmeans'), legend off
+# See also
+kmeans linkage
+
+@ gmdistribution, fitgmdist, posterior
+Gaussian mixtures: made, fitted to data, and the probability of each component for each point.
+
+A Gaussian mixture is a weighted sum of normal distributions: means (a row each), covariances and proportions. `fitgmdist` fits one by expectation-maximization from k-means++ starts, with full or diagonal, shared or separate covariances and a regularization; it keeps the log-likelihood, AIC and BIC. `pdf`, `random`, `cluster`, `posterior` and `mahal` work on a mixture; `posterior` gives each component's probability given each point.
+
+# Syntax
+gm = gmdistribution(mu, sigma, p)
+    A mixture.
+gm = fitgmdist(X, k, 'CovarianceType', t, 'SharedCovariance', tf, 'RegularizationValue', r, 'Replicates', n)
+    Fitted.
+[P, nlogL] = posterior(gm, X)
+    Each component's probability.
+# Examples
+## Two components found again
+gm0 = gmdistribution([0 0; 4 3], cat(3, [1 0.5; 0.5 1], [0.5 0; 0 2]), [0.6 0.4]);
+X = random(gm0, 1000);
+gm = fitgmdist(X, 2, 'Replicates', 3);
+sortrows(round(gm.mu, 1))
+round(sort(gm.ComponentProportion), 2)
+P = posterior(gm, [0 0; 4 3; 2 1.5]);
+round(P, 3)
+fcontour(@(x, y) reshape(pdf(gm, [x(:) y(:)]), size(x)), [-3 7 -4 8]), hold on, plot(X(:, 1), X(:, 2), '.', 'MarkerSize', 3), hold off
+# See also
+cluster kmeans mvnpdf
+
+@ cluster
+Clusters cut from a hierarchical tree, or the clusters of a Gaussian mixture.
+
+From a linkage tree: at most n clusters (`'MaxClust'`), or a cut where the inconsistency coefficient (or the height, with `'Criterion', 'distance'`) exceeds a cutoff; clusters are numbered in the order of their first observation. From a Gaussian mixture: each row goes with the component most probable for it, with the posterior probabilities and the negative log-likelihood.
+
+# Syntax
+T = cluster(Z, 'MaxClust', n)
+    At most n clusters.
+T = cluster(Z, 'Cutoff', c, 'Criterion', 'distance')
+    Cut at a height.
+[idx, nlogL, P] = cluster(gm, X)
+    By a mixture.
+# Examples
+## A tree cut two ways
+X = [0 0; 0.5 0; 5 5; 5.5 5; 12 0];
+Z = linkage(X);
+cluster(Z, 'MaxClust', 2)'
+cluster(Z, 'Cutoff', 2, 'Criterion', 'distance')'
+gm = gmdistribution([0 0; 5 5], eye(2));
+cluster(gm, [0.2 0.1; 4.8 5.3])'
+# See also
+linkage fitgmdist
+
+@ silhouette, evalclusters
+How well points sit in their clusters, and the number of clusters a criterion prefers.
+
+A point's silhouette is (b - a)/max(a, b), a its mean distance to the rest of its cluster and b to the nearest other cluster: near 1 for a point well inside its cluster, near 0 on a border, negative when it sits better in another; without outputs they are drawn as bars, cluster by cluster. `evalclusters` clusters for each k (by k-means, Ward linkage or a Gaussian mixture) and picks the k a criterion prefers: `'CalinskiHarabasz'`, `'DaviesBouldin'`, `'silhouette'` or `'gap'`.
+
+# Syntax
+s = silhouette(X, clust, distance)
+    Each point's silhouette.
+silhouette(X, clust)
+    Drawn.
+eva = evalclusters(X, clust, criterion, 'KList', ks)
+    The number preferred.
+# Examples
+## How many groups?
+X = [randn(40, 2); randn(40, 2) + [6 0]; randn(40, 2) + [3 5]; randn(40, 2) + [9 5]];
+eva = evalclusters(X, 'kmeans', 'CalinskiHarabasz', 'KList', 2:6);
+eva.OptimalK
+eva2 = evalclusters(X, 'kmeans', 'silhouette', 'KList', 2:6);
+eva2.OptimalK
+silhouette(X, eva.OptimalY)
+round(mean(silhouette(X, eva.OptimalY)), 2)
+# See also
+kmeans
+
+@ pca, pcacov, barttest
+Principal components: the directions in which data vary most.
+
+`pca` centres the data and takes its singular value decomposition: the components (coeff's columns, orthonormal), the data in their terms (score), their variances (latent), the percentage each explains, Hotelling's T² of each row and the means. Rows with NaN are left out; `'VariableWeights', 'variance'` works on standardized variables. `pcacov` gives the components of a covariance matrix; `barttest` tests how many components differ (whether the smallest eigenvalues may be equal).
+
+# Syntax
+[coeff, score, latent, tsquared, explained, mu] = pca(X, 'NumComponents', k)
+    The components.
+[coeff, latent, explained] = pcacov(V)
+    Of a covariance matrix.
+[ndim, prob, chisquare] = barttest(X, alpha)
+    How many differ.
+# Examples
+## Three measurements that are mostly one
+t = randn(200, 1);
+X = [t, 2*t + 0.3*randn(200, 1), -t + 0.3*randn(200, 1)];
+[coeff, score, latent, ~, explained] = pca(X);
+round(explained', 1)
+round(coeff(:, 1)', 2)
+plot(score(:, 1), score(:, 2), '.'), axis equal, xlabel('component 1'), ylabel('component 2')
+[~, ~, e2] = pcacov(cov(X));
+max(abs(e2 - explained)) < 1e-9
+barttest(X, 0.05)
+# See also
+ppca factoran svd
+
+@ ppca
+Probabilistic principal components, missing values allowed.
+
+The model Y = mu + X W' + noise of one variance, fitted by expectation-maximization, each row using the values it has (NaN is missing): the components, scores, their variances, the means and the noise variance, with the data reconstructed where values were missing.
+
+# Syntax
+coeff = ppca(Y, k)
+    k components.
+[coeff, score, pcvar, mu, v, S] = ppca(Y, k)
+    With scores, variances, means, noise and more.
+# Examples
+## A tenth of the values missing
+t = randn(100, 2);
+Y = t*[1 2 0 1; 0 1 1 -1] + 0.1*randn(100, 4);
+Ym = Y;
+Ym(rand(size(Y)) < 0.1) = NaN;
+[coeff, ~, ~, ~, v, S] = ppca(Ym, 2);
+round(v, 3)
+miss = isnan(Ym);
+round(sqrt(mean((S.Recon(miss) - Y(miss)).^2)), 2)
+# See also
+pca
+
+@ factoran, rotatefactors
+Factor analysis, and loadings rotated to be simpler.
+
+`factoran` models the variables' correlations as a few common factors plus each variable's own variance (lambda lambda' + diag(psi)), by maximum likelihood; the loadings are rotated (varimax unless named) so that each variable loads mostly on one factor. With the number of observations it tests whether m factors suffice. `rotatefactors` rotates loadings: orthogonally (varimax, quartimax, equamax, parsimax, orthomax), or obliquely (promax).
+
+# Syntax
+[lambda, psi, T, stats, F] = factoran(X, m, 'Rotate', method)
+    The loadings, specific variances, rotation, statistics and scores.
+[B, T] = rotatefactors(A, 'Method', m)
+    Rotated.
+# Examples
+## Six tests, two abilities
+f = randn(300, 2);
+L = [0.9 0; 0.8 0; 0.7 0.1; 0 0.9; 0.1 0.8; 0 0.7];
+X = f*L' + 0.4*randn(300, 6);
+[lambda, psi, ~, stats] = factoran(X, 2);
+round(abs(lambda), 1)
+round(stats.p, 3)
+# See also
+pca
+
+@ cmdscale, mdscale
+Points placed so that their distances match given ones.
+
+`cmdscale` (classical scaling) finds points whose Euclidean distances are D's exactly when D is Euclidean, and near them otherwise, with the eigenvalues that say how many dimensions are needed. `mdscale` fits points in p dimensions to dissimilarities: metric (the distances themselves) or nonmetric (only their order, `'stress'`, the default), measuring the misfit by Kruskal's stress.
+
+# Syntax
+[Y, e] = cmdscale(D, p)
+    Classical scaling.
+[Y, stress] = mdscale(D, p, 'Criterion', c)
+    Fitted.
+# Examples
+## A map from road distances
+names = {'Stockholm', 'Göteborg', 'Malmö', 'Umeå'};
+D = [0 470 615 635; 470 0 270 1100; 615 270 0 1250; 635 1100 1250 0];
+[Y, e] = cmdscale(D, 2);
+round(e(1:3)')
+plot(Y(:, 1), Y(:, 2), 'o'), text(Y(:, 1), Y(:, 2), names), axis equal
+[~, stress] = mdscale(D, 2);
+round(stress, 3)
+# See also
+pdist tsne procrustes
+
+@ tsne
+Points in two (or three) dimensions whose neighbourhoods are those of high-dimensional data.
+
+t-SNE matches each point's neighbourhood: Gaussian affinities in the data (their width set by the perplexity, 30) against Student t affinities among the points placed, by gradient descent. Groups that are apart in the data stay apart; distances between groups mean little.
+
+# Syntax
+Y = tsne(X)
+    Two dimensions.
+[Y, loss] = tsne(X, 'NumDimensions', d, 'Perplexity', p, 'Standardize', tf)
+    With the loss.
+# Examples
+## Three groups in ten dimensions
+X = [randn(40, 10); randn(40, 10) + 3; randn(40, 10) - 3];
+g = repelem(1:3, 40)';
+Y = tsne(X, 'Perplexity', 20);
+gscatter(Y(:, 1), Y(:, 2), g)
+c = splitapply(@(y) mean(y, 1), Y, g);
+min(pdist(c)) > 3*max(splitapply(@(y) mean(std(y)), Y, g))
+# See also
+pca cmdscale
+
+@ procrustes
+The rotation, scale and shift that fit one set of points onto another.
+
+Z = b Y T + c fits X best by least squares; d is the residual sum of squares over X's (centred), 0 for a perfect fit. The transform holds T, b and c; `'Scaling'` false fixes b at 1, and `'Reflection'` allows (or forbids) a mirror image.
+
+# Syntax
+d = procrustes(X, Y)
+    The misfit.
+[d, Z, transform] = procrustes(X, Y, 'Scaling', tf, 'Reflection', tf)
+    With the fitted points and the transform.
+# Examples
+## A shape found turned and shrunk
+X = [0 0; 2 0; 2 1; 0 1; 1 2];
+th = pi/5;
+Y = 0.5*X*[cos(th) -sin(th); sin(th) cos(th)] + [3 1];
+[d, Z, tr] = procrustes(X, Y);
+round(d, 10)
+round(tr.b, 3)
+# See also
+cmdscale fitgeotform2d
+
+@ canoncorr
+Canonical correlation: the combinations of two sets of variables most correlated with each other.
+
+U = (X - mean) A and V = (Y - mean) B, each pair as correlated as it can be (r), each uncorrelated with the others, with unit variance. The statistics test, by Wilks' lambda and Bartlett's chi-square, whether the correlations from the k-th on are all zero.
+
+# Syntax
+[A, B, r] = canoncorr(X, Y)
+    The coefficients and correlations.
+[A, B, r, U, V, stats] = canoncorr(X, Y)
+    With the variates and tests.
+# Examples
+## Two sets sharing one signal
+s = randn(200, 1);
+X = [s + 0.5*randn(200, 1), randn(200, 1)];
+Y = [randn(200, 1), -s + 0.5*randn(200, 1), randn(200, 1)];
+[A, B, r, ~, ~, stats] = canoncorr(X, Y);
+round(r, 2)
+round(stats.pChisq, 4)
+# See also
+corr pca
+
+@ nnmf
+Nonnegative matrix factorization: A ≈ W H, nothing negative.
+
+By alternating least squares (each solution's negatives set to zero) or multiplicative updates, from random starts (or W0 and H0), the best of several replicates; H's rows have unit length, and D is the root mean square residual. Parts that only add up (spectra of mixtures, counts) come out as parts.
+
+# Syntax
+[W, H] = nnmf(A, k)
+    The factors.
+[W, H, D] = nnmf(A, k, 'Algorithm', a, 'Replicates', r)
+    With the residual.
+# Examples
+## Two spectra in mixtures
+x = linspace(0, 10, 60);
+s1 = exp(-(x - 3).^2); s2 = exp(-(x - 7).^2/2);
+A = rand(20, 2)*[s1; s2];
+[W, H, D] = nnmf(A, 2, 'Replicates', 5);
+round(D, 6)
+plot(x, H), legend('part 1', 'part 2')
+# See also
+pca
+
+@ corrcov
+The correlation matrix of a covariance matrix.
+
+R = C ./ (sigma sigma') with sigma the standard deviations, sqrt(diag(C)); a variable with zero variance gives NaN.
+
+# Syntax
+R = corrcov(C)
+    The correlations.
+[R, sigma] = corrcov(C)
+    And the standard deviations.
+# Examples
+## From covariance to correlation
+C = [4 3 0; 3 9 -1.5; 0 -1.5 1];
+[R, sigma] = corrcov(C)
+# See also
+cov2corr corrcoef

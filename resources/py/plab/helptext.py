@@ -3762,9 +3762,11 @@ fpolarplot: Plot r = f(theta) in polar axes, theta from 0 to 2*pi unless given.
     fpolarplot(f, [thetamin thetamax])
     fpolarplot(..., LineSpec)
     h = fpolarplot(...)
-ezplot: Plot a function of one variable (older; fplot is preferred).
+ezplot: Plot a function of one variable, or a curve f(x, y) = 0 (older; fplot and fimplicit are preferred).
     ezplot(f)
     ezplot(f, [xmin xmax])
+    ezplot(f2, [xmin xmax ymin ymax])
+    * f is text such as 'x^2 - 2' or a function handle; over -2*pi to 2*pi unless given, the plot titled with it. A function of two variables draws the curve where it is 0.
 scatter: Markers at points, with sizes and colours of their own.
     scatter(x, y)
     scatter(x, y, sz)
