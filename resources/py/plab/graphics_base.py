@@ -615,7 +615,28 @@ class Axes(GObj):
             return 'matlab.graphics.axis.GeographicAxes'
         return 'matlab.graphics.axis.PolarAxes' if self.kind == 'polar' else self.CLASSNAME
 
+    # what yyaxis's two sides share: read and set through the right side's axes, they are the left side's
+    YY_SHARED = {n.lower() for n in ('Title', 'Subtitle', 'XLabel', 'XLim', 'XLimMode', 'XTick', 'XTickMode', 'XTickLabel',
+                                     'XTickLabelMode', 'XScale', 'XDir', 'XGrid', 'XMinorGrid', 'XAxisLocation')}
+
+    # and what belongs to the side yyaxis made active: read and set through either side's axes, they are that side's
+    YY_SIDE = {n.lower() for n in ('YLabel', 'YLim', 'YLimMode', 'YTick', 'YTickMode', 'YTickLabel', 'YTickLabelMode',
+                                   'YScale', 'YDir', 'YColor')}
+
+    def _yy_active(self):
+        """The axes of the side yyaxis last made active (self when it has no two sides)."""
+        owner = self.yy_owner if self.yy_owner is not None else self
+        if owner.yy is None or owner.yy.get('right') is None:
+            return self
+        return owner.yy['right'] if owner.yy['side'] == 'right' else owner
+
     def getprop(self, name):
+        if self.yy_owner is not None and name.lower() in self.YY_SHARED:
+            return self.yy_owner.getprop(name)
+        if name.lower() in self.YY_SIDE and (self.yy is not None or self.yy_owner is not None):
+            side = self._yy_active()
+            if side is not self:
+                return side.getprop(name)
         if name.lower() == 'type' and self.kind in ('polar', 'geo'):
             return Char.of('polaraxes' if self.kind == 'polar' else 'geoaxes')
         if name.lower() == 'basemap' and self.kind == 'geo':
@@ -623,6 +644,14 @@ class Axes(GObj):
         return super().getprop(name)
 
     def setprop(self, name, value):
+        if self.yy_owner is not None and name.lower() in self.YY_SHARED:
+            self.yy_owner.setprop(name, value)
+            return
+        if name.lower() in self.YY_SIDE and (self.yy is not None or self.yy_owner is not None):
+            side = self._yy_active()
+            if side is not self:
+                side.setprop(name, value)
+                return
         if name.lower() == 'basemap' and self.kind == 'geo':
             from .builtins.mapping import set_basemap
             set_basemap(self, value)

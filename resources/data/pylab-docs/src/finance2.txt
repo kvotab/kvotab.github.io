@@ -1,0 +1,196 @@
+@ daysact, days360, yearfrac
+Days and fractions of a year between dates, by the conventions of financial markets.
+
+`daysact` counts the actual days; `days360` counts every month as 30 days and the year as 360 (the 30/360 convention of many bonds); `yearfrac` gives the fraction of a year by a basis: 0 actual/actual (the default), 1 30/360 SIA, 2 actual/360, 3 actual/365, 4 30/360 PSA, 5 30/360 ISDA, 6 30/360 European, 7 actual/365 Japanese, 12 actual/actual ISDA, 13 business days over 252. Dates are serial date numbers, date text or datetimes.
+
+# Syntax
+NumDays = daysact(StartDate, EndDate)
+    The actual days.
+NumDays = days360(StartDate, EndDate)
+    Days counted 30/360.
+YearFraction = yearfrac(StartDate, EndDate, Basis)
+    The fraction of a year.
+# Examples
+## Half a year, counted several ways
+a = datenum(2026, 1, 31);
+b = datenum(2026, 7, 31);
+[daysact(a, b), days360(a, b)]
+yearfrac(a, b, [0 1 2 3])
+# See also
+datenum between
+
+@ holidays, isbusday, busdate, fbusdate, lbusdate
+Exchange holidays and business days.
+
+`holidays` gives the New York Stock Exchange's regular holidays as the exchange observes them (a holiday on a weekend moves to the Friday before or the Monday after; closings for special events are not included), as serial date numbers. A business day is neither a weekend day (Saturday and Sunday, unless `Weekend` flags others, 7 flags from Sunday) nor a holiday (those, unless a list is given). `isbusday` tests dates; `busdate` gives the next business day (or the previous, Direction -1); `fbusdate` and `lbusdate` the first and last of a month.
+
+# Syntax
+H = holidays(StartDate, EndDate)
+    The holidays between two dates.
+tf = isbusday(Date, Holiday, Weekend)
+    True on business days.
+Busday = busdate(Date, Direction, Holiday, Weekend)
+    The next (or previous) business day.
+Date = fbusdate(Year, Month, Holiday, Weekend)
+    A month's first business day.
+Date = lbusdate(Year, Month, Holiday, Weekend)
+    A month's last business day.
+# Examples
+## The exchange's year
+h = holidays(datenum(2026, 1, 1), datenum(2026, 12, 31));
+datestr(h, 'ddd dd-mmm')
+isbusday(datenum(2026, 7, [2 3 6]))
+datestr(busdate(datenum(2026, 7, 2)))
+datestr([fbusdate(2026, 1); lbusdate(2026, 5)])
+## A Friday-and-Saturday weekend, no holidays
+w = [0 0 0 0 0 1 1];
+datestr(busdate(datenum(2026, 11, 5), 1, [], w))
+# See also
+weekday isweekend
+
+@ Portfolio, setAssetMoments, estimateAssetMoments, setDefaultConstraints, setBounds, setBudget, setInequality, setEquality
+A mean-variance portfolio problem: the assets' expected returns and covariance, and the constraints on the weights.
+
+A `Portfolio` holds the assets' means and covariance (given by `setAssetMoments`, or estimated from returns by `estimateAssetMoments`), a risk-free rate, and constraints on the weights: bounds on each (`setBounds`), on their sum (`setBudget`), and linear inequalities and equalities. `setDefaultConstraints` makes it long only and fully invested (weights at least 0, summing to 1). Each function gives a new Portfolio, `p = setBounds(p, ...)`; name-value pairs set the same things at once. The `estimate` functions then find portfolios on the efficient frontier.
+
+# Syntax
+p = Portfolio('AssetMean', m, 'AssetCovar', C, 'LowerBound', 0, 'Budget', 1, 'RiskFreeRate', r)
+    A problem set up.
+p = setAssetMoments(p, AssetMean, AssetCovar)
+    The means and covariance.
+p = estimateAssetMoments(p, AssetReturns)
+    Estimated from returns.
+p = setDefaultConstraints(p)
+    Long only, fully invested.
+p = setBounds(p, LowerBound, UpperBound)
+    Bounds on each weight.
+p = setBudget(p, LowerBudget, UpperBudget)
+    Bounds on the sum.
+p = setInequality(p, AInequality, bInequality)
+    A w <= b.
+p = setEquality(p, AEquality, bEquality)
+    A w = b.
+# Examples
+## Four assets, no more than 40% in any, and the last two at most half together
+m = [0.05; 0.07; 0.10; 0.14];
+C = corr2cov([0.08 0.12 0.18 0.26], [1 .3 .2 .1; .3 1 .4 .25; .2 .4 1 .35; .1 .25 .35 1]);
+p = Portfolio('AssetMean', m, 'AssetCovar', C, 'RiskFreeRate', 0.02);
+p = setDefaultConstraints(p);
+p = setBounds(p, 0, 0.4);
+w = estimateFrontierLimits(p);
+round(w, 3)
+p2 = setInequality(p, [0 0 1 1], 0.5);
+w2 = estimateFrontierLimits(p2, 'max');
+round(w2', 3)
+# See also
+estimateFrontier plotFrontier portopt
+
+@ estimateFrontier, estimateFrontierLimits, estimateFrontierByReturn, estimateFrontierByRisk, estimateMaxSharpeRatio, plotFrontier
+Portfolios on the efficient frontier: the least risk for each return.
+
+`estimateFrontier` gives NumPorts portfolios (10 unless given), a column each, equally spaced in return from the least-risk one to the largest-return one; `estimateFrontierLimits` those two ends (or one, `'min'` or `'max'`); `estimateFrontierByReturn` the least-risk portfolio of a target return, `estimateFrontierByRisk` the largest-return one of a target risk; `estimateMaxSharpeRatio` the one whose excess return over the risk-free rate per unit of risk is largest. `plotFrontier` draws the frontier, risk against return.
+
+# Syntax
+PortWts = estimateFrontier(p, NumPorts)
+    Portfolios along the frontier.
+PortWts = estimateFrontierLimits(p)
+    Its two ends.
+PortWts = estimateFrontierByReturn(p, TargetReturn)
+    The least risk for a return.
+PortWts = estimateFrontierByRisk(p, TargetRisk)
+    The largest return for a risk.
+PortWts = estimateMaxSharpeRatio(p)
+    The largest Sharpe ratio.
+plotFrontier(p)
+    The frontier drawn.
+# Examples
+## The frontier and its best portfolio
+m = [0.05; 0.07; 0.10; 0.14];
+C = corr2cov([0.08 0.12 0.18 0.26], [1 .3 .2 .1; .3 1 .4 .25; .2 .4 1 .35; .1 .25 .35 1]);
+p = setDefaultConstraints(Portfolio('AssetMean', m, 'AssetCovar', C, 'RiskFreeRate', 0.02));
+ws = estimateMaxSharpeRatio(p);
+round(ws', 3)
+[r, s] = deal(estimatePortReturn(p, ws), estimatePortRisk(p, ws));
+round([r s (r - 0.02)/s], 4)
+w8 = estimateFrontierByReturn(p, 0.08);
+round(estimatePortRisk(p, w8), 4)
+plotFrontier(p), hold on, plot(s, r, 'r*'), hold off
+# See also
+Portfolio estimatePortMoments portopt
+
+@ estimatePortReturn, estimatePortRisk, estimatePortMoments
+Portfolios' expected returns and risks.
+
+For weights a column each, the expected return m' w and the risk, the standard deviation sqrt(w' C w), by the portfolio's moments.
+
+# Syntax
+pret = estimatePortReturn(p, PortWts)
+    Expected returns.
+prsk = estimatePortRisk(p, PortWts)
+    Standard deviations.
+[prsk, pret] = estimatePortMoments(p, PortWts)
+    Both.
+# Examples
+## Equal weights against the frontier's ends
+m = [0.05; 0.07; 0.10; 0.14];
+C = corr2cov([0.08 0.12 0.18 0.26], [1 .3 .2 .1; .3 1 .4 .25; .2 .4 1 .35; .1 .25 .35 1]);
+p = setDefaultConstraints(Portfolio('AssetMean', m, 'AssetCovar', C));
+W = [ones(4, 1)/4, estimateFrontierLimits(p)];
+[rsk, ret] = estimatePortMoments(p, W);
+round([rsk ret], 4)
+# See also
+estimateFrontier portstats
+
+@ portopt, portstats
+The efficient frontier the older way, and portfolios' risks and returns.
+
+`portopt` takes the expected returns and covariance directly: long only and fully invested, with further constraints as rows [A b] of A w <= b. It gives NumPorts portfolios along the frontier (or those of the returns given), their risks and returns, the weights a row each; without outputs it draws the frontier. `portstats` gives the risks and returns of weights given as rows.
+
+# Syntax
+[PortRisk, PortReturn, PortWts] = portopt(ExpReturn, ExpCovariance, NumPorts)
+    Along the frontier.
+[PortRisk, PortReturn, PortWts] = portopt(ExpReturn, ExpCovariance, [], PortReturn)
+    At returns given.
+[PortRisk, PortReturn] = portstats(ExpReturn, ExpCovariance, PortWts)
+    Of weights given.
+# Examples
+## Five portfolios along the frontier
+m = [0.05 0.07 0.10 0.14];
+C = corr2cov([0.08 0.12 0.18 0.26], [1 .3 .2 .1; .3 1 .4 .25; .2 .4 1 .35; .1 .25 .35 1]);
+[rsk, ret, W] = portopt(m, C, 5);
+round([rsk ret W], 3)
+[r1, e1] = portstats(m, C, W(3, :));
+round([r1 e1], 3)
+# See also
+estimateFrontier portvrisk
+
+@ portvrisk
+The value at risk of a portfolio whose returns are normal.
+
+The loss that is exceeded with probability RiskThreshold (0.05 unless given) over the period of the returns: -(PortReturn + norminv(RiskThreshold) PortRisk) PortValue (PortValue 1 unless given), as a positive number for a loss.
+
+# Syntax
+ValueAtRisk = portvrisk(PortReturn, PortRisk, RiskThreshold, PortValue)
+    The value at risk.
+# Examples
+## A million at 1% and 5%
+round(portvrisk(0.0005, 0.012, [0.01 0.05], 1e6))
+# See also
+portstats norminv
+
+@ corr2cov, cov2corr
+A covariance from standard deviations and correlations, and back.
+
+`corr2cov` gives C(i, j) = s(i) s(j) R(i, j); `cov2corr` gives the standard deviations (the square roots of the diagonal) and the correlations.
+
+# Syntax
+ExpCovariance = corr2cov(ExpSigma, ExpCorrC)
+    The covariance.
+[ExpSigma, ExpCorrC] = cov2corr(ExpCovariance)
+    The standard deviations and correlations.
+# Examples
+## There and back
+C = corr2cov([0.1 0.2], [1 0.5; 0.5 1])
+[s, R] = cov2corr(C)
+# See also
+cov corrcoef

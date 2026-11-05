@@ -181,8 +181,14 @@ def melSpectrogram(nargout, *args):
     if nargout == 0:
         b = lambda name, *a: R._builtin(name, *a)
         D = 10 * np.log10(np.maximum(M if M.ndim == 2 else M[:, :, 0], 1e-300))
-        b('imagesc', out(T.reshape(1, -1)), out(centres.reshape(-1, 1) / 1000), out(D))
+        # the bands are even in mel, not in hertz: rows on a mel axis, ticks labelled in kHz where those frequencies are
+        mel = hz_to_mel(centres)
+        b('imagesc', out(T.reshape(1, -1)), out(mel.reshape(-1, 1)), out(D))
         b('axis', Char.of('xy'))
+        lo, hi = mel[0] - (mel[1] - mel[0]) / 2 if mel.size > 1 else mel[0], mel[-1]
+        ticks = [f for f in 1000 * 2.0 ** np.arange(-2, 6) if lo <= hz_to_mel(f) <= hi]
+        b('yticks', out(hz_to_mel(np.array(ticks)).reshape(1, -1)))
+        b('yticklabels', Cell.of_list([Char.of(f'{f / 1000:g}') for f in ticks], (1, len(ticks))))
         b('colorbar')
         b('title', Char.of('Mel Spectrogram'))
         b('xlabel', Char.of('Time (s)'))

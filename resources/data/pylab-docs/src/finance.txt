@@ -1,0 +1,259 @@
+@ blsprice, blkprice
+European option prices: Black and Scholes's for stocks, Black's for futures.
+
+The price of a call (the right to buy at the strike) and a put (the right to sell) at expiry, for an asset whose log price moves as Brownian motion: Price now, Strike, Rate the risk-free rate and Yield a continuous dividend yield (0 unless given), both continuously compounded per year, Time to expiry in years, Volatility per year. Inputs are scalars or arrays of one size. Calls and puts satisfy put-call parity: C - P = S e^(-qT) - K e^(-rT). `blkprice` prices options on futures, the futures price taking the place of the discounted asset price.
+
+# Syntax
+[Call, Put] = blsprice(Price, Strike, Rate, Time, Volatility)
+    Black and Scholes's prices.
+[Call, Put] = blsprice(Price, Strike, Rate, Time, Volatility, Yield)
+    With a dividend yield.
+[Call, Put] = blkprice(Price, Strike, Rate, Time, Volatility)
+    Black's prices of options on futures.
+# Examples
+## A call and a put, and parity between them
+[C, P] = blsprice(100, 95, 0.03, 0.5, 0.25)
+C - P - (100 - 95*exp(-0.03*0.5))
+## Prices across strikes
+K = 70:5:130;
+[C, P] = blsprice(100, K, 0.03, 0.5, 0.25);
+plot(K, C, K, P), legend('call', 'put'), xlabel('strike'), ylabel('price')
+[Cf, Pf] = blkprice(100, 95, 0.03, 0.5, 0.25)
+# See also
+blsdelta blsimpv binprice
+
+@ blsdelta, blsgamma, blsvega, blstheta, blsrho, blslambda
+The Black-Scholes sensitivities ("Greeks") of option prices.
+
+Delta: the change of the price for a change of 1 in the asset's price; gamma: delta's change; vega: the change for a change of 1 in the volatility (0.01 is a percentage point); theta: the change per year as time passes (negative for most options); rho: the change for a change of 1 in the rate; lambda: the elasticity, the percentage change of the option's price for a 1% change in the asset's. The inputs are blsprice's.
+
+# Syntax
+[CallDelta, PutDelta] = blsdelta(Price, Strike, Rate, Time, Volatility, Yield)
+    Deltas.
+Gamma = blsgamma(Price, Strike, Rate, Time, Volatility, Yield)
+    Gamma, the same for calls and puts.
+Vega = blsvega(Price, Strike, Rate, Time, Volatility, Yield)
+    Vega, the same for both.
+[CallTheta, PutTheta] = blstheta(Price, Strike, Rate, Time, Volatility, Yield)
+    Thetas.
+[CallRho, PutRho] = blsrho(Price, Strike, Rate, Time, Volatility, Yield)
+    Rhos.
+[CallEl, PutEl] = blslambda(Price, Strike, Rate, Time, Volatility, Yield)
+    Elasticities.
+# Examples
+## Delta against a finite difference
+S = 100; K = 95; r = 0.03; T = 0.5; v = 0.25;
+[cd, pd] = blsdelta(S, K, r, T, v)
+h = 1e-4;
+(blsprice(S + h, K, r, T, v) - blsprice(S - h, K, r, T, v))/(2*h)
+[blsgamma(S, K, r, T, v), blsvega(S, K, r, T, v)]
+[ct, pt] = blstheta(S, K, r, T, v);
+[ct pt]/365
+## Delta and gamma across the asset's price
+S = 60:140;
+[d, ~] = blsdelta(S, 100, 0.03, 0.5, 0.25);
+yyaxis left, plot(S, d), ylabel('call delta')
+yyaxis right, plot(S, blsgamma(S, 100, 0.03, 0.5, 0.25)), ylabel('gamma'), xlabel('asset price')
+# See also
+blsprice blsimpv
+
+@ blsimpv
+The implied volatility of option prices: the volatility at which Black and Scholes's price is the price given.
+
+The volatility is searched up to `'Limit'` (10) until blsprice gives Value within `'Tolerance'`; calls unless `'Class'` says put (or is false); NaN where no volatility gives the price (below the option's intrinsic value, say).
+
+# Syntax
+Volatility = blsimpv(Price, Strike, Rate, Time, Value)
+    The volatility of a call's price.
+Volatility = blsimpv(..., 'Yield', q, 'Class', {'Put'}, 'Limit', L, 'Tolerance', tol)
+    Of a put, with a yield.
+# Examples
+## A price back to its volatility, and a price no volatility gives
+[C, P] = blsprice(100, 95, 0.03, 0.5, 0.25);
+blsimpv(100, 95, 0.03, 0.5, C)
+blsimpv(100, 95, 0.03, 0.5, P, 'Class', {'Put'})
+blsimpv(100, 95, 0.03, 0.5, 1)
+# See also
+blsprice blsvega
+
+@ binprice
+An American option priced on a binomial tree.
+
+Cox, Ross and Rubinstein's tree: in each step of `Increment` years the price moves up by u = e^(v sqrt(dt)) or down by 1/u, and the option's value is worked back from expiry, an American option taking its exercise value where that is more. Flag 1 is a call, 0 a put. `AssetPrice` holds the prices after each step (column j after j-1 steps, the most up moves first), `OptionValue` the option's value at each node, `OptionValue(1, 1)` its value now.
+
+# Syntax
+[AssetPrice, OptionValue] = binprice(Price, Strike, Rate, Time, Increment, Volatility, Flag)
+    The tree.
+[AssetPrice, OptionValue] = binprice(..., DividendRate)
+    With a dividend yield.
+# Examples
+## An American put is worth more than a European one
+[~, V] = binprice(100, 100, 0.05, 1, 1/200, 0.3, 0);
+american = V(1, 1)
+[~, european] = blsprice(100, 100, 0.05, 1, 0.3)
+[A, V] = binprice(100, 100, 0.05, 1, 1/4, 0.3, 0);
+round(A, 2)
+# See also
+blsprice
+
+@ irr, mirr, xirr
+Internal rates of return: the rate at which cash flows are worth nothing today.
+
+`irr` gives the rate per period that makes the present value of the flows zero, the first flow at time 0 (a column of flows for each investment); where there are several such rates, the one nearest 0, with a warning listing them. `mirr` borrows at FinRate for the outflows and reinvests the inflows at Reinvest, which gives one rate always. `xirr` takes flows on dates, the years counted as days over 365, and gives an annual rate.
+
+# Syntax
+Return = irr(CashFlow)
+    The internal rate per period.
+Return = mirr(CashFlow, FinRate, Reinvest)
+    The modified rate.
+Return = xirr(CashFlow, CashFlowDates)
+    For flows on dates, a year's rate.
+# Examples
+## An investment's rates
+cf = [-1000 300 400 400 200];
+r = irr(cf)
+round(pvvar(cf, r), 6)
+mirr(cf, 0.05, 0.04)
+d = datenum(2026, [1 3 9], 15);
+xirr([-500 200 350], d)
+# See also
+pvvar fvvar
+
+@ pvvar, fvvar, pvfix, fvfix
+Present and future values of cash flows: varying ones, and equal payments.
+
+`pvvar` discounts varying flows (the first at time 0) at a rate per period to today, `fvvar` carries them forward to the last period; with dates, by the days between them over 365. `pvfix` and `fvfix` value NumPeriods equal payments (plus an extra payment at the end, or a present value), paid at the ends of the periods unless Due is 1.
+
+# Syntax
+PresentVal = pvvar(CashFlow, Rate)
+    Varying flows today.
+FutureVal = fvvar(CashFlow, Rate)
+    At the end.
+PresentVal = pvvar(CashFlow, Rate, CFDates)
+    On dates.
+PresentVal = pvfix(Rate, NumPeriods, Payment, ExtraPayment, Due)
+    Equal payments today.
+FutureVal = fvfix(Rate, NumPeriods, Payment, PresentValue, Due)
+    At the end.
+# Examples
+## Saving 100 a month for ten years at 4% a year
+format bank
+fvfix(0.04/12, 120, 100)
+fvfix(0.04/12, 120, 100, 0, 1)
+pvfix(0.04/12, 120, 100)
+cf = [-1000 300 400 400 200];
+[pvvar(cf, 0.05), fvvar(cf, 0.05), pvvar(cf, 0.05)*1.05^4]
+# See also
+irr payper
+
+@ payper, amortize, annurate, annuterm
+Loans and annuities: the payment, the schedule, the rate and the number of periods.
+
+These relate a present value, a rate per period, a number of periods, an equal payment and a future value (0 unless given), payments at the ends of the periods unless Due is 1: `payper` gives the payment, `amortize` the schedule of principal, interest and balance (and the payment), `annurate` the rate and `annuterm` the number of periods.
+
+# Syntax
+Payment = payper(Rate, NumPeriods, PresentValue, FutureValue, Due)
+    The payment.
+[Principal, Interest, Balance, Payment] = amortize(Rate, NumPeriods, PresentValue, FutureValue, Due)
+    The schedule.
+Rate = annurate(NumPeriods, Payment, PresentValue, FutureValue, Due)
+    The rate.
+NumPeriods = annuterm(Rate, Payment, PresentValue, FutureValue, Due)
+    The number of periods.
+# Examples
+## A loan of 200 000 over 25 years at 3.6%
+format bank
+p = payper(0.036/12, 300, 200000)
+percent_a_year = 100*12*annurate(300, p, 200000)
+annuterm(0.036/12, p, 200000)
+[Prin, Int, Bal] = amortize(0.036/12, 300, 200000);
+round([Prin(1:3)' Int(1:3)' Bal(1:3)'])
+sum(Int)
+area(1:300, [Prin' Int']), legend('principal', 'interest'), xlabel('month')
+# See also
+pvfix fvfix
+
+@ effrr, nomrr
+Effective and nominal annual rates.
+
+A nominal rate compounded NumPeriods times a year earns the effective rate (1 + Rate/NumPeriods)^NumPeriods - 1 (e^Rate - 1 when compounded continuously, NumPeriods Inf); `nomrr` goes back.
+
+# Syntax
+Return = effrr(Rate, NumPeriods)
+    The effective rate.
+Return = nomrr(Rate, NumPeriods)
+    The nominal rate.
+# Examples
+## 6% compounded more and more often
+effrr(0.06, [1 4 12 365 Inf])
+nomrr(effrr(0.06, 12), 12)
+# See also
+irr
+
+@ price2ret, ret2price, tick2ret, ret2tick
+Returns from prices, and prices from returns.
+
+`price2ret` and `ret2price` work in continuous (log) returns, log(p(t)/p(t-1)), unless `'Method'` is `'periodic'`; `tick2ret` and `ret2tick` in simple returns, p(t)/p(t-1) - 1, unless `'continuous'`. Given the times of the prices, returns are divided by the time between them. The way back starts from `'StartPrice'` (1 unless given). Each column is a series.
+
+# Syntax
+[Returns, Intervals] = price2ret(Prices)
+    Continuous returns.
+[Prices, Ticks] = ret2price(Returns, 'StartPrice', p0)
+    Prices from continuous returns.
+[Returns, Intervals] = tick2ret(Data, 'Method', m, 'TickTimes', t)
+    Simple returns.
+[Prices, Times] = ret2tick(Returns, 'StartPrice', p0)
+    Prices from simple returns.
+# Examples
+## There and back
+p = [100; 102; 99; 105];
+r = price2ret(p)
+ret2price(r, 'StartPrice', 100)
+s = tick2ret(p)
+ret2tick(s, 'StartPrice', 100)
+# See also
+ewstats
+
+@ ewstats
+The exponentially weighted mean and covariance of returns.
+
+Recent returns weigh most: the last row weighs 1, the one before DecayFactor, the one before that DecayFactor^2, and so on, over the last WindowLength rows (all unless given). DecayFactor 1 gives the plain mean and covariance (divided by the number of rows). The third output is the effective number of observations.
+
+# Syntax
+[ExpReturn, ExpCovariance, NumEffObs] = ewstats(RetSeries, DecayFactor, WindowLength)
+    Weighted mean, covariance and effective number.
+# Examples
+## Two assets, recent returns weighing more
+R = [0.01 0.02; -0.02 0.01; 0.03 -0.01; 0.00 0.02; 0.02 0.03];
+[m, C, n] = ewstats(R, 0.8)
+[m1, C1] = ewstats(R, 1);
+[m1; mean(R)]
+# See also
+cov price2ret
+
+@ movavg, bollinger, rsindex, macd
+Technical indicators of a price series: moving averages, Bollinger bands, the relative strength index and the MACD.
+
+`movavg` averages over trailing windows (shorter at the start): `'simple'`, `'square-root'`, `'linear'`, `'exponential'`, `'triangular'`, `'modified'` (Wilder's) or `'custom'` weights. `bollinger` gives a simple moving average with bands NumStd standard deviations above and below (NaN until a window is full). `rsindex` is Wilder's relative strength index, 100 - 100/(1 + average gain/average loss) over 14 periods. `macd` is the 12-period less the 26-period exponential moving average, with its 9-period average as the signal line.
+
+# Syntax
+ma = movavg(Data, type, windowSize)
+    A moving average.
+ma = movavg(Data, 'custom', weights)
+    With weights of one's own.
+[middle, upper, lower] = bollinger(Data, 'WindowSize', n, 'NumStd', k)
+    Bollinger bands.
+index = rsindex(Data, 'WindowSize', n)
+    The relative strength index.
+[MACDLine, SignalLine] = macd(Data)
+    The MACD and its signal line.
+# Examples
+## A price series and its indicators
+p = 100 + cumsum(randn(150, 1));
+[mid, up, lo] = bollinger(p);
+subplot(2, 1, 1), plot([p mid up lo]), legend('price', 'average', 'upper', 'lower', 'Location', 'northwest')
+subplot(2, 1, 2), plot(rsindex(p)), yline([30 70], '--'), ylabel('RSI')
+movavg((1:6)', 'simple', 3)'
+movavg((1:6)', 'exponential', 3)'
+# See also
+movmean filter

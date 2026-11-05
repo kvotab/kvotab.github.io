@@ -881,6 +881,15 @@ run("figure; yyaxis left; plot(1:3); yyaxis right; plot(3:-1:1); ylabel('R');")
 check('the right y-axis of yyaxis is in the tree with its label and plot',
       [r['label'] for r in json.loads(W.inspect_object(val('f').id if False else STORE.current.id))['tree']][-3:],
       ['Axes (right y)', "Y label 'R'", 'Line'])
+run("figure; yyaxis left; plot(1:3); ylabel('L'); yyaxis right; plot(10:10:30); ylabel('R'); xlabel('X'); title('T'); xlim([0 4]); ax = gca;")
+check("yyaxis: the x label, title and x limits given on the right side are the axes' own (one x-axis, one title)",
+      (text("ax.XLabel.String"), text("ax.Title.String"), num("ax.XLim")), ('X', 'T', [0.0, 4.0]))
+_own = val('ax').yy_owner
+check('... and stored with the left side, whose x-axis and title are drawn', (_own.xlabel.get_value('String').str(), tuple(np.asarray(_own.props['XLim'], float).reshape(-1))), ('X', (0.0, 4.0)))
+run("yyaxis left; ax.YLim = [0 5]; b = gca;")
+check("yyaxis: a handle taken on either side reads and sets the active side's y-axis", (text("ax.YLabel.String"), num("b.YLim"), text("b.YLabel.String")), ('L', [0.0, 5.0], 'L'))
+run("yyaxis right;")
+check('... and the other side once that is active', (text("b.YLabel.String"), text("ax.YLabel.String")), ('R', 'R'))
 
 # what is changed is drawn: charts laid out again, on/off kept as on/off, log axes with bars
 run("figure; hb = bar([1 2 3]); hold on; ha = area([1 2 3] + 5); hold off;")

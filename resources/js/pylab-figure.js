@@ -934,6 +934,18 @@
       return { x, y, w, h };
     }
 
+    /* A right y-axis (yyaxis) whose tick labels and label would run past the right edge of the figure (or of
+       its panel): the box narrows to make room, as a title brings it down. */
+    rightRoom(ctx, ax, r, W) {
+      const right = ax.yy.right;
+      const b = ax._box || { x: 0, w: W };
+      const yt = this.ticksFor(right, 'y', r, false);
+      let need = 5 + Math.max(0, ...yt.labels.map((s) => textSize(ctx, s, right.fontSize * PT).width));
+      if (right.ylabel && right.ylabel.string && right.ylabel.visible !== false) need += 10 + right.ylabel.fontSize * PT * 1.1 * 1.2;
+      const over = r.x + r.w + need + 4 - (b.x + b.w);
+      return over > 0 && r.w - over > r.w / 2 ? Object.assign({}, r, { w: r.w - over }) : r;
+    }
+
     /* The height the title and subtitle take above the box, as titles() draws them. */
     titleRoom(ax) {
       const lines = (s) => (Array.isArray(s) ? s.length : String(s ?? '').split('\n').length);
@@ -967,6 +979,7 @@
 
     drawAxesIn(ctx, fig, ax, W, H, legend, cbar) {
       let rect = this.axesRect(ax, W, H, cbar, legend);
+      if (ax.yy && ax.yy.right && ax.kind !== 'polar') rect = this.rightRoom(ctx, ax, rect, W);
       const is3d = !(Math.abs(ax.view[1]) === 90 && ax.view[0] % 90 === 0);
       const cmap = decode(ax.cmap) || decode(fig.cmap);
       ax._cmap = cmap;

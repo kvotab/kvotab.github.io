@@ -246,6 +246,11 @@ W, _ = run(f"x = {col(xs)}; [S, F, T] = melSpectrogram(x, {fs}); [S2] = melSpect
 near('melSpectrogram: the steps written out (periodic Hann, normalized, power, mel triangles)', (W['S'], W['F'], W['T']), ((B @ P.T), ctr.reshape(-1, 1), ((np.arange(P.shape[0]) * 160 + 480) / fs).reshape(-1, 1)), 1e-9)
 B2, _ = mel_ref(480, 16, 100, 4000)
 near('melSpectrogram: bands, a range and the magnitude spectrum', W['S2'], B2 @ np.sqrt(P.T), 1e-9)
+W, _ = run("close all; fs = 16000; x = sin(2*pi*2000*(0:fs-1)'/fs); melSpectrogram(x, fs); ax = gca; im = findobj(ax, 'Type', 'image'); C = im.CData; "
+           "[~, r] = max(mean(C, 2)); yd = im.YData; ys = linspace(yd(1), yd(end), size(C, 1)); yr = ys(r); step = ys(2) - ys(1); "
+           "y2 = ax.YTick(strcmp(ax.YTickLabel, '2'));")
+C("melSpectrogram drawn: a 2 kHz tone's band at the axis's 2 kHz tick (rows even in mel, labels where those frequencies are)",
+  np.size(W['y2']) == 1 and abs(float(W['yr']) - float(W['y2'])) <= float(W['step']), (W['yr'], W['y2'], W['step']))
 from scipy.fft import dct  # noqa: E402
 ham = 0.54 - 0.46 * np.cos(2 * np.pi * np.arange(480) / 480)
 Fr = frames(x, ham, 160)

@@ -1,0 +1,145 @@
+@ hz2mel, mel2hz
+Frequencies on the mel scale, and back.
+
+The mel scale follows how far apart pitches sound: mel = 2595 log10(1 + hz/700), nearly straight below 1 kHz and logarithmic above. Filter banks of mel spectrograms and cepstral coefficients are spaced evenly on it.
+
+# Syntax
+mel = hz2mel(hz)
+    Hertz to mel.
+hz = mel2hz(mel)
+    Mel to hertz.
+# Examples
+## Six bands evenly spaced in mel
+> Equal steps in mel are narrow at low frequencies and wide at high ones.
+round(hz2mel([100 1000 8000]))
+edges = mel2hz(linspace(hz2mel(0), hz2mel(8000), 7));
+round(edges)'
+# See also
+melSpectrogram mfcc
+
+@ melSpectrogram
+A mel spectrogram: the power of each window in bands evenly spaced on the mel scale.
+
+The signal is cut into windows (30 ms periodic Hann windows every 10 ms unless given), each window's power spectrum summed through triangular filters equally spaced in mel (32 bands unless `'NumBands'`, over `'FrequencyRange'`), each filter divided by half its width unless `'FilterBankNormalization'` says `'area'` or `'none'`. The result has a row for each band (F its centre frequency) and a column for each window (T the time of its last sample); `'SpectrumType', 'magnitude'` sums magnitudes instead of power. Without outputs, it is drawn in dB.
+
+# Syntax
+S = melSpectrogram(audioIn, fs)
+    The bands' power in each window.
+[S, F, T] = melSpectrogram(audioIn, fs, Name, Value)
+    With the bands' centres and the windows' times.
+melSpectrogram(audioIn, fs)
+    Drawn in dB.
+# Examples
+## A rising tone
+fs = 16000;
+t = (0:2*fs - 1)'/fs;
+x = chirp(t, 200, 2, 4000, 'logarithmic');
+[S, F, T] = melSpectrogram(x, fs, 'NumBands', 40);
+size(S)
+[~, k] = max(S);
+round(F(k([10 100 190])))'
+melSpectrogram(x, fs, 'NumBands', 40)
+# See also
+mfcc spectrogram hz2mel
+
+@ mfcc
+Mel-frequency cepstral coefficients: the shape of each window's spectrum in a few numbers.
+
+For each window (30 ms periodic Hamming windows every 10 ms unless given), the energies of 40 mel bands, their natural log, and its discrete cosine transform: the first coefficients describe the spectrum's broad shape and leave out its fine harmonic detail, which makes them the usual features for speech. `'LogEnergy'` `'append'` (the default) puts the window's log energy first, `'replace'` puts it in place of the first coefficient, `'ignore'` leaves it out. The deltas are each coefficient's slope over `'DeltaWindowLength'` windows, by regression.
+
+# Syntax
+coeffs = mfcc(audioIn, fs)
+    A row for each window.
+[coeffs, delta, deltaDelta, loc] = mfcc(audioIn, fs, Name, Value)
+    With their slopes, and each window's last sample.
+# Examples
+## Two vowel-like sounds told apart
+> Both are 150 Hz buzzes; the second has its strength at higher harmonics, as an /i/ has against an /u/.
+fs = 16000;
+t = (0:fs/2 - 1)'/fs;
+h = (1:20)';
+a = sum(sin(2*pi*150*h*t')./h.^2)';
+b = sum(sin(2*pi*150*h*t').*exp(-(h - 12).^2/8))';
+ca = mfcc(a, fs, 'LogEnergy', 'ignore');
+cb = mfcc(b, fs, 'LogEnergy', 'ignore');
+size(ca)
+plot(1:13, mean(ca), '-o', 1:13, mean(cb), '-s'), legend('low harmonics', 'high harmonics'), xlabel('coefficient')
+# See also
+melSpectrogram pitch dct
+
+@ pitch
+The fundamental frequency of each window of speech or music.
+
+`'NCF'` (the default) finds the lag at which the window is most like itself, by normalized correlation; `'CEP'` the cepstrum's peak, refined by the correlation; `'LHS'` the frequency whose harmonics carry the most of the log spectrum. The search is within `'Range'` (50 to 400 Hz unless given), in 52 ms windows every 10 ms, with a median filter over `'MedianFilterLength'` windows to smooth single misses.
+
+# Syntax
+f0 = pitch(audioIn, fs)
+    The pitch of each window.
+[f0, loc] = pitch(audioIn, fs, 'Method', m, 'Range', [lo hi])
+    By a method, within a range; with each window's last sample.
+# Examples
+## A voice that glides from 120 to 240 Hz
+fs = 16000;
+t = (0:fs - 1)'/fs;
+f = 120 + 120*t;
+ph = 2*pi*cumsum(f)/fs;
+x = sin(ph) + 0.5*sin(2*ph) + 0.3*sin(3*ph);
+[f0, loc] = pitch(x, fs);
+plot(loc/fs, f0, t, f, '--'), legend('found', 'true'), xlabel('time (s)'), ylabel('Hz')
+round(f0([10 50 90]))'
+# See also
+mfcc spectrogram
+
+@ spectralCentroid, spectralSpread, spectralRolloffPoint, spectralFlatness, spectralEntropy
+Descriptors of each window's spectrum: where its power lies, how widely spread, how noise-like.
+
+Each window's power spectrum (30 ms periodic Hamming windows every 10 ms unless given), within `'FrequencyRange'`, gives: the centroid, its power-weighted mean frequency (brightness); the spread, the standard deviation about it; the rolloff point, the frequency below which `'Threshold'` (95%) of the power lies; the flatness, the geometric mean over the arithmetic mean (1 for white noise, near 0 for a tone); and the entropy, the spectrum's Shannon entropy over the largest possible (1 for white noise).
+
+# Syntax
+centroid = spectralCentroid(audioIn, fs)
+    The power-weighted mean frequency.
+spread = spectralSpread(audioIn, fs)
+    The spread about it.
+rolloff = spectralRolloffPoint(audioIn, fs, 'Threshold', 0.95)
+    Where the power reaches a share.
+flatness = spectralFlatness(audioIn, fs)
+    Noise-like or tonal.
+entropy = spectralEntropy(audioIn, fs)
+    How evenly the power spreads.
+[value, loc] = spectralCentroid(audioIn, fs, 'Window', w, 'OverlapLength', n, 'FrequencyRange', [lo hi])
+    With each window's last sample.
+# Examples
+## A tone, then noise
+fs = 8000;
+x = [sin(2*pi*1000*(0:fs - 1)'/fs); randn(fs, 1)];
+c = spectralCentroid(x, fs);
+s = spectralSpread(x, fs);
+f = spectralFlatness(x, fs);
+e = spectralEntropy(x, fs);
+k = [50 150];
+centroid_spread = round([c(k) s(k)])
+flatness_entropy = round([f(k) e(k)], 2)
+r = spectralRolloffPoint(x, fs);
+round(r(k))'
+# See also
+melSpectrogram pspectrum
+
+@ zerocrossrate
+The share of samples whose sign differs from the one before, for a signal or each window.
+
+A tone crosses zero twice a period, so its rate is twice its frequency over the sampling rate; noise crosses far more often. Zero counts as positive. With `'WindowLength'` and `'OverlapLength'`, a rate for each window; the second output counts the crossings.
+
+# Syntax
+zcr = zerocrossrate(x)
+    For the whole signal.
+[zcr, countTotal] = zerocrossrate(x, 'WindowLength', n, 'OverlapLength', k)
+    For each window, and the crossings counted.
+# Examples
+## A 100 Hz tone at 8 kHz
+fs = 8000;
+x = sin(2*pi*100*(0:fs - 1)'/fs + 0.1);
+[z, n] = zerocrossrate(x)
+2*100/fs
+zerocrossrate(randn(fs, 1))
+# See also
+spectralFlatness pitch

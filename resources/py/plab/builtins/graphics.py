@@ -2220,10 +2220,17 @@ def _fill(nargout, args, low):
 
 # ---- decorations -------------------------------------------------------------------------------
 
+def _shared(ax):
+    """The axes that hold what yyaxis's two sides share (the title, the x-axis): the left side's, when ax is the right."""
+    return ax.yy_owner if ax.yy_owner is not None else ax
+
+
 def _label(args, which, nargout):
     ax, rest = split_axes_arg(args)
     if ax is None:
         ax = gca_()
+    if which != 'ylabel':
+        ax = _shared(ax)
     t = {'title': ax.title, 'xlabel': ax.xlabel, 'ylabel': ax.ylabel, 'zlabel': ax.zlabel}[which]
     if not rest:
         return t
@@ -2244,7 +2251,7 @@ def title(nargout, *args):
 @bi('subtitle', arr=False)
 def subtitle(nargout, *args):
     ax, rest = split_axes_arg(args)
-    ax = ax or gca_()
+    ax = _shared(ax or gca_())
     ax.subtitle.set_value('String', rest[0])
     ax.touch()
     return ax.subtitle if nargout else None
@@ -2605,6 +2612,8 @@ def _tight(ax, pad=0.0):
 def _lim(args, which, nargout):
     ax, rest = split_axes_arg(args)
     ax = ax or gca_()
+    if which != 'Y':
+        ax = _shared(ax)
     if not rest:
         return ax.get_value(which + 'Lim')
     s = opt_str(rest[0])

@@ -2366,6 +2366,15 @@ async def finance(page):
     await asyncio.sleep(0.8)
     check('the efficient frontier drawn', (await ink(page)) > 0.005, True)
     await canvas_shot(page, 'finance18-1.png')
+    await command(page, "close all; figure('Position', [50 50 560 420]); S = 60:140; yyaxis left; plot(S, normcdf((S - 100)/15)); ylabel('call delta'); "
+                        "yyaxis right; plot(S, normpdf(S, 100, 15)/15); ylabel('gamma'); xlabel('asset price');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    fit = await page.ev(f"(() => {{ const w = {WIN}; const cw = w.canvas.getBoundingClientRect().width; const base = w.renderer.frames.find((f) => !f.yyRight); "
+                        "const r = base.rect; const again = w.renderer.rightRoom(w.canvas.getContext('2d'), base.ax, r, cw); "
+                        "return [cw - (r.x + r.w) > 0.095 * cw + 2, again.w === r.w]; })()")
+    check("yyaxis: a right y-axis whose tick labels and label need more than the default margin narrows the box, and then fits", fit, [True, True])
     await command(page, 'close all; clear')
 
 
