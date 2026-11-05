@@ -63,9 +63,11 @@ C('every page has a summary sentence', all(p['summary'].endswith('.') for _, p i
   [p['names'][0] for _, p in everything if not p['summary'].endswith('.')])
 C('every page has its forms and an example', all(p['syntax'] and p['examples'] for _, p in everything),
   [p['names'][0] for _, p in everything if not (p['syntax'] and p['examples'])])
-# an operator's page may give its forms as the operator (a:b, A*B, A\\b, [A, B])
+# an operator's page may give its forms as the operator (a:b, A*B, A\\b, [A, B]); the imaginary unit's as 3 + 4i;
+# classdef's as the blocks a class file holds
 OPERATORS = {'colon', 'plus', 'minus', 'uminus', 'times', 'mtimes', 'rdivide', 'mrdivide', 'ldivide', 'mldivide', 'power', 'mpower',
-             'eq', 'ne', 'lt', 'gt', 'le', 'ge', 'and', 'or', 'not', 'transpose', 'ctranspose', 'horzcat', 'vertcat', 'end'}
+             'eq', 'ne', 'lt', 'gt', 'le', 'ge', 'and', 'or', 'not', 'transpose', 'ctranspose', 'horzcat', 'vertcat', 'end',
+             'i', 'j', 'classdef'}
 
 
 def names_form(p, code):

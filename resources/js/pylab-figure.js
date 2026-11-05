@@ -1025,18 +1025,27 @@
     }
 
     /* The axes' children in their order, each kept inside the axes' box
-       unless its Clipping is off (text's is, unless set). Bubbles are kept
-       by their middles instead (series2), and a pie's labels lie outside
-       its wedges, beyond the box. */
+       unless its Clipping is off (text's is, unless set). Markers (of
+       scatter plots, bubbles, and lines) are kept by their middles instead:
+       one whose middle is in the box is drawn whole. A pie's labels lie
+       outside its wedges, beyond the box. */
     children2(ctx, ax, fr, r) {
       let clipped = false;
+      const clip = () => { ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip(); };
       for (const c of ax.children) {
         if (c.visible === false) continue;
-        const want = c.clip !== false && c.kind !== 'bubblechart' && c.kind !== 'pie';
+        const want = c.clip !== false && c.kind !== 'bubblechart' && c.kind !== 'scatter' && c.kind !== 'pie';
         if (want !== clipped) {
           if (clipped) ctx.restore();
-          else { ctx.save(); ctx.beginPath(); ctx.rect(r.x, r.y, r.w, r.h); ctx.clip(); }
+          else clip();
           clipped = want;
+        }
+        if (clipped && c.type === 'line' && c.marker && c.marker !== 'none') {
+          this.line2(ctx, ax, fr, c, { markers: false });
+          ctx.restore();
+          this.line2(ctx, ax, fr, c, { line: false, inside: r });
+          clip();
+          continue;
         }
         this.child2(ctx, ax, fr, c);
       }
@@ -1227,15 +1236,17 @@
       }
     }
 
-    line2(ctx, ax, fr, c) {
+    /* A line: its segments (line), its markers (markers; inside: only those
+       whose middles are in that box). */
+    line2(ctx, ax, fr, c, { line = true, markers = true, inside = null } = {}) {
       let x = vec(decode(c.x)), y = vec(decode(c.y));
       // xline and yline: a constant value across all of the other axis, whatever its limits are now
       if (c.span === 'vertical') { x = [x[0], x[0]]; y = [fr.yl[0], fr.yl[1]]; }
       else if (c.span === 'horizontal') { y = [y[0], y[0]]; x = [fr.xl[0], fr.xl[1]]; }
       const n = Math.min(x.length, y.length);
       const col = rgb(c.color);
-      if (c.span && c.label) this.spanLabel(ctx, fr, c, x, y, col);
-      if (c.lineStyle !== 'none' && n > 1) {
+      if (line && c.span && c.label) this.spanLabel(ctx, fr, c, x, y, col);
+      if (line && c.lineStyle !== 'none' && n > 1) {
         ctx.save();
         ctx.strokeStyle = col;
         ctx.lineWidth = lw(c.lineWidth);
@@ -1250,12 +1261,13 @@
         ctx.stroke();
         ctx.restore();
       }
-      if (c.marker && c.marker !== 'none') {
-        const pts = [];
+      if (markers && c.marker && c.marker !== 'none') {
+        let pts = [];
         const idx = c.markerIndices ? vec(decode(c.markerIndices)) : null;
         const take = idx ? Array.from(idx) : null;
         if (take) { for (const i of take) if (fr.ok(x[i], y[i])) pts.push([fr.fx(x[i]), fr.fy(y[i])]); }
         else for (let i = 0; i < n; i++) if (fr.ok(x[i], y[i])) pts.push([fr.fx(x[i]), fr.fy(y[i])]);
+        if (inside) pts = pts.filter(([px, py]) => px >= inside.x - 0.5 && px <= inside.x + inside.w + 0.5 && py >= inside.y - 0.5 && py <= inside.y + inside.h + 0.5);
         const edge = c.mec === 'auto' ? col : c.mec === 'none' ? 'transparent' : rgb(c.mec);
         const face = c.mfc === 'auto' ? col : c.mfc === 'none' ? null : rgb(c.mfc);
         drawMarkers(ctx, pts, c.marker, c.markerSize, edge, face, c.lineWidth);
@@ -1602,9 +1614,8 @@
         if (c.marker !== 'none') { const k = markerInk(c, col); drawMarkers(ctx, Array.from(x, (v, i) => [fr.fx(v), fr.fy(y[i])]), c.marker, c.markerSize, k.edge, k.face, c.lineWidth); }
         return;
       }
-      if (k === 'scatter') return this.scatter(ctx, ax, (xx, yy) => [fr.fx(xx), fr.fy(yy)], c, null);
-      if (k === 'bubblechart') {
-        // a bubble whose middle is in the box is drawn whole, the others not at all
+      if (k === 'scatter' || k === 'bubblechart') {
+        // a marker or bubble whose middle is in the box is drawn whole, the others not at all
         const r = fr.r, keep = c.clip === false;
         return this.scatter(ctx, ax, (xx, yy) => {
           const px = fr.fx(xx), py = fr.fy(yy);

@@ -60,6 +60,7 @@
     upload: '<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v4h16v-4"/>',
     download: '<path d="M12 4v12M7 11l5 5 5-5"/><path d="M4 16v4h16v-4"/>',
     run: '<path d="M7 4l13 8-13 8z" fill="currentColor" stroke="none"/>',
+    copy: '<rect x="8" y="8" width="12" height="13" rx="1.5"/><path d="M16 8V4.5A1.5 1.5 0 0 0 14.5 3h-9A1.5 1.5 0 0 0 4 4.5v11A1.5 1.5 0 0 0 5.5 17H8"/>',
     runsec: '<path d="M4 5h9M4 9h6M4 13h9"/><path d="M13 12l8 5-8 5z" fill="currentColor" stroke="none"/>',
     runadv: '<path d="M4 5h16M4 9h10"/><path d="M8 13l7 4.5L8 22z" fill="currentColor" stroke="none"/><path d="M17 14v7"/>',
     runsel: '<path d="M3 6h7M3 10h5"/><rect x="2" y="13" width="9" height="6" rx="1"/><path d="M14 9l8 5-8 5z" fill="currentColor" stroke="none"/>',

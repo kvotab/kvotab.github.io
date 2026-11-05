@@ -397,3 +397,701 @@ isequal(NaN, NaN)
 isequaln(NaN, NaN)
 # See also
 isequaln eq strcmp
+
+@ cumprod
+Cumulative products.
+
+Each element of the result is the product of the elements up to and including that point, down the columns by default. Growth factors compound this way: `cumprod(1 + r)` turns a series of returns into the growth of one unit.
+
+# Syntax
+B = cumprod(A)
+    Running products down the first dimension whose length is not 1.
+B = cumprod(A, dim)
+    Along dimension `dim`.
+# Examples
+## Factorials, and compounding
+cumprod(1:6)
+r = [0.05 -0.02 0.03 0.04];
+growth = cumprod(1 + r)
+# See also
+cumsum prod
+
+@ cummax, cummin
+The largest or smallest element so far.
+
+Each element of the result is the largest (or smallest) of the elements up to that point: the running record, or the high-water mark of a series.
+
+# Syntax
+M = cummax(A)
+    The running maximum.
+M = cummax(A, dim)
+    Along dimension `dim`.
+M = cummin(A)
+    The running minimum (and the same forms).
+# Examples
+## Records so far, and the fall from the peak
+x = [3 5 2 8 6 9 4];
+cummax(x)
+cummin(x)
+drawdown = cummax(x) - x
+# See also
+max min cumsum
+
+@ mode
+The most frequent value (the smallest of those tied).
+
+Down the columns by default. With more outputs, how often it occurs and, as a cell array, every value tied for the most frequent.
+
+# Syntax
+M = mode(A)
+    The most frequent value of each column (or of a vector).
+M = mode(A, dim)
+    Along dimension `dim`.
+M = mode(A, 'all')
+    Of every element.
+[M, F] = mode(...)
+    With its frequency.
+[M, F, C] = mode(...)
+    With every value tied for most frequent.
+# Examples
+## The most frequent value, and ties
+[m, f] = mode([1 2 2 3 3 3 4])
+[m, f, c] = mode([5 1 5 1 7]);
+m
+c{1}
+# See also
+median mean histcounts unique
+
+@ bounds
+The smallest and largest elements.
+
+The same as `min` and `max` together, in one pass.
+
+# Syntax
+[lo, hi] = bounds(A)
+    The smallest and largest elements of each column (or of a vector).
+[lo, hi] = bounds(A, dim)
+    Along dimension `dim`.
+# Examples
+## Of a vector and of a matrix's columns
+[lo, hi] = bounds([4 -2 9 1])
+[lo, hi] = bounds([1 8; 5 3; 9 0])
+# See also
+min max range
+
+@ range
+The difference between the largest and smallest elements.
+
+`max(A) - min(A)`, down the columns by default: the simplest measure of spread.
+
+# Syntax
+r = range(A)
+    For each column (or of a vector).
+r = range(A, dim)
+    Along dimension `dim`.
+# Examples
+## The spread of some data
+range([12 7 19 3 15])
+range([1 4; 6 2; 3 9])
+# See also
+bounds iqr std
+
+@ sortrows
+Sort the rows of a matrix by its columns, or of a table by its variables.
+
+Rows are ordered by their first column, ties broken by the second, and so on, keeping each row together. Columns can be chosen and ordered (negative for descending). With a second output, the order, to sort other data to match.
+
+# Syntax
+B = sortrows(A)
+    By the first column, then the next for ties.
+B = sortrows(A, column)
+    By the columns listed, in that order.
+B = sortrows(A, -column)
+    Descending by that column.
+[B, I] = sortrows(...)
+    With the row order: `B = A(I, :)`.
+# Examples
+## By one column, then by two
+A = [3 1; 1 9; 2 5; 1 4];
+sortrows(A)
+sortrows(A, -2)
+## Text in a cell array
+names = {'pear'; 'apple'; 'fig'};
+[~, I] = sortrows(names);
+names(I)'
+# See also
+sort issorted unique
+
+@ issorted
+True when the elements are in sorted order.
+
+Whether a vector is in increasing order (equal neighbours allowed). A quick check before an algorithm that needs sorted data, such as a binary search.
+
+# Syntax
+tf = issorted(A)
+    True when `A` is sorted in increasing order.
+# Examples
+## Sorted and not
+issorted([1 2 2 5])
+issorted([3 1 2])
+issorted(sort([3 1 2]))
+# See also
+sort sortrows
+
+@ ismember
+Which elements of A are found in B, and where.
+
+For each element of `A`, true when it occurs in `B`; the second output gives its position in `B` (0 when it does not occur). Works for numbers, text in cell or string arrays, and whole rows with `'rows'`.
+
+# Syntax
+tf = ismember(A, B)
+    True where the element of `A` is in `B`.
+[tf, loc] = ismember(A, B)
+    With the index in `B` of each one found.
+tf = ismember(A, B, 'rows')
+    For the rows of `A` among the rows of `B`.
+# Examples
+## Numbers and their positions
+[tf, loc] = ismember([3 7 9 2], [2 3 4 5])
+## Text
+ismember({'red', 'pink', 'blue'}, {'blue', 'green', 'red'})
+## Rows
+ismember([1 2; 3 4; 5 6], [3 4; 1 2], 'rows')'
+# See also
+unique intersect find
+
+@ union, intersect, setdiff, setxor
+Set operations: the values in either set, in both, in the first only, or in exactly one.
+
+Each result holds every value once, sorted. The extra outputs say where the values came from: `C = A(ia)` and, for `union` and `intersect`, `C = B(ib)` for the values from `B`.
+
+# Syntax
+C = union(A, B)
+    The values in either.
+C = intersect(A, B)
+    The values in both.
+C = setdiff(A, B)
+    The values of `A` that are not in `B`.
+C = setxor(A, B)
+    The values in one but not both.
+[C, ia, ib] = intersect(A, B)
+    With where they are in `A` and `B` (and so for `union`; `setdiff` gives `ia`).
+# Examples
+## The four operations
+A = [5 1 3 3 7];
+B = [4 3 1 9];
+union(A, B)
+intersect(A, B)
+setdiff(A, B)
+setxor(A, B)
+## Where the common values are
+[C, ia, ib] = intersect([10 20 30 40], [30 10 50])
+## Text
+setdiff({'a', 'b', 'c', 'd'}, {'b', 'd'})
+# See also
+unique ismember
+
+@ histcounts2
+Counts of pairs in a grid of bins.
+
+The bivariate histogram: each pair (x(k), y(k)) is counted in the bin of the grid it falls in. The bins are chosen from the data unless their numbers or edges are given.
+
+# Syntax
+N = histcounts2(X, Y)
+    Counts in a grid of bins chosen from the data.
+N = histcounts2(X, Y, nbins)
+    With `nbins` bins in each direction (or `[nx ny]`).
+N = histcounts2(X, Y, Xedges, Yedges)
+    With the edges given.
+[N, Xedges, Yedges, binX, binY] = histcounts2(...)
+    With the edges and each pair's bin.
+# Examples
+## Counts in a 3-by-2 grid
+x = [0.2 0.8 1.5 2.5 2.2 0.4];
+y = [1 3 1 3 3 3];
+N = histcounts2(x, y, [0 1 2 3], [0 2 4])
+## The counts of correlated data, as an image
+rng default
+x = randn(1, 5000);
+y = 0.6*x + 0.8*randn(1, 5000);
+N = histcounts2(x, y, -3:0.25:3, -3:0.25:3);
+imagesc(-3:0.25:3, -3:0.25:3, N')
+axis xy equal tight
+colorbar
+# See also
+histcounts histogram2 accumarray
+
+@ histc
+Counts of values between edges (the last bin holds values equal to the last edge).
+
+An older form of counting: bin k counts the values with `edges(k) <= x < edges(k+1)`, and one more bin at the end counts the values equal to the last edge. `histcounts` is the newer form, whose last bin includes its right edge.
+
+# Syntax
+n = histc(x, edges)
+    The counts, one for each edge.
+[n, bin] = histc(x, edges)
+    With the bin of each value (0 outside the edges).
+# Examples
+## Compared with histcounts
+x = [1 2 2 3 4 5];
+histc(x, [1 3 5])
+histcounts(x, [1 3 5])
+# See also
+histcounts discretize
+
+@ discretize
+The bin each value falls into.
+
+Gives each value the number of its bin among the edges (`NaN` outside them): a value equal to an inner edge goes to the bin to its right, and the last bin includes its right edge. With `n`, the bins are `n` equal ones over the data's range.
+
+# Syntax
+Y = discretize(X, edges)
+    The bin of each value.
+Y = discretize(X, n)
+    In `n` equal bins over the range of `X`.
+# Examples
+## Ages into groups
+ages = [3 17 18 42 65 90];
+g = discretize(ages, [0 18 65 120])
+## Values outside the edges
+discretize([0.5 1.5 9], [1 2 3])
+# See also
+histcounts histc
+
+@ cov
+The covariance of two vectors, or of the columns of a matrix.
+
+For a matrix, each column is a variable and each row an observation: element (i, j) is the covariance of columns i and j, and the diagonal holds the variances. Normalized by N - 1 unless `w` is 1. `'omitrows'` leaves out rows with `NaN`.
+
+# Syntax
+C = cov(A)
+    The covariance matrix of the columns of `A`.
+C = cov(x, y)
+    The 2-by-2 covariance matrix of two vectors.
+C = cov(..., w)
+    With `w` 0 (N - 1) or 1 (N), or weights for the rows.
+C = cov(..., 'omitrows')
+    Without the rows that hold `NaN`.
+# Examples
+## Two variables
+x = [1 2 3 4 5];
+y = [2 4 5 4 5];
+C = cov(x, y)
+## The columns of a matrix, and the variances on the diagonal
+A = [1 2; 3 6; 5 7; 7 13];
+C = cov(A)
+var(A)
+# See also
+corrcoef var std
+
+@ corrcoef
+Correlation coefficients.
+
+The covariances scaled by the standard deviations: between -1 and 1, with 1 on the diagonal. A second output gives the p-values for the hypothesis of no correlation.
+
+# Syntax
+R = corrcoef(A)
+    The correlation matrix of the columns of `A`.
+R = corrcoef(x, y)
+    The 2-by-2 matrix of two vectors.
+[R, P] = corrcoef(...)
+    With p-values.
+# Examples
+## Two variables, and their p-value
+x = [1 2 3 4 5 6];
+y = [2.1 3.9 6.2 7.8 10.1 11.8];
+[R, P] = corrcoef(x, y)
+## Correlated and uncorrelated columns
+rng default
+a = randn(100, 1);
+b = a + 0.5*randn(100, 1);
+c = randn(100, 1);
+round(corrcoef([a b c]), 2)
+# See also
+cov corr
+
+@ cumtrapz
+The running integral by the trapezoidal rule.
+
+Like `trapz`, but every partial integral from the start: element k is the integral up to the k-th point. Velocity samples give the distance covered so far, rates give amounts.
+
+# Syntax
+Q = cumtrapz(y)
+    With unit spacing.
+Q = cumtrapz(x, y)
+    At the points `x`.
+Q = cumtrapz(..., dim)
+    Along dimension `dim`.
+# Examples
+## The integral of cos is sin
+x = linspace(0, 2*pi, 100);
+Q = cumtrapz(x, cos(x));
+maxError = max(abs(Q - sin(x)))
+plot(x, Q, x, sin(x), '--')
+legend('cumtrapz', 'sin')
+# See also
+trapz cumsum integral
+
+@ quantile, prctile
+Quantiles and percentiles of a sample.
+
+The value below which a given share of the data lies: `quantile(X, 0.5)` is the median and `prctile(X, 25)` the lower quartile. Between the data points, values are interpolated linearly. For a matrix, down the columns.
+
+# Syntax
+Q = quantile(X, p)
+    The quantiles for the probabilities `p` (between 0 and 1).
+Q = quantile(X, p, dim)
+    Along dimension `dim`.
+P = prctile(X, p)
+    The percentiles for `p` (between 0 and 100).
+P = prctile(X, p, dim)
+    Along dimension `dim`.
+# Examples
+## Quartiles both ways
+x = [2 4 4 5 7 9 10 12];
+quantile(x, [0.25 0.5 0.75])
+prctile(x, [25 50 75])
+## The middle 90 percent of a sample
+rng default
+y = randn(1, 10000);
+prctile(y, [5 95])
+# See also
+median iqr boxplot
+
+@ iqr
+The interquartile range.
+
+The difference between the third and first quartiles: the spread of the middle half of the data, little moved by outliers. Of a distribution object, the same for the distribution.
+
+# Syntax
+r = iqr(X)
+    For each column (or of a vector).
+r = iqr(pd)
+    Of a probability distribution.
+# Examples
+## Robust spread
+x = [2 4 4 5 7 9 10 12 100];
+[iqr(x) std(x)]
+iqr(makedist('Normal'))
+# See also
+prctile range mad
+
+@ skewness, kurtosis
+The sample skewness and kurtosis.
+
+The skewness measures asymmetry: 0 for symmetric data, positive when the right tail is longer. The kurtosis measures how heavy the tails are: 3 for the normal distribution (not the excess over 3). With `flag` 0 the bias of a small sample is corrected; 1 (the default) gives the plain sample values.
+
+# Syntax
+s = skewness(X)
+    The skewness of each column (or of a vector).
+s = skewness(X, flag)
+    With `flag` 0, corrected for bias.
+k = kurtosis(X)
+    The kurtosis.
+k = kurtosis(X, flag)
+    With `flag` 0, corrected for bias.
+# Examples
+## A symmetric sample and a skewed one
+rng default
+n = randn(1, 50000);
+e = -log(rand(1, 50000));
+round([skewness(n) skewness(e); kurtosis(n) kurtosis(e)], 2)
+# See also
+mean std moment
+
+@ movmean, movsum, movprod, movmax, movmin, movmedian, movmad, movstd, movvar
+Statistics over a moving window.
+
+Each element of the result is the statistic of a window of `k` neighbouring elements around it (for an even `k`, one more before than after), or of `kb` before and `kf` after. Near the ends the window shrinks to the elements there are. Moving means smooth noisy data; a moving median does so without being pulled by outliers.
+
+# Syntax
+M = movmean(A, k)
+    The mean of each window of `k` elements.
+M = movmean(A, [kb kf])
+    Of `kb` elements before and `kf` after.
+M = movmean(..., dim)
+    Along dimension `dim`.
+M = movsum(A, k)
+    The sum (and the same forms for `movprod`, `movmax`, `movmin`, `movmedian`, `movmad`, `movstd` and `movvar`).
+# Examples
+## Windows of three
+x = [4 8 6 -1 -2 -3 -1 3 4 5];
+movmean(x, 3)
+movmax(x, [1 0])
+## Smoothing noise, and an outlier
+rng default
+t = 1:100;
+y = sin(t/10) + 0.2*randn(1, 100);
+y(40) = 3;
+plot(t, y, '.', t, movmean(y, 9), t, movmedian(y, 9))
+legend('data', 'movmean', 'movmedian')
+# See also
+smoothdata filter conv
+
+@ rescale
+Scale values linearly to fill [0, 1], or another interval.
+
+The smallest value goes to the lower end and the largest to the upper end, the others in proportion. `'InputMin'` and `'InputMax'` set the range taken as the input's, clamping what lies outside.
+
+# Syntax
+R = rescale(A)
+    To [0, 1].
+R = rescale(A, l, u)
+    To [l, u].
+R = rescale(..., 'InputMin', inmin, 'InputMax', inmax)
+    With the input range given.
+# Examples
+## To [0, 1] and to [-1, 1]
+rescale([2 4 6 10])
+rescale([2 4 6 10], -1, 1)
+# See also
+normalize clip
+
+@ normalize
+Centre and scale data (z-scores by default).
+
+By default each column has its mean subtracted and is divided by its standard deviation, so that the result has mean 0 and standard deviation 1. Other methods scale to a norm, to a range, or by the median and interquartile range; the extra outputs give the centre and scale used, to apply the same to other data.
+
+# Syntax
+N = normalize(A)
+    Z-scores of each column (or of a vector).
+N = normalize(A, dim)
+    Along dimension `dim`.
+N = normalize(..., 'range', [a b])
+    Scaled to [a, b].
+N = normalize(..., 'norm', p)
+    Divided by the p-norm.
+N = normalize(..., 'medianiqr')
+    Centred on the median, scaled by the interquartile range.
+[N, C, S] = normalize(...)
+    With the centre and scale.
+# Examples
+## Z-scores, and their mean and spread
+x = [2 4 4 4 5 5 7 9];
+z = normalize(x)
+[mean(z) std(z)]
+## A range and a norm
+normalize([2 4 6], 'range')
+normalize([3 4], 'norm')
+# See also
+rescale zscore
+
+@ islocalmax, islocalmin
+Where the local maxima (or minima) of data are.
+
+A local maximum is higher than its neighbours on both sides; the first and last points never are. The prominence (the second output) says how far each stands out: the height above the higher of the lowest points between it and a higher peak on either side. `'MinProminence'` keeps the clear peaks only, and `'MinSeparation'` keeps peaks apart.
+
+# Syntax
+TF = islocalmax(A)
+    True at the local maxima.
+TF = islocalmax(A, dim)
+    Along dimension `dim`.
+[TF, P] = islocalmax(..., 'MinProminence', p, 'MinSeparation', d, 'MaxNumExtrema', n)
+    With conditions, and the prominences.
+TF = islocalmin(A)
+    True at the local minima (and the same forms).
+# Examples
+## Peaks and valleys
+x = [1 3 2 5 4 4 6 2];
+find(islocalmax(x))
+find(islocalmin(x))
+## Only the clear peaks
+t = linspace(0, 10, 500);
+y = sin(t) + 0.1*sin(15*t);
+tf = islocalmax(y, 'MinProminence', 0.5);
+plot(t, y, t(tf), y(tf), 'o')
+# See also
+findpeaks max ischange
+
+@ ischange
+Where abrupt changes in data begin.
+
+Splits the data into segments in which the mean (by default), the variance, or the slope and intercept of a line stay the same, and marks the first point of each new segment. `'Threshold'` sets how large a change must be (a cost for each change), and `'MaxNumChanges'` asks for the best split with at most that many.
+
+# Syntax
+TF = ischange(A)
+    Changes in the mean.
+TF = ischange(A, method)
+    `'mean'`, `'variance'` or `'linear'`.
+[TF, S1, S2] = ischange(A, method, dim, 'Threshold', t, 'MaxNumChanges', k)
+    With conditions, and each segment's mean and variance (or slope and intercept).
+# Examples
+## Steps in a level
+rng default
+y = [ones(1, 30), 3*ones(1, 30), 2*ones(1, 30)] + 0.1*randn(1, 90);
+tf = ischange(y);
+find(tf)
+## Each segment's mean
+rng default
+y = [ones(1, 30), 3*ones(1, 30), 2*ones(1, 30)] + 0.1*randn(1, 90);
+[tf, s1] = ischange(y, 'MaxNumChanges', 2);
+unique(round(s1, 1))
+# See also
+islocalmax movmean trenddecomp
+
+@ trenddecomp
+Trends of data: long-term, seasonal and the remainder.
+
+Splits a series into a long-term trend `LT`, seasonal trends `ST` (a column for each) and a remainder `R`, with `LT + sum(ST, 2) + R` equal to the data. By singular spectrum analysis (the default), or by STL with the period given.
+
+# Syntax
+[LT, ST, R] = trenddecomp(A)
+    By singular spectrum analysis.
+[LT, ST, R] = trenddecomp(A, 'ssa', lag)
+    With a lag of your own.
+[LT, ST, R] = trenddecomp(A, 'stl', period)
+    By STL, with the period (or periods) of the seasons.
+# Examples
+## A rising series with a yearly cycle
+rng default
+t = (1:120)';
+y = 0.05*t + sin(2*pi*t/12) + 0.2*randn(120, 1);
+[LT, ST, R] = trenddecomp(y, 'stl', 12);
+plot(t, y, t, LT, t, ST)
+legend('data', 'long-term', 'seasonal')
+max(abs(LT + sum(ST, 2) + R - y))
+# See also
+detrend movmean ischange
+
+@ mink, maxk
+The k smallest or largest elements.
+
+The `k` smallest (largest) elements, smallest (largest) first, down the columns by default, with `NaN` last. The second output gives where they were.
+
+# Syntax
+B = mink(A, k)
+    The `k` smallest elements.
+B = mink(A, k, dim)
+    Along dimension `dim`.
+[B, I] = mink(..., 'ComparisonMethod', 'abs')
+    By absolute value, with the indices.
+B = maxk(A, k)
+    The `k` largest elements (and the same forms).
+# Examples
+## The three largest and smallest, and where they are
+x = [5 9 1 7 3 8];
+[B, I] = maxk(x, 3)
+mink(x, 2)
+# See also
+sort max min
+
+@ clip
+Values held between a lower and an upper bound.
+
+Values below the lower bound become the lower bound, values above the upper bound the upper bound; `NaN` stays `NaN`.
+
+# Syntax
+C = clip(A, lower, upper)
+    `A` held within [lower, upper].
+# Examples
+## Into a range
+clip([-2 0.5 3 1.2 NaN], 0, 1)
+# See also
+min max rescale
+
+@ allfinite, anynan
+Whether every element is finite, and whether any is NaN.
+
+Quick checks of a whole array, giving one logical value: the same as `all(isfinite(A), 'all')` and `any(isnan(A), 'all')`.
+
+# Syntax
+tf = allfinite(A)
+    True when no element is `Inf`, `-Inf` or `NaN`.
+tf = anynan(A)
+    True when some element is `NaN`.
+# Examples
+## Two arrays checked
+allfinite([1 2 3])
+allfinite([1 Inf])
+anynan([1 NaN; 3 4])
+# See also
+isfinite isnan
+
+@ isuniform
+Whether a vector's values are evenly spaced.
+
+True when the steps between neighbours are all the same, to round-off; the second output is the step (`NaN` when they are not).
+
+# Syntax
+tf = isuniform(v)
+    True for evenly spaced values.
+[tf, step] = isuniform(v)
+    With the step.
+# Examples
+## Even and uneven spacing
+[tf, step] = isuniform(0:0.1:1)
+isuniform([1 2 4 8])
+# See also
+linspace diff
+
+@ resize, paddata, trimdata
+An array padded or cut to a size.
+
+`resize` makes an array the given length (or size), padding with a fill value (0 by default) or cutting as needed; `paddata` only pads and `trimdata` only cuts. Padding and cutting happen at the end unless `'Side'` says `'leading'` or `'both'`; `'Pattern'` pads by repeating the edge, the array, or its reflection.
+
+# Syntax
+B = resize(A, m)
+    `A` padded or cut to length `m` (or to the size `m`).
+B = resize(A, m, 'Dimension', dim, 'Pattern', p, 'FillValue', v, 'Side', s)
+    With options.
+B = paddata(A, m, Name, Value)
+    Padded only, with the same options.
+B = trimdata(A, m, 'Side', s)
+    Cut only.
+# Examples
+## Padding and cutting
+v = [1 2 3 4];
+resize(v, 6)
+resize(v, 2)
+paddata(v, 7, 'Pattern', 'edge')
+trimdata(v, 2, 'Side', 'leading')
+# See also
+padarray cat
+
+@ uniquetol, ismembertol
+Distinct values and members of a set, values within a tolerance taken as one.
+
+Floating-point results that should be equal often differ in their last digits; these compare with a tolerance relative to the largest value instead of exactly. `uniquetol` keeps one value of each group (its smallest), and `ismembertol` tests membership.
+
+# Syntax
+C = uniquetol(A)
+    The distinct values, within 1e-6 relative to the largest.
+C = uniquetol(A, tol)
+    Within `tol`.
+[C, IA, IC] = uniquetol(...)
+    With `C = A(IA)` and `A` about `C(IC)`.
+LIA = ismembertol(A, B)
+    True where a value of `A` is within the tolerance (1e-12 relative) of one of `B`.
+[LIA, LocB] = ismembertol(A, B, tol)
+    With a tolerance, and where they are in `B`.
+# Examples
+## Values that differ in their last digits
+a = [0.1*3, 0.3, 0.2+0.1, 0.5];
+unique(a)
+uniquetol(a)
+ismembertol(0.1*3, [0.3 0.6])
+# See also
+unique ismember eps
+
+@ rmse, mape
+The root-mean-square error and the mean absolute percentage error.
+
+Measures of how far a forecast or a model `F` is from the actual values `A`: `rmse` is `sqrt(mean(abs(F - A).^2))`, in the units of the data, and `mape` is `100*mean(abs((A - F)./A))`, in percent. Down the columns by default.
+
+# Syntax
+E = rmse(F, A)
+    The root-mean-square error.
+E = rmse(F, A, 'all')
+    Over every element.
+E = rmse(F, A, dim)
+    Along dimension `dim`.
+E = mape(F, A)
+    The mean absolute percentage error (and the same forms).
+# Examples
+## A forecast against the actual values
+actual = [100 110 120 130];
+forecast = [98 113 118 135];
+rmse(forecast, actual)
+mape(forecast, actual)
+# See also
+mean std

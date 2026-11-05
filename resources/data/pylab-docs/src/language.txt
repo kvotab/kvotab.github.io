@@ -1,4 +1,4 @@
-@ if
+@ if, elseif, else
 Run a block when a condition holds, with optional elseif and else branches.
 
 The branches are tried in order and the first whose condition holds runs; `else` runs when none does. A condition holds when it is not empty and every one of its elements is nonzero, so `if [1 1 0]` does not run its block, and `if []` never does. Use `any` or `all` to say which is meant for an array.
@@ -114,7 +114,7 @@ fprintf('%.15f\n', x)
 # See also
 for break continue if
 
-@ switch
+@ switch, case, otherwise
 Pick a block by comparing a value with cases (numbers or text).
 
 The value is compared with each `case` in turn and the first that matches runs; `otherwise` runs when none does. Numbers match when they are equal, text when it is the same text. A case given as a cell array, such as `{'png', 'jpg'}`, matches any of its members. Only one block runs: there is no falling through to the next case.
@@ -147,7 +147,7 @@ end
 # See also
 if strcmp
 
-@ try
+@ try, catch
 Run a block, and another block if the first one throws an error.
 
 When a statement in the `try` block throws an error, the rest of that block is skipped and the `catch` block runs; without an error the `catch` block is passed over. Named after `catch`, the error is an exception whose `message`, `identifier` and `stack` say what went wrong. `rethrow` passes it on, and `error` throws one of your own.
@@ -220,3 +220,208 @@ function greet(name)
 end
 # See also
 nargin nargout return end
+
+@ break, continue
+Leave a loop, or go on with its next pass.
+
+`break` ends the innermost `for` or `while` loop at once; the program goes on after its `end`. `continue` skips the rest of the current pass and starts the next one. In nested loops both act on the innermost loop only.
+
+# Syntax
+break
+    Leave the innermost loop.
+continue
+    Go on with the next pass of the innermost loop.
+# Examples
+## Stopping at the first match
+v = [4 9 16 25 36];
+for k = 1:numel(v)
+    if v(k) > 10
+        fprintf('first value above 10: %d, at %d\n', v(k), k)
+        break
+    end
+end
+## Skipping some passes
+for k = 1:8
+    if mod(k, 3) == 0
+        continue
+    end
+    fprintf('%d ', k)
+end
+fprintf('\n')
+## A loop that runs until a condition inside it
+n = 27;
+steps = 0;
+while true
+    if n == 1
+        break
+    end
+    if mod(n, 2) == 0
+        n = n / 2;
+    else
+        n = 3*n + 1;
+    end
+    steps = steps + 1;
+end
+steps
+# See also
+for while return
+
+@ return
+Leave the function (or script) here.
+
+The function ends at once and its caller goes on, with the outputs as they are set at that moment: an output not yet set is an error if the caller asked for it. In a script, `return` ends the script.
+
+# Syntax
+return
+    Leave the current function or script.
+# Examples
+## An early way out
+r = firstNegative([3 8 -2 5 -7])
+r = firstNegative([1 2 3])
+
+function idx = firstNegative(v)
+    idx = 0;
+    for k = 1:numel(v)
+        if v(k) < 0
+            idx = k;
+            return
+        end
+    end
+end
+# See also
+break function error
+
+@ end
+Close a block; inside an index, the last index.
+
+`end` closes `if`, `for`, `while`, `switch`, `try` and `function` blocks. Inside the brackets of an index it stands for the last index of that dimension, so `x(end)` is the last element and `x(end+1) = v` appends one.
+
+# Syntax
+A(end), A(end-1, :), x(end+1) = value
+    The last element, the last row but one, and a value added at the end.
+# Examples
+## The last elements, and growing a vector
+x = [10 20 30 40];
+x(end)
+x(end-1:end)
+x(end+1) = 50
+## Rows and columns of a matrix
+A = magic(4);
+lastRow = A(end, :)
+cornerBlock = A(end-1:end, end-1:end)
+# See also
+colon numel size
+
+@ global
+Share a variable between functions and the base workspace.
+
+A variable declared `global` in several places is one variable: a change in one is seen by all. Each function that uses it declares it. Global variables make programs harder to follow; passing values as inputs and outputs is usually better.
+
+# Syntax
+global name1 name2
+    Declare the names global here.
+# Examples
+## A counter shared with a function
+global calls
+calls = 0;
+countCall();
+countCall();
+calls
+
+function countCall()
+    global calls
+    calls = calls + 1;
+end
+# See also
+persistent function
+
+@ persistent
+Keep a variable of a function between its calls.
+
+A persistent variable belongs to its function: it keeps its value from one call to the next, while other variables start afresh. It is `[]` the first time, so test with `isempty` to give it a start value. `clear` with the function's name (or `clear all`) starts it again.
+
+# Syntax
+persistent name1 name2
+    Declare the names persistent in the function.
+# Examples
+## A function that counts its own calls
+for k = 1:3
+    n = nextNumber();
+end
+n
+
+function n = nextNumber()
+    persistent count
+    if isempty(count)
+        count = 0;
+    end
+    count = count + 1;
+    n = count;
+end
+# See also
+global clear function
+
+@ classdef
+A class of your own, in a file of its name: properties, methods and events.
+
+A class is written in a file named as the class (`Account.m` for `classdef Account`), with blocks of `properties` (with defaults, and optionally a size and class), `methods` (the one named as the class is the constructor) and `events`. A class that derives from `handle` is shared: every variable holding the object sees its changes. Any other class is a value, copied when a copy changes, so a method that changes it returns the changed object. Methods are called as `obj.method(args)` or `method(obj, args)`.
+
+# Syntax
+classdef Name
+    A value class.
+classdef Name < handle
+    A handle class: the object is shared, not copied.
+classdef Name < Super1 & Super2
+    A class that inherits from others.
+properties (Access = private, Constant, Dependent) ... end
+    A block of properties of the class, with attributes in parentheses.
+methods (Static, Access = private) ... end
+    A block of methods.
+events ... end
+    The events objects of the class can notify.
+# Examples
+## A value class, written to its file and used
+> The file is written here so that the example runs on its own; normally it is written in the Editor.
+lines = {
+    'classdef Point'
+    '    properties'
+    '        x = 0'
+    '        y = 0'
+    '    end'
+    '    methods'
+    '        function p = Point(x, y)'
+    '            p.x = x;'
+    '            p.y = y;'
+    '        end'
+    '        function d = dist(p, q)'
+    '            d = hypot(p.x - q.x, p.y - q.y);'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Point.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+a = Point(0, 0);
+b = Point(3, 4);
+d = a.dist(b)
+## A handle class: one object, seen from two variables
+lines = {
+    'classdef Counter < handle'
+    '    properties'
+    '        n = 0'
+    '    end'
+    '    methods'
+    '        function bump(c)'
+    '            c.n = c.n + 1;'
+    '        end'
+    '    end'
+    'end'};
+fid = fopen('Counter.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+c1 = Counter;
+c2 = c1;
+c2.bump();
+c1.n
+# See also
+properties methods isa events

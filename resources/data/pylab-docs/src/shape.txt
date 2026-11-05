@@ -1,0 +1,307 @@
+@ ndims
+The number of dimensions (always 2 or more).
+
+Every array has at least two dimensions: a scalar and a vector are 1-by-1 and 1-by-n matrices. Trailing dimensions of length 1 are not counted beyond the second, so a 3-by-4-by-1 array has two.
+
+# Syntax
+n = ndims(A)
+    `numel(size(A))`.
+# Examples
+## Scalars, matrices and more
+ndims(5)
+ndims(ones(3, 4))
+ndims(ones(3, 4, 2))
+ndims(ones(3, 4, 1))
+# See also
+size numel squeeze
+
+@ isscalar, isvector, isrow, iscolumn, ismatrix, issquare
+Tests of an array's shape.
+
+Each looks only at the size: a scalar is 1-by-1; a vector is 1-by-n or n-by-1 (a scalar is both a row and a column); a matrix has two dimensions, whatever their lengths; a square matrix has as many rows as columns. Useful to check the inputs of a function.
+
+# Syntax
+tf = isscalar(A)
+    True for a 1-by-1 array.
+tf = isvector(A)
+    True for a 1-by-n or n-by-1 array.
+tf = isrow(A)
+    True for a 1-by-n array.
+tf = iscolumn(A)
+    True for an n-by-1 array.
+tf = ismatrix(A)
+    True for an array of two dimensions.
+tf = issquare(A)
+    True for an n-by-n array.
+# Examples
+## The tests side by side
+shapes = {5, [1 2 3], [1; 2], magic(3), ones(2, 3), zeros(2, 2, 2)};
+for k = 1:numel(shapes)
+    A = shapes{k};
+    fprintf('%-8s scalar %d vector %d row %d column %d matrix %d square %d\n', mat2str(size(A)), ...
+        isscalar(A), isvector(A), isrow(A), iscolumn(A), ismatrix(A), issquare(A))
+end
+# See also
+size ndims isempty validateattributes
+
+@ squeeze
+Remove the dimensions of length 1 (beyond the first two).
+
+A slice taken along the third dimension of an array keeps its singleton dimensions: `A(2, 3, :)` is 1-by-1-by-n. `squeeze` takes them away; a matrix or vector is returned as it is.
+
+# Syntax
+B = squeeze(A)
+    `A` without its dimensions of length 1.
+# Examples
+## A slice through the pages of an array
+A = reshape(1:24, 2, 3, 4);
+s = A(2, 3, :);
+size(s)
+v = squeeze(s)
+# See also
+permute reshape shiftdim
+
+@ permute, ipermute
+Rearrange the dimensions of an array, and undo it.
+
+`permute(A, order)` makes dimension `order(k)` of `A` the k-th dimension of the result: for a matrix, `permute(A, [2 1])` is the transpose. `ipermute` with the same order gives `A` back.
+
+# Syntax
+B = permute(A, order)
+    The dimensions of `A` in the order given.
+A = ipermute(B, order)
+    The inverse of `permute` with that order.
+# Examples
+## Pages become columns
+A = reshape(1:12, 2, 3, 2);
+B = permute(A, [1 3 2]);
+size(B)
+isequal(ipermute(B, [1 3 2]), A)
+## The transpose
+permute([1 2 3; 4 5 6], [2 1])
+# See also
+reshape squeeze transpose shiftdim
+
+@ shiftdim
+Shift the dimensions of an array.
+
+With `n` positive the first `n` dimensions move to the end (circularly); with `n` negative, `-n` dimensions of length 1 come first. Without `n`, leading dimensions of length 1 are taken away, and their number is the second output: a row vector becomes a column.
+
+# Syntax
+B = shiftdim(A, n)
+    The dimensions shifted by `n`.
+[B, n] = shiftdim(A)
+    Leading singleton dimensions taken away, and how many.
+# Examples
+## Shifting, and taking away leading singletons
+A = rand(2, 3, 4);
+size(shiftdim(A, 1))
+[B, n] = shiftdim([1 2 3]);
+size(B), n
+# See also
+permute squeeze reshape
+
+@ circshift
+Shift elements around in a circle.
+
+The elements move `k` places along a dimension, those pushed off one end coming in at the other. A positive `k` shifts down (or right), a negative one up (or left). A vector of shifts moves along several dimensions at once.
+
+# Syntax
+B = circshift(A, k)
+    Shifted `k` places along the first dimension that is not 1.
+B = circshift(A, k, dim)
+    Along dimension `dim`.
+B = circshift(A, [k1 k2])
+    `k1` places down and `k2` places right.
+# Examples
+## A vector both ways
+v = 1:6;
+circshift(v, 2)
+circshift(v, -1)
+## The rows and columns of a matrix
+A = magic(4);
+circshift(A, 1)
+circshift(A, [0 -1])
+# See also
+flip rot90 permute
+
+@ flip, fliplr, flipud
+Reverse the order of elements along a dimension.
+
+`flip(A)` reverses a vector, or the rows of a matrix; `flip(A, dim)` reverses along any dimension. `fliplr` reverses the columns (left to right) and `flipud` the rows (up to down).
+
+# Syntax
+B = flip(A)
+    Along the first dimension that is not 1.
+B = flip(A, dim)
+    Along dimension `dim`.
+B = fliplr(A)
+    The columns in reverse order.
+B = flipud(A)
+    The rows in reverse order.
+# Examples
+## A vector and a matrix
+flip(1:5)
+A = [1 2 3; 4 5 6];
+fliplr(A)
+flipud(A)
+## Reversed text
+flip('stressed')
+# See also
+rot90 circshift permute
+
+@ rot90
+Turn a matrix by multiples of 90 degrees, anticlockwise.
+
+`rot90(A)` turns the matrix a quarter turn anticlockwise: the last column becomes the first row. `k` quarter turns, negative for clockwise.
+
+# Syntax
+B = rot90(A)
+    A quarter turn anticlockwise.
+B = rot90(A, k)
+    `k` quarter turns (clockwise for negative `k`).
+# Examples
+## Quarter turns both ways
+A = [1 2; 3 4; 5 6]
+rot90(A)
+rot90(A, -1)
+rot90(A, 2)
+# See also
+flip transpose circshift
+
+@ tril, triu
+The lower or upper triangle of a matrix, the rest set to zero.
+
+`tril` keeps the elements on and below the main diagonal, `triu` those on and above it. `k` moves the boundary: positive above the main diagonal, negative below.
+
+# Syntax
+L = tril(A)
+    The lower triangle.
+L = tril(A, k)
+    On and below diagonal `k`.
+U = triu(A)
+    The upper triangle.
+U = triu(A, k)
+    On and above diagonal `k`.
+# Examples
+## Triangles and shifted triangles
+A = magic(4);
+tril(A)
+triu(A, 1)
+## A strictly lower mask
+tril(true(4), -1)
+# See also
+diag lu
+
+@ kron
+The Kronecker product: every element of A times the whole of B.
+
+The result is made of blocks `A(i, j)*B`, laid out as `A`'s elements are: an m-by-n `A` and a p-by-q `B` give an mp-by-nq matrix.
+
+# Syntax
+K = kron(A, B)
+    The Kronecker product.
+# Examples
+## Blocks of B, scaled by A
+K = kron([1 2; 3 4], [1 1; 1 1])
+kron(eye(2), [0 1; 1 0])
+# See also
+repmat repelem blkdiag
+
+@ pagemtimes, pagetranspose, pagectranspose
+Matrix products and transposes of each page of an array.
+
+An array of three or more dimensions is a stack of matrices, its pages. `pagemtimes(X, Y)` multiplies each page of `X` by the matching page of `Y` (a page of size 1 in a dimension is used against all of the other's), and can transpose either side first. `pagetranspose` and `pagectranspose` turn each page.
+
+# Syntax
+Z = pagemtimes(X, Y)
+    `Z(:,:,k) = X(:,:,k) * Y(:,:,k)`.
+Z = pagemtimes(X, transpX, Y, transpY)
+    With `'none'`, `'transpose'` or `'ctranspose'` for each side.
+B = pagetranspose(A)
+    Each page transposed.
+B = pagectranspose(A)
+    Each page transposed and conjugated.
+# Examples
+## A rotation matrix for each angle, applied to one point
+theta = reshape([0 pi/2 pi], 1, 1, 3);
+R = [cos(theta) -sin(theta); sin(theta) cos(theta)];
+p = pagemtimes(R, [1; 0]);
+squeeze(p)'
+## Transposing each page
+A = reshape(1:12, 2, 3, 2);
+size(pagetranspose(A))
+# See also
+mtimes tensorprod transpose
+
+@ tensorprod
+Products of A and B summed over dimensions of each.
+
+Contracts dimension `dimA` of `A` with dimension `dimB` of `B` (lengths must agree): the result has `A`'s other dimensions followed by `B`'s. Matrix multiplication is the contraction of `A`'s second dimension with `B`'s first. With no dimensions it is the outer product, and with `'all'` the sum of all of `A.*B`.
+
+# Syntax
+C = tensorprod(A, B, dimA, dimB)
+    Summed over `dimA` of `A` and `dimB` of `B`.
+C = tensorprod(A, B, dims)
+    The same dimensions of both.
+C = tensorprod(A, B)
+    The outer product.
+C = tensorprod(A, B, 'all')
+    The sum of every product of matching elements.
+# Examples
+## Matrix multiplication, and the inner product of two matrices
+A = [1 2; 3 4];
+B = [5 6; 7 8];
+isequal(tensorprod(A, B, 2, 1), A*B)
+tensorprod(A, B, 'all')
+## An outer product
+size(tensorprod(ones(2, 3), ones(4)))
+# See also
+pagemtimes kron mtimes
+
+@ sub2ind, ind2sub
+Linear indices from subscripts, and subscripts from linear indices.
+
+The elements of an array can be named by their subscripts (row, column, …) or by one linear index counting down the columns. `sub2ind` turns subscripts into linear indices for an array of size `sz`; `ind2sub` goes the other way.
+
+# Syntax
+ind = sub2ind(sz, row, col)
+    The linear indices of the elements at (`row`, `col`).
+ind = sub2ind(sz, i1, i2, i3, ...)
+    For more dimensions.
+[row, col] = ind2sub(sz, ind)
+    The rows and columns of linear indices.
+[i1, i2, i3, ...] = ind2sub(sz, ind)
+    For more dimensions.
+# Examples
+## Both ways in a 3-by-4 matrix
+sz = [3 4];
+ind = sub2ind(sz, [1 3 2], [1 2 4])
+[r, c] = ind2sub(sz, ind)
+## Where a maximum is
+A = magic(5);
+[~, k] = max(A(:));
+[row, col] = ind2sub(size(A), k)
+# See also
+find size colon
+
+@ nnz, nonzeros
+The number of nonzero elements, and the nonzero elements themselves.
+
+`nnz` counts the elements that are not zero; for logical arrays it counts the true ones, which makes it a quick count of how many elements pass a test. `nonzeros` gives the nonzero values as a column, in column order.
+
+# Syntax
+n = nnz(X)
+    The number of nonzero elements.
+v = nonzeros(X)
+    The nonzero elements, as a column.
+# Examples
+## Counting and taking the nonzero elements
+A = [0 3 0; 5 0 7];
+nnz(A)
+nonzeros(A)'
+## How many pass a test
+x = [2 9 4 11 6];
+nnz(x > 5)
+# See also
+find any sparse

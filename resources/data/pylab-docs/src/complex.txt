@@ -1,0 +1,167 @@
+@ real, imag
+The real and imaginary parts of complex numbers.
+
+For a real array, `real` gives it back and `imag` gives zeros. Together with `abs` and `angle` they take complex numbers apart; `complex` puts them together.
+
+# Syntax
+x = real(z)
+    The real parts.
+y = imag(z)
+    The imaginary parts.
+# Examples
+## The parts of some numbers
+z = [3+4i, -2i, 5];
+real(z)
+imag(z)
+## The roots of a quadratic, split into parts
+r = roots([1 2 5]);
+[real(r) imag(r)]
+# See also
+abs angle complex conj
+
+@ conj
+The complex conjugate.
+
+The imaginary part changes sign: `conj(a + bi)` is `a - bi`. `z.*conj(z)` is the squared modulus, and the conjugate transpose `A'` conjugates too.
+
+# Syntax
+w = conj(z)
+    The conjugate of each element.
+# Examples
+## Conjugates and the squared modulus
+z = 3 + 4i;
+conj(z)
+z * conj(z)
+# See also
+real imag ctranspose
+
+@ angle
+The phase angle of a complex number, in radians between -pi and pi.
+
+The angle from the positive real axis to the number in the complex plane: `angle(z)` is `atan2(imag(z), real(z))`. With `abs`, it gives the polar form `z = abs(z)*exp(1i*angle(z))`.
+
+# Syntax
+theta = angle(z)
+    The phase of each element.
+# Examples
+## Phases, and the polar form back
+z = [1, 1i, -1, -1i, 1+1i];
+angle(z)
+w = 2 - 2i;
+abs(w) * exp(1i*angle(w))
+# See also
+abs atan2 unwrap
+
+@ complex
+A complex number from its real and imaginary parts (kept complex when the imaginary part is 0).
+
+`complex(a, b)` is `a + b*1i`, except that the result stays complex even when `b` is zero, where `a + 0i` would be stored as real. `complex(a)` makes a real array complex.
+
+# Syntax
+z = complex(a, b)
+    Real parts `a`, imaginary parts `b`.
+z = complex(a)
+    `a` as complex numbers with zero imaginary parts.
+# Examples
+## From parts, and kept complex
+z = complex([1 2], [3 4])
+w = complex(5, 0);
+isreal(w)
+isreal(5 + 0i)
+# See also
+real imag isreal
+
+@ isreal
+True when an array is stored without imaginary parts.
+
+It tests how the array is stored, not its values: `complex(5, 0)` is not real by this test though its imaginary part is zero. Arithmetic that gives zero imaginary parts usually gives a real result.
+
+# Syntax
+tf = isreal(A)
+    True when `A` has no imaginary parts.
+# Examples
+## Stored as real or as complex
+isreal([1 2 3])
+isreal(sqrt(-1))
+isreal(complex(1, 0))
+# See also
+complex real isnumeric
+
+@ cplxpair
+Sort complex numbers into conjugate pairs, the real ones last.
+
+The pairs come in order of increasing real part, the number with the negative imaginary part first in each; the real numbers follow, sorted. Numbers that have no conjugate are an error. Used to tidy roots and poles, which come in such pairs for real polynomials.
+
+# Syntax
+B = cplxpair(A)
+    The numbers of `A` in conjugate pairs.
+B = cplxpair(A, tol)
+    Pairs within the tolerance `tol`.
+# Examples
+## The roots of a real polynomial, paired
+r = roots([1 3 4 8 2 6])';
+cplxpair(r)
+# See also
+roots sort
+
+@ unwrap
+Remove the jumps of 2*pi from a sequence of phase angles.
+
+Angles from `angle` or `atan2` stay between -pi and pi, so a steadily turning phase jumps back by 2*pi each turn. `unwrap` adds multiples of 2*pi wherever two neighbours differ by more than pi (or `tol`), giving a smooth phase.
+
+# Syntax
+q = unwrap(p)
+    The phases without their jumps.
+q = unwrap(p, tol)
+    With jumps larger than `tol` removed.
+q = unwrap(p, tol, dim)
+    Along dimension `dim`.
+# Examples
+## A phase that turns three times
+t = linspace(0, 3, 300);
+p = angle(exp(1i*2*pi*t));
+plot(t, p, t, unwrap(p))
+legend('angle', 'unwrapped', 'Location', 'northwest')
+# See also
+angle atan2
+
+@ cart2pol, pol2cart
+Cartesian to polar (or cylindrical) coordinates, and back.
+
+`cart2pol` gives the angle `theta` (in radians, from the x axis) and the distance `rho` from the origin; `pol2cart` goes back. A third coordinate `z` passes through unchanged (cylindrical coordinates).
+
+# Syntax
+[theta, rho] = cart2pol(x, y)
+    The polar coordinates of the points (x, y).
+[theta, rho, z] = cart2pol(x, y, z)
+    Cylindrical coordinates.
+[x, y] = pol2cart(theta, rho)
+    The Cartesian coordinates of polar points.
+[x, y, z] = pol2cart(theta, rho, z)
+    From cylindrical coordinates.
+# Examples
+## A point both ways
+[theta, rho] = cart2pol(1, 1)
+[x, y] = pol2cart(theta, rho)
+## Points on a circle
+[x, y] = pol2cart(linspace(0, 2*pi, 7), 2);
+round([x; y], 4)
+# See also
+cart2sph atan2 hypot
+
+@ cart2sph, sph2cart
+Cartesian to spherical coordinates, and back.
+
+`cart2sph` gives the azimuth (the angle in the x-y plane, from the x axis), the elevation (the angle up from that plane) and the distance from the origin, the angles in radians; `sph2cart` goes back.
+
+# Syntax
+[azimuth, elevation, r] = cart2sph(x, y, z)
+    Spherical coordinates of the points.
+[x, y, z] = sph2cart(azimuth, elevation, r)
+    Cartesian coordinates.
+# Examples
+## A point both ways
+[az, el, r] = cart2sph(1, 1, sqrt(2))
+[x, y, z] = sph2cart(az, el, r)
+# See also
+cart2pol

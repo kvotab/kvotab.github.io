@@ -485,3 +485,498 @@ n = 5;
 T = diag(2*ones(1, n)) + diag(-ones(1, n-1), 1) + diag(-ones(1, n-1), -1)
 # See also
 eye trace tril triu
+
+@ randperm
+A random permutation of 1 to n.
+
+Every ordering of 1, 2, …, n is equally likely. With `k`, the first `k` of such an ordering: `k` different integers from 1 to n. It is the usual way to shuffle the rows of a matrix, or to draw without replacement.
+
+# Syntax
+p = randperm(n)
+    The integers 1 to n in random order.
+p = randperm(n, k)
+    `k` of them, all different.
+# Examples
+## A shuffle, and a draw without replacement
+rng default
+p = randperm(6)
+q = randperm(49, 6)
+## Shuffling the rows of a matrix
+rng(1)
+A = [1 1; 2 4; 3 9; 4 16];
+B = A(randperm(size(A, 1)), :)
+# See also
+rand randi randsample
+
+@ logspace
+Points evenly spaced in the exponent, from 10^a to 10^b.
+
+The exponents are evenly spaced, as `linspace` spaces them; the points themselves are `10.^linspace(a, b, n)`. Frequencies, scales of rates and other quantities over several orders of magnitude are sampled this way, and look evenly spaced on a logarithmic axis.
+
+# Syntax
+y = logspace(a, b)
+    50 points from 10^a to 10^b.
+y = logspace(a, b, n)
+    `n` points.
+# Examples
+## Decades
+y = logspace(0, 3, 4)
+y = logspace(-1, 1, 5)
+## A response over three decades
+f = logspace(0, 3, 200);
+semilogx(f, 1 ./ sqrt(1 + (f/50).^2))
+grid on
+xlabel('frequency')
+# See also
+linspace semilogx loglog
+
+@ magic
+A magic square: its rows, columns and both diagonals have the same sum.
+
+An n-by-n matrix of the integers 1 to n^2 for n of 3 or more, each row, column and diagonal summing to n(n^2 + 1)/2. Handy as a small test matrix whose values are easy to recognize.
+
+# Syntax
+M = magic(n)
+    The magic square of order `n`.
+# Examples
+## The sums
+M = magic(4)
+[sum(M); sum(M, 2)']
+[trace(M) trace(fliplr(M))]
+# See also
+pascal hilb rand
+
+@ repelem
+Repeat each element of an array.
+
+Unlike `repmat`, which repeats the whole array, `repelem` repeats each element in place: `repelem([1 2], 3)` is `[1 1 1 2 2 2]`. A vector of counts gives each element its own number of copies.
+
+# Syntax
+u = repelem(v, n)
+    Each element of the vector `v` repeated `n` times (or `n(k)` times for a vector of counts).
+B = repelem(A, r1, r2)
+    Each element of the matrix `A` made an r1-by-r2 block.
+# Examples
+## Each element, and counts of their own
+repelem([1 2 3], 2)
+repelem([7 8 9], [3 1 2])
+## Blocks of a matrix
+B = repelem([1 2; 3 4], 2, 3)
+# See also
+repmat kron
+
+@ bsxfun
+Apply a two-input function with singleton dimensions expanded.
+
+Calls the function on arrays whose sizes agree or are 1, the dimensions of length 1 stretched to match: a column against a row gives a matrix. The arithmetic operators do this by themselves (implicit expansion), so `A - mean(A)` needs no `bsxfun`; it remains useful for a function of your own.
+
+# Syntax
+C = bsxfun(fun, A, B)
+    `fun(A, B)` with singleton dimensions expanded.
+# Examples
+## A column against a row
+C = bsxfun(@plus, (1:3)', [10 20 30 40])
+## Centring the columns, both ways
+A = [1 2; 3 6; 5 10];
+B1 = bsxfun(@minus, A, mean(A))
+B2 = A - mean(A)
+# See also
+arrayfun plus times
+
+@ ndgrid
+Coordinate arrays for a grid, in the order of the dimensions (the first input varies down the columns).
+
+Like `meshgrid`, but the first input runs along the first dimension (down the rows) and the second along the second: the layout `interpn`, `griddedInterpolant` and arrays indexed `A(i, j)` expect. For two inputs the results are the transposes of `meshgrid`'s.
+
+# Syntax
+[X1, X2] = ndgrid(x1, x2)
+    `X1` varies down the columns, `X2` across the rows.
+[X1, X2, X3] = ndgrid(x1, x2, x3)
+    Three-dimensional grids.
+# Examples
+## Compared with meshgrid
+[X1, X2] = ndgrid(1:3, 10:10:20)
+[X, Y] = meshgrid(1:3, 10:10:20);
+isequal(X1, X')
+# See also
+meshgrid interpn griddedInterpolant
+
+@ true, false
+Logical true or false, or arrays of them.
+
+Logical values are what comparisons give; they take one byte each and index arrays by position (`A(mask)`). `true(m, n)` and `false(m, n)` make logical arrays, for example a mask to be filled in.
+
+# Syntax
+t = true
+    Logical 1.
+T = true(m, n)
+    An m-by-n logical array of true.
+f = false
+    Logical 0.
+F = false(m, n)
+    An m-by-n logical array of false.
+# Examples
+## A mask filled in, then used as an index
+mask = false(1, 6);
+mask([2 5]) = true;
+v = 10:10:60;
+v(mask)
+class(mask)
+# See also
+logical islogical zeros ones
+
+@ pi
+The ratio of a circle's circumference to its diameter.
+
+The double closest to π, 3.141592653589793. It is a function, so a variable named `pi` hides it.
+
+# Syntax
+p = pi
+    π as a double.
+# Examples
+## The circle and its area
+r = 2;
+area = pi*r^2
+fprintf('%.15f\n', pi)
+# See also
+exp sin deg2rad
+
+@ eps
+The distance from a number to the next larger floating-point number.
+
+`eps` is 2^-52, about 2.2e-16: the spacing of doubles near 1, and the relative precision of double arithmetic. `eps(x)` is the spacing at `x`, larger for larger numbers. Comparisons of computed values use a tolerance in these terms rather than `==`.
+
+# Syntax
+e = eps
+    The spacing at 1, 2^-52.
+d = eps(x)
+    The spacing at `x`.
+e = eps('single')
+    The spacing at 1 in single precision, 2^-23.
+# Examples
+## Spacing grows with the numbers
+e1 = eps
+e1000 = eps(1000)
+e16 = eps(1e16)
+eps('single')
+## A comparison with a tolerance
+a = 0.1 + 0.2;
+a == 0.3
+abs(a - 0.3) < 4*eps(0.3)
+# See also
+realmin realmax flintmax
+
+@ Inf, inf
+Positive infinity (-Inf for negative), or an array of it.
+
+What overflow and division of a nonzero number by zero give. `Inf` compares larger than every finite number, so it serves as a start value for a minimum search and as an unbounded limit (`integral(f, 0, Inf)`). `Inf - Inf` and `0*Inf` are `NaN`.
+
+# Syntax
+x = Inf
+    Positive infinity.
+X = Inf(m, n)
+    An m-by-n array of Inf.
+x = inf
+    The same as `Inf`.
+# Examples
+## Where infinity comes from, and what it does
+[1/0 -1/0 exp(1000)]
+Inf > 1e308
+[Inf - Inf, 0*Inf]
+## A start value for a minimum
+best = Inf;
+for v = [7 3 9 4]
+    best = min(best, v);
+end
+best
+# See also
+NaN isinf isfinite realmax
+
+@ NaN, nan
+Not-a-Number, the result of an undefined operation such as 0/0, or an array of it.
+
+`NaN` marks a value that is missing or undefined. Arithmetic with it gives `NaN`, and it is not equal to anything, itself included: test for it with `isnan`, never with `==`. Many statistics take `'omitnan'` to leave it out.
+
+# Syntax
+x = NaN
+    Not-a-Number.
+X = NaN(m, n)
+    An m-by-n array of NaN.
+x = nan
+    The same as `NaN`.
+# Examples
+## Where it comes from, and how to find it
+[0/0, Inf - Inf]
+x = [1 NaN 3];
+x == NaN
+isnan(x)
+## Room for results not yet known
+r = NaN(1, 4);
+r(2) = 5;
+mean(r, 'omitnan')
+# See also
+isnan ismissing Inf rmmissing
+
+@ i, j
+The imaginary unit, the square root of -1.
+
+Written after a number, as in `3 + 4i` or `2j`, it makes a complex constant. Alone, `i` and `j` are functions giving the unit, but they are often used as loop variables, which then hide them: `4i` and `1i` always mean the unit.
+
+# Syntax
+z = 3 + 4i
+    A complex number.
+z = complex(3, 4)
+    The same, from its parts.
+z = 3 + 4j
+    `j` works as `i`.
+# Examples
+## Complex numbers and their parts
+z = 3 + 4i
+[real(z) imag(z) abs(z)]
+1i^2
+## A loop variable named i, and 1i still the unit
+for i = 1:2
+end
+w = 2 + 1i*i
+# See also
+complex real imag abs angle
+
+@ intmax, intmin
+The largest and smallest values an integer class holds.
+
+Each integer class holds a fixed range: `int8` from -128 to 127, `uint8` from 0 to 255, and so on up to 64 bits. Without a class name, `int32`. Integer arithmetic stops at these limits (it saturates) instead of wrapping round.
+
+# Syntax
+v = intmax
+    The largest `int32`.
+v = intmax(classname)
+    The largest value of another class, such as `'uint8'` or `'int64'`.
+v = intmin
+    The smallest `int32`.
+v = intmin(classname)
+    The smallest value of another class.
+# Examples
+## The ranges of some classes
+[intmin('int8') intmax('int8')]
+intmax('uint16')
+intmax('int64')
+## Saturation at the limits
+x = uint8(250) + 10
+y = int8(-100) - 50
+# See also
+realmax flintmax int32 uint8
+
+@ realmax, realmin
+The largest finite and the smallest positive normalized floating-point numbers.
+
+`realmax` is about 1.8e308 for double; anything larger overflows to `Inf`. `realmin` is about 2.2e-308, the smallest double with full precision (smaller numbers down to about 4.9e-324 exist with fewer digits). `'single'` gives the limits of single precision.
+
+# Syntax
+v = realmax
+    The largest finite double.
+v = realmax('single')
+    The largest finite single.
+v = realmin
+    The smallest positive normalized double.
+v = realmin('single')
+    The smallest positive normalized single.
+# Examples
+## The limits, and past them
+big = realmax
+small = realmin
+realmax * 2
+realmax('single')
+# See also
+eps flintmax Inf intmax
+
+@ flintmax
+The largest integer up to which floating point holds every integer exactly (2^53 for double).
+
+Every integer up to `flintmax` (9007199254740992 for double) is a double exactly; past it, doubles are two apart, then four, so some integers have no double of their own. Integer counts above it belong in `int64` or `uint64`.
+
+# Syntax
+v = flintmax
+    2^53.
+v = flintmax('single')
+    2^24.
+# Examples
+## The last exact integer
+f = flintmax;
+fprintf('%.0f\n', f)
+f + 1 == f
+f - 1 == f
+flintmax('single')
+# See also
+eps intmax realmax
+
+@ blkdiag
+A block diagonal matrix built from the matrices given.
+
+The matrices go down the diagonal in order, each in its own rows and columns, with zeros elsewhere.
+
+# Syntax
+B = blkdiag(A1, A2, ...)
+    The block diagonal matrix of `A1`, `A2`, ….
+# Examples
+## Three blocks
+B = blkdiag([1 2; 3 4], 5, [6 7])
+# See also
+diag eye kron
+
+@ toeplitz
+A Toeplitz matrix: constant along each diagonal.
+
+The first column is `c` and the first row is `r`; every diagonal repeats its first element. With one argument the matrix is symmetric (Hermitian for complex values). Toeplitz matrices describe convolution and the covariances of a stationary series.
+
+# Syntax
+T = toeplitz(c, r)
+    First column `c`, first row `r` (`c(1)` is used where they meet).
+T = toeplitz(r)
+    The symmetric Toeplitz matrix of `r`.
+# Examples
+## Symmetric, and from a column and a row
+T = toeplitz([1 2 3 4])
+T2 = toeplitz([1 5 6], [1 2 3 4])
+# See also
+hankel vander conv
+
+@ hankel
+A Hankel matrix: constant along each anti-diagonal.
+
+The first column is `c`; with `r`, the last row is `r`, and without it the matrix is zero below the anti-diagonal. Each anti-diagonal (running up to the right) repeats one value.
+
+# Syntax
+H = hankel(c)
+    First column `c`, zeros below the anti-diagonal.
+H = hankel(c, r)
+    First column `c` and last row `r`.
+# Examples
+## Both forms
+H = hankel([1 2 3])
+H2 = hankel([1 2 3], [3 4 5 6])
+# See also
+toeplitz vander
+
+@ vander
+The Vandermonde matrix of a vector: its columns are powers of the vector.
+
+Column j is `v.^(n-j)`, so the last column is ones. Solving with it fits the polynomial through the points (`polyfit` does this more stably).
+
+# Syntax
+V = vander(v)
+    The Vandermonde matrix, highest power first.
+# Examples
+## The polynomial through three points
+x = [1 2 3];
+y = [2 3 6];
+V = vander(x)
+p = V \ y'
+# See also
+polyfit toeplitz
+
+@ hilb, invhilb
+The Hilbert matrix, H(i,j) = 1/(i+j-1), and its exact inverse.
+
+The Hilbert matrix is a classic example of an ill-conditioned matrix: its condition number grows very fast with its size, so linear systems with it lose digits. `invhilb` gives its inverse exactly (integers), for checking how much a numerical inverse loses.
+
+# Syntax
+H = hilb(n)
+    The n-by-n Hilbert matrix.
+H = invhilb(n)
+    Its inverse, exact.
+# Examples
+## The matrix, its condition, and its inverse
+H = hilb(3)
+cond(hilb(8))
+invhilb(3)
+## How much a numerical inverse loses
+n = 10;
+err = norm(inv(hilb(n)) - invhilb(n)) / norm(invhilb(n))
+# See also
+cond inv pascal
+
+@ pascal
+The Pascal matrix: binomial coefficients, symmetric and positive definite.
+
+Element (i, j) is the binomial coefficient `nchoosek(i+j-2, j-1)`, so the anti-diagonals are rows of Pascal's triangle. Its determinant is 1 and its inverse has integer entries.
+
+# Syntax
+P = pascal(n)
+    The n-by-n Pascal matrix.
+# Examples
+## The matrix and its determinant
+P = pascal(5)
+det(P)
+# See also
+nchoosek magic hilb
+
+@ compan
+The companion matrix of a polynomial; its eigenvalues are the polynomial's roots.
+
+For coefficients `p` (highest power first), a square matrix whose characteristic polynomial is `p`: its eigenvalues are the roots, which is how `roots` finds them.
+
+# Syntax
+C = compan(p)
+    The companion matrix of `p`.
+# Examples
+## The roots from the eigenvalues
+p = [1 -6 11 -6];
+C = compan(p)
+sort(eig(C))'
+roots(p)'
+# See also
+roots poly eig
+
+@ wilkinson, rosser
+Eigenvalue test matrices: Wilkinson's, and Rosser's 8-by-8.
+
+`wilkinson(n)` is symmetric tridiagonal, with ones beside the diagonal and |k| on it; its largest eigenvalues come in nearly equal pairs, a test for eigenvalue solvers. `rosser` is a symmetric 8-by-8 integer matrix with a double eigenvalue, three nearly equal ones, a zero and a nearly zero one.
+
+# Syntax
+W = wilkinson(n)
+    The n-by-n Wilkinson matrix.
+R = rosser
+    Rosser's matrix.
+# Examples
+## Nearly equal eigenvalues
+W = wilkinson(7)
+e = eig(wilkinson(21));
+e(end-1:end)'
+## Rosser's eigenvalues
+format long g
+eig(rosser)
+# See also
+eig hilb
+
+@ accumarray
+Gather values by index and combine those that share one (a sum by default).
+
+Each value goes to the place its index (a row of `subs`) names; values sent to the same place are summed, or combined by `fun`. With group numbers as the indices it computes a statistic for each group, as `unique`'s third output gives them.
+
+# Syntax
+A = accumarray(subs, vals)
+    Sums of `vals` by the indices in `subs`.
+A = accumarray(subs, vals, sz)
+    With the size of the result.
+A = accumarray(subs, vals, sz, fun)
+    Combined by `fun` instead of summed, such as `@max` or `@(x) {x}`.
+A = accumarray(subs, vals, sz, fun, fillval)
+    With `fillval` where no value went.
+# Inputs
+subs — matrix, vector or cell array of index vectors
+    A column for each dimension of the result (a column of positions for a vector result).
+vals — vector or scalar
+    The values, one for each row of `subs` (a scalar goes to every one).
+# Examples
+## Counting and summing by group
+g = [1 3 1 2 3 3];
+v = [10 20 30 40 50 60];
+counts = accumarray(g', 1)'
+sums = accumarray(g', v')'
+## The largest value of each group, and an empty group
+accumarray([1; 3; 3; 1], [4; 2; 8; 6], [4 1], @max, NaN)'
+## A table of counts from two indices
+pairs = [1 1; 2 1; 1 1; 2 2; 1 2];
+T = accumarray(pairs, 1)
+# See also
+unique histcounts splitapply

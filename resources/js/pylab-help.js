@@ -332,15 +332,16 @@
     }
 
     example(ex, known) {
-      const btn = (label, title, fn) => {
-        const b = el('button', { class: 'pl-btn', type: 'button', title }, label);
+      // over the code's upper right corner: Run, Open in Editor, Copy
+      const btn = (name, title, fn, cls) => {
+        const b = el('button', { class: 'pl-iconbtn', type: 'button', title, 'aria-label': title }, PL.icon(name, cls));
         b.addEventListener('click', fn);
         return b;
       };
-      const tools = el('div', { class: 'pl-doc-tools' },
-        btn('Run', 'Run the example in the Command Window', () => { this.app.activePanel?.(this.app.pCmd); this.app.runCommand(ex.code); }),
-        btn('Open in Editor', 'Open the example as a new script', () => this.app.newScript(`${ex.code}\n`)),
-        btn('Copy', 'Copy the code', () => { navigator.clipboard?.writeText(ex.code); U().toast('Copied.'); }));
+      const tools = el('div', { class: 'pl-doc-tools', role: 'toolbar', 'aria-label': `Example: ${ex.title}` },
+        btn('run', 'Run the example in the Command Window', () => { this.app.activePanel?.(this.app.pCmd); this.app.runCommand(ex.code); }, 'pl-ic-run'),
+        btn('newscript', 'Open the example in the Editor, as a new script', () => this.app.newScript(`${ex.code}\n`)),
+        btn('copy', 'Copy the code', () => { navigator.clipboard?.writeText(ex.code); U().toast('Copied.'); }));
       const sec = el('section', { class: 'pl-doc-ex' }, el('h4', null, ex.title));
       if (ex.intro) sec.append(el('p', { class: 'pl-doc-p' }, ...inline(ex.intro, known)));
       sec.append(el('div', { class: 'pl-doc-codebox' }, codeBlock(ex.code, 'pl-doc-code'), tools));

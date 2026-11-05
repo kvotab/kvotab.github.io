@@ -255,3 +255,406 @@ y = 3*x.^2 - 2*x + 1
 nthroot(-8, 3)
 # See also
 times mtimes sqrt nthroot exp
+
+@ plus, minus, uminus, uplus
+Addition and subtraction element by element, A + B and A - B, and the signs -A and +A.
+
+The arrays must have the same size, or sizes that expand: a scalar goes with every element, and a row with a column makes a matrix (implicit expansion). Integers keep their class and stop at its limits; text is taken as its character codes.
+
+# Syntax
+C = A + B
+    The sums of matching elements.
+C = A - B
+    The differences.
+B = -A
+    Each element negated.
+C = plus(A, B)
+    The same as `A + B`; `minus`, `uminus` and `uplus` likewise.
+# Examples
+## Arrays, scalars and expansion
+A = [1 2; 3 4];
+A + 10
+A - [1 1; 1 1]
+(1:3)' + [10 20]
+## Integers stop at their limits
+uint8(200) + uint8(100)
+-int8(-128)
+# See also
+times rdivide sum
+
+@ rdivide, ldivide
+Division element by element: A ./ B, and A .\ B (B divided by A).
+
+`A ./ B` divides each element of `A` by the matching element of `B`; `A .\ B` divides `B` by `A`. As with the other element-wise operators, a scalar goes with every element and a row with a column makes a matrix. Division by zero gives `Inf` (or `NaN` for 0/0).
+
+# Syntax
+C = A ./ B
+    The quotients of matching elements.
+C = A .\ B
+    `B ./ A`.
+C = rdivide(A, B)
+    The same as `A ./ B`; `ldivide(A, B)` is `A .\ B`.
+# Examples
+## Quotients, and division by zero
+[6 8 10] ./ [3 4 5]
+[2 4] .\ [10 20]
+[1 0 -1] ./ 0
+## Each row divided by its sum
+A = [1 3; 2 2; 5 0];
+P = A ./ sum(A, 2)
+# See also
+mrdivide mldivide times
+
+@ mrdivide
+Right matrix division, A / B: the solution of x*B = A.
+
+For a scalar `B`, simply division. For matrices, `x = A / B` solves `x*B = A`, as `x = (B' \ A')'`: exactly for a square `B`, by least squares otherwise. `A / B` is not `A ./ B`.
+
+# Syntax
+x = A / B
+    The solution of `x*B = A`.
+x = mrdivide(A, B)
+    The same.
+# Examples
+## Scalars, and a matrix equation
+[2 4 6] / 2
+B = [2 1; 1 3];
+A = [5 10];
+x = A / B
+x * B
+# See also
+mldivide rdivide inv
+
+@ transpose, ctranspose
+Transpose a matrix: A.' keeps complex numbers as they are, A' conjugates them.
+
+Rows become columns. For real arrays the two are the same; for complex ones, `A'` is the conjugate transpose, the one linear algebra usually wants (`x'*x` is the squared length of a complex vector), and `A.'` turns the matrix without conjugating.
+
+# Syntax
+B = A.'
+    The transpose.
+B = A'
+    The conjugate transpose.
+B = transpose(A)
+    The same as `A.'`; `ctranspose(A)` is `A'`.
+# Examples
+## Real and complex
+A = [1 2 3; 4 5 6];
+A'
+z = [1+2i, 3-1i];
+z.'
+z'
+# See also
+permute pagetranspose conj
+
+@ sign
+-1, 0 or 1 by the sign of each element (x./abs(x) for complex x).
+
+For real numbers, -1 for negative, 0 for zero and 1 for positive. For a nonzero complex number, the number of length 1 in its direction.
+
+# Syntax
+s = sign(x)
+    The sign of each element.
+# Examples
+## Real and complex
+sign([-3 0 2.5])
+sign(3 + 4i)
+# See also
+abs angle
+
+@ nthroot, cbrt
+The real nth root, and the real cube root.
+
+For a negative number and an odd `n`, the root is negative and real: `nthroot(-8, 3)` is -2, where `(-8)^(1/3)` gives a complex number. `cbrt(x)` is `nthroot(x, 3)`.
+
+# Syntax
+y = nthroot(x, n)
+    The real `n`-th root of each element.
+y = cbrt(x)
+    The real cube root.
+# Examples
+## Real roots of negative numbers
+nthroot(-27, 3)
+(-27)^(1/3)
+cbrt([8 -64 2])
+nthroot(16, 4)
+# See also
+sqrt power realpow
+
+@ hypot
+sqrt(a.^2 + b.^2), without overflow or underflow on the way.
+
+The length of the hypotenuse of a right triangle, or the distance of the point (a, b) from the origin. Squaring very large or very small numbers would overflow or underflow; `hypot` scales first, so it gives the right answer anyway.
+
+# Syntax
+c = hypot(a, b)
+    The hypotenuse, element by element.
+# Examples
+## Triangles, and very large numbers
+hypot(3, 4)
+hypot([5 8], [12 15])
+hypot(1e200, 1e200)
+sqrt(1e200^2 + 1e200^2)
+# See also
+sqrt abs norm
+
+@ expm1, log1p
+exp(x) - 1 and log(1 + x), accurate for small x.
+
+For `x` near 0, `exp(x)` and `1 + x` are close to 1, and subtracting or taking the logarithm loses most of the digits of `x`. These two functions keep them: interest compounding, small probabilities and small growth rates are where they matter.
+
+# Syntax
+y = expm1(x)
+    exp(x) - 1.
+y = log1p(x)
+    log(1 + x).
+# Examples
+## Digits kept for a small x
+x = 1e-10;
+format long
+exp(x) - 1
+expm1(x)
+log(1 + x)
+log1p(x)
+# See also
+exp log
+
+@ log2
+The base 2 logarithm, or a number split into mantissa and exponent.
+
+`log2(x)` is the power of 2 that gives `x`. With two outputs, it splits each number into `f` and `e` with `x = f.*2.^e` and `0.5 <= abs(f) < 1`, exactly.
+
+# Syntax
+y = log2(x)
+    The base 2 logarithm of each element.
+[f, e] = log2(x)
+    Mantissas and exponents.
+# Examples
+## Powers of two, and a number taken apart
+log2([1 2 8 1024 0.25])
+[f, e] = log2(10)
+f * 2^e
+# See also
+pow2 nextpow2 log
+
+@ pow2, nextpow2
+Powers of 2; and the exponent of the next power of 2 at or above abs(x).
+
+`pow2(e)` is `2.^e`; `pow2(f, e)` is `f.*2.^e`, computed exactly. `nextpow2(x)` is the smallest `p` with `2^p >= abs(x)`, the size to pad a signal to for a fast Fourier transform.
+
+# Syntax
+y = pow2(e)
+    2 to the powers `e`.
+y = pow2(f, e)
+    `f` times 2 to the powers `e`.
+p = nextpow2(x)
+    The exponent of the next power of 2.
+# Examples
+## Powers, and a length to pad to
+pow2(0:5)
+pow2(0.625, 4)
+n = 1000;
+p = nextpow2(n)
+2^p
+# See also
+log2 fft
+
+@ reallog, realpow, realsqrt
+The logarithm, power and square root, with an error instead of a complex result.
+
+`log`, `.^` and `sqrt` give complex numbers for negative inputs; these three stop with an error instead, which catches a negative value where none should be.
+
+# Syntax
+y = reallog(x)
+    The natural logarithm of nonnegative numbers.
+y = realpow(a, b)
+    `a.^b` when the result is real.
+y = realsqrt(x)
+    The square root of nonnegative numbers.
+# Examples
+## Real results, and the error for a negative number
+realsqrt([4 9])
+realpow(2, 10)
+try
+    reallog(-1)
+catch err
+    disp(err.message)
+end
+# See also
+log sqrt power
+
+@ idivide
+Integer division with a chosen rounding.
+
+Divides integers and rounds the quotient by `'fix'` (toward zero, the default), `'round'`, `'floor'` or `'ceil'`. Ordinary division of integers rounds to the nearest, which is not always what integer arithmetic needs. At least one input must be an integer class.
+
+# Syntax
+c = idivide(a, b)
+    The quotient rounded toward zero.
+c = idivide(a, b, 'fix' | 'round' | 'floor' | 'ceil')
+    With another rounding.
+# Examples
+## The roundings of 7/2 and -7/2
+a = int32([7 -7]);
+b = int32(2);
+a / b
+idivide(a, b)
+idivide(a, b, 'floor')
+idivide(a, b, 'ceil')
+# See also
+mod rem floor fix
+
+@ bitand, bitor, bitxor, bitcmp
+Bitwise AND, OR, exclusive OR, and complement.
+
+Each bit of the result is computed from the matching bits of the inputs. Integers keep their class; doubles must be nonnegative whole numbers and are treated as 64-bit unsigned (or `assumedtype`). `bitcmp` turns every bit round.
+
+# Syntax
+c = bitand(a, b)
+    The bits set in both.
+c = bitor(a, b)
+    The bits set in either.
+c = bitxor(a, b)
+    The bits set in one but not both.
+c = bitcmp(a)
+    Every bit turned round (of an integer, or a double as `uint64`).
+c = bitcmp(a, assumedtype)
+    For a double taken as another type, such as `'uint8'`.
+# Examples
+## Two numbers bit by bit
+a = 12;
+b = 10;
+[bitand(a, b) bitor(a, b) bitxor(a, b)]
+dec2bin([a b bitand(a, b)])
+bitcmp(uint8(12))
+# See also
+bitshift bitget bitset dec2bin
+
+@ bitshift
+Bits moved left (k > 0) or right (k < 0).
+
+Shifting left by `k` multiplies by 2^k, as long as no bit passes the top of the type; shifting right divides by 2^k, rounding down.
+
+# Syntax
+c = bitshift(a, k)
+    `a` shifted by `k` bits.
+c = bitshift(a, k, assumedtype)
+    For a double taken as another type.
+# Examples
+## Shifts left and right
+bitshift(5, 2)
+bitshift(40, -3)
+bitshift(uint8(200), 1)
+# See also
+bitand pow2
+
+@ bitget, bitset
+Read or set the bit at a position, 1 the lowest.
+
+`bitget(a, bit)` is 1 or 0; with a vector of positions, several bits of one number. `bitset` sets a bit to 1 (or to `v`).
+
+# Syntax
+b = bitget(a, bit)
+    The bit at position `bit`.
+c = bitset(a, bit)
+    `a` with that bit set to 1.
+c = bitset(a, bit, v)
+    With that bit set to `v` (0 or 1).
+# Examples
+## The bits of a number, and changing one
+bitget(13, 4:-1:1)
+bitset(13, 2)
+bitset(13, 1, 0)
+# See also
+bitand dec2bin
+
+@ gcd, lcm
+The greatest common divisor and the least common multiple.
+
+Element by element, for integers (or doubles that are whole numbers). `gcd(a, b)` is the largest number dividing both; `lcm(a, b)` the smallest positive number both divide.
+
+# Syntax
+g = gcd(a, b)
+    The greatest common divisor.
+m = lcm(a, b)
+    The least common multiple.
+# Examples
+## Pairs of numbers
+gcd(48, 18)
+lcm(4, 6)
+gcd([12 15 21], 9)
+## A fraction in lowest terms
+n = 84;
+d = 126;
+g = gcd(n, d);
+[n d] / g
+# See also
+factor rat
+
+@ factorial, nchoosek, perms
+Products and counts of arrangements: n!, binomial coefficients, and every permutation.
+
+`factorial(n)` is 1·2·…·n (a double holds it exactly up to 22!, and it is `Inf` past 170!). `nchoosek(n, k)` is the number of ways to choose `k` of `n` things; given a vector it lists those choices, one per row. `perms(v)` lists every ordering of `v`'s elements, one per row, in reverse lexicographic order.
+
+# Syntax
+f = factorial(n)
+    n! for each element.
+c = nchoosek(n, k)
+    The binomial coefficient.
+C = nchoosek(v, k)
+    Every combination of `k` elements of `v`, one per row.
+P = perms(v)
+    Every permutation of `v`, one per row.
+# Examples
+## Counts
+factorial(0:6)
+nchoosek(10, 3)
+## Lists
+C = nchoosek([1 2 3 4], 2)
+P = perms([1 2 3])
+# See also
+gamma primes randperm
+
+@ primes, isprime, factor
+Prime numbers up to n, a test for primes, and prime factors.
+
+`primes(n)` lists the primes up to `n`. `isprime` tests each element. `factor(n)` gives the prime factors of `n` in increasing order, repeated as often as they divide it, so their product is `n`.
+
+# Syntax
+p = primes(n)
+    The primes up to `n`.
+tf = isprime(n)
+    True for the primes.
+f = factor(n)
+    The prime factors of `n`.
+# Examples
+## Primes and factors
+primes(30)
+isprime([2 9 17 21 97])
+f = factor(360)
+prod(f)
+# See also
+gcd nchoosek
+
+@ rat, rats
+Rational approximations: as text, or as numerator and denominator.
+
+`rat` finds a fraction close to each number by continued fractions, to within a tolerance (by default `1e-6*norm(x(:), 1)`). With two outputs it gives the numerators and denominators; with one, the continued fraction as text. `rats` gives the fractions as text, in columns.
+
+# Syntax
+[n, d] = rat(x)
+    Numerators and denominators with `n./d` close to `x`.
+[n, d] = rat(x, tol)
+    Within `tol`.
+s = rat(x)
+    The continued fraction, as text.
+s = rats(x)
+    The fractions, as text.
+# Examples
+## Fractions for decimals and for pi
+[n, d] = rat(0.75)
+[n, d] = rat(pi)
+rat(pi)
+rats([0.5 0.125 1/3])
+# See also
+format gcd

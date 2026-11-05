@@ -1,0 +1,260 @@
+@ sec, csc, cot
+The secant, cosecant and cotangent of angles in radians: 1/cos, 1/sin and 1/tan.
+
+Element by element. Where the cosine, sine or tangent is zero they are infinite (or, because pi is not exact, very large).
+
+# Syntax
+y = sec(x)
+    1./cos(x).
+y = csc(x)
+    1./sin(x).
+y = cot(x)
+    1./tan(x).
+# Examples
+## Some values
+x = [pi/3 pi/4 pi/6];
+[sec(x); csc(x); cot(x)]
+## The secant's curve, between its poles
+x = linspace(-1.4, 1.4, 200);
+plot(x, sec(x))
+grid on
+# See also
+sin cos tan secd asec
+
+@ asin, acos, atan
+The inverse sine, cosine and tangent, in radians.
+
+`asin` gives angles from -pi/2 to pi/2, `acos` from 0 to pi, `atan` from -pi/2 to pi/2. Outside [-1, 1] the inverse sine and cosine are complex. For the angle of a point (x, y) in all four quadrants, use `atan2`.
+
+# Syntax
+y = asin(x)
+    The angle whose sine is `x`.
+y = acos(x)
+    The angle whose cosine is `x`.
+y = atan(x)
+    The angle whose tangent is `x`.
+# Examples
+## Back to the angles
+asin(0.5)
+acos([1 0 -1])
+atan(1) * 4
+## Outside [-1, 1]
+asin(2)
+# See also
+sin atan2 asind
+
+@ atan2, atan2d
+The angle of the point (x, y): in radians between -pi and pi, or in degrees between -180 and 180.
+
+Unlike `atan(y/x)`, which cannot tell (1, 1) from (-1, -1), `atan2(y, x)` uses the signs of both to give the angle in the right quadrant. Note the order: `y` first.
+
+# Syntax
+theta = atan2(y, x)
+    In radians.
+theta = atan2d(y, x)
+    In degrees.
+# Examples
+## The four quadrants
+x = [1 -1 -1 1];
+y = [1 1 -1 -1];
+atan2d(y, x)
+atand(y ./ x)
+## The direction of a vector, in radians
+atan2(3, -4)
+# See also
+atan angle cart2pol
+
+@ asec, acsc, acot
+The inverse secant, cosecant and cotangent, in radians.
+
+`asec(x)` is `acos(1./x)`, `acsc(x)` is `asin(1./x)` and `acot(x)` is `atan(1./x)`.
+
+# Syntax
+y = asec(x)
+    The angle whose secant is `x`.
+y = acsc(x)
+    The angle whose cosecant is `x`.
+y = acot(x)
+    The angle whose cotangent is `x`.
+# Examples
+## Inverses of known values
+asec(2)
+acsc(2)
+acot(1)
+# See also
+sec acos asecd
+
+@ sinh, cosh, tanh
+The hyperbolic sine, cosine and tangent.
+
+`sinh(x) = (e^x - e^-x)/2`, `cosh(x) = (e^x + e^-x)/2` and `tanh = sinh/cosh`. A hanging chain takes the shape of `cosh`, and `tanh` rises smoothly from -1 to 1, a common smooth step.
+
+# Syntax
+y = sinh(x)
+    The hyperbolic sine.
+y = cosh(x)
+    The hyperbolic cosine.
+y = tanh(x)
+    The hyperbolic tangent.
+# Examples
+## The identity cosh^2 - sinh^2 = 1
+x = [0 0.5 2];
+cosh(x).^2 - sinh(x).^2
+## The three curves
+x = linspace(-2, 2, 200);
+plot(x, sinh(x), x, cosh(x), x, tanh(x))
+legend('sinh', 'cosh', 'tanh', 'Location', 'north')
+grid on
+# See also
+asinh exp sech
+
+@ sech, csch, coth
+The hyperbolic secant, cosecant and cotangent: 1/cosh, 1/sinh and 1/tanh.
+
+`sech` is a bell-shaped curve with its peak 1 at 0; `csch` and `coth` are infinite at 0.
+
+# Syntax
+y = sech(x)
+    1./cosh(x).
+y = csch(x)
+    1./sinh(x).
+y = coth(x)
+    1./tanh(x).
+# Examples
+## Some values
+x = [0.5 1 2];
+[sech(x); csch(x); coth(x)]
+# See also
+cosh asech
+
+@ asinh, acosh, atanh
+The inverse hyperbolic sine, cosine and tangent.
+
+`asinh(x) = log(x + sqrt(x^2 + 1))`, defined for every real number; `acosh` is real for `x >= 1` and `atanh` for -1 < x < 1, complex elsewhere.
+
+# Syntax
+y = asinh(x)
+    The inverse hyperbolic sine.
+y = acosh(x)
+    The inverse hyperbolic cosine.
+y = atanh(x)
+    The inverse hyperbolic tangent.
+# Examples
+## Back again
+asinh(sinh(1.5))
+acosh([1 2 10])
+atanh(0.5)
+# See also
+sinh log
+
+@ asech, acsch, acoth
+The inverse hyperbolic secant, cosecant and cotangent.
+
+`asech(x)` is `acosh(1./x)`, `acsch(x)` is `asinh(1./x)` and `acoth(x)` is `atanh(1./x)`.
+
+# Syntax
+y = asech(x)
+    The inverse hyperbolic secant.
+y = acsch(x)
+    The inverse hyperbolic cosecant.
+y = acoth(x)
+    The inverse hyperbolic cotangent.
+# Examples
+## Inverses of the hyperbolic functions
+asech(sech(0.7))
+acsch(2)
+acoth(2)
+# See also
+sech acosh
+
+@ sind, cosd, tand, secd, cscd, cotd
+The trigonometric functions of angles in degrees.
+
+They give exact results where the values are exact: `sind(180)` is exactly 0 and `cosd(90)` exactly 0, while `sin(pi)` is about 1.2e-16 because `pi` is not exact.
+
+# Syntax
+y = sind(x)
+    The sine of `x` degrees.
+y = cosd(x)
+    The cosine.
+y = tand(x)
+    The tangent.
+y = secd(x)
+    The secant.
+y = cscd(x)
+    The cosecant.
+y = cotd(x)
+    The cotangent.
+# Examples
+## Exact zeros
+sind(180)
+sin(pi)
+cosd([0 60 90 180])
+## A table of angles
+d = [0 30 45 60];
+[sind(d); cosd(d); tand(d)]
+# See also
+sin deg2rad asind
+
+@ asind, acosd, atand, asecd, acscd, acotd
+The inverse trigonometric functions, in degrees.
+
+The same as `asin`, `acos` and the rest, with the angle given in degrees.
+
+# Syntax
+y = asind(x)
+    The angle in degrees whose sine is `x`.
+y = acosd(x)
+    Whose cosine is `x`.
+y = atand(x)
+    Whose tangent is `x`.
+y = asecd(x)
+    Whose secant is `x`.
+y = acscd(x)
+    Whose cosecant is `x`.
+y = acotd(x)
+    Whose cotangent is `x`.
+# Examples
+## Angles in degrees
+asind(0.5)
+acosd([1 0.5 0])
+atand(1)
+asecd(2)
+# See also
+sind atan2d asin
+
+@ sinpi, cospi
+sin(pi*x) and cos(pi*x), exact at the integers and half-integers.
+
+`sinpi(x)` is exactly 0 at the integers and `cospi(x)` exactly 0 at the half-integers, where `sin(pi*x)` and `cos(pi*x)` leave round-off.
+
+# Syntax
+y = sinpi(x)
+    sin(pi*x).
+y = cospi(x)
+    cos(pi*x).
+# Examples
+## Exact zeros
+sinpi([0 1 2 0.5])
+sin(pi*[0 1 2 0.5])
+cospi(0.5)
+cos(pi/2)
+# See also
+sin sind
+
+@ deg2rad, rad2deg
+Degrees to radians, and radians to degrees.
+
+`deg2rad(d)` is `d*pi/180` and `rad2deg(r)` is `r*180/pi`.
+
+# Syntax
+r = deg2rad(d)
+    Degrees as radians.
+d = rad2deg(r)
+    Radians as degrees.
+# Examples
+## Both ways
+deg2rad([90 180 360])
+rad2deg(pi/4)
+# See also
+sind cosd

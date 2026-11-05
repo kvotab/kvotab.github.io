@@ -708,9 +708,13 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-help .pl-doc-ex { margin: 12px 0 22px; }
 .pl-help .pl-doc-ex h4 { font-size: 13.5px; margin: 0 0 6px; }
 .pl-help .pl-doc-codebox { position: relative; max-width: 100ch; }
-.pl-help pre.pl-doc-code { margin: 0; padding-right: 8px; white-space: pre; }
+.pl-help pre.pl-doc-code { margin: 0; padding-right: 96px; white-space: pre; }
 .pl-help pre.pl-doc-code .ln { display: block; min-height: 1.5em; }
-.pl-help .pl-doc-tools { display: flex; gap: 6px; margin: 5px 0 0; flex-wrap: wrap; }
+/* Run, Open in Editor and Copy over the code's upper right corner */
+.pl-help .pl-doc-tools { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; }
+.pl-help .pl-doc-tools .pl-iconbtn { width: 26px; height: 24px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--code-bg) 80%, transparent); }
+.pl-help .pl-doc-tools .pl-iconbtn:hover { background: var(--pl-hover); }
+.pl-help .pl-doc-tools .pl-iconbtn svg { width: 15px; height: 15px; }
 .pl-help pre.pl-doc-out { margin: 6px 0 0; max-width: 100ch; background: transparent; border: 1px solid var(--pl-border); white-space: pre; }
 .pl-help .pl-doc-figs { display: flex; flex-direction: column; gap: 8px; margin: 8px 0 0; }
 .pl-help .pl-doc-figbox { width: 100%; }
