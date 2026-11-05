@@ -1,0 +1,137 @@
+@ parula, viridis, turbo, jet
+Colormaps for data: blue to yellow, perceptually uniform, and two rainbows.
+
+A colormap is an n-by-3 matrix of RGB rows from 0 to 1 (64 rows unless n is given, or as many as the current figure's map has). `parula` (the default here) runs from blue through green to yellow; `viridis` from dark purple to yellow with lightness rising evenly, so that it reads correctly in gray and for most colour-blind readers; `turbo` is a rainbow whose lightness changes smoothly; `jet` the classic rainbow, whose bright band in the middle can suggest features that are not in the data.
+
+# Syntax
+c = parula(n)
+    Blue to yellow.
+c = viridis(n)
+    Dark purple to yellow.
+c = turbo(n)
+    A smooth rainbow.
+c = jet(n)
+    The classic rainbow.
+# Examples
+## Four maps on one surface
+Z = peaks(40);
+names = {'parula', 'viridis', 'turbo', 'jet'};
+for k = 1:4
+    ax = subplot(2, 2, k);
+    imagesc(Z), axis image off, title(names{k})
+    colormap(ax, feval(names{k}, 64))
+end
+size(viridis(10))
+# See also
+colormap colorbar gray
+
+@ gray, hot, cool, spring, summer, autumn, winter, bone, copper, pink
+The classic colormaps: grays, heat, and seasons.
+
+`gray` runs from black to white; `bone` is gray with a tint of blue, `copper` black to light copper, `pink` pastel shades. `hot` goes black, red, yellow, white; `cool` cyan to magenta; and the seasons: `spring` magenta to yellow, `summer` green to yellow, `autumn` red to yellow, `winter` blue to green. Each takes the number of rows.
+
+# Syntax
+c = gray(n)
+    Black to white.
+c = hot(n)
+    Black, red, yellow, white.
+c = cool(n)
+    Cyan to magenta.
+c = spring(n)
+    Magenta to yellow.
+c = summer(n)
+    Green to yellow.
+c = autumn(n)
+    Red to yellow.
+c = winter(n)
+    Blue to green.
+c = bone(n)
+    Blue-tinted gray.
+c = copper(n)
+    Copper.
+c = pink(n)
+    Pink.
+# Examples
+## Ten maps as bands
+names = {'gray', 'bone', 'copper', 'pink', 'hot', 'cool', 'spring', 'summer', 'autumn', 'winter'};
+for k = 1:10
+    ax = subplot(10, 1, k);
+    image(ax, 1:64), colormap(ax, feval(names{k}, 64)), axis off
+    text(ax, -2, 1, names{k}, 'HorizontalAlignment', 'right')
+end
+gray(3)
+# See also
+parula colormap
+
+@ hsv, lines, prism, flag, white, colorcube
+Colormaps of distinct or repeating colours: the hues round the circle, the line colours, stripes, and a colour cube.
+
+`hsv` runs through the hues of the colour circle, red back to red, which suits angles and phases. `lines` repeats the colours lines take in turn, `prism` six colours and `flag` red, white, blue and black over and over, for telling neighbouring levels apart; `white` is all white, and `colorcube` evenly spaced colours of a colour cube, then grays and pure tones.
+
+# Syntax
+c = hsv(n)
+    The hues.
+c = lines(n)
+    The line colours, repeated.
+c = prism(n)
+    Six colours, repeated.
+c = flag(n)
+    Four colours, repeated.
+c = white(n)
+    White.
+c = colorcube(n)
+    A colour cube.
+# Examples
+## A phase in hues, and the line colours
+[X, Y] = meshgrid(linspace(-1, 1, 101));
+subplot(1, 2, 1), imagesc(angle(X + 1i*Y)), axis image off, colormap(gca, hsv(64)), title('hsv')
+subplot(1, 2, 2), image(1:7), colormap(gca, lines(7)), axis off, title('lines')
+flag(4)
+# See also
+colororder parula
+
+@ brighten, rgbplot, spinmap
+A colormap brightened or darkened, drawn as its three columns, and turned round.
+
+`brighten` raises each value of a colormap to a power, brighter for beta between 0 and 1, darker for beta between -1 and 0; given only beta it changes the current figure's map. `rgbplot` draws a map's red, green and blue columns against their row, in those colours, which shows how it was made. `spinmap` turns the current figure's map round for a few seconds, shifting its rows.
+
+# Syntax
+newmap = brighten(map, beta)
+    A brighter or darker map.
+brighten(beta)
+    The figure's map changed.
+rgbplot(map)
+    Its columns drawn.
+spinmap(t, inc)
+    Turned round for t seconds.
+# Examples
+## Parula brighter, and how its columns run
+c = parula(64);
+b = brighten(c, 0.5);
+mean(b(:)) > mean(c(:))
+subplot(1, 2, 1), rgbplot(c), title('parula')
+subplot(1, 2, 2), rgbplot(b), title('brightened')
+# See also
+colormap parula
+
+@ validatecolor, rgb2hex, hex2rgb
+Colours checked and given as RGB, and converted to and from hex codes.
+
+`validatecolor` takes colours as names (`'red'`, `'r'`), hex codes (`'#FF8800'`, `'#F80'`) or RGB rows (doubles from 0 to 1, or integers scaled by their range) and gives them as rows of doubles, refusing anything that is not a colour; one colour unless `'multiple'`. `rgb2hex` writes RGB rows as `'#RRGGBB'` strings (`'#RGB'` with `'Shorthand', true` where it can), and `hex2rgb` reads them back.
+
+# Syntax
+RGB = validatecolor(colors, 'multiple')
+    Checked, as RGB.
+hex = rgb2hex(RGB)
+    As hex codes.
+RGB = hex2rgb(hex)
+    From hex codes.
+# Examples
+## One colour three ways
+validatecolor({'red', '#00FF80', 'b'}, 'multiple')
+validatecolor(uint8([255 128 0]))
+h = rgb2hex([1 0.5 0; 0 0 1])
+rgb2hex([1 1 0], 'Shorthand', true)
+hex2rgb(h)
+# See also
+colormap

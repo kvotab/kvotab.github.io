@@ -1,0 +1,466 @@
+@ uicontrol
+A control in a figure: a button, check box, text field, slider, list or menu, which calls back when used.
+
+The Style chooses the control: `pushbutton`, `togglebutton`, `checkbox`, `radiobutton`, `edit`, `text`, `slider`, `listbox`, `popupmenu` or `frame`. Position [left bottom width height] is in the parent's Units (pixels unless set) from its lower left corner. String is its text (the items of a list), Value its state (a slider's position, a list's chosen item, a check box's 1 or 0), and Callback the function called when it is used, given the control and event data. `uicontrol(h)` gives a control the keyboard focus.
+
+# Syntax
+h = uicontrol('Style', 'pushbutton', 'String', 'Go', 'Callback', @go)
+    A button.
+h = uicontrol(parent, 'Style', 'slider', 'Min', a, 'Max', b, 'Value', v)
+    A slider in a parent.
+uicontrol(h)
+    Given the focus.
+# Examples
+## A slider that sets a line's slope
+f = figure('Position', [100 100 420 300]);
+ax = axes('Position', [0.12 0.35 0.8 0.6]);
+h = plot(ax, 0:10, 0:10);
+s = uicontrol('Style', 'slider', 'Min', 0, 'Max', 3, 'Value', 1, 'Position', [60 30 200 20], ...
+    'Callback', @(src, ~) set(h, 'YData', src.Value*(0:10)));
+uicontrol('Style', 'text', 'String', 'slope', 'Position', [270 28 60 20]);
+uicontrol('Style', 'checkbox', 'String', 'grid', 'Position', [330 30 70 20], 'Callback', @(~, ~) grid(ax));
+s.Style
+[s.Min s.Value s.Max]
+# See also
+uipanel uibuttongroup figure
+
+@ uipanel, uibuttongroup
+Panels in a figure: a titled frame that holds controls and axes, and one whose buttons are chosen one at a time.
+
+A panel groups what it holds, which is placed from the panel's lower left corner in its own Units, and moves and hides with it. A button group is a panel whose radio buttons and toggle buttons exclude each other: SelectedObject is the chosen one, and SelectionChangedFcn is called with the old and new choice when it changes.
+
+# Syntax
+p = uipanel('Title', title, 'Position', [left bottom width height])
+    A panel.
+g = uibuttongroup('Title', title, 'SelectionChangedFcn', @changed)
+    A button group.
+# Examples
+## A plot and its settings side by side
+f = figure('Position', [100 100 520 300]);
+p = uipanel(f, 'Title', 'Line', 'Position', [0.68 0.1 0.3 0.8]);
+g = uibuttongroup(p, 'Title', 'Style', 'Position', [0.05 0.45 0.9 0.5]);
+r1 = uicontrol(g, 'Style', 'radiobutton', 'String', 'solid', 'Position', [10 50 100 20]);
+r2 = uicontrol(g, 'Style', 'radiobutton', 'String', 'dashed', 'Position', [10 20 100 20]);
+g.SelectedObject = r2;
+axes(f, 'Position', [0.08 0.12 0.55 0.8]);
+plot(1:10, '--')
+g.SelectedObject.String
+# See also
+uicontrol uitabgroup
+
+@ uitable
+A table of numbers, logical values or text in a figure, which can be typed in.
+
+Data is a matrix, a cell array or a table; ColumnName and RowName label it, ColumnEditable says which columns take typing, and CellEditCallback is called with the indices and the old and new values when a cell changes.
+
+# Syntax
+t = uitable('Data', data, 'ColumnName', names)
+    A table.
+t = uitable(parent, 'Name', value)
+    In a parent.
+# Examples
+## Three items, two columns to edit
+f = figure('Position', [100 100 420 200]);
+t = uitable(f, 'Data', {'bolt', 120, true; 'nut', 300, false; 'washer', 80, true}, ...
+    'ColumnName', {'item', 'count', 'ordered'}, 'ColumnEditable', [false true true], 'Position', [20 20 380 160]);
+size(t.Data)
+t.Data{2, 2}
+# See also
+uicontrol table
+
+@ uitabgroup, uitab
+Tabs in a figure, each holding its own controls and axes.
+
+A tab group holds tabs, one shown at a time: SelectedTab is the one shown, and SelectionChangedFcn is called when someone picks another. Each tab is a container like a panel, its Title on the tab.
+
+# Syntax
+g = uitabgroup(parent)
+    The tab group.
+t = uitab(g, 'Title', title)
+    A tab.
+# Examples
+## Data and a plot on two tabs
+f = figure('Position', [100 100 420 300]);
+g = uitabgroup(f);
+t1 = uitab(g, 'Title', 'Plot');
+t2 = uitab(g, 'Title', 'Data');
+axes(t1);
+plot(1:10, (1:10).^2)
+uitable(t2, 'Data', [1:10; (1:10).^2]', 'Position', [10 10 250 200]);
+g.SelectedTab.Title
+# See also
+uipanel uitable
+
+@ uimenu, uicontextmenu
+Menus: in a figure's menu bar, and opened by a right-click on an object.
+
+`uimenu` adds a menu to a figure's menu bar, or an item to a menu (an & before a letter underlines it; Accelerator a key that chooses it with Ctrl); its Callback (or MenuSelectedFcn) runs when it is chosen, and Checked, Enable and Separator change how it looks. `uicontextmenu` makes a menu that opens where someone right-clicks the objects whose UIContextMenu (ContextMenu) it is.
+
+# Syntax
+m = uimenu(fig, 'Label', '&File')
+    A menu.
+item = uimenu(m, 'Label', 'Open', 'Accelerator', 'O', 'Callback', @open)
+    An item.
+cm = uicontextmenu(fig)
+    A context menu.
+set(h, 'UIContextMenu', uicontextmenu(fig))
+    Given to an object.
+# Examples
+## A menu and a right-click menu
+f = figure('Position', [100 100 420 300]);
+m = uimenu(f, 'Label', '&Line');
+uimenu(m, 'Label', 'Red', 'Callback', 'set(findobj(gcf, ''Type'', ''line''), ''Color'', ''r'')');
+uimenu(m, 'Label', 'Thick', 'Separator', 'on', 'Callback', 'set(findobj(gcf, ''Type'', ''line''), ''LineWidth'', 3)');
+h = plot(1:10);
+cm = uicontextmenu(f);
+uimenu(cm, 'Label', 'Delete', 'Callback', @(~, ~) delete(h));
+h.UIContextMenu = cm;
+{m.Children.Label}
+# See also
+uitoolbar uicontrol
+
+@ uitoolbar, uipushtool, uitoggletool
+A toolbar in a figure, and its buttons: pressed once, or staying in and out.
+
+A toolbar holds tools, each with a picture (CData, m-by-n-by-3 colours from 0 to 1, NaN showing through) and a tooltip. A push tool calls ClickedCallback when pressed; a toggle tool stays in or out (State 'on' or 'off'), calling OnCallback or OffCallback.
+
+# Syntax
+tb = uitoolbar(fig)
+    A toolbar.
+t = uipushtool(tb, 'CData', icon, 'TooltipString', tip, 'ClickedCallback', @fn)
+    A button.
+t = uitoggletool(tb, 'CData', icon, 'OnCallback', @on, 'OffCallback', @off)
+    A button that stays.
+# Examples
+## Two tools with drawn pictures
+f = figure('Position', [100 100 420 300]);
+tb = uitoolbar(f);
+icon = ones(16, 16, 3) * 0.9;
+icon(4:13, 4:13, 1) = 0.2;
+p = uipushtool(tb, 'CData', icon, 'TooltipString', 'Clear', 'ClickedCallback', @(~, ~) cla);
+t = uitoggletool(tb, 'CData', 1 - icon, 'TooltipString', 'Grid', 'OnCallback', @(~, ~) grid('on'), 'OffCallback', @(~, ~) grid('off'));
+plot(rand(10, 1))
+t.State
+# See also
+uimenu uicontrol
+
+@ gcbo, gcbf, closereq
+The object whose callback is running and its figure, and the default way a figure closes.
+
+Inside a callback, `gcbo` gives the object whose callback it is (and its figure), and `gcbf` the figure; outside one they are empty. `closereq` deletes the current figure: it is the default CloseRequestFcn, which a figure calls when its close button is pressed, and a function of one's own there can ask first.
+
+# Syntax
+h = gcbo
+    The object.
+[h, fig] = gcbo
+    And its figure.
+fig = gcbf
+    The figure.
+closereq
+    The figure closed.
+# Examples
+## A button that names itself
+f = figure('Position', [100 100 300 150]);
+b = uicontrol('Style', 'pushbutton', 'String', 'Who am I?', 'Position', [80 50 140 40], ...
+    'Callback', 'disp(get(gcbo, ''String''))');
+isempty(gcbo)
+f.CloseRequestFcn
+# See also
+uicontrol uiwait
+
+@ uiwait, uiresume, waitfor
+A program waiting, with callbacks running, until a figure closes or something changes.
+
+`uiwait` stops the program, while callbacks go on running, until the figure is closed or `uiresume` is called (from a callback), or for a time. `waitfor` waits until an object is deleted or one of its properties changes (to a value). Together with controls they make a program wait for its answer from a window.
+
+# Syntax
+uiwait(fig)
+    Until closed or resumed.
+uiwait(fig, seconds)
+    At most so long.
+uiresume(fig)
+    Go on.
+waitfor(h, 'Name', value)
+    Until a property changes.
+# Examples
+## A program that waits for a button
+lines = {
+    'function n = ask()'
+    'f = figure(''Position'', [100 100 260 120]);'
+    'uicontrol(''Style'', ''edit'', ''Tag'', ''n'', ''String'', ''5'', ''Position'', [20 60 100 25]);'
+    'uicontrol(''String'', ''OK'', ''Position'', [140 60 80 25], ''Callback'', ''uiresume(gcbf)'');'
+    'uiwait(f)'
+    'n = str2double(get(findobj(f, ''Tag'', ''n''), ''String''));'
+    'close(f)'
+    'end'};
+fid = fopen('ask.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type ask
+# See also
+uicontrol questdlg
+
+@ guidata, setappdata, getappdata, isappdata, rmappdata
+Data kept with a figure or any graphics object, for its callbacks to share.
+
+`guidata` keeps one value (usually a struct) with a figure, reachable from any object in it: a callback reads it with guidata(src), changes it and stores it again. `setappdata` keeps named values with any object, `getappdata` reads one (or all as a struct), `isappdata` asks whether one is there and `rmappdata` forgets it.
+
+# Syntax
+guidata(h, data)
+    Kept with h's figure.
+data = guidata(h)
+    Read back.
+setappdata(h, 'name', value)
+    A named value.
+value = getappdata(h, 'name')
+    Read back.
+tf = isappdata(h, 'name')
+    There?
+rmappdata(h, 'name')
+    Forgotten.
+# Examples
+## A counter kept with a figure
+f = figure('Position', [100 100 300 150]);
+b = uicontrol('Style', 'pushbutton', 'String', 'Count', 'Position', [100 55 100 40]);
+guidata(f, struct('clicks', 0));
+s = guidata(b);
+s.clicks = s.clicks + 1;
+guidata(b, s);
+guidata(f).clicks
+setappdata(f, 'owner', 'lab 3');
+[isappdata(f, 'owner'), isappdata(f, 'size')]
+getappdata(f, 'owner')
+rmappdata(f, 'owner');
+isappdata(f, 'owner')
+# See also
+uicontrol set
+
+@ msgbox, errordlg, warndlg, helpdlg
+Message windows: a message with an OK button, with an error, warning or information sign.
+
+Each opens a small window and the program goes on at once; `uiwait(h)` waits until it is closed. `msgbox` can take a sign ('error', 'warn', 'help') or a picture of one's own, and `'modal'` last makes the rest of the page wait for it.
+
+# Syntax
+h = msgbox(message, title)
+    A message.
+h = errordlg(message, title)
+    With an error sign.
+h = warndlg(message, title)
+    With a warning sign.
+h = helpdlg(message, title)
+    With an information sign.
+# Examples
+## A program that reports how a file went
+lines = {
+    'function report(ok, n)'
+    'if ok'
+    '    h = helpdlg(sprintf(''%d rows read.'', n), ''Done'');'
+    'elseif n == 0'
+    '    h = warndlg(''The file is empty.'', ''Nothing read'');'
+    'else'
+    '    h = errordlg(''The file could not be read.'', ''Error'');'
+    'end'
+    'uiwait(h)'
+    'end'};
+fid = fopen('report.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type report
+# See also
+questdlg uiwait
+
+@ questdlg, inputdlg, listdlg, menu
+Questions in windows: buttons, lines of text, a choice from a list, a choice among buttons.
+
+Each waits for the answer. `questdlg` gives the text of the button pressed ('' when the window is closed), Yes, No and Cancel unless others are given; `inputdlg` the lines typed, as a cell array ({} when cancelled); `listdlg` the indices chosen and whether one was; `menu` the number of the button pressed (0 when closed).
+
+# Syntax
+answer = questdlg(question, title, b1, b2, default)
+    By buttons.
+answers = inputdlg(prompts, title, lines, defaults)
+    Lines of text.
+[indx, tf] = listdlg('ListString', items, 'SelectionMode', 'single')
+    From a list.
+k = menu(title, b1, b2, b3)
+    Among buttons.
+# Examples
+## A program that asks three ways
+lines = {
+    'function setup()'
+    'a = inputdlg({''Name'', ''Age''}, ''About you'', [1; 1], {''Ada'', ''36''});'
+    'if isempty(a), return, end'
+    '[k, ok] = listdlg(''ListString'', {''red'', ''green'', ''blue''}, ''SelectionMode'', ''single'');'
+    'if questdlg(''Save these?'', ''Settings'', ''Save'', ''Discard'', ''Save'') == "Save"'
+    '    fprintf(''%s, %s, colour %d\n'', a{1}, a{2}, k)'
+    'end'
+    'end'};
+fid = fopen('setup.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type setup
+# See also
+msgbox uiwait
+
+@ uigetfile, uiputfile, uigetdir, uisetcolor
+Choosing a file to open, a name to save under, a folder, or a colour, in a window.
+
+`uigetfile` asks for a file among the page's files, by filters, and gives its name and folder (0 when cancelled; several with `'MultiSelect', 'on'`); `uiputfile` asks for a name and folder to save under; `uigetdir` for a folder; `uisetcolor` for a colour, as an RGB row.
+
+# Syntax
+[file, path] = uigetfile(filter, title)
+    A file to open.
+[file, path, index] = uiputfile(filter, title, default)
+    A name to save under.
+folder = uigetdir(start, title)
+    A folder.
+rgb = uisetcolor(start, title)
+    A colour.
+# Examples
+## A program that opens a chosen file
+lines = {
+    'function T = pickData()'
+    '[file, folder] = uigetfile({''*.csv'', ''Data (*.csv)''}, ''Open data'');'
+    'if isequal(file, 0), T = []; return, end'
+    'T = readtable(fullfile(folder, file));'
+    'c = uisetcolor([0 0.45 0.74], ''Line colour'');'
+    'plot(T{:, 1}, T{:, 2}, ''Color'', c)'
+    'end'};
+fid = fopen('pickData.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type pickData
+# See also
+readtable uigetdir
+
+@ waitbar, dialog
+A window with a bar showing how far a long job has come, and an empty window for a dialog of one's own.
+
+`waitbar` opens a window with a bar and a message, and moves the bar (and changes the message) when called again with its handle; a Cancel button can be added whose callback marks the job to stop. `dialog` opens an empty modal window to fill with controls: until it is closed, the rest of the page takes no clicks.
+
+# Syntax
+h = waitbar(0, message)
+    The bar.
+waitbar(fraction, h, message)
+    Moved on.
+d = dialog('Name', title, 'Position', pos)
+    An empty modal window.
+# Examples
+## A bar moved on, and a dialog's style
+h = waitbar(0, 'Working...');
+for k = 1:4
+    waitbar(k/4, h, sprintf('step %d of 4', k));
+end
+close(h)
+d = dialog('Name', 'Settings', 'Position', [300 300 250 120]);
+d.WindowStyle
+close(d)
+# See also
+uicontrol uiwait
+
+@ printdlg, printpreview
+A figure printed with the browser's printing.
+
+Both open the browser's print window for the figure, where it can be printed or saved as a PDF.
+
+# Syntax
+printdlg(fig)
+    Printed.
+printpreview(fig)
+    The same.
+# Examples
+## A program that prints its figure
+lines = {
+    'function printIt()'
+    'f = figure; plot(peaks(20))'
+    'printdlg(f)'
+    'end'};
+fid = fopen('printIt.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type printIt
+# See also
+print saveas
+
+@ helpwin, doc
+A function's help in the Help panel: its page, with examples and what they print and draw.
+
+`doc` opens a function's page in the Help panel (or, alone, the list of every function by subject); `helpwin` opens it there too. `help` writes the short help in the Command Window instead.
+
+# Syntax
+doc name
+    Its page.
+doc
+    Every function.
+helpwin name
+    In the Help panel.
+# Examples
+## The short help, written out
+help hypot
+# See also
+help lookfor
+
+@ timer, start, stop, wait, timerfind, timerfindall
+Timers: a callback run after a delay, and again as often as asked.
+
+A timer runs its TimerFcn after StartDelay, once (`'singleShot'`) or every Period seconds (`'fixedRate'`, `'fixedSpacing'`, `'fixedDelay'`), TasksToExecute times or until stopped. `start` starts it, `stop` stops it, and `wait` waits until it stops. The callbacks run when the engine is idle, or at a running program's `drawnow` and `pause`. `timerfind` gives the timers there are (with given properties), `timerfindall` the hidden ones too.
+
+# Syntax
+t = timer('TimerFcn', @tick, 'Period', p, 'ExecutionMode', 'fixedRate')
+    A timer.
+start(t)
+    Started.
+stop(t)
+    Stopped.
+wait(t)
+    Until it stops.
+t = timerfind('Name', value)
+    Found.
+t = timerfindall
+    All of them.
+# Examples
+## A timer made, and a program that counts down with one
+t = timer('Name', 'ticker', 'Period', 0.5, 'ExecutionMode', 'fixedRate', 'TasksToExecute', 3);
+[t.Period, t.TasksToExecute]
+t.Running
+numel(timerfind('Name', 'ticker'))
+delete(t)
+lines = {
+    'function countdown()'
+    't = timer(''Period'', 1, ''ExecutionMode'', ''fixedRate'', ''TasksToExecute'', 3, ...'
+    '    ''TimerFcn'', @(src, ~) disp(4 - src.TasksExecuted));'
+    'start(t)'
+    'wait(t)'
+    'delete(t)'
+    'end'};
+fid = fopen('countdown.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type countdown
+# See also
+pause drawnow
+
+@ movegui, uistack
+A figure window moved on the desktop, and an object brought to the front or sent back.
+
+`movegui` moves a figure's window to the middle of the desktop or to an edge or corner ('north', 'southeast' and so on). `uistack` changes the order in which an object is drawn among its siblings: to the top, up or down by steps, or to the bottom.
+
+# Syntax
+movegui(fig, 'center')
+    To the middle.
+movegui(fig, position)
+    To an edge or corner.
+uistack(h, 'top')
+    To the front.
+uistack(h, 'down', steps)
+    Back a step.
+# Examples
+## A square brought in front of a circle
+t = linspace(0, 2*pi, 60);
+c = patch(cos(t), sin(t), [0.3 0.6 0.9]);
+s = patch([-0.5 1.5 1.5 -0.5], [-0.5 -0.5 1.5 1.5], [0.9 0.5 0.2]);
+axis equal
+uistack(c, 'top')
+get(gca, 'Children') == c
+movegui(gcf, 'center')
+# See also
+figure patch

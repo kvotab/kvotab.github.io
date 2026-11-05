@@ -1,0 +1,598 @@
+@ gcf, gca, gco, groot, clf, cla
+The current figure and axes, the root object, and clearing them.
+
+Graphics commands work on the current figure and its current axes: `gcf` and `gca` give them, making them when there are none. `gco` gives the object last clicked. `groot` is the root of every graphics object; its properties hold defaults (`set(groot, 'DefaultLineLineWidth', 2)`) and the list of figures. `clf` clears the current figure of its axes and everything in them; `cla` clears the current axes of what is plotted in them, keeping the axes.
+
+# Syntax
+f = gcf
+    The current figure.
+ax = gca
+    The current axes.
+h = gco
+    The object last clicked.
+r = groot
+    The root object.
+clf
+    The figure cleared.
+cla
+    The axes cleared.
+# Examples
+## What is current, and clearing it
+plot(1:5)
+ax = gca;
+class(ax)
+numel(ax.Children)
+cla
+numel(ax.Children)
+f = gcf;
+f == ax.Parent
+clf
+isvalid(ax)
+r = groot;
+class(r)
+bar([3 1 2]), title('a new plot after clf')
+# See also
+figure axes findobj
+
+@ axes, newplot, ishold
+Axes made by hand, and how plotting functions prepare them.
+
+`axes` makes axes in the current figure, placed by their Position in normalized units of the figure ([left bottom width height], from 0 to 1), or makes given axes current. Plotting functions call `newplot`, which clears the axes unless hold is on (`ishold` tells), so that a new plot replaces the last.
+
+# Syntax
+ax = axes
+    New axes.
+ax = axes('Position', [left bottom width height])
+    Placed.
+axes(ax)
+    Made current.
+ax = newplot
+    Ready for a plot.
+tf = ishold
+    Whether hold is on.
+# Examples
+## An inset
+x = linspace(0, 10, 200);
+plot(x, sin(x))
+inset = axes('Position', [0.6 0.6 0.25 0.25]);
+plot(inset, x, exp(-x))
+ishold
+hold on
+ishold
+# See also
+subplot hold tiledlayout
+
+@ xticks, yticks, zticks, xticklabels, yticklabels, zticklabels
+Where the ticks are, and what they say.
+
+`xticks` sets (or gives) the positions of the ticks on the x axis, `yticks` and `zticks` on the others; `xticks auto` gives the choice back. `xticklabels` sets the text at the ticks, one label for each, as a cell of texts or a string array.
+
+# Syntax
+xticks(ticks)
+    Ticks at these values.
+t = xticks
+    Where they are.
+xticklabels(labels)
+    What they say.
+yticks(ticks)
+    The y axis's.
+yticklabels(labels)
+    And theirs.
+zticks(ticks)
+    The z axis's.
+zticklabels(labels)
+    And theirs.
+# Examples
+## Months on a year's data
+plot(1:12, [3 4 6 9 13 16 18 17 14 10 6 4], '-o')
+xticks(1:3:12)
+xticklabels({'Jan', 'Apr', 'Jul', 'Oct'})
+yticks(0:5:20)
+xticks
+# See also
+xtickangle xtickformat axis
+
+@ xtickangle, ytickangle, ztickangle, xtickformat, ytickformat, ztickformat, datetick
+Tick labels turned, written in a format, or written as dates.
+
+`xtickangle` turns the x tick labels (in degrees), for long ones. `xtickformat` writes the labels by a pattern: `'%.2f'`, `'%,d'` (thousands parted by commas), `'$%,.2f'`, `'%g°'`, or a name such as `'usd'` or `'percentage'`. `datetick` takes an axis's values as date numbers and labels the ticks as dates, on whole years, months or days as the range suits.
+
+# Syntax
+xtickangle(angle)
+    Turned.
+xtickformat(fmt)
+    In a format.
+ytickformat(fmt)
+    The y axis.
+ztickformat(fmt)
+    The z axis.
+ytickangle(angle)
+    Turned.
+ztickangle(angle)
+    Turned.
+datetick(axis, fmt)
+    As dates.
+# Examples
+## Money and long names
+bar([1250 3400 2100])
+xticklabels({'north region', 'south region', 'west region'})
+xtickangle(30)
+ytickformat('$%,.0f')
+xtickangle
+## Date numbers as dates
+t = datenum(2024, 1, 1) + (0:90);
+plot(t, cumsum(ones(1, 91)))
+datetick('x', 'mmm dd')
+# See also
+xticks xticklabels
+
+@ box, daspect, pbaspect
+The box round the axes, and the proportions of the data and of the plot box.
+
+`box on` draws the box's far sides as well as the axes' own lines. `daspect` sets the data aspect ratio, how long one unit is on each axis relative to the others ([1 1 1] makes a circle round); `pbaspect` sets the plot box's proportions whatever the data. `'auto'` gives either back to the axes.
+
+# Syntax
+box on
+    The box drawn.
+daspect([1 1 1])
+    Equal units.
+r = daspect
+    The ratio.
+pbaspect([2 1 1])
+    The box twice as wide as high.
+# Examples
+## A circle round, and a wide box
+t = linspace(0, 2*pi, 100);
+subplot(1, 2, 1), plot(cos(t), sin(t)), daspect([1 1 1]), box off
+daspect
+subplot(1, 2, 2), plot(t, sin(t)), pbaspect([3 1 1])
+# See also
+axis
+
+@ yyaxis, colororder
+A second y axis on the right, and the colours plots take in turn.
+
+`yyaxis right` gives the axes a second y axis on the right and makes it the one the next plot uses; `yyaxis left` goes back. Each side has its own limits, ticks and label, and its plots take its colour. `colororder` sets the colours that lines and other plots take in turn (a matrix of rows, or names), or gives them.
+
+# Syntax
+yyaxis left
+    Plot against the left axis.
+yyaxis right
+    Against the right one.
+colororder(colors)
+    The colours in turn.
+c = colororder
+    The colours.
+# Examples
+## Temperature and rain
+m = 1:12;
+yyaxis left
+plot(m, [-3 -3 1 6 12 16 18 17 12 7 2 -2], '-o'), ylabel('temperature (°C)')
+yyaxis right
+bar(m, [40 30 30 35 40 60 75 80 60 55 55 50], 0.4), ylabel('rain (mm)')
+## Three colours of my own
+colororder([0.8 0.2 0.2; 0.2 0.5 0.8; 0.3 0.6 0.3])
+plot([1:5; 2:6; 3:7]')
+size(colororder)
+# See also
+plot legend
+
+@ subtitle, sgtitle, suptitle
+A subtitle under an axes' title, and a title over a grid of subplots.
+
+`subtitle` writes a second, smaller line under the axes' title. `sgtitle` writes a title over all the subplots of a figure (or of a tiled layout), above their own titles; `suptitle` is its older name.
+
+# Syntax
+subtitle(text)
+    Under the title.
+sgtitle(text)
+    Over the subplots.
+suptitle(text)
+    The older name.
+# Examples
+## Four views of one signal
+t = linspace(0, 1, 500);
+x = sin(2*pi*5*t) + 0.3*sin(2*pi*40*t);
+subplot(2, 1, 1), plot(t, x), title('signal'), subtitle('5 Hz and 40 Hz')
+subplot(2, 1, 2), plot(t, cumsum(x)/500), title('its integral')
+sgtitle('A signal and its integral')
+# See also
+title tiledlayout
+
+@ annotation, rectangle
+Lines, arrows, boxes and text on a figure, and rectangles and ellipses in the axes.
+
+`annotation` draws on the figure itself, in normalized figure units ((0, 0) its lower left corner, (1, 1) its upper right), so that its shapes stay put as the axes change: a line, an arrow, a double arrow, an arrow with text, a rectangle, an ellipse or a text box. `rectangle` draws in the axes' data units, a rectangle with corners rounded by Curvature, an ellipse at [1 1].
+
+# Syntax
+h = annotation('arrow', [x1 x2], [y1 y2])
+    An arrow, its head at the second point.
+h = annotation('textarrow', [x1 x2], [y1 y2], 'String', s)
+    With text at its tail.
+h = annotation('textbox', [x y w h], 'String', s)
+    A text box.
+r = rectangle('Position', [x y w h], 'Curvature', [cx cy])
+    In the axes.
+# Examples
+## A peak pointed out, a region boxed
+x = linspace(0, 10, 300);
+plot(x, exp(-(x - 4).^2) + 0.3*exp(-(x - 8).^2/0.2))
+annotation('textarrow', [0.25 0.39], [0.85 0.88], 'String', 'main peak')
+annotation('textbox', [0.62 0.55 0.25 0.1], 'String', 'small one here', 'EdgeColor', 'none')
+rectangle('Position', [7.2 0 1.6 0.45], 'Curvature', 0.3, 'EdgeColor', 'r')
+rectangle('Position', [3 0.85 2 0.3], 'Curvature', [1 1])
+# See also
+text line
+
+@ set, get
+Properties of graphics objects: set and read.
+
+`set` gives objects new property values (a name and a value at a time, or a struct of them; several objects at once). `get` reads one property, or all of them as a struct. The same can be written with a dot, h.LineWidth = 2, but `set` takes several objects and properties at once.
+
+# Syntax
+set(h, 'Name', value, ...)
+    Set.
+set(h, s)
+    From a struct.
+v = get(h, 'Name')
+    Read one.
+s = get(h)
+    All, as a struct.
+# Examples
+## Two lines at once
+h = plot(1:5, [1:5; 5:-1:1]);
+set(h, 'LineWidth', 2, 'LineStyle', '--')
+get(h(1), 'LineWidth')
+get(h, 'Color')
+s = get(h(1));
+isfield(s, 'XData')
+# See also
+findobj
+
+@ findobj, findall, allchild, ancestor
+Graphics objects found by their properties, the children of an object, and an object's figure or axes.
+
+`findobj` searches the objects under a parent (the root unless given) for those whose properties match: a name and value, a pattern (`-regexp`), objects having a property (`-property`), joined by `-and` (the default), `-or`, `-xor` and turned round by `-not`; `-depth` limits how far down it goes. It leaves out objects whose HandleVisibility is off, which `findall` finds too. `allchild` gives every child, hidden ones included; `ancestor` the figure or axes an object is in.
+
+# Syntax
+h = findobj(parent, 'Name', value)
+    By a property.
+h = findobj(parent, 'Tag', 'a', '-or', 'Tag', 'b')
+    Either.
+h = findobj(parent, '-regexp', 'Tag', pattern)
+    By a pattern.
+h = findall(parent, 'Name', value)
+    Hidden ones too.
+h = allchild(parent)
+    Every child.
+p = ancestor(h, 'figure')
+    The figure it is in.
+# Examples
+## Lines picked out by tag and colour
+plot(1:3, 'Tag', 'raw'), hold on
+plot(2:4, 'r', 'Tag', 'fit')
+plot(3:5, 'Tag', 'fit2'), hold off
+numel(findobj(gca, 'Type', 'line'))
+h = findobj(gca, 'Tag', 'raw', '-or', 'Color', [1 0 0]);
+{h.Tag}
+h2 = findobj(gca, '-regexp', 'Tag', '^fit');
+numel(h2)
+ancestor(h2(1), 'axes') == gca
+# See also
+get set gobjects
+
+@ copyobj, gobjects, ishandle, ishghandle, isgraphics
+Copies of graphics objects, arrays to hold them, and whether handles are valid.
+
+`copyobj` copies objects with everything under them into a new parent: a line into other axes, axes into another figure. `gobjects` makes an array of empty placeholders to fill with graphics objects in a loop. `ishandle`, `ishghandle` and `isgraphics` say which handles are valid graphics objects (not deleted); `isgraphics` also checks the type.
+
+# Syntax
+c = copyobj(h, parent)
+    Copied.
+h = gobjects(n)
+    Placeholders.
+tf = isgraphics(h, type)
+    Valid, of a type.
+tf = ishandle(h)
+    Valid.
+tf = ishghandle(h)
+    Valid.
+# Examples
+## Lines copied, then one deleted
+h = gobjects(1, 3);
+ax1 = subplot(1, 2, 1);
+for k = 1:3
+    h(k) = line(1:5, k*(1:5));
+end
+ax2 = subplot(1, 2, 2);
+c = copyobj(h, ax2);
+numel(ax2.Children)
+delete(h(2))
+[isgraphics(h); ishandle(h); ishghandle(h)]
+isgraphics(c, 'line')
+# See also
+findobj delete
+
+@ drawnow, refresh, shg, refreshdata
+Drawing now, while a program runs, and plots that fetch their data again.
+
+Figures are drawn when the program pauses or ends; `drawnow` draws them at once, so that a loop shows its progress, and runs the callbacks of what was done meanwhile. `refresh` and `shg` are accepted and have no effect. `refreshdata` sets a plot's data again from the expressions in its XDataSource and YDataSource, evaluated in the workspace.
+
+# Syntax
+drawnow
+    Draw now.
+drawnow limitrate
+    No more often than the screen shows.
+refresh
+    Accepted.
+refreshdata
+    Data from their sources.
+shg
+    Accepted.
+# Examples
+## A line that follows a variable
+x = linspace(0, 2*pi, 50);
+y = sin(x);
+h = plot(x, y, 'YDataSource', 'y');
+for k = 1:3
+    y = sin(x + k/2);
+    refreshdata
+    drawnow
+end
+h.YData(1)
+sin(1.5)
+# See also
+pause animatedline
+
+@ getframe, frame2im, im2frame, movie
+Movie frames: a figure as a picture, frames to pictures and back, and playing them.
+
+`getframe` takes the figure or axes as drawn on the screen as a frame, a struct whose cdata is the picture (rows by columns by 3 of uint8); it needs the figure on the screen, so it runs in the page. `frame2im` gives a frame's picture, `im2frame` makes a frame of a picture (an RGB array, or indices with a colormap), and `movie` plays a struct array of frames in the axes.
+
+# Syntax
+F = getframe(fig)
+    A frame of the figure.
+X = frame2im(F)
+    Its picture.
+F = im2frame(X, map)
+    A frame of a picture.
+movie(F, n, fps)
+    Played.
+# Examples
+## Frames of pictures, and a program that films a wave
+F(1) = im2frame(rand(8, 8, 3));
+F(2) = im2frame(magic(8), parula(64));
+size(frame2im(F(2)))
+lines = {
+    'function F = film()'
+    'x = linspace(0, 2*pi, 100);'
+    'for k = 1:20'
+    '    plot(x, sin(x - k/3)), ylim([-1 1])'
+    '    F(k) = getframe(gcf);'
+    'end'
+    'movie(F, 2)'
+    'end'};
+fid = fopen('film.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type film
+# See also
+VideoWriter image
+
+@ saveas, exportgraphics, print, copygraphics, orient
+A figure saved as a picture or a vector file, copied, and its paper orientation.
+
+`saveas` writes a figure to a file whose kind its extension sets: .png, .jpg, .bmp and .tif pictures, or .svg, .pdf and .eps, which keep lines and text as such (or a .fig figure file). `exportgraphics` does the same for a figure or axes with a resolution, and `print` with device options (`-dpng`, `-dpdf`, `-r300`). `copygraphics` copies the figure to the clipboard as a picture. These draw the figure, so they run in the page. `orient` sets the paper orientation for printing.
+
+# Syntax
+saveas(fig, filename)
+    By the extension.
+exportgraphics(obj, filename, 'Resolution', dpi)
+    With a resolution.
+print(fig, filename, '-dpdf')
+    By device.
+copygraphics(fig)
+    To the clipboard.
+orient landscape
+    The paper turned.
+# Examples
+## The paper, and a program that saves three ways
+plot(1:10)
+orient(gcf)
+orient landscape
+orient(gcf)
+lines = {
+    'function saveAll(fig)'
+    'saveas(fig, ''plot.png'')'
+    'exportgraphics(fig, ''plot.pdf'', ''Resolution'', 300)'
+    'print(fig, ''plot.svg'', ''-dsvg'')'
+    'end'};
+fid = fopen('saveAll.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type saveAll
+# See also
+savefig getframe imwrite
+
+@ savefig, openfig, hgsave, hgload
+Figures saved in a figure file (.fig), and opened again with everything in them.
+
+`savefig` writes figures to a .fig file (a MAT-file holding the figure as a tree of properties), and `openfig` makes them again: axes, lines, surfaces, patches, images, text, controls and menus, with their properties. `hgsave` and `hgload` do the same for figures or other graphics objects, `hgload` setting properties given on what it opens.
+
+# Syntax
+savefig(fig, filename)
+    Saved.
+h = openfig(filename)
+    Opened again.
+hgsave(h, filename)
+    Saved.
+h = hgload(filename, props)
+    Opened, with properties.
+# Examples
+## A figure saved, closed and opened again
+plot(1:5, (1:5).^2, 'r-o'), title('squares')
+savefig(gcf, 'squares.fig');
+close all
+f = openfig('squares.fig');
+ax = f.Children;
+ax.Title.String
+ax.Children.Color
+hgsave(f, 'again.fig'), close all
+g = hgload('again.fig', struct('Name', 'reopened'));
+g.Name
+# See also
+saveas figure
+
+@ ginput, waitforbuttonpress, gtext
+Points and keys from the person at the screen: clicks in a figure, and text placed by a click.
+
+`ginput` waits for n clicks in the current figure and gives their positions in the axes' data units (and which button), ending early at Enter. `waitforbuttonpress` waits for a click or a key. `gtext` waits for a click and puts text there. They need someone at the page.
+
+# Syntax
+[x, y] = ginput(n)
+    n clicked points.
+[x, y, button] = ginput(n)
+    And the buttons.
+waitforbuttonpress
+    Wait.
+gtext(str)
+    Text where clicked.
+# Examples
+## A program that draws through clicked points
+lines = {
+    'function pick()'
+    'plot(0, 0), axis([0 10 0 10])'
+    'title(''click five points'')'
+    '[x, y] = ginput(5);'
+    'hold on, plot(x, y, ''o-''), hold off'
+    'gtext(''the last one'')'
+    'end'};
+fid = fopen('pick.m', 'w');
+fprintf(fid, '%s\n', lines{:});
+fclose(fid);
+type pick
+# See also
+uiwait input
+
+@ plotedit, inspect, zoom, pan, rotate3d, datacursormode, brush, linkaxes, linkprop, whitebg
+Editing and exploring a figure on the screen.
+
+`plotedit on` turns a figure's edit mode on: a click picks a part of the figure for the property editor, which `inspect` opens beside the figure, showing an object's properties, each with a field that suits it, and the figure's objects as a tree. The figure window has its own tools for zooming (or scrolling), panning (dragging) and turning a 3-D view, and data tips; `zoom`, `pan`, `rotate3d`, `datacursormode`, `brush`, `linkaxes`, `linkprop` and `whitebg` are accepted and have no effect.
+
+# Syntax
+plotedit on
+    Edit mode on.
+inspect(h)
+    The property editor.
+zoom on
+    Accepted.
+pan on
+    Accepted.
+rotate3d on
+    Accepted.
+datacursormode on
+    Accepted.
+brush on
+    Accepted.
+linkaxes(ax)
+    Accepted.
+linkprop(h, props)
+    Accepted.
+whitebg
+    Accepted.
+# Examples
+## Settings that change nothing here
+plot(1:10)
+zoom on
+pan off
+rotate3d on
+datacursormode on
+linkaxes(gca)
+# See also
+set get
+
+@ camorbit, campos, camtarget, camup, camroll, lightangle
+The camera moved about the axes, and a light placed by angles.
+
+The axes are drawn as a camera sees them: from campos toward camtarget (the middle of the axes unless set), camup pointing up on the screen. `camorbit` turns the camera about the target by angles in degrees (as dragging does), `camroll` turns the picture about the line of sight. `lightangle` places a light by azimuth and elevation, as `view` counts them.
+
+# Syntax
+camorbit(dtheta, dphi)
+    Turned about the target.
+p = campos
+    Where the camera is.
+camtarget([x y z])
+    What it looks at.
+camup([x y z])
+    Up on the screen.
+camroll(dtheta)
+    Turned about the line of sight.
+h = lightangle(az, el)
+    A light by angles.
+# Examples
+## A surface seen round the side
+surf(peaks(25)), shading interp
+camtarget
+camorbit(40, 0)
+camroll(10)
+round(camup, 4)
+lightangle(-45, 30);
+# See also
+view camzoom camlight
+
+@ hggroup, hgtransform, makehgtform, rotate
+Groups of graphics objects, moved together by a transform, and objects turned about an axis.
+
+`hggroup` makes a group: objects made with it as their Parent are shown, hidden and deleted together. `hgtransform` makes a group drawn through a 4-by-4 transform, Matrix, which `makehgtform` makes from translations, scalings and rotations (radians); setting Matrix moves everything in the group, while their own data stay. `rotate` turns objects' data about an axis by an angle in degrees.
+
+# Syntax
+g = hggroup
+    A group.
+t = hgtransform
+    A group drawn through a transform.
+M = makehgtform('translate', [tx ty tz], 'zrotate', t)
+    A transform.
+rotate(h, direction, alpha, origin)
+    Data turned.
+# Examples
+## A shape turned and moved, twice
+t = hgtransform;
+patch('XData', [0 1 0.5], 'YData', [0 0 1], 'FaceColor', [0.3 0.6 0.9], 'Parent', t)
+t.Matrix = makehgtform('translate', [2 0 0], 'zrotate', pi/4);
+M = t.Matrix;
+M(1:2, :)
+h = line([0 1], [0 0], 'Color', 'r', 'LineWidth', 2);
+rotate(h, [0 0 1], 90, [0 0 0])
+round(h.YData, 4)
+axis equal, axis([-1 3 -1 2])
+# See also
+patch line
+
+@ rticks, thetaticks, rticklabels, thetaticklabels, rlim
+The ticks, labels and radius limits of polar axes.
+
+Polar axes have a radius axis and an angle axis. `rticks` and `thetaticks` set (or give) where their ticks are (angles in degrees, every 30 unless set); `rticklabels` and `thetaticklabels` what the ticks say; `rlim` the radius limits.
+
+# Syntax
+rticks(ticks)
+    Radius ticks.
+thetaticks(ticks)
+    Angle ticks.
+rticklabels(labels)
+    Their labels.
+thetaticklabels(labels)
+    The angles' labels.
+rlim([rmin rmax])
+    The radius limits.
+# Examples
+## A compass rose of wind
+th = linspace(0, 2*pi, 9);
+polarplot(th, [4 6 3 2 5 7 4 3 4], '-o')
+thetaticks(0:45:315)
+thetaticklabels({'E', 'NE', 'N', 'NW', 'W', 'SW', 'S', 'SE'})
+rlim([0 8])
+rticks([2 4 6 8])
+rticklabels({'2 m/s', '4', '6', '8'})
+thetaticks
+# See also
+polarplot polaraxes

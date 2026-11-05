@@ -730,6 +730,10 @@
       ctx.lineJoin = 'round';
       const legendFor = new Map((fig.legends || []).map((l) => [l.axes, l]));
       const cbarFor = new Map((fig.colorbars || []).map((c) => [c.axes, c]));
+      // the height a figure title (sgtitle) takes at the top, which the axes below it leave free
+      const sg = fig.sgtitle;
+      this._sgRoom = sg && sg.string && sg.visible !== false
+        ? 8 + (Array.isArray(sg.string) ? sg.string.length : String(sg.string).split('\n').length) * sg.fontSize * PT * 1.2 + 4 : 0;
       for (const ax of fig.axes) {
         if (ax._skip) continue;
         try {
@@ -912,8 +916,9 @@
       if (cbar && cbar.visible && cbar.location === 'southoutside') h -= Math.min(54, h * 0.18);
       if (legend && legend.visible && /outside$/.test(legend.location) && legend.location.startsWith('northeast')) w -= Math.min(120, w * 0.25);
       // a title (with its subtitle) that would rise past the top of the figure, or of its panel: the box comes down to make room
-      const room = this.titleRoom(ax);
-      if (room > y - b.y && h > 2 * room) { const d = room - (y - b.y); y += d; h -= d; }
+      // so does a figure title above axes of the figure itself
+      const room = this.titleRoom(ax) + (ax._box ? 0 : this._sgRoom || 0);
+      if (room > y - b.y && h - (room - (y - b.y)) >= 0.4 * h) { const d = room - (y - b.y); y += d; h -= d; }
       if (ax.kind === 'polar') {
         const s = Math.min(w, h);
         return { x: x + (w - s) / 2, y: y + (h - s) / 2, w: s, h: s };
@@ -2166,7 +2171,24 @@
             const P = poly.pts.map(([x, y, z]) => fr.p(x, y, z == null ? fr.lims[2][0] : z));
             if (P.length < 2) continue;
             const d = P.reduce((s, p) => s + p[2], 0) / P.length;
-            const fill = poly.open ? null : Array.isArray(c.faceColor) ? rgb(c.faceColor, c.faceAlpha) : (poly.c != null && c.faceColor !== 'none' ? cmapColor(cmap, ax.clim, poly.c, c.faceAlpha) : null);
+            // a face's colour: the patch's own, a true colour given for the face, or its value through the colormap
+            let base = poly.open ? null : Array.isArray(c.faceColor) ? c.faceColor : (poly.c != null && c.faceColor !== 'none'
+              ? (Array.isArray(poly.c) ? poly.c : Number.isFinite(poly.c) ? cmapRGB(cmap, ax.clim, poly.c) : null) : null);
+            if (base && lightDir && c.lighting !== 'none' && poly.pts.length >= 3) {
+              // lit as surfaces are: the face's normal (Newell's, in the box's normalised space) against the light
+              const Q = poly.pts.map(([x, y, z]) => [fr.norm(0, x), fr.norm(1, y), fr.norm(2, z == null ? fr.lims[2][0] : z)]);
+              let nx = 0, ny = 0, nz = 0;
+              for (let i = 0; i < Q.length; i++) {
+                const a = Q[i], b = Q[(i + 1) % Q.length];
+                nx += (a[1] - b[1]) * (a[2] + b[2]); ny += (a[2] - b[2]) * (a[0] + b[0]); nz += (a[0] - b[0]) * (a[1] + b[1]);
+              }
+              const L = Math.hypot(nx, ny, nz);
+              if (L > 0 && Number.isFinite(L)) {
+                const f = 0.35 + 0.65 * Math.abs((nx * lightDir[0] + ny * lightDir[1] + nz * lightDir[2]) / L);
+                base = [base[0] * f, base[1] * f, base[2] * f];
+              }
+            }
+            const fill = base ? rgb(base, c.faceAlpha) : null;
             const edge = c.edgeColor === 'none' ? null : Array.isArray(c.edgeColor) ? rgb(c.edgeColor)
               : ((c.edgeColor === 'flat' || c.edgeColor === 'interp') && poly.c != null) ? cmapColor(cmap, ax.clim, poly.c) : AXIS_INK;
             const fin = P.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
@@ -2187,6 +2209,8 @@
               }
               if (fill) { ctx.fillStyle = fill; ctx.fill(); }
               if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); }
+              // no edges: a hairline in the face's own colour hides the seams between faces, as for surfaces
+              else if (fill && !poly.open && !(c.faceAlpha < 1)) { ctx.strokeStyle = fill; ctx.lineWidth = 0.5; ctx.stroke(); }
             } });
           }
         } else if (c.type === 'text') {
@@ -2525,7 +2549,9 @@
     const X = decode(c.x), Y = decode(c.y), Z = c.z ? decode(c.z) : null;
     if (!X || !Y) return out;
     const C = c.c ? decode(c.c) : null;
-    const rows = X.shape[0], cols = X.shape.length > 1 ? X.shape[1] : 1;
+    let rows = X.shape[0], cols = X.shape.length > 1 ? X.shape[1] : 1;
+    // a vector is one face, a row as a column (a row of XData drew as faces of one vertex each: nothing)
+    if (rows === 1 && cols > 1) { rows = cols; cols = 1; }
     for (let j = 0; j < cols; j++) {
       const pts = [];
       for (let i = 0; i < rows; i++) pts.push([X.data[i * cols + j], Y.data[i * cols + j], Z ? Z.data[i * cols + j] : null]);

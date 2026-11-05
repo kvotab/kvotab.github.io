@@ -944,6 +944,13 @@ check("plotedit takes on or off", "Use 'on' or 'off'." in run("plotedit maybe"),
 check('plotedit needs a figure', 'The input must be a figure.' in run("plotedit(1e9, 'on')"), True)
 run("close all force")
 
+# quiver at scattered points (a mesh's nodes): arrows as long as the room each point has in the area they cover
+run("figure; rng default; hs = quiver(rand(50, 1), rand(50, 1), ones(50, 1), zeros(50, 1));")
+_X, _Y = np.asarray(val('hs').props['XData'], float), np.asarray(val('hs').props['YData'], float)
+check('quiver at scattered points: the longest arrow 0.9 of the room each point has (the smallest x step made it 1e-17 long)',
+      round(val('hs').extra['scale'] / (0.9 * np.sqrt(np.ptp(_X) * np.ptp(_Y) / 50)), 9), 1.0)
+run("close all force")
+
 # quiver and quiver3: their sizes checked; quiver3 holds Z and W and draws in 3-D
 check('quiver refuses U and V of different sizes', 'U and V must be the same size.' in run("figure; quiver(eye(2), eye(2), eye(3), eye(2))"), True)
 check("quiver refuses X and Y that fit U's grid neither way", 'must be the same size' in run("quiver(1:4, 1:2, ones(2, 3), ones(2, 3))"), True)

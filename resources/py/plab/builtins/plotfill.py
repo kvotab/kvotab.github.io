@@ -285,10 +285,18 @@ def camlookat(nargout, *args):
     lims = [np.asarray(arr(ax.get_value(k)), F64).reshape(-1) for k in ('XLim', 'YLim', 'ZLim')]
     span = np.array([max(l[1] - l[0], 1e-300) for l in lims])
     three = ax.is3d()
-    size = (hi - lo) / span
+    # the plot box's proportions as drawn: the spans over the data aspect ratio when that is fixed (axis equal), else its own
+    # ratio; a box taken as a cube made an object long in a long box look far bigger than it is (a 2-unit sphere in an 8-unit
+    # box was closed in on by a fifth)
+    if ax.props.get('DataAspectRatioMode') == 'manual':
+        box = span / np.maximum(np.asarray(arr(ax.props['DataAspectRatio']), F64).reshape(-1)[:3], 1e-300)
+    else:
+        box = np.asarray(arr(ax.get_value('PlotBoxAspectRatio')), F64).reshape(-1)[:3]
+    box = box / max(float(box.max()), 1e-300)
+    size = (hi - lo) / span * box
     if not three:
-        size = size[:2]
-    whole = math.sqrt(3.0 if three else 2.0)
+        size, box = size[:2], box[:2]
+    whole = float(np.linalg.norm(box))
     part = max(float(np.linalg.norm(size)), 1e-6 * whole)
     zoom = min(whole / part, 20.0)          # a point or a line still leaves some of its surroundings in view
     auto = ax.auto_view_angle()

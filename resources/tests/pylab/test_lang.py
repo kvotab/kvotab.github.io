@@ -724,6 +724,9 @@ case('subplots', 'close all; subplot(2,1,1); a1 = gca; subplot(2,1,2); a2 = gca;
 case('legend and labels', "close all; plot(1:3); hold on; plot(2:4); legend('a', 'b'); title('T'); t = get(get(gca, 'Title'), 'String');", want={'t': 'T'})
 case('contour matrix', 'close all; C = contourc(peaks(10), [0 0]); ok = C(1,1) == 0 && C(2,1) > 0;', want={'ok': True})
 case('surface data', "close all; h = surf(peaks(5)); z = size(get(h, 'ZData'));", want={'z': [[5, 5]]})
+case('contourc: [v v] is the one level v (the circle came twice), levels each once and in order',
+     '[X, Y] = meshgrid(-2:0.1:2); Z = exp(-X.^2 - Y.^2); C = contourc(-2:0.1:2, -2:0.1:2, Z, [0.5 0.5]); n = size(C, 2) - C(2, 1); '
+     'C2 = contourc(Z, [0.7 0.3 0.7]); lv = [C2(1, 1), C2(1, C2(2, 1) + 2)];', want={'n': 1.0, 'lv': [[0.3, 0.7]]})
 
 # ---- what the page reads is JSON it can parse: no NaN or Infinity in it ----------------------------
 from plab import worker_api as WA  # noqa: E402

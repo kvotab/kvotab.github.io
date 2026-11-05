@@ -1,0 +1,430 @@
+@ runtests, functiontests, localfunctions
+Run tests and give their results; tests written as the local functions of a file.
+
+`runtests` runs the tests of files, folders, classes or names (the current folder unless given), reports each failure as it happens and then a summary, and gives a result for each test: Name, Passed, Failed, Incomplete, Duration and Details. A function-based test file's main function returns `functiontests(localfunctions)`: its local functions whose names start or end with "test", each taking a test case to qualify with, and `setupOnce`, `teardownOnce`, `setup` and `teardown` run around them. `localfunctions` gives handles to the local functions of the file it is called in. Options choose tests by name (`'Name'`, wildcards allowed), take subfolders, and set how much is shown (`'OutputDetail'`).
+
+# Syntax
+results = runtests(names)
+    Run tests.
+results = runtests(names, 'Name', pattern, 'OutputDetail', level)
+    Some of them, more or less told.
+tests = functiontests(localfunctions)
+    A function-based test file's tests.
+fh = localfunctions
+    Handles to the file's local functions.
+# Examples
+## A test file with a mistake in it
+lines = ["function tests = squareTest"
+    "tests = functiontests(localfunctions);"
+    "end"
+    "function testPositive(testCase)"
+    "verifyEqual(testCase, 3^2, 9)"
+    "end"
+    "function testNegative(testCase)"
+    "verifyEqual(testCase, (-3)^2, 9)"
+    "end"
+    "function testWrong(testCase)"
+    "verifyEqual(testCase, 2^2, 5)"
+    "end"];
+writelines(lines, 'squareTest.m');
+results = runtests('squareTest');
+[results.Passed]
+results(3).Name
+# See also
+testsuite verifyEqual assertSuccess
+
+@ testsuite, matlab.unittest.TestSuite.fromFile, matlab.unittest.TestSuite.fromFolder, matlab.unittest.TestSuite.fromName, matlab.unittest.TestSuite.fromClass
+Test suites: the tests to run, gathered now and run later.
+
+A suite is an array of tests, each with its Name, made from the same things `runtests` takes: `testsuite` from files, folders, classes or names, and the `TestSuite` functions from one kind each. Suites can be indexed and concatenated, and run by `run` (with a runner or alone). A class-based test is a class derived from `matlab.unittest.TestCase` whose methods in a `(Test)` block are the tests; `(TestMethodSetup)` methods run before each.
+
+# Syntax
+suite = testsuite(names)
+    From files, folders, classes or names.
+suite = matlab.unittest.TestSuite.fromFile(file)
+    From a file.
+suite = matlab.unittest.TestSuite.fromFolder(folder, 'IncludeSubfolders', true)
+    From a folder's test files.
+suite = matlab.unittest.TestSuite.fromName('SampleTest/testSum')
+    From names.
+suite = matlab.unittest.TestSuite.fromClass(?SampleTest)
+    From a class.
+results = run(testsuite(names))
+    Gathered and run.
+# Examples
+## A test class, gathered three ways
+lines = ["classdef StackTest < matlab.unittest.TestCase"
+    "    properties"
+    "        S"
+    "    end"
+    "    methods (TestMethodSetup)"
+    "        function makeStack(tc)"
+    "            tc.S = {};"
+    "        end"
+    "    end"
+    "    methods (Test)"
+    "        function startsEmpty(tc)"
+    "            tc.verifyEmpty(tc.S)"
+    "        end"
+    "        function pushOne(tc)"
+    "            tc.S{end+1} = 5;"
+    "            tc.verifyNumElements(tc.S, 1)"
+    "        end"
+    "    end"
+    "end"];
+writelines(lines, 'StackTest.m');
+suite = testsuite('StackTest');
+{suite.Name}'
+numel(matlab.unittest.TestSuite.fromClass(?StackTest))
+one = matlab.unittest.TestSuite.fromName('StackTest/pushOne');
+r = run(one);
+r.Passed
+# See also
+runtests matlab.unittest.TestRunner.withTextOutput
+
+@ matlab.unittest.TestRunner.withTextOutput, matlab.unittest.TestRunner.withNoPlugins, assertSuccess
+Test runners, which run a suite and report as they go or not at all, and a check that every test passed.
+
+A runner made `withTextOutput` reports as `runtests` does; one made `withNoPlugins` runs silently, leaving only the results. `run(runner, suite)` runs the suite. `assertSuccess` throws an error naming the tests that failed, unless every one passed, so that a script or build stops there.
+
+# Syntax
+runner = matlab.unittest.TestRunner.withTextOutput
+    Reporting.
+runner = matlab.unittest.TestRunner.withNoPlugins
+    Silent.
+results = run(matlab.unittest.TestRunner.withNoPlugins, suite)
+    The suite run silently.
+assertSuccess(results)
+    An error unless all passed.
+# Examples
+## Run quietly, then insist
+lines = ["function tests = mathTest"
+    "tests = functiontests(localfunctions);"
+    "end"
+    "function testSqrt(testCase)"
+    "verifyEqual(testCase, sqrt(16), 4)"
+    "end"
+    "function testRound(testCase)"
+    "verifyEqual(testCase, round(2.5), 2)"
+    "end"];
+writelines(lines, 'mathTest.m');
+runner = matlab.unittest.TestRunner.withNoPlugins;
+results = run(runner, testsuite('mathTest'));
+[results.Passed]
+try
+    assertSuccess(results)
+catch e
+    disp(e.message)
+end
+# See also
+runtests testsuite
+
+@ matlab.unittest.TestCase.forInteractiveUse, addTeardown
+A test case to try qualifications at the prompt, and something to do when a test ends.
+
+`forInteractiveUse` gives a test case whose qualifications print at once whether they passed, with the reason when not: a way to see what a check does before writing it into a test. In a test, `addTeardown` registers a function (with its arguments) to call when the test ends, passed or failed, the last added first: a test that changes something shared puts it back this way.
+
+# Syntax
+tc = matlab.unittest.TestCase.forInteractiveUse
+    A test case at the prompt.
+addTeardown(testCase, fh, args)
+    fh(args) when the test ends.
+# Examples
+## Checks at the prompt
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyEqual(tc, 0.1 + 0.2, 0.3, 'AbsTol', 1e-12)
+verifyEqual(tc, 0.1 + 0.2, 0.3)
+## A test that puts the display format back
+lines = ["function tests = tidyTest"
+    "tests = functiontests(localfunctions);"
+    "end"
+    "function testFormat(testCase)"
+    "format long"
+    "addTeardown(testCase, @format, 'short')"
+    "addTeardown(testCase, @disp, 'teardown: format short again')"
+    "verifyEqual(testCase, num2str(pi, 8), '3.1415927')"
+    "end"];
+writelines(lines, 'tidyTest.m');
+r = runtests('tidyTest');
+pi
+# See also
+verifyEqual runtests
+
+@ verifyEqual, verifyNotEqual, assertEqual, assertNotEqual, fatalAssertEqual, fatalAssertNotEqual, assumeEqual, assumeNotEqual
+Qualifications that a value equals the expected one, or does not: the four kinds of check.
+
+Every check comes in four kinds, which differ in what a failure does. A verification records the failure and the test goes on; an assertion ends the test there (the others still run); a fatal assertion ends the whole run; an assumption marks the test incomplete (filtered, not failed), for a test that cannot run here. Equality is of class, size and values (cell arrays, structs and objects compared element by element); `'AbsTol'` and `'RelTol'` allow a difference in numbers, either one sufficing. A failure tells what differs, and a text argument at the end is added to the report.
+
+# Syntax
+verifyEqual(testCase, actual, expected)
+    Equal, else the failure is recorded.
+verifyEqual(testCase, actual, expected, 'AbsTol', t, 'RelTol', r)
+    Within a tolerance.
+assertEqual(testCase, actual, expected, diagnostic)
+    Equal, else the test ends.
+fatalAssertEqual(testCase, actual, expected)
+    Equal, else the run ends.
+assumeEqual(testCase, actual, expected)
+    Equal, else the test is incomplete.
+verifyNotEqual(testCase, actual, notExpected)
+    Not equal.
+# Examples
+## Equal, nearly, and not at all
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyEqual(tc, [1 2 3], [1 2 3])
+verifyEqual(tc, int8(1), 1)
+verifyEqual(tc, exp(log(5)), 5, 'RelTol', 1e-12)
+verifyNotEqual(tc, 'abc', 'abd')
+try
+    assertEqual(tc, [1 2], [1 3], 'the second element')
+catch e
+    class(e)
+end
+# See also
+verifyTrue runtests matlab.unittest.TestCase.forInteractiveUse
+
+@ verifyTrue, verifyFalse, assertTrue, assertFalse, fatalAssertTrue, fatalAssertFalse, assumeTrue, assumeFalse
+Qualifications that a value is true, or false.
+
+The value must be a logical scalar: an array, or a number such as 1, fails even when every element is true (use `all` for an array). Verifications record a failure, assertions end the test, fatal assertions the run, and assumptions mark the test incomplete (see `verifyEqual`).
+
+# Syntax
+verifyTrue(testCase, value)
+    True.
+verifyFalse(testCase, value)
+    False.
+assertTrue(testCase, value, diagnostic)
+    True, else the test ends.
+fatalAssertFalse(testCase, value)
+    False, else the run ends.
+assumeTrue(testCase, value)
+    True, else the test is incomplete.
+# Examples
+## Logical scalars only
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyTrue(tc, isrow(1:3))
+verifyFalse(tc, isempty(1:3))
+verifyTrue(tc, 1)
+verifyTrue(tc, all([true true]))
+try
+    assumeTrue(tc, ispc, 'needs Windows')
+catch
+    disp('the test would be incomplete here')
+end
+# See also
+verifyEqual verifyReturnsTrue
+
+@ verifyError, verifyWarning, verifyWarningFree, assertError, assertWarning, assertWarningFree, fatalAssertError, fatalAssertWarning, fatalAssertWarningFree, assumeError, assumeWarning, assumeWarningFree
+Qualifications that a function throws an error, issues a warning, or issues none.
+
+The function is given as a handle and called by the check. An error must carry the identifier given (or a meta.class of the exception); a warning must be among those issued, by identifier. `verifyWarningFree` passes when the function issues no warning at all. The warning checks give the function's outputs when asked for them. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyError(testCase, fh, identifier)
+    fh throws that error.
+verifyWarning(testCase, fh, identifier)
+    fh issues that warning.
+[out1, out2] = verifyWarningFree(testCase, fh)
+    No warning, and fh's outputs.
+assertError(testCase, fh, identifier)
+    Else the test ends.
+fatalAssertWarning(testCase, fh, identifier)
+    Else the run ends.
+assumeWarningFree(testCase, fh)
+    Else the test is incomplete.
+# Examples
+## An error, a warning, and neither
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyError(tc, @() error('shop:empty', 'The basket is empty.'), 'shop:empty')
+verifyError(tc, @() ones(2) * ones(3), 'shop:empty')
+verifyWarning(tc, @() warning('shop:late', 'Delivery is late.'), 'shop:late')
+v = verifyWarningFree(tc, @() sqrt(16))
+# See also
+error warning verifyEqual
+
+@ verifyEmpty, verifyNotEmpty, verifySize, verifyLength, verifyNumElements, assertEmpty, assertNotEmpty, assertSize, assertLength, assertNumElements, fatalAssertEmpty, fatalAssertNotEmpty, fatalAssertSize, fatalAssertLength, fatalAssertNumElements, assumeEmpty, assumeNotEmpty, assumeSize, assumeLength, assumeNumElements
+Qualifications of a value's shape: empty or not, its size, length and number of elements.
+
+`verifyEmpty` and `verifyNotEmpty` ask `isempty`; `verifySize` compares the whole size vector, `verifyLength` the largest dimension, and `verifyNumElements` the count of elements. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyEmpty(testCase, value)
+    Empty.
+verifyNotEmpty(testCase, value)
+    Not empty.
+verifySize(testCase, value, sz)
+    Of size sz.
+verifyLength(testCase, value, n)
+    Of length n.
+verifyNumElements(testCase, value, n)
+    Of n elements.
+assertSize(testCase, value, sz)
+    Else the test ends.
+fatalAssertEmpty(testCase, value)
+    Else the run ends.
+assumeNotEmpty(testCase, value)
+    Else the test is incomplete.
+# Examples
+## A 2-by-3 matrix
+tc = matlab.unittest.TestCase.forInteractiveUse;
+A = ones(2, 3);
+verifySize(tc, A, [2 3])
+verifyLength(tc, A, 3)
+verifyNumElements(tc, A, 6)
+verifyNotEmpty(tc, A)
+verifyEmpty(tc, A(:, []))
+verifySize(tc, A, [3 2])
+# See also
+size numel isempty
+
+@ verifyClass, verifyInstanceOf, assertClass, assertInstanceOf, fatalAssertClass, fatalAssertInstanceOf, assumeClass, assumeInstanceOf
+Qualifications of a value's class: exactly a class, or that class or one derived from it.
+
+`verifyClass` asks that the value's class be exactly the one named (or a meta.class object); `verifyInstanceOf` also accepts subclasses, as `isa` does. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyClass(testCase, value, className)
+    Exactly the class.
+verifyInstanceOf(testCase, value, className)
+    The class or a subclass.
+assertClass(testCase, value, className)
+    Else the test ends.
+fatalAssertInstanceOf(testCase, value, className)
+    Else the run ends.
+assumeClass(testCase, value, className)
+    Else the test is incomplete.
+# Examples
+## Numbers and handles
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyClass(tc, int8(1), 'int8')
+verifyClass(tc, 1, 'single')
+m = containers.Map;
+verifyInstanceOf(tc, m, 'handle')
+verifyClass(tc, m, 'containers.Map')
+# See also
+class isa
+
+@ verifyGreaterThan, verifyGreaterThanOrEqual, verifyLessThan, verifyLessThanOrEqual, assertGreaterThan, assertGreaterThanOrEqual, assertLessThan, assertLessThanOrEqual, fatalAssertGreaterThan, fatalAssertGreaterThanOrEqual, fatalAssertLessThan, fatalAssertLessThanOrEqual, assumeGreaterThan, assumeGreaterThanOrEqual, assumeLessThan, assumeLessThanOrEqual
+Qualifications that every value is above a floor or below a ceiling.
+
+Each element of the value is compared with the bound (a scalar, or an array of the value's size); every one must hold, and a failure names those that do not. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyGreaterThan(testCase, value, floor)
+    Every value above.
+verifyGreaterThanOrEqual(testCase, value, floor)
+    At least.
+verifyLessThan(testCase, value, ceiling)
+    Every value below.
+verifyLessThanOrEqual(testCase, value, ceiling)
+    At most.
+assertGreaterThan(testCase, value, floor)
+    Else the test ends.
+assumeLessThan(testCase, value, ceiling)
+    Else the test is incomplete.
+# Examples
+## Probabilities
+tc = matlab.unittest.TestCase.forInteractiveUse;
+p = [0.2 0.5 0.3];
+verifyGreaterThanOrEqual(tc, p, 0)
+verifyLessThanOrEqual(tc, p, 1)
+verifyGreaterThan(tc, p, 0.25)
+# See also
+verifyEqual verifyTrue
+
+@ verifyReturnsTrue, assertReturnsTrue, fatalAssertReturnsTrue, assumeReturnsTrue
+Qualifications that a function, called with no inputs, gives true.
+
+The function is given as a handle, and its result must be a logical scalar true. Writing the condition as a function lets the report show the function itself, which says more than a bare false would. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyReturnsTrue(testCase, fh)
+    fh() is true.
+assertReturnsTrue(testCase, fh)
+    Else the test ends.
+fatalAssertReturnsTrue(testCase, fh)
+    Else the run ends.
+assumeReturnsTrue(testCase, fh)
+    Else the test is incomplete.
+# Examples
+## Conditions as functions
+tc = matlab.unittest.TestCase.forInteractiveUse;
+v = [3 1 2];
+verifyReturnsTrue(tc, @() issorted(sort(v)))
+verifyReturnsTrue(tc, @() issorted(v))
+# See also
+verifyTrue
+
+@ verifySubstring, verifyMatches, assertSubstring, assertMatches, fatalAssertSubstring, fatalAssertMatches, assumeSubstring, assumeMatches
+Qualifications of text: that it holds a piece of text, or matches a regular expression.
+
+`verifySubstring` asks that the text contain the piece exactly (case counts); `verifyMatches` that the regular expression match somewhere in it (anchor it with ^ and $ to match the whole). Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifySubstring(testCase, text, piece)
+    Contains the piece.
+verifyMatches(testCase, text, expression)
+    Matches the expression.
+assertSubstring(testCase, text, piece)
+    Else the test ends.
+fatalAssertMatches(testCase, text, expression)
+    Else the run ends.
+assumeSubstring(testCase, text, piece)
+    Else the test is incomplete.
+# Examples
+## A message and a code
+tc = matlab.unittest.TestCase.forInteractiveUse;
+msg = sprintf('Saved %d rows to %s.', 12, 'out.csv');
+verifySubstring(tc, msg, '12 rows')
+verifySubstring(tc, msg, 'Rows')
+verifyMatches(tc, 'AB-1234', '^[A-Z]{2}-\d{4}$')
+# See also
+contains regexp
+
+@ verifyFail, assertFail, fatalAssertFail, assumeFail
+Qualifications that always fail: a test not written yet, or a branch that must not be reached.
+
+They fail whatever happens, with the text given as the reason: a placeholder for a test still to be written, or a mark in a branch the code should never take. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifyFail(testCase, diagnostic)
+    A failure recorded.
+assertFail(testCase, diagnostic)
+    The test ends.
+fatalAssertFail(testCase, diagnostic)
+    The run ends.
+assumeFail(testCase, diagnostic)
+    The test is incomplete.
+# Examples
+## A placeholder
+tc = matlab.unittest.TestCase.forInteractiveUse;
+verifyFail(tc, 'Test the empty input too.')
+# See also
+verifyTrue
+
+@ verifySameHandle, verifyNotSameHandle, assertSameHandle, assertNotSameHandle, fatalAssertSameHandle, fatalAssertNotSameHandle, assumeSameHandle, assumeNotSameHandle
+Qualifications that two handles are the same object, or different ones.
+
+Two handles to one object are the same however they were copied; two objects with equal contents are not. Verifications record a failure, assertions end the test, fatal assertions the run, assumptions mark it incomplete (see `verifyEqual`).
+
+# Syntax
+verifySameHandle(testCase, actual, expected)
+    The same object.
+verifyNotSameHandle(testCase, actual, other)
+    Different objects.
+assertSameHandle(testCase, actual, expected)
+    Else the test ends.
+fatalAssertNotSameHandle(testCase, actual, other)
+    Else the run ends.
+assumeSameHandle(testCase, actual, expected)
+    Else the test is incomplete.
+# Examples
+## A copy of a handle and a second map
+tc = matlab.unittest.TestCase.forInteractiveUse;
+m = containers.Map;
+alias = m;
+verifySameHandle(tc, alias, m)
+verifyNotSameHandle(tc, containers.Map, m)
+verifySameHandle(tc, containers.Map, m)
+# See also
+isa eq

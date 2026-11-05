@@ -1,0 +1,179 @@
+@ isosurface, isocaps, isonormals, isocolors
+Surfaces of equal value in volume data, the caps that close them, their normals and their colours.
+
+`isosurface` finds the surface where a volume V (on a grid made by meshgrid) has a given value, as faces and vertices for `patch`, or draws it. `isocaps` gives the faces that close it where it meets the volume's edges. `isonormals` computes normals from the volume's gradient so that a lit surface looks smooth, and `isocolors` colours the vertices by another volume's values.
+
+# Syntax
+fv = isosurface(X, Y, Z, V, isovalue)
+    Faces and vertices.
+isosurface(X, Y, Z, V, isovalue)
+    Drawn.
+fvc = isocaps(X, Y, Z, V, isovalue)
+    The caps.
+isonormals(X, Y, Z, V, p)
+    Normals set on a patch.
+nc = isocolors(X, Y, Z, C, vertices)
+    Colours at the vertices.
+# Examples
+## A ball cut by the box
+[X, Y, Z] = meshgrid(linspace(-1, 1, 12));
+V = sqrt(X.^2 + Y.^2 + (Z + 0.6).^2);
+fv = isosurface(X, Y, Z, V, 1);
+size(fv.faces, 1)
+p = patch(fv, 'FaceColor', [0.8 0.4 0.2], 'EdgeColor', 'none');
+isonormals(X, Y, Z, V, p)
+fvc = isocaps(X, Y, Z, V, 1, 'below');
+patch(fvc, 'FaceColor', 'interp', 'EdgeColor', 'none')
+view(3), axis equal, camlight, lighting gouraud
+# See also
+patch slice smooth3
+
+@ slice, contourslice
+Volume data shown on planes through it: in colour, or as contour lines.
+
+`slice` draws the values of a volume on planes at the x, y and z positions given, each a surface coloured by the values on it. `contourslice` draws contour lines of the volume on such planes instead, which shows the shape of the values while leaving the inside open to view.
+
+# Syntax
+slice(X, Y, Z, V, xslice, yslice, zslice)
+    Coloured planes.
+contourslice(X, Y, Z, V, Sx, Sy, Sz, levels)
+    Contour lines on planes.
+# Examples
+## A field through a cube
+[X, Y, Z] = meshgrid(linspace(-2, 2, 20));
+V = X.*exp(-X.^2 - Y.^2 - Z.^2);
+subplot(1, 2, 1), slice(X, Y, Z, V, [-1 0.8], 2, -2), shading flat, view(-35, 25)
+subplot(1, 2, 2), contourslice(X, Y, Z, V, [], [], [-1 0 1], 8), view(-35, 25)
+# See also
+isosurface contour
+
+@ smooth3, reducevolume, subvolume, volumebounds, reducepatch, shrinkfaces
+Volume and patch helpers: smoothing, thinning, cutting out, measuring, fewer faces, smaller faces.
+
+`smooth3` smooths a volume with a box or Gaussian kernel (edges replicated). `reducevolume` keeps every R-th element in each direction, `subvolume` the part within limits, and `volumebounds` gives the extent of the coordinates and values. For patches, `reducepatch` keeps a fraction of the faces (or a number of them) and `shrinkfaces` draws each face smaller about its centre, so that the faces stand apart.
+
+# Syntax
+W = smooth3(V, 'gaussian', size, sd)
+    Smoothed.
+nv = reducevolume(V, R)
+    Every R-th element.
+Nv = subvolume(V, limits)
+    A part.
+lims = volumebounds(X, Y, Z, V)
+    The extent.
+nfv = reducepatch(fv, r)
+    Fewer faces.
+nfv = shrinkfaces(fv, sf)
+    Smaller faces.
+# Examples
+## A noisy volume made smaller and smoother
+rng default
+[X, Y, Z] = meshgrid(1:20);
+V = double((X - 10).^2 + (Y - 10).^2 + (Z - 10).^2 < 49) + 0.3*rand(20, 20, 20);
+W = smooth3(V, 'gaussian', 5);
+size(reducevolume(W, 2))
+size(subvolume(W, [1 10 NaN NaN 5 15]))
+volumebounds(X, Y, Z, W)
+fv = isosurface(X, Y, Z, W, 0.6);
+r = reducepatch(fv, 0.25);
+[size(fv.faces, 1), size(r.faces, 1)]
+patch(shrinkfaces(r, 0.6), 'FaceColor', [0.3 0.6 0.9]), view(3), axis equal
+# See also
+isosurface smoothdata
+
+@ stream2, stream3, streamline, streamslice, streamparticles
+Streamlines of a vector field: computed, drawn, spread evenly, and markers along them.
+
+A streamline follows the field from a start point: `stream2` and `stream3` compute them (a cell of vertex lists) for 2-D and 3-D fields on a grid, and `streamline` draws them (or computes and draws). `streamslice` spreads streamlines evenly over a 2-D field, with arrows showing the direction. `streamparticles` puts markers along streamlines, as particles carried by the flow.
+
+# Syntax
+XY = stream2(X, Y, U, V, startx, starty)
+    2-D streamlines.
+XYZ = stream3(X, Y, Z, U, V, W, startx, starty, startz)
+    3-D streamlines.
+streamline(XY)
+    Drawn.
+streamslice(X, Y, U, V, density)
+    Spread evenly, with arrows.
+streamparticles(verts, n)
+    Markers along them.
+# Examples
+## Flow round a corner and a whirl
+[X, Y] = meshgrid(linspace(0, 2, 20));
+U = X; V = -Y;
+XY = stream2(X, Y, U, V, 0.1*ones(1, 5), linspace(0.4, 2, 5));
+numel(XY)
+subplot(1, 2, 1), streamline(XY), hold on, streamparticles(XY, 15), hold off, axis equal
+[X, Y] = meshgrid(linspace(-1, 1, 20));
+subplot(1, 2, 2), streamslice(X, Y, -Y, X), axis equal
+# See also
+quiver coneplot
+
+@ coneplot, streamtube, streamribbon
+A 3-D vector field shown by cones, by tubes round its streamlines, and by ribbons that twist with its spin.
+
+`coneplot` draws a cone at each of the points given, pointing along the field and as long as the speed. `streamtube` draws tubes round streamlines, their width following the field's divergence. `streamribbon` draws ribbons along streamlines that turn as the flow spins about them. All three are patches or surfaces that can be lit.
+
+# Syntax
+coneplot(X, Y, Z, U, V, W, Cx, Cy, Cz, s)
+    Cones at points.
+streamtube(X, Y, Z, U, V, W, startx, starty, startz)
+    Tubes.
+streamribbon(X, Y, Z, U, V, W, startx, starty, startz)
+    Ribbons.
+# Examples
+## A swirl rising
+[X, Y, Z] = meshgrid(linspace(-1, 1, 10), linspace(-1, 1, 10), linspace(0, 1, 8));
+U = -Y; V = X; W = 0.3*ones(size(X));
+[cx, cy, cz] = meshgrid([-0.6 0 0.6], [-0.6 0 0.6], 0.5);
+subplot(1, 2, 1), coneplot(X, Y, Z, U, V, W, cx, cy, cz, 1), axis equal, view(3)
+subplot(1, 2, 2), streamribbon(X, Y, Z, U, V, W, [0.5 -0.5], [0 0], [0 0]), axis equal, view(3)
+hold on, streamtube(X, Y, Z, U, V, W, 0, 0.5, 0), hold off
+# See also
+stream3 quiver3
+
+@ fimplicit3, tetramesh
+The surface where a function of three variables is zero, and tetrahedra drawn as their faces.
+
+`fimplicit3` samples f(x, y, z) over a box ([-5 5] in each direction unless given) and draws the surface where it is zero; f takes arrays. `tetramesh` draws a mesh of tetrahedra, each a row of four point indices, as their faces, coloured from the colormap.
+
+# Syntax
+fimplicit3(f, [xmin xmax ymin ymax zmin zmax])
+    f = 0.
+h = tetramesh(T, X, c)
+    Tetrahedra.
+# Examples
+## A torus, and a cube in five pieces
+subplot(1, 2, 1), fimplicit3(@(x, y, z) (sqrt(x.^2 + y.^2) - 1).^2 + z.^2 - 0.1, [-1.5 1.5 -1.5 1.5 -0.5 0.5], 'MeshDensity', 18), axis equal
+P = [0 0 0; 1 0 0; 0 1 0; 1 1 0; 0 0 1; 1 0 1; 0 1 1; 1 1 1];
+T = [1 2 3 5; 2 3 4 8; 2 5 6 8; 3 5 7 8; 2 3 5 8];
+subplot(1, 2, 2), tetramesh(T, P), view(3), axis equal
+# See also
+fimplicit isosurface delaunayTriangulation
+
+@ surfnorm, specular, diffuse
+The normals of a surface, and how much light it reflects: mirror-like and matte.
+
+`surfnorm` gives the unit normals at a surface's vertices, or draws the surface with them. `diffuse` gives the matte reflectance, the cosine of the angle between each normal and the direction to the light (0 behind it); `specular` the mirror-like one, strongest where the light's mirror image points at the viewer. Directions are [x y z] or [azimuth elevation].
+
+# Syntax
+[Nx, Ny, Nz] = surfnorm(X, Y, Z)
+    The normals.
+surfnorm(X, Y, Z)
+    Drawn with them.
+R = diffuse(Nx, Ny, Nz, S)
+    Matte.
+R = specular(Nx, Ny, Nz, S, V)
+    Mirror-like.
+# Examples
+## A dome lit from the side
+[X, Y] = meshgrid(linspace(-1, 1, 15));
+Z = 1 - X.^2 - Y.^2;
+[Nx, Ny, Nz] = surfnorm(X, Y, Z);
+[Nx(8, 8), Ny(8, 8), Nz(8, 8)]
+D = diffuse(Nx, Ny, Nz, [1 0 1]);
+S = specular(Nx, Ny, Nz, [1 0 1], [0 0 1]);
+subplot(1, 2, 1), surfnorm(X, Y, Z), axis equal
+subplot(1, 2, 2), surf(X, Y, Z, D + S), shading interp, axis equal, colorbar
+# See also
+surf camlight

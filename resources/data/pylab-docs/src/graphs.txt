@@ -1,0 +1,330 @@
+@ graph, digraph
+Graphs: nodes joined by edges, undirected or directed, the edges with weights or without.
+
+A graph is made from end nodes s and t (numbers or names, an edge from each s(k) to t(k)), with weights, or from an adjacency matrix (A(i, j) nonzero an edge, its value the weight). `graph` makes an undirected one (an edge joins two nodes both ways), `digraph` a directed one (an edge goes from s to t). G.Edges is a table of EndNodes and Weight, kept sorted; G.Nodes a table of the nodes' Name and anything else added. `plot` draws a graph, a digraph's edges with arrowheads.
+
+# Syntax
+G = graph(s, t, weights)
+    From end nodes.
+G = graph(A, nodenames)
+    From an adjacency matrix.
+G = digraph(s, t, weights)
+    Directed.
+G = digraph(EdgeTable, NodeTable)
+    From tables.
+# Examples
+## Five towns and their roads, and a chain of tasks
+G = graph([1 1 2 3 3 4], [2 3 3 4 5 5], [4 2 1 5 8 3]);
+G.Edges
+D = digraph({'plan', 'plan', 'build', 'test'}, {'build', 'test', 'ship', 'ship'});
+D.Nodes
+subplot(1, 2, 1), plot(G, 'EdgeLabel', G.Edges.Weight)
+subplot(1, 2, 2), plot(D)
+# See also
+numnodes shortestpath plot
+
+@ numnodes, numedges, findnode, findedge, edgecount, ismultigraph
+A graph's size, and its nodes and edges found by name or by their ends.
+
+`numnodes` and `numedges` count; `findnode` gives the numbers of nodes named (0 for a name not there); `findedge` the number of the edge joining two nodes (0 where none does), or the end nodes of edges given by number. `edgecount` counts the edges between two nodes, and `ismultigraph` asks whether any pair is joined more than once.
+
+# Syntax
+n = numnodes(G)
+    Nodes.
+m = numedges(G)
+    Edges.
+ids = findnode(G, names)
+    Nodes by name.
+idx = findedge(G, s, t)
+    Edges by their ends.
+[s, t] = findedge(G, idx)
+    Ends by edge.
+c = edgecount(G, s, t)
+    How many join s and t.
+tf = ismultigraph(G)
+    Any pair joined twice.
+# Examples
+## Finding things
+D = digraph({'a', 'b', 'b', 'c'}, {'b', 'c', 'd', 'd'});
+[numnodes(D), numedges(D)]
+findnode(D, {'c', 'x'})
+findedge(D, 'b', 'd')
+[s, t] = findedge(D, 3)
+G = graph([1 1 2], [2 3 3]);
+edgecount(G, 2, 1)
+ismultigraph(addedge(G, 1, 2))
+# See also
+graph neighbors
+
+@ degree, indegree, outdegree, neighbors, successors, predecessors, outedges, inedges
+The edges at each node, and the nodes and edges next to a node.
+
+`degree` counts the edges meeting each node (a self-loop twice; for a digraph, in and out together), `indegree` and `outdegree` those coming into and leaving a node of a digraph. `neighbors` gives the nodes joined to a node either way, `successors` those a digraph's node points to and `predecessors` those pointing to it. `outedges` and `inedges` give the edges themselves, with the nodes at their other ends.
+
+# Syntax
+d = degree(G, nodes)
+    Edges at each node.
+d = indegree(G)
+    Coming in.
+d = outdegree(G)
+    Going out.
+N = neighbors(G, node)
+    Joined either way.
+[s, eid] = successors(G, node)
+    Pointed to, and the edges.
+p = predecessors(G, node)
+    Pointing here.
+[eid, nid] = outedges(G, node)
+    The edges out, and their ends.
+eid = inedges(G, node)
+    The edges in.
+# Examples
+## A small directed network
+D = digraph([1 1 2 3 4 4], [2 3 3 4 1 2]);
+[indegree(D), outdegree(D), degree(D)]
+successors(D, 4)'
+predecessors(D, 3)'
+neighbors(D, 1)'
+[eid, nid] = outedges(D, 4)
+# See also
+graph adjacency
+
+@ adjacency, incidence
+A graph as a sparse matrix: who is joined to whom, and which edge meets which node.
+
+`adjacency` gives A(i, j) = 1 where an edge joins i to j (both ways for a graph), or the weights there with `'weighted'`. `incidence` gives a row for each node and a column for each edge: -1 at an edge's source, 1 at its target. For a graph, I*I' is the Laplacian, the degrees on the diagonal.
+
+# Syntax
+A = adjacency(G)
+    Ones where joined.
+A = adjacency(G, 'weighted')
+    The weights.
+I = incidence(G)
+    Nodes by edges.
+# Examples
+## A weighted triangle with a tail
+G = graph([1 1 2 3], [2 3 3 4], [5 2 7 1]);
+full(adjacency(G))
+full(adjacency(G, 'weighted'))
+I = full(incidence(G))
+isequal(I*I', full(laplacian(G)))
+# See also
+graph laplacian
+
+@ addedge, rmedge, addnode, rmnode, subgraph, reordernodes, flipedge
+New graphs from a graph: edges and nodes added or taken away, a part, renumbered, or turned round.
+
+A graph is a value: each of these gives a new graph and leaves the one given as it was. `addedge` adds edges (and nodes named or numbered past the last), `rmedge` takes edges away, `addnode` adds nodes joined to nothing, `rmnode` takes nodes away with their edges (the nodes after them numbered down). `subgraph` keeps some nodes and the edges among them, `reordernodes` numbers the nodes in another order, and `flipedge` turns a digraph's edges round.
+
+# Syntax
+H = addedge(G, s, t, weights)
+    Edges added.
+H = rmedge(G, s, t)
+    Edges taken away.
+H = addnode(G, names)
+    Nodes added.
+H = rmnode(G, nodes)
+    Nodes taken away.
+H = subgraph(G, nodes)
+    A part.
+H = reordernodes(G, order)
+    Renumbered.
+H = flipedge(G, s, t)
+    Edges turned round.
+# Examples
+## Editing a graph
+G = graph({'a', 'b', 'c'}, {'b', 'c', 'a'});
+G = addedge(G, 'c', 'd');
+G = addnode(G, 'e');
+G.Nodes.Name'
+H = rmnode(G, 'a');
+H.Edges
+S = subgraph(G, {'a', 'b', 'c'});
+numedges(S)
+R = reordernodes(G, [5 4 3 2 1]);
+R.Nodes.Name'
+D = flipedge(digraph([1 2], [2 3]));
+D.Edges.EndNodes
+# See also
+graph simplify
+
+@ shortestpath, distances, nearest, shortestpathtree
+Shortest paths: between two nodes, between every pair, the nodes within a distance, and the tree of paths from a node.
+
+A path's length is the sum of its edges' weights (the number of its edges when there are none, or with `'Method', 'unweighted'`). `shortestpath` gives the nodes along one shortest path, its length and its edges; `distances` the lengths between every pair (Inf where there is no path); `nearest` the nodes within a distance of a node, nearest first; `shortestpathtree` the digraph of the shortest paths from a node to every other. Negative weights need a digraph without a negative cycle (`'Method', 'mixed'`).
+
+# Syntax
+[P, d, edgepath] = shortestpath(G, s, t)
+    One shortest path.
+d = distances(G)
+    Every pair.
+[nodeIDs, dist] = nearest(G, s, d)
+    Within a distance.
+TR = shortestpathtree(G, s)
+    The tree from s.
+# Examples
+## Roads between five towns
+G = graph([1 1 2 3 3 4], [2 3 3 4 5 5], [4 2 1 5 8 3]);
+[P, d] = shortestpath(G, 1, 5)
+distances(G)
+[ids, dist] = nearest(G, 1, 6)
+TR = shortestpathtree(G, 1);
+h = plot(G, 'EdgeLabel', G.Edges.Weight);
+highlight(h, TR, 'EdgeColor', 'r', 'LineWidth', 2)
+# See also
+graph minspantree bfsearch
+
+@ bfsearch, dfsearch, allpaths
+Walking a graph: breadth first, depth first, and every path between two nodes.
+
+`bfsearch` visits the nodes in order of their distance in edges from the start, `dfsearch` goes as deep as it can along each branch before coming back; neighbours are taken in the order of their numbers, and `'Restart', true` goes on from the first node not reached until every node has been visited. `allpaths` lists every path between two nodes that visits no node twice, as node lists (and edge lists).
+
+# Syntax
+v = bfsearch(G, s)
+    Breadth first.
+v = dfsearch(G, s, 'Restart', true)
+    Depth first, every node.
+[paths, edgepaths] = allpaths(G, s, t)
+    Every simple path.
+# Examples
+## A small tree with a shortcut
+G = graph([1 1 2 2 3 4], [2 3 4 5 6 6]);
+bfsearch(G, 1)'
+dfsearch(G, 1)'
+paths = allpaths(G, 1, 6);
+paths{:}
+# See also
+shortestpath conncomp
+
+@ conncomp, biconncomp, condensation
+The parts of a graph: connected components, the parts no single node splits, and a digraph's components as nodes.
+
+`conncomp` gives each node's component, components numbered in the order of their first nodes (a digraph's are strongly connected, each node reaching each other, unless `'Type', 'weak'`). `biconncomp` gives each edge's biconnected component and the cut vertices, whose removal splits the graph. `condensation` makes a digraph of the strongly connected components, which has no cycle.
+
+# Syntax
+[bins, binsizes] = conncomp(G)
+    Each node's component.
+bins = conncomp(G, 'Type', 'weak')
+    Directions ignored.
+[bins, iC] = biconncomp(G)
+    Each edge's, and the cut vertices.
+C = condensation(G)
+    Components as nodes.
+# Examples
+## Two islands, and a bridge
+G = graph([1 2 3 4 5 6], [2 3 1 5 6 4]);
+[bins, sizes] = conncomp(G)
+H = addedge(G, 3, 4);
+[ebins, cut] = biconncomp(H)
+D = digraph([1 2 3 3 4 5], [2 3 1 4 5 4]);
+conncomp(D)
+C = condensation(D);
+C.Edges.EndNodes
+# See also
+bfsearch toposort
+
+@ toposort, isdag, hascycles, transclosure, transreduction
+Order and reach in a digraph: an order every edge goes forward in, cycles, and the edges of reach.
+
+`toposort` puts the nodes of a digraph without cycles in an order in which every edge goes forward (of the nodes free to come next, the smallest), and `isdag` asks whether there is no cycle; `hascycles` asks the same of any graph. `transclosure` adds an edge from each node to every node it reaches; `transreduction` keeps the fewest edges that reach as the digraph does.
+
+# Syntax
+order = toposort(G)
+    Every edge forward.
+tf = isdag(G)
+    No cycle.
+tf = hascycles(G)
+    A cycle somewhere.
+H = transclosure(G)
+    Reach as edges.
+H = transreduction(G)
+    The fewest edges.
+# Examples
+## Tasks and what they wait for
+D = digraph([1 1 2 3 4], [2 3 4 4 5]);
+toposort(D)
+[isdag(D), hascycles(D)]
+T = transclosure(D);
+numedges(T)
+R = transreduction(addedge(D, 1, 4));
+numedges(R)
+isdag(addedge(D, 5, 1))
+# See also
+digraph condensation
+
+@ minspantree, maxflow
+A minimum spanning tree, and the largest flow through a network.
+
+`minspantree` joins the nodes a root reaches with edges of least total weight (`'Type', 'forest'` makes a tree in each component); pred gives each node's parent. `maxflow` treats weights as capacities and gives the largest flow from s to t, the flow on each edge as a digraph, and a minimum cut: the nodes on s's side and on t's, whose edges between carry exactly the maximum flow.
+
+# Syntax
+[T, pred] = minspantree(G)
+    The tree, and parents.
+T = minspantree(G, 'Type', 'forest')
+    A tree per component.
+[mf, GF, cs, ct] = maxflow(G, s, t)
+    The flow and a cut.
+# Examples
+## Cables and pipes
+G = graph([1 1 2 2 3 4], [2 3 3 4 4 5], [3 1 1 4 2 5]);
+[T, pred] = minspantree(G);
+T.Edges
+sum(T.Edges.Weight)
+D = digraph([1 1 2 2 3 4], [2 3 3 4 4 5], [3 2 1 2 3 4]);
+[mf, GF, cs, ct] = maxflow(D, 1, 5)
+subplot(1, 2, 1), h = plot(G, 'EdgeLabel', G.Edges.Weight); highlight(h, T, 'EdgeColor', 'r', 'LineWidth', 2)
+subplot(1, 2, 2), plot(GF, 'EdgeLabel', GF.Edges.Weight)
+# See also
+shortestpath graph
+
+@ centrality, isisomorphic
+How central each node is, and whether two graphs are the same but for numbering.
+
+`centrality` scores nodes: `'degree'` by their edges, `'closeness'` by how near they are to all others, `'betweenness'` by how many shortest paths pass through them, `'pagerank'` and `'eigenvector'` by the importance of their neighbours (these sum to 1); a digraph also has in and out kinds and `'hubs'` and `'authorities'`. `isisomorphic` asks whether the nodes of one graph can be renumbered to give the other.
+
+# Syntax
+C = centrality(G, type)
+    A score per node.
+C = centrality(G, type, 'Cost', c)
+    Edge lengths for closeness and betweenness.
+tf = isisomorphic(G1, G2)
+    The same shape.
+# Examples
+## A star and a chain
+G = graph([1 1 1 1 5], [2 3 4 5 6]);
+centrality(G, 'degree')'
+centrality(G, 'betweenness')'
+round(centrality(G, 'closeness')', 4)
+round(centrality(G, 'pagerank')', 4)
+isisomorphic(G, graph([6 6 6 6 2], [1 3 4 2 5]))
+isisomorphic(G, graph([1 2 3 4 5], [2 3 4 5 6]))
+# See also
+degree shortestpath
+
+@ highlight, labelnode, labeledge, layout
+A graph plot changed: nodes and edges drawn apart, labels, and the nodes placed again.
+
+`highlight` draws nodes, edges or a whole subgraph (a path tree, a spanning tree) of a plot apart, in red and larger unless told otherwise; nodes given with `'EdgeColor'` or `'LineWidth'` mark the edges between them too, so a path draws as a path. `labelnode` and `labeledge` label nodes and edges. `layout` places the nodes again: `'force'`, `'layered'` (for a digraph without cycles), `'circle'` or `'subspace'`.
+
+# Syntax
+highlight(h, nodes, 'NodeColor', c)
+    Nodes drawn apart.
+highlight(h, s, t, 'EdgeColor', c, 'LineWidth', w)
+    Edges drawn apart.
+labelnode(h, nodes, labels)
+    Node labels.
+labeledge(h, s, t, labels)
+    Edge labels.
+layout(h, method)
+    Placed again.
+# Examples
+## A path through a grid of streets
+G = graph([1 2 1 3 2 4 3 5 4 6 5 6], [2 3 4 4 5 5 6 6 7 7 8 8]);
+h = plot(G);
+layout(h, 'circle')
+P = shortestpath(G, 1, 8);
+highlight(h, P, 'EdgeColor', 'r', 'LineWidth', 2)
+labelnode(h, [1 8], {'start', 'end'})
+labeledge(h, 1, 2, 'first')
+# See also
+plot graph

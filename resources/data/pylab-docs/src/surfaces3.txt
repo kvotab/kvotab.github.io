@@ -1,0 +1,233 @@
+@ contour3, contourc, clabel
+Contour lines drawn at their heights, the contour matrix without drawing, and labels on the lines.
+
+`contour3` draws the contour lines of a matrix at their own heights in 3-D. `contourc` computes them without drawing: a matrix of segments, each a column [level; number of points] followed by the points' columns [x; y]. `clabel` writes each line's value on it, given the contour matrix and the contour object that `contour` returns.
+
+# Syntax
+contour3(X, Y, Z, n)
+    n levels at their heights.
+C = contourc(x, y, Z, levels)
+    The lines as numbers.
+clabel(C, h)
+    Values on the lines.
+# Examples
+## A hill's contours, flat and in 3-D
+[X, Y] = meshgrid(-2:0.1:2);
+Z = exp(-X.^2 - Y.^2);
+C = contourc(-2:0.1:2, -2:0.1:2, Z, [0.5 0.5]);
+C(:, 1)'
+n = C(2, 1);
+r = hypot(C(1, 2:n+1), C(2, 2:n+1));
+[min(r), max(r)]
+sqrt(log(2))
+subplot(1, 2, 1), [C2, h] = contour(X, Y, Z, 0.2:0.2:0.8); clabel(C2, h), axis equal
+subplot(1, 2, 2), contour3(X, Y, Z, 10), view(-30, 30)
+# See also
+contour contourf
+
+@ fcontour, ezcontour, ezcontourf
+Contours of a function of two variables, drawn over a range.
+
+`fcontour` evaluates a function handle f(x, y) (written for arrays) over [-5 5] in each direction unless given and draws its contours. `ezcontour` and `ezcontourf` are older forms that also take text such as `'x*exp(-x^2 - y^2)'`, over [-2*pi, 2*pi] unless given, titled with the function; `ezcontourf` fills between the lines.
+
+# Syntax
+fcontour(f, [xmin xmax ymin ymax])
+    Contours of f.
+ezcontour(f, [xmin xmax ymin ymax], n)
+    The older form, n points a side.
+ezcontourf(f, [xmin xmax ymin ymax], n)
+    Filled.
+# Examples
+## One function three ways
+f = @(x, y) x.*exp(-x.^2 - y.^2);
+subplot(1, 3, 1), fcontour(f, [-2 2 -2 2]), axis equal
+subplot(1, 3, 2), ezcontour('x*exp(-x^2 - y^2)', [-2 2 -2 2], 40), axis equal
+subplot(1, 3, 3), ezcontourf('x*exp(-x^2 - y^2)', [-2 2 -2 2], 40), axis equal
+# See also
+contour fsurf fimplicit
+
+@ surfc, meshc, meshz, waterfall, surfl
+Surfaces and meshes with more: contours under them, a curtain round the edges, a row of curtains, and lighting.
+
+`surfc` and `meshc` draw a surface or a mesh with its contour lines on the floor below. `meshz` hangs a curtain from the mesh's edges down to the lowest value; `waterfall` draws each row of the matrix as a curtain of its own, like a row of profiles. `surfl` draws a surface lit from a light behind the viewer, coloured by how much light each face catches.
+
+# Syntax
+surfc(X, Y, Z)
+    With contours below.
+meshc(X, Y, Z)
+    A mesh with contours.
+meshz(X, Y, Z)
+    With a curtain.
+waterfall(X, Y, Z)
+    Rows as curtains.
+surfl(X, Y, Z)
+    Lit.
+# Examples
+## One surface five ways
+[X, Y, Z] = peaks(25);
+subplot(2, 3, 1), surfc(X, Y, Z), title('surfc')
+subplot(2, 3, 2), meshc(X, Y, Z), title('meshc')
+subplot(2, 3, 3), meshz(X, Y, Z), title('meshz')
+subplot(2, 3, 4), waterfall(X, Y, Z), title('waterfall')
+subplot(2, 3, 5), surfl(X, Y, Z), shading interp, title('surfl')
+# See also
+surf mesh contour
+
+@ pcolor, surface
+A pseudocolour plot, and a surface added to the axes without clearing them.
+
+`pcolor` draws a matrix as a flat surface seen from above, each cell coloured by the value at its corner (so the last row and column set no cell's colour unless shading is interpolated). `surface` adds a surface object to the current axes as they are, without clearing them or changing the view, and takes its properties by name.
+
+# Syntax
+pcolor(X, Y, C)
+    Cells coloured by value.
+h = surface(X, Y, Z, 'Name', value)
+    A surface added.
+# Examples
+## A field on a curved grid, and a surface added
+[R, T] = meshgrid(linspace(1, 2, 12), linspace(0, pi, 24));
+X = R.*cos(T); Y = R.*sin(T);
+subplot(1, 2, 1), pcolor(X, Y, R.*sin(3*T)), axis equal
+subplot(1, 2, 2), plot3([0 0], [0 0], [-1 1], 'k', 'LineWidth', 2), hold on
+[x, y] = meshgrid(-1:0.25:1);
+surface(x, y, 0.5*x.*y, 'FaceColor', 'interp'), view(3), hold off
+# See also
+surf image
+
+@ fmesh, ezsurf, ezmesh, ezsurfc, ezmeshc
+Surfaces and meshes of a function of two variables.
+
+`fmesh` evaluates a function handle f(x, y) over [-5 5] in each direction unless given and draws a mesh. The older `ezsurf`, `ezmesh`, `ezsurfc` and `ezmeshc` also take text such as `'sin(x)*cos(y)'` (its variables in alphabetical order), over [-2*pi, 2*pi] on a 60-by-60 grid unless given, titled with the function; the c forms add contours below.
+
+# Syntax
+fmesh(f, [xmin xmax ymin ymax])
+    A mesh of f.
+ezsurf(f, [xmin xmax ymin ymax], n)
+    A surface.
+ezmesh(f, [xmin xmax ymin ymax], n)
+    A mesh.
+ezsurfc(f, [xmin xmax ymin ymax], n)
+    A surface with contours.
+ezmeshc(f, [xmin xmax ymin ymax], n)
+    A mesh with contours.
+# Examples
+## A ripple
+subplot(1, 2, 1), fmesh(@(x, y) sin(x).*cos(y), [-3 3 -3 3])
+subplot(1, 2, 2), ezsurfc('sin(x)*cos(y)', [-3 3 -3 3], 30)
+# See also
+fsurf fcontour
+
+@ peaks, sphere, cylinder, ellipsoid
+Surfaces to try things with: a function with peaks and valleys, a sphere, a cylinder of any profile, an ellipsoid.
+
+`peaks` gives a smooth function of two variables with three peaks and two valleys on [-3, 3] (49 points a side unless given). `sphere`, `cylinder` and `ellipsoid` give the coordinates of their surfaces for `surf` or `mesh`, or draw them when no output is asked for; `cylinder` takes a radius profile from bottom to top, so a vector of radii makes a surface of revolution.
+
+# Syntax
+[X, Y, Z] = peaks(n)
+    The peaks function.
+[X, Y, Z] = sphere(n)
+    A unit sphere.
+[X, Y, Z] = cylinder(r, n)
+    A surface of revolution.
+[X, Y, Z] = ellipsoid(xc, yc, zc, xr, yr, zr, n)
+    An ellipsoid.
+# Examples
+## Four shapes
+[X, Y, Z] = peaks(30);
+[min(Z(:)), max(Z(:))]
+subplot(2, 2, 1), surf(X, Y, Z)
+[x, y, z] = sphere(20);
+subplot(2, 2, 2), surf(x, y, z), axis equal
+[x, y, z] = cylinder(1 + 0.3*sin(linspace(0, 2*pi, 15)), 30);
+subplot(2, 2, 3), surf(x, y, z), axis equal
+[x, y, z] = ellipsoid(0, 0, 0, 3, 2, 1, 20);
+subplot(2, 2, 4), surf(x, y, z), axis equal
+# See also
+surf meshgrid
+
+@ shading, lighting, light, camlight, material
+How surfaces look: flat or smooth colour, lights, and how lit faces are shaded.
+
+`shading` sets how surfaces in the axes are coloured: `faceted` (flat with black edges, the default), `flat` (no edges) or `interp` (colours blended across each face). `light` adds a light at a position and `camlight` one near the camera; `lighting` then shades lit faces `flat` or `gouraud` (smooth), or turns lighting off with `none`. `material` is accepted and has no effect.
+
+# Syntax
+shading interp
+    Smooth colour.
+light('Position', [x y z])
+    A light.
+camlight headlight
+    A light at the camera.
+lighting gouraud
+    Smooth lighting.
+material shiny
+    Accepted.
+# Examples
+## One sphere three ways
+[x, y, z] = sphere(30);
+subplot(1, 3, 1), surf(x, y, z), axis equal, title('faceted')
+subplot(1, 3, 2), surf(x, y, z), shading interp, axis equal, title('interp')
+subplot(1, 3, 3), surf(x, y, z, 'FaceColor', [0.8 0.5 0.2], 'EdgeColor', 'none'), axis equal
+camlight headlight, lighting gouraud, title('lit')
+# See also
+surf colormap
+
+@ clim, caxis, alpha, hidden
+The limits of the colour scale, and two older settings that are accepted.
+
+`clim` sets the values that map to the first and last colours of the colormap (values beyond take the end colours), or gives them; `clim auto` lets the data set them again. `caxis` is its older name. `alpha` and `hidden` are accepted and have no effect: transparency is set by an object's FaceAlpha, and meshes are drawn with hidden lines removed.
+
+# Syntax
+clim([cmin cmax])
+    Set the limits.
+lims = clim
+    The limits.
+clim auto
+    From the data.
+caxis([cmin cmax])
+    The older name.
+alpha(value)
+    Accepted.
+hidden off
+    Accepted.
+# Examples
+## The same data on two scales
+Z = peaks(30);
+subplot(1, 2, 1), imagesc(Z), colorbar, axis image
+clim
+subplot(1, 2, 2), imagesc(Z), colorbar, axis image
+clim([-2 2])
+# See also
+colormap colorbar imagesc
+
+@ camzoom, camva, camlookat
+The camera: zoom by a factor, its view angle, and pointing it at objects.
+
+The axes are drawn as a camera sees them, from a position toward a target, with a view angle: the smaller the angle, the larger the axes. `camzoom` narrows the angle by a factor (above 1 nearer, below 1 farther); `camva` sets or gives the angle itself. `camlookat` points the camera at objects and closes in until they fill the view.
+
+# Syntax
+camzoom(f)
+    Zoom by a factor.
+va = camva
+    The view angle.
+camva(va)
+    Set it.
+camlookat(h)
+    Look at objects.
+# Examples
+## Half as near again
+[x, y, z] = sphere(16);
+surf(x, y, z), axis equal
+va = camva
+camzoom(1.5)
+camva
+## At the last of three spheres
+[x, y, z] = sphere(16);
+hold on
+for k = 0:2
+    h(k + 1) = surf(x + 3*k, y, z);
+end
+hold off, axis equal, view(3)
+camlookat(h(3))
+camva
+# See also
+view campos

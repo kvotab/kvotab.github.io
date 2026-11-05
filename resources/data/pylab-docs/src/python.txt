@@ -1,0 +1,71 @@
+@ pyrun, pyrunfile
+Run Python code or a Python file, and take its variables back.
+
+`pyrun` runs a line of Python, or a string array of lines, in Python's `__main__`, whose variables stay from one call to the next; name-value pairs set Python variables first, and the names asked for come back as outputs. `pyrunfile` runs a file in a namespace of its own, with the words after its name as `sys.argv`. What Python prints shows in the Command Window. Values cross both ways: numbers, arrays (as NumPy arrays), text, cells (tuples) and structs (dicts) go in; None, booleans, integers, floats and strings come back as the language's values, and anything else stays a Python object, which `double`, `cell`, `char`, `string`, `struct` and `length` convert.
+
+# Syntax
+pyrun(code)
+    Run it.
+x = pyrun(code, "x")
+    And take a variable.
+[a, b] = pyrun(code, ["a" "b"], "name", value)
+    Variables set first, two taken.
+pyrunfile("file.py arg1 arg2")
+    Run a file with arguments.
+x = pyrunfile(file, "x")
+    And take a variable.
+# Examples
+## Variables going in and out
+r = pyrun(["import math", "r = math.comb(10, 3)"], "r")
+[a, b] = pyrun(["a = x * 2", "b = [x, x ** 2]"], ["a" "b"], "x", 3);
+a
+double(b)
+pyrun("print('hello from Python')")
+pyrun("counter = 1")
+pyrun("counter += 1")
+pyrun("counter", "counter")
+## A script with an argument
+writelines(["import sys", "n = int(sys.argv[1])", "squares = [k * k for k in range(n)]", "print('made', len(squares), 'squares')"], 'squares.py');
+s = pyrunfile("squares.py 5", "squares");
+double(s)
+# See also
+pyargs pyenv
+
+@ pyargs
+Keyword arguments for a call to a Python function.
+
+A Python module's functions are called as `py.module.function(args)` and Python's builtins as `py.name`; `pyargs` gives the keyword arguments, last in the call. Integers must be given as an integer class (`int32(3)`) where Python wants an int, since the language's numbers are floats. An object's methods and attributes are read with a dot, and an item of a list or dict by p(k).
+
+# Syntax
+kw = pyargs('name1', value1, 'name2', value2)
+    Keyword arguments.
+r = py.module.function(args, pyargs(...))
+    Given last.
+# Examples
+## NumPy and the standard library by keyword
+x = py.numpy.round(pi, pyargs('decimals', int32(3)))
+v = py.numpy.linspace(0, 1, pyargs('num', int32(5)));
+double(v)
+L = py.list({10, 20, 30});
+py.len(L)
+L(2)
+d = py.dict(pyargs('alpha', 1, 'beta', 2));
+d('beta')
+# See also
+pyrun
+
+@ pyenv
+The Python that PyLAB runs on.
+
+`pyenv` describes it: Version, Executable, Home, Status and ExecutionMode (always in process, since PyLAB is itself a Python program; in the page, the browser's Python with NumPy and SciPy). It cannot be changed to another Python.
+
+# Syntax
+pe = pyenv
+    Its properties.
+# Examples
+## How Python runs
+pe = pyenv;
+pe.ExecutionMode
+pe.Status
+# See also
+pyrun

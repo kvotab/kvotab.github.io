@@ -1507,8 +1507,12 @@ def quiver_scale(h):
         ys = np.unique(Y.reshape(-1))
         dx = np.min(np.diff(xs)) if xs.size > 1 else 1.0
         dy = np.min(np.diff(ys)) if ys.size > 1 else 1.0
-        if xs.size > 1 and ys.size > 1:
+        if xs.size > 1 and ys.size > 1 and xs.size * ys.size <= X.size:
             d = math.sqrt(dx * dy) if dx > 0 and dy > 0 else max(dx, dy, 1.0)
+        elif xs.size > 1 and ys.size > 1:
+            # points not on a grid (a mesh's nodes): the room each has in the area they cover; the smallest step
+            # between x values, near nothing for scattered points, drew the arrows 1e-17 long
+            d = math.sqrt((xs[-1] - xs[0]) * (ys[-1] - ys[0]) / X.size)
         else:
             rng = max(X.max() - X.min(), Y.max() - Y.min() if Y.size else 1.0, 1e-9)
             d = rng / math.sqrt(max(X.size, 1))
@@ -1699,6 +1703,11 @@ def marching_squares(X, Y, Z, level):
     return lines
 
 
+def given_levels(v):
+    """Levels given for contours, each once and in order: [v v] is the one level v (it traced every line twice)."""
+    return sorted({float(x) for x in np.asarray(v, float).reshape(-1)})
+
+
 def contour_levels(z, n=None, fill=False):
     zf = z[np.isfinite(z)]
     if zf.size == 0:
@@ -1756,9 +1765,7 @@ def _contour(args, nargout, fill=False, is3d=False):
         if lv.size == 1:
             nlev = int(lv[0])
         else:
-            levels = list(lv)
-            if len(levels) == 2 and levels[0] == levels[1]:
-                levels = [levels[0]]
+            levels = given_levels(lv)
     spec = None
     if rest and opt_str(rest[0]) is not None and parse_linespec(opt_str(rest[0])) is not None and opt_lower(rest[0]) not in ('linewidth', 'linestyle', 'levellist', 'showtext', 'labelspacing', 'linecolor', 'fill', 'facealpha', 'edgecolor', 'levelstep'):
         spec = parse_linespec(opt_str(rest.pop(0)))
@@ -1769,7 +1776,7 @@ def _contour(args, nargout, fill=False, is3d=False):
     for k, v in pairs:
         kl = k.lower()
         if kl == 'levellist':
-            levels = list(darr(v).reshape(-1))
+            levels = given_levels(darr(v))
         elif kl == 'showtext':
             show_text = py_str(v).lower() == 'on' if is_str(v) else bool(num(v))
         elif kl in ('linecolor', 'edgecolor'):
@@ -1895,7 +1902,7 @@ def contourc(nargout, *args):
         if lv.size == 1:
             nlev = int(lv[0])
         else:
-            levels = list(lv)
+            levels = given_levels(lv)
     X, Y, Z = _grid_xyz(data)
     if levels is None:
         levels = contour_levels(Z, nlev)

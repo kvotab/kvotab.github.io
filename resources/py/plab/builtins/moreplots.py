@@ -985,7 +985,7 @@ def contourslice(nargout, *args):
     levels a number of them or the levels themselves (automatic unless
     given)."""
     nargchk(args, 4, 9, 'contourslice')
-    from .graphics import marching_squares, contour_levels
+    from .graphics import marching_squares, contour_levels, given_levels
     G, GB = _g(), _gb()
     rest = [a for a in args if not is_str(a)]
     if len(rest) >= 7 and darr(rest[3]).ndim == 3:
@@ -1002,7 +1002,7 @@ def contourslice(nargout, *args):
     xv, yv, zv = _grid_vectors(X, Y, Z, V)
     fin = V[np.isfinite(V)]
     if more and numel(more[0]) > 1:
-        levels = list(darr(more[0]).reshape(-1))
+        levels = given_levels(darr(more[0]))
     elif more and numel(more[0]) == 1:
         levels = contour_levels(fin, int(num(more[0])))
     else:

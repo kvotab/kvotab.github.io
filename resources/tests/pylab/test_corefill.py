@@ -343,6 +343,9 @@ W, _ = run("figure; [X, Y, Z] = peaks(20); surf(X, Y, Z); hold on; p = plot3([0 
            "camlookat(gca); md2 = get(gca, 'CameraViewAngleMode');")
 near('camlookat: the target the middle of the objects', W['tg'], [[0.5, 0.5, 3]])
 C('camlookat: a narrower view, back to automatic for the axes', W['va'] < 10.3396 and text(W['md']) == 'manual' and text(W['md2']) == 'auto')
+W, _ = run("figure; [x, y, z] = sphere(16); hold on; for k = 0:2, h(k + 1) = surf(x + 3*k, y, z); end; hold off; axis equal; view(3); camlookat(h(3)); va = camva;")
+want = math.degrees(2 * math.atan(math.tan(math.radians(10.3396) / 2) / (math.sqrt(1 + 0.04 + 0.04) / math.sqrt(3 * 0.04))))
+near('camlookat in a box drawn long by axis equal: closed in by the box as drawn (a cube taken for it gave 8.5 degrees)', W['va'], want, 1e-3)
 W, _ = run("[x, y, z] = meshgrid(-2:0.5:2); u = -y; v = x; w = 0.2*ones(size(x)); figure; h = streamribbon(x, y, z, u, v, w, 1, 0, -2); n = numel(h); s = size(h(1).XData);"
            "X = h(1).XData; Y = h(1).YData; Z = h(1).ZData;")
 X, Y, Z = a(W['X']), a(W['Y']), a(W['Z'])

@@ -2019,6 +2019,35 @@ async def charts_and_more(page):
     check("a patch with a value at each vertex shades between them ('interp'): bluish by the first corner, yellowish by the third",
           True if shaded else px, True)
     await command(page, 'close all')
+    # a lit 3-D patch: each face shaded by its angle to the light, as surfaces are (patches were drawn flat, an isosurface a blot)
+    await command(page, "figure('Position', [80 80 500 400]); v = [0 0 0; 1 0 0; 1 1 0; 0 1 0; 0 0 1; 1 0 1; 1 1 1; 0 1 1]; "
+                        "f = [1 2 3 4; 5 6 7 8; 1 2 6 5; 2 3 7 6; 3 4 8 7; 4 1 5 8]; patch('Vertices', v, 'Faces', f, 'FaceColor', [0.7 0.7 0.7], 'EdgeColor', 'none'); "
+                        "view(3); axis equal; light('Position', [1 -3 2]);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    lit = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const at = (x, y, z) => {{ const q = f.p(x, y, z); const d = c.getContext('2d').getImageData(Math.round(q[0] * k), Math.round(q[1] * k), 1, 1).data; return d[0]; }}; "
+                        "return [at(0.5, 0.5, 1), at(0.5, 0, 0.5), at(1, 0.5, 0.5)]; })()")
+    check('a lit 3-D patch: its faces shaded apart by their angles to the light', True if (lit and max(lit) - min(lit) > 15 and max(lit) < 250) else lit, True)
+    await command(page, 'close all')
+    # a patch whose XData and YData are rows is one face, as columns are (it drew as faces of one vertex each: nothing)
+    await command(page, "figure('Position', [80 80 500 400]); patch('XData', [0 1 0.5], 'YData', [0 0 1], 'FaceColor', 'r'); axis([0 1 0 1]);")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    red = await page.ev(f"(() => {{ const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+                        "const d = c.getContext('2d').getImageData(Math.round(f.fx(0.5) * k), Math.round(f.fy(0.3) * k), 1, 1).data; return [d[0], d[1], d[2]]; })()")
+    check('a patch given by rows of XData and YData fills its face', True if (red and red[0] > 200 and red[1] < 60 and red[2] < 60) else red, True)
+    await command(page, 'close all')
+    # a figure title (sgtitle) keeps the top axes, with their title and subtitle, below it (they ran into it)
+    await command(page, "figure('Position', [80 80 500 400]); subplot(2, 1, 1); plot(1:5); title('top'); subtitle('more'); subplot(2, 1, 2); plot(1:5); sgtitle('Over all');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    room = await page.ev(f"(() => {{ const w = {WIN}; const r = w.renderer; const top = Math.min(...r.frames.map((f) => f.rect.y)); return [top, r._sgRoom, r.titleRoom(r.frames.find((f) => f.rect.y === top).ax)]; }})()")
+    check('an sgtitle keeps the top axes and their titles below it', True if (room and room[0] >= room[1] + room[2] - 0.5) else room, True)
+    await command(page, 'close all')
 
     await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
     snd = await page.ev('PL.app.lastSound || null')

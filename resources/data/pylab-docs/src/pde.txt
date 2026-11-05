@@ -1,0 +1,280 @@
+@ createpde, specifyCoefficients, applyBoundaryCondition, solvepde
+A model of partial differential equations in two dimensions, its coefficients and boundary conditions, and its solution by finite elements.
+
+`createpde` makes a model of N equations m*u'' + d*u' - div(c*grad(u)) + a*u = f (one unless N is given). It is built up in steps: a geometry (`geometryFromEdges`), a mesh (`generateMesh`), the coefficients (`specifyCoefficients`, all five, 0 for a term not there, numbers or functions of location and state), conditions on the boundary's edges (`applyBoundaryCondition`: Dirichlet, u given; Neumann, n.(c*grad(u)) + q*u = g given; or mixed), and initial conditions for a problem in time. `solvepde` then solves it: stationary when m and d are zero, else at the times asked for. An edge with no condition is insulated (g = q = 0); the last condition given on an edge holds.
+
+# Syntax
+model = createpde(N)
+    A model of N equations.
+specifyCoefficients(model, 'm', m, 'd', d, 'c', c, 'a', a, 'f', f)
+    The coefficients.
+applyBoundaryCondition(model, 'dirichlet', 'Edge', ids, 'u', u)
+    u given on edges.
+applyBoundaryCondition(model, 'neumann', 'Edge', ids, 'g', g, 'q', q)
+    The flux given.
+results = solvepde(model)
+    A stationary solution.
+results = solvepde(model, tlist)
+    In time.
+# Examples
+## Poisson's equation on the unit disc
+model = createpde;
+geometryFromEdges(model, decsg([1; 0; 0; 1]));
+mesh = generateMesh(model, 'Hmax', 0.1);
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 1);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+results = solvepde(model);
+u = results.NodalSolution;
+r2 = sum(mesh.Nodes.^2, 1)';
+max(abs(u - (1 - r2)/4)) < 1e-4
+pdeplot(model, 'XYData', u, 'Contour', 'on'), axis equal
+## A bar held at both ends, then with a flux at one
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 2; 2; 0; 0; 0; 1; 1]));
+generateMesh(model, 'Hmax', 0.2);
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 0);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 4, 'u', 0);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 2, 'u', 1);
+results = solvepde(model);
+x = results.Mesh.Nodes(1, :)';
+max(abs(results.NodalSolution - x/2)) < 1e-10
+applyBoundaryCondition(model, 'neumann', 'Edge', 2, 'g', 1);
+results = solvepde(model);
+max(abs(results.NodalSolution - x)) < 1e-10
+# See also
+geometryFromEdges generateMesh pdeplot solvepdeeig
+
+@ decsg, geometryFromEdges, pdegplot
+A geometry made of shapes, given to a model, and drawn.
+
+`decsg` combines circles, polygons, rectangles and ellipses (a column of the geometry matrix each) by a set formula of their names: + for union, * for intersection, - for difference. It gives the edges of the regions that result, a column each, with the faces on their left and right. `geometryFromEdges` makes that the model's geometry (or takes a geometry function). `pdegplot` draws it, with the labels of its edges, faces and vertices when asked: the numbers that boundary conditions and coefficients refer to.
+
+# Syntax
+dl = decsg(gd)
+    The shapes together.
+dl = decsg(gd, sf, ns)
+    Combined by a formula of their names.
+geometryFromEdges(model, dl)
+    The model's geometry.
+pdegplot(model, 'EdgeLabels', 'on', 'FaceLabels', 'on')
+    Drawn, labelled.
+# Examples
+## A plate with a hole
+R1 = [3; 4; -1; 1; 1; -1; -0.6; -0.6; 0.6; 0.6];
+C1 = [1; 0.3; 0; 0.3; zeros(6, 1)];
+ns = char('R1', 'C1')';
+dl = decsg([R1, C1], 'R1 - C1', ns);
+size(dl)
+model = createpde;
+geometryFromEdges(model, dl);
+model.Geometry.NumEdges
+pdegplot(model, 'EdgeLabels', 'on', 'FaceLabels', 'on'), axis equal
+# See also
+createpde generateMesh
+
+@ generateMesh, pdemesh, meshToPet
+A triangular mesh of a model's geometry, drawn, and in the point, edge and triangle form.
+
+`generateMesh` covers the geometry with triangles about Hmax across (a tenth of the geometry's size unless given), quadratic ones by default, with a node at the middle of each side, curved along curved edges; `'GeometricOrder', 'linear'` makes plain triangles. The mesh is stored in the model and returned: Nodes (2-by-n) and Elements (a column each). `pdemesh` draws it, with node or element numbers when asked. `meshToPet` gives it as p (the nodes), e (the boundary's pieces with their edges) and t (the elements' corners and their face).
+
+# Syntax
+mesh = generateMesh(model, 'Hmax', h)
+    Quadratic elements.
+mesh = generateMesh(model, 'Hmax', h, 'GeometricOrder', 'linear')
+    Linear ones.
+pdemesh(model)
+    Drawn.
+pdemesh(mesh, 'NodeLabels', 'on')
+    With the nodes' numbers.
+[p, e, t] = meshToPet(mesh)
+    Points, edges, triangles.
+# Examples
+## Coarse and fine
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 2; 2; 0; 0; 0; 1; 1]));
+mesh = generateMesh(model, 'Hmax', 0.5, 'GeometricOrder', 'linear');
+size(mesh.Nodes), size(mesh.Elements)
+[p, e, t] = meshToPet(mesh);
+[size(p); size(e); size(t)]
+subplot(2, 1, 1), pdemesh(mesh, 'NodeLabels', 'on'), axis equal
+mesh2 = generateMesh(model, 'Hmax', 0.15);
+size(mesh2.Elements)
+subplot(2, 1, 2), pdemesh(model), axis equal
+# See also
+findNodes findElements pdeplot
+
+@ findNodes, findElements
+The nodes and elements of a mesh in a region: on an edge or a face, in a box or a circle, or nearest to points.
+
+Both give a row of numbers, to pick out a solution's values or the elements of a part. `findNodes` takes the nodes on edges or faces (`'region'`), within a box or a circle, or the node nearest each point. `findElements` takes the elements of faces, those with all their nodes within a box or a circle, or those attached to nodes.
+
+# Syntax
+nodes = findNodes(mesh, 'region', 'Edge', ids)
+    On edges.
+nodes = findNodes(mesh, 'box', xlim, ylim)
+    In a box.
+nodes = findNodes(mesh, 'nearest', points)
+    Nearest to points (a column each).
+elems = findElements(mesh, 'radius', center, r)
+    Within a circle.
+elems = findElements(mesh, 'attached', nodes)
+    Attached to nodes.
+# Examples
+## An edge, a point, a disc
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 2; 2; 0; 0; 0; 1; 1]));
+mesh = generateMesh(model, 'Hmax', 0.25, 'GeometricOrder', 'linear');
+left = findNodes(mesh, 'region', 'Edge', 4);
+mesh.Nodes(1, left)
+nn = findNodes(mesh, 'nearest', [1; 0.5]);
+mesh.Nodes(:, nn)'
+el = findElements(mesh, 'radius', [1 0.5], 0.4);
+numel(el)
+pdemesh(mesh), axis equal, hold on
+plot(mesh.Nodes(1, left), mesh.Nodes(2, left), 'ro', mesh.Nodes(1, nn), mesh.Nodes(2, nn), 'k*')
+triplot(mesh.Elements(1:3, el)', mesh.Nodes(1, :), mesh.Nodes(2, :), 'r'), hold off
+# See also
+generateMesh interpolateSolution
+
+@ setInitialConditions
+Initial values for a problem in time, or a starting guess for a nonlinear one.
+
+The initial value is a number (one for each equation), a vector of nodal values, a function of location (location.x, location.y), or the last solution of earlier results; with m not zero, a second argument gives the initial rate. Given on faces, it holds there only.
+
+# Syntax
+setInitialConditions(model, u0)
+    The initial value.
+setInitialConditions(model, u0, ut0)
+    With the initial rate.
+setInitialConditions(..., 'Face', ids)
+    On faces.
+setInitialConditions(model, results)
+    From a solution.
+# Examples
+## Heat leaving a square
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 1; 1; 0; 0; 0; 1; 1]));
+generateMesh(model, 'Hmax', 0.1);
+specifyCoefficients(model, 'm', 0, 'd', 1, 'c', 1, 'a', 0, 'f', 0);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+setInitialConditions(model, @(location) sin(pi*location.x).*sin(pi*location.y));
+tlist = 0:0.02:0.1;
+results = solvepde(model, tlist);
+uc = interpolateSolution(results, 0.5, 0.5, 1:numel(tlist));
+[uc; exp(-2*pi^2*tlist)]
+pdeplot(model, 'XYData', results.NodalSolution(:, end), 'ZData', results.NodalSolution(:, end))
+# See also
+solvepde createpde
+
+@ solvepdeeig
+Eigenvalues and eigenvectors of a model: its modes.
+
+The lambda in the range [lo, hi] (hi may be Inf) for which -div(c*grad(u)) + a*u = lambda*d*u has a solution with the model's boundary conditions (Dirichlet ones taken as zero): the vibration modes of a membrane, or the decay rates of heat. Eigenvalues come in order, Eigenvectors a column each at the nodes.
+
+# Syntax
+results = solvepdeeig(model, [lo hi])
+    The modes in the range.
+# Examples
+## The modes of a square membrane
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 1; 1; 0; 0; 0; 1; 1]));
+generateMesh(model, 'Hmax', 0.1);
+specifyCoefficients(model, 'm', 0, 'd', 1, 'c', 1, 'a', 0, 'f', 0);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+r = solvepdeeig(model, [0 60]);
+r.Eigenvalues'
+pi^2*[2 5 5]
+v = r.Eigenvectors(:, 1);
+v = v*sign(sum(v));
+pdeplot(model, 'XYData', v), axis equal
+# See also
+solvepde eigs
+
+@ assembleFEMatrices
+The finite-element matrices of a model, to solve or study by hand.
+
+K comes from c, A from a, F from f, Q and G from the Neumann conditions' q and g, M from m (or d), and H and R state the Dirichlet conditions as H*u = R. All are sparse, with the components of a system one after another.
+
+# Syntax
+FEM = assembleFEMatrices(model)
+    A struct of the matrices.
+# Examples
+## The disc's Poisson problem solved by hand
+model = createpde;
+geometryFromEdges(model, decsg([1; 0; 0; 1]));
+generateMesh(model, 'Hmax', 0.2);
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 1);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+FEM = assembleFEMatrices(model);
+fieldnames(FEM)'
+fixed = full(any(FEM.H, 1))';
+u = zeros(size(FEM.F));
+u(~fixed) = FEM.K(~fixed, ~fixed) \ FEM.F(~fixed);
+r = solvepde(model);
+max(abs(u - r.NodalSolution)) < 1e-12
+full(sum(FEM.F))
+# See also
+solvepde sparse
+
+@ interpolateSolution, evaluateGradient
+A PDE solution, and its gradient, at any points.
+
+Both evaluate the elements' basis functions at the points (given as x and y, or as a matrix with a column for each point), NaN outside the mesh. For a system, iU picks the components; for a solution in time or a set of modes, iT picks the times or modes, a column each.
+
+# Syntax
+u = interpolateSolution(results, xq, yq)
+    At points.
+u = interpolateSolution(results, xq, yq, iU, iT)
+    Components and times.
+[gradx, grady] = evaluateGradient(results, xq, yq)
+    The gradient at points.
+# Examples
+## Along a diameter of the disc
+model = createpde;
+geometryFromEdges(model, decsg([1; 0; 0; 1]));
+generateMesh(model, 'Hmax', 0.1);
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 1);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+r = solvepde(model);
+xq = linspace(-1, 1, 5);
+u = interpolateSolution(r, xq, zeros(size(xq)))'
+(1 - xq.^2)/4
+[gx, gy] = evaluateGradient(r, xq, zeros(size(xq)));
+round(gx', 3)
+interpolateSolution(r, 2, 0)
+# See also
+solvepde findNodes
+
+@ pdeplot
+A PDE solution drawn over its mesh: in colour, as contours, as a surface, with arrows.
+
+The nodal values fill the elements in interpolated colour (a quadratic element as four triangles); `'ZData'` lifts them into a surface, `'Contour', 'on'` adds contour lines, `'Mesh', 'on'` the elements' sides, and `'FlowData'` arrows of a vector field such as the gradient. Given only a model or a mesh, it draws the mesh.
+
+# Syntax
+pdeplot(model, 'XYData', u)
+    In colour.
+pdeplot(model, 'XYData', u, 'ZData', u)
+    As a surface.
+pdeplot(model, 'XYData', u, 'Contour', 'on', 'FlowData', [ux uy])
+    With contours and arrows.
+h = pdeplot(...)
+    The graphics objects.
+# Examples
+## A load heavier to the sides
+model = createpde;
+geometryFromEdges(model, decsg([1; 0; 0; 1]));
+generateMesh(model, 'Hmax', 0.1);
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', @(location, state) 4*location.x.^2);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+r = solvepde(model);
+pdeplot(model, 'XYData', r.NodalSolution, 'Contour', 'on', 'FlowData', [r.XGradients, r.YGradients])
+## The mesh over the colours
+model = createpde;
+geometryFromEdges(model, decsg([3; 4; 0; 2; 2; 0; 0; 0; 1; 1]));
+generateMesh(model, 'Hmax', 0.25, 'GeometricOrder', 'linear');
+specifyCoefficients(model, 'm', 0, 'd', 0, 'c', 1, 'a', 0, 'f', 1);
+applyBoundaryCondition(model, 'dirichlet', 'Edge', 1:4, 'u', 0);
+r = solvepde(model);
+pdeplot(model, 'XYData', r.NodalSolution, 'Mesh', 'on')
+# See also
+pdemesh pdegplot solvepde

@@ -1,0 +1,159 @@
+@ boxplot, boxchart
+Box plots: each group's median and quartiles as a box, whiskers to the most extreme values within reach, and outliers beyond.
+
+The box spans the lower to the upper quartile with a line at the median; the whiskers reach the farthest values within 1.5 times the box's height of it, and values beyond are drawn alone as outliers. `boxplot` takes the columns of a matrix, or values and a grouping variable, with notches (an interval for the median: boxes whose notches do not overlap differ at about the 5% level), labels, and horizontal boxes. `boxchart` makes the same chart as an object, its groups numbers or categories, coloured by a second grouping when asked.
+
+# Syntax
+boxplot(X)
+    A box per column.
+boxplot(x, group, 'Notch', 'on', 'Labels', labels)
+    By group, notched.
+h = boxplot(...)
+    The lines of each box.
+b = boxchart(ydata)
+    A box chart.
+b = boxchart(xgroupdata, ydata, 'GroupByColor', g)
+    By group and colour.
+# Examples
+## Three samples, one skewed
+rng default
+X = [randn(60, 1), 1 + 0.5*randn(60, 1), exprnd(1, 60, 1)];
+subplot(1, 2, 1), boxplot(X, 'Notch', 'on', 'Labels', {'normal', 'narrow', 'skewed'})
+subplot(1, 2, 2), boxchart(categorical(repelem({'a'; 'b'}, 30)), [randn(30, 1); 2 + randn(30, 1)])
+# See also
+histogram quantile prctile
+
+@ gscatter, gplotmatrix, plotmatrix
+Scatter plots by group, and matrices of scatter plots.
+
+`gscatter` draws each group of points in its own colour and marker, named in a legend. `plotmatrix` draws every column of a matrix against every other, with histograms on the diagonal; `gplotmatrix` does so by group, the diagonal showing each group's histogram outline. Both give the axes, and a big invisible axes over the whole for a title.
+
+# Syntax
+gscatter(x, y, group, colors, markers)
+    By group.
+plotmatrix(X)
+    Every pair of columns.
+[S, AX, BigAx] = plotmatrix(X, Y)
+    Y's columns against X's.
+gplotmatrix(X, [], group)
+    Every pair by group.
+# Examples
+## Two kinds of points
+rng default
+g = repelem([1; 2], 50);
+X = [randn(100, 1) + 2*(g == 2), randn(100, 1) - (g == 2), randn(100, 1)];
+gscatter(X(:, 1), X(:, 2), g, 'br', 'o+')
+## Three variables at once
+rng default
+x = randn(200, 1);
+X = [x, 2*x + randn(200, 1), randn(200, 1)];
+[S, AX, BigAx] = plotmatrix(X);
+title(BigAx, 'pairs of variables')
+# See also
+scatter scatterhist
+
+@ scatterhist, scatterhistogram, binscatter
+A scatter plot with the histograms of x and y beside it, and many points as coloured bins.
+
+`scatterhist` draws the points and, below and to the left, the histograms of x and of y (by group if asked, with kernel densities if asked). `scatterhistogram` makes the same chart as an object, from vectors or a table. `binscatter` counts the points in a grid of bins and colours each bin by its count: the shape of a cloud too dense to draw point by point.
+
+# Syntax
+scatterhist(x, y, 'Group', g, 'Kernel', 'on')
+    With histograms.
+s = scatterhistogram(x, y, 'GroupData', g)
+    As an object.
+h = binscatter(x, y, N)
+    Points binned.
+# Examples
+## A correlated pair
+rng default
+x = randn(300, 1);
+y = 0.6*x + 0.8*randn(300, 1);
+scatterhist(x, y)
+## Ten thousand points
+rng default
+x = randn(10000, 1);
+y = x.^2 + randn(10000, 1);
+binscatter(x, y, 40)
+# See also
+scatter histogram histogram2
+
+@ histfit, normplot, qqplot, cdfplot
+How a sample is distributed: a histogram with a fitted density, probability and quantile plots, and the empirical distribution function.
+
+`histfit` draws a histogram with a density fitted to the data (normal unless another is named) scaled to the counts. `normplot` plots the sorted data against normal quantiles on an axis marked in probabilities: normal data lie near the line through the quartiles. `qqplot` plots a sample's quantiles against the standard normal's, a distribution's or another sample's: points near the line mean the two differ at most in location and scale. `cdfplot` draws the empirical distribution function as steps.
+
+# Syntax
+histfit(x, nbins, dist)
+    A histogram and a density.
+normplot(x)
+    A normal probability plot.
+qqplot(x, y)
+    Quantiles against quantiles.
+[h, stats] = cdfplot(x)
+    The empirical distribution.
+# Examples
+## A normal sample and a skewed one
+rng default
+x = 3 + 2*randn(200, 1);
+y = exprnd(2, 200, 1);
+subplot(2, 2, 1), histfit(x)
+subplot(2, 2, 2), histfit(y, 20, 'exponential')
+subplot(2, 2, 3), normplot([x, y])
+subplot(2, 2, 4), qqplot(x, y)
+## The empirical distribution function
+rng default
+x = randn(50, 1);
+[h, stats] = cdfplot(x);
+hold on, plot(-3:0.1:3, normcdf(-3:0.1:3), 'r--'), hold off
+round(stats.median, 4)
+# See also
+fitdist histogram ecdf
+
+@ lsline, refline, refcurve
+Lines and curves for reference across a plot: least-squares lines, y = m*x + b, and a polynomial.
+
+`lsline` fits a straight line to each set of points in the axes (markers without lines) and draws it across their x values, in their colour. `refline` draws y = m*x + b across the axes (with no inputs, the least-squares lines). `refcurve` draws a polynomial, its coefficients from the highest power down.
+
+# Syntax
+lsline
+    Least-squares lines.
+h = refline(m, b)
+    A line.
+h = refcurve(p)
+    A polynomial.
+# Examples
+## Points, their fit, and two references
+rng default
+x = linspace(0, 10, 30)';
+y = 1 + 0.5*x + randn(30, 1);
+plot(x, y, 'o')
+h = lsline;
+h.Color = 'r';
+refline(0.5, 1)
+refcurve([0.02 0.3 1])
+legend('data', 'least squares', 'y = 0.5x + 1', 'a quadratic')
+# See also
+polyfit fitlm
+
+@ parallelplot
+Parallel coordinates: each row of data a line across its variables.
+
+Each variable has an axis of its own, scaled to its range (or by z-scores, or not at all), side by side; each row is a line joining its values. Groups are coloured apart, which shows which variables separate them. It takes a matrix or a table, and gives a chart object.
+
+# Syntax
+p = parallelplot(data)
+    A line per row.
+p = parallelplot(tbl, 'GroupData', g)
+    By group.
+p = parallelplot(..., 'DataNormalization', 'zscore')
+    Another scaling.
+# Examples
+## Two groups apart in two of four variables
+rng default
+g = repelem({'first'; 'second'}, 20);
+X = randn(40, 4) + [zeros(20, 4); repmat([2 0 -2 0], 20, 1)];
+T = array2table(X, 'VariableNames', {'w', 'x', 'y', 'z'});
+parallelplot(T, 'GroupData', g)
+# See also
+plot gplotmatrix
