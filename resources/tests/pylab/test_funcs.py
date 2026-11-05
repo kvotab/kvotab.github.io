@@ -481,6 +481,9 @@ W, _ = run("k = polyder([1 2 3]); kp = polyder([1 1], [1 -1]); [q, d] = polyder(
 same("polyder: of a polynomial, of a product, and [q, d] of a quotient (q = a'b - ab' over b^2, leading zeros dropped)",
      (v(W['k']).tolist(), v(W['kp']).tolist(), v(W['q']).tolist(), v(W['d']).tolist(), v(W['q0']).tolist(), v(W['d0']).tolist(), v(W['k0']).tolist()),
      ([2.0, 2.0], [2.0, 0.0], [-2.0, -4.0, 2.0], [1.0, 0.0, 2.0, 0.0, 1.0], [0.0], [1.0, 2.0, 1.0], [0.0]))
+W, _ = run("a = sscanf('1,2,3,4', '%d,'); [d, n] = sscanf('1,2,3,4', '%d,', [2 2]); f = sscanf('10:20:30', '%d:');")
+same("sscanf: literal text after the last conversion matched before the format starts again", (v(W['a']).tolist(), v(W['d']).tolist(), float(v(W['n'])), v(W['f']).tolist()),
+     ([1.0, 2.0, 3.0, 4.0], [1.0, 2.0, 3.0, 4.0], 4.0, [10.0, 20.0, 30.0]))
 W, _ = run("o = optimoptions('fminunc', 'MaxIterations', 50); o = resetoptions(o, 'MaxIterations'); m = o.MaxIterations; e = optimoptions('fmincon').MaxFunctionEvaluations;")
 same("an option's default number reaches the workspace as a double", (type(W['m']).__name__ != 'int', type(W['e']).__name__ != 'int', float(v(W['m'])), float(v(W['e']))), (True, True, 400.0, 3000.0))
 

@@ -1029,6 +1029,17 @@ def scan_text(s, fmt, size=None):
             if limit is not None and len(vals) >= limit:
                 stop = True
                 break
+        if not stop:
+            # the literal text after the last conversion ('%d,'), before the format starts again
+            for ch in fmt[fpos:]:
+                if ch.isspace():
+                    while pos < n and s[pos].isspace():
+                        pos += 1
+                elif pos < n and s[pos] == ch:
+                    pos += 1
+                else:
+                    stop = True
+                    break
         if not progressed:
             break
     if chars_only and vals:

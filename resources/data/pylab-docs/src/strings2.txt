@@ -1,0 +1,631 @@
+@ strings
+A string array of empty strings.
+
+Strings (in double quotes) are whole texts held as single elements, where character arrays (in single quotes) are rows of characters. `strings(m, n)` makes an m-by-n array of empty strings to fill in.
+
+# Syntax
+s = strings(m, n)
+    An m-by-n array of "".
+s = strings(sz)
+    Of the size `sz`.
+# Examples
+## Filled in a loop
+s = strings(1, 3);
+for k = 1:3
+    s(k) = "item " + k;
+end
+s
+# See also
+string char
+
+@ cellstr
+A cell array of character vectors.
+
+From a character array, one cell per row with the trailing blanks removed; from a string array, one cell per string; a cell array of text stays as it is.
+
+# Syntax
+C = cellstr(A)
+    The cells.
+# Examples
+## From a padded character array and from strings
+C = cellstr(char('one', 'three'))
+cellstr(["a" "bc"])
+# See also
+char string iscellstr
+
+@ int2str, mat2str
+Numbers as text: rounded to integers, or a whole matrix in the language's brackets.
+
+`int2str` rounds and writes the numbers as `num2str` would; `mat2str` writes a matrix so that evaluating the text gives it back (to 15 significant digits, or `precision`), with `true`/`false` for logical values and quotes for characters.
+
+# Syntax
+s = int2str(x)
+    Rounded, as text.
+s = mat2str(A)
+    In brackets.
+s = mat2str(A, precision)
+    To a number of significant digits.
+# Examples
+## Text that evaluates back
+int2str([2.4 2.5 -3.7])
+s = mat2str([1 2; 3 4.5])
+isequal(eval(s), [1 2; 3 4.5])
+mat2str(pi, 4)
+mat2str([true false])
+# See also
+num2str str2num
+
+@ str2num
+Text evaluated as an expression, and its value.
+
+The text may hold numbers, matrices in brackets and expressions (`'[1 2; 3 4]'`, `'pi/2'`); `ok` is false when it cannot be evaluated. As it evaluates the text, use `str2double` for plain numbers from untrusted text.
+
+# Syntax
+x = str2num(s)
+    The value.
+[x, ok] = str2num(s)
+    With whether it worked.
+# Examples
+## A matrix, an expression, and text that is not one
+str2num('[1 2; 3 4]')
+str2num('sqrt(16) + 1')
+[x, ok] = str2num('hello world')
+# See also
+str2double eval mat2str
+
+@ strvcat
+Character arrays stacked as rows, padded with spaces, empty ones left out.
+
+As `char`, except that empty inputs give no row.
+
+# Syntax
+S = strvcat(t1, t2, ...)
+    The rows.
+# Examples
+## Empty texts dropped
+S = strvcat('alpha', '', 'be')
+size(char('alpha', '', 'be'))
+# See also
+char
+
+@ split, splitlines, join
+Strings split at a separator or at line breaks, and joined with one; or two tables joined by their keys.
+
+`split` splits at white space unless a separator (or several) is given; one string gives a column, several (with the same number of parts) a matrix. `splitlines` splits at line breaks. `join` puts the elements of a string array together with a space or a separator, along the last dimension. For tables, `join(A, B)` adds B's other variables to A, each row matched by its keys.
+
+# Syntax
+parts = split(s)
+    At white space.
+parts = split(s, delimiter)
+    At a separator.
+lines = splitlines(s)
+    At line breaks.
+s = join(parts, delimiter)
+    Joined.
+T = join(A, B, 'Keys', keys)
+    Two tables.
+# Examples
+## Split and joined again
+parts = split("red,green,blue", ",")
+join(parts, " / ")
+lines = splitlines("first" + newline + "second")
+## Two tables joined by a key
+A = table([1; 2; 3], ["x"; "y"; "x"], 'VariableNames', {'Id', 'Group'});
+B = table(["x"; "y"], [10; 20], 'VariableNames', {'Group', 'Weight'});
+join(A, B)
+# See also
+strsplit strjoin
+
+@ strtrim, strip, deblank
+White space removed from the ends of text.
+
+`strtrim` removes leading and trailing white space; `strip` does too, from one side or both, or another character; `deblank` removes trailing white space and null characters only.
+
+# Syntax
+t = strtrim(s)
+    Both ends.
+t = strip(s, side)
+    `'left'`, `'right'` or `'both'`.
+t = strip(s, side, character)
+    Another character.
+t = deblank(s)
+    Trailing only.
+# Examples
+## Three ways of trimming
+s = "   data   ";
+["[" + strtrim(s) + "]", "[" + strip(s, 'left') + "]", "[" + deblank(s) + "]"]
+strip("--title--", 'both', '-')
+# See also
+pad blanks
+
+@ blanks, pad, strjust
+Spaces: a row of them, text padded with them, and text shifted within its width.
+
+`blanks(n)` is a row of n spaces. `pad` pads texts to the longest (or to n) with spaces or another character, on the right unless `'left'` or `'both'`. `strjust` shifts the text of each row of a character array to the right, left or centre within the array's width.
+
+# Syntax
+s = blanks(n)
+    `n` spaces.
+t = pad(s, n, side, character)
+    Padded.
+t = strjust(s, how)
+    `'right'` (the default), `'left'` or `'center'`.
+# Examples
+## A column of names lined up
+names = ["Ada"; "Grace"; "Al"];
+pad(names)
+pad(names, 8, 'left', '.')
+strjust(['a  '; 'bb '], 'right')
+['[' blanks(3) ']']
+# See also
+strip strtrim
+
+@ reverse
+Text backwards.
+
+# Syntax
+t = reverse(s)
+    The characters in reverse order.
+# Examples
+## A palindrome test
+s = "level";
+reverse(s)
+s == reverse(s)
+# See also
+fliplr
+
+@ strlength
+The number of characters of each string, or of a character vector.
+
+# Syntax
+n = strlength(s)
+    For each element.
+# Examples
+## Lengths of strings and of text
+strlength(["a" "four" ""])
+strlength('hello')
+# See also
+length strtrim
+
+@ strcmp, strcmpi, strncmp, strncmpi
+Texts compared: whole and exact, ignoring case, or by their first n characters.
+
+True when the texts are identical (`strcmp`), identical ignoring case (`strcmpi`), or agree in their first n characters (`strncmp`, `strncmpi`). With a cell array or string array, a result for each element; text never equals a number.
+
+# Syntax
+tf = strcmp(s1, s2)
+    Identical.
+tf = strcmpi(s1, s2)
+    Ignoring case.
+tf = strncmp(s1, s2, n)
+    The first `n` characters.
+tf = strncmpi(s1, s2, n)
+    The first `n`, ignoring case.
+# Examples
+## Four ways of comparing
+strcmp('Apple', {'apple', 'Apple', 'Apricot'})
+strcmpi('Apple', {'apple', 'Apple', 'Apricot'})
+strncmp('Apple', {'apple', 'Apple', 'Apricot'}, 2)
+strncmpi('Apple', {'apple', 'Apple', 'Apricot'}, 2)
+# See also
+isequal contains matches
+
+@ startsWith, endsWith, matches
+Whether text starts with, ends with, or is a pattern (or one of several).
+
+The pattern is text, a list of texts (any of which will do), or a pattern object; `'IgnoreCase', true` ignores case.
+
+# Syntax
+tf = startsWith(s, pattern)
+    Starts with it.
+tf = endsWith(s, pattern)
+    Ends with it.
+tf = matches(s, pattern)
+    Is it.
+tf = startsWith(..., 'IgnoreCase', true)
+    Ignoring case.
+# Examples
+## Files by name
+files = ["data.csv", "notes.txt", "Data2.CSV", "plot.png"];
+endsWith(files, ".csv", 'IgnoreCase', true)
+startsWith(files, ["data", "plot"])
+matches(files, "notes.txt")
+# See also
+contains strcmp pattern
+
+@ strfind, strmatch
+Where a pattern occurs in text, and which rows of a list start with some text.
+
+`strfind` gives the starting index of every occurrence (overlapping ones too); for a cell array, a cell of them. `strmatch` gives the rows of a character matrix (or elements of a cell array) that start with the text, or with `'exact'` are it.
+
+# Syntax
+k = strfind(s, pattern)
+    The starting indices.
+k = strmatch(s, list)
+    The rows that start with `s`.
+k = strmatch(s, list, 'exact')
+    The rows that are `s`.
+# Examples
+## Occurrences, and rows of a list
+strfind('abababa', 'aba')
+strmatch('ma', {'max', 'min', 'mean', 'map'})
+strmatch('max', char('max', 'maxima'), 'exact')
+# See also
+contains regexp count
+
+@ count
+How many times a pattern occurs in text (occurrences that do not overlap).
+
+# Syntax
+n = count(s, pattern)
+    The number of occurrences.
+n = count(s, pattern, 'IgnoreCase', true)
+    Ignoring case.
+# Examples
+## Letters and words
+count("banana", "a")
+count(["one two", "three"], " ")
+count("Ba ba BA", "ba", 'IgnoreCase', true)
+# See also
+strfind contains
+
+@ strtok
+The first token of text, and the rest.
+
+Leading delimiters (white space unless given) are skipped; the token runs to the next delimiter, and the rest starts with it.
+
+# Syntax
+token = strtok(s)
+    The first word.
+[token, rest] = strtok(s, delimiters)
+    With delimiters, and the rest.
+# Examples
+## Words one at a time
+[t, r] = strtok('  the quick fox')
+[t, r] = strtok(r)
+[t, r] = strtok('a,b;c', ',;')
+# See also
+split strsplit
+
+@ replace, erase
+Every occurrence of substrings replaced, or deleted.
+
+`replace` takes one old text and one new, or lists of them (each old text its new one); `erase` deletes. Both take patterns too.
+
+# Syntax
+t = replace(s, old, new)
+    Replaced.
+t = erase(s, pattern)
+    Deleted.
+# Examples
+## Replacements and deletions
+replace("the cat sat", ["cat" "sat"], ["dog" "ran"])
+erase("2026-11-05", "-")
+erase("a1b22c333", digitsPattern)
+# See also
+strrep regexprep
+
+@ extractBefore, extractAfter, extractBetween
+The text before or after a position or a pattern, or between two.
+
+The positions are character indices; the patterns texts or pattern objects (the first occurrence counts). `extractBetween` takes `'Boundaries', 'inclusive'` to keep the markers.
+
+# Syntax
+t = extractBefore(s, pos)
+    Before a position (or a pattern).
+t = extractAfter(s, pattern)
+    After a pattern (or a position).
+t = extractBetween(s, start, stop)
+    Between two.
+# Examples
+## Parts of a file name and of a tag
+f = "report_2026.pdf";
+extractBefore(f, "_")
+extractAfter(f, ".")
+extractBetween(f, "_", ".")
+extractBetween("<b>bold</b>", "<b>", "</b>", 'Boundaries', 'inclusive')
+# See also
+extract strtok
+
+@ replaceBetween, eraseBetween
+The text between two markers or positions replaced, or removed.
+
+The markers stay unless `'Boundaries', 'inclusive'` takes them with it.
+
+# Syntax
+s = replaceBetween(str, startText, endText, newText)
+    Replaced between markers.
+s = replaceBetween(str, startPos, endPos, newText)
+    Between positions.
+s = eraseBetween(str, startText, endText)
+    Removed.
+# Examples
+## Between brackets
+replaceBetween("value: [old]", "[", "]", "new")
+eraseBetween("keep (drop) keep", "(", ")", 'Boundaries', 'inclusive')
+# See also
+extractBetween replace
+
+@ insertAfter, insertBefore
+Text inserted after or before a position or a pattern.
+
+At every occurrence of the pattern, or at the character position.
+
+# Syntax
+t = insertAfter(s, pos, new)
+    After a position (or a pattern).
+t = insertBefore(s, pattern, new)
+    Before a pattern (or a position).
+# Examples
+## A unit and a sign added
+insertAfter("12 and 30", digitsPattern, " m")
+insertBefore("value", 1, "+")
+# See also
+replace extractAfter
+
+@ regexp, regexpi
+Text matched by a regular expression.
+
+A regular expression describes text: `\d` a digit, `\w` a word character, `+` one or more, `(...)` a token, `(?<name>...)` a named token. The outputs come in the order of the keywords asked for (`'match'`, `'tokens'`, `'names'`, `'start'`, `'end'`, `'split'`); without keywords, the starting indices. `'once'` gives the first match only, not in a cell. `regexpi` ignores case.
+
+# Syntax
+startIndex = regexp(s, expr)
+    Where matches start.
+[tok, mat] = regexp(s, expr, 'tokens', 'match')
+    The tokens and matches.
+names = regexp(s, expr, 'names')
+    Named tokens as a struct.
+parts = regexp(s, expr, 'split')
+    The text between matches.
+t = regexp(s, expr, 'match', 'once')
+    The first match.
+# Examples
+## Numbers, named parts and splits
+s = 'x = 12, y = 345, z = 6';
+regexp(s, '\d+', 'match')
+d = regexp('2026-11-05', '(?<year>\d+)-(?<month>\d+)-(?<day>\d+)', 'names')
+regexp('a1b22c', '\d+', 'split')
+regexpi('Hello HELLO hello', 'hello', 'match')
+# See also
+regexprep regexptranslate pattern
+
+@ regexprep
+The matches of a regular expression replaced.
+
+In the replacement, `$1`, `$2`, ... stand for the tokens; `'once'` replaces the first match only, `'ignorecase'` ignores case.
+
+# Syntax
+t = regexprep(s, expr, replace)
+    Every match replaced.
+t = regexprep(s, expr, replace, 'once')
+    The first.
+# Examples
+## Dates reordered and spaces squeezed
+regexprep('2026-11-05', '(\d+)-(\d+)-(\d+)', '$3/$2/$1')
+regexprep('too    many   spaces', '\s+', ' ')
+# See also
+regexp replace
+
+@ regexptranslate
+Text escaped for use in a regular expression, or a wildcard turned into one.
+
+`'escape'` puts a backslash before each character that has a meaning in a regular expression; `'wildcard'` turns `*` and `?` into `.*` and `.`, as file names are matched.
+
+# Syntax
+t = regexptranslate('escape', s)
+    Escaped.
+t = regexptranslate('wildcard', s)
+    A wildcard as a regular expression.
+# Examples
+## A literal dot, and a file mask
+e = regexptranslate('escape', 'a.b')
+regexp('axb a.b', e, 'match')
+w = regexptranslate('wildcard', '*.csv')
+regexp({'a.csv', 'b.txt'}, ['^' w '$'], 'match', 'once')
+# See also
+regexp
+
+@ isspace, isletter, isstrprop
+Which characters are white space, letters, or of another category.
+
+`isstrprop(s, category)` tests for `'alpha'`, `'digit'`, `'alphanum'`, `'upper'`, `'lower'`, `'wspace'`, `'punct'`, `'cntrl'` or `'xdigit'`, a result for each character.
+
+# Syntax
+tf = isspace(s)
+    White space.
+tf = isletter(s)
+    Letters.
+tf = isstrprop(s, category)
+    A category.
+# Examples
+## The characters of a short text
+s = 'Ab 3!';
+isspace(s)
+isletter(s)
+isstrprop(s, 'digit')
+isstrprop(s, 'punct')
+# See also
+upper lower
+
+@ istext, isStringScalar
+Whether a value is text: a character array or a string array; and whether it is a single string.
+
+# Syntax
+tf = istext(x)
+    A char array or a string array.
+tf = isStringScalar(x)
+    A 1-by-1 string.
+# Examples
+## Text, and not
+[istext('abc') istext("abc") istext({'abc'}) istext(5)]
+[isStringScalar("abc") isStringScalar(["a" "b"]) isStringScalar('abc')]
+# See also
+ischar isstring iscellstr
+
+@ dec2bin, bin2dec, dec2hex, hex2dec, dec2base, base2dec
+Integers in binary, hexadecimal or another base, and back.
+
+`dec2bin`, `dec2hex` and `dec2base` (bases 2 to 36) write nonnegative integers as digits, at least `n` of them when given; several numbers give rows of the same width. A negative number is written in two's complement. `bin2dec`, `hex2dec` and `base2dec` read the digits back.
+
+# Syntax
+s = dec2bin(d, n)
+    Binary digits.
+d = bin2dec(s)
+    Back.
+s = dec2hex(d, n)
+    Hexadecimal digits.
+d = hex2dec(s)
+    Back.
+s = dec2base(d, base, n)
+    In another base.
+d = base2dec(s, base)
+    Back.
+# Examples
+## The same numbers in three bases
+dec2bin([5 12], 8)
+bin2dec('1100')
+dec2hex(255)
+hex2dec('FF')
+dec2base(35, 36)
+base2dec('Z', 36)
+dec2bin(-1, 8)
+# See also
+num2hex dec2base
+
+@ num2hex, hex2num
+A double's IEEE 754 bits as 16 hexadecimal digits, and a double from them.
+
+The sign, exponent and fraction of a double, as stored; useful to see exactly which number a value is.
+
+# Syntax
+s = num2hex(x)
+    The bits.
+x = hex2num(s)
+    The number.
+# Examples
+## One, and the double nearest 0.1
+num2hex(1)
+num2hex(0.1)
+hex2num('3ff0000000000000')
+# See also
+dec2hex eps
+
+@ newline
+The line feed character, char(10).
+
+# Syntax
+c = newline
+    A newline.
+# Examples
+## Lines joined into one text
+s = ['first' newline 'second'];
+disp(s)
+double(newline)
+# See also
+splitlines sprintf
+
+@ sscanf
+Formatted data read from text.
+
+The format is applied again and again until the text is used up or does not match: `%d` and `%f` numbers, `%s` a word (as its character codes in a numeric result), literal text to match. The numbers come as a column unless `sizeA` gives a shape; `count` is how many were read.
+
+# Syntax
+A = sscanf(s, format)
+    The values.
+A = sscanf(s, format, sizeA)
+    Shaped.
+[A, count, errmsg, nextindex] = sscanf(...)
+    With how many, any error, and where reading stopped.
+# Examples
+## Numbers out of a line of text
+sscanf('3 4 5', '%d')'
+sscanf('x=1.5 y=2.5', 'x=%f y=%f')'
+[A, n] = sscanf('1,2,3,4', '%d,', [2 2])
+# See also
+str2double textscan sprintf
+
+@ validatestring
+The valid text that a text abbreviates, or an error.
+
+Matches ignore case and may be the start of a valid text; when the text starts more than one valid text that are not prefixes of one another, or none, it is an error. Made for checking options given to a function.
+
+# Syntax
+s = validatestring(str, validStrings)
+    The matching text.
+# Examples
+## An option given short
+opts = {'linear', 'nearest', 'cubic'};
+validatestring('cub', opts)
+validatestring('NEAR', opts)
+try, validatestring('spline', opts); catch e, disp(e.message), end
+# See also
+inputParser
+
+@ convertCharsToStrings, convertStringsToChars
+Inputs converted between character vectors and strings; anything else passed through.
+
+For functions that take either kind of text: convert once at the start, work with one kind, and give the other back if wanted. Cells of character vectors become string arrays and string arrays become cells of character vectors.
+
+# Syntax
+[a, b, ...] = convertCharsToStrings(a, b, ...)
+    Character vectors as strings.
+[a, b, ...] = convertStringsToChars(a, b, ...)
+    Strings as character vectors.
+# Examples
+## Mixed inputs made one kind
+[a, b, c] = convertCharsToStrings('abc', {'x', 'y'}, 5)
+convertStringsToChars("abc")
+# See also
+string char cellstr
+
+@ matlab.net.base64encode, matlab.net.base64decode
+Bytes as Base64 text, and back.
+
+Base64 writes bytes with 64 printable characters, four for every three bytes, so binary data can travel as text. Text is encoded as UTF-8 first; decoding gives a uint8 row.
+
+# Syntax
+b64 = matlab.net.base64encode(V)
+    Base64 text.
+V = matlab.net.base64decode(b64)
+    The bytes.
+# Examples
+## Text there and back
+b = matlab.net.base64encode('hello')
+v = matlab.net.base64decode(b)
+char(v)
+# See also
+unicode2native
+
+@ unicode2native, native2unicode
+Text as the bytes of an encoding, and bytes as text.
+
+UTF-8 unless an encoding is named (`'ISO-8859-1'`, `'windows-1252'`, `'UTF-16'`, ...). A character the encoding lacks becomes `?`; bytes that do not decode become U+FFFD.
+
+# Syntax
+bytes = unicode2native(str, encoding)
+    The bytes, a uint8 row.
+str = native2unicode(bytes, encoding)
+    The text.
+# Examples
+## The same letter in two encodings
+unicode2native('ä')
+unicode2native('ä', 'ISO-8859-1')
+native2unicode(uint8([195 164]))
+# See also
+matlab.net.base64encode double
+
+@ textwrap
+Text wrapped to a width.
+
+Each paragraph (a cell element, a string, or a line) is broken at spaces into lines of at most `columns` characters (a longer word gets a line of its own), as a column cell array. With a uicontrol, the width comes from the control.
+
+# Syntax
+outstring = textwrap(instring, columns)
+    Wrapped to `columns` characters.
+[outstring, position] = textwrap(h, instring)
+    For a uicontrol.
+# Examples
+## A sentence in lines of 20
+c = textwrap({'The quick brown fox jumps over the lazy dog.'}, 20)
+# See also
+strsplit splitlines

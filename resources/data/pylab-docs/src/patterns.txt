@@ -1,0 +1,124 @@
+@ pattern, digitsPattern, lettersPattern, alphanumericsPattern, whitespacePattern, wildcardPattern, characterListPattern
+Patterns of text, built from parts: what the text functions search for, as readable pieces instead of a regular expression.
+
+A pattern is text to match, or one of the character patterns: digits, letters, letters and digits, white space, any characters, or one of a list of characters. With a count `n`, exactly that many; with `min` and `max`, between them; otherwise as many as there are (wildcards as few as will do). Patterns join with `+` (one after the other) and give alternatives with `|`. `contains`, `startsWith`, `endsWith`, `matches`, `count`, `strfind`, `replace`, `erase`, `split`, `extract`, `extractBefore`, `extractAfter`, `extractBetween`, `insertBefore` and `insertAfter` take them.
+
+# Syntax
+pat = pattern(text)
+    Text as a pattern; `p1 + p2` matches one after the other, `p1 | p2` either.
+pat = digitsPattern(n)
+    Digits (also `lettersPattern`, `alphanumericsPattern`, `whitespacePattern`).
+pat = digitsPattern(min, max)
+    Between `min` and `max` of them.
+pat = wildcardPattern(..., 'Except', chars)
+    Any characters but some.
+pat = characterListPattern(chars)
+    One of a list of characters.
+pat = characterListPattern(startChar, endChar)
+    One of a range.
+# Examples
+## Numbers, words and codes taken out of text
+s = "Order 12 shipped to room B-204 on 5 Nov";
+extract(s, digitsPattern)
+extract(s, lettersPattern(4, Inf))
+extract(s, characterListPattern("A", "Z") + "-" + digitsPattern(3))
+contains(["a1", "bb", "c22"], digitsPattern)
+## Wildcards, and alternatives
+extract("<b>one</b> and <b>two</b>", "<b>" + wildcardPattern + "</b>")
+replace("cat, dog, cow", "cat" | "cow", "animal")
+extract("key=value; name=pylab", lettersPattern + "=" + lettersPattern)
+extract("f(x), g(y, z)", "(" + wildcardPattern('Except', "()") + ")")
+# See also
+extract regexp optionalPattern letterBoundary
+
+@ optionalPattern, asManyOfPattern, asFewOfPattern
+Patterns repeated: once or not at all, as many times as possible, or as few as will do.
+
+`optionalPattern(p)` matches p or nothing; `asManyOfPattern(p, min, max)` repeats p as many times as it can (between min and max when given); `asFewOfPattern(p, min, max)` as few times as lets the rest match.
+
+# Syntax
+pat = optionalPattern(p)
+    `p` or nothing.
+pat = asManyOfPattern(p)
+    Greedy repetition.
+pat = asManyOfPattern(p, min, max)
+    Between `min` and `max` times.
+pat = asFewOfPattern(p, min, max)
+    Lazy repetition.
+# Examples
+## Signs, repeats, and the shortest match
+num = optionalPattern("-") + digitsPattern;
+extract("5, -12 and 7", num)
+extract("aaab", asManyOfPattern("a", 1, 2))
+extract("[1][2]", "[" + asFewOfPattern(wildcardPattern(1), 1, 5) + "]")
+# See also
+pattern wildcardPattern
+
+@ letterBoundary, digitBoundary, alphanumericBoundary, whitespaceBoundary, lineBoundary, textBoundary, lookAheadBoundary, lookBehindBoundary
+Boundaries: places in text that patterns match without taking any characters.
+
+Where letters, digits, letters and digits, or white space start, end, or either (`type` `'start'`, `'end'` or `'either'`, the default); the start or end of a line or of the whole text; and where a pattern comes next (`lookAheadBoundary`) or just before (`lookBehindBoundary`, of a fixed length). They anchor a pattern without becoming part of the match.
+
+# Syntax
+pat = letterBoundary(type)
+    Where letters start or end (also `digitBoundary`, `alphanumericBoundary`, `whitespaceBoundary`).
+pat = lineBoundary(type)
+    The start or end of a line.
+pat = textBoundary(type)
+    The start or end of the text.
+pat = lookAheadBoundary(p)
+    Where `p` comes next.
+pat = lookBehindBoundary(p)
+    Where `p` comes just before.
+# Examples
+## Whole words, line starts, and what comes before a unit
+s = "cat category scat";
+count(s, "cat")
+count(s, letterBoundary + "cat" + letterBoundary)
+lines = "a: 1" + newline + "b: 2";
+extract(lines, lineBoundary('start') + lettersPattern)
+extract("5 kg, 12 m, 7 kg", digitsPattern + lookAheadBoundary(" kg"))
+extract("$12 and €30", lookBehindBoundary("€") + digitsPattern)
+# See also
+pattern regexp
+
+@ regexpPattern, caseInsensitivePattern, caseSensitivePattern, namedPattern
+Patterns from a regular expression, patterns matched whatever the case, and patterns with a name.
+
+`regexpPattern(expr)` makes a pattern of a regular expression, to combine with others. `caseInsensitivePattern(p)` matches p in any case (and `caseSensitivePattern` only in its own). `namedPattern(p, name)` gives a pattern a name it is shown by.
+
+# Syntax
+pat = regexpPattern(expr)
+    A regular expression.
+pat = caseInsensitivePattern(p)
+    Any case.
+pat = caseSensitivePattern(p)
+    Its own case.
+pat = namedPattern(p, name)
+    With a name.
+# Examples
+## A date by regular expression, and words in any case
+date = regexpPattern('\d{4}-\d{2}-\d{2}');
+extract("from 2026-11-05 to 2026-12-24", date)
+count("Error, ERROR, error", caseInsensitivePattern("error"))
+p = namedPattern(digitsPattern, "number")
+# See also
+regexp pattern
+
+@ extract
+The parts of text that match a pattern, or characters by position.
+
+For one text, a column of the matches; for several texts, an array when each has one match, else a cell array. A number takes the character at that position.
+
+# Syntax
+newStr = extract(str, pat)
+    The matches.
+newStr = extract(str, pos)
+    Characters by position.
+# Examples
+## Matches and positions
+extract("a1b22c333", digitsPattern)
+extract(["x=1", "y=22"], digitsPattern)
+extract("hello", [1 5])
+# See also
+pattern extractBetween regexp
