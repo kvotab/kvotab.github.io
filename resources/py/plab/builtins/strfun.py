@@ -1209,6 +1209,16 @@ def compose(nargout, *args):
     fmt = py_str(args[0])
     if len(args) == 1:
         return Str.of(unescape(fmt))
+    if len(args) == 2 and type(args[1]) not in (Str, Cell, Char):
+        # one array, more columns than the format has operators: a string for each group of columns, row by row
+        A = arr(args[1])
+        A = A.reshape(1, -1) if A.ndim < 2 else A
+        k = len(re.findall(r'%[-+ #0]*(?:\d+|\*)?(?:\.\d+)?[a-zA-Z]', fmt.replace('%%', '')))
+        if k >= 1 and A.ndim == 2 and A.shape[1] > k and A.shape[1] % k == 0:
+            m, c = A.shape[0], A.shape[1] // k
+            # listed column by column, as the array is filled
+            res = [_sprintf(fmt, [A[i, j * k:(j + 1) * k].reshape(1, -1)]) for j in range(c) for i in range(m)]
+            return Str.from_list(res, (m, c))
     # one string per row of the arguments
     cols = [arr(a) if type(a) not in (Str, Cell) else a for a in args[1:]]
     n = max((c.shape[0] if type(c) is np.ndarray else numel(c)) for c in cols)

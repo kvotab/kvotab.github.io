@@ -33,7 +33,8 @@ its page. Each example runs in a fresh workspace (no variables, no figures,
 `rng default`, `format short`) in a folder of its own; what it prints and
 the figures it leaves are stored beside its code, the figures as the page
 draws them (in single precision where that changes no value by more than
-1e-5 of its array's range). The examples' outputs are never typed by hand.
+1e-5 of its array's range, values below 1e-7 of the range stored as 0 so that
+rounding noise never changes a page). The examples' outputs are never typed by hand.
 """
 import asyncio
 import itertools
@@ -262,6 +263,10 @@ def _single(o):
         span = float(np.max(a[fin]) - np.min(a[fin])) or float(np.max(np.abs(a[fin]))) or 1.0
         if np.max(np.abs(s[fin].astype('<f8') - a[fin])) > 1e-5 * span:
             return o
+        # values far below the range's size (rounding noise about a zero, as 1e-14 dB at a filter's passband) stored as 0:
+        # drawn the same, and the same whatever the noise was this time
+        s = s.copy()
+        s[fin & (np.abs(a) < 1e-7 * span)] = 0
     return {'$': base64.b64encode(s.tobytes()).decode('ascii'), 'shape': o['shape'], 'dt': 'f4'}
 
 

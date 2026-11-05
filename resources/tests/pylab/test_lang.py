@@ -538,6 +538,10 @@ case('text files', "fid = fopen('t.txt', 'w'); fprintf(fid, '%d %d\\n', [1 2; 3 
      want={'A': [[1, 3], [2, 4]], 't': '1 3\n2 4\n'})
 case('fgetl loop', "fid = fopen('t2.txt', 'w'); fprintf(fid, 'a\\nbb\\n'); fclose(fid); fid = fopen('t2.txt'); n = 0; while true, l = fgetl(fid); if ~ischar(l), break; end; n = n + numel(l); end; fclose(fid);",
      want={'n': 3})
+case('compose: a string for each row, and for each group of columns when there are more columns than operators',
+     "a = compose(\"%.1e\", [4e-12 1.7e-9]); b = compose(\"%d-%d\", [1 2 3 4; 5 6 7 8]); c = compose(\"%.2f\", [pi; exp(1)]); d = compose(\"%d and %d\", [1 2]); "
+     "sa = size(a); sb = size(b); a2 = char(a(2)); b12 = char(b(1, 2)); b21 = char(b(2, 1)); sc = size(c); dd = char(d);",
+     want={'sa': [[1, 2]], 'a2': '1.7e-09', 'sb': [[2, 2]], 'b12': '3-4', 'b21': '5-6', 'sc': [[2, 1]], 'dd': '1 and 2'})
 case('sscanf', "a = sscanf('3 4 5', '%d')'; b = sscanf('1.5,2.5', '%f,%f')';", want={'a': [[3, 4, 5]], 'b': [[1.5, 2.5]]})
 case('dir and fileparts', "[p, n, e] = fileparts('/a/b/c.txt'); f = fullfile('a', 'b', 'c.m');", want={'p': '/a/b', 'n': 'c', 'e': '.txt', 'f': 'a/b/c.m'})
 case('a point with no precision writes no decimals', "s = sprintf('[%.f|%5.f|%.f|%.s]', 2.6, 3.5, -0.4, 'abc');", want={'s': '[3|    4|-0|]'})

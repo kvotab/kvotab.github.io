@@ -229,6 +229,11 @@ C('a protected array refuses a new category', 'categor' in err_of("p = categoric
   err_of("p = categorical({'a'}, {'a', 'b'}, 'Protected', true); p(2) = 'z';"))
 C('< needs an ordinal array', err_of("c = categorical({'a', 'b'}); t = c(1) < c(2);") != 'none', err_of("c = categorical({'a', 'b'}); t = c(1) < c(2);"))
 
+W, _ = run("g = categorical([\"apple\"; \"pear\"; \"apple\"]); g(1) = \"pear\"; g([2 3]) = \"plum\"; gk = categories(g); gc = cellstr(g); "
+           "dt = datetime(2026, 1, [1 2]); dt(2) = \"2026-03-04\"; ds = char(dt(2));")
+same('a string assigned into a categorical array (a category, a new one) or a datetime array: taken as theirs, not made a string array',
+     ([text(v) for v in W['gk'].items()], [text(v) for v in W['gc'].items()], text(W['ds'])), (['apple', 'pear', 'plum'], ['pear', 'plum', 'plum'], '04-Mar-2026'))
+
 # ---- table: making, indexing, assigning ------------------------------------------------------------
 W, o = run("""Name = {'Ann'; 'Bo'; 'Cy'}; Age = [38; 43; 38]; Ok = [true; false; true];
 T = table(Name, Age, Ok);

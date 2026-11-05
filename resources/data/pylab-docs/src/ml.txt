@@ -1,0 +1,406 @@
+@ fitctree, fitrtree
+Decision trees for classification and regression.
+
+A tree splits the data again and again on one predictor at a time, each split where the impurity falls most: the Gini index (or the deviance) for classes, the squared error for numbers. Splitting stops at `'MaxNumSplits'`, or when a node has fewer than `'MinParentSize'` observations or a child would have fewer than `'MinLeafSize'`. A classification leaf predicts its most frequent class, a regression leaf its mean. Every model of this family keeps its data and takes `predict`, `loss`, `resubLoss`, `resubPredict` and `crossval`; `view` prints a tree's rules. The fit functions also take `'ClassNames'`, `'Prior'`, `'Weights'`, predictor and response names, and the cross-validation options, which give a cross-validated model.
+
+# Syntax
+Mdl = fitctree(X, Y, 'MaxNumSplits', n, 'MinLeafSize', m, 'SplitCriterion', c)
+    A classification tree.
+Mdl = fitctree(Tbl, ResponseVarName)
+    From a table.
+Mdl = fitrtree(X, Y, 'MinLeafSize', m)
+    A regression tree.
+# Examples
+## Two classes divided by a step
+X = rand(200, 2);
+Y = categorical(X(:, 1) > 0.6 & X(:, 2) > 0.3, [false true], {'out', 'in'});
+t = fitctree(X, Y, 'MaxNumSplits', 3);
+view(t)
+predict(t, [0.8 0.5; 0.2 0.9])
+resubLoss(t)
+## A curve by steps
+x = linspace(0, 2*pi, 200)';
+y = sin(x) + 0.1*randn(200, 1);
+r = fitrtree(x, y, 'MinLeafSize', 15);
+plot(x, y, '.', x, predict(r, x), 'LineWidth', 1.5)
+round(resubLoss(r), 4)
+# See also
+view fitcensemble predict
+
+@ fitcknn
+A k-nearest-neighbour classifier.
+
+A point is given the class most common among its k nearest training points (1 unless `'NumNeighbors'` says), by a distance (Euclidean unless named), the votes weighted equally or by inverse distance; the score of each class is its share. With `'Standardize'` the predictors are put on one scale first.
+
+# Syntax
+Mdl = fitcknn(X, Y)
+    The nearest point decides.
+Mdl = fitcknn(X, Y, 'NumNeighbors', k, 'Distance', d, 'DistanceWeight', w, 'Standardize', tf)
+    k neighbours, weighted.
+# Examples
+## Five neighbours vote
+X = [randn(50, 2); randn(50, 2) + 2.5];
+Y = [ones(50, 1); 2*ones(50, 1)];
+m = fitcknn(X, Y, 'NumNeighbors', 5);
+[label, score] = predict(m, [0 0; 1.25 1.25; 3 3])
+# See also
+knnsearch fitcdiscr
+
+@ fitcdiscr, fitcnb
+Discriminant analysis and naive Bayes: classes as probability distributions.
+
+`fitcdiscr` takes each class as a multivariate normal distribution: with one covariance pooled over the classes (`'linear'`, straight boundaries) or each its own (`'quadratic'`, curved ones), or their diagonals, or pseudo-inverses when singular; the score is the posterior probability. `fitcnb` takes each predictor as independent within a class: normal (unless named), a kernel density, or frequencies of values or counts.
+
+# Syntax
+Mdl = fitcdiscr(X, Y, 'DiscrimType', type)
+    Discriminant analysis.
+Mdl = fitcnb(X, Y, 'DistributionNames', names)
+    Naive Bayes.
+# Examples
+## Linear and quadratic boundaries
+X = [mvnrnd([0 0], [1 0; 0 1], 100); mvnrnd([2 2], [3 1; 1 0.5], 100)];
+Y = [ones(100, 1); 2*ones(100, 1)];
+lin = fitcdiscr(X, Y);
+quad = fitcdiscr(X, Y, 'DiscrimType', 'quadratic');
+nb = fitcnb(X, Y);
+round([resubLoss(lin), resubLoss(quad), resubLoss(nb)], 3)
+round(lin.Mu, 2)
+[x1, x2] = meshgrid(linspace(-3, 7, 150), linspace(-3, 5, 120));
+g = predict(quad, [x1(:) x2(:)]);
+contour(x1, x2, reshape(g, size(x1)), [1.5 1.5], 'k'), hold on, gscatter(X(:, 1), X(:, 2), Y), hold off
+# See also
+fitcknn mvnpdf
+
+@ fitcsvm, fitrsvm
+Support vector machines: a widest margin between two classes, and regression within a tube.
+
+`fitcsvm` finds the boundary with the widest margin between two classes, allowing misclassified points at a cost (`'BoxConstraint'`), in the space of a kernel: linear, Gaussian (`'rbf'`) or polynomial, scaled by `'KernelScale'` (`'auto'` picks one). Its score is the signed distance from the boundary. `fitrsvm` fits a function that keeps the data within epsilon of it where it can. Standardizing the predictors usually helps.
+
+# Syntax
+Mdl = fitcsvm(X, Y, 'KernelFunction', k, 'BoxConstraint', C, 'KernelScale', s, 'Standardize', tf)
+    A classifier.
+Mdl = fitrsvm(X, Y, 'KernelFunction', k, 'Epsilon', e, 'Standardize', tf)
+    Regression.
+# Examples
+## A ring around a core
+t = 2*pi*rand(150, 1);
+X = [0.5*randn(150, 2); [2.5*cos(t), 2.5*sin(t)] + 0.3*randn(150, 2)];
+Y = [-ones(150, 1); ones(150, 1)];
+m = fitcsvm(X, Y, 'KernelFunction', 'gaussian', 'KernelScale', 'auto', 'Standardize', true);
+resubLoss(m)
+predict(m, [0 0; 2.5 0])
+[x1, x2] = meshgrid(linspace(-4, 4, 100));
+[~, s] = predict(m, [x1(:) x2(:)]);
+contour(x1, x2, reshape(s(:, 2), size(x1)), [0 0], 'k', 'LineWidth', 1.5), hold on, gscatter(X(:, 1), X(:, 2), Y), hold off
+## A noisy line fitted within a tube
+x = (1:50)';
+y = 2*x + 5 + 3*randn(50, 1);
+r = fitrsvm(x, y, 'KernelFunction', 'linear');
+round(predict(r, [10; 40])')
+# See also
+fitcecoc fitclinear
+
+@ fitcecoc, templateTree, templateSVM, templateKNN, templateDiscriminant, templateNaiveBayes, templateLinear, templateKernel, templateGP
+Many classes by binary learners, and the templates that set the learners' options.
+
+`fitcecoc` turns a problem of many classes into binary ones by a coding: one class against another for each pair (`'onevsone'`, the default) or each against all the rest; each binary learner is an SVM unless named (`'tree'`, `'knn'`, `'discriminant'`, `'naivebayes'`, `'linear'`) or given as a template. A class's score is minus the mean loss of the learners over it. The templates hold a learner's options for `fitcecoc` and the ensembles: `templateTree`, `templateSVM`, `templateKNN`, `templateDiscriminant`, `templateNaiveBayes`, `templateLinear`, `templateKernel` and `templateGP`.
+
+# Syntax
+Mdl = fitcecoc(X, Y, 'Learners', t, 'Coding', c)
+    Many classes.
+t = templateSVM('KernelFunction', k, ...)
+    An SVM's options.
+t = templateTree('MaxNumSplits', n, ...)
+    A tree's.
+t = templateKNN('NumNeighbors', k)
+    k-nearest neighbours'.
+t = templateDiscriminant('DiscrimType', type)
+    Discriminant analysis'.
+t = templateNaiveBayes(...)
+    Naive Bayes'.
+t = templateLinear('Learner', l, 'Lambda', lambda)
+    A linear learner's.
+t = templateKernel('KernelScale', s)
+    A kernel learner's.
+t = templateGP('KernelFunction', k)
+    A Gaussian process's.
+# Examples
+## Four classes, two kinds of learner
+c = [0 0; 3 0; 0 3; 3 3];
+X = [randn(40, 2) + c(1, :); randn(40, 2) + c(2, :); randn(40, 2) + c(3, :); randn(40, 2) + c(4, :)];
+Y = repelem((1:4)', 40);
+m1 = fitcecoc(X, Y);
+m2 = fitcecoc(X, Y, 'Learners', templateTree('MaxNumSplits', 4), 'Coding', 'onevsall');
+size(m1.CodingMatrix), size(m2.CodingMatrix)
+predict(m1, c)'
+round([resubLoss(m1), resubLoss(m2)], 3)
+# See also
+fitcsvm fitcensemble
+
+@ fitcensemble, fitrensemble, TreeBagger, oobLoss, oobPredict
+Ensembles of trees: boosted and bagged.
+
+Many small trees together predict better than one. Boosting (`'AdaBoostM1'` for two classes, `'AdaBoostM2'` for more, `'GentleBoost'`, `'LogitBoost'`, `'LSBoost'` for regression) grows each tree on what the earlier ones got wrong; bagging (`'Bag'`, a random forest) grows full trees on bootstrap samples, a random few predictors tried at each split, and averages them. A bagged ensemble's out-of-bag loss (`oobLoss`) and predictions (`oobPredict`) use, for each observation, only the trees that did not see it: an honest estimate without a test set. `TreeBagger` is the older way to bag.
+
+# Syntax
+Mdl = fitcensemble(X, Y, 'Method', m, 'NumLearningCycles', n, 'Learners', t)
+    Classification.
+Mdl = fitrensemble(X, Y, 'Method', m, 'NumLearningCycles', n)
+    Regression.
+B = TreeBagger(n, X, Y, 'Method', 'classification')
+    Bagged trees.
+L = oobLoss(Mdl)
+    The out-of-bag loss.
+[label, score] = oobPredict(Mdl)
+    The out-of-bag predictions.
+# Examples
+## A forest's honest error, and boosting's training error
+X = rand(300, 4);
+Y = categorical(X(:, 1) + X(:, 2).^2 + 0.2*randn(300, 1) > 0.9);
+bag = fitcensemble(X, Y, 'Method', 'Bag', 'NumLearningCycles', 60);
+round(oobLoss(bag), 3)
+boost = fitcensemble(X, Y, 'Method', 'AdaBoostM1', 'NumLearningCycles', 60);
+round(resubLoss(boost), 3)
+r = fitrensemble(X, X(:, 1).^2 + X(:, 3), 'Method', 'LSBoost', 'NumLearningCycles', 80);
+round(resubLoss(r), 4)
+# See also
+fitctree crossval
+
+@ fitclinear, fitrlinear, fitckernel, fitrkernel
+Regularized linear models, and Gaussian-kernel models by random features, for large data.
+
+`fitclinear` fits a linear SVM or logistic regression for two classes, `fitrlinear` a linear epsilon-insensitive SVM or least squares, each with a ridge or lasso penalty Lambda (1/n unless given). `fitckernel` and `fitrkernel` first map the predictors to random Fourier features of a Gaussian kernel, then fit a linear model there: nearly a kernel SVM, at a linear model's cost.
+
+# Syntax
+Mdl = fitclinear(X, Y, 'Learner', l, 'Lambda', lambda, 'Regularization', r)
+    A linear classifier.
+Mdl = fitrlinear(X, Y, 'Learner', l, 'Lambda', lambda)
+    Linear regression.
+Mdl = fitckernel(X, Y, 'NumExpansionDimensions', m, 'KernelScale', s)
+    A kernel classifier.
+Mdl = fitrkernel(X, Y, 'KernelScale', s)
+    Kernel regression.
+# Examples
+## Sparse coefficients by the lasso
+X = randn(500, 20);
+Y = X(:, 3) - 2*X(:, 7) + 0.3*randn(500, 1) > 0;
+m = fitclinear(X, Y, 'Learner', 'logistic', 'Regularization', 'lasso', 'Lambda', 0.01);
+nnz(m.Beta)
+round(m.Beta([3 7])', 1)
+round(resubLoss(m), 3)
+k = fitckernel(X(:, 1:2), sum(X(:, 1:2).^2, 2) > 1.5);
+round(resubLoss(k), 3)
+# See also
+lasso fitcsvm
+
+@ fitcnet, fitrnet
+Feedforward neural networks for classification and regression.
+
+Fully connected layers (one of 10 unless `'LayerSizes'` says), each with an activation (`'relu'` unless named, `'tanh'`, `'sigmoid'` or none), then a softmax for classes or a linear output for numbers; the weights minimize the cross-entropy (or half the mean squared error) plus a ridge penalty, by L-BFGS from random starting weights.
+
+# Syntax
+Mdl = fitcnet(X, Y, 'LayerSizes', sizes, 'Activations', a, 'Lambda', l)
+    A classifier.
+Mdl = fitrnet(X, Y, 'LayerSizes', sizes, 'Standardize', tf)
+    Regression.
+# Examples
+## A spiral of two classes, and a smooth curve
+t = linspace(0, 3*pi, 150)';
+X = [t.*cos(t), t.*sin(t); -t.*cos(t), -t.*sin(t)]/5 + 0.05*randn(300, 2);
+Y = [ones(150, 1); 2*ones(150, 1)];
+net = fitcnet(X, Y, 'LayerSizes', [20 20]);
+round(resubLoss(net), 3)
+x = linspace(-3, 3, 100)';
+r = fitrnet(x, sin(2*x) + 0.05*randn(100, 1), 'LayerSizes', 20, 'Activations', 'tanh');
+plot(x, sin(2*x), x, predict(r, x), '--'), legend('true', 'network')
+# See also
+fitcsvm fitrgp
+
+@ fitrgp
+Gaussian process regression: a smooth function with error bars.
+
+The function is a Gaussian process with a kernel (squared exponential unless named: exponential, Matérn 3/2 or 5/2, rational quadratic, or with a length scale for each predictor), its length scale, signal and noise fitted by the marginal likelihood. `predict` gives the mean, the standard deviation and the interval of new observations, noise included.
+
+# Syntax
+Mdl = fitrgp(X, Y)
+    Fitted.
+Mdl = fitrgp(X, Y, 'KernelFunction', k, 'BasisFunction', b, 'Sigma', s)
+    With a kernel, a basis and a noise level.
+# Examples
+## Seven points and what lies between
+x = [0 1 2 3.5 4 5.5 6]';
+y = sin(x);
+gp = fitrgp(x, y, 'KernelFunction', 'squaredexponential');
+xn = linspace(0, 7, 200)';
+[m, s, int] = predict(gp, xn);
+plot(xn, m, x, y, 'o', xn, int, 'k:'), legend('mean', 'data', '95% interval')
+round(predict(gp, [1; 4.75])', 2)
+# See also
+fitrnet fitrsvm
+
+@ loss, resubLoss, resubPredict, compact
+A model's loss on data, on its own data, its own predictions, and a compact model.
+
+`loss` gives a model's loss on data: for classes the weighted share misclassified unless `'LossFun'` names another (the hinge, logit, exponential, binomial deviance, quadratic, minimum cost or cross-entropy loss), for numbers the mean squared error. `resubLoss` and `resubPredict` use the data the model was fitted to, which flatters it. `compact` gives a model for predicting only (here the model itself).
+
+# Syntax
+L = loss(Mdl, X, Y, 'LossFun', f)
+    On data.
+L = resubLoss(Mdl, 'LossFun', f)
+    On its own data.
+[label, score] = resubPredict(Mdl)
+    Its own predictions.
+CMdl = compact(Mdl)
+    For predicting.
+# Examples
+## Training error and test error
+X = randn(400, 2);
+Y = double(X(:, 1).*X(:, 2) + 0.5*randn(400, 1) > 0);
+tr = 1:200; te = 201:400;
+deep = fitctree(X(tr, :), Y(tr));
+shallow = fitctree(X(tr, :), Y(tr), 'MaxNumSplits', 4);
+round([resubLoss(deep), loss(deep, X(te, :), Y(te)); resubLoss(shallow), loss(shallow, X(te, :), Y(te))], 3)
+[lab, sc] = resubPredict(shallow);
+size(sc)
+# See also
+crossval predict
+
+@ crossval, kfoldLoss, kfoldPredict
+Cross-validation: a model judged on data it was not fitted to.
+
+`crossval` fits the model again on each training set of a partition (10 folds unless `'KFold'`, `'Holdout'`, `'Leaveout'` or a `cvpartition` says) and gives a cross-validated model; `kfoldLoss` gives the loss of each fold's model on the observations it left out (their average, or each), and `kfoldPredict` each observation's prediction by the model that did not see it. Given a function instead, `crossval` gives its values for each fold, or the cross-validated mean squared error or misclassification rate of a prediction function.
+
+# Syntax
+CVMdl = crossval(Mdl, 'KFold', k)
+    A cross-validated model.
+L = kfoldLoss(CVMdl, 'Mode', m)
+    The loss.
+[label, score] = kfoldPredict(CVMdl)
+    The predictions.
+vals = crossval(fun, X, Y, 'KFold', k)
+    A function's values for each fold.
+mse = crossval('mse', X, y, 'Predfun', predfun)
+    A prediction's error.
+# Examples
+## The size of tree that generalizes
+X = randn(300, 2);
+Y = double(X(:, 1).*X(:, 2) + 0.5*randn(300, 1) > 0);
+splits = [1 4 16 64];
+cvl = zeros(size(splits));
+for k = 1:4
+    cvl(k) = kfoldLoss(crossval(fitctree(X, Y, 'MaxNumSplits', splits(k)), 'KFold', 5));
+end
+round(cvl, 3)
+## A prediction function's error
+x = linspace(0, 1, 60)';
+y = 3*x + 0.2*randn(60, 1);
+predfun = @(xtr, ytr, xte) [ones(size(xte)) xte]*([ones(size(xtr)) xtr]\ytr);
+round(crossval('mse', x, y, 'Predfun', predfun), 3)
+# See also
+cvpartition loss
+
+@ cvpartition, training, test, repartition
+Partitions of observations into training and test sets.
+
+`cvpartition` divides n observations at random into k folds, a holdout set of a share p, one at a time (`'Leaveout'`), or not at all (`'Resubstitution'`); given a grouping instead of n, each set keeps the groups' proportions (stratified). `training` and `test` give logical columns for set i; `repartition` draws a new partition of the same kind.
+
+# Syntax
+c = cvpartition(n, 'KFold', k)
+    k folds.
+c = cvpartition(group, 'HoldOut', p)
+    A stratified holdout.
+idx = training(c, i)
+    The training set.
+idx = test(c, i)
+    The test set.
+cnew = repartition(c)
+    Drawn again.
+# Examples
+## Folds, and a holdout that keeps the classes' shares
+c = cvpartition(20, 'KFold', 4);
+c.TestSize
+find(test(c, 1))'
+g = [ones(30, 1); 2*ones(10, 1)];
+h = cvpartition(g, 'HoldOut', 0.25);
+accumarray(g(test(h)), 1)'
+c2 = repartition(c);
+isequal(test(c, 1), test(c2, 1))
+# See also
+crossval
+
+@ confusionmat, confusionchart
+The confusion matrix of known and predicted classes, and its chart.
+
+C(i, j) counts the observations of class i predicted as class j, the classes sorted (or in a given order). `confusionchart` draws it, the diagonal (right) in blue and the rest (wrong) in red, shaded by count, normalized by rows, columns or the total if asked, with the share right for each row and column in summaries.
+
+# Syntax
+[C, order] = confusionmat(group, grouphat, 'Order', order)
+    The matrix.
+cm = confusionchart(trueLabels, predictedLabels, 'RowSummary', r, 'ColumnSummary', c)
+    Drawn.
+cm = confusionchart(C, classLabels)
+    From a matrix.
+# Examples
+## Three kinds of fruit sorted by a machine
+truth = categorical([repmat("apple", 20, 1); repmat("pear", 15, 1); repmat("plum", 10, 1)]);
+guess = truth;
+guess([3 7 22]) = "pear"; guess(30) = "apple"; guess([40 41]) = "pear";
+[C, order] = confusionmat(truth, guess)
+confusionchart(truth, guess, 'RowSummary', 'row-normalized', 'Title', 'Sorting');
+# See also
+perfcurve crosstab
+
+@ perfcurve
+A classifier's performance as its threshold moves: the ROC curve and others.
+
+For each threshold (the distinct scores, from the highest), the observations scored at least that high are called positive: the false and true positive rates by default, or other criteria (`'XCrit'`, `'YCrit'`: precision, recall, specificity, accuracy and the like). AUC is the area under the curve, 1 for a perfect classifier and 0.5 for a guess; OPTROCPT the best operating point.
+
+# Syntax
+[X, Y] = perfcurve(labels, scores, posclass)
+    The ROC curve.
+[X, Y, T, AUC, OPTROCPT] = perfcurve(labels, scores, posclass, 'XCrit', c, 'YCrit', c)
+    Other criteria, with the thresholds, area and best point.
+# Examples
+## Two scores of one test
+y = [zeros(100, 1); ones(100, 1)];
+good = [randn(100, 1); randn(100, 1) + 2];
+poor = [randn(100, 1); randn(100, 1) + 0.5];
+[x1, y1, ~, a1] = perfcurve(y, good, 1);
+[x2, y2, ~, a2] = perfcurve(y, poor, 1);
+round([a1 a2], 2)
+plot(x1, y1, x2, y2, [0 1], [0 1], 'k:'), legend('good', 'poor', 'chance', 'Location', 'southeast'), xlabel('false positive rate'), ylabel('true positive rate')
+# See also
+rocmetrics confusionmat
+
+@ view
+The viewpoint of axes, or the rules of a decision tree.
+
+For axes: the azimuth (degrees round the z-axis, from the negative y-axis) and the elevation (degrees above the x-y plane) the scene is seen from: `view(2)` looks straight down (0 and 90), `view(3)` from the default 3-D angle (-37.5 and 30). Without inputs it gives them. For a classification or regression tree: its rules printed, node by node.
+
+# Syntax
+view(az, el)
+    Seen from an angle.
+view(2)
+    From above.
+view(3)
+    In 3-D.
+[az, el] = view
+    The angle.
+view(tree)
+    A tree's rules.
+# Examples
+## A surface from three viewpoints
+[x, y] = meshgrid(-2:0.2:2);
+z = x.*exp(-x.^2 - y.^2);
+for k = 1:3
+    subplot(1, 3, k), surf(x, y, z)
+end
+subplot(1, 3, 1), view(2), axis square
+subplot(1, 3, 2), view(3)
+subplot(1, 3, 3), view(60, 10)
+[az, el] = view
+## A small tree's rules
+t = fitrtree([1; 2; 3; 4; 5; 6], [1; 1; 1; 5; 5; 9], 'MinParentSize', 2);
+view(t)
+# See also
+camorbit rotate3d fitctree

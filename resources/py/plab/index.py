@@ -759,7 +759,8 @@ def asgn(A, args, V):
         return C
     if t is Struct:
         return _asgn_struct(A, args, V)
-    if t is Str or type(V) is Str:
+    if t is Str or (type(V) is Str and not (isinstance(A, Obj) and getattr(A, 'index_assign', None) is not None)):
+        # a string into numbers or text makes a string array; an object (categorical, datetime ...) takes it itself
         from .strings import to_str_array
         S = writable(A) if t is Str else to_str_array(A)
         Vs = to_str_array(V)

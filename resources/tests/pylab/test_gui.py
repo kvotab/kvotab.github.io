@@ -891,6 +891,10 @@ check("yyaxis: a handle taken on either side reads and sets the active side's y-
 run("yyaxis right;")
 check('... and the other side once that is active', (text("b.YLabel.String"), text("ax.YLabel.String")), ('R', 'R'))
 
+run("figure; plot(1:3, [1:3; 2:4; 3:5]'); lgA = legend('a', '', 'c'); figure; plot(1:3, [1:3; 2:4]'); lgB = legend;")
+check('legend: a name given empty stays empty (an entry without text); only unnamed lines get dataN',
+      (text("strjoin(lgA.String, '|')"), text("strjoin(lgB.String, '|')")), ('a||c', 'data1|data2'))
+
 # what is changed is drawn: charts laid out again, on/off kept as on/off, log axes with bars
 run("figure; hb = bar([1 2 3]); hold on; ha = area([1 2 3] + 5); hold off;")
 for pname, value, key, want in (('BarWidth', '0.3', 'width', 0.3), ('BaseValue', '1', 'bottom', [1.0, 1.0, 1.0]), ('YData', '[3 2 1]', 'top', [3.0, 2.0, 1.0])):

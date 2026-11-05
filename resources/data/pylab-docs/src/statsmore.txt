@@ -1,0 +1,342 @@
+@ lasso
+Lasso and elastic net regression along a path of penalties.
+
+For each penalty lambda, the coefficients that minimize half the mean squared error plus lambda times (Alpha times the sum of their absolute values, plus (1 - Alpha)/2 times the sum of their squares): Alpha 1 (the default) is the lasso, which sets some coefficients exactly to zero; less is the elastic net. Without `'Lambda'`, 100 values from the smallest that gives no predictors down by a factor of 10^4. With `'CV'` the mean squared error is cross-validated, giving the lambda of the least error and the largest within one standard error of it. The predictors are standardized for the fit unless asked not to; the coefficients come in their own units.
+
+# Syntax
+B = lasso(X, y)
+    A column of coefficients for each lambda.
+[B, FitInfo] = lasso(X, y, 'Alpha', a, 'Lambda', l, 'CV', k)
+    With the intercepts, lambdas and cross-validated errors.
+# Examples
+## Three predictors that matter among ten
+X = randn(100, 10);
+y = 3*X(:, 2) - 2*X(:, 5) + X(:, 9) + 0.5*randn(100, 1);
+[B, info] = lasso(X, y, 'CV', 5);
+b = B(:, info.Index1SE);
+find(b)'
+round(b(b ~= 0)', 2)
+semilogx(info.Lambda, B'), xlabel('\lambda'), ylabel('coefficients'), xline(info.Lambda1SE, '--')
+# See also
+fitclinear stepwiselm ridge
+
+@ stepwiselm
+A linear model built by adding and removing terms one at a time.
+
+From a starting model (a constant unless given), the term whose F-test p-value is smallest enters while it is below `'PEnter'` (0.05); when none can, the term with the largest p-value leaves if above `'PRemove'` (0.10); until neither. The terms come from `'Upper'` (interactions unless given), an interaction only when its main effects are in. Each step is shown unless `'Verbose'` is 0. The result is a linear model like `fitlm`'s.
+
+# Syntax
+mdl = stepwiselm(X, y)
+    From a constant.
+mdl = stepwiselm(X, y, modelspec, 'Upper', spec, 'PEnter', pe, 'PRemove', pr, 'Verbose', v)
+    From a model, within bounds.
+# Examples
+## Two of five predictors, and their interaction
+X = randn(120, 5);
+y = 2 + X(:, 1) - 1.5*X(:, 3) + 0.8*X(:, 1).*X(:, 3) + 0.3*randn(120, 1);
+mdl = stepwiselm(X, y, 'constant', 'Upper', 'interactions', 'Verbose', 0);
+mdl.CoefficientNames
+round(mdl.Coefficients.Estimate', 2)
+# See also
+fitlm lasso
+
+@ anovan, manova1
+Analysis of variance with several factors, and of several responses.
+
+`anovan` tests the main effects of several grouping variables (and their interactions, with `'model'` `'interaction'` or `'full'`), by type III sums of squares unless `'sstype'` says, and shows the table unless `'display'` is `'off'`. `manova1` tests whether groups differ in several responses at once: the dimension of the space their means span as far as the data show, with Wilks' lambda tests.
+
+# Syntax
+p = anovan(y, group)
+    Main effects.
+[p, tbl, stats] = anovan(y, group, 'model', m, 'varnames', names, 'display', 'off')
+    With interactions, the table and statistics.
+[d, p, stats] = manova1(X, group)
+    Several responses.
+# Examples
+## Fertilizer, water, and their interaction
+f = repmat([1 1 2 2], 1, 6)';
+w = repmat([1 2 1 2], 1, 6)';
+y = 10 + 2*(f == 2) + 1*(w == 2) + 1.5*(f == 2 & w == 2) + 0.5*randn(24, 1);
+p = anovan(y, {f, w}, 'model', 'interaction', 'varnames', {'fertilizer', 'water'}, 'display', 'off');
+compose("%.1e", p')
+## Three groups in two responses
+X = [randn(20, 2); randn(20, 2) + [1 0]; randn(20, 2) + [2 0]];
+g = repelem((1:3)', 20);
+[d, pm] = manova1(X, g)
+# See also
+anova1 anova2
+
+@ bootci
+A bootstrap confidence interval.
+
+The statistic is computed on nboot resamples of the data's rows (drawn with replacement), and the interval comes from their spread: bias-corrected and accelerated percentiles (`'bca'`, the default), plain percentiles, bias-corrected percentiles, a normal interval from the bootstrap's bias and standard error, or studentized. No distribution needs to be assumed.
+
+# Syntax
+ci = bootci(nboot, bootfun, d1, ...)
+    The interval.
+[ci, bootstat] = bootci(nboot, {bootfun, d1, ...}, 'Type', t, 'Alpha', a)
+    Of a type, with the resampled statistics.
+# Examples
+## A median's interval, and a mean's two ways
+x = exprnd(2, 60, 1);
+round(bootci(2000, @median, x)', 2)
+[ci, bs] = bootci(2000, {@mean, x}, 'Type', 'per');
+round(ci', 2)
+round(mean(x) + [-1 1]*1.96*std(x)/sqrt(60), 2)
+histogram(bs, 30), xline(ci, 'r')
+# See also
+bootstrp ttest
+
+@ ansaribradley
+The Ansari-Bradley test that two samples are equally spread.
+
+A rank test of dispersion: the samples' values are ranked from both ends towards the middle, and the test asks whether one sample's ranks lie nearer the ends than chance gives. It needs no normality, but assumes the samples share a median.
+
+# Syntax
+h = ansaribradley(x, y)
+    The test.
+[h, p, stats] = ansaribradley(x, y, 'Alpha', a, 'Tail', t)
+    With the p-value and statistics.
+# Examples
+## The same centre, different spreads
+x = randn(60, 1);
+y = 2.5*randn(60, 1);
+z = randn(60, 1);
+[h, p] = ansaribradley(x, y)
+[h2, p2] = ansaribradley(x, z)
+# See also
+vartest2 ranksum
+
+@ copularnd, copulapdf, copulacdf, copulastat, copulaparam, copulafit
+Copulas: dependence between variables, apart from their distributions.
+
+A copula is a distribution of variables each uniform on [0, 1], carrying only how they depend on each other; any marginal distributions can then be put on top by their inverse cdfs. `copularnd` draws from a Gaussian or t copula (a correlation) or a Clayton, Frank or Gumbel copula (a parameter); `copulapdf` and `copulacdf` give its density and distribution; `copulastat` the Kendall (or Spearman) rank correlation a parameter gives and `copulaparam` the parameter for a rank correlation; `copulafit` fits one to data in the unit square.
+
+# Syntax
+U = copularnd(family, rho, n)
+    Random vectors.
+y = copulapdf(family, U, param)
+    The density.
+y = copulacdf(family, U, param)
+    The distribution.
+r = copulastat(family, param, 'Type', t)
+    The rank correlation.
+param = copulaparam(family, r)
+    The parameter for one.
+param = copulafit(family, U)
+    Fitted.
+# Examples
+## Lower tails that go together
+alpha = copulaparam('Clayton', 0.5)
+U = copularnd('Clayton', alpha, 2000);
+x = expinv(U(:, 1), 1);
+y = norminv(U(:, 2), 10, 2);
+subplot(1, 2, 1), plot(U(:, 1), U(:, 2), '.', 'MarkerSize', 3), axis square, title('the copula')
+subplot(1, 2, 2), plot(x, y, '.', 'MarkerSize', 3), axis square, title('with marginals')
+round([corr(x, y, 'Type', 'Kendall'), copulastat('Clayton', alpha)], 2)
+round(copulafit('Clayton', U), 2)
+round(copulacdf('Gaussian', [0.5 0.5], 0.5), 4)
+# See also
+mvnrnd corr
+
+@ coxphfit
+Cox proportional hazards regression: how predictors scale the hazard.
+
+The hazard of each subject is a baseline hazard times exp(x b), whatever the baseline's shape: the coefficients maximize the partial likelihood, censored times counting as at risk until they leave. exp(b) is the hazard ratio for a unit change of a predictor. The outputs include the log partial likelihood, the cumulative baseline hazard and the coefficients' standard errors and p-values.
+
+# Syntax
+b = coxphfit(X, T)
+    The coefficients.
+[b, logl, H, stats] = coxphfit(X, T, 'Censoring', c, 'Ties', t, 'Baseline', x0)
+    With the likelihood, baseline hazard and statistics.
+# Examples
+## A treatment that halves the hazard
+n = 300;
+treated = rand(n, 1) < 0.5;
+T = exprnd(1./(0.2*exp(-0.7*treated)));
+c = T > 8; T(c) = 8;
+[b, ~, ~, st] = coxphfit(double(treated), T, 'Censoring', c);
+round([b, exp(b), st.p], 3)
+# See also
+ecdf
+
+@ hmmgenerate, hmmviterbi, hmmdecode, hmmestimate, hmmtrain
+Hidden Markov models: sequences generated, states decoded, and probabilities estimated.
+
+A hidden Markov model moves between states by the transition probabilities TRANS(i, j) and emits a symbol k from each state with probability EMIS(i, k); only the symbols are seen. `hmmgenerate` draws a sequence and its states; `hmmviterbi` gives the most likely state path for a sequence, `hmmdecode` each state's probability at each step; `hmmestimate` counts the probabilities from a sequence whose states are known, `hmmtrain` estimates them from the symbols alone, by Baum-Welch.
+
+# Syntax
+[seq, states] = hmmgenerate(len, TRANS, EMIS)
+    A sequence.
+states = hmmviterbi(seq, TRANS, EMIS)
+    The likeliest states.
+[PSTATES, logpseq] = hmmdecode(seq, TRANS, EMIS)
+    The states' probabilities.
+[TRANS, EMIS] = hmmestimate(seq, states)
+    Counted.
+[ESTTR, ESTEMIT] = hmmtrain(seq, TRGUESS, EMITGUESS)
+    Trained.
+# Examples
+## A fair die and a loaded one
+TRANS = [0.95 0.05; 0.10 0.90];
+EMIS = [ones(1, 6)/6; 0.1*ones(1, 5) 0.5];
+[seq, states] = hmmgenerate(500, TRANS, EMIS);
+v = hmmviterbi(seq, TRANS, EMIS);
+round(mean(v == states), 2)
+[Te, Ee] = hmmestimate(seq, states);
+round(Ee(2, :), 2)
+P = hmmdecode(seq, TRANS, EMIS);
+plot(1:500, P(2, :), 1:500, states - 1, ':'), ylim([-0.1 1.1]), legend('P(loaded)', 'true state')
+# See also
+randsample
+
+@ relieff, fscchi2, fscmrmr, sequentialfs
+Predictors ranked and chosen.
+
+`relieff` weighs each predictor by how it differs between a point and its nearest neighbours of other classes against its own (or, for regression, how its differences go with the response's); `fscchi2` by chi-square tests of independence from the response; `fscmrmr` by mutual information, each next predictor relevant but not redundant with those chosen. Each gives the predictors ranked, best first, and their scores. `sequentialfs` chooses predictors one at a time by a cross-validated criterion of one's own.
+
+# Syntax
+[idx, weights] = relieff(X, y, k)
+    By ReliefF.
+[idx, scores] = fscchi2(X, Y)
+    By chi-square tests.
+[idx, scores] = fscmrmr(X, Y)
+    By minimum redundancy, maximum relevance.
+[inmodel, history] = sequentialfs(fun, X, y, 'cv', k)
+    By a criterion.
+# Examples
+## Two predictors that matter among six
+X = rand(200, 6);
+y = double(X(:, 2) + X(:, 5) > 1);
+idx1 = relieff(X, y, 10);
+idx2 = fscchi2(X, y);
+idx3 = fscmrmr(X, y);
+[idx1(1:2); idx2(1:2); idx3(1:2)]
+fun = @(Xtr, ytr, Xte, yte) sum(predict(fitcdiscr(Xtr, ytr), Xte) ~= yte);
+inmodel = sequentialfs(fun, X, y, 'cv', 5);
+find(inmodel)
+# See also
+lasso stepwiselm
+
+@ andrewsplot, parallelcoords
+Observations of many variables drawn as curves or as lines across their variables.
+
+`parallelcoords` draws each observation as a line across parallel axes, one for each variable; `andrewsplot` as a curve, f(t) = x1/√2 + x2 sin 2πt + x3 cos 2πt + ..., so that observations alike have curves alike. Both colour by `'Group'` and can standardize the variables (or use principal components) first.
+
+# Syntax
+parallelcoords(X, 'Group', g, 'Labels', names, 'Standardize', s)
+    Lines across the variables.
+andrewsplot(X, 'Group', g, 'Standardize', s)
+    Curves.
+# Examples
+## Two kinds of four measurements
+X = [randn(20, 4) + [5 3 1.5 0.3]; randn(20, 4) + [6 2.8 4.5 1.5]];
+g = [repmat({'small'}, 20, 1); repmat({'large'}, 20, 1)];
+subplot(1, 2, 1), parallelcoords(X, 'Group', g, 'Labels', {'a', 'b', 'c', 'd'})
+subplot(1, 2, 2), andrewsplot(X, 'Group', g, 'Standardize', 'on')
+# See also
+gplotmatrix
+
+@ probplot
+A probability plot: data against a distribution's quantiles.
+
+The sorted data are drawn against the quantiles of a distribution at (i - 0.5)/n, with a line through their quartiles; data from that distribution lie along the line. The distribution is normal unless named: exponential, extreme value, lognormal, Weibull, Rayleigh or half normal.
+
+# Syntax
+probplot(y)
+    Against the normal.
+probplot(dist, y)
+    Against another distribution.
+h = probplot(...)
+    With the lines.
+# Examples
+## Lognormal data, two ways
+y = lognrnd(1, 0.5, 100, 1);
+subplot(1, 2, 1), probplot(y), title('normal')
+subplot(1, 2, 2), probplot('lognormal', y), title('lognormal')
+# See also
+normplot qqplot
+
+@ tiedrank
+Ranks, ties given the average of their ranks.
+
+The smallest value gets rank 1; values that tie share the mean of the ranks they span, and NaN stays NaN. The second output is the tie adjustment that rank tests use. Each column of a matrix is ranked alone.
+
+# Syntax
+r = tiedrank(x)
+    The ranks.
+[r, tieadj] = tiedrank(x)
+    With the tie adjustment.
+# Examples
+## Scores with ties
+x = [70 85 85 60 92 85 70];
+[r, adj] = tiedrank(x)
+# See also
+sort ranksum
+
+@ ecdfhist
+A histogram of the density from an empirical distribution function.
+
+From the cdf values f at x (as `ecdf` gives them, possibly with censored data), the probability in each of m equal bins (10) divided by the bin width: an estimate of the density. Without outputs it is drawn as bars.
+
+# Syntax
+[n, c] = ecdfhist(f, x, m)
+    The density and the bins' centres.
+ecdfhist(f, x, m)
+    Drawn.
+# Examples
+## Censored lifetimes
+t = exprnd(5, 200, 1);
+cens = t > 10;
+t(cens) = 10;
+[f, x] = ecdf(t, 'Censoring', cens);
+[n, c] = ecdfhist(f, x, 8);
+round(n(1:3), 3)
+ecdfhist(f, x, 8), hold on, fplot(@(s) exppdf(s, 5), [0 10]), hold off
+# See also
+ecdf histogram
+
+@ mnrfit, mnrval
+Multinomial regression: the probabilities of several categories from predictors.
+
+`mnrfit` fits by maximum likelihood: nominal categories (the default) as the log odds of each against the last; ordinal ones as cumulative log odds with one set of slopes; or hierarchical ones. Links other than the logit can be chosen for ordinal models. `mnrval` gives the categories' probabilities for new predictors (or expected counts).
+
+# Syntax
+B = mnrfit(X, Y)
+    The coefficients.
+[B, dev, stats] = mnrfit(X, Y, 'model', m, 'link', l)
+    With the deviance and statistics.
+pihat = mnrval(B, X, 'model', m)
+    The probabilities.
+# Examples
+## Three outcomes by one predictor
+x = linspace(-3, 3, 300)';
+p = [exp(-x) ones(size(x)) exp(x)];
+p = p./sum(p, 2);
+Y = sum(rand(300, 1) > cumsum(p, 2), 2) + 1;
+B = mnrfit(x, Y);
+P = mnrval(B, [-2; 0; 2]);
+round(P, 2)
+# See also
+fitglm
+
+@ rocmetrics
+ROC curves of a classifier, each class against the rest.
+
+From the true labels and a column of scores for each class: for each class, the false and true positive rates as its threshold moves, in `Metrics` (a table), and the areas under the curves in `AUC`. `plot` draws the curves.
+
+# Syntax
+rocObj = rocmetrics(labels, scores, classNames)
+    The curves.
+# Examples
+## Three classes' curves
+c = [0 0; 2 0; 1 2];
+X = [randn(50, 2) + c(1, :); randn(50, 2) + c(2, :); randn(50, 2) + c(3, :)];
+Y = repelem((1:3)', 50);
+m = fitcdiscr(X, Y);
+[~, s] = resubPredict(m);
+roc = rocmetrics(Y, s, [1 2 3]);
+round(roc.AUC, 3)
+plot(roc)
+# See also
+perfcurve

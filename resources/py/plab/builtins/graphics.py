@@ -2368,8 +2368,9 @@ def legend(nargout, *args):
             objs = plotted
     for o, nm in zip(objs, names):
         o.props['DisplayName'] = nm
+    # a name given empty stays empty (the entry without text); only the unnamed get dataN
     for k, o in enumerate(objs):
-        if not o.props.get('DisplayName'):
+        if k >= len(names) and not o.props.get('DisplayName'):
             o.props['DisplayName'] = f'data{k + 1}'
     if ax.legend is not None:
         ax.legend.delete_handle()

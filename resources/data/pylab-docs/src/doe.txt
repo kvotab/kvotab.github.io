@@ -1,0 +1,88 @@
+@ fullfact, ff2n, fracfact
+Factorial designs: every combination of levels, of two levels, and a fraction of them.
+
+`fullfact` gives every combination of the factors' levels (numbered from 1, the first factor changing fastest); `ff2n` every combination of n factors at two levels, 0 and 1. `fracfact` gives a two-level fractional design from generators: single letters are the base factors (their full factorial in -1 and 1), longer words the products that set the other factors, so that 2^k runs study more than k factors, at the cost of confounding some effects with others.
+
+# Syntax
+dFF = fullfact(levels)
+    Every combination.
+dFF2 = ff2n(n)
+    Two levels, 0 and 1.
+dfF = fracfact(gen)
+    A fraction, by generators.
+# Examples
+## Six runs, eight, and a half of sixteen
+fullfact([3 2])
+ff2n(3)
+d = fracfact('a b c abc')
+all(d(:, 4) == prod(d(:, 1:3), 2))
+# See also
+bbdesign ccdesign rowexch
+
+@ bbdesign, ccdesign
+Response surface designs: Box-Behnken and central composite.
+
+Both fit quadratic models with few runs. `bbdesign` takes, for each pair of factors, the four corners at -1 and 1 with the others at 0, then centre points: no run sits at a corner of the whole cube. `ccdesign` takes the factorial corners, axial points at ±alpha on each axis (alpha chosen so that the design is rotatable), and centre points; `'inscribed'` scales it into [-1, 1], `'faced'` puts the axial points on the faces.
+
+# Syntax
+dBB = bbdesign(n, 'center', nc)
+    Box-Behnken.
+[dCC, blocks] = ccdesign(n, 'type', t, 'center', nc)
+    Central composite.
+# Examples
+## Three factors two ways
+B = bbdesign(3);
+size(B)
+C = ccdesign(3, 'center', 1);
+size(C)
+round(max(abs(C(:))), 4)
+subplot(1, 2, 1), plot3(B(:, 1), B(:, 2), B(:, 3), 'o'), title('Box-Behnken'), grid on, axis equal
+subplot(1, 2, 2), plot3(C(:, 1), C(:, 2), C(:, 3), 'o'), title('central composite'), grid on, axis equal
+# See also
+fullfact fitlm
+
+@ candgen, candexch, rowexch, cordexch
+D-optimal designs: the runs that estimate a model's coefficients best.
+
+A D-optimal design makes det(X'X) as large as it can for its number of runs, X the model matrix, so that the coefficients' joint confidence region is smallest. `candgen` lists a candidate grid (-1 and 1, and 0 for quadratic models); `candexch` picks rows of a candidate model matrix by exchanging one at a time from random starts; `rowexch` does both for a model (`'linear'`, `'interaction'`, `'quadratic'` or `'purequadratic'`); `cordexch` changes one coordinate at a time instead, without a candidate list.
+
+# Syntax
+dC = candgen(nfactors, model)
+    The candidates.
+rlist = candexch(C, nruns, 'tries', k)
+    Rows chosen.
+[dRE, X] = rowexch(nfactors, nruns, model)
+    By row exchange.
+[dCE, X] = cordexch(nfactors, nruns, model, 'tries', k)
+    By coordinate exchange.
+# Examples
+## Nine runs for a quadratic model in two factors
+[d, X] = cordexch(2, 9, 'quadratic', 'tries', 5);
+sortrows(d)
+round(det(X'*X))
+[d2, X2] = rowexch(2, 9, 'quadratic');
+round(det(X2'*X2))
+# See also
+daugment fitlm
+
+@ daugment, dcovary
+D-optimal designs extended by more runs, and around covariates fixed in advance.
+
+`daugment` adds runs to an existing design, chosen so that the whole design is D-optimal for the model; `dcovary` chooses the factors for runs whose covariates are already fixed (a block, a day, a measured property), the covariates coming after the factors in the result.
+
+# Syntax
+[dCE2, X] = daugment(startdes, nruns, model)
+    Augmented.
+[dCV, X] = dcovary(nfactors, covariates, model)
+    Around covariates.
+# Examples
+## Four runs made eight, and a design over two days
+start = [-1 -1; 1 1; -1 1; 1 -1];
+d = daugment(start, 4, 'interaction');
+size(d)
+isequal(d(1:4, :), start)
+days = [zeros(4, 1); ones(4, 1)];
+dc = dcovary(2, days, 'linear');
+dc(:, end)'
+# See also
+cordexch
