@@ -1,0 +1,428 @@
+@ sym
+A symbolic number, variable or matrix: exact values that formulas are built from.
+
+`sym('x')` is a variable; arithmetic on it builds expressions that stay exact (`1/3` stays a third, `sqrt(2)` stays a root) until `double` or `vpa` gives numbers. A double becomes the exact number it stands for when it is a ratio p/q, p·π/q or √p/q to the last bit, else its binary fraction (`'f'`), or a decimal (`'d'`). Variables are complex unless assumed `'real'`, `'positive'`, `'integer'` or `'rational'`. `sym('a', [2 3])` makes a matrix of variables named `a1_1`, `a1_2`, .... Symbolic values take the operators, indexing and the elementary and matrix functions numbers do.
+
+# Syntax
+x = sym('x')
+    A variable.
+x = sym('x', 'real')
+    With an assumption.
+A = sym('a', [2 3])
+    A matrix of variables.
+v = sym(0.1)
+    A number made exact (here 1/10).
+v = sym(M, flag)
+    By `'r'` (ratios, the default), `'f'` (the binary fraction) or `'d'` (a decimal).
+# Examples
+## Exact numbers
+sym(1/3) + sym(1/6)
+sym(0.1)
+sym(0.1, 'f')
+sqrt(sym(8))
+## A matrix of variables and its determinant
+A = sym('a', [2 2])
+det(A)
+# See also
+syms vpa double subs
+
+@ syms
+Symbolic variables and functions made in the workspace.
+
+A shorter way to make variables: `syms x y` is `x = sym('x'); y = sym('y')`, with assumptions after the names (`real`, `positive`, `integer`, `rational`). `syms f(x)` makes x and a symbolic function f of x, to be given a formula (`f(x) = x^2`) or left unknown for `dsolve`. Alone, `syms` lists the symbolic variables.
+
+# Syntax
+syms x y z
+    Variables.
+syms a b positive
+    With an assumption.
+syms f(x) g(x, y)
+    Symbolic functions.
+syms a [1 3]
+    A vector of variables a1, a2, a3.
+syms x clear
+    Assumptions on x removed.
+syms
+    The list.
+# Examples
+## Variables, a function and the list
+syms x y positive
+syms f(x)
+f(x) = x^2 + y;
+f(3)
+syms a [1 3]
+a
+syms
+# See also
+sym symfun assume
+
+@ str2sym
+A symbolic expression or equation from text.
+
+The text is read in the language's syntax: `^` and `*` as powers and products, `==` as an equation, functions such as `sin` and `exp` as their symbolic forms.
+
+# Syntax
+e = str2sym(text)
+    The expression or equation.
+# Examples
+## From text
+e = str2sym('x^2 + sin(y)')
+eq = str2sym('x + y == 3')
+solve(eq, sym('x'))
+# See also
+sym char
+
+@ symfun, argnames, formula
+Symbolic functions: a formula with its inputs, and its parts.
+
+A symbolic function is called with values for its inputs: `f(2, 3)`. It is made by `symfun(expr, [x y])`, or by assigning, `f(x, y) = expr`. `argnames` gives its inputs, `formula` its formula as an expression (of a fit or fittype, the model as text).
+
+# Syntax
+f = symfun(expr, [x y])
+    A symbolic function.
+v = argnames(f)
+    Its inputs.
+e = formula(f)
+    Its formula.
+# Examples
+## Made, called and taken apart
+syms x y
+f = symfun(x^2 + y, [x y])
+f(2, 3)
+argnames(f)
+formula(f)
+# See also
+syms matlabFunction
+
+@ vpa, digits
+Numbers to many significant digits: variable-precision arithmetic.
+
+`vpa(x)` evaluates a symbolic value to `digits` significant digits (32 to begin with); `vpa(x, d)` to `d`. A double is first recognized as `sym` recognizes it, so `vpa(pi)` is π itself, not the double nearest it.
+
+# Syntax
+v = vpa(x)
+    To the current number of digits.
+v = vpa(x, d)
+    To `d` digits.
+digits(d)
+    The number of digits set.
+d = digits
+    The current number.
+# Examples
+## Pi and a root to 30 digits, a seventh to 10
+vpa(pi, 30)
+vpa(sqrt(sym(2)), 30)
+old = digits(10);
+vpa(sym(1)/7)
+digits(old);
+# See also
+sym double
+
+@ subs
+Values or expressions put in for symbolic variables.
+
+`subs(e, old, new)` replaces `old` (a variable, an expression such as `diff(y(t), t)`, or an array of them) with `new` (numbers or expressions of the same size, or a cell). An array of values for one variable gives an array of results. `subs(e)` takes the variables' values from the workspace.
+
+# Syntax
+s = subs(e, old, new)
+    One replacement, or arrays of them.
+s = subs(e, {x, y}, {1, 2})
+    Several, in cells.
+s = subs(e, new)
+    For the first variable of `e`.
+s = subs(e)
+    From the workspace.
+# Examples
+## Numbers, an array, and an expression
+syms x y
+e = x^2 + y;
+subs(e, x, 3)
+subs(e, {x, y}, {1, 2})
+subs(e, x, [1 2 3])
+subs(e, y, sin(x))
+# See also
+vpa double matlabFunction
+
+@ simplify, simplifyFraction
+A simpler form of a symbolic expression, and a fraction with its common factors cancelled.
+
+`simplify` tries rewritings and keeps the shortest result; `'IgnoreAnalyticConstraints'` also allows rules that hold only for positive reals, such as `log(a*b) = log(a) + log(b)`. `simplifyFraction` writes a rational expression as one fraction in lowest terms. For a graph, `simplify` merges parallel edges and removes self-loops.
+
+# Syntax
+s = simplify(e)
+    Simplified.
+s = simplify(e, 'IgnoreAnalyticConstraints', true)
+    With rules for positive reals.
+s = simplifyFraction(e)
+    One fraction, cancelled.
+H = simplify(G)
+    A graph with one edge for each joined pair.
+# Examples
+## Identities and fractions
+> For a complex x, sqrt(x^2) is not x (take x = -1); the rules for positive reals make it so.
+syms x
+simplify(sin(x)^2 + cos(x)^2)
+simplify(sqrt(x^2))
+simplify(sqrt(x^2), 'IgnoreAnalyticConstraints', true)
+simplify(log(exp(x)), 'IgnoreAnalyticConstraints', true)
+simplifyFraction((x^2 - 1)/(x^2 + 2*x + 1))
+# See also
+expand collect rewrite
+
+@ expand, collect, combine, horner
+Expressions multiplied out, gathered by powers, combined by function, and nested.
+
+`expand` multiplies out products and powers and expands functions of sums (`sin(a + b)`); `collect` gathers the terms by powers of a variable; `combine` joins terms of one kind (`'powers'` unless given, `'log'`, `'sincos'`, `'exp'`, ...); `horner` writes a polynomial in nested form, cheapest to evaluate. For datastores, `combine` reads several together.
+
+# Syntax
+s = expand(e)
+    Multiplied out.
+s = collect(e, x)
+    By powers of `x`.
+s = combine(e, target)
+    Terms of one kind combined.
+s = horner(p)
+    Nested.
+dsnew = combine(ds1, ds2, ...)
+    Datastores read side by side.
+# Examples
+## Four forms of the same expressions
+> Logarithms combine only where that is true: here for positive a and b.
+syms x y
+syms a b positive
+expand((x + y)^3)
+expand(sin(a + b))
+collect(x*y + x^2*y + 3*x, x)
+combine(log(a) + log(b), 'log')
+horner(x^3 - 2*x^2 + 3*x - 4)
+# See also
+simplify factor rewrite
+
+@ rewrite
+An expression rewritten in terms of other functions.
+
+`rewrite(e, 'exp')` writes the trigonometric and hyperbolic functions with exponentials; other targets are `'log'`, `'sin'`, `'cos'`, `'tan'`, `'sqrt'`, `'sincos'`, `'sinhcosh'`, the inverse functions, `'heaviside'` and `'piecewise'`.
+
+# Syntax
+s = rewrite(e, target)
+    In terms of the target.
+# Examples
+## The same functions, other forms
+syms x
+rewrite(cos(x), 'exp')
+rewrite(tan(x), 'sincos')
+rewrite(asinh(x), 'log')
+# See also
+simplify expand
+
+@ partfrac, numden
+Partial fractions of a rational expression, and its numerator and denominator.
+
+`partfrac(e, x)` writes a ratio of polynomials in `x` as a polynomial plus simple fractions; `'FactorMode', 'full'` factors the denominator over the complex numbers. `numden` gives the numerator and denominator after putting the expression over one denominator.
+
+# Syntax
+s = partfrac(e, x)
+    Partial fractions.
+s = partfrac(e, x, 'FactorMode', 'full')
+    With the denominator fully factored.
+[n, d] = numden(e)
+    Numerator and denominator.
+# Examples
+## A fraction parted and put back
+syms x
+partfrac((2*x + 3)/(x^2 + 3*x + 2), x)
+[n, d] = numden(1/x + 1/(x + 1))
+# See also
+residue simplifyFraction
+
+@ coeffs, poly2sym, sym2poly
+The coefficients of a symbolic polynomial, and polynomials between coefficients and symbolic form.
+
+`coeffs(p, x)` gives the nonzero coefficients from the lowest power up, and the terms with them; with `'All'`, every coefficient from the highest power down, the order `polyval` uses. `poly2sym` makes a symbolic polynomial from coefficients; `sym2poly` gives a polynomial's coefficients as doubles.
+
+# Syntax
+[c, t] = coeffs(p, x)
+    Nonzero coefficients and their terms.
+c = coeffs(p, x, 'All')
+    All of them, highest power first.
+p = poly2sym(c, x)
+    A symbolic polynomial.
+c = sym2poly(p)
+    Its coefficients as doubles.
+# Examples
+## A polynomial both ways
+syms x a
+p = 3*x^3 + a*x + 5;
+[c, t] = coeffs(p, x)
+coeffs(p, x, 'All')
+q = poly2sym([1 -2 3], x)
+sym2poly(q)
+# See also
+polyval roots
+
+@ children, has
+The parts of a symbolic expression, and whether one is in it.
+
+`children` gives the operands of the top operation: the terms of a sum, the factors of a product, the arguments of a function, the sides of an equation. `has(e, sub)` is true when `sub` appears in `e`.
+
+# Syntax
+c = children(e)
+    The operands, in a cell array.
+tf = has(e, sub)
+    Whether `sub` is in `e`.
+# Examples
+## A sum taken apart
+syms x y
+e = x^2 + sin(y) + 3;
+c = children(e);
+c{:}
+[has(e, sin(y)) has(e, cos(y))]
+# See also
+lhs rhs symvar
+
+@ lhs, rhs
+The left and right sides of a symbolic equation or inequality.
+
+# Syntax
+L = lhs(eqn)
+    The left side.
+R = rhs(eqn)
+    The right side.
+# Examples
+## Both sides, and the equation moved to one
+syms x
+eqn = x^2 + 1 == 3*x;
+lhs(eqn)
+rhs(eqn)
+lhs(eqn) - rhs(eqn) == 0
+# See also
+isolate children
+
+@ isolate
+An equation rearranged so that a variable, or an expression such as a derivative, stands alone on the left.
+
+# Syntax
+e = isolate(eqn, x)
+    For a variable.
+e = isolate(eqn, expr)
+    For an expression: `diff(y(t), t, 2)`, `x^2`, ....
+# Examples
+## For a variable, and for an acceleration
+syms a b c x
+isolate(a*x + b == c, x)
+syms theta(t) L g
+isolate(L*diff(theta, t, 2) + g*sin(theta) == 0, diff(theta, t, 2))
+# See also
+solve lhs rhs
+
+@ finverse, compose
+The inverse of a symbolic function, and functions composed; or data formatted into strings.
+
+`finverse(f)` gives g with g(f(x)) = x, where one exists on the principal branch. `compose(f, g)` is f(g(x)). With a format and data instead, `compose` formats each row of values into a string, as `sprintf` does, one string per row.
+
+# Syntax
+g = finverse(f)
+    The inverse, in the same variable.
+g = finverse(f, x)
+    In `x`.
+h = compose(f, g)
+    `f(g(x))`.
+s = compose(format, a1, a2, ...)
+    Formatted strings, one per row.
+# Examples
+## Inverse and composition
+syms x
+finverse(exp(2*x) + 1)
+compose(sin(x), x^2)
+## Strings from rows of values
+compose('%s: %d', ["a"; "b"], [1; 2])
+# See also
+subs sprintf
+
+@ int
+Integrals of symbolic expressions, indefinite or definite.
+
+`int(f, x)` gives an antiderivative (without a constant); `int(f, x, a, b)` the definite integral, where the limits may be symbolic or infinite. The variable is `symvar(f, 1)` unless given. An integral with no closed form is left as `int(...)`; `'Hold', true` keeps it so.
+
+# Syntax
+F = int(f, x)
+    An antiderivative.
+F = int(f, x, a, b)
+    From `a` to `b`.
+F = int(..., 'Hold', true)
+    Kept unevaluated.
+# Examples
+## Antiderivatives and definite integrals
+syms x a
+int(x*exp(x), x)
+int(1/(1 + x^2), x, 0, Inf)
+int(exp(-a*x^2), x, -Inf, Inf)
+int(sin(x)/x, x, 0, Inf)
+# See also
+diff integral symsum
+
+@ limit
+The limit of a symbolic expression as a variable approaches a point.
+
+From both sides unless `'left'` or `'right'` is given; when the two differ the limit is NaN. The point may be infinite.
+
+# Syntax
+L = limit(f, x, a)
+    As `x` approaches `a`.
+L = limit(f, x, a, 'left')
+    From the left (or `'right'`).
+L = limit(f)
+    At 0, in `symvar(f, 1)`.
+# Examples
+## Classic limits, and one sided
+syms x n
+limit(sin(x)/x, x, 0)
+limit((1 + 1/n)^n, n, Inf)
+[limit(1/x, x, 0, 'left') limit(1/x, x, 0, 'right') limit(1/x, x, 0)]
+# See also
+taylor diff
+
+@ taylor, series
+Taylor polynomials and series of a symbolic expression about a point.
+
+`taylor(f, x, a)` gives the terms up to the power n - 1 (`'Order'`, 6 unless given) about `a` (0 unless given). `series` gives the series with negative and fractional powers too, where the expression has them (Laurent and Puiseux series). For dynamic models, `series(sys1, sys2)` connects them one after the other.
+
+# Syntax
+T = taylor(f, x)
+    About 0.
+T = taylor(f, x, a, 'Order', n)
+    About `a`, to order `n`.
+S = series(f, x, a)
+    With negative or fractional powers where needed.
+sys = series(sys1, sys2)
+    Two models in series.
+# Examples
+## A polynomial approximation, and a Laurent series
+syms x
+T = taylor(exp(x), x, 'Order', 4)
+series(1/sin(x), x, 'Order', 4)
+fplot([exp(x) T], [-2 2]), legend('exp(x)', 'Taylor, order 4', 'Location', 'northwest')
+# See also
+limit diff
+
+@ symsum, symprod
+Symbolic sums and products, finite or infinite.
+
+`symsum(f, k, a, b)` sums f over k from a to b, which may be infinite; `symsum(f, k)` is the indefinite sum, F with F(k+1) - F(k) = f(k). `symprod` multiplies.
+
+# Syntax
+F = symsum(f, k, a, b)
+    A sum.
+F = symsum(f, k)
+    The indefinite sum.
+F = symprod(f, k, a, b)
+    A product.
+# Examples
+## Sums and a product in closed form
+syms k n
+symsum(k^2, k, 1, n)
+symsum(1/k^2, k, 1, Inf)
+symprod(1 + 1/k, k, 1, n)
+symprod(1 - 1/k^2, k, 2, Inf)
+# See also
+sum int

@@ -186,6 +186,13 @@ def run_example(code, where='?'):
         R.STATE['cwd'] = work
         R.BASE.clear()
         R.BASE.gnames.clear()
+        # the symbolic engine's state too: no assumptions or digits carried from the example before
+        import sys as _sys
+        Y = _sys.modules.get('plab.symbolic')
+        if Y is not None:
+            Y.NAMES.clear()
+            Y.RELS.clear()
+            Y.DIGITS[0] = 32
         asyncio.run(R.execute('close all force; rng default; format short; format loose'))
         GB._ids = itertools.count(1)
         GB._order = itertools.count(1)
@@ -209,7 +216,21 @@ def run_example(code, where='?'):
     while lines and not lines[0].strip():
         lines.pop(0)
     # a figure's numbers through JSON once, as the page reads them; the default colormap by name (index.json holds it)
-    return '\n'.join(lines), _shared(json.loads(json.dumps(figs)))
+    return '\n'.join(lines), _shared(_lean(json.loads(json.dumps(figs))))
+
+
+def _lean(figs):
+    """What the page does not draw left out: the sampled grid of an unfilled contour in 2-D axes (fimplicit's is
+    hundreds of kilobytes), which is drawn from its lines."""
+    for f in figs:
+        for ax in f.get('axes') or []:
+            if list(ax.get('view') or [0, 90]) != [0.0, 90.0]:
+                continue
+            for c in ax.get('children') or []:
+                if c.get('type') == 'series' and c.get('kind') == 'contour' and not c.get('fill') and c.get('lines'):
+                    for k in ('xData', 'yData', 'zData'):
+                        c.pop(k, None)
+    return figs
 
 
 def shared_arrays():

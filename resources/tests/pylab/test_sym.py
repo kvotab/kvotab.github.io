@@ -360,4 +360,15 @@ near('fpolarplot of a handle over an interval, with a line spec and width', [W['
      [2, 1, 0, 0, 0, math.pi], 1e-12)
 raises('fpolarplot refuses an interval that does not increase', "fpolarplot(@(th) th, [1 0])", 'increasing')
 
+# ---- found writing the function pages -------------------------------------------------------------------------------------
+W, _ = run("syms x; f = figure('Visible', 'off'); h = fplot([exp(x) 1 + x], [-2 2]); n = numel(h); y2 = h(2).YData(1); close(f)")
+same('fplot of a vector of expressions: a line for each', (float(W['n']), float(W['y2'])), (2.0, -1.0))
+same('symprod in closed form: a finite product simplified, an infinite one as the limit', (shows("syms k n; zzc = char(symprod(1 + 1/k, k, 1, n));", 'zzc'),
+     shows("syms k; zzc = char(symprod(1 - 1/k^2, k, 2, Inf));", 'zzc')), ('n + 1', '1/2'))
+W, out1 = run("syms x; g1 = finverse(exp(2*x) + 1);")
+W, out2 = run("syms x; g2 = finverse(x^2);")
+same("finverse warns only when the inverse it gives is one of several real ones", ('more than one inverse' in out1, 'more than one inverse' in out2), (False, True))
+same("laplace of a real function as one real fraction (not conjugate pairs); a complex one keeps its i",
+     (shows("syms t; zzc = char(laplace(t^2*sin(t)));", 'zzc'), shows("syms t; zzc = char(laplace(exp(1i*t)));", 'zzc')), ('2*(3*s^2 - 1)/(s^2 + 1)^3', '1/(s - 1i)'))
+
 sys.exit(C.done())

@@ -210,18 +210,32 @@ async def desktop(page):
     await page.ev("(() => { const a = [...PL.app.cmd.out.querySelectorAll('a.pl-helplink')].find((e) => e.dataset.help === 'prod'); a.click(); return 1; })()")
     out2 = await until(page, "(() => { const t = PL.app.cmd.out.textContent; return t.includes(' prod - ') ? t : null; })()")
     check('a click on a link in help shows that function\'s help', bool(out2) and '>> help prod' in out2, True)
-    # (a function without a page of its own: its summary, forms and how it is computed; the docs section has the pages)
-    await page.ev("PL.app.openHelp('ode23s'); 1")
-    help_text = await until(page, "document.querySelector('.pl-help pre')?.textContent")
-    check('the Help panel shows a function', 'ode23s - Solve a stiff ODE system' in (help_text or ''), True)
+    # a function without a page of its own shows its summary, forms and how it is computed (the docs section has the
+    # pages): the last in the Help lists whose How it works has two paragraphs or more and whose See also names another
+    # without a page, so that the rounds of pages never take it away
+    await page.ev("PL.app.openHelp(); 1")
+    await until(page, "document.querySelector('.pl-help .pl-fnlist a[data-fn]')")
+    bare = await page.ev("[...document.querySelectorAll('.pl-help .pl-fnlist a[data-fn]')].filter((a) => !a.classList.contains('has-doc')).map((a) => a.dataset.fn)") or []
+    pick, help_text, see = None, None, []
+    for name in reversed(bare):
+        await page.ev(f"PL.app.openHelp({json.dumps(name)}); 1")
+        info = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); if (!p || !p.textContent.includes(" + json.dumps(name + ' - ') + ")) return null; "
+                                 "const s = document.querySelector('.pl-help .pl-how'); return { text: p.textContent, how: s ? s.querySelectorAll('p').length : 0, "
+                                 "see: [...document.querySelectorAll('.pl-help .pl-see a[data-help]')].map((a) => a.dataset.help) }; })()", 5)
+        other = [x for x in (info or {}).get('see', []) if x in bare and x != name]
+        if info and info['how'] >= 2 and other:
+            pick, help_text, see = (name, other[0]), info['text'], info['see']
+            break
+    check('the Help panel shows a function', bool(pick) and f'{pick[0]} - ' in (help_text or ''), True)
     how = await page.ev("(() => { const s = document.querySelector('.pl-help .pl-how'); "
                         "return !!s && s.querySelector('h3').textContent === 'How it works' && s.querySelectorAll('p').length >= 2 "
                         "&& !document.querySelector('.pl-help pre').textContent.includes('How it works'); })()")
     check('and how PyLAB computes it, as paragraphs after the call forms', how, True)
-    see = await page.ev("[...document.querySelectorAll('.pl-help .pl-see a[data-help]')].map((a) => a.dataset.help)")
-    check('the Help panel ends with See also, each a link', bool(see) and 'ode15s' in see, True)
-    await page.ev("document.querySelector('.pl-help .pl-see a[data-help=\"ode15s\"]').click(); 1")
-    shown = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); return p && p.textContent.includes('ode15s - ') ? p.textContent : null; })()")
+    check('the Help panel ends with See also, each a link', bool(pick) and pick[1] in see, True)
+    shown = None
+    if pick:
+        await page.ev(f"document.querySelector('.pl-help .pl-see a[data-help=' + {json.dumps(json.dumps(pick[1]))} + ']').click(); 1")
+        shown = await until(page, "(() => { const p = document.querySelector('.pl-help pre'); return p && p.textContent.includes(" + json.dumps(pick[1] + ' - ') + ") ? p.textContent : null; })()")
     check('a click there shows that function in the Help panel', bool(shown), True)
     await page.ev("PL.app.openHelp(); 1")
     n_links = await page.ev("document.querySelectorAll('.pl-help [data-fn]').length")

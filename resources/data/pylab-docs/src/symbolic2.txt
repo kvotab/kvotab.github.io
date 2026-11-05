@@ -1,0 +1,484 @@
+@ jacobian, hessian
+The Jacobian matrix of symbolic functions, and the Hessian matrix of one.
+
+Row i of `jacobian(f, v)` is the gradient of `f(i)` with respect to the variables in `v`; `hessian(f, v)` is the matrix of second derivatives of a scalar `f`, the Jacobian of its gradient.
+
+# Syntax
+J = jacobian(f, v)
+    The Jacobian.
+H = hessian(f, v)
+    The Hessian.
+# Examples
+## Polar coordinates, and a quadratic form
+syms r t x y
+J = jacobian([r*cos(t); r*sin(t)], [r t])
+simplify(det(J))
+hessian(x^2 + 3*x*y + 2*y^2, [x y])
+# See also
+gradient diff divergence
+
+@ divergence, curl, laplacian
+The divergence and curl of a vector field, and the Laplacian: of arrays on a grid, or symbolic.
+
+For arrays, by the differences `gradient` takes (x along the columns, y down the rows): `divergence` is dU/dx + dV/dy (+ dW/dz), and `curl` the rotation, with `cav` the angular velocity (half the curl along the flow). For symbolic fields, the exact derivatives: `divergence(V, X)` and `curl(V, X)` of a field `V` in variables `X`, and `laplacian(f, x)` the sum of the second derivatives. For a graph, `laplacian(G)` is its Laplacian matrix.
+
+# Syntax
+div = divergence(X, Y, U, V)
+    Of arrays on a grid.
+[curlz, cav] = curl(X, Y, U, V)
+    The curl of a 2-D field.
+d = divergence(V, X)
+    Of a symbolic field.
+c = curl(V, X)
+    Of a symbolic field of three components.
+L = laplacian(f, x)
+    Of a symbolic expression.
+L = laplacian(G)
+    Of a graph, a sparse matrix.
+# Examples
+## A rotation and a source, symbolically
+syms x y z
+divergence([x; y; z], [x y z])
+curl([-y; x; 0], [x y z])
+laplacian(x^2 + y^2 + z^2, [x y z])
+## The same rotation on a grid
+[X, Y] = meshgrid(-2:0.5:2);
+U = -Y;
+V = X;
+[cz, cav] = curl(X, Y, U, V);
+[min(cz(:)) max(cz(:))]
+quiver(X, Y, U, V), axis equal
+# See also
+gradient jacobian del2
+
+@ solve
+Equations solved symbolically; also ode objects and optimization problems solved.
+
+`solve(eqn, x)` gives the values of x where the equation holds (an expression counts as `expression == 0`), as a column; for several equations and variables, a structure with a field for each, or one output each. Solutions must agree with the variables' assumptions; `'Real', true` keeps the real ones, and `'ReturnConditions', true` gives families of solutions with their parameters and conditions. Polynomials above degree 3 give their roots as `root(...)` unless `'MaxDegree'` allows more. For an `ode` object, `solve(F, t0, tf)` gives its solution; for an `optimproblem` or `eqnproblem`, the solution found by the solver that suits it.
+
+# Syntax
+S = solve(eqn, x)
+    The solutions.
+[x, y] = solve(eqns, [x y])
+    For several variables.
+S = solve(..., 'Real', true)
+    Only real solutions.
+S = solve(..., 'ReturnConditions', true)
+    With parameters and conditions.
+S = solve(F, t0, tf)
+    The solution of an ode object.
+sol = solve(prob, x0)
+    An optimization problem.
+# Examples
+## One equation, and a system
+syms x y
+solve(x^2 - 5*x + 6 == 0, x)
+[sx, sy] = solve([x + y == 3, x - y == 1], [x y])
+## Every solution of a periodic equation
+syms x
+S = solve(sin(x) == 1/2, x, 'ReturnConditions', true);
+S.x
+S.conditions
+## A solution that must agree with an assumption
+syms t positive
+solve(t^2 == 4, t)
+# See also
+vpasolve dsolve isolate fzero
+
+@ vpasolve
+Equations solved numerically, to the current number of digits.
+
+A polynomial in one variable gives all its roots; any other equation one solution, from the start `x0` (0 unless given) or within the interval `[a b]`. For systems, starting values for each variable.
+
+# Syntax
+S = vpasolve(eqn, x)
+    A solution (all roots of a polynomial).
+S = vpasolve(eqn, x, x0)
+    Starting from `x0`.
+S = vpasolve(eqn, x, [a b])
+    Within an interval.
+S = vpasolve(eqns, vars, x0)
+    A system.
+# Examples
+## Roots and a transcendental equation
+syms x
+vpasolve(x^3 - 2*x - 5 == 0, x)
+vpasolve(cos(x) == x, x)
+vpasolve(tan(x) == x, x, [4 5])
+# See also
+solve fzero
+
+@ dsolve
+Ordinary differential equations solved symbolically.
+
+The unknowns are symbolic functions: `syms y(t)`, then `dsolve(diff(y, t) == -y, y(0) == 1)`. Conditions on derivatives use the derivative as a function: `Dy = diff(y); Dy(0) == 0`. Without conditions the free constants are `C1`, `C2`, .... For a system, a structure with a field for each unknown, or one output each.
+
+# Syntax
+y = dsolve(eqn)
+    The general solution.
+y = dsolve(eqn, cond)
+    With initial or boundary conditions.
+[y1, y2] = dsolve(eqns, conds)
+    A system.
+# Examples
+## Growth, an oscillator, and a system
+syms y(t) a
+dsolve(diff(y, t) == a*y)
+Dy = diff(y, t);
+ys = dsolve(diff(y, t, 2) + 4*y == 0, [y(0) == 1, Dy(0) == 0])
+syms u(t) v(t)
+[us, vs] = dsolve([diff(u, t) == v, diff(v, t) == -u], [u(0) == 0, v(0) == 1])
+## A damped oscillator drawn
+syms y(t)
+Dy = diff(y, t);
+ys = dsolve(diff(y, t, 2) + 0.5*diff(y, t) + 4*y == 0, [y(0) == 1, Dy(0) == 0]);
+fplot(ys, [0 15]), grid on
+# See also
+solve ode45 laplace
+
+@ laplace, ilaplace
+The Laplace transform and its inverse.
+
+`laplace(f)` is the integral of f(t)·exp(-s·t) from 0 to infinity, from t to s unless the variables are given; `ilaplace` goes back from s to t, for t > 0. Differential equations become algebraic: the transform of a derivative brings in the initial value.
+
+# Syntax
+F = laplace(f)
+    From t to s.
+F = laplace(f, var, transVar)
+    With the variables named.
+f = ilaplace(F)
+    From s to t.
+# Examples
+## Transforms and back
+syms t s a
+laplace(exp(-a*t))
+laplace(t^2 * sin(t))
+ilaplace(1/(s^2 + 4*s + 13))
+## An ODE through the transform
+> y'' + 3y' + 2y = 0 with y(0) = 1, y'(0) = 0: transform, solve for Y, transform back.
+syms y(t) Y s
+eq = laplace(diff(y, t, 2) + 3*diff(y, t) + 2*y, t, s);
+eq = subs(eq, {laplace(y(t), t, s), y(0), subs(diff(y(t), t), t, 0)}, {Y, 1, 0});
+Ys = solve(eq == 0, Y);
+ilaplace(Ys, s, t)
+# See also
+fourier ztrans dsolve
+
+@ fourier, ifourier
+The Fourier transform and its inverse.
+
+`fourier(f)` is the integral of f(x)·exp(-i·w·x) over all x; `ifourier(F)` the integral of F(w)·exp(i·w·x) over all w, divided by 2π, so that one undoes the other.
+
+# Syntax
+F = fourier(f)
+    From x to w.
+F = fourier(f, var, transVar)
+    With the variables named.
+f = ifourier(F)
+    Back from w to x.
+# Examples
+## A Gaussian and a decaying exponential
+syms x w
+fourier(exp(-x^2))
+F = fourier(exp(-abs(x)))
+ifourier(F, w, x)
+# See also
+laplace fft
+
+@ ztrans, iztrans
+The z-transform and its inverse.
+
+`ztrans(f)` is the sum of f(n)·z^(-n) from n = 0 to infinity, the discrete counterpart of the Laplace transform for sequences; `iztrans` gives the sequence back from a rational function of z.
+
+# Syntax
+F = ztrans(f)
+    From n to z.
+F = ztrans(f, var, transVar)
+    With the variables named.
+f = iztrans(F)
+    Back from z to n.
+# Examples
+## Two sequences and back
+syms n z a
+ztrans(a^n)
+ztrans(n)
+iztrans(z/(z - 1/2))
+# See also
+laplace filter
+
+@ assume, assumeAlso, assumptions
+What is assumed about symbolic variables: set, added to, and listed.
+
+`assume` replaces the assumptions on the variables in its condition: a kind (`'real'`, `'positive'`, `'integer'`, `'rational'`), or a condition such as `x > 0`, `0 < x < 1` or `in(x, 'integer')`; `'clear'` removes them. `assumeAlso` adds one. `solve`, `simplify` and the other functions keep to them, and `assumptions` lists them.
+
+# Syntax
+assume(cond)
+    The assumptions replaced.
+assume(x, 'real')
+    A kind.
+assume(x, 'clear')
+    Removed.
+assumeAlso(cond)
+    One added.
+a = assumptions
+    All of them.
+a = assumptions(x)
+    Those on x.
+# Examples
+## Solutions kept to an interval
+syms x
+assume(0 < x < 2*pi)
+solve(sin(x) == 1/2, x)
+assumeAlso(x > pi/2)
+solve(sin(x) == 1/2, x)
+assumptions(x)
+assume(x, 'clear')
+# See also
+syms isAlways solve
+
+@ isAlways
+Whether a symbolic condition holds for every value of its variables.
+
+The condition is checked under the assumptions; when it cannot be decided, the answer is false with a warning, unless `'Unknown'` says otherwise (`'false'`, `'true'` or `'error'`).
+
+# Syntax
+tf = isAlways(cond)
+    True when it always holds.
+tf = isAlways(cond, 'Unknown', 'false')
+    Undecided as false, without the warning.
+# Examples
+## True, false, and true under an assumption
+syms x
+isAlways(sin(x)^2 + cos(x)^2 == 1)
+isAlways(x^2 >= 0)
+syms y positive
+isAlways(y^2 > 0)
+# See also
+assume simplify
+
+@ piecewise
+A symbolic expression with a value for each condition.
+
+The first condition that holds gives the value; a last value without a condition is the otherwise value, and without one the rest is NaN. Piecewise expressions take `diff`, `int`, `subs`, `fplot` and `solve` as others do.
+
+# Syntax
+y = piecewise(cond1, val1, cond2, val2, ...)
+    By conditions.
+y = piecewise(cond1, val1, ..., otherwise)
+    With an otherwise value.
+# Examples
+## The absolute value, and a ramp held level
+syms x
+a = piecewise(x < 0, -x, x)
+subs(a, x, [-2 3])
+r = piecewise(x < 0, 0, 0 <= x < 1, x, 1);
+diff(r, x)
+fplot(r, [-1 2]), ylim([-0.2 1.2]), grid on
+# See also
+heaviside assume
+
+@ heaviside, dirac, kroneckerDelta
+The step function, the Dirac delta, and the Kronecker delta.
+
+`heaviside(x)` is 0 below zero, 1 above and 1/2 at zero; `dirac(x)` is 0 except at zero, where it is infinite, its integral 1; `dirac(n, x)` is its nth derivative. For symbolic input they stay symbolic, so `int` and `diff` work on them: the derivative of the step is the delta. `kroneckerDelta(m, n)` is 1 where m equals n and 0 elsewhere.
+
+# Syntax
+y = heaviside(x)
+    The step.
+y = dirac(x)
+    The delta.
+y = dirac(n, x)
+    Its nth derivative.
+d = kroneckerDelta(m, n)
+    1 where m = n.
+# Examples
+## Numbers and symbols
+heaviside([-1 0 2])
+syms x
+diff(heaviside(x), x)
+int(dirac(x - 2)*x^2, x, -Inf, Inf)
+kroneckerDelta(sym(3), sym(3))
+# See also
+piecewise sign
+
+@ sinc
+The sinc function, sin(π·x)/(π·x), 1 at zero.
+
+Normalized so that it is zero at the whole numbers other than 0; it is the Fourier transform of a rectangular pulse and the kernel of band-limited interpolation.
+
+# Syntax
+y = sinc(x)
+    sin(πx)/(πx).
+# Examples
+## Zeros at the whole numbers
+sinc([0 0.5 1 2])
+x = linspace(-5, 5, 500);
+plot(x, sinc(x)), grid on
+# See also
+sin
+
+@ lambertw
+The Lambert W function: the w with w·exp(w) = x.
+
+On its principal branch (k = 0) it is real for x ≥ -1/e; the branch k = -1 gives the other real value for -1/e ≤ x < 0. Equations of the form a^x = b·x come down to it.
+
+# Syntax
+w = lambertw(x)
+    The principal branch.
+w = lambertw(k, x)
+    Branch `k`.
+# Examples
+## Its values, and an equation solved with it
+w = lambertw([0 1 exp(1)])
+w(2)*exp(w(2))
+syms x
+solve(x*exp(x) == 3, x)
+# See also
+log solve
+
+@ zeta
+The Riemann zeta function: the sum of 1/k^s over the positive whole numbers.
+
+Exact for symbolic even integers (ζ(2) = π²/6), a number for doubles; it has a pole at s = 1.
+
+# Syntax
+z = zeta(s)
+    The zeta function.
+# Examples
+## Two exact values and a number
+zeta(sym(2))
+zeta(sym(4))
+zeta(3)
+# See also
+symsum
+
+@ latex, pretty
+A symbolic expression as LaTeX, and printed in two dimensions.
+
+`latex` gives text for documents and for `title` and `text` with the LaTeX interpreter; `pretty` prints fractions, powers and roots on several lines in the Command Window.
+
+# Syntax
+s = latex(e)
+    LaTeX text.
+pretty(e)
+    Printed in two dimensions.
+# Examples
+## The same expression two ways
+syms x
+e = sqrt(x^2 + 1)/(x - 1);
+latex(e)
+pretty(e)
+# See also
+char disp
+
+@ char, double
+Values converted: to characters, or to double-precision numbers.
+
+`char` turns numbers into the characters with those codes, strings and cells of text into a character array (rows padded with blanks), and symbolic expressions into their text. `double` turns numbers of any class, logical values and characters (their codes) into doubles, and symbolic numbers into their nearest doubles; for a Python object, its numbers.
+
+# Syntax
+c = char(x)
+    Characters.
+c = char(s1, s2, ...)
+    Rows of a character array, padded.
+y = double(x)
+    Doubles.
+# Examples
+## Between numbers, text and symbols
+char([72 105])
+char('a', 'bcd')
+double('Hi')
+syms x
+char(x^2 + 1)
+double(sym(1)/3 + sqrt(sym(2)))
+# See also
+string num2str vpa
+
+@ matlabFunction
+A function handle, or a function file, that computes a symbolic expression with numbers.
+
+The inputs are the expression's variables in alphabetical order unless `'Vars'` gives them; the operators become element-wise, so the handle takes arrays. With `'File'`, a function file is written, which can return several outputs.
+
+# Syntax
+f = matlabFunction(e)
+    A function handle.
+f = matlabFunction(e, 'Vars', [x y])
+    With the inputs in that order.
+f = matlabFunction(e1, e2, 'File', name)
+    A function file with two outputs.
+# Examples
+## From a symbolic derivative to numbers
+syms x y
+df = diff(x^2*sin(y), x)
+f = matlabFunction(df)
+f([1 2], [pi/2 pi/6])
+g = matlabFunction(x - y, 'Vars', [y x]);
+g(1, 5)
+# See also
+subs double
+
+@ fpolarplot
+A function plotted in polar axes: r = f(θ), θ from 0 to 2π unless given.
+
+The function is a symbolic expression in one variable or a function handle; a line specification and line properties may follow.
+
+# Syntax
+fpolarplot(f)
+    Over a full turn.
+fpolarplot(f, [thetamin thetamax])
+    Over an interval.
+h = fpolarplot(..., LineSpec)
+    With a line specification.
+# Examples
+## A rose and a cardioid
+syms t
+fpolarplot(abs(sin(4*t))), hold on
+fpolarplot(1 + cos(t), 'r--'), hold off
+# See also
+polarplot fplot
+
+@ fimplicit
+The curve where f(x, y) = 0.
+
+`f` is a function handle of two inputs, a symbolic expression in two variables, or an equation; the curve is traced over [-5, 5] in both unless limits are given.
+
+# Syntax
+fimplicit(f)
+    Over [-5, 5] in x and y.
+fimplicit(f, [xmin xmax ymin ymax])
+    Over limits.
+h = fimplicit(...)
+    With its handle.
+# Examples
+## A circle, a hyperbola and a folium
+syms x y
+fimplicit(x^2 + y^2 == 4), hold on
+fimplicit(x*y - 1)
+fimplicit(@(x, y) x.^3 + y.^3 - 3*x.*y, [-3 3 -3 3]), hold off
+axis equal, grid on
+# See also
+fplot contour
+
+@ fplot3, fsurf
+A curve in 3-D given by x(t), y(t) and z(t), and a surface of a function of two variables.
+
+`fplot3` draws the curve for t in [-5, 5] unless an interval is given. `fsurf(f)` draws z = f(x, y) over [-5, 5] in both unless limits are given; `fsurf(x, y, z)` with three functions of two parameters draws a parametric surface.
+
+# Syntax
+fplot3(xt, yt, zt)
+    A curve.
+fplot3(xt, yt, zt, [tmin tmax])
+    Over an interval.
+fsurf(f)
+    A surface z = f(x, y).
+fsurf(f, [xmin xmax ymin ymax])
+    Over limits.
+# Examples
+## A helix
+syms t
+fplot3(cos(t), sin(t), t/4, [0 6*pi]), grid on
+## A saddle
+syms x y
+fsurf(x^2 - y^2, [-2 2 -2 2])
+# See also
+fplot fmesh fcontour

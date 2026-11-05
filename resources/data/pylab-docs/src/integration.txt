@@ -1,0 +1,83 @@
+@ integral2, quad2d, dblquad
+Double integrals of a function of two variables, over a rectangle or a region with curved limits.
+
+`integral2(fun, xmin, xmax, ymin, ymax)` integrates `fun(x, y)` over x and then y, where `ymin` and `ymax` may be functions of x, so the region can be a triangle, a disk or any region between two curves. `fun` must take arrays and work element-wise. `quad2d` does the same; `dblquad` takes only a rectangle (constant limits).
+
+# Syntax
+q = integral2(fun, xmin, xmax, ymin, ymax)
+    The double integral; the y limits may be functions of x.
+q = quad2d(fun, a, b, c, d)
+    The same.
+q = dblquad(fun, xmin, xmax, ymin, ymax)
+    Over a rectangle.
+# Examples
+## A square, a triangle and a disk
+q1 = integral2(@(x, y) x.*y, 0, 1, 0, 1)
+q2 = integral2(@(x, y) x.*y, 0, 1, 0, @(x) x)
+area = integral2(@(x, y) ones(size(x)), -1, 1, @(x) -sqrt(1 - x.^2), @(x) sqrt(1 - x.^2))
+[quad2d(@(x, y) x.*y, 0, 1, 0, @(x) x) dblquad(@(x, y) x.*y, 0, 1, 0, 1)]
+# See also
+integral integral3 trapz
+
+@ integral3, triplequad
+Triple integrals over a box or a region with curved limits.
+
+`integral3(fun, xmin, xmax, ymin, ymax, zmin, zmax)` integrates `fun(x, y, z)` (element-wise) over z, y and then x; `ymin` and `ymax` may be functions of x, and `zmin` and `zmax` of x and y. `triplequad` takes only a box.
+
+# Syntax
+q = integral3(fun, xmin, xmax, ymin, ymax, zmin, zmax)
+    The triple integral.
+q = triplequad(fun, xmin, xmax, ymin, ymax, zmin, zmax)
+    Over a box.
+# Examples
+## A box, and the volume of the unit ball
+q = triplequad(@(x, y, z) x + y + z, 0, 1, 0, 1, 0, 1)
+V = integral3(@(x, y, z) ones(size(x)), -1, 1, @(x) -sqrt(1 - x.^2), @(x) sqrt(1 - x.^2), ...
+    @(x, y) -sqrt(max(1 - x.^2 - y.^2, 0)), @(x, y) sqrt(max(1 - x.^2 - y.^2, 0)))
+4*pi/3
+# See also
+integral2 integral
+
+@ quadgk
+A definite integral by adaptive Gauss-Kronrod quadrature: for singular ends and infinite intervals.
+
+Each subinterval is integrated by a 7-point Gauss rule and a 15-point Kronrod rule, whose difference estimates the error; intervals are split until the error is within `'RelTol'` (1e-6) and `'AbsTol'` (1e-10). A singularity at an end and an infinite limit are handled by changes of variable; `'Waypoints'` marks points inside where the function jumps or bends sharply. `fun` must work element-wise.
+
+# Syntax
+q = quadgk(fun, a, b)
+    The integral.
+[q, errbnd] = quadgk(fun, a, b)
+    With an error bound.
+q = quadgk(fun, a, b, 'RelTol', r, 'AbsTol', t, 'Waypoints', w)
+    With tolerances and points where to break the interval.
+# Examples
+## A singular end, an infinite interval, and a jump
+[q, err] = quadgk(@(x) 1./sqrt(x), 0, 1)
+quadgk(@(x) exp(-x.^2), 0, Inf)
+sqrt(pi)/2
+quadgk(@(x) double(x > 1), 0, 2, 'Waypoints', 1)
+# See also
+integral quad
+
+@ quad, quadl, quadv
+Definite integrals by adaptive Simpson (`quad`, `quadv`) and Lobatto (`quadl`) quadrature: the older functions.
+
+`integral` is preferred; these remain for programs that use them. The tolerance is absolute (1e-6). `quad` also gives the number of evaluations, and passes extra inputs to `fun` after x. `quadv` integrates an array-valued function, every element to the tolerance.
+
+# Syntax
+q = quad(fun, a, b)
+    Adaptive Simpson.
+[q, fcnt] = quad(fun, a, b, tol)
+    With a tolerance and the number of evaluations.
+q = quadl(fun, a, b)
+    Adaptive Lobatto.
+Q = quadv(fun, a, b)
+    Of an array-valued function.
+# Examples
+## The same integral three ways, and a vector of them
+[q, fcnt] = quad(@(x) exp(-x.^2), 0, 2)
+quadl(@(x) exp(-x.^2), 0, 2)
+integral(@(x) exp(-x.^2), 0, 2)
+quadv(@(x) [x, x^2, x^3], 0, 1)
+# See also
+integral quadgk

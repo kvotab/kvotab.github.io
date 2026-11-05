@@ -1,0 +1,300 @@
+@ ode23, ode113, ode78, ode89
+Nonstiff ODE solvers for other tolerances: lower order for loose ones, higher order or multistep for tight ones.
+
+They take the inputs and give the outputs of `ode45`. `ode23` (Bogacki-Shampine, orders 3 and 2) is cheapest at loose tolerances; `ode78` and `ode89` (Verner's pairs, orders 8 and 9) take few, long steps at tight tolerances; `ode113` (Adams-Bashforth-Moulton, orders 1 to 12) uses two evaluations a step, for problems whose function is costly. For stiff problems, the stiff solvers.
+
+# Syntax
+[t, y] = ode23(odefun, tspan, y0)
+    Bogacki-Shampine.
+[t, y] = ode113(odefun, tspan, y0, options)
+    Adams-Bashforth-Moulton, with options.
+[t, y] = ode78(odefun, tspan, y0)
+    Verner 8(7).
+[t, y] = ode89(odefun, tspan, y0)
+    Verner 9(8).
+sol = ode113(...)
+    A solution structure for `deval`.
+# Examples
+## Steps and errors at a tight tolerance
+> The orbit-like system y'' = -y over five periods, its exact solution cos(t), at RelTol 1e-10.
+f = @(t, y) [y(2); -y(1)];
+opts = odeset('RelTol', 1e-10, 'AbsTol', 1e-12);
+solvers = {@ode23, @ode45, @ode113, @ode78, @ode89};
+for k = 1:numel(solvers)
+    [t, y] = solvers{k}(f, [0 10*pi], [1; 0], opts);
+    fprintf('%-6s %6d steps  error %.1e\n', func2str(solvers{k}), numel(t) - 1, max(abs(y(:, 1) - cos(t))));
+end
+# See also
+ode45 ode15s odeset
+
+@ ode15s, ode23s, ode23t, ode23tb
+Stiff ODE solvers: for problems with very different time scales, where explicit solvers crawl.
+
+In a stiff problem a fast component decays almost at once but forces an explicit solver to take tiny steps for stability. These implicit solvers take steps sized for the accuracy wanted. `ode15s` (numerical differentiation formulas of orders 1 to 5) is the first to try, and solves differential-algebraic systems with a singular mass matrix; `ode23s` (Rosenbrock) suits loose tolerances; `ode23t` (trapezoidal rule) moderately stiff problems; `ode23tb` (TR-BDF2) loose tolerances on stiff ones.
+
+# Syntax
+[t, y] = ode15s(odefun, tspan, y0)
+    NDFs of orders 1 to 5.
+[t, y] = ode15s(odefun, tspan, y0, options)
+    With options: `'Mass'`, `'Jacobian'`, `'MaxOrder'`, `'BDF'`, ....
+[t, y] = ode23s(odefun, tspan, y0)
+    Rosenbrock.
+[t, y] = ode23t(odefun, tspan, y0)
+    The trapezoidal rule.
+[t, y] = ode23tb(odefun, tspan, y0)
+    TR-BDF2.
+# Examples
+## A stiff equation: steps taken
+> y' = -1000(y - cos t): y follows cos t after a quick start, and an explicit solver stays held to steps near 1/1000.
+f = @(t, y) -1000*(y - cos(t));
+solvers = {@ode45, @ode15s, @ode23s, @ode23t, @ode23tb};
+for k = 1:numel(solvers)
+    [t, y] = solvers{k}(f, [0 2], 0);
+    fprintf('%-7s %5d steps  y(2) = %.4f\n', func2str(solvers{k}), numel(t) - 1, y(end));
+end
+## Robertson's chemical kinetics
+> Three species reacting at rates from 0.04 to 3e7: a classic stiff test, solved over 40 seconds.
+f = @(t, y) [-0.04*y(1) + 1e4*y(2)*y(3); 0.04*y(1) - 1e4*y(2)*y(3) - 3e7*y(2)^2; 3e7*y(2)^2];
+[t, y] = ode15s(f, [0 40], [1; 0; 0]);
+semilogx(t(2:end), y(2:end, 1), t(2:end), 1e4*y(2:end, 2), t(2:end), y(2:end, 3))
+legend('y_1', '10^4 y_2', 'y_3', 'Location', 'east'), xlabel('t'), grid on
+# See also
+ode45 odeset ode15i
+
+@ ode15i, decic
+Implicit ODEs and DAEs, F(t, y, y') = 0, and consistent initial values for them.
+
+`ode15i` solves a system given as `F(t, y, yp)` returning a column of residuals: an implicit ODE, or a differential-algebraic system of index 1. Its start needs both `y0` and `yp0` with `F(t0, y0, yp0) = 0`; `decic` finds such values, holding the components marked 1 in `fixed_y0` and `fixed_yp0` and changing the others as little as it can.
+
+# Syntax
+[y0new, yp0new] = decic(odefun, t0, y0, fixed_y0, yp0, fixed_yp0)
+    Consistent initial values.
+[t, y] = ode15i(odefun, tspan, y0, yp0)
+    The solution.
+[t, y] = ode15i(odefun, tspan, y0, yp0, options)
+    With options.
+sol = ode15i(...)
+    A solution structure.
+# Examples
+## y' + y^2 = 0 written implicitly
+> With y(0) = 1, decic finds y'(0) = -1; the exact solution is 1/(1 + t).
+F = @(t, y, yp) yp + y.^2;
+[y0, yp0] = decic(F, 0, 1, 1, 0, 0)
+[t, y] = ode15i(F, [0 5], y0, yp0);
+max(abs(y - 1./(1 + t)))
+# See also
+ode15s odeset
+
+@ odeset, odeget
+Options for the ODE solvers, made and read.
+
+`odeset` takes names and values (`'RelTol'` 1e-3 and `'AbsTol'` 1e-6 unless set; `'MaxStep'`, `'InitialStep'`, `'Events'`, `'Jacobian'`, `'Mass'`, `'NonNegative'`, `'OutputFcn'`, `'Refine'`, `'MaxOrder'`, ...), or changes an existing structure. `odeget` reads one, with a default when it is not set. An events function `[value, isterminal, direction] = events(t, y)` marks where `value` crosses zero, and with `isterminal` 1 stops the solution there.
+
+# Syntax
+options = odeset(Name, Value, ...)
+    Options.
+options = odeset(oldopts, Name, Value, ...)
+    Changed.
+v = odeget(options, Name, default)
+    One option, or the default.
+# Examples
+## A ball dropped from 10 m, stopped when it lands
+> The event is the height crossing zero going down; [t, y, te, ye, ie] gives when and where.
+opts = odeset('RelTol', 1e-8, 'Events', @(t, y) deal(y(1), 1, -1));
+[t, y, te, ye] = ode45(@(t, y) [y(2); -9.81], [0 5], [10; 0], opts);
+te
+sqrt(2*10/9.81)
+ye(2)
+odeget(opts, 'RelTol')
+odeget(opts, 'MaxStep', 0.5)
+# See also
+ode45 deval
+
+@ odeplot
+The output function that plots the solution against time as the solver goes.
+
+Given as `'OutputFcn'`, it plots each component (or those `'OutputSel'` names) as the steps come; a solver called with no outputs uses it, so `ode45(f, tspan, y0)` alone plots the solution.
+
+# Syntax
+options = odeset('OutputFcn', @odeplot)
+    As an output function; a solver called with no outputs, `ode45(odefun, tspan, y0)`, uses it too.
+# Examples
+## A solver called without outputs
+ode45(@(t, y) [y(2); -y(1) - 0.2*y(2)], [0 20], [1; 0])
+# See also
+odeset ode45
+
+@ deval, odextend
+A solution structure evaluated at new times, and carried on to a later time.
+
+`sol = ode45(...)` keeps the steps and the interpolant between them; `deval(sol, t)` evaluates it anywhere in the interval, a column for each time (and the derivative for the BVP and DDE solvers). `odextend` continues the solution past its end from where it stopped.
+
+# Syntax
+y = deval(sol, t)
+    Values at `t`.
+y = deval(sol, t, idx)
+    Of the components `idx`.
+sol = odextend(sol, odefun, tfinal)
+    Carried on to `tfinal` (`[]` for the same function).
+# Examples
+## Evaluated between steps, then carried on
+sol = ode45(@(t, y) -0.5*y, [0 2], 1);
+y = deval(sol, [0.5 1 1.5])
+exp(-0.5*[0.5 1 1.5])
+sol = odextend(sol, [], 4);
+[sol.x(end) deval(sol, 4) exp(-2)]
+# See also
+ode45 bvp4c dde23
+
+@ ode, solutionFcn
+An initial value problem as an object: its function, start and solver; solved by solve.
+
+`F = ode(ODEFcn=@(t, y) ..., InitialValue=y0)` holds the problem; properties set the start time, parameters, tolerances, a Jacobian or mass matrix, and the solver (`'auto'`, `'nonstiff'`, `'stiff'`, or a solver's name; `SelectedSolver` says which). `solve(F, t0, tf)` gives the solution, `S.Time` a row and `S.Solution` a column for each time; `solutionFcn(F, t0, tf)` a function of time from the solver's interpolant.
+
+# Syntax
+F = ode(ODEFcn=fun, InitialValue=y0)
+    The problem.
+F = ode(..., InitialTime=t0, Parameters=p, Solver=name)
+    With more properties; `S = solve(F, t0, tf)` gives its solution.
+f = solutionFcn(F, t0, tf)
+    The solution as a function.
+# Examples
+## A decay with a parameter
+F = ode(ODEFcn=@(t, y, p) -p*y, InitialValue=1, Parameters=2);
+F.SelectedSolver
+S = solve(F, 0, 1);
+[S.Solution(end) exp(-2)]
+f = solutionFcn(F, 0, 1);
+f(0.5)
+exp(-1)
+# See also
+ode45 solve
+
+@ bvp4c, bvp5c
+Boundary value problems y' = f(x, y) on [a, b], with conditions at both ends, by collocation.
+
+`odefun(x, y)` gives y' as a column; `bcfun(ya, yb)` the residuals of the boundary conditions, zero when they hold. The guess from `bvpinit` gives the first mesh, refined until the residual is within `'RelTol'` on each interval. `bvp4c` uses fourth-order collocation, `bvp5c` fifth-order (more accurate on a mesh). Unknown parameters can be solved for alongside. The solution has `x`, `y` and `yp` on the final mesh, and `deval` gives values between.
+
+# Syntax
+sol = bvp4c(odefun, bcfun, solinit)
+    Fourth order.
+sol = bvp4c(odefun, bcfun, solinit, options)
+    With options from `bvpset`.
+sol = bvp5c(odefun, bcfun, solinit)
+    Fifth order.
+# Examples
+## y'' = -y with y(0) = 0 and y(π/2) = 1, whose solution is sin(x)
+odefun = @(x, y) [y(2); -y(1)];
+bcfun = @(ya, yb) [ya(1); yb(1) - 1];
+solinit = bvpinit(linspace(0, pi/2, 5), [0; 1]);
+sol = bvp4c(odefun, bcfun, solinit);
+max(abs(sol.y(1, :) - sin(sol.x)))
+sol5 = bvp5c(odefun, bcfun, solinit);
+max(abs(sol5.y(1, :) - sin(sol5.x)))
+x = linspace(0, pi/2, 50);
+plot(x, deval(sol, x, 1), sol.x, sol.y(1, :), 'o'), grid on
+# See also
+bvpinit bvpset deval
+
+@ bvpinit, bvpxtend
+First guesses for the boundary value solvers: from a mesh and values, or from a solution carried to a longer interval.
+
+`bvpinit(xmesh, yinit)` gives the first mesh and a guess on it: a constant column, or a function `yinit(x)`; a third input guesses unknown parameters. `bvpinit(sol, [anew bnew])` and `bvpxtend(sol, xnew)` start a longer interval from a solution, its end values carried out (by the slope, for `bvpxtend`).
+
+# Syntax
+solinit = bvpinit(xmesh, yinit)
+    A mesh and a guess.
+solinit = bvpinit(xmesh, yinit, parameters)
+    With parameters.
+solinit = bvpinit(sol, [anew bnew])
+    From a solution, to new ends.
+solinit = bvpxtend(sol, xnew)
+    From a solution, past an end.
+# Examples
+## A guess, and a solution carried on
+solinit = bvpinit(linspace(0, 1, 4), @(x) [x; 1]);
+solinit.y
+sol = bvp4c(@(x, y) [y(2); -y(1)], @(ya, yb) [ya(1); yb(1) - sin(1)], solinit);
+s2 = bvpxtend(sol, 2);
+[s2.x(end) s2.y(1, end)]
+# See also
+bvp4c
+
+@ bvpset, bvpget
+Options of the boundary value solvers, made and read.
+
+The names: `'RelTol'` (1e-3) and `'AbsTol'` (1e-6), `'NMax'` (the most mesh points), `'SingularTerm'` (S, for y' = S·y/x + f), `'FJacobian'`, `'BCJacobian'`, `'Stats'` and `'Vectorized'`.
+
+# Syntax
+options = bvpset(Name, Value, ...)
+    Options.
+v = bvpget(options, Name, default)
+    One of them.
+# Examples
+## A tighter tolerance, and its effect
+odefun = @(x, y) [y(2); -y(1)];
+bcfun = @(ya, yb) [ya(1); yb(1) - 1];
+solinit = bvpinit(linspace(0, pi/2, 5), [0; 1]);
+opts = bvpset('RelTol', 1e-8);
+bvpget(opts, 'RelTol')
+sol = bvp4c(odefun, bcfun, solinit, opts);
+points = numel(sol.x)
+maxError = max(abs(sol.y(1, :) - sin(sol.x)))
+# See also
+bvp4c bvpinit
+
+@ dde23, ddesd, ddeset, ddeget
+Delay differential equations: y' depends on y at earlier times.
+
+`dde23` solves y'(t) = f(t, y(t), Z) where `Z(:, j)` is y(t - lags(j)) for constant positive lags; `history` gives y before the start (a constant, a function of t, or an earlier solution). It steps on to the points where a lag carries the jump at the start forward. `ddesd` takes delays that depend on t and y: `delays(t, y)` gives the times at which y is taken. `ddeset` and `ddeget` make and read their options (`'RelTol'`, `'AbsTol'`, `'Events'`, `'InitialY'`, `'Jumps'`, ...). The solution goes to `deval`.
+
+# Syntax
+sol = dde23(ddefun, lags, history, tspan)
+    Constant lags.
+sol = dde23(ddefun, lags, history, tspan, options)
+    With options from `ddeset`.
+sol = ddesd(ddefun, delays, history, tspan)
+    Delays of t and y.
+options = ddeset(Name, Value, ...)
+    Options.
+v = ddeget(options, Name, default)
+    One option.
+# Examples
+## Delayed feedback: y'(t) = -y(t - 1)
+sol = dde23(@(t, y, Z) -Z, 1, 1, [0 10]);
+t = linspace(0, 10, 300);
+plot(t, deval(sol, t)), grid on, xlabel('t')
+sol.discont
+## A delay that grows with time
+sol = ddesd(@(t, y, Z) -Z, @(t, y) t/2, 1, [0 5]);
+deval(sol, 5)
+ddeget(ddeset('RelTol', 1e-6), 'RelTol')
+# See also
+deval ode45
+
+@ pdepe, pdeval
+Parabolic and elliptic PDEs in one space variable and time, solved by the method of lines; and the solution between mesh points.
+
+The equations are c·∂u/∂t = x^(-m)·∂/∂x(x^m·f) + s, with `[c, f, s] = pdefun(x, t, u, dudx)` and m 0 (slab), 1 (cylinder) or 2 (sphere). `icfun(x)` gives the start; `[pl, ql, pr, qr] = bcfun(xl, ul, xr, ur, t)` the boundary conditions p + q·f = 0 at each end (q = 0 holds u). `sol(i, j, k)` is component k at `tspan(i)` and `xmesh(j)`; `pdeval` interpolates one time's solution between the mesh points.
+
+# Syntax
+sol = pdepe(m, pdefun, icfun, bcfun, xmesh, tspan)
+    The solution.
+sol = pdepe(..., options)
+    With options from `odeset`.
+[uout, duoutdx] = pdeval(m, xmesh, ui, xout)
+    Between mesh points, with the slope.
+# Examples
+## Heat in a rod with its ends held at zero
+> u_t = u_xx with u(x, 0) = sin(πx): the solution is exp(-π²t)·sin(πx).
+x = linspace(0, 1, 21);
+t = linspace(0, 0.2, 11);
+pdefun = @(x, t, u, dudx) deal(1, dudx, 0);
+icfun = @(x) sin(pi*x);
+bcfun = @(xl, ul, xr, ur, t) deal(ul, 0, ur, 0);
+sol = pdepe(0, pdefun, icfun, bcfun, x, t);
+max(abs(sol(end, :) - exp(-pi^2*0.2)*sin(pi*x)))
+pdeval(0, x, sol(end, :), 0.5)
+surf(x, t, sol), xlabel('x'), ylabel('t'), zlabel('u')
+# See also
+ode15s

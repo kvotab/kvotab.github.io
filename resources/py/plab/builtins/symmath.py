@@ -490,7 +490,25 @@ def _sum_prod(args, fn, name):
         a, b = to_expr(lims[0]), to_expr(lims[1])
     else:
         a, b = s.Integer(0), k - 1
-    return Sym(_each(lambda e: fn(e, (k, a, b)), A))
+    return Sym(_each(lambda e: _closed(fn, e, k, a, b), A))
+
+
+def _closed(fn, e, k, a, b):
+    """A sum or product in closed form where SymPy can be brought to one: an infinite one left unevaluated as the
+    limit of the finite one, simplified; rising and falling factorials (which the language has no names for)
+    simplified away through gamma functions."""
+    s = sp()
+    r = fn(e, (k, a, b))
+    if isinstance(r, (s.Product, s.Sum)) and b == s.oo:
+        m = s.Dummy('m', integer=True, positive=True)
+        part = s.simplify(fn(e, (k, a, m)))
+        if not part.has(s.Product, s.Sum):
+            lim = s.limit(part, m, s.oo)
+            if not lim.has(s.AccumBounds, s.Limit):
+                r = lim
+    if r.has(s.RisingFactorial, s.FallingFactorial):
+        r = s.gammasimp(r)
+    return r
 
 
 @bi('symsum', arr=False)
@@ -896,7 +914,9 @@ def finverse(nargout, *args):
             except (TypeError, ValueError):
                 return False
         sols.sort(key=lambda g: (not real_at(g), s.count_ops(g)))
-        R.write('Warning: the function has more than one inverse; finverse gives one.\n')
+        if sum(map(real_at, sols)) != 1:
+            # several real inverses (x^2), or none: the one given is a choice (exp's other inverses are complex)
+            R.write('Warning: the function has more than one inverse; finverse gives one.\n')
     return S(sols[0].subs(y, x))
 
 
@@ -1253,7 +1273,13 @@ def laplace(nargout, *args):
 
     def lt(e):
         # the variable back as it was, inside the initial values too (subs(diff(x(t), t), t, 0))
-        return _tidy(s.laplace_transform(e.subs(t, tp), tp, z, noconds=True)).xreplace({tp: t})
+        r = _tidy(s.laplace_transform(e.subs(t, tp), tp, z, noconds=True)).xreplace({tp: t})
+        if r.has(s.I) and not e.has(s.I) and not r.has(s.LaplaceTransform):
+            # a real function's transform in conjugate pairs (t^2*sin(t)): one fraction over the rationals
+            q = s.factor(s.cancel(s.together(r)))
+            if not q.has(s.I):
+                r = q
+        return r
     return Sym(_each(lt, A))
 
 
@@ -1719,9 +1745,24 @@ def _with_fhs(name, nvars, args):
 
 @_over('fplot')
 def fplot_(nargout, *args):
-    syms_ = [a for a in args if _is(a)]
-    nv = 1
-    return OVERLOADS['_orig_fplot'](nargout, *_with_fhs('fplot', nv, args))
+    first = next((i for i, a in enumerate(args) if _is(a)), None)
+    if first is not None and args[first].a.size > 1:
+        # a vector of expressions: a line for each, in the same axes
+        from .graphics import gca_
+        from ..graphics_base import HArr
+        A = args[first]
+        hs, ax, keep = [], None, None
+        for e in A.a.reshape(-1, order='F'):
+            one = list(args)
+            one[first] = Sym(np.array([[e]], object), A.fargs)
+            hs.append(OVERLOADS['_orig_fplot'](1, *_with_fhs('fplot', 1, one)))
+            if ax is None:
+                ax = gca_()
+                keep = ax.props['NextPlot']
+                ax.props['NextPlot'] = 'add'
+        ax.props['NextPlot'] = keep
+        return HArr(np.array(hs, object).reshape(-1, 1)) if nargout else None
+    return OVERLOADS['_orig_fplot'](nargout, *_with_fhs('fplot', 1, args))
 
 
 @_over('fpolarplot')
