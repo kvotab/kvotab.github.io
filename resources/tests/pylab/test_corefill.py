@@ -142,6 +142,13 @@ C("LabelSource 'foldernames': categorical labels, counted by countEachLabel", te
   and a(W['tbl'].vars[1]).reshape(-1).tolist() == [2.0, 1.0])
 C('splitEachLabel: half of each label (rounded) in the first, the rest in the second', len(W['tr'].files) == 2 and len(W['te'].files) == 1)
 C('readall and a ReadSize of 2: cells of images', W['all_'].a.shape == (3, 1) and W['two'].a.shape == (2, 1))
+W, _ = run("imds = imageDatastore('imgs', 'IncludeSubfolders', true, 'LabelSource', 'foldernames'); read(imds); [r3, i3] = readimage(imds, 3); "
+           "lab3 = char(i3.Label); f3 = i3.Filename; still = progress(imds); imds.ReadFcn = @(f) 2*imread(f); r1 = readimage(imds, 1); "
+           "try, readimage(imds, 4); e = ''; catch ex, e = ex.message; end")
+near('readimage: the k-th image, by its ReadFcn when it has one', (a(W['r3']).astype(float), a(W['r1']).astype(float)), (np.ones((3, 3)), np.minimum(2 * np.array([[16, 2, 3, 13], [5, 11, 10, 8], [9, 7, 6, 12], [4, 14, 15, 1]], float), 255)))
+C('readimage: its label and file, and the datastore left where it was', text(W['lab3']) == 'dogs' and text(W['f3']).endswith('d1.png') and abs(float(W['still']) - 1 / 3) < 1e-12,
+  (W['lab3'], W['f3'], W['still']))
+C('readimage: an index past the files refused', 'whole number from 1 to 3' in text(W['e']), W['e'])
 W, _ = run("fds = fileDatastore('dd', 'ReadFcn', @(f) height(readtable(f)), 'FileExtensions', '.csv', 'UniformRead', true); r = readall(fds);"
            "bds = fileDatastore('dd/a.csv', 'ReadMode', 'bytes', 'BlockSize', 10, 'ReadFcn', @(f) 0); b1 = read(bds); b2 = read(bds); b3 = read(bds); hb = hasdata(bds);"
            "ads = arrayDatastore(magic(4), 'ReadSize', 3); d1 = read(ads); d2 = read(ads); ads.OutputType = 'same'; reset(ads); s1 = read(ads);"

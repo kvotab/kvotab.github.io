@@ -2575,8 +2575,8 @@ readall, hasdata, preview, progress, numpartitions, partition, shuffle, subset, 
     Python: datastores.py. readall reads a copy of the datastore from its start to its end and joins the blocks (tables by the table concatenation, arrays by vertcat); preview reads a copy's first block (eight rows of a table); progress is the files read, with the part of the current one, over the files. partition, shuffle and subset make a copy holding some of the files (or slices), shuffle in an order from the language's random number generator.
 transform:
     Python: datastores.py. A TransformedDatastore of copies of the datastores, each started over; each read reads them and calls the function (with the info too when IncludeInfo is true). A transform of a transformed datastore adds the function after the others.
-countEachLabel, splitEachLabel:
-    Python: datastores.py. The labels counted per category; splitEachLabel takes each label's files in order (or in an order from the random number generator), a proportion rounded to the nearest whole number or a count for each output, the rest for the last.
+countEachLabel, splitEachLabel, readimage:
+    Python: datastores.py. readimage reads the k-th file as read does (ReadFcn, or imread) and leaves the datastore where it is. The labels counted per category; splitEachLabel takes each label's files in order (or in an order from the random number generator), a proportion rounded to the nearest whole number or a count for each output, the rest for the last.
 writeall:
     Python: datastores.py. Each file read alone (a datastore of that file) and written again: tables by writetable, images by imwrite, other data by save as the variable data; the file's folder relative to the files' common folder (os.path.commonpath) is kept unless FolderLayout is 'flatten'.
 mapreduce, add, addmulti, hasnext, getnext:

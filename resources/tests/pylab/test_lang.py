@@ -547,6 +547,10 @@ case('archives: gzip and gunzip, tar and untar', "gzip('za/one.txt', 'gz'); g = 
      "tar('t.tgz', 'za'); mkdir('tout'); r = untar('t.tgz', 'tout'); b = fileread('tout/za/one.txt');",
      want={'a': 'hello', 'b': 'hello'})
 case('archives: a name that is not there', "zip('x.zip', 'nothere.txt')", error="'nothere.txt' not found")
+case('dir of a name that is not there says so', "dir('nothere'); s = dir('nothere'); n = numel(s);",
+     shows='Warning: Name is nonexistent or not a directory: nothere', want={'n': 0})
+_W, _out = run("dir('*.nomatch');")
+C('dir of a pattern that matches nothing prints nothing', _out.strip() == '', _out)
 
 case('ode15i', "[t, y] = ode15i(@(t, y, yp) yp + y, [0 1], 1, -1); e = abs(y(end) - exp(-1)) < 1e-3; "
      "[t, y] = ode15i(@(t, y, yp) yp.^3 + yp + y, [0 2], 1, -0.6823278); n = abs(y(end) - 0.18267339) < 1e-3;",

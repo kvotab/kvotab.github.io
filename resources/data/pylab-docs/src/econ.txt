@@ -1,0 +1,342 @@
+@ arima
+An ARIMA model of a time series: autoregressive, integrated, moving average.
+
+y(t) depends on its own past (AR, p lags), on past innovations (MA, q lags), after differencing D times; seasonal terms (SAR, SMA at their actual lags, 12 not 1) and predictors (`Beta`, an ARIMAX model) can be added, and the innovations' variance can be a constant or a `garch`, `egarch` or `gjr` model. Parameters given as NaN are what `estimate` fits; numbers are held. AR, MA, SAR and SMA are cells of coefficients, a 0 leaving a lag out. `P` is the whole AR degree, differences included.
+
+# Syntax
+Mdl = arima(p, D, q)
+    A model whose parameters are to be estimated.
+Mdl = arima('AR', {a1, a2}, 'MA', {m1}, 'Constant', c, 'Variance', v)
+    A model with its parameters.
+Mdl = arima('ARLags', [1 4], 'D', 1, 'Seasonality', 12, 'SMALags', 12)
+    Lags of one's choosing, seasonal terms.
+Mdl = arima('ARLags', 1, 'Beta', NaN, 'Distribution', 't')
+    With predictors, t innovations.
+Mdl = arima('ARLags', 1, 'Variance', garch(1, 1))
+    With a conditional variance model.
+# Examples
+## A model to estimate, and one to simulate
+Mdl = arima(2, 0, 1)
+True = arima('AR', {0.6 -0.2}, 'MA', {0.4}, 'Constant', 1, 'Variance', 0.5);
+y = simulate(True, 500);
+plot(y), xlabel('t')
+mean(y)
+1/(1 - 0.6 + 0.2)
+# See also
+estimate forecast garch autocorr
+
+@ garch, egarch, gjr
+Conditional variance models: the variance of the innovations changing with their recent size.
+
+GARCH: v(t) = Constant + Σ GARCH(i) v(t-i) + Σ ARCH(j) e(t-j)², where e(t) = y(t) - Offset; the variance is persistent when the GARCH and ARCH coefficients sum near 1. EGARCH models log v(t), with `Leverage` terms in the standardized innovations z = e/√v so that falls and rises can weigh differently; GJR adds Leverage(j) e(t-j)² where e(t-j) < 0, so that negative innovations weigh more. NaN parameters are estimated.
+
+# Syntax
+Mdl = garch(P, Q)
+    GARCH(P, Q) to estimate.
+Mdl = garch('Constant', c, 'GARCH', {g}, 'ARCH', {a}, 'Offset', mu)
+    With its parameters.
+Mdl = egarch('Constant', c, 'GARCH', {g}, 'ARCH', {a}, 'Leverage', {l})
+    EGARCH.
+Mdl = gjr('Constant', c, 'GARCH', {g}, 'ARCH', {a}, 'Leverage', {l})
+    GJR.
+# Examples
+## Volatility that clusters
+Mdl = garch('Constant', 0.05, 'GARCH', {0.85}, 'ARCH', {0.1});
+[v, e] = simulate(Mdl, 1000);
+subplot(2, 1, 1), plot(e), ylabel('innovation')
+subplot(2, 1, 2), plot(v), ylabel('variance'), xlabel('t')
+0.05/(1 - 0.85 - 0.1)
+mean(e.^2)
+# See also
+arima estimate archtest
+
+@ varm
+A vector autoregression: several series, each depending on the past of all of them.
+
+y(t) = Constant + Trend t + AR{1} y(t-1) + ... + AR{p} y(t-p) + Beta x(t) + e(t), the innovations e with covariance `Covariance`. NaN values are what `estimate` fits (by least squares, the likelihood's maximum).
+
+# Syntax
+Mdl = varm(numSeries, numLags)
+    A model to estimate.
+Mdl = varm('Constant', c, 'AR', {A1, A2}, 'Covariance', S)
+    A model with its parameters.
+Mdl = varm('AR', {A1}, 'Lags', 4, 'Trend', t, 'Beta', B, 'SeriesNames', names)
+    With lags, a trend and predictors.
+# Examples
+## Two series, one leading the other
+True = varm('Constant', [0; 0], 'AR', {[0.5 0; 0.4 0.3]}, 'Covariance', [1 0.2; 0.2 0.5]);
+Y = simulate(True, 800);
+Est = estimate(varm(2, 1), Y);
+round(Est.AR{1}, 2)
+round(Est.Covariance, 2)
+# See also
+irf fevd estimate
+
+@ estimate, summarize
+A model's NaN parameters estimated by maximum likelihood, and the fit summarized.
+
+For `arima`, the first P observations are the presample unless `'Y0'` is given, and presample innovations are 0 (or `'E0'`); predictors come as `'X'`. For `garch`, `egarch` and `gjr`, y holds the innovations themselves. `varm` is fitted by least squares, its covariance the residuals' (divided by T). The outputs are the fitted model, the estimates' covariance (or standard errors for varm), the log-likelihood and more. `summarize` shows the estimates with their standard errors, t statistics and p-values, the sample size, the log-likelihood, AIC and BIC, or gives them as a struct.
+
+# Syntax
+EstMdl = estimate(Mdl, y)
+    The fitted model.
+[EstMdl, EstParamCov, logL, info] = estimate(Mdl, y, 'Y0', y0, 'X', X, 'Display', 'off')
+    With the estimates' covariance and the log-likelihood.
+[EstMdl, EstSE, logL, E] = estimate(VarMdl, Y)
+    A vector autoregression.
+summarize(EstMdl)
+    The estimates and the fit shown.
+results = summarize(EstMdl)
+    The same as a struct.
+# Examples
+## An AR(1) found again
+True = arima('AR', {0.7}, 'Constant', 0.5, 'Variance', 1);
+y = simulate(True, 600);
+[Est, ~, logL] = estimate(arima(1, 0, 0), y, 'Display', 'off');
+[Est.AR{1}, Est.Constant, Est.Variance]
+summarize(Est)
+# See also
+arima forecast infer aicbic
+
+@ forecast, simulate, infer
+Forecasts of a model, sample paths of it, and the innovations it implies for data.
+
+`forecast` gives minimum mean square error forecasts from the presample Y0 (at least P values; a column for each path), with their mean square errors, which grow with the model's moving-average weights; a variance model forecasts the conditional variances. `simulate` draws paths from the language's random number generator, the presample at the model's mean unless given. `infer` gives the innovations (residuals) a model implies for data, their variances and the log-likelihood.
+
+# Syntax
+[Y, YMSE] = forecast(Mdl, numperiods, Y0)
+    Forecasts and their mean square errors.
+[Y, E, V] = simulate(Mdl, numobs, 'NumPaths', m)
+    Sample paths, their innovations and variances.
+[E, V, logL] = infer(Mdl, y)
+    The innovations of data.
+# Examples
+## A forecast with its band
+Mdl = arima('AR', {0.8}, 'Constant', 0.4, 'Variance', 0.25);
+y = simulate(Mdl, 100);
+[f, mse] = forecast(Mdl, 20, y);
+plot(1:100, y, 101:120, f, 101:120, f + 1.96*sqrt(mse), 'k:', 101:120, f - 1.96*sqrt(mse), 'k:')
+round(f([1 20])', 3)
+0.4/(1 - 0.8)
+[E, V] = infer(Mdl, y);
+[std(E(2:end)) sqrt(0.25)]
+# See also
+estimate arima
+
+@ impulse
+The impulse response of a dynamic system, or of an ARIMA model.
+
+For a system (`tf`, `ss`, `zpk`): its response to a unit impulse, drawn without outputs. For an `arima` model: the weights of its infinite moving-average form, 1 first, how a single innovation is felt later (a stem plot without outputs).
+
+# Syntax
+impulse(sys)
+    A system's response drawn.
+[y, t] = impulse(sys, Tfinal)
+    Its values.
+y = impulse(Mdl, numObs)
+    An ARIMA model's moving-average weights.
+# Examples
+## An ARMA(1,1) model's weights
+> For y(t) = 0.5 y(t-1) + e(t) + 0.4 e(t-1) the weights are 1, then 0.9 0.5^(k-1).
+w = impulse(arima('AR', {0.5}, 'MA', {0.4}, 'Constant', 0, 'Variance', 1), 6)'
+0.9*0.5.^(0:4)
+## A second-order system
+impulse(tf(1, [1 0.6 1]))
+# See also
+irf step arima
+
+@ irf, fevd
+A vector autoregression's impulse responses and forecast error variance decomposition.
+
+`irf` gives Response(t, j, k), variable k's response at time t-1 to a shock of one standard deviation to variable j: orthogonalized by the Cholesky factor of the covariance (the default, which depends on the order of the series) or `'generalized'`. `fevd` gives Decomposition(t, j, k), the share of variable k's forecast error variance at horizon t due to shocks to variable j; each row's shares sum to 1. Without outputs `irf` draws the responses.
+
+# Syntax
+Response = irf(Mdl, 'NumObs', n, 'Method', method)
+    Impulse responses.
+irf(Mdl)
+    Drawn.
+Decomposition = fevd(Mdl, 'NumObs', n, 'Method', method)
+    The decomposition.
+# Examples
+## Who moves whom
+Mdl = varm('Constant', [0; 0], 'AR', {[0.5 0; 0.4 0.3]}, 'Covariance', [1 0; 0 0.5]);
+R = irf(Mdl, 'NumObs', 6);
+round(squeeze(R(:, 1, 2))', 3)
+round(squeeze(R(:, 2, 1))', 3)
+D = fevd(Mdl, 'NumObs', 6);
+round(squeeze(D(6, :, 2)), 3)
+irf(Mdl)
+# See also
+varm forecast
+
+@ autocorr, parcorr, crosscorr
+Sample autocorrelations, partial autocorrelations and cross-correlations, with bounds.
+
+`autocorr` gives the correlation of the series with itself k steps back, lags 0 to k (min(20, n-1)), with bounds of ±2 standard errors (`'NumSTD'`) by Bartlett's formula for an MA(q) process (`'NumMA'`, 0: white noise). `parcorr` gives the partial autocorrelations, the last coefficient of y regressed on its first m lags (`'ols'`, or `'yule-walker'`), with bounds ±s/√n past lag p. `crosscorr` gives the correlation of y1(t+k) with y2(t), for lags -k to k. Without outputs, each draws stems with the bounds. An AR(p) process's partial autocorrelations stop after lag p; an MA(q)'s autocorrelations after lag q.
+
+# Syntax
+[acf, lags, bounds] = autocorr(y, 'NumLags', k, 'NumMA', q, 'NumSTD', s)
+    Autocorrelations.
+[pacf, lags, bounds] = parcorr(y, 'NumLags', k, 'NumAR', p, 'Method', m)
+    Partial autocorrelations.
+[xcf, lags, bounds] = crosscorr(y1, y2, 'NumLags', k)
+    Cross-correlations.
+autocorr(y)
+    Drawn with the bounds.
+# Examples
+## An AR(2) process: partial autocorrelations stop at lag 2
+y = simulate(arima('AR', {0.6 0.25}, 'Constant', 0, 'Variance', 1), 1000);
+subplot(2, 1, 1), autocorr(y)
+subplot(2, 1, 2), parcorr(y)
+p = parcorr(y, 'NumLags', 4);
+round(p', 2)
+## A series that leads another by three steps
+x = randn(500, 1);
+z = [zeros(3, 1); x(1:end - 3)] + 0.3*randn(500, 1);
+[c, lags] = crosscorr(z, x, 'NumLags', 5);
+[~, k] = max(c);
+lags(k)
+# See also
+arima lbqtest xcorr
+
+@ adftest, pptest, kpsstest
+Tests of a unit root, and of stationarity.
+
+`adftest` (augmented Dickey-Fuller) regresses the differences on the lagged level and lagged differences: h = true rejects a unit root. Its model is `'AR'` (no constant, the default), `'ARD'` (with a drift) or `'TS'` (trend stationary); its statistic `'t1'`, `'t2'` or `'F'`. `pptest` (Phillips-Perron) uses the regression without lagged differences and corrects its statistics for autocorrelation with a Newey-West variance. `kpsstest` turns the question round: its null is stationarity (about a trend, or a level), and h = true rejects it; with autocorrelated data it needs lags, or it rejects too often. Options given as vectors run a test for each.
+
+# Syntax
+[h, pValue, stat, cValue, reg] = adftest(y, 'model', m, 'lags', k, 'test', t, 'alpha', a)
+    Augmented Dickey-Fuller.
+[h, pValue, stat, cValue, reg] = pptest(y, 'model', m, 'lags', k)
+    Phillips-Perron.
+[h, pValue, stat, cValue] = kpsstest(y, 'lags', k, 'trend', tf)
+    KPSS.
+# Examples
+## A random walk and a stationary series
+w = cumsum(randn(300, 1));
+s = filter(1, [1 -0.5], randn(300, 1));
+[adftest(w), adftest(s)]
+[pptest(w), pptest(s)]
+[kpsstest(w, 'trend', false, 'lags', 8), kpsstest(s, 'trend', false, 'lags', 8)]
+[~, ~, stat, cv] = adftest(w, 'model', 'ARD');
+round([stat cv], 2)
+# See also
+egcitest vratiotest
+
+@ lbqtest, archtest
+Tests of residuals: autocorrelation (Ljung-Box) and conditional heteroscedasticity (Engle's ARCH test).
+
+`lbqtest` sums the squared autocorrelations, Q = n(n+2) Σ r_k²/(n-k), up to `'Lags'`, chi-square with `'DOF'` degrees of freedom (Lags unless given: take off a fitted model's parameters for its residuals). `archtest` regresses the squared residuals on their lags: T R², chi-square with Lags degrees of freedom. h = true rejects white noise, or constant variance.
+
+# Syntax
+[h, pValue, stat, cValue] = lbqtest(res, 'Lags', k, 'DOF', d)
+    Ljung-Box Q.
+[h, pValue, stat, cValue] = archtest(res, 'Lags', k)
+    Engle's ARCH test.
+# Examples
+## White noise, an AR series, and clustered volatility
+e = randn(500, 1);
+a = filter(1, [1 -0.4], e);
+[~, v] = simulate(garch('Constant', 0.05, 'GARCH', {0.8}, 'ARCH', {0.15}), 500);
+[lbqtest(e), lbqtest(a)]
+[archtest(e), archtest(v, 'Lags', 2)]
+# See also
+autocorr garch
+
+@ vratiotest
+The variance ratio test of a random walk.
+
+y holds log prices. The variance of q-period returns over q times the variance of one-period returns (Lo and MacKinlay) is 1 for a random walk; above 1 means trends, below 1 reversion. The test is robust to heteroscedasticity unless `'IID'` is true; h = true rejects the random walk.
+
+# Syntax
+[h, pValue, stat, cValue, ratio] = vratiotest(y, 'period', q, 'IID', tf, 'alpha', a)
+    The test and the ratio.
+# Examples
+## A random walk, and one whose returns persist
+r1 = randn(1000, 1);
+r2 = filter(1, [1 -0.3], randn(1000, 1));
+[h1, ~, ~, ~, ratio1] = vratiotest(cumsum(r1), 'period', 4);
+[h2, ~, ~, ~, ratio2] = vratiotest(cumsum(r2), 'period', 4);
+[h1 h2]
+round([ratio1 ratio2], 2)
+# See also
+adftest
+
+@ egcitest
+The Engle-Granger test of cointegration: whether series that wander share a common trend.
+
+The first column is regressed on the others (with a constant `'c'`, none `'nc'`, a trend `'ct'` or a quadratic trend `'ctt'`), then a Dickey-Fuller test of the residuals: if they are stationary, the series are cointegrated. h = true rejects no cointegration. Up to 6 series.
+
+# Syntax
+[h, pValue, stat, cValue, reg] = egcitest(Y, 'creg', c, 'lags', k, 'alpha', a)
+    The test, and the cointegrating regression.
+# Examples
+## Two series tied together, and two apart
+x = cumsum(randn(400, 1));
+y = 2*x + 1 + randn(400, 1);
+z = cumsum(randn(400, 1));
+[h1, ~, ~, ~, reg] = egcitest([y x]);
+h2 = egcitest([z x]);
+[h1 h2]
+round(reg.coeff', 2)
+# See also
+adftest
+
+@ aicbic, lratiotest, waldtest, lmtest
+Comparing fitted models: information criteria, and likelihood ratio, Wald and Lagrange multiplier tests.
+
+`aicbic` gives AIC = -2 logL + 2k and BIC = -2 logL + k log(n) (and AICc, CAIC and HQC in its third output), smaller being better. The three tests ask whether restrictions on the parameters hold: `lratiotest` from both models' log-likelihoods, 2(uLogL - rLogL); `waldtest` from the unrestricted estimates alone, the restrictions' values r, their Jacobian R and the estimates' covariance; `lmtest` from the restricted model alone, its score and covariance. Each statistic is chi-square with as many degrees of freedom as restrictions.
+
+# Syntax
+[aic, bic] = aicbic(logL, numParam, numObs)
+    Information criteria.
+[h, pValue, stat, cValue] = lratiotest(uLogL, rLogL, dof, alpha)
+    The likelihood ratio test.
+[h, pValue, stat, cValue] = waldtest(r, R, EstCov, alpha)
+    The Wald test.
+[h, pValue, stat, cValue] = lmtest(score, ParamCov, dof, alpha)
+    The Lagrange multiplier test.
+# Examples
+## AR(1) or AR(2)?
+y = simulate(arima('AR', {0.5 0.3}, 'Constant', 0, 'Variance', 1), 500);
+[~, ~, L1] = estimate(arima(1, 0, 0), y, 'Display', 'off');
+[~, ~, L2] = estimate(arima(2, 0, 0), y, 'Display', 'off');
+[aic, bic] = aicbic([L1; L2], [3; 4], 500);
+aic_bic = round([aic bic])
+[h, p] = lratiotest(L2, L1, 1)
+# See also
+estimate summarize
+
+@ hpfilter
+The Hodrick-Prescott trend of a series, and its cycle.
+
+The trend is the smooth series that minimizes the squared distance to the data plus `smoothing` times its squared second differences (1600, for quarterly data, unless given; larger is smoother); the cycle is what is left. Each column is a series. Without outputs, the series and their trends are drawn.
+
+# Syntax
+[trend, cyclical] = hpfilter(Y)
+    The trend and the cycle.
+[trend, cyclical] = hpfilter(Y, smoothing)
+    With a smoothing of one's own.
+# Examples
+## A trend through a cycle
+t = (1:120)';
+y = 0.05*t + sin(2*pi*t/20) + 0.3*randn(120, 1);
+[tr, cy] = hpfilter(y);
+plot(t, y, t, tr, 'LineWidth', 1.5), legend('series', 'trend', 'Location', 'northwest')
+round(corr(cy, sin(2*pi*t/20)), 2)
+# See also
+smoothdata detrend
+
+@ lagmatrix
+A series shifted by lags.
+
+Each lag shifts every series down by that many steps (a negative lag is a lead, shifting up), NaN where there is no value. The columns are every series at the first lag, then every series at the next.
+
+# Syntax
+YLag = lagmatrix(Y, lags)
+    The series shifted.
+# Examples
+## Lags and a lead
+lagmatrix((1:5)', [1 2 -1])
+# See also
+autocorr circshift

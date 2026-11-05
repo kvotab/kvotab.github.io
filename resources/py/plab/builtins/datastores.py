@@ -193,7 +193,7 @@ def hjoin(parts):
 # ---- the datastores ------------------------------------------------------------------------------------------------------
 
 METHODS = ('read', 'readall', 'hasdata', 'reset', 'preview', 'partition', 'numpartitions', 'progress', 'shuffle', 'subset',
-           'transform', 'combine', 'writeall', 'isPartitionable', 'isShuffleable', 'countEachLabel', 'splitEachLabel', 'copy')
+           'transform', 'combine', 'writeall', 'isPartitionable', 'isShuffleable', 'countEachLabel', 'splitEachLabel', 'readimage', 'copy')
 
 
 class Datastore(Obj):
@@ -1695,6 +1695,26 @@ async def _writeall(nargout, *args):
     return None
 
 
+async def _readimage(nargout, *args):
+    """[img, info] = readimage(imds, k): the k-th image, read as the datastore reads (its ReadFcn), without moving it."""
+    nargchk(args, 2, 2, 'readimage')
+    ds = args[0]
+    if not isinstance(ds, ImageStore):
+        raise err('MATLAB:readimage:NotImageDatastore', 'readimage reads an image of an imageDatastore.', 'readimage')
+    k, n = float(num(args[1])), len(ds.files)
+    if not (k == int(k) and 1 <= k <= n):
+        raise err('MATLAB:readimage:InvalidIndex', f'The index is a whole number from 1 to {n}, the number of files.', 'readimage')
+    i = int(k) - 1
+    img = await ds.read_file(ds.files[i])
+    if nargout < 2:
+        return img
+    d = {'Filename': Char.of(ds.files[i]), 'FileSize': _size_of(ds.files[i])}
+    lab = ds._labels_at([i])
+    if lab is not None:
+        d['Label'] = lab
+    return img, Struct.scalar(d)
+
+
 def _copy_ds(nargout, *args):
     nargchk(args, 1, 1, 'copy')
     return args[0].copy()
@@ -1706,7 +1726,7 @@ for _name, _h, _aw, _nout in (('read', _read, True, 2), ('readall', _readall, Tr
                               ('shuffle', _shuffle, False, 1), ('subset', _subset, False, 1), ('transform', _transform, False, 1),
                               ('combine', _combine, False, 1), ('isPartitionable', _is_part, False, 1), ('isShuffleable', _is_shuf, False, 1),
                               ('countEachLabel', _count_labels, False, 1), ('splitEachLabel', _split_labels, False, 8),
-                              ('writeall', _writeall, True, 1)):
+                              ('writeall', _writeall, True, 1), ('readimage', _readimage, True, 2)):
     _take_over(_name, _is_ds, _h, _aw, _nout)
 
 

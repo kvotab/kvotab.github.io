@@ -9194,6 +9194,10 @@ isPartitionable: Whether a datastore can be partitioned.
     tf = isPartitionable(ds)
 isShuffleable: Whether a datastore can be shuffled.
     tf = isShuffleable(ds)
+readimage: One image of an image datastore, by its number.
+    img = readimage(imds, k)
+    [img, info] = readimage(imds, k)
+    * The k-th file, read as read reads it (by ReadFcn), without moving the datastore; info holds its Filename, FileSize and Label.
 countEachLabel: How many images each label has.
     tbl = countEachLabel(imds)
     * A table of Label and Count.

@@ -395,6 +395,9 @@ def dir_(nargout, *args):
         return s
     names = [r[0] for r in rows]
     if not names:
+        # nothing there: a name that is not, said (a pattern that matches nothing is just empty)
+        if args and not any(c in sval(args[0], 'name', 'dir') for c in '*?'):
+            R.warn('MATLAB:dir:NotFound', f"Name is nonexistent or not a directory: {sval(args[0], 'name', 'dir')}")
         return None
     w = max(len(n) for n in names) + 2
     per = max(1, 80 // w)
