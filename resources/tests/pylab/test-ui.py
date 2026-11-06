@@ -501,6 +501,19 @@ async def editor_view(page):
       return [r.top >= f.top, r.bottom <= f.top + ed.el.clientHeight + 1, x >= g.right, x <= f.left + ed.el.clientWidth]; }})()""")
     check('after a paste of many lines the caret is in view', view, [True, True, True, True])
 
+    # Enter after an end (or else) typed on a line indented for the block's body: the word goes back to its block, the
+    # new line comes after it with the cursor on it (the new line went in before the word, end pushed down a line)
+    typed = []
+    for text, want, caret in (('for k = 1:3\n    disp(k)\n    end', 'for k = 1:3\n    disp(k)\nend\n', 28),
+                              ('if x\n    a = 1;\n    else', 'if x\n    a = 1;\nelse\n    ', 25)):
+        await page.ev(f"(() => {{ const ed = {EDITOR}; ed.ta.value = {json.dumps(text)}; ed.ta.dispatchEvent(new Event('input')); ed.ta.focus(); "
+                      f"ed.ta.setSelectionRange({len(text)}, {len(text)}); return 1; }})()")
+        await vkey(page, 'Enter', 'Enter', 13, '\r')
+        await asyncio.sleep(0.2)
+        got = await page.ev(f"[{EDITOR}.ta.value, {EDITOR}.ta.selectionStart]")
+        typed.append(got == [want, caret] or got)
+    check('Enter after an end or else typed too far in: the word back to its block, the new line after it', typed, [True, True])
+
     await page.ev(f"(() => {{ const d = PL.app.docs.find((x) => x.key === '{path}'); d.saved = d.editor.value; d.setDirty(false); return PL.app.closeDoc(d).then(() => 1); }})()")
     await page.ev(f"PL.engine.fs('remove', {{ path: '/tmp/pylab-ui' }}).then(() => 1)")
 

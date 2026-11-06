@@ -278,6 +278,7 @@
         ev.preventDefault();
         const v = ta.value;
         const s = ta.selectionStart;
+        const e = ta.selectionEnd;
         const ls = v.lastIndexOf('\n', s - 1) + 1;
         let line = v.slice(ls, s);
         // a block's end or middle typed on its own line moves back to its block
@@ -290,6 +291,10 @@
           if (cur !== want) {
             this.replaceRange(ls, ls + cur.length, want);
             line = want + line.trimStart();
+            // the cursor back where it was in the line (the new indentation left it at its start, so the new line
+            // went in before the word: end pushed down a line with the cursor in front of it)
+            const d = want.length - cur.length;
+            ta.setSelectionRange(s + d, e + d);
           }
         }
         const ind = L().nextIndent(line, UNIT);
