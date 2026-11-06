@@ -1092,8 +1092,15 @@
     }
 
     /* Breakpoints: kept per file, in the page and in the engine. */
-    toggleBreakpoint(doc, line) {
+    async toggleBreakpoint(doc, line) {
       const path = doc.key;
+      if (!(this.breakpoints[path] || []).includes(line) && !(await this.canStop(doc, line))) {
+        // a comment, a blank line or an end is never reached: no breakpoint there
+        const msg = `Line ${line} has no statement to stop at: a breakpoint goes where a statement begins.`;
+        this.statusText.textContent = msg;
+        setTimeout(() => { if (this.statusText.textContent === msg) this.statusText.textContent = ''; }, 5000);
+        return;
+      }
       const set = new Set(this.breakpoints[path] || []);
       if (set.has(line)) set.delete(line); else set.add(line);
       const lines = [...set].sort((a, b) => a - b);
@@ -1101,6 +1108,25 @@
       U.store.set('breakpoints', this.breakpoints);
       doc.editor.setBreakpoints(lines);
       PL.engine.call('set_breakpoints', path, JSON.stringify(lines)).catch(() => {});
+    }
+
+    /* Whether a statement begins on the line, so that a breakpoint there can stop: the engine parses the Editor's text
+       as it stands; while it cannot (the text half written, the engine busy), comments and blank lines at least are
+       refused. */
+    async canStop(doc, line) {
+      const text = doc.editor.value;
+      let lines = null;
+      if (PL.engine.state === 'ready') {
+        try {
+          lines = await Promise.race([PL.engine.call('statement_lines', text), new Promise((r) => setTimeout(() => r(null), 1500))]);
+        } catch (e) { lines = null; }
+      }
+      if (Array.isArray(lines)) return lines.includes(line);
+      const state = { block: 0, depth: 0 };
+      const all = text.split('\n');
+      for (let i = 0; i < line - 1 && i < all.length; i++) PL.lang.lineTokens(all[i], state);
+      const toks = PL.lang.lineTokens(all[line - 1] || '', state);
+      return toks.some(([c, s]) => c !== 'c' && c !== 'sc' && s.trim());
     }
 
     breakpointsFromEngine(path, lines) {

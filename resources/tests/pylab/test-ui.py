@@ -254,7 +254,7 @@ async def desktop(page):
     await page.ev("PL.app.closeDoc(PL.app.docs.find(d => d.kind === 'help')); 1")
 
     # the debugger
-    await page.ev("PL.app.openFile('/home/user/examples/collatz.m').then(d => { PL.app.clearAllBreakpoints(); PL.app.toggleBreakpoint(d, 14); return 1; })")
+    await page.ev("PL.app.openFile('/home/user/examples/collatz.m').then(d => { PL.app.clearAllBreakpoints(); return PL.app.toggleBreakpoint(d, 14); }).then(() => 1)")
     await asyncio.sleep(0.5)
     await type_line(page, 'n = collatz(6)')
     line = await until(page, 'PL.app.debug && PL.app.debug.line')
@@ -509,17 +509,28 @@ async def editor_view(page):
     check('after a paste of many lines the caret is in view', view, [True, True, True, True])
 
     # Enter after an end (or else) typed on a line indented for the block's body: the word goes back to its block, the
-    # new line comes after it with the cursor on it (the new line went in before the word, end pushed down a line)
+    # new line comes after it with the cursor on it (the new line went in before the word, end pushed down a line); in a
+    # function whose body is not indented an end stays where it lines up with its block (it was pushed in)
     typed = []
     for text, want, caret in (('for k = 1:3\n    disp(k)\n    end', 'for k = 1:3\n    disp(k)\nend\n', 28),
-                              ('if x\n    a = 1;\n    else', 'if x\n    a = 1;\nelse\n    ', 25)):
+                              ('if x\n    a = 1;\n    else', 'if x\n    a = 1;\nelse\n    ', 25),
+                              ('function f(x)\nif x\n    a = 1;\nend', 'function f(x)\nif x\n    a = 1;\nend\n', 34),
+                              ('function f(x)\nif x\n    a = 1;\nend\nend', 'function f(x)\nif x\n    a = 1;\nend\nend\n', 38)):
         await page.ev(f"(() => {{ const ed = {EDITOR}; ed.ta.value = {json.dumps(text)}; ed.ta.dispatchEvent(new Event('input')); ed.ta.focus(); "
                       f"ed.ta.setSelectionRange({len(text)}, {len(text)}); return 1; }})()")
         await vkey(page, 'Enter', 'Enter', 13, '\r')
         await asyncio.sleep(0.2)
         got = await page.ev(f"[{EDITOR}.ta.value, {EDITOR}.ta.selectionStart]")
         typed.append(got == [want, caret] or got)
-    check('Enter after an end or else typed too far in: the word back to its block, the new line after it', typed, [True, True])
+    check('Enter after an end or else typed too far in: the word back to its block, the new line after it; ends in a function body not indented left alone',
+          typed, [True, True, True, True])
+    # a breakpoint only where a statement begins: none on a comment or a blank line (never reached), one on a statement
+    await page.ev(f"(() => {{ const ed = {EDITOR}; ed.ta.value = 'x = 1;\\n% a comment\\n\\ny = 2;'; ed.ta.dispatchEvent(new Event('input')); return 1; }})()")
+    bp = await page.ev(f"(async () => {{ const d = PL.app.docs.find((x) => x.key === '{path}'); PL.app.clearAllBreakpoints(); "
+                       "await PL.app.toggleBreakpoint(d, 2); await PL.app.toggleBreakpoint(d, 3); const a = (PL.app.breakpoints[d.key] || []).slice(); "
+                       "const msg = PL.app.statusText.textContent; await PL.app.toggleBreakpoint(d, 4); const b = (PL.app.breakpoints[d.key] || []).slice(); "
+                       "await PL.app.toggleBreakpoint(d, 4); return [a, b, msg.includes('no statement to stop at')]; })()")
+    check('a breakpoint only where a statement begins: none on a comment or a blank line, one on a statement', bp, [[], [4], True])
     bg = await page.ev(f"[getComputedStyle({EDITOR}.el.querySelector('.ple-code')).backgroundColor, getComputedStyle(PL.app.cmd.el).backgroundColor]")
     check("the Editor's code on the page's own background (white, black in the dark theme), as the Command Window, not grey", bg[0] == bg[1], True if bg[0] == bg[1] else bg)
 

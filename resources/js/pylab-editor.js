@@ -281,14 +281,13 @@
         const e = ta.selectionEnd;
         const ls = v.lastIndexOf('\n', s - 1) + 1;
         let line = v.slice(ls, s);
-        // a block's end or middle typed on its own line moves back to its block
+        // a block's end or middle typed on its own line lines up with the line that opened its block (as the file is
+        // indented: a function's body may not be)
         const first = /^\s*([a-z]+)\b/.exec(line);
         if (first && ['end', 'else', 'elseif', 'case', 'otherwise', 'catch'].includes(first[1])) {
-          const upto = v.slice(0, ls);
-          const levels = L().indentLevels(upto + line.trim());
-          const want = UNIT.repeat(levels[levels.length - 1]);
+          const want = L().blockIndent(v.slice(0, ls), first[1], UNIT);
           const cur = /^\s*/.exec(line)[0];
-          if (cur !== want) {
+          if (want != null && cur !== want) {
             this.replaceRange(ls, ls + cur.length, want);
             line = want + line.trimStart();
             // the cursor back where it was in the line (the new indentation left it at its start, so the new line

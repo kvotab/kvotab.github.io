@@ -532,6 +532,16 @@ def lint(text):
         return json.dumps([{'line': getattr(e, 'line', 1) or 1, 'pos': getattr(e, 'pos', None), 'message': e.message}])
 
 
+def statement_lines(text):
+    """The lines of the Editor's text where a breakpoint can stop (where statements begin), or null when it does not
+    parse as it stands."""
+    from .builtins.devtools import statement_lines as lines_of
+    try:
+        return json.dumps(lines_of(text))
+    except MError:
+        return json.dumps(None)
+
+
 def python_of(path, text):
     """The Python a file compiles to (as this session would run it)."""
     from .compiler import compile_source

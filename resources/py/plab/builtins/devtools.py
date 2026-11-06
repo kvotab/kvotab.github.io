@@ -174,10 +174,15 @@ def _program(name, fn):
 
 def _statement_lines(path):
     """The lines where statements begin (where a program can stop)."""
-    from ..parser import parse, assigned_names, Stmt, Func
-    from .. import classdef as CD
     with open(path, encoding='utf-8', errors='replace') as f:
-        text = f.read()
+        return statement_lines(f.read())
+
+
+def statement_lines(text):
+    """The lines of a program's text where statements begin: not its comments, blank lines, ends or the lines a
+    statement continues on."""
+    from ..parser import parse, assigned_names, Stmt
+    from .. import classdef as CD
     if CD.is_classdef(text):
         sp = CD.parse(text)
         text, _ = CD.methods_text(sp, sp.name)

@@ -261,6 +261,34 @@
     }).join('\n');
   }
 
+  /* Where a line starting with end or a block's middle (else, elseif, catch, case, otherwise) belongs, from the text
+     before it: the indentation of the line that opened its block, as the file has it (a function's body indented or
+     not); a case or otherwise that of the switch's first case, or one unit inside the switch. null when no block is
+     open. A class's properties, methods, events and enumeration blocks and a function's arguments block count when
+     they head their line. */
+  function blockIndent(before, word, unit = '    ') {
+    const state = { block: 0, depth: 0 };
+    const stack = [];
+    for (const line of before.split('\n')) {
+      const inComment = state.block > 0;
+      const toks = lineTokens(line, state);
+      const words = toks.filter(([c]) => c === 'k').map(([, s]) => s);
+      const lead = /^\s*/.exec(line)[0];
+      const first = words.length && line.trim().startsWith(words[0]) ? words[0] : null;
+      const top = stack[stack.length - 1];
+      if ((first === 'case' || first === 'otherwise') && top && top.w === 'switch' && top.cases == null) top.cases = lead;
+      if (!inComment && /^\s*(properties|methods|events|enumeration|arguments)\b\s*(\([^)]*\))?\s*(%.*)?$/.test(line)) stack.push({ w: 'section', lead });
+      for (const w of words) {
+        if (OPENERS.has(w)) stack.push({ w, lead });
+        else if (w === 'end') stack.pop();
+      }
+    }
+    const top = stack[stack.length - 1];
+    if (!top) return null;
+    if (word === 'case' || word === 'otherwise') return top.w === 'switch' ? (top.cases != null ? top.cases : top.lead + unit) : null;
+    return top.lead;
+  }
+
   /* The indentation to give a new line after `line` (Enter in the Editor). */
   function nextIndent(prevLine, unit = '    ') {
     const lead = /^\s*/.exec(prevLine)[0];
@@ -306,5 +334,5 @@
     return `${html}</span>`;
   }
 
-  PL.lang = { tokens, lineTokens, highlight, lineHtml, complete, sections, indent, indentLevels, nextIndent, highlightPython, KEYWORDS, esc };
+  PL.lang = { tokens, lineTokens, highlight, lineHtml, complete, sections, indent, indentLevels, blockIndent, nextIndent, highlightPython, KEYWORDS, esc };
 })(window);

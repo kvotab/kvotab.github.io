@@ -409,6 +409,13 @@ C("abbreviated values and names: 'toggle', 'normal', 'norm', 'lo' and 'pos' (Pos
 W, _ = run("c1 = char(@sin); c2 = char(@(z) z.^2 + 1); f = @(z) z; t = char(f); t(1:4) = []; figure; plot(1:3); snapnow; close all")
 C('char of a function handle: its text, as func2str gives it; snapnow runs', (text(W['c1']), text(W['c2']), text(W['t'])) == ('sin', '@(z)z.^2+1', 'z'),
   (W['c1'], W['c2'], W['t']))
+# where a breakpoint can stop (the Editor's margin asks): lines where statements begin, not comments, blank lines, block
+# comments, ends, a function's header or the lines a statement continues on; null for text that does not parse yet
+from plab import worker_api as _WA  # noqa: E402
+import json as _json  # noqa: E402
+_src = 'function f(x)\n% a comment\n\nif x\n    y = [1, ...\n         2];\nend\n%{\nblock\n%}\nz = 3;\nend\n'
+C('statement lines for breakpoints: comments, blank lines, ends, headers and continued lines left out; half-written text none',
+  (_json.loads(_WA.statement_lines(_src)), _json.loads(_WA.statement_lines('if x\n  y = 1;\n'))) == ([4, 5, 11], None))
 # transparency: alpha, alphamap and alim, and alpha data mapped to opacities as the page draws them
 W, _ = run("[X, Y] = meshgrid(1:3); figure; s = surf(X, Y, X + Y); alpha('z'); fa = s.FaceAlpha; al = alim; alim([3 7]); am = alim('mode'); al1 = alim; "
            "alim auto; al2 = alim; alphamap('rampdown'); m1 = alphamap; alphamap('vup', 5); m2 = alphamap; alphamap('decrease', 0.25); m3 = alphamap; "
