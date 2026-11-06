@@ -490,7 +490,7 @@ dec2base(35, 36)
 base2dec('Z', 36)
 dec2bin(-1, 8)
 # See also
-num2hex dec2base
+num2hex
 
 @ num2hex, hex2num
 A double's IEEE 754 bits as 16 hexadecimal digits, and a double from them.

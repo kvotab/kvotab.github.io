@@ -296,8 +296,11 @@
         }
         parts.push(sec);
       }
+      // the names this page is about: never links on it (a click there only showed the same page again)
+      const own = new Set(page ? page.names : [name]);
       // related functions, each a link (a page's own list first)
       if (page && page.see.length) h.see = page.see;
+      if (h.see) h.see = h.see.filter((n) => !own.has(n));
       if (h.see && h.see.length) {
         const see = el('p', { class: 'pl-see' }, el('strong', null, 'See also: '));
         h.see.forEach((n, i) => {
@@ -310,6 +313,11 @@
         const open = el('button', { class: 'pl-btn', type: 'button' }, 'Open in the Editor');
         open.addEventListener('click', () => this.app.openFile(h.path));
         parts.push(open);
+      }
+      // in the text, the code and How it works alike: a link to this page becomes what it shows
+      for (const part of parts) {
+        if (!part.querySelectorAll) continue;
+        for (const a of part.querySelectorAll('a[data-help]')) if (own.has(a.dataset.help)) a.replaceWith(...a.childNodes);
       }
       this.el.replaceChildren(...parts);
       this.el.scrollTop = 0;

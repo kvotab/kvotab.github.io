@@ -36,7 +36,7 @@ load nums.txt
 nums
 importdata('nums.txt')
 # See also
-whos matfile h5write
+whos h5write
 
 @ jsondecode, jsonencode
 JSON text to values, and values to JSON text.

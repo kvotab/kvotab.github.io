@@ -23,7 +23,7 @@ fprintf('SWEREF 99 TM: %.2f E, %.2f N\n', x, y)
 [xu, yu] = projfwd(projcrs(32633), 59.3294, 18.0686);
 fprintf('UTM zone 33:  %.2f E, %.2f N\n', xu, yu)
 # See also
-geocrs axesm mfwdtran
+axesm mfwdtran
 
 @ axesm
 Map axes with a projection: the frame, graticule and labels drawn in it, and data given in latitude and longitude.
@@ -95,7 +95,7 @@ m.mapprojection
 ismap(gca)
 close all
 # See also
-axesm gcm
+axesm
 
 @ framem, gridm, mlabel, plabel, tightmap, showaxes
 Parts of map axes turned on and off: the frame, the graticule, the meridian and parallel labels; the axes fitted to the frame; and the plain axes shown.
@@ -236,7 +236,7 @@ pcolorm(lat, lon, Z)
 contourm(lat, lon, Z, -1:0.5:1, 'k')
 colorbar
 # See also
-geoshow contourm
+geoshow
 
 @ geoshow, mapshow
 Geographic data drawn: lines, points, polygons, shapefile features or rasters.
@@ -265,7 +265,7 @@ Z = sind(8*lat).*cosd(10*lon);
 geoshow(Z, R, 'DisplayType', 'texturemap')
 geoshow([55 62 66 58 55], [12 8 20 25 12], 'DisplayType', 'polygon', 'FaceColor', 'none', 'EdgeColor', 'r', 'LineWidth', 2)
 # See also
-shaperead mapshow worldmap
+shaperead worldmap
 
 @ geoaxes, geolimits
 Geographic axes: longitude across, latitude up, with ticks in degrees and hemispheres; and their limits.

@@ -330,7 +330,7 @@ fprintf(fid, '%s\n', lines{:});
 fclose(fid);
 type pickData
 # See also
-readtable uigetdir
+readtable
 
 @ waitbar, dialog
 A window with a bar showing how far a long job has come, and an empty window for a dialog of one's own.

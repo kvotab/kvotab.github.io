@@ -1314,6 +1314,19 @@ async def docs(page):
     await page.ev("[...PL.app.cmd.out.querySelectorAll('a[data-run]')].pop().click(); 1")
     got = await until(page, "document.querySelector('.pl-help h2')?.textContent === 'linspace'", 20)
     check('docs: the link opens the page', bool(got), True)
+    # a page never links to itself: NaT's page names NaT, isnat and isdatetime as code, not as links that show it again
+    await command(page, "doc NaT")
+    await until(page, "document.querySelector('.pl-help h2')?.textContent === 'NaT, isdatetime, isnat'", 20)
+    selfs = await page.ev("(() => { const h = document.querySelector('.pl-help'); const own = ['NaT', 'isdatetime', 'isnat']; "
+                          "return [[...h.querySelectorAll('a[data-help]')].filter((a) => own.includes(a.dataset.help)).length, "
+                          "[...h.querySelectorAll('.pl-doc-summary code, .pl-doc-p code')].filter((c) => own.includes(c.textContent)).length]; })()")
+    check('docs: a page names its own functions as code, never as links to itself', selfs[0] == 0 and selfs[1] >= 3, True if selfs[0] == 0 and selfs[1] >= 3 else selfs)
+    # and a function its text names is a link that shows that function
+    await command(page, "doc sum")
+    await until(page, "document.querySelector('.pl-help h2')?.textContent.split(', ').includes('sum')", 20)
+    await page.ev("document.querySelector('.pl-help .pl-doc-p a[data-help=\"NaN\"], .pl-help .pl-doc-summary a[data-help=\"NaN\"]').click(); 1")
+    got = await until(page, "document.querySelector('.pl-help h2')?.textContent.split(', ').includes('NaN')", 20)
+    check("docs: a function named in a page's text is a link to its page", bool(got), True)
     await command(page, "doc surf")
     await until(page, "document.querySelectorAll('.pl-help canvas.pl-doc-fig').length >= 3", 20)
     await page.ev("document.querySelectorAll('.pl-help canvas.pl-doc-fig')[1].scrollIntoView(); 1")

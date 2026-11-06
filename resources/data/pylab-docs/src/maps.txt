@@ -240,7 +240,7 @@ areaint([0 0 90 0], [0 90 0 0])
 E = referenceSphere('earth', 'kilometer');
 areaquad(55, 10, 69, 25, E)
 # See also
-polyarea areaquad
+polyarea
 
 @ interpm
 More points along a line in latitude and longitude, none farther apart than a step.

@@ -81,6 +81,8 @@ C('every form and argument has its description', all(text for _, p in everything
   [(p['names'][0], h) for _, p in everything for h, text in p['syntax'] + p['inputs'] + p['outputs'] if not text])
 C('See also names functions PyLAB has', all(n in known for _, p in everything for n in p['see']),
   [(p['names'][0], n) for _, p in everything for n in p['see'] if n not in known])
+C('See also never names the page itself', not [n for _, p in everything for n in p['see'] if n in p['names']],
+  [(p['names'][0], n) for _, p in everything for n in p['see'] if n in p['names']])
 
 
 def prose(p):
