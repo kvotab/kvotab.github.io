@@ -9385,7 +9385,7 @@ orient: The paper orientation for printing.
 copygraphics: Copy a figure to the clipboard as a picture.
     copygraphics(fig)
     copygraphics(ax, 'Resolution', 300)
-    * The whole figure of the axes or chart given is copied.
+    * The whole figure of the axes or chart given is copied, as a PNG picture twice its size on the screen; Copy to Clipboard in the menu of the figure window's picture button does the same.
 
 # ---- classes, copies, surface fits -----------------------------------------------------------------------------------------
 events: The events of a class.

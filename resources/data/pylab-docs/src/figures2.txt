@@ -384,7 +384,7 @@ VideoWriter image
 @ saveas, exportgraphics, print, copygraphics, orient
 A figure saved as a picture or a vector file, copied, and its paper orientation.
 
-`saveas` writes a figure to a file whose kind its extension sets: .png, .jpg, .bmp and .tif pictures, or .svg, .pdf and .eps, which keep lines and text as such (or a .fig figure file). `exportgraphics` does the same for a figure or axes with a resolution, and `print` with device options (`-dpng`, `-dpdf`, `-r300`). `copygraphics` copies the figure to the clipboard as a picture. These draw the figure, so they run in the page. `orient` sets the paper orientation for printing.
+`saveas` writes a figure to a file whose kind its extension sets: .png, .jpg, .bmp and .tif pictures, or .svg, .pdf and .eps, which keep lines and text as such (or a .fig figure file). `exportgraphics` does the same for a figure or axes with a resolution, and `print` with device options (`-dpng`, `-dpdf`, `-r300`). `copygraphics` copies the figure to the clipboard as a picture, as Copy to Clipboard does in the menu of the figure window's picture button (where the files can be saved too). These draw the figure, so they run in the page. `orient` sets the paper orientation for printing.
 
 # Syntax
 saveas(fig, filename)

@@ -390,8 +390,8 @@ async def desktop(page):
     check('Save as a picture makes a PNG', (png or '').startswith('data:image/png') and len(png) > 5000, True)
     await page.ev(f"{WIN}.btnSave.click(); 1")
     items = await page.ev("[...document.querySelectorAll('.pl-menu [role=menuitem]')].map(b => b.textContent)")
-    check('the save button offers the kinds of file', items,
-          ['PNG picture (.png)', 'SVG drawing (.svg)', 'PDF document (.pdf)', 'EPS drawing (.eps)', 'JPEG picture (.jpg)'])
+    check('the save button offers copying to the clipboard and the kinds of file', items,
+          ['Copy to Clipboard', 'PNG picture (.png)', 'SVG drawing (.svg)', 'PDF document (.pdf)', 'EPS drawing (.eps)', 'JPEG picture (.jpg)'])
     saved = await page.ev("(async () => { const was = HTMLAnchorElement.prototype.click; let got = null; "
                           "HTMLAnchorElement.prototype.click = function () { got = [this.download, this.href]; }; "
                           "[...document.querySelectorAll('.pl-menu [role=menuitem]')].find(b => b.textContent.startsWith('SVG')).click(); "
@@ -2055,6 +2055,24 @@ async def files_and_tools(page):
     await page.ev('navigator.clipboard.writeText("pasted text").then(() => 1)')
     out = await command(page, "t = clipboard('paste')")
     check("clipboard('paste') reads it", "t =\n\n    'pasted text'" in out[-80:], True)
+    # a figure copied to the clipboard as a picture, from its save button's menu and by copygraphics
+    PNG_ON_CLIP = ("navigator.clipboard.read().then(async (items) => { const it = items.find((i) => i.types.includes('image/png')); if (!it) return null; "
+                   "const b = await createImageBitmap(await it.getType('image/png')); return [b.width, b.height]; }).catch((e) => 'ERR ' + e.message)")
+    await command(page, "close all; figure('Position', [100 100 400 300]); plot(1:10)")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await page.ev('navigator.clipboard.writeText("") .then(() => 1)')
+    await page.ev(f"{WIN}.btnSave.click(); [...document.querySelectorAll('.pl-menu button')].find((b) => b.textContent === 'Copy to Clipboard').click(); 1")
+    await until(page, "(document.querySelector('.pl-toast') || {}).textContent", 10)
+    menu_copy = await page.ev(PNG_ON_CLIP)
+    toast = await page.ev("(document.querySelector('.pl-toast') || {}).textContent || ''")
+    await page.ev('navigator.clipboard.writeText("") .then(() => 1)')
+    await command(page, "copygraphics(gcf)")
+    cmd_copy = await page.ev(PNG_ON_CLIP)
+    css = await page.ev(f"[{WIN}.canvas.clientWidth, {WIN}.canvas.clientHeight]")
+    check("a figure to the clipboard as a picture twice its size on the screen: Copy to Clipboard in its save menu, and copygraphics",
+          [menu_copy == [2 * css[0], 2 * css[1]] or menu_copy, 'on the clipboard' in toast, cmd_copy == [2 * css[0], 2 * css[1]] or cmd_copy], [True, True, True])
+    await command(page, 'close all')
 
     out = await command(page, "profile on; r = stopper(3); profile off\nprofile viewer")
     check('profile viewer lists the function', 'Profile summary' in out[-1500:] and 'stopper' in out[-1500:], True)

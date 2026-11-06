@@ -2748,7 +2748,7 @@
         return b;
       };
       this.btnClose = tb('close', 'Close the figure', () => this.mgr.requestClose(this));
-      this.btnSave = tb('image', 'Save as a picture or a drawing (PNG, SVG, PDF, EPS, JPEG)', () => this.saveMenu());
+      this.btnSave = tb('image', 'Copy to the clipboard, or save as a picture or a drawing (PNG, SVG, PDF, EPS, JPEG)', () => this.saveMenu());
       this.btnDock = tb('dock', 'Dock the figure in the desktop, as a tab', () => this.mgr.toggleDock(this));
       this.docked = false;
       this.titlebar = el('div', { class: 'pl-figtitle' }, icon('figure', 'pl-ficon'), this.title, this.btnDock, this.btnSave, this.btnClose);
@@ -2958,9 +2958,28 @@
     saveMenu() {
       const r = this.btnSave.getBoundingClientRect();
       PL.util.menu(r.left, r.bottom + 2, [
+        { label: 'Copy to Clipboard', action: () => this.copyPicture().then((ok) => PL.util.toast(ok ? 'The figure is on the clipboard, as a picture.' : 'The browser did not let the page copy the figure to the clipboard.')) },
+        '-',
         { heading: 'Save the figure as' },
         ...SAVE_KINDS.map(([f, label]) => ({ label, action: () => this.savePicture(f) })),
       ]);
+    }
+
+    /* The figure to the clipboard as a PNG picture, at twice its size on the screen (as the PNG it saves), to paste into
+       a document or a drawing program; true when the browser took it. The picture is handed over as a promise, so the
+       click that asked still counts as the person's own when it is drawn. */
+    async copyPicture() {
+      if (!navigator.clipboard || !window.ClipboardItem) return false;
+      const png = (async () => {
+        await this.ready(2);
+        return (await fetch(this.renderTo(2))).blob();
+      })();
+      try {
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })]);
+        return true;
+      } catch (e) {
+        return false;
+      }
     }
 
     /* The figure as a file to download: PNG by default, or SVG, PDF, EPS or

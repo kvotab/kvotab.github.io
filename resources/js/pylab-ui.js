@@ -1350,13 +1350,10 @@
       return true;
     },
 
-    /* print -dmeta or -dbitmap with no file: the figure to the clipboard. */
+    /* copygraphics, and print -dmeta or -dbitmap with no file: the figure to the clipboard, as its menu's Copy. */
     copyfig: async (app, req) => {
       const w = app.figures.wins.get(req.figure);
-      if (!w || !navigator.clipboard || !window.ClipboardItem) return false;
-      await w.ready(2);
-      const blob = await (await fetch(w.renderTo(2))).blob();
-      try { await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); return true; } catch (e) { return false; }
+      return w ? w.copyPicture() : false;
     },
   };
 

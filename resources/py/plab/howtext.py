@@ -2621,7 +2621,7 @@ specular, diffuse:
 orient:
     Python: plotfill.py. PaperOrientation set, PaperSize turned so that its longer side runs across for 'landscape'; 'tall' also sets PaperPosition to the page less 0.25 inch each side.
 copygraphics:
-    Python: plotfill.py and the page. The figure drawn as print -dmeta draws it, the picture copied to the clipboard by the page.
+    Python: plotfill.py and the page. The figure drawn at twice its size on the screen, as its PNG is saved, and handed to the browser's clipboard as an image/png item (navigator.clipboard.write), as Copy to Clipboard in the figure window's menu does.
 # ---- classfun.py, surfacefit.py: events, copies and surface fits -----------------------------------------------------------------------
 events:
     Python: classfun.py. The class's events, then its superclasses', and ObjectBeingDestroyed for a handle class (classdef.py notifies it when the object is deleted, before the class's delete method).
