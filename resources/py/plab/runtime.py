@@ -738,7 +738,8 @@ async def ask_page(request):
 
 def flush_figures():
     if FLUSH_FIGURES is not None:
-        FLUSH_FIGURES()
+        return FLUSH_FIGURES()
+    return False
 
 
 async def ask_input(prompt, kind='line'):

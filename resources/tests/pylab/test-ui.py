@@ -2189,6 +2189,22 @@ async def charts_and_more(page):
     check("3-D clipping: a line and a surface cut at the axes' box ('3dbox'), drawn up to the box's rectangle on the screen ('rectangle')",
           (box3, rect), ([True, False, True, False], [True, True, True, True]))
     await command(page, 'close all')
+    # a drawing loop that runs until its toggle button is pressed, its controls and axes given with abbreviations ('toggle',
+    # 'normal', 'pos'), then closes its figure (drawnow waits for the page to draw: sent faster than drawn, the drawings filled its memory)
+    loop = ("figure; tg = uicontrol('style', 'toggle', 'string', 'X', 'units', 'normal', 'position', [.9 .9 .08 .08]); "
+            "axes('units', 'normal', 'pos', [.2 .2 .6 .6]); axis([-1.2 1.2 -1.2 1.2]); h = line(1, 0, 'marker', 'o', 'linestyle', 'none'); d = 0; "
+            "while get(tg, 'value') == 0, set(h, 'xdata', cos(d), 'ydata', sin(d)); drawnow; d = d + 0.1; end; close(gcf); clear tg h d")
+    await page.ev(f'PL.app.runCommand({json.dumps(loop)}); 1')
+    await until(page, f"{WIN} && {WIN}.ui && !!{WIN}.ui.layer.querySelector('.pl-uictl')", 30)
+    v0 = await page.ev(f"{WIN}.fig.version")
+    await asyncio.sleep(1.5)
+    v1 = await page.ev(f"{WIN}.fig.version")
+    bx = await page.ev(f"(() => {{ const b = {WIN}.ui.layer.querySelector('.pl-uictl').getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; }})()")
+    await page.mouse('mousePressed', bx[0], bx[1])
+    await page.mouse('mouseReleased', bx[0], bx[1])
+    closed = await until(page, 'PL.app.figures.wins.size === 0', 20)
+    await idle(page)
+    check('a drawing loop runs until its toggle button is pressed, then closes its figure', [(v1 or 0) > (v0 or 0), bool(closed)], [True, True])
 
     await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
     snd = await page.ev('PL.app.lastSound || null')

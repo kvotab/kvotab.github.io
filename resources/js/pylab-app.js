@@ -834,6 +834,9 @@
         let data = null;
         try { data = await this.figures.frame(req.figure, req.axes, req.rect); } catch (e) { console.error(e); }
         PL.engine.reply(req.id, data);
+      } else if (req.type === 'drawn') {
+        // drawnow: the figures sent before this were drawn as their message came (in order), so the program may go on
+        PL.engine.reply(req.id, true);
       } else if (req.type === 'breakpoints') {
         // dbstop and dbclear: the engine has them already; the Editor and the page's store follow
         this.breakpointsFromEngine(req.path, req.lines || []);

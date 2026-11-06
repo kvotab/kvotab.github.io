@@ -159,6 +159,10 @@ class GObj(Obj):
             hits = [v for k, v in cls._lower.items() if k.startswith(low)]
             if len(hits) == 1:
                 return hits[0]
+            # 'pos' begins Position and PositionConstraint: the name the others only extend
+            short = [h for h in hits if all(o.lower().startswith(h.lower()) for o in hits)]
+            if len(short) == 1:
+                return short[0]
             return None
         return m
 
@@ -229,7 +233,7 @@ class GObj(Obj):
             set_font_units(self, value)
             return
         if k in _CHOICES and type(value) in (Char, Str):
-            v = py_str(value).lower()
+            v = choice(value, _CHOICES[k])
             if v not in _CHOICES[k]:
                 raise gerr(f"Invalid value for {k}: use " + ', '.join(f"'{c}'" for c in _CHOICES[k]) + '.')
             self.props[k] = v
@@ -378,6 +382,16 @@ _ONOFF = {'Visible', 'Box', 'XGrid', 'YGrid', 'ZGrid', 'XMinorGrid', 'YMinorGrid
 
 
 # the values some properties take, one of them (case not minded)
+def choice(value, names):
+    """A property's text value as one of its names: the name itself (case aside), or the one name it begins
+    ('normal' for 'normalized', 'toggle' for 'togglebutton'); otherwise the text as given, lower case, for the caller to refuse."""
+    v = py_str(value).lower()
+    if v in names or not v:
+        return v
+    hits = [n for n in names if n.startswith(v)]
+    return hits[0] if len(hits) == 1 else v
+
+
 _CHOICES = {**{f'{a}LimitMethod': ('tickaligned', 'tight', 'padded') for a in 'XYZ'},
             'TitleHorizontalAlignment': ('left', 'center', 'right'), 'LineJoin': ('round', 'miter', 'chamfer'),
             'Interpolation': ('nearest', 'bilinear'), 'AlphaScale': ('linear', 'log'), 'ColorScale': ('linear', 'log'),

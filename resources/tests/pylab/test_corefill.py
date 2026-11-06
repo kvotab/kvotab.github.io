@@ -396,6 +396,15 @@ _want = {
     _GB.Text: 'Extent', _GB.Image: 'Interpolation'}
 _missing = [(C_.__name__, n) for C_, names in _want.items() for n in names.split() if C_.canon(n) is None]
 C('figures, axes, lines, surfaces, patches, texts and images have the properties they commonly have', not _missing, _missing)
+# a unique beginning of a value names it ('normal' for 'normalized'), and a beginning of two names where one extends the other
+# names the shorter ('pos': Position, not PositionConstraint)
+W, _ = run("f = figure; b = uicontrol('style', 'toggle', 'units', 'normal', 'position', [.9 .9 .05 .05]); bs = b.Style; bu = b.Units; "
+           "b.FontUnits = 'norm'; fu = b.FontUnits; ax = axes('units', 'normal', 'pos', [.1 .2 .3 .4]); au = ax.Units; ap = ax.Position; "
+           "t = text(0.5, 0.5, 'a'); t.Units = 'norm'; tu = t.Units; ax.ColorScale = 'lo'; cs = ax.ColorScale; "
+           "try, b.Units = 'p'; e1 = ''; catch ex, e1 = ex.message; end; close all")
+C("abbreviated values and names: 'toggle', 'normal', 'norm', 'lo' and 'pos' (Position); 'p' (pixels or points) refused",
+  (text(W['bs']), text(W['bu']), text(W['fu']), text(W['au']), a(W['ap']).tolist(), text(W['tu']), text(W['cs']), "'p' is not a valid value for Units" in text(W['e1'])) ==
+  ('togglebutton', 'normalized', 'normalized', 'normalized', [[0.1, 0.2, 0.3, 0.4]], 'normalized', 'log', True), W.get('e1'))
 # transparency: alpha, alphamap and alim, and alpha data mapped to opacities as the page draws them
 W, _ = run("[X, Y] = meshgrid(1:3); figure; s = surf(X, Y, X + Y); alpha('z'); fa = s.FaceAlpha; al = alim; alim([3 7]); am = alim('mode'); al1 = alim; "
            "alim auto; al2 = alim; alphamap('rampdown'); m1 = alphamap; alphamap('vup', 5); m2 = alphamap; alphamap('decrease', 0.25); m3 = alphamap; "

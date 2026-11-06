@@ -3607,7 +3607,10 @@ def copyobj(nargout, *args):
 
 @bi('drawnow', aw=True, arr=False)
 async def drawnow(nargout, *args):
-    flush_figures()
+    if flush_figures():
+        # the page draws what was sent before the program goes on: a loop of drawnow sent faster than the page could draw,
+        # and the drawings waiting their turn filled the page's memory
+        await R.ask_page({'type': 'drawn'})
     if not any(opt_str(a) == 'nocallbacks' for a in args):
         from .. import uievents as E
         await E.process()
@@ -3736,16 +3739,16 @@ def fcontour(nargout, *args):
 # ---- sending the figures to the page -----------------------------------------------------------
 
 def flush_figures():
-    """Tell the page about the figures that changed (and those closed)."""
+    """Tell the page about the figures that changed (and those closed); True when something was sent."""
     hook = R.EVENT_HOOK[0]
     dirty = [f for f in STORE.dirty if f.valid]
     closed = list(STORE.closed)
     STORE.dirty.clear()
     STORE.closed.clear()
     if hook is None:
-        return
+        return False
     if not dirty and not closed:
-        return
+        return False
     figs = []
     for f in sorted(dirty, key=lambda f: f.order):
         try:
@@ -3757,6 +3760,7 @@ def flush_figures():
     from .. import uievents as E
     for f in dirty:
         E.shown(f)
+    return True
 
 
 R.FLUSH_FIGURES = flush_figures

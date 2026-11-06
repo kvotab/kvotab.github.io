@@ -1492,7 +1492,7 @@ copyobj:
 gobjects:
     Python: graphics.py. An array of graphics placeholders of the size given, to be filled with handles.
 drawnow:
-    Python: graphics.py. Sends the changed figures to the page at once, then runs the callbacks of the clicks and keys that have come in ('nocallbacks' leaves them).
+    Python: graphics.py. Sends the changed figures to the page at once and waits until the page has drawn them (so a loop goes no faster than its drawings), then runs the callbacks of the clicks and keys that have come in ('nocallbacks' leaves them).
 peaks:
     Python: graphics.py. 3*(1 - x).^2.*exp(-x.^2 - (y + 1).^2) - 10*(x/5 - x.^3 - y.^5).*exp(-x.^2 - y.^2) - 1/3*exp(-(x + 1).^2 - y.^2) on a 49-by-49 grid over [-3, 3] (or the size or points given); without outputs, its surface.
 sphere, ellipsoid, cylinder:

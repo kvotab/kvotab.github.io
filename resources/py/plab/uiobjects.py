@@ -7,7 +7,7 @@ serialize_ui() makes, and tells uievents what people do with them.
 import numpy as np
 
 from .values import Char, Cell, Str, EMPTY, py_str, numel, F64
-from .graphics_base import (GObj, HArr, ROOT, INTERACT, register, gerr, _arr, _color, has_callback, _interact_json,
+from .graphics_base import (GObj, HArr, ROOT, INTERACT, register, gerr, choice, _arr, _color, has_callback, _interact_json,
                             serialize_axes)
 
 UNITS = ('pixels', 'normalized', 'characters', 'points', 'inches', 'centimeters')
@@ -84,7 +84,7 @@ def set_placed(o, k, value):
     if k == 'CurrentPoint':
         o.props[k] = np.asarray(value, float)
         return
-    u = py_str(value).lower()
+    u = choice(value, UNITS)
     if u not in UNITS:
         raise gerr(f"'{py_str(value)}' is not a valid value for Units. Use one of these values: {_choices(UNITS)}.")
     if u != o.props['Units']:
@@ -156,7 +156,7 @@ TEXT_UNITS = ('data', 'normalized', 'pixels', 'points', 'inches', 'centimeters',
 def set_text_units(t, value):
     """A text's Units, its Position converted so the text stays where it is:
     data through the axes' limits, the rest from the axes' lower left."""
-    u = py_str(value).lower()
+    u = choice(value, TEXT_UNITS)
     if u not in TEXT_UNITS:
         raise gerr(f"'{py_str(value)}' is not a valid value for Units. Use one of these values: {_choices(TEXT_UNITS)}.")
     old = t.props.get('Units', 'data')
@@ -211,7 +211,7 @@ def set_font_units(o, value):
     """FontUnits, with FontSize changed to keep the letters their size, as
     FontSize given before FontUnits ('FontSize', 20, 'FontUnits',
     'normalized') means a size in the units it had."""
-    u = py_str(value).lower()
+    u = choice(value, FONT_UNITS)
     if u not in FONT_UNITS:
         raise gerr(f"'{py_str(value)}' is not a valid value for FontUnits. Use one of these values: {_choices(FONT_UNITS)}.")
     old = o.props.get('FontUnits', 'points')
@@ -262,10 +262,7 @@ class UIControl(_Placed):
 
     def set_value(self, k, value):
         if k == 'Style':
-            s = py_str(value).lower()
-            hits = [x for x in STYLES if x.startswith(s)] if s and s not in STYLES else []
-            if len(hits) == 1:
-                s = hits[0]         # an abbreviation that names one: 'push', 'radio', 'popup'
+            s = choice(value, STYLES)       # an abbreviation that names one: 'push', 'radio', 'popup'
             if s not in STYLES:
                 raise gerr(f"'{py_str(value)}' is not a valid value for Style. Use one of these values: {_choices(STYLES)}.")
             self.props[k] = s
