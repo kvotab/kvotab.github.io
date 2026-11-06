@@ -46,7 +46,9 @@ _SKIP = {'parent', 'children', 'type', 'beingdeleted', 'number', 'currentpoint',
          'currentmodifier', 'selectiontype', 'currentobject', 'extent', 'filename', 'integerhandle', 'legend',
          # the view the file keeps gives the camera's direction; a position set before the limits and target are read
          # would turn it wrongly
-         'cameraposition', 'camerapositionmode'}
+         'cameraposition', 'camerapositionmode',
+         # worked out, not set
+         'tightinset'}
 # properties that name another object by its handle number
 _REFS = {'uicontextmenu': 'UIContextMenu', 'currentaxes': 'CurrentAxes', 'selectedobject': 'SelectedObject',
          'selectedtab': 'SelectedTab'}
@@ -195,6 +197,9 @@ def _build(node, parent, ctx, visible=None):
             continue
         if t == 'figure' and low == 'visible':
             shown = v
+            continue
+        if t == 'figure' and low in ('innerposition', 'outerposition'):
+            # a figure's Position here; the outer one of a file includes its window's frame
             continue
         if t == 'specgraph.scattergroup' and low == 'sizedata':
             n = _num(v)

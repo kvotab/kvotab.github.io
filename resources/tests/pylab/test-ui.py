@@ -2126,6 +2126,15 @@ async def charts_and_more(page):
     room = await page.ev(f"(() => {{ const w = {WIN}; const r = w.renderer; const top = Math.min(...r.frames.map((f) => f.rect.y)); return [top, r._sgRoom, r.titleRoom(r.frames.find((f) => f.rect.y === top).ax)]; }})()")
     check('an sgtitle keeps the top axes and their titles below it', True if (room and room[0] >= room[1] + room[2] - 0.5) else room, True)
     await command(page, 'close all')
+    # TitleHorizontalAlignment: the title at the box's left or right edge
+    await command(page, "figure('Position', [80 80 500 400]); plot(1:5); ht = title('Left title'); set(gca, 'TitleHorizontalAlignment', 'left');")
+    await until(page, 'PL.app.figures.wins.size === 1')
+    await drawn(page, 1)
+    await asyncio.sleep(0.6)
+    tl = await page.ev(f"(() => {{ const r = {WIN}.renderer; const f = r.frames[0]; const t = [...r.textBoxes.entries()].find(([id]) => id === f.ax.title.id); "
+                       "return t ? [t[1].x, f.rect.x, f.rect.x + f.rect.w] : null; })()")
+    check("TitleHorizontalAlignment 'left' puts the title at the box's left edge", True if (tl and abs(tl[0] - tl[1]) <= 2) else tl, True)
+    await command(page, 'close all')
 
     await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
     snd = await page.ev('PL.app.lastSound || null')

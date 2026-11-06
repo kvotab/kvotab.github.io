@@ -360,6 +360,42 @@ W, _ = run("figure; s = surf(peaks(5)); hold on; p = patch([0 1 0], [0 0 1], 'r'
            "material default; rd = [s.SpecularStrength s.SpecularExponent s.SpecularColorReflectance]; material(p, [0.5 0.5 0.1]); rp = [p.AmbientStrength p.DiffuseStrength p.SpecularStrength s.AmbientStrength]; close all")
 near('surfaces and patches have SpecularColorReflectance and the other reflectances, and material sets them (metal, default, numbers, one object)',
      (W['r0'], W['rm'], W['rd'], W['rp']), ([[1, 1, 0.3]], [[0.3, 0.3, 1, 25, 0.5, 25]], [[0.9, 10, 1]], [[0.5, 0.5, 0.1, 0.3]]))
+W, _ = run("f = figure('Position', [100 100 560 420]); fi = isequal(f.InnerPosition, f.Position) && isequal(f.OuterPosition, f.Position); "
+           "f.InnerPosition = [50 60 400 300]; fp = f.Position; plot(1:10); title('T'); subtitle('S'); ax = gca; ai = isequal(ax.InnerPosition, ax.Position); "
+           "pc = ax.PositionConstraint; ax.PositionConstraint = 'innerposition'; ap = ax.ActivePositionProperty; st = ax.Subtitle.String; "
+           "ax.SubtitleFontWeight = 'bold'; sw = ax.Subtitle.FontWeight; ax.GridColor = [1 0 0]; gm1 = ax.GridColorMode; ax.GridColorMode = 'auto'; gc = ax.GridColor; "
+           "ti0 = ax.TightInset; ylabel('a long label'); ti1 = ax.TightInset; ax.XLimitMethod = 'padded'; xp = xlim; ax.XLimitMethod = 'tight'; xt = xlim; "
+           "try, ax.TitleHorizontalAlignment = 'middle'; e1 = ''; catch ex, e1 = ex.message; end; close all")
+C('figure and axes: Inner/OuterPosition, PositionConstraint, Subtitle and its weight, a mode turned manual and back, limit methods, TightInset',
+  (bool(W['fi']), a(W['fp']).tolist(), bool(W['ai']), text(W['pc']), text(W['ap']), text(W['st']), text(W['sw']), text(W['gm1']), a(W['gc']).tolist(),
+   bool(a(W['ti1'])[0, 0] > a(W['ti0'])[0, 0] > 0), a(W['xp']).round(6).tolist(), a(W['xt']).tolist(), "'left', 'center', 'right'" in text(W['e1'])) ==
+  (True, [[50, 60, 400, 300]], True, 'outerposition', 'position', 'S', 'bold', 'manual', [[0.15, 0.15, 0.15]], True, [[0.55, 10.45]], [[1, 10]], True),
+  (W['fp'], W['pc'], W['gm1'], W['xp'], W['xt'], W['e1']))
+W, _ = run("figure; plot(1:10); t1 = text(2, 5, 'ab'); t2 = text(2, 5, 'abcdefgh'); e1 = t1.Extent; e2 = t2.Extent; "
+           "try, t1.Extent = [1 2 3 4]; ro = ''; catch ex, ro = ex.message; end; "
+           "[x, y] = meshgrid(1:3); s = surf(x, y, zeros(3)); vn = squeeze(s.VertexNormals(2, 2, :))'; fs = size(s.FaceNormals); "
+           "p = patch([0 1 0], [0 0 1], 'r'); pf = p.FaceNormals; pv = p.VertexNormals; "
+           "l = line(1:3, 1:3); cm0 = l.ColorMode; l.Color = 'r'; cm1 = l.ColorMode; lj = l.LineJoin; im = image(magic(3)); ip = im.Interpolation; close all")
+C('Text Extent (wider for more letters, read-only), surface and patch normals (upward for a flat one), Line modes and LineJoin, Image Interpolation',
+  (bool(a(W['e2'])[0, 2] > a(W['e1'])[0, 2] > 0), 'read-only property Extent' in text(W['ro']), a(W['vn']).tolist(), a(W['fs']).tolist(),
+   a(W['pf']).tolist(), a(W['pv']).tolist(), text(W['cm0']), text(W['cm1']), text(W['lj']), text(W['ip'])) ==
+  (True, True, [[0, 0, 1]], [[2, 2, 3]], [[0, 0, 0.5]], [[0, 0, 0.5]] * 3, 'auto', 'manual', 'round', 'nearest'),
+  (W['e1'], W['e2'], W['vn'], W['pf'], W['pv'], W['cm1']))
+# the properties these objects commonly have are all here (a Line's Annotation and DataTipTemplate, objects of their own, apart)
+from plab import graphics_base as _GB  # noqa: E402
+_want = {
+    _GB.Figure: 'InnerPosition OuterPosition Position Color Colormap Name NumberTitle WindowStyle',
+    _GB.Axes: 'AlphaScale Alphamap BoxStyle CameraPosition ClippingStyle ColorScale FontAngle FontSizeMode FontSmoothing GridAlphaMode '
+              'GridColorMode InnerPosition Interactions MinorGridColor PositionConstraint Subtitle SubtitleFontWeight TickDirMode TightInset '
+              'TitleHorizontalAlignment Toolbar XColorMode YColorMode ZColorMode XLimitMethod YLimitMethod ZLimitMethod ZAxis',
+    _GB.Line: 'ColorMode LineJoin LineStyleMode MarkerMode XDataMode AlignVertexCenters',
+    _GB.Surface: 'AlphaData AlphaDataMapping CDataMode CDataSource FaceNormals FaceNormalsMode MarkerEdgeColor MarkerFaceColor '
+                 'SpecularColorReflectance VertexNormals VertexNormalsMode XDataMode YDataMode',
+    _GB.Patch: 'AlignVertexCenters AlphaDataMapping AmbientStrength FaceNormals FaceNormalsMode FaceVertexAlphaData LineJoin MarkerEdgeColor '
+               'SpecularColorReflectance VertexNormals VertexNormalsMode',
+    _GB.Text: 'Extent', _GB.Image: 'Interpolation'}
+_missing = [(C_.__name__, n) for C_, names in _want.items() for n in names.split() if C_.canon(n) is None]
+C('figures, axes, lines, surfaces, patches, texts and images have the properties they commonly have', not _missing, _missing)
 W, _ = run("[x, y, z] = meshgrid(-2:0.5:2); u = -y; v = x; w = 0.2*ones(size(x)); figure; h = streamribbon(x, y, z, u, v, w, 1, 0, -2); n = numel(h); s = size(h(1).XData);"
            "X = h(1).XData; Y = h(1).YData; Z = h(1).ZData;")
 X, Y, Z = a(W['X']), a(W['Y']), a(W['Z'])

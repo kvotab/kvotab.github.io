@@ -788,7 +788,7 @@
       if (rot === def) {
         if (side === 'left' || side === 'right') {
           this.textOf(t, ctx, t.string, side === 'left' ? x - inset : x + inset, y, Object.assign(o, { halign: 'center', valign: 'middle', rotation: side === 'left' ? 90 : -90 }));
-        } else this.textOf(t, ctx, t.string, x, y, Object.assign(o, { halign: 'center', valign: side === 'below' ? 'top' : 'bottom', rotation: 0 }));
+        } else this.textOf(t, ctx, t.string, x, y, Object.assign(o, { halign: (opts && opts.halign) || 'center', valign: side === 'below' ? 'top' : 'bottom', rotation: 0 }));
         const m = textSize(ctx, t.string, o.size, o);
         return side === 'left' || side === 'right' ? { w: m.height, h: m.width } : { w: m.width, h: m.height };
       }
@@ -1213,7 +1213,7 @@
       if (ax.ygrid) for (const t of yt.ticks) { const y = fr.fy(t); ctx.moveTo(r.x, y); ctx.lineTo(r.x + r.w, y); }
       ctx.stroke();
       // minor grid on log axes, or when asked (MinorGridAlpha against its usual 0.25)
-      ctx.strokeStyle = rgb(ax.gridColor, ax.gridAlpha * 0.6 * ((ax.minorGridAlpha ?? 0.25) / 0.25));
+      ctx.strokeStyle = rgb(ax.minorGridColor || ax.gridColor, ax.gridAlpha * 0.6 * ((ax.minorGridAlpha ?? 0.25) / 0.25));
       if (!ax.minorGridLineStyle || ax.minorGridLineStyle === ':') ctx.setLineDash([1, 2]);
       else dash(ctx, ax.minorGridLineStyle, 0.5);
       ctx.beginPath();
@@ -1246,16 +1246,20 @@
           this.axesText(ctx, ax.ylabel, x, r.y + r.h / 2, right ? 'right' : 'left', lfs * 0.6, { size: ax.ylabel.fontSize * PT * (ax.labelSize ?? 1.1), color: rgb(ax.ylabel.color === 'none' ? [0, 0, 0] : ax.ylabel.color), bold: ax.ylabel.fontWeight === 'bold' });
         }
       }
-      this.titles(ctx, ax, r.x + r.w / 2, r.y - 6 - (xAtTop ? fs * 3 : 0));
+      this.titles(ctx, ax, r.x + r.w / 2, r.y - 6 - (xAtTop ? fs * 3 : 0), r);
     }
 
-    /* The axes' title above (x, y), its subtitle under it. */
-    titles(ctx, ax, x, y) {
+    /* The axes' title above (x, y), its subtitle under it; at the box's left or right edge when TitleHorizontalAlignment
+       says so (r the box). */
+    titles(ctx, ax, x, y, r) {
+      const align = ax.titleAlign || 'center';
+      if (r && align !== 'center') x = align === 'left' ? r.x : r.x + r.w;
+      const halign = align;
       if (ax.subtitle && ax.subtitle.string && ax.subtitle.visible !== false) {
-        const m = this.axesText(ctx, ax.subtitle, x, y, 'above', 0, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), bold: ax.subtitle.fontWeight === 'bold' });
+        const m = this.axesText(ctx, ax.subtitle, x, y, 'above', 0, { size: ax.subtitle.fontSize * PT, color: rgb(ax.subtitle.color), bold: ax.subtitle.fontWeight === 'bold', halign });
         y -= Math.max(ax.subtitle.fontSize * PT * 1.3, m.h);
       }
-      if (ax.title.string && ax.title.visible !== false) this.axesText(ctx, ax.title, x, y, 'above', 0, { size: ax.title.fontSize * PT * (ax.titleSize ?? 1.1), color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal' });
+      if (ax.title.string && ax.title.visible !== false) this.axesText(ctx, ax.title, x, y, 'above', 0, { size: ax.title.fontSize * PT * (ax.titleSize ?? 1.1), color: rgb(ax.title.color), bold: ax.title.fontWeight !== 'normal', halign });
     }
 
     child2(ctx, ax, fr, c) {
@@ -1284,6 +1288,8 @@
         ctx.save();
         ctx.strokeStyle = col;
         ctx.lineWidth = lw(c.lineWidth);
+        // LineJoin: 'chamfer' is the canvas's 'bevel'; round unless set
+        if (c.lineJoin) ctx.lineJoin = c.lineJoin === 'chamfer' ? 'bevel' : c.lineJoin;
         dash(ctx, c.lineStyle, c.lineWidth);
         ctx.beginPath();
         let pen = false;
@@ -1476,7 +1482,8 @@
       octx.putImageData(img, 0, 0);
       const px0 = fr.fx(x0), px1 = fr.fx(x1), py0 = fr.fy(y0), py1 = fr.fy(y1);
       ctx.save();
-      ctx.imageSmoothingEnabled = false;
+      // Interpolation 'bilinear' blends between the pixels; 'nearest' keeps each a block
+      ctx.imageSmoothingEnabled = c.interpolation === 'bilinear';
       ctx.translate(px0, py0);
       ctx.scale((px1 - px0) / cols, (py1 - py0) / rows);
       ctx.drawImage(off, 0, 0);
@@ -2101,7 +2108,7 @@
       ctx.restore();
       let minY = Infinity;
       for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) minY = Math.min(minY, corner(sx, sy, sz)[1]);
-      this.titles(ctx, ax, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8));
+      this.titles(ctx, ax, fr.r.x + fr.r.w / 2, Math.max(fs * 1.2, minY - 8), fr.r);
     }
 
     scene3(ctx, ax, fr) {

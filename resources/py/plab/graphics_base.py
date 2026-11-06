@@ -174,6 +174,9 @@ class GObj(Obj):
             f.version += 1
             STORE.dirty.add(f)
 
+    SAME_AS = {}          # a property that is another under a second name (a figure's InnerPosition is its Position)
+    MODED = ()            # properties with an XxxMode that turns 'manual' when they are set, and back to the default at 'auto'
+
     def getprop(self, name):
         if not self.valid:
             raise gerr('Invalid or deleted object.', 'MATLAB:class:InvalidHandle')
@@ -195,7 +198,7 @@ class GObj(Obj):
             if d is not None:
                 return self.default_value(*d)
             raise gerr(f"Unrecognized property '{name}' for class '{self.CLASSNAME.split('.')[-1]}'.", 'MATLAB:noSuchMethodOrField')
-        return self.get_value(k)
+        return self.get_value(self.SAME_AS.get(k, k))
 
     def get_value(self, k):
         v = self.props.get(k)
@@ -214,13 +217,31 @@ class GObj(Obj):
                 self.set_default(d[1], d[2], value)
                 return
             raise gerr(f"Unrecognized property '{name}' for class '{self.CLASSNAME.split('.')[-1]}'.", 'MATLAB:noPublicFieldForClass')
+        k = self.SAME_AS.get(k, k)
         self.set_value(k, value)
+        if k in self.MODED and k + 'Mode' in self.props:
+            self.props[k + 'Mode'] = 'manual'
         self.touch()
 
     def set_value(self, k, value):
         if k == 'FontUnits':
             from .uiobjects import set_font_units
             set_font_units(self, value)
+            return
+        if k in _CHOICES and type(value) in (Char, Str):
+            v = py_str(value).lower()
+            if v not in _CHOICES[k]:
+                raise gerr(f"Invalid value for {k}: use " + ', '.join(f"'{c}'" for c in _CHOICES[k]) + '.')
+            self.props[k] = v
+            return
+        if k.endswith('Mode') and k[:-4] in self.MODED:
+            s = py_str(value).lower() if type(value) in (Char, Str) else ''
+            if s not in ('auto', 'manual'):
+                raise gerr(f"Invalid value for {k}: use 'auto' or 'manual'.")
+            self.props[k] = s
+            if s == 'auto':
+                d = type(self).DEFAULTS.get(k[:-4])
+                self.props[k[:-4]] = d() if callable(d) else d
             return
         self.props[k] = import_value(self, k, value)
 
@@ -356,6 +377,15 @@ _ONOFF = {'Visible', 'Box', 'XGrid', 'YGrid', 'ZGrid', 'XMinorGrid', 'YMinorGrid
           'GraphicsSmoothing', 'LineSmoothing', 'Editing', 'FontSmoothing', 'FitBoxToText'}
 
 
+# the values some properties take, one of them (case not minded)
+_CHOICES = {**{f'{a}LimitMethod': ('tickaligned', 'tight', 'padded') for a in 'XYZ'},
+            'TitleHorizontalAlignment': ('left', 'center', 'right'), 'LineJoin': ('round', 'miter', 'chamfer'),
+            'Interpolation': ('nearest', 'bilinear'), 'AlphaScale': ('linear', 'log'), 'ColorScale': ('linear', 'log'),
+            'BoxStyle': ('back', 'full'), 'ClippingStyle': ('3dbox', 'rectangle'), 'AlphaDataMapping': ('none', 'scaled', 'direct'),
+            'SubtitleFontWeight': ('normal', 'bold'), 'XDataMode': ('auto', 'manual'), 'YDataMode': ('auto', 'manual'),
+            'VertexNormalsMode': ('auto', 'manual'), 'FaceNormalsMode': ('auto', 'manual')}
+
+
 def import_value(obj, k, v):
     """A value of the language stored as a property."""
     if k == 'UIContextMenu':
@@ -444,7 +474,9 @@ _order = itertools.count(1)
 class Figure(GObj):
     TYPE = 'figure'
     CLASSNAME = 'matlab.ui.Figure'
+    SAME_AS = {'InnerPosition': 'Position', 'OuterPosition': 'Position'}
     DEFAULTS = {'Number': 1.0, 'Name': '', 'NumberTitle': True, 'Position': lambda: np.array([[680, 458, 560, 420]], F64),
+                'InnerPosition': None, 'OuterPosition': None,
                 'Color': (0.94, 0.94, 0.94), 'Colormap': _cm_default, 'Visible': True, 'WindowStyle': 'normal',
                 'Units': 'pixels', 'NextPlot': 'add', 'Tag': '', 'UserData': lambda: EMPTY(), 'CurrentAxes': None,
                 'MenuBar': 'figure', 'ToolBar': 'auto', 'Resize': True, 'PaperPositionMode': 'auto',
@@ -548,6 +580,8 @@ class Figure(GObj):
 class Axes(GObj):
     TYPE = 'axes'
     CLASSNAME = 'matlab.graphics.axis.Axes'
+    SAME_AS = {'InnerPosition': 'Position'}
+    MODED = ('FontSize', 'GridAlpha', 'GridColor', 'TickDir', 'XColor', 'YColor', 'ZColor')
     DEFAULTS = {
         'Position': lambda: np.array([[0.13, 0.11, 0.775, 0.815]]), 'OuterPosition': lambda: np.array([[0, 0, 1, 1]], F64),
         'XLim': lambda: np.array([[0.0, 1.0]]), 'YLim': lambda: np.array([[0.0, 1.0]]), 'ZLim': lambda: np.array([[0.0, 1.0]]),
@@ -572,7 +606,16 @@ class Axes(GObj):
         'XAxisLocation': 'bottom', 'YAxisLocation': 'left', 'Layer': 'bottom', 'Visible': True, 'Tag': '',
         'UserData': lambda: EMPTY(), 'Units': 'normalized', 'Clipping': True, 'Projection': 'orthographic',
         'TickLabelInterpreter': 'tex', 'Colormap': None, 'ActivePositionProperty': 'outerposition', 'SortMethod': 'depth',
-        'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None,
+        'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None, 'ZAxis': None,
+        # the inner position is the Position; PositionConstraint is ActivePositionProperty by its newer name; TightInset
+        # is estimated from the fonts (axes_tight_inset)
+        'InnerPosition': None, 'PositionConstraint': None, 'TightInset': None, 'SubtitleFontWeight': 'normal',
+        'TitleHorizontalAlignment': 'center', 'FontAngle': 'normal', 'FontSmoothing': True, 'MinorGridColor': (0.1, 0.1, 0.1),
+        'FontSizeMode': 'auto', 'GridAlphaMode': 'auto', 'GridColorMode': 'auto', 'TickDirMode': 'auto',
+        'XColorMode': 'auto', 'YColorMode': 'auto', 'ZColorMode': 'auto',
+        'XLimitMethod': 'tickaligned', 'YLimitMethod': 'tickaligned', 'ZLimitMethod': 'tickaligned',
+        'AlphaScale': 'linear', 'Alphamap': lambda: np.linspace(0, 1, 64).reshape(1, -1), 'ColorScale': 'linear',
+        'BoxStyle': 'back', 'ClippingStyle': '3dbox', 'Interactions': lambda: EMPTY(), 'Toolbar': lambda: EMPTY(),
         'CameraViewAngle': 6.6086, 'CameraViewAngleMode': 'auto',
         # where the camera is: along the view's direction from the target (camera_position), so it follows View
         'CameraPosition': lambda: np.array([[0.0, 0.0, 0.0]]), 'CameraPositionMode': 'auto',
@@ -719,6 +762,14 @@ class Axes(GObj):
             return np.array([[float(np.mean(np.asarray(self.get_value(a), float))) for a in ('XLim', 'YLim', 'ZLim')]])
         if k == 'CameraPosition':
             return self.camera_position()
+        if k == 'PositionConstraint':
+            return Char.of('innerposition' if self.props['ActivePositionProperty'] == 'position' else 'outerposition')
+        if k == 'TightInset':
+            return axes_tight_inset(self)
+        if k == 'Subtitle':
+            return self.subtitle
+        if k == 'SubtitleFontWeight':
+            return Char.of(self.subtitle.props.get('FontWeight', 'normal'))
         if k == 'Title':
             return self.title
         if k == 'XLabel':
@@ -842,8 +893,20 @@ class Axes(GObj):
             from .colormaps import as_colormap
             self.props[k] = as_colormap(value)
             return
-        if k in ('Title', 'XLabel', 'YLabel', 'ZLabel'):
-            t = {'Title': self.title, 'XLabel': self.xlabel, 'YLabel': self.ylabel, 'ZLabel': self.zlabel}[k]
+        if k == 'PositionConstraint':
+            s = py_str(value).lower() if type(value) in (Char, Str) else ''
+            if s not in ('innerposition', 'outerposition'):
+                raise gerr("Invalid value for PositionConstraint: use 'innerposition' or 'outerposition'.")
+            self.props['ActivePositionProperty'] = 'position' if s == 'innerposition' else 'outerposition'
+            return
+        if k == 'TightInset':
+            raise gerr('You cannot set the read-only property TightInset of Axes.', 'MATLAB:class:SetProhibited')
+        if k == 'SubtitleFontWeight':
+            super().set_value(k, value)
+            self.subtitle.props['FontWeight'] = self.props[k]
+            return
+        if k in ('Title', 'Subtitle', 'XLabel', 'YLabel', 'ZLabel'):
+            t = {'Title': self.title, 'Subtitle': self.subtitle, 'XLabel': self.xlabel, 'YLabel': self.ylabel, 'ZLabel': self.zlabel}[k]
             if isinstance(value, Text):
                 t.props.update(value.props)
             else:
@@ -965,8 +1028,10 @@ class Line(GObj):
     DEFAULTS = {'XData': lambda: np.zeros((1, 0)), 'YData': lambda: np.zeros((1, 0)), 'ZData': lambda: np.zeros((1, 0)),
                 'Color': (0.0, 0.447, 0.741), 'LineStyle': '-', 'LineWidth': 0.5, 'Marker': 'none', 'MarkerSize': 6.0,
                 'MarkerFaceColor': 'none', 'MarkerEdgeColor': 'auto', 'MarkerIndices': None, 'DisplayName': '', 'Visible': True,
-                'Tag': '', 'UserData': lambda: EMPTY(), 'Clipping': True, 'SeriesIndex': 1.0, 'AlignVertexCenters': False}
+                'Tag': '', 'UserData': lambda: EMPTY(), 'Clipping': True, 'SeriesIndex': 1.0, 'AlignVertexCenters': False,
+                'LineJoin': 'round', 'ColorMode': 'auto', 'LineStyleMode': 'auto', 'MarkerMode': 'auto', 'XDataMode': 'manual'}
     SHOWN = ['Color', 'LineStyle', 'LineWidth', 'Marker', 'MarkerSize', 'MarkerFaceColor', 'XData', 'YData', 'ZData']
+    MODED = ('Color', 'LineStyle', 'Marker')
 
     def set_value(self, k, value):
         if k in ('XData', 'YData', 'ZData'):
@@ -997,12 +1062,26 @@ class Surface(GObj):
                 'LineWidth': 0.5, 'MeshStyle': 'both', 'Marker': 'none', 'MarkerSize': 6.0, 'DisplayName': '', 'Visible': True,
                 'FaceLighting': 'flat', 'EdgeLighting': 'none', 'Tag': '', 'UserData': lambda: EMPTY(), 'CDataMapping': 'scaled',
                 'AmbientStrength': 0.3, 'DiffuseStrength': 0.6, 'SpecularStrength': 0.9, 'SpecularExponent': 10.0,
-                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit'}
+                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit',
+                'AlphaData': 1.0, 'AlphaDataMapping': 'scaled', 'CDataMode': 'auto', 'CDataSource': '', 'MarkerEdgeColor': 'auto',
+                'MarkerFaceColor': 'none', 'XDataMode': 'manual', 'YDataMode': 'manual',
+                # computed from the data while their modes are 'auto' (surface_normals)
+                'VertexNormals': None, 'VertexNormalsMode': 'auto', 'FaceNormals': None, 'FaceNormalsMode': 'auto'}
     SHOWN = ['EdgeColor', 'LineStyle', 'FaceColor', 'FaceLighting', 'FaceAlpha', 'XData', 'YData', 'ZData', 'CData']
+    MODED = ('CData',)
+
+    def get_value(self, k):
+        if k in ('VertexNormals', 'FaceNormals') and self.props[k + 'Mode'] == 'auto':
+            return surface_normals(self, k == 'FaceNormals')
+        return super().get_value(k)
 
     def set_value(self, k, value):
         if k in ('FaceAlpha', 'EdgeAlpha') and type(value) in (Char, Str):
             self.props[k] = py_str(value)
+            return
+        if k in ('VertexNormals', 'FaceNormals'):
+            self.props[k] = np.asarray(value, float)
+            self.props[k + 'Mode'] = 'manual'
             return
         super().set_value(k, value)
 
@@ -1017,8 +1096,24 @@ class Patch(GObj):
                 'UserData': lambda: EMPTY(), 'FaceLighting': 'flat', 'CDataMapping': 'scaled',
                 # how a lit face reflects (set by material too), as a surface has them
                 'AmbientStrength': 0.3, 'DiffuseStrength': 0.6, 'SpecularStrength': 0.9, 'SpecularExponent': 10.0,
-                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit'}
+                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit',
+                'AlignVertexCenters': False, 'AlphaDataMapping': 'scaled', 'FaceVertexAlphaData': lambda: EMPTY(), 'LineJoin': 'miter',
+                'MarkerEdgeColor': 'auto',
+                # computed from the faces while their modes are 'auto' (patch_normals); isonormals sets VertexNormals
+                'VertexNormals': None, 'VertexNormalsMode': 'auto', 'FaceNormals': None, 'FaceNormalsMode': 'auto'}
     SHOWN = ['FaceColor', 'FaceAlpha', 'EdgeColor', 'LineStyle', 'Faces', 'Vertices']
+
+    def get_value(self, k):
+        if k in ('VertexNormals', 'FaceNormals') and self.props.get(k + 'Mode', 'auto') == 'auto':
+            return patch_normals(self, k == 'FaceNormals')
+        return super().get_value(k)
+
+    def set_value(self, k, value):
+        if k in ('VertexNormals', 'FaceNormals'):
+            self.props[k] = np.asarray(value, float)
+            self.props[k + 'Mode'] = 'manual'
+            return
+        super().set_value(k, value)
 
 
 class Polygon(Patch):
@@ -1190,7 +1285,8 @@ class Image(GObj):
     TYPE = 'image'
     CLASSNAME = 'matlab.graphics.primitive.Image'
     DEFAULTS = {'CData': lambda: EMPTY(), 'XData': lambda: np.array([[1.0, 1.0]]), 'YData': lambda: np.array([[1.0, 1.0]]),
-                'CDataMapping': 'direct', 'AlphaData': 1.0, 'Visible': True, 'Tag': '', 'UserData': lambda: EMPTY(), 'DisplayName': ''}
+                'CDataMapping': 'direct', 'AlphaData': 1.0, 'Visible': True, 'Tag': '', 'UserData': lambda: EMPTY(), 'DisplayName': '',
+                'Interpolation': 'nearest'}
     SHOWN = ['CData', 'CDataMapping']
 
 
@@ -1218,7 +1314,7 @@ class Text(GObj):
                 'FontWeight': 'normal', 'FontAngle': 'normal', 'Color': (0.0, 0.0, 0.0), 'HorizontalAlignment': 'left',
                 'VerticalAlignment': 'middle', 'Rotation': 0.0, 'Interpreter': 'tex', 'BackgroundColor': 'none',
                 'EdgeColor': 'none', 'LineWidth': 0.5, 'Margin': 3.0, 'Visible': True, 'Units': 'data', 'Tag': '',
-                'UserData': lambda: EMPTY(), 'Clipping': False}
+                'UserData': lambda: EMPTY(), 'Clipping': False, 'Extent': None}
     SHOWN = ['String', 'FontSize', 'FontWeight', 'FontName', 'Color', 'HorizontalAlignment', 'Position', 'Units']
 
     def __init__(self, parent=None, **props):
@@ -1227,6 +1323,8 @@ class Text(GObj):
         self.hidden = hidden
 
     def set_value(self, k, value):
+        if k == 'Extent':
+            raise gerr('You cannot set the read-only property Extent of Text.', 'MATLAB:class:SetProhibited')
         if k == 'String':
             self.props[k] = string_value(value)
             return
@@ -1248,6 +1346,8 @@ class Text(GObj):
             if isinstance(v, list):
                 return Cell.of_list([Char.of(s) for s in v], (len(v), 1))
             return Char.of(v)
+        if k == 'Extent':
+            return text_extent(self)
         return super().get_value(k)
 
 
@@ -1747,6 +1847,151 @@ def _num(v):
         return None
 
 
+# ---- properties worked out from others: sizes from the fonts, normals from the data ------------------------------------------
+
+_PX_PER_PT = 4 / 3      # a point in pixels, as figures measure them
+
+
+def _plot_box_px(ax):
+    """The axes' Position in pixels of its figure (normalized units unless set otherwise)."""
+    f = ax.figure()
+    fw, fh = (np.asarray(f.props['Position'], float).reshape(-1)[2:4] if f is not None else (560.0, 420.0))
+    pos = np.asarray(ax.props['Position'], float).reshape(-1)
+    if ax.props.get('Units', 'normalized') == 'normalized':
+        return pos[0] * fw, pos[1] * fh, pos[2] * fw, pos[3] * fh, fw, fh
+    return pos[0], pos[1], pos[2], pos[3], fw, fh
+
+
+def _text_size_px(lines, size_pt):
+    """A text's width and height in pixels, estimated: the page measures what it draws, the engine counts letters."""
+    em = size_pt * _PX_PER_PT
+    return max((len(l) for l in lines), default=0) * 0.55 * em, max(len(lines), 1) * 1.2 * em
+
+
+def axes_tight_inset(ax):
+    """The room the tick labels, axis labels and title take outside the plot box, [left bottom right top] in the axes'
+    Units: estimated from the fonts and the labels' lengths."""
+    fs = float(ax.props.get('FontSize', 10.0))
+    lab = fs * float(ax.props.get('LabelFontSizeMultiplier', 1.1))
+
+    def labels(k):
+        try:
+            v = ax.get_value(k + 'TickLabel')
+            return [py_str(x) for x in v.a.reshape(-1)] if isinstance(v, Cell) else []
+        except Exception:
+            return []
+    yl = labels('Y')
+    left = _text_size_px([max(yl, key=len)] if yl else [], fs)[0] + 6
+    if py_str(ax.ylabel.get_value('String')):
+        left += 1.4 * lab * _PX_PER_PT
+    bottom = 1.2 * fs * _PX_PER_PT + 4
+    if py_str(ax.xlabel.get_value('String')):
+        bottom += 1.4 * lab * _PX_PER_PT
+    top = 0.0
+    if py_str(ax.title.get_value('String')):
+        top += 1.4 * fs * float(ax.props.get('TitleFontSizeMultiplier', 1.1)) * _PX_PER_PT
+    if py_str(ax.subtitle.get_value('String')):
+        top += 1.3 * fs * _PX_PER_PT
+    xl = labels('X')
+    right = _text_size_px([xl[-1]] if xl else [], fs)[0] / 2
+    _, _, _, _, fw, fh = _plot_box_px(ax)
+    if ax.props.get('Units', 'normalized') == 'normalized':
+        return np.array([[left / fw, bottom / fh, right / fw, top / fh]])
+    return np.array([[left, bottom, right, top]])
+
+
+def text_extent(t):
+    """A text's box [left bottom width height] in its Units: its size estimated from the font and the letters, placed by
+    its alignment; in data units through its axes' limits and size."""
+    v = t.get_value('String')
+    lines = [py_str(x) for x in v.a.reshape(-1)] if isinstance(v, Cell) else (v.row_strs() if isinstance(v, Char) and v.a.shape[0] > 1 else [py_str(v)])
+    w, h = _text_size_px(lines, float(t.props.get('FontSize', 10.0)))
+    pos = np.asarray(t.props['Position'], float).reshape(-1)
+    ha, va = t.props.get('HorizontalAlignment', 'left'), t.props.get('VerticalAlignment', 'middle')
+    dx = {'left': 0.0, 'center': -0.5, 'right': -1.0}.get(ha, 0.0)
+    dy = {'bottom': 0.0, 'baseline': -0.2, 'middle': -0.5, 'cap': -0.85, 'top': -1.0}.get(va, -0.5)
+    units = t.props.get('Units', 'data')
+    ax = t.parent if isinstance(t.parent, Axes) else None
+    if units == 'pixels' or ax is None:
+        sx = sy = 1.0
+    else:
+        _, _, bw, bh, _, _ = _plot_box_px(ax)
+        if units == 'normalized':
+            sx, sy = 1 / max(bw, 1e-9), 1 / max(bh, 1e-9)
+        else:
+            xl = np.asarray(ax.get_value('XLim'), float).reshape(-1)
+            yl = np.asarray(ax.get_value('YLim'), float).reshape(-1)
+            sx, sy = (xl[1] - xl[0]) / max(bw, 1e-9), (yl[1] - yl[0]) / max(bh, 1e-9)
+    return np.array([[pos[0] + dx * w * sx, pos[1] + dy * h * sy, w * sx, h * sy]])
+
+
+def surface_normals(s, faces=False):
+    """A surface's normals: at each vertex the cross product of the tangents along its columns and its rows (upward for
+    z = f(x, y) on an increasing grid), or for each face that of its diagonals; not made unit length."""
+    Z = np.asarray(s.props['ZData'], float)
+    if Z.ndim != 2 or Z.size == 0:
+        return EMPTY()
+    m, n = Z.shape
+    X = np.asarray(s.props['XData'], float)
+    Y = np.asarray(s.props['YData'], float)
+    X = np.broadcast_to(X.reshape(1, -1), (m, n)) if X.size == n and X.shape != (m, n) else (X if X.shape == (m, n) else np.broadcast_to(np.arange(1.0, n + 1), (m, n)))
+    Y = np.broadcast_to(Y.reshape(-1, 1), (m, n)) if Y.size == m and Y.shape != (m, n) else (Y if Y.shape == (m, n) else np.broadcast_to(np.arange(1.0, m + 1).reshape(-1, 1), (m, n)))
+    P = np.stack([X, Y, Z], axis=2)
+    if faces:
+        if m < 2 or n < 2:
+            return EMPTY()
+        a = P[1:, 1:] - P[:-1, :-1]
+        b = P[:-1, 1:] - P[1:, :-1]
+        return np.cross(b, a)
+    tj = np.gradient(P, axis=1) if n > 1 else np.zeros_like(P)
+    ti = np.gradient(P, axis=0) if m > 1 else np.zeros_like(P)
+    return np.cross(tj, ti)
+
+
+def _patch_faces(p):
+    """A patch's faces (rows of vertex indices from 0, -1 for none) and vertices, from Faces and Vertices or from its
+    XData, YData and ZData (a column each face)."""
+    F, V = p.props.get('Faces'), p.props.get('Vertices')
+    if numel(F) and numel(V):
+        F = np.asarray(F, float)
+        F = np.where(np.isfinite(F), F - 1, -1).astype(int)
+        return F.reshape(F.shape[0], -1), np.asarray(V, float).reshape(np.asarray(V).shape[0], -1)
+    X = np.asarray(p.props.get('XData'), float)
+    if X.size == 0:
+        return np.zeros((0, 0), int), np.zeros((0, 3))
+    X = X.reshape(-1, 1) if X.ndim < 2 or X.shape[0] == 1 else X
+    Y = np.asarray(p.props.get('YData'), float).reshape(X.shape)
+    Z = np.asarray(p.props.get('ZData'), float)
+    Z = Z.reshape(X.shape) if Z.size == X.size else np.zeros(X.shape)
+    V = np.column_stack([X.reshape(-1, order='F'), Y.reshape(-1, order='F'), Z.reshape(-1, order='F')])
+    F = np.arange(X.size).reshape(X.shape[1], X.shape[0])
+    return F, V
+
+
+def patch_normals(p, faces=False):
+    """A patch's normals: each face's by Newell's method (its area times its unit normal), and at each vertex the sum
+    over the faces that meet there."""
+    F, V = _patch_faces(p)
+    if not F.size:
+        return EMPTY()
+    V3 = V if V.shape[1] == 3 else np.column_stack([V[:, :2], np.zeros(len(V))])
+    N = np.zeros((F.shape[0], 3))
+    for i, row in enumerate(F):
+        idx = row[row >= 0]
+        if idx.size < 3:
+            continue
+        a, b = V3[idx], V3[np.roll(idx, -1)]
+        N[i] = 0.5 * np.array([np.sum((a[:, 1] - b[:, 1]) * (a[:, 2] + b[:, 2])), np.sum((a[:, 2] - b[:, 2]) * (a[:, 0] + b[:, 0])),
+                               np.sum((a[:, 0] - b[:, 0]) * (a[:, 1] + b[:, 1]))])
+    if faces:
+        return N
+    out = np.zeros((V3.shape[0], 3))
+    for i, row in enumerate(F):
+        for j in row[row >= 0]:
+            out[j] += N[i]
+    return out
+
+
 def serialize_child(c, ax):
     p = c.props
     t = c.TYPE
@@ -1761,6 +2006,8 @@ def serialize_child(c, ax):
         mi = p.get('MarkerIndices')
         if mi is not None and numel(mi):
             d['markerIndices'] = _arr(np.asarray(mi, float) - 1)
+        if p.get('LineJoin', 'round') != 'round':
+            d['lineJoin'] = p['LineJoin']
     elif t == 'surface':
         d.update(x=_arr(p['XData']), y=_arr(p['YData']), z=_arr(p['ZData']), c=_arr(p['CData']) if numel(p['CData']) else None,
                  faceColor=_color(p['FaceColor']), edgeColor=_color(p['EdgeColor']),
@@ -1788,6 +2035,8 @@ def serialize_child(c, ax):
         d.update(c=_arr(a), x=_arr(p['XData']), y=_arr(p['YData']), cmapping=p['CDataMapping'],
                  alpha=float(_num(p['AlphaData'])) if numel(p['AlphaData']) == 1 else 1.0,
                  rgb=bool(a.ndim == 3))
+        if p.get('Interpolation', 'nearest') == 'bilinear':
+            d['interpolation'] = 'bilinear'
     elif t == 'text':
         d.update(_text_json(c))
     elif t == 'light':
@@ -1912,6 +2161,11 @@ def serialize_axes(ax):
         'parent': ax.parent.id if ax.parent is not None and ax.parent.TYPE not in ('figure', 'axes') else None,
     }
     d.update(_interact_json(ax))
+    # the title's alignment and the minor grid's colour, when not their defaults (the pages stored before stay as they were)
+    if p.get('TitleHorizontalAlignment', 'center') != 'center':
+        d['titleAlign'] = p['TitleHorizontalAlignment']
+    if _color(p.get('MinorGridColor', (0.1, 0.1, 0.1))) != _color((0.1, 0.1, 0.1)):
+        d['minorGridColor'] = _color(p['MinorGridColor'])
     if ax.kind == 'geo':
         # the basemap's name, and for one of addCustomBasemap its tiles (pylab-basemap.js)
         eg = getattr(ax, 'extra_geo', {})
@@ -2022,7 +2276,7 @@ def register(*classes):
         C._alias = {a.lower(): n for a, n in getattr(C, 'ALIASES', {}).items() if n in C.DEFAULTS}
 
 
-_EXTRA = {Axes: ('Title', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Text: ('Extent',), Root: ('CallbackObject',)}
+_EXTRA = {Axes: ('Title', 'Subtitle', 'XLabel', 'YLabel', 'ZLabel', 'Legend'), Colorbar: ('Label',), Root: ('CallbackObject',)}
 register(Root, Figure, Axes, Line, Surface, Patch, Polygon, Rectangle, Group, Transform, Image, Text, Legend, Colorbar, Light, Series,
          *SHAPES.values())
 GObj._lower = {}

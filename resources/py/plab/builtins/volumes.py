@@ -250,6 +250,7 @@ def isonormals(nargout, *args):
     if target is not None:
         _vertex_normals_prop()
         target.props['VertexNormals'] = N
+        target.props['VertexNormalsMode'] = 'manual'
         target.touch()
         return None
     return out(N)

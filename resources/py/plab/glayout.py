@@ -262,7 +262,16 @@ def auto_limits(ax):
         r = bounds[k]
         lo, hi = (r if r is not None else (None, None))
         log = ax.props[k + 'Scale'] == 'log'
-        lim = _aligned(lo, hi, axis_pixels(ax, k), log, tight[k] or axis_tight, is3d)
+        method = ax.props.get(k + 'LimitMethod', 'tickaligned')
+        lim = _aligned(lo, hi, axis_pixels(ax, k), log, tight[k] or axis_tight or method in ('tight', 'padded'), is3d)
+        if method == 'padded' and lo is not None and hi is not None and lim[1] > lim[0]:
+            # a margin of 5% of the span either side (of the decades on a log scale), as axis padded
+            if log and lim[0] > 0:
+                a, b = math.log10(lim[0]), math.log10(lim[1])
+                lim = [10 ** (a - 0.05 * (b - a)), 10 ** (b + 0.05 * (b - a))]
+            else:
+                pad = 0.05 * (lim[1] - lim[0])
+                lim = [lim[0] - pad, lim[1] + pad]
         out[k + 'Lim'] = lim
     out['bounds'] = {k: (list(bounds[k]) if bounds[k] else None) for k in 'XYZ'}
     out['tight'] = tight

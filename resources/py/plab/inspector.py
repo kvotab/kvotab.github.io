@@ -42,6 +42,12 @@ ENUMS = {
     'WindowState': ['normal', 'minimized', 'maximized', 'fullscreen'], 'MenuBar': ['figure', 'none'],
     'ToolBar': ['auto', 'figure', 'none'], 'SortMethod': ['depth', 'childorder'],
     'ActivePositionProperty': ['outerposition', 'position'], 'Enable': ['on', 'off', 'inactive'],
+    'PositionConstraint': ['outerposition', 'innerposition'], 'SubtitleFontWeight': ['normal', 'bold'],
+    'TitleHorizontalAlignment': ['left', 'center', 'right'], 'LineJoin': ['round', 'miter', 'chamfer'],
+    'Interpolation': ['nearest', 'bilinear'], 'XLimitMethod': ['tickaligned', 'tight', 'padded'],
+    'YLimitMethod': ['tickaligned', 'tight', 'padded'], 'ZLimitMethod': ['tickaligned', 'tight', 'padded'],
+    'AlphaScale': ['linear', 'log'], 'ColorScale': ['linear', 'log'], 'BoxStyle': ['back', 'full'],
+    'ClippingStyle': ['3dbox', 'rectangle'], 'AlphaDataMapping': ['none', 'scaled', 'direct'],
     'FontUnits': ['points', 'pixels', 'inches', 'centimeters', 'normalized'], 'Units': _FIG_UNITS,
     'HeadStyle': list(G.HEAD_STYLES), 'Head1Style': list(G.HEAD_STYLES), 'Head2Style': list(G.HEAD_STYLES),
     'Pointer': ['arrow', 'crosshair', 'watch', 'hand', 'ibeam', 'fleur', 'circle', 'cross', 'topl', 'topr', 'botl', 'botr',
@@ -435,13 +441,17 @@ _NOT_DRAWN = {
     'figure': 'Alphamap BackingStore DockControls DoubleBuffer GraphicsSmoothing InvertHardcopy MinColormap PaperOrientation '
               'PaperPositionMode PaperSize PaperType PaperUnits Renderer RendererMode ShareColors WindowState Selected SelectionHighlight',
     'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty ZTickLabelRotation '
-            'ThetaAxisUnits',
-    'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight XDataSource YDataSource ZDataSource',
+            'ThetaAxisUnits PositionConstraint AlphaScale Alphamap BoxStyle ClippingStyle ColorScale FontAngle FontSmoothing '
+            'Interactions Toolbar',
+    'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight XDataSource YDataSource ZDataSource '
+            'ColorMode LineStyleMode MarkerMode XDataMode',
     'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength SpecularColorReflectance MeshStyle '
-               'Marker MarkerSize CDataMapping Selected SelectionHighlight XDataSource YDataSource ZDataSource',
+               'Marker MarkerSize CDataMapping Selected SelectionHighlight XDataSource YDataSource ZDataSource '
+               'AlphaData AlphaDataMapping CDataSource MarkerEdgeColor MarkerFaceColor VertexNormals FaceNormals',
     'patch': 'AmbientStrength BackFaceLighting DiffuseStrength SpecularExponent SpecularStrength SpecularColorReflectance '
              'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
-             'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha',
+             'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha AlignVertexCenters AlphaDataMapping FaceVertexAlphaData '
+             'LineJoin VertexNormals FaceNormals',
     'image': 'AlphaDataMapping EraseMode Selected SelectionHighlight',
     'text': 'Editing EraseMode FontSmoothing Selected SelectionHighlight',
     'legend': 'Position', 'colorbar': 'Position',

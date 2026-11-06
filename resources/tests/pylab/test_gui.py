@@ -799,8 +799,8 @@ check('each with the field that suits it',
       [(prop(d, n)['kind'], prop(d, n)['value']) for n in ('Color', 'LineStyle', 'LineWidth', 'XData', 'Visible', 'MarkerFaceColor')],
       [('color', [1.0, 0.0, 0.0]), ('enum', '--'), ('number', '0.5'), ('array', '[1 2 3 4 5]'), ('onoff', True), ('color', 'none')])
 check("a colour's words are offered", prop(d, 'MarkerFaceColor')['options'], ['none', 'auto', 'flat'])
-check("the other groups follow, by name, and last what is kept but not drawn", [g['name'] for g in d['groups']],
-      ['Common', 'Markers', 'Data', 'Identity and interaction', 'Callbacks', 'Kept, not drawn'])
+check("the other groups follow, by name, and last what is kept but not drawn (LineJoin with the colours and lines)", [g['name'] for g in d['groups']],
+      ['Common', 'Colors and lines', 'Markers', 'Data', 'Identity and interaction', 'Callbacks', 'Kept, not drawn'])
 check('Parent is a link to the axes; Type and UserData are only shown',
       (prop(d, 'Parent')['kind'], prop(d, 'Parent')['link'], prop(d, 'Type')['kind'], prop(d, 'UserData')['kind']),
       ('link', idof('ax'), 'readonly', 'readonly'))
