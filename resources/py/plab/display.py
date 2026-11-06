@@ -516,6 +516,40 @@ def body_lines(v):
     return ['  ' + repr(v)]
 
 
+# ---- "Show all properties": a link in an object's display that lists every property ---------------------------------------
+
+_ALL = {}             # the number a link carries -> the object it was written for (the latest 200)
+_ALL_NEXT = [0]
+
+
+def all_props_link(obj):
+    """The last line of an object's display: "Show all properties" as a link the Command Window follows to list them all
+    (all_props_text); as plain text wherever links are taken out (evalc, the diary)."""
+    _ALL_NEXT[0] += 1
+    k = _ALL_NEXT[0]
+    _ALL[k] = obj
+    while len(_ALL) > 200:
+        _ALL.pop(next(iter(_ALL)))
+    return f'  \x01props:{k}\x02Show all properties\x03'
+
+
+def all_props_text(k):
+    """Every property of the object a "Show all properties" link was written for, by name, as its display shows a few."""
+    obj = _ALL.get(k)
+    if obj is None or not getattr(obj, 'valid', True):
+        return '  The object is no longer there.\n\n'
+    d = {}
+    for n in obj.propnames():
+        try:
+            d[n] = obj.getprop(n)
+        except Exception:     # a property the object cannot give now is left out, as get leaves it
+            pass
+    name = (getattr(obj, 'CLASSNAME', None) or getattr(obj, 'cls', 'object')).split('.')[-1]
+    w = max((len(n) for n in d), default=0)
+    lines = [f'  {name} with properties:', ''] + ['    ' + n.rjust(w) + ': ' + summary(v) for n, v in sorted(d.items(), key=lambda kv: kv[0].lower())]
+    return '\n'.join(lines) + '\n\n'
+
+
 class _NoSym:
     pass
 

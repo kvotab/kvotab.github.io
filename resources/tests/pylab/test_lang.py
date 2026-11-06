@@ -623,6 +623,17 @@ from plab import worker_api as _WA  # noqa: E402
 from plab.helptext import HELP as _HELP  # noqa: E402
 import json as _json  # noqa: E402
 _sums = _json.loads(_WA.help_summaries())
+import re as _re2  # noqa: E402
+asyncio.run(R.execute('close all force; ax_sp = axes'))
+_t = R.take_output()
+_k = _re2.search(r'\x01props:(\d+)\x02Show all properties\x03', _t)
+_full = _json.loads(_WA.all_properties(int(_k.group(1))))['text'] if _k else ''
+_names = [l.split(':')[0].strip() for l in _full.split('\n')[2:] if ':' in l]
+asyncio.run(R.execute('delete(ax_sp)'))
+_gone = _json.loads(_WA.all_properties(int(_k.group(1))))['text'] if _k else ''
+C('Show all properties is a link; it lists every property by name, and says so when the object is gone',
+  (bool(_k), _full.startswith('  Axes with properties:'), len(_names) > 80, _names == sorted(_names, key=str.lower), 'XLim' in _names, 'no longer' in _gone),
+  (True, True, True, True, True, True))
 C("help_summaries: every function's one-line summary, for the Help view's search", (len(_sums) == len(_HELP), _sums.get('std', '').startswith('The standard deviation')), (True, True))
 C('help sin: its siblings', help_for('sin')['see'][:3] == ['cos', 'tan', 'sinh'], help_for('sin')['see'])
 import re as _re  # noqa: E402

@@ -210,6 +210,13 @@ async def desktop(page):
     await page.ev("(() => { const a = [...PL.app.cmd.out.querySelectorAll('a.pl-helplink')].find((e) => e.dataset.help === 'prod'); a.click(); return 1; })()")
     out2 = await until(page, "(() => { const t = PL.app.cmd.out.textContent; return t.includes(' prod - ') ? t : null; })()")
     check('a click on a link in help shows that function\'s help', bool(out2) and '>> help prod' in out2, True)
+    # an object's display ends with Show all properties, a link: a click lists every property below, no command run
+    await command(page, 'ax_sp = axes')
+    n_links = await page.ev("PL.app.cmd.out.querySelectorAll('a[data-props]').length")
+    await page.ev("[...PL.app.cmd.out.querySelectorAll('a[data-props]')].pop().click(); 1")
+    listed = await until(page, "(() => { const t = PL.app.cmd.out.textContent; return t.includes('ActivePositionProperty') && t.includes('XTickLabelRotation') ? 1 : null; })()", 10)
+    check('Show all properties is a link that lists every property of the object', (n_links >= 1, bool(listed)), (True, True))
+    await command(page, 'close all force; clear ax_sp')
     # a function shows its page (or, without one, its summary and forms), how it is computed and its See also: the last
     # in the Help lists whose How it works has two paragraphs or more and whose See also names another, those without a
     # page first (the rounds of pages leave none at the end)

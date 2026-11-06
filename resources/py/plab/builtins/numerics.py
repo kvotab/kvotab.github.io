@@ -493,8 +493,9 @@ class Decomposition(Obj):
         m, n = self.size
         if self.ct:
             m, n = n, m
+        from ..display import all_props_link
         return ['  decomposition with properties:', '', f'    MatrixSize: [{m} {n}]', f"          Type: '{self.kind}'",
-                '', '  Show all properties']
+                '', all_props_link(self)]
 
     def transposed(self):
         import copy

@@ -313,7 +313,8 @@ class GObj(Obj):
             v = self.get_value(k) if k in self.props else self.getprop(k)
             lines.append('    ' + k.rjust(w) + ': ' + summary(v))
         lines.append('')
-        lines.append('  Show all properties')
+        from .display import all_props_link
+        lines.append(all_props_link(self))
         return lines
 
     def equals(self, other):
@@ -541,7 +542,7 @@ class Figure(GObj):
         return ['  Figure (' + str(int(p['Number'])) + (': ' + p['Name'] if p['Name'] else '') + ') with properties:', '',
                 f"      Number: {int(p['Number'])}", f"        Name: '{p['Name']}'",
                 f"       Color: [{' '.join(f'{x:g}' for x in p['Color'])}]",
-                f"    Position: [{' '.join(f'{x:g}' for x in pos)}]", "       Units: 'pixels'", '', '  Show all properties']
+                f"    Position: [{' '.join(f'{x:g}' for x in pos)}]", "       Units: 'pixels'", '', _all_props_link(self)]
 
 
 class Axes(GObj):
@@ -1620,6 +1621,11 @@ def split_default(name):
 
 ROOT = Root(None)
 HANDLE_FRACTION = 0.0001       # objects' handle numbers are their ids plus this
+
+
+def _all_props_link(obj):
+    from .display import all_props_link
+    return all_props_link(obj)
 
 
 def handle_of_number(x):

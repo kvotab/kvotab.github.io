@@ -55,6 +55,11 @@
         if (a) { ev.preventDefault(); this.emit('link', a.dataset.path, Number(a.dataset.line) || 0); }
         const h = ev.target.closest('[data-run]');
         if (h) { ev.preventDefault(); this.emit('submit', h.dataset.run); }
+        const p = ev.target.closest('[data-props]');
+        if (p) {
+          ev.preventDefault();
+          PL.engine.call('all_properties', Number(p.dataset.props)).then((r) => this.write(r.text, 'out')).catch(() => {});
+        }
       });
     }
 
@@ -353,6 +358,12 @@
         // a function named in help text: a click shows its help
         const name = target.slice(5);
         parent.append(el('a', { href: '#', class: 'pl-helplink', 'data-help': name, 'data-run': `help ${name}` }, text.slice(b + 1, c)));
+        i = c + 1;
+        continue;
+      }
+      if (target.startsWith('props:')) {
+        // an object's display: every property, written below by the Command Window
+        parent.append(el('a', { href: '#', class: 'pl-helplink', 'data-props': target.slice(6) }, text.slice(b + 1, c)));
         i = c + 1;
         continue;
       }

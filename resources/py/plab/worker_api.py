@@ -553,6 +553,12 @@ def help_text(name):
     return json.dumps(help_for(name))
 
 
+def all_properties(k):
+    """The full property list a "Show all properties" link in the Command Window asks for."""
+    from .display import all_props_text
+    return json.dumps({'text': all_props_text(int(k))})
+
+
 def help_summaries():
     """Every function's one-line summary, by name: the Help view's search finds functions by what they do too."""
     from .helptext import HELP
