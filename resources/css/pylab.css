@@ -684,11 +684,17 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .pl-help code, .pl-help pre { font-family: var(--font-mono); font-size: 12.5px; }
 .pl-help pre { background: var(--code-bg); padding: 8px 10px; border-radius: var(--radius-sm); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .pl-help .pl-fnlist { columns: 3 150px; column-gap: 18px; font-family: var(--font-mono); font-size: 12px; }
-.pl-help .pl-fnlist a { display: block; color: var(--pl-link); cursor: pointer; text-decoration: none; padding: 1px 0; break-inside: avoid; }
+.pl-help .pl-fnlist a { display: block; color: var(--pl-link); cursor: pointer; text-decoration: none; padding: 1px 0; break-inside: avoid; overflow-wrap: anywhere; }
 .pl-help .pl-fnlist a:hover { text-decoration: underline; }
 .pl-help .pl-fnlist a.has-doc { font-weight: 650; }
 .pl-help .pl-doc-legend { color: var(--pl-muted); font-size: 12.5px; margin: 0 0 8px; max-width: 80ch; }
 .pl-help input[type="search"] { width: min(360px, 100%); padding: 5px 8px; border: 1px solid var(--input-border); border-radius: var(--radius-sm); background: var(--input-bg); color: var(--input-text); font-size: 16px; }
+/* Back, Forward and All functions: kept at the top as the view scrolls */
+.pl-help .pl-helpnav { position: sticky; top: -14px; z-index: 3; display: flex; gap: 6px; margin: -14px 0 8px; padding: 8px 0; background: var(--pl-bg);
+  /* the gutters either side covered too, by shadows (wider margins made the view scroll sideways), and a line under it all */
+  box-shadow: -18px 0 0 var(--pl-bg), 18px 0 0 var(--pl-bg), 0 1px 0 var(--pl-border), -18px 1px 0 var(--pl-border), 18px 1px 0 var(--pl-border); }
+.pl-help .pl-helpnav .pl-btn { padding: 3px 10px; }
+.pl-help .pl-helpnav .pl-btn:disabled { opacity: 0.4; cursor: default; background: var(--pl-bg); }
 .pl-help .pl-notice { color: var(--pl-muted); font-size: 12px; margin-top: 22px; border-top: 1px solid var(--pl-border); padding-top: 8px; }
 .pl-help .pl-how p { max-width: 80ch; margin: 0 0 9px; }
 .pl-help .pl-how pre { margin: 0 0 9px; white-space: pre; }

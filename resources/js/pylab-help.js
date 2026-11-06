@@ -208,23 +208,86 @@
         const a = ev.target.closest('[data-help]');
         if (a) { ev.preventDefault(); this.show(a.dataset.help); }
       });
+      // the views visited, as a browser keeps them: { name } (null for the list of all functions) and how far each
+      // was scrolled when left, so that Back comes to the same place (the Mapping functions, not the top)
+      this.hist = [];
+      this.pos = -1;
+      this.seq = 0;
       this.home();
     }
 
-    home() {
+    /* The list of all functions, or a function's help, as a new view: the view shown keeps how far it was
+       scrolled, and the views ahead of it (Forward) are dropped. The same view again is only shown again. */
+    home() { return this.go(null); }
+
+    show(name) { return this.go(name); }
+
+    go(name) {
+      const cur = this.hist[this.pos];
+      if (cur && cur.name === name) { cur.scroll = 0; return this.render(cur); }
+      if (cur) cur.scroll = this.el.scrollTop;
+      this.hist.length = this.pos + 1;
+      this.hist.push({ name, scroll: 0 });
+      this.pos = this.hist.length - 1;
+      return this.render(this.hist[this.pos]);
+    }
+
+    back() { return this.step(-1); }
+
+    forward() { return this.step(1); }
+
+    step(d) {
+      const to = this.pos + d;
+      if (to < 0 || to >= this.hist.length) return null;
+      this.hist[this.pos].scroll = this.el.scrollTop;
+      this.pos = to;
+      return this.render(this.hist[to]);
+    }
+
+    async render(entry) {
+      const seq = ++this.seq;
+      const parts = entry.name == null ? await this.homeParts() : await this.pageParts(entry.name);
+      if (seq !== this.seq) return;          // another view was asked for meanwhile
+      this.el.replaceChildren(this.navRow(entry.name == null), ...parts);
+      // where it was left; again once its figures have been drawn to their heights
+      const at = entry.scroll || 0;
+      this.el.scrollTop = at;
+      if (at) requestAnimationFrame(() => requestAnimationFrame(() => { if (seq === this.seq) this.el.scrollTop = at; }));
+    }
+
+    /* Back and Forward through the views visited, and the list of all functions, at the top of every view. */
+    navRow(onHome) {
+      const btn = (label, title, enabled, go) => {
+        const b = el('button', { class: 'pl-btn', type: 'button', title, 'aria-label': title }, label);
+        b.disabled = !enabled;
+        b.addEventListener('click', go);
+        return b;
+      };
+      const row = el('div', { class: 'pl-helpnav' },
+        btn('←', 'Back', this.pos > 0, () => this.back()),
+        btn('→', 'Forward', this.pos < this.hist.length - 1, () => this.forward()));
+      if (!onHome) row.append(btn('All functions', 'All functions', true, () => this.home()));
+      return row;
+    }
+
+    async homeParts() {
       const k = PL.util.modName;
       const search = el('input', { type: 'search', placeholder: 'Find a function', 'aria-label': 'Find a function' });
       search.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && search.value.trim()) this.show(search.value.trim()); });
       const lists = CATEGORIES.map(([title, names]) => {
         const list = el('div', { class: 'pl-fnlist' });
         for (const n of names.split(' ')) {
-          const a = el('a', { href: '#', 'data-fn': n }, n);
+          // a long dotted name (matlab.unittest.TestRunner.withTextOutput) may break after its dots, not past its column
+          const a = el('a', { href: '#', 'data-fn': n }, ...n.split('.').flatMap((p, i) => (i ? ['.', el('wbr'), p] : [p])));
           a.addEventListener('click', (ev) => { ev.preventDefault(); this.show(n); });
           list.append(a);
         }
         return [el('h3', null, title), list];
       });
-      this.el.replaceChildren(
+      // the names with pages in bold before the list is shown: marked afterwards, they moved what Back scrolls to
+      const idx = await docNames().catch(() => null);
+      if (idx) for (const list of lists) for (const a of list[1].querySelectorAll('a[data-fn]')) if (idx.names[a.dataset.fn]) a.classList.add('has-doc');
+      return [
         el('h2', null, 'PyLAB'),
         el('p', null, 'A desktop for programs in the MATLAB language. What you type in the Command Window and the files you run from the Editor are compiled to Python and run on NumPy and SciPy, in this browser tab (Pyodide). Nothing is sent to a server; your files are kept in this browser.'),
         el('p', null, search),
@@ -261,28 +324,22 @@
         el('p', { class: 'pl-doc-legend' }, 'Names in bold have a page of their own, with examples and what they give; the others show their summary, forms and how PyLAB computes them.'),
         ...lists.flat(),
         el('p', { class: 'pl-notice' }, 'MATLAB is a registered trademark of The MathWorks, Inc. PyLAB is not made by The MathWorks and is not affiliated with or endorsed by it; it runs programs written in the same language.'),
-      );
-      this.el.scrollTop = 0;
-      docNames().then((idx) => {
-        for (const a of this.el.querySelectorAll('.pl-fnlist a[data-fn]')) if (idx.names[a.dataset.fn]) a.classList.add('has-doc');
-      });
+      ];
     }
 
-    async show(name) {
+    async pageParts(name) {
       let h;
       const [got, page] = await Promise.all([
         PL.engine.call('help_text', name).catch((e) => ({ text: `${name}: ${e.message}` })),
         docPage(name).catch(() => null),
       ]);
       h = got;
-      const back = el('button', { class: 'pl-btn', type: 'button' }, '← All functions');
-      back.addEventListener('click', () => this.home());
       let parts;
-      if (page) parts = [back, ...await this.docParts(name, page)];
+      if (page) parts = await this.docParts(name, page);
       else {
         const pre = el('pre');
         PL.appendLinked(pre, h.base_linked || h.linked || h.base || h.text);
-        parts = [back, el('h2', null, name), pre];
+        parts = [el('h2', null, name), pre];
       }
       // how PyLAB computes it, as paragraphs (the Command Window has them wrapped into its text)
       const how = h.how_linked || h.how;
@@ -319,8 +376,7 @@
         if (!part.querySelectorAll) continue;
         for (const a of part.querySelectorAll('a[data-help]')) if (own.has(a.dataset.help)) a.replaceWith(...a.childNodes);
       }
-      this.el.replaceChildren(...parts);
-      this.el.scrollTop = 0;
+      return parts;
     }
 
     /* A function's page: what it does, its forms, inputs and outputs, and
