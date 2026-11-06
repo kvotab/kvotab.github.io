@@ -95,6 +95,10 @@ def char(nargout, *args):
             return Char.rows(strs)
         if t is Cell:
             return Char.rows(cellstr_list(v))
+        if isinstance(v, FH):
+            # a function handle's text, as func2str gives it: 'sin', '@(x)x.^2'
+            s = v.text()
+            return Char.of(s[1:] if isinstance(v, R.NamedFH) else s)
         a = arr(v, 'char')
         if a.dtype.kind == 'c':
             a = a.real

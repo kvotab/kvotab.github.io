@@ -2592,7 +2592,7 @@ odextend: Carry the solution structure of an ODE solver on to a later time.
 char: A character array, from numbers (character codes), strings or cells of text.
     c = char(x)
     c = char(s1, s2, ...)
-    * char(p) of a Python object (see pyrun): its str().
+    * char(f) of a function handle: its text, as func2str gives it. char(p) of a Python object (see pyrun): its str().
 string: A string array, from text, numbers or cells.
     s = string(x)
     * string(p) of a Python object (see pyrun): its str(); a list of str a string array.
@@ -4330,6 +4330,8 @@ drawnow: Draw the figures now (while a long program runs), and run the callbacks
     drawnow limitrate
     drawnow nocallbacks
     * pause, uiwait and waitfor run waiting callbacks too.
+snapnow: Draw the figures now, as drawnow does (there is no publishing to take a picture for).
+    snapnow
 refresh: Accepted, with no effect: figures redraw by themselves.
     refresh
 shg: Accepted, with no effect.

@@ -3605,7 +3605,7 @@ def copyobj(nargout, *args):
     return HArr(a.reshape(shape))
 
 
-@bi('drawnow', aw=True, arr=False)
+@bi('drawnow', 'snapnow', aw=True, arr=False)
 async def drawnow(nargout, *args):
     if flush_figures():
         # the page draws what was sent before the program goes on: a loop of drawnow sent faster than the page could draw,

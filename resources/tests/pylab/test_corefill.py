@@ -405,6 +405,10 @@ W, _ = run("f = figure; b = uicontrol('style', 'toggle', 'units', 'normal', 'pos
 C("abbreviated values and names: 'toggle', 'normal', 'norm', 'lo' and 'pos' (Position); 'p' (pixels or points) refused",
   (text(W['bs']), text(W['bu']), text(W['fu']), text(W['au']), a(W['ap']).tolist(), text(W['tu']), text(W['cs']), "'p' is not a valid value for Units" in text(W['e1'])) ==
   ('togglebutton', 'normalized', 'normalized', 'normalized', [[0.1, 0.2, 0.3, 0.4]], 'normalized', 'log', True), W.get('e1'))
+# char of a function handle is its text, as func2str's (a program titling its plot with char(F)), and snapnow draws as drawnow
+W, _ = run("c1 = char(@sin); c2 = char(@(z) z.^2 + 1); f = @(z) z; t = char(f); t(1:4) = []; figure; plot(1:3); snapnow; close all")
+C('char of a function handle: its text, as func2str gives it; snapnow runs', (text(W['c1']), text(W['c2']), text(W['t'])) == ('sin', '@(z)z.^2+1', 'z'),
+  (W['c1'], W['c2'], W['t']))
 # transparency: alpha, alphamap and alim, and alpha data mapped to opacities as the page draws them
 W, _ = run("[X, Y] = meshgrid(1:3); figure; s = surf(X, Y, X + Y); alpha('z'); fa = s.FaceAlpha; al = alim; alim([3 7]); am = alim('mode'); al1 = alim; "
            "alim auto; al2 = alim; alphamap('rampdown'); m1 = alphamap; alphamap('vup', 5); m2 = alphamap; alphamap('decrease', 0.25); m3 = alphamap; "

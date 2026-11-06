@@ -313,16 +313,18 @@ isgraphics(c, 'line')
 # See also
 findobj delete
 
-@ drawnow, refresh, shg, refreshdata
+@ drawnow, snapnow, refresh, shg, refreshdata
 Drawing now, while a program runs, and plots that fetch their data again.
 
-Figures are drawn when the program pauses or ends; `drawnow` draws them at once, so that a loop shows its progress, and runs the callbacks of what was done meanwhile. `refresh` and `shg` are accepted and have no effect. `refreshdata` sets a plot's data again from the expressions in its XDataSource and YDataSource, evaluated in the workspace.
+Figures are drawn when the program pauses or ends; `drawnow` draws them at once, so that a loop shows its progress, and runs the callbacks of what was done meanwhile. It waits until the page has drawn them, so a loop goes no faster than its pictures. `snapnow` does the same. `refresh` and `shg` are accepted and have no effect. `refreshdata` sets a plot's data again from the expressions in its XDataSource and YDataSource, evaluated in the workspace.
 
 # Syntax
 drawnow
     Draw now.
 drawnow limitrate
     No more often than the screen shows.
+snapnow
+    Draw now, as drawnow.
 refresh
     Accepted.
 refreshdata

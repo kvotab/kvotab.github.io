@@ -995,7 +995,7 @@ onCleanup:
     Python: core.py and runtime.py. An object that calls the function when Python deletes it: when the variable holding it is cleared or the function's workspace goes at its return.
 # ---- strfun.py: text ----------------------------------------------------------------------
 char:
-    Python: strfun.py and values.py. Character arrays hold the characters' codes in a NumPy array of uint16. Numbers become codes: rounded down, negative ones and NaN to 0, and kept within 0 to 65535. Several arguments, a cell or a string array become the rows of a character matrix, the shorter rows padded with blanks. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
+    Python: strfun.py and values.py. Character arrays hold the characters' codes in a NumPy array of uint16. Numbers become codes: rounded down, negative ones and NaN to 0, and kept within 0 to 65535. A function handle becomes its text (func2str's). Several arguments, a cell or a string array become the rows of a character matrix, the shorter rows padded with blanks. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 string:
     Python: strfun.py and strings.py. String arrays are NumPy arrays of Python str objects (None for a missing string). Text converts as it is, each row of a character matrix to one string; a whole number is written in full, any other with 5 significant digits (Python's %.5g), a logical as true or false, and NaN becomes a missing string. Of a Python object: pycall.py, NumPy's asarray (double), the items, str() or the dict's items.
 strings:
@@ -1491,7 +1491,7 @@ copyobj:
     Python: graphics.py. Each object is copied by Python's copy.copy and given an id (and handle number) of its own, its properties' arrays copied; its children, and the title and labels an axes keeps, are copied the same way into the copy. Then the references among the copies, such as a legend's axes and lines or an axes' legend, are pointed at the copies.
 gobjects:
     Python: graphics.py. An array of graphics placeholders of the size given, to be filled with handles.
-drawnow:
+drawnow, snapnow:
     Python: graphics.py. Sends the changed figures to the page at once and waits until the page has drawn them (so a loop goes no faster than its drawings), then runs the callbacks of the clicks and keys that have come in ('nocallbacks' leaves them).
 peaks:
     Python: graphics.py. 3*(1 - x).^2.*exp(-x.^2 - (y + 1).^2) - 10*(x/5 - x.^3 - y.^5).*exp(-x.^2 - y.^2) - 1/3*exp(-(x + 1).^2 - y.^2) on a 49-by-49 grid over [-3, 3] (or the size or points given); without outputs, its surface.
