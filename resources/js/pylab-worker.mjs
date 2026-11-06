@@ -159,7 +159,7 @@ async function run(msg) {
 }
 
 /* Calls to worker_api functions that return JSON text. */
-const CALLS = new Set(['complete', 'ui_event', 'var_view', 'lint', 'python_of', 'file_info', 'list_dir', 'workspace_json', 'help_text',
+const CALLS = new Set(['complete', 'ui_event', 'var_view', 'lint', 'python_of', 'file_info', 'list_dir', 'workspace_json', 'help_text', 'help_summaries',
   'all_figures', 'figure_event', 'inspect_object', 'inspect_change', 'set_format', 'set_cwd', 'set_breakpoints', 'debug_command', 'files_changed']);
 
 /* A call may answer { need: package } first (h5py, for MAT-files of version

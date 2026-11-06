@@ -619,6 +619,11 @@ C('help mean: See also at the end, its names links, the same text plain in text'
 C('help: every entry has a See also list of other functions that have help',
   all(see_also(n) and all(m in HELP and m != n for m in see_also(n)) for n in HELP), [n for n in HELP if not see_also(n)][:5])
 C('help: See also lines wrap within the Command Window', all(len(l) <= 76 for n in ('plot', 'sum', 'sobolindices', 'datetime') for l in help_for(n)['text'].split(' See also')[1].split('\n')), True)
+from plab import worker_api as _WA  # noqa: E402
+from plab.helptext import HELP as _HELP  # noqa: E402
+import json as _json  # noqa: E402
+_sums = _json.loads(_WA.help_summaries())
+C("help_summaries: every function's one-line summary, for the Help view's search", (len(_sums) == len(_HELP), _sums.get('std', '').startswith('The standard deviation')), (True, True))
 C('help sin: its siblings', help_for('sin')['see'][:3] == ['cos', 'tan', 'sinh'], help_for('sin')['see'])
 import re as _re  # noqa: E402
 _src = open(os.path.join(HERE, '..', '..', 'js', 'pylab-help.js')).read()

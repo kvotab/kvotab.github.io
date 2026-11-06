@@ -1349,6 +1349,27 @@ async def docs(page):
           (navs, bool(got), last), ([['Back', False], ['Forward', True], ['All functions', False]], True, [0, True]))
     wide = await page.ev("(() => { const h = document.querySelector('.pl-help'); return [h.scrollWidth, h.clientWidth]; })()")
     check('docs: the list of all functions does not scroll sideways (long dotted names break after their dots)', wide[0] <= wide[1], True if wide[0] <= wide[1] else wide)
+    # the search field in the bar: names listed as letters are typed, Tab completes, words of what a function does find it
+    FIND = "document.querySelector('.pl-help .pl-helpnav .pl-helpfind input')"
+    async def find_type(text):
+        await page.ev(f"(() => {{ const i = {FIND}; i.focus(); i.value = {json.dumps(text)}; i.dispatchEvent(new Event('input')); return 1; }})()")
+    async def find_key(key):
+        await page.ev(f"(() => {{ {FIND}.dispatchEvent(new KeyboardEvent('keydown', {{ key: {json.dumps(key)}, bubbles: true, cancelable: true }})); return 1; }})()")
+    LISTED = "(() => { const b = document.querySelector('.pl-complete.is-help'); return b ? [...b.querySelectorAll('.n')].map((e) => e.textContent) : null; })()"
+    await find_type('deg2')
+    listed = await until(page, LISTED, 10)
+    await find_type('deg2r')
+    await find_key('Tab')
+    done = await until(page, f"{FIND}.value === 'deg2rad' ? {FIND}.value : null", 10)
+    await find_type('standard deviation')
+    about = await until(page, f"(() => {{ const l = {LISTED}; return l && l[0] === 'std' ? l : null; }})()", 10)
+    check('docs: the search lists names as letters are typed, Tab completes one, and words of what a function does find it',
+          ((listed or [])[:3], done, (about or [None])[0]), (['deg2km', 'deg2nm', 'deg2sm'], 'deg2rad', 'std'))
+    await find_key('ArrowDown')
+    await find_key('Enter')
+    got = await until(page, "document.querySelector('.pl-help h2')?.textContent.split(', ').includes('movstd') ? 1 : null", 20)
+    gone = await page.ev(f"[!document.querySelector('.pl-complete.is-help'), {FIND}.value]")
+    check('docs: Down and Enter open the function chosen, and the list closes', (bool(got), gone), (True, [True, '']))
     await command(page, "doc surf")
     await until(page, "document.querySelectorAll('.pl-help canvas.pl-doc-fig').length >= 3", 20)
     await page.ev("document.querySelectorAll('.pl-help canvas.pl-doc-fig')[1].scrollIntoView(); 1")

@@ -199,6 +199,48 @@
     return box;
   }
 
+  /* Every function's one-line summary, fetched from the engine once. */
+  let summaries = null;
+  function helpSummaries() {
+    if (!summaries) summaries = PL.engine.call('help_summaries').then((r) => (typeof r === 'string' ? JSON.parse(r) : r) || {}).catch(() => { summaries = null; return {}; });
+    return summaries;
+  }
+
+  /* The functions that answer what is typed: the name itself, names that start with it, names that hold it, then
+     names whose summary holds every word of it (at least three letters), each kind in a sensible order. */
+  function findMatches(query, sums) {
+    const q = query.trim().toLowerCase();
+    if (!q) return [];
+    const words = q.split(/\s+/).filter((w) => w.length >= 3);
+    const seen = new Set();
+    const exact = [], start = [], inside = [], about = [];
+    for (const [, names] of CATEGORIES) {
+      for (const n of names.split(' ')) {
+        if (seen.has(n)) continue;
+        seen.add(n);
+        const l = n.toLowerCase();
+        if (l === q) exact.push(n);
+        else if (l.startsWith(q)) start.push(n);
+        else if (l.includes(q)) inside.push(n);
+        else if (words.length && sums && sums[n]) {
+          const s = sums[n].toLowerCase();
+          const at = words.map((w) => s.search(new RegExp(`\\b${w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`)));
+          // what it does in so many words first, then the words nearest the start of the summary
+          if (at.every((i) => i >= 0)) {
+            const p = words.join(' ');
+            const phrase = words.length > 1 ? s.indexOf(p) : -1;
+            // the words as whole words ahead of their plurals and the like ('standard deviation' before '... deviations')
+            const whole = phrase >= 0 && !/[a-z]/.test(s[phrase + p.length] || '');
+            about.push({ n, score: phrase >= 0 ? phrase + (whole ? 0 : 50) : 1000 + at.reduce((t, i) => t + i, 0) });
+          }
+        }
+      }
+    }
+    const byLength = (a, b) => a.length - b.length || a.localeCompare(b);
+    about.sort((a, b) => a.score - b.score || byLength(a.n, b.n));
+    return [...exact, ...start.sort(byLength), ...inside.sort(byLength), ...about.map((a) => a.n)];
+  }
+
   class HelpView {
     constructor(app) {
       this.app = app;
@@ -213,7 +255,100 @@
       this.hist = [];
       this.pos = -1;
       this.seq = 0;
+      this.makeFind();
+      this.el.addEventListener('scroll', () => this.closeList());
       this.home();
+    }
+
+    /* The search field: as letters are typed, the functions that match (by name, then by what they do) are listed
+       under it, as Tab lists names in the Command Window; Tab completes a name as far as the names agree, Up and
+       Down choose, Enter (or a click) opens one, Escape closes the list and then empties the field. */
+    makeFind() {
+      const input = el('input', { type: 'search', placeholder: 'Find a function', 'aria-label': 'Find a function',
+        spellcheck: 'false', autocapitalize: 'off', autocomplete: 'off', role: 'combobox', 'aria-expanded': 'false' });
+      this.findInput = input;
+      this.findBox = el('label', { class: 'pl-helpfind' }, PL.icon('find'), input);
+      this.list = null;
+      input.addEventListener('input', () => this.suggest());
+      input.addEventListener('focus', () => { helpSummaries(); if (input.value.trim()) this.suggest(); });
+      input.addEventListener('blur', () => setTimeout(() => this.closeList(), 120));
+      input.addEventListener('keydown', (ev) => {
+        if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+          ev.preventDefault();
+          if (!this.list) this.suggest(); else this.moveSel(ev.key === 'ArrowDown' ? 1 : -1);
+        } else if (ev.key === 'Enter') {
+          ev.preventDefault();
+          const it = this.list && this.list.items[this.list.sel];
+          const name = it || input.value.trim();
+          if (name) this.openFound(name);
+        } else if (ev.key === 'Tab' && !ev.shiftKey && input.value.trim()) {
+          ev.preventDefault();
+          this.completeName();
+        } else if (ev.key === 'Escape') {
+          ev.preventDefault();
+          if (this.list) this.closeList(); else input.value = '';
+        }
+      });
+    }
+
+    async suggest() {
+      const q = this.findInput.value;
+      const sums = await helpSummaries();
+      if (q !== this.findInput.value) return;          // typed on meanwhile
+      this.openList(findMatches(q, sums), sums);
+    }
+
+    /* Tab: the name typed as far as the names that start with it agree (all of it when one does), and the list. */
+    async completeName() {
+      const input = this.findInput;
+      const q = input.value.trim().toLowerCase();
+      const starts = findMatches(q, null).filter((n) => n.toLowerCase().startsWith(q));
+      if (starts.length) {
+        let common = starts[0];
+        for (const n of starts) while (!n.toLowerCase().startsWith(common.toLowerCase())) common = common.slice(0, -1);
+        if (common.length > q.length) input.value = common;
+      }
+      await this.suggest();
+    }
+
+    openList(items, sums) {
+      this.closeList();
+      if (!items.length) return;
+      const box = el('div', { class: 'pl-complete is-help', role: 'listbox' });
+      items.slice(0, 200).forEach((n, i) => {
+        const row = el('div', { role: 'option', class: i === 0 ? 'is-sel' : '', title: (sums && sums[n]) || '' },
+          el('span', { class: 'n' }, n), el('span', { class: 's' }, (sums && sums[n]) || ''));
+        row.addEventListener('mousedown', (ev) => { ev.preventDefault(); this.openFound(n); });
+        box.append(row);
+      });
+      document.body.append(box);
+      const r = this.findBox.getBoundingClientRect();
+      box.style.left = `${Math.max(4, Math.min(r.left, window.innerWidth - 470))}px`;
+      box.style.top = `${r.bottom + 2}px`;
+      box.style.minWidth = `${Math.round(r.width)}px`;
+      this.list = { box, items: items.slice(0, 200), sel: 0 };
+      this.findInput.setAttribute('aria-expanded', 'true');
+    }
+
+    moveSel(d) {
+      const c = this.list;
+      const rows = c.box.children;
+      rows[c.sel].classList.remove('is-sel');
+      c.sel = (c.sel + d + rows.length) % rows.length;
+      rows[c.sel].classList.add('is-sel');
+      rows[c.sel].scrollIntoView({ block: 'nearest' });
+    }
+
+    closeList() {
+      if (this.list) { this.list.box.remove(); this.list = null; }
+      if (this.findInput) this.findInput.setAttribute('aria-expanded', 'false');
+    }
+
+    openFound(name) {
+      this.closeList();
+      this.findInput.value = '';
+      this.findInput.blur();
+      this.show(name);
     }
 
     /* The list of all functions, or a function's help, as a new view: the view shown keeps how far it was
@@ -248,6 +383,7 @@
       const seq = ++this.seq;
       const parts = entry.name == null ? await this.homeParts() : await this.pageParts(entry.name);
       if (seq !== this.seq) return;          // another view was asked for meanwhile
+      this.closeList();
       this.el.replaceChildren(this.navRow(entry.name == null), ...parts);
       // where it was left; again once its figures have been drawn to their heights
       const at = entry.scroll || 0;
@@ -255,25 +391,24 @@
       if (at) requestAnimationFrame(() => requestAnimationFrame(() => { if (seq === this.seq) this.el.scrollTop = at; }));
     }
 
-    /* Back and Forward through the views visited, and the list of all functions, at the top of every view. */
+    /* Back and Forward through the views visited, the list of all functions, and the search field, at the top of
+       every view, as the address bar is drawn over the desktop. */
     navRow(onHome) {
-      const btn = (label, title, enabled, go) => {
-        const b = el('button', { class: 'pl-btn', type: 'button', title, 'aria-label': title }, label);
+      const btn = (name, title, enabled, go) => {
+        const b = el('button', { class: 'pl-iconbtn', type: 'button', title, 'aria-label': title }, PL.icon(name));
         b.disabled = !enabled;
         b.addEventListener('click', go);
         return b;
       };
-      const row = el('div', { class: 'pl-helpnav' },
-        btn('←', 'Back', this.pos > 0, () => this.back()),
-        btn('→', 'Forward', this.pos < this.hist.length - 1, () => this.forward()));
-      if (!onHome) row.append(btn('All functions', 'All functions', true, () => this.home()));
-      return row;
+      return el('div', { class: 'pl-helpnav' },
+        btn('back', 'Back', this.pos > 0, () => this.back()),
+        btn('fwd', 'Forward', this.pos < this.hist.length - 1, () => this.forward()),
+        btn('home', 'All functions', !onHome, () => this.home()),
+        this.findBox);
     }
 
     async homeParts() {
       const k = PL.util.modName;
-      const search = el('input', { type: 'search', placeholder: 'Find a function', 'aria-label': 'Find a function' });
-      search.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && search.value.trim()) this.show(search.value.trim()); });
       const lists = CATEGORIES.map(([title, names]) => {
         const list = el('div', { class: 'pl-fnlist' });
         for (const n of names.split(' ')) {
@@ -290,7 +425,6 @@
       return [
         el('h2', null, 'PyLAB'),
         el('p', null, 'A desktop for programs in the MATLAB language. What you type in the Command Window and the files you run from the Editor are compiled to Python and run on NumPy and SciPy, in this browser tab (Pyodide). Nothing is sent to a server; your files are kept in this browser.'),
-        el('p', null, search),
         el('h3', null, 'Getting started'),
         el('ul', null,
           el('li', null, 'Type a command at ', el('code', null, '>>'), ' and press Enter. End it with ', el('code', null, ';'), ' to run it without showing the result.'),

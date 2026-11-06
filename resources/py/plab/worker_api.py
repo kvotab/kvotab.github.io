@@ -553,6 +553,12 @@ def help_text(name):
     return json.dumps(help_for(name))
 
 
+def help_summaries():
+    """Every function's one-line summary, by name: the Help view's search finds functions by what they do too."""
+    from .helptext import HELP
+    return json.dumps({name: entry[0] for name, entry in HELP.items()})
+
+
 # ---- figures ------------------------------------------------------------------------------------
 
 def figure_event(ev_json):
