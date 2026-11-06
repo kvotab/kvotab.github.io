@@ -32,6 +32,7 @@
   --pl-section: color-mix(in oklab, #f2e9b8 55%, var(--bg-primary));
   --pl-section-line: #c9b779;
   --pl-bp: #c62828;
+  --pl-bp-cond: #d89400;
   --pl-arrow: #2e7d32;
   --pl-current-line: color-mix(in oklab, #2e7d32 14%, var(--bg-primary));
   --pl-fig-bg: #f0f0f0;
@@ -55,6 +56,7 @@
   --pl-section: color-mix(in oklab, #6b5f2a 30%, var(--bg-primary));
   --pl-section-line: #8a7b44;
   --pl-bp: #ff6b6b;
+  --pl-bp-cond: #f2c14e;
   --pl-arrow: #7fd27f;
   --pl-current-line: color-mix(in oklab, #7fd27f 13%, var(--bg-primary));
   --pl-fig-bg: #2a2f36;
@@ -411,6 +413,9 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .ple-gl .n { font-size: 0.86em; line-height: 0; }   /* smaller, on the baseline of the code's line */
 .ple-gl .bp { position: absolute; left: 6px; top: calc((var(--ple-lh) - 11px) / 2); width: 11px; height: 11px; border-radius: 50%; background: var(--pl-bp); }
 .ple-gl .bp.is-off { background: transparent; border: 1.5px solid var(--pl-bp); }
+/* a breakpoint with a condition: amber, hollow when turned off */
+.ple-gl .bp.is-cond { background: var(--pl-bp-cond); }
+.ple-gl .bp.is-cond.is-off { background: transparent; border-color: var(--pl-bp-cond); }
 .ple-gl .arrow { position: absolute; left: 20px; top: calc((var(--ple-lh) - 10px) / 2); width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent; border-left: 9px solid var(--pl-arrow); }
 .ple-gl .lint { position: absolute; left: 2px; top: 2px; bottom: 2px; width: 3px; background: var(--pl-err); border-radius: 1px; }
 .ple-gl:hover { color: var(--pl-text); }

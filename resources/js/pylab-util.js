@@ -73,6 +73,8 @@
     quitdbg: '<rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9l6 6M15 9l-6 6"/>',
     bp: '<circle cx="12" cy="12" r="6" fill="currentColor" stroke="none"/>',
     bpclear: '<circle cx="12" cy="12" r="6"/><path d="M6 18L18 6"/>',
+    bpoff: '<circle cx="12" cy="12" r="6"/>',
+    bpcond: '<circle cx="9" cy="13" r="5" fill="currentColor" stroke="none"/><path d="M15.5 5.5a2.2 2.2 0 1 1 3 2.1c-.8.4-1 .9-1 1.6"/><path d="M17.5 12h.01"/>',
     comment: '<path d="M7 8h2M7 12h2M7 16h2"/><path d="M12 8h6M12 12h5M12 16h6"/><path d="M4 4l2 16" />',
     indent: '<path d="M4 6h16M10 10h10M10 14h10M4 18h16"/><path d="M4 9l3 3-3 3"/>',
     find: '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',

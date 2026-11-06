@@ -216,11 +216,13 @@ return error
 @ dbstop, dbclear, dbstatus, dbstack
 Breakpoints set and cleared by command, the breakpoints listed, and the functions running.
 
-`dbstop in file at line` makes a program stop before that line with the `K>>` prompt, where variables can be looked at; `dbstop if error` stops where an error is raised. `dbclear` takes breakpoints away and `dbstatus` lists them (the Editor shows them in its margin). `dbstack` lists the functions running, the innermost first, each with its line.
+`dbstop in file at line` makes a program stop before that line with the `K>>` prompt, where variables can be looked at; with `if expression` after it, only when the expression is true there. `dbstop if error` stops where an error is raised. `dbclear` takes breakpoints away and `dbstatus` lists them (the Editor shows them in its margin). `dbstack` lists the functions running, the innermost first, each with its line.
 
 # Syntax
 dbstop in file at line
     A breakpoint.
+dbstop in file at line if expression
+    One that stops only when the expression is true.
 dbstop if error
     Stop at errors.
 dbclear all
@@ -241,7 +243,9 @@ fprintf(fid, '%s\n', lines{:});
 fclose(fid);
 outer()
 # Notes
-A session: with a function file `twice.m` holding `y = 2*x;` on line 2, `dbstop in twice at 2` and then `twice(3)` stop before that line at `K>>`, where `x` can be shown or changed; `dbcont` runs on, `dbquit` stops, and `dbclear all` takes the breakpoint away.
+A session: with a function file `twice.m` holding `y = 2*x;` on line 2, `dbstop in twice at 2` and then `twice(3)` stop before that line at `K>>`, where `x` can be shown or changed; `dbcont` runs on, `dbquit` stops, and `dbclear all` takes the breakpoint away. `dbstop in twice at 2 if x > 10` stops only for calls with `x` above 10.
+
+In the Editor, a click in the margin sets or clears a breakpoint; a right click on one gives it a condition, turns it off (kept, but the program goes past it) or on again, or clears it. The EDITOR tab's Enable/Disable and Set Condition do the same for the cursor's line.
 # See also
 keyboard
 

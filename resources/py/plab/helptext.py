@@ -6322,11 +6322,12 @@ read: Frames of a VideoReader; the next block of a datastore.
 # ---- tools of the desktop --------------------------------------------------------------------------------------------------------------
 dbstop: A breakpoint set from a command.
     dbstop in file at line
+    dbstop in file at line if expression
     dbstop in file
     dbstop at line in file
     dbstop if error
     dbstop(s)
-    * The program stops before the line (or the first statement of the file) with the K>> prompt; a line with no statement moves to the next one that has one. 'if error' stops where an error is raised (not inside try), in that function's workspace. The Editor shows the breakpoints as if set in its margin; s is what dbstatus gives.
+    * The program stops before the line (or the first statement of the file) with the K>> prompt; a line with no statement moves to the next one that has one. With 'if expression' it stops there only when the expression is true (as if's condition) in the function's workspace; a condition that cannot be evaluated stops, with a warning saying why. 'if error' stops where an error is raised (not inside try), in that function's workspace. The Editor shows the breakpoints as if set in its margin (one with a condition in amber, one turned off hollow); s is what dbstatus gives, and dbstop(s) sets them again.
 dbclear: Breakpoints taken away.
     dbclear all
     dbclear in file
@@ -6336,6 +6337,7 @@ dbstatus: The breakpoints set.
     dbstatus
     dbstatus file
     s = dbstatus
+    * Each line with its condition, and whether it is turned off in the Editor; in s the expression of each line, false&&(condition) for one turned off.
 dbstack: The functions running now, the innermost first.
     dbstack
     [ST, I] = dbstack

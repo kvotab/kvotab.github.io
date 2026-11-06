@@ -124,6 +124,8 @@
       this.back = [];
       this.fwd = [];
       this.breakpoints = U.store.get('breakpoints', {});
+      // by file and line: a breakpoint's condition, and whether it is turned off ({cond, on})
+      this.bpInfo = U.store.get('breakpointInfo', {});
       this.debug = null;          // {file, line, waitId} while paused
       this.inputId = null;
       this.state = 'loading';
@@ -338,6 +340,8 @@
         this.group('Breakpoints',
           el('div', { class: 'pl-col' },
             this.small('bp', 'Set/Clear', 'A breakpoint on the cursor line (F12)', () => this.toggleBreakpointHere()),
+            this.small('bpoff', 'Enable/Disable', 'Turn the breakpoint on the cursor line off, keeping it, or on again', () => this.withBreakpointHere((d, ln) => this.enableBreakpoint(d, ln))),
+            this.small('bpcond', 'Set Condition', 'Stop at the cursor line only when an expression is true', () => this.withBreakpointHere((d, ln) => this.breakpointCondition(d, ln))),
             this.small('bpclear', 'Clear All', 'Remove every breakpoint', () => this.clearAllBreakpoints()))),
         this.runGroup,
         this.debugGroup,
@@ -709,7 +713,7 @@
         this.setCwd(ok ? startDir : HOME, false);
         if (!ok) await PL.engine.call('set_cwd', HOME);
       } catch (e) { this.setCwd(HOME, false); }
-      for (const [path, lines] of Object.entries(this.breakpoints)) PL.engine.call('set_breakpoints', path, JSON.stringify(lines)).catch(() => {});
+      for (const [path, lines] of Object.entries(this.breakpoints)) PL.engine.call('set_breakpoints', path, JSON.stringify(lines), JSON.stringify(this.bpInfo[path] || {})).catch(() => {});
       if (!info.persistent) this.cmd.write('This browser keeps no files between visits here: download what you want to keep.\n', 'warn');
       if (info.fresh) this.cmd.write('The examples are in the examples folder: double-click one in the Current Folder.\n\n', 'info');
       this.restoreDocs();
@@ -839,7 +843,7 @@
         PL.engine.reply(req.id, true);
       } else if (req.type === 'breakpoints') {
         // dbstop and dbclear: the engine has them already; the Editor and the page's store follow
-        this.breakpointsFromEngine(req.path, req.lines || []);
+        this.breakpointsFromEngine(req.path, req.lines || [], req.info || {});
         PL.engine.reply(req.id, true);
       } else if (req.type === 'clipboard') {
         let answer;
@@ -1095,19 +1099,87 @@
     async toggleBreakpoint(doc, line) {
       const path = doc.key;
       if (!(this.breakpoints[path] || []).includes(line) && !(await this.canStop(doc, line))) {
-        // a comment, a blank line or an end is never reached: no breakpoint there
-        const msg = `Line ${line} has no statement to stop at: a breakpoint goes where a statement begins.`;
-        this.statusText.textContent = msg;
-        setTimeout(() => { if (this.statusText.textContent === msg) this.statusText.textContent = ''; }, 5000);
+        this.noStatement(line);
         return;
       }
       const set = new Set(this.breakpoints[path] || []);
       if (set.has(line)) set.delete(line); else set.add(line);
       const lines = [...set].sort((a, b) => a - b);
       if (lines.length) this.breakpoints[path] = lines; else delete this.breakpoints[path];
+      this.syncBreakpoints(path);
+    }
+
+    /* A comment, a blank line or an end is never reached: no breakpoint there. */
+    noStatement(line) {
+      const msg = `Line ${line} has no statement to stop at: a breakpoint goes where a statement begins.`;
+      this.statusText.textContent = msg;
+      setTimeout(() => { if (this.statusText.textContent === msg) this.statusText.textContent = ''; }, 5000);
+    }
+
+    /* A file's breakpoints to the page's store, its Editor and the engine: the lines, and by line a condition or that
+       one is turned off (what neither has is left out). */
+    syncBreakpoints(path) {
+      const lines = this.breakpoints[path] || [];
+      const info = this.bpInfo[path] || {};
+      for (const k of Object.keys(info)) if (!lines.includes(+k) || (!info[k].cond && info[k].on !== false)) delete info[k];
+      if (Object.keys(info).length) this.bpInfo[path] = info; else delete this.bpInfo[path];
       U.store.set('breakpoints', this.breakpoints);
-      doc.editor.setBreakpoints(lines);
-      PL.engine.call('set_breakpoints', path, JSON.stringify(lines)).catch(() => {});
+      U.store.set('breakpointInfo', this.bpInfo);
+      const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
+      if (doc && doc.editor) doc.editor.setBreakpoints(lines, this.bpInfo[path]);
+      PL.engine.call('set_breakpoints', path, JSON.stringify(lines), JSON.stringify(this.bpInfo[path] || {})).catch(() => {});
+    }
+
+    /* A condition for the breakpoint at a line, one set there if there is none: the program stops there only when the
+       expression is true (as if's condition), in the function's workspace. Empty, it always stops. */
+    async breakpointCondition(doc, line) {
+      const path = doc.key;
+      const has = (this.breakpoints[path] || []).includes(line);
+      if (!has && !(await this.canStop(doc, line))) { this.noStatement(line); return; }
+      const cur = (this.bpInfo[path] || {})[line] || { cond: '', on: true };
+      const r = await U.prompt('Breakpoint condition', `Stop at line ${line} only when this is true (empty: every time)`, cur.cond || '');
+      if (r === null) return;
+      if (!(this.breakpoints[path] || []).includes(line)) this.breakpoints[path] = [...(this.breakpoints[path] || []), line].sort((a, b) => a - b);
+      (this.bpInfo[path] || (this.bpInfo[path] = {}))[line] = { cond: r.trim(), on: cur.on !== false };
+      this.syncBreakpoints(path);
+    }
+
+    /* The breakpoint at a line turned off (kept, but the program goes past it) or on again; on undefined turns it over. */
+    enableBreakpoint(doc, line, on) {
+      const path = doc.key;
+      if (!(this.breakpoints[path] || []).includes(line)) {
+        const msg = `Line ${line} has no breakpoint to turn off or on.`;
+        this.statusText.textContent = msg;
+        setTimeout(() => { if (this.statusText.textContent === msg) this.statusText.textContent = ''; }, 5000);
+        return;
+      }
+      const cur = (this.bpInfo[path] || {})[line] || { cond: '', on: true };
+      (this.bpInfo[path] || (this.bpInfo[path] = {}))[line] = { cond: cur.cond || '', on: on === undefined ? cur.on === false : !!on };
+      this.syncBreakpoints(path);
+    }
+
+    /* The Editor's margin, right-clicked: what can be done with the breakpoint at that line, or to set one. */
+    breakpointMenu(doc, line, x, y) {
+      const has = (this.breakpoints[doc.key] || []).includes(line);
+      const cur = (this.bpInfo[doc.key] || {})[line] || {};
+      const off = cur.on === false;
+      U.menu(x, y, has ? [
+        { heading: `Breakpoint, line ${line}` },
+        // the condition as written (the heading's capitals would change it)
+        cur.cond ? { label: `Stops when ${cur.cond}`, disabled: true } : null,
+        { label: cur.cond ? 'Edit Condition…' : 'Set Condition…', action: () => this.breakpointCondition(doc, line) },
+        { label: off ? 'Enable Breakpoint' : 'Disable Breakpoint', action: () => this.enableBreakpoint(doc, line, off) },
+        { label: 'Clear Breakpoint', action: () => this.toggleBreakpoint(doc, line) },
+      ] : [
+        { label: 'Set Breakpoint', kbd: 'F12', action: () => this.toggleBreakpoint(doc, line) },
+        { label: 'Set Conditional Breakpoint…', action: () => this.breakpointCondition(doc, line) },
+      ]);
+    }
+
+    /* The open file's cursor line, for the toolstrip's breakpoint buttons. */
+    withBreakpointHere(fn) {
+      const d = this.current;
+      if (d && d.kind === 'file') fn(d, d.editor.cursorLine());
     }
 
     /* Whether a statement begins on the line, so that a breakpoint there can stop: the engine parses the Editor's text
@@ -1129,11 +1201,13 @@
       return toks.some(([c, s]) => c !== 'c' && c !== 'sc' && s.trim());
     }
 
-    breakpointsFromEngine(path, lines) {
+    breakpointsFromEngine(path, lines, info = {}) {
       if (lines.length) this.breakpoints[path] = [...lines].sort((a, b) => a - b); else delete this.breakpoints[path];
+      if (Object.keys(info).length) this.bpInfo[path] = info; else delete this.bpInfo[path];
       U.store.set('breakpoints', this.breakpoints);
+      U.store.set('breakpointInfo', this.bpInfo);
       const doc = this.docs.find((d) => d.kind === 'file' && d.key === path);
-      if (doc && doc.editor) doc.editor.setBreakpoints(this.breakpoints[path] || []);
+      if (doc && doc.editor) doc.editor.setBreakpoints(this.breakpoints[path] || [], this.bpInfo[path]);
     }
 
     toggleBreakpointHere() {
@@ -1144,7 +1218,9 @@
     clearAllBreakpoints() {
       for (const path of Object.keys(this.breakpoints)) PL.engine.call('set_breakpoints', path, '[]').catch(() => {});
       this.breakpoints = {};
+      this.bpInfo = {};
       U.store.set('breakpoints', {});
+      U.store.set('breakpointInfo', {});
       for (const d of this.docs) if (d.editor && d.kind === 'file') d.editor.setBreakpoints([]);
     }
 
@@ -1293,9 +1369,10 @@
         const ed = new PL.Editor({ value: text, label: `Editor: ${U.basename(path)}`, language: /\.m$/i.test(path) ? 'matlab' : 'text' });
         doc.editor = ed;
         doc.saved = text;
-        ed.setBreakpoints(this.breakpoints[path] || []);
+        ed.setBreakpoints(this.breakpoints[path] || [], this.bpInfo[path]);
         ed.on('change', (v) => { doc.setDirty(v !== doc.saved); this.scheduleLint(doc); this.saveDocs(); if (doc === this.current) this.updateRunButtons(); });
         ed.on('gutter', (ln) => this.toggleBreakpoint(doc, ln));
+        ed.on('gutterMenu', (ln, x, y) => this.breakpointMenu(doc, ln, x, y));
         ed.on('cursor', (ln, col) => { this.caretEl.textContent = `Ln ${ln}, Col ${col}`; });
         ed.on('key', (ev) => this.editorKey(ev, doc));
         doc.view.append(ed.el);
@@ -1405,6 +1482,7 @@
         }
       }
       if (this.breakpoints[from]) { this.breakpoints[to] = this.breakpoints[from]; delete this.breakpoints[from]; U.store.set('breakpoints', this.breakpoints); }
+      if (this.bpInfo[from]) { this.bpInfo[to] = this.bpInfo[from]; delete this.bpInfo[from]; U.store.set('breakpointInfo', this.bpInfo); }
       this.saveDocs();
     }
 

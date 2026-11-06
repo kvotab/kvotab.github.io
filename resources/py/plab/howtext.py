@@ -2119,7 +2119,7 @@ VideoReader, hasFrame, readFrame, read:
 
     read of a datastore: datastores.py, which gives the datastore the call (each kind of datastore has its own read).
 dbstop, dbclear, dbstatus:
-    Python: devtools.py and worker_api.py. The breakpoints are the same the Editor's margin sets: the file found on the path, the line moved to the next line where a statement begins (from the parsed file), the page told so that the Editor shows them. 'if error': when an error ends a command, the run stops at the innermost function of the program where it was raised, with its workspace and the K>> prompt, after the error is shown.
+    Python: devtools.py and worker_api.py. The breakpoints are the same the Editor's margin sets: the file found on the path, the line moved to the next line where a statement begins (from the parsed file), the page told so that the Editor shows them. A condition ('if expression', or set in the Editor's margin) is compiled once for the names of the function's workspace (as eval compiles an expression) and run there each time the line comes; its value is taken as if's condition is, and a breakpoint turned off in the Editor is skipped. 'if error': when an error ends a command, the run stops at the innermost function of the program where it was raised, with its workspace and the K>> prompt, after the error is shown.
 dbstack:
     Python: devtools.py and runtime.py. The program's function frames on Python's stack, innermost first, with the line each is at.
 checkcode, mlint:

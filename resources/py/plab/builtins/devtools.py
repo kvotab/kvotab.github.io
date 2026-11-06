@@ -220,8 +220,29 @@ def _walk(x, seen=None):
 
 
 def _publish(path, lines):
-    """The page's Editor shows the file's breakpoints as the engine now has them."""
-    return R.ask_page({'type': 'breakpoints', 'path': path, 'lines': sorted(lines)})
+    """The page's Editor shows the file's breakpoints as the engine now has them (their conditions, those turned off)."""
+    return R.ask_page({'type': 'breakpoints', 'path': path, 'lines': sorted(lines), 'info': R.DEBUGGER.info_json(path)})
+
+
+def _expression(info):
+    """A breakpoint's expression as dbstatus gives it: its condition, and one turned off as false&&(condition), which
+    dbstop reads back as turned off."""
+    if info is None:
+        return ''
+    if info['on']:
+        return info['cond']
+    return f"false&&({info['cond']})" if info['cond'] else 'false'
+
+
+def _from_expression(expr):
+    """dbstop's reading of an expression: (condition, on)."""
+    e = expr.strip()
+    m = re.fullmatch(r'false\s*&&\s*\((.*)\)', e, re.S)
+    if m:
+        return m.group(1).strip(), False
+    if e == 'false':
+        return '', False
+    return e, True
 
 
 @bi('dbstop', aw=True, arr=False)
@@ -236,7 +257,13 @@ async def dbstop(nargout, *args):
             path = py_str(e['file']) if 'file' in e else _program(py_str(e['name']), 'dbstop')
             lines = [int(x) for x in darr(e['line']).reshape(-1)] if 'line' in e and numel(e['line']) else []
             if lines:
-                D.set_breakpoints(path, sorted(set(D.breakpoints.get(path, set())) | set(lines)))
+                # the expressions dbstatus gave: conditions, and false&&(...) for one turned off
+                exprs = [py_str(x) for x in e['expression'].a.reshape(-1, order='F')] if 'expression' in e and isinstance(e['expression'], Cell) else []
+                info = dict(D.info_json(path))
+                for ln, ex in zip(lines, exprs):
+                    cond, on = _from_expression(ex)
+                    info[str(ln)] = {'cond': cond, 'on': on}
+                D.set_breakpoints(path, sorted(set(D.breakpoints.get(path, set())) | set(lines)), info)
                 await _publish(path, D.breakpoints.get(path, ()))
         return None
     w = _words(args, 'dbstop')
@@ -248,6 +275,7 @@ async def dbstop(nargout, *args):
             return None
         raise err('MATLAB:dbstop:condition', "PyLAB stops 'if error'; conditions on warnings and naninf are not watched.", 'dbstop')
     name = line = None
+    cond = ''
     k = 0
     while k < len(low):
         if low[k] == 'in' and k + 1 < len(w):
@@ -257,7 +285,11 @@ async def dbstop(nargout, *args):
             line = w[k + 1]
             k += 2
         elif low[k] == 'if':
-            raise err('MATLAB:dbstop:condition', 'Breakpoints with conditions are not set here: stop at the line and look with if at the K>> prompt.', 'dbstop')
+            # dbstop in file at line if expression: the rest is the condition
+            cond = ' '.join(w[k + 1:]).strip()
+            if not cond:
+                raise err('MATLAB:dbstop:condition', 'dbstop ... if expression: give the condition.', 'dbstop')
+            break
         elif name is None:
             name = w[k]
             k += 1
@@ -286,7 +318,11 @@ async def dbstop(nargout, *args):
             raise err('MATLAB:dbstop:line', f'Line {n} of {os.path.basename(path)} is after its last statement.', 'dbstop')
         want.append(nxt)
     lines = sorted(set(D.breakpoints.get(path, set())) | set(want))
-    D.set_breakpoints(path, lines)
+    # a breakpoint set again takes the condition given (or none), and is on
+    info = dict(D.info_json(path))
+    for ln in want:
+        info[str(ln)] = {'cond': cond, 'on': True}
+    D.set_breakpoints(path, lines, info)
     await _publish(path, lines)
     return None
 
@@ -339,11 +375,12 @@ def dbstatus(nargout, *args):
         p = _program(py_str(args[0]), 'dbstatus')
         bps = {p: bps.get(p, set())} if p in bps else {}
     stop = bool(getattr(D, 'stop_on_error', False))
+    info = {p: getattr(D, 'bp_info', {}).get(p, {}) for p in bps}
     if nargout:
         keys = ('name', 'file', 'line', 'anonymous', 'expression', 'cond', 'identifier')
         recs = [{'name': Char.of(os.path.splitext(os.path.basename(p))[0]), 'file': Char.of(p),
                  'line': np.array([[float(x) for x in sorted(ls)]]), 'anonymous': np.zeros((1, len(ls))),
-                 'expression': Cell.of_list([Char.of('') for _ in ls]), 'cond': Char.of(''), 'identifier': Cell.empty((0, 0))}
+                 'expression': Cell.of_list([Char.of(_expression(info[p].get(x))) for x in sorted(ls)]), 'cond': Char.of(''), 'identifier': Cell.empty((0, 0))}
                 for p, ls in sorted(bps.items()) if ls]
         if stop:
             recs.append({'name': Char.of(''), 'file': Char.of(''), 'line': EMPTY(), 'anonymous': EMPTY(), 'expression': Cell.empty((1, 0)),
@@ -359,10 +396,18 @@ def dbstatus(nargout, *args):
             continue
         nm = os.path.splitext(os.path.basename(p))[0]
         ls = sorted(ls)
+
+        def say(x):
+            # a line, with its condition and whether it is turned off
+            i = info[p].get(x)
+            if i is None:
+                return str(x)
+            notes = ([f"if {i['cond']}"] if i['cond'] else []) + ([] if i['on'] else ['turned off'])
+            return f"{x} ({', '.join(notes)})"
         if len(ls) == 1:
-            lines.append(f'Breakpoint for {R.link(p, ls[0], nm)} is on line {ls[0]}.')
+            lines.append(f'Breakpoint for {R.link(p, ls[0], nm)} is on line {say(ls[0])}.')
         else:
-            lines.append(f"Breakpoints for {R.link(p, ls[0], nm)} are on lines {', '.join(str(x) for x in ls[:-1])} and {ls[-1]}.")
+            lines.append(f"Breakpoints for {R.link(p, ls[0], nm)} are on lines {', '.join(say(x) for x in ls[:-1])} and {say(ls[-1])}.")
     if stop:
         lines.append('Stop if error.')
     if lines:

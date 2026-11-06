@@ -667,6 +667,8 @@ class Debugger:
 
     def __init__(self):
         self.breakpoints = {}       # path -> set of lines
+        self.bp_info = {}           # path -> {line: {'cond': text, 'on': bool}}: those with a condition or turned off
+        self._conds = {}            # compiled conditions, by their text and the workspace's names
         self.stepping = None        # None, 'over', 'in', 'out'
         self.step_depth = 0
         self.pause_requested = False
@@ -689,12 +691,59 @@ class Debugger:
             for v in (getattr(mod, 'variants', None) or {}).values():
                 v[1].ns['T_'] = on_all or (mod.path in self.breakpoints)
 
-    def set_breakpoints(self, path, lines):
+    def set_breakpoints(self, path, lines, info=None):
+        """The file's breakpoints: their lines, and (info, by line) a condition or whether each is turned off; without info
+        the lines that stay keep theirs."""
         if lines:
             self.breakpoints[path] = set(int(x) for x in lines)
+            old = self.bp_info.get(path, {})
+            src = {int(k): v for k, v in info.items()} if info is not None else old
+            keep = {}
+            for ln, v in src.items():
+                cond = str(v.get('cond') or '').strip()
+                on = bool(v.get('on', True))
+                if ln in self.breakpoints[path] and (cond or not on):
+                    keep[ln] = {'cond': cond, 'on': on}
+            if keep:
+                self.bp_info[path] = keep
+            else:
+                self.bp_info.pop(path, None)
         else:
             self.breakpoints.pop(path, None)
+            self.bp_info.pop(path, None)
         self.refresh_modules()
+
+    def info_json(self, path):
+        """A file's conditions and turned-off breakpoints, as the page keeps them (by line)."""
+        return {str(ln): dict(v) for ln, v in self.bp_info.get(path, {}).items()}
+
+    async def holds(self, W, mod, line):
+        """Whether the breakpoint at a line stops: one turned off never; one with a condition when the condition is true
+        (as if's is) in the function's workspace there; a condition that cannot be evaluated stops, and says why."""
+        info = self.bp_info.get(mod, {}).get(line)
+        if info is None:
+            return True
+        if not info['on']:
+            return False
+        cond = info['cond']
+        if not cond:
+            return True
+        from .ops import truth
+        key = (cond, frozenset(W.keys()))
+        try:
+            fn = self._conds.get(key)
+            if fn is None:
+                fn, _ = R.compile_command('plabTmpCond = ' + cond.rstrip(';') + ';', W)
+                if len(self._conds) > 200:
+                    self._conds.clear()
+                self._conds[key] = fn
+            await fn(W)
+            return bool(truth(W.pop('plabTmpCond')))
+        except MError as e:
+            W.pop('plabTmpCond', None)
+            R.write(f"Warning: the condition '{cond}' of the breakpoint at line {line} of {os.path.basename(mod)} could not be "
+                    f"evaluated, so the program stops there: {e.message}\n", 'warn')
+            return True
 
     def depth(self):
         f = sys._getframe(1)
@@ -719,7 +768,7 @@ class Debugger:
         if self.pause_requested:
             stop = True
             self.pause_requested = False
-        elif mod in self.breakpoints and line in self.breakpoints[mod]:
+        elif mod in self.breakpoints and line in self.breakpoints[mod] and (mod not in self.bp_info or await self.holds(W, mod, line)):
             stop = True
         elif self.stepping is not None:
             d = self.depth()
@@ -804,8 +853,9 @@ def debug_command(cmd_json):
     return False
 
 
-def set_breakpoints(path, lines_json):
-    R.DEBUGGER.set_breakpoints(path, json.loads(lines_json))
+def set_breakpoints(path, lines_json, info_json=None):
+    """The Editor's breakpoints for a file: their lines, and by line a condition or whether one is turned off."""
+    R.DEBUGGER.set_breakpoints(path, json.loads(lines_json), json.loads(info_json) if info_json else {})
     return True
 
 

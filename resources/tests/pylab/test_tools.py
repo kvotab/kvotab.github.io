@@ -274,6 +274,31 @@ try:
     same('dbclear one line, then all (and the stop at errors)', (a(W['l']).tolist(), W['n'], R.DEBUGGER.stop_on_error), ([[10.0]], 0.0, False))
     raises('dbstop in nosuchfile at 3', 'is not a program file')
     raises('dbstop in work at 40', 'after its last statement')
+    # a condition: the program stops only when it holds in the function's workspace; one turned off in the Editor never
+    W, out = run("dbstop in work at 5 if k > 3\ndbstop in work at 3\ndbstatus\ns = dbstatus; e = s(1).expression; f = s(1).file;")
+    p = text(W['f'])
+    same('dbstop ... if expression: the condition kept with its line, shown by dbstatus and in its expression',
+         ('are on lines 3 and 5 (if k > 3).' in out, [text(x) for x in W['e'].a.reshape(-1)], R.DEBUGGER.info_json(p)),
+         (True, ['', 'k > 3'], {'5': {'cond': 'k > 3', 'on': True}}))
+    ws = R.Workspace('work')
+    ws['k'] = 2.0
+    no = asyncio.run(R.DEBUGGER.holds(ws, p, 5))
+    ws['k'] = 4.0
+    yes = asyncio.run(R.DEBUGGER.holds(ws, p, 5))
+    R.DEBUGGER.set_breakpoints(p, [3, 5], {'3': {'cond': '', 'on': False}, '5': {'cond': 'nosuch > 1', 'on': True}})
+    off = asyncio.run(R.DEBUGGER.holds(ws, p, 3))
+    R.take_output()
+    bad = asyncio.run(R.DEBUGGER.holds(ws, p, 5))
+    warned = R.take_output()
+    same("a condition false, true; a breakpoint turned off; a condition that cannot be evaluated stops, saying why",
+         (no, yes, off, bad, 'could not be evaluated' in warned and 'nosuch' in warned), (False, True, False, True, True))
+    W, out = run("dbstatus\ns = dbstatus; e = s(1).expression; dbclear all\ndbstop(s)\nt = dbstatus; e2 = t(1).expression;")
+    same('dbstatus says which is turned off (false&&(...) in its expression), and dbstop(s) sets them again as they were',
+         ('3 (turned off)' in out, [text(x) for x in W['e'].a.reshape(-1)], [text(x) for x in W['e2'].a.reshape(-1)], R.DEBUGGER.info_json(p)),
+         (True, ['false', 'nosuch > 1'], ['false', 'nosuch > 1'], {'3': {'cond': '', 'on': False}, '5': {'cond': 'nosuch > 1', 'on': True}}))
+    R.DEBUGGER.set_breakpoints(p, [5])
+    same('a line cleared takes its condition with it, the others keep theirs', R.DEBUGGER.info_json(p), {'5': {'cond': 'nosuch > 1', 'on': True}})
+    run("dbclear all")
 finally:
     R.DEBUGGER = saved
 write('outer.m', 'function s = outer()\ns = inner();\nend\n\nfunction s = inner()\ns = dbstack;\nend\n')

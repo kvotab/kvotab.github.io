@@ -275,6 +275,29 @@ async def desktop(page):
     check('Continue finishes the run', 'n =\n\n     8' in await tail(page, 300), True)
     check('the prompt is >> again', await page.ev('PL.app.cmd.prompt.textContent'), '>> ')
     await command(page, 'close all')
+    # a breakpoint with a condition stops only when it holds; one turned off is passed by; the margin's menu on a
+    # breakpoint offers its condition, turning it off and clearing it
+    marks = await page.ev("PL.app.openFile('/home/user/examples/collatz.m').then((d) => { PL.app.clearAllBreakpoints(); PL.app.breakpoints[d.key] = [12, 14]; "
+                          "PL.app.bpInfo[d.key] = { 12: { cond: 'numel(seq) == 4', on: true }, 14: { cond: '', on: false } }; PL.app.syncBreakpoints(d.key); "
+                          "return new Promise((r) => setTimeout(r, 300)).then(() => [!!document.querySelector('.ple-gl .bp.is-cond'), !!document.querySelector('.ple-gl .bp.is-off:not(.is-cond)')]); })")
+    await type_line(page, 'n = collatz(6)')
+    line = await until(page, 'PL.app.debug && PL.app.debug.line')
+    await page.ev('new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(1))))')
+    await type_line(page, 'disp(seq)')
+    seen = await until(page, f"{OUTPUT}.slice(-60).includes('6     3    10     5')", 10)
+    await page.ev("PL.app.dbg('continue'); 1")
+    await until(page, '!PL.engine.busy && !PL.app.debug', 30)
+    done = 'n =\n\n     8' in await tail(page, 300)
+    check('a conditional breakpoint stops when its condition holds (seq has 4 values), one turned off is passed by; amber and hollow marks',
+          [marks, line, seen, done], [[True, True], 12, True, True])
+    menu = await page.ev("""(() => { const d = PL.app.current; const ed = d.editor; const r = ed.gutter.getBoundingClientRect();
+      const y = r.top + ed._pad() + 11.5 * ed._lh(); ed.gutter.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + 8, clientY: y }));
+      const m = document.querySelector('.pl-menu'); if (!m) return null; const labels = [...m.querySelectorAll('button')].map((b) => b.textContent);
+      [...m.querySelectorAll('button')].find((b) => b.textContent === 'Disable Breakpoint').click();
+      return [labels, PL.app.bpInfo[d.key][12].on, PL.app.bpInfo[d.key][12].cond]; })()""")
+    check("the margin's menu on a conditional breakpoint: its condition, Disable (keeping the condition), Clear",
+          menu, [['Stops when numel(seq) == 4', 'Edit Condition…', 'Disable Breakpoint', 'Clear Breakpoint'], False, 'numel(seq) == 4'])
+    await page.ev('PL.app.clearAllBreakpoints(); 1')
 
     # input() and Ctrl+C
     await type_line(page, "v = input('Number: ') * 2")

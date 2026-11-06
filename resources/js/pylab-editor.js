@@ -10,8 +10,8 @@
        const ed = new PL.Editor({ value, readOnly, language });
        ed.el                 the element to place
        ed.value              the text (setting it resets the undo history)
-       ed.on('change' | 'cursor' | 'gutter' | 'key', fn)
-       ed.setBreakpoints(lines) / ed.setArrow(line) / ed.setLint(items)
+       ed.on('change' | 'cursor' | 'gutter' | 'gutterMenu' | 'key', fn)
+       ed.setBreakpoints(lines, info) / ed.setArrow(line) / ed.setLint(items)
        ed.revealLine(n, select) / ed.cursorLine() / ed.selectedText()
 
    Keys: Tab and Shift+Tab indent and outdent; Enter keeps the indent and
@@ -34,6 +34,7 @@
       super();
       this.language = language;
       this.breakpoints = new Set();
+      this.bpInfo = {};
       this.arrow = 0;
       this.lint = [];
       this.hl = el('pre', { class: 'ple-hl', 'aria-hidden': 'true' });
@@ -56,10 +57,20 @@
       this.ta.addEventListener('click', () => this._cursor());
       this.ta.addEventListener('select', () => this._cursor());
       this.el.addEventListener('scroll', () => this._gutterDraw());
-      this.gutter.addEventListener('pointerdown', (ev) => {
+      const lineAt = (ev) => {
         const r = this.gutter.getBoundingClientRect();
         const line = Math.floor((ev.clientY - r.top - this._pad()) / this._lh()) + 1;
-        if (line >= 1 && line <= this._lines) { ev.preventDefault(); this.emit('gutter', line); }
+        return line >= 1 && line <= this._lines ? line : 0;
+      };
+      this.gutter.addEventListener('pointerdown', (ev) => {
+        // a click sets or clears; a right click (or Ctrl+click on a Mac) opens the breakpoint's menu instead
+        if (ev.button !== 0 || (PL.util.isMac && ev.ctrlKey)) return;
+        const line = lineAt(ev);
+        if (line) { ev.preventDefault(); this.emit('gutter', line); }
+      });
+      this.gutter.addEventListener('contextmenu', (ev) => {
+        const line = lineAt(ev);
+        if (line) { ev.preventDefault(); this.emit('gutterMenu', line, ev.clientX, ev.clientY); }
       });
       // numbers for the lines a taller frame shows, drawn in the next frame:
       // changing the content inside the observed box at once makes the browser
@@ -118,7 +129,13 @@
       const lintLines = new Set(this.lint.map((x) => x.line));
       for (let i = first; i <= last; i++) {
         const d = el('div', { class: 'ple-gl', style: { top: `${pad + (i - 1) * lh}px` } }, el('span', { class: 'n' }, String(i)));
-        if (this.breakpoints.has(i)) d.append(el('span', { class: 'bp' }));
+        if (this.breakpoints.has(i)) {
+          // a condition: amber; turned off: hollow
+          const inf = this.bpInfo[i];
+          const span = el('span', { class: `bp${inf && inf.cond ? ' is-cond' : ''}${inf && inf.on === false ? ' is-off' : ''}` });
+          if (inf && (inf.cond || inf.on === false)) span.title = `${inf.cond ? `Stops when ${inf.cond}` : 'Breakpoint'}${inf.on === false ? ' (turned off)' : ''}`;
+          d.append(span);
+        }
         if (this.arrow === i) d.append(el('span', { class: 'arrow' }));
         if (lintLines.has(i)) {
           const item = this.lint.find((x) => x.line === i);
@@ -153,7 +170,7 @@
       this.emit('cursor', this.cursorLine(), this.cursorCol());
     }
 
-    setBreakpoints(lines) { this.breakpoints = new Set(lines); this._gutterDraw(); }
+    setBreakpoints(lines, info) { this.breakpoints = new Set(lines); this.bpInfo = info || {}; this._gutterDraw(); }
     setArrow(line) { this.arrow = line || 0; this._gutterDraw(); if (line) this.revealLine(line, false); }
     setLint(items) { this.lint = items || []; this._gutterDraw(); }
 
