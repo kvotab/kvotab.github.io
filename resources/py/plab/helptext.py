@@ -4087,8 +4087,11 @@ camlight: Add a light near the camera.
     camlight headlight | right | left
 lighting: How lit surfaces are shaded.
     lighting flat | gouraud | none
-material: Accepted, with no effect.
+material: How the surfaces and patches reflect light.
     material shiny | dull | metal | default
+    material([ka kd ks n sc])
+    material(h, ...)
+    * Sets AmbientStrength, DiffuseStrength, SpecularStrength, SpecularExponent and SpecularColorReflectance of the current axes' surfaces and patches (or of h): shiny 0.3 0.6 0.9 20 1, dull 0.3 0.8 0 10 1, metal 0.3 0.3 1 25 0.5, default their own defaults; three to five numbers set the first ones. The page's lighting shades by the angle to the light alone, so these are kept but not drawn.
 colorbar: Show the colour scale beside the axes.
     colorbar
     colorbar off

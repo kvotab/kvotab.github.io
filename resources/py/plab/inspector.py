@@ -437,9 +437,10 @@ _NOT_DRAWN = {
     'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty ZTickLabelRotation '
             'ThetaAxisUnits',
     'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight XDataSource YDataSource ZDataSource',
-    'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength MeshStyle '
+    'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength SpecularColorReflectance MeshStyle '
                'Marker MarkerSize CDataMapping Selected SelectionHighlight XDataSource YDataSource ZDataSource',
-    'patch': 'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
+    'patch': 'AmbientStrength BackFaceLighting DiffuseStrength SpecularExponent SpecularStrength SpecularColorReflectance '
+             'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
              'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha',
     'image': 'AlphaDataMapping EraseMode Selected SelectionHighlight',
     'text': 'Editing EraseMode FontSmoothing Selected SelectionHighlight',

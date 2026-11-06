@@ -574,6 +574,8 @@ class Axes(GObj):
         'TickLabelInterpreter': 'tex', 'Colormap': None, 'ActivePositionProperty': 'outerposition', 'SortMethod': 'depth',
         'AmbientLightColor': (1.0, 1.0, 1.0), 'XAxis': None, 'YAxis': None,
         'CameraViewAngle': 6.6086, 'CameraViewAngleMode': 'auto',
+        # where the camera is: along the view's direction from the target (camera_position), so it follows View
+        'CameraPosition': lambda: np.array([[0.0, 0.0, 0.0]]), 'CameraPositionMode': 'auto',
         'CameraTarget': lambda: np.array([[0.5, 0.5, 0.5]]), 'CameraTargetMode': 'auto',
         'CameraUpVector': lambda: np.array([[0.0, 0.0, 1.0]]), 'CameraUpVectorMode': 'auto',
         'BubbleSizeRange': lambda: np.array([[1.0, 20.0]]), 'BubbleLim': lambda: np.array([[0.0, 1.0]]), 'BubbleLimMode': 'auto',
@@ -715,6 +717,8 @@ class Axes(GObj):
         if k == 'CameraTarget' and self.props['CameraTargetMode'] == 'auto':
             # the middle of the limits
             return np.array([[float(np.mean(np.asarray(self.get_value(a), float))) for a in ('XLim', 'YLim', 'ZLim')]])
+        if k == 'CameraPosition':
+            return self.camera_position()
         if k == 'Title':
             return self.title
         if k == 'XLabel':
@@ -790,6 +794,22 @@ class Axes(GObj):
             self.props[k] = float(a[0])
             self.props[k + 'Mode'] = 'manual'
             return
+        if k == 'CameraPosition':
+            # the view turned to look from there toward the target, and the distance kept, so that it reads back as set
+            a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
+            if a.size != 3 or not np.all(np.isfinite(a)):
+                raise gerr('Value must be a vector of three finite numbers.')
+            d = a - np.asarray(self.get_value('CameraTarget'), float).reshape(-1)
+            dist = float(np.linalg.norm(d))
+            if dist == 0:
+                raise gerr('The camera position cannot be the camera target.')
+            self.props['View'] = np.array([[math.degrees(math.atan2(d[0], -d[1])), math.degrees(math.atan2(d[2], math.hypot(d[0], d[1])))]])
+            self.cam_dist = dist
+            # the point as given while the view and the target stay as they are (the angles' round trip adds noise)
+            self.cam_set = (a.reshape(1, 3).copy(), self.props['View'].copy(), np.asarray(self.get_value('CameraTarget'), float).reshape(-1).copy())
+            self.props['CameraPositionMode'] = 'manual'
+            self.touch()
+            return
         if k in ('CameraTarget', 'CameraUpVector'):
             a = np.asarray(value, float).reshape(-1) if not isinstance(value, (Char, Str)) else np.zeros(0)
             if a.size != 3 or not np.all(np.isfinite(a)) or (k == 'CameraUpVector' and not np.any(a)):
@@ -800,7 +820,7 @@ class Axes(GObj):
             return
         if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode',
                  'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode',
-                 'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode', 'RLimMode', 'RTickMode', 'ThetaTickMode',
+                 'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode', 'CameraPositionMode', 'RLimMode', 'RTickMode', 'ThetaTickMode',
                  'RTickLabelMode', 'ThetaTickLabelMode'):
             s = py_str(value).lower()
             if s not in ('auto', 'manual'):
@@ -865,6 +885,22 @@ class Axes(GObj):
     def is3d(self):
         v = self.props['View'].reshape(-1)
         return not (abs(v[1]) == 90 and v[0] % 90 == 0 and abs(v[1]) == 90) or self.kind == '3d'
+
+    def camera_position(self):
+        """Where the camera is: from the target along the view's azimuth and elevation, ten times the axes' size away
+        unless a position was set (then as far as it was), so that it follows the view as it turns."""
+        az, el = (math.radians(float(x)) for x in np.asarray(self.props['View'], float).reshape(-1)[:2])
+        d = np.array([math.sin(az) * math.cos(el), -math.cos(az) * math.cos(el), math.sin(el)])
+        t = np.asarray(self.get_value('CameraTarget'), float).reshape(-1)
+        manual = self.props['CameraPositionMode'] == 'manual'
+        kept = getattr(self, 'cam_set', None)
+        if manual and kept is not None and np.array_equal(kept[1], self.props['View']) and np.array_equal(kept[2], t):
+            return kept[0].copy()
+        dist = getattr(self, 'cam_dist', None) if manual else None
+        if not dist:
+            lims = np.concatenate([np.asarray(self.get_value(k), float).reshape(-1) for k in ('XLim', 'YLim', 'ZLim')])
+            dist = 10 * max(float(np.ptp(lims)), 1.0)
+        return (t + dist * d).reshape(1, 3)
 
     def auto_view_angle(self):
         """The camera's angle when the axes fill their place: a view from
@@ -960,7 +996,8 @@ class Surface(GObj):
                 'FaceColor': 'flat', 'EdgeColor': (0.0, 0.0, 0.0), 'FaceAlpha': 1.0, 'EdgeAlpha': 1.0, 'LineStyle': '-',
                 'LineWidth': 0.5, 'MeshStyle': 'both', 'Marker': 'none', 'MarkerSize': 6.0, 'DisplayName': '', 'Visible': True,
                 'FaceLighting': 'flat', 'EdgeLighting': 'none', 'Tag': '', 'UserData': lambda: EMPTY(), 'CDataMapping': 'scaled',
-                'AmbientStrength': 0.3, 'DiffuseStrength': 0.6, 'SpecularStrength': 0.9, 'SpecularExponent': 10.0, 'BackFaceLighting': 'reverselit'}
+                'AmbientStrength': 0.3, 'DiffuseStrength': 0.6, 'SpecularStrength': 0.9, 'SpecularExponent': 10.0,
+                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit'}
     SHOWN = ['EdgeColor', 'LineStyle', 'FaceColor', 'FaceLighting', 'FaceAlpha', 'XData', 'YData', 'ZData', 'CData']
 
     def set_value(self, k, value):
@@ -977,7 +1014,10 @@ class Patch(GObj):
                 'Vertices': lambda: EMPTY(), 'FaceColor': (0.0, 0.0, 0.0), 'EdgeColor': (0.0, 0.0, 0.0), 'FaceAlpha': 1.0,
                 'EdgeAlpha': 1.0, 'LineStyle': '-', 'LineWidth': 0.5, 'CData': lambda: EMPTY(), 'FaceVertexCData': lambda: EMPTY(),
                 'Marker': 'none', 'MarkerSize': 6.0, 'MarkerFaceColor': 'none', 'DisplayName': '', 'Visible': True, 'Tag': '',
-                'UserData': lambda: EMPTY(), 'FaceLighting': 'flat', 'CDataMapping': 'scaled'}
+                'UserData': lambda: EMPTY(), 'FaceLighting': 'flat', 'CDataMapping': 'scaled',
+                # how a lit face reflects (set by material too), as a surface has them
+                'AmbientStrength': 0.3, 'DiffuseStrength': 0.6, 'SpecularStrength': 0.9, 'SpecularExponent': 10.0,
+                'SpecularColorReflectance': 1.0, 'BackFaceLighting': 'reverselit'}
     SHOWN = ['FaceColor', 'FaceAlpha', 'EdgeColor', 'LineStyle', 'Faces', 'Vertices']
 
 

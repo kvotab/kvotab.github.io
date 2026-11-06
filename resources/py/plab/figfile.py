@@ -43,7 +43,10 @@ _LABELS = ('Title', 'XLabel', 'YLabel', 'ZLabel')
 _FIRST = ('style', 'units', 'fontunits')
 # never set from a file: the object's place in the tree, the read-only, what is set apart
 _SKIP = {'parent', 'children', 'type', 'beingdeleted', 'number', 'currentpoint', 'currentcharacter', 'currentkey',
-         'currentmodifier', 'selectiontype', 'currentobject', 'extent', 'filename', 'integerhandle', 'legend'}
+         'currentmodifier', 'selectiontype', 'currentobject', 'extent', 'filename', 'integerhandle', 'legend',
+         # the view the file keeps gives the camera's direction; a position set before the limits and target are read
+         # would turn it wrongly
+         'cameraposition', 'camerapositionmode'}
 # properties that name another object by its handle number
 _REFS = {'uicontextmenu': 'UIContextMenu', 'currentaxes': 'CurrentAxes', 'selectedobject': 'SelectedObject',
          'selectedtab': 'SelectedTab'}

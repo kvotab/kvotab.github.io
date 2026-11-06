@@ -1466,7 +1466,7 @@ light, camlight:
 lighting:
     Python: graphics.py. Sets FaceLighting on the axes' surfaces and patches ('phong' is taken as 'gouraud'); 'none' turns the shading off.
 material:
-    Python: graphics.py. Accepted and ignored: the shading has no specular part.
+    Python: graphics.py. Sets the surfaces' and patches' reflectance properties to the values of the material named (or given); they are kept, not drawn: the shading has no specular part.
 rotate3d, zoom, pan, datacursormode, brush:
     Python: graphics.py. Accepted and ignored: the figure's toolbar and the mouse zoom, pan, rotate and show data tips.
 linkaxes, linkprop, alpha, hidden, whitebg, refresh, shg:

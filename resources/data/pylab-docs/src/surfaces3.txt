@@ -148,7 +148,7 @@ surf meshgrid
 @ shading, lighting, light, camlight, material
 How surfaces look: flat or smooth colour, lights, and how lit faces are shaded.
 
-`shading` sets how surfaces in the axes are coloured: `faceted` (flat with black edges, the default), `flat` (no edges) or `interp` (colours blended across each face). `light` adds a light at a position and `camlight` one near the camera; `lighting` then shades lit faces `flat` or `gouraud` (smooth), or turns lighting off with `none`. `material` is accepted and has no effect.
+`shading` sets how surfaces in the axes are coloured: `faceted` (flat with black edges, the default), `flat` (no edges) or `interp` (colours blended across each face). `light` adds a light at a position and `camlight` one near the camera; `lighting` then shades lit faces `flat` or `gouraud` (smooth), or turns lighting off with `none`. `material` sets how the surfaces and patches reflect light (`shiny`, `dull`, `metal`, or the strengths as numbers): their reflectance properties, which the page keeps but does not draw.
 
 # Syntax
 shading interp
@@ -160,7 +160,7 @@ camlight headlight
 lighting gouraud
     Smooth lighting.
 material shiny
-    Accepted.
+    The reflectances of a material.
 # Examples
 ## One sphere three ways
 [x, y, z] = sphere(30);

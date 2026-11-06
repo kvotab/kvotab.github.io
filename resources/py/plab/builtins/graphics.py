@@ -2967,8 +2967,39 @@ def lighting(nargout, *args):
     return None
 
 
+# material's reflectances: ambient, diffuse and specular strength, specular exponent, specular colour reflectance
+_MATERIALS = {'shiny': (0.3, 0.6, 0.9, 20.0, 1.0), 'dull': (0.3, 0.8, 0.0, 10.0, 1.0), 'metal': (0.3, 0.3, 1.0, 25.0, 0.5)}
+_REFLECT = ('AmbientStrength', 'DiffuseStrength', 'SpecularStrength', 'SpecularExponent', 'SpecularColorReflectance')
+
+
 @bi('material', arr=False)
 def material(nargout, *args):
+    """material shiny | dull | metal | default, material([ka kd ks n sc]), material(h, ...): how the surfaces and patches of the
+    current axes (or h) reflect light: their ambient, diffuse and specular strengths, specular exponent and specular colour
+    reflectance (the first three to five of them given as numbers)."""
+    nargchk(args, 1, 2, 'material')
+    rest = list(args)
+    objs = None
+    if len(rest) == 2 or (rest and not is_str(rest[0]) and isinstance(rest[0], (GObj, HArr))):
+        objs = _handles(rest.pop(0))
+    if objs is None:
+        objs = [c for c in gca_().children if c.TYPE in ('surface', 'patch')]
+    v = rest[0]
+    if is_str(v):
+        name = py_str(v).lower()
+        if name not in (*_MATERIALS, 'default'):
+            raise err('MATLAB:material:InvalidInput', "material takes 'shiny', 'dull', 'metal', 'default' or [ka kd ks n sc].", 'material')
+        vals = _MATERIALS.get(name)
+    else:
+        vals = tuple(float(x) for x in np.asarray(darr(v), float).reshape(-1))
+        if not 3 <= len(vals) <= 5:
+            raise err('MATLAB:material:InvalidInput', 'material takes three to five numbers: [ka kd ks n sc].', 'material')
+    for o in objs:
+        if getattr(o, 'TYPE', None) not in ('surface', 'patch'):
+            continue
+        for k, x in zip(_REFLECT, vals if vals is not None else (type(o).DEFAULTS[k] for k in _REFLECT)):
+            o.props[k] = float(x)
+        o.touch()
     return None
 
 

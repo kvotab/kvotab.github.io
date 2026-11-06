@@ -1068,30 +1068,32 @@ def camorbit(nargout, *args):
 
 @bi('campos', arr=False)
 def campos(nargout, *args):
-    """campos: where the camera is, from the view's azimuth and elevation, at
-    a distance of ten times the axes' size from the target (CameraTarget, the
-    axes' middle unless set); campos([x y z]) turns the view to look from
-    there toward the target."""
+    """campos: where the camera is (the axes' CameraPosition: from the target along the view, ten times the axes' size
+    away unless set); campos([x y z]) turns the view to look from there toward the target; campos('mode'),
+    campos('auto'), campos('manual')."""
     nargchk(args, 0, 2, 'campos')
     G = _g()
     rest = list(args)
     ax = rest.pop(0) if rest and hasattr(rest[0], 'props') and 'View' in getattr(rest[0], 'props', {}) else G.gca_()
-    lims = [np.asarray(arr(ax.get_value(k)), F64).reshape(-1) for k in ('XLim', 'YLim', 'ZLim')]
-    centre = np.asarray(ax.get_value('CameraTarget'), F64).reshape(-1)
+    if rest and is_str(rest[0]):
+        s = py_str(rest[0]).lower()
+        if s == 'mode':
+            return Char.of(ax.props['CameraPositionMode'])
+        if s not in ('auto', 'manual'):
+            raise err('MATLAB:campos:InvalidPosition', "campos takes [x y z], 'auto', 'manual' or 'mode'.", 'campos')
+        if s == 'manual':
+            ax.setprop('CameraPosition', out(ax.get_value('CameraPosition')))
+        else:
+            ax.props['CameraPositionMode'] = 'auto'
+            ax.touch()
+        return None
     if rest:
         p = darr(rest[0]).reshape(-1).astype(F64)
         if p.size != 3:
             raise err('MATLAB:campos:InvalidPosition', 'The camera position is [x y z].', 'campos')
-        d = p - centre
-        az = math.degrees(math.atan2(d[0], -d[1]))
-        el = math.degrees(math.atan2(d[2], math.hypot(d[0], d[1])))
-        R.BUILTINS['view'].fn(0, ax, out(np.array([[az, el]])))
+        ax.setprop('CameraPosition', out(p.reshape(1, 3)))
         return None
-    az, el = R.BUILTINS['view'].fn(2, ax)
-    a, e = math.radians(float(az)), math.radians(float(el))
-    size = max(float(np.ptp(np.concatenate(lims))), 1.0)
-    dirn = np.array([math.sin(a) * math.cos(e), -math.cos(a) * math.cos(e), math.sin(e)])
-    return out((centre + 10 * size * dirn).reshape(1, -1))
+    return out(ax.get_value('CameraPosition'))
 
 
 def _cam_axes(args):

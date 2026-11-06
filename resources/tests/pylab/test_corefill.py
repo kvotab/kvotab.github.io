@@ -346,6 +346,20 @@ C('camlookat: a narrower view, back to automatic for the axes', W['va'] < 10.339
 W, _ = run("figure; [x, y, z] = sphere(16); hold on; for k = 0:2, h(k + 1) = surf(x + 3*k, y, z); end; hold off; axis equal; view(3); camlookat(h(3)); va = camva;")
 want = math.degrees(2 * math.atan(math.tan(math.radians(10.3396) / 2) / (math.sqrt(1 + 0.04 + 0.04) / math.sqrt(3 * 0.04))))
 near('camlookat in a box drawn long by axis equal: closed in by the box as drawn (a cube taken for it gave 8.5 degrees)', W['va'], want, 1e-3)
+W, _ = run("figure; surf(peaks(20)); ax = gca; p0 = ax.CameraPosition; c0 = campos; m0 = ax.CameraPositionMode; ax.CameraPosition = [30 -40 50]; p1 = ax.CameraPosition; "
+           "v1 = view; m1 = ax.CameraPositionMode; t = camtarget; view(2); p2 = ax.CameraPosition; t2 = camtarget; campos('auto'); m2 = campos('mode'); s = get(ax); has = isfield(s, 'CameraPosition'); "
+           "try, ax.CameraPosition = camtarget; e = ''; catch ex, e = ex.message; end; close all")
+d1 = np.array([30, -40, 50]) - a(W['t']).reshape(-1)
+near('axes CameraPosition: as campos gives it, and set, the view turns to look from there and it reads back as set',
+     (W['p0'], W['p1'], a(W['v1']).reshape(-1)), (a(W['c0']), [[30, -40, 50]], [math.degrees(math.atan2(d1[0], -d1[1])), math.degrees(math.atan2(d1[2], math.hypot(d1[0], d1[1])))]), 1e-9)
+near('  it follows the view at the distance set (view(2): straight above the target)', a(W['p2']).reshape(-1), a(W['t2']).reshape(-1) + [0, 0, np.linalg.norm(d1)], 1e-9)
+C('  its mode, among all the properties, and never at the target', (text(W['m0']), text(W['m1']), text(W['m2']), bool(W['has']), 'cannot be the camera target' in text(W['e'])) == ('auto', 'manual', 'auto', True, True),
+  (W['m0'], W['m1'], W['m2'], W['has'], W['e']))
+W, _ = run("figure; s = surf(peaks(5)); hold on; p = patch([0 1 0], [0 0 1], 'r'); r0 = [s.SpecularColorReflectance, p.SpecularColorReflectance, p.AmbientStrength]; "
+           "material metal; rm = [s.AmbientStrength s.DiffuseStrength s.SpecularStrength s.SpecularExponent s.SpecularColorReflectance p.SpecularExponent]; "
+           "material default; rd = [s.SpecularStrength s.SpecularExponent s.SpecularColorReflectance]; material(p, [0.5 0.5 0.1]); rp = [p.AmbientStrength p.DiffuseStrength p.SpecularStrength s.AmbientStrength]; close all")
+near('surfaces and patches have SpecularColorReflectance and the other reflectances, and material sets them (metal, default, numbers, one object)',
+     (W['r0'], W['rm'], W['rd'], W['rp']), ([[1, 1, 0.3]], [[0.3, 0.3, 1, 25, 0.5, 25]], [[0.9, 10, 1]], [[0.5, 0.5, 0.1, 0.3]]))
 W, _ = run("[x, y, z] = meshgrid(-2:0.5:2); u = -y; v = x; w = 0.2*ones(size(x)); figure; h = streamribbon(x, y, z, u, v, w, 1, 0, -2); n = numel(h); s = size(h(1).XData);"
            "X = h(1).XData; Y = h(1).YData; Z = h(1).ZData;")
 X, Y, Z = a(W['X']), a(W['Y']), a(W['Z'])
