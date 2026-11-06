@@ -513,6 +513,8 @@ async def editor_view(page):
         got = await page.ev(f"[{EDITOR}.ta.value, {EDITOR}.ta.selectionStart]")
         typed.append(got == [want, caret] or got)
     check('Enter after an end or else typed too far in: the word back to its block, the new line after it', typed, [True, True])
+    bg = await page.ev(f"[getComputedStyle({EDITOR}.el.querySelector('.ple-code')).backgroundColor, getComputedStyle(PL.app.cmd.el).backgroundColor]")
+    check("the Editor's code on the page's own background (white, black in the dark theme), as the Command Window, not grey", bg[0] == bg[1], True if bg[0] == bg[1] else bg)
 
     await page.ev(f"(() => {{ const d = PL.app.docs.find((x) => x.key === '{path}'); d.saved = d.editor.value; d.setDirty(false); return PL.app.closeDoc(d).then(() => 1); }})()")
     await page.ev(f"PL.engine.fs('remove', {{ path: '/tmp/pylab-ui' }}).then(() => 1)")

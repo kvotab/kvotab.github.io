@@ -416,8 +416,9 @@ body:has(.pl) .content { padding: 0; max-width: none; height: calc(100dvh - var(
 .ple-gl:hover { color: var(--pl-text); }
 /* the coloured text sizes the code; the textarea lies over all of it. The
    code's background is under the section and current-line bands (the site
-   gives every pre one, which hid them) */
-.ple-code { position: relative; flex: 1 0 auto; background: var(--code-bg); }
+   gives every pre one, which hid them): the page's own white (black in the
+   dark theme), as the Command Window has, not the site's grey for code */
+.ple-code { position: relative; flex: 1 0 auto; background: var(--pl-panel); }
 .ple-hl, .ple-ta {
   margin: 0; padding: 4px 10px 40px; border: 0; white-space: pre;
   font: inherit; line-height: var(--ple-lh); letter-spacing: normal; tab-size: 4; box-sizing: border-box;
