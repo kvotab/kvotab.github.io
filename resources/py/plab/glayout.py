@@ -413,11 +413,16 @@ def auto_clim(ax):
         if a.ndim == 3 and a.shape[2] == 3:
             continue
         a = a[np.isfinite(a)]
+        if ax.props.get('ColorScale') == 'log':
+            # a log colour scale: the limits from the positive values
+            a = a[a > 0]
         if a.size:
             lo = min(lo, float(a.min()))
             hi = max(hi, float(a.max()))
     if lo == math.inf:
         return [0.0, 1.0]
+    if ax.props.get('ColorScale') == 'log' and lo == hi:
+        return [lo / 10, hi * 10]
     if lo == hi:
         return [lo - 1, hi + 1] if True else [lo, hi]
     return [lo, hi]

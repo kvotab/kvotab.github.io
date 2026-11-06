@@ -1436,7 +1436,13 @@ colormap:
 parula, viridis, turbo, jet, gray, hot, cool, spring, summer, autumn, winter, bone, copper, pink, hsv, lines, colorcube, prism, flag, white:
     Python: colormaps.py. m-by-3 arrays of RGB values, 256 rows unless m is given. gray, cool, spring, summer, autumn, winter and copper are their usual formulas in r = linspace(0, 1, m); hot ramps red, then green, then blue, each over fix(3m/8) rows, and the rest of blue over what is left; bone is (7*gray + hot reversed)/8 and pink sqrt((2*gray + hot)/3); jet places a ramp up, a plateau and a ramp down (a quarter of the map each) in blue, then green, then red, shifted by a quarter; hsv steps round the hue circle by Python's colorsys.hsv_to_rgb; lines, prism and flag repeat their colours; colorcube takes the points of an RGB grid. parula, viridis and turbo interpolate linearly between anchor colours (parula's are this page's own blue-to-yellow ramp).
 caxis, clim:
-    Python: graphics.py. The axes' CLim, the values mapped to the colormap's ends; until it is set, the range of the colour data the page draws ('auto').
+    Python: graphics.py. The axes' CLim, the values mapped to the colormap's ends; until it is set, the range of the colour data the page draws ('auto'). With the axes' ColorScale 'log' the automatic limits come from the positive values only, and the page maps a value by its logarithm between the limits' (the colorbar ticked in powers of ten); values not above zero take the first colour.
+alpha:
+    Python: graphics.py. Sets the objects' properties: FaceAlpha (an image's AlphaData) for a number, 'opaque' (1) or 'clear' (0), FaceAlpha 'flat' or 'interp', AlphaDataMapping for 'scaled', 'direct' or 'none', and the alpha data for an array or a word: a surface's ZData, CData, XData or YData (vectors spread over the grid), a patch's vertex coordinates or vertex colours as a column (a patch given by XData and YData has its vertices a column after another), an image's pixel columns or rows numbered from 1 or its colour indices, or uniform random numbers from the generator rand uses. The engine (graphics_base.py) maps the data to opacities before the page draws them: 'none' keeps them within 0 and 1, 'direct' takes floor(value) as an index into the axes' Alphamap (from 1, kept in range), 'scaled' takes t = (value - amin)/(amax - amin), or the same in log10 with AlphaScale 'log', and the entry floor(t*n) of the n in the map. A surface's face takes the opacity at its first corner ('flat') or the mean of its four ('interp'); a patch's face its own when there is one for each face, else its first vertex's ('flat') or its vertices' mean ('interp'); an image a value for each pixel.
+alphamap:
+    Python: graphics.py. Sets the Alphamap of the figure and each of its axes (axes made later in the figure start from it), or of the axes given. The named maps are linspace(0, 1, n) ('default', 'rampup'), its reverse ('rampdown'), 1 - |2t - 1| ('vup') and |2t - 1| ('vdown'); 'increase' and 'decrease' add or take delta from the current map and clip it to [0, 1]; 'spin' is numpy.roll by k places.
+alim:
+    Python: graphics.py. The axes' ALim: set (ALimMode 'manual'), frozen at its present value ('manual'), or worked out again from the data ('auto'): the smallest and largest finite alpha data of the axes' surfaces, patches and images whose AlphaDataMapping is 'scaled' (positive values only with AlphaScale 'log'); [0 1] when there are none, one either side when they are all equal.
 shading:
     Python: graphics.py. Sets the surfaces' and patches' FaceColor and EdgeColor: 'flat' (one colour for each face, no edges), 'interp' (colours interpolated across each face, no edges) or 'faceted' (flat with black edges).
 view:
@@ -1469,7 +1475,7 @@ material:
     Python: graphics.py. Sets the surfaces' and patches' reflectance properties to the values of the material named (or given); they are kept, not drawn: the shading has no specular part.
 rotate3d, zoom, pan, datacursormode, brush:
     Python: graphics.py. Accepted and ignored: the figure's toolbar and the mouse zoom, pan, rotate and show data tips.
-linkaxes, linkprop, alpha, hidden, whitebg, refresh, shg:
+linkaxes, linkprop, hidden, whitebg, refresh, shg:
     Python: graphics.py. Accepted and ignored.
 colororder:
     Python: graphics.py. Sets the ColorOrder of the figure's axes, the colours that new lines and series take in turn, or returns it.

@@ -129,7 +129,7 @@ xticks xticklabels
 @ box, daspect, pbaspect
 The box round the axes, and the proportions of the data and of the plot box.
 
-`box on` draws the box's far sides as well as the axes' own lines. `daspect` sets the data aspect ratio, how long one unit is on each axis relative to the others ([1 1 1] makes a circle round); `pbaspect` sets the plot box's proportions whatever the data. `'auto'` gives either back to the axes.
+`box on` draws the box's far sides as well as the axes' own lines; in 3-D the back planes are always outlined, and `box on` adds the edges in front when the axes' BoxStyle is 'full'. `daspect` sets the data aspect ratio, how long one unit is on each axis relative to the others ([1 1 1] makes a circle round); `pbaspect` sets the plot box's proportions whatever the data. `'auto'` gives either back to the axes.
 
 # Syntax
 box on

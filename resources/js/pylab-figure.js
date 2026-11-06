@@ -73,11 +73,21 @@
     return alpha < 1 ? `rgba(${r},${g},${b},${alpha})` : `rgb(${r},${g},${b})`;
   }
 
+  /* Where a value falls between the colour limits, 0 to 1: on a log scale when the axes' ColorScale is 'log' (the
+     limits marked so, clim.log), values not above zero at the bottom. */
+  function climFrac(clim, v) {
+    if (clim.log && clim[0] > 0 && clim[1] > clim[0]) {
+      if (!(v > 0)) return 0;
+      return (Math.log10(v) - Math.log10(clim[0])) / (Math.log10(clim[1]) - Math.log10(clim[0]));
+    }
+    return clim[1] > clim[0] ? (v - clim[0]) / (clim[1] - clim[0]) : 0.5;
+  }
+
   function cmapColor(cmap, clim, v, alpha = 1) {
     if (Array.isArray(v)) return rgb(v, alpha);        // a true colour (FaceVertexCData given as RGB rows)
     const n = cmap.shape[0];
     if (!Number.isFinite(v)) return null;
-    let t = clim[1] > clim[0] ? (v - clim[0]) / (clim[1] - clim[0]) : 0.5;
+    let t = climFrac(clim, v);
     t = Math.max(0, Math.min(1, t));
     const k = Math.min(n - 1, Math.floor(t * n));
     const d = cmap.data;
@@ -86,7 +96,7 @@
 
   function cmapRGB(cmap, clim, v) {
     const n = cmap.shape[0];
-    let t = clim[1] > clim[0] ? (v - clim[0]) / (clim[1] - clim[0]) : 0.5;
+    let t = climFrac(clim, v);
     t = Math.max(0, Math.min(1, t));
     const k = Math.min(n - 1, Math.floor(t * n));
     const d = cmap.data;
@@ -708,6 +718,56 @@
     return out;
   }
 
+  /* ---- clipping to a 3-D axes' box (ClippingStyle '3dbox'), in data coordinates ---------------------------- */
+  // the box's limits, a hair wider so that what lies on a face stays
+  function box3(fr) {
+    return fr.lims.map(([a, b]) => { const lo = Math.min(a, b), hi = Math.max(a, b), e = (hi - lo) * 1e-9; return [lo - e, hi + e]; });
+  }
+  function inBox3(B, p) { return p[0] >= B[0][0] && p[0] <= B[0][1] && p[1] >= B[1][0] && p[1] <= B[1][1] && p[2] >= B[2][0] && p[2] <= B[2][1]; }
+  /* A polygon cut to the box, plane by plane (Sutherland and Hodgman); what a point carries after x, y, z (a value for
+     interpolated colour) is cut with it. Empty when nothing is left. */
+  function clipPoly3(pts, B) {
+    let out = pts;
+    for (let k = 0; k < 3 && out.length; k++) {
+      for (const side of [0, 1]) {
+        const lim = B[k][side];
+        const inside = (p) => (side === 0 ? p[k] >= lim : p[k] <= lim);
+        const res = [];
+        for (let i = 0; i < out.length; i++) {
+          const a = out[i], b = out[(i + 1) % out.length];
+          const ia = inside(a), ib = inside(b);
+          if (ia) res.push(a);
+          if (ia !== ib) { const t = (lim - a[k]) / (b[k] - a[k]); res.push(a.map((v, j) => v + (b[j] - v) * t)); }
+        }
+        out = res;
+        if (out.length < 3) return [];
+      }
+    }
+    return out;
+  }
+  /* A segment cut to the box (Liang and Barsky), or null when none of it is inside. */
+  function clipSeg3(a, b, B) {
+    let t0 = 0, t1 = 1;
+    for (let k = 0; k < 3; k++) {
+      const d = b[k] - a[k];
+      for (const [p, q] of [[-d, a[k] - B[k][0]], [d, B[k][1] - a[k]]]) {
+        if (p === 0) { if (q < 0) return null; continue; }
+        const r = q / p;
+        if (p < 0) { if (r > t1) return null; if (r > t0) t0 = r; } else { if (r < t0) return null; if (r < t1) t1 = r; }
+      }
+    }
+    return [a.map((v, j) => v + (b[j] - v) * t0), a.map((v, j) => v + (b[j] - v) * t1)];
+  }
+
+  /* A surface's opacity for face (i, j): FaceAlpha's number, or from AlphaData (a value at each vertex, mapped by the
+     engine) at the face's first corner ('flat') or the mean of its corners ('interp'). */
+  function surfaceAlpha(c, m, n) {
+    const A = c.alphaData ? decode(c.alphaData) : null;
+    if (!A || A.data.length !== m * n) { const a = typeof c.faceAlpha === 'number' ? c.faceAlpha : 1; return () => a; }
+    const at = (i, j) => A.data[i * n + j];
+    return c.faceAlpha === 'interp' ? (i, j) => (at(i, j) + at(i, j + 1) + at(i + 1, j) + at(i + 1, j + 1)) / 4 : at;
+  }
+
   /* ---- drawing a figure -------------------------------------------------------------------- */
   class Renderer {
     constructor() {
@@ -976,6 +1036,8 @@
     }
 
     drawAxes(ctx, fig, ax, W, H, legend, cbar) {
+      // the colour limits read on a log scale (climFrac) when ColorScale is 'log'
+      if (Array.isArray(ax.clim)) ax.clim.log = ax.colorScale === 'log';
       // axes in a panel or tab are drawn inside it (a camera zoom takes them past their Position)
       const b = ax._box;
       if (b) { ctx.save(); ctx.beginPath(); ctx.rect(b.x, b.y, b.w, b.h); ctx.clip(); }
@@ -1153,7 +1215,7 @@
       ctx.stroke();
       ctx.restore();
       // tick labels, in the axes' font
-      const tf = { size: fs, interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
+      const tf = { size: fs, interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', italic: ax.fontAngle === 'italic', family: faceOf(ax.fontName) };
       let maxYLabel = 0;
       xt.labels.forEach((s, i) => {
         const x = fr.fx(xt.ticks[i]);
@@ -1383,12 +1445,14 @@
       const cmap = ax._cmap;
       for (const [pi, poly] of polys.entries()) {
         if (poly.pts.length < 2) continue;
+        // the face's opacity: from FaceVertexAlphaData (FaceAlpha 'flat' or 'interp'), else FaceAlpha's number
+        const fa = poly.a != null ? poly.a : c.faceAlpha;
         const interp = c.faceColor === 'interp' && !poly.open && !c.rings && poly.vals && poly.vals.length === poly.pts.length
           && poly.pts.length >= 3 && poly.vals.every(Number.isFinite);
         if (interp) {
           const P = poly.pts.map(([x, y]) => [fr.fx(x), fr.fy(y)]);
           for (let k = 1; k + 1 < P.length; k++) {
-            this.interpTri(ctx, P[0], P[k], P[k + 1], poly.vals[0], poly.vals[k], poly.vals[k + 1], cmap, ax.clim, c.faceAlpha, (col) => col);
+            this.interpTri(ctx, P[0], P[k], P[k + 1], poly.vals[0], poly.vals[k], poly.vals[k + 1], cmap, ax.clim, fa, (col) => col);
           }
         }
         ctx.beginPath();
@@ -1414,12 +1478,12 @@
         }
         let fill = null;
         if (poly.open || interp) fill = null;
-        else if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, c.faceAlpha);
-        else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, c.faceAlpha);
+        else if (Array.isArray(c.faceColor)) fill = rgb(c.faceColor, fa);
+        else if ((c.faceColor === 'flat' || c.faceColor === 'interp') && poly.c != null) fill = cmapColor(cmap, ax.clim, poly.c, fa);
         if (fill) {
           ctx.fillStyle = fill;
           ctx.fill(c.rings ? 'evenodd' : 'nonzero');
-          if (c.edgeColor === 'none' && !c.rings && polys.length > 1 && (c.faceAlpha == null || c.faceAlpha >= 1)) {
+          if (c.edgeColor === 'none' && !c.rings && polys.length > 1 && (fa == null || fa >= 1)) {
             // faces meeting edge to edge (a mesh): each traced in its own colour, so no seam of background shows between them
             ctx.strokeStyle = fill;
             ctx.lineWidth = 0.6;
@@ -1458,6 +1522,9 @@
       const n = cmap.shape[0];
       const cm = cmap.data;
       const rgbImg = c.rgb && sh.length === 3;
+      // AlphaData: an opacity for each pixel, mapped by the engine
+      const A = c.alphaData ? decode(c.alphaData) : null;
+      const aOf = A && A.data.length === rows * cols ? (i, j) => A.data[i * cols + j] : () => (c.alpha ?? 1);
       for (let i = 0; i < rows; i++) {
         for (let j = 0; j < cols; j++) {
           const k = (i * cols + j) * 4;
@@ -1470,13 +1537,13 @@
             if (!Number.isFinite(v)) { img.data[k + 3] = 0; continue; }
             let idx;
             if (c.cmapping === 'scaled') {
-              let t = ax.clim[1] > ax.clim[0] ? (v - ax.clim[0]) / (ax.clim[1] - ax.clim[0]) : 0.5;
+              let t = climFrac(ax.clim, v);
               t = Math.max(0, Math.min(1, t));
               idx = Math.min(n - 1, Math.floor(t * n));
             } else idx = Math.max(0, Math.min(n - 1, Math.round(v) - 1));
             r = cm[idx * 3]; g = cm[idx * 3 + 1]; b = cm[idx * 3 + 2];
           }
-          img.data[k] = r * 255; img.data[k + 1] = g * 255; img.data[k + 2] = b * 255; img.data[k + 3] = (c.alpha ?? 1) * 255;
+          img.data[k] = r * 255; img.data[k + 1] = g * 255; img.data[k + 2] = b * 255; img.data[k + 3] = aOf(i, j) * 255;
         }
       }
       octx.putImageData(img, 0, 0);
@@ -1500,8 +1567,10 @@
       const gy = (i, j) => (Y.shape.length === 2 && Y.shape[0] === m ? at2(Y, i, j) : Y.data[i]);
       const gc = (i, j) => (Cd.shape.length >= 2 ? Cd.data[i * Cd.shape[1] + j] : Cd.data[j]);
       const cmap = ax._cmap;
+      const aOf = surfaceAlpha(c, m, n);
       for (let i = 0; i < m - 1; i++) {
         for (let j = 0; j < n - 1; j++) {
+          const alpha = aOf(i, j);
           ctx.beginPath();
           ctx.moveTo(fr.fx(gx(i, j)), fr.fy(gy(i, j)));
           ctx.lineTo(fr.fx(gx(i, j + 1)), fr.fy(gy(i, j + 1)));
@@ -1510,7 +1579,7 @@
           ctx.closePath();
           let v = gc(i, j);
           if (c.faceColor === 'interp') v = (gc(i, j) + gc(i, j + 1) + gc(i + 1, j) + gc(i + 1, j + 1)) / 4;
-          const fill = Array.isArray(c.faceColor) ? rgb(c.faceColor) : c.faceColor === 'none' ? null : cmapColor(cmap, ax.clim, v);
+          const fill = Array.isArray(c.faceColor) ? rgb(c.faceColor, alpha) : c.faceColor === 'none' ? null : cmapColor(cmap, ax.clim, v, alpha);
           if (fill) { ctx.fillStyle = fill; ctx.fill(); }
           if (c.edgeColor !== 'none' && c.lineStyle !== 'none') {
             ctx.strokeStyle = Array.isArray(c.edgeColor) ? rgb(c.edgeColor) : (cmapColor(cmap, ax.clim, v) || AXIS_INK);
@@ -1518,7 +1587,7 @@
             dash(ctx, c.lineStyle || '-', c.lineWidth);
             ctx.stroke();
             ctx.setLineDash([]);
-          } else if (fill) { ctx.strokeStyle = fill; ctx.lineWidth = 0.6; ctx.stroke(); }
+          } else if (fill && alpha === 1) { ctx.strokeStyle = fill; ctx.lineWidth = 0.6; ctx.stroke(); }
         }
       }
     }
@@ -1889,7 +1958,7 @@
       const span = top - rlo || 1;
       const rad = (r) => R * Math.max(0, (r - rlo)) / span;
       const fs = ax.fontSize * PT;
-      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
+      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', italic: ax.fontAngle === 'italic', family: faceOf(ax.fontName) };
       ctx.save();
       if (ax.visible) {
         if (ax.color !== 'none') { ctx.fillStyle = rgb(ax.color); ctx.beginPath(); ctx.arc(cx, cy, R, 0, 2 * Math.PI); ctx.fill(); }
@@ -2013,7 +2082,7 @@
       }
       // the data, far to near
       this.scene3(ctx, ax, fr);
-      if (ax.box && ax.visible) {
+      if (ax.box && ax.visible && ax.boxStyle === 'full') {
         ctx.save();
         ctx.strokeStyle = AXIS_INK;
         ctx.lineWidth = lw(ax.lineWidth);
@@ -2070,7 +2139,7 @@
       })();
       ctx.save();
       ctx.lineWidth = lw(ax.lineWidth);
-      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', family: faceOf(ax.fontName) };
+      const tf = { interpreter: ax.tickLabelInterpreter || 'tex', bold: ax.fontWeight === 'bold', italic: ax.fontAngle === 'italic', family: faceOf(ax.fontName) };
       for (let k = 0; k < 3; k++) {
         const a = k === 2 ? zEdge : edgeFor(k);
         const t = ticks[k];
@@ -2112,8 +2181,12 @@
     }
 
     scene3(ctx, ax, fr) {
-      const items = [];          // {depth, draw}
+      const items = [];          // {depth, draw, clip}
       const cmap = ax._cmap;
+      // what the data are cut to: the box in data units ('3dbox'), or the box's outline on the screen ('rectangle', below)
+      const rect = ax.clippingStyle === 'rectangle';
+      this._box3 = rect ? null : box3(fr);
+      const B = this._box3;
       const lights = ax.children.filter((c) => c.type === 'light');
       const lightDir = lights.length ? (() => { const p = lights[0].position; const L = Math.hypot(...p) || 1; return p.map((v) => v / L); })() : null;
       for (const c of ax.children) {
@@ -2122,18 +2195,30 @@
         else if (c.type === 'line') {
           const x = vec(decode(c.x)), y = vec(decode(c.y)), z = c.z ? vec(decode(c.z)) : null;
           const n = Math.min(x.length, y.length);
-          const P = [];
-          for (let i = 0; i < n; i++) P.push(fr.p(x[i], y[i], z ? z[i] : fr.lims[2][0]));
+          const D = [];
+          for (let i = 0; i < n; i++) D.push([x[i], y[i], z ? z[i] : fr.lims[2][0]]);
+          const P = D.map((q) => fr.p(q[0], q[1], q[2]));
           const col = rgb(c.color);
+          const cut = c.clip !== false ? B : null;
+          const cl = c.clip !== false;
           if (c.lineStyle !== 'none') {
             for (let i = 0; i + 1 < n; i++) {
-              const a = P[i], b = P[i + 1];
+              let a = P[i], b = P[i + 1];
               if (!Number.isFinite(a[0] + a[1] + b[0] + b[1])) continue;
-              items.push({ d: (a[2] + b[2]) / 2 + 1e-6, f: () => { ctx.strokeStyle = col; ctx.lineWidth = lw(c.lineWidth); dash(ctx, c.lineStyle, c.lineWidth); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.setLineDash([]); } });
+              // a segment reaching past the box: the part inside
+              if (cut && !(inBox3(cut, D[i]) && inBox3(cut, D[i + 1]))) {
+                const s2 = clipSeg3(D[i], D[i + 1], cut);
+                if (!s2) continue;
+                a = fr.p(...s2[0]); b = fr.p(...s2[1]);
+              }
+              items.push({ d: (a[2] + b[2]) / 2 + 1e-6, clip: cl, f: () => { ctx.strokeStyle = col; ctx.lineWidth = lw(c.lineWidth); dash(ctx, c.lineStyle, c.lineWidth); ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke(); ctx.setLineDash([]); } });
             }
           }
           if (c.marker && c.marker !== 'none') {
-            for (const p of P) if (Number.isFinite(p[0] + p[1])) items.push({ d: p[2] + 2e-6, f: () => drawMarkers(ctx, [[p[0], p[1]]], c.marker, c.markerSize, c.mec === 'auto' ? col : rgb(c.mec), c.mfc === 'none' ? null : c.mfc === 'auto' ? col : rgb(c.mfc), c.lineWidth) });
+            P.forEach((p, i) => {
+              if (!Number.isFinite(p[0] + p[1]) || (cut && !inBox3(cut, D[i]))) return;
+              items.push({ d: p[2] + 2e-6, clip: cl, f: () => drawMarkers(ctx, [[p[0], p[1]]], c.marker, c.markerSize, c.mec === 'auto' ? col : rgb(c.mec), c.mfc === 'none' ? null : c.mfc === 'auto' ? col : rgb(c.mfc), c.lineWidth) });
+            });
           }
         } else if (c.type === 'series' && (c.kind === 'scatter' || c.kind === 'bubblechart')) {
           const x = vec(decode(c.xData)), y = vec(decode(c.yData)), z = c.zData ? vec(decode(c.zData)) : null;
@@ -2141,9 +2226,11 @@
           const rgbc = c.rgb ? decode(c.rgb) : null;
           const sd = c.sizeData ? vec(decode(c.sizeData)) : null;
           const bub = c.bubbleSize ? vec(decode(c.bubbleSize)) : null;
+          const cutS = c.clip !== false ? B : null;
           for (let i = 0; i < x.length; i++) {
             const p = fr.p(x[i], y[i], z ? z[i] : fr.lims[2][0]);
             if (!Number.isFinite(p[0] + p[1])) continue;
+            if (cutS && !inBox3(cutS, [x[i], y[i], z ? z[i] : fr.lims[2][0]])) continue;
             let col = rgb(c.color);
             if (rgbc) col = rgb([rgbc.data[i * 3], rgbc.data[i * 3 + 1], rgbc.data[i * 3 + 2]]);
             else if (cd && cd.length === x.length) col = cmapColor(cmap, ax.clim, cd[i]) || col;
@@ -2174,8 +2261,17 @@
             prev = p;
           }
         } else if (c.type === 'patch') {
+          const cutP = c.clip !== false ? B : null;
           for (const poly of patchPolys(c)) {
-            const P = poly.pts.map(([x, y, z]) => fr.p(x, y, z == null ? fr.lims[2][0] : z));
+            let pts = poly.pts;
+            if (cutP && !poly.open && pts.length >= 3) {
+              const D = pts.map(([x, y, z]) => [x, y, z == null ? fr.lims[2][0] : z]);
+              if (!D.every((q) => inBox3(cutP, q))) {
+                pts = clipPoly3(D, cutP);
+                if (!pts.length) continue;
+              }
+            }
+            const P = pts.map(([x, y, z]) => fr.p(x, y, z == null ? fr.lims[2][0] : z));
             if (P.length < 2) continue;
             const d = P.reduce((s, p) => s + p[2], 0) / P.length;
             // a face's colour: the patch's own, a true colour given for the face, or its value through the colormap
@@ -2195,13 +2291,14 @@
                 base = [base[0] * f, base[1] * f, base[2] * f];
               }
             }
-            const fill = base ? rgb(base, c.faceAlpha) : null;
+            const fa = poly.a != null ? poly.a : c.faceAlpha;
+            const fill = base ? rgb(base, fa) : null;
             const edge = c.edgeColor === 'none' ? null : Array.isArray(c.edgeColor) ? rgb(c.edgeColor)
               : ((c.edgeColor === 'flat' || c.edgeColor === 'interp') && poly.c != null) ? cmapColor(cmap, ax.clim, poly.c) : AXIS_INK;
             const fin = P.filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
             if (fin.length < 2) continue;
             const dd = fin.reduce((s, p) => s + p[2], 0) / fin.length;
-            items.push({ d: poly.open ? dd : d, f: () => {
+            items.push({ d: poly.open ? dd : d, clip: c.clip !== false, f: () => {
               ctx.beginPath();
               if (poly.open) {
                 let start = true;
@@ -2217,7 +2314,7 @@
               if (fill) { ctx.fillStyle = fill; ctx.fill(); }
               if (edge) { ctx.strokeStyle = edge; ctx.lineWidth = lw(c.lineWidth); ctx.stroke(); }
               // no edges: a hairline in the face's own colour hides the seams between faces, as for surfaces
-              else if (fill && !poly.open && !(c.faceAlpha < 1)) { ctx.strokeStyle = fill; ctx.lineWidth = 0.5; ctx.stroke(); }
+              else if (fill && !poly.open && !(fa < 1)) { ctx.strokeStyle = fill; ctx.lineWidth = 0.5; ctx.stroke(); }
             } });
           }
         } else if (c.type === 'text') {
@@ -2241,7 +2338,18 @@
       }
       items.sort((a, b) => a.d - b.d);
       ctx.save();
-      for (const it of items) it.f(ctx);
+      // ClippingStyle 'rectangle': what is clipped stays within the rectangle round the box as drawn
+      let R = null;
+      if (rect) {
+        const cs = [];
+        for (const x of fr.lims[0]) for (const y of fr.lims[1]) for (const z of fr.lims[2]) cs.push(fr.p(x, y, z));
+        const xs = cs.map((p) => p[0]), ys = cs.map((p) => p[1]);
+        R = [Math.min(...xs), Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)];
+      }
+      for (const it of items) {
+        if (R && it.clip) { ctx.save(); ctx.beginPath(); ctx.rect(...R); ctx.clip(); it.f(ctx); ctx.restore(); }
+        else it.f(ctx);
+      }
       ctx.restore();
     }
 
@@ -2275,11 +2383,14 @@
         const f = 0.35 + 0.65 * d;
         return [col[0] * f, col[1] * f, col[2] * f];
       };
+      const aOf = surfaceAlpha(c, m, n);
+      // the axes' box cuts the faces that reach past it (Clipping on, ClippingStyle '3dbox')
+      const B = c.clip !== false ? this._box3 : null;
       for (let i = 0; i < m - 1; i++) {
         for (let j = 0; j < n - 1; j++) {
           const q = [P[i][j], P[i][j + 1], P[i + 1][j + 1], P[i + 1][j]];
           if (q.some((p) => !Number.isFinite(p[0] + p[1] + p[2]))) continue;
-          const d = (q[0][2] + q[1][2] + q[2][2] + q[3][2]) / 4;
+          const alpha = aOf(i, j);
           let fill = null, grad = null;
           if (Array.isArray(faceMode)) fill = shade(faceMode, i, j);
           else if (faceMode === 'flat' || faceMode === 'texturemap') {
@@ -2290,14 +2401,31 @@
             if (vals.every(Number.isFinite)) grad = { vals, i, j };
           }
           const edge = edgeMode === 'none' ? null : Array.isArray(edgeMode) ? edgeMode : (Number.isFinite(gc(i, j)) ? cmapRGB(cmap, clim, gc(i, j)) : null);
+          // a face partly outside the box: the part inside, its colour values carried to the new corners
+          let poly = q, pvals = grad ? grad.vals : null;
+          if (B) {
+            const ij = [[i, j], [i, j + 1], [i + 1, j + 1], [i + 1, j]];
+            const D = ij.map(([a, b], k) => [gx(a, b), gy(a, b), at2(Z, a, b), grad ? grad.vals[k] : 0]);
+            if (!D.every((p) => inBox3(B, p))) {
+              const cut = clipPoly3(D, B);
+              if (!cut.length) continue;
+              poly = cut.map((p) => fr.p(p[0], p[1], p[2]));
+              if (grad) pvals = cut.map((p) => p[3]);
+            }
+          }
+          const d = poly.reduce((t, p) => t + p[2], 0) / poly.length;
           items.push({
             d,
+            clip: c.clip !== false,
             f: (g) => {
-              g.beginPath();
-              g.moveTo(q[0][0], q[0][1]); g.lineTo(q[1][0], q[1][1]); g.lineTo(q[2][0], q[2][1]); g.lineTo(q[3][0], q[3][1]);
-              g.closePath();
+              const path = () => { g.beginPath(); poly.forEach((p, k) => (k ? g.lineTo(p[0], p[1]) : g.moveTo(p[0], p[1]))); g.closePath(); };
+              path();
               if (fill) { g.fillStyle = rgb(fill, alpha); g.fill(); }
-              else if (grad) this.interpQuad(g, q, grad.vals, cmap, clim, alpha, (col) => shade(col, grad.i, grad.j));
+              else if (grad) {
+                if (poly === q) this.interpQuad(g, q, grad.vals, cmap, clim, alpha, (col) => shade(col, grad.i, grad.j));
+                else for (let t = 1; t + 1 < poly.length; t++) this.interpTri(g, poly[0], poly[t], poly[t + 1], pvals[0], pvals[t], pvals[t + 1], cmap, clim, alpha, (col) => shade(col, grad.i, grad.j));
+                path();
+              }
               if (edge) { g.strokeStyle = rgb(edge, c.edgeAlpha); g.lineWidth = c.lineWidth; dash(g, c.lineStyle || '-', c.lineWidth); g.stroke(); g.setLineDash([]); }
               else if (fill && alpha === 1) { g.strokeStyle = rgb(fill); g.lineWidth = 0.5; g.stroke(); }
             },
@@ -2460,13 +2588,14 @@
       ctx.lineWidth = lw(0.5);
       if (cb.box !== false) ctx.strokeRect(x, y, w, h);
       const lim = ax.clim;
-      const ticks = cb.ticks || niceTicks(lim[0], lim[1], 9);
-      const { labels, exp } = cb.tickLabels ? { labels: cb.tickLabels, exp: null } : tickLabels(ticks, false);
+      const logc = !!lim.log && lim[0] > 0 && lim[1] > lim[0];
+      const ticks = cb.ticks || (logc ? logTicks(lim[0], lim[1]) : niceTicks(lim[0], lim[1], 9));
+      const { labels, exp } = cb.tickLabels ? { labels: cb.tickLabels, exp: null } : tickLabels(ticks, logc);
       // TickDirection: in (into the bar), out, or both
       const tin = cb.tickDirection !== 'out' ? 3 : 0, tout = cb.tickDirection === 'out' || cb.tickDirection === 'both' ? 3 : 0;
       ctx.beginPath();
       ticks.forEach((t, i) => {
-        let f = (t - lim[0]) / (lim[1] - lim[0]);
+        let f = climFrac(lim, t);
         if (f < -1e-9 || f > 1 + 1e-9) return;
         if (rev) f = 1 - f;
         if (horiz) { const px = x + f * w; ctx.moveTo(px, y + h + tout); ctx.lineTo(px, y + h - tin); drawText(ctx, labels[i] ?? '', px, y + h + 3 + tout, { size: fs, halign: 'center', valign: 'top', color: rgb(cb.color) }); }
@@ -2520,6 +2649,18 @@
   }
 
   function patchPolys(c) {
+    const out = patchFaces(c);
+    const fva = c.fva ? vec(decode(c.fva)) : null;
+    if (fva && fva.length) {
+      for (const [i, poly] of out.entries()) {
+        if (fva.length === out.length) poly.a = fva[i];
+        else if (poly.vi && poly.vi.length) poly.a = c.faceAlphaMode === 'interp' ? poly.vi.reduce((t, k) => t + (fva[k] ?? 1), 0) / poly.vi.length : (fva[poly.vi[0]] ?? 1);
+      }
+    }
+    return out;
+  }
+
+  function patchFaces(c) {
     const out = [];
     if (c.faces && c.vertices) {
       const F = decode(c.faces), V = decode(c.vertices);
@@ -2549,7 +2690,7 @@
         } else if (fvc) col = colorOf(Math.min(i, rows - 1));
         // a value at each vertex, for a face whose colour is interpolated
         const vals = fvc && perVertex && width === 1 && idx.length ? idx.map(colorOf) : null;
-        out.push({ pts, c: col, open, vals });
+        out.push({ pts, c: col, open, vals, vi: idx });
       }
       return out;
     }
@@ -2570,7 +2711,10 @@
         for (let i = 0; i < rows; i++) vals.push(C.data[i * cols + j]);
         cv = vals[0];
       }
-      out.push({ pts, c: cv, vals });
+      // its vertices' places in the patch's vertex list (a column after another), for alpha data given for each vertex
+      const vi = [];
+      for (let i = 0; i < rows; i++) vi.push(j * rows + i);
+      out.push({ pts, c: cv, vals, vi });
     }
     return out;
   }

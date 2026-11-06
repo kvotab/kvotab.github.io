@@ -635,6 +635,10 @@ class Axes(GObj):
 
     def __init__(self, parent, **props):
         super().__init__(parent, **props)
+        # new axes start from their figure's alphamap (alphamap sets it)
+        f = self.figure()
+        if f is not None and 'Alphamap' not in props and f.props.get('Alphamap') is not None:
+            self.props['Alphamap'] = np.array(f.props['Alphamap'], float).reshape(1, -1)
         self.title = Text(None, String='', hidden=True)
         self.title.props['FontWeight'] = 'bold'
         self.xlabel = Text(None, String='')
@@ -762,6 +766,8 @@ class Axes(GObj):
             return np.array([[float(np.mean(np.asarray(self.get_value(a), float))) for a in ('XLim', 'YLim', 'ZLim')]])
         if k == 'CameraPosition':
             return self.camera_position()
+        if k == 'ALim' and self.props.get('ALimMode', 'auto') == 'auto':
+            return np.array([auto_alim(self)])
         if k == 'PositionConstraint':
             return Char.of('innerposition' if self.props['ActivePositionProperty'] == 'position' else 'outerposition')
         if k == 'TightInset':
@@ -816,7 +822,7 @@ class Axes(GObj):
             return
         if k in ('RTickLabel', 'ThetaTickLabel'):
             return self._set_labels(k, value)
-        if k in ('XLim', 'YLim', 'ZLim', 'CLim'):
+        if k in ('XLim', 'YLim', 'ZLim', 'CLim', 'ALim'):
             a = np.asarray(value if type(value) is not float else [value], float).reshape(-1)
             if a.size != 2:
                 raise gerr('Value must be a 1x2 vector of numeric type in which the second element is larger than the first and may be Inf.', 'MATLAB:hg:shaped_arrays:LimitsWithInfsPredicate')
@@ -825,7 +831,7 @@ class Axes(GObj):
                 raise gerr('Value must be a 1x2 vector of numeric type in which the second element is larger than the first and may be Inf.', 'MATLAB:hg:shaped_arrays:LimitsWithInfsPredicate')
             if math.isinf(lo) or math.isinf(hi):
                 from .glayout import auto_limits, auto_clim
-                auto = auto_clim(self) if k == 'CLim' else auto_limits(self)[k]
+                auto = auto_clim(self) if k == 'CLim' else auto_alim(self) if k == 'ALim' else auto_limits(self)[k]
                 lo = auto[0] if math.isinf(lo) else lo
                 hi = auto[1] if math.isinf(hi) else hi
             self.props[k] = np.array([[lo, hi]])
@@ -869,7 +875,7 @@ class Axes(GObj):
             self.props[k + 'Mode'] = 'manual'
             self.touch()
             return
-        if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode',
+        if k in ('XLimMode', 'YLimMode', 'ZLimMode', 'XTickMode', 'YTickMode', 'ZTickMode', 'CLimMode', 'ALimMode',
                  'XTickLabelMode', 'YTickLabelMode', 'ZTickLabelMode', 'DataAspectRatioMode', 'PlotBoxAspectRatioMode',
                  'CameraViewAngleMode', 'CameraTargetMode', 'CameraUpVectorMode', 'CameraPositionMode', 'RLimMode', 'RTickMode', 'ThetaTickMode',
                  'RTickLabelMode', 'ThetaTickLabelMode'):
@@ -1925,6 +1931,59 @@ def text_extent(t):
     return np.array([[pos[0] + dx * w * sx, pos[1] + dy * h * sy, w * sx, h * sy]])
 
 
+def _alpha_values(c):
+    """An object's alpha data as given (AlphaData, or a patch's FaceVertexAlphaData), or None."""
+    k = 'FaceVertexAlphaData' if c.TYPE == 'patch' else 'AlphaData'
+    v = c.props.get(k)
+    if v is None or not numel(v) or isinstance(v, (Char, Str)):
+        return None
+    return np.asarray(v, float)
+
+
+def auto_alim(ax):
+    """The alpha limits from the data mapped through the alphamap ('scaled'), as CLim's from the colours."""
+    lo, hi = math.inf, -math.inf
+    for c in drawn_children(ax):
+        if not c.valid or c.props.get('AlphaDataMapping') != 'scaled' or c.TYPE not in ('surface', 'patch', 'image'):
+            continue
+        a = _alpha_values(c)
+        # a single value (a surface's AlphaData of 1 by default) leaves the limits as they are
+        if a is None or a.size < 2:
+            continue
+        a = a[np.isfinite(a)]
+        if ax.props.get('AlphaScale') == 'log':
+            a = a[a > 0]
+        if a.size:
+            lo, hi = min(lo, float(a.min())), max(hi, float(a.max()))
+    if lo == math.inf:
+        return [0.0, 1.0]
+    return [lo, hi] if hi > lo else [lo - 1, hi + 1]
+
+
+def mapped_alpha(c, ax, a):
+    """Alpha data as opacities from 0 to 1: as they are ('none'), as indices into the axes' Alphamap ('direct', from 1), or
+    through ALim onto the Alphamap ('scaled'; on a log scale with AlphaScale 'log')."""
+    a = np.asarray(a, float)
+    mapping = c.props.get('AlphaDataMapping', 'none')
+    if mapping == 'none':
+        return np.clip(np.nan_to_num(a, nan=0.0), 0, 1)
+    amap = np.asarray(ax.props.get('Alphamap'), float).reshape(-1) if ax is not None else np.linspace(0, 1, 64)
+    if not amap.size:
+        amap = np.linspace(0, 1, 64)
+    n = amap.size
+    if mapping == 'direct':
+        idx = np.clip(np.nan_to_num(np.floor(a), nan=1) - 1, 0, n - 1).astype(int)
+        return amap[idx]
+    lo, hi = (np.asarray(ax.get_value('ALim'), float).reshape(-1) if ax is not None else (0.0, 1.0))
+    if ax is not None and ax.props.get('AlphaScale') == 'log' and lo > 0 and hi > lo:
+        with np.errstate(all='ignore'):
+            t = (np.log10(np.where(a > 0, a, lo)) - math.log10(lo)) / (math.log10(hi) - math.log10(lo))
+    else:
+        t = (a - lo) / (hi - lo) if hi > lo else np.full(a.shape, 0.5)
+    idx = np.clip(np.floor(np.nan_to_num(t, nan=0.0) * n), 0, n - 1).astype(int)
+    return amap[idx]
+
+
 def surface_normals(s, faces=False):
     """A surface's normals: at each vertex the cross product of the tangents along its columns and its rows (upward for
     z = f(x, y) on an increasing grid), or for each face that of its diagonals; not made unit length."""
@@ -2016,6 +2075,15 @@ def serialize_child(c, ax):
                  lineStyle=p['LineStyle'], lineWidth=float(p['LineWidth']), meshStyle=p['MeshStyle'],
                  lighting=p['FaceLighting'], marker=p['Marker'], markerSize=float(p['MarkerSize']),
                  cmapping=p['CDataMapping'])
+        # FaceAlpha 'flat' or 'interp': the faces' opacities from AlphaData, through the alphamap as its mapping says
+        if isinstance(p['FaceAlpha'], str) and p['FaceAlpha'] in ('flat', 'interp'):
+            ad = _alpha_values(c)
+            if ad is not None:
+                m_ = mapped_alpha(c, ax, ad)
+                if ad.size > 1:
+                    d['alphaData'] = _arr(m_.reshape(ad.shape))
+                elif float(m_.reshape(-1)[0]) != 1.0:
+                    d['faceAlpha'] = float(m_.reshape(-1)[0])
     elif t == 'patch':
         d.update(x=_arr(p['XData']) if numel(p['XData']) else None, y=_arr(p['YData']) if numel(p['YData']) else None,
                  z=_arr(p['ZData']) if numel(p['ZData']) else None,
@@ -2027,6 +2095,12 @@ def serialize_child(c, ax):
                  edgeAlpha=float(_num(p['EdgeAlpha'])) if not isinstance(p['EdgeAlpha'], str) else 1.0,
                  lineStyle=p['LineStyle'], lineWidth=float(p['LineWidth']), marker=p['Marker'], markerSize=float(p['MarkerSize']),
                  mfc=_color(p['MarkerFaceColor']), rings=bool(getattr(c, 'rings', False)))
+        # FaceAlpha 'flat' or 'interp': each face's opacity from FaceVertexAlphaData (one for each face, or each vertex)
+        if isinstance(p['FaceAlpha'], str) and p['FaceAlpha'] in ('flat', 'interp'):
+            ad = _alpha_values(c)
+            if ad is not None:
+                d['fva'] = _arr(mapped_alpha(c, ax, ad).reshape(-1, 1))
+                d['faceAlphaMode'] = p['FaceAlpha']
     elif t == 'image':
         cd = p['CData']
         a = np.asarray(cd.a if type(cd) is Char else cd)
@@ -2035,6 +2109,14 @@ def serialize_child(c, ax):
         d.update(c=_arr(a), x=_arr(p['XData']), y=_arr(p['YData']), cmapping=p['CDataMapping'],
                  alpha=float(_num(p['AlphaData'])) if numel(p['AlphaData']) == 1 else 1.0,
                  rgb=bool(a.ndim == 3))
+        # alpha data: a value for each pixel, or one mapped through the alphamap, as opacities
+        ad = _alpha_values(c)
+        if ad is not None and (ad.size > 1 or p.get('AlphaDataMapping', 'none') != 'none'):
+            m_ = mapped_alpha(c, ax, ad)
+            if ad.size > 1:
+                d['alphaData'] = _arr(m_.reshape(ad.shape))
+            else:
+                d['alpha'] = float(m_.reshape(-1)[0])
         if p.get('Interpolation', 'nearest') == 'bilinear':
             d['interpolation'] = 'bilinear'
     elif t == 'text':
@@ -2164,6 +2246,14 @@ def serialize_axes(ax):
     # the title's alignment and the minor grid's colour, when not their defaults (the pages stored before stay as they were)
     if p.get('TitleHorizontalAlignment', 'center') != 'center':
         d['titleAlign'] = p['TitleHorizontalAlignment']
+    if p.get('FontAngle', 'normal') == 'italic':
+        d['fontAngle'] = 'italic'
+    if p.get('BoxStyle', 'back') == 'full':
+        d['boxStyle'] = 'full'
+    if p.get('ColorScale', 'linear') == 'log':
+        d['colorScale'] = 'log'
+    if p.get('ClippingStyle', '3dbox') == 'rectangle':
+        d['clippingStyle'] = 'rectangle'
     if _color(p.get('MinorGridColor', (0.1, 0.1, 0.1))) != _color((0.1, 0.1, 0.1)):
         d['minorGridColor'] = _color(p['MinorGridColor'])
     if ax.kind == 'geo':

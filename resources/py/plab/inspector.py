@@ -438,21 +438,20 @@ _POLAR_NOT = re.compile(r'^([XYZ][A-Z]|Camera|DataAspect|PlotBox|View$|Projectio
 
 # kept (programs set them, files keep them) but not drawn by this page, by object type
 _NOT_DRAWN = {
-    'figure': 'Alphamap BackingStore DockControls DoubleBuffer GraphicsSmoothing InvertHardcopy MinColormap PaperOrientation '
+    'figure': 'BackingStore DockControls DoubleBuffer GraphicsSmoothing InvertHardcopy MinColormap PaperOrientation '
               'PaperPositionMode PaperSize PaperType PaperUnits Renderer RendererMode ShareColors WindowState Selected SelectionHighlight',
-    'axes': 'ALim ALimMode AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty ZTickLabelRotation '
-            'ThetaAxisUnits PositionConstraint AlphaScale Alphamap BoxStyle ClippingStyle ColorScale FontAngle FontSmoothing '
-            'Interactions Toolbar',
+    'axes': 'AmbientLightColor DrawMode Projection SortMethod OuterPosition ActivePositionProperty ZTickLabelRotation '
+            'ThetaAxisUnits PositionConstraint FontSmoothing Interactions Toolbar',
     'line': 'AlignVertexCenters EraseMode LineSmoothing SeriesIndex Selected SelectionHighlight XDataSource YDataSource ZDataSource '
             'ColorMode LineStyleMode MarkerMode XDataMode',
     'surface': 'AmbientStrength BackFaceLighting DiffuseStrength EdgeLighting EraseMode SpecularExponent SpecularStrength SpecularColorReflectance MeshStyle '
                'Marker MarkerSize CDataMapping Selected SelectionHighlight XDataSource YDataSource ZDataSource '
-               'AlphaData AlphaDataMapping CDataSource MarkerEdgeColor MarkerFaceColor VertexNormals FaceNormals',
+               'CDataSource MarkerEdgeColor MarkerFaceColor VertexNormals FaceNormals',
     'patch': 'AmbientStrength BackFaceLighting DiffuseStrength SpecularExponent SpecularStrength SpecularColorReflectance '
              'CDataMapping EdgeLighting FaceLighting EraseMode LineSmoothing Marker MarkerFaceColor MarkerEdgeColor MarkerSize '
-             'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha AlignVertexCenters AlphaDataMapping FaceVertexAlphaData '
+             'Selected SelectionHighlight HoleEdgeColor HoleEdgeAlpha AlignVertexCenters '
              'LineJoin VertexNormals FaceNormals',
-    'image': 'AlphaDataMapping EraseMode Selected SelectionHighlight',
+    'image': 'EraseMode Selected SelectionHighlight',
     'text': 'Editing EraseMode FontSmoothing Selected SelectionHighlight',
     'legend': 'Position', 'colorbar': 'Position',
     'uipanel': 'AutoResizeChildren HighlightColor ShadowColor Scrollable FontAngle BorderWidth',

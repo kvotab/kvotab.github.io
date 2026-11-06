@@ -396,6 +396,61 @@ _want = {
     _GB.Text: 'Extent', _GB.Image: 'Interpolation'}
 _missing = [(C_.__name__, n) for C_, names in _want.items() for n in names.split() if C_.canon(n) is None]
 C('figures, axes, lines, surfaces, patches, texts and images have the properties they commonly have', not _missing, _missing)
+# transparency: alpha, alphamap and alim, and alpha data mapped to opacities as the page draws them
+W, _ = run("[X, Y] = meshgrid(1:3); figure; s = surf(X, Y, X + Y); alpha('z'); fa = s.FaceAlpha; al = alim; alim([3 7]); am = alim('mode'); al1 = alim; "
+           "alim auto; al2 = alim; alphamap('rampdown'); m1 = alphamap; alphamap('vup', 5); m2 = alphamap; alphamap('decrease', 0.25); m3 = alphamap; "
+           "alphamap('spin', 2); m4 = alphamap; ax2 = axes; m7 = ax2.Alphamap; alphamap(ax2, [0.2 0.8]); m5 = alphamap(ax2); m6 = alphamap(gcf); "
+           "alpha(s, 0.3); f3 = s.FaceAlpha; alpha(s, 'direct'); dm = s.AlphaDataMapping; "
+           "figure; im = image(magic(3)); alpha('color'); ad = im.AlphaData; alpha(0.5); a5 = im.AlphaData; "
+           "p = patch([0 1 1 0], [0 0 1 1], 'r'); alpha(p, 'x'); pv = p.FaceVertexAlphaData'; pf = p.FaceAlpha; close all")
+C('alpha sets FaceAlpha, alpha data from the z values, the colours or x, AlphaDataMapping; alim sets, freezes and frees ALim',
+  (text(W['fa']), a(W['al']).tolist(), text(W['am']), a(W['al1']).tolist(), a(W['al2']).tolist(), float(W['f3']), text(W['dm']),
+   a(W['ad']).tolist(), float(W['a5']), a(W['pv']).tolist(), text(W['pf'])) ==
+  ('flat', [[2, 6]], 'manual', [[3, 7]], [[2, 6]], 0.3, 'direct', [[8, 1, 6], [3, 5, 7], [4, 9, 2]], 0.5, [[0, 1, 1, 0]], 'flat'),
+  (W['fa'], W['al'], W['al1'], W['al2'], W['pv']))
+near('alphamap: rampdown, vup, decrease, spin, new axes start from the figure\'s map, a map for one axes (the figure keeps its own)',
+     (a(W['m1'])[0, [0, -1]], W['m2'], W['m3'], W['m4'], a(W['m7'])[0, [0, 1]], W['m5'], a(W['m6'])[0, [0, -1]]),
+     ([1, 0], [[0, 0.5, 1, 0.5, 0]], [[0, 0.25, 0.75, 0.25, 0]], [[0.25, 0, 0, 0.25, 0.75]], [0.25, 0], [[0.2, 0.8]], [0.25, 0.75]))
+raises("alpha banana", "alpha does not take 'banana'")
+raises("alphamap('ramp')", "alphamap does not know 'ramp'")
+raises("alim([2 1])", 'second element is larger')
+W, _ = run("figure; s = surf([1 2; 3 4]); ax = gca; ax2 = axes; s2 = surf(ax2, [-1 0; 2 8]); s2.AlphaData = [-1 0; 2 8]; s2.FaceAlpha = 'flat'; "
+           "lin = ax2.ALim; ax2.AlphaScale = 'log'; lg = ax2.ALim; cl = ax2.CLim; ax2.ColorScale = 'log'; cg = ax2.CLim;")
+s_, ax_ = W['s'], W['ax']
+s_.props['AlphaDataMapping'] = 'none'
+none_ = _GB.mapped_alpha(s_, ax_, [-1, 0.5, 2, np.nan])
+s_.props['AlphaDataMapping'] = 'direct'
+ax_.props['Alphamap'] = np.array([[0.1, 0.2, 0.3]])
+direct_ = _GB.mapped_alpha(s_, ax_, [1, 2.7, 3, 9, 0])
+s_.props['AlphaDataMapping'] = 'scaled'
+ax_.props['Alphamap'] = np.array([[0, 0.25, 0.5, 1]])
+ax_.setprop('ALim', np.array([[0.0, 10.0]]))
+scaled_ = _GB.mapped_alpha(s_, ax_, [0, 2.4, 2.5, 5, 9.99, 10, 20])
+ax_.props['Alphamap'] = np.array([[0, 0.5, 1]])
+ax_.setprop('ALim', np.array([[1.0, 1000.0]]))
+ax_.props['AlphaScale'] = 'log'
+log_ = _GB.mapped_alpha(s_, ax_, [2, 20, 200, 0])
+near("alpha data to opacities: 'none' kept within 0 and 1, 'direct' indices, 'scaled' through ALim, on a log scale with AlphaScale 'log'",
+     (none_, direct_, scaled_, log_), ([0, 0.5, 1, 0], [0.1, 0.2, 0.3, 0.3, 0.1], [0, 0, 0.25, 0.5, 1, 1, 1], [0, 0.5, 1, 0]))
+near("automatic ALim and CLim from the data, the positive values only on a log scale", (W['lin'], W['lg'], W['cl'], W['cg']),
+     ([[-1, 8]], [[2, 8]], [[-1, 8]], [[2, 8]]))
+W, _ = run("figure; s = surf(magic(3)); s.AlphaData = magic(3); ax = gca; fig = gcf; "
+           "figure; im = image(magic(3)); im.AlphaData = 0.5*ones(3); hold on; p = patch([0 1 1 0], [0 0 1 1], 'r'); p.FaceVertexAlphaData = [0; 0.5; 1; 1]; "
+           "p.AlphaDataMapping = 'none'; p.FaceAlpha = 'interp'; ax2 = gca; fig2 = gcf;")
+d0 = _GB.serialize_figure(W['fig'])
+W['s'].setprop('FaceAlpha', Char.of('flat'))
+for k, v in (('FontAngle', 'italic'), ('BoxStyle', 'full'), ('ColorScale', 'log'), ('ClippingStyle', 'rectangle')):
+    W['ax'].setprop(k, Char.of(v))
+d1 = _GB.serialize_figure(W['fig'])
+d2 = _GB.serialize_figure(W['fig2'])
+ax0, ax1 = d0['axes'][0], d1['axes'][0]
+im_ = [c for c in d2['axes'][0]['children'] if c['type'] == 'image'][0]
+pa_ = [c for c in d2['axes'][0]['children'] if c['type'] == 'patch'][0]
+C('the page is sent alpha data only where drawn (FaceAlpha flat or interp, an image\'s array) and the axes\' settings only when not their defaults',
+  (any(k in ax0 for k in ('fontAngle', 'boxStyle', 'colorScale', 'clippingStyle')), 'alphaData' in ax0['children'][0],
+   [ax1.get(k) for k in ('fontAngle', 'boxStyle', 'colorScale', 'clippingStyle')], 'alphaData' in ax1['children'][0],
+   'alphaData' in im_, pa_.get('faceAlphaMode'), 'fva' in pa_) ==
+  (False, False, ['italic', 'full', 'log', 'rectangle'], True, True, 'interp', True))
 W, _ = run("[x, y, z] = meshgrid(-2:0.5:2); u = -y; v = x; w = 0.2*ones(size(x)); figure; h = streamribbon(x, y, z, u, v, w, 1, 0, -2); n = numel(h); s = size(h(1).XData);"
            "X = h(1).XData; Y = h(1).YData; Z = h(1).ZData;")
 X, Y, Z = a(W['X']), a(W['Y']), a(W['Z'])

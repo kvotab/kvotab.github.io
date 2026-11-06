@@ -2470,6 +2470,204 @@ def caxis(nargout, *args):
     return None
 
 
+# ---- transparency: alpha, alphamap, alim --------------------------------------------------------
+
+_ALPHA_WORDS = {'opaque': 1.0, 'clear': 0.0}
+_ALPHA_DATA = ('x', 'y', 'z', 'color', 'rand')
+
+
+def _alpha_from(o, word):
+    """Alpha data made from an object's own data: its x, y or z values, its colour values, or random numbers; a value at each
+    vertex (a patch's as a column), or None where the object has no such data."""
+    from .elmat import RNG
+    if o.TYPE == 'surface':
+        z = np.asarray(o.get_value('ZData'), float)
+        if word == 'z':
+            return z
+        if word == 'rand':
+            return RNG.uniform(z.shape)
+        if word == 'color':
+            c = np.asarray(o.get_value('CData'), float)
+            return c if c.shape == z.shape else None
+        d = np.asarray(o.get_value('XData' if word == 'x' else 'YData'), float)
+        if d.shape == z.shape:
+            return d
+        v = d.reshape(-1)
+        return np.tile(v, (z.shape[0], 1)) if word == 'x' else np.tile(v.reshape(-1, 1), (1, z.shape[1]))
+    if o.TYPE == 'patch':
+        V = np.asarray(o.get_value('Vertices'), float)
+        if V.ndim != 2 or not V.size:
+            # a patch given by XData and YData (a face in each column): its vertices a column after another
+            cols = [np.asarray(o.get_value(k), float).reshape(-1, order='F') for k in ('XData', 'YData', 'ZData')]
+            cols = [c for c in cols if c.size]
+            if len(cols) < 2 or cols[0].size != cols[1].size:
+                return None
+            V = np.column_stack(cols[:3] if len(cols) == 3 and cols[2].size == cols[0].size else cols[:2])
+            if word == 'color':
+                c = np.asarray(o.get_value('CData'), float)
+                return c.reshape(-1, 1, order='F') if c.size == V.shape[0] else None
+        if word == 'rand':
+            return RNG.uniform((V.shape[0], 1))
+        if word == 'color':
+            c = np.asarray(o.get_value('FaceVertexCData'), float)
+            return c.reshape(-1, 1) if c.ndim == 2 and c.shape[1:] == (1,) and c.shape[0] == V.shape[0] else None
+        k = 'xyz'.index(word)
+        return V[:, k:k + 1].copy() if k < V.shape[1] else None
+    c = np.asarray(o.get_value('CData'))
+    rows, cols = c.shape[:2]
+    if word == 'rand':
+        return RNG.uniform((rows, cols))
+    if word == 'color':
+        return np.asarray(c, float) if c.ndim == 2 else None
+    if word == 'x':
+        return np.tile(np.arange(1.0, cols + 1), (rows, 1))
+    if word == 'y':
+        return np.tile(np.arange(1.0, rows + 1).reshape(-1, 1), (1, cols))
+    return None
+
+
+@bi('alpha', arr=False)
+def alpha(nargout, *args):
+    """alpha(v), alpha(h, v): the transparency of the current axes' surfaces, patches and images (or of h, an axes standing
+    for those in it). A number, 'opaque' or 'clear' sets FaceAlpha (an image's AlphaData); 'flat' and 'interp' make the
+    faces take their opacities from the alpha data; an array, or 'x', 'y', 'z', 'color' or 'rand', gives that data (an
+    object whose FaceAlpha was a number turns 'flat'); 'scaled', 'direct' and 'none' set AlphaDataMapping."""
+    nargchk(args, 1, 2, 'alpha')
+    rest = list(args)
+    if len(rest) == 2 or (not is_str(rest[0]) and isinstance(rest[0], (GObj, HArr))):
+        objs = []
+        for o in _handles(rest.pop(0)):
+            objs += list(o.children) if isinstance(o, Axes) else [o]
+    else:
+        objs = list(gca_().children)
+    objs = [o for o in objs if o.valid and getattr(o, 'TYPE', None) in ('surface', 'patch', 'image')]
+    v = rest[0]
+    word = py_str(v).lower() if is_str(v) else None
+    if word is not None and word not in (*_ALPHA_WORDS, *_ALPHA_DATA, 'flat', 'interp', 'texturemap', 'scaled', 'direct', 'none'):
+        raise err('MATLAB:alpha:InvalidInput', f"alpha does not take '{py_str(v)}': a number, 'opaque', 'clear', 'flat', "
+                  "'interp', 'x', 'y', 'z', 'color', 'rand', 'scaled', 'direct', 'none' or an array.", 'alpha')
+    if word is None and not numel(v):
+        raise err('MATLAB:alpha:InvalidInput', 'alpha takes a number or an array, not an empty one.', 'alpha')
+    for o in objs:
+        img = o.TYPE == 'image'
+        if word in ('scaled', 'direct', 'none'):
+            o.props['AlphaDataMapping'] = word
+        elif word in _ALPHA_WORDS or (word is None and numel(v) == 1):
+            o.props['AlphaData' if img else 'FaceAlpha'] = _ALPHA_WORDS[word] if word else float(num(v))
+        elif word in ('flat', 'interp', 'texturemap'):
+            if not img:
+                o.props['FaceAlpha'] = word
+        else:
+            data = _alpha_from(o, word) if word else np.asarray(darr(v), float)
+            if data is None:
+                continue
+            if o.TYPE == 'patch':
+                o.props['FaceVertexAlphaData'] = data.reshape(-1, 1)
+            else:
+                o.props['AlphaData'] = data
+            if not img and not isinstance(o.props.get('FaceAlpha'), str):
+                o.props['FaceAlpha'] = 'flat'
+        o.touch()
+    return None
+
+
+def _alphamap_named(name, n, cur, delta):
+    """A named alphamap of n entries, or the current one changed: 'increase' and 'decrease' move every entry by delta
+    (kept within 0 and 1), 'spin' turns it round by delta places."""
+    t = np.linspace(0.0, 1.0, n)
+    if name in ('default', 'rampup'):
+        return t
+    if name == 'rampdown':
+        return t[::-1].copy()
+    if name == 'vup':
+        return 1 - np.abs(2 * t - 1)
+    if name == 'vdown':
+        return np.abs(2 * t - 1)
+    if name == 'increase':
+        return np.clip(cur + delta, 0, 1)
+    if name == 'decrease':
+        return np.clip(cur - delta, 0, 1)
+    return np.roll(cur, int(round(delta)))
+
+
+@bi('alphamap', arr=False)
+def alphamap(nargout, *args):
+    """alphamap(map), alphamap(name), alphamap(name, n or delta), alphamap(target, ...), m = alphamap: the opacities that
+    alpha data scaled by ALim (or given as indices) are mapped to, for the current figure and its axes, or for the axes or
+    figure given."""
+    rest = list(args)
+    target = None
+    if rest and isinstance(rest[0], (Axes, Figure)):
+        target = rest.pop(0)
+    elif rest and isinstance(rest[0], HArr) and rest[0].a.size == 1 and isinstance(rest[0].a.flat[0], (Axes, Figure)):
+        target = rest.pop(0).a.flat[0]
+    f = target if isinstance(target, Figure) else gcf_() if target is None else None
+    # the map read: the axes' or figure's given, else the current axes' (the figure's when it has none)
+    src = target
+    if src is None:
+        ca = f.props.get('CurrentAxes')
+        src = ca if ca is not None and ca.valid else f
+    cur = np.asarray(src.props['Alphamap'], float).reshape(-1)
+    if not rest:
+        return cur.reshape(1, -1)
+    nargchk(rest, 1, 2, 'alphamap')
+    v = rest[0]
+    if is_str(v):
+        name = py_str(v).lower()
+        names = ('default', 'rampup', 'rampdown', 'vup', 'vdown', 'increase', 'decrease', 'spin')
+        if name not in names:
+            raise err('MATLAB:alphamap:InvalidInput', f"alphamap does not know '{py_str(v)}': " + ', '.join(f"'{x}'" for x in names) + '.', 'alphamap')
+        extra = float(num(rest[1])) if len(rest) > 1 else None
+        if name in ('increase', 'decrease', 'spin'):
+            m = _alphamap_named(name, cur.size, cur, extra if extra is not None else (1.0 if name == 'spin' else 0.1))
+        else:
+            n = int(extra) if extra is not None else 64
+            if n < 1:
+                raise err('MATLAB:alphamap:InvalidInput', 'The number of entries must be a positive integer.', 'alphamap')
+            m = _alphamap_named(name, n, cur, 0.0)
+    else:
+        if len(rest) > 1:
+            raise err('MATLAB:alphamap:InvalidInput', 'alphamap takes one map: a vector of values from 0 to 1.', 'alphamap')
+        m = np.asarray(darr(v), float).reshape(-1)
+        if not m.size or not np.all(np.isfinite(m)):
+            raise err('MATLAB:alphamap:InvalidInput', 'An alphamap is a vector of finite values from 0 to 1.', 'alphamap')
+    m = np.asarray(m, float).reshape(1, -1)
+    if isinstance(target, Axes):
+        target.props['Alphamap'] = m
+        target.touch()
+    else:
+        f.props['Alphamap'] = m
+        for a in f.axes_list():
+            a.props['Alphamap'] = m.copy()
+            a.touch()
+        f.touch()
+    return out(m) if nargout else None
+
+
+@bi('alim', arr=False)
+def alim(nargout, *args):
+    """alim([amin amax]), alim auto | manual, lims = alim, m = alim('mode'), alim(ax, ...): the alpha data mapped to the
+    first and last entries of the alphamap (AlphaDataMapping 'scaled')."""
+    ax, rest = split_axes_arg(args)
+    ax = ax or gca_()
+    if not rest:
+        return ax.get_value('ALim')
+    s = opt_str(rest[0])
+    if s is not None:
+        s = s.lower()
+        if s == 'mode':
+            return Char.of(ax.props['ALimMode'])
+        if s not in ('auto', 'manual'):
+            raise err('MATLAB:alim:InvalidInput', f"alim takes [amin amax], 'auto', 'manual' or 'mode', not '{s}'.", 'alim')
+        if s == 'manual':
+            ax.props['ALim'] = np.asarray(ax.get_value('ALim'), float).reshape(1, 2)
+        ax.props['ALimMode'] = s
+    else:
+        ax.setprop('ALim', rest[0])
+    ax.touch()
+    return None
+
+
 @bi('shading', arr=False)
 def shading(nargout, *args):
     ax, rest = split_axes_arg(args)
@@ -3003,7 +3201,7 @@ def material(nargout, *args):
     return None
 
 
-@bi('rotate3d', 'zoom', 'pan', 'datacursormode', 'brush', 'linkaxes', 'linkprop', 'alpha', 'hidden', 'whitebg', 'movegui', 'uistack', 'refresh', 'shg', arr=False)
+@bi('rotate3d', 'zoom', 'pan', 'datacursormode', 'brush', 'linkaxes', 'linkprop', 'hidden', 'whitebg', 'movegui', 'uistack', 'refresh', 'shg', arr=False)
 def ui_noop(nargout, *args):
     return None
 

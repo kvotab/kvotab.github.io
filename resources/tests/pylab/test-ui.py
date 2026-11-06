@@ -2135,6 +2135,60 @@ async def charts_and_more(page):
                        "return t ? [t[1].x, f.rect.x, f.rect.x + f.rect.w] : null; })()")
     check("TitleHorizontalAlignment 'left' puts the title at the box's left edge", True if (tl and abs(tl[0] - tl[1]) <= 2) else tl, True)
     await command(page, 'close all')
+    # transparency, the colour scale, the 3-D box and clipping: properties that were kept but not drawn
+    PX = (f"const w = {WIN}; const f = w.renderer.frames[0].fr; const c = w.canvas; const k = c.width / c.getBoundingClientRect().width; "
+          "const rgbAt = (q) => Array.from(c.getContext('2d').getImageData(Math.round(q[0] * k), Math.round(q[1] * k), 1, 1).data).slice(0, 3); "
+          "const at = (x, y) => rgbAt([f.fx(x), f.fy(y)]); const red = (q) => { const d = rgbAt(q); return d[0] > 180 && d[1] < 90 && d[2] < 90; }; ")
+
+    async def fig(code, frames=1):
+        await command(page, "close all; figure('Position', [80 80 500 400]); " + code)
+        await until(page, 'PL.app.figures.wins.size === 1')
+        await drawn(page, frames)
+        await asyncio.sleep(0.6)
+    await page.ev("(() => { window.__fonts = []; const P = CanvasRenderingContext2D.prototype; window.__fillText = P.fillText; "
+                  "P.fillText = function (s, ...a) { window.__fonts.push(this.font); return window.__fillText.call(this, s, ...a); }; return 1; })()")
+    await fig("subplot(1, 2, 1); plot(1:5); set(gca, 'FontAngle', 'italic'); subplot(1, 2, 2); surf(peaks(5)); set(gca, 'FontAngle', 'italic');", 2)
+    it = await page.ev("(() => { CanvasRenderingContext2D.prototype.fillText = window.__fillText; return window.__fonts.filter((s) => s.startsWith('italic')).length; })()")
+    check("FontAngle 'italic': the tick labels of 2-D and 3-D axes in italics", (it or 0) >= 16, True)
+    await fig("surf(peaks(10), 'FaceColor', 'none', 'EdgeColor', 'none'); box on;")
+    FRONT = ("(() => { " + PX + "const cs = []; for (const x of f.lims[0]) for (const y of f.lims[1]) cs.push([x, y, f.p(x, y, f.lims[2][0])[2]]); "
+             "const n = cs.sort((a, b) => b[2] - a[2])[0]; const q = f.p(n[0], n[1], (f.lims[2][0] + f.lims[2][1]) / 2); "
+             "return Math.min(...[-2, -1, 0, 1, 2].map((dx) => rgbAt([q[0] + dx / k, q[1]])[0])); })()")
+    back = await page.ev(FRONT)
+    await command(page, "set(gca, 'BoxStyle', 'full')")
+    await asyncio.sleep(0.8)
+    full = await page.ev(FRONT)
+    check("BoxStyle: the front edges of a 3-D box only when 'full' ('back' outlines the back planes)", (back or 0) > 200 and (full if full is not None else 255) < 140, True)
+    await fig("h = image(cat(3, ones(2), zeros(2), zeros(2))); h.AlphaData = [1 0; 1 0];")
+    px = await page.ev("(() => { " + PX + "return [at(1, 1), at(2, 1)]; })()")
+    check('an image\'s AlphaData: a pixel at 0 lets the axes through, one at 1 is opaque',
+          True if (px and px[0][0] > 200 and px[0][1] < 60 and min(px[1]) > 230) else px, True)
+    await fig("s = surf([1 2 3], [1 2], zeros(2, 3), 'FaceColor', [0 0 1], 'EdgeColor', 'none'); view(2); s.AlphaData = [1 0 1; 1 0 1]; s.FaceAlpha = 'flat';")
+    px = await page.ev("(() => { " + PX + "return [at(1.5, 1.5), at(2.5, 1.5)]; })()")
+    check("a surface's AlphaData with FaceAlpha 'flat': each face as opaque as its first corner's value through the alphamap",
+          True if (px and px[0][2] > 200 and px[0][0] < 60 and min(px[1]) > 230) else px, True)
+    await fig("p = patch([0 1; 1 2; 1 2; 0 1], [0 0; 0 0; 1 1; 1 1], 'r'); alpha(p, [1; 0]); axis([0 2 0 1]);")
+    px = await page.ev("(() => { " + PX + "return [at(0.5, 0.5), at(1.5, 0.5)]; })()")
+    check("a patch's FaceVertexAlphaData, one for each face (alpha): the first opaque, the second clear",
+          True if (px and px[0][0] > 200 and px[0][1] < 60 and min(px[1]) > 230) else px, True)
+    await fig("imagesc([1 10 100]); colormap(gray(256)); set(gca, 'ColorScale', 'log');")
+    px = await page.ev("(() => { " + PX + "return at(2, 1); })()")
+    check("ColorScale 'log': 10 between 1 and 100 takes the middle of the colormap (a tenth of the way up on a linear scale)",
+          True if (px and 100 < px[0] < 160) else px, True)
+    CUT = ("(() => { " + PX + "const cs = []; for (const x of f.lims[0]) for (const y of f.lims[1]) for (const z of f.lims[2]) cs.push(f.p(x, y, z)); "
+           "const R = [Math.min(...cs.map((p) => p[0])), Math.min(...cs.map((p) => p[1])), Math.max(...cs.map((p) => p[0])), Math.max(...cs.map((p) => p[1]))]; "
+           "const inR = (q) => q[0] > R[0] + 4 && q[0] < R[2] - 4 && q[1] > R[1] + 4 && q[1] < R[3] - 4; "
+           "let line = null, surf = null; for (let x = 1.1; x < 4; x += 0.05) { if (inR(f.p(x, 0, -0.5))) line = f.p(x, 0, -0.5); if (inR(f.p(x, 0.5, x))) surf = f.p(x, 0.5, x); } "
+           "return line && surf ? [red(f.p(0.5, 0, -0.5)), red(line), red(f.p(0.5, 0.5, 0.5)), red(surf)] : null; })()")
+    await fig("[X, Y] = meshgrid(-3:0.25:3); surf(X, Y, X, 'FaceColor', 'r', 'EdgeColor', 'none'); hold on; plot3([-4 4], [0 0], [-0.5 -0.5], 'r', 'LineWidth', 3); "
+              "axis([-1 1 -1 1 -1 1]); view(3);")
+    box3 = await page.ev(CUT)
+    await command(page, "set(gca, 'ClippingStyle', 'rectangle')")
+    await asyncio.sleep(0.8)
+    rect = await page.ev(CUT)
+    check("3-D clipping: a line and a surface cut at the axes' box ('3dbox'), drawn up to the box's rectangle on the screen ('rectangle')",
+          (box3, rect), ([True, False, True, False], [True, True, True, True]))
+    await command(page, 'close all')
 
     await command(page, "p = audioplayer(sin(2*pi*440*(0:1/8000:0.5))', 8000); play(p)")
     snd = await page.ev('PL.app.lastSound || null')

@@ -171,10 +171,10 @@ camlight headlight, lighting gouraud, title('lit')
 # See also
 surf colormap
 
-@ clim, caxis, alpha, hidden
-The limits of the colour scale, and two older settings that are accepted.
+@ clim, caxis, hidden
+The limits of the colour scale, and an older setting that is accepted.
 
-`clim` sets the values that map to the first and last colours of the colormap (values beyond take the end colours), or gives them; `clim auto` lets the data set them again. `caxis` is its older name. `alpha` and `hidden` are accepted and have no effect: transparency is set by an object's FaceAlpha, and meshes are drawn with hidden lines removed.
+`clim` sets the values that map to the first and last colours of the colormap (values beyond take the end colours), or gives them; `clim auto` lets the data set them again. `caxis` is its older name. With the axes' ColorScale set to 'log', values are placed between the limits by their logarithm, and the automatic limits come from the positive values. `hidden` is accepted and has no effect: meshes are drawn with hidden lines removed.
 
 # Syntax
 clim([cmin cmax])
@@ -185,8 +185,6 @@ clim auto
     From the data.
 caxis([cmin cmax])
     The older name.
-alpha(value)
-    Accepted.
 hidden off
     Accepted.
 # Examples
@@ -196,8 +194,79 @@ subplot(1, 2, 1), imagesc(Z), colorbar, axis image
 clim
 subplot(1, 2, 2), imagesc(Z), colorbar, axis image
 clim([-2 2])
+## Colours on a log scale
+> Values from 0.01 to 100: on a linear scale all but the highest look alike; on a log scale each power of ten has its share of the colours.
+[X, Y] = meshgrid(linspace(-3, 3, 40));
+Z = 10.^(2*cos(X).*cos(Y));
+subplot(1, 2, 1), imagesc(Z), colorbar, axis image
+subplot(1, 2, 2), imagesc(Z), colorbar, axis image
+set(gca, 'ColorScale', 'log')
+clim
 # See also
-colormap colorbar imagesc
+colormap colorbar imagesc alim
+
+@ alpha, alphamap, alim
+Transparency: how much the surfaces, patches and images let through, face by face from their data.
+
+`alpha` sets how opaque the surfaces, patches and images in the axes are. A single number makes every face equally see-through. With `alpha('flat')` or `alpha('interp')` each face takes its own opacity from the object's alpha data, which `alpha` also sets: from the object's x, y or z values, its colour data or an array given. The data become opacities through the axes' alphamap, a vector of values from 0 (clear) to 1 (opaque) that `alphamap` sets; `alim` gives the values mapped to its first and last entries, as `clim` does for colours.
+
+# Syntax
+alpha(value)
+    The same opacity for every face: 0 to 1, 'clear' or 'opaque'.
+alpha('flat')
+    Each face its own opacity from the alpha data ('interp' takes the mean of its corners).
+alpha('z')
+    The alpha data from the z values ('x', 'y', 'color' and 'rand' likewise).
+alpha(data)
+    The alpha data given.
+alpha('direct')
+    How the data become opacities: 'scaled' through the limits (the default for surfaces and patches), 'direct' as indices into the alphamap, 'none' as opacities (the default for images).
+alpha(h, ...)
+    For the objects h, or those in the axes h.
+alphamap(name)
+    A named map: 'rampup' (also 'default'), 'rampdown', 'vup' or 'vdown'.
+alphamap(map)
+    The map given.
+alphamap('increase', delta)
+    Every entry raised by delta; 'decrease' lowers them and 'spin' turns the map round.
+m = alphamap
+    The current map.
+alphamap(ax, ...)
+    For the axes ax only.
+alim([amin amax])
+    The values mapped to the map's ends.
+lims = alim
+    The limits.
+alim auto
+    From the data.
+# Examples
+## A surface clear where it is low
+> Each face's opacity comes from its height: the lowest faces are clear, the highest opaque.
+[X, Y] = meshgrid(-2:0.2:2);
+Z = X.*exp(-X.^2 - Y.^2);
+surf(X, Y, Z)
+alpha('z')
+alim
+## An image fading out at its edges
+> An image's alpha data are opacities as they are, one for each pixel.
+imagesc(peaks(64)), axis image
+[c, r] = meshgrid(1:64);
+alpha(exp(-((c - 32.5).^2 + (r - 32.5).^2)/300))
+## The same data through two alphamaps
+> Ten squares with the alpha data 1 to 10, one value for each face.
+x = [0 1 1 0]' + 1.2*(0:9);
+y = repmat([0 0 1 1]', 1, 10);
+subplot(2, 1, 1)
+p = patch(x, y, 'b');
+alpha(p, 1:10)
+axis equal off, title('rampup, the default')
+subplot(2, 1, 2)
+p = patch(x, y, 'b');
+alpha(p, 1:10)
+alphamap(gca, 'vup')
+axis equal off, title('vup')
+# See also
+clim colormap surf patch image
 
 @ camzoom, camva, camlookat
 The camera: zoom by a factor, its view angle, and pointing it at objects.

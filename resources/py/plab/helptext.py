@@ -4109,8 +4109,30 @@ clim: The limits of the colour scale.
 caxis: The limits of the colour scale (older name of clim).
     caxis([cmin cmax])
     lims = caxis
-alpha: Accepted, with no effect: transparency is set by FaceAlpha on the object.
+alpha: Set the transparency of the surfaces, patches and images in the axes.
     alpha(value)
+    alpha('flat') | alpha('interp')
+    alpha(data)
+    alpha('x') | alpha('y') | alpha('z') | alpha('color') | alpha('rand')
+    alpha('scaled') | alpha('direct') | alpha('none')
+    alpha(h, ...)
+    * A number from 0 (clear) to 1 (opaque), or 'clear' and 'opaque', sets FaceAlpha (an image's AlphaData). 'flat' and 'interp' make the faces take their opacities from the alpha data, a value at each vertex mapped through the alphamap. An array, or the x, y or z values, the colour data or random numbers, becomes the alpha data (AlphaData, a patch's FaceVertexAlphaData); an object whose FaceAlpha was a number turns 'flat' so that it shows. 'scaled' maps the data through ALim onto the alphamap (alim), 'direct' takes them as indices into it, 'none' as opacities. h is the objects, or axes standing for those in them.
+alphamap: Set or get the opacities alpha data are mapped to.
+    alphamap(map)
+    alphamap(name)
+    alphamap(name, n)
+    alphamap('increase', delta) | alphamap('decrease', delta)
+    alphamap('spin', k)
+    m = alphamap
+    alphamap(target, ...)
+    * A vector of opacities from 0 to 1, for the current figure and its axes (or the axes or figure given). The names: 'default' and 'rampup' (0 to 1), 'rampdown' (1 to 0), 'vup' (0 at the ends, 1 in the middle), 'vdown' (1 at the ends, 0 in the middle), 64 entries unless n is given. 'increase' and 'decrease' move every entry by delta (0.1 unless given), kept within 0 and 1; 'spin' turns the map round by k places (1 unless given).
+alim: The alpha data mapped to the first and last opacities of the alphamap.
+    alim([amin amax])
+    lims = alim
+    alim auto | manual
+    m = alim('mode')
+    alim(ax, ...)
+    * For objects whose AlphaDataMapping is 'scaled': values at amin and below take the alphamap's first entry, at amax and above its last. Until set, the range of the axes' alpha data (only the positive values when AlphaScale is 'log').
 hidden: Accepted, with no effect.
     hidden on | off
 
