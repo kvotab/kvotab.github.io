@@ -1303,6 +1303,21 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
           </ul>
           <p>A look at a run stays on the tab after the next run, saying that it is of the run before.</p>
 
+          <h4 id="help-phreeqc-transport">Against PHREEQC's own transport</h4>
+          <p>The same column run by both: acid, 5&nbsp;mmol/kgw of HCl, entering 0.1&nbsp;m of a water at
+            saturation with calcite, 10&nbsp;mmol/kgw of it in every cell, at a Peclet number of 40 for two
+            pore volumes, the calcite dissolving in a front that moves at about a quarter of the water's
+            speed. PHREEQC runs its <code>TRANSPORT</code>. This page runs the model it writes from the
+            same water — activities following the ionic strength, the relations held, the calcite kept at
+            saturation, limited advection — with the acid water as PHREEQC speciates it coming in at the
+            left. Each of PHREEQC's cells is read as its scheme makes it, the water at the cell's
+            downstream face half a shift after the time it is printed at. On 40 cells the two agree on
+            the effluent all the way through to 0.009 in pH and 0.03&nbsp;mmol/kgw in calcium, and on 80
+            cells to 0.002 and 0.008; the calcite left in the column differs by 0.45&nbsp;% and
+            0.25&nbsp;%, and the front has cleared the same cells to within one. They are different
+            schemes that meet as the cells are refined. On 40 cells PHREEQC takes half a second and this
+            page three; on 80, three and ten, PHREEQC's mixing steps growing as the cells shrink.</p>
+
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
             3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,

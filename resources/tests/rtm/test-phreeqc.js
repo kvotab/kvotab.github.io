@@ -506,6 +506,122 @@ function againstNative(wasm, py, first) {
   check('a run through PHREEQC: the two agree on every number written', w2 < 1e-6, `largest difference ${w2.toExponential(1)}`);
 }
 
+/* ======================================================================
+   4. A reactive column against PHREEQC's own TRANSPORT
+
+   Acid enters a column of groundwater at saturation with calcite and
+   dissolves it, a front moving down the column. PHREEQC runs its TRANSPORT
+   (shifts, mixing for the dispersivity, every cell equilibrated with its
+   calcite each shift); the page runs the model it writes from the same water
+   -- activities following the ionic strength, the relations held, calcite a
+   mineral kept at saturation -- as a column, with limited advection, the
+   inflow the speciated acid water. PHREEQC's cell at a shift is read as the
+   water at its downstream face half a shift later, which is what its scheme
+   makes it. The two are different numerical schemes and meet only as the
+   cells are refined, so the checks are the effluent over the whole run, the
+   calcite left and where the front has reached.
+   ====================================================================== */
+function againstTransport(engine) {
+  const N = 40;
+  const L = 0.1;
+  const dx = L / N;
+  const dt = 1000;
+  const S = 2 * N;
+  const alpha = L / 40;
+  const v = dx / dt;
+  const water = (n) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH 7.5\n Na 2\n Ca 1\n Cl 2 charge\n C(4) 3\n`;
+  const acid = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 3 charge\n Na 2\n Ca 1\n Cl 7\n C(4) 3\nEND\n';
+  // A clean PHREEQC: what earlier inputs defined is still there otherwise, and
+  // TRANSPORT applies every reactant numbered as a cell -- a REACTION 1 left
+  // from a test above put acid into cell 1 at every shift.
+  engine.load(dbText);
+  const started = Date.now();
+  const rows = engine.run(`${water(`1-${N}`)}END\nEQUILIBRIUM_PHASES 1-${N}\n Calcite 0 0.01\nEND\n`
+    + `RUN_CELLS\n -cells 1-${N}\nEND\n${acid}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH Ca cal\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), TOT("Ca"), EQUI("Calcite")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const r of rows.slice(1)) {
+    const t = Number(r[head.indexOf('time')]);
+    if (!(t > 0)) continue;
+    pq.set(`${Number(r[head.indexOf('cell')])}/${Math.round(t / dt)}`, {
+      pH: Number(r[head.indexOf('pH')]), Ca: Number(r[head.indexOf('Ca')]), cal: Number(r[head.indexOf('cal')]) });
+  }
+  // The page: the water as the hand-off writes it, made a column.
+  const res = P.waterToModel({ engine, database, water: { name: 'column', text: `${water(1)}EQUILIBRIUM_PHASES 1\n Calcite 0 0.01\nEND\n` },
+    activity: true, exact: true, phases: true });
+  const inflow = P.parseRows(engine.run(`${P.punchBlock()}${acid}`)).pop();
+  const back = new Map([...res.names].map(([k, n]) => [n, k]));
+  const text = res.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral/.test(rest) || !back.has(name)) return line;
+      const sp = inflow.species.get(back.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const m = RtmModel.compile(text);
+  const times = Array.from({ length: S }, (_, k) => (k + 1.5) * dt);
+  const t0 = Date.now();
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: times });
+  const rtmMs = Date.now() - t0;
+  const ns = m.speciesNames.length;
+  const db = P.readDatabase(dbText);
+  const caOf = [];
+  m.speciesNames.forEach((n, i) => {
+    if (!back.has(n)) return;
+    const ex = db.expand(back.get(n));
+    if (ex.has('Ca')) caOf.push([i, ex.get('Ca')]);
+  });
+  const iH = m.speciesNames.indexOf('H+');
+  const iCal = m.speciesNames.indexOf('Calcite');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  const at = (c, cell) => {
+    let Ca = 0;
+    for (const [i, k] of caOf) Ca += k * c[cell * ns + i];
+    RtmModel.activityAt(m.act, c, cell * ns, lnG, dG);
+    return { Ca, pH: -(Math.log(c[cell * ns + iH]) + lnG[iH]) / Math.LN10 };
+  };
+  // The effluent: PHREEQC's last cell at shift s, the outlet half a shift later.
+  let effpH = 0;
+  let effCa = 0;
+  for (let k = 1; k <= S; k++) {
+    const o = at(m.toConcentrations(r.grid.y[k - 1]), N - 1);
+    const d = pq.get(`${N}/${k}`);
+    effpH = Math.max(effpH, Math.abs(o.pH - d.pH));
+    effCa = Math.max(effCa, Math.abs(o.Ca - d.Ca));
+  }
+  check('a reactive column, acid dissolving calcite, against PHREEQC\'s TRANSPORT: the effluent all the way through',
+    effpH < 0.02 && effCa < 5e-5, `pH within ${effpH.toFixed(4)}, Ca within ${(effCa * 1e3).toFixed(4)} mM `
+      + `(of 1 to 5); ${N} cells, ${S} shifts: PHREEQC ${pqMs} ms, the page ${rtmMs} ms`);
+  // The calcite left: PHREEQC after S shifts, the page at S dt, as much acid in.
+  const before = m.toConcentrations(r.grid.y[S - 2]);
+  const after = m.toConcentrations(r.grid.y[S - 1]);
+  let left = 0;
+  let pqLeft = 0;
+  let gone = 0;
+  let pqGone = 0;
+  for (let cell = 0; cell < N; cell++) {
+    left += (before[cell * ns + iCal] + after[cell * ns + iCal]) / 2;
+    if (!(after[cell * ns + iCal] > 0)) gone++;
+    const d = pq.get(`${cell + 1}/${S}`);
+    pqLeft += d.cal;
+    if (!(d.cal > 0)) pqGone++;
+  }
+  check('... the calcite left in the column within 1 %, and the front within a cell of PHREEQC\'s',
+    Math.abs(left / pqLeft - 1) < 0.01 && Math.abs(gone - pqGone) <= 1 && r.events.length === gone,
+    `${((left / pqLeft - 1) * 100).toFixed(2)} %; calcite gone from ${gone} cells here, ${pqGone} in PHREEQC, `
+      + `${r.events.length} events`);
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -514,6 +630,8 @@ function againstNative(wasm, py, first) {
   const first = withPhreeqc(wasm);
   console.log('\n--- as the page asks ---');
   await asThePage(createPhreeqc, first.acidText);
+  console.log('\n--- a reactive column against PHREEQC\'s TRANSPORT ---');
+  againstTransport(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);
