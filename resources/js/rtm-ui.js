@@ -564,6 +564,8 @@
   function afterRun(reply, ms, partial) {
     setProgress(null);
     state.compiled = reply.model;
+    // A look at the run before this one, through PHREEQC, stays on its tab and says which run it is.
+    runNumber++;
     renderFacts();
     infoRefresh();
     renderSeriesList();
@@ -573,6 +575,7 @@
     drawTime();
     drawProfile();
     drawGradient();
+    pqRenderView();
     if (partial) return;
     const st = reply.stats || {};
     /*
@@ -1297,12 +1300,13 @@
     if (name === 'time') { drawTime(); resize(); }
     if (name === 'profile') { drawProfile(); resize(); }
     if (name === 'gradient') { drawGradient(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
   function resize() {
     if (typeof Plotly === 'undefined') return;
-    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient'].forEach((id) => {
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartPq'].forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
     });
@@ -1958,11 +1962,109 @@
           '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
           '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model. Dropping files, or their folder, anywhere on the page does the same.',
           '**Save**: the text, as `model.rtm`.',
+          '**From PHREEQC…**: opens a panel where PHREEQC speciates a water and the water, as PHREEQC leaves it, becomes the text. Its own (i) says how.',
           '**colour the syntax**: paints comments, section headings, numbers, functions and the words that mean something where they stand. Turn it off for a very large model. The choice is kept.',
         ] },
-        { heading: 'Keep in mind', text: 'A reload does not bring the built-in model back: the text stays in this browser until Reset, an example or a file replaces it.' },
+        { heading: 'Keep in mind', text: 'A reload does not bring the built-in model back: the text stays in this browser until Reset, an example, a file or a water from PHREEQC replaces it.' },
       ],
       more: more('The model text', 'help-model-text'),
+    }),
+
+    'pq:water': () => ({
+      kicker: 'Model tab', title: 'A water from PHREEQC',
+      lead: 'PHREEQC speciates a water, from its analysis or after whatever else the input does to it, and the water as PHREEQC leaves it becomes the model text: its species, and its equilibria with constants that hold at this water.',
+      facts: [
+        ['PHREEQC', 'the U.S. Geological Survey’s, version 3, compiled to run in the browser: the water goes nowhere'],
+        ['Database', pqDatabase() ? pqDatabase().name : 'phreeqc.dat, which comes with the page'],
+        ['Kept', 'the water and these settings, in this browser between visits'],
+      ],
+      sections: [
+        { heading: 'What is written', list: [
+          'Every aqueous species above the floor, at PHREEQC’s molality, in `<SPECIES>`.',
+          'Every complexation and acid–base reaction among them, as the database writes it and with water left out, in `<EQUILIBRIUM>`, with `EQUILIBRATE = 1`.',
+          'Each `logK` is **conditional**: the activity coefficients at this ionic strength and the activity of water are folded into it, so that the relations rtm.html holds between concentrations hold exactly where PHREEQC’s hold between activities. The comment on each line is the database’s own log K at the water’s temperature.',
+          'No redox relation. A reaction with electrons is not written, so each valence state keeps its own total and electrons move only through the reactions you write.',
+          'A name rtm.html cannot write, such as `(UO2)2(OH)2+2`, is renamed (`UO2_2(OH)2+2`), and the text lists each one at the top.',
+        ] },
+        { heading: 'The input', text: 'Ordinary PHREEQC input: a `SOLUTION`, and anything PHREEQC should do to it first, such as `EQUILIBRIUM_PHASES`, `REACTION` or `MIX`. The water of its last calculation is the one written. **Open…** reads a PHREEQC input file; **An example water** puts in a granitic groundwater made of round numbers.' },
+        { heading: 'Keep in mind', text: 'The model text is replaced, as an example replaces it. Concentrations are molalities, so rate constants you add must use the same unit. The constants belong to this water’s ionic strength; the PHREEQC tab says how far a run moves from it.' },
+      ],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:database': () => ({
+      kicker: 'PHREEQC', title: 'Database',
+      lead: 'Where PHREEQC takes its species, their reactions and constants, the activity model and the phases from.',
+      facts: [
+        ['In use', pqDatabase() ? `${pqDatabase().name}, opened this visit` : 'phreeqc.dat, which comes with the page'],
+        ['Opened this visit', pq.opened.size ? someOf([...pq.opened.keys()], 6) : 'none'],
+      ],
+      sections: [
+        { text: '**phreeqc.dat** is the database that comes with PHREEQC 3.8.6, unchanged.' },
+        { text: '**Open a database…** reads another, such as `llnl.dat`, `wateq4f.dat`, `minteq.v4.dat` or a project’s own, and PHREEQC reads it at once and says whether it can. It is used for this visit only: a database is never stored in the browser, and one opened last time is named until it is opened again.' },
+        { text: 'The choice is shared by the panel on the Model tab and the PHREEQC tab: one database for both directions.' },
+      ],
+      more: more('PHREEQC in the page', 'help-phreeqc'),
+    }),
+
+    'pq:floor': () => ({
+      kicker: 'PHREEQC', title: 'Leave out species below',
+      lead: 'Species PHREEQC finds at less than this many mol/kgw are left out of the model. That keeps a few thousand vanishing complexes from a large database out of the text.',
+      facts: [['Default', '1e-20 mol/kgw'], ['Now', $('rtmPqFloor').value || '(empty)']],
+      sections: [
+        { text: 'A species below the floor is still kept when a relation that is kept needs it, so that every relation written is whole. The report says how many those were, and the largest species left out.' },
+        { text: '0 keeps every species PHREEQC lists.' },
+      ],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:hold': () => ({
+      kicker: 'PHREEQC', title: 'Hold the equilibria during the run',
+      lead: 'Without this, the relations only put the start on equilibrium. With it, each is also held during the run, as a fast reversible pair whose backward constant is kf divided by K.',
+      facts: [['Relaxing at', `${$('rtmPqRelax').value || '(empty)'} per second`], ['Default', 'on, at 1e3 per second']],
+      sections: [
+        { text: 'One forward constant for every relation would not do. A water relation and a carbonate relation need constants about thirteen orders apart to move at the same speed. So each relation gets the **kf** that makes it relax back to equilibrium at the rate given, at this water. Near equilibrium a relation relaxes at kf times the product of its reactants times the sum of ν²/c over its species, and that is solved for kf.' },
+        { text: 'Faster than anything else in the model is what is wanted: 1e3 per second is a few milliseconds, against reactions over minutes or years. Much faster only costs the solver steps.' },
+        { text: 'The kf are per second: change `TIME_UNIT` in the text and they have to change with it.' },
+      ],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:diffusion': () => ({
+      kicker: 'PHREEQC', title: 'Diffusion',
+      lead: 'Whether the species written get a diffusion coefficient, `D=` on their lines, for a model that becomes a column.',
+      sections: [{ choices: [
+        ['none', 'No `D`: the model is a batch, or you add the coefficients in the text.', pq.diff === 'none'],
+        ['one coefficient for every species', 'The value given, in m²/s, on every line.', pq.diff === 'one'],
+        ['each species its own', 'The tracer diffusion coefficient the database gives each species (`-dw`); a species without one gets none.', pq.diff === 'dw'],
+      ] }, { heading: 'Keep in mind', text: 'rtm.html has no electrical coupling between ions. Different coefficients let charge separate as the species spread, which real water does not allow: one coefficient for every species is the safe choice unless that is what you mean.' }],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pane:phreeqc': () => ({
+      kicker: 'Tab', title: 'PHREEQC',
+      lead: 'The run, seen through PHREEQC: every stored water is given to PHREEQC, which speciates it with its own constants, activity model and ion pairs.',
+      facts: [
+        ['Database', pqDatabase() ? pqDatabase().name : 'phreeqc.dat'],
+        ['Waters', pq.view ? `${pq.view.report.waters.toLocaleString()} in the last look` : 'none looked at yet'],
+      ],
+      sections: [
+        { heading: 'What PHREEQC is given', list: [
+          'Each species of the run that the database has, under the same name or the renamed one, counted into the element totals PHREEQC takes: `HCO3-` into C(4), `H2` twice into H(0), `(UO2)2(OH)2+2` twice into U(6).',
+          'The pH, walked until PHREEQC’s molality of H+ is the run’s [H+].',
+          'Left out, and listed: water; rtm.html’s `e-`, which is the hydrated electron and not PHREEQC’s; radicals, surface sites and anything else the database lacks.',
+          'The temperature the model was written at, read from the top of its text; 25 °C for a model that does not say.',
+          '**fill in from the water** (off unless ticked): the water in the panel on the Model tab gives the temperature, and any element the model does not carry at all, such as a background electrolyte, held at its totals. A model written from a water carries all of them already; this is for one that leaves its counter-ions out. A water PHREEQC will not take is said, and left out.',
+        ] },
+        { heading: 'What comes back', list: [
+          'The pH as an activity, and the saturation index of every phase that comes within 3 of saturation, or of the **Phases** named, drawn against time for one cell. The CSV holds every cell and the ionic strength, the charge balance and the activity of water as well.',
+          'Which phases are supersaturated anywhere, and where and when.',
+          'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong.',
+          'A water that is far from neutral, which usually means the model leaves out a counter-ion.',
+        ] },
+        { heading: 'Settings', text: '**Times per cell**: at most this many stored times, spread over the run (0 reads them all). **Cells**: a list such as `0, 5, 10-19`, or empty for all.' },
+      ],
+      more: more('A run through PHREEQC', 'help-phreeqc-run'),
     }),
 
     'pane:jacobian': {
@@ -2385,6 +2487,559 @@
   }
 
   /* ---------------------------------------------------------------------
+     PHREEQC: a water into the model, and a run back out
+
+     PHREEQC is the USGS's IPhreeqc compiled to WebAssembly (vendors/phreeqc),
+     run in a worker of its own that is started the first time PHREEQC is
+     asked anything: its 2.4 MB are fetched only by someone who uses
+     it, and a long look at a run leaves the page and the solver's worker
+     free. A page opened from the disk cannot start a worker, so there PHREEQC
+     is loaded as scripts and runs on the page itself, as the solver does.
+     The chemistry of the hand-off is rtm-phreeqc.js; this keeps its state
+     and shows what it did.
+     --------------------------------------------------------------------- */
+  const PQ_KEY = 'kvot-rtm-phreeqc-v1';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107';
+  const PQ_SCRIPTS = [
+    'vendors/phreeqc/phreeqc.js?v=20261107',
+    'vendors/phreeqc/phreeqc-dat.js?v=20261107',
+    'resources/js/rtm-phreeqc.js?v=20261107',
+    'resources/js/rtm-phreeqc-engine.js?v=20261107',
+  ];
+  /** "An example water": round numbers, nobody's sample. */
+  const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
+# Chloride takes the charge balance. Anything PHREEQC can do to a water may
+# follow the SOLUTION -- EQUILIBRIUM_PHASES, REACTION, MIX -- and the water as
+# PHREEQC leaves it is what becomes the model.
+SOLUTION 1
+  temp   15
+  pH     7.4
+  pe     -3
+  units  mmol/kgw
+  Na     50
+  K      0.5
+  Ca     15
+  Mg     5
+  Cl     85 charge
+  S(6)   2
+  C(4)   2.5
+  Fe(2)  0.02
+  Si     0.2
+END
+`;
+  const pq = {
+    water: '', db: 'builtin', floor: '1e-20', hold: true, relax: '1e3', diff: 'none', D: '2e-9',
+    times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0,
+    opened: new Map(),       // databases opened this visit, name -> text; never stored
+    missingDb: null,         // a database chosen on an earlier visit and not opened on this one
+    view: null,              // the last look at a run through PHREEQC
+    busy: false,
+    worker: null,
+    kind: 'none',            // 'worker' | 'inline' once started
+    inline: null,
+    pending: new Map(),
+    nextId: 1,
+  };
+  /** Finished runs, counted, so that a look at an earlier one can say it is that. */
+  let runNumber = 0;
+
+  function pqSave() {
+    try {
+      localStorage.setItem(PQ_KEY, JSON.stringify({
+        water: pq.water, db: pq.db, floor: pq.floor, hold: pq.hold, relax: pq.relax, diff: pq.diff,
+        D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
+        open: pq.open,
+      }));
+    } catch (e) { /* storage unavailable: for this visit only */ }
+  }
+
+  function pqLoad() {
+    try {
+      const s = JSON.parse(localStorage.getItem(PQ_KEY) || 'null');
+      if (!s) return;
+      for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
+        if (typeof s[k] === 'string') pq[k] = s[k];
+      }
+      for (const k of ['hold', 'fill', 'logT', 'open']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      // A database's text is not kept between visits: one opened last time is
+      // named, and phreeqc.dat used until it is opened again.
+      if (typeof s.db === 'string' && s.db !== 'builtin') pq.missingDb = s.db;
+    } catch (e) { /* a corrupt entry: start fresh */ }
+  }
+
+  function pqWriteControls() {
+    $('rtmPqWater').value = pq.water;
+    $('rtmPqFloor').value = pq.floor;
+    $('rtmPqHold').checked = pq.hold;
+    $('rtmPqRelax').value = pq.relax;
+    $('rtmPqDiff').value = pq.diff;
+    $('rtmPqD').value = pq.D;
+    $('rtmPqTimes').value = pq.times;
+    $('rtmPqCells').value = pq.cells;
+    $('rtmPqPhases').value = pq.phases;
+    $('rtmPqFill').checked = pq.fill;
+    $('rtmPqLogT').checked = pq.logT;
+    pqDependents();
+    pqRenderDatabases();
+    pqShowPanel(pq.open);
+  }
+
+  /** What one setting decides about another being asked at all. */
+  function pqDependents() {
+    $('rtmPqDWrap').hidden = pq.diff !== 'one';
+    $('rtmPqRelax').disabled = !pq.hold;
+  }
+
+  function pqReadControls() {
+    pq.water = $('rtmPqWater').value;
+    pq.floor = $('rtmPqFloor').value.trim();
+    pq.hold = $('rtmPqHold').checked;
+    pq.relax = $('rtmPqRelax').value.trim();
+    pq.diff = $('rtmPqDiff').value;
+    pq.D = $('rtmPqD').value.trim();
+    pq.times = $('rtmPqTimes').value.trim();
+    pq.cells = $('rtmPqCells').value.trim();
+    pq.phases = $('rtmPqPhases').value.trim();
+    pq.fill = $('rtmPqFill').checked;
+    pq.logT = $('rtmPqLogT').checked;
+    pqDependents();
+    pqSave();
+  }
+
+  /**
+   * A number as it is typed: one comma is a decimal mark, spaces are dropped,
+   * e or E starts an exponent. Null, and the field marked, when it is none.
+   */
+  function pqNumber(el, opts = {}) {
+    const raw = String(el.value).trim().replace(/\s+/g, '');
+    const text = (raw.match(/,/g) || []).length === 1 && !raw.includes('.') ? raw.replace(',', '.') : raw;
+    const v = /^(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(text) ? Number(text) : NaN;
+    const ok = Number.isFinite(v) && (!opts.positive || v > 0) && (!opts.integer || Number.isInteger(v));
+    el.setAttribute('aria-invalid', ok ? 'false' : 'true');
+    return ok ? v : null;
+  }
+
+  /** "0, 5, 10-19" as cell numbers; null when it is not that. */
+  function pqCellList(text) {
+    const out = [];
+    for (const part of String(text).split(/[,;\s]+/).filter(Boolean)) {
+      const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+      if (!m) return null;
+      const a = Number(m[1]);
+      const b = m[2] === undefined ? a : Number(m[2]);
+      if (b < a || b - a > 100000) return null;
+      for (let c = a; c <= b; c++) out.push(c);
+    }
+    return out.length ? out : null;
+  }
+
+  const pqNum = (x) => (x === 0 ? '0' : !Number.isFinite(x) ? String(x)
+    : Math.abs(x) >= 1e-3 && Math.abs(x) < 1e4 ? String(Number(x.toPrecision(3))) : x.toExponential(2));
+
+  function pqShowPanel(open) {
+    pq.open = !!open;
+    $('rtmPq').hidden = !pq.open;
+    $('rtmPqToggle').setAttribute('aria-expanded', String(pq.open));
+    infoRefresh();
+  }
+
+  /* ---- the database: phreeqc.dat, or one opened this visit ---- */
+  function pqRenderDatabases() {
+    const html = ['<option value="builtin">phreeqc.dat, which comes with the page</option>']
+      .concat([...pq.opened.keys()].map((n) => `<option value="${esc(n)}">${esc(n)}</option>`))
+      .concat('<option value="__open">Open a database…</option>')
+      .join('');
+    for (const id of ['rtmPqDb', 'rtmPqViewDb']) {
+      const sel = $(id);
+      sel.innerHTML = html;
+      sel.value = pq.opened.has(pq.db) ? pq.db : 'builtin';
+    }
+  }
+
+  /** The database to send: null for the built-in phreeqc.dat. */
+  function pqDatabase() {
+    return pq.db !== 'builtin' && pq.opened.has(pq.db) ? { name: pq.db, text: pq.opened.get(pq.db) } : null;
+  }
+
+  /** A file's text: UTF-8 when it is that, else Latin-1, which PHREEQC's own files are. */
+  async function pqFileText(file) {
+    const bytes = await file.arrayBuffer();
+    try {
+      return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    } catch (e) {
+      return new TextDecoder('windows-1252').decode(bytes);
+    }
+  }
+
+  async function pqDatabaseChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    const text = await pqFileText(file);
+    pqBusy(true, `Reading ${file.name} into PHREEQC…`);
+    try {
+      const reply = await pqRequest({ type: 'load', database: { name: file.name, text } });
+      pq.opened.set(file.name, text);
+      pq.db = file.name;
+      pq.missingDb = null;
+      pqRenderDatabases();
+      pqSave();
+      setStatus(`${file.name} is loaded: ${reply.species.toLocaleString()} aqueous species and `
+        + `${reply.phases.toLocaleString()} phases, for this visit. PHREEQC ${reply.version}.`, 'ok');
+    } catch (e) {
+      pqRenderDatabases();
+      setStatus(`PHREEQC cannot read ${file.name} as a database: ${e.message}`, 'error');
+    } finally {
+      pqBusy(false);
+    }
+  }
+
+  /* ---- PHREEQC itself: its worker, or the page ---- */
+  function pqStart() {
+    if (pq.worker || pq.kind === 'inline') return;
+    if (typeof Worker === 'undefined' || location.protocol === 'file:') { pq.kind = 'inline'; return; }
+    try {
+      pq.worker = new Worker(PQ_WORKER_URL);
+      pq.kind = 'worker';
+      pq.worker.onmessage = (ev) => pqReceive(ev.data);
+      pq.worker.onerror = (ev) => {
+        // A worker that could not load its scripts. Whatever was waiting is
+        // told so; from here on PHREEQC runs on the page.
+        const why = (ev && ev.message) || 'its scripts did not load';
+        pq.worker = null;
+        pq.kind = 'inline';
+        for (const entry of pq.pending.values()) entry.reject(new Error(`PHREEQC's worker stopped: ${why}`));
+        pq.pending.clear();
+      };
+    } catch (e) {
+      pq.worker = null;
+      pq.kind = 'inline';
+    }
+  }
+
+  function pqReceive(msg) {
+    const entry = pq.pending.get(msg.id);
+    if (!entry) return;
+    if (msg.type === 'progress') { if (entry.onProgress) entry.onProgress(msg); return; }
+    pq.pending.delete(msg.id);
+    if (msg.type === 'error') entry.reject(new Error(msg.error));
+    else entry.resolve(msg);
+  }
+
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = src;
+      s.onload = () => resolve();
+      s.onerror = () => reject(new Error(`${src.split('?')[0]} could not be loaded`));
+      document.head.appendChild(s);
+    });
+  }
+
+  async function pqInline() {
+    if (pq.inline) return pq.inline;
+    for (const src of PQ_SCRIPTS) await loadScript(src);
+    pq.inline = self.RtmPhreeqcEngine.handler(self.createPhreeqc, { builtin: self.PHREEQC_DAT });
+    return pq.inline;
+  }
+
+  async function pqRequest(message, onProgress) {
+    pqStart();
+    const id = pq.nextId++;
+    const full = { ...message, id };
+    if (pq.worker) {
+      return new Promise((resolve, reject) => {
+        pq.pending.set(id, { resolve, reject, onProgress });
+        pq.worker.postMessage(full);
+      });
+    }
+    const handle = await pqInline();
+    // On the page, PHREEQC holds it until it is done: the words above first.
+    await repaint();
+    return new Promise((resolve, reject) => {
+      pq.pending.set(id, { resolve, reject, onProgress });
+      handle(full, (reply) => pqReceive(reply));
+    });
+  }
+
+  function pqBusy(on, text) {
+    pq.busy = on;
+    $('rtmPqWrite').disabled = on;
+    $('rtmPqLook').disabled = on;
+    if (on && text) {
+      const first = pq.kind === 'none' || (pq.kind === 'inline' && !pq.inline)
+        ? ' PHREEQC is fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.' : '';
+      setStatus(`${text}${first}`);
+    }
+  }
+
+  /* ---- a water into the model ---- */
+  function pqReport(html) {
+    const el = $('rtmPqReport');
+    el.innerHTML = html;
+    el.hidden = !html;
+  }
+
+  function pqWaterReport(reply) {
+    const r = reply.report;
+    const out = [];
+    out.push(`<p>Written into the text below: <strong>${r.species} species</strong> and <strong>${r.equilibria} `
+      + `equilibria</strong>, the water at ${pqNum(r.temperature)} °C and ionic strength `
+      + `${pqNum(r.ionicStrength)} mol/kgw, pH ${r.pH.toFixed(3)} as PHREEQC has it; from ${esc(reply.database)}, `
+      + `PHREEQC ${esc(reply.version)}.</p>`);
+    const c = reply.check;
+    if (c && c.error) {
+      out.push(`<p class="error">rtm.html does not compile the text it was given: ${esc(c.error)}</p>`);
+    } else if (c) {
+      const good = c.converged && c.worst < 1e-6;
+      out.push(`<p${good ? '' : ' class="warn"'}>rtm.html's own speciation, from the conditional constants alone, `
+        + `${c.converged ? 'lands on' : 'does not converge to'} PHREEQC's molalities`
+        + `${c.converged ? ` to ${c.worst.toExponential(1)}` : ''}.</p>`);
+    }
+    const items = [];
+    if (r.dropped) {
+      items.push(`${r.dropped} species below the floor left out; the largest of them is ${esc(r.droppedTop)}, at `
+        + `${pqNum(r.droppedTopValue)} mol/kgw.`);
+    }
+    if (r.pulled) items.push(`${r.pulled} below the floor kept, because a relation kept needs them.`);
+    if (r.redox.length) {
+      items.push(`No redox relation for ${esc(someOf(r.redox, 8))}: each valence state keeps its own total, `
+        + 'and electrons move only through the reactions you write.');
+    }
+    if (r.renamed.length) {
+      items.push(`Renamed, since rtm.html cannot write the name as PHREEQC does: ${r.renamed.slice(0, 6)
+        .map(([a, b]) => `${esc(a)} as ${esc(b)}`).join(', ')}${r.renamed.length > 6 ? ', and more' : ''}.`);
+    }
+    if (r.unknown.length) items.push(`Not in the database, kept with no relation: ${esc(someOf(r.unknown, 8))}.`);
+    for (const s of r.skipped) items.push(`No relation for ${esc(s.species)}: it needs ${esc(s.missing.join(', '))}.`);
+    for (const w of reply.warnings || []) items.push(`PHREEQC: ${esc(w.replace(/\s+/g, ' '))}`);
+    if (items.length) out.push(`<ul>${items.map((x) => `<li>${x}</li>`).join('')}</ul>`);
+    return out.join('');
+  }
+
+  async function pqWrite() {
+    if (pq.busy) return;
+    pqReadControls();
+    if (!pq.water.trim()) {
+      pqReport('<p class="error">Give PHREEQC a water first: a SOLUTION, as in a PHREEQC input file. '
+        + '“An example water” puts one in.</p>');
+      return;
+    }
+    const floor = pqNumber($('rtmPqFloor'));
+    const relax = pq.hold ? pqNumber($('rtmPqRelax'), { positive: true }) : null;
+    const D = pq.diff === 'one' ? pqNumber($('rtmPqD'), { positive: true }) : null;
+    if (floor === null || (pq.hold && relax === null) || (pq.diff === 'one' && D === null)) {
+      pqReport('<p class="error">A number in the settings is not one: the field is marked. A comma or a '
+        + 'point is the decimal mark, and 1e-20 is written as here.</p>');
+      return;
+    }
+    pqBusy(true, 'Writing the model through PHREEQC…');
+    try {
+      const reply = await pqRequest({
+        type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
+        options: { floor, relax, D, dw: pq.diff === 'dw', date: new Date().toISOString().slice(0, 10) },
+      });
+      // As an example is loaded: the text replaced outright, and said so below the panel.
+      state.text = reply.text;
+      $('rtmText').value = reply.text;
+      renderHighlight();
+      $('rtmExample').value = '';
+      $('rtmExampleAbout').hidden = true;
+      state.result = null;
+      state.verify = null;
+      pqReport(pqWaterReport(reply));
+      saveState();
+      compile();
+    } catch (e) {
+      pqReport(`<p class="error">PHREEQC could not make a model of that water: ${esc(e.message)}</p>`);
+      setStatus('PHREEQC could not make a model of that water: the panel on the Model tab says why.', 'error');
+    } finally {
+      pqBusy(false);
+    }
+  }
+
+  /* ---- a run back out ---- */
+  async function pqView() {
+    if (pq.busy) return;
+    pqReadControls();
+    const r = state.result;
+    if (!r) {
+      setStatus('Run the model first: PHREEQC looks at a run that has finished.', 'warn');
+      return;
+    }
+    const times = pqNumber($('rtmPqTimes'), { integer: true });
+    if (times === null) { setStatus('Times per cell is a whole number; 0 reads every stored time.', 'error'); return; }
+    let cells = null;
+    if (pq.cells) {
+      cells = pqCellList(pq.cells);
+      if (!cells) { setStatus('Cells is a list such as 0, 5, 10-19; empty for all of them.', 'error'); return; }
+    }
+    const phases = pq.phases ? pq.phases.split(/[,;]/).map((s) => s.trim()).filter(Boolean) : null;
+    const water = pq.fill && pq.water.trim() ? { name: 'The water', text: pq.water } : null;
+    pqBusy(true, 'Looking at the run through PHREEQC…');
+    setProgress(0);
+    const started = Date.now();
+    try {
+      const reply = await pqRequest({
+        type: 'view', database: pqDatabase(), water,
+        run: { t: r.t, states: r.states, n: r.n, width: r.width, model: r.model },
+        modelText: (state.ran && state.ran.text) || state.text,
+        options: { times, cells, phases, siFloor: -3, unit: timeUnit().symbol },
+      }, (m) => setProgress(m.total ? m.done / m.total : 0));
+      pq.view = { ...reply, runNumber, water: !!water };
+      const shown = [...new Set(reply.table.cell)];
+      if (!shown.includes(pq.cell)) pq.cell = shown[0];
+      pqRenderView();
+      setStatus(`PHREEQC looked at ${reply.report.waters.toLocaleString()} waters in `
+        + `${((Date.now() - started) / 1000).toFixed(1)} s.`, 'ok');
+    } catch (e) {
+      setStatus(`PHREEQC could not look at the run: ${e.message}`, 'error');
+    } finally {
+      setProgress(null);
+      pqBusy(false);
+    }
+  }
+
+  function pqSummary(v) {
+    const r = v.report;
+    const where = (x) => `${r.cells > 1 ? `cell ${x.cell}, ` : ''}${x.t > 0 ? fmtTime(x.t) : 'at the start'}`;
+    const tempWhy = {
+      'the model text': ', as the top of the model text has it',
+      'the water': ', the water’s',
+      none: ': nothing said otherwise',
+    }[r.temperatureFrom] || '';
+    const out = [];
+    out.push(`<p>${r.waters.toLocaleString()} waters (${r.cells} cell${r.cells === 1 ? '' : 's'} × ${r.times} times) `
+      + `at ${pqNum(r.temperature)} °C${tempWhy}, through ${esc(v.database)} and PHREEQC ${esc(v.version)}: pH `
+      + `${r.pH[0].toFixed(2)} to ${r.pH[1].toFixed(2)}, ionic strength ${pqNum(r.ionicStrength[0])} to `
+      + `${pqNum(r.ionicStrength[1])} mol/kgw.</p>`);
+    if (r.waterError) {
+      out.push(`<p class="warn">PHREEQC would not take the water in the panel on the Model tab, so nothing was `
+        + `filled in from it: ${esc(r.waterError)}</p>`);
+    }
+    if (r.supersaturated.length) {
+      out.push(`<p>Supersaturated: ${r.supersaturated.slice(0, 8).map((s) => `<strong>${esc(s.phase)}</strong>, `
+        + `saturation index up to ${s.si.toFixed(2)} (${where(s)})`).join('; ')}`
+        + `${r.supersaturated.length > 8 ? `; and ${r.supersaturated.length - 8} more` : ''}.</p>`);
+    } else {
+      out.push('<p>No phase is supersaturated anywhere in the run.</p>');
+    }
+    if (r.drift.length) {
+      const d = r.drift[0];
+      const big = Math.abs(d.by) > 0.02;
+      out.push(`<p${big ? ' class="warn"' : ''}>The activity coefficients in the model's equilibria moved by up to `
+        + `${pqNum(Math.abs(d.by))} in log K (${esc(d.rel)}${d.t !== null ? `; ${where(d)}` : ''}). `
+        + (big ? 'Conditional constants made for the start are that far off by then: write the model again from a '
+          + 'water nearer the run, or read what depends on them with that in mind.'
+          : 'Conditional constants made for the start still hold.') + '</p>');
+    }
+    if (r.notNeutral) {
+      out.push(`<p class="warn">The waters are not neutral: ${pqNum(r.notNeutral.cb)} eq/kgw at `
+        + `${where(r.notNeutral)}. The model probably leaves out a counter-ion, and the ionic strength is then too `
+        + `low${v.water ? '' : '; “fill in from the water” takes what the model does not carry from the water on the Model tab'}.</p>`);
+    }
+    if (r.noH) out.push('<p class="warn">The run has no H+, so PHREEQC set the pH by charge balance.</p>');
+    if (r.failed.length) {
+      out.push(`<p class="warn">PHREEQC could not calculate ${r.failed.length} of the waters; the first at `
+        + `${where(r.failed[0])}: ${esc(r.failed[0].error)}</p>`);
+    }
+    out.push(`<p>Counted (${r.counted.length}): ${r.counted.map((c) => esc(c.name)
+      + (c.as !== c.name ? ` as ${esc(c.as)}` : '')).join(', ')}.</p>`);
+    if (r.skipped.length) out.push(`<p>Left out: ${r.skipped.map((s) => `${esc(s.name)}, ${esc(s.why)}`).join('; ')}.</p>`);
+    if (r.unmapped.length) {
+      out.push(`<p>Not in the database, so left out (${r.unmapped.length}): ${r.unmapped.slice(0, 12)
+        .map((u) => `${esc(u.name)} (up to ${pqNum(u.peak)})`).join(', ')}${r.unmapped.length > 12 ? ', and more' : ''}.</p>`);
+    }
+    if (r.background.length) {
+      out.push(`<p>From the water, held as it was: ${r.background.map(([k, x]) => `${esc(k)} ${pqNum(x)}`).join(', ')} `
+        + 'mol/kgw.</p>');
+    }
+    if (r.unchecked.length) {
+      out.push(`<p>${r.unchecked.length} of the model's equilibria could not be followed: a species in them is not in `
+        + 'the database.</p>');
+    }
+    return out.join('');
+  }
+
+  function pqRenderView() {
+    const v = pq.view;
+    const plot = $('rtmChartPq');
+    $('rtmPqEmpty').hidden = !!v;
+    $('rtmPqShow').hidden = !v;
+    $('rtmPqSummary').hidden = !v;
+    const stale = !!v && v.runNumber !== runNumber;
+    $('rtmPqStale').hidden = !stale;
+    if (stale) {
+      $('rtmPqStale').textContent = 'This is the run before the latest one, as PHREEQC saw it. Look through '
+        + 'PHREEQC again to see the new one.';
+    }
+    if (!v) {
+      if (typeof Plotly !== 'undefined') Plotly.purge(plot);
+      plot.hidden = true;
+      $('rtmPqEmpty').textContent = state.result
+        ? 'Look at the run through PHREEQC: the pH as an activity, the ionic strength and the saturation index '
+          + 'of every phase, at each stored time.'
+        : 'Run the model, then look at it through PHREEQC: the pH as an activity, the ionic strength and the '
+          + 'saturation index of every phase, at each stored time.';
+      return;
+    }
+    const cells = [...new Set(v.table.cell)];
+    $('rtmPqCellWrap').hidden = cells.length < 2;
+    $('rtmPqCell').innerHTML = cells.map((c) => `<option value="${c}">${c}</option>`).join('');
+    $('rtmPqCell').value = String(pq.cell);
+    $('rtmPqSummary').innerHTML = pqSummary(v);
+    pqDraw();
+  }
+
+  /** The pH above, the saturation indices below, against time, for one cell. */
+  function pqDraw() {
+    const v = pq.view;
+    const plot = $('rtmChartPq');
+    if (!v || typeof Plotly === 'undefined') return;
+    if (state.tab !== 'phreeqc') return;
+    plot.hidden = false;
+    const T = v.table;
+    const logT = pq.logT;
+    const rows = [];
+    for (let i = 0; i < T.t.length; i++) {
+      if (T.cell[i] !== pq.cell || T.layer[i] !== 0 || T.pH[i] === null) continue;
+      if (logT && !(T.t[i] > 0)) continue;
+      rows.push(i);
+    }
+    const x = rows.map((i) => T.t[i]);
+    const traces = [{ name: 'pH, −log a(H+)', x, y: rows.map((i) => T.pH[i]), mode: 'lines', type: 'scatter',
+      yaxis: 'y', line: { width: 2 } }];
+    for (const p of v.phases) {
+      traces.push({ name: p, x, y: rows.map((i) => T.si[p][i]), mode: 'lines', type: 'scatter', yaxis: 'y2' });
+    }
+    const layout = baseLayout();
+    const c = themeColors();
+    layout.xaxis = { ...layout.xaxis, type: logT ? 'log' : 'linear', anchor: 'y2',
+      title: { text: `time (${timeUnit().symbol})`, font: { size: 11 } } };
+    layout.yaxis = { ...layout.yaxis, domain: [0.62, 1], exponentformat: 'none',
+      title: { text: 'pH', font: { size: 11 } } };
+    layout.yaxis2 = { gridcolor: c.grid, linecolor: c.grid, domain: [0, 0.52], anchor: 'x', zeroline: true,
+      zerolinecolor: c.text, zerolinewidth: 1, title: { text: 'saturation index', font: { size: 11 } } };
+    layout.margin = { ...layout.margin, b: 48 };
+    layout.legend = { ...layout.legend, y: -0.16 };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  function pqCsv() {
+    if (!pq.view) { setStatus('Look at a run through PHREEQC first: there is no table yet.', 'warn'); return; }
+    downloadBlob(new Blob([pq.view.csv], { type: 'text/csv' }), `${fileStem()}_phreeqc.csv`);
+  }
+
+  async function pqWaterChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    pq.water = await pqFileText(file);
+    $('rtmPqWater').value = pq.water;
+    pqSave();
+  }
+
+  /* ---------------------------------------------------------------------
      Actions
      --------------------------------------------------------------------- */
   registerActions({
@@ -2472,6 +3127,38 @@
       saveState();
       resize();
     },
+    'rtm:pqPanel': () => { pqShowPanel(!pq.open); pqSave(); },
+    'rtm:pqWaterEdited': () => { pq.water = $('rtmPqWater').value; pqSave(); },
+    'rtm:pqOpenWater': () => $('rtmPqWaterFile').click(),
+    'rtm:pqWaterChosen': (ev) => { pqWaterChosen(ev); },
+    'rtm:pqExample': () => {
+      pq.water = PQ_EXAMPLE;
+      $('rtmPqWater').value = PQ_EXAMPLE;
+      pqSave();
+    },
+    'rtm:pqDbChosen': (ev, el) => {
+      if (el.value === '__open') {
+        pqRenderDatabases();
+        $('rtmPqDbFile').click();
+        return;
+      }
+      pq.db = el.value;
+      pq.missingDb = null;
+      pqRenderDatabases();
+      pqSave();
+      infoRefresh();
+    },
+    'rtm:pqDbFileChosen': (ev) => { pqDatabaseChosen(ev); },
+    'rtm:pqSettings': () => { pqReadControls(); infoRefresh(); },
+    'rtm:pqWrite': () => { pqWrite(); },
+    'rtm:pqView': () => { pqView(); },
+    'rtm:pqRedraw': () => {
+      pq.cell = Number($('rtmPqCell').value) || 0;
+      pq.logT = $('rtmPqLogT').checked;
+      pqSave();
+      pqDraw();
+    },
+    'rtm:pqCsv': () => pqCsv(),
   });
 
   /* ---------------------------------------------------------------------
@@ -2500,7 +3187,13 @@
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.
   if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });
-  showTab(['profile', 'gradient', 'model', 'jacobian', 'help'].includes(state.tab)
+  pqLoad();
+  pqWriteControls();
+  if (pq.missingDb) {
+    pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
+      + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');
+  }
+  showTab(['profile', 'gradient', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);
   compile();

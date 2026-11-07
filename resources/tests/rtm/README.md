@@ -1,16 +1,48 @@
 # Tests for rtm.html
 
-Three of them. `test-model.js` is the mathematics and needs only Node;
-`test-hdf5.py` is the file the page writes and needs Node and `h5py`;
-`test-ui.py` is the page and needs the server and browser of `../rb/README.md`.
+Five of them:
 
-    node resources/tests/rtm/test-model.js [--verbose]
-    python3 resources/tests/rtm/test-hdf5.py
-    python3 resources/tests/rtm/test-ui.py
+- `test-model.js` is the mathematics and needs only Node.
+- `test-hdf5.py` is the file the page writes and needs Node and `h5py`.
+- `test-ui.py` is the page and needs the server and browser of `../rb/README.md`.
+- `test-phreeqc.js` is the hand-off to and from PHREEQC, on the page's own PHREEQC (`vendors/phreeqc`, compiled to WebAssembly), in Node.
+- `test-phreeqc-ui.py` is that hand-off in the page, with the same server and browser as `test-ui.py`.
 
-All three exit 0 when every check passes. `test-ui.py` expects the server on
-8765 and Chrome on 9222; when another session has those, start yours on other
-ports and name them, `RTM_HTTP_PORT=8811 RTM_CDP_PORT=9311 python3 …`.
+```sh
+node resources/tests/rtm/test-model.js [--verbose]
+python3 resources/tests/rtm/test-hdf5.py
+python3 resources/tests/rtm/test-ui.py
+node resources/tests/rtm/test-phreeqc.js
+python3 resources/tests/rtm/test-phreeqc-ui.py
+```
+
+Each exits 0 when every check passes. The two browser tests expect the server on 8765 and Chrome on 9222. When another session has those, start yours on other ports and name them: `RTM_HTTP_PORT=8811 RTM_CDP_PORT=9311 python3 …`.
+
+## What test-phreeqc.js and test-phreeqc-ui.py check
+
+The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engine. In the page, the engine is IPhreeqc compiled to WebAssembly (`rtm-phreeqc-engine.js`, run by `rtm-phreeqc-worker.js`). The tests check it against what has to be true, not against stored numbers:
+
+- **A water as a model** (an illustrative groundwater, round numbers) compiles, and rtm.html's own speciation, from the conditional constants alone, lands on PHREEQC's molalities to 1e-8 (2.4e-10 measured). The database's log K, worked back from PHREEQC's activities, is phreeqc.dat's own (10.329 for HCO3-).
+- **A run of that model read back through PHREEQC** starts at exactly the water's pH and calcite saturation. With 1.5 mM HCl added, it ends where PHREEQC adding the same acid by itself ends: pH within 3e-4, calcite SI within 6e-4.
+- **With 0.4 mol/kgw of salt added instead**, the conditional constants go wrong, and the drift of the activity coefficients says so: 0.48 in log K.
+- **Without a water**, the temperature is read from the top of the model text. A water PHREEQC refuses is reported, and the look goes on without it.
+- **The built-in model:** the seven species PHREEQC knows are counted; the hydrated electron, the radicals and the surface sites are not; the missing counter-ion is noticed.
+- **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
+
+With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge.py` drives it), the same inputs also go through that native PHREEQC on the same database. The WebAssembly build has to agree with it: 1.7e-13 on a model's numbers, and every number of a run's CSV identical.
+
+`test-phreeqc-ui.py` covers the page itself:
+
+- PHREEQC is not fetched until it is used, and then runs in a worker of its own.
+- The panel on the Model tab writes the example water and reports the check.
+- A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
+- The PHREEQC tab's chart starts at the water's pH, 7.4 at 15 °C. Before the cache was cleared in this test, a cached worker script ran at 25 °C and gave 7.4012, which is how the test caught it.
+- The CSV has a row for each water.
+- An earlier look says it is of the run before.
+- A database opened is read at once, and a file that is no database is refused.
+- All of it also works with no Worker, and from the disk.
+
+PHREEQC's worker fetches its scripts itself, so the test clears the browser's whole cache before each page: turning the cache off for the page does not reach the worker.
 
 ## What test-model.js checks, and why those things
 

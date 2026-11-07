@@ -48,8 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section and five tab toolbars.
-STATIC_SLOTS = 27
+# of the Solver section, six tab toolbars, and the PHREEQC panel's heading and
+# four settings.
+STATIC_SLOTS = 33
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -1177,7 +1178,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient model jacobian help'])
+                [True, ['gradient'], 'time profile gradient phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

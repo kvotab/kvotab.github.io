@@ -26,6 +26,7 @@ others. Each item keeps its own licence.
 | CALERF (`resources/js/erf.f`, `erf.js`; its coefficients also in `resources/js/distributions/special.js`, and those of its first interval in `kompartment/src/parser/functions.js` and `kompartment/python/kompartment/stats/_normal.py`) | public domain (W. J. Cody, Netlib SPECFUN) | header in the file |
 | Sobol direction numbers of Joe and Kuo (the first 16 dimensions of `new-joe-kuo-6.21201`, in `resources/js/distributions/sampling.js`) | BSD-style (Frances Y. Kuo and Stephen Joe, 2008) | `resources/js/distributions/sobol.LICENSE` |
 | [IBM Plex](https://github.com/IBM/plex) Sans 1.1.0 and Mono 2.5.0, IBM's split WOFF2 files, unmodified (`vendors/font/ibm-plex-sans/`, `vendors/font/ibm-plex-mono/`) | SIL Open Font License 1.1 | `LICENSE.txt` in each folder |
+| [PHREEQC](https://www.usgs.gov/software/phreeqc-version-3) (IPhreeqc 3.8.6-17100, by D.L. Parkhurst and C.A.J. Appelo, U.S. Geological Survey), compiled unchanged to WebAssembly by `scripts/build-phreeqc-wasm.sh`, with its database `phreeqc.dat`, for `rtm.html` (`vendors/phreeqc/`) | public domain (USGS user rights notice) | `vendors/phreeqc/NOTICE`; `vendors/phreeqc/README.md` names the original distribution and its checksum |
 | Rawengulk Sans (no longer used by any page) | SIL Open Font License 1.1 | `vendors/font/SIL Open Font License.txt` |
 
 ## Libraries loaded from public CDNs

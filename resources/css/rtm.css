@@ -559,3 +559,87 @@
   text-align: center;
   pointer-events: none;
 }
+
+/* ---- PHREEQC -------------------------------------------------------------
+   The panel on the Model tab that turns a PHREEQC water into the model text,
+   and the PHREEQC tab, where a run is looked at through PHREEQC. The panel
+   sits above the text, which keeps whatever height is left under it.
+   ------------------------------------------------------------------------ */
+.rtm-pq {
+  flex: 0 0 auto;
+  margin: 0 0 8px;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.rtm-pq[hidden] { display: none; }
+.rtm-pq-head { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; }
+.rtm-pq-close {
+  margin-left: auto;
+  padding: 0 6px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+.rtm-pq-close:hover { color: var(--text-primary); }
+.rtm-pq-body { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: flex-start; }
+.rtm-pq-input { flex: 1 1 340px; min-width: 0; }
+.rtm-pq-input > label { display: block; margin: 0 0 3px; color: var(--text-secondary); }
+.rtm-pq-water {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 9.5em;
+  padding: 6px 8px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font: 12px/1.45 var(--font-mono);
+  tab-size: 4;
+  resize: vertical;
+}
+.rtm-pq-row { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 0; }
+.rtm-pq-settings { flex: 0 1 290px; min-width: 220px; }
+.rtm-pq-field { margin: 0 0 8px; }
+.rtm-pq-field > .kvot-info-line { align-items: flex-start; margin: 0 0 2px; }
+.rtm-pq-field > .kvot-info-line > label { margin: 0; }
+.rtm-pq-field .rtm-name { display: block; color: var(--text-muted); font-size: 11px; }
+.rtm-pq-field > input[type="text"], .rtm-pq-field > select, .rtm-pq-sub input {
+  box-sizing: border-box;
+  padding: 3px 6px;
+  border: 1px solid var(--input-border);
+  border-radius: 4px;
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-size: 12px;
+}
+.rtm-pq-field > input[type="text"], .rtm-pq-field > select { width: 100%; }
+.rtm-pq-field input[type="text"], .rtm-pq-sub input { font-family: var(--font-mono); }
+.rtm-pq-field [aria-invalid="true"] { border-color: var(--color-kvot-accent); }
+.rtm-pq-sub { margin: 4px 0 0 22px; }
+.rtm-pq-sub[hidden] { display: none; }
+.rtm-pq-sub label { display: block; margin: 0 0 2px; color: var(--text-secondary); font-size: 11px; }
+.rtm-pq-sub input { width: 100%; }
+.rtm-pq-sub input:disabled { opacity: 0.55; }
+.rtm-pq-report, .rtm-pq-summary { font-size: 12px; line-height: 1.6; max-width: 72rem; }
+.rtm-pq-report { margin: 8px 0 0; padding: 6px 0 0; border-top: 1px solid var(--border-color); }
+.rtm-pq-report[hidden], .rtm-pq-summary[hidden] { display: none; }
+.rtm-pq-report p, .rtm-pq-summary p { margin: 0 0 4px; }
+.rtm-pq-report ul, .rtm-pq-summary ul { margin: 2px 0 6px; padding-left: 18px; }
+.rtm-pq-report .warn, .rtm-pq-summary .warn { border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
+.rtm-pq-report .error { border-left: 3px solid var(--color-kvot-accent); padding-left: 6px; }
+.rtm-pq-summary { margin: 4px 0 12px; }
+.rtm-pq-stale {
+  margin: 0 0 8px;
+  padding: 4px 8px;
+  border-left: 3px solid var(--color-kvot-bright);
+  background: var(--bg-surface);
+  font-size: 12px;
+}
+.rtm-pq-stale[hidden] { display: none; }
+.rtm-pq-summary code, .rtm-pq-report code { font-size: 11px; }

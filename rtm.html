@@ -29,7 +29,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261031">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261107">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -213,6 +213,7 @@
             <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
             <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
             <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
+            <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
             <button type="button" data-tab="help" data-on-click="rtm:tab">Help</button>
@@ -286,12 +287,73 @@
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:resetModel">Reset to the built-in model</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:loadFile">Open…</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
+            <button type="button" class="rtm-btn secondary small" id="rtmPqToggle" data-on-click="rtm:pqPanel"
+              aria-expanded="false" aria-controls="rtmPq">From PHREEQC…</button>
             <label class="rtm-check inline"><input type="checkbox" id="rtmSyntax" checked
               data-on-change="rtm:syntaxToggle"> colour the syntax</label>
             <span class="kvot-info-slot" data-info-key="pane:model"></span>
             <input type="file" id="rtmFile" accept=".txt,.rtm,.in,.py" multiple hidden data-on-change="rtm:fileChosen">
           </div>
           <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
+          <!--
+            A water from PHREEQC. PHREEQC itself -- the USGS's IPhreeqc, compiled
+            to WebAssembly in vendors/phreeqc and run in a worker of its own --
+            speciates it, and the water as PHREEQC leaves it becomes the model
+            text below. rtm-phreeqc.js writes the text; rtm-ui.js wires this.
+          -->
+          <div class="rtm-pq" id="rtmPq" hidden>
+            <div class="rtm-pq-head">
+              <strong>A water from PHREEQC</strong>
+              <span class="kvot-info-slot" data-info-key="pq:water"></span>
+              <button type="button" class="rtm-pq-close" data-on-click="rtm:pqPanel"
+                aria-label="Close the PHREEQC panel" title="Close">&#215;</button>
+            </div>
+            <div class="rtm-pq-body">
+              <div class="rtm-pq-input">
+                <label for="rtmPqWater">PHREEQC input: a SOLUTION, and anything PHREEQC should do to it first</label>
+                <textarea id="rtmPqWater" class="rtm-pq-water" spellcheck="false" wrap="off" rows="9"
+                  data-on-input="rtm:pqWaterEdited"
+                  placeholder="SOLUTION 1&#10;  temp   15&#10;  pH     7.4&#10;  units  mmol/kgw&#10;  Na 50;  Ca 15&#10;  Cl     85 charge&#10;  C(4)   2.5&#10;END"></textarea>
+                <div class="rtm-pq-row">
+                  <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqOpenWater">Open…</button>
+                  <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqExample">An example water</button>
+                  <input type="file" id="rtmPqWaterFile" accept=".pqi,.phr,.txt,.in" hidden data-on-change="rtm:pqWaterChosen">
+                </div>
+              </div>
+              <div class="rtm-pq-settings">
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmPqDb">Database</label><span class="kvot-info-slot" data-info-key="pq:database"></span></div>
+                  <select id="rtmPqDb" data-on-change="rtm:pqDbChosen"></select>
+                </div>
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmPqFloor">Leave out species below<span class="rtm-name">mol/kgw, unless a species kept needs them</span></label><span class="kvot-info-slot" data-info-key="pq:floor"></span></div>
+                  <input id="rtmPqFloor" type="text" value="1e-20" data-on-change="rtm:pqSettings">
+                </div>
+                <div class="rtm-pq-field">
+                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqHold" checked data-on-change="rtm:pqSettings"> Hold the equilibria during the run</label><span class="kvot-info-slot" data-info-key="pq:hold"></span></div>
+                  <div class="rtm-pq-sub">
+                    <label for="rtmPqRelax">each relaxing back at, per second</label>
+                    <input id="rtmPqRelax" type="text" value="1e3" data-on-change="rtm:pqSettings">
+                  </div>
+                </div>
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmPqDiff">Diffusion</label><span class="kvot-info-slot" data-info-key="pq:diffusion"></span></div>
+                  <select id="rtmPqDiff" data-on-change="rtm:pqSettings">
+                    <option value="none">none: a batch, or set it in the text</option>
+                    <option value="one">one coefficient for every species</option>
+                    <option value="dw">each species its own, from the database (-dw)</option>
+                  </select>
+                  <div class="rtm-pq-sub" id="rtmPqDWrap" hidden>
+                    <label for="rtmPqD">the coefficient, m²/s</label>
+                    <input id="rtmPqD" type="text" value="2e-9" data-on-change="rtm:pqSettings">
+                  </div>
+                </div>
+                <button type="button" class="rtm-btn small" id="rtmPqWrite" data-on-click="rtm:pqWrite">Write the model</button>
+                <input type="file" id="rtmPqDbFile" accept=".dat,.txt" hidden data-on-change="rtm:pqDbFileChosen">
+              </div>
+            </div>
+            <div class="rtm-pq-report" id="rtmPqReport" hidden></div>
+          </div>
           <!--
             The coloured copy of the text and the box being typed in, one on
             top of the other: a textarea cannot colour its own contents, and
@@ -333,6 +395,40 @@
           </div>
           <div class="plot" id="rtmChartGradient" hidden></div>
           <p class="rtm-empty" id="rtmGradEmpty">A gradient needs a run in transport mode.</p>
+        </section>
+
+        <!-- ---- the run, seen through PHREEQC ---- -->
+        <section class="rtm-pane" data-pane="phreeqc" hidden>
+          <div class="rtm-toolbar">
+            <label>Database
+              <select id="rtmPqViewDb" data-on-change="rtm:pqDbChosen"></select>
+            </label>
+            <label>Times per cell
+              <input type="text" id="rtmPqTimes" value="100" style="width:48px" data-on-change="rtm:pqSettings">
+            </label>
+            <label>Cells
+              <input type="text" id="rtmPqCells" placeholder="all" style="width:84px" data-on-change="rtm:pqSettings">
+            </label>
+            <label>Phases
+              <input type="text" id="rtmPqPhases" class="rtm-times" placeholder="any within 3 of saturation"
+                data-on-change="rtm:pqSettings">
+            </label>
+            <label><input type="checkbox" id="rtmPqFill" data-on-change="rtm:pqSettings"> fill in from the water</label>
+            <button type="button" class="rtm-btn small" id="rtmPqLook" data-on-click="rtm:pqView">Look through PHREEQC</button>
+            <span class="kvot-info-slot" data-info-key="pane:phreeqc"></span>
+          </div>
+          <div class="rtm-toolbar" id="rtmPqShow" hidden>
+            <label id="rtmPqCellWrap">Cell
+              <select id="rtmPqCell" data-on-change="rtm:pqRedraw"></select>
+            </label>
+            <label><input type="checkbox" id="rtmPqLogT" checked data-on-change="rtm:pqRedraw"> log time</label>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqCsv">CSV</button>
+          </div>
+          <p class="rtm-pq-stale" id="rtmPqStale" hidden></p>
+          <div class="plot" id="rtmChartPq" hidden></div>
+          <div class="rtm-pq-summary" id="rtmPqSummary" hidden></div>
+          <p class="rtm-empty" id="rtmPqEmpty">Run the model, then look at it through PHREEQC: the pH as an activity, the
+            ionic strength and the saturation index of every phase, at each stored time.</p>
         </section>
 
         <section class="rtm-pane" data-pane="jacobian" hidden>
@@ -951,6 +1047,110 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             four thousand of them the rock layers are left out — the root attribute
             <code>matrix_written</code> says so when that happens, and the water is always there.</p>
 
+          <h3 id="help-phreeqc">PHREEQC in the page</h3>
+          <p>PHREEQC does what this page does not. It has a thermodynamic database, activity
+            coefficients, ion pairs, minerals and saturation, and it speciates a water from its
+            analysis. This page instead integrates stiff networks of reactions, with transport, in one
+            implicit system. The two are joined both ways here. A water goes from PHREEQC into the
+            model, and a run goes back through PHREEQC to be read. PHREEQC itself runs in the page: the
+            U.S. Geological Survey's program, compiled to run in the browser. Nothing is uploaded. It is
+            fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.</p>
+
+          <h4 id="help-phreeqc-water">A water from PHREEQC</h4>
+          <p><em>From PHREEQC…</em> on the Model tab opens a panel that takes PHREEQC input. That is a
+            <code>SOLUTION</code>, and anything PHREEQC should do to it first:
+            <code>EQUILIBRIUM_PHASES</code> to put it at calcite and a CO<sub>2</sub> pressure, a
+            <code>REACTION</code>, a <code>MIX</code>. PHREEQC calculates it, and <em>Write the
+            model</em> turns the water, as PHREEQC leaves it, into the model text:</p>
+          <ul>
+            <li>every aqueous species above the floor, at PHREEQC's molality, in
+              <code>&lt;SPECIES&gt;</code>;</li>
+            <li>every complexation and acid–base reaction among them, as the database writes it and
+              with water left out, in <code>&lt;EQUILIBRIUM&gt;</code>, with <code>EQUILIBRATE = 1</code>;</li>
+            <li>no redox relation: a reaction with electrons is left out, so that each valence state
+              keeps its own total and electrons move only through the reactions you write — which is
+              what a kinetic model is for.</li>
+          </ul>
+          <p>Each <code>logK</code> is <strong>conditional</strong>. The relations here hold between
+            concentrations, and PHREEQC's hold between activities. So each constant has the activity
+            coefficients at this water's ionic strength, and the activity of water, folded into it, and
+            the relations then hold exactly where PHREEQC's do. The page checks that: it compiles the text
+            and runs its own speciation from those constants alone, and the report under the panel says
+            how close that lands to PHREEQC's molalities. On each line, the comment gives the database's
+            own log K at the water's temperature, worked back from PHREEQC's activities.</p>
+          <pre>CO3-2 + H+ &lt;=&gt; HCO3-,     logK = 10.0298747218     # log K 10.4284
+Ca+2 + CO3-2 &lt;=&gt; CaCO3,    logK = 2.3122100860      # log K 3.1553
+ &lt;=&gt; OH- + H+,             logK = -14.1398953203    # log K -14.3433</pre>
+          <p>Those three lines are from <em>An example water</em>, a groundwater at 15 °C and ionic
+            strength 0.11 mol/kgw. The activity coefficients there move the constants by −0.40, −0.84
+            and +0.20 in log K.</p>
+          <p>The constants belong to that ionic strength. A run that adds or removes a lot of salt moves
+            away from it, and the PHREEQC tab says how far.</p>
+          <p><em>Hold the equilibria during the run</em> also keeps each relation as a fast reversible
+            pair, with the backward constant <code>kb = kf/K</code>. One forward constant for every
+            relation would not do: water and carbonate need constants about thirteen orders apart to
+            move at the same speed. So each relation gets the <code>kf</code> that makes it relax back
+            to equilibrium at the rate given, at this water. Near equilibrium a relation relaxes at
+            k<sub>f</sub> times the product of its reactants times Σ ν²/c over its species, and that is
+            solved for k<sub>f</sub>. The <code>kf</code> are per second, so change
+            <code>TIME_UNIT</code> and they have to change with it.</p>
+          <p>A name this page cannot write is renamed, and the top of the text lists every one:
+            <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
+            molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
+            every species one coefficient, or each its own from the database's <code>-dw</code>. This
+            page has no electrical coupling between ions, though, and different coefficients let charge
+            separate as the species spread.</p>
+
+          <h4 id="help-phreeqc-run">A run through PHREEQC</h4>
+          <p>The PHREEQC tab gives PHREEQC every stored water of the run, up to <em>Times per cell</em>
+            of them in each cell. PHREEQC then speciates them with its own constants, activity model and
+            ion pairs.</p>
+          <ul>
+            <li>Each species the database has, under the same name or the renamed one, is counted into
+              the element totals PHREEQC takes: <code>HCO3-</code> into C(4), <code>H2</code> twice
+              into H(0), <code>(UO2)2(OH)2+2</code> twice into U(6).</li>
+            <li>The pH is walked until PHREEQC's molality of H<sup>+</sup> is the run's [H<sup>+</sup>].</li>
+            <li>Left out, and listed with their largest concentration: water; this page's
+              <code>e-</code>, which is the hydrated electron and not PHREEQC's; radicals, surface
+              sites and whatever else the database lacks.</li>
+            <li>The temperature is the one the model was written at, read from the top of its text, or
+              25 °C for a model that does not say.</li>
+            <li><em>fill in from the water</em>, off unless ticked, takes the temperature from the water in
+              the panel on the Model tab. It also takes any element the model does not carry at all,
+              such as a background electrolyte, held at its totals. A model written from a water
+              carries every element already, so this is for one that leaves its counter-ions out. A
+              water PHREEQC will not take is said, and left out.</li>
+          </ul>
+          <p>What comes back is the pH as an activity and the saturation indices against time, for one
+            cell at a time, and a CSV with every cell, the ionic strength, the charge balance and the
+            activity of water. It also says:</p>
+          <ul>
+            <li>which phases are supersaturated, and where and when — what would precipitate if the
+              model let it;</li>
+            <li>how far the activity coefficients in the model's own equilibria moved along the run, in
+              log K units. That is how far constants made for the start have gone wrong. A few
+              hundredths is fine; a tenth or more means a fresh water nearer the run;</li>
+            <li>a water far from neutral, which usually means the model leaves out a counter-ion, and
+              so PHREEQC's ionic strength is too low.</li>
+          </ul>
+          <p>A look at a run stays on the tab after the next run, saying that it is of the run before.</p>
+
+          <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
+          <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
+            3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,
+            <code>wateq4f.dat</code>, <code>minteq.v4.dat</code> or a project's own. PHREEQC reads it
+            at once and says whether it can. A database you open is used for the visit and never
+            stored in the browser.</p>
+          <p>PHREEQC is the U.S. Geological Survey's, by David Parkhurst and Tony Appelo: Parkhurst,
+            D.L., and Appelo, C.A.J., 2013, <em>Description of input and examples for PHREEQC version
+            3—A computer program for speciation, batch-reaction, one-dimensional transport, and
+            inverse geochemical calculations</em>, U.S. Geological Survey Techniques and Methods, book
+            6, chap. A43, <a href="https://doi.org/10.3133/tm6A43">doi:10.3133/tm6A43</a>. The page
+            runs IPhreeqc 3.8.6, the library form of the program, compiled to WebAssembly from the
+            source as the Survey distributes it, unchanged. It is public domain under the Survey's
+            <a href="./vendors/phreeqc/NOTICE">user rights notice</a>, and the original distribution is at
+            <a href="https://www.usgs.gov/software/phreeqc-version-3">usgs.gov</a>.</p>
+
           <h3 id="help-jacobian">The Jacobian</h3>
           <p>Every rate law is differentiated symbolically with respect to each species it mentions.
             Nothing is differenced, so there is no step size to choose and no accuracy to lose. The
@@ -1089,6 +1289,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261102"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107"></script>
 </body>
 </html>
