@@ -352,6 +352,9 @@
                   <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqMinerals" data-on-change="rtm:pqSettings"> Keep the phases at saturation</label><span class="kvot-info-slot" data-info-key="pq:minerals"></span></div>
                 </div>
                 <div class="rtm-pq-field">
+                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqRedox" checked data-on-change="rtm:pqSettings"> Hold the valence states at one pe</label><span class="kvot-info-slot" data-info-key="pq:redox"></span></div>
+                </div>
+                <div class="rtm-pq-field">
                   <div class="kvot-info-line"><label for="rtmPqDiff">Diffusion</label><span class="kvot-info-slot" data-info-key="pq:diffusion"></span></div>
                   <select id="rtmPqDiff" data-on-change="rtm:pqSettings">
                     <option value="none">none: a batch, or set it in the text</option>
@@ -539,6 +542,8 @@ UO2                      # no number: starts at zero, does not move</pre>
             does, which is how a surface site is written, and <code>mineral</code> makes it a pure
             phase: see <em>Minerals</em> below. <code>exchanger</code> makes it the sites of an ion
             exchanger and <code>exchange</code> a species on them: see <em>Ion exchange</em> below.
+            <code>electron</code> makes it PHREEQC's electron, with <code>pe=</code> its pe: see
+            <em>Redox: the electron</em> below.
             With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
@@ -1159,6 +1164,48 @@ Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
             Na, moves a calcium front at the water's speed over 1 + 1/(2 × 0.6), with the exchanger all
             calcium behind it and the sodium pushed out ahead.</p>
 
+          <h4 id="help-redox">Redox: the electron</h4>
+          <pre>e-     electron   pe=4
+Fe+2   1e-4
+Fe+3   0
+HS-    1e-6
+SO4-2  1e-3
+
+&lt;EQUILIBRIUM&gt;
+Fe+2 &lt;=&gt; Fe+3 + e-,                     logK = -13.02
+SO4-2 + 9 H+ + 8 e- &lt;=&gt; HS- + 4 H2O,    logK = 33.65</pre>
+          <p>Redox as PHREEQC has it. <code>electron</code> makes a species PHREEQC's electron,
+            <code>e-</code> in a database's reactions. It is no amount: its activity, 10<sup>−pe</sup>, is
+            solved for in every cell, it counts in no total, and what the page shows for it is that
+            activity. It never moves, is in no ionic strength and no water, and takes no
+            <code>D</code>, <code>R</code>, rock-matrix properties or <code>z=</code>. A model has one.
+            In a radiolysis model <code>e-</code> is the hydrated electron, a species like any other:
+            the word on the line is what makes the difference.</p>
+          <p>A couple is tied to the electron by a relation, written as the database writes it, and
+            every couple tied to it is in equilibrium with every other at one pe. The totals the
+            relations conserve then include the electrons the couples hold between them, so a reaction
+            in <code>&lt;REACTIONS&gt;</code> that moves electrons — oxygen arriving, iron oxidised at
+            a rate — moves every couple together, and where the last of a reductant has gone the pe
+            jumps as the oxidant builds up. A couple not tied to it keeps its valence states apart, as
+            PHREEQC's decoupled elements do. The electron itself is in no reaction and no fast pair:
+            redox at a rate is written between species, <code>Fe+2 + 0.25 O2 + H+ =&gt; Fe+3 + 0.5
+            H2O</code>, and a rate law may read the electron's activity as <code>[e-]</code>. A phase
+            that dissolves with electrons, such as pyrite, is a <code>mineral</code> with the electron
+            in its relation.</p>
+          <p>Given <code>pe=</code>, or an activity, the start is speciated at that pe first, as
+            PHREEQC's <code>SOLUTION</code> is: each element tied to it is shared out between its
+            valence states as that pe has it, which is how one given none of a state gets some. Given
+            neither, the pe is the water's own, from the valence states as written, and
+            <code>EQUILIBRATE</code> is needed. <code>fixed</code> holds the pe all through the run, a
+            redox buffer.</p>
+          <p>The relations with the electron hold all through the run under <code>EQUILIBRATE =
+            always</code>, and at the start only otherwise. Held, a model with the electron is solved a
+            little differently from one without: each cell's species are the speciation of its totals,
+            found by a damped Newton iteration of its own at every evaluation, and only the totals are
+            held to the tolerance. That is what carries a run through the moment no couple buffers the
+            pe — the last pyrite gone, the oxygen coming in not yet built up — where the pe moves by ten
+            while what is conserved moves by less than the arithmetic can tell.</p>
+
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
             <code>reaction.in</code>, <code>solutions.in</code>, <code>diffusion.in</code>, the
@@ -1295,10 +1342,21 @@ Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
               <code>&lt;SPECIES&gt;</code>;</li>
             <li>every complexation and acid–base reaction among them, as the database writes it, in
               <code>&lt;EQUILIBRIUM&gt;</code>;</li>
-            <li>no redox relation: a reaction with electrons is left out, so that each valence state
-              keeps its own total and electrons move only through the reactions you write — which is
-              what a kinetic model is for.</li>
+            <li>with <em>Hold the valence states at one pe</em>, the default, each species the database
+              writes with electrons tied to the electron by that reaction, with the database's own log
+              K (see <em>Redox: the electron</em> above); without it, no reaction with electrons, so
+              that each valence state keeps its own total and electrons move only through the reactions
+              you write.</li>
           </ul>
+          <p>Held at one pe, the water is the one PHREEQC's next step makes. PHREEQC keeps the valence
+            states a <code>SOLUTION</code> is given, whatever its pe says — sulfate given, there is no
+            sulfide in it, however reducing — and any reaction then puts every couple on one pe, the
+            electrons kept, and forms the valence states it was given none of. Where the input ends on
+            a <code>SOLUTION</code> as given, it is mixed with nothing else and that water written; the
+            report says how far its pe moved. With the floor at 0 every species PHREEQC lists is
+            written, even one it finds none of — PHREEQC counts nothing below 10<sup>−30</sup> — at
+            none and with the database's log K: oxygen in a reducing water, ferric iron's complexes. A
+            water that oxygen will enter needs them.</p>
           <p>PHREEQC's relations hold between activities. <em>Activity coefficients</em> says how the
             model's do. <em>Following the ionic strength</em>, the default, writes
             <code>ACTIVITY = debye-huckel</code> at the water's <code>TEMPERATURE</code>, each
@@ -1344,8 +1402,9 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             temperature plus the saturation index it is held at, so a gas such as
             <code>CO2(g) -3.5</code> keeps its partial pressure while any of it is left. Left off, the
             phases only prepare the water. A phase that dissolves with electrons, such as pyrite, is
-            not carried, since no redox relation is written; nor is one whose line says more than a
-            saturation index and an amount. The report under the panel names both kinds.</p>
+            carried when the valence states are held at one pe, and not otherwise; nor is one whose
+            line says more than a saturation index and an amount. The report under the panel names
+            both kinds.</p>
           <p>An exchanger in the input, an <code>EXCHANGE</code> that PHREEQC's last calculation holds,
             is carried when the relations are held exactly. Its sites become an
             <code>exchanger</code> and each species PHREEQC put on it an <code>exchange</code> species
@@ -1376,8 +1435,10 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             <li>A mineral of the model is not part of the water: it is listed with the phases, its
               saturation index beside theirs. Nor is an exchanger or a species on one: the exchanger
               is looked at whole, below.</li>
-            <li>Left out, and listed with their largest concentration: water; this page's
-              <code>e-</code>, which is the hydrated electron and not PHREEQC's; radicals, surface
+            <li>The model's electron, if it has one, is PHREEQC's: each water is given the pe the run
+              has there, and the valence states are looked at against it, below.</li>
+            <li>Left out, and listed with their largest concentration: water; an <code>e-</code> that
+              is not the electron, the hydrated electron of a radiolysis model; radicals, surface
               sites and whatever else the database lacks.</li>
             <li>The temperature is the one the model was written at, read from the top of its text, or
               25 °C for a model that does not say.</li>
@@ -1406,6 +1467,9 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             <li>for an exchanger of the model, how close the run's equivalent fractions are to the ones
               PHREEQC puts on it when it loads an exchanger of the run's capacity from the same water,
               species by species, at every water looked at;</li>
+            <li>for the electron of the model, the pe over the waters, and how close the run's valence
+              states are to the ones PHREEQC shares each element out to when it is given the water at
+              that pe with the element as one total, as a part of the element;</li>
             <li>a water far from neutral, which usually means the model leaves out a counter-ion, and
               so PHREEQC's ionic strength is too low.</li>
           </ul>
@@ -1434,6 +1498,15 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             exchanger, as above. On 40 cells its effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's
             in sodium, 0.033 in potassium, 0.017 in calcium and 0.005 in chloride. On 80 cells that is
             0.016, 0.017, 0.007 and 0.001.</p>
+          <p>And redox. Water with 0.25&nbsp;mmol/kgw of oxygen enters 0.1&nbsp;m of an aquifer at
+            saturation with pyrite, 0.05&nbsp;mmol/kgw of it, and calcite, with goethite free to
+            precipitate, for 1.5 pore volumes. Each cell's pyrite dissolves as the oxygen reaches it; when
+            the last of it goes, the cell's pe jumps from −3.5 to 13 and goethite takes the iron. The page
+            runs the model it writes from the column water, the valence states at one pe and the floor
+            at 0, so that oxygen has a species to arrive as. On 20 cells its effluent is within 0.0011 of
+            PHREEQC's in pH, 0.0016 in pe, 1.5&nbsp;µmol/kgw in sulfate and 0.6&nbsp;nmol/kgw in iron, and
+            the pyrite is gone from the same 12 cells, with 3.4&nbsp;% less of it left. PHREEQC takes 2
+            seconds and this page 16. (On 40 cells PHREEQC itself stops: sulfur has not converged.)</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -1577,18 +1650,18 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20261005"></script>
-  <script src="./resources/js/ode-core.js?v=20261107"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20261107"></script>
+  <script src="./resources/js/ode-core.js?v=20261107a"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261107c"></script>
+  <script src="./resources/js/rtm-model.js?v=20261107d"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261107c"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261107d"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107e"></script>
 </body>
 </html>

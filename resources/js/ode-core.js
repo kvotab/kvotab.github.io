@@ -3466,7 +3466,8 @@
    * count in every other test. `floor`, set after construction, measures some
    * states against another's size as well: see `weightFloor` below; and
    * `absolute`, set the same way, measures some against abstol/rtol alone,
-   * their size left out: see `absolute` below.
+   * their size left out: see `absolute` below. `scale`, set the same way, may
+   * then lower any weight, step by step: see `weightScale` below.
    */
   class Weighting {
   	constructor(neq, threshold, normControl, rms = false, skip = null) {
@@ -3478,6 +3479,7 @@
   		this.invError = this.skip ? new Float64Array(neq) : this.inv;
   		this.floor = null;
   		this.absolute = null;
+  		this.scale = null;
   	}
 
   	/** Sets the weights for a step from `y` to `ynew`. */
@@ -3507,6 +3509,7 @@
   		}
   		const abs = this.absolute;
   		if (abs) for (let m = 0; m < abs.length; m++) inv[abs[m]] = 1 / th[abs[m]];
+  		if (this.scale) this.scale(y, ynew, inv);
   		if (this.skip) {
   			this.invError.set(inv);
   			for (const i of this.skip) this.invError[i] = 0;
@@ -3779,6 +3782,9 @@
    *   absolute           state indices weighed against abstol/rtol alone, their
    *                      size left out, and whose abstol never floats: a
    *                      logarithm; see where it is read
+   *   weightScale        (y, ynew, inv) => void, called once the weights of a
+   *                      step are set: it may lower inv[i], so that state i
+   *                      counts for less, and never raise it; see where it is read
    *   iterationMatrix    (pattern, J, opts) => the matrix Newton iterates with,
    *                      in the shape ../core/sparse.js's `iterationMatrix`
    *                      gives it, which is used when this is left out
@@ -3901,6 +3907,17 @@
   	newtonWeight.absolute = absolute;
   	const floats = new Uint8Array(neq).fill(1);
   	if (absolute) for (const i of absolute) floats[i] = 0;
+  	// And a state may count for less than its weight says, as the run goes:
+  	// the caller lowers, step by step, the weights of states whose value
+  	// matters to less than rtol of itself. The logarithm of a species that is
+  	// a vanishing part of everything it counts in is one: its error is an
+  	// error of rtol·C in a total far larger, and asked for rtol of itself it
+  	// is asked for what the rounding of those totals denies it -- the Newton
+  	// iteration stalls on it, at every step size. Not under norm control.
+  	if (typeof o.weightScale === 'function') {
+  		errorWeight.scale = o.weightScale;
+  		newtonWeight.scale = o.weightScale;
+  	}
   	// How many failing steps at the smallest step size may be taken in a row.
   	// Unset, this solver's own rule: up to MAX_BELOW_TOLERANCE steps that fail
   	// the error test, and none whose Newton iteration will not converge. Set,

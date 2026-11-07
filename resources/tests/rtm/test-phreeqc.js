@@ -143,6 +143,208 @@ Fe+3 + OH- = FeOH+2 ; log_k 11.8    # defined again: this one counts, as in PHRE
 }
 
 /* ======================================================================
+   Redox: the couples tied to the electron, against PHREEQC
+   ====================================================================== */
+function againstRedox(engine) {
+  const back = (res) => new Map([...res.names].map(([k, v]) => [v, k]));
+  const startOf = (res) => {
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    const b = back(res);
+    let worst = 0;
+    let at = '';
+    m.speciesNames.forEach((n, i) => {
+      const want = b.has(n) ? res.molal.get(b.get(n)) : undefined;
+      if (!(want > 0)) return;
+      const d = Math.abs(y[i] / want - 1);
+      if (d > worst) { worst = d; at = n; }
+    });
+    return { m, y, worst, at, pe: -Math.log10(y[m.speciesNames.indexOf('e-')]) };
+  };
+  // The groundwater, given as an analysis: PHREEQC's next step puts its
+  // couples on one pe, and the text is that water, every couple tied.
+  for (const activity of [true, false]) {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'groundwater', text: groundwater }, activity, exact: true });
+    const s = startOf(res);
+    const e = res.report.electron;
+    check(`a water given as an analysis, ${activity ? 'with its activity coefficients' : 'conditional'}: written as `
+      + 'PHREEQC\'s next step, its couples tied to the electron, and the page starts on that water and its pe',
+    /^e-\s+electron$/m.test(res.text) && /^Fe\+2 <=> Fe\+3 \+ e-,\s+logK = -1[0-9]\.[0-9]{10}/m.test(res.text)
+      && e && e.settled && e.settled.from === -3 && Math.abs(e.settled.to - res.water.pe) < 1e-12
+      && ['HS-', 'CH4', 'H2', 'Fe+3'].every((n) => e.tied.includes(n))
+      && s.worst < 1e-8 && Math.abs(s.pe - res.water.pe) < 1e-9,
+    `pe ${e ? `${e.settled.from} given, ${res.water.pe.toFixed(6)} at one pe` : '?'}; tied ${e ? e.tied.join(', ') : '-'}; `
+      + `the start within ${s.worst.toExponential(1)} (${s.at}), pe within ${Math.abs(s.pe - res.water.pe).toExponential(1)}`);
+  }
+  // Given sulfide and sulfate, Fe(2) and Fe(3) out of equilibrium at pe 4:
+  // the database's log K, not one read back off the water, and the start
+  // where the couples settle, as PHREEQC's next step has it.
+  const mixedUp = 'SOLUTION 1\n temp 25\n pH 7.0\n pe 4\n units mmol/kgw\n Na 10\n Ca 2\n Cl 14 charge\n'
+    + ' S(6) 1\n S(-2) 0.01\n Fe(2) 0.01\n Fe(3) 0.001\n C(4) 2\nEND\n';
+  engine.load(dbText);
+  const mres = P.waterToModel({ engine, database, water: { name: 'mixed', text: mixedUp }, activity: true, exact: true });
+  const ms = startOf(mres);
+  check('  given valence states its pe does not hold, the water settles on one pe, as PHREEQC\'s next step has it',
+    mres.report.electron.settled.from === 4 && mres.water.pe < -3 && ms.worst < 1e-8
+    && /^SO4-2 \+ 9 H\+ \+ 8 e- <=> HS- \+ 4 H2O,\s+logK = 33\.6500000000/m.test(mres.text),
+    `pe 4 given, ${mres.water.pe.toFixed(4)} settled; the start within ${ms.worst.toExponential(1)}`);
+  // Not held exactly, no relation with electrons, as before.
+  engine.load(dbText);
+  const pairs = P.waterToModel({ engine, database, water: { name: 'groundwater', text: groundwater }, activity: true, relax: 1e3 });
+  check('  held as fast pairs, the couples are not tied, and each valence state keeps its own total',
+    !/electron/.test(pairs.text.split('<SETTINGS>')[1]) && !pairs.report.electron && pairs.report.redox.includes('H2'));
+
+  // Oxygen fed into the groundwater at a steady rate, against PHREEQC
+  // adding the same oxygen: the iron's equivalence point and past it.
+  engine.load(dbText);
+  const ores = P.waterToModel({ engine, database, water: { name: 'groundwater', text: groundwater }, activity: true,
+    exact: true, floor: 0 });
+  const k = 1e-8;
+  const T = 1e4;
+  const text = ores.text.replace('TEND = 1\n', `TEND = ${T}\n`)
+    .replace('# Your kinetic reactions here, in the same species and units.', ` => O2, r = ${k}`);
+  const m = RtmModel.compile(text);
+  const steps = [0.5e-5, 2e-5, 6e-5, 1e-4];
+  const t0 = Date.now();
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: T, rtol: 1e-8, atol: 1e-20, outputTimes: steps.map((x) => x / k) });
+  const ms2 = Date.now() - t0;
+  engine.load(dbText);
+  const rows = P.parseRows(engine.run(`${P.punchBlock()}${groundwater}MIX 1\n 1 1.0\nSAVE solution 2\nEND\n`
+    + steps.map((x, i) => `USE solution 2\nREACTION ${i + 1}\n O2 1\n ${x} moles\nEND\n`).join('')));
+  const reacted = rows.filter((x) => x.state === 'react').slice(1);
+  const ob = back(ores);
+  let worstSp = 0;
+  let worstPe = 0;
+  let at = '';
+  steps.forEach((x, i) => {
+    const c = m.toConcentrations(r.grid.y[i]);
+    const pq = reacted[i];
+    m.speciesNames.forEach((n, j) => {
+      const want = ob.has(n) ? pq.species.get(ob.get(n)) : null;
+      if (!want || !(want[0] > 1e-12)) return;
+      const d = Math.abs(c[j] / want[0] - 1);
+      if (d > worstSp) { worstSp = d; at = `${n} at ${x} mol`; }
+    });
+    worstPe = Math.max(worstPe, Math.abs(-Math.log10(c[m.speciesNames.indexOf('e-')]) - pq.pe));
+  });
+  check('oxygen into the groundwater, against PHREEQC adding the same: through the iron\'s equivalence point and past it',
+    worstSp < 1e-4 && worstPe < 1e-4 && reacted[reacted.length - 1].pe > 13,
+    `every species above 1e-12 within ${worstSp.toExponential(1)} (${at}), the pe within ${worstPe.toExponential(1)}, `
+      + `from ${reacted[0].pe.toFixed(3)} to ${reacted[reacted.length - 1].pe.toFixed(3)}; ${m.speciesNames.length} species, ${ms2} ms`);
+
+  // The PHREEQC tab on that run: the electron is PHREEQC's pe, and the run's
+  // valence states are the ones PHREEQC shares each element out to at it.
+  const reply = pageRun(text, T);
+  engine.load(dbText);
+  const view = P.viewRun({ engine, database, run: reply, modelText: text, unit: 's', times: 12 });
+  const x = view.report.redox;
+  check('  the PHREEQC tab: each water at the run\'s pe, and PHREEQC shares the valence states out as the run has them',
+    x && !x.error && x.elements.includes('Fe') && x.elements.includes('S') && Math.abs(x.gap) < 1e-6
+    && view.report.skipped.some((sk) => sk.name === 'e-' && /the electron/.test(sk.why)),
+    x ? `pe ${x.pe[0].toFixed(3)} to ${x.pe[1].toFixed(3)}; ${x.elements.join(', ')} within ${Math.abs(x.gap).toExponential(1)} (${x.worst})`
+      : 'no redox');
+
+  // A pyrite column: oxygenated water into an aquifer with pyrite, calcite
+  // and goethite, against PHREEQC's TRANSPORT. Each cell's pyrite goes, the
+  // pe jumps by sixteen, and goethite takes the iron.
+  const N = 20;
+  const L = 0.1;
+  const dx = L / N;
+  const dt = 2000;
+  const S = 30;
+  const alpha = L / 40;
+  const v = dx / dt;
+  const water = (n) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH 7.5\n Na 2\n Ca 1\n Cl 2 charge\n C(4) 3\n S(6) 0.5\n Fe 0.001\n`;
+  const phases = (n) => `EQUILIBRIUM_PHASES ${n}\n Pyrite 0 5e-5\n Calcite 0 0.01\n Goethite 0 0\n`;
+  const inflow = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 7.5\n Na 2\n Ca 1\n Cl 2 charge\n C(4) 3\n S(6) 0.5\n'
+    + ' O(0) 0.25\n Fe 1e-9\nEND\n';
+  engine.load(dbText);
+  let started = Date.now();
+  const prow = engine.run(`${water(`1-${N}`)}END\n${phases(`1-${N}`)}END\nRUN_CELLS\n -cells 1-${N}\nEND\n${inflow}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH pe S6 Fe py\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), -LA("e-"), TOT("S(6)"), TOT("Fe"), EQUI("Pyrite")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = prow[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const row of prow.slice(1)) {
+    const t = Number(row[head.indexOf('time')]);
+    if (!(t > 0)) continue;
+    const o = {};
+    for (const key of ['pH', 'pe', 'S6', 'Fe', 'py']) o[key] = Number(row[head.indexOf(key)]);
+    pq.set(`${Number(row[head.indexOf('cell')])}/${Math.round(t / dt)}`, o);
+  }
+  engine.load(dbText);
+  const cres = P.waterToModel({ engine, database, water: { name: 'column', text: `${water(1)}${phases(1)}END\n` },
+    activity: true, exact: true, phases: true, floor: 0 });
+  engine.load(dbText);
+  const inRow = P.parseRows(engine.run(`${P.punchBlock()}${inflow}MIX 1\n 0 1.0\nEND\n`)).pop();
+  const cb = back(cres);
+  const ctext = cres.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral/.test(rest) || !cb.has(name)) return line;
+      const sp = inRow.species.get(cb.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const cm = RtmModel.compile(ctext);
+  started = Date.now();
+  const cr = FacsimileODE.runModel(cm, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-6, atol: 1e-20, nonNegative: true,
+    stagnationTol: 0.5, belowTolRun: 5, outputTimes: Array.from({ length: S }, (_, kk) => (kk + 1.5) * dt) });
+  const rtmMs = Date.now() - started;
+  const ns = cm.speciesNames.length;
+  const db = P.readDatabase(dbText);
+  const sum = (label) => {
+    const out = [];
+    cm.speciesNames.forEach((n, i) => {
+      if (!cb.has(n)) return;
+      for (const [kk, cc] of db.expand(cb.get(n))) if (P.normLabel(kk) === label) out.push([i, cc]);
+    });
+    return out;
+  };
+  const s6 = sum('S(6)');
+  const fe = [...sum('Fe(2)'), ...sum('Fe(3)')];
+  const iH = cm.speciesNames.indexOf('H+');
+  const iE = cm.speciesNames.indexOf('e-');
+  const iPy = cm.speciesNames.indexOf('Pyrite');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  const worst = { pH: 0, pe: 0, S6: 0, Fe: 0 };
+  for (let kk = 1; kk <= S; kk++) {
+    const c = cm.toConcentrations(cr.grid.y[kk - 1]);
+    const b = (N - 1) * ns;
+    RtmModel.activityAt(cm.act, c, b, lnG, dG);
+    const o = { pH: -(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10, pe: -Math.log10(c[b + iE]),
+      S6: s6.reduce((a, [i, cc]) => a + cc * c[b + i], 0), Fe: fe.reduce((a, [i, cc]) => a + cc * c[b + i], 0) };
+    const d = pq.get(`${N}/${kk}`);
+    for (const key of Object.keys(worst)) worst[key] = Math.max(worst[key], Math.abs(o[key] - d[key]));
+  }
+  const end = cm.toConcentrations(cr.grid.y[S - 1]);
+  let gone = 0;
+  let pqGone = 0;
+  let left = 0;
+  let pqLeft = 0;
+  for (let cell = 0; cell < N; cell++) {
+    if (!(end[cell * ns + iPy] > 0)) gone++;
+    left += end[cell * ns + iPy];
+    const d = pq.get(`${cell + 1}/${S}`);
+    if (!(d.py > 0)) pqGone++;
+    pqLeft += d.py;
+  }
+  check('a pyrite column, oxygenated water in, against PHREEQC\'s TRANSPORT: the effluent, and the pyrite gone and left',
+    worst.pH < 0.005 && worst.pe < 0.005 && worst.S6 < 3e-6 && worst.Fe < 2e-9 && Math.abs(gone - pqGone) <= 1
+    && Math.abs(left / pqLeft - 1) < 0.05 && cr.events.length === gone,
+    `effluent pH within ${worst.pH.toFixed(4)}, pe ${worst.pe.toFixed(4)}, sulfate ${(worst.S6 * 1e3).toFixed(5)} mM, `
+      + `iron ${(worst.Fe * 1e3).toExponential(2)} mM; pyrite gone from ${gone} cells (PHREEQC ${pqGone}), `
+      + `${((left / pqLeft - 1) * 100).toFixed(1)} % left; ${N} cells, ${S} shifts: PHREEQC ${pqMs} ms, the page ${rtmMs} ms`);
+}
+
+/* ======================================================================
    2. With PHREEQC running
    ====================================================================== */
 /** phreeqpython's PHREEQC, one process per run, for the cross-check. */
@@ -228,7 +430,7 @@ function withPhreeqc(engine) {
     `${acid.report.drift[0].by.toExponential(2)} in log K`);
 
   // --- the same water, its relations held exactly ---------------------------
-  const ex = P.waterToModel({ engine, database, water, exact: true });
+  const ex = P.waterToModel({ engine, database, water, exact: true, redox: false });
   const mx = RtmModel.compile(ex.text);
   const backX = new Map([...ex.names].map(([k, v]) => [v, k]));
   const cx = mx.toConcentrations(mx.initialState());
@@ -239,8 +441,8 @@ function withPhreeqc(engine) {
       && mx.heldEquilibria.relations === ex.report.equilibria && worstX < 1e-8,
     `${mx.heldEquilibria ? mx.heldEquilibria.species : 0} species on ${ex.report.equilibria} relations, `
       + `${worstX.toExponential(1)}`);
-  const own = P.waterToModel({ engine, database, water, exact: true, dw: true });
-  const one = P.waterToModel({ engine, database, water, exact: true, D: 2e-9 });
+  const own = P.waterToModel({ engine, database, water, exact: true, dw: true, redox: false });
+  const one = P.waterToModel({ engine, database, water, exact: true, D: 2e-9, redox: false });
   check('each species its own D from the database: the ions coupled, DIFFUSION = nernst-planck; one D for all: not',
     /^DIFFUSION = nernst-planck$/m.test(own.text) && /^Na\+ .*D=1\.33e-9$/m.test(own.text)
       && !/nernst-planck/.test(one.text) && RtmModel.compile(own.text).settings.DIFFUSION === 2);
@@ -272,7 +474,7 @@ function withPhreeqc(engine) {
   try { P.waterToModel({ engine, database, water: phaseWater, phases: true }); } catch (e) { notHeld = e.message; }
   check('... phases are kept at saturation only with the relations held exactly', /needs the relations held exactly/.test(notHeld),
     notHeld);
-  const ph = P.waterToModel({ engine, database, water: phaseWater, activity: true, exact: true, phases: true });
+  const ph = P.waterToModel({ engine, database, water: phaseWater, activity: true, exact: true, phases: true, redox: false });
   const mph = RtmModel.compile(ph.text);
   const backP = new Map([...ph.names].map(([k, v]) => [v, k]));
   const cph = mph.toConcentrations(mph.initialState());
@@ -378,7 +580,7 @@ function withPhreeqc(engine) {
   } catch (e) { pitzer = e.message; }
   check('... and a database with the Pitzer model is not followed, and says so', /Pitzer activity model/.test(pitzer),
     pitzer.slice(0, 90));
-  const fol = P.waterToModel({ engine, database, water, activity: true, exact: true });
+  const fol = P.waterToModel({ engine, database, water, activity: true, exact: true, redox: false });
   const mf = RtmModel.compile(fol.text);
   const backF = new Map([...fol.names].map(([k, v]) => [v, k]));
   const cf = mf.toConcentrations(mf.initialState());
@@ -411,7 +613,7 @@ function withPhreeqc(engine) {
     });
     return { worst: worstA, where };
   };
-  const fixedRes = P.waterToModel({ engine, database, water, exact: true });
+  const fixedRes = P.waterToModel({ engine, database, water, exact: true, redox: false });
   const fixedSalt = againstAlone(fixedRes, saltRun(fixedRes));
   const folSaltRun = saltRun(fol);
   const folSalt = againstAlone(fol, folSaltRun);
@@ -819,6 +1021,8 @@ function againstExchange(engine) {
   againstKinetics(wasm);
   console.log('\n--- an exchanger: the hand-off, PHREEQC\'s TRANSPORT and the PHREEQC tab ---');
   againstExchange(wasm);
+  console.log('\n--- redox: the hand-off, oxygen in, a pyrite column, and the PHREEQC tab ---');
+  againstRedox(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

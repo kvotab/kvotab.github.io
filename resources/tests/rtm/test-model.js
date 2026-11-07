@@ -3880,6 +3880,251 @@ Na+ + X- <=> NaX, logK = 0
     && !col.warnings.some((w) => /stays as it is while the water moves/.test(w)));
 }
 
+console.log('\n--- redox: the electron ---');
+{
+  const batch = (species, rel, more = '', reactions = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+${more}
+
+<SPECIES>
+${species}
+
+<EQUILIBRIUM>
+${rel}
+${reactions ? `\n<REACTIONS>\n${reactions}\n` : ''}`);
+  const val = (m, y, name) => y[m.speciesNames.indexOf(name)];
+  const FE = 'Fe+2 <=> Fe+3 + e-, logK = -13.02';
+  const MN = 'Mn+2 <=> Mn+3 + e-, logK = -25.51';
+
+  // One couple at a given pe: Fe3/Fe2 = K/a(e-), the electron held there at the start.
+  const atPe = batch('Fe+2 1e-3\nFe+3 0\nCl- 2e-3\ne- electron pe=12', FE, 'EQUILIBRATE = start');
+  const ya = atPe.initialState();
+  const ratio = 10 ** (-13.02 + 12);
+  check('one couple at a given pe: the valence states share the element as the pe has it (Fe3/Fe2 = K/a(e-))',
+    Math.abs(val(atPe, ya, 'Fe+3') / (1e-3 * ratio / (1 + ratio)) - 1) < 1e-12
+    && Math.abs(val(atPe, ya, 'Fe+2') + val(atPe, ya, 'Fe+3') - 1e-3) < 1e-18
+    && Math.abs(Math.log10(val(atPe, ya, 'e-')) + 12) < 1e-12 && atPe.speciated[0].converged,
+    `Fe+3 ${val(atPe, ya, 'Fe+3').toExponential(6)}, from none`);
+  // Without a pe, the couple's own ratio sets it.
+  const own = batch('Fe+2 9e-4\nFe+3 1e-4\ne- electron', FE, 'EQUILIBRATE = start');
+  const pe = -Math.log10(val(own, own.initialState(), 'e-'));
+  check('  given no pe, the valence states as written set it: pe = -log K - log(Fe2/Fe3)',
+    Math.abs(pe - (13.02 - Math.log10(9))) < 1e-12, `pe ${pe.toFixed(12)}`);
+
+  // Two couples tied to the electron are the redox reaction between them.
+  for (const [what, start] of [['as written', 'Fe+2 1e-6\nFe+3 1e-4\nMn+2 1e-4\nMn+3 1e-8'],
+    ['from none of the products', 'Fe+2 0\nFe+3 1e-4\nMn+2 1e-4\nMn+3 0']]) {
+    const tied = batch(`${start}\ne- electron`, `${FE}\n${MN}`, 'EQUILIBRATE = start');
+    const full = batch(start, 'Fe+3 + Mn+2 <=> Fe+2 + Mn+3, logK = -12.49', 'EQUILIBRATE = start');
+    const yt = tied.initialState();
+    const yf = full.initialState();
+    const d = Math.max(...['Fe+2', 'Fe+3', 'Mn+2', 'Mn+3'].map((n) => Math.abs(val(tied, yt, n) / val(full, yf, n) - 1)));
+    check(`two couples tied to the electron are the reaction between them, ${what}`,
+      d < 1e-9 && tied.speciated[0].converged && full.speciated[0].converged,
+      `within ${d.toExponential(1)}; Mn+3 ${val(tied, yt, 'Mn+3').toExponential(4)}`);
+  }
+
+  // A held run: an oxidant consumed at k[Ox] moves electrons from Fe(2) to
+  // Fe(3), and the couples tied to the electron share them out by their K.
+  const kFe = -13.02;
+  const kA = -13.5;
+  const k = 1e-3;
+  const Ox0 = 5e-5;
+  const held = batch(`Fe+2 1e-4\nFe+3 1e-8\nA 1e-4\nB 1e-8\nOx ${Ox0}\nRed 0\ne- electron`,
+    `${FE}\nA <=> B + e-, logK = ${kA}`, 'EQUILIBRATE = always',
+    `Ox + Fe+2 => Red + Fe+3, r = k*[Ox], k = ${k}`);
+  const c0 = held.toConcentrations(held.initialState());
+  const FeT = val(held, c0, 'Fe+2') + val(held, c0, 'Fe+3');
+  const AT = val(held, c0, 'A') + val(held, c0, 'B');
+  const O0 = val(held, c0, 'Fe+3') + val(held, c0, 'B');
+  const rh = run(held, { tend: 5000, outputTimes: [500, 1000, 2000, 5000] });
+  let dev = 0;
+  rh.grid.t.forEach((t, q) => {
+    const c = held.toConcentrations(rh.grid.y[q]);
+    const O = O0 + Ox0 * (1 - Math.exp(-k * t));
+    const KF = 10 ** kFe;
+    const KA = 10 ** kA;
+    let lo = -60;
+    let hi = 60;
+    for (let i = 0; i < 300; i++) {
+      const mid = (lo + hi) / 2;
+      const a = Math.exp(mid);
+      if (FeT * KF / (KF + a) + AT * KA / (KA + a) > O) lo = mid; else hi = mid;
+    }
+    const a = Math.exp((lo + hi) / 2);
+    dev = Math.max(dev, Math.abs(val(held, c, 'Fe+3') / (FeT * KF / (KF + a)) - 1),
+      Math.abs(val(held, c, 'B') / (AT * KA / (KA + a)) - 1), Math.abs(Math.log(val(held, c, 'e-') / a)));
+  });
+  check('a held run: an oxidant at k[Ox] moves electrons the two couples share by their K, against the closed solution',
+    dev < 1e-8 && held.warnings.length === 0, `within ${dev.toExponential(1)} over 5000 s`);
+
+  // Fixed, the electron is a redox buffer: the pe stays, and the couple with it.
+  const buffered = batch('Fe+2 1e-4\nFe+3 1e-8\nOx 5e-5\nRed 0\ne- electron pe=12 fixed', FE,
+    'EQUILIBRATE = always', `Ox + Fe+2 => Red + Fe+3, r = k*[Ox], k = ${k}`);
+  const rb = run(buffered, { tend: 2000 });
+  const cb = buffered.toConcentrations(last(rb));
+  check('  fixed, the electron holds the pe: Fe3/Fe2 stays K/a(e-) while the oxidant comes and goes',
+    Math.abs((val(buffered, cb, 'Fe+3') / val(buffered, cb, 'Fe+2')) / ratio - 1) < 1e-9
+    && Math.abs(Math.log10(val(buffered, cb, 'e-')) + 12) < 1e-14, `Fe3/Fe2 ${(val(buffered, cb, 'Fe+3') / val(buffered, cb, 'Fe+2')).toExponential(6)}`);
+
+  // The equivalence point: oxygen into a water whose Fe(2) it oxidises to
+  // Fe(OH)3, with methane tied to the same pe. Past the point the pe jumps by
+  // ten and methane falls to 1e-140; the run goes through it.
+  const jump = batch(`H+ 1e-7\nOH- 1e-7\nNa+ 3e-3\nCl- 1e-3\nFe+2 2e-5\nFe+3 0\nO2 0\nH2 0\nCH4 0
+HCO3- 2e-3\nCO2 2e-4\nFe(OH)3 0\ne- electron pe=-3`,
+  `H2O <=> OH- + H+, logK = -14\n${FE}\n2 H2O <=> O2 + 4 H+ + 4 e-, logK = -86.08
+2 H+ + 2 e- <=> H2, logK = -3.15\nHCO3- + 9 H+ + 8 e- <=> CH4 + 3 H2O, logK = 27.85
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+, logK = -12.56\nCO2 + H2O <=> HCO3- + H+, logK = -6.35`,
+  'EQUILIBRATE = always', '=> O2, r = 1e-8');
+  const rj = run(jump, { tend: 1000, rtol: 1e-8, outputTimes: [250, 1000] });
+  const ce = jump.toConcentrations(last(rj));
+  const c250 = jump.toConcentrations(rj.grid.y[0]);
+  const peAt = (c) => -Math.log10(val(jump, c, 'e-'));
+  check('the equivalence point: oxygen past the last Fe(2) sends the pe up by nine, and the run goes through it',
+    Math.abs(val(jump, ce, 'O2') / 5e-6 - 1) < 1e-6 && peAt(c250) < 4 && peAt(ce) > 12.5
+    && Math.abs(val(jump, ce, 'Fe(OH)3') + val(jump, ce, 'Fe+3') + val(jump, ce, 'Fe+2') - 2e-5) < 1e-17,
+    `pe ${peAt(c250).toFixed(2)} at 250 s, ${peAt(ce).toFixed(2)} at the end; O2 ${val(jump, ce, 'O2').toExponential(6)} `
+      + `for 5e-6; ${rj.stats.nsteps} steps, ${rj.stats.nfailed} failed`);
+
+  // A redox front in a column: Fe(3) water into a column whose immobile
+  // reductant it oxidises. Behind the front the reductant is spent, so the
+  // front moves at v/R, R = 1 + Y/Fe3_in, as a sorbing species would.
+  const N = 80;
+  const L = 0.08;
+  const v = 1e-5;
+  const Cin = 6e-4;
+  const Ycap = 1e-3;
+  const Rf = 1 + Ycap / Cin;
+  const T = (0.04 * Rf) / v;
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = ${N}
+LENGTH = ${L}
+VELOCITY = ${v}
+DIFFUSION = 1
+ADVECTION = 1
+EQUILIBRATE = always
+TEND = ${T}
+
+<SPECIES>
+Fe+2  1e-9   D=1e-10  left=1e-9
+Fe+3  1e-15  D=1e-10  left=${Cin}
+Yr    ${Ycap}  immobile
+Yo    1e-12  immobile
+e-    electron
+
+<EQUILIBRIUM>
+${FE}
+Yr <=> Yo + e-, logK = -5
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: T, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+    outputTimes: [T / 2, T] });
+  const nsc = col.speciesNames.length;
+  let rel = 0;
+  for (const yy of rc.grid.y) {
+    const c = col.toConcentrations(yy);
+    for (let i = 0; i < N; i++) {
+      const b = i * nsc;
+      rel = Math.max(rel, Math.abs(Math.log10(c[b + 1] * c[b + 4] / c[b]) + 13.02),
+        Math.abs(Math.log10(c[b + 3] * c[b + 4] / c[b + 2]) + 5));
+    }
+  }
+  const cEnd = col.toConcentrations(rc.grid.y[1]);
+  let xFe = NaN;
+  for (let i = 0; i < N - 1; i++) {
+    const a = cEnd[i * nsc + 1];
+    const b2 = cEnd[(i + 1) * nsc + 1];
+    if (a >= Cin / 2 && b2 < Cin / 2) { xFe = col.grid.centres[i] + ((a - Cin / 2) / (a - b2)) * (col.grid.centres[i + 1] - col.grid.centres[i]); break; }
+  }
+  check('a redox front: Fe(3) water into a column of reductant, the couples held in every cell, the front at v t/R',
+    rel < 1e-12 && Math.abs(xFe - 0.04) < 2 * (L / N),
+    `relations within ${rel.toExponential(1)} in log; front at ${(xFe * 100).toFixed(3)} cm for 4 cm (R = ${Rf.toFixed(4)})`);
+  /*
+    Its Jacobian, through each cell's speciation, on a short column where
+    every couple is buffered and the activities follow the ionic strength:
+    at the start, and part of the way. (A cell the front has passed holds
+    Fe(2) at 1e-12, where ln Fe(2) moves by 1e9 per unit of a total and a
+    central difference cannot follow it; and a total nudged by the
+    difference's step can be one no water has.)
+  */
+  const small = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 3
+LENGTH = 0.003
+VELOCITY = 1e-5
+DIFFUSION = 1
+ADVECTION = 1
+EQUILIBRATE = always
+ACTIVITY = davies
+TEND = 100
+
+<SPECIES>
+Fe+2  1e-4   D=1e-10  left=1e-9
+Fe+3  1e-6   D=1e-10  left=${Cin}
+Na+   1e-3   D=1e-10  left=1e-3
+Cl-   3e-3   D=1e-10  left=2e-3
+Yr    ${Ycap}  immobile
+Yo    1e-4   immobile
+e-    electron
+
+<EQUILIBRIUM>
+${FE}
+Yr <=> Yo + e-, logK = -5
+`);
+  const rs = FacsimileODE.runModel(small, { solver: 'ndf', tend: 100, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+    outputTimes: [50] });
+  const vj0 = RtmModel.verifyJacobian(small, 0, small.initialState());
+  const vj1 = RtmModel.verifyJacobian(small, 50, rs.grid.y[0]);
+  check('  its Jacobian, through each cell\'s speciation, against a central difference, at the start and on the way',
+    vj0.discrepancies.length === 0 && vj1.discrepancies.length === 0, `${vj0.checked} and ${vj1.checked} entries`);
+
+  // Under ACTIVITY the electron's coefficient is 1, and it counts in neither I nor the water.
+  const wa = batch('Na+ 0.05\nCl- 0.05\nFe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', FE, 'ACTIVITY = davies\nEQUILIBRATE = start');
+  const ie = wa.speciesNames.indexOf('e-');
+  const lnG = new Float64Array(wa.speciesNames.length);
+  RtmModel.activityAt(wa.act, wa.initialState(), 0, lnG, new Float64Array(wa.speciesNames.length), 0);
+  check('under ACTIVITY the electron\'s activity coefficient is 1, and it is neither an ion nor a solute',
+    lnG[ie] === 0 && wa.act.z[ie] === 0 && !wa.act.solute[ie]);
+  // A rate law reads the electron's activity.
+  const reads = batch('Fe+2 1e-4\nFe+3 1e-6\nT 1\ne- electron pe=4', FE, 'EQUILIBRATE = start', 'T => , r = 1e3*[e-]');
+  const rr = run(reads, { tend: 1 });
+  check('  and a rate law reads its activity, 10^-pe, as [e-]',
+    Math.abs((1 - last(rr)[reads.speciesNames.indexOf('T')]) / 0.1 - 1) < 1e-9);
+
+  // The texts it refuses, and what it says.
+  const refusal = (species, rel, more = '', reactions = '') => {
+    try { batch(species, rel, more, reactions); } catch (e) { return e.message; }
+    return '';
+  };
+  const cases = [
+    ['two electrons', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron\nE- electron', `${FE}\nFe+2 <=> Fe+3 + E-, logK = -13`,
+      /a model has one/, 'EQUILIBRATE = start'],
+    ['an electron in no relation', 'Fe+2 1e-4\nOH- 1e-7\nFeOH+ 0\ne- electron pe=4', 'Fe+2 + OH- <=> FeOH+, logK = 4',
+      /is the electron and in no relation/],
+    ['the electron in a fast pair', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', `${FE}, kf = 1`,
+      /no amount and cannot react at a rate/],
+    ['the electron in a reaction', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', FE, /cannot react at a rate/, '',
+      'Fe+3 + e- => Fe+2, k = 1'],
+    ['an electron that moves', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4 D=1e-9', FE, /never moves: it takes no D/],
+    ['a charge on the electron', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4 z=-1', FE, /takes no z, a or b/],
+    ['a pe on anything else', 'Fe+2 1e-4 pe=4\nFe+3 1e-6\ne- electron', FE, /pe is the electron's/],
+    ['an activity and a pe', 'Fe+2 1e-4\nFe+3 1e-6\ne- 1e-4 electron pe=4', FE, /both an activity and a pe/],
+    ['nothing to start from', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron', FE, /has nothing to start from/],
+    ['fixed with no pe', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron fixed', FE, /is fixed: give it the pe/, 'EQUILIBRATE = start'],
+  ];
+  const wrong = cases.filter(([, sp, rel, re, more, rx]) => !re.test(refusal(sp, rel, more, rx)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, sp, rel, , more, rx]) => `${what}: "${refusal(sp, rel, more, rx)}"`).join(' | '));
+  const startOnly = batch('Fe+2 9e-4\nFe+3 1e-4\ne- electron', FE, 'EQUILIBRATE = start');
+  check('  and relations with the electron put on at the start only are said to be, the pe staying put after',
+    startOnly.warnings.some((w) => /put on at the start only: the pe then stays as it was/.test(w))
+    && !held.warnings.some((w) => /the pe then stays/.test(w)));
+}
+
 /* ======================================================================
    3. The Jacobian
    ====================================================================== */

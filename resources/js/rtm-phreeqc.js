@@ -10,10 +10,13 @@
                    PHREEQC leaves it becomes the <SPECIES> and <EQUILIBRIUM>
                    of a model: every aqueous species at PHREEQC's molality,
                    every complexation and acid-base reaction as the database
-                   writes it, and no redox relation, so that each valence
-                   state keeps its own total and electrons move only through
-                   reactions the model writes. An exchanger in the input
-                   comes too, with the species PHREEQC put on it. The
+                   writes it, and, held exactly, each species written with
+                   electrons tied to the electron by its reaction, so that
+                   the couples share one pe as in PHREEQC -- the water then
+                   PHREEQC's next step, where it was given as an analysis --
+                   or else no redox relation, each valence state keeping its
+                   own total. An exchanger in the input comes too, with the
+                   species PHREEQC put on it. The
                    relations hold between activities that follow the ionic
                    strength (ACTIVITY, the database's own log K and -gamma),
                    or each has a CONDITIONAL log K (the activity
@@ -574,6 +577,12 @@
    *   exchange    with exact, unless false: an exchanger PHREEQC's last
    *               calculation holds becomes an exchanger and the species on
    *               it, at the molalities PHREEQC put there
+   *   redox       with exact, unless false: each species the database
+   *               writes with electrons is tied to the electron, e-, by its
+   *               reaction, so that every couple is in equilibrium at one pe
+   *               as in PHREEQC, starting at this water's; a phase that
+   *               dissolves with electrons can then be a mineral. Without it
+   *               each valence state keeps its own total
    *   relax       ... or as fast pairs, each with the kf that makes it relax
    *               back at this rate per second here
    *   kf          ... or as fast pairs all with this one forward constant
@@ -611,6 +620,20 @@
     const exMasters = [...new Set(db.exMaster.values())];
     const laAt = extras.length;
     for (const sp of exMasters) extras.push(`LA("${sp}")`);
+    /*
+      Each redox species' log K at this temperature, the database's own. A
+      relation without electrons holds in any water PHREEQC speciates, and
+      its log K can be read back off it; one with them need not: a water
+      given two valence states of an element keeps both as given, whatever
+      its pe says, and only PHREEQC's next step puts them on one pe.
+    */
+    const carryRedox = !!o.exact && o.redox !== false;
+    // With the floor at 0, every species' log K: one PHREEQC finds none of is written too (see atNone).
+    const everything = carryRedox && floor === 0;
+    const lkSpecies = carryRedox ? [...db.reaction.keys()].filter((sp) => sp !== 'e-' && sp !== 'H2O'
+      && (everything || db.isRedox(sp))) : [];
+    const lkAt = extras.length;
+    for (const sp of lkSpecies) extras.push(`LK_SPECIES("${sp}")`);
     let rows = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
@@ -618,7 +641,24 @@
         + (o.solution != null ? ` with SOLUTION ${o.solution}` : '')
         + ': it needs a SOLUTION, or something PHREEQC calculates.');
     }
-    const w = rows[rows.length - 1];
+    let w = rows[rows.length - 1];
+    /*
+      ONE PE. PHREEQC keeps the valence states an initial solution is given,
+      whatever its pe says: sulfate given, there is no sulfide in it, however
+      reducing the pe. Its next step -- any reaction -- puts every couple on
+      one pe, the electrons the water holds kept, and forms valence states
+      the water was given none of. With the couples tied to the electron, the
+      model is that next step: the water mixed with nothing else.
+    */
+    let settled = null;
+    if (carryRedox && w.state === 'i_soln' && Number.isFinite(Number(w.soln))) {
+      const more = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\nMIX 1\n ${Number(w.soln)} 1.0\nEND\n`);
+      const w2 = more[more.length - 1];
+      if (w2 && w2.state === 'react') {
+        settled = { from: w.pe, to: w2.pe };
+        w = w2;
+      }
+    }
 
     const molal = new Map();
     const lg = new Map();
@@ -627,9 +667,46 @@
       if (m > 0 && !NOT_A_SPECIES.has(n)) molal.set(n, m);
     }
     const logAw = log10(w.aw);
+    /*
+      REDOX: each species the database writes with electrons tied to the
+      electron by that reaction, which a run holds exactly, so that the
+      couples share one pe as in PHREEQC. The electron's activity is
+      10^-pe, its activity coefficient 1, and a relation reads it as it
+      reads a species.
+    */
+    const isE = (n) => carryRedox && n === 'e-';
+    const lkOf = new Map(lkSpecies.map((sp, i) => [sp, Number(w.x[lkAt + i])]));
+    const logM = (n) => (isE(n) ? -w.pe : log10(molal.get(n)));
+    const lgOf = (n) => (isE(n) ? 0 : lg.get(n));
 
     // Kept: everything above the floor, and whatever a kept relation needs.
     const kept = new Set([...molal].filter(([, m]) => m >= floor).map(([n]) => n));
+    /*
+      With the floor at 0 and the couples tied, a species PHREEQC lists at
+      none -- oxygen in a reducing water, ferric iron's complexes, PHREEQC
+      counting nothing below 1e-30 -- is written as well, at none, with the
+      database's log K: an oxidant or a reductant then has species to arrive
+      as and become, and the start puts each where the water's pe has it.
+    */
+    const atNone = new Set();
+    if (everything) {
+      const zero = [...w.species].filter(([n, [m]]) => !(m > 0) && !NOT_A_SPECIES.has(n) && db.reaction.has(n)
+        && Number.isFinite(lkOf.get(n)) && Number.isFinite(lg.get(n)));
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const [n] of zero) {
+          if (atNone.has(n)) continue;
+          const r = db.reaction.get(n);
+          if (r.left.length === 1 && r.right.length === 1 && r.left[0].n === r.right[0].n) continue;
+          const others = [...r.left, ...r.right.slice(1)].filter((t) => t.n !== 'H2O' && t.n !== 'e-');
+          if (!others.every((t) => molal.get(t.n) > 0 || atNone.has(t.n))) continue;
+          atNone.add(n);
+          molal.set(n, 0);
+          kept.add(n);
+          grew = true;
+        }
+      }
+    }
     const redox = new Set();
     const unknown = new Set();
     const pulled = new Set();
@@ -650,14 +727,17 @@
       if (!r || !r.left.length) { skip('the database has no reaction for it'); return; }
       if (a.extra) { skip(`its line says more than this page carries (${a.extra})`); return; }
       const others = [...r.left.slice(1), ...r.right];
-      if (others.some((t) => t.n === 'e-')) { skip('it dissolves with electrons, and no redox relation is written'); return; }
-      const missing = others.filter((t) => t.n !== 'H2O' && !molal.has(t.n)).map((t) => t.n);
+      if (others.some((t) => t.n === 'e-') && !carryRedox) {
+        skip('it dissolves with electrons, and the valence states are not held at one pe');
+        return;
+      }
+      const missing = others.filter((t) => t.n !== 'H2O' && !isE(t.n) && !molal.has(t.n)).map((t) => t.n);
       if (missing.length) { skip(`the water has no ${missing.join(', ')}`); return; }
       if (!Number.isFinite(moles) || !Number.isFinite(lk) || !(waterKg > 0)) { skip('PHREEQC gave no amount or log K for it'); return; }
       minerals.push({ phase: a.name, si: moles > 0 && Number.isFinite(siLeft) ? siLeft : a.si, target: a.si,
         amount: Math.max(moles, 0) / waterKg, lk, c0: r.left[0].c, reac: r.left.slice(1), prod: r.right });
       for (const t of others) {
-        if (t.n !== 'H2O' && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+        if (t.n !== 'H2O' && !isE(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
       }
     });
     /*
@@ -708,7 +788,7 @@
           if (db.masterLabel(n) === null) unknown.add(n);
           continue;
         }
-        if (db.isRedox(n)) { redox.add(n); continue; }
+        if (db.isRedox(n) && !carryRedox) { redox.add(n); continue; }
         for (const { n: x } of [...r.left, ...r.right.slice(1)]) {
           if (NOT_A_SPECIES.has(x) || kept.has(x)) continue;
           if (molal.has(x)) { kept.add(x); pulled.add(x); changed = true; }
@@ -726,14 +806,30 @@
       if (r.left.length === 1 && r.right.length === 1 && r.left[0].n === r.right[0].n) continue;
       const reac = r.left.filter((t) => t.n !== 'H2O');
       const prod = r.right.filter((t) => t.n !== 'H2O');
-      const missing = [...reac, ...prod].map((t) => t.n).filter((x) => !kept.has(x));
+      const missing = [...reac, ...prod].map((t) => t.n).filter((x) => !kept.has(x) && !isE(x));
       if (missing.length) { skipped.push({ species: n, missing }); continue; }
-      const sumLog = (terms) => terms.reduce((s, t) => s + t.c * log10(molal.get(t.n)), 0);
-      const sumLg = (terms) => terms.reduce((s, t) => s + t.c * lg.get(t.n), 0);
-      const logkC = sumLog(prod) - sumLog(reac);
+      const sumLog = (terms) => terms.reduce((s, t) => s + t.c * logM(t.n), 0);
+      const sumLg = (terms) => terms.reduce((s, t) => s + t.c * lgOf(t.n), 0);
       const nw = r.right.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0)
         - r.left.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0);
-      const logk = logkC + sumLg(prod) - sumLg(reac) + nw * logAw;
+      // A species at none has no molality to read its log K back off.
+      let logk = atNone.has(n) ? lkOf.get(n) : null;
+      let logkC = atNone.has(n) ? logk - sumLg(prod) + sumLg(reac) - nw * logAw : sumLog(prod) - sumLog(reac);
+      if (logk === null) logk = logkC + sumLg(prod) - sumLg(reac) + nw * logAw;
+      /*
+        A couple tied to the electron takes the database's log K, and says
+        what pe it stands at in this water: PHREEQC's own, unless the water
+        was given both its valence states.
+      */
+      let peHere = null;
+      const ne = prod.filter((t) => isE(t.n)).reduce((s, t) => s + t.c, 0)
+        - reac.filter((t) => isE(t.n)).reduce((s, t) => s + t.c, 0);
+      if (ne && Number.isFinite(lkOf.get(n)) && !atNone.has(n)) {
+        const lk = lkOf.get(n);
+        peHere = w.pe - (lk - logk) / ne;
+        logkC += lk - logk;
+        logk = lk;
+      }
       let kf = (!o.exact && o.kf) || null;
       if (o.relax && !o.exact) {
         // Near equilibrium a relation relaxes at kf * prod(reactants) * sum(nu^2 / c).
@@ -742,7 +838,7 @@
         kf = o.relax / (forward * spread);
       }
       // As the database writes it, water and all, for a model that keeps activities.
-      eqs.push({ species: n, reac, prod, logkC, logk, kf, left: r.left, right: r.right });
+      eqs.push({ species: n, reac, prod, logkC, logk, kf, left: r.left, right: r.right, peHere });
     }
 
     // Names as rtm.html can write them; H+ and OH- first.
@@ -752,6 +848,16 @@
       const i = order.indexOf(front);
       if (i >= 0) { order.splice(i, 1); order.unshift(front); }
     }
+    // The electron, when a relation written has it: PHREEQC's e-, under that name.
+    const withE = (terms) => terms.some((t) => t.n === 'e-');
+    const tied = carryRedox ? eqs.filter((e) => withE(e.reac) || withE(e.prod)) : [];
+    const eUsed = carryRedox && (tied.length > 0 || minerals.some((mn) => withE(mn.reac) || withE(mn.prod)));
+    if (eUsed) taken.set('e-', 'e-');
+    // The pe each couple stands at in PHREEQC's water: one, unless it was given
+    // two valence states of an element, which the run then settles on one pe.
+    const pes = tied.map((e) => e.peHere).filter((v) => Number.isFinite(v));
+    const peSpread = pes.length ? [Math.min(...pes), Math.max(...pes)] : null;
+    const outOfEq = !!peSpread && peSpread[1] - peSpread[0] > 1e-6;
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
     // The exchangers used, and the species on them, by the names written.
@@ -826,8 +932,35 @@
       out.push(`# ${fmtG(tc, 6)} C. If a run moves the ionic strength far from ${fmtG(w.mu, 3)}, look at it through`);
       out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
     }
-    out.push('# No redox relation is written: each valence state keeps its own total, and electrons');
-    out.push('# move only through the reactions you add.');
+    if (eUsed) {
+      const list = tied.map((e) => name.get(e.species) || e.species);
+      out.push('# Redox: each species the database writes with electrons is tied to the electron, e-, by its');
+      out.push(`# reaction (${list.slice(0, 8).join(', ')}${list.length > 8 ? `, and ${list.length - 8} more` : ''}${
+        minerals.some((mn) => withE(mn.reac) || withE(mn.prod)) ? '; and the phases that dissolve with electrons' : ''}),`);
+      out.push("# so the couples share one pe, as in PHREEQC, each with the database's log K. e- is no amount:");
+      out.push('# its activity is 10^-pe, which the run works out from the electrons the couples hold between them.');
+      if (atNone.size) {
+        const none = [...atNone].map((sp) => name.get(sp) || sp);
+        out.push(`# Written at none, PHREEQC finding less than 1e-30 of them, so that they can arrive and form: ${none.length} species`);
+        out.push(`# (${none.slice(0, 8).join(', ')}${none.length > 8 ? ', ...' : ''}), each with the database's log K.`);
+      }
+      if (outOfEq) {
+        out.push(`# PHREEQC's water is out of redox equilibrium: it was given valence states its pe of ${fmtG(w.pe, 6)} does not`);
+        out.push(`# hold, and its couples stand at pe ${fmtG(peSpread[0], 6)} to ${fmtG(peSpread[1], 6)}. The run starts where they settle on`);
+        out.push("# one pe, the electrons kept, as PHREEQC's next step would.");
+      } else if (settled && Math.abs(settled.to - settled.from) > 1e-6) {
+        out.push(`# The water is PHREEQC's next step: its valence states put on one pe, ${fmtG(settled.to, 6)}, where it was`);
+        out.push(`# given ${fmtG(settled.from, 6)} and the valence states as written.`);
+      } else {
+        out.push(`# The start is PHREEQC's water, at its pe of ${fmtG(w.pe, 6)}.`);
+      }
+    } else if (carryRedox) {
+      out.push('# Redox: no species written here is one the database writes with electrons, so none is');
+      out.push('# tied to a pe.');
+    } else {
+      out.push('# No redox relation is written: each valence state keeps its own total, and electrons');
+      out.push('# move only through the reactions you add.');
+    }
     if (o.exact) {
       out.push('# Every relation is also held exactly during the run (EQUILIBRATE = always): in every');
       out.push('# cell it is an algebraic equation, and what the relations conserve is integrated in');
@@ -903,6 +1036,7 @@
       out.push(`${name.get(s).padEnd(width)}${more ? fmtG(molal.get(s), 15).padEnd(width2) + more
         : fmtG(molal.get(s), 15)}`);
     }
+    if (eUsed) out.push(`${'e-'.padEnd(width)}${''.padEnd(follow ? width2 : 0)}electron`);
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
       out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
@@ -927,7 +1061,7 @@
     // this temperature plus the saturation index it is held at.
     for (const mn of minerals) {
       const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
-      const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lg.get(t.n), 0);
+      const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
       const nw = mn.prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
         - mn.reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
       const logk = mn.lk + mn.si;
@@ -971,6 +1105,13 @@
         pH: w.pH, chargeBalance: w.cb,
         dropped: dropped.length, droppedTop: top, droppedTopValue: top ? molal.get(top) : null,
         pulled: pulled.size, redox: [...redox].sort(), unknown: [...unknown].sort(), skipped, renamed,
+        // The electron, when the couples are tied to it: its pe here, and the species tied.
+        electron: eUsed ? { name: 'e-', pe: w.pe, tied: tied.map((e) => name.get(e.species) || e.species),
+          minerals: minerals.filter((mn) => withE(mn.reac) || withE(mn.prod)).map((mn) => mn.name),
+          spread: outOfEq ? peSpread : null,
+          atNone: [...atNone].map((sp) => name.get(sp) || sp),
+          // PHREEQC's next step, where the input ended on a water as given: the pe it was given, and the one it settles at.
+          settled } : null,
         activity: follow ? { temperature: tc, unsupported } : null,
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
@@ -989,6 +1130,21 @@
     ['H2O', 'water itself'],
     ['e-', "rtm.html's e- is the hydrated electron, not PHREEQC's"],
   ]);
+
+  /** The species a model text makes PHREEQC's electron (`electron` on its line), or null. */
+  function modelElectron(text) {
+    let section = null;
+    for (const raw of String(text || '').split(/\r\n|\r|\n/)) {
+      const line = raw.split('#', 1)[0].trim();
+      if (!line) continue;
+      const m = /^<\s*([A-Za-z_]+)(?:\s[^>]*)?>$/.exec(line);
+      if (m) { section = m[1].toUpperCase(); continue; }
+      if (section !== 'SPECIES') continue;
+      const parts = line.split(/[\s,;]+/).filter(Boolean);
+      if (parts.slice(1).some((p) => /^electron$/i.test(p))) return parts[0];
+    }
+    return null;
+  }
 
   /** The <EQUILIBRIUM> lines of a model text as {rel, reac, prod}. */
   function modelEquilibria(text) {
@@ -1060,9 +1216,13 @@
     const exMasterOf = new Map([...db.exMaster].map(([lb, sp]) => [sp, lb]));
     const exMasterBack = new Map([...db.exMaster.values()].map((sp) => [rtmName(sp), sp]));
     const onExchanger = [];
+    // The model's electron is PHREEQC's: its activity is the pe each water is given.
+    const electron = modelElectron(o.modelText);
+    const eIndex = electron ? model.species.indexOf(electron) : -1;
     model.species.forEach((n) => {
       let p;
       if (skip.has(n)) { skipped.set(n, 'asked'); return; }
+      if (n === electron) { skipped.set(n, "the electron: its activity is the run's pe, which each water is given"); return; }
       if (map[n]) {
         p = map[n];
         if (!db.reaction.has(p) && db.masterLabel(p) === null) {
@@ -1162,16 +1322,26 @@
           for (const [lb, v] of contrib) totals.set(lb, (totals.get(lb) || 0) + v * c);
         }
         const h = hIndex >= 0 ? Math.max(value(g.state, hIndex, k), 0) * scale : null;
+        const ae = eIndex >= 0 ? value(g.state, eIndex, k) : 0;
         rows.push({ t: run.t[k], cell: g.cell, layer: g.layer, totals, H: h, pH: h > 0 ? -Math.log10(h) : null,
-          state: g.state, k });
+          pe: ae > 0 ? -Math.log10(ae) : null, state: g.state, k });
       }
     }
 
     // --- PHREEQC, with the pH walked onto the run's [H+] -------------------
-    const solution = (k, r) => {
-      const lines = [`SOLUTION ${k}`, `  temp ${fmtG(temp, 10)}`, '  units mol/kgw', '  pe 4',
+    // totals: the element totals to give PHREEQC, by valence state unless
+    // `together` says to give an element's valence states as one.
+    const solution = (k, r, together) => {
+      const lines = [`SOLUTION ${k}`, `  temp ${fmtG(temp, 10)}`, '  units mol/kgw',
+        `  pe ${r.pe !== null && r.pe !== undefined ? r.pe.toFixed(12) : '4'}`,
         r.pH !== null ? `  pH ${r.pH.toFixed(12)}` : '  pH 7 charge'];
-      for (const [lb, v] of [...r.totals].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
+      const totals = new Map();
+      for (const [lb, v] of r.totals) {
+        const el = elementOf(lb);
+        const key = together && together.has(el) ? el : lb;
+        totals.set(key, (totals.get(key) || 0) + v);
+      }
+      for (const [lb, v] of [...totals].sort((a, b) => (a[0] < b[0] ? -1 : 1))) {
         if (v > 0) lines.push(`  ${lb} ${fmtG(v, 15)}`);
       }
       return `${lines.join('\n')}\n`;
@@ -1272,6 +1442,62 @@
       };
     }
 
+    // --- the model's redox couples: the run's valence states against PHREEQC's ----
+    // Each water given to PHREEQC at the run's pe with each element of
+    // several valence states as one total, which PHREEQC shares out between
+    // them as that pe has it: how far each valence state the run has is from
+    // PHREEQC's, as a part of its element.
+    let redox = null;
+    if (eIndex >= 0) {
+      const states = new Map();
+      for (const { contrib } of mapped.values()) {
+        for (const lb of contrib.keys()) {
+          const el = elementOf(lb);
+          if (['H', 'O'].includes(el) || !lb.includes('(')) continue;
+          if (!states.has(el)) states.set(el, new Set());
+          states.get(el).add(lb);
+        }
+      }
+      const together = new Set([...states].filter(([, set]) => set.size > 1).map(([el]) => el));
+      const pes = good.filter((r) => r.pe !== null).map((r) => r.pe);
+      let worst = { by: 0, at: null, label: null };
+      let error = null;
+      if (together.size) {
+        for (let start = 0; start < good.length && !error; start += CHUNK) {
+          const sub = good.slice(start, start + CHUNK);
+          let out;
+          try {
+            out = runRows(o.engine, `${punchBlock()}${sub.map((r, k) => solution(k + 1, r, together)).join('')}END\n`);
+          } catch (e) {
+            error = String(e.message || e).trim().split('\n')[0];
+            break;
+          }
+          sub.forEach((r, k) => {
+            const q = out[k];
+            if (!q) return;
+            for (const el of together) {
+              let whole = 0;
+              for (const [lb, v] of r.totals) if (elementOf(lb) === el) whole += v;
+              if (!(whole > 0)) continue;
+              for (const lb of states.get(el)) {
+                const ours = (r.totals.get(lb) || 0) / whole;
+                const theirs = (q.elements.get(lb) || 0) / whole;
+                if (Math.abs(ours - theirs) > Math.abs(worst.by)) worst = { by: ours - theirs, at: r, label: lb };
+              }
+            }
+          });
+        }
+      }
+      redox = {
+        electron,
+        pe: pes.length ? [Math.min(...pes), Math.max(...pes)] : null,
+        elements: [...together].sort(),
+        gap: worst.by, worst: worst.label,
+        t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null,
+        error,
+      };
+    }
+
     // --- phases worth a column ----------------------------------------------
     let phases;
     if (o.phases && o.phases.length) phases = o.phases.slice();
@@ -1312,7 +1538,7 @@
       const prod = e.prod.filter((t) => !isWater(t));
       const all = [...reac, ...prod].every((t) => mapped.has(t.n));
       // An exchanger's relations are looked at with the exchanger, whole.
-      const onEx = (t) => exBack.has(t.n) || exMasterBack.has(t.n);
+      const onEx = (t) => exBack.has(t.n) || exMasterBack.has(t.n) || t.n === electron;
       if (!all) { if (![...reac, ...prod].every((t) => mapped.has(t.n) || onEx(t))) unchecked.push(e.rel); continue; }
       const conv = (terms) => terms.map((t) => ({ c: t.c, n: mapped.get(t.n).p }));
       const water = e.prod.filter(isWater).reduce((a, t) => a + t.c, 0) - e.reac.filter(isWater).reduce((a, t) => a + t.c, 0);
@@ -1419,6 +1645,7 @@
       drift: drifts.map((d) => ({ rel: d.rel, by: d.by, t: d.at ? d.at.t : null, cell: d.at ? d.at.cell : null })),
       activity,
       exchange,
+      redox,
       minerals: mineralCheck,
       unchecked,
       phases,
@@ -1447,6 +1674,6 @@
 
   return {
     readDatabase, readAssemblage, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
-    punchBlock, parseRows, modelEquilibria, waterToModel, viewRun, fmtG, SEL,
+    punchBlock, parseRows, modelEquilibria, modelElectron, waterToModel, viewRun, fmtG, SEL,
   };
 }));

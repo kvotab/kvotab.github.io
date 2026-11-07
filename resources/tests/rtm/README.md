@@ -35,6 +35,7 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **An exchanger**: Example 11's column water with an `EXCHANGE` of 1.1 mmol/kgw loaded from it. The hand-off writes `X- exchanger` and the species PHREEQC put on it, with the database's `-gamma` when the activity coefficients follow (none when conditional), and the page's start is PHREEQC's exchanger to 6.7e-16. Not held exactly, the exchanger is not carried and the report says so. Then Example 11 itself: CaCl2 through 40 cells for three pore volumes, PHREEQC's TRANSPORT against the page's model of the water (limited advection), read as in the calcite column. The effluent agrees to 0.022 mM in Na, 0.033 in K (peaking at 1.115), 0.017 in Ca and 0.005 in Cl (on 80 cells, measured once: 0.016, 0.017, 0.007, 0.001). The PHREEQC tab loads PHREEQC's exchanger from each water of a run at the run's capacity, and the run's fractions are within 6.8e-9 of it over 150 waters.
 
   These found that a BASIC `FOR` over an empty range, as `SYS("ex")` gives for a water with no exchanger, spoils the WebAssembly PHREEQC's memory: a later load of the database failed with "memory access out of bounds", three tests on. The punch block jumps the loop when there is nothing to loop over.
+- **Redox**: the groundwater, given as an analysis at pe −3, is written as PHREEQC's next step: its couples on one pe (−2.946), sulfide, methane, H2 and Fe(3) tied to the electron with the database's log K at 15 °C, and the page's start is that water to 1e-8 (9e-10 measured) and its pe to 1e-9, in both activity modes. A water given sulfate and sulfide, Fe(2) and Fe(3) at pe 4 settles at pe −3.42, as PHREEQC's next step has it. Held as fast pairs, no couple is tied. Oxygen fed into the groundwater at 1e-8 mol/kgw/s against PHREEQC adding the same in REACTION: through the iron's equivalence point (where the pe jumps from 1 to 10) and past it, every species above 1e-12 within 1e-4 (5.9e-5 measured, Fe+2 at the point itself) and the pe within 1e-4 (2.6e-5). The PHREEQC tab on that run gives each water its pe, with C, Fe and S each one total, and PHREEQC shares the valence states out as the run has them, to 4e-10. Then a pyrite column: oxygenated water into an aquifer with pyrite, calcite and goethite (20 cells, 30 shifts), PHREEQC's TRANSPORT against the page's model of the column water (floor 0, so that oxygen has a species to arrive as): the effluent within 0.0011 in pH, 0.0016 in pe, 1.5e-6 mol/kgw in sulfate and 6e-10 in iron, the pyrite gone from the same 12 cells and 3.4 % less of it left. On 40 cells PHREEQC itself fails ("S has not converged").
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
 With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge.py` drives it), the same inputs also go through that native PHREEQC on the same database. The WebAssembly build has to agree with it: 1.7e-13 on a model's numbers, and every number of a run's CSV identical.
@@ -45,6 +46,7 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 - The panel on the Model tab writes the example water and reports the check. By default the activity coefficients follow the ionic strength (`ACTIVITY = debye-huckel` at 15 °C, `H2O` in the relations); fixed at this water, the constants are conditional and the water is left out. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
 - Keeping the phases needs the relations held exactly (the box is greyed otherwise); with a calcite phase in the example water, calcite becomes a mineral, the report says so, and the model facts count it.
 - An `EXCHANGE` in the example water is carried: `X- exchanger`, CaX2 with the database's a and b, the report and the model facts saying so. Run and looked at, the PHREEQC tab finds the run's exchanger within 1e-6 of the one PHREEQC loads from its waters (6e-10 measured).
+- The example water's couples are tied to the electron by default, the water PHREEQC's next step (51 species, 41 relations, pe −2.95): the report and the model facts say so, and the run looked at through PHREEQC shares C, Fe and S out at the run's pe as the run has them, within 1e-6.
 - A column is offered against distance as well: each cell at its centre down the column, at one of the times looked at.
 - The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
 - A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
@@ -355,6 +357,24 @@ in every cell to rounding, the Ca front sits at v t/R with R = 1 + CEC/(2 Ca)
 and the chloride at v t, each within two cells, and the Jacobian holds, the
 exchanger in the relations and out of the totals. Eleven texts are refused,
 each with its reason.
+
+**Redox** (`electron`, `pe=`). One couple at a given pe shares its element as
+K/a(e-) has it, from none of one state (1e-12); given no pe, the valence
+states set it (1e-12). Two couples tied to the electron are the reaction
+between them written without it, as written and from none of the products
+(1e-9). A held run with an oxidant consumed at k[Ox] against its closed
+solution: the electrons it moves shared by the two couples by their K
+(3e-10); fixed, the electron holds the pe and the couple with it. Oxygen past
+the last Fe(2), with methane tied to the same pe: the pe jumps by nine and
+the run goes through in 27 steps, none failed, at rtol 1e-8. A redox front:
+Fe(3) water into a column of immobile reductant, the relations held in every
+cell to 5e-15 and the front at v t/R with R = 1 + Y/Fe3_in, within two cells;
+the Jacobian of the projected form (each cell's species the speciation of its
+totals) against a central difference on a buffered column with ACTIVITY, at
+the start and on the way (a cell the front has passed holds Fe(2) at 1e-12,
+where no central difference can follow ln Fe(2)). The electron's activity
+coefficient is 1, out of I and the water; a rate law reads it as [e-]. Ten
+texts are refused, each with its reason.
 
 **Limited advection** (`ADVECTION_SCHEME = limited`). A front at a Peclet
 number of 400 against van Genuchten and Alves's closed solution for the flux

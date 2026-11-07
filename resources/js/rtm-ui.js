@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107d';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -308,6 +308,9 @@
     return Math.abs(v) >= 1e-3 && Math.abs(v) < 1e6 ? String(Number(v.toPrecision(4))) : v.toExponential(3);
   };
 
+  /** A pe, or the range of pe over the cells: [lowest, highest]. */
+  const fmtPe = ([lo, hi]) => (Math.abs(hi - lo) < 5e-3 ? lo.toFixed(2) : `${lo.toFixed(2)} to ${hi.toFixed(2)}`);
+
   /** A thickness, in mm or µm where that reads better than metres. */
   const fmtLength = (x) => {
     const a = Math.abs(x);
@@ -450,7 +453,9 @@
         + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : 'Debye–Hückel'} at ${a.temperature} °C `
           + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
-          : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : ''));
+          : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
+        + (m.redox ? ` · ${m.redox.relations} relation${m.redox.relations === 1 ? '' : 's'} tied to the electron `
+          + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : ''));
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -2012,7 +2017,7 @@
           'Every aqueous species above the floor, at PHREEQC’s molality, in `<SPECIES>`.',
           'Every complexation and acid–base reaction among them, as the database writes it, in `<EQUILIBRIUM>`: held exactly through the run (`EQUILIBRATE = always`), as fast pairs with a `kf`, or at the start only, as **The equilibria during the run** says.',
           'Between activities that follow the ionic strength, with the database’s own log K (`ACTIVITY`), or with each `logK` **conditional**, the activity coefficients at this water folded in, as **Activity coefficients** says.',
-          'No redox relation. A reaction with electrons is not written, so each valence state keeps its own total and electrons move only through the reactions you write.',
+          'The redox couples, as **Hold the valence states at one pe** says: each species the database writes with electrons tied to the electron, `e-`, by that reaction, so that every couple is at one pe as in PHREEQC; or none of them, each valence state keeping its own total.',
           'A name rtm.html cannot write, such as `(UO2)2(OH)2+2`, is renamed (`UO2_2(OH)2+2`), and the text lists each one at the top.',
         ] },
         { heading: 'The input', text: 'Ordinary PHREEQC input: a `SOLUTION`, and anything PHREEQC should do to it first, such as `EQUILIBRIUM_PHASES`, `REACTION` or `MIX`. The water of its last calculation is the one written. **Open…** reads a PHREEQC input file; **An example water** puts in a granitic groundwater made of round numbers.' },
@@ -2065,9 +2070,21 @@
       sections: [
         { text: 'Off, the phases only prepare the water: calcite and a CO2 pressure put it where it is, and the run starts from that water with no calcite and no gas. On, they stay: calcite dissolves as acid comes in and precipitates where the water is supersaturated, and a gas holds its partial pressure, as EQUILIBRIUM_PHASES do in PHREEQC.' },
         { text: 'Each is written as `mineral` on its species line, at its amount per kilogram of water, with its reaction from the database’s PHASES and its log K at the water’s temperature, plus its saturation index. The run stops where one dissolves away or precipitates, and says so.' },
-        { heading: 'Not carried', text: 'A phase that dissolves with electrons, such as pyrite, since no redox relation is written; and one whose line says more, such as dissolve_only. The report says which.' },
+        { heading: 'Not carried', text: 'A phase that dissolves with electrons, such as pyrite, unless the valence states are held at one pe; and one whose line says more, such as dissolve_only. The report says which.' },
       ],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:redox': () => ({
+      kicker: 'PHREEQC', title: 'Hold the valence states at one pe',
+      lead: 'Each species the database writes with electrons is tied to the electron, `e-`, by that reaction, so that every couple in the water is in equilibrium at one pe, as PHREEQC has them.',
+      facts: [['Default', 'on'], ['Needs', 'the equilibria held exactly']],
+      sections: [
+        { text: 'On, the text gets `e- electron` and a relation such as `Fe+2 <=> Fe+3 + e-` for each species of another valence state, with the database’s own log K. The electron is no amount: the run works out its activity, 10^-pe, in every cell from the electrons the couples hold between them, so an oxidant that arrives, or a reductant that runs out, moves every couple together. A phase that dissolves with electrons, such as pyrite, can then be kept at saturation.' },
+        { text: 'A water PHREEQC was given as an analysis keeps the valence states it was given, whatever its pe says: sulfate given, it has no sulfide however reducing it is. PHREEQC’s next step, any reaction, puts every couple on one pe and forms the valence states the water was given none of, and the text is that next step; the report says how far it moved the pe. With **Leave out species below** at 0, every species PHREEQC lists is written, even those it finds none of, such as oxygen in a reducing water: then there is a species for oxygen coming in to arrive as.' },
+        { text: 'Off, no relation with electrons is written: each valence state keeps its own total, and electrons move only through the reactions you write, as in a radiolysis model where `e-` is the hydrated electron.' },
+      ],
+      more: more('Redox: the electron', 'help-redox'),
     }),
 
     'pq:hold': () => ({
@@ -2196,14 +2213,14 @@
 
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
-    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
   };
   /** Names that mean something where they take a value: `NAME = ...`. */
   const HL_ASSIGN = {
-    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b']),
+    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b', 'pe']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
     PHASES: new Set(['k', 'logk']),
@@ -2558,11 +2575,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107d';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107e';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107d',
+    'resources/js/rtm-phreeqc.js?v=20261107e',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2591,7 +2608,7 @@ END
   /** Whether their activity coefficients follow the ionic strength: see pq:activity. */
   const PQ_ACTS = ['follow', 'fixed'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, relax: '1e3', diff: 'none', D: '2e-9',
+    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, redox: true, relax: '1e3', diff: 'none', D: '2e-9',
     times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0, mode: 'time', at: -1,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
@@ -2609,7 +2626,7 @@ END
   function pqSave() {
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
-        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, relax: pq.relax, diff: pq.diff,
+        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open,
       }));
@@ -2623,7 +2640,7 @@ END
       for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
-      for (const k of ['fill', 'logT', 'open', 'minerals']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (PQ_HOLDS.includes(s.eq)) pq.eq = s.eq;
       if (PQ_ACTS.includes(s.act)) pq.act = s.act;
       else if (typeof s.hold === 'boolean') pq.eq = s.hold ? 'exact' : 'start';
@@ -2639,6 +2656,7 @@ END
     $('rtmPqAct').value = pq.act;
     $('rtmPqHold').value = pq.eq;
     $('rtmPqMinerals').checked = pq.minerals;
+    $('rtmPqRedox').checked = pq.redox;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
     $('rtmPqD').value = pq.D;
@@ -2656,8 +2674,10 @@ END
   function pqDependents() {
     $('rtmPqDWrap').hidden = pq.diff !== 'one';
     $('rtmPqRelaxWrap').hidden = pq.eq !== 'pairs';
-    // A mineral is held at saturation only where the relations are held.
+    // A mineral is held at saturation only where the relations are held, and
+    // so is the electron.
     $('rtmPqMinerals').disabled = pq.eq !== 'exact';
+    $('rtmPqRedox').disabled = pq.eq !== 'exact';
   }
 
   function pqReadControls() {
@@ -2666,6 +2686,7 @@ END
     pq.act = PQ_ACTS.includes($('rtmPqAct').value) ? $('rtmPqAct').value : 'follow';
     pq.eq = PQ_HOLDS.includes($('rtmPqHold').value) ? $('rtmPqHold').value : 'exact';
     pq.minerals = $('rtmPqMinerals').checked;
+    pq.redox = $('rtmPqRedox').checked;
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
     pq.D = $('rtmPqD').value.trim();
@@ -2886,6 +2907,19 @@ END
         out.push(`<p class="warn">Not carried from the exchanger: ${r.exchangeSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
+      if (r.electron) {
+        const e = r.electron;
+        const moved = e.settled && Math.abs(e.settled.to - e.settled.from) > 1e-6;
+        out.push(`<p>Redox: ${e.tied.length} species tied to the electron ${esc(e.name)} by the database's reactions `
+          + `(${esc(someOf(e.tied, 8))})${e.minerals.length ? `, and ${e.minerals.map(esc).join(', ')} with them` : ''}, `
+          + 'so that the couples share one pe'
+          + (e.spread ? `. PHREEQC's water is out of redox equilibrium, its couples at pe ${pqNum(e.spread[0])} to `
+            + `${pqNum(e.spread[1])}: the run starts where they settle on one, the electrons kept.`
+            : moved ? `. The water is PHREEQC's next step, its valence states put on one pe: ${pqNum(e.settled.to)}, `
+              + `where it was given ${pqNum(e.settled.from)}.` : `, PHREEQC's pe of ${pqNum(e.pe)} to start with.`)
+          + (e.atNone.length ? ` ${e.atNone.length} species PHREEQC finds none of are written at none, so that they can `
+            + 'arrive and form.' : '') + '</p>');
+      }
       if (r.activity && r.activity.unsupported.length) {
         out.push(`<p class="warn">PHREEQC works out the activity of ${r.activity.unsupported.map(esc).join(', ')} in `
           + 'a way this page does not have; here they follow Davies, or 0.1 I if neutral.</p>');
@@ -2933,7 +2967,7 @@ END
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
         options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact',
-          phases: pq.minerals && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
+          phases: pq.minerals && pq.eq === 'exact', redox: pq.redox && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
           date: new Date().toISOString().slice(0, 10) },
       });
       // As an example is loaded: the text replaced outright, and said so below the panel.
@@ -3060,6 +3094,27 @@ END
           + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
           + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
             + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
+      }
+    }
+    // The model's redox couples, against PHREEQC sharing out each element at the run's pe.
+    if (r.redox) {
+      const x = r.redox;
+      const pe = x.pe ? (x.pe[1] - x.pe[0] < 5e-3 ? `pe ${pqNum(x.pe[0])}` : `pe ${pqNum(x.pe[0])} to ${pqNum(x.pe[1])}`)
+        : 'no pe';
+      if (x.error) {
+        out.push(`<p class="warn">The electron ${esc(x.electron)}, ${pe} over the waters: PHREEQC would not share the `
+          + `valence states out at that pe: ${esc(x.error)}.</p>`);
+      } else if (!x.elements.length) {
+        out.push(`<p>The electron ${esc(x.electron)}, ${pe} over the waters, which PHREEQC is given with each. No `
+          + 'element the run carries has more than one valence state for it to share out.</p>');
+      } else {
+        const big = Math.abs(x.gap) > 1e-3;
+        out.push(`<p${big ? ' class="warn"' : ''}>The electron ${esc(x.electron)}, ${pe} over the waters. Given each `
+          + `water at its pe, with ${x.elements.map(esc).join(', ')} each one total, PHREEQC shares the valence states `
+          + `out to within ${pqNum(Math.abs(x.gap))} of the run's, as a part of their element`
+          + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
+          + (big ? ' That is further than holding the relations leaves it: the run may be missing a valence state '
+            + 'PHREEQC has, or the relations are not the database\'s.' : '') + '</p>');
       }
     }
     // The model's minerals, as PHREEQC sees the water around them.

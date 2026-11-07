@@ -180,7 +180,7 @@ async def main():
 
             report = await write_from_example(page)
             check('the example water is written as a model through PHREEQC',
-                  isinstance(report, str) and report.startswith('Written into the text below: 41 species and 30 '
+                  isinstance(report, str) and report.startswith('Written into the text below: 51 species and 41 '
                                                                 'equilibria'), True)
             check('and rtm.html\'s own speciation, its own activity coefficients and all, lands on PHREEQC\'s',
                   isinstance(report, str) and 'from the database\'s constants and its own activity coefficients, '
@@ -194,13 +194,19 @@ async def main():
             status = await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and it compiles', status, 'Compiled:')
             check('with the relations held, in activities: the model facts say so', await page.ev(
-                "/all held throughout the run, 40 species algebraic in every cell · in activities, "
-                "Debye–Hückel at 15 °C \\(27 ions\\)/.test(document.getElementById('rtmFacts').textContent)"), True)
+                "/all held throughout the run, 52 species algebraic in every cell · in activities, "
+                "Debye–Hückel at 15 °C \\(33 ions\\)/.test(document.getElementById('rtmFacts').textContent)"), True)
+            check('its couples tied to the electron, the water PHREEQC\'s next step: the report and the model facts say so',
+                  isinstance(report, str)
+                  and "Redox: 4 species tied to the electron e- by the database's reactions (HS-, H2, CH4 and Fe+3)" in report
+                  and "The water is PHREEQC's next step, its valence states put on one pe: -2.95, where it was given -3." in report
+                  and await page.ev("/4 relations tied to the electron e-, pe −?-?2\\.95 at the start/"
+                                    ".test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('[data-tab="jacobian"]'))
             jac = await page.ev("document.getElementById('rtmJacNote').textContent")
             check('the Jacobian tab draws the species\' part and says the totals are not drawn',
-                  True if isinstance(jac, str) and jac.startswith("the species' 41 × 41 of the 51 × 51 the solver works with")
-                  and 'the 10 totals the held equilibria conserve are not drawn' in jac else jac, True)
+                  True if isinstance(jac, str) and jac.startswith("the species' 52 × 52 of the 63 × 63 the solver works with")
+                  and 'the 11 totals the held equilibria conserve are not drawn' in jac else jac, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
             # As fast pairs instead: the rate they relax at is asked for, and each gets its kf.
@@ -275,13 +281,18 @@ async def main():
                   ['pH, −log a(H+)', 0, 7.4, True, True])
             summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
             check('the summary says what was supersaturated and how far the constants moved',
-                  isinstance(summary, str) and 'Supersaturated: Quartz' in summary
+                  isinstance(summary, str) and 'Supersaturated: ' in summary and 'Quartz, saturation index up to' in summary
                   and 'The model works its activity coefficients out as the run goes (ACTIVITY = debye-huckel). '
                       'PHREEQC\'s moved by up to ' in summary
                   and re.search(r"the model's own are within [0-9.e−-]+ of PHREEQC's in log K", summary) is not None, True)
             check('at the temperature the model was written at, read from the top of its text',
                   isinstance(summary, str) and 'at 15 °C, as the top of the model text has it' in summary
-                  and 'Counted (41)' in summary, True)
+                  and 'Counted (51)' in summary, True)
+            m_re = re.search(r'The electron e-, pe .+? over the waters\. Given each water at its pe, with ([A-Za-z, ]+) '
+                             r'each one total, PHREEQC shares the valence states out to within ([0-9.e+−-]+)', summary or '')
+            check('the electron is PHREEQC\'s pe, and PHREEQC shares each element out at it as the run has it',
+                  m_re is not None and m_re.group(1) == 'C, Fe, S'
+                  and float(m_re.group(2).replace('−', '-')) < 1e-6, True)
 
             # Filled in from a water PHREEQC refuses (the bad one is still in the panel):
             # said, and the look goes on without it.
@@ -444,7 +455,7 @@ async def main():
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             report = await write_from_example(page)
             check('with no Worker, PHREEQC runs on the page and writes the same model',
-                  isinstance(report, str) and report.startswith('Written into the text below: 41 species and 30 '
+                  isinstance(report, str) and report.startswith('Written into the text below: 51 species and 41 '
                                                                 'equilibria'), True)
             check('loaded as scripts', await page.ev("typeof createPhreeqc === 'function' && "
                                                      "typeof PHREEQC_DAT === 'string'"), True)
@@ -459,7 +470,7 @@ async def main():
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             report = await write_from_example(page)
             check('opened from the disk, PHREEQC loads and writes the model', isinstance(report, str)
-                  and report.startswith('Written into the text below: 41 species'), True)
+                  and report.startswith('Written into the text below: 51 species'), True)
             check('no console errors from the disk', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

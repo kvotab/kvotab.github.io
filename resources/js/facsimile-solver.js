@@ -130,7 +130,9 @@
    *   rtol, atol (number|array), maxOrder (1-5), bdf (bool), hmax, h0, maxSteps,
    *   nonNegative (bool[] or null), mass (diagonal: 1 differential, 0 algebraic),
    *   absolute (bool[] or null: logarithms, weighed against atol/rtol alone),
-   *   suppressAlgebraic, norm ('max'|'rms'), normControl, scaling, minNewton,
+   *   weightScale ((y, ynew, inv) => void: lowers the weights of states that
+   *   matter less, step by step; see the NDF), suppressAlgebraic,
+   *   norm ('max'|'rms'), normControl, scaling, minNewton,
    *   stagnationTol, belowTolRun, autoAtol,
    *   jacobian: {pattern, evaluate(t,y), groups} -- `evaluate` optional (differenced through the pattern),
    *   matrix: 'auto'|'refactor'|'sparse'|'dense',
@@ -174,6 +176,7 @@
       maxSteps: opts.maxSteps ?? 2e6,
       nonNegative,
       absolute,
+      weightScale: typeof opts.weightScale === 'function' ? opts.weightScale : undefined,
       mass: opts.mass,
       suppressAlgebraic: !!opts.suppressAlgebraic,
       jacobian: Jopt,
@@ -776,6 +779,8 @@
         mass: model.mass, suppressAlgebraic: opts.suppressAlgebraic ?? model.suppressAlgebraic,
         // States the model says are logarithms, weighed as they stand (see the NDF).
         absolute: model.absoluteMask && model.absoluteMask.length === n ? model.absoluteMask : null,
+        // ...and step by step, those of them that count for less (see the NDF's weightScale).
+        weightScale: typeof model.weightScale === 'function' ? model.weightScale : null,
         maxSteps: opts.maxSteps,
         // The first step, at the start and at every restart after an event,
         // as Kompartment hands its solvers one; and the NDF's norm control.

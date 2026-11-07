@@ -365,8 +365,8 @@
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
-        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null,
-        mineral: false, immobile: false, exchange: false, exchanger: false, line };
+        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null,
+        mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -403,8 +403,11 @@
             if (!(value >= 0)) throw new RtmError(`a = ${value} for ${name}: an ion size is zero or more.`, line);
             entry.dha = value;
           } else if (key === 'b') entry.dhb = value;
+          // The electron's: the pe its activity starts at, 10^-pe.
+          else if (key === 'pe') entry.pe = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
-            + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; and for ACTIVITY z, a and b.', line);
+            + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; and for '
+            + 'the electron pe.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -417,6 +420,8 @@
         if (/^exchanger$/i.test(part)) { entry.exchanger = true; entry.immobile = true; continue; }
         // A species on an exchanger, NaX: its activity is its equivalent fraction.
         if (/^exchange$/i.test(part)) { entry.exchange = true; entry.immobile = true; continue; }
+        // PHREEQC's electron: no amount, its activity 10^-pe solved for.
+        if (/^electron$/i.test(part)) { entry.electron = true; entry.immobile = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
@@ -424,9 +429,41 @@
         }
         throw new RtmError(`"${part}" is not understood on a species line.`, line);
       }
-      const kinds = ['mineral', 'exchange', 'exchanger'].filter((k) => entry[k]);
+      const kinds = ['mineral', 'exchange', 'exchanger', 'electron'].filter((k) => entry[k]);
       if (kinds.length > 1) throw new RtmError(`${name} is given as ${kinds.join(' and ')}: it is one of them.`, line);
-      if (kinds.length) {
+      if (entry.pe !== null && !entry.electron) {
+        throw new RtmError(`pe = ${entry.pe} for ${name}: pe is the electron's, e- electron pe=4.`, line);
+      }
+      if (entry.electron) {
+        /*
+          The electron is no amount and never moves: what it is given is its
+          activity, 10^-pe, which the start is speciated at. It may be fixed:
+          the pe held from outside, a redox buffer.
+        */
+        const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
+          ['Kd', entry.Kd !== null], ['Kdf', entry.Kdf !== null], ['left', entry.left !== null],
+          ['right', entry.right !== null]].filter(([, given]) => given).map(([k]) => k);
+        if (moves.length) {
+          throw new RtmError(`${name} is the electron, which is no amount and never moves: it takes no `
+            + `${moves.join(', ')}.`, line);
+        }
+        if (entry.z !== null || entry.dha !== null || entry.dhb !== null) {
+          throw new RtmError(`${name} is the electron, whose activity is solved for and which carries no charge `
+            + 'into the ionic strength: it takes no z, a or b.', line);
+        }
+        if (entry.pe !== null) {
+          if (entry.initial !== 0) {
+            throw new RtmError(`${name} is given both an activity and a pe: they say the same thing, `
+              + 'the activity being 10^-pe. Give one.', line);
+          }
+          entry.initial = 10 ** -entry.pe;
+          if (!(entry.initial > 0 && Number.isFinite(entry.initial))) {
+            throw new RtmError(`pe = ${entry.pe} for ${name} puts its activity out of reach of a number.`, line);
+          }
+        } else if (!(entry.initial >= 0)) {
+          throw new RtmError(`${name} is the electron, and its activity is above zero: pe=4 is 1e-4.`, line);
+        }
+      } else if (kinds.length) {
         const kind = kinds[0];
         const what = { mineral: 'a mineral', exchange: 'on an exchanger', exchanger: 'an exchanger' }[kind];
         const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
@@ -1561,7 +1598,8 @@
       // The water itself, and a pure phase: activity 1, and no solute. An
       // exchanger and the species on it are no solutes either, and carry no
       // charge into I: their coefficients are set with the exchange (exchangeSetup).
-      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger) { solute[s] = 0; return; }
+      // Nor is the electron, whose coefficient is 1: its activity is solved for.
+      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron) { solute[s] = 0; return; }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
       if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
       if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
@@ -1656,8 +1694,8 @@
    */
   function noActivity(species) {
     const ns = species.length;
-    const z = Float64Array.from(species, (sp) => (sp.mineral || sp.exchange || sp.exchanger || sp.name === 'H2O' ? 0
-      : (sp.z !== null ? sp.z : chargeOf(sp.name))));
+    const z = Float64Array.from(species, (sp) => (sp.mineral || sp.exchange || sp.exchanger || sp.electron
+      || sp.name === 'H2O' ? 0 : (sp.z !== null ? sp.z : chargeOf(sp.name))));
     return { kind: 'none', A: 0, B: 0, ns, z, zg: new Float64Array(ns), form: new Uint8Array(ns),
       a: new Float64Array(ns), b: new Float64Array(ns), solute: new Uint8Array(ns), ex: null };
   }
@@ -1804,6 +1842,48 @@
 
   /** A number of sites as a reader would write it. */
   function fmtSites(v) { return String(+v.toPrecision(6)); }
+
+  /**
+   * REDOX, as PHREEQC has it: the electron.
+   *
+   *   e-     electron  pe=4             the electron, and the pe a start is speciated at
+   *   Fe+2 <=> Fe+3 + e-, logK = -13.02
+   *   SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O, logK = 33.65
+   *
+   * The electron is no amount: PHREEQC's e-, whose activity, 10^-pe, is
+   * solved for in every cell and which counts in no total. A couple tied to
+   * it is in equilibrium at that pe, and every couple tied to it with every
+   * other: the totals the relations conserve then hold the electrons the
+   * couples have between them, and a reaction at a rate that moves some
+   * moves that total. A couple left out keeps its valence states apart, as
+   * PHREEQC's decoupled elements do. One electron to a model, in at least one
+   * relation, and in no fast pair: what holds it is EQUILIBRATE.
+   *
+   * Returns the electron's index, or -1.
+   */
+  function electronSetup(species, equilibria) {
+    const ks = [];
+    species.forEach((sp, k) => { if (sp.electron) ks.push(k); });
+    if (!ks.length) return -1;
+    if (ks.length > 1) {
+      throw new RtmError(`${ks.map((k) => species[k].name).join(' and ')} are each given as the electron: a model `
+        + 'has one, whose activity is the pe of each cell.', species[ks[1]].line);
+    }
+    const [e] = ks;
+    const name = species[e].name;
+    if (!equilibria.some((eq) => eq.net.some(([s]) => s === e))) {
+      throw new RtmError(`${name} is the electron and in no relation: Fe+2 <=> Fe+3 + ${name}, logK = -13.02, `
+        + 'ties a couple to it.', species[e].line);
+    }
+    for (const eq of equilibria) {
+      if (eq.kf !== null && eq.net.some(([s]) => s === e)) {
+        throw new RtmError(`"${eq.text}" has the electron in it, which is no amount and cannot react at a rate: it `
+          + 'is held (EQUILIBRATE). Redox at a rate is a reaction in <REACTIONS> between species, '
+          + 'Fe+2 + 0.25 O2 + H+ => Fe+3 + 0.5 H2O.', eq.line);
+      }
+    }
+    return e;
+  }
 
   /* ======================================================================
      2b. Equilibria, and the speciation that solves them
@@ -1961,7 +2041,9 @@
       the capacity -- the sites the species on it take -- and each ion's
       itself and its species on the exchanger. The exchanger is no amount and
       counts in no total, and taken otherwise its total would be the sites
-      less some ion, a difference of two large numbers.
+      less some ion, a difference of two large numbers. The electron, no
+      amount either, goes last for the same reason: its total is then the
+      electrons the couples hold, made of the species that hold them.
     */
     if (site) {
       const rank = (k) => (site[k] === 1 ? 0 : site[k] === 2 ? 2 : 1);
@@ -2030,21 +2112,24 @@
    * @returns {{y: Float64Array, cells: object[]}}
    */
   function speciate(model, y, opts = {}) {
-    // opts.equilibria: some of the relations only, and the species they take.
+    // opts.equilibria: some of the relations only, and the species they take;
+    // opts.fixed: the species held where they stand, in place of the model's
+    // fixed ones -- the electron, at the pe a start is given.
     const eqs = opts.equilibria || model.equilibria;
     if (!eqs || !eqs.length) return { y: Float64Array.from(y || model.initialState()), cells: [] };
     const ns = model.speciesNames.length;
     const out = Float64Array.from(y || model.initialState());
-    const site = model.act && model.act.ex ? model.act.ex.site : null;
-    const basis = opts.equilibria
-      ? conservationBasis(eqs, ns, model.fixed, abundanceOf(out, ns, model.cells), site) : model.conservation;
-    const ne = eqs.length;
-    const nb = basis.length;
-    const cells = [];
+    // Species on an exchanger first, and last what counts in no total.
+    const site = model.rank || null;
     // The species that take part, and where each sits in the small system. A
     // fixed one is held: it appears in the equilibrium rows as a known number,
     // never as an unknown.
-    const held = model.fixed || [];
+    const held = opts.fixed || model.fixed || [];
+    const basis = opts.equilibria || opts.fixed
+      ? conservationBasis(eqs, ns, held, abundanceOf(out, ns, model.cells), site) : model.conservation;
+    const ne = eqs.length;
+    const nb = basis.length;
+    const cells = [];
     const part = equilibriumSpecies(eqs).filter((si) => !held[si]);
     const na = part.length;
     if (ne + nb !== na) {
@@ -2056,8 +2141,8 @@
         + 'usually does not, and an equilibrium that repeats another has the same effect.');
     }
     const sys = cellSystem(eqs, part, basis.map((v) => Float64Array.from(part, (si) => v[si])), model.mineral,
-      model.act || null, ns);
-    // An exchanger counts in no total: it is no amount.
+      model.act || null, ns, site);
+    // An exchanger, or the electron, counts in no total: it is no amount.
     const w = Float64Array.from(part, (si) => (site && site[si] === 2 ? 0 : 1));
     for (let cell = 0; cell < model.cells; cell++) {
       const b = cell * ns;
@@ -2185,11 +2270,15 @@
    *   U        the totals, one row each, over part
    *   minOf    a relation's mineral, as its place in part, or -1
    *   minNu    that mineral's coefficient: which way its saturation runs
+   *   exch     1 where the unknown is no amount -- an exchanger, the
+   *            electron -- whose ln a it is and which no total counts
+   *   rank     the model's: 1 on an exchanger, 2 no amount (see conservationBasis)
    */
-  function cellSystem(eqs, part, U, mineral, act, ns) {
+  function cellSystem(eqs, part, U, mineral, act, ns, rank) {
     const at = new Int32Array(ns).fill(-1);
     part.forEach((si, k) => { at[si] = k; });
     const isMin = Uint8Array.from({ length: ns }, (_, si) => (mineral && mineral[si] ? 1 : 0));
+    const exch = rank ? Uint8Array.from(part, (si) => (rank[si] === 2 ? 1 : 0)) : null;
     return {
       eqs, ne: eqs.length, nb: U.length, na: part.length, part, at, U, act, ns, isMin,
       lin: Uint8Array.from(part, (si) => isMin[si]),
@@ -2198,8 +2287,8 @@
       lnG: act ? new Float64Array(ns) : null,
       dG: act ? new Float64Array(ns) : null,
       cellC: new Float64Array(ns),
-      // An exchanger, whose unknown is ln a and which no total counts.
-      exch: act && act.ex ? Uint8Array.from(part, (si) => (act.ex.site[si] === 2 ? 1 : 0)) : null,
+      exch: exch && exch.some((v) => v) ? exch : null,
+      rank: rank || null,
     };
   }
 
@@ -2237,9 +2326,14 @@
     const cell = opts.cell !== undefined ? opts.cell : Math.round(off / sys.ns);
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
-    const J = Array.from({ length: na }, () => new Float64Array(na));
-    const F = new Float64Array(na);
-    const val = new Float64Array(na);
+    // The system's own scratch, refilled at every iteration: a held run
+    // speciates every cell at every evaluation, and allocating these each time
+    // was most of what that cost.
+    if (!sys.scratch) {
+      sys.scratch = { J: Array.from({ length: na }, () => new Float64Array(na)), F: new Float64Array(na),
+        val: new Float64Array(na) };
+    }
+    const { J, F, val } = sys.scratch;
     let iterations = 0;
     let residual = Infinity;
     let why = '';
@@ -2333,7 +2427,11 @@
         }
         residual = norm;
         if (norm < tol) converged = true;
-        const step = solveDense(J, F, na);
+        // Settled where it started, and asked for no more than that: a held
+        // run's projection, at an iterate that is already its speciation.
+        if (converged && it === 0 && opts.asStarted) break;
+        // J and F are made afresh at every iteration, so the elimination may use them up.
+        const step = solveInPlace(J, F, na);
         if (!step) {
           if (converged) break;
           why = 'singular';
@@ -2360,23 +2458,26 @@
     };
 
     /*
-      An exchanger with no activity yet -- a state written by hand, its
-      species given -- starts where its relations put it, the species
-      around it as they stand: least squares in its one unknown over the
-      relations whose other species are all there. A species on it that
-      starts at none starts where a relation puts it once the rest are
-      there. From ln C = ln(1e-300) the damped iteration would take hundreds
-      of steps to arrive.
+      WHERE A SPECIES AT NONE STARTS. An exchanger or the electron with no
+      activity yet -- a state written by hand, its species given -- starts
+      where its relations put it, the species around it as they stand: least
+      squares in its one unknown over the relations whose other species are
+      all there. Any other species that starts at none -- a valence state
+      the water is given none of, at a pe -- starts where a relation puts it
+      once the rest are there, and no higher than the largest total; one no
+      relation can place, at a part in 1e12 of that total. From ln C =
+      ln(1e-300) the damped iteration would take hundreds of steps to arrive,
+      and stop before it did.
     */
-    if (sys.exch) {
-      const site = act.ex.site;
+    {
       const have = new Set();
-      for (let k = 0; k < na; k++) if (C[off + part[k]] > 0) have.add(part[k]);
+      for (let k = 0; k < na; k++) if (lin[k] || C[off + part[k]] > 0) have.add(part[k]);
       const there = (j, skip) => eqs[j].net.every(([si]) => si === skip || have.has(si) || at[si] < 0 && C[off + si] > 0);
       const guess = [];
-      for (let k = 0; k < na; k++) if (sys.exch[k] && !have.has(part[k])) { x[k] = 0; guess.push(k); }
+      for (let k = 0; k < na; k++) if (sys.exch && sys.exch[k] && !have.has(part[k])) { x[k] = 0; guess.push(k); }
       const zero = [];
-      for (let k = 0; k < na; k++) if (site[part[k]] === 1 && !have.has(part[k])) zero.push(k);
+      for (let k = 0; k < na; k++) if (!(sys.exch && sys.exch[k]) && !have.has(part[k])) zero.push(k);
+      const top = Math.log(Math.max(big, floor));
       if (guess.length || zero.length) {
         const water = evaluate();
         for (const k of guess) {
@@ -2399,13 +2500,14 @@
               const mine = eqs[j].net.find(([si]) => si === part[k]);
               if (!mine || !there(j, part[k])) continue;
               x[k] = 0;
-              x[k] = -relation(j, water, null) / mine[1];
+              x[k] = Math.min(-relation(j, water, null) / mine[1], top);
               have.add(part[k]);
               grew = true;
               break;
             }
           }
         }
+        for (const k of zero) if (!have.has(part[k])) x[k] = Math.max(top - 12 * Math.LN10, Math.log(floor));
       }
     }
 
@@ -2449,6 +2551,128 @@
     }
     for (let k = 0; k < na; k++) C[off + part[k]] = lin[k] ? x[k] : Math.exp(x[k]);
     return { converged: ok, iterations, residual, x, why };
+  }
+
+  /**
+   * The Jacobian of a cell's speciation (speciateCell) at the unknowns in C
+   * from `off`: its relations and its totals, rows in that order, in the
+   * unknowns of sys.part -- ln C, or an amount -- as speciateCell iterates
+   * with it. Also, in `outside`, d(relation)/dC of each species that is not
+   * an unknown and that the relations read through the ionic strength or the
+   * water's activity, a column each.
+   */
+  function cellJacobian(sys, C, off, w, present, cell, outside) {
+    const { eqs, ne, nb, na, part, at, U, act, lin, minOf, isMin } = sys;
+    const J = Array.from({ length: na }, () => new Float64Array(na));
+    const O = outside ? Array.from({ length: na }, () => new Float64Array(outside.length)) : null;
+    let water = null;
+    if (act) water = activityAt(act, C, off, sys.lnG, sys.dG, cell);
+    for (let j = 0; j < ne; j++) {
+      const km = minOf[j];
+      if (km >= 0 && !present[j]) { J[j][km] = 1; continue; }
+      const eq = eqs[j];
+      let G = 0;
+      for (const [si, nu] of eq.net) {
+        if (isMin[si]) continue;
+        if (act) G += nu * sys.dG[si];
+        const k = at[si];
+        if (k >= 0) J[j][k] += nu;
+      }
+      if (!act) continue;
+      const wv = eq.water || 0;
+      const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv && act.solute[si] ? wv * water.dAw : 0);
+      for (let k = 0; k < na; k++) {
+        if (lin[k]) continue;
+        const v = d(part[k]);
+        if (v) J[j][k] += v * C[off + part[k]];
+      }
+      if (O) outside.forEach((si, i) => { O[j][i] = d(si); });
+    }
+    for (let q = 0; q < nb; q++) {
+      const row = ne + q;
+      for (let k = 0; k < na; k++) {
+        const u = U[q][k];
+        if (!u || (sys.exch && sys.exch[k])) continue;
+        const uw = w ? u * w[k] : u;
+        J[row][k] = lin[k] ? uw : uw * C[off + part[k]];
+      }
+    }
+    return { J, O };
+  }
+
+  /** LU with partial pivoting, in place; null when singular. */
+  function luFactor(A, n) {
+    const piv = new Int32Array(n);
+    for (let k = 0; k < n; k++) {
+      let p = k;
+      let big = Math.abs(A[k][k]);
+      for (let i = k + 1; i < n; i++) if (Math.abs(A[i][k]) > big) { big = Math.abs(A[i][k]); p = i; }
+      if (!(big > 0)) return null;
+      piv[k] = p;
+      if (p !== k) { const t = A[p]; A[p] = A[k]; A[k] = t; }
+      const rk = A[k];
+      for (let i = k + 1; i < n; i++) {
+        const ri = A[i];
+        const f = ri[k] / rk[k];
+        if (!f) continue;
+        ri[k] = f;
+        for (let j = k + 1; j < n; j++) ri[j] -= f * rk[j];
+      }
+    }
+    return piv;
+  }
+
+  /**
+   * Solves with luFactor's result, b overwritten by x. The factorization
+   * swapped whole rows, multipliers and all, so its L is in the final order:
+   * every interchange goes on b first, then L and U, as LAPACK's getrs does.
+   */
+  function luSolve(A, piv, b, n) {
+    for (let k = 0; k < n; k++) {
+      const p = piv[k];
+      if (p !== k) { const t = b[p]; b[p] = b[k]; b[k] = t; }
+    }
+    for (let i = 1; i < n; i++) {
+      const r = A[i];
+      let s = b[i];
+      for (let k = 0; k < i; k++) s -= r[k] * b[k];
+      b[i] = s;
+    }
+    for (let k = n - 1; k >= 0; k--) {
+      let s = b[k];
+      for (let j = k + 1; j < n; j++) s -= A[k][j] * b[j];
+      b[k] = s / A[k][k];
+    }
+    return b;
+  }
+
+  /** solveDense on A and rhs themselves, both spoilt; the solution is rhs. */
+  function solveInPlace(M, x, n) {
+    for (let col = 0; col < n; col++) {
+      let best = col;
+      for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[best][col])) best = r;
+      if (Math.abs(M[best][col]) < 1e-300) return null;
+      if (best !== col) {
+        const t = M[col]; M[col] = M[best]; M[best] = t;
+        const tv = x[col]; x[col] = x[best]; x[best] = tv;
+      }
+      const pr = M[col];
+      const p = pr[col];
+      for (let r = col + 1; r < n; r++) {
+        const mr = M[r];
+        const f = mr[col] / p;
+        if (!f) continue;
+        for (let c = col; c < n; c++) mr[c] -= f * pr[c];
+        x[r] -= f * x[col];
+      }
+    }
+    for (let r = n - 1; r >= 0; r--) {
+      let sum = x[r];
+      const mr = M[r];
+      for (let c = r + 1; c < n; c++) sum -= mr[c] * x[c];
+      x[r] = sum / mr[r];
+    }
+    return x;
   }
 
   /** Gaussian elimination with partial pivoting; null when singular. */
@@ -3099,6 +3323,17 @@
       for (const [c, name] of rx.products) bump(needSpecies(name, rx.line), +c);
       const net = [...stoich.entries()].filter(([, c]) => c !== 0);
       if (!net.length) warnings.push(`Line ${rx.line}: the reaction changes nothing.`);
+      // What is no amount cannot be made or used up at a rate.
+      const none = net.find(([i]) => species[i].electron || species[i].exchanger);
+      if (none) {
+        const sp = species[none[0]];
+        throw new RtmError(sp.electron
+          ? `${sp.name} is the electron, which is no amount and cannot react at a rate: a redox reaction in `
+            + '<REACTIONS> is written between species, Fe+2 + 0.25 O2 + H+ => Fe+3 + 0.5 H2O, and the couples '
+            + 'tied to the electron in <EQUILIBRIUM> share out what it moves. A rate law may read it, as [e-].'
+          : `${sp.name} is an exchanger, which is no amount and cannot react at a rate: exchange at a rate is a `
+            + 'relation between species on it with a kf, Ca+2 + 2 NaX <=> CaX2 + 2 Na+.', rx.line);
+      }
 
       const build = (spec, side, sign) => {
         // Mass action: the rate is k times each reactant to its coefficient.
@@ -3285,6 +3520,12 @@
     }
     act = exchangeSetup(species, equilibria, act, settings, warnings);
     const ex = act ? act.ex : null;
+    const electron = electronSetup(species, equilibria);
+    // The order the conserved totals are made in (conservationBasis): species
+    // on an exchanger first, and last what is no amount, an exchanger or the
+    // electron, which counts in no total.
+    const rank = ex || electron >= 0
+      ? Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger || sp.electron ? 2 : 0)) : null;
     const apairs = [];
     for (const eq of equilibria) {
       if (eq.kf === null) continue;
@@ -4749,7 +4990,11 @@
       equilibria,
       nequilibria: equilibria.length,
       conservation: equilibria.length
-        ? conservationBasis(equilibria, ns, fixed, abundanceOf(initial, ns, nc), ex ? ex.site : null) : [],
+        ? conservationBasis(equilibria, ns, fixed, abundanceOf(initial, ns, nc), rank) : [],
+      // Where the totals are made from (see conservationBasis), or null.
+      rank,
+      // PHREEQC's electron, its index, or -1: no amount, its activity 10^-pe.
+      electron,
       parameters: params.order.slice(),
       anyMass,
       // The coefficient on the left of each state's equation, R dC/dt = f.
@@ -4786,13 +5031,63 @@
         + ', and then stays as it is while the water moves past: EQUILIBRATE = always holds it all through the run.');
     }
     /*
+      THE ELECTRON'S START. Given an activity -- pe= -- in every cell, the
+      water is first speciated at that pe, the electron held there, as
+      PHREEQC's SOLUTION is: its couples share each element out between
+      their valence states as that pe has it, and what the electrons the
+      couples hold come to is then whatever that makes it. Given none, the
+      pe is the water's own, from the valence states as written, which
+      needs EQUILIBRATE. Fixed, it is held there all through the run.
+    */
+    let peStart = false;
+    if (electron >= 0) {
+      const eName = nameOf[electron];
+      let given = 0;
+      for (let c = 0; c < nc; c++) if (initial[c * ns + electron] > 0) given++;
+      if (given && given < nc) {
+        throw new RtmError(`${eName}, the electron, is given an activity in ${given} of the ${nc} cells: give it `
+          + 'in every cell, or in none and let the water there set it.', species[electron].line);
+      }
+      if (!given && !settings.EQUILIBRATE) {
+        throw new RtmError(`${eName} is the electron and has nothing to start from: give it a pe, ${eName} electron `
+          + 'pe=4, or speciate the start (EQUILIBRATE), and the valence states there set it.', species[electron].line);
+      }
+      if (fixed[electron] && !given) {
+        throw new RtmError(`${eName}, the electron, is fixed: give it the pe it is held at, pe=4.`, species[electron].line);
+      }
+      peStart = given > 0 && !fixed[electron];
+      if (settings.EQUILIBRATE !== 2 && !fixed[electron]) {
+        warnings.push(`The relations with the electron are put on ${settings.EQUILIBRATE ? 'at the start only' : 'nothing'}`
+          + `: the pe then stays as it ${settings.EQUILIBRATE ? 'was' : 'is given'} while the run goes on, whatever `
+          + 'it does to the couples. EQUILIBRATE = always holds them all through the run.');
+      }
+    }
+    if (peStart && settings.EQUILIBRATE) {
+      const fx = Uint8Array.from(fixed, (v) => (v ? 1 : 0));
+      fx[electron] = 1;
+      // Without what goes on an exchanger loaded from this water: that comes next.
+      const rel = ex && ex.load.length ? equilibria.filter((eq) => !eq.net.some(([k]) => ex.site[k])) : equilibria;
+      if (rel.length) {
+        const done = speciate(model, initial, { equilibria: rel, fixed: fx });
+        initial.set(done.y);
+        const stuck = done.cells.filter((c) => !c.converged);
+        if (stuck.length) {
+          warnings.push(`The speciation of the initial state at its pe did not converge in ${stuck.length} `
+            + `cell${stuck.length > 1 ? 's' : ''} (worst residual `
+            + `${Math.max(...stuck.map((c) => c.residual)).toExponential(2)}).`);
+        }
+      }
+    }
+    /*
       An exchanger given a capacity takes its load from the water of its
       cell, which stays as it is: after that water's own speciation, under
       EQUILIBRATE, and from the water as written without.
     */
     if (ex && ex.load.length) {
       const water = equilibria.filter((eq) => !eq.net.some(([k]) => ex.site[k]));
-      if (settings.EQUILIBRATE && water.length) initial.set(speciate(model, initial, { equilibria: water }).y);
+      if (settings.EQUILIBRATE && water.length && !peStart) {
+        initial.set(speciate(model, initial, { equilibria: water }).y);
+      }
       loadExchangers(model, initial);
     }
     if (settings.EQUILIBRATE && equilibria.length) {
@@ -4883,8 +5178,8 @@
     const nc = base.cells;
     const nBase = base.nspecies;
     const fixed = base.fixed;
-    // An exchanger is no amount: it counts in no total, whatever its R.
-    const site = base.act && base.act.ex ? base.act.ex.site : null;
+    // An exchanger, or the electron, is no amount: it counts in no total, whatever its R.
+    const site = base.rank || null;
     const massless = (s) => !!site && site[s] === 2;
     const massOf = site ? Float64Array.from(base.massOf, (m, i) => (site[i % ns] === 2 ? 0 : m)) : base.massOf;
     const start = base.initialState();
@@ -4954,14 +5249,50 @@
     const nmin = mins.length;
     const present = new Uint8Array(nc * ne).fill(1);
     const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
+    /*
+      THE PROJECTED FORM, for a model with the electron in it. A redox front
+      passes through a moment no couple buffers: the last of a reductant has
+      gone and the oxidant coming in has not yet built up, and the pe jumps
+      by ten or more while what is conserved moves by nothing the arithmetic
+      can see. Held as relations and definitions, each step's Newton
+      iteration would have to make that jump undamped, and does not. So each
+      held species' row says instead that it is the speciation of its cell's
+      totals -- the cell solved by speciateCell, damped, from where the state
+      stands -- and its derivatives are the speciation's own, by the implicit
+      function theorem (cellJacobian). The totals are integrated as before
+      and only they, with what is not held, are held to the tolerance: the
+      species are what the totals make them, at every step.
+    */
+    const projected = base.electron >= 0;
+    // What else the relations read: each ion and solute not held, through I and a(H2O).
+    const outside = projected && act
+      ? [...Array(ns).keys()].filter((k) => pos[k] < 0 && (act.z[k] !== 0 || act.solute[k])) : [];
 
     /* ---- the pattern: the compiled model's, composed, and the held rows ---- */
     const bp = base.pattern;
     const cols = Array.from({ length: n }, () => new Set());
     const touch = (row, col) => cols[col].add(row);
+    // Projected: where a value of the compiled Jacobian lands. Its row is a
+    // held species' -- then the totals it counts in -- or its own; its column
+    // a held species' -- then its cell's totals, and what else its cell's
+    // relations read, through the speciation -- or its own.
+    const rowsOf = (row) => {
+      if (!held[row]) return [row];
+      const c = Math.floor(row / ns);
+      const kk = pos[row - c * ns];
+      const out = [];
+      for (let j = 0; j < nb; j++) if (U[j][kk]) out.push(tIndex(c, j));
+      return out;
+    };
+    const cellCols = (c) => Array.from({ length: nb }, (_, j) => tIndex(c, j)).concat(outside.map((i) => c * ns + i));
     for (let col = 0; col < nBase; col++) {
       for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
         const row = bp.rowIdx[k];
+        if (projected) {
+          const colsTo = held[col] ? cellCols(Math.floor(col / ns)) : [col];
+          for (const r of rowsOf(row)) for (const q of colsTo) touch(r, q);
+          continue;
+        }
         if (!held[row]) { touch(row, col); continue; }
         const c = Math.floor(row / ns);
         const kk = pos[row - c * ns];
@@ -4970,6 +5301,14 @@
     }
     for (let c = 0; c < nc; c++) {
       const b = c * ns;
+      if (projected) {
+        // A held species: itself, its cell's totals, and what else its relations read.
+        for (const s of active) {
+          for (let j = 0; j < nb; j++) touch(b + s, tIndex(c, j));
+          for (const i of outside) touch(b + s, b + i);
+        }
+        continue;
+      }
       for (let j = 0; j < nb; j++) {
         touch(b + defAt[j], tIndex(c, j));
         for (let k = 0; k < na; k++) if (U[j][k]) touch(b + defAt[j], b + active[k]);
@@ -5033,6 +5372,50 @@
       relC.push(eqs.map((eq, r) => Int32Array.from(eq.net, ([s]) => slot(b + relRow[r], b + s))));
       relA.push(eqs.map((eq, r) => Int32Array.from(actCols[r], (k) => slot(b + relRow[r], b + k))));
     }
+    // The projected rows' entries, per cell: each held species on itself, on
+    // its cell's totals, and on what its cell's relations read besides.
+    const projDiag = [];
+    const projT = [];
+    const projO = [];
+    if (projected) {
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        projDiag.push(Int32Array.from(active, (s) => slot(b + s, b + s)));
+        projT.push(active.map((s) => Int32Array.from({ length: nb }, (_, j) => slot(b + s, tIndex(c, j)))));
+        projO.push(active.map((s) => Int32Array.from(outside, (i) => slot(b + s, b + i))));
+      }
+    }
+    /*
+      Projected, each value of the compiled Jacobian, in turn: the rows it
+      goes to, each with its weight -- U times the species' R for a total, 1
+      for its own row -- and either the one slot on its own column, or, for a
+      held column, a slot for each of the column's cell's totals and of what
+      else that cell's relations read (cellCols), which the speciation's
+      derivatives are spread over.
+    */
+    const pRow0 = new Int32Array(bp.nnz + 1);
+    const pW = [];
+    const pMass = [];
+    const pSlot = [];
+    if (projected) {
+      const width = nb + outside.length;
+      for (let col = 0; col < nBase; col++) {
+        const colsTo = held[col] ? cellCols(Math.floor(col / ns)) : [col];
+        for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
+          const row = bp.rowIdx[k];
+          pRow0[k] = pW.length;
+          const c = Math.floor(row / ns);
+          for (const r of rowsOf(row)) {
+            pW.push(held[row] ? U[r - tIndex(c, 0)][pos[row - c * ns]] : 1);
+            pMass.push(held[row] ? row : -1);
+            for (const q of colsTo) pSlot.push(slot(r, q));
+            if (!held[col]) for (let e = 1; e < width; e++) pSlot.push(-1);
+          }
+        }
+      }
+      pRow0[bp.nnz] = pW.length;
+    }
+    const pWidth = nb + outside.length;
 
     /* ---- concentrations, and back ---- */
     const C = new Float64Array(nBase);
@@ -5063,7 +5446,54 @@
       return t;
     };
 
+    // The projected state: y's concentrations with every held species put at
+    // the speciation of its cell's totals, and those speciations' unknowns.
+    const Cstar = projected ? new Float64Array(nBase) : null;
+    const xs = projected ? Array.from({ length: nc }, () => null) : null;
+    function projectAll(y) {
+      concentrations(y);
+      Cstar.set(C);
+      let ok = true;
+      for (let c = 0; c < nc; c++) {
+        const x = project(c, y);
+        xs[c] = x;
+        if (!x) { ok = false; continue; }
+        const b = c * ns;
+        for (const s of active) Cstar[b + s] = Cs[s];
+        // Kept a cell at a time: the next projection reuses Cs.
+        sens[c] = null;
+      }
+      return ok;
+    }
+    // Each cell's speciation's derivatives, du/dT and du/dC of what else its
+    // relations read, at the projection: na rows of nb, and of outside.length.
+    const sens = projected ? Array.from({ length: nc }, () => null) : null;
+    function sensitivities(c, y) {
+      const b = c * ns;
+      for (let s = 0; s < ns; s++) Cs[s] = Cstar[b + s];
+      for (let k = 0; k < na; k++) wP[k] = massOf[b + active[k]];
+      const { J, O } = cellJacobian(sys, Cs, 0, wP, present.subarray(c * ne, (c + 1) * ne), c,
+        outside.length ? outside : null);
+      const piv = luFactor(J, na);
+      if (!piv) return null;
+      const dT = Array.from({ length: na }, () => new Float64Array(nb));
+      const dO = Array.from({ length: na }, () => new Float64Array(outside.length));
+      for (let q = 0; q < nb; q++) {
+        rhsP.fill(0);
+        rhsP[ne + q] = 1;
+        luSolve(J, piv, rhsP, na);
+        for (let k = 0; k < na; k++) dT[k][q] = rhsP[k];
+      }
+      outside.forEach((si, i) => {
+        for (let r = 0; r < na; r++) rhsP[r] = O[r][i] ? -O[r][i] : 0;
+        luSolve(J, piv, rhsP, na);
+        for (let k = 0; k < na; k++) dO[k][i] = rhsP[k];
+      });
+      return { dT, dO };
+    }
+
     function rhs(t, y, out) {
+      if (projected) return rhsProjected(t, y, out);
       concentrations(y);
       base.rhs(t, C, f);
       for (let k = 0; k < nBase; k++) out[k] = held[k] ? 0 : f[k];
@@ -5090,7 +5520,77 @@
       return out;
     }
 
+    /*
+      Projected: the rates are the compiled model's at the projected state,
+      so a Newton iterate however far its held species stray reads none of
+      them; each held species' row is it less its projection.
+    */
+    function rhsProjected(t, y, out) {
+      const ok = projectAll(y);
+      base.rhs(t, Cstar, f);
+      for (let k = 0; k < nBase; k++) out[k] = held[k] ? 0 : f[k];
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        for (let j = 0; j < nb; j++) {
+          let rate = 0;
+          for (let k = 0; k < na; k++) {
+            if (!U[j][k]) continue;
+            const at = b + active[k];
+            rate += U[j][k] * massOf[at] * f[at];
+          }
+          out[tIndex(c, j)] = ok ? rate : NaN;
+        }
+        const x = xs[c];
+        for (let k = 0; k < na; k++) {
+          const s = b + active[k];
+          out[s] = x ? y[s] - x[k] : NaN;
+        }
+      }
+      return out;
+    }
+
+    // Its Jacobian: the totals' rows through the speciation's derivatives, and
+    // each held species' row 1 on itself and minus those derivatives.
+    function jacProjected(t, y, V) {
+      projectAll(y);
+      for (let c = 0; c < nc; c++) sens[c] = xs[c] ? sensitivities(c, y) : null;
+      base.jac(t, Cstar, Vb);
+      V.fill(0);
+      for (let col = 0; col < nBase; col++) {
+        const heldCol = held[col];
+        const cc = Math.floor(col / ns);
+        const kq = heldCol ? pos[col - cc * ns] : -1;
+        const sc = heldCol ? sens[cc] : null;
+        if (heldCol && !sc) continue;
+        const fac = heldCol && !lin[col] ? Cstar[col] : 1;
+        for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
+          const v = Vb[k];
+          if (v === 0) continue;
+          for (let t2 = pRow0[k]; t2 < pRow0[k + 1]; t2++) {
+            const w = pW[t2] * (pMass[t2] >= 0 ? massOf[pMass[t2]] : 1) * v;
+            const at = t2 * pWidth;
+            if (!heldCol) { V[pSlot[at]] += w; continue; }
+            const dTk = sc.dT[kq];
+            for (let q = 0; q < nb; q++) if (dTk[q]) V[pSlot[at + q]] += w * fac * dTk[q];
+            const dOk = sc.dO[kq];
+            for (let i = 0; i < outside.length; i++) if (dOk[i]) V[pSlot[at + nb + i]] += w * fac * dOk[i];
+          }
+        }
+      }
+      for (let c = 0; c < nc; c++) {
+        for (let k = 0; k < na; k++) V[projDiag[c][k]] += 1;
+        const sc = sens[c];
+        if (!sc) continue;
+        for (let k = 0; k < na; k++) {
+          for (let q = 0; q < nb; q++) if (sc.dT[k][q]) V[projT[c][k][q]] -= sc.dT[k][q];
+          for (let i = 0; i < outside.length; i++) if (sc.dO[k][i]) V[projO[c][k][i]] -= sc.dO[k][i];
+        }
+      }
+      return V;
+    }
+
     function jac(t, y, V) {
+      if (projected) return jacProjected(t, y, V);
       concentrations(y);
       base.jac(t, C, Vb);
       V.fill(0);
@@ -5149,9 +5649,39 @@
      * state itself has them, found again: which is how a stored point is
      * read back, whatever the run went on to.
      */
-    const sys = cellSystem(eqs, active, U.map((row) => Float64Array.from(row)), isMin, act, ns);
+    const sys = cellSystem(eqs, active, U.map((row) => Float64Array.from(row)), isMin, act, ns, site);
     const wCell = new Float64Array(na);
     const totalsCell = new Float64Array(nb);
+    // The projection (see projected): cell c's held species as the speciation
+    // of the totals y carries there, started from where y stands -- C must
+    // hold y's concentrations -- into Cs, the cell's concentrations. Null
+    // where it does not settle.
+    const Cs = new Float64Array(ns);
+    const wP = new Float64Array(na);
+    const totalsP = new Float64Array(nb);
+    const rhsP = new Float64Array(na);
+    // Each cell's last settled speciation, where a projection starts again
+    // when the Newton iterate it is handed is too wild to start from: oxygen
+    // at e^50 spoils even the ionic strength.
+    const settled = projected ? Array.from({ length: nc }, () => null) : null;
+    function project(c, y) {
+      const b = c * ns;
+      for (let j = 0; j < nb; j++) totalsP[j] = y[tIndex(c, j)];
+      for (let k = 0; k < na; k++) wP[k] = massOf[b + active[k]];
+      const pres = present.subarray(c * ne, (c + 1) * ne);
+      const opts = { tol: 1e-12, roundOff: true, cell: c, maxIter: 200, asStarted: true };
+      for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
+      let res = speciateCell(sys, Cs, 0, totalsP, wP, pres, opts);
+      if (!res.converged && settled[c]) {
+        for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
+        for (let k = 0; k < na; k++) Cs[active[k]] = settled[c][k];
+        res = speciateCell(sys, Cs, 0, totalsP, wP, pres, opts);
+      }
+      if (!res.converged) return null;
+      if (!settled[c]) settled[c] = new Float64Array(na);
+      for (let k = 0; k < na; k++) settled[c][k] = Cs[active[k]];
+      return res.x;
+    }
     function consistentInitial(t, y, opts = {}) {
       // Not below 1e-13: a relation is ln K of 30 or 50 in size, and rounding
       // there is a few times 1e-15 whatever is asked.
@@ -5270,6 +5800,19 @@
     const amountScale = new Float64Array(nc);
     for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) amountScale[c] = Math.max(amountScale[c], Math.abs(initial[tIndex(c, j)]));
 
+    /*
+      Projected, a held species is what its cell's totals make it, and its
+      error is theirs: the totals are held to the tolerance, and the species
+      not at all (the NDF's weightScale). Held to rtol of itself, a species
+      that is 1e-150 of everything it counts in -- sulfide's complexes where
+      oxygen has arrived, whose logarithms follow the electron's eight times
+      over and more -- stalled the Newton iteration where a redox front
+      passes, at every step size.
+    */
+    function weightScale(y, ynew, inv) {
+      for (let c = 0; c < nc; c++) for (let k = 0; k < na; k++) inv[c * ns + active[k]] = 0;
+    }
+
     return {
       ...base,
       nspecies: n,
@@ -5293,6 +5836,7 @@
       consistentInitial,
       nonNegativeMask,
       absoluteMask,
+      ...(projected ? { weightScale } : {}),
       // A species held is ln C, and an error of rtol in it is an error of rtol
       // in C, relative, which is what rtol asks of every species: so its atol
       // is rtol and the solver weighs it against that alone (absoluteMask),

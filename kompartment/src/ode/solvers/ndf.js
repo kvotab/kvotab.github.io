@@ -375,7 +375,10 @@ class DifferenceTable {
  * the run began with. See `autoAbstol` below. `skip` names states the error
  * test leaves out -- the algebraic ones, under `suppressAlgebraic` -- which
  * count in every other test. `floor`, set after construction, measures some
- * states against another's size as well: see `weightFloor` below.
+ * states against another's size as well: see `weightFloor` below; and
+ * `absolute`, set the same way, measures some against abstol/rtol alone,
+ * their size left out: see `absolute` below. `scale`, set the same way, may
+ * then lower any weight, step by step: see `weightScale` below.
  */
 class Weighting {
 	constructor(neq, threshold, normControl, rms = false, skip = null) {
@@ -386,6 +389,8 @@ class Weighting {
 		this.skip = !normControl && skip && skip.length ? skip : null;
 		this.invError = this.skip ? new Float64Array(neq) : this.inv;
 		this.floor = null;
+		this.absolute = null;
+		this.scale = null;
 	}
 
 	/** Sets the weights for a step from `y` to `ynew`. */
@@ -413,6 +418,9 @@ class Weighting {
 				inv[i] = 1 / Math.max(Math.abs(y[i]), Math.abs(ynew[i]), th[i]);
 			}
 		}
+		const abs = this.absolute;
+		if (abs) for (let m = 0; m < abs.length; m++) inv[abs[m]] = 1 / th[abs[m]];
+		if (this.scale) this.scale(y, ynew, inv);
 		if (this.skip) {
 			this.invError.set(inv);
 			for (const i of this.skip) this.invError[i] = 0;
@@ -682,6 +690,12 @@ class Differencer {
  *   weightFloor        {from, factor}, one entry per state: state i is also
  *                      weighed against factor[i]·|y[from[i]]| (from[i] -1:
  *                      not); see where it is read
+ *   absolute           state indices weighed against abstol/rtol alone, their
+ *                      size left out, and whose abstol never floats: a
+ *                      logarithm; see where it is read
+ *   weightScale        (y, ynew, inv) => void, called once the weights of a
+ *                      step are set: it may lower inv[i], so that state i
+ *                      counts for less, and never raise it; see where it is read
  *   iterationMatrix    (pattern, J, opts) => the matrix Newton iterates with,
  *                      in the shape ../core/sparse.js's `iterationMatrix`
  *                      gives it, which is used when this is left out
@@ -791,6 +805,30 @@ export function ndf(f, tspan, y0, options = {}) {
 	const floor = weightFloorOf(o.weightFloor, neq);
 	errorWeight.floor = floor;
 	newtonWeight.floor = floor;
+	// And some states are measured as they stand. The size of a logarithm says
+	// nothing of how precisely it is known -- ln C is -20 or -2 as C is 2e-9 or
+	// 0.1 -- and an error of rtol in it is an error of rtol·C in C, which is
+	// what rtol asks of a concentration; weighed against its own size, the
+	// first would be held to twenty times less. Its abstol is that floor and
+	// stays it: it does not float. Not under norm control, which weighs the
+	// vector whole.
+	const absolute = o.absolute && o.absolute.length
+		? Int32Array.from(o.absolute).filter((i) => i >= 0 && i < neq) : null;
+	errorWeight.absolute = absolute;
+	newtonWeight.absolute = absolute;
+	const floats = new Uint8Array(neq).fill(1);
+	if (absolute) for (const i of absolute) floats[i] = 0;
+	// And a state may count for less than its weight says, as the run goes:
+	// the caller lowers, step by step, the weights of states whose value
+	// matters to less than rtol of itself. The logarithm of a species that is
+	// a vanishing part of everything it counts in is one: its error is an
+	// error of rtol·C in a total far larger, and asked for rtol of itself it
+	// is asked for what the rounding of those totals denies it -- the Newton
+	// iteration stalls on it, at every step size. Not under norm control.
+	if (typeof o.weightScale === 'function') {
+		errorWeight.scale = o.weightScale;
+		newtonWeight.scale = o.weightScale;
+	}
 	// How many failing steps at the smallest step size may be taken in a row.
 	// Unset, this solver's own rule: up to MAX_BELOW_TOLERANCE steps that fail
 	// the error test, and none whose Newton iteration will not converge. Set,
@@ -958,7 +996,10 @@ export function ndf(f, tspan, y0, options = {}) {
 			anyHeld = false;
 			for (let m = 0; m < constrained.length; m++) if (heldInW[constrained[m]]) { anyHeld = true; break; }
 		}
-		if (wscale) for (let i = 0; i < neq; i++) wscale[i] = Math.max(Math.abs(y[i]), newtonThreshold[i]);
+		if (wscale) {
+			for (let i = 0; i < neq; i++) wscale[i] = Math.max(Math.abs(y[i]), newtonThreshold[i]);
+			if (absolute) for (const i of absolute) wscale[i] = newtonThreshold[i];
+		}
 		try {
 			W.form(h / leading[k], J, wscale, anyHeld ? heldInW : null);
 		} catch (e) {
@@ -1403,7 +1444,7 @@ export function ndf(f, tspan, y0, options = {}) {
 		if (o.autoAbstol) {
 			for (let i = 0; i < neq; i++) {
 				const floor = rtol * Math.abs(y[i]);
-				if (floor > atol[i]) {
+				if (floats[i] && floor > atol[i]) {
 					atol[i] = floor;
 					threshold[i] = floor / rtol;
 				}

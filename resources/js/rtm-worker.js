@@ -183,6 +183,26 @@ function rtmSummary(model) {
     exchange: model.act && model.act.ex
       ? { exchangers: model.act.ex.exchangers.map((k) => model.speciesNames[k]), species: model.act.ex.list.length }
       : null,
+    // Redox: the electron, the relations tied to it, and the pe the start has.
+    redox: model.electron >= 0 ? rtmRedoxSummary(model) : null,
+  };
+}
+
+function rtmRedoxSummary(model) {
+  const e = model.electron;
+  const ns = model.speciesNames.length;
+  const c = model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState();
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let k = 0; k < model.cells; k++) {
+    const pe = -Math.log10(c[k * ns + e]);
+    if (Number.isFinite(pe)) { lo = Math.min(lo, pe); hi = Math.max(hi, pe); }
+  }
+  return {
+    name: model.speciesNames[e],
+    relations: model.equilibria.filter((eq) => eq.net.some(([s]) => s === e)).length,
+    fixed: !!model.fixed[e],
+    pe: Number.isFinite(lo) ? [lo, hi] : null,
   };
 }
 
