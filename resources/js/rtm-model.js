@@ -83,6 +83,14 @@
     SURFACE_LAYER: { def: 0, kind: 'number' },
     DIFFUSION: { def: 1, kind: 'flag' },
     ADVECTION: { def: 0, kind: 'flag' },
+    /*
+      How advection is differenced: upwind, first order, stable at any step and
+      spreading a front by v*dz/2; or limited, which adds to each face the slope
+      of the cell upwind of it, limited (van Albada) so that no new peak or
+      trough appears: second order where the profile is smooth, upwind where it
+      turns. See limitedFaces.
+    */
+    ADVECTION_SCHEME: { def: 'upwind', kind: 'word', of: ['upwind', 'limited'] },
     VELOCITY: { def: 0, kind: 'number' },
     POROSITY: { def: 1, kind: 'number' },
     /*
@@ -352,7 +360,8 @@
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
-        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, line };
+        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null,
+        mineral: false, immobile: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -394,12 +403,26 @@
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
+        // Never carried or diffused, whatever the column does: a surface site.
+        if (/^immobile$/i.test(part)) { entry.immobile = true; continue; }
+        // A pure phase: immobile, its activity 1, its amount free to reach zero.
+        if (/^mineral$/i.test(part)) { entry.mineral = true; entry.immobile = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
           continue;
         }
         throw new RtmError(`"${part}" is not understood on a species line.`, line);
+      }
+      if (entry.mineral) {
+        const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
+          ['Kd', entry.Kd !== null], ['Kdf', entry.Kdf !== null], ['left', entry.left !== null],
+          ['right', entry.right !== null], ['fixed', entry.fixed]].filter(([, given]) => given).map(([k]) => k);
+        if (moves.length) {
+          throw new RtmError(`${name} is a mineral, which stays where it is and is never held: it takes no `
+            + `${moves.join(', ')}.`, line);
+        }
+        if (!(entry.initial >= 0)) throw new RtmError(`${name} is a mineral, and its amount is zero or more.`, line);
       }
       // Each pair says one thing two ways, and two answers to it cannot both stand.
       if (entry.Kd !== null && entry.Rm !== null) {
@@ -1506,7 +1529,8 @@
     const b = new Float64Array(ns);
     const solute = new Uint8Array(ns).fill(1);
     species.forEach((sp, s) => {
-      if (sp.name === 'H2O') { solute[s] = 0; return; }
+      // The water itself, and a pure phase: activity 1, and no solute.
+      if (sp.name === 'H2O' || sp.mineral) { solute[s] = 0; return; }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
       if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
       if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
@@ -1674,13 +1698,20 @@
    * @param {number} ns
    * @returns {number[][]} one row per conserved total
    */
+  /** Each species' largest concentration over the cells of a state. */
+  function abundanceOf(y, ns, nc) {
+    const out = new Float64Array(ns);
+    for (let c = 0; c < nc; c++) for (let s = 0; s < ns; s++) out[s] = Math.max(out[s], Math.abs(y[c * ns + s]));
+    return out;
+  }
+
   function equilibriumSpecies(equilibria) {
     const seen = new Set();
     for (const eq of equilibria) for (const [si] of eq.net) seen.add(si);
     return [...seen].sort((a, b) => a - b);
   }
 
-  function conservationBasis(equilibria, ns, fixed) {
+  function conservationBasis(equilibria, ns, fixed, abundance) {
     /*
       Only the species an equilibrium actually touches take part. Every other
       one is conserved trivially -- it is its own total -- and including it
@@ -1705,10 +1736,27 @@
       for (const [si, c] of eq.net) if (!(fixed && fixed[si])) A[j][si] = c;
     });
 
-    // Row-reduce, remembering which column each pivot landed in.
+    /*
+      Row-reduce, remembering which column each pivot landed in -- the
+      columns taken least abundant first, when the abundances are known.
+      Each column a pivot lands in is a species the relations work out from
+      the others; each one left free makes a total, 1 at itself and 0 at every
+      other free one. Left free, a trace species makes a total that is mostly
+      the major ones -- the other free species stand for theirs only in
+      combination -- and in it a trace species is a part in 1e10 of the
+      total, which arithmetic resolves to a part in a million: a speciation
+      off by that, and a held run whose Newton iteration cannot settle it.
+      Free, the most abundant species of each element make the totals that
+      element by element, so every species counts in a total of its own size.
+    */
+    const order = [...Array(ns).keys()];
+    if (abundance) {
+      order.sort((a, b) => (Math.abs(abundance[a]) - Math.abs(abundance[b])) || a - b);
+    }
     const pivotOf = [];
     let row = 0;
-    for (let col = 0; col < ns && row < ne; col++) {
+    for (let oi = 0; oi < ns && row < ne; oi++) {
+      const col = order[oi];
       let best = -1;
       let mag = 1e-12;
       for (let r = row; r < ne; r++) if (Math.abs(A[r][col]) > mag) { mag = Math.abs(A[r][col]); best = r; }
@@ -1770,9 +1818,6 @@
   function speciate(model, y, opts = {}) {
     const eqs = model.equilibria;
     if (!eqs || !eqs.length) return { y: Float64Array.from(y || model.initialState()), cells: [] };
-    const tol = opts.tol || 1e-10;
-    const maxIter = opts.maxIter || 100;
-    const floor = opts.floor || 1e-300;
     const ns = model.speciesNames.length;
     const out = Float64Array.from(y || model.initialState());
     const basis = model.conservation;
@@ -1785,8 +1830,6 @@
     const held = model.fixed || [];
     const part = equilibriumSpecies(eqs).filter((si) => !held[si]);
     const na = part.length;
-    const at = new Int32Array(ns).fill(-1);
-    part.forEach((si, k) => { at[si] = k; });
     if (ne + nb !== na) {
       const nheld = equilibriumSpecies(eqs).length - na;
       throw new RtmError(`The equilibria give ${ne} equations and ${nb} conserved totals, which is `
@@ -1795,102 +1838,249 @@
         + '. Fixing one species of an equilibrium leaves it solvable; fixing two of the same one '
         + 'usually does not, and an equilibrium that repeats another has the same effect.');
     }
-
-    // With ACTIVITY the relations hold between activities, and every species
-    // of the cell has a say through the ionic strength: the ones taking part
-    // as they move, the rest as they stand.
-    const act = model.act || null;
-    const lnG = act ? new Float64Array(ns) : null;
-    const dG = act ? new Float64Array(ns) : null;
-    const cellC = act ? new Float64Array(ns) : null;
-
+    const sys = cellSystem(eqs, part, basis.map((v) => Float64Array.from(part, (si) => v[si])), model.mineral,
+      model.act || null, ns);
     for (let cell = 0; cell < model.cells; cell++) {
       const b = cell * ns;
-      const u = new Float64Array(na);
-      for (let k = 0; k < na; k++) u[k] = Math.log(Math.max(out[b + part[k]], floor));
-      // The totals to hold, taken from the state as it stands.
-      const totals = basis.map((v) => {
+      // The totals to hold, taken from the state as it stands; a mineral
+      // there at the start is taken to be present until it proves otherwise.
+      const totals = sys.U.map((row) => {
         let t = 0;
-        for (let k = 0; k < na; k++) t += v[part[k]] * out[b + part[k]];
+        for (let k = 0; k < na; k++) t += row[k] * out[b + part[k]];
         return t;
       });
+      const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0 ? 1 : 0));
+      const res = speciateCell(sys, out, b, totals, null, present,
+        { tol: opts.tol, maxIter: opts.maxIter, floor: opts.floor, activeSet: true });
+      if (res.why === 'singular') throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
+      cells.push({ cell, converged: res.converged, iterations: res.iterations, residual: res.residual,
+        minerals: sys.minOf.reduce((n, k, j) => n + (k >= 0 && present[j] ? 1 : 0), 0) });
+    }
+    return { y: out, cells };
+  }
 
-      const J = Array.from({ length: na }, () => new Float64Array(na));
-      const F = new Float64Array(na);
+  /**
+   * The small system a cell is speciated in, set up once for a set of
+   * relations: who takes part and how each is solved for, and what each
+   * total counts.
+   *
+   *   part     the species taking part: in a relation, and not fixed
+   *   at       a species' place in part, or -1
+   *   lin      1 where the unknown is the amount itself -- a mineral, which
+   *            may reach zero -- and 0 where it is ln C
+   *   U        the totals, one row each, over part
+   *   minOf    a relation's mineral, as its place in part, or -1
+   *   minNu    that mineral's coefficient: which way its saturation runs
+   */
+  function cellSystem(eqs, part, U, mineral, act, ns) {
+    const at = new Int32Array(ns).fill(-1);
+    part.forEach((si, k) => { at[si] = k; });
+    const isMin = Uint8Array.from({ length: ns }, (_, si) => (mineral && mineral[si] ? 1 : 0));
+    return {
+      eqs, ne: eqs.length, nb: U.length, na: part.length, part, at, U, act, ns, isMin,
+      lin: Uint8Array.from(part, (si) => isMin[si]),
+      minOf: Int32Array.from(eqs, (eq) => (eq.mineral >= 0 && at[eq.mineral] >= 0 ? at[eq.mineral] : -1)),
+      minNu: Float64Array.from(eqs, (eq) => eq.mineralNu || 0),
+      lnG: act ? new Float64Array(ns) : null,
+      dG: act ? new Float64Array(ns) : null,
+      cellC: new Float64Array(ns),
+    };
+  }
+
+  /**
+   * One cell's speciation: the unknowns of sys.part such that every relation
+   * holds -- a mineral's saturation only while `present` says there is some
+   * of it, and its amount zero while there is none -- and every total is
+   * `totals`. C holds the cell's concentrations from `off`: read for the
+   * species not taking part, written back for those that do. `w` weighs each
+   * species in the totals (its capacity R), or null for 1.
+   *
+   * Converged when every relation is met to `tol` in ln K and every total to
+   * `tol` of its size -- relative, so that a trace total of 1e-9 is held as
+   * closely as one of 1e-3 -- and then given one more Newton step, which from
+   * there takes the residual to rounding.
+   *
+   * With opts.activeSet it also finds which minerals are there, as PHREEQC
+   * does: one that would have to be less than none of dissolves away, one the
+   * water is supersaturated in and has none of precipitates, one change at a
+   * time until neither is left. `present` is updated in place.
+   *
+   * @returns {{converged, iterations, residual, x, why}}  x the unknowns:
+   *   ln C, or a mineral's amount
+   */
+  function speciateCell(sys, C, off, totals, w, present, opts = {}) {
+    const { eqs, ne, nb, na, part, at, U, act, lin, minOf, minNu, isMin } = sys;
+    const tol = opts.tol || 1e-10;
+    const maxIter = opts.maxIter || 100;
+    const floor = opts.floor || 1e-300;
+    const x = new Float64Array(na);
+    for (let k = 0; k < na; k++) {
+      const c = C[off + part[k]];
+      x[k] = lin[k] ? c : Math.log(Math.max(c, floor));
+    }
+    let big = 0;
+    for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
+    const J = Array.from({ length: na }, () => new Float64Array(na));
+    const F = new Float64Array(na);
+    const val = new Float64Array(na);
+    let iterations = 0;
+    let residual = Infinity;
+    let why = '';
+
+    // The values, and with ACTIVITY the coefficients, at x.
+    const evaluate = () => {
+      for (let k = 0; k < na; k++) val[k] = lin[k] ? x[k] : Math.exp(x[k]);
+      if (!act) return null;
+      const cc = sys.cellC;
+      for (let s = 0; s < sys.ns; s++) cc[s] = C[off + s];
+      for (let k = 0; k < na; k++) cc[part[k]] = val[k];
+      return activityAt(act, cc, 0, sys.lnG, sys.dG);
+    };
+    // Relation j as a residual, sum of nu ln a - ln K, a mineral adding
+    // nothing; with `row`, its derivatives in x as well.
+    const relation = (j, water, row) => {
+      const eq = eqs[j];
+      let r = -eq.lnK;
+      let G = 0;
+      for (const [si, nu] of eq.net) {
+        if (isMin[si]) continue;
+        if (act) { r += nu * sys.lnG[si]; G += nu * sys.dG[si]; }
+        const k = at[si];
+        // A fixed species contributes a constant, and no column.
+        if (k < 0) { r += nu * Math.log(Math.max(C[off + si], floor)); continue; }
+        r += nu * x[k];
+        if (row) row[k] += nu;
+      }
+      if (act) {
+        const wv = eq.water || 0;
+        if (wv) r += wv * water.lnAw;
+        if (row) {
+          for (let k = 0; k < na; k++) {
+            if (lin[k]) continue;
+            const si = part[k];
+            let d = G * 0.5 * act.z[si] * act.z[si];
+            if (wv && act.solute[si]) d += wv * water.dAw;
+            if (d) row[k] += d * val[k];
+          }
+        }
+      }
+      return r;
+    };
+    // A mineral's saturation index, ln(IAP/K), whichever side it is written on.
+    const saturation = (j, water) => (minNu[j] < 0 ? 1 : -1) * relation(j, water, null);
+
+    // None of a mineral is exactly none: its amount is set, not iterated
+    // towards -- a damped step would only halve it, and leave 1e-30 of a
+    // mineral the water is far from saturated in.
+    const pin = () => {
+      for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !present[j]) x[minOf[j]] = 0;
+    };
+    const solve = () => {
       let converged = false;
-      let iter = 0;
-      let norm = Infinity;
-      for (; iter < maxIter; iter++) {
-        const C = new Float64Array(na);
-        for (let k = 0; k < na; k++) C[k] = Math.exp(u[k]);
-        let water = null;
-        if (act) {
-          for (let s = 0; s < ns; s++) cellC[s] = out[b + s];
-          for (let k = 0; k < na; k++) cellC[part[k]] = C[k];
-          water = activityAt(act, cellC, 0, lnG, dG);
-        }
-        // Equilibrium rows: linear in u, so the Jacobian is the stoichiometry --
-        // and, with activities, the ionic strength and the water through
-        // every species taking part.
+      pin();
+      for (let it = 0; it < maxIter; it++) {
+        iterations++;
+        const water = evaluate();
+        let norm = 0;
         for (let j = 0; j < ne; j++) {
-          let r = -eqs[j].lnK;
           J[j].fill(0);
-          let G = 0;
-          for (const [si, c] of eqs[j].net) {
-            if (act) { r += c * lnG[si]; G += c * dG[si]; }
-            // A held species contributes a constant, and no column.
-            if (at[si] < 0) { r += c * Math.log(Math.max(out[b + si], floor)); continue; }
-            r += c * u[at[si]];
-            J[j][at[si]] = c;
+          const km = minOf[j];
+          if (km >= 0 && !present[j]) {
+            // None of the mineral: its amount is zero, and the relation waits.
+            F[j] = x[km];
+            J[j][km] = 1;
+            norm = Math.max(norm, Math.abs(x[km]) / Math.max(big, 1e-300));
+            continue;
           }
-          if (act) {
-            const w = eqs[j].water || 0;
-            if (w) r += w * water.lnAw;
-            for (let k = 0; k < na; k++) {
-              const si = part[k];
-              let d = G * 0.5 * act.z[si] * act.z[si];
-              if (w && act.solute[si]) d += w * water.dAw;
-              if (d) J[j][k] += d * C[k];
-            }
-          }
-          F[j] = r;
+          F[j] = relation(j, water, J[j]);
+          norm = Math.max(norm, Math.abs(F[j]));
         }
-        // Mass-balance rows: d(sum v C)/du_i = v_i C_i.
-        norm = 0;
-        for (let j = 0; j < ne; j++) norm = Math.max(norm, Math.abs(F[j]));
-        for (let k = 0; k < nb; k++) {
-          const rowI = ne + k;
-          let r = -totals[k];
-          let scale = Math.abs(totals[k]);
-          J[rowI].fill(0);
-          for (let i = 0; i < na; i++) {
-            const v = basis[k][part[i]] * C[i];
+        // The totals: d(sum U w C)/du = U w C, and U w for an amount.
+        for (let q = 0; q < nb; q++) {
+          const row = ne + q;
+          J[row].fill(0);
+          let r = -totals[q];
+          let scale = Math.abs(totals[q]);
+          for (let k = 0; k < na; k++) {
+            const u = U[q][k];
+            if (!u) continue;
+            const uw = w ? u * w[k] : u;
+            const v = uw * val[k];
             r += v;
             scale += Math.abs(v);
-            J[rowI][i] = v;
+            J[row][k] = lin[k] ? uw : v;
           }
-          F[rowI] = r;
+          F[row] = r;
           norm = Math.max(norm, Math.abs(r) / Math.max(scale, 1e-300));
         }
+        residual = norm;
         if (norm < tol) converged = true;
         const step = solveDense(J, F, na);
         if (!step) {
           if (converged) break;
-          throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
+          why = 'singular';
+          return false;
         }
         // Damped, and capped: an undamped step in log space can move a
         // concentration by e^40 and leave the iteration nowhere near where it
-        // started. Two is the usual cap and behaves well here.
+        // started. Two is the usual cap and behaves well here; an amount is
+        // not in log space and sets no cap of its own.
         let damp = 1;
-        for (let i = 0; i < na; i++) damp = Math.min(damp, 2 / Math.max(Math.abs(step[i]), 2));
-        for (let i = 0; i < na; i++) u[i] -= damp * step[i];
-        // Converged, and that was the step that takes it to rounding.
-        if (converged) break;
+        for (let k = 0; k < na; k++) if (!lin[k]) damp = Math.min(damp, 2 / Math.max(Math.abs(step[k]), 2));
+        let largest = 0;
+        for (let k = 0; k < na; k++) {
+          x[k] -= damp * step[k];
+          if (!lin[k]) largest = Math.max(largest, Math.abs(damp * step[k]));
+        }
+        pin();
+        // Converged, and that was the step that takes it to rounding; or a
+        // step that moves no concentration by more than a part in 1e12 at a
+        // residual already small: as far as the arithmetic goes.
+        if (converged || (largest < 1e-12 && norm < 1e-8 && opts.roundOff)) { converged = true; break; }
       }
-      for (let k = 0; k < na; k++) out[b + part[k]] = Math.exp(u[k]);
-      cells.push({ cell, converged, iterations: iter, residual: norm });
+      return converged;
+    };
+
+    let ok = solve();
+    if (opts.activeSet && ok) {
+      const mins = [];
+      for (let j = 0; j < ne; j++) if (minOf[j] >= 0) mins.push(j);
+      let settled = !mins.length;
+      for (let round = 0; round < 4 * mins.length + 4 && !settled && ok; round++) {
+        // A mineral that would have to be less than none of: it dissolves away.
+        let pick = -1;
+        let by = 0;
+        for (const j of mins) {
+          const m = x[minOf[j]];
+          if (present[j] && m < -1e-12 * big && -m > by) { by = -m; pick = j; }
+        }
+        if (pick >= 0) {
+          present[pick] = 0;
+          x[minOf[pick]] = 0;
+          ok = solve();
+          continue;
+        }
+        // One the water is supersaturated in, and none of it: it precipitates.
+        const water = evaluate();
+        for (const j of mins) {
+          if (present[j]) continue;
+          const si = saturation(j, water);
+          if (si > 1e-9 && si > by) { by = si; pick = j; }
+        }
+        if (pick >= 0) {
+          present[pick] = 1;
+          ok = solve();
+          continue;
+        }
+        settled = true;
+      }
+      if (ok && !settled) {
+        ok = false;
+        why = 'which minerals are there could not be settled';
+      }
     }
-    return { y: out, cells };
+    for (let k = 0; k < na; k++) C[off + part[k]] = lin[k] ? x[k] : Math.exp(x[k]);
+    return { converged: ok, iterations, residual, x, why };
   }
 
   /** Gaussian elimination with partial pivoting; null when singular. */
@@ -2336,11 +2526,11 @@
 
     /* ---- what moves ---------------------------------------------------- */
     const peclet = transport && settings.ADVECTION && settings.PECLET > 0 ? settings.PECLET : 0;
-    const mobile = species.map((s) => (transport && !s.fixed
+    const mobile = species.map((s) => (transport && !s.fixed && !s.immobile
       && ((settings.DIFFUSION && (s.D > 0 || peclet > 0))
         || (settings.ADVECTION && settings.VELOCITY !== 0))));
     // Which species cross into the rock: those with a matrix diffusivity.
-    const enters = species.map((s) => !!matrix && !s.fixed && s.Dm > 0);
+    const enters = species.map((s) => !!matrix && !s.fixed && !s.immobile && s.Dm > 0);
 
     /*
       THE OUTLET. A semi-infinite right-hand end is the column going on past
@@ -2574,6 +2764,35 @@
       say that, so those pairs are worked out beside the generated code: see
       pairInfo below.
     */
+    /*
+      A MINERAL in a relation is its pure phase: activity 1, so it adds
+      nothing to the relation, which is its saturation; it counts in the
+      totals as everything else does. One mineral to a relation and one
+      relation to a mineral, and none of them a fast pair: what holds a
+      mineral is EQUILIBRATE, and while there is none of it, nothing does.
+    */
+    const inRelation = new Map();
+    for (const eq of equilibria) {
+      const mins = eq.net.filter(([si]) => species[si].mineral);
+      if (mins.length > 1) {
+        throw new RtmError(`"${eq.text}" has ${mins.map(([si]) => species[si].name).join(' and ')} in it, `
+          + 'two minerals: a relation is the saturation of one mineral.', eq.line);
+      }
+      eq.mineral = mins.length ? mins[0][0] : -1;
+      eq.mineralNu = mins.length ? mins[0][1] : 0;
+      if (!mins.length) continue;
+      const name = species[eq.mineral].name;
+      if (eq.kf !== null) {
+        throw new RtmError(`"${eq.text}" is the saturation of ${name}, a mineral, and a mineral is not a fast `
+          + 'pair: it is held at equilibrium (EQUILIBRATE), or it dissolves by a rate law of your own in '
+          + '<REACTIONS>.', eq.line);
+      }
+      if (inRelation.has(eq.mineral)) {
+        throw new RtmError(`${name} is in two relations, lines ${inRelation.get(eq.mineral)} and ${eq.line}: a `
+          + 'mineral has one saturation.', eq.line);
+      }
+      inRelation.set(eq.mineral, eq.line);
+    }
     const apairs = [];
     for (const eq of equilibria) {
       if (eq.kf === null) continue;
@@ -2793,13 +3012,20 @@
                       answer is more dispersive than the D says, and the fix
                       is the same: more cells.
     */
-    if (peclet > 0 && 2 * nf < peclet) {
+    // The limited scheme spreads a front by far less than v*dz/2: what follows
+    // is about upwinding, and only about it.
+    const limited = transport && !!settings.ADVECTION && settings.VELOCITY !== 0
+      && settings.ADVECTION_SCHEME === 'limited';
+    if (settings.ADVECTION_SCHEME === 'limited' && !limited && settings.given && settings.given.has('ADVECTION_SCHEME')) {
+      warnings.push('ADVECTION_SCHEME = limited, and nothing is advected here: it does nothing.');
+    }
+    if (!limited && peclet > 0 && 2 * nf < peclet) {
       warnings.push(`${nf} cells disperse as a Peclet number of ${2 * nf} would, and PECLET = ${peclet} `
         + 'was asked for: the upwind scheme spreads a front by v*dz/2 on its own, more than the '
         + `setting wants, and the correction that would sharpen it cannot be negative. ${Math.ceil(peclet / 2)} `
         + 'cells (Pe/2) is the fewest that reaches it.');
     }
-    if (transport && !peclet && settings.ADVECTION && settings.VELOCITY !== 0 && settings.DIFFUSION) {
+    if (!limited && transport && !peclet && settings.ADVECTION && settings.VELOCITY !== 0 && settings.DIFFUSION) {
       const u = Math.abs(settings.VELOCITY) / (settings.POROSITY > 0 ? settings.POROSITY : 1);
       // The coarsest cell is where the scheme disperses most; on an even grid
       // that is every cell.
@@ -2843,7 +3069,13 @@
       }
       return out;
     };
-    for (const p of patches) if (p.fixed) for (const c of patchCells(p)) fixedAt[c * ns + p.si] = 1;
+    for (const p of patches) {
+      if (p.fixed && species[p.si].mineral) {
+        throw new RtmError(`${species[p.si].name} is a mineral, and a mineral is never held: its amount is what `
+          + 'the water leaves of it.', p.line);
+      }
+      if (p.fixed) for (const c of patchCells(p)) fixedAt[c * ns + p.si] = 1;
+    }
     // Held somewhere but not everywhere, by species: what the panel reports.
     const held = [];
     for (let s = 0; s < ns; s++) {
@@ -2968,10 +3200,14 @@
         touch(b + s, b + s);
         const g = geom[i];
         if (g.j === 0) {
-          // Along the fracture, to the neighbouring fracture cells.
+          // Along the fracture, to the neighbouring fracture cells -- two
+          // either way when advection is limited, the slope of the cell
+          // upwind of a face reading the cell beyond it.
           if (mobile[s]) {
             if (g.i > 0) touch(b + s, cellOf(g.i - 1, 0) * ns + s);
             if (g.i < ncol - 1) touch(b + s, cellOf(g.i + 1, 0) * ns + s);
+            if (limited && g.i > 1) touch(b + s, cellOf(g.i - 2, 0) * ns + s);
+            if (limited && g.i < ncol - 2) touch(b + s, cellOf(g.i + 2, 0) * ns + s);
           }
           // ...and into the first layer of rock behind it.
           if (enters[s]) touch(b + s, cellOf(g.i, 1) * ns + s);
@@ -3103,8 +3339,10 @@
     // Peclet number the hydrodynamic dispersion the cell is short of.
     const v = transport && settings.ADVECTION ? settings.VELOCITY : 0;
     const u = v / (settings.POROSITY > 0 ? settings.POROSITY : 1);
+    // With the limited scheme nothing is taken back: it does not spread a
+    // front by u*dz/2 for the dispersion to make up.
     const dispersionAt = (s, i) => (settings.DIFFUSION ? species[s].D : 0)
-      + (peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (Math.abs(u) * col.width[i]) / 2) : 0);
+      + (peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (limited ? 0 : (Math.abs(u) * col.width[i]) / 2)) : 0);
     if (transport) {
       for (let s = 0; s < ns; s++) {
         if (!mobile[s]) continue;
@@ -3121,7 +3359,7 @@
             rates. Without a Peclet number the species' own D stands, and the
             numerical part is simply there, as it is on every upwind grid.
           */
-          const disp = peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (Math.abs(u) * w) / 2) : 0;
+          const disp = peclet > 0 ? Math.max(0, (Math.abs(u) * grid.L) / peclet - (limited ? 0 : (Math.abs(u) * w) / 2)) : 0;
           const D = Dspecies + disp;
           if (dual && dual.advF === null && u !== 0) { dual.advF = Math.abs(u) / w; dual.dF = disp / (w * w); }
           // The last cell past a semi-infinite end is closed by linear
@@ -3336,6 +3574,92 @@
     const chanCap = Int32Array.from(channels, (ch) => (ch.whole && ch.capOf >= 0 ? ch.capOf : -1));
     const nchan = channels.length;
 
+    /*
+      ADVECTION, LIMITED (ADVECTION_SCHEME = limited). Upwinding takes a face
+      at the value of the cell upwind of it; this adds the slope of that cell
+      times the distance to the face, so the face is read where the profile
+      would have it. The slope is an average of the gradients on either side,
+      2 a^2 b^2 (a + b)/((a^2 + b^2)^2 + E^2), and none at all where they
+      differ in sign, so no new peak or trough is made and nothing goes below
+      zero: second order where the profile is smooth (a = b gives a), upwind
+      where it turns. As a limiter it is phi(r) = 2r^2(1 + r)/(1 + r^2)^2,
+      inside the TVD region (0 <= phi <= min(2r, 2), phi(1) = 1); unlike van
+      Albada's it starts from zero with zero slope, so the slope and its
+      derivatives are continuous where a gradient changes sign, and the
+      Jacobian is one a difference of the state can check. On
+      cell k upwind of the face, and m on the other side of it, that is
+      -u s/2 in k and +u s w_k/(2 w_m) in m. The first cell and the last stay
+      upwind -- each needs a neighbour it does not have -- so the faces at the
+      ends, and what crosses them, are as upwinding has them.
+
+      E = (1e-3 Cs)^2/(h h'), with Cs the species' scale (its largest start or
+      face value): where a profile is flat to a part in a thousand of the
+      scale over a cell -- rounding behind a front -- the slope fades to
+      upwind, smoothly, rather than taking a slope of either sign from the
+      rounding that a difference of the state cannot follow.
+    */
+    const limitedFaces = [];
+    if (limited) {
+      for (let s2 = 0; s2 < ns; s2++) {
+        if (!mobile[s2]) continue;
+        const at = (i) => cellOf(i, 0) * ns + s2;
+        let scale = Math.abs(species[s2].initial);
+        for (const bc of [species[s2].left, species[s2].right]) if (bc != null) scale = Math.max(scale, Math.abs(bc));
+        for (const pt of patches) if (pt.si === s2 && pt.value != null) scale = Math.max(scale, Math.abs(pt.value));
+        if (!(scale > 0)) scale = 1e-30;
+        for (let k = 1; k < last; k++) {
+          const m = v > 0 ? k + 1 : k - 1;
+          const f = {
+            prev: at(k - 1), here: at(k), next: at(k + 1), down: at(m),
+            hUp: col.centres[k] - col.centres[k - 1], hDn: col.centres[k + 1] - col.centres[k],
+            E: (1e-6 * scale * scale) / ((col.centres[k] - col.centres[k - 1]) * (col.centres[k + 1] - col.centres[k])),
+            // Nothing into a cell where the species is held.
+            inHere: fixedAt[at(k)] ? 0 : -u / 2,
+            inDown: fixedAt[at(m)] ? 0 : (u * col.width[k]) / (2 * col.width[m]),
+          };
+          // Where its derivatives go: rows k and m, columns k-1, k, k+1.
+          f.slots = Int32Array.from([f.prev, f.here, f.next].flatMap((c) => [slot(f.here, c), slot(f.down, c)]));
+          limitedFaces.push(f);
+        }
+      }
+    }
+    const nlim = limitedFaces.length;
+    /** The limited slope and its derivatives in a and b, into lim. */
+    const lim = new Float64Array(3);
+    const slopeOf = (a, b, E) => {
+      if (!(a * b > 0)) { lim[0] = 0; lim[1] = 0; lim[2] = 0; return; }
+      const q = a * a + b * b;
+      const D = q * q + E * E;
+      const N = 2 * a * a * b * b * (a + b);
+      lim[0] = N / D;
+      lim[1] = ((6 * a * a * b * b + 4 * a * b * b * b) * D - N * 4 * a * q) / (D * D);
+      lim[2] = ((4 * a * a * a * b + 6 * a * a * b * b) * D - N * 4 * b * q) / (D * D);
+    };
+    // The correction into out, or its derivatives into V.
+    const limitedFlux = (y, out, V) => {
+      for (let q = 0; q < nlim; q++) {
+        const f = limitedFaces[q];
+        const a = (y[f.next] - y[f.here]) / f.hDn;
+        const b = (y[f.here] - y[f.prev]) / f.hUp;
+        slopeOf(a, b, f.E);
+        if (out) {
+          if (lim[0] === 0) continue;
+          out[f.here] += f.inHere * lim[0];
+          out[f.down] += f.inDown * lim[0];
+          continue;
+        }
+        if (lim[1] === 0 && lim[2] === 0) continue;
+        // ds/dC for C_prev, C_here, C_next.
+        const dPrev = -lim[2] / f.hUp;
+        const dHere = -lim[1] / f.hDn + lim[2] / f.hUp;
+        const dNext = lim[1] / f.hDn;
+        const sl = f.slots;
+        V[sl[0]] += f.inHere * dPrev; V[sl[1]] += f.inDown * dPrev;
+        V[sl[2]] += f.inHere * dHere; V[sl[3]] += f.inDown * dHere;
+        V[sl[4]] += f.inHere * dNext; V[sl[5]] += f.inDown * dNext;
+      }
+    };
+
     /* ---- the model ------------------------------------------------------ */
     const R = new Float64Array(channels.length);
     const D = new Float64Array(Math.max(nd, 1));
@@ -3468,6 +3792,7 @@
         out[row] = acc;
       }
       for (let k = 0; k < nbound; k++) out[boundRow[k]] += boundValue[k];
+      if (nlim) limitedFlux(y, out, null);
       for (let k = 0; k < heldList.length; k++) out[heldList[k]] = 0;
       // M dC/dt = f, so every term on the right -- reaction, transport and
       // boundary alike -- is divided by the coefficient of that row.
@@ -3529,6 +3854,7 @@
         }
       }
       for (let k = 0; k < nflow; k++) V[flowAt[k]] += flowValue[k];
+      if (nlim) limitedFlux(y, null, V);
       if (anyMass) for (let k = 0; k < nnz; k++) V[k] *= invMass[rowOfSlot[k]];
       return V;
     }
@@ -3610,7 +3936,7 @@
       jac,
       // The Jacobian is the same at every state and time: see jacobianMoves.
       // A pair under ACTIVITY is mass action with a constant that moves.
-      jacobianConstant: !jacobianMoves && !pairInfo.length,
+      jacobianConstant: !jacobianMoves && !pairInfo.length && !nlim,
       /**
        * The times in (t0, t1) at which a table a rate law reads at the clock
        * turns, ascending, near-duplicates merged: where the run is started
@@ -3663,6 +3989,8 @@
       speciesNames: nameOf,
       mobile,
       fixed,
+      // The minerals: pure phases, activity 1, amounts that may reach zero.
+      mineral: Uint8Array.from(species, (sp) => (sp.mineral ? 1 : 0)),
       // Held state by state, and the species held in some cells only.
       fixedAt,
       held: held.map((h) => ({ species: h.species, cells: h.cells })),
@@ -3671,7 +3999,7 @@
       nreactions: reactions.length,
       equilibria,
       nequilibria: equilibria.length,
-      conservation: equilibria.length ? conservationBasis(equilibria, ns, fixed) : [],
+      conservation: equilibria.length ? conservationBasis(equilibria, ns, fixed, abundanceOf(initial, ns, nc)) : [],
       parameters: params.order.slice(),
       anyMass,
       // The coefficient on the left of each state's equation, R dC/dt = f.
@@ -3790,7 +4118,8 @@
     const nBase = base.nspecies;
     const fixed = base.fixed;
     const massOf = base.massOf;
-    const basis = conservationBasis(eqs, ns, fixed);
+    const start = base.initialState();
+    const basis = conservationBasis(eqs, ns, fixed, abundanceOf(start, ns, nc));
     const ne = eqs.length;
     const nb = basis.length;
     const active = equilibriumSpecies(eqs).filter((si) => !fixed[si]);
@@ -3800,7 +4129,6 @@
         + `${ne + nb} for the ${na} species they are free to move: one of them repeats another, or a `
         + 'species fixed in it leaves it without a free one.');
     }
-    const start = base.initialState();
     for (const eq of eqs) {
       for (const [s] of eq.net) {
         if (!fixed[s]) continue;
@@ -3829,6 +4157,19 @@
     const tIndex = (c, j) => nBase + c * nb + j;
     const held = new Uint8Array(n);
     for (let c = 0; c < nc; c++) for (const s of active) held[c * ns + s] = 1;
+    // A mineral is held as its amount, which may reach zero, and not as ln C.
+    const isMin = base.mineral || new Uint8Array(ns);
+    const lin = new Uint8Array(n);
+    for (let c = 0; c < nc; c++) for (const s of active) if (isMin[s]) lin[c * ns + s] = 1;
+    // The relations that are a mineral's saturation, and in each cell whether
+    // there is any of it: while there is, the relation holds; while there is
+    // none, the amount is zero and the water may be undersaturated. Which it
+    // is changes at events (see eventValues), and a run starts from the state.
+    const mins = [];
+    eqs.forEach((eq, r) => { if (eq.mineral >= 0) mins.push(r); });
+    const nmin = mins.length;
+    const present = new Uint8Array(nc * ne).fill(1);
+    const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
 
     /* ---- the pattern: the compiled model's, composed, and the held rows ---- */
     const bp = base.pattern;
@@ -3914,8 +4255,22 @@
     const f = new Float64Array(nBase);
     const Vb = new Float64Array(base.nnz);
     const concentrations = (y) => {
-      for (let k = 0; k < nBase; k++) C[k] = held[k] ? Math.exp(y[k]) : y[k];
+      for (let k = 0; k < nBase; k++) C[k] = held[k] ? (lin[k] ? y[k] : Math.exp(y[k])) : y[k];
       return C;
+    };
+    // Relation r in the cell at b, as a residual: sum of nu ln a - ln K, a
+    // mineral adding nothing; C the concentrations, `water` the activity
+    // evaluation of the cell when there is ACTIVITY.
+    const relationAt = (b, r, y, water) => {
+      const eq = eqs[r];
+      let g = -eq.lnK;
+      for (const [sp, nu] of eq.net) {
+        if (isMin[sp]) continue;
+        g += nu * (held[b + sp] ? y[b + sp] : Math.log(C[b + sp]));
+        if (act) g += nu * lnG[sp];
+      }
+      if (act && eq.water) g += eq.water * water.lnAw;
+      return g;
     };
     const totalOf = (cIn, c, j) => {
       const b = c * ns;
@@ -3943,13 +4298,9 @@
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
-          let g = -eqs[r].lnK;
-          for (const [s, nu] of eqs[r].net) g += nu * (held[b + s] ? y[b + s] : Math.log(C[b + s]));
-          if (act) {
-            for (const [s, nu] of eqs[r].net) g += nu * lnG[s];
-            if (eqs[r].water) g += eqs[r].water * water.lnAw;
-          }
-          out[b + relRow[r]] = g;
+          // None of the mineral: its amount is zero, and the relation waits.
+          const m = eqs[r].mineral;
+          out[b + relRow[r]] = m >= 0 && !present[c * ne + r] ? y[b + m] : relationAt(b, r, y, water);
         }
       }
       return out;
@@ -3960,8 +4311,8 @@
       base.jac(t, C, Vb);
       V.fill(0);
       for (let col = 0; col < nBase; col++) {
-        // d/du of anything taken at C = e^u is C times d/dC.
-        const sc = held[col] ? C[col] : 1;
+        // d/du of anything taken at C = e^u is C times d/dC; an amount is itself.
+        const sc = held[col] && !lin[col] ? C[col] : 1;
         for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
           const v = Vb[k];
           if (v === 0) continue;
@@ -3977,12 +4328,17 @@
             const at = defC[c][j][k];
             if (at < 0) continue;
             const s = b + active[k];
-            V[at] -= U[j][k] * massOf[s] * C[s];
+            V[at] -= U[j][k] * massOf[s] * (lin[s] ? 1 : C[s]);
           }
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
+          if (eqs[r].mineral >= 0 && !present[c * ne + r]) {
+            V[relC[c][r][minAt[r]]] += 1;
+            continue;
+          }
           eqs[r].net.forEach(([s, nu], m) => {
+            if (isMin[s]) return;
             V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
           });
           if (!act) continue;
@@ -4003,91 +4359,46 @@
 
     /**
      * Puts every cell's held species on its relations and its totals, the
-     * totals and everything else held where they are: Newton in u, as the
-     * speciation of the starting state, one small system a cell.
+     * totals and everything else held where they are: the speciation of each
+     * cell's totals, one small system a cell (speciateCell), with the
+     * minerals present as the run has them -- or, opts.fromState, as the
+     * state itself has them, found again: which is how a stored point is
+     * read back, whatever the run went on to.
      */
+    const sys = cellSystem(eqs, active, U.map((row) => Float64Array.from(row)), isMin, act, ns);
+    const wCell = new Float64Array(na);
+    const totalsCell = new Float64Array(nb);
     function consistentInitial(t, y, opts = {}) {
-      const tol = Math.min(1e-10, (opts.rtol || 1e-6) * 1e-4);
+      // Not below 1e-13: a relation is ln K of 30 or 50 in size, and rounding
+      // there is a few times 1e-15 whatever is asked.
+      const tol = Math.max(Math.min(1e-10, (opts.rtol || 1e-6) * 1e-4), 1e-13);
       let worstRes = 0;
       let moved = 0;
       let iterations = 0;
       let why = '';
       concentrations(y);
-      const J = Array.from({ length: na }, () => new Float64Array(na));
-      const F = new Float64Array(na);
-      for (let c = 0; c < nc && !why; c++) {
+      // Every cell, whatever one of them does: they are separate systems, and
+      // one that does not settle says so without leaving the rest unsettled.
+      for (let c = 0; c < nc; c++) {
         const b = c * ns;
-        const u = Float64Array.from(active, (s) => y[b + s]);
-        const u0 = Float64Array.from(u);
-        let done = false;
-        let res = Infinity;
-        for (let it = 0; it < 100; it++) {
-          let water = null;
-          if (act) {
-            for (let k = 0; k < na; k++) C[b + active[k]] = Math.exp(u[k]);
-            water = activityAt(act, C, b, lnG, dG);
-          }
-          for (let r = 0; r < ne; r++) {
-            let g = -eqs[r].lnK;
-            J[r].fill(0);
-            for (const [s, nu] of eqs[r].net) {
-              if (act) g += nu * lnG[s];
-              if (pos[s] < 0) { g += nu * Math.log(C[b + s]); continue; }
-              g += nu * u[pos[s]];
-              J[r][pos[s]] += nu;
-            }
-            if (act) {
-              const w = eqs[r].water || 0;
-              if (w) g += w * water.lnAw;
-              let G = 0;
-              for (const [s, nu] of eqs[r].net) G += nu * dG[s];
-              for (let k = 0; k < na; k++) {
-                const s = active[k];
-                let d = G * 0.5 * act.z[s] * act.z[s];
-                if (w && act.solute[s]) d += w * water.dAw;
-                if (d) J[r][k] += d * C[b + s];
-              }
-            }
-            F[r] = g;
-          }
-          res = 0;
-          for (let r = 0; r < ne; r++) res = Math.max(res, Math.abs(F[r]));
-          for (let j = 0; j < nb; j++) {
-            const row = ne + j;
-            J[row].fill(0);
-            let sum = 0;
-            let scale = Math.abs(y[tIndex(c, j)]);
-            for (let k = 0; k < na; k++) {
-              if (!U[j][k]) continue;
-              const v = U[j][k] * massOf[b + active[k]] * Math.exp(u[k]);
-              sum += v;
-              scale += Math.abs(v);
-              J[row][k] = v;
-            }
-            F[row] = sum - y[tIndex(c, j)];
-            res = Math.max(res, Math.abs(F[row]) / Math.max(scale, 1e-300));
-          }
-          iterations = Math.max(iterations, it);
-          if (res < tol) { done = true; break; }
-          const step = solveDense(J, F, na);
-          if (!step) { why = `the relations do not determine the held species in cell ${c}`; break; }
-          let damp = 1;
-          for (let k = 0; k < na; k++) damp = Math.min(damp, 2 / Math.max(Math.abs(step[k]), 2));
-          let largest = 0;
-          for (let k = 0; k < na; k++) {
-            u[k] -= damp * step[k];
-            largest = Math.max(largest, Math.abs(damp * step[k]));
-          }
-          // A step that changes no concentration by more than a few units in
-          // the last place has reached what the arithmetic can give: a tol
-          // under that would only be chased round in rounding.
-          if (largest < 1e-14 && res < 1e-8) { done = true; break; }
+        for (let j = 0; j < nb; j++) totalsCell[j] = y[tIndex(c, j)];
+        for (let k = 0; k < na; k++) wCell[k] = massOf[b + active[k]];
+        const pres = opts.fromState
+          ? Uint8Array.from(eqs, (eq) => (eq.mineral < 0 || y[b + eq.mineral] > 0 ? 1 : 0))
+          : present.subarray(c * ne, (c + 1) * ne);
+        const res = speciateCell(sys, C, b, totalsCell, wCell, pres,
+          { tol, roundOff: true, activeSet: !!opts.fromState });
+        iterations = Math.max(iterations, res.iterations);
+        worstRes = Math.max(worstRes, res.residual);
+        if (!res.converged && !why) {
+          why = res.why === 'singular' ? `the relations do not determine the held species in cell ${c}`
+            : res.why ? `${res.why} in cell ${c}`
+              : `the held equilibria did not settle in cell ${c} (residual ${res.residual.toExponential(2)})`;
         }
-        if (!done && !why) why = `the held equilibria did not settle in cell ${c} (residual ${res.toExponential(2)})`;
-        worstRes = Math.max(worstRes, res);
         for (let k = 0; k < na; k++) {
-          moved = Math.max(moved, Math.abs(u[k] - u0[k]));
-          y[b + active[k]] = u[k];
+          const st = b + active[k];
+          moved = Math.max(moved, Math.abs(res.x[k] - y[st]));
+          y[st] = res.x[k];
         }
       }
       return { solved: !why, iterations, residual: worstRes, moved, why };
@@ -4101,14 +4412,14 @@
     // rounding there. So every point shown is the speciation of its totals.
     const toConcentrations = (y) => {
       const z = Float64Array.from(y);
-      consistentInitial(0, z, { rtol: 1e-12 });
+      consistentInitial(0, z, { rtol: 1e-12, fromState: true });
       const out = new Float64Array(nBase);
-      for (let k = 0; k < nBase; k++) out[k] = held[k] ? Math.exp(z[k]) : z[k];
+      for (let k = 0; k < nBase; k++) out[k] = held[k] && !lin[k] ? Math.exp(z[k]) : z[k];
       return out;
     };
     const fromConcentrations = (cIn) => {
       const y = new Float64Array(n);
-      for (let k = 0; k < nBase; k++) y[k] = held[k] ? Math.log(Math.max(cIn[k], 1e-300)) : cIn[k];
+      for (let k = 0; k < nBase; k++) y[k] = held[k] && !lin[k] ? Math.log(Math.max(cIn[k], 1e-300)) : cIn[k];
       for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) y[tIndex(c, j)] = totalOf(cIn, c, j);
       return y;
     };
@@ -4118,20 +4429,77 @@
     // The logarithms, which the solver weighs as they stand: see atolFor.
     const absoluteMask = new Uint8Array(n);
     for (let k = 0; k < nBase; k++) {
-      if (held[k]) { mass[k] = 0; absoluteMask[k] = 1; } else nonNegativeMask[k] = 1;
+      if (held[k]) { mass[k] = 0; absoluteMask[k] = lin[k] ? 0 : 1; } else nonNegativeMask[k] = 1;
     }
     const names = base.species.concat(Array.from({ length: nc * nb }, (_, q) => {
       const c = Math.floor(q / nb);
       return `total ${q - c * nb + 1}${nc === 1 ? '' : `@${c}`}`;
     }));
     const initial = fromConcentrations(start);
+
+    /*
+      THE MINERALS' EVENTS, one for each mineral in each cell. While there is
+      some of it, the event is minus its amount, which reaches zero from below
+      when the last of it dissolves; while there is none, it is the
+      saturation index, which reaches zero from below when the water becomes
+      supersaturated. Either way it is crossed upwards, the run stops there,
+      the mineral is switched, and the run starts again from the state put
+      back on its constraints (runModel in facsimile-solver.js).
+    */
+    const where = (c) => (nc > 1 ? ` in cell ${c}` : '');
+    const events = Array.from({ length: nc * nmin }, (_, q) => ({
+      expr: `${base.speciesNames[eqs[mins[q % nmin]].mineral]}${where(Math.floor(q / nmin))}`,
+      shown: '', assigns: ['present'], once: false, stop: false,
+    }));
+    function eventValues(t, y, out) {
+      concentrations(y);
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        let water = null;
+        let ready = !act;
+        for (let q = 0; q < nmin; q++) {
+          const r = mins[q];
+          const m = eqs[r].mineral;
+          if (present[c * ne + r]) { out[c * nmin + q] = -y[b + m]; continue; }
+          if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
+          out[c * nmin + q] = (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
+        }
+      }
+      return out;
+    }
+    function applyEvent(which) {
+      const c = Math.floor(which / nmin);
+      const r = mins[which % nmin];
+      const at = c * ne + r;
+      present[at] = present[at] ? 0 : 1;
+      const name = base.speciesNames[eqs[r].mineral];
+      events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
+      return [name];
+    }
+    // Each run starts from the state: some of a mineral is there or none is.
+    const resetModes = (y) => {
+      for (let c = 0; c < nc; c++) {
+        for (const r of mins) present[c * ne + r] = y[c * ns + eqs[r].mineral] > 0 ? 1 : 0;
+      }
+    };
+    // The scale an amount is measured against: the largest total its cell starts with.
+    const amountScale = new Float64Array(nc);
+    for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) amountScale[c] = Math.max(amountScale[c], Math.abs(initial[tIndex(c, j)]));
+
     return {
       ...base,
       nspecies: n,
       nnz,
       pattern: { n, nnz, colPtr, rowIdx },
       species: names,
-      initialState: () => Float64Array.from(initial),
+      initialState: () => { resetModes(initial); return Float64Array.from(initial); },
+      ...(nmin ? {
+        nevents: nc * nmin,
+        eventDirections: new Int8Array(nc * nmin).fill(1),
+        events,
+        eventValues,
+        applyEvent,
+      } : {}),
       rhs,
       jac,
       jacobianConstant: false,
@@ -4145,19 +4513,22 @@
       // in C, relative, which is what rtol asks of every species: so its atol
       // is rtol and the solver weighs it against that alone (absoluteMask),
       // whatever rtol and atol say of C and however large |ln C| is.
+      // A mineral's amount is held to rtol of the totals of its cell, which is
+      // what it is made of, rather than of itself: it is on its way to zero.
       atolFor(atol, rtol) {
         const out = new Float64Array(n);
         const r = rtol > 0 ? rtol : 1e-6;
         for (let k = 0; k < n; k++) {
-          if (k < nBase && held[k]) out[k] = r;
-          else out[k] = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
+          const given = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
+          if (k < nBase && held[k]) out[k] = lin[k] ? Math.max(given, r * amountScale[Math.floor(k / ns)]) : r;
+          else out[k] = given;
         }
         return out;
       },
       stateWidth: nBase,
       toConcentrations,
       fromConcentrations,
-      heldEquilibria: { relations: ne, totals: nb, species: na },
+      heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin },
       density: nnz / (n * n),
     };
   }
@@ -4181,6 +4552,8 @@
     model.rhs(t, y, f0);
     const EPS = 2 ** -52;
     const yp = Float64Array.from(y);
+    const fp2 = new Float64Array(n);
+    const fm2 = new Float64Array(n);
     const discrepancies = [];
     let checked = 0;
     let unresolvable = 0;
@@ -4228,13 +4601,18 @@
       earlier version of this function reported hundreds of discrepancies
       against a Jacobian that turned out to be exact.
     */
+    // A held model's logarithms (absoluteMask) are no concentrations: they
+    // set no floor for the others -- ln C of -30 would step a species at 1e-4
+    // by 2 % of itself -- and are stepped by an absolute amount, a relative
+    // change of that size in C.
+    const logs = model.absoluteMask && model.absoluteMask.length === n ? model.absoluteMask : null;
     let typ = 0;
-    for (let i = 0; i < n; i++) typ = Math.max(typ, Math.abs(y[i]));
+    for (let i = 0; i < n; i++) if (!(logs && logs[i])) typ = Math.max(typ, Math.abs(y[i]));
     if (!(typ > 0)) typ = 1;
     const cbrtEps = Math.cbrt(2 ** -52);
 
     for (let c = 0; c < n; c++) {
-      const h = cbrtEps * Math.max(Math.abs(y[c]), typ * 1e-2);
+      const h = logs && logs[c] ? cbrtEps : cbrtEps * Math.max(Math.abs(y[c]), typ * 1e-2);
       yp[c] = y[c] + h;
       model.rhs(t, yp, fp);
       yp[c] = y[c] - h;
@@ -4247,6 +4625,7 @@
       for (let r = 0; r < n; r++) if (!Number.isFinite(fm[r])) { ok = false; break; }
       if (!ok) { model.rhs(t, y, fm); step = h; }
       const inColumn = new Map();
+      let halved = false;
       for (let k = colPtr[c]; k < colPtr[c + 1]; k++) inColumn.set(rowIdx[k], V[k]);
       let scale = 0;
       for (let r = 0; r < n; r++) scale = Math.max(scale, Math.abs((fp[r] - fm[r]) / step));
@@ -4278,11 +4657,45 @@
           unresolvable++;
           continue;
         }
+        /*
+          And an entry whose term is under 1e-7 of its row's terms: it moves
+          nothing the Newton iteration does, and it is where a difference is
+          least to be trusted -- the step moves this state by 6e-6 of the
+          largest, and a slope that varies on a finer scale than that, as a
+          limited advection does in a stretch flat to rounding, cannot be
+          followed across it. Counted apart, as those below rounding are.
+        */
+        if (Math.max(Math.abs(analytic), Math.abs(numeric)) * Math.max(Math.abs(y[c]), h) < 1e-7 * rowScale[r]) {
+          unresolvable++;
+          continue;
+        }
         checked++;
         const tol = Math.max(rtol * Math.max(Math.abs(analytic), Math.abs(numeric)), floor);
-        if (Math.abs(analytic - numeric) > tol) {
-          discrepancies.push({ row: r, col: c, analytic, numeric });
+        if (Math.abs(analytic - numeric) <= tol) continue;
+        /*
+          A disagreement is looked at again before it is reported: the
+          difference taken at half the step as well, and the two extrapolated,
+          (4 D(h/2) - D(h))/3, which takes away the h^2 that a central
+          difference carries. Where the entry's function varies on a scale
+          not far above the step -- a limited advection's slope where the
+          gradients are a few times what the step moves them by -- that h^2 is
+          the disagreement; a Jacobian that is wrong stays wrong.
+        */
+        if (step === 2 * h) {
+          if (!halved) {
+            yp[c] = y[c] + h / 2;
+            model.rhs(t, yp, fp2);
+            yp[c] = y[c] - h / 2;
+            model.rhs(t, yp, fm2);
+            yp[c] = y[c];
+            halved = true;
+          }
+          const half = (fp2[r] - fm2[r]) / h;
+          const extrapolated = (4 * half - numeric) / 3;
+          const tol2 = Math.max(rtol * Math.max(Math.abs(analytic), Math.abs(extrapolated)), floor);
+          if (Math.abs(analytic - extrapolated) <= tol2) continue;
         }
+        discrepancies.push({ row: r, col: c, analytic, numeric });
       }
     }
     return { checked, unresolvable, discrepancies, outsidePattern: outside };

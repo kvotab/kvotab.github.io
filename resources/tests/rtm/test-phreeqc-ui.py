@@ -343,6 +343,65 @@ async def main():
             refused = await until(page, f"(() => {{ const t = {STATUS}; return / is loaded: |cannot read/.test(t) ? t : ''; }})()")
             check('a file that is no database is refused, with PHREEQC\'s reason', isinstance(refused, str)
                   and refused.startswith('PHREEQC cannot read rtm.html as a database'), True)
+
+            # --- the phases kept at saturation ---
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'start';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            check('the phases can be kept only with the equilibria held exactly', await page.ev(
+                "document.getElementById('rtmPqMinerals').disabled"), True)
+            await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'exact';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("(() => { const c = document.getElementById('rtmPqMinerals'); c.checked = true;"
+                          " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/\\nEND\\s*$/, '\\nEQUILIBRIUM_PHASES 1\\n  Calcite 0 0.001\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            kept = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            minerals_text = await page.ev("document.getElementById('rtmText').value")
+            check('with them kept, calcite becomes a mineral of the model, and the report says so', isinstance(kept, str)
+                  and 'Kept at saturation: Calcite (' in kept and isinstance(minerals_text, str)
+                  and re.search(r'^Calcite +[0-9.e-]+ +mineral$', minerals_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts count it', await page.ev(
+                "/1 mineral at saturation while there is any/.test(document.getElementById('rtmFacts').textContent)"), True)
+
+            # --- a column, looked at against distance ---
+            column = ('<SETTINGS>\\nMODE = transport\\nCELLS = 5\\nLENGTH = 0.05\\nDIFFUSION = 1\\nTEND = 1e4\\n'
+                      'EQUILIBRATE = always\\n\\n<SPECIES>\\nH+      1e-7   D=1e-9\\nOH-     1e-7   D=1e-9\\n'
+                      'CO2     1e-4   D=1e-9\\nHCO3-   2e-3   D=1e-9\\nCO3-2   1e-5   D=1e-9\\nCa+2    1e-3   D=1e-9\\n'
+                      'Cl-     2.2e-4 D=1e-9\\n\\n<INITIAL>\\nH+ 0 1e-4\\nCl- 0 3.2e-4\\n\\n<EQUILIBRIUM>\\n'
+                      ' <=> H+ + OH-,          logK = -14\\nCO2 <=> H+ + HCO3-,     logK = -6.35\\n'
+                      'HCO3- <=> H+ + CO3-2,   logK = -10.33\\n')
+            await page.ev(f"""(() => {{ const t = document.getElementById('rtmText'); t.value = '{column}';
+              t.dispatchEvent(new Event('input', {{ bubbles: true }})); }})()""")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("(() => { const f = document.getElementById('rtmPqTimes'); f.value = '4';"
+                          " f.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmStatus').textContent = ''; })()")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            check('a column offers the view against distance', await page.ev(
+                "!document.getElementById('rtmPqModeWrap').hidden"), True)
+            await page.ev("(() => { const s = document.getElementById('rtmPqMode'); s.value = 'distance';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            across = await page.ev("(() => { const d = document.getElementById('rtmChartPq').data || [];"
+                                   " return d.length ? [d[0].x.map((x) => +x.toFixed(4)),"
+                                   " !document.getElementById('rtmPqTimeWrap').hidden,"
+                                   " document.getElementById('rtmPqCellWrap').hidden,"
+                                   " document.getElementById('rtmPqTime').options.length] : null; })()")
+            check('against distance: each cell at its centre down the column, at one of the times looked at',
+                  across, [[0.005, 0.015, 0.025, 0.035, 0.045], True, True, 4])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

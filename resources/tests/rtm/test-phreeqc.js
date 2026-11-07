@@ -255,6 +255,88 @@ function withPhreeqc(engine) {
   check('with the water, its temperature', acid.report.temperature === 15 && acid.report.temperatureFrom === 'the water',
     `${acid.report.temperature} C, from ${acid.report.temperatureFrom}`);
 
+  // --- phases carried as minerals, held at saturation ----------------------------
+  check('a phase\'s reaction is read: Calcite is CaCO3 = CO3-2 + Ca+2; the input\'s EQUILIBRIUM_PHASES with their SI',
+    JSON.stringify(P.readDatabase(dbText).phaseReaction.get('Calcite')) === JSON.stringify({ left: [{ c: 1, n: 'CaCO3' }],
+      right: [{ c: 1, n: 'CO3-2' }, { c: 1, n: 'Ca+2' }] })
+      && JSON.stringify(P.readAssemblage('EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\nEND\n'))
+        === JSON.stringify([{ name: 'Calcite', si: 0, extra: '' }, { name: 'CO2(g)', si: -2, extra: '' }]));
+  const phasesIn = 'EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\n Pyrite 0 0\n';
+  const phaseWater = { name: 'groundwater', text: groundwater.replace('END', phasesIn) };
+  let notHeld = '';
+  try { P.waterToModel({ engine, database, water: phaseWater, phases: true }); } catch (e) { notHeld = e.message; }
+  check('... phases are kept at saturation only with the relations held exactly', /needs the relations held exactly/.test(notHeld),
+    notHeld);
+  const ph = P.waterToModel({ engine, database, water: phaseWater, activity: true, exact: true, phases: true });
+  const mph = RtmModel.compile(ph.text);
+  const backP = new Map([...ph.names].map(([k, v]) => [v, k]));
+  const cph = mph.toConcentrations(mph.initialState());
+  let worstP = 0;
+  let whereP = '';
+  mph.speciesNames.forEach((n, i) => {
+    const ref = backP.has(n) ? ph.molal.get(backP.get(n)) : ph.amounts.get(n);
+    const d = Math.abs(cph[i] - ref) / Math.max(Math.abs(ref), 1e-15);
+    if (d > worstP) { worstP = d; whereP = n; }
+  });
+  check('calcite and a CO2 pressure as minerals, pyrite not (it dissolves with electrons): the start, the amounts '
+    + 'too, on what PHREEQC left', worstP < 1e-8 && ph.report.minerals.length === 2
+    && ph.report.phasesSkipped.length === 1 && ph.report.phasesSkipped[0].name === 'Pyrite'
+    && /^Calcite +[0-9.e-]+ +mineral$/m.test(ph.text) && /^CO2\(g\) <=> CO2,/m.test(ph.text),
+  `${worstP.toExponential(1)} (${whereP}); ${ph.report.minerals.map((mn) => `${mn.as} ${mn.amount.toExponential(3)}`).join(', ')}`);
+  // Acid in: the calcite dissolves and the gas holds the CO2, as PHREEQC with the same phases has them.
+  const coupled = (res) => {
+    // Every species of an element the model keeps in more than one valence
+    // state: PHREEQC alone moves electrons between them, the model never does.
+    const db = P.readDatabase(dbText);
+    const labelsOf = new Map([...res.names.keys()].map((sp) => [sp, (() => {
+      try { return [...db.expand(sp).keys()]; } catch (e) { return []; }
+    })()]));
+    const states = new Map();
+    for (const labels of labelsOf.values()) {
+      for (const lb of labels) {
+        const el = P.elementOf(lb);
+        if (!states.has(el)) states.set(el, new Set());
+        states.get(el).add(lb);
+      }
+    }
+    const many = new Set([...states].filter(([, set]) => set.size > 1).map(([el]) => el));
+    // ...and the redox species the report names, H2 among them: H(1) is in no
+    // species' count, so H looks to have one valence state when it has two.
+    return new Set([...labelsOf].filter(([sp, labels]) => res.report.redox.includes(sp)
+      || labels.some((lb) => many.has(P.elementOf(lb)))).map(([sp]) => sp));
+  };
+  const acidPh = `${ph.text.replace('TEND = 1\n', 'TEND = 1e5\n')}=> H+ + Cl-, k = 1e-8\n`;
+  const runPh = pageRun(acidPh, 1e5);
+  const kEnd = runPh.n - 1;
+  const tPh = runPh.t[kEnd];
+  const alonePh = P.parseRows(engine.run(`${P.punchBlock(['EQUI("Calcite")', 'TOT("water")'])}`
+    + `${groundwater.replace('END', 'EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\n')}`
+    + `REACTION 1\n  HCl 1\n  ${(1e-8 * tPh).toPrecision(12)} moles\nEND\n`)).pop();
+  const skipPh = coupled(ph);
+  let worstA = 0;
+  let whereA = '';
+  runPh.model.species.forEach((n, i) => {
+    const v = runPh.states[kEnd * runPh.width + i];
+    const ref = n === 'Calcite' ? alonePh.x[0] / alonePh.x[1] : backP.has(n) && !skipPh.has(backP.get(n))
+      ? alonePh.species.get(backP.get(n))[0] : null;
+    if (ref === null || ref === undefined) return;
+    const d = Math.abs(v / ref - 1);
+    if (d > worstA) { worstA = d; whereA = n; }
+  });
+  // PHREEQC settles a phase only to its own tolerance: it leaves CO2(g) about
+  // 3e-5 off its SI, which the model then holds, and the rest follows from that.
+  check('... and with acid in, ends where PHREEQC with the same phases ends: the calcite left, every species',
+    worstA < 1e-4, `${worstA.toExponential(1)} (${whereA}); calcite ${(alonePh.x[0] / alonePh.x[1]).toExponential(4)} left`);
+  const viewPh = P.viewRun({ engine, database, run: runPh, modelText: acidPh, water: phaseWater, unit: 's' });
+  const calc = (viewPh.report.minerals || []).find((mn) => mn.name === 'Calcite');
+  const gas = (viewPh.report.minerals || []).find((mn) => mn.name === 'CO2(g)');
+  check('... and the PHREEQC tab finds the water at saturation with calcite, and at the CO2 pressure, wherever there is any',
+    !!calc && !!calc.present && Math.abs(calc.present[0]) < 1e-6 && Math.abs(calc.present[1]) < 1e-6
+      && !!gas && !!gas.present && Math.abs(gas.present[0] + 2) < 1e-4 && gas.present[1] - gas.present[0] < 1e-8
+      && viewPh.phases.includes('Calcite'),
+    calc ? `Calcite SI ${calc.present && calc.present.map((v) => v.toExponential(1)).join(' to ')}, CO2(g) `
+      + `${gas && gas.present && gas.present.map((v) => v.toFixed(6)).join(' to ')}` : 'no minerals reported');
+
   // --- no water: the temperature from the top of the model text --------------
   const bare = P.viewRun({ engine, database, run: pageRun(acidText, 1e5), modelText: acidText, phases: ['Calcite'],
     unit: 's' });

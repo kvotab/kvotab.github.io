@@ -339,6 +339,8 @@ function handleRtmMessage(msg, post) {
       model: rtmSummary(model),
       stats: res.stats,
       heldDrift,
+      // A mineral dissolving away or precipitating, where and when.
+      events: (res.events || []).map((e) => ({ t: e.t, what: e.expr })),
       seconds: (Date.now() - started) / 1000,
     };
     post(payload, [res.t.buffer, states.buffer]);

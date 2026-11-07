@@ -349,6 +349,9 @@
                   </div>
                 </div>
                 <div class="rtm-pq-field">
+                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqMinerals" data-on-change="rtm:pqSettings"> Keep the phases at saturation</label><span class="kvot-info-slot" data-info-key="pq:minerals"></span></div>
+                </div>
+                <div class="rtm-pq-field">
                   <div class="kvot-info-line"><label for="rtmPqDiff">Diffusion</label><span class="kvot-info-slot" data-info-key="pq:diffusion"></span></div>
                   <select id="rtmPqDiff" data-on-change="rtm:pqSettings">
                     <option value="none">none: a batch, or set it in the text</option>
@@ -430,10 +433,19 @@
             <span class="kvot-info-slot" data-info-key="pane:phreeqc"></span>
           </div>
           <div class="rtm-toolbar" id="rtmPqShow" hidden>
+            <label id="rtmPqModeWrap">Show
+              <select id="rtmPqMode" data-on-change="rtm:pqRedraw">
+                <option value="time">against time</option>
+                <option value="distance">against distance</option>
+              </select>
+            </label>
             <label id="rtmPqCellWrap">Cell
               <select id="rtmPqCell" data-on-change="rtm:pqRedraw"></select>
             </label>
-            <label><input type="checkbox" id="rtmPqLogT" checked data-on-change="rtm:pqRedraw"> log time</label>
+            <label id="rtmPqTimeWrap" hidden>At
+              <select id="rtmPqTime" data-on-change="rtm:pqRedraw"></select>
+            </label>
+            <label id="rtmPqLogTWrap"><input type="checkbox" id="rtmPqLogT" checked data-on-change="rtm:pqRedraw"> log time</label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqCsv">CSV</button>
           </div>
           <p class="rtm-pq-stale" id="rtmPqStale" hidden></p>
@@ -498,7 +510,8 @@
               <tr><td><code>FACES</code></td><td>The face positions outright, in metres from the left end: a list, <code>FACES = 0, 1e-7, 8e-7, 2.7e-6, …</code>, or an expression in <code>i</code> worked out for <em>i</em> = 0 to <code>CELLS</code>, <code>FACES = 1e-4*(i/10)^3</code>. The first must be 0 and each must be larger than the last. A list decides <code>CELLS</code> and <code>LENGTH</code>; if they are given too they have to agree.</td></tr>
               <tr><td><code>SURFACE_LAYER</code></td><td>Makes the first cell exactly this thick, in metres, and lays the other <code>CELLS</code>&nbsp;−&nbsp;1 out over the rest by <code>GRID</code>. See <em>A surface</em> below.</td></tr>
               <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither.</td></tr>
-              <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
+              <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind unless <code>ADVECTION_SCHEME</code> says otherwise, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
+              <tr><td><code>ADVECTION_SCHEME</code></td><td><em>upwind</em> (the default) or <em>limited</em>: second order where a profile is smooth and upwind where it turns, so a front stays sharp — see <em>What it actually solves</em> below.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
               <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>), and on the right <em>semi-infinite</em> — see below.</td></tr>
               <tr><td><code>EXTRA_CELLS</code></td><td>With <code>RIGHT = semi-infinite</code>: how many cells stand for the column past its end. Worked out unless given.</td></tr>
@@ -508,7 +521,7 @@
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em> or <em>debye-huckel</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength. See <em>Activity</em> below.</td></tr>
               <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: sets the activity model's Debye–Hückel <em>A</em> and <em>B</em>, and nothing else. A <code>logK</code> or a rate constant is taken as written.</td></tr>
-              <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less the <em>v</em>·Δ<em>x</em>/2 the upwind scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
+              <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less, when advection is upwind, the <em>v</em>·Δ<em>x</em>/2 that scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
               <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
             </tbody>
           </table>
@@ -520,8 +533,11 @@ UO2                      # no number: starts at zero, does not move</pre>
           <p>A name, the concentration it starts at, and then any of: <code>fixed</code> to hold it
             there for ever, <code>D=</code> its diffusion coefficient in m²/s, and
             <code>left=</code> / <code>right=</code> the concentration at a Dirichlet face. A
-            species with no <code>D</code> does not move, which is how a surface site or a mineral
-            is written. With a rock matrix a species also takes <code>De=</code> (or
+            species with no <code>D</code> does not diffuse; but in a column with
+            <code>ADVECTION</code> the water carries every species that is not fixed, <code>D</code> or
+            no <code>D</code>. <code>immobile</code> keeps a species where it is whatever the column
+            does, which is how a surface site is written, and <code>mineral</code> makes it a pure
+            phase: see <em>Minerals</em> below. With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
             <code>a=</code> and <code>b=</code>: see <em>Activity</em> below.</p>
@@ -1043,6 +1059,33 @@ X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
             relation then reads every ion in its cell, through the ionic strength, so the Jacobian is
             fuller within a cell, and a little more work.</p>
 
+          <h4 id="help-minerals">Minerals</h4>
+          <pre>Calcite   5e-4   mineral
+
+&lt;EQUILIBRIUM&gt;
+Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
+          <p><code>mineral</code> on a species line makes it a pure phase: an amount, in the model's
+            concentration unit and so per litre or kilogram of the water in its cell, that never moves.
+            It is never <code>fixed</code> and takes no <code>D</code>, <code>R</code> or rock-matrix
+            properties. In a relation its activity is 1, so the relation is its saturation: the
+            product of the activities of what it dissolves to is <em>K</em>. One mineral to a
+            relation and one relation to a mineral, and no <code>kf</code>: a mineral that
+            dissolves at a rate is a rate law of your own in <code>&lt;REACTIONS&gt;</code>.</p>
+          <p>With <code>EQUILIBRATE = 1</code> the start is put on the relations as PHREEQC puts a
+            water on its <code>EQUILIBRIUM_PHASES</code>. A mineral the water is supersaturated in
+            precipitates. One it is undersaturated in dissolves until the water is saturated or none
+            is left, and then the water stays undersaturated. With <code>EQUILIBRATE = always</code>
+            that goes on all through the run. While there is some of a mineral its saturation is one
+            of the relations held, and its amount is what the totals leave, changing as reactions and
+            transport change them. Where the last of it dissolves the run stops at that instant, the
+            relation is let go, the amount held at zero, and the water may go undersaturated; where
+            the water becomes supersaturated again the run stops there and the mineral precipitates.
+            The status after a run names the first and the last of these, where and when.</p>
+          <p>A mineral counts in the totals as anything else does. Calcite holds calcium and carbon,
+            so what dissolves is in the water, and in a column the water carries it on. Under
+            <code>ACTIVITY</code> its saturation reads every ion of its cell, as any relation
+            does.</p>
+
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
             <code>reaction.in</code>, <code>solutions.in</code>, <code>diffusion.in</code>, the
@@ -1074,6 +1117,21 @@ X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
             the textbook form does not. Measured on a closed box, mass is held to about one part in
             10<sup>15</sup>, and against the analytic <code>erfc</code> profile the error falls by
             four each time the cells are doubled — second order, as it should be.</p>
+          <p>Advection is upwind: a face carries the concentration of the cell upwind of it. That is
+            stable at any step and never makes a new peak or trough, but it spreads a front by
+            <em>v</em>·Δ<em>x</em>/2 whatever the model says, as if it had a Peclet number of twice
+            the cells. <code>ADVECTION_SCHEME = limited</code> adds to each face the slope of the cell
+            upwind of it, times the distance to the face, the slope an average of the gradients on
+            either side, 2<em>a</em>²<em>b</em>²(<em>a</em>+<em>b</em>)/(<em>a</em>²+<em>b</em>²)²,
+            and none where they differ in sign. That is second order where the profile is smooth,
+            and upwind at a peak or a trough, so nothing goes below zero; as a limiter it lies
+            inside the TVD region, and unlike van Albada's it starts from zero with zero slope, so
+            the Jacobian is smooth and one a difference of the state can check. The first and last
+            cells stay upwind, so what crosses the ends is as upwinding has it, and with
+            <code>PECLET</code> nothing is taken back for the scheme. On a front at a Peclet number of
+            400, the largest error against the closed solution is 8 % on 40 cells and 0.7 % on 160,
+            where upwinding's is 19 % and 2.9 %; it costs more steps, the Jacobian moving with the
+            profile.</p>
 
           <h3 id="help-charts">Reading the charts</h3>
           <p>The time chart draws the species ticked in the list above it, at one cell, or what
@@ -1186,6 +1244,15 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             a relation relaxes at k<sub>f</sub> times the product of its reactants times Σ ν²/c over its
             species, and that is solved for k<sub>f</sub>. The <code>kf</code> are per second, so change
             <code>TIME_UNIT</code> and they have to change with it.</p>
+          <p><em>Keep the phases at saturation</em>, with the relations held exactly, carries the
+            input's <code>EQUILIBRIUM_PHASES</code> into the model. Each phase becomes a mineral (see
+            <em>Minerals</em> above) at the amount PHREEQC left of it, per kilogram of water. Its
+            relation is the phase's reaction from the database, with its log K at the water's
+            temperature plus the saturation index it is held at, so a gas such as
+            <code>CO2(g) -3.5</code> keeps its partial pressure while any of it is left. Left off, the
+            phases only prepare the water. A phase that dissolves with electrons, such as pyrite, is
+            not carried, since no redox relation is written; nor is one whose line says more than a
+            saturation index and an amount. The report under the panel names both kinds.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -1202,6 +1269,8 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               the element totals PHREEQC takes: <code>HCO3-</code> into C(4), <code>H2</code> twice
               into H(0), <code>(UO2)2(OH)2+2</code> twice into U(6).</li>
             <li>The pH is walked until PHREEQC's molality of H<sup>+</sup> is the run's [H<sup>+</sup>].</li>
+            <li>A mineral of the model is not part of the water: it is listed with the phases, its
+              saturation index beside theirs.</li>
             <li>Left out, and listed with their largest concentration: water; this page's
               <code>e-</code>, which is the hydrated electron and not PHREEQC's; radicals, surface
               sites and whatever else the database lacks.</li>
@@ -1213,9 +1282,10 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               carries every element already, so this is for one that leaves its counter-ions out. A
               water PHREEQC will not take is said, and left out.</li>
           </ul>
-          <p>What comes back is the pH as an activity and the saturation indices against time, for one
-            cell at a time, and a CSV with every cell, the ionic strength, the charge balance and the
-            activity of water. It also says:</p>
+          <p>What comes back is the pH as an activity and the saturation indices, drawn against time
+            for one cell, or, under <em>Show</em>, against distance down the column at one of the times
+            looked at, where a front's chemistry is a shape; and a CSV with every cell, the ionic
+            strength, the charge balance and the activity of water. It also says:</p>
           <ul>
             <li>which phases are supersaturated, and where and when — what would precipitate if the
               model let it;</li>
@@ -1225,6 +1295,9 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               A model with <code>ACTIVITY</code> follows them itself, and then the tab says instead
               how close its own activity coefficients stay to PHREEQC's along the run, relation by
               relation;</li>
+            <li>for each mineral of the model, the saturation index PHREEQC finds where the model has
+              some of it, which holding it means is its target, and how far below saturation the water
+              is where it has none;</li>
             <li>a water far from neutral, which usually means the model leaves out a counter-ion, and
               so PHREEQC's ionic strength is too low.</li>
           </ul>
@@ -1376,14 +1449,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261107a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261107b"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261107a"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261107b"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107c"></script>
 </body>
 </html>

@@ -3019,6 +3019,345 @@ HCO3- <=> H+ + CO3-2,      logK = -10.4284
 }
 
 /* ======================================================================
+   2z. Minerals at saturation (`mineral`)
+
+   A mineral is a pure phase: activity 1, its amount free to reach zero. Held
+   (EQUILIBRATE = always), its saturation is a relation while there is any of
+   it, and the run stops where the last of it dissolves or the water becomes
+   supersaturated. So the checks are the saturation index at every stored
+   point, the totals the mineral counts in, and each event's instant against
+   a speciation of the totals there.
+   ====================================================================== */
+console.log('\n--- minerals at saturation ---');
+{
+  const water = (opts = {}) => `
+<SETTINGS>
+MODE = batch
+TEND = ${opts.tend || 2e5}
+EQUILIBRATE = ${opts.eq || 'always'}
+${opts.settings || ''}
+
+<SPECIES>
+H+      1e-7
+OH-     1e-7
+CO2     1e-4
+HCO3-   2e-3
+CO3-2   ${opts.co3 || '1e-5'}
+Ca+2    ${opts.ca || '1e-3'}
+Cl-     ${opts.cl || '1e-4'}
+Calcite ${opts.calcite ?? '5e-4'}   mineral
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+${opts.relation || 'Calcite <=> Ca+2 + CO3-2, logK = -8.48'}
+
+<REACTIONS>
+${opts.rx || ''}
+`;
+  const iCa = 5;
+  const iCO3 = 4;
+  const iCal = 7;
+  const si = (c) => Math.log10(c[iCa] * c[iCO3]) + 8.48;
+  const caT = (c) => c[iCa] + c[iCal];
+  const cT = (c) => c[2] + c[3] + c[4] + c[iCal];
+
+  // --- what a mineral line may say, and what a relation with one may ---
+  const refusal = (text) => { try { RtmModel.compile(text); return ''; } catch (e) { return e.message; } };
+  check('a mineral is immobile and never held: D on one is refused',
+    /Calcite is a mineral, which stays where it is and is never held: it takes no D/.test(
+      refusal(water().replace('Calcite 5e-4   mineral', 'Calcite 5e-4   mineral  D=1e-9'))));
+  check('  two minerals in one relation are refused', /two minerals/.test(refusal(water({
+    relation: 'Calcite <=> Ca+2 + CO3-2, logK = -8.48\nAragonite <=> Calcite, logK = -0.1' })
+    .replace('Calcite 5e-4   mineral', 'Calcite 5e-4   mineral\nAragonite 0   mineral'))));
+  check('  a mineral in two relations is refused', /in two relations/.test(refusal(water({
+    relation: 'Calcite <=> Ca+2 + CO3-2, logK = -8.48\nCalcite + H+ <=> Ca+2 + HCO3-, logK = 1.85' }))));
+  check('  a mineral is no fast pair', /is not a fast pair/.test(refusal(water({
+    relation: 'Calcite <=> Ca+2 + CO3-2, logK = -8.48, kf = 1' }))));
+  check('  and is never held in some cells', /a mineral is never held/.test(refusal(`${water()}\n<INITIAL>\nCalcite 0-0 1e-3 fixed\n`
+    .replace('MODE = batch', 'MODE = batch'))));
+
+  // --- immobile: a species no column carries ---
+  const column = (word) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 1
+ADVECTION = 1
+VELOCITY = 1e-3
+LEFT = robin
+RIGHT = free
+TEND = 500
+
+<SPECIES>
+Site   0   ${word}
+Tr     0   D=1e-9  left=1
+
+<INITIAL>
+Site 0-4 1
+`);
+  const carried = FacsimileODE.runModel(column(''), { solver: 'ndf', tend: 500, rtol: 1e-6, atol: 1e-12 });
+  const stays = FacsimileODE.runModel(column('immobile'), { solver: 'ndf', tend: 500, rtol: 1e-6, atol: 1e-12 });
+  const siteAt = (r, c) => r.y[r.y.length - 1][c * 2];
+  check('under advection a species with no D is carried; `immobile` stays where it is',
+    siteAt(carried, 9) > 0.1 && siteAt(stays, 0) === 1 && siteAt(stays, 9) === 0,
+    `cell 9: ${siteAt(carried, 9).toFixed(3)} carried, ${siteAt(stays, 9)} immobile`);
+
+  // --- the start: precipitated to saturation, or dissolved away ---
+  const sup = RtmModel.compile(water({ eq: 1 })).initialState();
+  check('a supersaturated start precipitates calcite to saturation, Ca and C conserved',
+    Math.abs(si(sup)) < 1e-12 && sup[iCal] > 5e-4 && Math.abs(caT(sup) / 1.5e-3 - 1) < 1e-14
+      && Math.abs(cT(sup) / 2.61e-3 - 1) < 1e-14, `calcite ${sup[iCal].toExponential(4)}, SI ${si(sup).toExponential(1)}`);
+  const sub = RtmModel.compile(water({ eq: 1, co3: '1e-7', ca: '1e-5', calcite: '1e-6' })).initialState();
+  check('  an undersaturated one dissolves what little there is, and stays undersaturated',
+    sub[iCal] === 0 && si(sub) < -1 && Math.abs(caT(sub) / (1e-5 + 1e-6) - 1) < 1e-14,
+    `calcite ${sub[iCal]}, SI ${si(sub).toFixed(3)}`);
+
+  // --- held: acid dissolves the calcite away ---
+  const m = RtmModel.compile(water({ rx: '=> H+ + Cl-, k = 1e-8' }));
+  check('held, the mineral is one event in its cell', m.nevents === 1 && m.heldEquilibria.minerals === 1);
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 2e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const c0 = m.toConcentrations(r.y[0]);
+  let onSat = 0;
+  let below = -Infinity;
+  let totals = 0;
+  for (const y of r.y) {
+    const c = m.toConcentrations(y);
+    if (c[iCal] > 0) onSat = Math.max(onSat, Math.abs(si(c))); else below = Math.max(below, si(c));
+    totals = Math.max(totals, Math.abs(caT(c) / caT(c0) - 1), Math.abs(cT(c) / cT(c0) - 1));
+  }
+  const ev = r.events[0];
+  check('acid: at saturation while there is calcite, Ca and C conserved with it',
+    onSat < 1e-12 && totals < 1e-12, `|SI| ${onSat.toExponential(1)}, totals ${totals.toExponential(1)}`);
+  check('  one event, where the last of it dissolves, and undersaturated after',
+    r.events.length === 1 && ev.expr === 'Calcite has dissolved away' && below < 1e-8
+      && si(m.toConcentrations(r.y[r.y.length - 1])) < -1,
+    `${ev && ev.expr} at t = ${ev && ev.t.toFixed(1)}; SI with none at most ${below.toExponential(1)}`);
+  // The event's instant, apart: the start with all its calcite in the water
+  // and the acid added by then, speciated afresh, is just saturated and has
+  // none of it -- a little earlier there would be some left, a little later
+  // the water would be undersaturated.
+  const tE = ev.t;
+  const names = ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2', 'Ca+2', 'Cl-'];
+  const moved = Float64Array.from(c0);
+  moved[0] += 1e-8 * tE;
+  moved[6] += 1e-8 * tE;
+  moved[iCO3] += c0[iCal];
+  moved[iCa] += c0[iCal];
+  moved[iCal] = 0;
+  let atText = water({ eq: 1, calcite: '0' });
+  names.forEach((nm, i) => {
+    atText = atText.replace(new RegExp(`^${nm.replace(/[+]/g, '\\+')}( +)\\S+$`, 'm'), `${nm}$1${moved[i]}`);
+  });
+  const atE = RtmModel.compile(atText).initialState();
+  check('  the event instant: the water there is just saturated, with none of the mineral',
+    Math.abs(si(atE)) < 1e-7 && atE[iCal] < 1e-10 * caT(c0), `SI ${si(atE).toExponential(1)} with calcite ${atE[iCal].toExponential(1)}`);
+  const vA = RtmModel.verifyJacobian(m, 0, m.initialState());
+  const vB = RtmModel.verifyJacobian(m, 2e5, r.y[r.y.length - 1]);
+  check('  the Jacobian with the mineral there, and with none', vA.discrepancies.length === 0
+    && vB.discrepancies.length === 0, `${vA.checked} and ${vB.checked} entries`);
+  // A point stored while there was calcite is read back with it, whatever the run went on to.
+  const early = m.toConcentrations(r.y[Math.floor(r.y.length / 4)]);
+  check('  a point stored before the event is read back as it was', early[iCal] > 0 && Math.abs(si(early)) < 1e-12,
+    `calcite ${early[iCal].toExponential(3)}`);
+
+  // --- precipitation: a Ca source into an undersaturated water ---
+  const mp = RtmModel.compile(water({ co3: '1e-6', ca: '1e-5', cl: '2e-5', calcite: '0', rx: '=> Ca+2 + Cl- + Cl-, k = 1e-8' }));
+  const rp = FacsimileODE.runModel(mp, { solver: 'ndf', tend: 2e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const cp = mp.toConcentrations(rp.y[rp.y.length - 1]);
+  check('a Ca source into an undersaturated water: calcite precipitates where it saturates, and stays there',
+    rp.events.length === 1 && rp.events[0].expr === 'Calcite precipitates' && Math.abs(si(cp)) < 1e-12 && cp[iCal] > 0,
+    `${rp.events.map((e) => `${e.expr} at ${e.t.toFixed(0)}`).join(', ')}; calcite ${cp[iCal].toExponential(3)}`);
+
+  // --- a column: an acid front dissolves the calcite cell by cell ---
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.1
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1e-6
+PECLET = 20
+LEFT = robin
+RIGHT = free
+TEND = 3e5
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7    D=1e-9  left=3e-3
+OH-     1e-7    D=1e-9
+CO2     1e-4    D=1e-9
+HCO3-   2e-3    D=1e-9
+CO3-2   1e-5    D=1e-9
+Ca+2    1e-3    D=1e-9
+Cl-     1e-4    D=1e-9  left=3.1e-3
+Calcite 2e-4    mineral
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: 3e5, rtol: 1e-6, atol: 1e-20, nonNegative: true });
+  const order = rc.events.map((e) => Number(/cell (\d+)/.exec(e.expr)[1]));
+  const vc = RtmModel.verifyJacobian(col, 3e5, rc.y[rc.y.length - 1]);
+  check('a column: the acid front dissolves the calcite cell by cell, in order, and the Jacobian holds',
+    rc.events.length === 10 && order.every((c, k) => c === k) && vc.discrepancies.length === 0,
+    `${rc.events.length} events, cells ${order.join(' ')}; ${vc.checked} entries`);
+  // Every stored point read back as the run had it, cell by cell: at
+  // saturation wherever there is calcite, and none at all where there is not
+  // -- not the 1e-29 a damped step leaves, nor a cell left unsettled because
+  // one before it missed a tolerance under rounding.
+  let offSat = 0;
+  let crumbs = 0;
+  let unsettled = 0;
+  for (const y of rc.y) {
+    const c = col.toConcentrations(y);
+    if (!col.consistentInitial(0, Float64Array.from(y), { rtol: 1e-12, fromState: true }).solved) unsettled++;
+    for (let k = 0; k < 10; k++) {
+      const b = k * 8;
+      if (c[b + 7] > 0) offSat = Math.max(offSat, Math.abs(Math.log10(c[b + 5] * c[b + 4]) + 8.48));
+      if (c[b + 7] > 0 && c[b + 7] < 1e-12) crumbs++;
+    }
+  }
+  check('  every stored point read back: at saturation where there is calcite, none at all where there is not',
+    offSat < 1e-12 && crumbs === 0 && unsettled === 0,
+    `|SI| ${offSat.toExponential(1)}; ${crumbs} crumbs, ${unsettled} unsettled of ${rc.y.length}`);
+
+  // --- activities ---
+  const ma = RtmModel.compile(water({ settings: 'ACTIVITY = debye-huckel', rx: '=> H+ + Cl-, k = 1e-8', tend: 5e4 }));
+  const ra = FacsimileODE.runModel(ma, { solver: 'ndf', tend: 5e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let siAct = 0;
+  const lnG = new Float64Array(8);
+  for (const y of ra.y) {
+    const c = ma.toConcentrations(y);
+    if (!(c[iCal] > 0)) continue;
+    RtmModel.activityAt(ma.act, c, 0, lnG, new Float64Array(8));
+    siAct = Math.max(siAct, Math.abs((Math.log(c[iCa]) + lnG[iCa] + Math.log(c[iCO3]) + lnG[iCO3]) / Math.LN10 + 8.48));
+  }
+  check('with ACTIVITY the saturation is in activities, the mineral at 1',
+    siAct < 1e-12 && RtmModel.verifyJacobian(ma, 0, ma.initialState()).discrepancies.length === 0, siAct.toExponential(1));
+}
+
+/* ======================================================================
+   2w. Limited advection (ADVECTION_SCHEME = limited)
+
+   A front at a Peclet number of 400 against van Genuchten and Alves's
+   closed solution for the flux inlet, beside upwinding on the same grids:
+   sharper, closer to second order as the cells are refined, nothing below
+   zero, and a Jacobian a difference of the state agrees with.
+   ====================================================================== */
+console.log('\n--- limited advection ---');
+{
+  const erfcRel = (x) => {
+    const z = Math.abs(x);
+    const t = 1 / (1 + 0.5 * z);
+    const y = t * Math.exp(-z * z - 1.26551223 + t * (1.00002368 + t * (0.37409196
+      + t * (0.09678418 + t * (-0.18628806 + t * (0.27886807 + t * (-1.13520398
+        + t * (1.48851587 + t * (-0.82215223 + t * 0.17087277)))))))));
+    return x >= 0 ? y : 2 - y;
+  };
+  const flux3 = (x, t, v, d) => {
+    const A = 0.5 * erfcRel((x - v * t) / (2 * Math.sqrt(d * t)));
+    const B = Math.sqrt((v * v * t) / (Math.PI * d)) * Math.exp(-((x - v * t) ** 2) / (4 * d * t));
+    const e = (v * x) / d;
+    const C = e > 700 ? 0
+      : 0.5 * (1 + e + (v * v * t) / d) * Math.exp(e) * erfcRel((x + v * t) / (2 * Math.sqrt(d * t)));
+    return A + B - C;
+  };
+  const v = 1e-3;
+  const T = 500;
+  const front = (n, scheme) => {
+    const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = ${n}
+LENGTH = 1
+DIFFUSION = 1
+ADVECTION = 1
+ADVECTION_SCHEME = ${scheme}
+VELOCITY = ${v}
+PECLET = 400
+LEFT = robin
+RIGHT = free
+TEND = ${T}
+
+<SPECIES>
+Tr  0  left=1
+`);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: T, rtol: 1e-8, atol: 1e-14, nonNegative: true });
+    const y = r.y[r.y.length - 1];
+    let err = 0;
+    let low = Infinity;
+    for (let i = 0; i < n; i++) {
+      err = Math.max(err, Math.abs(y[i] - flux3(m.grid.centres[i], T, v, v / 400)));
+      low = Math.min(low, y[i]);
+    }
+    return { m, y, err, low };
+  };
+  const u40 = front(40, 'upwind');
+  const l40 = front(40, 'limited');
+  const u160 = front(160, 'upwind');
+  const l160 = front(160, 'limited');
+  check('a front at Pe 400: limited is sharper than upwinding on the same cells',
+    l40.err < u40.err / 2 && l160.err < u160.err / 3,
+    `largest error ${l40.err.toExponential(2)} against ${u40.err.toExponential(2)} at 40 cells, `
+      + `${l160.err.toExponential(2)} against ${u160.err.toExponential(2)} at 160`);
+  check('  and closer to second order: four times the cells take the error down by more than six',
+    l40.err / l160.err > 6, `${(l40.err / l160.err).toFixed(1)} times`);
+  check('  with nothing below zero', l40.low >= 0 && l160.low >= 0, `${l40.low.toExponential(1)}, ${l160.low.toExponential(1)}`);
+  const vl = RtmModel.verifyJacobian(l40.m, T, l40.y);
+  check('  and a Jacobian that moves with the state, checked across the front', vl.discrepancies.length === 0
+    && !l40.m.jacobianConstant && u40.m.jacobianConstant, `${vl.checked} entries`);
+  let word = '';
+  try { RtmModel.compile('<SETTINGS>\nADVECTION_SCHEME = tvd\n<SPECIES>\nA 1\n'); } catch (e) { word = e.message; }
+  check('  ADVECTION_SCHEME is upwind or limited', /ADVECTION_SCHEME must be one of upwind, limited/.test(word), word);
+
+  // A reactive front: acid dissolving calcite, the relations held, limited.
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.1
+DIFFUSION = 1
+ADVECTION = 1
+ADVECTION_SCHEME = limited
+VELOCITY = 1e-6
+PECLET = 50
+LEFT = robin
+RIGHT = free
+TEND = 3e5
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7    D=1e-9  left=3e-3
+OH-     1e-7    D=1e-9
+CO2     1e-4    D=1e-9
+HCO3-   2e-3    D=1e-9
+CO3-2   1e-5    D=1e-9
+Ca+2    1e-3    D=1e-9
+Cl-     1e-4    D=1e-9  left=3.1e-3
+Calcite 2e-4    mineral
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: 3e5, rtol: 1e-6, atol: 1e-20, nonNegative: true });
+  const order = rc.events.map((e) => Number(/cell (\d+)/.exec(e.expr)[1]));
+  const vc = RtmModel.verifyJacobian(col, rc.t[Math.floor(rc.t.length / 3)], rc.y[Math.floor(rc.y.length / 3)]);
+  check('acid dissolving calcite down a column, limited: cell by cell in order, the Jacobian across the front',
+    rc.events.length === 10 && order.every((c, k) => c === k) && vc.discrepancies.length === 0,
+    `${rc.events.length} events, cells ${order.join(' ')}; ${vc.checked} entries, ${vc.discrepancies.length} off`
+      + `${vc.discrepancies.length ? ` ${JSON.stringify(vc.discrepancies.slice(0, 3))}` : ''}`);
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

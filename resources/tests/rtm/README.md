@@ -28,6 +28,7 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **Without a water**, the temperature is read from the top of the model text. A water PHREEQC refuses is reported, and the look goes on without it.
 - **The built-in model:** the seven species PHREEQC knows are counted; the hydrated electron, the radicals and the surface sites are not; the missing counter-ion is noticed.
 - **Activity coefficients that follow the ionic strength** (`ACTIVITY = debye-huckel`): the database's `-gamma` is read (Ca+2: 5 and 0.165), and a database with the Pitzer model is refused. The text has the water's `TEMPERATURE`, the water in its relations and the database's own log K. Its start, from the page's own activity coefficients, lands on PHREEQC's molalities (9.1e-10). With 0.4 mol/kgw of NaCl added, every species ends within 1e-5 (3.1e-7 measured) of what PHREEQC alone finds; with the constants fixed at the start, MgSO4 ends 89 % off. The PHREEQC tab then says PHREEQC's activity coefficients moved by 0.48 in log K and the model's own stayed within 1e-6 (3.9e-9) of them. PHREEQC alone also moves the valence states, which the model never does, so the redox species are left out of that comparison: with acid it re-equilibrates a little carbon, 5e-5, whatever the tolerance.
+- **Phases kept at saturation**: a phase's reaction is read from the database's PHASES, and the input's EQUILIBRIUM_PHASES with their SI. Phases are refused unless the relations are held exactly. Calcite and a CO2(g) pressure become minerals and pyrite is not carried (it dissolves with electrons); the start, the amounts included, lands on what PHREEQC left (1.4e-9). With acid in, every species and the calcite left end within 1e-4 of PHREEQC with the same phases (2e-5 measured: PHREEQC leaves CO2(g) about 3e-5 off its SI, which the model then holds). The PHREEQC tab finds the water at saturation with calcite and at that CO2 pressure wherever there is any. Comparisons with PHREEQC alone leave out every species of an element kept in more than one valence state, and the redox species, since PHREEQC alone moves electrons between them.
 - **The water held exactly** (`EQUILIBRATE = always`, no `kf`): its start, read from the logarithms and totals the solver keeps, lands on PHREEQC's molalities as closely (2.4e-10). With the same acid it ends 7e-5 in pH from PHREEQC alone, where the fast pairs end 3.3e-4 from it. Exactly and as pairs at once is refused.
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
@@ -37,6 +38,8 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 
 - PHREEQC is not fetched until it is used, and then runs in a worker of its own.
 - The panel on the Model tab writes the example water and reports the check. By default the activity coefficients follow the ionic strength (`ACTIVITY = debye-huckel` at 15 °C, `H2O` in the relations); fixed at this water, the constants are conditional and the water is left out. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
+- Keeping the phases needs the relations held exactly (the box is greyed otherwise); with a calcite phase in the example water, calcite becomes a mineral, the report says so, and the model facts count it.
+- A column is offered against distance as well: each cell at its centre down the column, at one of the times looked at.
 - The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
 - A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
 - The PHREEQC tab's chart starts at the water's pH, 7.4 at 15 °C. Before the cache was cleared in this test, a cached worker script ran at 25 °C and gave 7.4012, which is how the test caught it.
@@ -286,6 +289,63 @@ What the conserved totals are is worked out from the stoichiometry alone — the
 left null space of the equilibrium matrix — so the check that the basis comes
 out as expected is a check on that derivation, not on a table of elements the
 page does not have.
+
+**Minerals at saturation** (`mineral`). What a mineral line and a relation
+with one may say (no `D`, one mineral to a relation and one relation to a
+mineral, no `kf`, never held), and `immobile` keeping a species where advection
+carries one with no `D`. The start precipitates calcite from a supersaturated
+water (SI 0 to 2e-15, Ca and C conserved) and dissolves what little there is in
+an undersaturated one. Held, acid dissolves calcite at saturation (to 2e-15,
+the totals to 2e-15) until one event where the last of it goes. The event's
+instant is checked apart: the start with all its calcite put in the water and
+the acid added by then, speciated afresh, is just saturated with none of it
+(SI 9e-11). A point stored before the event is read back with its calcite; a
+Ca source precipitates calcite at an event; a column's acid front dissolves it
+cell by cell, ten events in order; and under `ACTIVITY` the saturation is in
+activities. The Jacobian is checked with the mineral there and with none.
+
+A held column's stored points are read back cell by cell (the run's own
+modes found again from each state): at saturation wherever there is calcite,
+and none at all where there is not. That check guards two faults the PHREEQC
+tab showed: an absent mineral's amount was iterated towards zero with a damped
+step and left at 1e-29, which read as "some calcite" in a water at SI -7; and
+the polish stopped at the first cell whose residual stayed above a tolerance
+set under rounding (1e-16 against relations of size 30), leaving every later
+cell as the solver had it. The amount is now set to zero, the tolerance is not
+below 1e-13, and every cell is settled whatever another does.
+
+**Limited advection** (`ADVECTION_SCHEME = limited`). A front at a Peclet
+number of 400 against van Genuchten and Alves's closed solution for the flux
+inlet: the largest error 7.6e-2 on 40 cells and 7.2e-3 on 160, where upwinding
+gives 1.9e-1 and 2.9e-2 (the checks: less than half and a third of upwinding's,
+and a fall of more than six over four times the cells); nothing below zero; a
+Jacobian that moves with the state and that a difference agrees with; and a
+calcite column dissolved cell by cell with the relations held.
+
+The slope is 2a²b²(a+b)/((a²+b²)² + E²), zero where the gradients differ in
+sign. Van Albada's own, ab(a+b)/(a²+b²), was tried first: scale-free, its
+derivatives are O(1) however small the gradients, so in a stretch flat to
+rounding behind a front it took a slope of either sign from the rounding, and a
+difference of the state could not follow it (55 entries off). This one starts
+from zero with zero slope, and E keeps rounding flats smooth. verifyJacobian
+also gained two things there: an entry under 1e-7 of its row's terms is set
+apart, as one under rounding is, and a disagreement is taken again at half the
+step and extrapolated before it is reported, which removes the h² of a central
+difference across a slope that varies on not much more than the step. Entries
+spoiled by 0.1 % are still caught. It no longer lets a held model's logarithms
+set the step floor for its concentrations (ln C of 30 stepped Cl- at 1e-4 by
+2 % of itself).
+
+These checks, and the PHREEQC ones, found that the conserved totals were made
+from the wrong species. The totals are the free species of the elimination,
+and it took them in the order the text lists the species, so a PHREEQC water
+(most abundant first) left its trace species free: the total made from Fe+3
+was mostly Na+, Ca+2 and Cl-, in which the ferric species are a part in 1e10.
+Arithmetic resolved them to a part in a million, the start was 1.6e-5 off
+PHREEQC, and a held run stalled, Newton moving Fe+3 by 2e-6 against residuals
+of 2e-14. The elimination now takes the least abundant species first, so each
+element's most abundant species makes its total; the start lands on PHREEQC to
+1e-9 and the runs go through.
 
 **Activity** (`ACTIVITY`). The four forms of PHREEQC's rule worked out by
 hand at I = 0.05 (Davies, WATEQ with a and b, b·I for a neutral species, 1 for

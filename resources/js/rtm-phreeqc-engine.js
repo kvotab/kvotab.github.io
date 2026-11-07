@@ -171,8 +171,10 @@
       let worst = 0;
       let where = null;
       m.speciesNames.forEach((n, i) => {
-        const ref = res.molal.get(back.get(n));
-        const d = Math.abs(y[i] / ref - 1);
+        // A mineral against the amount PHREEQC left of it.
+        const ref = back.has(n) ? res.molal.get(back.get(n)) : (res.amounts && res.amounts.get(n));
+        if (ref === undefined) return;
+        const d = Math.abs(y[i] - ref) / Math.max(Math.abs(ref), 1e-15);
         if (d > worst) { worst = d; where = n; }
       });
       const converged = (m.speciated || []).every((c) => c.converged);

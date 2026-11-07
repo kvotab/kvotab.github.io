@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -430,7 +430,7 @@
       const moves = [];
       if (s.DIFFUSION) moves.push('diffusion');
       if (s.ADVECTION && s.VELOCITY) {
-        moves.push(`advection at ${fmtNumber(s.VELOCITY)} m/${timeUnit().symbol}`
+        moves.push(`${s.ADVECTION_SCHEME === 'limited' ? 'limited ' : ''}advection at ${fmtNumber(s.VELOCITY)} m/${timeUnit().symbol}`
           + (m.travelTime ? `, a travel time of ${fmtTime(m.travelTime)}` : ''));
       }
       if (s.PECLET > 0 && s.ADVECTION) moves.push(`Peclet number ${s.PECLET}`);
@@ -445,7 +445,8 @@
         + `, ${m.nconserved} conserved total${m.nconserved === 1 ? '' : 's'}`
         + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : '')
         + (h ? ` · ${h.relations === m.nequilibria ? 'all' : h.relations} held throughout the run, `
-          + `${h.species} species algebraic in every cell` : '')
+          + `${h.species} species algebraic in every cell`
+          + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
         + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : 'Debye–Hückel'} at ${a.temperature} °C `
           + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : ''));
     }
@@ -612,9 +613,16 @@
     // Started again at the corners of a table read at the clock: said, since
     // it is what a run with a release history spends its first steps on.
     const restarts = st.breaks ? `, started again at ${st.breaks.toLocaleString()} table corner${st.breaks === 1 ? '' : 's'}` : '';
+    // Minerals held at saturation: when one dissolved away or precipitated,
+    // the run stopped there and went on; the first and the last are named.
+    const ev = reply.events || [];
+    const said = (e) => `${e.what} at ${fmtTime(e.t)}`;
+    const minerals = !ev.length ? ''
+      : ev.length === 1 ? ` ${said(ev[0])}.`
+        : ` ${ev.length.toLocaleString()} mineral changes, from “${said(ev[0])}” to “${said(ev[ev.length - 1])}”.`;
     setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
       + `(${(st.nfailed || 0).toLocaleString()} rejected)${methods ? `: ${methods}` : ''}${restarts}, ${reply.n.toLocaleString()} points kept, `
-      + `${matrix}.${drift}`, drift ? 'warn' : 'ok');
+      + `${matrix}.${minerals}${drift}`, drift ? 'warn' : 'ok');
   }
 
   /**
@@ -1582,7 +1590,7 @@
             '`batch` or `transport`, and how many species and reactions: `MODE`, `<SPECIES>` and `<REACTIONS>`.',
             'For a column, the cells: how many, over what length and how laid out, from `CELLS`, `LENGTH` and `GRID` with its `GRID_RATIO` or `GRID_POWER`, and a first cell pinned by `SURFACE_LAYER`.',
             'With a rock matrix, `dual porosity`: how many layers behind each cell, `matched` or `reference`, to `MATRIX_DEPTH`; the first layer, why it is that thick and how fast the rest grow; the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `De=` and so enter the rock.',
-            'What moves: `diffusion`, `advection` at the `VELOCITY` with the travel time it makes, the Peclet number, or `nothing moves`.',
+            'What moves: `diffusion`, `advection` at the `VELOCITY` with the travel time it makes (`limited advection` under `ADVECTION_SCHEME = limited`), the Peclet number, or `nothing moves`.',
             'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean, and how many cells stand for the column past a `semi-infinite` end.',
             'Equilibria and the totals they conserve, and whether `EQUILIBRATE` put the starting state on them.',
             'Parameters and tables by name, and a species held in some cells only.',
@@ -2048,6 +2056,18 @@
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
+    'pq:minerals': () => ({
+      kicker: 'PHREEQC', title: 'Keep the phases at saturation',
+      lead: 'Each phase of the input’s EQUILIBRIUM_PHASES becomes a mineral of the model, at the amount PHREEQC left of it, and is held at its saturation index while there is any of it.',
+      facts: [['Default', 'off'], ['Needs', 'the equilibria held exactly']],
+      sections: [
+        { text: 'Off, the phases only prepare the water: calcite and a CO2 pressure put it where it is, and the run starts from that water with no calcite and no gas. On, they stay: calcite dissolves as acid comes in and precipitates where the water is supersaturated, and a gas holds its partial pressure, as EQUILIBRIUM_PHASES do in PHREEQC.' },
+        { text: 'Each is written as `mineral` on its species line, at its amount per kilogram of water, with its reaction from the database’s PHASES and its log K at the water’s temperature, plus its saturation index. The run stops where one dissolves away or precipitates, and says so.' },
+        { heading: 'Not carried', text: 'A phase that dissolves with electrons, such as pyrite, since no redox relation is written; and one whose line says more, such as dissolve_only. The report says which.' },
+      ],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
     'pq:hold': () => ({
       kicker: 'PHREEQC', title: 'The equilibria during the run',
       lead: 'Every relation written puts the start on equilibrium. This says what keeps it there while the run goes on.',
@@ -2089,9 +2109,10 @@
           '**fill in from the water** (off unless ticked): the water in the panel on the Model tab gives the temperature, and any element the model does not carry at all, such as a background electrolyte, held at its totals. A model written from a water carries all of them already; this is for one that leaves its counter-ions out. A water PHREEQC will not take is said, and left out.',
         ] },
         { heading: 'What comes back', list: [
-          'The pH as an activity, and the saturation index of every phase that comes within 3 of saturation, or of the **Phases** named, drawn against time for one cell. The CSV holds every cell and the ionic strength, the charge balance and the activity of water as well.',
+          'The pH as an activity, and the saturation index of every phase that comes within 3 of saturation, or of the **Phases** named, drawn against time for one cell or, under **Show**, against distance at one of the times looked at. The CSV holds every cell and the ionic strength, the charge balance and the activity of water as well.',
           'Which phases are supersaturated anywhere, and where and when.',
-          'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong.',
+          'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong; a model with `ACTIVITY` follows them, and then it says how close its own stay to PHREEQC’s.',
+          'Each mineral of the model: the saturation index PHREEQC finds where the model has some of it, and where it has none.',
           'A water that is far from neutral, which usually means the model leaves out a counter-ion.',
         ] },
         { heading: 'Settings', text: '**Times per cell**: at most this many stored times, spread over the run (0 reads them all). **Cells**: a list such as `0, 5, 10-19`, or empty for all.' },
@@ -2173,7 +2194,7 @@
 
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
-    SPECIES: new Set(['fixed']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
@@ -2532,12 +2553,12 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107b',
-    'resources/js/rtm-phreeqc-engine.js?v=20261107a',
+    'resources/js/rtm-phreeqc.js?v=20261107c',
+    'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -2565,8 +2586,8 @@ END
   /** Whether their activity coefficients follow the ionic strength: see pq:activity. */
   const PQ_ACTS = ['follow', 'fixed'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', relax: '1e3', diff: 'none', D: '2e-9',
-    times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0,
+    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, relax: '1e3', diff: 'none', D: '2e-9',
+    times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0, mode: 'time', at: -1,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
     view: null,              // the last look at a run through PHREEQC
@@ -2583,7 +2604,7 @@ END
   function pqSave() {
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
-        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, relax: pq.relax, diff: pq.diff,
+        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open,
       }));
@@ -2597,7 +2618,7 @@ END
       for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
-      for (const k of ['fill', 'logT', 'open']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      for (const k of ['fill', 'logT', 'open', 'minerals']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (PQ_HOLDS.includes(s.eq)) pq.eq = s.eq;
       if (PQ_ACTS.includes(s.act)) pq.act = s.act;
       else if (typeof s.hold === 'boolean') pq.eq = s.hold ? 'exact' : 'start';
@@ -2612,6 +2633,7 @@ END
     $('rtmPqFloor').value = pq.floor;
     $('rtmPqAct').value = pq.act;
     $('rtmPqHold').value = pq.eq;
+    $('rtmPqMinerals').checked = pq.minerals;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
     $('rtmPqD').value = pq.D;
@@ -2629,6 +2651,8 @@ END
   function pqDependents() {
     $('rtmPqDWrap').hidden = pq.diff !== 'one';
     $('rtmPqRelaxWrap').hidden = pq.eq !== 'pairs';
+    // A mineral is held at saturation only where the relations are held.
+    $('rtmPqMinerals').disabled = pq.eq !== 'exact';
   }
 
   function pqReadControls() {
@@ -2636,6 +2660,7 @@ END
     pq.floor = $('rtmPqFloor').value.trim();
     pq.act = PQ_ACTS.includes($('rtmPqAct').value) ? $('rtmPqAct').value : 'follow';
     pq.eq = PQ_HOLDS.includes($('rtmPqHold').value) ? $('rtmPqHold').value : 'exact';
+    pq.minerals = $('rtmPqMinerals').checked;
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
     pq.D = $('rtmPqD').value.trim();
@@ -2841,6 +2866,13 @@ END
       out.push(`<p${good ? '' : ' class="warn"'}>rtm.html's own speciation, ${from}, `
         + `${c.converged ? 'lands on' : 'does not converge to'} PHREEQC's molalities`
         + `${c.converged ? ` to ${c.worst.toExponential(1)}` : ''}.</p>`);
+      if (r.minerals && r.minerals.length) {
+        out.push(`<p>Kept at saturation: ${r.minerals.map((mn) => `${esc(mn.as)} (${pqNum(mn.amount)} mol/kgw`
+          + `${mn.si ? `, SI ${pqNum(mn.si)}` : ''})`).join(', ')}.</p>`);
+      }
+      if (r.phasesSkipped && r.phasesSkipped.length) {
+        out.push(`<p class="warn">Not carried: ${r.phasesSkipped.map((ps) => `${esc(ps.name)}, ${esc(ps.why)}`).join('; ')}.</p>`);
+      }
       if (r.activity && r.activity.unsupported.length) {
         out.push(`<p class="warn">PHREEQC works out the activity of ${r.activity.unsupported.map(esc).join(', ')} in `
           + 'a way this page does not have; here they follow Davies, or 0.1 I if neutral.</p>');
@@ -2887,7 +2919,8 @@ END
     try {
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
-        options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
+        options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact',
+          phases: pq.minerals && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
           date: new Date().toISOString().slice(0, 10) },
       });
       // As an example is loaded: the text replaced outright, and said so below the panel.
@@ -2937,7 +2970,8 @@ END
         modelText: (state.ran && state.ran.text) || state.text,
         options: { times, cells, phases, siFloor: -3, unit: timeUnit().symbol },
       }, (m) => setProgress(m.total ? m.done / m.total : 0));
-      pq.view = { ...reply, runNumber, water: !!water };
+      // The cells' centres as the run had them, for the view against distance.
+      pq.view = { ...reply, runNumber, water: !!water, centres: (r.model.centres || []).slice() };
       const shown = [...new Set(reply.table.cell)];
       if (!shown.includes(pq.cell)) pq.cell = shown[0];
       pqRenderView();
@@ -3000,6 +3034,13 @@ END
           + 'water nearer the run, or read what depends on them with that in mind.'
           : 'Conditional constants made for the start still hold.') + '</p>');
     }
+    // The model's minerals, as PHREEQC sees the water around them.
+    for (const mn of r.minerals || []) {
+      const at = mn.present ? (mn.present[1] - mn.present[0] < 5e-5 ? `SI ${pqNum(mn.present[0])}`
+        : `SI ${pqNum(mn.present[0])} to ${pqNum(mn.present[1])}`) : null;
+      out.push(`<p>${esc(mn.name)}, a mineral of the model: ${at ? `where it has some, PHREEQC finds the water at ${at}` : 'the model has none of it in the waters looked at'}`
+        + `${mn.absent !== null ? `${at ? '; where' : ', and where'} it has none, SI up to ${pqNum(mn.absent)}` : ''}.</p>`);
+    }
     if (r.notNeutral) {
       out.push(`<p class="warn">The waters are not neutral: ${pqNum(r.notNeutral.cb)} eq/kgw at `
         + `${where(r.notNeutral)}. The model probably leaves out a counter-ion, and the ionic strength is then too `
@@ -3051,9 +3092,20 @@ END
       return;
     }
     const cells = [...new Set(v.table.cell)];
-    $('rtmPqCellWrap').hidden = cells.length < 2;
+    // Against distance needs more than one cell, and then one of the times.
+    const across = cells.length > 1;
+    if (!across) pq.mode = 'time';
+    const times = [...new Set(v.table.t)].sort((a, b) => a - b);
+    if (!(pq.at >= 0 && pq.at < times.length)) pq.at = times.length - 1;
+    $('rtmPqModeWrap').hidden = !across;
+    $('rtmPqMode').value = pq.mode;
+    $('rtmPqCellWrap').hidden = !across || pq.mode !== 'time';
     $('rtmPqCell').innerHTML = cells.map((c) => `<option value="${c}">${c}</option>`).join('');
     $('rtmPqCell').value = String(pq.cell);
+    $('rtmPqTimeWrap').hidden = pq.mode !== 'distance';
+    $('rtmPqTime').innerHTML = times.map((t, k) => `<option value="${k}">${esc(t > 0 ? fmtTime(t) : 'the start')}</option>`).join('');
+    $('rtmPqTime').value = String(pq.at);
+    $('rtmPqLogTWrap').hidden = pq.mode !== 'time';
     $('rtmPqSummary').innerHTML = pqSummary(v);
     pqDraw();
   }
@@ -3066,14 +3118,21 @@ END
     if (state.tab !== 'phreeqc') return;
     plot.hidden = false;
     const T = v.table;
-    const logT = pq.logT;
+    const distance = pq.mode === 'distance';
+    const logT = pq.logT && !distance;
+    const times = distance ? [...new Set(T.t)].sort((a, b) => a - b) : null;
+    const at = distance ? times[Math.min(Math.max(pq.at, 0), times.length - 1)] : null;
     const rows = [];
     for (let i = 0; i < T.t.length; i++) {
-      if (T.cell[i] !== pq.cell || T.layer[i] !== 0 || T.pH[i] === null) continue;
+      if (T.layer[i] !== 0 || T.pH[i] === null) continue;
+      if (distance ? T.t[i] !== at : T.cell[i] !== pq.cell) continue;
       if (logT && !(T.t[i] > 0)) continue;
       rows.push(i);
     }
-    const x = rows.map((i) => T.t[i]);
+    // Against distance, each cell at its centre along the column, in order.
+    if (distance) rows.sort((a, b) => T.cell[a] - T.cell[b]);
+    const where = (i) => (v.centres && v.centres[T.cell[i]] !== undefined ? v.centres[T.cell[i]] : T.cell[i]);
+    const x = rows.map((i) => (distance ? where(i) : T.t[i]));
     const traces = [{ name: 'pH, −log a(H+)', x, y: rows.map((i) => T.pH[i]), mode: 'lines', type: 'scatter',
       yaxis: 'y', line: { width: 2 } }];
     for (const p of v.phases) {
@@ -3082,7 +3141,8 @@ END
     const layout = baseLayout();
     const c = themeColors();
     layout.xaxis = { ...layout.xaxis, type: logT ? 'log' : 'linear', anchor: 'y2',
-      title: { text: `time (${timeUnit().symbol})`, font: { size: 11 } } };
+      title: { text: distance ? `distance (m), at ${at > 0 ? fmtTime(at) : 'the start'}` : `time (${timeUnit().symbol})`,
+        font: { size: 11 } } };
     layout.yaxis = { ...layout.yaxis, domain: [0.62, 1], exponentformat: 'none',
       title: { text: 'pH', font: { size: 11 } } };
     layout.yaxis2 = { gridcolor: c.grid, linecolor: c.grid, domain: [0, 0.52], anchor: 'x', zeroline: true,
@@ -3222,8 +3282,11 @@ END
     'rtm:pqRedraw': () => {
       pq.cell = Number($('rtmPqCell').value) || 0;
       pq.logT = $('rtmPqLogT').checked;
+      pq.mode = $('rtmPqMode').value === 'distance' ? 'distance' : 'time';
+      pq.at = Number($('rtmPqTime').value);
       pqSave();
-      pqDraw();
+      // The controls follow the choice: a cell against time, a time against distance.
+      if (pq.view) pqRenderView(); else pqDraw();
     },
     'rtm:pqCsv': () => pqCsv(),
   });

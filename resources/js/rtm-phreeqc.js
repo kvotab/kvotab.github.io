@@ -265,6 +265,7 @@
       this.otherGamma = new Map();  // species -> an activity option this page does not have
       this.model = null;            // 'Pitzer', 'SIT' or 'LLNL' when the database is one of those
       this.phases = [];
+      this.phaseReaction = new Map(); // phase -> {left, right}, its formula first on the left
     }
 
     read(text) {
@@ -311,8 +312,16 @@
             this.otherGamma.set(last, tokens[0].replace(/^-/, '').toLowerCase());
           }
         } else if (block === 'PHASES') {
-          if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1
-            && !this.phases.includes(tokens[0])) this.phases.push(tokens[0]);
+          if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
+            if (!this.phases.includes(tokens[0])) this.phases.push(tokens[0]);
+            last = tokens[0];
+          } else if (last && line.includes('=') && !tokens[0].startsWith('-')) {
+            // The phase's reaction as written: its own formula, then whatever
+            // else it takes, on the left; what it dissolves to on the right.
+            const at = line.indexOf('=');
+            this.phaseReaction.set(last, { left: parseSide(line.slice(0, at)), right: parseSide(line.slice(at + 1)) });
+            last = null;
+          }
         }
       }
       return this;
@@ -367,6 +376,27 @@
       for (const [k, v] of out) if (Math.abs(v) > 1e-12) res.set(k, v / c0);
       return res;
     }
+  }
+
+  /**
+   * The phases of the EQUILIBRIUM_PHASES blocks of an input, each with the
+   * saturation index it is held at (0 unless given) and anything else its
+   * line says, which this page does not carry (an alternative reaction,
+   * dissolve_only, precipitate_only). A phase named again takes the later line.
+   */
+  function readAssemblage(text) {
+    const out = new Map();
+    let inBlock = false;
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word)) { inBlock = word === 'EQUILIBRIUM_PHASES'; continue; }
+      if (!inBlock || tokens[0].startsWith('-')) continue;
+      const si = tokens.length > 1 ? Number(tokens[1]) : 0;
+      out.set(tokens[0], { name: tokens[0], si: Number.isFinite(si) ? si : 0, extra: tokens.slice(3).join(' ') });
+    }
+    return [...out.values()];
   }
 
   function readDatabase(...texts) {
@@ -496,6 +526,9 @@
    *               conditional, the coefficients at this water folded in
    *   exact       hold every relation exactly during the run: EQUILIBRATE =
    *               always, no kf, each relation an algebraic equation
+   *   phases      with exact: the input's EQUILIBRIUM_PHASES become minerals,
+   *               at the amounts PHREEQC left, each held at its saturation
+   *               index while there is any of it
    *   relax       ... or as fast pairs, each with the kf that makes it relax
    *               back at this rate per second here
    *   kf          ... or as fast pairs all with this one forward constant
@@ -516,7 +549,18 @@
         + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
         + 'them fixed at this water instead.');
     }
-    let rows = runRows(o.engine, `${punchBlock()}${o.water.text}\nEND\n`);
+    // EQUILIBRIUM_PHASES carried as minerals: held at saturation while there
+    // is any, which is the relations held exactly. PHREEQC says how much of
+    // each it left, per kilogram of water, and its log K at this temperature.
+    const assemblage = o.phases ? readAssemblage(o.water.text) : [];
+    if (assemblage.length && !o.exact) {
+      throw new Error('The phases are carried as minerals held at saturation while there is any of them, which '
+        + 'needs the relations held exactly.');
+    }
+    const extras = [];
+    for (const a of assemblage) extras.push(`EQUI("${a.name}")`, `LK_PHASE("${a.name}")`, `SI("${a.name}")`);
+    if (assemblage.length) extras.push('TOT("water")');
+    let rows = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
       throw new Error('PHREEQC calculated no water from that input'
@@ -538,6 +582,33 @@
     const redox = new Set();
     const unknown = new Set();
     const pulled = new Set();
+
+    // The phases, each as its reaction: its formula first on the left, then
+    // what else it takes, and what it dissolves to.
+    const minerals = [];
+    const phasesSkipped = [];
+    const waterKg = assemblage.length ? Number(w.x[extras.length - 1]) : 1;
+    assemblage.forEach((a, i) => {
+      const r = db.phaseReaction.get(a.name);
+      const moles = Number(w.x[3 * i]);
+      const lk = Number(w.x[3 * i + 1]);
+      // Held where PHREEQC left it: at its target while there is any of it,
+      // to PHREEQC's own tolerance, which is the water the model starts from.
+      const siLeft = Number(w.x[3 * i + 2]);
+      const skip = (why) => phasesSkipped.push({ name: a.name, why });
+      if (!r || !r.left.length) { skip('the database has no reaction for it'); return; }
+      if (a.extra) { skip(`its line says more than this page carries (${a.extra})`); return; }
+      const others = [...r.left.slice(1), ...r.right];
+      if (others.some((t) => t.n === 'e-')) { skip('it dissolves with electrons, and no redox relation is written'); return; }
+      const missing = others.filter((t) => t.n !== 'H2O' && !molal.has(t.n)).map((t) => t.n);
+      if (missing.length) { skip(`the water has no ${missing.join(', ')}`); return; }
+      if (!Number.isFinite(moles) || !Number.isFinite(lk) || !(waterKg > 0)) { skip('PHREEQC gave no amount or log K for it'); return; }
+      minerals.push({ phase: a.name, si: moles > 0 && Number.isFinite(siLeft) ? siLeft : a.si, target: a.si,
+        amount: Math.max(moles, 0) / waterKg, lk, c0: r.left[0].c, reac: r.left.slice(1), prod: r.right });
+      for (const t of others) {
+        if (t.n !== 'H2O' && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+      }
+    });
     let changed = true;
     while (changed) {
       changed = false;
@@ -592,7 +663,9 @@
       if (i >= 0) { order.splice(i, 1); order.unshift(front); }
     }
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
-    const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)]);
+    for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
+    const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
+      .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]));
     const side = (terms) => terms
       .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || t.n)).join(' + ');
     // With activities: each species' -gamma, and a charge where a new name
@@ -602,7 +675,7 @@
 
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
-    const width = Math.max(...order.map((s) => name.get(s).length)) + 2;
+    const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length)) + 2;
     const out = [];
     out.push(`# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
     out.push(`# Database: ${o.database.name || 'unnamed'}.`);
@@ -640,6 +713,13 @@
       out.push('# The relations put the start on equilibrium (EQUILIBRATE = 1) and nothing more; give');
       out.push('# each a kf to hold them during the run as well.');
     }
+    if (minerals.length) {
+      out.push('# The phases of EQUILIBRIUM_PHASES are minerals, at the amounts PHREEQC left (mol/kgw), each');
+      out.push(`# held at its saturation index while there is any of it: ${minerals.map((mn) => `${mn.name} (SI ${fmtG(mn.target, 6)})`).join(', ')}.`);
+    }
+    if (phasesSkipped.length) {
+      out.push(`# Phases not carried: ${phasesSkipped.map((ps) => `${ps.name}, ${ps.why}`).join('; ')}.`);
+    }
     if (unsupported.length) {
       out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
         unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
@@ -674,6 +754,10 @@
       out.push(`${name.get(s).padEnd(width)}${more ? fmtG(molal.get(s), 15).padEnd(width2) + more
         : fmtG(molal.get(s), 15)}`);
     }
+    for (const mn of minerals) {
+      const amount = fmtG(mn.amount, 15);
+      out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+    }
     out.push('', '<EQUILIBRIUM>');
     const lines = eqs.map((e) => {
       const reac = follow ? e.left : e.reac;
@@ -684,6 +768,23 @@
         note: follow ? `# here ${e.logkC.toFixed(4)}` : `# log K ${e.logk.toFixed(4)}`,
       };
     });
+    // A mineral's saturation: its activity is 1, and its log K the phase's at
+    // this temperature plus the saturation index it is held at.
+    for (const mn of minerals) {
+      const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lg.get(t.n), 0);
+      const nw = mn.prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
+        - mn.reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+      const logk = mn.lk + mn.si;
+      const logkC = logk - sumLg(mn.prod) + sumLg(mn.reac) - nw * logAw;
+      const reac = [{ c: mn.c0, n: mn.name }, ...(follow ? mn.reac : aq(mn.reac))];
+      const prod = follow ? mn.prod : aq(mn.prod);
+      lines.push({
+        rel: `${side(reac)} <=> ${side(prod)}`,
+        k: `logK = ${(follow ? logk : logkC).toFixed(10)}`,
+        note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${logk.toFixed(4)}`}${mn.target ? `, SI ${fmtG(mn.target, 6)}` : ''}`,
+      });
+    }
     const wrel = Math.max(0, ...lines.map((l) => l.rel.length)) + 1;
     const wk = Math.max(0, ...lines.map((l) => l.k.length)) + 3;
     for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}${l.note}`);
@@ -697,12 +798,16 @@
       water: w,
       names: name,
       molal,
+      // The minerals' amounts as written, by their names in the model.
+      amounts: new Map(minerals.map((mn) => [mn.name, mn.amount])),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
         pH: w.pH, chargeBalance: w.cb,
         dropped: dropped.length, droppedTop: top, droppedTopValue: top ? molal.get(top) : null,
         pulled: pulled.size, redox: [...redox].sort(), unknown: [...unknown].sort(), skipped, renamed,
         activity: follow ? { temperature: tc, unsupported } : null,
+        minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
+        phasesSkipped,
       },
     };
   }
@@ -776,6 +881,10 @@
     const mapped = new Map();         // rtm name -> {p, contrib: Map}
     const skipped = new Map();
     const unmapped = [];
+    // A mineral of the model is a phase of the database: not in the water,
+    // and PHREEQC says how far the water is from its saturation.
+    const phaseBack = new Map(db.phases.map((ph) => [rtmName(ph), ph]));
+    const minerals = [];
     model.species.forEach((n) => {
       let p;
       if (skip.has(n)) { skipped.set(n, 'asked'); return; }
@@ -787,7 +896,11 @@
       } else if (SKIP_ALWAYS.has(n)) { skipped.set(n, SKIP_ALWAYS.get(n)); return; }
       else if (db.reaction.has(n)) p = n;
       else if (back.has(n)) p = back.get(n);
-      else { unmapped.push(n); return; }
+      else if (phaseBack.has(n)) {
+        skipped.set(n, 'a mineral: not in the water, and its saturation index is among the phases');
+        minerals.push({ name: n, phase: phaseBack.get(n) });
+        return;
+      } else { unmapped.push(n); return; }
       if (p === 'H+') { mapped.set(n, { p, contrib: new Map() }); return; }
       let contrib;
       try {
@@ -932,6 +1045,24 @@
       const floor = o.siFloor != null ? o.siFloor : -3;
       phases = [...best].sort((a, b) => b[1] - a[1]).filter(([, si]) => si >= floor).map(([p]) => p);
     }
+    // The model's own minerals always: what it holds, PHREEQC can look at.
+    for (const mn of minerals) if (!phases.includes(mn.phase)) phases.push(mn.phase);
+
+    // --- the model's minerals: PHREEQC's saturation index where the model has
+    // some of each, which holding it means is its target, and where none ----
+    const mineralCheck = minerals.map((mn) => {
+      const si = model.species.indexOf(mn.name);
+      let present = null;
+      let absent = null;
+      for (const r of good) {
+        const v = r.pq.phases.has(mn.phase) ? r.pq.phases.get(mn.phase) : null;
+        if (v === null || v < -990) continue;
+        const amount = value(r.state, si, r.k);
+        if (amount > 0) present = present ? [Math.min(present[0], v), Math.max(present[1], v)] : [v, v];
+        else absent = absent === null ? v : Math.max(absent, v);
+      }
+      return { name: mn.name, phase: mn.phase, present, absent };
+    });
 
     // --- the equilibria's activity coefficients along the run --------------
     // H2O in a relation is the water, whose activity enters it.
@@ -1047,6 +1178,7 @@
       supersaturated: supersaturated.map((s) => ({ phase: s.phase, si: s.si, t: s.at.t, cell: s.at.cell, layer: s.at.layer })),
       drift: drifts.map((d) => ({ rel: d.rel, by: d.by, t: d.at ? d.at.t : null, cell: d.at ? d.at.cell : null })),
       activity,
+      minerals: mineralCheck,
       unchecked,
       phases,
     };
@@ -1073,7 +1205,7 @@
   }
 
   return {
-    readDatabase, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
+    readDatabase, readAssemblage, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, waterToModel, viewRun, fmtG, SEL,
   };
 }));
