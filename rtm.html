@@ -330,6 +330,13 @@
                   <input id="rtmPqFloor" type="text" value="1e-20" data-on-change="rtm:pqSettings">
                 </div>
                 <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmPqAct">Activity coefficients</label><span class="kvot-info-slot" data-info-key="pq:activity"></span></div>
+                  <select id="rtmPqAct" data-on-change="rtm:pqSettings">
+                    <option value="follow">following the ionic strength</option>
+                    <option value="fixed">fixed at this water</option>
+                  </select>
+                </div>
+                <div class="rtm-pq-field">
                   <div class="kvot-info-line"><label for="rtmPqHold">The equilibria during the run</label><span class="kvot-info-slot" data-info-key="pq:hold"></span></div>
                   <select id="rtmPqHold" data-on-change="rtm:pqSettings">
                     <option value="exact">held exactly</option>
@@ -499,6 +506,8 @@
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
+              <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em> or <em>debye-huckel</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength. See <em>Activity</em> below.</td></tr>
+              <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: sets the activity model's Debye–Hückel <em>A</em> and <em>B</em>, and nothing else. A <code>logK</code> or a rate constant is taken as written.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less the <em>v</em>·Δ<em>x</em>/2 the upwind scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
               <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
             </tbody>
@@ -514,7 +523,8 @@ UO2                      # no number: starts at zero, does not move</pre>
             species with no <code>D</code> does not move, which is how a surface site or a mineral
             is written. With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
-            <em>A rock matrix</em> below.</p>
+            <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
+            <code>a=</code> and <code>b=</code>: see <em>Activity</em> below.</p>
           <p><code>fixed</code> is a statement about the equation, not a nudge: that species' row
             in the right-hand side and in the Jacobian is set to exactly zero, so nothing —
             reaction, diffusion, advection, a Dirichlet face, an equilibrium — can move it. It
@@ -955,7 +965,12 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
           <p>A relation that has to hold rather than a rate that has to be integrated:
             <code>&prod;[C]<sup>&nu;</sup> = K</code>, with <code>logK</code> its base-ten
             logarithm, which is the form a database gives. An empty left-hand side means the
-            reaction has no reactant, as it does for water dissociating.</p>
+            reaction has no reactant, as it does for water dissociating. <code>H2O</code>, when it is
+            not one of the species, is the water itself, and a relation may be written with it as a
+            database writes it: <code>H2O &lt;=&gt; H+ + OH-</code>,
+            <code>CO2 + H2O &lt;=&gt; H+ + HCO3-</code>. It is never a concentration. Its activity
+            is 1, which leaves the relation as it would be without it, unless
+            <code>ACTIVITY</code> says otherwise.</p>
           <p>With <code>EQUILIBRATE = 1</code> the starting concentrations are put on these
             relations before the run: a damped Newton iteration in ln&nbsp;C, run separately in every
             cell, over the species the relations mention and no others — anything they do not
@@ -987,6 +1002,46 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             ln&nbsp;C, and an error of <code>rtol</code> in ln&nbsp;C is a relative error of
             <code>rtol</code> in C, so the tolerance means for these species what it means for the
             others.</p>
+
+          <h4 id="help-activity">Activity</h4>
+          <pre>ACTIVITY = debye-huckel
+TEMPERATURE = 15
+
+Ca+2    0.0146   a=5  b=0.165
+CO2     1.8e-4   b=0.066
+X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
+          <p>With <code>ACTIVITY</code> the relations of <code>&lt;EQUILIBRIUM&gt;</code> hold
+            between activities, Σ&nbsp;ν&nbsp;log&nbsp;(γC)&nbsp;=&nbsp;log&nbsp;K, and each
+            <code>logK</code> is then the thermodynamic constant a database gives rather than one
+            made for a particular water. Every activity coefficient γ follows the ionic strength of
+            its cell, <em>I</em>&nbsp;=&nbsp;½&nbsp;Σ&nbsp;<em>z</em>²C over all the cell's species,
+            as the run goes on:</p>
+          <ul>
+            <li>an ion, by Davies: log&nbsp;γ = −<em>A</em>&nbsp;<em>z</em>²&nbsp;(√<em>I</em>/(1&nbsp;+&nbsp;√<em>I</em>)
+              −&nbsp;0.3&nbsp;<em>I</em>);</li>
+            <li>under <em>debye-huckel</em>, an ion given <code>a=</code>, by the WATEQ
+              Debye–Hückel form: log&nbsp;γ = −<em>A</em>&nbsp;<em>z</em>²&nbsp;√<em>I</em>/(1&nbsp;+&nbsp;<em>B</em>&nbsp;<em>a</em>&nbsp;√<em>I</em>)
+              +&nbsp;<em>b</em>&nbsp;<em>I</em>, with <code>a=</code> in ångström and <code>b=</code>
+              in kg/mol, a database's <code>-gamma</code>;</li>
+            <li>a neutral species: log&nbsp;γ = <em>b</em>&nbsp;<em>I</em>, with <em>b</em> 0.1
+              unless <code>b=</code> gives it;</li>
+            <li>a species named <code>H2O</code>: γ = 1.</li>
+          </ul>
+          <p>That is PHREEQC's rule, and on the same water the page's activity coefficients are
+            PHREEQC's to rounding. <em>A</em> and <em>B</em> come from <code>TEMPERATURE</code> as
+            PHREEQC works them out, from the dielectric constant and the density of water at one
+            atmosphere; from 0 to 200 °C they are PHREEQC's to nine digits. The water's activity,
+            where a relation has <code>H2O</code> in it, is 1&nbsp;−&nbsp;0.017&nbsp;ΣC, PHREEQC's
+            too. A charge is read from the end of the name, <code>H+</code> 1 and
+            <code>SO4-2</code> −2, and <code>z=</code> gives it where the name should not: a
+            surface site is no ion in the water, and <code>z=0 b=0</code> leaves it out of the
+            ionic strength with γ&nbsp;=&nbsp;1. Concentrations are read as molalities.</p>
+          <p>The activities act on the relations, wherever the page uses them: the speciation of
+            the start, the relations held throughout the run, and the fast pairs, whose backward
+            constant follows the ionic strength so that each pair relaxes to its <em>K</em> in
+            activities. A rate law in <code>&lt;REACTIONS&gt;</code> stays in concentrations. A
+            relation then reads every ion in its cell, through the ionic strength, so the Jacobian is
+            fuller within a cell, and a little more work.</p>
 
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
@@ -1087,27 +1142,36 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
           <ul>
             <li>every aqueous species above the floor, at PHREEQC's molality, in
               <code>&lt;SPECIES&gt;</code>;</li>
-            <li>every complexation and acid–base reaction among them, as the database writes it and
-              with water left out, in <code>&lt;EQUILIBRIUM&gt;</code>;</li>
+            <li>every complexation and acid–base reaction among them, as the database writes it, in
+              <code>&lt;EQUILIBRIUM&gt;</code>;</li>
             <li>no redox relation: a reaction with electrons is left out, so that each valence state
               keeps its own total and electrons move only through the reactions you write — which is
               what a kinetic model is for.</li>
           </ul>
-          <p>Each <code>logK</code> is <strong>conditional</strong>. The relations here hold between
-            concentrations, and PHREEQC's hold between activities. So each constant has the activity
-            coefficients at this water's ionic strength, and the activity of water, folded into it, and
-            the relations then hold exactly where PHREEQC's do. The page checks that: it compiles the text
-            and runs its own speciation from those constants alone, and the report under the panel says
-            how close that lands to PHREEQC's molalities. On each line, the comment gives the database's
-            own log K at the water's temperature, worked back from PHREEQC's activities.</p>
-          <pre>CO3-2 + H+ &lt;=&gt; HCO3-,     logK = 10.0298747218     # log K 10.4284
-Ca+2 + CO3-2 &lt;=&gt; CaCO3,    logK = 2.3122100860      # log K 3.1553
- &lt;=&gt; OH- + H+,             logK = -14.1398953203    # log K -14.3433</pre>
+          <p>PHREEQC's relations hold between activities. <em>Activity coefficients</em> says how the
+            model's do. <em>Following the ionic strength</em>, the default, writes
+            <code>ACTIVITY = debye-huckel</code> at the water's <code>TEMPERATURE</code>, each
+            species' <code>-gamma</code> from the database as <code>a=</code> and <code>b=</code>, and
+            each relation with its water and with the database's own log K at that temperature, worked
+            back from PHREEQC's activities. The model then works out its activity coefficients as
+            PHREEQC does (see <em>Activity</em> above), and they follow the ionic strength of each cell
+            as the run goes on. The comment on each line gives the conditional log K at this water:</p>
+          <pre>CO3-2 + H+ &lt;=&gt; HCO3-,      logK = 10.4284264990    # here 10.0299
+Ca+2 + CO3-2 &lt;=&gt; CaCO3,     logK = 3.1553347887     # here 2.3122
+H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
           <p>Those three lines are from <em>An example water</em>, a groundwater at 15 °C and ionic
-            strength 0.11 mol/kgw. The activity coefficients there move the constants by −0.40, −0.84
+            strength 0.11 mol/kgw, where the activity coefficients move the constants by −0.40, −0.84
             and +0.20 in log K.</p>
-          <p>The constants belong to that ionic strength. A run that adds or removes a lot of salt moves
-            away from it, and the PHREEQC tab says how far.</p>
+          <p><em>Fixed at this water</em> writes those conditional constants instead, with the water
+            left out of the relations, and the relations hold between concentrations exactly where
+            PHREEQC's hold between activities. The comment then gives the database's own log K. Such
+            constants belong to that ionic strength, and a run that adds or removes a lot of salt moves
+            away from it; the PHREEQC tab says how far. With 0.4 mol/kgw of NaCl added to the example
+            water, fixed constants leave some species far from what PHREEQC finds for the same water —
+            MgSO<sub>4</sub> by 89&nbsp;% — where the model that follows the ionic strength ends on
+            PHREEQC's molalities to about a part in a million.</p>
+          <p>Either way the page checks the start: it compiles the text and runs its own speciation,
+            and the report under the panel says how close that lands to PHREEQC's molalities.</p>
           <p><em>The equilibria during the run</em> says what keeps the relations on equilibrium
             once the run starts. <em>Held exactly</em>, the default, writes
             <code>EQUILIBRATE = always</code>, and each relation is an algebraic equation in every
@@ -1156,8 +1220,11 @@ Ca+2 + CO3-2 &lt;=&gt; CaCO3,    logK = 2.3122100860      # log K 3.1553
             <li>which phases are supersaturated, and where and when — what would precipitate if the
               model let it;</li>
             <li>how far the activity coefficients in the model's own equilibria moved along the run, in
-              log K units. That is how far constants made for the start have gone wrong. A few
-              hundredths is fine; a tenth or more means a fresh water nearer the run;</li>
+              log K units. For a model with constants fixed at the start, that is how far they have gone
+              wrong: a few hundredths is fine, and a tenth or more means a fresh water nearer the run.
+              A model with <code>ACTIVITY</code> follows them itself, and then the tab says instead
+              how close its own activity coefficients stay to PHREEQC's along the run, relation by
+              relation;</li>
             <li>a water far from neutral, which usually means the model leaves out a counter-ion, and
               so PHREEQC's ionic strength is too low.</li>
           </ul>
@@ -1309,14 +1376,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261107"></script>
+  <script src="./resources/js/rtm-model.js?v=20261107a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261107"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261107a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107b"></script>
 </body>
 </html>

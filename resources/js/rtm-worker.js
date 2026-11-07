@@ -177,6 +177,8 @@ function rtmSummary(model) {
     // relations, conserved totals and species, and the species' share of the state.
     heldEquilibria: model.heldEquilibria || null,
     speciesStates: model.stateWidth || model.nspecies,
+    // ACTIVITY: the model, its temperature and A and B, and how many ions.
+    activity: model.activity || null,
   };
 }
 

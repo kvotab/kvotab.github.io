@@ -2835,6 +2835,190 @@ HCO3- <=> H+ + CO3-2,   logK = -10.33
 }
 
 /* ======================================================================
+   2y. Activity (ACTIVITY = davies | debye-huckel)
+
+   The activity coefficients are PHREEQC's rule, so the checks are the rule
+   worked out here by hand, PHREEQC's own A and B, and the relations holding
+   in activities wherever the page uses them: the start, held throughout, and
+   a fast pair. The comparison with PHREEQC itself is in test-phreeqc.js.
+   ====================================================================== */
+console.log('\n--- activity ---');
+{
+  check('a charge is read from the end of the name', [['H+', 1], ['SO4-2', -2], ['UO2+2', 2], ['e-', -1],
+    ['CO2', 0], ['Fe(OH)2+', 1], ['UO2(CO3)3-4', -4]].every(([n, z]) => RtmModel.chargeOf(n) === z));
+  // PHREEQC 3.8.6's DH_A and DH_B, asked of it at these temperatures.
+  const ab25 = RtmModel.debyeHuckelAB(25);
+  const ab15 = RtmModel.debyeHuckelAB(15);
+  check('A and B from the temperature, as PHREEQC works them out (25 and 15 C)',
+    Math.abs(ab25.A / 0.5100247894 - 1) < 1e-9 && Math.abs(ab25.B / 0.3284906340 - 1) < 1e-9
+      && Math.abs(ab15.A / 0.5017022572 - 1) < 1e-9 && Math.abs(ab15.B / 0.3269184571 - 1) < 1e-9,
+    `A ${ab25.A.toFixed(10)}, B ${ab25.B.toFixed(10)} at 25 C`);
+
+  // The four forms, by hand, at I = 0.1.
+  const sp = (name, opts = {}) => ({ name, z: opts.z ?? null, dha: opts.a ?? null, dhb: opts.b ?? null, line: 1 });
+  const species = [sp('Na+'), sp('Ca+2', { a: 5, b: 0.165 }), sp('CO2'), sp('H2O'), sp('X-', { z: 0, b: 0 })];
+  const warn = [];
+  const act = RtmModel.activityModel({ ACTIVITY: 'debye-huckel', TEMPERATURE: 25, given: new Set() }, species, warn);
+  const C = Float64Array.of(0.1, 0, 0.01, 55.5, 0.3);
+  const lnG = new Float64Array(5);
+  const dG = new Float64Array(5);
+  const w = RtmModel.activityAt(act, C, 0, lnG, dG);
+  const A = ab25.A;
+  const B = ab25.B;
+  const sq = Math.sqrt(0.05);
+  const want = [-A * (sq / (1 + sq) - 0.3 * 0.05), -A * 4 * sq / (1 + B * 5 * sq) + 0.165 * 0.05, 0.1 * 0.05, 0, 0];
+  check('Davies, WATEQ with a and b, b I for a neutral species, 1 for the water and for z=0 b=0',
+    Math.abs(w.I - 0.05) < 1e-15 && want.every((v, i) => Math.abs(lnG[i] / Math.LN10 - v) < 1e-14),
+    `I ${w.I}, log gamma ${Array.from(lnG, (v) => (v / Math.LN10).toFixed(6)).join(' ')}`);
+  check('  a(H2O) = 1 - 0.017 times the solutes, the water itself left out',
+    Math.abs(Math.exp(w.lnAw) - (1 - 0.017 * 0.41)) < 1e-15, Math.exp(w.lnAw).toFixed(8));
+  // d(ln gamma)/dI against a difference.
+  let dWorst = 0;
+  for (let i = 0; i < 5; i++) {
+    const h = 1e-6;
+    const up = Float64Array.from(C);
+    const dn = Float64Array.from(C);
+    up[0] += 2 * h;                       // Na+: I moves by h
+    dn[0] -= 2 * h;
+    const g1 = new Float64Array(5);
+    const g2 = new Float64Array(5);
+    RtmModel.activityAt(act, up, 0, g1, new Float64Array(5));
+    RtmModel.activityAt(act, dn, 0, g2, new Float64Array(5));
+    dWorst = Math.max(dWorst, Math.abs((g1[i] - g2[i]) / (2 * h) - dG[i]) / Math.max(Math.abs(dG[i]), 1));
+  }
+  check('  and their derivatives in I, against differences', dWorst < 1e-7, dWorst.toExponential(1));
+
+  // The settings.
+  const water = (more) => `
+<SETTINGS>
+MODE = batch
+TEND = 1e5
+${more}
+
+<SPECIES>
+H+      1e-7    a=9
+OH-     1e-7    a=3.5
+CO2     2e-4
+HCO3-   2e-3    a=5.4
+CO3-2   1e-9    a=5.4
+Na+     0.1     a=4.08  b=0.082
+Cl-     0.098   a=3.63  b=0.017
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,          logK = -14.3433
+CO2 + H2O <=> H+ + HCO3-,  logK = -6.4180
+HCO3- <=> H+ + CO3-2,      logK = -10.4284
+
+<REACTIONS>
+`;
+  let refused = '';
+  try { RtmModel.compile(water('ACTIVITY = pitzer')); } catch (e) { refused = e.message; }
+  check('ACTIVITY is none, davies or debye-huckel', /ACTIVITY must be one of none, davies, debye-huckel/.test(refused),
+    refused);
+  check('  and debye-hückel is debye-huckel', RtmModel.compile(water('ACTIVITY = debye-hückel')).act.kind === 'debye-huckel');
+  refused = '';
+  try { RtmModel.compile(water('ACTIVITY = davies\nTEMPERATURE = 400')); } catch (e) { refused = e.message; }
+  check('  TEMPERATURE outside 0 to 350 C is refused', /0 to 350 C/.test(refused), refused);
+  check('  TEMPERATURE with no ACTIVITY says it does nothing',
+    RtmModel.compile(water('TEMPERATURE = 15')).warnings.some((x) => /TEMPERATURE sets/.test(x)));
+  check('  and ACTIVITY with no EQUILIBRATE and no kf says nothing uses it',
+    RtmModel.compile(water('ACTIVITY = davies')).warnings.some((x) => /nothing uses it/.test(x)));
+  refused = '';
+  try { RtmModel.compile(water('').replace('Na+     0.1     a=4.08', 'Na+     0.1     z=1.5')); } catch (e) { refused = e.message; }
+  check('  a charge that is no whole number is refused', /a charge is a whole number/.test(refused), refused);
+
+  // H2O in a relation: nothing without ACTIVITY; a(H2O) with it.
+  const plain = RtmModel.compile(water('EQUILIBRATE = 1').replace(/^H2O <=>/m, ' <=>').replace('CO2 + H2O <=>', 'CO2 <=>'));
+  const wet = RtmModel.compile(water('EQUILIBRATE = 1'));
+  const y0 = plain.initialState();
+  const y1 = wet.initialState();
+  check('H2O in a relation is the water: without ACTIVITY it changes nothing',
+    y0.every((v, i) => v === y1[i]) && wet.equilibria[0].water === -1 && wet.equilibria[1].water === -1,
+    `water ${wet.equilibria.map((e) => e.water).join(', ')}`);
+
+  // Every relation in activities, worked out apart from the page's own code.
+  const gammaOf = { 'H+': [1, 9, 0], 'OH-': [-1, 3.5, 0], CO2: [0, null, 0.1], 'HCO3-': [-1, 5.4, 0],
+    'CO3-2': [-2, 5.4, 0], 'Na+': [1, 4.08, 0.082], 'Cl-': [-1, 3.63, 0.017] };
+  const ab = RtmModel.debyeHuckelAB(15);
+  const logA = (m, c) => {
+    let I = 0;
+    let sum = 0;
+    m.speciesNames.forEach((n, i) => { I += 0.5 * gammaOf[n][0] ** 2 * c[i]; sum += c[i]; });
+    const s = Math.sqrt(I);
+    const la = { H2O: Math.log10(1 - 0.017 * sum) };
+    m.speciesNames.forEach((n, i) => {
+      const [z, a, b] = gammaOf[n];
+      la[n] = Math.log10(c[i]) + (z === 0 ? b * I : -ab.A * z * z * s / (1 + ab.B * a * s) + b * I);
+    });
+    return { la, I };
+  };
+  const off = (la) => Math.max(Math.abs(la['H+'] + la['OH-'] - la.H2O + 14.3433),
+    Math.abs(la['H+'] + la['HCO3-'] - la.CO2 - la.H2O + 6.4180), Math.abs(la['H+'] + la['CO3-2'] - la['HCO3-'] + 10.4284));
+  const settings = 'ACTIVITY = debye-huckel\nTEMPERATURE = 15';
+  const start = RtmModel.compile(water(`EQUILIBRATE = 1\n${settings}`));
+  const c0 = start.initialState();
+  check('the start speciated in activities: every relation, the water in two of them',
+    off(logA(start, c0).la) < 1e-12 && Math.abs((c0[2] + c0[3] + c0[4]) / 2.200001e-3 - 1) < 1e-14,
+    `${off(logA(start, c0).la).toExponential(1)} in log K at I = ${logA(start, c0).I.toFixed(4)}`);
+
+  // Held throughout, while salt raises the ionic strength from 0.1 to 0.5.
+  const held = RtmModel.compile(`${water(`EQUILIBRATE = always\n${settings}`)}=> Na+ + Cl-, k = 4e-6\n`);
+  const run = FacsimileODE.runModel(held, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let worst = 0;
+  let carbon = 0;
+  for (const y of run.y) {
+    const c = held.toConcentrations(y);
+    worst = Math.max(worst, off(logA(held, c).la));
+    carbon = Math.max(carbon, Math.abs((c[2] + c[3] + c[4]) / 2.200001e-3 - 1));
+  }
+  const cEnd = held.toConcentrations(run.y[run.y.length - 1]);
+  check('held throughout as salt raises I from 0.1 to 0.5: every stored point on every relation, in activities',
+    worst < 1e-12 && logA(held, cEnd).I > 0.49, `${worst.toExponential(1)} in log K over ${run.t.length} points, `
+      + `I ${logA(held, cEnd).I.toFixed(3)} at the end`);
+  check('  carbon conserved', carbon < 1e-12, carbon.toExponential(1));
+  const vh0 = RtmModel.verifyJacobian(held, 0, held.initialState());
+  const vh1 = RtmModel.verifyJacobian(held, 1e5, run.y[run.y.length - 1]);
+  check('  the Jacobian, the ionic strength and the water included, at the start and the end',
+    vh0.discrepancies.length === 0 && vh1.discrepancies.length === 0, `${vh0.checked} and ${vh1.checked} entries`);
+  // The end apart: a fresh speciation of the totals the end has.
+  const tEnd = run.t[run.t.length - 1];
+  const apartText = water(`EQUILIBRATE = 1\n${settings}`)
+    .replace('Na+     0.1 ', `Na+     ${0.1 + 4e-6 * tEnd} `).replace('Cl-     0.098 ', `Cl-     ${0.098 + 4e-6 * tEnd} `);
+  const apart = RtmModel.compile(apartText).initialState();
+  let apartWorst = 0;
+  for (let i = 0; i < apart.length; i++) apartWorst = Math.max(apartWorst, Math.abs(cEnd[i] / apart[i] - 1));
+  check('  and the end is the speciation, in activities, of the totals the end has', apartWorst < 1e-7,
+    `${apartWorst.toExponential(1)} relative`);
+  // The same with the constants fixed where the water started: how much activity matters here.
+  const fixedPh = -Math.log10(RtmModel.compile(apartText.replace(settings, '')).initialState()[0]);
+  check('  where concentrations alone would put -log[H+] elsewhere', Math.abs(fixedPh + Math.log10(cEnd[0])) > 0.05,
+    `${(-Math.log10(cEnd[0])).toFixed(4)} in activities, ${fixedPh.toFixed(4)} without`);
+
+  // A fast pair: its backward constant follows I, and it relaxes to K in activities.
+  const pair = RtmModel.compile(`${water(`EQUILIBRATE = 1\n${settings}`).replace('logK = -14.3433', 'logK = -14.3433, kf = 1e3')}`
+    + '=> Na+ + Cl-, k = 4e-6\n');
+  const vp0 = RtmModel.verifyJacobian(pair, 0, pair.initialState());
+  const rp = FacsimileODE.runModel(pair, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const pEnd = rp.y[rp.y.length - 1];
+  const vp1 = RtmModel.verifyJacobian(pair, 1e5, pEnd);
+  const la = logA(pair, pEnd).la;
+  check('a fast pair relaxes to its K in activities, and its Jacobian follows I',
+    Math.abs(la['H+'] + la['OH-'] - la.H2O + 14.3433) < 1e-8 && vp0.discrepancies.length === 0
+      && vp1.discrepancies.length === 0 && !pair.jacobianConstant,
+    `${(la['H+'] + la['OH-'] - la.H2O + 14.3433).toExponential(1)} in log K; ${vp0.checked} entries`);
+
+  // A column, the relations held in every cell: the Jacobian across cells.
+  const col = RtmModel.compile(water(`EQUILIBRATE = always\n${settings}`)
+    .replace('MODE = batch', 'MODE = transport\nCELLS = 6\nLENGTH = 0.01\nDIFFUSION = 1')
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (m0, n, s1, v, rest) => `${n}${s1}${v}${rest}  D=1e-9`));
+  const colY = col.initialState();
+  for (let k = 0; k < colY.length; k++) colY[k] += 1e-3 * Math.sin(k);
+  const vc = RtmModel.verifyJacobian(col, 0, colY);
+  check('  and in a column with every relation held, the Jacobian across the cells', vc.discrepancies.length === 0
+    && col.nalgebraic === 6 * 5, `${vc.checked} entries`);
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

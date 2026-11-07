@@ -182,16 +182,20 @@ async def main():
             check('the example water is written as a model through PHREEQC',
                   isinstance(report, str) and report.startswith('Written into the text below: 41 species and 30 '
                                                                 'equilibria'), True)
-            check('and rtm.html\'s own speciation lands on PHREEQC\'s', isinstance(report, str)
-                  and 'lands on PHREEQC\'s molalities to' in report, True)
+            check('and rtm.html\'s own speciation, its own activity coefficients and all, lands on PHREEQC\'s',
+                  isinstance(report, str) and 'from the database\'s constants and its own activity coefficients, '
+                  'lands on PHREEQC\'s molalities to' in report, True)
             text = await page.ev("document.getElementById('rtmText').value")
             check('the text has its equilibria, held exactly through the run', isinstance(text, str)
                   and '<EQUILIBRIUM>' in text and 'EQUILIBRATE = always' in text and 'kf = ' not in text, True)
+            check('in activities that follow the ionic strength, the water in the relations', isinstance(text, str)
+                  and 'ACTIVITY = debye-huckel' in text and 'TEMPERATURE = 15' in text
+                  and 'H2O <=> OH- + H+,' in text, True)
             status = await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and it compiles', status, 'Compiled:')
-            check('with the relations held: the model facts say so', await page.ev(
-                "/all held throughout the run, 40 species algebraic in every cell/"
-                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            check('with the relations held, in activities: the model facts say so', await page.ev(
+                "/all held throughout the run, 40 species algebraic in every cell · in activities, "
+                "Debye–Hückel at 15 °C \\(27 ions\\)/.test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('[data-tab="jacobian"]'))
             jac = await page.ev("document.getElementById('rtmJacNote').textContent")
             check('the Jacobian tab draws the species\' part and says the totals are not drawn',
@@ -211,6 +215,16 @@ async def main():
             check('as fast pairs, every relation has its kf and the start alone is speciated', isinstance(pairs, str)
                   and pairs.count('kf = ') == 30 and 'EQUILIBRATE = 1' in pairs, True)
             await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'exact';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            # Fixed at this water: conditional constants, and no water in the relations.
+            await page.ev("(() => { const s = document.getElementById('rtmPqAct'); s.value = 'fixed';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await write_from_example(page)
+            fixed = await page.ev("document.getElementById('rtmText').value")
+            check('fixed at this water: conditional constants, the water left out of the relations',
+                  isinstance(fixed, str) and 'ACTIVITY' not in fixed and ' <=> OH- + H+,' in fixed
+                  and 'logK = -14.1398953203' in fixed, True)
+            await page.ev("(() => { const s = document.getElementById('rtmPqAct'); s.value = 'follow';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await write_from_example(page)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
@@ -262,8 +276,9 @@ async def main():
             summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
             check('the summary says what was supersaturated and how far the constants moved',
                   isinstance(summary, str) and 'Supersaturated: Quartz' in summary
-                  and 'activity coefficients in the model\'s equilibria moved by up to ' in summary
-                  and 'Conditional constants made for the start still hold' in summary, True)
+                  and 'The model works its activity coefficients out as the run goes (ACTIVITY = debye-huckel). '
+                      'PHREEQC\'s moved by up to ' in summary
+                  and re.search(r"the model's own are within [0-9.e−-]+ of PHREEQC's in log K", summary) is not None, True)
             check('at the temperature the model was written at, read from the top of its text',
                   isinstance(summary, str) and 'at 15 °C, as the top of the model text has it' in summary
                   and 'Counted (41)' in summary, True)

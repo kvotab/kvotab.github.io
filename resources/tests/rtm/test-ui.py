@@ -50,7 +50,7 @@ HEADING_I_OFF = (
 # The (i) slots written into rtm.html: two section headings, twenty settings
 # of the Solver section, six tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 33
+STATIC_SLOTS = 34
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');

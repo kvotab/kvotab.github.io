@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -440,11 +440,14 @@
     }
     if (m.nequilibria) {
       const h = m.heldEquilibria;
+      const a = m.activity;
       bits.push(`${m.nequilibria} equilibri${m.nequilibria === 1 ? 'um' : 'a'}`
         + `, ${m.nconserved} conserved total${m.nconserved === 1 ? '' : 's'}`
         + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : '')
         + (h ? ` · ${h.relations === m.nequilibria ? 'all' : h.relations} held throughout the run, `
-          + `${h.species} species algebraic in every cell` : ''));
+          + `${h.species} species algebraic in every cell` : '')
+        + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : 'Debye–Hückel'} at ${a.temperature} °C `
+          + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : ''));
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -1997,8 +2000,8 @@
       sections: [
         { heading: 'What is written', list: [
           'Every aqueous species above the floor, at PHREEQC’s molality, in `<SPECIES>`.',
-          'Every complexation and acid–base reaction among them, as the database writes it and with water left out, in `<EQUILIBRIUM>`: held exactly through the run (`EQUILIBRATE = always`), as fast pairs with a `kf`, or at the start only, as **The equilibria during the run** says.',
-          'Each `logK` is **conditional**: the activity coefficients at this ionic strength and the activity of water are folded into it, so that the relations rtm.html holds between concentrations hold exactly where PHREEQC’s hold between activities. The comment on each line is the database’s own log K at the water’s temperature.',
+          'Every complexation and acid–base reaction among them, as the database writes it, in `<EQUILIBRIUM>`: held exactly through the run (`EQUILIBRATE = always`), as fast pairs with a `kf`, or at the start only, as **The equilibria during the run** says.',
+          'Between activities that follow the ionic strength, with the database’s own log K (`ACTIVITY`), or with each `logK` **conditional**, the activity coefficients at this water folded in, as **Activity coefficients** says.',
           'No redox relation. A reaction with electrons is not written, so each valence state keeps its own total and electrons move only through the reactions you write.',
           'A name rtm.html cannot write, such as `(UO2)2(OH)2+2`, is renamed (`UO2_2(OH)2+2`), and the text lists each one at the top.',
         ] },
@@ -2031,6 +2034,17 @@
         { text: 'A species below the floor is still kept when a relation that is kept needs it, so that every relation written is whole. The report says how many those were, and the largest species left out.' },
         { text: '0 keeps every species PHREEQC lists.' },
       ],
+      more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:activity': () => ({
+      kicker: 'PHREEQC', title: 'Activity coefficients',
+      lead: 'PHREEQC holds its relations between activities. This says how the model written from the water holds them.',
+      facts: [['Default', 'following the ionic strength']],
+      sections: [{ choices: [
+        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion. Each relation is written with its water and the database’s own log K, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
+        ['fixed at this water', 'Each `logK` is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far.', pq.act === 'fixed'],
+      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. A database whose activity model is Pitzer, SIT or LLNL cannot be followed here; keep it fixed.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2166,7 +2180,7 @@
   };
   /** Names that mean something where they take a value: `NAME = ...`. */
   const HL_ASSIGN = {
-    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm']),
+    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
   };
@@ -2518,11 +2532,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107a',
+    'resources/js/rtm-phreeqc.js?v=20261107b',
     'resources/js/rtm-phreeqc-engine.js?v=20261107a',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2548,8 +2562,10 @@ END
 `;
   /** How the relations written are kept during the run: see pq:hold. */
   const PQ_HOLDS = ['exact', 'pairs', 'start'];
+  /** Whether their activity coefficients follow the ionic strength: see pq:activity. */
+  const PQ_ACTS = ['follow', 'fixed'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', eq: 'exact', relax: '1e3', diff: 'none', D: '2e-9',
+    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', relax: '1e3', diff: 'none', D: '2e-9',
     times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
@@ -2567,7 +2583,7 @@ END
   function pqSave() {
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
-        water: pq.water, db: pq.db, floor: pq.floor, eq: pq.eq, relax: pq.relax, diff: pq.diff,
+        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open,
       }));
@@ -2583,6 +2599,7 @@ END
       }
       for (const k of ['fill', 'logT', 'open']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (PQ_HOLDS.includes(s.eq)) pq.eq = s.eq;
+      if (PQ_ACTS.includes(s.act)) pq.act = s.act;
       else if (typeof s.hold === 'boolean') pq.eq = s.hold ? 'exact' : 'start';
       // A database's text is not kept between visits: one opened last time is
       // named, and phreeqc.dat used until it is opened again.
@@ -2593,6 +2610,7 @@ END
   function pqWriteControls() {
     $('rtmPqWater').value = pq.water;
     $('rtmPqFloor').value = pq.floor;
+    $('rtmPqAct').value = pq.act;
     $('rtmPqHold').value = pq.eq;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
@@ -2616,6 +2634,7 @@ END
   function pqReadControls() {
     pq.water = $('rtmPqWater').value;
     pq.floor = $('rtmPqFloor').value.trim();
+    pq.act = PQ_ACTS.includes($('rtmPqAct').value) ? $('rtmPqAct').value : 'follow';
     pq.eq = PQ_HOLDS.includes($('rtmPqHold').value) ? $('rtmPqHold').value : 'exact';
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
@@ -2815,9 +2834,17 @@ END
       out.push(`<p class="error">rtm.html does not compile the text it was given: ${esc(c.error)}</p>`);
     } else if (c) {
       const good = c.converged && c.worst < 1e-6;
-      out.push(`<p${good ? '' : ' class="warn"'}>rtm.html's own speciation, from the conditional constants alone, `
+      // From what the text holds: the database's constants and the page's
+      // own activity coefficients, or conditional constants alone.
+      const from = r.activity ? 'from the database\'s constants and its own activity coefficients'
+        : 'from the conditional constants alone';
+      out.push(`<p${good ? '' : ' class="warn"'}>rtm.html's own speciation, ${from}, `
         + `${c.converged ? 'lands on' : 'does not converge to'} PHREEQC's molalities`
         + `${c.converged ? ` to ${c.worst.toExponential(1)}` : ''}.</p>`);
+      if (r.activity && r.activity.unsupported.length) {
+        out.push(`<p class="warn">PHREEQC works out the activity of ${r.activity.unsupported.map(esc).join(', ')} in `
+          + 'a way this page does not have; here they follow Davies, or 0.1 I if neutral.</p>');
+      }
     }
     const items = [];
     if (r.dropped) {
@@ -2860,7 +2887,7 @@ END
     try {
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
-        options: { floor, exact: pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
+        options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
           date: new Date().toISOString().slice(0, 10) },
       });
       // As an example is loaded: the text replaced outright, and said so below the panel.
@@ -2948,7 +2975,23 @@ END
     } else {
       out.push('<p>No phase is supersaturated anywhere in the run.</p>');
     }
-    if (r.drift.length) {
+    if (r.activity) {
+      // The model works its activity coefficients out itself: how closely
+      // they follow PHREEQC's is the question, not how far PHREEQC's moved.
+      const d = r.drift[0];
+      const g = r.activity.gap[0];
+      const moved = d && Math.abs(d.by) > 0
+        ? `moved by up to ${pqNum(Math.abs(d.by))} in log K (${esc(d.rel)}${d.t !== null ? `; ${where(d)}` : ''})`
+        : 'did not move';
+      if (g) {
+        const big = Math.abs(g.by) > 0.02;
+        out.push(`<p${big ? ' class="warn"' : ''}>The model works its activity coefficients out as the run goes `
+          + `(ACTIVITY = ${esc(r.activity.kind)}). PHREEQC's ${moved}, and the model's own are within `
+          + `${pqNum(Math.abs(g.by))} of PHREEQC's in log K (${esc(g.rel)}${g.t !== null ? `; ${where(g)}` : ''}).`
+          + (big ? ' That is further than it should be: the database may work some activities out in a way this '
+            + 'page does not, or PHREEQC counts species the model leaves out.' : '') + '</p>');
+      }
+    } else if (r.drift.length) {
       const d = r.drift[0];
       const big = Math.abs(d.by) > 0.02;
       out.push(`<p${big ? ' class="warn"' : ''}>The activity coefficients in the model's equilibria moved by up to `

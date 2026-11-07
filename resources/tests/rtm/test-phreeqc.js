@@ -279,6 +279,66 @@ function withPhreeqc(engine) {
     `${salt.report.drift[0].by.toFixed(3)} in log K (${salt.report.drift[0].rel}); ionic strength `
     + `${salt.report.ionicStrength.map((x) => x.toFixed(3)).join(' to ')}`);
 
+  // --- activity coefficients that follow the ionic strength -----------------
+  const dbRead = P.readDatabase(dbText);
+  check('the database\'s -gamma is read: Ca+2 a = 5, b = 0.165; Na+ 4.08 and 0.082',
+    dbRead.gamma.get('Ca+2').a === 5 && dbRead.gamma.get('Ca+2').b === 0.165 && dbRead.gamma.get('Na+').a === 4.08
+      && dbRead.gamma.get('Na+').b === 0.082 && dbRead.model === null);
+  let pitzer = '';
+  try {
+    P.waterToModel({ engine, database: { name: 'pz', text: `${dbText}\nPITZER\n-B0\n Na+ Cl- 0.0765\n` }, water,
+      activity: true });
+  } catch (e) { pitzer = e.message; }
+  check('... and a database with the Pitzer model is not followed, and says so', /Pitzer activity model/.test(pitzer),
+    pitzer.slice(0, 90));
+  const fol = P.waterToModel({ engine, database, water, activity: true, exact: true });
+  const mf = RtmModel.compile(fol.text);
+  const backF = new Map([...fol.names].map(([k, v]) => [v, k]));
+  const cf = mf.toConcentrations(mf.initialState());
+  let worstF = 0;
+  mf.speciesNames.forEach((n, i) => { worstF = Math.max(worstF, Math.abs(cf[i] / fol.molal.get(backF.get(n)) - 1)); });
+  check('following the ionic strength: ACTIVITY at the water\'s temperature, the water in the relations, '
+    + 'the database\'s log K; the start on PHREEQC\'s molalities from the page\'s own activity coefficients',
+  /^ACTIVITY = debye-huckel$/m.test(fol.text) && /^TEMPERATURE = 15$/m.test(fol.text)
+    && /^H2O <=> OH- \+ H\+, +logK = -14\.34328/m.test(fol.text) && /^Ca\+2 .* a=5 {2}b=0\.165$/m.test(fol.text)
+    && worstF < 1e-8 && mf.activity.kind === 'debye-huckel',
+  `${worstF.toExponential(1)} from PHREEQC; A ${mf.activity.A.toFixed(6)} at ${mf.activity.temperature} C`);
+  // Salt again, each kind of model against PHREEQC adding the same salt by itself.
+  const saltRun = (res) => {
+    const text = `${res.text.replace('TEND = 1\n', 'TEND = 1e5\n')}=> Na+ + Cl-, k = 4e-6\n`;
+    return { text, run: pageRun(text, 1e5) };
+  };
+  const againstAlone = (res, sr) => {
+    const k = sr.run.n - 1;
+    const tEnd = sr.run.t[k];
+    const alone = P.parseRows(engine.run(`${P.punchBlock()}${groundwater.replace('END', '')}`
+      + `REACTION 1\n  NaCl 1\n  ${(4e-6 * tEnd).toPrecision(12)} moles\nEND\n`)).pop();
+    const back = new Map([...res.names].map(([a, b]) => [b, a]));
+    let worstA = 0;
+    let where = '';
+    sr.run.model.species.forEach((n, i) => {
+      const p = back.get(n);
+      if (res.report.redox.includes(p)) return;   // PHREEQC alone moves the valence states; the model never does
+      const d = Math.abs(sr.run.states[k * sr.run.width + i] / alone.species.get(p)[0] - 1);
+      if (d > worstA) { worstA = d; where = n; }
+    });
+    return { worst: worstA, where };
+  };
+  const fixedRes = P.waterToModel({ engine, database, water, exact: true });
+  const fixedSalt = againstAlone(fixedRes, saltRun(fixedRes));
+  const folSaltRun = saltRun(fol);
+  const folSalt = againstAlone(fol, folSaltRun);
+  check('0.4 mol/kgw of salt: following, every species ends on what PHREEQC alone finds; fixed, far from it',
+    folSalt.worst < 1e-5 && fixedSalt.worst > 0.1,
+    `following ${folSalt.worst.toExponential(1)} (${folSalt.where}), fixed ${fixedSalt.worst.toFixed(2)} (${fixedSalt.where})`);
+  const folView = P.viewRun({ engine, database, run: folSaltRun.run, modelText: folSaltRun.text, water,
+    phases: ['Calcite'], unit: 's' });
+  const gap = folView.report.activity && folView.report.activity.gap[0];
+  check('... and the PHREEQC tab: its activity coefficients moved, and the model\'s own stayed on them',
+    !!gap && Math.abs(gap.by) < 1e-6 && Math.abs(folView.report.drift[0].by) > 0.2 && folView.report.unchecked.length === 0,
+    gap ? `PHREEQC's moved ${folView.report.drift[0].by.toFixed(3)}, the model's ${gap.by.toExponential(1)} from them `
+      + `(${gap.rel})` : 'no comparison');
+
   // --- the built-in model --------------------------------------------------
   const builtin = P.viewRun({ engine, database, run: pageRun(RTM_DEFAULT_MODEL), modelText: RTM_DEFAULT_MODEL,
     times: 10, unit: 's' });
@@ -313,6 +373,12 @@ async function asThePage(createPhreeqc, acidText) {
     && v.table.pH.length === 50 && v.progress.length > 0 && v.csv.split('\n').length === 52,
   v.type === 'done' ? `${v.table.pH.length} rows, ${v.phases.length} phases, ${v.progress.length} progress messages`
     : v.error);
+  const followed = await ask({ id: 6, type: 'toModel', database: null,
+    water: { name: 'groundwater', text: groundwater }, options: { activity: true, exact: true } });
+  check('... and following the ionic strength, checked by the page\'s own activity coefficients',
+    followed.type === 'done' && followed.check && followed.check.worst < 1e-8 && followed.check.converged
+      && /^ACTIVITY = debye-huckel$/m.test(followed.text),
+    followed.type === 'done' ? `${followed.check.worst.toExponential(1)} from PHREEQC` : followed.error);
   const held = await ask({ id: 5, type: 'toModel', database: null,
     water: { name: 'groundwater', text: groundwater }, options: { exact: true } });
   check('... and held exactly, checked from the concentrations its state stands for', held.type === 'done'

@@ -27,6 +27,7 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **With 0.4 mol/kgw of salt added instead**, the conditional constants go wrong, and the drift of the activity coefficients says so: 0.48 in log K.
 - **Without a water**, the temperature is read from the top of the model text. A water PHREEQC refuses is reported, and the look goes on without it.
 - **The built-in model:** the seven species PHREEQC knows are counted; the hydrated electron, the radicals and the surface sites are not; the missing counter-ion is noticed.
+- **Activity coefficients that follow the ionic strength** (`ACTIVITY = debye-huckel`): the database's `-gamma` is read (Ca+2: 5 and 0.165), and a database with the Pitzer model is refused. The text has the water's `TEMPERATURE`, the water in its relations and the database's own log K. Its start, from the page's own activity coefficients, lands on PHREEQC's molalities (9.1e-10). With 0.4 mol/kgw of NaCl added, every species ends within 1e-5 (3.1e-7 measured) of what PHREEQC alone finds; with the constants fixed at the start, MgSO4 ends 89 % off. The PHREEQC tab then says PHREEQC's activity coefficients moved by 0.48 in log K and the model's own stayed within 1e-6 (3.9e-9) of them. PHREEQC alone also moves the valence states, which the model never does, so the redox species are left out of that comparison: with acid it re-equilibrates a little carbon, 5e-5, whatever the tolerance.
 - **The water held exactly** (`EQUILIBRATE = always`, no `kf`): its start, read from the logarithms and totals the solver keeps, lands on PHREEQC's molalities as closely (2.4e-10). With the same acid it ends 7e-5 in pH from PHREEQC alone, where the fast pairs end 3.3e-4 from it. Exactly and as pairs at once is refused.
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
@@ -35,7 +36,7 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 `test-phreeqc-ui.py` covers the page itself:
 
 - PHREEQC is not fetched until it is used, and then runs in a worker of its own.
-- The panel on the Model tab writes the example water and reports the check. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
+- The panel on the Model tab writes the example water and reports the check. By default the activity coefficients follow the ionic strength (`ACTIVITY = debye-huckel` at 15 °C, `H2O` in the relations); fixed at this water, the constants are conditional and the water is left out. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
 - The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
 - A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
 - The PHREEQC tab's chart starts at the water's pH, 7.4 at 15 °C. Before the cache was cleared in this test, a cached worker script ran at 25 °C and gave 7.4012, which is how the test caught it.
@@ -285,6 +286,21 @@ What the conserved totals are is worked out from the stoichiometry alone — the
 left null space of the equilibrium matrix — so the check that the basis comes
 out as expected is a check on that derivation, not on a table of elements the
 page does not have.
+
+**Activity** (`ACTIVITY`). The four forms of PHREEQC's rule worked out by
+hand at I = 0.05 (Davies, WATEQ with a and b, b·I for a neutral species, 1 for
+the water and for `z=0 b=0`), a(H2O) = 1 − 0.017 ΣC without the water itself,
+the derivatives in I against differences, and A and B at 15 and 25 °C against
+PHREEQC 3.8.6's DH_A and DH_B (to 1e-9; the formulas agree with PHREEQC to
+3e-9 from 0 to 200 °C). `H2O` in a relation changes nothing without
+`ACTIVITY`. With it, every relation holds in activities, worked out apart from
+the page's code: at the start (9e-16 in log K); held throughout while salt
+takes I from 0.1 to 0.5 (4e-15 at every point, carbon to 6e-16, the end a
+fresh speciation of its totals, the Jacobian exact); and as a fast pair,
+whose backward constant follows I (4e-11 at the end, the Jacobian exact). A
+column with every relation held checks the Jacobian across cells. Wrong
+words, temperatures and charges are refused, and settings that do nothing
+say so.
 
 **Equilibria held throughout the run** (`EQUILIBRATE = always`). Held exactly,
 the relations are linear in ln C and the totals are integrated, so the checks

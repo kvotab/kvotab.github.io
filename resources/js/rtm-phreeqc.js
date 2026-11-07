@@ -10,11 +10,13 @@
                    PHREEQC leaves it becomes the <SPECIES> and <EQUILIBRIUM>
                    of a model: every aqueous species at PHREEQC's molality,
                    every complexation and acid-base reaction as the database
-                   writes it, each with a CONDITIONAL log K (the activity
-                   coefficients at this ionic strength and the activity of
-                   water folded in), and no redox relation, so that each
-                   valence state keeps its own total and electrons move only
-                   through reactions the model writes.
+                   writes it, and no redox relation, so that each valence
+                   state keeps its own total and electrons move only through
+                   reactions the model writes. The relations hold between
+                   activities that follow the ionic strength (ACTIVITY, the
+                   database's own log K and -gamma), or each has a
+                   CONDITIONAL log K (the activity coefficients at this ionic
+                   strength and the activity of water folded in).
 
      viewRun       every stored water of a run goes back to PHREEQC: the
                    species its database has are counted into the element
@@ -23,7 +25,8 @@
                    an activity, the ionic strength, the charge balance, the
                    saturation index of every phase, and how far the activity
                    coefficients of the model's own equilibria drifted from
-                   where its conditional constants were made.
+                   where its conditional constants were made -- or, for a
+                   model with ACTIVITY, how closely its own follow PHREEQC's.
 
    PHREEQC itself is an ENGINE handed in: { run(text) } returning the rows of
    selected output 99, header first, or throwing PHREEQC's error. In the page
@@ -32,7 +35,9 @@
 
    The database is read here as well, but only for what PHREEQC's BASIC
    cannot hand back: each species' reaction as written, the master species of
-   each element and valence state, and the tracer diffusion coefficients.
+   each element and valence state, the tracer diffusion coefficients, and
+   which species have -gamma (DH_A0 and DH_BDOT give a and b, but not whether
+   a species is Davies or WATEQ).
 
    ONE GLOBAL: RtmPhreeqc. Runs in a page, a Worker and Node.
    ========================================================================== */
@@ -213,6 +218,13 @@
    * leading group is not, so (UO2)2(OH)2+2 becomes UO2_2(OH)2+2. `taken`
    * (a Map, name -> original) keeps two originals from landing on one name.
    */
+  /** A species' charge as its name ends: H+ 1, SO4-2 -2; 0 for none. */
+  function chargeOf(name) {
+    const m = /([+-])([0-9]*)$/.exec(String(name));
+    if (!m) return 0;
+    return (m[1] === '+' ? 1 : -1) * (m[2] ? Number(m[2]) : 1);
+  }
+
   function rtmName(name, taken) {
     let out = String(name);
     if (!RTM_NAME.test(out)) {
@@ -249,6 +261,9 @@
       this.master = new Map();      // label -> master species: 'Fe(+3)' -> 'Fe+3'
       this.reaction = new Map();    // species -> {left, right}, right[0] the species
       this.dw = new Map();          // species -> tracer diffusion coefficient, m2/s
+      this.gamma = new Map();       // species -> {a, b}: its -gamma, the WATEQ Debye-Hueckel
+      this.otherGamma = new Map();  // species -> an activity option this page does not have
+      this.model = null;            // 'Pitzer', 'SIT' or 'LLNL' when the database is one of those
       this.phases = [];
     }
 
@@ -261,6 +276,10 @@
         if (KEYWORDS.has(tokens[0].toUpperCase())) {
           block = tokens[0].toUpperCase();
           last = null;
+          // Activity models other than the Debye-Hueckel ones this page has.
+          if (block === 'PITZER') this.model = 'Pitzer';
+          else if (block === 'SIT') this.model = 'SIT';
+          else if (block === 'LLNL_AQUEOUS_MODEL_PARAMETERS') this.model = 'LLNL';
           continue;
         }
         if (block === 'SOLUTION_MASTER_SPECIES' && tokens.length >= 2) {
@@ -275,11 +294,21 @@
               // 'Ca+2 = Ca+2' defines a master species and is kept as written.
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               this.reaction.set(last, identity ? { left, right } : normalise(left, right));
+              // A reaction read again starts from PHREEQC's defaults: Davies
+              // for an ion, 0.1 I for a neutral species.
               this.dw.delete(last);
+              this.gamma.delete(last);
+              this.otherGamma.delete(last);
             }
           } else if (last && /^-?dw$/i.test(tokens[0]) && tokens.length > 1) {
             const v = Number(tokens[1]);
             if (Number.isFinite(v)) this.dw.set(last, v);
+          } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
+            const a = Number(tokens[1]);
+            const b = Number(tokens[2]);
+            if (Number.isFinite(a) && Number.isFinite(b)) this.gamma.set(last, { a, b });
+          } else if (last && /^-(llnl_gamma|co2_llnl_gamma|activity_water)$/i.test(tokens[0])) {
+            this.otherGamma.set(last, tokens[0].replace(/^-/, '').toLowerCase());
           }
         } else if (block === 'PHASES') {
           if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1
@@ -460,6 +489,11 @@
    *   water       { name, text }      PHREEQC input holding the water
    *   solution    SOLUTION number to use (default: the last calculation)
    *   floor       mol/kgw below which a species is left out (1e-20)
+   *   activity    the activity coefficients follow the ionic strength:
+   *               ACTIVITY = debye-huckel at the water's temperature, each
+   *               species' -gamma as a= and b=, the relations with their
+   *               water and the database's own log K; else each log K is
+   *               conditional, the coefficients at this water folded in
    *   exact       hold every relation exactly during the run: EQUILIBRATE =
    *               always, no kf, each relation an algebraic equation
    *   relax       ... or as fast pairs, each with the kf that makes it relax
@@ -476,6 +510,12 @@
       throw new Error('The relations are held either exactly or as fast pairs with a kf, not both.');
     }
     const db = readDatabase(o.database.text, o.water.text);
+    const follow = !!o.activity;
+    if (follow && db.model) {
+      throw new Error(`${o.database.name || 'This database'} gives PHREEQC the ${db.model} activity model, which `
+        + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
+        + 'them fixed at this water instead.');
+    }
     let rows = runRows(o.engine, `${punchBlock()}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
@@ -540,7 +580,8 @@
         const spread = [...reac, ...prod].reduce((s, t) => s + (t.c * t.c) / molal.get(t.n), 0);
         kf = o.relax / (forward * spread);
       }
-      eqs.push({ species: n, reac, prod, logkC, logk, kf });
+      // As the database writes it, water and all, for a model that keeps activities.
+      eqs.push({ species: n, reac, prod, logkC, logk, kf, left: r.left, right: r.right });
     }
 
     // Names as rtm.html can write them; H+ and OH- first.
@@ -553,7 +594,11 @@
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)]);
     const side = (terms) => terms
-      .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + name.get(t.n)).join(' + ');
+      .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || t.n)).join(' + ');
+    // With activities: each species' -gamma, and a charge where a new name
+    // would read differently; and the species whose activity PHREEQC works
+    // out in a way this page does not.
+    const unsupported = follow ? order.filter((sp) => db.otherGamma.has(sp)) : [];
 
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
@@ -566,11 +611,19 @@
       + `a(H2O) ${w.aw.toFixed(6)}, charge balance ${fmtG(w.cb, 3)} eq/kgw.`);
     out.push('#');
     out.push('# Concentrations are molalities (mol/kgw); rate constants you add must use the same unit.');
-    out.push('# Each log K is CONDITIONAL: the activity coefficients at this ionic strength and the');
-    out.push('# activity of water are folded in, so the relations hold between concentrations exactly');
-    out.push("# where PHREEQC's hold between activities. The comment gives the database's own log K at");
-    out.push(`# ${fmtG(tc, 6)} C. If a run moves the ionic strength far from ${fmtG(w.mu, 3)}, look at it through`);
-    out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
+    if (follow) {
+      out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
+      out.push("# ACTIVITY works out each species' activity coefficient from the ionic strength of its cell");
+      out.push("# as the run goes on, by the database's -gamma (a= and b=) where it gives one and Davies for");
+      out.push('# any other ion, as PHREEQC does, and the activity of water where a relation has H2O. The');
+      out.push('# comment gives the conditional log K at this water, the activity coefficients folded in.');
+    } else {
+      out.push('# Each log K is CONDITIONAL: the activity coefficients at this ionic strength and the');
+      out.push('# activity of water are folded in, so the relations hold between concentrations exactly');
+      out.push("# where PHREEQC's hold between activities. The comment gives the database's own log K at");
+      out.push(`# ${fmtG(tc, 6)} C. If a run moves the ionic strength far from ${fmtG(w.mu, 3)}, look at it through`);
+      out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
+    }
     out.push('# No redox relation is written: each valence state keeps its own total, and electrons');
     out.push('# move only through the reactions you add.');
     if (o.exact) {
@@ -587,27 +640,53 @@
       out.push('# The relations put the start on equilibrium (EQUILIBRATE = 1) and nothing more; give');
       out.push('# each a kf to hold them during the run as well.');
     }
+    if (unsupported.length) {
+      out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
+        unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
+      out.push('# the rule above.');
+    }
     if (renamed.length) {
       out.push('# Renamed, since rtm.html cannot write the name as PHREEQC does:');
       for (const [s, r] of renamed) out.push(`#   ${s}  ->  ${r}`);
     }
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
-      `EQUILIBRATE = ${o.exact ? 'always' : '1'}`, '', '<SPECIES>');
+      `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
+    if (follow) out.push('ACTIVITY = debye-huckel', `TEMPERATURE = ${fmtG(tc, 10)}`);
+    out.push('', '<SPECIES>');
+    const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length)) + 2;
     for (const s of order) {
       let d = '';
-      if (o.dw && db.dw.has(s)) d = `  D=${fmtG(db.dw.get(s), 6)}`;
-      else if (o.D) d = `  D=${fmtG(o.D, 6)}`;
-      out.push(`${name.get(s).padEnd(width)}${fmtG(molal.get(s), 15)}${d}`);
+      if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
+      else if (o.D) d = `D=${fmtG(o.D, 6)}`;
+      if (!follow) {
+        out.push(`${name.get(s).padEnd(width)}${fmtG(molal.get(s), 15)}${d ? `  ${d}` : ''}`);
+        continue;
+      }
+      const bits = [];
+      if (chargeOf(name.get(s)) !== chargeOf(s)) bits.push(`z=${chargeOf(s)}`);
+      const g = db.gamma.get(s);
+      if (g) {
+        if (chargeOf(s)) bits.push(`a=${fmtG(g.a, 6)}`);
+        bits.push(`b=${fmtG(g.b, 6)}`);
+      }
+      if (d) bits.push(d);
+      const more = bits.join('  ');
+      out.push(`${name.get(s).padEnd(width)}${more ? fmtG(molal.get(s), 15).padEnd(width2) + more
+        : fmtG(molal.get(s), 15)}`);
     }
     out.push('', '<EQUILIBRIUM>');
-    const lines = eqs.map((e) => ({
-      rel: e.reac.length ? `${side(e.reac)} <=> ${side(e.prod)}` : ` <=> ${side(e.prod)}`,
-      k: `logK = ${e.logkC.toFixed(10)}${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
-      logk: e.logk,
-    }));
+    const lines = eqs.map((e) => {
+      const reac = follow ? e.left : e.reac;
+      const prod = follow ? e.right : e.prod;
+      return {
+        rel: reac.length ? `${side(reac)} <=> ${side(prod)}` : ` <=> ${side(prod)}`,
+        k: `logK = ${(follow ? e.logk : e.logkC).toFixed(10)}${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
+        note: follow ? `# here ${e.logkC.toFixed(4)}` : `# log K ${e.logk.toFixed(4)}`,
+      };
+    });
     const wrel = Math.max(0, ...lines.map((l) => l.rel.length)) + 1;
     const wk = Math.max(0, ...lines.map((l) => l.k.length)) + 3;
-    for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}# log K ${l.logk.toFixed(4)}`);
+    for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}${l.note}`);
     out.push('', '<REACTIONS>', '# Your kinetic reactions here, in the same species and units.');
     const text = `${out.join('\n')}\n`;
 
@@ -623,6 +702,7 @@
         pH: w.pH, chargeBalance: w.cb,
         dropped: dropped.length, droppedTop: top, droppedTopValue: top ? molal.get(top) : null,
         pulled: pulled.size, redox: [...redox].sort(), unknown: [...unknown].sort(), skipped, renamed,
+        activity: follow ? { temperature: tc, unsupported } : null,
       },
     };
   }
@@ -787,7 +867,8 @@
           for (const [lb, v] of contrib) totals.set(lb, (totals.get(lb) || 0) + v * c);
         }
         const h = hIndex >= 0 ? Math.max(value(g.state, hIndex, k), 0) * scale : null;
-        rows.push({ t: run.t[k], cell: g.cell, layer: g.layer, totals, H: h, pH: h > 0 ? -Math.log10(h) : null });
+        rows.push({ t: run.t[k], cell: g.cell, layer: g.layer, totals, H: h, pH: h > 0 ? -Math.log10(h) : null,
+          state: g.state, k });
       }
     }
 
@@ -853,17 +934,22 @@
     }
 
     // --- the equilibria's activity coefficients along the run --------------
+    // H2O in a relation is the water, whose activity enters it.
     const drift = [];
     const unchecked = [];
+    const isWater = (t) => t.n === 'H2O' && !model.species.includes('H2O');
     for (const e of modelEquilibria(o.modelText)) {
-      const all = [...e.reac, ...e.prod].every((t) => mapped.has(t.n));
+      const reac = e.reac.filter((t) => !isWater(t));
+      const prod = e.prod.filter((t) => !isWater(t));
+      const all = [...reac, ...prod].every((t) => mapped.has(t.n));
       if (!all) { unchecked.push(e.rel); continue; }
       const conv = (terms) => terms.map((t) => ({ c: t.c, n: mapped.get(t.n).p }));
-      drift.push({ rel: e.rel, reac: conv(e.reac), prod: conv(e.prod) });
+      const water = e.prod.filter(isWater).reduce((a, t) => a + t.c, 0) - e.reac.filter(isWater).reduce((a, t) => a + t.c, 0);
+      drift.push({ rel: e.rel, reac: conv(reac), prod: conv(prod), water });
     }
     const lgsum = (r, d) => {
       const sp = r.pq.species;
-      let s = 0;
+      let s = d.water ? d.water * log10(r.pq.aw) : 0;
       for (const t of d.prod) { if (!sp.has(t.n)) return null; s += t.c * sp.get(t.n)[1]; }
       for (const t of d.reac) { if (!sp.has(t.n)) return null; s -= t.c * sp.get(t.n)[1]; }
       return s;
@@ -883,6 +969,47 @@
       }
       return { rel: d.rel, by: top.by, at: top.at };
     }).sort((a, b) => Math.abs(b.by) - Math.abs(a.by));
+
+    // --- a model that keeps activities: its own against PHREEQC's ----------
+    // Under ACTIVITY the model works its activity coefficients out itself, so
+    // the question is no longer how far PHREEQC's moved but how closely the
+    // model's own follow them: the same relations, both sides at each water.
+    let activity = null;
+    const Rtm = (typeof self !== 'undefined' && self.RtmModel)
+      || (typeof globalThis !== 'undefined' && globalThis.RtmModel) || null;
+    if (Rtm && /^\s*ACTIVITY\s*=\s*(?!none\b)\S/im.test(String(o.modelText || ''))) {
+      let own = null;
+      try { own = Rtm.compile(o.modelText); } catch (e) { own = null; }
+      if (own && own.act && own.speciesNames.length === ns) {
+        const lnG = new Float64Array(ns);
+        const dG = new Float64Array(ns);
+        const cw = new Float64Array(ns);
+        const rels = own.equilibria.filter((eq) => eq.net.every(([si]) => mapped.has(own.speciesNames[si])));
+        const gaps = rels.map((eq) => ({ rel: eq.text.split(',', 1)[0].trim(), eq, by: 0, at: null }));
+        for (const r of good) {
+          for (let si = 0; si < ns; si++) cw[si] = value(r.state, si, r.k);
+          const w = Rtm.activityAt(own.act, cw, 0, lnG, dG);
+          for (const g of gaps) {
+            let pqSide = g.eq.water ? g.eq.water * log10(r.pq.aw) : 0;
+            let ours = g.eq.water ? g.eq.water * w.lnAw / Math.LN10 : 0;
+            let ok = true;
+            for (const [si, c] of g.eq.net) {
+              const p = mapped.get(own.speciesNames[si]).p;
+              if (!r.pq.species.has(p)) { ok = false; break; }
+              pqSide += c * r.pq.species.get(p)[1];
+              ours += c * lnG[si] / Math.LN10;
+            }
+            if (ok && Math.abs(pqSide - ours) > Math.abs(g.by)) { g.by = pqSide - ours; g.at = r; }
+          }
+        }
+        gaps.sort((a, b) => Math.abs(b.by) - Math.abs(a.by));
+        activity = {
+          kind: own.act.kind,
+          temperature: own.act.temperature,
+          gap: gaps.map((g) => ({ rel: g.rel, by: g.by, t: g.at ? g.at.t : null, cell: g.at ? g.at.cell : null })),
+        };
+      }
+    }
 
     // --- what to say about it ----------------------------------------------
     const peak = (n) => {
@@ -919,6 +1046,7 @@
       notNeutral: Math.abs(off.pq.cb) > 0.05 * off.pq.mu ? { cb: off.pq.cb, t: off.t, cell: off.cell, layer: off.layer } : null,
       supersaturated: supersaturated.map((s) => ({ phase: s.phase, si: s.si, t: s.at.t, cell: s.at.cell, layer: s.at.layer })),
       drift: drifts.map((d) => ({ rel: d.rel, by: d.by, t: d.at ? d.at.t : null, cell: d.at ? d.at.cell : null })),
+      activity,
       unchecked,
       phases,
     };

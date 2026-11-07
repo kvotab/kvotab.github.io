@@ -120,6 +120,17 @@
     */
     EQUILIBRATE: { def: 0, kind: 'flag', words: { start: 1, always: 2 } },
     /*
+      ACTIVITY: the relations of <EQUILIBRIUM> hold between activities, each
+      species' concentration times its activity coefficient, and those follow
+      the ionic strength of the cell as the run goes on: davies, or
+      debye-huckel, which is the WATEQ form for a species given a= and Davies
+      for any other ion, PHREEQC's rule. none, the default, holds them between
+      concentrations. TEMPERATURE, in degrees C, sets the Debye-Hueckel A and
+      B and nothing else. See activityModel.
+    */
+    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel'] },
+    TEMPERATURE: { def: 25, kind: 'number' },
+    /*
       DUAL POROSITY: a rock matrix beside the column.
 
       Every cell of the column -- the fracture, the flowing water -- has a
@@ -275,7 +286,7 @@
         if (!spec.of.includes(word)) {
           throw new RtmError(`${name} must be one of ${spec.of.join(', ')}, not "${raw}".`, line);
         }
-        out[name] = { cauchy: 'robin', outflow: 'free' }[word] || word;
+        out[name] = { cauchy: 'robin', outflow: 'free', 'debye-hückel': 'debye-huckel' }[word] || word;
         if (name === 'TIME_UNIT') out[name] = TIME_UNITS[out[name]].name;
       } else if (spec.kind === 'flag') {
         const word = raw.toLowerCase();
@@ -341,7 +352,7 @@
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
-        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, line };
+        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -369,8 +380,17 @@
           else if (key === 'kdf') entry.Kdf = value;
           else if (key === 'left') entry.left = value;
           else if (key === 'right') entry.right = value;
+          // The activity model's: the charge, where the name does not give
+          // it, and the WATEQ Debye-Hueckel a (angstrom) and b (kg/mol).
+          else if (key === 'z') {
+            if (!Number.isInteger(value)) throw new RtmError(`z = ${value} for ${name}: a charge is a whole number.`, line);
+            entry.z = value;
+          } else if (key === 'a') {
+            if (!(value >= 0)) throw new RtmError(`a = ${value} for ${name}: an ion size is zero or more.`, line);
+            entry.dha = value;
+          } else if (key === 'b') entry.dhb = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
-            + 'mass or R, and with a rock matrix Dm (or De), Rm, Kd or Kdf.', line);
+            + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; and for ACTIVITY z, a and b.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -1404,6 +1424,162 @@
   }
 
   /* ======================================================================
+     2a. Activity: the ionic strength, and what it does to the equilibria
+     ====================================================================== */
+
+  /**
+   * A species' charge as its name gives it: the sign at the end and the
+   * number after it -- H+ 1, SO4-2 -2, UO2+2 2, e- -1 -- and 0 for a name
+   * that ends in neither. `z=` on the species line says it where the name
+   * does not, or should not: a surface site is no ion in the water.
+   */
+  function chargeOf(name) {
+    const m = /([+-])([0-9]*)$/.exec(name);
+    if (!m) return 0;
+    return (m[1] === '+' ? 1 : -1) * (m[2] ? Number(m[2]) : 1);
+  }
+
+  /**
+   * The Debye-Hueckel A, in (kg/mol)^1/2, and B, in (kg/mol)^1/2 per
+   * angstrom, of water at tc degrees C and one atmosphere, worked out as
+   * PHREEQC 3 works them out: the relative dielectric constant from Bradley
+   * and Pitzer (1979, J. Phys. Chem. 83, 1599), the density on the saturation
+   * line from Wagner and Pruss (2002, J. Phys. Chem. Ref. Data 31, 387, eq.
+   * 2.6) with PHREEQC's fit in pressure on top. At 25 C, 0.5100 and 0.3285.
+   */
+  function debyeHuckelAB(tc) {
+    const T = tc + 273.15;
+    const th = 1 - T / 647.096;
+    const rhoSat = 322.0 * (1 + 1.99274064 * th ** (1 / 3) + 1.09965342 * th ** (2 / 3)
+      - 0.510839303 * th ** (5 / 3) - 1.75493479 * th ** (16 / 3) - 45.5170352 * th ** (43 / 3)
+      - 6.7469445e5 * th ** (110 / 3));
+    const p0 = 5.1880000e-02 + tc * (-4.1885519e-04 + tc * (6.6780748e-06 + tc * (-3.6648699e-08 + tc * 8.3501912e-11)));
+    const p1 = -6.0251348e-06 + tc * (3.6696407e-07 + tc * (-9.2056269e-09 + tc * (6.7024182e-11 + tc * -1.5947241e-13)));
+    const p2 = -2.2983596e-09 + tc * (-4.0133819e-10 + tc * (1.2619821e-11 + tc * (-9.8952363e-14 + tc * 2.3363281e-16)));
+    const p3 = 7.0517647e-11 + tc * (6.8566831e-12 + tc * (-2.2829750e-13 + tc * (1.8113313e-15 + tc * -4.2475324e-18)));
+    // One atmosphere, or the vapour pressure where that is higher.
+    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13));
+    const atm = Math.max(1, pSat);
+    const pa = atm - (pSat - 1e-6);
+    const rho = (rhoSat + pa * (p0 + pa * (p1 + pa * (p2 + Math.sqrt(pa) * p3)))) / 1e3; // g/cm3
+    const d1000 = 3.4279e2 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7));
+    const c = -2.0525 + 3.1159e3 / (-1.8289e2 + T);
+    const b = -8.0325e3 + 4.2142e6 / T + 2.1417 * T;
+    const eps = d1000 + c * Math.log((b + atm * 1.01325) / (b + 1e3));
+    const e2 = 1.671008e-3 / (eps * T); // e^2/(eps k T), cm
+    const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
+    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8 };
+  }
+
+  /**
+   * The activity model a text asks for, or null for ACTIVITY = none. Per
+   * species, its charge and how its activity coefficient goes with the ionic
+   * strength I of its cell:
+   *
+   *   0  the water itself, a species named H2O: gamma = 1
+   *   1  a neutral species: log gamma = b I, with b = 0.1 unless b= is given
+   *   2  an ion, Davies: log gamma = -A z^2 (sqrt(I)/(1 + sqrt(I)) - 0.3 I)
+   *   3  an ion given a= under debye-huckel, the WATEQ form:
+   *      log gamma = -A z^2 sqrt(I)/(1 + B a sqrt(I)) + b I
+   *
+   * which is PHREEQC's rule, a= and b= being a database's -gamma. I is half
+   * the sum of z^2 C over the cell, and the water's activity 1 - 0.017 times
+   * the sum of C, both PHREEQC's, with the concentrations read as molalities.
+   */
+  function activityModel(settings, species, warnings) {
+    if (settings.ACTIVITY === 'none') {
+      if (settings.given && settings.given.has('TEMPERATURE')) {
+        warnings.push('TEMPERATURE sets the activity model\'s A and B and nothing else, and ACTIVITY is none: '
+          + 'it does nothing here.');
+      }
+      return null;
+    }
+    const tc = settings.TEMPERATURE;
+    if (!(tc >= 0 && tc <= 350)) {
+      throw new RtmError(`TEMPERATURE = ${tc}: the activity model's A and B are worked out for 0 to 350 C.`);
+    }
+    const ns = species.length;
+    const { A, B } = debyeHuckelAB(tc);
+    const z = new Float64Array(ns);
+    const form = new Uint8Array(ns);
+    const a = new Float64Array(ns);
+    const b = new Float64Array(ns);
+    const solute = new Uint8Array(ns).fill(1);
+    species.forEach((sp, s) => {
+      if (sp.name === 'H2O') { solute[s] = 0; return; }
+      z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
+      if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
+      if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
+        form[s] = 3;
+        a[s] = sp.dha;
+        b[s] = sp.dhb !== null ? sp.dhb : 0;
+        return;
+      }
+      form[s] = 2;
+      if (sp.dha !== null || sp.dhb !== null) {
+        warnings.push(`Line ${sp.line}: ${sp.name} is an ion and ACTIVITY = ${settings.ACTIVITY}: `
+          + (settings.ACTIVITY === 'davies' ? 'Davies takes no a or b, and they are not used.'
+            : 'b without a is not used; give a as well for the WATEQ form.'));
+      }
+    });
+    return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, form, a, b, solute };
+  }
+
+  /**
+   * One cell's activity coefficients, from the concentrations C[off ..
+   * off + ns): ln gamma into lnG and d(ln gamma)/dI into dG, species by
+   * species. Returns the ionic strength and the water's ln a and its
+   * derivative in any one solute's concentration. Below an ionic strength of
+   * 1e-10 the strength is taken as that, as PHREEQC takes it, and its
+   * derivatives as zero.
+   */
+  function activityAt(act, C, off, lnG, dG) {
+    const ns = act.ns;
+    let I = 0;
+    let sum = 0;
+    for (let s = 0; s < ns; s++) {
+      const c = C[off + s];
+      const z = act.z[s];
+      if (z) I += z * z * c;
+      if (act.solute[s]) sum += c;
+    }
+    I *= 0.5;
+    const low = !(I > 1e-10);
+    if (low) I = 1e-10;
+    const sq = Math.sqrt(I);
+    const A = act.A * Math.LN10;
+    for (let s = 0; s < ns; s++) {
+      const z2 = act.z[s] * act.z[s];
+      switch (act.form[s]) {
+        case 1:
+          lnG[s] = Math.LN10 * act.b[s] * I;
+          dG[s] = Math.LN10 * act.b[s];
+          break;
+        case 2: {
+          const one = 1 + sq;
+          lnG[s] = -A * z2 * (sq / one - 0.3 * I);
+          dG[s] = -A * z2 * (0.5 / (sq * one * one) - 0.3);
+          break;
+        }
+        case 3: {
+          const den = 1 + act.B * act.a[s] * sq;
+          lnG[s] = -A * z2 * sq / den + Math.LN10 * act.b[s] * I;
+          dG[s] = -A * z2 * 0.5 / (sq * den * den) + Math.LN10 * act.b[s];
+          break;
+        }
+        default:
+          lnG[s] = 0;
+          dG[s] = 0;
+      }
+      if (low) dG[s] = 0;
+    }
+    let aw = 1 - 0.017 * sum;
+    const dry = !(aw > 1e-6);
+    if (dry) aw = 1e-6;
+    return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
+  }
+
+  /* ======================================================================
      2b. Equilibria, and the speciation that solves them
      ====================================================================== */
 
@@ -1454,7 +1630,16 @@
       if (lnK === null) throw new RtmError('An equilibrium needs K = ... or logK = ... .', line);
 
       const stoich = new Map();
+      /*
+        H2O, when it is not one of the species, is the water itself: its
+        activity enters the relation, 1 unless ACTIVITY says otherwise, and it
+        is never a concentration. So a relation can be written as a database
+        writes it, CO2 + H2O <=> H+ + HCO3-, and means what it meant without.
+      */
+      const solvent = !index.has('H2O');
+      let water = 0;
       const bump = (name, c) => {
+        if (solvent && name === 'H2O') { water += c; return; }
         if (!index.has(name)) {
           throw new RtmError(`"${name}" is used by an equilibrium but is not in <SPECIES>.`, line);
         }
@@ -1465,7 +1650,8 @@
       for (const [c, name] of products) bump(name, +c);
       const net = [...stoich.entries()].filter(([, c]) => c !== 0);
       if (!net.length) throw new RtmError('The equilibrium changes nothing.', line);
-      return { net, lnK, kf, line, text, reactants, products };
+      const species = (side) => (solvent ? side.filter(([, name]) => name !== 'H2O') : side);
+      return { net, lnK, kf, line, text, reactants: species(reactants), products: species(products), water };
     });
   }
 
@@ -1610,6 +1796,14 @@
         + 'usually does not, and an equilibrium that repeats another has the same effect.');
     }
 
+    // With ACTIVITY the relations hold between activities, and every species
+    // of the cell has a say through the ionic strength: the ones taking part
+    // as they move, the rest as they stand.
+    const act = model.act || null;
+    const lnG = act ? new Float64Array(ns) : null;
+    const dG = act ? new Float64Array(ns) : null;
+    const cellC = act ? new Float64Array(ns) : null;
+
     for (let cell = 0; cell < model.cells; cell++) {
       const b = cell * ns;
       const u = new Float64Array(na);
@@ -1629,15 +1823,35 @@
       for (; iter < maxIter; iter++) {
         const C = new Float64Array(na);
         for (let k = 0; k < na; k++) C[k] = Math.exp(u[k]);
-        // Equilibrium rows: linear in u, so the Jacobian is the stoichiometry.
+        let water = null;
+        if (act) {
+          for (let s = 0; s < ns; s++) cellC[s] = out[b + s];
+          for (let k = 0; k < na; k++) cellC[part[k]] = C[k];
+          water = activityAt(act, cellC, 0, lnG, dG);
+        }
+        // Equilibrium rows: linear in u, so the Jacobian is the stoichiometry --
+        // and, with activities, the ionic strength and the water through
+        // every species taking part.
         for (let j = 0; j < ne; j++) {
           let r = -eqs[j].lnK;
           J[j].fill(0);
+          let G = 0;
           for (const [si, c] of eqs[j].net) {
+            if (act) { r += c * lnG[si]; G += c * dG[si]; }
             // A held species contributes a constant, and no column.
             if (at[si] < 0) { r += c * Math.log(Math.max(out[b + si], floor)); continue; }
             r += c * u[at[si]];
             J[j][at[si]] = c;
+          }
+          if (act) {
+            const w = eqs[j].water || 0;
+            if (w) r += w * water.lnAw;
+            for (let k = 0; k < na; k++) {
+              const si = part[k];
+              let d = G * 0.5 * act.z[si] * act.z[si];
+              if (w && act.solute[si]) d += w * water.dAw;
+              if (d) J[j][k] += d * C[k];
+            }
           }
           F[j] = r;
         }
@@ -2112,6 +2326,8 @@
 
     const grid = makeGrid(settings);
     const warnings = [];
+    // Null unless ACTIVITY asks for one; see activityModel.
+    const act = activityModel(settings, species, warnings);
     const transport = settings.MODE === 'transport';
     flowFromTravelTime(settings, grid);
     const surface = wettedSurface(settings, grid);
@@ -2350,8 +2566,18 @@
       not. Without a kf an equilibrium is used for speciation and nothing else.
     */
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
+    /*
+      Under ACTIVITY a pair relaxes to its K in activities, so its backward
+      constant follows the ionic strength: kb = kf*Gamma/K, Gamma the product
+      of the activity coefficients (and the water's activity) to their
+      coefficients in the relation, products positive. No rate law here can
+      say that, so those pairs are worked out beside the generated code: see
+      pairInfo below.
+    */
+    const apairs = [];
     for (const eq of equilibria) {
       if (eq.kf === null) continue;
+      if (act) { apairs.push(eq); continue; }
       const kb = eq.kf / Math.exp(eq.lnK);
       const net = eq.net.map(([i, c]) => [i, c]);
       const mk = (side, sign, k) => {
@@ -2703,12 +2929,36 @@
     // neighbouring cells.
     const cols = Array.from({ length: n }, () => new Set());
     const touch = (row, col) => cols[col].add(row);
+    // The pairs under ACTIVITY: each side's species with their powers, and
+    // the columns a pair's rate reads -- its own species, every ion through
+    // the ionic strength, and with water in it every solute through a(H2O).
+    const ions = act ? species.map((_, k) => k).filter((k) => act.z[k] !== 0) : [];
+    const solutes = act ? species.map((_, k) => k).filter((k) => act.solute[k]) : [];
+    const pairInfo = apairs.map((eq) => {
+      const side = (terms) => {
+        const m = new Map();
+        for (const [c, name] of terms) { const k = index.get(name); m.set(k, (m.get(k) || 0) + c); }
+        return [...m.entries()];
+      };
+      const reac = side(eq.reactants);
+      const prod = side(eq.products);
+      const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...ions,
+        ...(eq.water ? solutes : [])])].sort((x, y) => x - y);
+      return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
+        kf: eq.kf, kb: eq.kf / Math.exp(eq.lnK), water: eq.water || 0, d: new Float64Array(colsOf.length) };
+    });
     for (let i = 0; i < nc; i++) {
       const b = i * ns;
       for (const ch of channels) {
         for (const [p] of ch.net) {
           if (fixedAt[b + p]) continue;
           for (const dep of ch.deps) touch(b + p, b + dep.si);
+        }
+      }
+      for (const pr of pairInfo) {
+        for (const [p] of pr.net) {
+          if (fixedAt[b + p]) continue;
+          for (const k of pr.cols) touch(b + p, b + k);
         }
       }
       for (let s = 0; s < ns; s++) {
@@ -2757,6 +3007,17 @@
       }
       throw new RtmError(`No room in the pattern for (${row}, ${col}).`);
     };
+    // Where each pair's derivatives go, cell by cell: row (each species it
+    // changes) by column, -1 where the row is held.
+    const pairSlots = pairInfo.length ? Array.from({ length: nc }, (_, i) => pairInfo.map((pr) => {
+      const b = i * ns;
+      const at = new Int32Array(pr.net.length * pr.cols.length).fill(-1);
+      pr.net.forEach(([p], m) => {
+        if (fixedAt[b + p]) return;
+        pr.cols.forEach((k, q) => { at[m * pr.cols.length + q] = slot(b + p, b + k); });
+      });
+      return at;
+    })) : null;
 
     /* ---- the transport coefficients, worked out once ------------------- */
     // Finite volume: the flux between two cells over the distance between
@@ -3131,9 +3392,55 @@
       slotCache.push(perChannel);
     }
 
+    /*
+      THE PAIRS UNDER ACTIVITY, beside the generated code: forward kf times
+      the reactants, backward kb*Gamma times the products, Gamma following the
+      ionic strength of the cell. One activity evaluation a cell serves them
+      all.
+    */
+    const lnG = act ? new Float64Array(ns) : null;
+    const dG = act ? new Float64Array(ns) : null;
+    /**
+     * One pair's rate in the cell at b; kb*Gamma kept in pr.kg and the
+     * backward rate in pr.back, for the Jacobian.
+     */
+    const pairRate = (pr, y, b, water) => {
+      let fwd = pr.kf;
+      for (const [k, e] of pr.reac) fwd *= e === 1 ? y[b + k] : y[b + k] ** e;
+      let lnGamma = pr.water * water.lnAw;
+      for (const [k, c] of pr.net) lnGamma += c * lnG[k];
+      pr.kg = pr.kb * Math.exp(lnGamma);
+      let back = pr.kg;
+      for (const [k, e] of pr.prod) back *= e === 1 ? y[b + k] : y[b + k] ** e;
+      pr.back = back;
+      return fwd - back;
+    };
+    /** d(prod of y^e over a side)/dy_k, the side's own species only. */
+    const sideDerivative = (terms, y, b, k) => {
+      let d = 0;
+      for (const [s1, e1] of terms) {
+        if (s1 !== k) continue;
+        d = e1 === 1 ? 1 : e1 * y[b + s1] ** (e1 - 1);
+        for (const [s2, e2] of terms) if (s2 !== k) d *= e2 === 1 ? y[b + s2] : y[b + s2] ** e2;
+      }
+      return d;
+    };
+
     function rhs(t, y, out) {
       out.fill(0);
       if (ntv) atTheClock(t);
+      if (pairInfo.length) {
+        for (let i = 0; i < nc; i++) {
+          const b = i * ns;
+          const water = activityAt(act, y, b, lnG, dG);
+          const sc = reactScale[i];
+          for (const pr of pairInfo) {
+            const r = pairRate(pr, y, b, water) * sc;
+            if (r === 0) continue;
+            for (const [p, c] of pr.net) if (!fixedAt[b + p]) out[b + p] += c * r;
+          }
+        }
+      }
       if (nchan) {
         for (let i = 0; i < nc; i++) {
           const b = i * ns;
@@ -3188,6 +3495,37 @@
               V[slotCache[i][j][m][q]] += c * dv;
             }
           }
+        }
+      }
+      if (pairInfo.length) {
+        for (let i = 0; i < nc; i++) {
+          const b = i * ns;
+          const water = activityAt(act, y, b, lnG, dG);
+          const sc = reactScale[i];
+          pairInfo.forEach((pr, j) => {
+            pairRate(pr, y, b, water);
+            const d = pr.d;
+            d.fill(0);
+            // The mass action of each side...
+            for (const [k] of pr.reac) d[pr.at.get(k)] += pr.kf * sideDerivative(pr.reac, y, b, k);
+            for (const [k] of pr.prod) d[pr.at.get(k)] -= pr.kg * sideDerivative(pr.prod, y, b, k);
+            // ...and Gamma through the ionic strength and the water.
+            let G = 0;
+            for (const [k, c] of pr.net) G += c * dG[k];
+            if (pr.back !== 0) {
+              pr.cols.forEach((k, q) => {
+                let g = G * 0.5 * act.z[k] * act.z[k];
+                if (pr.water && act.solute[k]) g += pr.water * water.dAw;
+                if (g) d[q] -= pr.back * g;
+              });
+            }
+            const at = pairSlots[i][j];
+            const ncol = pr.cols.length;
+            pr.net.forEach(([, c], m) => {
+              if (at[m * ncol] < 0) return;
+              for (let q = 0; q < ncol; q++) if (d[q]) V[at[m * ncol + q]] += c * sc * d[q];
+            });
+          });
         }
       }
       for (let k = 0; k < nflow; k++) V[flowAt[k]] += flowValue[k];
@@ -3271,7 +3609,8 @@
       rhs,
       jac,
       // The Jacobian is the same at every state and time: see jacobianMoves.
-      jacobianConstant: !jacobianMoves,
+      // A pair under ACTIVITY is mass action with a constant that moves.
+      jacobianConstant: !jacobianMoves && !pairInfo.length,
       /**
        * The times in (t0, t1) at which a table a rate law reads at the clock
        * turns, ascending, near-duplicates merged: where the run is started
@@ -3337,6 +3676,12 @@
       anyMass,
       // The coefficient on the left of each state's equation, R dC/dt = f.
       massOf,
+      // What a reaction in each cell is scaled by: the porosity in the rock.
+      reactScale,
+      // The activity model (activityModel), or null; and what of it to show.
+      act,
+      activity: act ? { kind: act.kind, temperature: act.temperature, A: act.A, B: act.B,
+        ions: ions.length, pairs: pairInfo.length } : null,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -3350,6 +3695,12 @@
       first moments of the run are the solver discovering that, at whatever the
       fastest rate in the set happens to be.
     */
+    if (act && !(equilibria.length && (settings.EQUILIBRATE || apairs.length))) {
+      warnings.push(equilibria.length
+        ? `ACTIVITY = ${act.kind} acts on the <EQUILIBRIUM> relations through EQUILIBRATE or a kf, and `
+          + 'here there is neither: nothing uses it.'
+        : `ACTIVITY = ${act.kind} acts on the <EQUILIBRIUM> relations, and there are none: nothing uses it.`);
+    }
     if (settings.EQUILIBRATE && equilibria.length) {
       const done = speciate(model, initial);
       initial.set(done.y);
@@ -3464,6 +3815,13 @@
 
     const free = basis.free;
     const relRow = matchRelations(eqs, active.filter((s) => !free.includes(s)));
+    // Under ACTIVITY a relation also reads every ion, through the ionic
+    // strength, and with water in it every solute, through a(H2O).
+    const act = base.act || null;
+    const lnG = act ? new Float64Array(ns) : null;
+    const dG = act ? new Float64Array(ns) : null;
+    const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
+      || (eq.water && act.solute[k])) : []));
     const pos = new Int32Array(ns).fill(-1);
     active.forEach((s, k) => { pos[s] = k; });
     const U = basis.map((u) => active.map((s) => u[s]));
@@ -3491,7 +3849,10 @@
         touch(b + free[j], tIndex(c, j));
         for (let k = 0; k < na; k++) if (U[j][k]) touch(b + free[j], b + active[k]);
       }
-      eqs.forEach((eq, r) => { for (const [s] of eq.net) touch(b + relRow[r], b + s); });
+      eqs.forEach((eq, r) => {
+        for (const [s] of eq.net) touch(b + relRow[r], b + s);
+        for (const k of actCols[r]) touch(b + relRow[r], b + k);
+      });
     }
     for (let i = 0; i < n; i++) touch(i, i);
     const colPtr = new Int32Array(n + 1);
@@ -3539,11 +3900,13 @@
     const defT = [];
     const defC = [];
     const relC = [];
+    const relA = [];
     for (let c = 0; c < nc; c++) {
       const b = c * ns;
       defT.push(Int32Array.from({ length: nb }, (_, j) => slot(b + free[j], tIndex(c, j))));
       defC.push(U.map((uj, j) => Int32Array.from(active, (s, k) => (uj[k] ? slot(b + free[j], b + s) : -1))));
       relC.push(eqs.map((eq, r) => Int32Array.from(eq.net, ([s]) => slot(b + relRow[r], b + s))));
+      relA.push(eqs.map((eq, r) => Int32Array.from(actCols[r], (k) => slot(b + relRow[r], b + k))));
     }
 
     /* ---- concentrations, and back ---- */
@@ -3578,9 +3941,14 @@
           // The total, as its species make it up, is the total.
           out[b + free[j]] = y[tIndex(c, j)] - totalOf(C, c, j);
         }
+        const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
           let g = -eqs[r].lnK;
           for (const [s, nu] of eqs[r].net) g += nu * (held[b + s] ? y[b + s] : Math.log(C[b + s]));
+          if (act) {
+            for (const [s, nu] of eqs[r].net) g += nu * lnG[s];
+            if (eqs[r].water) g += eqs[r].water * water.lnAw;
+          }
           out[b + relRow[r]] = g;
         }
       }
@@ -3612,9 +3980,21 @@
             V[at] -= U[j][k] * massOf[s] * C[s];
           }
         }
+        const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
           eqs[r].net.forEach(([s, nu], m) => {
             V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
+          });
+          if (!act) continue;
+          // The coefficients through the ionic strength, and the water: in
+          // a held species' column times C, as everything in ln C is.
+          let G = 0;
+          for (const [s, nu] of eqs[r].net) G += nu * dG[s];
+          const w = eqs[r].water || 0;
+          actCols[r].forEach((k, q) => {
+            let d = G * 0.5 * act.z[k] * act.z[k];
+            if (w && act.solute[k]) d += w * water.dAw;
+            if (d) V[relA[c][r][q]] += held[b + k] ? d * C[b + k] : d;
           });
         }
       }
@@ -3642,13 +4022,31 @@
         let done = false;
         let res = Infinity;
         for (let it = 0; it < 100; it++) {
+          let water = null;
+          if (act) {
+            for (let k = 0; k < na; k++) C[b + active[k]] = Math.exp(u[k]);
+            water = activityAt(act, C, b, lnG, dG);
+          }
           for (let r = 0; r < ne; r++) {
             let g = -eqs[r].lnK;
             J[r].fill(0);
             for (const [s, nu] of eqs[r].net) {
+              if (act) g += nu * lnG[s];
               if (pos[s] < 0) { g += nu * Math.log(C[b + s]); continue; }
               g += nu * u[pos[s]];
               J[r][pos[s]] += nu;
+            }
+            if (act) {
+              const w = eqs[r].water || 0;
+              if (w) g += w * water.lnAw;
+              let G = 0;
+              for (const [s, nu] of eqs[r].net) G += nu * dG[s];
+              for (let k = 0; k < na; k++) {
+                const s = active[k];
+                let d = G * 0.5 * act.z[s] * act.z[s];
+                if (w && act.solute[s]) d += w * water.dAw;
+                if (d) J[r][k] += d * C[b + s];
+              }
             }
             F[r] = g;
           }
@@ -3891,6 +4289,7 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
+    chargeOf, debyeHuckelAB, activityModel, activityAt,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
