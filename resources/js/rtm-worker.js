@@ -179,6 +179,10 @@ function rtmSummary(model) {
     speciesStates: model.stateWidth || model.nspecies,
     // ACTIVITY: the model, its temperature and A and B, and how many ions.
     activity: model.activity || null,
+    // Ion exchange: the exchangers, and how many species are on them.
+    exchange: model.act && model.act.ex
+      ? { exchangers: model.act.ex.exchangers.map((k) => model.speciesNames[k]), species: model.act.ex.list.length }
+      : null,
   };
 }
 

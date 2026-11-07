@@ -3358,6 +3358,529 @@ Calcite <=> Ca+2 + CO3-2, logK = -8.48
 }
 
 /* ======================================================================
+   2v. Activities and saturation in rate laws ({X}, I, SI, SR, <PHASES>)
+
+   A rate law may read an activity, the ionic strength, or the saturation of
+   a phase. The checks: each against the same quantity worked out apart, a
+   kinetic mineral that ends where holding it at saturation puts it, and the
+   Jacobian through all of them (the PHREEQC KINETICS comparison is in
+   test-phreeqc.js).
+   ====================================================================== */
+console.log('\n--- activities and saturation in rate laws ---');
+{
+  const water = (extra, rx, opts = {}) => `
+<SETTINGS>
+MODE = batch
+TEND = 1e6
+EQUILIBRATE = always
+ACTIVITY = ${opts.activity || 'debye-huckel'}
+
+<SPECIES>
+H+      1e-7    a=9
+OH-     1e-7    a=3.5
+CO2     1e-4
+HCO3-   2e-3    a=5.4
+CO3-2   1e-5    a=5.4
+Ca+2    1e-4    a=5  b=0.165
+Na+     2e-3    a=4.08  b=0.082
+Cl-     1e-4    a=3.63  b=0.017
+${extra}
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,          logK = -14
+CO2 + H2O <=> H+ + HCO3-,  logK = -6.35
+HCO3- <=> H+ + CO3-2,      logK = -10.33
+${opts.relations || ''}
+
+<PHASES>
+${opts.phases !== undefined ? opts.phases : 'Calcite <=> Ca+2 + CO3-2,  logK = -8.48'}
+
+<REACTIONS>
+${rx}
+${opts.params ? `\n<PARAMETERS>\n${opts.params}\n` : ''}`;
+  const rateOf = (m, name) => {
+    const f = new Float64Array(m.nspecies);
+    m.rhs(0, m.initialState(), f);
+    return f[m.speciesNames.indexOf(name)];
+  };
+  const m1 = RtmModel.compile(water('X 0', '=> X, r = 2*{H+}*{Ca+2}'));
+  const c1 = m1.toConcentrations(m1.initialState());
+  const lnG = new Float64Array(9);
+  const w1 = RtmModel.activityAt(m1.act, c1, 0, lnG, new Float64Array(9));
+  const iCa = m1.speciesNames.indexOf('Ca+2');
+  check('{X} in a rate law is the activity: 2 {H+}{Ca+2} against the coefficients worked out apart',
+    Math.abs(rateOf(m1, 'X') / (2 * c1[0] * Math.exp(lnG[0]) * c1[iCa] * Math.exp(lnG[iCa])) - 1) < 1e-14
+      && RtmModel.verifyJacobian(m1, 0, m1.initialState()).discrepancies.length === 0,
+    `${rateOf(m1, 'X').toExponential(6)}, gamma(Ca+2) ${Math.exp(lnG[iCa]).toFixed(5)}`);
+  const m2 = RtmModel.compile(water('X 0', '=> X, r = I'));
+  check('  I is the ionic strength of the cell', Math.abs(rateOf(m2, 'X') / w1.I - 1) < 1e-14, w1.I.toExponential(6));
+  const m2p = RtmModel.compile(water('X 0', '=> X, r = I', { params: 'I all 7' }));
+  check('  unless the text has a parameter called I', rateOf(m2p, 'X') === 7);
+  const m3 = RtmModel.compile(water('X 0', '=> X, r = {Ca+2}', { activity: 'none' }).replace(/ [ab]=[0-9.]+/g, ''));
+  check('  and without ACTIVITY an activity is the concentration', rateOf(m3, 'X') === 1e-4);
+
+  // A mineral that dissolves at a rate, k (1 - SR), ends where holding it puts it.
+  const kin = RtmModel.compile(water('Calcite 0.01 mineral',
+    'Calcite => Ca+2 + CO3-2, r = k*(1 - SR(Calcite)), k = 1e-7'));
+  const rk = FacsimileODE.runModel(kin, { solver: 'ndf', tend: 1e6, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const ck = kin.toConcentrations(rk.y[rk.y.length - 1]);
+  const held = RtmModel.compile(water('Calcite 0.01 mineral', '',
+    { relations: 'Calcite <=> Ca+2 + CO3-2, logK = -8.48', phases: '' }));
+  const ch = held.toConcentrations(held.initialState());
+  const iCal = kin.speciesNames.indexOf('Calcite');
+  let apart = 0;
+  for (let i = 0; i < ck.length; i++) apart = Math.max(apart, Math.abs(ck[i] / ch[i] - 1));
+  const vk0 = RtmModel.verifyJacobian(kin, 0, kin.initialState());
+  const vk1 = RtmModel.verifyJacobian(kin, 1e6, rk.y[rk.y.length - 1]);
+  check('calcite dissolving at k (1 - SR) ends on the state calcite held at saturation has',
+    apart < 1e-9 && vk0.discrepancies.length === 0 && vk1.discrepancies.length === 0,
+    `${(0.01 - ck[iCal]).toExponential(5)} mol dissolved, every species within ${apart.toExponential(1)}; `
+      + `${vk0.checked} and ${vk1.checked} entries`);
+  const siRate = RtmModel.compile(water('X 0', '=> X, r = SI(Calcite)'));
+  const cs = siRate.toConcentrations(siRate.initialState());
+  const lnGs = new Float64Array(9);
+  RtmModel.activityAt(siRate.act, cs, 0, lnGs, new Float64Array(9));
+  const siApart = (Math.log(cs[iCa]) + lnGs[iCa] + Math.log(cs[4]) + lnGs[4]) / Math.LN10 + 8.48;
+  check('  SI(Calcite) is log(IAP/K) in activities', Math.abs(rateOf(siRate, 'X') - siApart) < 1e-13,
+    rateOf(siRate, 'X').toFixed(6));
+  const fromEq = RtmModel.compile(water('Calcite 0.01 mineral\nX 0', '=> X, r = SI(Calcite)',
+    { relations: 'Calcite <=> Ca+2 + CO3-2, logK = -8.48', phases: '' }));
+  check('  and of a mineral held in <EQUILIBRIUM>, 0 while there is any', Math.abs(rateOf(fromEq, 'X')) < 1e-12);
+  const refused = (rx) => { try { RtmModel.compile(water('X 0', rx)); return ''; } catch (e) { return e.message; } };
+  check('  a phase that is nowhere is refused, and says where to give it',
+    /SI\(Nope\): "Nope" is no phase. Give its dissolution in <PHASES>/.test(refused('=> X, r = SI(Nope)')));
+}
+
+/* ======================================================================
+   2u. Diffusion that keeps the charge (DIFFUSION = nernst-planck)
+
+   A step of HCl in a closed column: coupled, H+ and Cl- spread together at
+   the ambipolar coefficient 2 D_H D_Cl/(D_H + D_Cl) and the water stays
+   neutral; each on its own, the acid runs ahead of its chloride. Against
+   the closed solution for a step in an unbounded column, on a column the
+   spread does not reach the ends of.
+   ====================================================================== */
+console.log('\n--- diffusion that keeps the charge ---');
+{
+  const N = 400;
+  const L = 0.04;
+  const T = 2e3;
+  const DH = 9.31e-9;
+  const DCl = 2.03e-9;
+  const step = (how, more = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = ${N}
+LENGTH = ${L}
+DIFFUSION = ${how}
+LEFT = neumann
+RIGHT = neumann
+TEND = ${T}
+
+<SPECIES>
+H+    1e-6   D=${DH}
+Cl-   1e-6   D=${DCl}
+${more}
+
+<INITIAL>
+H+   0-${N / 2 - 1}  1e-3
+Cl-  0-${N / 2 - 1}  1e-3
+`);
+  const spread = (how) => {
+    const m = step(how);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: T, rtol: 1e-8, atol: 1e-16 });
+    const y = r.y[r.y.length - 1];
+    let charge = 0;
+    let amb = 0;
+    let own = 0;
+    const Damb = (2 * DH * DCl) / (DH + DCl);
+    const exact = (x, D) => 1e-6 + ((1e-3 - 1e-6) / 2) * erfc((x - L / 2) / (2 * Math.sqrt(D * T)));
+    for (let i = 0; i < N; i++) {
+      const x = m.grid.centres[i];
+      charge = Math.max(charge, Math.abs(y[2 * i] - y[2 * i + 1]) / 1e-3);
+      amb = Math.max(amb, Math.abs(y[2 * i] - exact(x, Damb)) / 1e-3);
+      own = Math.max(own, Math.abs(y[2 * i] - exact(x, DH)) / 1e-3);
+    }
+    return { m, y, charge, amb, own };
+  };
+  const fick = spread(1);
+  const np = spread('nernst-planck');
+  check('each species on its own: the acid runs ahead of its chloride, at its own D', fick.charge > 0.1 && fick.own < 2e-3,
+    `charge up to ${fick.charge.toFixed(3)} of the step; H+ within ${fick.own.toExponential(1)} of erfc at D_H`);
+  check('  nernst-planck: HCl spreads at 2 D_H D_Cl/(D_H + D_Cl), the water neutral',
+    np.charge < 1e-12 && np.amb < 1e-4, `within ${np.amb.toExponential(1)} of the closed solution, charge `
+      + `${np.charge.toExponential(1)} of the step`);
+  const vnp = RtmModel.verifyJacobian(np.m, T, np.y);
+  check('  and its Jacobian, every ion against every other across each face', vnp.discrepancies.length === 0
+    && !np.m.jacobianConstant, `${vnp.checked} entries`);
+  // Equal coefficients in a neutral water: the coupling is nothing.
+  const same = (how) => {
+    const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 50
+LENGTH = 0.01
+DIFFUSION = ${how}
+LEFT = neumann
+RIGHT = neumann
+TEND = 2e3
+
+<SPECIES>
+Na+   1e-6   D=1e-9
+Cl-   1e-6   D=1e-9
+
+<INITIAL>
+Na+  0-24  1e-3
+Cl-  0-24  1e-3
+`);
+    return FacsimileODE.runModel(m, { solver: 'ndf', tend: 2e3, rtol: 1e-8, atol: 1e-16 });
+  };
+  const a = same(1);
+  const b = same('nernst-planck');
+  const ya = a.y[a.y.length - 1];
+  const yb = b.y[b.y.length - 1];
+  let diff = 0;
+  for (let i = 0; i < ya.length; i++) diff = Math.max(diff, Math.abs(ya[i] - yb[i]) / 1e-3);
+  check('  where every D is the same it changes nothing', diff < 1e-9, diff.toExponential(1));
+  let word = '';
+  try { step('nernst'); } catch (e) { word = e.message; }
+  check('  DIFFUSION is 0, 1 or nernst-planck', /DIFFUSION is 0, 1, nernst-planck/.test(word), word);
+  // Beside held equilibria: the coupling reaches the totals through the species.
+  const held = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 8
+LENGTH = 0.01
+DIFFUSION = nernst-planck
+LEFT = neumann
+RIGHT = neumann
+TEND = 1e3
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7   D=9.31e-9
+OH-     1e-7   D=5.27e-9
+CO2     1e-4   D=1.92e-9
+HCO3-   2e-3   D=1.18e-9
+CO3-2   1e-5   D=0.955e-9
+Na+     2e-3   D=1.33e-9
+Cl-     1e-4   D=2.03e-9
+
+<INITIAL>
+H+   0-1  2e-3
+Cl-  0-1  2.1e-3
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+`);
+  const yh = held.initialState();
+  for (let k = 0; k < yh.length; k++) yh[k] += 1e-4 * Math.sin(k);
+  const vh = RtmModel.verifyJacobian(held, 0, yh);
+  check('  and beside equilibria held, the Jacobian through the totals', vh.discrepancies.length === 0, `${vh.checked} entries`);
+}
+
+/* ======================================================================
+   2v. Ion exchange (exchange, exchanger)
+
+   PHREEQC's Gaines-Thomas: an exchanger X- that is no amount, its activity
+   solved for, and species on it whose activity is their equivalent
+   fraction. Against the closed solution of a binary Na/Ca exchange, as a
+   capacity loaded from a water that stays as it is, in the half-reaction,
+   exchange-reaction and Gapon forms, with the ion's activity coefficient,
+   as a column whose Ca front moves at v/R with R = 1 + CEC/(2 Ca), and as
+   a pair with a kf; and the texts it refuses.
+   ====================================================================== */
+console.log('\n--- ion exchange ---');
+{
+  const K = 10 ** 0.8;     // Ca+2 + 2 NaX <=> CaX2 + 2 Na+, with NaX at logK 0
+  const CEC = 1e-3;
+  const batch = (species, rel, more = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+${more}
+
+<SPECIES>
+${species}
+
+<EQUILIBRIUM>
+${rel}
+`);
+  const val = (m, y, name) => y[m.speciesNames.indexOf(name)];
+  const half = 'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8';
+
+  // The closed solution: x of Ca onto the exchanger from Na0, Ca0 and an
+  // exchanger all Na, beta_Ca/beta_Na^2 = K Ca/Na^2.
+  const Na0 = 1e-3;
+  const Ca0 = 2e-4;
+  const f = (x) => (2 * x / CEC) * (Na0 + 2 * x) ** 2 - K * (Ca0 - x) * ((CEC - 2 * x) / CEC) ** 2;
+  let lo = 0;
+  let hi = Ca0;
+  for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (f(mid) > 0) hi = mid; else lo = mid; }
+  const x = (lo + hi) / 2;
+  const given = batch(`Na+ ${Na0}\nCa+2 ${Ca0}\nCl- ${Na0 + 2 * Ca0}\nX- exchanger\nNaX exchange ${CEC}\nCaX2 exchange`,
+    half, 'EQUILIBRATE = start');
+  const yg = given.initialState();
+  const dev = Math.max(...[['CaX2', x], ['NaX', CEC - 2 * x], ['Na+', Na0 + 2 * x], ['Ca+2', Ca0 - x]]
+    .map(([n, v]) => Math.abs(val(given, yg, n) / v - 1)));
+  check('a binary Na/Ca exchange, the exchanger all Na at the start, against the closed solution',
+    dev < 1e-9 && given.speciated[0].converged, `within ${dev.toExponential(1)}; ${(x * 1e3).toFixed(5)} mM of Ca taken up`);
+  check('  the sites are the capacity, and the totals of Na and Ca are kept',
+    Math.abs((val(given, yg, 'NaX') + 2 * val(given, yg, 'CaX2')) / CEC - 1) < 1e-12
+    && Math.abs((val(given, yg, 'Na+') + val(given, yg, 'NaX')) / (Na0 + CEC) - 1) < 1e-12
+    && Math.abs((val(given, yg, 'Ca+2') + val(given, yg, 'CaX2')) / Ca0 - 1) < 1e-12);
+  // The same exchange written between the species on the exchanger.
+  const swap = batch(`Na+ ${Na0}\nCa+2 ${Ca0}\nCl- ${Na0 + 2 * Ca0}\nX- exchanger\nNaX exchange ${CEC}\nCaX2 exchange`,
+    'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 NaX <=> CaX2 + 2 Na+, logK = 0.8', 'EQUILIBRATE = start');
+  const ys = swap.initialState();
+  check('  written as Ca+2 + 2 NaX <=> CaX2 + 2 Na+, CaX2 takes 2 sites and the answer is the same',
+    swap.act.ex.n[swap.speciesNames.indexOf('CaX2')] === 2
+    && Math.abs(val(swap, ys, 'CaX2') / x - 1) < 1e-9);
+
+  // A capacity, loaded from the water, which stays as it is.
+  const loaded = batch(`Na+ ${Na0}\nCa+2 ${Ca0}\nCl- ${Na0 + 2 * Ca0}\nX- exchanger ${CEC}\nNaX exchange\nCaX2 exchange`,
+    half, 'EQUILIBRATE = start');
+  const yl = loaded.initialState();
+  const bNa = val(loaded, yl, 'NaX') / CEC;
+  const bCa = 2 * val(loaded, yl, 'CaX2') / CEC;
+  check('a capacity on the exchanger\'s line is loaded from the water, which stays as it is',
+    Math.abs(val(loaded, yl, 'Na+') / Na0 - 1) < 1e-14 && Math.abs(val(loaded, yl, 'Ca+2') / Ca0 - 1) < 1e-14
+    && Math.abs(bNa + bCa - 1) < 1e-14 && Math.abs((bCa / bNa ** 2) / (K * Ca0 / Na0 ** 2) - 1) < 1e-12,
+    `fractions Na ${bNa.toFixed(6)}, Ca ${bCa.toFixed(6)}`);
+  check('  and the exchanger\'s value is its activity, which no total counts',
+    Math.abs(Math.log(val(loaded, yl, 'NaX') / CEC) - Math.log(val(loaded, yl, 'Na+')) - Math.log(val(loaded, yl, 'X-'))) < 1e-12);
+  const noCa = batch(`Na+ ${Na0}\nCa+2 0\nCl- ${Na0}\nX- exchanger ${CEC}\nNaX exchange\nCaX2 exchange`, half);
+  const yn = noCa.initialState();
+  check('  an ion the water has none of puts none of its species on it',
+    val(noCa, yn, 'CaX2') === 0 && Math.abs(val(noCa, yn, 'NaX') / CEC - 1) < 1e-15);
+
+  // Gapon: Ca0.5X takes one site, its ion to the power 0.5.
+  const gapon = batch(`Na+ ${Na0}\nCa+2 ${Ca0}\nCl- ${Na0 + 2 * Ca0}\nX- exchanger ${CEC}\nNaX exchange\nCa0_5X exchange`,
+    'Na+ + X- <=> NaX, logK = 0\n0.5 Ca+2 + X- <=> Ca0_5X, logK = 0.4');
+  const yq = gapon.initialState();
+  const gN = val(gapon, yq, 'NaX') / CEC;
+  const gC = val(gapon, yq, 'Ca0_5X') / CEC;
+  check('Gapon, 0.5 Ca+2 + X- <=> Ca0_5X: one site each, Ca0_5X/NaX = K Ca^0.5/Na',
+    Math.abs(gN + gC - 1) < 1e-14 && Math.abs((gC / gN) / (10 ** 0.4 * Math.sqrt(Ca0) / Na0) - 1) < 1e-12);
+
+  // The ion's activity coefficient: WATEQ with the a and b on the species'
+  // line and its ion's charge, to the ion's power; Davies where both are 0.
+  const { A, B } = RtmModel.debyeHuckelAB(25);
+  const act = (more) => {
+    const m = batch(`Na+ 0.05\nCa+2 0.01\nCl- 0.07\nX- exchanger ${CEC}\nNaX exchange ${more[0]}\nCaX2 exchange ${more[1]}`,
+      half, 'ACTIVITY = debye-huckel');
+    const y = m.initialState();
+    const lnG = new Float64Array(m.speciesNames.length);
+    RtmModel.activityAt(m.act, y, 0, lnG, new Float64Array(m.speciesNames.length), 0);
+    return { m, y, lnG };
+  };
+  const I = 0.5 * (0.05 + 4 * 0.01 + 0.07);
+  const sq = Math.sqrt(I);
+  const wateq = (z, a, b) => Math.LN10 * (-A * z * z * sq / (1 + B * a * sq) + b * I);
+  const davies = (z) => -Math.LN10 * A * z * z * (sq / (1 + sq) - 0.3 * I);
+  const g1 = act(['a=4.08 b=0.082', 'a=5 b=0.165']);
+  const iNaX = g1.m.speciesNames.indexOf('NaX');
+  const iCaX2 = g1.m.speciesNames.indexOf('CaX2');
+  const shift = (j, n) => Math.log(n * val(g1.m, g1.y, j) / CEC) - Math.log(val(g1.m, g1.y, j));
+  check('an exchange species\' coefficient: its ion\'s, WATEQ with its own a and b, and its fraction',
+    Math.abs(g1.lnG[iNaX] - shift('NaX', 1) - wateq(1, 4.08, 0.082)) < 1e-12
+    && Math.abs(g1.lnG[iCaX2] - shift('CaX2', 2) - wateq(2, 5, 0.165)) < 1e-12,
+    `ln gamma ${g1.lnG[iNaX].toFixed(6)}, ${g1.lnG[iCaX2].toFixed(6)}`);
+  const g2 = act(['a=0 b=0', '']);
+  check('  Davies where a and b are both 0, and none without them',
+    Math.abs(g2.lnG[iNaX] - shift('NaX', 1) - davies(1)) < 1e-12 && Math.abs(g2.lnG[iCaX2] - shift('CaX2', 2)) < 1e-12);
+  check('  and neither counts in the ionic strength nor in the water',
+    g1.m.act.z[iNaX] === 0 && g1.m.act.z[g1.m.speciesNames.indexOf('X-')] === 0 && !g1.m.act.solute[iNaX]);
+  // {NaX} in a rate law: the fraction, times the ion's coefficient.
+  const rate = (more) => {
+    const m = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+${more}
+
+<SPECIES>
+Na+ 0.05
+Cl- 0.05
+T 1
+X- exchanger
+NaX exchange 6e-4 ${more ? 'a=4.08 b=0.082' : ''}
+KX exchange 4e-4
+
+<EQUILIBRIUM>
+Na+ + X- <=> NaX, logK = 0
+K+ + X- <=> KX, logK = 0.7
+
+<REACTIONS>
+T => , r = k*{NaX}, k = 0.1
+`.replace('Cl- 0.05', 'Cl- 0.05\nK+ 0'));
+    const r = run(m, { tend: 1 });
+    return 1 - last(r)[m.speciesNames.indexOf('T')];
+  };
+  const r0 = rate('');
+  const r1 = rate('ACTIVITY = debye-huckel');
+  const I2 = 0.05;
+  const g = Math.exp(Math.LN10 * (-A * Math.sqrt(I2) / (1 + B * 4.08 * Math.sqrt(I2)) + 0.082 * I2));
+  check('{NaX} in a rate law is its equivalent fraction, times its ion\'s coefficient under ACTIVITY',
+    Math.abs(r0 / 0.06 - 1) < 1e-9 && Math.abs(r1 / (0.06 * g) - 1) < 1e-9,
+    `${r0.toFixed(9)} and ${r1.toFixed(9)} taken in 1 s`);
+
+  // A kinetic exchange, between the species on the exchanger, relaxing to
+  // Gaines-Thomas: kf on the concentrations, as every pair has it, and the
+  // fractions' 1/CEC with the other coefficients in its kb.
+  const kin = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1e4
+
+<SPECIES>
+Na+ ${Na0}
+Ca+2 ${Ca0}
+Cl- ${Na0 + 2 * Ca0}
+X- exchanger
+NaX exchange ${CEC}
+CaX2 exchange
+
+<EQUILIBRIUM>
+Na+ + X- <=> NaX, logK = 0
+Ca+2 + 2 NaX <=> CaX2 + 2 Na+, logK = 0.8, kf = 1e8
+`);
+  const rk = run(kin, { tend: 1e4 });
+  const yk = last(rk);
+  check('a kinetic exchange, Ca+2 + 2 NaX <=> CaX2 + 2 Na+ with a kf, relaxes to the same exchange',
+    Math.abs(yk[kin.speciesNames.indexOf('CaX2')] / x - 1) < 1e-6,
+    `CaX2 within ${Math.abs(yk[kin.speciesNames.indexOf('CaX2')] / x - 1).toExponential(1)}`);
+
+  // A column: CaCl2 water into one whose exchanger is all Na. Behind the
+  // front the exchanger is all Ca, CEC/2 of it per litre, so the front moves
+  // at v/R, R = 1 + CEC/(2 Ca_in); the chloride at v.
+  const N = 80;
+  const L = 0.08;
+  const v = 1e-5;
+  const Cin = 6e-4;
+  const Rf = 1 + CEC / (2 * Cin);
+  const T = (0.04 * Rf) / v;
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = ${N}
+LENGTH = ${L}
+VELOCITY = ${v}
+DIFFUSION = 1
+ADVECTION = 1
+EQUILIBRATE = always
+TEND = ${T}
+
+<SPECIES>
+Na+   1e-3    D=1e-10  left=0
+Ca+2  1e-12   D=1e-10  left=${Cin}
+Cl-   1e-3    D=1e-10  left=${2 * Cin}
+X-    exchanger ${CEC}
+NaX   exchange
+CaX2  exchange
+
+<EQUILIBRIUM>
+${half}
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: T, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+    outputTimes: [T / 4, T / 2, T] });
+  const nsc = col.speciesNames.length;
+  const [iNa, iCa, iCl, , iNx, iCx] = [0, 1, 2, 3, 4, 5];
+  let sites = 0;
+  let gt = 0;
+  for (const yy of rc.grid.y) {
+    const c = col.toConcentrations(yy);
+    for (let i = 0; i < N; i++) {
+      const b = i * nsc;
+      sites = Math.max(sites, Math.abs((c[b + iNx] + 2 * c[b + iCx]) / CEC - 1));
+      if (c[b + iCa] > 1e-9 && c[b + iNa] > 1e-9) {
+        gt = Math.max(gt, Math.abs(Math.log10((2 * c[b + iCx] / CEC) / (c[b + iNx] / CEC) ** 2
+          / (K * c[b + iCa] / c[b + iNa] ** 2))));
+      }
+    }
+  }
+  const cEnd = col.toConcentrations(rc.grid.y[rc.grid.y.length - 1]);
+  const at = (k, level) => {
+    for (let i = 0; i < N - 1; i++) {
+      const a = cEnd[i * nsc + k];
+      const b2 = cEnd[(i + 1) * nsc + k];
+      if (a >= level && b2 < level) return col.grid.centres[i] + ((a - level) / (a - b2)) * (col.grid.centres[i + 1] - col.grid.centres[i]);
+    }
+    return NaN;
+  };
+  const xCa = at(iCa, Cin / 2);
+  check('a column, CaCl2 water into an exchanger all Na: the sites and Gaines-Thomas held in every cell throughout',
+    sites < 1e-12 && gt < 1e-9, `sites within ${sites.toExponential(1)}, the relation within ${gt.toExponential(1)} in log`);
+  const xCl = at(iCl, (1e-3 + 2 * Cin) / 2);
+  check('  and the Ca front at v t/R, R = 1 + CEC/(2 Ca), the chloride ahead of it at v t',
+    Math.abs(xCa - 0.04) < 2 * (L / N) && Math.abs(xCl - v * T) < 2 * (L / N),
+    `Ca at ${(xCa * 100).toFixed(3)} cm for 4 cm (R = ${Rf.toFixed(4)}); chloride at ${(xCl * 100).toFixed(3)} cm for `
+      + `${(v * T * 100).toFixed(3)} cm`);
+  const yv = col.initialState();
+  for (let k = 0; k < yv.length; k++) yv[k] += 1e-3 * Math.sin(k);
+  const vj = RtmModel.verifyJacobian(col, 0, yv);
+  check('  its Jacobian, the exchanger in the relations and out of the totals', vj.discrepancies.length === 0,
+    `${vj.checked} entries`);
+
+  // The texts it refuses.
+  const refusal = (species, rel, more = '') => {
+    try { batch(species, rel, more); } catch (e) { return e.message; }
+    return '';
+  };
+  const cases = [
+    ['a species on an exchanger with no exchanger', 'Na+ 1e-3\nNaX exchange 1e-3', 'Na+ <=> NaX, logK = 0',
+      /no species is one/],
+    ['an exchanger in no relation', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange', 'Na+ <=> NaX, logK = 0',
+      /gives NaX no sites/],
+    ['a relation that loses sites', 'Na+ 1e-3\nCa+2 1e-4\nX- exchanger 1e-3\nNaX exchange\nCaX2 exchange',
+      'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\nCa+2 + NaX <=> CaX2 + Na+, logK = 1',
+      /does not keep the exchanger's sites/],
+    ['the exchanger in a fast pair', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange', 'Na+ + X- <=> NaX, logK = 0, kf = 1',
+      /no amount and cannot react at a rate/],
+    ['a capacity and amounts in the same cell', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange 1e-3',
+      'Na+ + X- <=> NaX, logK = 0', /amounts there as well/],
+    ['no capacity at all', 'Na+ 1e-3\nX- exchanger\nNaX exchange', 'Na+ + X- <=> NaX, logK = 0', /has no capacity/],
+    ['a and b without a relation from one ion', 'Na+ 1e-3\nCl- 1e-3\nX- exchanger 1e-3\nNaCl exchange a=4 b=0',
+      'Na+ + Cl- + X- <=> NaCl, logK = 0', /no relation forms it from X- and one ion/, 'ACTIVITY = davies'],
+    ['a charge on an exchange species', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange z=1', 'Na+ + X- <=> NaX, logK = 0',
+      /takes no z/],
+    ['an exchange species that moves', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange D=1e-9', 'Na+ + X- <=> NaX, logK = 0',
+      /stays where it is.*takes no D/],
+    ['a without b', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange a=4', 'Na+ + X- <=> NaX, logK = 0', /a and b together/],
+    ['two exchangers in one relation', 'Na+ 1e-3\nX- exchanger 1e-3\nY- exchanger 1e-3\nNaX exchange\nNaY exchange',
+      'Na+ + X- <=> NaX, logK = 0\nNa+ + Y- <=> NaY, logK = 0\nNaX + Y- <=> NaY + X-, logK = 0', /joins two exchangers/],
+  ];
+  const wrong = cases.filter(([, sp, rel, re, more]) => !re.test(refusal(sp, rel, more)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, sp, rel, , more]) => `${what}: "${refusal(sp, rel, more)}"`).join(' | '));
+  const quiet = batch(`Na+ 1e-3\nX- exchanger ${CEC}\nNaX exchange a=4.08 b=0.082`, 'Na+ + X- <=> NaX, logK = 0');
+  check('  and without ACTIVITY, an a and b on a species on the exchanger are said to be unused',
+    quiet.warnings.some((w) => /a and b given to one are not used/.test(w)) && quiet.activity === null);
+  const start = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 4
+LENGTH = 0.01
+VELOCITY = 1e-6
+ADVECTION = 1
+EQUILIBRATE = start
+
+<SPECIES>
+Na+ 1e-3
+X- exchanger ${CEC}
+NaX exchange
+
+<EQUILIBRIUM>
+Na+ + X- <=> NaX, logK = 0
+`);
+  check('  and in a column whose exchanger is put on its relations at the start only, that is said',
+    start.warnings.some((w) => /at the start only, and then stays as it is/.test(w))
+    && !col.warnings.some((w) => /stays as it is while the water moves/.test(w)));
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

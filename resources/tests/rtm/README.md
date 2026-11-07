@@ -31,6 +31,10 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **Phases kept at saturation**: a phase's reaction is read from the database's PHASES, and the input's EQUILIBRIUM_PHASES with their SI. Phases are refused unless the relations are held exactly. Calcite and a CO2(g) pressure become minerals and pyrite is not carried (it dissolves with electrons); the start, the amounts included, lands on what PHREEQC left (1.4e-9). With acid in, every species and the calcite left end within 1e-4 of PHREEQC with the same phases (2e-5 measured: PHREEQC leaves CO2(g) about 3e-5 off its SI, which the model then holds). The PHREEQC tab finds the water at saturation with calcite and at that CO2 pressure wherever there is any. Comparisons with PHREEQC alone leave out every species of an element kept in more than one valence state, and the redox species, since PHREEQC alone moves electrons between them.
 - **The water held exactly** (`EQUILIBRATE = always`, no `kf`): its start, read from the logarithms and totals the solver keeps, lands on PHREEQC's molalities as closely (2.4e-10). With the same acid it ends 7e-5 in pH from PHREEQC alone, where the fast pairs end 3.3e-4 from it. Exactly and as pairs at once is refused.
 - **A reactive column against PHREEQC's own TRANSPORT**: acid entering a water at saturation with calcite, 40 cells at a Peclet number of 40 for two pore volumes. PHREEQC runs TRANSPORT; the page runs the model it writes (activities following, relations held, calcite kept at saturation, limited advection). Read PHREEQC's way (its cell is the downstream face half a shift later), the effluent agrees to 0.009 in pH and 0.026 mM in calcium over the whole run, the calcite left to 0.45 %, and the front to a cell (on 80 cells, measured once: 0.002, 0.008 mM and 0.25 %). The engine is loaded afresh first: TRANSPORT applies every reactant numbered as a cell, and a REACTION 1 left from a test above had put acid into cell 1 at every shift.
+- **A mineral dissolving at a rate against PHREEQC's KINETICS**: calcite into an undersaturated water at k(1 − SR), PHREEQC with a RATES block, the page with `SR(Calcite)` from `<PHASES>` (log K PHREEQC gives at the temperature). The way to saturation agrees at 100 s to 10,000 s, calcium to 1.3e-5 and pH to 2.3e-6.
+- **An exchanger**: Example 11's column water with an `EXCHANGE` of 1.1 mmol/kgw loaded from it. The hand-off writes `X- exchanger` and the species PHREEQC put on it, with the database's `-gamma` when the activity coefficients follow (none when conditional), and the page's start is PHREEQC's exchanger to 6.7e-16. Not held exactly, the exchanger is not carried and the report says so. Then Example 11 itself: CaCl2 through 40 cells for three pore volumes, PHREEQC's TRANSPORT against the page's model of the water (limited advection), read as in the calcite column. The effluent agrees to 0.022 mM in Na, 0.033 in K (peaking at 1.115), 0.017 in Ca and 0.005 in Cl (on 80 cells, measured once: 0.016, 0.017, 0.007, 0.001). The PHREEQC tab loads PHREEQC's exchanger from each water of a run at the run's capacity, and the run's fractions are within 6.8e-9 of it over 150 waters.
+
+  These found that a BASIC `FOR` over an empty range, as `SYS("ex")` gives for a water with no exchanger, spoils the WebAssembly PHREEQC's memory: a later load of the database failed with "memory access out of bounds", three tests on. The punch block jumps the loop when there is nothing to loop over.
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
 With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge.py` drives it), the same inputs also go through that native PHREEQC on the same database. The WebAssembly build has to agree with it: 1.7e-13 on a model's numbers, and every number of a run's CSV identical.
@@ -40,6 +44,7 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 - PHREEQC is not fetched until it is used, and then runs in a worker of its own.
 - The panel on the Model tab writes the example water and reports the check. By default the activity coefficients follow the ionic strength (`ACTIVITY = debye-huckel` at 15 °C, `H2O` in the relations); fixed at this water, the constants are conditional and the water is left out. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
 - Keeping the phases needs the relations held exactly (the box is greyed otherwise); with a calcite phase in the example water, calcite becomes a mineral, the report says so, and the model facts count it.
+- An `EXCHANGE` in the example water is carried: `X- exchanger`, CaX2 with the database's a and b, the report and the model facts saying so. Run and looked at, the PHREEQC tab finds the run's exchanger within 1e-6 of the one PHREEQC loads from its waters (6e-10 measured).
 - A column is offered against distance as well: each cell at its centre down the column, at one of the times looked at.
 - The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
 - A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
@@ -314,6 +319,42 @@ the polish stopped at the first cell whose residual stayed above a tolerance
 set under rounding (1e-16 against relations of size 30), leaving every later
 cell as the solver had it. The amount is now set to zero, the tolerance is not
 below 1e-13, and every cell is settled whatever another does.
+
+**Activities and saturation in rate laws** (`{X}`, `I`, `SI()`, `SR()`,
+`<PHASES>`). Each against the same quantity worked out apart: `{H+}{Ca+2}` the
+coefficients times the concentrations, `I` the ionic strength (a parameter
+called I wins), `{X}` the concentration without `ACTIVITY`, `SI(Calcite)`
+log(IAP/K) in activities and 0 for a mineral held in `<EQUILIBRIUM>` while
+there is any. Calcite dissolving at `k*(1 - SR(Calcite))` ends on the state
+calcite held at saturation has, every species to 5e-15, and the Jacobian
+follows each quantity through every ion it reads. A phase that is nowhere is
+refused.
+
+**Diffusion that keeps the charge** (`DIFFUSION = nernst-planck`). A step
+of HCl in a closed column, on a column the spread does not reach the ends of:
+each species on its own, the acid runs ahead of its chloride (a sixth of the
+step in charge) at its own D (5e-4 of the closed solution); coupled, H+ and
+Cl- spread together at 2 D_H D_Cl/(D_H + D_Cl), within 2.4e-5 of the closed
+solution, the water neutral to 3e-14. Equal coefficients in a neutral water
+are left as they were (1.5e-15), the word is read, and the Jacobian holds,
+every ion against every other across each face, beside equilibria held too.
+The hand-off writes the setting with each species' own D (`-dw`) and not with
+one D for all (test-phreeqc.js).
+
+**Ion exchange** (`exchanger`, `exchange`). A binary Na/Ca exchange from an
+exchanger all Na, against its closed solution (7e-14), the sites and the totals
+kept to 1e-12; the same exchange written between the species on the exchanger,
+CaX2 then taking 2 sites from the relations; a capacity loaded from a water
+that stays as it is, Gaines–Thomas to 1e-12, with none of an ion the water lacks;
+Gapon's Ca0_5X; an exchange species' coefficient its ion's, WATEQ with its own
+a and b, Davies where both are 0, none without them, and out of I and the
+water; `{NaX}` in a rate law the fraction, times its ion's coefficient under
+`ACTIVITY`; a kinetic exchange with a `kf` relaxing to the same answer; and a
+column of CaCl2 into an exchanger all Na. There the sites and the relation hold
+in every cell to rounding, the Ca front sits at v t/R with R = 1 + CEC/(2 Ca)
+and the chloride at v t, each within two cells, and the Jacobian holds, the
+exchanger in the relations and out of the totals. Eleven texts are refused,
+each with its reason.
 
 **Limited advection** (`ADVECTION_SCHEME = limited`). A front at a Peclet
 number of 400 against van Genuchten and Alves's closed solution for the flux

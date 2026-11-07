@@ -239,6 +239,11 @@ function withPhreeqc(engine) {
       && mx.heldEquilibria.relations === ex.report.equilibria && worstX < 1e-8,
     `${mx.heldEquilibria ? mx.heldEquilibria.species : 0} species on ${ex.report.equilibria} relations, `
       + `${worstX.toExponential(1)}`);
+  const own = P.waterToModel({ engine, database, water, exact: true, dw: true });
+  const one = P.waterToModel({ engine, database, water, exact: true, D: 2e-9 });
+  check('each species its own D from the database: the ions coupled, DIFFUSION = nernst-planck; one D for all: not',
+    /^DIFFUSION = nernst-planck$/m.test(own.text) && /^Na\+ .*D=1\.33e-9$/m.test(own.text)
+      && !/nernst-planck/.test(one.text) && RtmModel.compile(own.text).settings.DIFFUSION === 2);
   let both = '';
   try { P.waterToModel({ engine, database, water, exact: true, relax: 1e3 }); } catch (e) { both = e.message; }
   check('... and exactly and as fast pairs at once is refused', /either exactly or as fast pairs/.test(both), both);
@@ -622,6 +627,184 @@ function againstTransport(engine) {
       + `${r.events.length} events`);
 }
 
+/* ======================================================================
+   5. A mineral dissolving at a rate, against PHREEQC's KINETICS
+
+   Calcite dissolving into an undersaturated water at k (1 - SR), in PHREEQC
+   as KINETICS with a RATES block, here as the hand-off's model of the water
+   with calcite a mineral, its saturation from <PHASES> (log K PHREEQC gives
+   for this temperature) and the rate law reading SR(Calcite). Not where it
+   ends -- test-model.js has that -- but the way there.
+   ====================================================================== */
+function againstKinetics(engine) {
+  engine.load(dbText);
+  const water = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 6.5\n Na 4\n Ca 0.2\n Cl 0.4 charge\n C(4) 4\n';
+  const k = 1e-7;
+  const steps = [100, 200, 700, 2000, 7000];
+  const times = [];
+  steps.forEach((dt) => times.push((times.length ? times[times.length - 1] : 0) + dt));
+  const rows = engine.run(`${water}KINETICS 1\nCalcite\n -formula CaCO3 1\n -m 0.01\n -m0 0.01\n -parms ${k}\n`
+    + ` -tol 1e-10\n -steps ${steps.join(' ')}\nINCREMENTAL_REACTIONS true\nRATES\nCalcite\n-start\n`
+    + '10 rate = PARM(1) * (1 - SR("Calcite"))\n20 SAVE rate * TIME\n-end\nSELECTED_OUTPUT 99\n -reset false\n'
+    + 'USER_PUNCH 99\n -headings t Ca pH\n -start\n10 PUNCH TOTAL_TIME, TOT("Ca"), -LA("H+")\n -end\nEND\n');
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map(rows.slice(1).map((r) => [Math.round(Number(r[head.indexOf('t')])),
+    { Ca: Number(r[head.indexOf('Ca')]), pH: Number(r[head.indexOf('pH')]) }]));
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'w', text: `${water}END\n` }, activity: true, exact: true });
+  const lk = P.parseRows(engine.run(`${P.punchBlock(['LK_PHASE("Calcite")'])}${water}END\n`)).pop().x[0];
+  const text = `${res.text.replace('TEND = 1\n', `TEND = ${times[times.length - 1]}\n`)
+    .replace('\n<EQUILIBRIUM>', 'Calcite     0.01   mineral\n\n<EQUILIBRIUM>')
+    .replace('\n<REACTIONS>', `\n<PHASES>\nCalcite <=> CO3-2 + Ca+2, logK = ${lk}\n\n<REACTIONS>`)
+  }Calcite => CO3-2 + Ca+2, r = k*(1 - SR(Calcite)), k = ${k}\n`;
+  const m = RtmModel.compile(text);
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-9, atol: 1e-22,
+    nonNegative: true, outputTimes: times });
+  const back = new Map([...res.names].map(([a, b]) => [b, a]));
+  const db = P.readDatabase(dbText);
+  const caOf = [];
+  m.speciesNames.forEach((n, i) => {
+    if (!back.has(n)) return;
+    const ex = db.expand(back.get(n));
+    if (ex.has('Ca')) caOf.push([i, ex.get('Ca')]);
+  });
+  const ns = m.speciesNames.length;
+  const iH = m.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  let worstCa = 0;
+  let worstPH = 0;
+  times.forEach((t, k2) => {
+    const c = m.toConcentrations(r.grid.y[k2]);
+    let Ca = 0;
+    for (const [i, kk] of caOf) Ca += kk * c[i];
+    RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns));
+    const d = pq.get(t);
+    worstCa = Math.max(worstCa, Math.abs(Ca / d.Ca - 1));
+    worstPH = Math.max(worstPH, Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - d.pH));
+  });
+  check('calcite dissolving at k (1 - SR) against PHREEQC\'s KINETICS and RATES: the way to saturation',
+    worstCa < 1e-4 && worstPH < 1e-5, `calcium within ${worstCa.toExponential(1)}, pH within ${worstPH.toExponential(1)} `
+      + `over ${times.join(', ')} s (calcium ${(pq.get(times[0]).Ca * 1e3).toFixed(3)} to `
+      + `${(pq.get(times[times.length - 1]).Ca * 1e3).toFixed(3)} mM)`);
+}
+
+/* ======================================================================
+   6. An exchanger: the hand-off, PHREEQC's TRANSPORT, and the PHREEQC tab
+
+   PHREEQC's Example 11: a column whose exchanger (X, 1.1 mmol/kgw) was
+   loaded from a Na-K-NO3 water, flushed with CaCl2. The hand-off writes the
+   exchanger and the species PHREEQC put on it; the page runs it as a column
+   with limited advection, the inflow the speciated CaCl2 water, and its
+   effluent is read against PHREEQC's last cell half a shift later, as in 4.
+   Ca and Cl are in the column's water at a part in a million, so that the
+   hand-off has their species to write.
+   ====================================================================== */
+function againstExchange(engine) {
+  const exWater = (n) => `SOLUTION ${n}\n units mmol/kgw\n temp 25\n pH 7 charge\n Na 1.0\n K 0.2\n N(5) 1.2\n`
+    + ' Ca 1e-6\n Cl 2e-6\n';
+  const loaded = `${exWater(1)}EXCHANGE 1\n -equilibrate 1\n X 0.0011\nEND\n`;
+  // The hand-off, both ways: the page's start is PHREEQC's exchanger.
+  for (const activity of [true, false]) {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'column', text: loaded }, activity, exact: true });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    let worst = 0;
+    for (const [n, v] of res.amounts) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(n)] / v - 1));
+    const lines = /^X-\s+exchanger$/m.test(res.text) && /^NaX\s+\S+\s+exchange(\s+a=4\.08\s+b=0\.082)?$/m.test(res.text)
+      && /^K\+ \+ X- <=> KX,\s+logK = 0\.7000000000/m.test(res.text);
+    check(`an exchanger in the water, ${activity ? 'with its activity coefficients' : 'conditional'}: written as an `
+      + 'exchanger and the species on it, and the page starts from what PHREEQC put on it',
+    lines && worst < 1e-12 && res.report.exchange && res.report.exchange.species.length === 3
+      && (activity ? /exchange\s+a=4\.08\s+b=0\.082/.test(res.text) : !/exchange\s+a=/.test(res.text)),
+    `${res.report.exchange ? res.report.exchange.species.map((e) => `${e.as} ${e.amount.toExponential(4)}`).join(', ') : 'none'}; `
+      + `within ${worst.toExponential(1)}`);
+  }
+  engine.load(dbText);
+  const apart = P.waterToModel({ engine, database, water: { name: 'column', text: loaded }, activity: true, exact: false });
+  check('  not held exactly, the exchanger is said and not carried',
+    !/exchanger/.test(apart.text.split('<SETTINGS>')[1]) && apart.report.exchangeSkipped.length === 1);
+
+  // The column against PHREEQC's TRANSPORT.
+  const N = 40;
+  const L = 0.08;
+  const dx = L / N;
+  const dt = 720;
+  const S = 3 * N;
+  const alpha = 0.002;
+  const v = dx / dt;
+  const inflow = 'SOLUTION 0\n units mmol/kgw\n temp 25\n pH 7 charge\n Ca 0.6\n Cl 1.2\n Na 1e-6\n K 1e-6\n N(5) 1e-6\nEND\n';
+  engine.load(dbText);
+  const started = Date.now();
+  const rows = engine.run(`${exWater(`1-${N}`)}END\nEXCHANGE 1-${N}\n -equilibrate 1\n X 0.0011\nEND\n${inflow}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time Na K Ca Cl\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, TOT("Na"), TOT("K"), TOT("Ca"), TOT("Cl")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells ${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = rows[0].map((h) => String(h).trim());
+  const els = ['Na', 'K', 'Ca', 'Cl'];
+  const pq = new Map();
+  for (const r of rows.slice(1)) {
+    const t = Number(r[head.indexOf('time')]);
+    if (t > 0) pq.set(Math.round(t / dt), Object.fromEntries(els.map((k) => [k, Number(r[head.indexOf(k)])])));
+  }
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'column', text: loaded }, activity: true, exact: true });
+  const inRow = P.parseRows(engine.run(`${P.punchBlock()}${inflow}`)).pop();
+  const back = new Map([...res.names].map(([k, n]) => [n, k]));
+  const text = res.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral|exchange/.test(rest) || !back.has(name)) return line;
+      const sp = inRow.species.get(back.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const m = RtmModel.compile(text);
+  const t0 = Date.now();
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+  const rtmMs = Date.now() - t0;
+  const ns = m.speciesNames.length;
+  const db = P.readDatabase(dbText);
+  const of = Object.fromEntries(els.map((k) => [k, []]));
+  m.speciesNames.forEach((n, i) => {
+    if (!back.has(n)) return;
+    const ex = db.expand(back.get(n));
+    for (const el of els) if (ex.has(el)) of[el].push([i, ex.get(el)]);
+  });
+  const worst = Object.fromEntries(els.map((k) => [k, 0]));
+  let peakK = 0;
+  for (let k = 1; k <= S; k++) {
+    const c = m.toConcentrations(r.grid.y[k - 1]);
+    for (const el of els) {
+      let tot = 0;
+      for (const [i, kk] of of[el]) tot += kk * c[(N - 1) * ns + i];
+      worst[el] = Math.max(worst[el], Math.abs(tot - pq.get(k)[el]));
+      if (el === 'K') peakK = Math.max(peakK, tot);
+    }
+  }
+  check('Example 11, CaCl2 through a column whose exchanger holds Na and K, against PHREEQC\'s TRANSPORT: the effluent',
+    worst.Na < 3e-5 && worst.K < 5e-5 && worst.Ca < 3e-5 && worst.Cl < 1e-5,
+    `within ${els.map((el) => `${el} ${(worst[el] * 1e3).toFixed(4)}`).join(', ')} mM (K peaking at `
+      + `${(peakK * 1e3).toFixed(3)} mM); ${N} cells, ${S} shifts: PHREEQC ${pqMs} ms, the page ${rtmMs} ms`);
+
+  // The PHREEQC tab: the run's exchanger against PHREEQC's loaded from each water.
+  const reply = pageRun(text.replace(/^CELLS = \d+$/m, 'CELLS = 10').replace(`LENGTH = ${L}`, `LENGTH = ${L / 4}`)
+    .replace(/^TEND = .*$/m, `TEND = ${30 * dt}`), 30 * dt);
+  engine.load(dbText);
+  const view = P.viewRun({ engine, database, run: reply, modelText: text, water: { name: 'column', text: loaded },
+    unit: 's', times: 15 });
+  const x = view.report.exchange;
+  check('  the PHREEQC tab loads PHREEQC\'s exchanger from each water of a run: the fractions the run holds',
+    x && !x.error && Math.abs(x.gap) < 1e-6 && view.report.unmapped.length === 0
+    && view.report.skipped.some((sk) => sk.name === 'X-'),
+    x ? `within ${Math.abs(x.gap).toExponential(1)} (${x.worst}) over ${view.report.waters} waters` : 'no exchanger');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -632,6 +815,10 @@ function againstTransport(engine) {
   await asThePage(createPhreeqc, first.acidText);
   console.log('\n--- a reactive column against PHREEQC\'s TRANSPORT ---');
   againstTransport(wasm);
+  console.log('\n--- a mineral dissolving at a rate against PHREEQC\'s KINETICS ---');
+  againstKinetics(wasm);
+  console.log('\n--- an exchanger: the hand-off, PHREEQC\'s TRANSPORT and the PHREEQC tab ---');
+  againstExchange(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

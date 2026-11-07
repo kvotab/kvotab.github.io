@@ -480,7 +480,7 @@
             remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
-          <p>Six sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+          <p>Seven sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
             <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
@@ -509,7 +509,7 @@
               <tr><td><code>GRID_POWER</code></td><td>For <em>powerlaw</em>: the exponent, 3 unless given. Above 1 is fine at the left, below 1 at the right.</td></tr>
               <tr><td><code>FACES</code></td><td>The face positions outright, in metres from the left end: a list, <code>FACES = 0, 1e-7, 8e-7, 2.7e-6, …</code>, or an expression in <code>i</code> worked out for <em>i</em> = 0 to <code>CELLS</code>, <code>FACES = 1e-4*(i/10)^3</code>. The first must be 0 and each must be larger than the last. A list decides <code>CELLS</code> and <code>LENGTH</code>; if they are given too they have to agree.</td></tr>
               <tr><td><code>SURFACE_LAYER</code></td><td>Makes the first cell exactly this thick, in metres, and lays the other <code>CELLS</code>&nbsp;−&nbsp;1 out over the rest by <code>GRID</code>. See <em>A surface</em> below.</td></tr>
-              <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither.</td></tr>
+              <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither. <code>DIFFUSION</code> may also be <em>nernst-planck</em>, which couples the ions so that no current flows — see <em>Diffusion that keeps the charge</em> below.</td></tr>
               <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind unless <code>ADVECTION_SCHEME</code> says otherwise, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
               <tr><td><code>ADVECTION_SCHEME</code></td><td><em>upwind</em> (the default) or <em>limited</em>: second order where a profile is smooth and upwind where it turns, so a front stays sharp — see <em>What it actually solves</em> below.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
@@ -537,7 +537,9 @@ UO2                      # no number: starts at zero, does not move</pre>
             <code>ADVECTION</code> the water carries every species that is not fixed, <code>D</code> or
             no <code>D</code>. <code>immobile</code> keeps a species where it is whatever the column
             does, which is how a surface site is written, and <code>mineral</code> makes it a pure
-            phase: see <em>Minerals</em> below. With a rock matrix a species also takes <code>De=</code> (or
+            phase: see <em>Minerals</em> below. <code>exchanger</code> makes it the sites of an ion
+            exchanger and <code>exchange</code> a species on them: see <em>Ion exchange</em> below.
+            With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
             <code>a=</code> and <code>b=</code>: see <em>Activity</em> below.</p>
@@ -594,6 +596,33 @@ A => B, r = k*c^(2/3)*(1 - [B]/cmax), k = 5e-13, c = [A], cmax = 1.8e-6</pre>
             databases, and they mean here what they say. (skbrtm itself pastes each constant into
             the law as text, so it reads <code>(kr/kh)</code> above as
             <code>1.33*10**12/1.3*10**-3</code> — a million times less.)</p>
+          <pre>Calcite => Ca+2 + CO3-2, r = k*A*(1 - SR(Calcite)), k = 1e-7, A = 0.5
+=> X, r = kx*{H+}^0.5                     # an activity: gamma times the concentration
+=> Y, r = ky*exp(-0.5*I)                  # I, the ionic strength of the cell</pre>
+          <p>A rate law may read more than concentrations. <code>{H+}</code> is the activity of
+            <code>H+</code>, its activity coefficient times <code>[H+]</code>, as
+            <code>ACTIVITY</code> works it out (without <code>ACTIVITY</code>, the concentration),
+            and <code>{H2O}</code> the water's when no species is called H2O. <code>I</code> is the
+            ionic strength of the cell, unless a parameter of that name says otherwise.
+            <code>SI(Calcite)</code> is a phase's saturation index, log(IAP/<em>K</em>) in
+            activities, and <code>SR(Calcite)</code> its saturation ratio, IAP/<em>K</em>. The phase
+            is one of <code>&lt;PHASES&gt;</code> below, or a mineral with its relation in
+            <code>&lt;EQUILIBRIUM&gt;</code>. So a mineral can dissolve and precipitate at a rate, as
+            PHREEQC's <code>RATES</code> have it — <code>k·A·(1 − SR)</code>, or any law of the
+            saturation — with the amount a <code>mineral</code> species the reaction consumes.
+            Each of these reads every ion of the cell through the ionic strength, and the Jacobian
+            follows it there. A law that should stop when the mineral is gone says so, as
+            <code>(m/m0)^(2/3)</code> does in PHREEQC's examples.</p>
+
+          <h4 id="help-phases">&lt;PHASES&gt;</h4>
+          <pre>Calcite  &lt;=&gt; Ca+2 + CO3-2,          logK = -8.48
+Gypsum   &lt;=&gt; Ca+2 + SO4-2 + 2 H2O,   logK = -4.58</pre>
+          <p>Phases a rate law can ask the saturation of, held at nothing: the dissolution of each,
+            the phase first on the left and its <code>logK</code> (or <code>K</code>), as PHREEQC's
+            <code>PHASES</code> write them. The phase need not be a species; what it dissolves to
+            must be, or <code>H2O</code> for the water. A mineral held at saturation goes in
+            <code>&lt;EQUILIBRIUM&gt;</code> instead (see <em>Minerals</em>); a phase here is only
+            measured against.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -1086,6 +1115,50 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             <code>ACTIVITY</code> its saturation reads every ion of its cell, as any relation
             does.</p>
 
+          <h4 id="help-exchange">Ion exchange</h4>
+          <pre>X-     exchanger  1.1e-3
+NaX    exchange   a=4.08  b=0.082
+CaX2   exchange   a=5     b=0.165
+
+&lt;EQUILIBRIUM&gt;
+Na+ + X- &lt;=&gt; NaX,       logK = 0
+Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
+          <p>Cation exchange as PHREEQC writes it, the Gaines–Thomas convention. <code>exchanger</code>
+            makes a species the exchanger's sites, PHREEQC's <code>X-</code>. It is no amount: its
+            activity is solved for in every cell, it counts in no total, and what the page shows for it
+            is that activity. <code>exchange</code> makes a species one held on the exchanger. Neither
+            ever moves, and neither takes <code>D</code>, <code>R</code>, rock-matrix properties,
+            <code>fixed</code> or <code>z=</code>. Neither counts in the ionic strength or in the
+            activity of water.</p>
+          <p>Each species on the exchanger is formed in a relation, from the exchanger or from another
+            species on it: <code>Ca+2 + 2 NaX &lt;=&gt; CaX2 + 2 Na+</code> says the same as the
+            second relation above. The relations say how many sites each species takes, the exchanger
+            one and an ion none, so CaX2 takes two. A relation that does not keep the sites, or joins
+            two exchangers, is refused. A species' activity is its equivalent fraction, the sites it
+            takes times its amount over the capacity of its cell. Given <code>a=</code> and
+            <code>b=</code>, that is multiplied by the activity coefficient of its ion, the one ion in
+            the relation that forms it from the exchanger, to the ion's power there, as PHREEQC's
+            <code>-gamma a b</code> does. That coefficient is the WATEQ form under
+            <code>ACTIVITY = debye-huckel</code>, and Davies under <code>davies</code> or where
+            <code>a</code> and <code>b</code> are both 0. Without <code>ACTIVITY</code> the fraction
+            stands alone, so the exchange is Gaines–Thomas whatever the water does.</p>
+          <p>The capacity of a cell is what its species on the exchanger take, in the model's
+            concentration unit. Or it is the number on the exchanger's line, and then, before
+            anything else, the exchanger is loaded from the water of that cell, which stays as it is:
+            PHREEQC's <code>EXCHANGE</code> with <code>-equilibrate</code>. Under
+            <code>EQUILIBRATE</code> the water is first put on its own relations. Give one or the
+            other in a cell, not both. Every cell its relations hold in needs some capacity.</p>
+          <p>The relations with the exchanger in them are held, by <code>EQUILIBRATE</code>: the
+            exchanger takes no <code>kf</code>. Exchange at a rate is a relation between species on the
+            exchanger with a <code>kf</code>, such as <code>Ca+2 + 2 NaX &lt;=&gt; CaX2 + 2 Na+, logK =
+            0.8, kf = 1e8</code>. Its forward rate is in concentrations, as every pair's is, and the
+            fractions' capacity goes into its backward constant with the activity coefficients. A rate
+            law may read <code>{NaX}</code>, the species' activity.</p>
+          <p>In a column the cations travel at the speed the exchanger lets them. Water carrying 0.6
+            mmol/L of CaCl<sub>2</sub> into a column whose exchanger holds 1&nbsp;mmol/L of sites, all
+            Na, moves a calcium front at the water's speed over 1 + 1/(2 × 0.6), with the exchanger all
+            calcium behind it and the sodium pushed out ahead.</p>
+
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
             <code>reaction.in</code>, <code>solutions.in</code>, <code>diffusion.in</code>, the
@@ -1132,6 +1205,26 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             400, the largest error against the closed solution is 8 % on 40 cells and 0.7 % on 160,
             where upwinding's is 19 % and 2.9 %; it costs more steps, the Jacobian moving with the
             profile.</p>
+
+          <h4 id="help-nernst-planck">Diffusion that keeps the charge</h4>
+          <p>Each species diffuses at its own <code>D</code>. That is right for a neutral molecule
+            and wrong for ions whose coefficients differ: H<sup>+</sup> diffuses more than four times as fast as
+            Cl<sup>−</sup>, so acid spreading into water runs ahead of its chloride and the water
+            between them is charged, which real water does not allow. <code>DIFFUSION =
+            nernst-planck</code> couples the ions so that no current flows: across each face between
+            two cells an ion moves at</p>
+          <pre>J_k = −D_k ∇C_k + D_k z_k C_k (Σ z_j D_j ∇C_j) / (Σ z_j² D_j C_j)</pre>
+          <p>the second term the pull of the diffusion potential, which makes the charges' fluxes
+            cancel. A fast ion drags its slow partner along and is held back by it: HCl spreading
+            into water does so at 2·<em>D</em><sub>H</sub><em>D</em><sub>Cl</sub>/(<em>D</em><sub>H</sub>
+            + <em>D</em><sub>Cl</sub>), 3.3×10<sup>−9</sup> m²/s, and the page matches the closed
+            solution for that to 2×10<sup>−5</sup> of the step, the water neutral to 10<sup>−13</sup>,
+            where without it the chloride lags the acid by a sixth of the step. Where every
+            coefficient is the same the term is nothing in a neutral water. The charge comes from the
+            name, <code>z=</code> where it should not; a <code>PECLET</code> dispersion moves every
+            species alike and is left as it is. It acts between the cells of the column: a Dirichlet
+            end and the rock matrix keep each species on its own, and the gradients are of
+            concentrations, the activity coefficients' own gradients left out.</p>
 
           <h3 id="help-charts">Reading the charts</h3>
           <p>The time chart draws the species ticked in the list above it, at one cell, or what
@@ -1253,12 +1346,23 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             phases only prepare the water. A phase that dissolves with electrons, such as pyrite, is
             not carried, since no redox relation is written; nor is one whose line says more than a
             saturation index and an amount. The report under the panel names both kinds.</p>
+          <p>An exchanger in the input, an <code>EXCHANGE</code> that PHREEQC's last calculation holds,
+            is carried when the relations are held exactly. Its sites become an
+            <code>exchanger</code> and each species PHREEQC put on it an <code>exchange</code> species
+            at PHREEQC's molality (see <em>Ion exchange</em> above), with its relation from the
+            database's <code>EXCHANGE_SPECIES</code> and the log K PHREEQC's activities give there.
+            With the activity coefficients following the ionic strength, each species keeps the
+            database's <code>-gamma</code>. A species whose coefficient PHREEQC takes from more than
+            its one ion has it folded into its log K at this water, and the text says so. The
+            run then starts from the exchanger PHREEQC loaded. Held as fast pairs instead, the
+            exchanger is not carried, and the report says so.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
-            every species one coefficient, or each its own from the database's <code>-dw</code>. This
-            page has no electrical coupling between ions, though, and different coefficients let charge
-            separate as the species spread.</p>
+            every species one coefficient, or each its own from the database's <code>-dw</code>; with
+            each its own the text says <code>DIFFUSION = nernst-planck</code> as well, so that the ions
+            are coupled and the water stays neutral as they spread (see <em>Diffusion that keeps the
+            charge</em>).</p>
 
           <h4 id="help-phreeqc-run">A run through PHREEQC</h4>
           <p>The PHREEQC tab gives PHREEQC every stored water of the run, up to <em>Times per cell</em>
@@ -1270,7 +1374,8 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               into H(0), <code>(UO2)2(OH)2+2</code> twice into U(6).</li>
             <li>The pH is walked until PHREEQC's molality of H<sup>+</sup> is the run's [H<sup>+</sup>].</li>
             <li>A mineral of the model is not part of the water: it is listed with the phases, its
-              saturation index beside theirs.</li>
+              saturation index beside theirs. Nor is an exchanger or a species on one: the exchanger
+              is looked at whole, below.</li>
             <li>Left out, and listed with their largest concentration: water; this page's
               <code>e-</code>, which is the hydrated electron and not PHREEQC's; radicals, surface
               sites and whatever else the database lacks.</li>
@@ -1298,6 +1403,9 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             <li>for each mineral of the model, the saturation index PHREEQC finds where the model has
               some of it, which holding it means is its target, and how far below saturation the water
               is where it has none;</li>
+            <li>for an exchanger of the model, how close the run's equivalent fractions are to the ones
+              PHREEQC puts on it when it loads an exchanger of the run's capacity from the same water,
+              species by species, at every water looked at;</li>
             <li>a water far from neutral, which usually means the model leaves out a counter-ion, and
               so PHREEQC's ionic strength is too low.</li>
           </ul>
@@ -1317,6 +1425,15 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             0.25&nbsp;%, and the front has cleared the same cells to within one. They are different
             schemes that meet as the cells are refined. On 40 cells PHREEQC takes half a second and this
             page three; on 80, three and ten, PHREEQC's mixing steps growing as the cells shrink.</p>
+          <p>And an exchanger, PHREEQC's own Example 11. A column of 0.08&nbsp;m holds a water of 1
+            mmol/kgw NaNO<sub>3</sub> and 0.2 of KNO<sub>3</sub>, and an exchanger of 1.1&nbsp;mmol/kgw
+            loaded from it. It is flushed with 0.6 mmol/kgw of CaCl<sub>2</sub> for three pore volumes
+            at a dispersivity of 2&nbsp;mm. The chloride arrives after one pore volume. The sodium is
+            pushed out first, and the potassium after it, peaking at 1.1&nbsp;mmol/kgw. The calcium
+            comes through after two. The page runs the model it writes from the water with its
+            exchanger, as above. On 40 cells its effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's
+            in sodium, 0.033 in potassium, 0.017 in calcium and 0.005 in chloride. On 80 cells that is
+            0.016, 0.017, 0.007 and 0.001.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -1464,14 +1581,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261107b"></script>
+  <script src="./resources/js/rtm-model.js?v=20261107c"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261107b"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261107c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107d"></script>
 </body>
 </html>

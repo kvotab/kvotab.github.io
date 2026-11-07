@@ -12,11 +12,13 @@
                    every complexation and acid-base reaction as the database
                    writes it, and no redox relation, so that each valence
                    state keeps its own total and electrons move only through
-                   reactions the model writes. The relations hold between
-                   activities that follow the ionic strength (ACTIVITY, the
-                   database's own log K and -gamma), or each has a
-                   CONDITIONAL log K (the activity coefficients at this ionic
-                   strength and the activity of water folded in).
+                   reactions the model writes. An exchanger in the input
+                   comes too, with the species PHREEQC put on it. The
+                   relations hold between activities that follow the ionic
+                   strength (ACTIVITY, the database's own log K and -gamma),
+                   or each has a CONDITIONAL log K (the activity
+                   coefficients at this ionic strength and the activity of
+                   water folded in).
 
      viewRun       every stored water of a run goes back to PHREEQC: the
                    species its database has are counted into the element
@@ -26,7 +28,9 @@
                    saturation index of every phase, and how far the activity
                    coefficients of the model's own equilibria drifted from
                    where its conditional constants were made -- or, for a
-                   model with ACTIVITY, how closely its own follow PHREEQC's.
+                   model with ACTIVITY, how closely its own follow PHREEQC's
+                   -- and how closely its exchanger holds what PHREEQC
+                   would load from the same water.
 
    PHREEQC itself is an ENGINE handed in: { run(text) } returning the rows of
    selected output 99, header first, or throwing PHREEQC's error. In the page
@@ -266,6 +270,9 @@
       this.model = null;            // 'Pitzer', 'SIT' or 'LLNL' when the database is one of those
       this.phases = [];
       this.phaseReaction = new Map(); // phase -> {left, right}, its formula first on the left
+      this.exMaster = new Map();    // exchanger label -> master species: 'X' -> 'X-'
+      this.exReaction = new Map();  // exchange species -> {left, right}, right[0] the species
+      this.exGamma = new Map();     // exchange species -> {a, b}: -gamma; Davies as a = b = 0
     }
 
     read(text) {
@@ -310,6 +317,27 @@
             if (Number.isFinite(a) && Number.isFinite(b)) this.gamma.set(last, { a, b });
           } else if (last && /^-(llnl_gamma|co2_llnl_gamma|activity_water)$/i.test(tokens[0])) {
             this.otherGamma.set(last, tokens[0].replace(/^-/, '').toLowerCase());
+          }
+        } else if (block === 'EXCHANGE_MASTER_SPECIES' && tokens.length >= 2) {
+          this.exMaster.set(tokens[0], tokens[1]);
+        } else if (block === 'EXCHANGE_SPECIES') {
+          if (line.includes('=')) {
+            const at = line.indexOf('=');
+            const left = parseSide(line.slice(0, at));
+            const right = parseSide(line.slice(at + 1));
+            if (right.length && right[0].c > 0) {
+              last = right[0].n;
+              // 'X- = X-' defines the exchanger itself.
+              const identity = left.length === 1 && right.length === 1 && left[0].n === last;
+              if (identity) this.exReaction.delete(last); else this.exReaction.set(last, normalise(left, right));
+              this.exGamma.delete(last);
+            }
+          } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
+            const a = Number(tokens[1]);
+            const b = Number(tokens[2]);
+            if (Number.isFinite(a) && Number.isFinite(b)) this.exGamma.set(last, { a, b });
+          } else if (last && /^-dav(i(e(s)?)?)?$/i.test(tokens[0])) {
+            this.exGamma.set(last, { a: 0, b: 0 });
           }
         } else if (block === 'PHASES') {
           if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
@@ -424,7 +452,7 @@
     const lines = [
       `SELECTED_OUTPUT ${SEL}`, '  -reset false', '  -solution true', '  -state true',
       `USER_PUNCH ${SEL}`,
-      `  -headings aq phases elements mu pH mH cb aw tc pe${more.map((_, i) => ` x${i}`).join('')}`,
+      `  -headings aq phases elements mu pH mH cb aw tc pe ex${more.map((_, i) => ` x${i}`).join('')}`,
       '  -start',
       '  10 t = SYS("aq", n, nm$, ty$, mo)',
       '  20 s$ = ""',
@@ -444,6 +472,18 @@
       '  160   e$ = e$ + en$(i) + "," + STR_E$(ev(i), 23, 15) + "|"',
       '  170 NEXT i',
       '  180 PUNCH e$, MU, -LA("H+"), MOL("H+"), CHARGE_BALANCE, ACT("H2O"), TC, -LA("e-")',
+      // The species on an exchanger: mol/kgw, log activity and the log gamma
+      // of its ion that the activity takes, the equivalent fraction left out.
+      // A FOR over no species at all is jumped, not entered: PHREEQC's BASIC
+      // skipping an empty FOR left its memory spoiled, and a later load of
+      // the database fell over it (WebAssembly: memory access out of bounds).
+      '  182 t = SYS("ex", n4, xn$, xt$, xm)',
+      '  183 x$ = ""',
+      '  184 IF n4 < 1 THEN GOTO 188',
+      '  185 FOR i = 1 TO n4',
+      '  186   x$ = x$ + xn$(i) + "," + STR_E$(MOL(xn$(i)), 23, 15) + "," + STR_E$(LA(xn$(i)), 23, 15) + "," + STR_E$(LG(xn$(i)), 23, 15) + "|"',
+      '  187 NEXT i',
+      '  188 PUNCH x$',
     ];
     more.forEach((expr, i) => lines.push(`  ${200 + 10 * i} PUNCH ${expr}`));
     lines.push('  -end');
@@ -473,11 +513,13 @@
       for (const [n, si] of pairs(r[at('phases')])) phases.set(n, si);
       const elements = new Map();
       for (const [n, v] of pairs(r[at('elements')])) elements.set(n, v);
+      const exchange = new Map();
+      if (at('ex') >= 0) for (const [n, m, la, g] of pairs(r[at('ex')])) exchange.set(n, { m, la, lg: g });
       const num = (name) => Number(r[at(name)]);
       return {
         soln: at('soln') >= 0 ? r[at('soln')] : null,
         state: at('state') >= 0 ? String(r[at('state')]).trim() : '',
-        species, phases, elements,
+        species, phases, elements, exchange,
         mu: num('mu'), pH: num('pH'), mH: num('mH'), cb: num('cb'), aw: num('aw'), tc: num('tc'),
         pe: num('pe'),
         x: xs.map((i) => r[i]),
@@ -529,6 +571,9 @@
    *   phases      with exact: the input's EQUILIBRIUM_PHASES become minerals,
    *               at the amounts PHREEQC left, each held at its saturation
    *               index while there is any of it
+   *   exchange    with exact, unless false: an exchanger PHREEQC's last
+   *               calculation holds becomes an exchanger and the species on
+   *               it, at the molalities PHREEQC put there
    *   relax       ... or as fast pairs, each with the kf that makes it relax
    *               back at this rate per second here
    *   kf          ... or as fast pairs all with this one forward constant
@@ -559,7 +604,13 @@
     }
     const extras = [];
     for (const a of assemblage) extras.push(`EQUI("${a.name}")`, `LK_PHASE("${a.name}")`, `SI("${a.name}")`);
+    const waterAt = assemblage.length ? extras.length : -1;
     if (assemblage.length) extras.push('TOT("water")');
+    // Each exchanger's activity: its master species is no amount, and
+    // SYS("ex") leaves it out.
+    const exMasters = [...new Set(db.exMaster.values())];
+    const laAt = extras.length;
+    for (const sp of exMasters) extras.push(`LA("${sp}")`);
     let rows = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
@@ -587,7 +638,7 @@
     // what else it takes, and what it dissolves to.
     const minerals = [];
     const phasesSkipped = [];
-    const waterKg = assemblage.length ? Number(w.x[extras.length - 1]) : 1;
+    const waterKg = waterAt >= 0 ? Number(w.x[waterAt]) : 1;
     assemblage.forEach((a, i) => {
       const r = db.phaseReaction.get(a.name);
       const moles = Number(w.x[3 * i]);
@@ -609,6 +660,45 @@
         if (t.n !== 'H2O' && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
       }
     });
+    /*
+      THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
+      its relation as the database writes it, which a run holds exactly.
+      Its activity is its equivalent fraction (Gaines-Thomas), times its
+      ion's activity coefficient where PHREEQC gives it one (-gamma).
+    */
+    const onEx = [];
+    const exSkipped = [];
+    const laMaster = new Map(exMasters.map((sp, i) => [sp, Number(w.x[laAt + i])]));
+    if (w.exchange && w.exchange.size && o.exchange !== false) {
+      if (!o.exact) {
+        exSkipped.push({ name: [...w.exchange.keys()].join(', '), why: 'an exchanger needs the relations held exactly' });
+      } else {
+        for (const [n, e] of w.exchange) {
+          if (!(e.m >= floor)) continue;
+          const skip = (why) => exSkipped.push({ name: n, why });
+          const r = db.exReaction.get(n);
+          if (!r) { skip('the database has no reaction for it'); continue; }
+          const terms = [...r.left, ...r.right.slice(1)];
+          const masters = terms.filter((t) => laMaster.has(t.n));
+          if (masters.length !== 1 || terms.some((t) => db.exReaction.has(t.n))) {
+            skip('it is not formed from one exchanger');
+            continue;
+          }
+          if (!Number.isFinite(laMaster.get(masters[0].n)) || laMaster.get(masters[0].n) < -99) {
+            skip(`PHREEQC gave no activity for ${masters[0].n}`);
+            continue;
+          }
+          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
+          const missing = terms.filter((t) => t.n !== 'H2O' && !laMaster.has(t.n) && !molal.has(t.n)).map((t) => t.n);
+          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
+          onEx.push({ species: n, master: masters[0].n, m: e.m, la: e.la, lg: e.lg, left: r.left, right: r.right });
+          for (const t of terms) {
+            if (t.n !== 'H2O' && !laMaster.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+      }
+    }
+
     let changed = true;
     while (changed) {
       changed = false;
@@ -664,10 +754,48 @@
     }
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
+    // The exchangers used, and the species on them, by the names written.
+    const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
+    const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
+    for (const e of onEx) { e.name = rtmName(e.species, taken); exName.set(e.species, e.name); }
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
-      .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]));
+      .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]))
+      .concat([...exName].filter(([sp, nm]) => sp !== nm));
     const side = (terms) => terms
-      .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || t.n)).join(' + ');
+      .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || exName.get(t.n) || t.n))
+      .join(' + ');
+    /*
+      Each exchange species' relation: its log K the one PHREEQC's activities
+      give at this water, the database's at this temperature. Its ion's
+      coefficient goes with it as a= and b= where PHREEQC takes it from the
+      one ion of the relation, a master species, as this page does; where
+      PHREEQC takes it otherwise, or from something this page does not
+      write, it is folded into the log K at this water.
+    */
+    for (const e of onEx) {
+      const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      const ions = aq([...e.left, ...e.right.slice(1)]).filter((t) => !laMaster.has(t.n));
+      const g = db.exGamma.get(e.species);
+      const hasWater = [...e.left, ...e.right].some((t) => t.n === 'H2O');
+      e.gamma = follow && e.lg !== 0 && g && ions.length === 1 && !hasWater && db.masterLabel(ions[0].n) !== null
+        ? g : null;
+      e.folded = follow && e.lg !== 0 && !e.gamma;
+      // log a: PHREEQC's ('db'); or this page's, an ion its molality alone
+      // ('conditional') or times its coefficient ('follow'), the species its
+      // fraction, times its ion's coefficient where it keeps it. The
+      // exchanger's activity is PHREEQC's throughout.
+      const laOf = (n, how) => {
+        if (laMaster.has(n)) return laMaster.get(n);
+        if (n === e.species) return how === 'db' || (how === 'follow' && e.gamma) ? e.la : e.la - e.lg;
+        return log10(molal.get(n)) + (how === 'conditional' ? 0 : lg.get(n));
+      };
+      const sum = (terms, how) => aq(terms).reduce((acc, t) => acc + t.c * laOf(t.n, how), 0);
+      const nw = e.right.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
+        - e.left.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+      e.logkC = sum(e.right, 'conditional') - sum(e.left, 'conditional');
+      e.logkDb = sum(e.right, 'db') - sum(e.left, 'db') + nw * logAw;
+      e.logk = sum(e.right, 'follow') - sum(e.left, 'follow') + nw * logAw;
+    }
     // With activities: each species' -gamma, and a charge where a new name
     // would read differently; and the species whose activity PHREEQC works
     // out in a way this page does not.
@@ -675,7 +803,8 @@
 
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
-    const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length)) + 2;
+    const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length),
+      ...[...exName.values()].map((nm) => nm.length)) + 2;
     const out = [];
     out.push(`# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
     out.push(`# Database: ${o.database.name || 'unnamed'}.`);
@@ -720,6 +849,24 @@
     if (phasesSkipped.length) {
       out.push(`# Phases not carried: ${phasesSkipped.map((ps) => `${ps.name}, ${ps.why}`).join('; ')}.`);
     }
+    if (onEx.length) {
+      const cap = (sp) => onEx.filter((e) => e.master === sp)
+        .reduce((acc, e) => acc + e.m * (e.right.concat(e.left).find((t) => t.n === sp) || { c: 0 }).c, 0);
+      out.push(`# The exchanger${exUsed.length > 1 ? 's' : ''} ${exUsed.map((sp) => `${exName.get(sp)} (${fmtG(cap(sp), 6)} eq/kgw)`).join(', ')}`
+        + ' with the species PHREEQC put on');
+      out.push('# it at their molalities: an exchanger is no amount, its activity is solved for, and each');
+      out.push("# species on it has its equivalent fraction for its activity (Gaines-Thomas)"
+        + (follow ? ", times its ion's activity" : '.'));
+      if (follow) out.push('# coefficient where the database gives it -gamma (a= and b=).');
+      const folded = onEx.filter((e) => e.folded);
+      if (folded.length) {
+        out.push(`# PHREEQC takes the coefficient of ${folded.map((e) => e.name).join(', ')} from more than its one ion; `
+          + 'here it is folded into the log K at this water.');
+      }
+    }
+    if (exSkipped.length) {
+      out.push(`# Not carried from the exchanger: ${exSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
+    }
     if (unsupported.length) {
       out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
         unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
@@ -732,6 +879,8 @@
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     if (follow) out.push('ACTIVITY = debye-huckel', `TEMPERATURE = ${fmtG(tc, 10)}`);
+    // Each species its own D: the ions coupled, so the water stays neutral as they spread.
+    if (o.dw) out.push('DIFFUSION = nernst-planck');
     out.push('', '<SPECIES>');
     const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length)) + 2;
     for (const s of order) {
@@ -757,6 +906,12 @@
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
       out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+    }
+    for (const sp of exUsed) out.push(`${exName.get(sp).padEnd(width)}${''.padEnd(follow ? width2 : 0)}exchanger`);
+    for (const e of onEx) {
+      const amount = fmtG(e.m, 15);
+      const g = e.gamma ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
+      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
     }
     out.push('', '<EQUILIBRIUM>');
     const lines = eqs.map((e) => {
@@ -785,6 +940,17 @@
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${logk.toFixed(4)}`}${mn.target ? `, SI ${fmtG(mn.target, 6)}` : ''}`,
       });
     }
+    for (const e of onEx) {
+      const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      const reac = follow ? e.left : aq(e.left);
+      const prod = follow ? e.right : aq(e.right);
+      lines.push({
+        rel: `${side(reac)} <=> ${side(prod)}`,
+        k: `logK = ${(follow ? e.logk : e.logkC).toFixed(10)}`,
+        note: follow ? `# here ${e.logkC.toFixed(4)}${e.folded ? `, the database's ${e.logkDb.toFixed(4)}` : ''}`
+          : `# log K ${e.logkDb.toFixed(4)}`,
+      });
+    }
     const wrel = Math.max(0, ...lines.map((l) => l.rel.length)) + 1;
     const wk = Math.max(0, ...lines.map((l) => l.k.length)) + 3;
     for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}${l.note}`);
@@ -798,8 +964,8 @@
       water: w,
       names: name,
       molal,
-      // The minerals' amounts as written, by their names in the model.
-      amounts: new Map(minerals.map((mn) => [mn.name, mn.amount])),
+      // The minerals' and exchange species' amounts as written, by their names in the model.
+      amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
         pH: w.pH, chargeBalance: w.cb,
@@ -808,6 +974,9 @@
         activity: follow ? { temperature: tc, unsupported } : null,
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
+        exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
+          species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
+        exchangeSkipped: exSkipped,
       },
     };
   }
@@ -885,6 +1054,12 @@
     // and PHREEQC says how far the water is from its saturation.
     const phaseBack = new Map(db.phases.map((ph) => [rtmName(ph), ph]));
     const minerals = [];
+    // A species on an exchanger is not in the water either: the exchanger is
+    // looked at as PHREEQC would load it from each water (see below).
+    const exBack = new Map([...db.exReaction.keys()].map((sp) => [rtmName(sp), sp]));
+    const exMasterOf = new Map([...db.exMaster].map(([lb, sp]) => [sp, lb]));
+    const exMasterBack = new Map([...db.exMaster.values()].map((sp) => [rtmName(sp), sp]));
+    const onExchanger = [];
     model.species.forEach((n) => {
       let p;
       if (skip.has(n)) { skipped.set(n, 'asked'); return; }
@@ -899,6 +1074,13 @@
       else if (phaseBack.has(n)) {
         skipped.set(n, 'a mineral: not in the water, and its saturation index is among the phases');
         minerals.push({ name: n, phase: phaseBack.get(n) });
+        return;
+      } else if (exBack.has(n)) {
+        skipped.set(n, 'on an exchanger: not in the water, and looked at with its exchanger');
+        onExchanger.push({ name: n, p: exBack.get(n) });
+        return;
+      } else if (exMasterBack.has(n)) {
+        skipped.set(n, 'an exchanger: no amount, its activity solved for');
         return;
       } else { unmapped.push(n); return; }
       if (p === 'H+') { mapped.set(n, { p, contrib: new Map() }); return; }
@@ -1034,6 +1216,62 @@
       throw new Error(`PHREEQC could not calculate any of the waters: ${rows[0].error || ''}`);
     }
 
+    // --- the model's exchangers: the run's fractions against PHREEQC's ------
+    // Each water given to PHREEQC with an exchanger of the run's capacity
+    // there, loaded from it (EXCHANGE -equilibrate, the water left as it is):
+    // how far the fraction of each species the run has on it is from the
+    // fraction PHREEQC puts there.
+    let exchange = null;
+    const exOf = [];
+    for (const e of onExchanger) {
+      const r = db.exReaction.get(e.p);
+      const t = r.left.find((x) => exMasterOf.has(x.n));
+      if (t) exOf.push({ ...e, si: model.species.indexOf(e.name), label: exMasterOf.get(t.n), n: t.c });
+    }
+    if (exOf.length) {
+      const capOf = (r) => {
+        const cap = new Map();
+        for (const e of exOf) cap.set(e.label, (cap.get(e.label) || 0) + e.n * Math.max(value(r.state, e.si, r.k), 0) * scale);
+        return cap;
+      };
+      let worst = { by: 0, at: null, species: null };
+      let error = null;
+      for (let start = 0; start < good.length && !error; start += CHUNK) {
+        const sub = good.slice(start, start + CHUNK);
+        const caps = sub.map(capOf);
+        const blocks = sub.map((r, k) => {
+          const lines = [...caps[k]].filter(([, v]) => v > 0).map(([lb, v]) => ` ${lb} ${fmtG(v, 15)}`);
+          return lines.length ? `EXCHANGE ${k + 1}\n -equilibrate ${k + 1}\n${lines.join('\n')}\n` : '';
+        }).join('');
+        let out;
+        try {
+          out = runRows(o.engine, `${punchBlock()}${sub.map((r, k) => solution(k + 1, r)).join('')}END\n${blocks}END\n`);
+        } catch (e) {
+          error = String(e.message || e).trim().split('\n')[0];
+          break;
+        }
+        const byK = new Map(out.filter((q) => q.state === 'i_exch').map((q) => [Number(q.soln), q]));
+        sub.forEach((r, k) => {
+          const q = byK.get(k + 1);
+          if (!q) return;
+          for (const e of exOf) {
+            const cap = caps[k].get(e.label);
+            if (!(cap > 0)) continue;
+            const ours = (e.n * Math.max(value(r.state, e.si, r.k), 0) * scale) / cap;
+            const theirs = q.exchange.has(e.p) ? (e.n * q.exchange.get(e.p).m) / cap : 0;
+            if (Math.abs(ours - theirs) > Math.abs(worst.by)) worst = { by: ours - theirs, at: r, species: e.name };
+          }
+        });
+      }
+      exchange = {
+        exchangers: [...new Set(exOf.map((e) => e.label))],
+        species: exOf.map((e) => e.name),
+        gap: worst.by, worst: worst.species,
+        t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null,
+        error,
+      };
+    }
+
     // --- phases worth a column ----------------------------------------------
     let phases;
     if (o.phases && o.phases.length) phases = o.phases.slice();
@@ -1073,7 +1311,9 @@
       const reac = e.reac.filter((t) => !isWater(t));
       const prod = e.prod.filter((t) => !isWater(t));
       const all = [...reac, ...prod].every((t) => mapped.has(t.n));
-      if (!all) { unchecked.push(e.rel); continue; }
+      // An exchanger's relations are looked at with the exchanger, whole.
+      const onEx = (t) => exBack.has(t.n) || exMasterBack.has(t.n);
+      if (!all) { if (![...reac, ...prod].every((t) => mapped.has(t.n) || onEx(t))) unchecked.push(e.rel); continue; }
       const conv = (terms) => terms.map((t) => ({ c: t.c, n: mapped.get(t.n).p }));
       const water = e.prod.filter(isWater).reduce((a, t) => a + t.c, 0) - e.reac.filter(isWater).reduce((a, t) => a + t.c, 0);
       drift.push({ rel: e.rel, reac: conv(reac), prod: conv(prod), water });
@@ -1119,7 +1359,7 @@
         const gaps = rels.map((eq) => ({ rel: eq.text.split(',', 1)[0].trim(), eq, by: 0, at: null }));
         for (const r of good) {
           for (let si = 0; si < ns; si++) cw[si] = value(r.state, si, r.k);
-          const w = Rtm.activityAt(own.act, cw, 0, lnG, dG);
+          const w = Rtm.activityAt(own.act, cw, 0, lnG, dG, r.state);
           for (const g of gaps) {
             let pqSide = g.eq.water ? g.eq.water * log10(r.pq.aw) : 0;
             let ours = g.eq.water ? g.eq.water * w.lnAw / Math.LN10 : 0;
@@ -1178,6 +1418,7 @@
       supersaturated: supersaturated.map((s) => ({ phase: s.phase, si: s.si, t: s.at.t, cell: s.at.cell, layer: s.at.layer })),
       drift: drifts.map((d) => ({ rel: d.rel, by: d.by, t: d.at ? d.at.t : null, cell: d.at ? d.at.cell : null })),
       activity,
+      exchange,
       minerals: mineralCheck,
       unchecked,
       phases,

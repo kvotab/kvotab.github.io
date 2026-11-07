@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -448,7 +448,9 @@
           + `${h.species} species algebraic in every cell`
           + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
         + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : 'Debye–Hückel'} at ${a.temperature} °C `
-          + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : ''));
+          + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : '')
+        + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
+          : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : ''));
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -2089,7 +2091,7 @@
         ['none', 'No `D`: the model is a batch, or you add the coefficients in the text.', pq.diff === 'none'],
         ['one coefficient for every species', 'The value given, in m²/s, on every line.', pq.diff === 'one'],
         ['each species its own', 'The tracer diffusion coefficient the database gives each species (`-dw`); a species without one gets none.', pq.diff === 'dw'],
-      ] }, { heading: 'Keep in mind', text: 'rtm.html has no electrical coupling between ions. Different coefficients let charge separate as the species spread, which real water does not allow: one coefficient for every species is the safe choice unless that is what you mean.' }],
+      ] }, { heading: 'Keep in mind', text: 'With each species its own coefficient the text also says `DIFFUSION = nernst-planck`: the ions are coupled so that no current flows, and the water stays neutral as they spread. With one coefficient for every species there is nothing to couple.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2194,7 +2196,7 @@
 
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
-    SPECIES: new Set(['fixed', 'immobile', 'mineral']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
@@ -2204,6 +2206,7 @@
     SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
+    PHASES: new Set(['k', 'logk']),
   };
   /*
     A species name ends in a charge -- H+, OH-, C2O4-2 -- and the charge is
@@ -2259,8 +2262,10 @@
         const lower = word.toLowerCase();
         const rest = code.slice(HL_TOKEN.lastIndex);
         const takesValue = /^\s*=[^=>]/.test(rest) || /^\s*=$/.test(rest);
-        if (/^\s*\(/.test(rest) && fns[lower]) html += hlSpan('fn', word);
-        else if (takesValue && section === 'SETTINGS' && settings.names.has(lower)) html += hlSpan('key', word);
+        // A rate law's SI(phase) and SR(phase) are functions of the page's own.
+        if (/^\s*\(/.test(rest) && (fns[lower] || (section === 'REACTIONS' && (word === 'SI' || word === 'SR')))) {
+          html += hlSpan('fn', word);
+        } else if (takesValue && section === 'SETTINGS' && settings.names.has(lower)) html += hlSpan('key', word);
         else if (takesValue && assign && assign.has(lower)) html += hlSpan('key', word);
         else if (section === 'SETTINGS' && settings.values.has(lower)) html += hlSpan('key', word);
         else if (words && words.has(lower)) html += hlSpan('key', word);
@@ -2553,11 +2558,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107c',
+    'resources/js/rtm-phreeqc.js?v=20261107d',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2873,6 +2878,14 @@ END
       if (r.phasesSkipped && r.phasesSkipped.length) {
         out.push(`<p class="warn">Not carried: ${r.phasesSkipped.map((ps) => `${esc(ps.name)}, ${esc(ps.why)}`).join('; ')}.</p>`);
       }
+      if (r.exchange) {
+        out.push(`<p>On the exchanger ${r.exchange.exchangers.map(esc).join(', ')}: ${r.exchange.species
+          .map((e) => `${esc(e.as)} (${pqNum(e.amount)} mol/kgw)`).join(', ')}, held on it by Gaines–Thomas.</p>`);
+      }
+      if (r.exchangeSkipped && r.exchangeSkipped.length) {
+        out.push(`<p class="warn">Not carried from the exchanger: ${r.exchangeSkipped
+          .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
+      }
       if (r.activity && r.activity.unsupported.length) {
         out.push(`<p class="warn">PHREEQC works out the activity of ${r.activity.unsupported.map(esc).join(', ')} in `
           + 'a way this page does not have; here they follow Davies, or 0.1 I if neutral.</p>');
@@ -3033,6 +3046,21 @@ END
         + (big ? 'Conditional constants made for the start are that far off by then: write the model again from a '
           + 'water nearer the run, or read what depends on them with that in mind.'
           : 'Conditional constants made for the start still hold.') + '</p>');
+    }
+    // The model's exchanger, against PHREEQC's loaded from the same water.
+    if (r.exchange) {
+      const x = r.exchange;
+      if (x.error) {
+        out.push(`<p class="warn">PHREEQC would not load the exchanger from the waters: ${esc(x.error)}.</p>`);
+      } else {
+        const big = Math.abs(x.gap) > 1e-3;
+        out.push(`<p${big ? ' class="warn"' : ''}>The exchanger (${x.exchangers.map(esc).join(', ')}): loaded by PHREEQC `
+          + 'from each water at the capacity the run has there, every species on it is within '
+          + `${pqNum(Math.abs(x.gap))} of the run's equivalent fraction`
+          + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
+          + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
+            + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
+      }
     }
     // The model's minerals, as PHREEQC sees the water around them.
     for (const mn of r.minerals || []) {

@@ -372,6 +372,37 @@ async def main():
             check('and the model facts count it', await page.ev(
                 "/1 mineral at saturation while there is any/.test(document.getElementById('rtmFacts').textContent)"), True)
 
+            # --- an exchanger in the water: carried, run, and looked at through PHREEQC ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/\\nEND\\s*$/, '\\nEXCHANGE 1\\n  -equilibrate 1\\n  X 0.002\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            onx = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ex_text = await page.ev("document.getElementById('rtmText').value")
+            check('an exchanger in the water is carried: its sites and the species PHREEQC put on them, and the report says so',
+                  isinstance(onx, str) and 'On the exchanger X-: ' in onx and isinstance(ex_text, str)
+                  and re.search(r'^X- +exchanger$', ex_text, re.M) is not None
+                  and re.search(r'^CaX2 +[0-9.e-]+ +exchange +a=5 +b=0\.165$', ex_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts count the species on it', await page.ev(
+                "/species on the exchanger X-, Gaines/.test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ex_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_gap = re.search(r'The exchanger \(X\): loaded by PHREEQC from each water at the capacity the run has there, '
+                              r'every species on it is within ([0-9.e+-]+)', ex_summary or '')
+            check('looked at through PHREEQC, the run\'s exchanger is the one PHREEQC loads from its water',
+                  m_gap is not None and float(m_gap.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column, looked at against distance ---
             column = ('<SETTINGS>\\nMODE = transport\\nCELLS = 5\\nLENGTH = 0.05\\nDIFFUSION = 1\\nTEND = 1e4\\n'
                       'EQUILIBRATE = always\\n\\n<SPECIES>\\nH+      1e-7   D=1e-9\\nOH-     1e-7   D=1e-9\\n'
