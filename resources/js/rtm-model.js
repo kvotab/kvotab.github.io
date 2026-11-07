@@ -1640,6 +1640,21 @@
     I *= 0.5;
     const low = !(I > 1e-10);
     if (low) I = 1e-10;
+    coefficientsAt(act, I, low, lnG, dG, cell === undefined ? Math.round(off / ns) : cell);
+    let aw = 1 - 0.017 * sum;
+    const dry = !(aw > 1e-6);
+    if (dry) aw = 1e-6;
+    return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
+  }
+
+  /**
+   * Every species' ln gamma and d(ln gamma)/dI at the ionic strength I of
+   * cell `cell` (activityAt, which works I out first; the reduced
+   * speciation, which solves for it). `low`: I is the floor, and the
+   * derivatives are zero.
+   */
+  function coefficientsAt(act, I, low, lnG, dG, cell) {
+    const ns = act.ns;
     const sq = Math.sqrt(I);
     const A = act.A * Math.LN10;
     for (let s = 0; s < ns; s++) {
@@ -1676,16 +1691,12 @@
     */
     const ex = act.ex;
     if (ex) {
-      const at = (cell === undefined ? Math.round(off / ns) : cell) * ns;
+      const at = cell * ns;
       for (const s of ex.list) {
         lnG[s] = ex.pw[s] * lnG[s] + ex.shift[at + s];
         dG[s] *= ex.pw[s];
       }
     }
-    let aw = 1 - 0.017 * sum;
-    const dry = !(aw > 1e-6);
-    if (dry) aw = 1e-6;
-    return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
   }
 
   /**
@@ -2551,6 +2562,479 @@
     }
     for (let k = 0; k < na; k++) C[off + part[k]] = lin[k] ? x[k] : Math.exp(x[k]);
     return { converged: ok, iterations, residual, x, why };
+  }
+
+  /* ----------------------------------------------------------------------
+     THE REDUCED SPECIATION. A cell's relations hold the ln a of most of its
+     species as linear combinations of a few -- as many as there are totals,
+     its components -- so a cell can be speciated in those alone, as PHREEQC
+     speciates a water in its master species: the components' ln a, the
+     minerals' amounts, and under ACTIVITY the ionic strength and the
+     water's ln a as unknowns with equations of their own. Every other
+     species follows from them exactly, the relations holding by
+     construction. A held run with the electron speciates every cell at
+     every evaluation (the projected form), and 54 unknowns a cell became 16.
+     ---------------------------------------------------------------------- */
+
+  /**
+   * Sets a cell system (cellSystem) up for reducedSpeciate: which aqueous
+   * unknowns the relations work out from the rest (D) and which are the
+   * components (K), D taken as `prefer` (part positions) orders them, and
+   * the elimination that gives alpha_D = M rhs - E alpha_K, alpha = ln a and
+   * rhs each relation's lnK less its water and fixed species. Null where the
+   * system is not of that shape: the full one is used.
+   */
+  function reducedSystem(sys, prefer) {
+    const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
+    const aq = [];
+    for (let k = 0; k < na; k++) if (!lin[k]) aq.push(k);
+    const naq = aq.length;
+    const aqOf = new Int32Array(na).fill(-1);
+    aq.forEach((k, i) => { aqOf[k] = i; });
+    const aqRel = [];
+    const minRel = [];
+    for (let j = 0; j < ne; j++) (minOf[j] >= 0 ? minRel : aqRel).push(j);
+    const nr = aqRel.length;
+    if (naq - nr !== nb) return null;
+    // [R | 1]: a row for each aqueous relation, R over the aqueous unknowns.
+    const A = aqRel.map((j, r) => {
+      const row = new Float64Array(naq + nr);
+      for (const [si, nu] of eqs[j].net) {
+        if (isMin[si]) continue;
+        const k = at[si];
+        if (k >= 0) row[aqOf[k]] += nu;
+      }
+      row[naq + r] = 1;
+      return row;
+    });
+    // Reduced row echelon, each row's pivot in the column `prefer` puts first.
+    const pivotOf = [];
+    let row = 0;
+    for (const k of prefer) {
+      const col = aqOf[k];
+      if (col < 0 || row >= nr) continue;
+      let best = -1;
+      let mag = 1e-12;
+      for (let r = row; r < nr; r++) if (Math.abs(A[r][col]) > mag) { mag = Math.abs(A[r][col]); best = r; }
+      if (best < 0) continue;
+      const t = A[row]; A[row] = A[best]; A[best] = t;
+      const p = A[row][col];
+      for (let c = 0; c < naq + nr; c++) A[row][c] /= p;
+      for (let r = 0; r < nr; r++) {
+        if (r === row) continue;
+        const f = A[r][col];
+        if (!f) continue;
+        for (let c = 0; c < naq + nr; c++) A[r][c] -= f * A[row][c];
+      }
+      pivotOf.push(col);
+      row++;
+    }
+    if (row !== nr) return null;
+    const isPivot = new Uint8Array(naq);
+    for (const c of pivotOf) isPivot[c] = 1;
+    const K = [];
+    for (let i = 0; i < naq; i++) if (!isPivot[i]) K.push(i);
+    const constants = (j) => ({ lnK: eqs[j].lnK, water: eqs[j].water || 0,
+      fixed: eqs[j].net.filter(([si]) => at[si] < 0 && !isMin[si]) });
+    const mins = minRel.map((j) => {
+      const nu = new Float64Array(naq);
+      for (const [si, v] of eqs[j].net) {
+        if (isMin[si]) continue;
+        const k = at[si];
+        if (k >= 0) nu[aqOf[k]] += v;
+      }
+      return { j, k: minOf[j], nu, ...constants(j) };
+    });
+    const useI = !!act && [...act.form].some((f) => f !== 0);
+    const useL = !!act && act.kind !== 'none'
+      && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water));
+    const nK = K.length;
+    const nm = mins.length;
+    const M = A.map((rw) => rw.slice(naq));
+    const rel = aqRel.map(constants);
+    return {
+      sys, aq, naq, aqOf, D: pivotOf, K, nK, nm, nr,
+      E: A.map((rw) => Float64Array.from(K, (i) => rw[i])),
+      M,
+      rel,
+      // M times the relations' ln K and water, made once: alpha_D = mLnK - L mWater
+      // - M (the fixed species' terms, a few relations have any) - E alpha_K.
+      mLnK: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.lnK, 0)),
+      mWater: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.water, 0)),
+      withFixed: rel.map((r, c) => (r.fixed.length ? c : -1)).filter((c) => c >= 0),
+      mins, useI, useL,
+      iI: nK + nm, iL: nK + nm + (useI ? 1 : 0), nz: nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0),
+      // Where each aqueous unknown is a component, or -1.
+      kOf: Int32Array.from({ length: naq }, (_, i) => K.indexOf(i)),
+      dOf: Int32Array.from({ length: naq }, (_, i) => pivotOf.indexOf(i)),
+      // The totals each part position counts in, with its coefficient.
+      inTotals: Array.from({ length: na }, (_, k) => {
+        const out = [];
+        if (sys.exch && sys.exch[k]) return out;
+        for (let q = 0; q < nb; q++) if (sys.U[q][k]) out.push([q, sys.U[q][k]]);
+        return out;
+      }),
+    };
+  }
+
+  /**
+   * One state of a reduced cell: from the unknowns z, every aqueous
+   * unknown's ln a (alpha) and concentration (val), the coefficients, and
+   * the derivatives of alpha_D in I and L (hI, hL). The scratch is the
+   * system's own.
+   */
+  function reducedState(rs, z, C, off, cell) {
+    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, mLnK, mWater, withFixed } = rs;
+    const { part, act, ns } = sys;
+    const sc = rs.scratch || (rs.scratch = {
+      alpha: new Float64Array(naq), val: new Float64Array(naq), lnG: new Float64Array(ns), dG: new Float64Array(ns),
+      fixedTerm: new Float64Array(nr), fixedDI: new Float64Array(nr),
+      hI: new Float64Array(nr), hL: new Float64Array(nr),
+    });
+    const { alpha, val, lnG, dG, fixedTerm, fixedDI, hI, hL } = sc;
+    let I = 1e-10;
+    let low = true;
+    if (act) {
+      if (useI) { I = z[rs.iI]; low = !(I > 1e-10); }
+      coefficientsAt(act, low ? 1e-10 : I, low, lnG, dG, cell);
+    } else { lnG.fill(0); dG.fill(0); }
+    const L = useL ? z[rs.iL] : 0;
+    for (const c of withFixed) {
+      let v = 0;
+      let g = 0;
+      for (const [si, nu] of rel[c].fixed) {
+        v += nu * (Math.log(Math.max(C[off + si], 1e-300)) + lnG[si]);
+        g += nu * dG[si];
+      }
+      fixedTerm[c] = v;
+      fixedDI[c] = g;
+    }
+    for (let j = 0; j < nK; j++) alpha[K[j]] = z[j];
+    for (let r = 0; r < nr; r++) {
+      const Mr = M[r];
+      const Er = E[r];
+      let a = mLnK[r] - L * mWater[r];
+      let gi = 0;
+      for (const c of withFixed) { a -= Mr[c] * fixedTerm[c]; gi -= Mr[c] * fixedDI[c]; }
+      for (let j = 0; j < nK; j++) a -= Er[j] * z[j];
+      alpha[D[r]] = a;
+      hI[r] = gi;
+      hL[r] = -mWater[r];
+    }
+    for (let i = 0; i < naq; i++) val[i] = Math.exp(alpha[i] - lnG[part[aq[i]]]);
+    return { I, low, L, sc };
+  }
+
+  /**
+   * The residuals of a reduced cell at z, into F, and with J (rows nz of
+   * nz) their Jacobian: each total, each mineral's saturation (or its amount,
+   * while there is none of it), the ionic strength, the water's ln a. Returns
+   * the convergence measure, as speciateCell's: relations in ln K, totals
+   * relative to their size.
+   */
+  function reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, J) {
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, kOf, dOf, E, inTotals } = rs;
+    const { nb, part, act, lin, ns } = sys;
+    const { I, low, L, sc } = reducedState(rs, z, C, off, cell);
+    const { alpha, val, dG, hI, hL } = sc;
+    if (J) for (let r = 0; r < nz; r++) J[r].fill(0);
+    let Iout = 0;
+    let Sout = 0;
+    if (act) {
+      for (const si of outside) { const zz = act.z[si]; Iout += zz * zz * C[off + si]; if (act.solute[si]) Sout += C[off + si]; }
+      Iout *= 0.5;
+    }
+    let norm = 0;
+    // The totals, minerals included.
+    const scale = sc.scale || (sc.scale = new Float64Array(nb));
+    for (let q = 0; q < nb; q++) { F[q] = -totals[q]; scale[q] = Math.abs(totals[q]); }
+    let Isum = Iout;
+    let Ssum = Sout;
+    const g = sc.g || (sc.g = new Float64Array(nz));
+    for (let i = 0; i < naq; i++) {
+      const k = aq[i];
+      const s = part[k];
+      const v = val[i];
+      const zz = act ? act.z[s] : 0;
+      if (zz) Isum += 0.5 * zz * zz * v;
+      if (act && act.solute[s]) Ssum += v;
+      const tl = inTotals[k];
+      for (const [q, u] of tl) { const x = u * (w ? w[k] : 1) * v; F[q] += x; scale[q] += Math.abs(x); }
+      // A species in no total and neither ion nor solute adds nothing to the Jacobian.
+      if (!J || (!tl.length && !(useI && zz))) continue;
+      // d val_i / dz: val (d alpha - dG dI).
+      g.fill(0);
+      const kk = kOf[i];
+      if (kk >= 0) g[kk] = v;
+      else {
+        const r = dOf[i];
+        const Er = E[r];
+        for (let j = 0; j < nK; j++) g[j] = -v * Er[j];
+        if (useI) g[iI] = v * hI[r];
+        if (useL) g[iL] = v * hL[r];
+      }
+      if (useI && !low) g[iI] -= v * dG[s];
+      for (const [q, u] of tl) {
+        const f = u * (w ? w[k] : 1);
+        const Jq = J[q];
+        for (let c = 0; c < nz; c++) if (g[c]) Jq[c] += f * g[c];
+      }
+      if (useI && zz) { const Ji = J[iI]; const f = 0.5 * zz * zz; for (let c = 0; c < nz; c++) if (g[c]) Ji[c] -= f * g[c]; }
+    }
+    for (let p = 0; p < nm; p++) {
+      const k = mins[p].k;
+      const m = z[nK + p];
+      for (const [q, u] of inTotals[k]) {
+        const f = u * (w ? w[k] : 1);
+        F[q] += f * m;
+        scale[q] += Math.abs(f * m);
+        if (J) J[q][nK + p] += f;
+      }
+    }
+    for (let q = 0; q < nb; q++) norm = Math.max(norm, Math.abs(F[q]) / Math.max(scale[q], 1e-300));
+    // The minerals: saturation while there is some, none while there is none.
+    let big = 0;
+    for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
+    for (let p = 0; p < nm; p++) {
+      const row = nb + p;
+      const mn = mins[p];
+      if (!present[mn.j]) {
+        F[row] = z[nK + p];
+        if (J) J[row][nK + p] = 1;
+        norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
+        continue;
+      }
+      let r = mn.water * L - mn.lnK;
+      let gI = 0;
+      for (const [si, nu] of mn.fixed) { r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + sc.lnG[si]); gI += nu * dG[si]; }
+      for (let i = 0; i < naq; i++) if (mn.nu[i]) r += mn.nu[i] * alpha[i];
+      F[row] = r;
+      norm = Math.max(norm, Math.abs(r));
+      if (!J) continue;
+      const Jr = J[row];
+      for (let i = 0; i < naq; i++) {
+        const nu = mn.nu[i];
+        if (!nu) continue;
+        const kk = kOf[i];
+        if (kk >= 0) { Jr[kk] += nu; continue; }
+        const d = dOf[i];
+        const Er = E[d];
+        for (let j = 0; j < nK; j++) Jr[j] -= nu * Er[j];
+        if (useI) Jr[iI] += nu * hI[d];
+        if (useL) Jr[iL] += nu * hL[d];
+      }
+      if (useI && !low) Jr[iI] += gI;
+      if (useL) Jr[iL] += mn.water;
+    }
+    // The ionic strength, and the water's ln a.
+    if (useI) {
+      F[iI] = I - Isum;
+      norm = Math.max(norm, Math.abs(F[iI]) / Math.max(Isum, 1e-300));
+      if (J) J[iI][iI] += 1;
+    }
+    if (useL) {
+      let aw = 1 - 0.017 * Ssum;
+      const dry = !(aw > 1e-6);
+      if (dry) aw = 1e-6;
+      F[iL] = L - Math.log(aw);
+      norm = Math.max(norm, Math.abs(F[iL]));
+      if (J) {
+        J[iL][iL] += 1;
+        if (!dry) {
+          // d(-ln aw)/d val = 0.017/aw for each solute, through d val/dz.
+          const f = 0.017 / aw;
+          for (let i = 0; i < naq; i++) {
+            const s = part[aq[i]];
+            if (!act.solute[s]) continue;
+            const v = val[i];
+            const kk = kOf[i];
+            if (kk >= 0) { J[iL][kk] += f * v; } else {
+              const r = dOf[i];
+              const Er = E[r];
+              for (let j = 0; j < nK; j++) J[iL][j] -= f * v * Er[j];
+              if (useI) J[iL][iI] += f * v * hI[r];
+              J[iL][iL] += f * v * hL[r];
+            }
+            if (useI && !low) J[iL][iI] -= f * v * dG[s];
+          }
+        }
+      }
+    }
+    return norm;
+  }
+
+  /**
+   * A cell's speciation in its components (see reducedSystem), with the
+   * contract of speciateCell: C read for the start and written back for the
+   * unknowns of sys.part, x the unknowns as speciateCell has them (ln C, or
+   * a mineral's amount). Damped as speciateCell is, by the largest change in
+   * any species' ln a. No active set: `present` is as given.
+   */
+  function reducedSpeciate(rs, C, off, totals, w, present, opts = {}) {
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, D } = rs;
+    const { part, act, ns } = sys;
+    const tol = opts.tol || 1e-10;
+    const maxIter = opts.maxIter || 100;
+    const cell = opts.cell !== undefined ? opts.cell : Math.round(off / ns);
+    const outside = rs.outside || [];
+    const z = new Float64Array(nz);
+    const F = new Float64Array(nz);
+    const J = rs.J || (rs.J = Array.from({ length: nz }, () => new Float64Array(nz)));
+    const lnG = new Float64Array(ns);
+    const dG = new Float64Array(ns);
+    let big = 0;
+    for (let q = 0; q < totals.length; q++) big = Math.max(big, Math.abs(totals[q]));
+    // The start, from C: the components' ln a, the amounts, I and the water.
+    let lnAw = 0;
+    let I0 = 1e-10;
+    if (act) {
+      const wt = activityAt(act, C, off, lnG, dG, cell);
+      I0 = wt.I;
+      lnAw = wt.lnAw;
+    }
+    for (let j = 0; j < nK; j++) {
+      const s = part[aq[K[j]]];
+      const c = C[off + s];
+      z[j] = (c > 0 ? Math.log(c) : Math.log(Math.max(1e-12 * big, 1e-300))) + lnG[s];
+    }
+    for (let p = 0; p < nm; p++) z[nK + p] = present[mins[p].j] ? C[off + part[mins[p].k]] : 0;
+    if (useI) z[iI] = I0;
+    if (useL) z[iL] = lnAw;
+    let iterations = 0;
+    let residual = Infinity;
+    let converged = false;
+    const dAlpha = rs.dAlpha || (rs.dAlpha = new Float64Array(naq));
+    for (let it = 0; it < maxIter; it++) {
+      iterations++;
+      // Where it starts settled, as a projection mostly does, the residual
+      // alone says so; the Jacobian is made only for a step.
+      const lazy = it === 0 && opts.asStarted;
+      const norm = reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, lazy ? null : J);
+      residual = norm;
+      if (!(norm === norm)) break;
+      if (norm < tol) converged = true;
+      if (converged && lazy) break;
+      if (lazy) reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, J);
+      const step = solveInPlace(J, F, nz);
+      if (!step) { if (converged) break; return { converged: false, iterations, residual, x: null, why: 'singular' }; }
+      // The change each species' ln a would make: the components', and the rest through E, hI, hL.
+      const { hI, hL } = rs.scratch;
+      for (let j = 0; j < nK; j++) dAlpha[K[j]] = step[j];
+      for (let r = 0; r < D.length; r++) {
+        const Er = E[r];
+        let d = 0;
+        for (let j = 0; j < nK; j++) d -= Er[j] * step[j];
+        if (useI) d += hI[r] * step[iI];
+        if (useL) d += hL[r] * step[iL];
+        dAlpha[D[r]] = d;
+      }
+      /*
+        Damped by the species that matter: none moves its ln C by more than 2
+        where it is, before or after, more than 1e-14 of the largest total,
+        and none rises above ten times that total (or 1 mol/kg). A species
+        that is 1e-150 of everything moves as it must: capped like the rest,
+        sulfide's complexes, whose ln a follows the electron's 24 times
+        over, held the pe to 0.08 an iteration where it has to jump by 38.
+      */
+      const { val } = rs.scratch;
+      const lnSig = Math.log(Math.max(1e-14 * big, 1e-300));
+      const lnCap = Math.log(Math.max(10 * big, 1));
+      let damp = 1;
+      for (let i = 0; i < naq; i++) {
+        const d = dAlpha[i];
+        if (!d || (sys.exch && sys.exch[aq[i]])) continue;
+        const lnC = Math.log(Math.max(val[i], 1e-300));
+        const lnNew = lnC - d;
+        if (Math.max(lnC, lnNew) > lnSig && Math.abs(d) * damp > 2) damp = 2 / Math.abs(d);
+        if (lnC - damp * d > lnCap && d < 0) damp = Math.max((lnCap - lnC) / -d, 0);
+      }
+      if (!(damp > 0)) damp = 2 / Math.max(...Array.from(dAlpha, Math.abs), 2);
+      // The ionic strength stays above a tenth of what it was.
+      if (useI && step[iI] > 0 && z[iI] - damp * step[iI] < 0.1 * z[iI]) damp = (0.9 * z[iI]) / step[iI];
+      for (let c = 0; c < nz; c++) z[c] -= damp * step[c];
+      for (let p = 0; p < nm; p++) if (!present[mins[p].j]) z[nK + p] = 0;
+      if (converged) break;
+    }
+    if (!converged) return { converged: false, iterations, residual, x: null, why: '' };
+    // Back into C, and the unknowns as speciateCell has them.
+    reducedState(rs, z, C, off, cell);
+    const { alpha, val, lnG: lg } = rs.scratch;
+    const x = new Float64Array(sys.na);
+    for (let i = 0; i < naq; i++) {
+      const k = aq[i];
+      C[off + part[k]] = val[i];
+      x[k] = alpha[i] - lg[part[k]];
+    }
+    for (let p = 0; p < nm; p++) {
+      const k = mins[p].k;
+      C[off + part[k]] = z[nK + p];
+      x[k] = z[nK + p];
+    }
+    return { converged: true, iterations, residual, x, why: '', z };
+  }
+
+  /**
+   * The derivatives of a reduced cell's speciation, at the state C holds
+   * (one reducedSpeciate left): of each unknown of sys.part, as
+   * speciateCell's x, in each total (dT, na rows of nb) and in each species
+   * of `outside` (dO): the implicit function theorem on reducedResidual.
+   */
+  function reducedSensitivity(rs, C, off, totals, w, present, cell, z, outside) {
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, kOf, dOf } = rs;
+    const { na, nb, part, act } = sys;
+    const F = new Float64Array(nz);
+    const J = Array.from({ length: nz }, () => new Float64Array(nz));
+    reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, J);
+    const { val, dG, hI, hL } = rs.scratch;
+    const low = !(useI && z[iI] > 1e-10);
+    const piv = luFactor(J, nz);
+    if (!piv) return null;
+    // dx of every part position from dz.
+    const expand = (dz, out, col) => {
+      for (let i = 0; i < naq; i++) {
+        const k = aq[i];
+        const s = part[k];
+        let d;
+        const kk = kOf[i];
+        if (kk >= 0) d = dz[kk];
+        else {
+          const r = dOf[i];
+          const Er = E[r];
+          d = 0;
+          for (let j = 0; j < nK; j++) d -= Er[j] * dz[j];
+          if (useI) d += hI[r] * dz[iI];
+          if (useL) d += hL[r] * dz[iL];
+        }
+        if (useI && !low) d -= dG[s] * dz[iI];
+        out[k][col] = d;
+      }
+      for (let p = 0; p < nm; p++) out[mins[p].k][col] = dz[nK + p];
+    };
+    const dT = Array.from({ length: na }, () => new Float64Array(nb));
+    const dO = Array.from({ length: na }, () => new Float64Array(outside.length));
+    const b = new Float64Array(nz);
+    for (let q = 0; q < nb; q++) {
+      b.fill(0);
+      b[q] = 1;
+      luSolve(J, piv, b, nz);
+      expand(b, dT, q);
+    }
+    if (act && outside.length) {
+      let Ssum = 0;
+      for (let i = 0; i < naq; i++) if (act.solute[part[aq[i]]]) Ssum += val[i];
+      for (const si of outside) if (act.solute[si]) Ssum += C[off + si];
+      const aw = 1 - 0.017 * Ssum;
+      const dry = !(aw > 1e-6);
+      outside.forEach((si, i) => {
+        b.fill(0);
+        const zz = act.z[si];
+        if (useI && !low) b[iI] = 0.5 * zz * zz;
+        if (useL && !dry && act.solute[si]) b[iL] = -0.017 / aw;
+        luSolve(J, piv, b, nz);
+        expand(b, dO, i);
+      });
+    }
+    return { dT, dO };
   }
 
   /**
@@ -5472,6 +5956,10 @@
       const b = c * ns;
       for (let s = 0; s < ns; s++) Cs[s] = Cstar[b + s];
       for (let k = 0; k < na; k++) wP[k] = massOf[b + active[k]];
+      if (zOf[c]) {
+        for (let j = 0; j < nb; j++) totalsP[j] = y[tIndex(c, j)];
+        return reducedSensitivity(rsys, Cs, 0, totalsP, wP, present.subarray(c * ne, (c + 1) * ne), c, zOf[c], outside);
+      }
       const { J, O } = cellJacobian(sys, Cs, 0, wP, present.subarray(c * ne, (c + 1) * ne), c,
         outside.length ? outside : null);
       const piv = luFactor(J, na);
@@ -5664,20 +6152,49 @@
     // when the Newton iterate it is handed is too wild to start from: oxygen
     // at e^50 spoils even the ionic strength.
     const settled = projected ? Array.from({ length: nc }, () => null) : null;
+    /*
+      The projection is the reduced speciation (reducedSystem), its
+      components the species that make up the start, least abundant made
+      dependent first, an exchanger or the electron kept a component; the
+      full one where there is no reduced system. Each cell's reduced unknowns
+      are kept for its derivatives (sensitivities). What neither start
+      settles in 60 iterations is a Newton iterate whose totals no water has,
+      and the step is cut: on a pyrite column the full speciation settled one
+      of 141 such, at 200 iterations each.
+    */
+    let rsys = null;
+    if (projected) {
+      const abundance = abundanceOf(start, ns, nc);
+      const rankOf = (k) => (site && site[active[k]] === 1 ? 0 : site && site[active[k]] === 2 ? 2 : 1);
+      const prefer = [...Array(na).keys()].sort((a, b2) => (rankOf(a) - rankOf(b2))
+        || (Math.abs(abundance[active[a]]) - Math.abs(abundance[active[b2]])) || a - b2);
+      rsys = reducedSystem(sys, prefer);
+      if (rsys) rsys.outside = outside;
+    }
+    const zOf = projected ? Array.from({ length: nc }, () => null) : null;
     function project(c, y) {
       const b = c * ns;
       for (let j = 0; j < nb; j++) totalsP[j] = y[tIndex(c, j)];
       for (let k = 0; k < na; k++) wP[k] = massOf[b + active[k]];
       const pres = present.subarray(c * ne, (c + 1) * ne);
-      const opts = { tol: 1e-12, roundOff: true, cell: c, maxIter: 200, asStarted: true };
-      for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
-      let res = speciateCell(sys, Cs, 0, totalsP, wP, pres, opts);
-      if (!res.converged && settled[c]) {
-        for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
+      const opts = { tol: 1e-12, roundOff: true, cell: c, maxIter: rsys ? 60 : 200, asStarted: true };
+      const fromIterate = () => { for (let s = 0; s < ns; s++) Cs[s] = C[b + s]; };
+      const fromSettled = () => {
+        fromIterate();
         for (let k = 0; k < na; k++) Cs[active[k]] = settled[c][k];
-        res = speciateCell(sys, Cs, 0, totalsP, wP, pres, opts);
+      };
+      let res = null;
+      let reduced = false;
+      for (const [solve, start2] of rsys ? [['reduced', fromIterate], ['reduced', fromSettled]]
+        : [['full', fromIterate], ['full', fromSettled]]) {
+        if (start2 === fromSettled && !settled[c]) continue;
+        start2();
+        res = solve === 'reduced' ? reducedSpeciate(rsys, Cs, 0, totalsP, wP, pres, opts)
+          : speciateCell(sys, Cs, 0, totalsP, wP, pres, opts);
+        if (res.converged) { reduced = solve === 'reduced'; break; }
       }
-      if (!res.converged) return null;
+      if (!res || !res.converged) return null;
+      zOf[c] = reduced ? Float64Array.from(res.z) : null;
       if (!settled[c]) settled[c] = new Float64Array(na);
       for (let k = 0; k < na; k++) settled[c][k] = Cs[active[k]];
       return res.x;
@@ -5700,6 +6217,22 @@
         const pres = opts.fromState
           ? Uint8Array.from(eqs, (eq) => (eq.mineral < 0 || y[b + eq.mineral] > 0 ? 1 : 0))
           : present.subarray(c * ne, (c + 1) * ne);
+        /*
+          Projected, the held species in the state carry no weight and may
+          stand far from what their totals make them: the cell is started
+          from its reduced speciation, from there or from where it last
+          settled, and only then polished and its minerals settled.
+        */
+        if (rsys) {
+          for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
+          let r0 = reducedSpeciate(rsys, Cs, 0, totalsCell, wCell, pres, { tol, cell: c, maxIter: 60 });
+          if (!r0.converged && settled[c]) {
+            for (let s = 0; s < ns; s++) Cs[s] = C[b + s];
+            for (let k = 0; k < na; k++) Cs[active[k]] = settled[c][k];
+            r0 = reducedSpeciate(rsys, Cs, 0, totalsCell, wCell, pres, { tol, cell: c, maxIter: 60 });
+          }
+          if (r0.converged) for (const s of active) C[b + s] = Cs[s];
+        }
         const res = speciateCell(sys, C, b, totalsCell, wCell, pres,
           { tol, roundOff: true, activeSet: !!opts.fromState, cell: c });
         iterations = Math.max(iterations, res.iterations);
@@ -5766,6 +6299,35 @@
       shown: '', assigns: ['present'], once: false, stop: false,
     }));
     function eventValues(t, y, out) {
+      /*
+        Projected, a held species in the state is only near its projection
+        -- it carries no weight in the error test -- and a mineral's
+        saturation read off it fired "precipitates" on noise and stalled a
+        redox front: the projection's own amounts and saturations, then.
+      */
+      if (projected) {
+        projectAll(y);
+        for (let c = 0; c < nc; c++) {
+          const b = c * ns;
+          const water = act && xs[c] ? activityAt(act, Cstar, b, lnG, dG) : null;
+          for (let q = 0; q < nmin; q++) {
+            const r = mins[q];
+            const m = eqs[r].mineral;
+            if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] ? -y[b + m] : -1; continue; }
+            if (present[c * ne + r]) { out[c * nmin + q] = -Cstar[b + m]; continue; }
+            const eq = eqs[r];
+            let g = -eq.lnK;
+            for (const [sp, nu] of eq.net) {
+              if (isMin[sp]) continue;
+              g += nu * Math.log(Math.max(Cstar[b + sp], 1e-300));
+              if (act) g += nu * lnG[sp];
+            }
+            if (act && eq.water) g += eq.water * water.lnAw;
+            out[c * nmin + q] = (eq.mineralNu < 0 ? 1 : -1) * g;
+          }
+        }
+        return out;
+      }
       concentrations(y);
       for (let c = 0; c < nc; c++) {
         const b = c * ns;
