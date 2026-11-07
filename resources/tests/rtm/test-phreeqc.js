@@ -226,6 +226,32 @@ function withPhreeqc(engine) {
     `${last.pq.phases.get('Calcite').toFixed(4)} vs ${alone.phases.get('Calcite').toFixed(4)}`);
   check('the activity coefficients hardly moved', Math.abs(acid.report.drift[0].by) < 0.01,
     `${acid.report.drift[0].by.toExponential(2)} in log K`);
+
+  // --- the same water, its relations held exactly ---------------------------
+  const ex = P.waterToModel({ engine, database, water, exact: true });
+  const mx = RtmModel.compile(ex.text);
+  const backX = new Map([...ex.names].map(([k, v]) => [v, k]));
+  const cx = mx.toConcentrations(mx.initialState());
+  let worstX = 0;
+  mx.speciesNames.forEach((n, i) => { worstX = Math.max(worstX, Math.abs(cx[i] / ex.molal.get(backX.get(n)) - 1)); });
+  check('held exactly: EQUILIBRATE = always and no kf, the start on PHREEQC\'s molalities',
+    /^EQUILIBRATE = always$/m.test(ex.text) && !/kf = /.test(ex.text) && !!mx.heldEquilibria
+      && mx.heldEquilibria.relations === ex.report.equilibria && worstX < 1e-8,
+    `${mx.heldEquilibria ? mx.heldEquilibria.species : 0} species on ${ex.report.equilibria} relations, `
+      + `${worstX.toExponential(1)}`);
+  let both = '';
+  try { P.waterToModel({ engine, database, water, exact: true, relax: 1e3 }); } catch (e) { both = e.message; }
+  check('... and exactly and as fast pairs at once is refused', /either exactly or as fast pairs/.test(both), both);
+  const exAcidText = ex.text.replace('TEND = 1\n', 'TEND = 1e5\n') + '=> H+ + Cl-, k = 1.5e-8\n';
+  const exAcid = P.viewRun({ engine, database, run: pageRun(exAcidText, 1e5), modelText: exAcidText, water,
+    phases: ['Calcite'], unit: 's' });
+  const exLast = exAcid.rows[exAcid.rows.length - 1];
+  const exAlone = P.parseRows(engine.run(`${P.punchBlock()}${groundwater.replace('END', '')}`
+    + `REACTION 1\n  HCl 1\n  ${(1.5e-8 * exLast.t).toPrecision(12)} moles\nEND\n`)).pop();
+  check('held exactly, the acid run lands where PHREEQC alone does, as close as the pairs or closer',
+    Math.abs(exLast.pq.pH - exAlone.pH) < 2e-3
+      && Math.abs(exLast.pq.pH - exAlone.pH) <= Math.abs(last.pq.pH - alone.pH) + 1e-4,
+    `pH ${exLast.pq.pH.toFixed(5)} vs ${exAlone.pH.toFixed(5)}; the pairs ${last.pq.pH.toFixed(5)} vs ${alone.pH.toFixed(5)}`);
   check('with the water, its temperature', acid.report.temperature === 15 && acid.report.temperatureFrom === 'the water',
     `${acid.report.temperature} C, from ${acid.report.temperatureFrom}`);
 
@@ -287,6 +313,11 @@ async function asThePage(createPhreeqc, acidText) {
     && v.table.pH.length === 50 && v.progress.length > 0 && v.csv.split('\n').length === 52,
   v.type === 'done' ? `${v.table.pH.length} rows, ${v.phases.length} phases, ${v.progress.length} progress messages`
     : v.error);
+  const held = await ask({ id: 5, type: 'toModel', database: null,
+    water: { name: 'groundwater', text: groundwater }, options: { exact: true } });
+  check('... and held exactly, checked from the concentrations its state stands for', held.type === 'done'
+    && held.check && held.check.worst < 1e-8 && held.check.converged && /^EQUILIBRATE = always$/m.test(held.text),
+  held.type === 'done' ? `${held.check.worst.toExponential(1)} from PHREEQC` : held.error);
   const bad = await ask({ id: 3, type: 'toModel', database: null, water: { name: 'x', text: 'SOLUTION 1\n pH seven\nEND\n' } });
   check('a bad water is answered with PHREEQC\'s own message', bad.type === 'error' && /pH|ph/.test(bad.error),
     bad.error && bad.error.split('\n')[0]);

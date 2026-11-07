@@ -19,6 +19,7 @@ Exit status is 0 when every check passes.
 import asyncio
 import json
 import os
+import re
 import sys
 import urllib.request
 
@@ -184,10 +185,35 @@ async def main():
             check('and rtm.html\'s own speciation lands on PHREEQC\'s', isinstance(report, str)
                   and 'lands on PHREEQC\'s molalities to' in report, True)
             text = await page.ev("document.getElementById('rtmText').value")
-            check('the text has its equilibria, each held during the run', isinstance(text, str)
-                  and '<EQUILIBRIUM>' in text and text.count('kf = ') == 30, True)
+            check('the text has its equilibria, held exactly through the run', isinstance(text, str)
+                  and '<EQUILIBRIUM>' in text and 'EQUILIBRATE = always' in text and 'kf = ' not in text, True)
             status = await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and it compiles', status, 'Compiled:')
+            check('with the relations held: the model facts say so', await page.ev(
+                "/all held throughout the run, 40 species algebraic in every cell/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('[data-tab="jacobian"]'))
+            jac = await page.ev("document.getElementById('rtmJacNote').textContent")
+            check('the Jacobian tab draws the species\' part and says the totals are not drawn',
+                  True if isinstance(jac, str) and jac.startswith("the species' 41 × 41 of the 51 × 51 the solver works with")
+                  and 'the 10 totals the held equilibria conserve are not drawn' in jac else jac, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
+            # As fast pairs instead: the rate they relax at is asked for, and each gets its kf.
+            check('the rate pairs relax at is asked only for pairs', await page.ev(
+                "document.getElementById('rtmPqRelaxWrap').hidden"), True)
+            await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'pairs';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            check('... and shown when they are chosen', await page.ev(
+                "document.getElementById('rtmPqRelaxWrap').hidden"), False)
+            await write_from_example(page)
+            pairs = await page.ev("document.getElementById('rtmText').value")
+            check('as fast pairs, every relation has its kf and the start alone is speciated', isinstance(pairs, str)
+                  and pairs.count('kf = ') == 30 and 'EQUILIBRATE = 1' in pairs, True)
+            await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'exact';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await write_from_example(page)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('PHREEQC ran in a worker of its own', await page.ev(
                 "performance.getEntriesByType('resource').some((r) => /rtm-phreeqc-worker\\.js/.test(r.name))"), True)
 
@@ -212,6 +238,10 @@ async def main():
             await page.ev(CLICK % json.dumps('#rtmRun'))
             done = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('the model runs', done, 'Done')
+            # The look takes up to 100 of the waters the run kept, and how many
+            # it kept is the solver's business: read off the run's own status.
+            kept = re.search(r'([\d,]+) points kept', await page.ev(STATUS) or '')
+            waters = min(100, int(kept.group(1).replace(',', ''))) if kept else 100
             await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
             check('the PHREEQC tab waits to be asked', await page.ev(
                 "[!document.getElementById('rtmPqEmpty').hidden, document.getElementById('rtmChartPq').hidden]"),
@@ -222,7 +252,7 @@ async def main():
             looked = await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
                                        f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
             check('the run is looked at through PHREEQC', isinstance(looked, str)
-                  and looked.startswith('PHREEQC looked at 100 waters'), True)
+                  and looked.startswith(f'PHREEQC looked at {waters} waters'), True)
             chart = await page.ev("(() => { const d = document.getElementById('rtmChartPq').data || [];"
                                   " return d.length ? [d[0].name, d[0].x[0], d[0].y[0], d.length > 1,"
                                   " d.slice(1).some((t) => t.name === 'Calcite')] : null; })()")
@@ -274,7 +304,7 @@ async def main():
             lines = csv.strip().split('\n') if isinstance(csv, str) else []
             check('CSV: a row for each water, with the ionic strength and the saturation indices',
                   [len(lines), lines[0].split(',')[:5] if lines else None, 'SI Calcite' in (lines[0] if lines else '')],
-                  [101, ['t (s)', 'cell', 'layer', 'ionic strength (mol/kgw)', 'pH (-log a H+)'], True])
+                  [waters + 1, ['t (s)', 'cell', 'layer', 'ionic strength (mol/kgw)', 'pH (-log a H+)'], True])
 
             # --- a run after the look: the look stays, and says it is the earlier one ---
             await page.ev(CLICK % json.dumps('#rtmRun'))

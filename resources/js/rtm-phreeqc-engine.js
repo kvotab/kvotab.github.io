@@ -166,7 +166,8 @@
     try {
       const m = Rtm.compile(res.text);
       const back = new Map([...res.names].map(([k, v]) => [v, k]));
-      const y = m.initialState();
+      // A model holding its equilibria keeps ln C and the totals: its concentrations, then.
+      const y = m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState();
       let worst = 0;
       let where = null;
       m.speciesNames.forEach((n, i) => {

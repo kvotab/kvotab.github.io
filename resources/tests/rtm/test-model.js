@@ -2636,6 +2636,205 @@ console.log('\n--- the examples ---');
 }
 
 /* ======================================================================
+   2x. Equilibria held throughout the run (EQUILIBRATE = always)
+
+   Held exactly, a relation is an algebraic equation: the totals it conserves
+   are integrated and the species are solved for at every instant. So the
+   checks are exact ones -- every stored point on every relation; the totals
+   what the sources put in; the state at the end the speciation of the totals
+   the end has, worked out apart.
+   ====================================================================== */
+console.log('\n--- equilibria held throughout the run ---');
+{
+  const carb = (equilibrate, opts = {}) => `
+<SETTINGS>
+MODE = batch
+TEND = 1e5
+EQUILIBRATE = ${equilibrate}
+
+<SPECIES>
+H+      ${opts.h || '1e-7'}${opts.fixH ? '  fixed' : ''}
+OH-     1e-7
+CO2     2e-4
+HCO3-   2e-3${opts.rHCO3 ? `  R=${opts.rHCO3}` : ''}
+CO3-2   1e-9
+Cl-     ${opts.cl || '0'}
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14${opts.kfWater ? `, kf = ${opts.kfWater}` : ''}
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+
+<REACTIONS>
+${opts.reactions !== undefined ? opts.reactions : '=> H+ + Cl-, k = 1.5e-8'}
+`;
+  const at = (m) => (name) => m.speciesNames.indexOf(name);
+
+  // --- the setting ---
+  check('EQUILIBRATE = always holds the equilibria: five species algebraic',
+    RtmModel.compile(carb('always')).nalgebraic === 5);
+  const startOnly = RtmModel.compile(carb('start'));
+  check('  start means 1: the start only, nothing algebraic', startOnly.settings.EQUILIBRATE === 1
+    && !startOnly.nalgebraic);
+  let refused = '';
+  try { RtmModel.compile(carb('alway')); } catch (e) { refused = e.message; }
+  check('  a word it does not know is refused, not read as no', /EQUILIBRATE is 0, 1, start or always/.test(refused),
+    refused);
+
+  // --- acid into a carbonate water ---
+  const m = RtmModel.compile(carb('always'));
+  const i = at(m);
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let onRel = 0;
+  let carbon = 0;
+  let chloride = 0;
+  let charge = 0;
+  for (let p = 0; p < r.t.length; p++) {
+    const c = m.toConcentrations(r.y[p]);
+    const [H, OH, CO2, HCO3, CO3, Cl] = ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2', 'Cl-'].map((n) => c[i(n)]);
+    onRel = Math.max(onRel, Math.abs(Math.log10(H * OH) + 14), Math.abs(Math.log10(H * HCO3 / CO2) + 6.35),
+      Math.abs(Math.log10(H * CO3 / HCO3) + 10.33));
+    carbon = Math.max(carbon, Math.abs((CO2 + HCO3 + CO3) / 2.200001e-3 - 1));
+    chloride = Math.max(chloride, Math.abs(Cl - 1.5e-8 * r.t[p]) / 1.5e-3);
+    charge = Math.max(charge, Math.abs((H - OH - HCO3 - 2 * CO3 - Cl) / -2.000002e-3 - 1));
+  }
+  check('acid into a carbonate water: every stored point on all three relations', onRel < 1e-9,
+    `${r.t.length} points, worst ${onRel.toExponential(1)} in log K`);
+  check('  carbon conserved', carbon < 1e-12, `${carbon.toExponential(1)} relative`);
+  check('  the chloride the source put in', chloride < 1e-10, `${chloride.toExponential(1)}`);
+  check('  and the charge the equilibria cannot change, acid adding H+ and Cl- alike', charge < 1e-10,
+    `${charge.toExponential(1)} relative`);
+  // The answer at the end, apart: the same totals, speciated from scratch.
+  const tEnd = r.t[r.t.length - 1];
+  const clEnd = 1.5e-8 * tEnd;
+  const apart = RtmModel.compile(carb(1, { h: String(1e-7 + clEnd), cl: String(clEnd), reactions: '' })).initialState();
+  const end = m.toConcentrations(r.y[r.y.length - 1]);
+  let worstEnd = 0;
+  for (const n of ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2']) worstEnd = Math.max(worstEnd, Math.abs(end[i(n)] / apart[i(n)] - 1));
+  check('  the state at the end is the speciation of the totals the end has', worstEnd < 1e-7,
+    `pH ${(-Math.log10(end[i('H+')])).toFixed(6)}, worst species ${worstEnd.toExponential(1)} relative`);
+
+  // --- the Jacobian, the consistent start, the methods that cannot ---
+  const v0 = RtmModel.verifyJacobian(m, 0, m.initialState());
+  const v1 = RtmModel.verifyJacobian(m, tEnd, r.y[r.y.length - 1]);
+  check('the Jacobian, ln C and the totals included, at the start and the end',
+    v0.discrepancies.length === 0 && v1.discrepancies.length === 0, `${v0.checked} and ${v1.checked} entries`);
+  const y0 = m.initialState();
+  const knocked = Float64Array.from(y0);
+  for (const n of ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2']) knocked[i(n)] += 0.7;
+  const settled = m.consistentInitial(0, knocked, { rtol: 1e-8 });
+  let back = 0;
+  for (let k = 0; k < y0.length; k++) back = Math.max(back, Math.abs(knocked[k] - y0[k]));
+  check('  a state knocked off its relations is put back where it was, the totals held', settled.solved && back < 1e-9,
+    `${settled.iterations} iterations, ${back.toExponential(1)}`);
+  let methodRefused = '';
+  try { FacsimileODE.runModel(m, { solver: 'ros23', tend: 1, rtol: 1e-6, atol: 1e-20 }); } catch (e) { methodRefused = e.message; }
+  check('  a method with no mass matrix is refused, and says why', /algebraic/.test(methodRefused),
+    methodRefused.slice(0, 80));
+
+  // --- a retarded species weighs its coefficient into the totals ---
+  const mr = RtmModel.compile(carb('always', { rHCO3: 2.5 }));
+  const ir = at(mr);
+  const rr = FacsimileODE.runModel(mr, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const inv = (c) => c[ir('CO2')] + 2.5 * c[ir('HCO3-')] + c[ir('CO3-2')];
+  const inv0 = inv(mr.toConcentrations(rr.y[0]));
+  let invWorst = 0;
+  for (const y of rr.y) invWorst = Math.max(invWorst, Math.abs(inv(mr.toConcentrations(y)) / inv0 - 1));
+  check('with R = 2.5 on HCO3-, the carbon inventory is what is conserved', invWorst < 1e-12,
+    `${invWorst.toExponential(1)} relative`);
+
+  // --- a buffered pH: H+ fixed, so the carbonate ratio is too ---
+  const mf = RtmModel.compile(carb('always', { fixH: true, reactions: '=> CO2, k = 1e-9' }));
+  const iff = at(mf);
+  const rf = FacsimileODE.runModel(mf, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const cf = mf.toConcentrations(rf.y[rf.y.length - 1]);
+  const totalF = cf[iff('CO2')] + cf[iff('HCO3-')] + cf[iff('CO3-2')];
+  check('H+ fixed: the carbonate takes what the source adds and keeps the buffered ratio',
+    Math.abs(cf[iff('H+')] - 1e-7) < 1e-20 && Math.abs(Math.log10(cf[iff('H+')] * cf[iff('HCO3-')] / cf[iff('CO2')]) + 6.35) < 1e-9
+      && Math.abs(totalF / (2.200001e-3 + 1e-9 * rf.t[rf.t.length - 1]) - 1) < 1e-10,
+    `carbon ${totalF.toExponential(6)}`);
+
+  // --- held relations beside a fast pair ---
+  const mk = RtmModel.compile(carb('always', { kfWater: 1e-3 }));
+  const ik = at(mk);
+  const rk = FacsimileODE.runModel(mk, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let heldTwo = 0;
+  let pair = 0;
+  for (const y of rk.y) {
+    const c = mk.toConcentrations(y);
+    heldTwo = Math.max(heldTwo, Math.abs(Math.log10(c[ik('H+')] * c[ik('HCO3-')] / c[ik('CO2')]) + 6.35),
+      Math.abs(Math.log10(c[ik('H+')] * c[ik('CO3-2')] / c[ik('HCO3-')]) + 10.33));
+    pair = Math.max(pair, Math.abs(Math.log10(c[ik('H+')] * c[ik('OH-')]) + 14));
+  }
+  check('a relation with a kf stays a fast pair beside the two held', mk.nalgebraic === 4 && heldTwo < 1e-9
+    && pair < 1e-3, `held ${heldTwo.toExponential(1)}, the pair ${pair.toExponential(1)} in log K`);
+
+  // --- a closed column: what moves between cells, conserved over them ---
+  const col = `
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.01
+GRID = log
+DIFFUSION = 1
+LEFT = neumann
+RIGHT = neumann
+TEND = 2e4
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7   D=9.3e-9
+OH-     1e-7   D=5.3e-9
+CO2     2e-4   D=1.9e-9
+HCO3-   2e-3   D=1.2e-9
+CO3-2   1e-9   D=0.9e-9
+
+<INITIAL>
+H+  0-4  3e-3
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+
+<REACTIONS>
+`;
+  const mc = RtmModel.compile(col);
+  const ic = at(mc);
+  const nsC = mc.speciesNames.length;
+  const rc = FacsimileODE.runModel(mc, { solver: 'ndf', tend: 2e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const w = mc.grid.width;
+  const totals = (y) => {
+    const c = mc.toConcentrations(y);
+    let carbonT = 0;
+    let protons = 0;
+    for (let k = 0; k < mc.cells; k++) {
+      const b = k * nsC;
+      carbonT += w[k] * (c[b + ic('CO2')] + c[b + ic('HCO3-')] + c[b + ic('CO3-2')]);
+      protons += w[k] * (c[b + ic('H+')] - c[b + ic('OH-')] - c[b + ic('HCO3-')] - 2 * c[b + ic('CO3-2')]);
+    }
+    return [carbonT, protons];
+  };
+  const [c0T, p0T] = totals(rc.y[0]);
+  let colWorst = 0;
+  let colRel = 0;
+  for (const y of rc.y) {
+    const [cT, pT] = totals(y);
+    colWorst = Math.max(colWorst, Math.abs(cT / c0T - 1), Math.abs((pT - p0T) / c0T));
+    const c = mc.toConcentrations(y);
+    for (let k = 0; k < mc.cells; k++) {
+      const b = k * nsC;
+      colRel = Math.max(colRel, Math.abs(Math.log10(c[b + ic('H+')] * c[b + ic('OH-')]) + 14));
+    }
+  }
+  check('a closed column, species diffusing at five rates: carbon and protons conserved over it',
+    colWorst < 1e-10, `${colWorst.toExponential(1)} relative, ${rc.t.length} points`);
+  check('  and every cell on its relations all the while', colRel < 1e-9, `${colRel.toExponential(1)} in log K`);
+  const vc = RtmModel.verifyJacobian(mc, 0, mc.initialState());
+  check('  its Jacobian, transport between cells included', vc.discrepancies.length === 0, `${vc.checked} entries`);
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

@@ -129,6 +129,7 @@
    * @param {object} opts
    *   rtol, atol (number|array), maxOrder (1-5), bdf (bool), hmax, h0, maxSteps,
    *   nonNegative (bool[] or null), mass (diagonal: 1 differential, 0 algebraic),
+   *   absolute (bool[] or null: logarithms, weighed against atol/rtol alone),
    *   suppressAlgebraic, norm ('max'|'rms'), normControl, scaling, minNewton,
    *   stagnationTol, belowTolRun, autoAtol,
    *   jacobian: {pattern, evaluate(t,y), groups} -- `evaluate` optional (differenced through the pattern),
@@ -158,6 +159,8 @@
     }
     const nonNegative = [];
     if (opts.nonNegative) for (let i = 0; i < y0.length; i++) if (opts.nonNegative[i]) nonNegative.push(i);
+    const absolute = [];
+    if (opts.absolute) for (let i = 0; i < y0.length; i++) if (opts.absolute[i]) absolute.push(i);
     const res = core.ndf(f, [t0, ...inner, tfinal], y0, {
       rtol: opts.rtol,
       abstol: opts.atol,
@@ -170,6 +173,7 @@
       h0: opts.h0,
       maxSteps: opts.maxSteps ?? 2e6,
       nonNegative,
+      absolute,
       mass: opts.mass,
       suppressAlgebraic: !!opts.suppressAlgebraic,
       jacobian: Jopt,
@@ -557,10 +561,20 @@
     })();
     let nextBreak = 0;
     const y0 = model.initialState(0);
+    /*
+      What a model may answer for itself. A model that knows the structure of
+      its constraints can put its state on them better than one Newton over all
+      of them at once -- rtm.html's equilibria are many small systems, one per
+      cell, where the general one is a dense matrix the size of all of them --
+      and a model whose states are not all concentrations knows which may go
+      negative and how closely each has to be held. Absent, the defaults.
+    */
+    const settle = typeof model.consistentInitial === 'function'
+      ? (m, t, yy, o) => m.consistentInitial(t, yy, o) : consistentInitial;
     // The constraints, before anything is integrated. See consistentInitial.
     let startInfo = null;
     if (model.nalgebraic && opts.consistentStart !== false) {
-      startInfo = consistentInitial(model, 0, y0, { rtol: opts.rtol });
+      startInfo = settle(model, 0, y0, { rtol: opts.rtol });
       if (!startInfo.solved) {
         throw new SolverError('consistent',
           `The algebraic variables could not be put on their constraints at t = 0: ${startInfo.why}. `
@@ -581,7 +595,9 @@
         }
         : undefined,
     };
-    const nonNegative = opts.nonNegative ? new Uint8Array(n).fill(1) : null;
+    const nonNegative = !opts.nonNegative ? null
+      : model.nonNegativeMask && model.nonNegativeMask.length === n ? Uint8Array.from(model.nonNegativeMask)
+        : new Uint8Array(n).fill(1);
     const events = model.nevents
       ? {
         n: model.nevents,
@@ -702,7 +718,7 @@
           // points that each satisfy g = 0 does not give a point that does:
           // on Robertson's problem the reported sum of the three species was
           // out by 3e-4 where the solver's own steps hold it to rounding.
-          if (algMass) consistentInitial(gridModel, tq, yq, { rtol: 1e-12 });
+          if (algMass) settle(gridModel, tq, yq, { rtol: 1e-12 });
           gridT.push(tq);
           gridY.push(yq);
           gi++;
@@ -728,7 +744,8 @@
     // Per-species tolerances, if any: resolved once against the compiled
     // species list, so an unknown name is refused before the run rather than
     // ignored during it.
-    const baseAtol = speciesAtol(model.species, opts.atol, opts.atolSpecies) ?? opts.atol;
+    const modelAtol = typeof model.atolFor === 'function' ? model.atolFor(opts.atol, opts.rtol) : opts.atol;
+    const baseAtol = speciesAtol(model.species, modelAtol, opts.atolSpecies) ?? modelAtol;
     const runAtol = opts.autoAtol
       ? (typeof baseAtol === 'number' || baseAtol == null
         ? new Float64Array(n).fill(baseAtol ?? 1e-6) : Float64Array.from(baseAtol))
@@ -756,7 +773,9 @@
         hmax: opts.hmax > 0 || !breaks.length ? opts.hmax : 0.1 * tend,
         norm: opts.norm, debug: opts.debug, scaling: opts.scaling, minNewton: opts.minNewton, stagnationTol: opts.stagnationTol,
         nonNegative, jacobian, matrix: opts.matrix || 'auto', events, tStart: seg === 0 ? undefined : t0,
-        mass: model.mass, suppressAlgebraic: opts.suppressAlgebraic,
+        mass: model.mass, suppressAlgebraic: opts.suppressAlgebraic ?? model.suppressAlgebraic,
+        // States the model says are logarithms, weighed as they stand (see the NDF).
+        absolute: model.absoluteMask && model.absoluteMask.length === n ? model.absoluteMask : null,
         maxSteps: opts.maxSteps,
         // The first step, at the start and at every restart after an event,
         // as Kompartment hands its solvers one; and the NDF's norm control.
@@ -837,7 +856,7 @@
       // An event changes the constants, so it can move the constraints; the
       // state has to be put back on them before the next segment starts.
       if (model.nalgebraic && changed.length && opts.consistentStart !== false) {
-        const again = consistentInitial(model, res.stopped.t, res.stopped.y, { rtol: opts.rtol });
+        const again = settle(model, res.stopped.t, res.stopped.y, { rtol: opts.rtol });
         if (!again.solved) {
           throw new SolverError('consistent',
             `After the event "${ev.expr}" the algebraic variables could not be put back on their `

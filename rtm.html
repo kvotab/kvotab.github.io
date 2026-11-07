@@ -330,8 +330,13 @@
                   <input id="rtmPqFloor" type="text" value="1e-20" data-on-change="rtm:pqSettings">
                 </div>
                 <div class="rtm-pq-field">
-                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqHold" checked data-on-change="rtm:pqSettings"> Hold the equilibria during the run</label><span class="kvot-info-slot" data-info-key="pq:hold"></span></div>
-                  <div class="rtm-pq-sub">
+                  <div class="kvot-info-line"><label for="rtmPqHold">The equilibria during the run</label><span class="kvot-info-slot" data-info-key="pq:hold"></span></div>
+                  <select id="rtmPqHold" data-on-change="rtm:pqSettings">
+                    <option value="exact">held exactly</option>
+                    <option value="pairs">held as fast reversible pairs</option>
+                    <option value="start">on equilibrium at the start only</option>
+                  </select>
+                  <div class="rtm-pq-sub" id="rtmPqRelaxWrap" hidden>
                     <label for="rtmPqRelax">each relaxing back at, per second</label>
                     <input id="rtmPqRelax" type="text" value="1e3" data-on-change="rtm:pqSettings">
                   </div>
@@ -493,7 +498,7 @@
               <tr><td><code>TRAVEL_TIME</code></td><td>The time the water takes to cross the column, in the model's time unit, which is how a far-field path is described. It sets <code>VELOCITY</code> to <code>POROSITY</code>·<code>LENGTH</code>/<code>TRAVEL_TIME</code> and turns <code>ADVECTION</code> on.</td></tr>
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
-              <tr><td><code>EQUILIBRATE</code></td><td>1 puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins.</td></tr>
+              <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less the <em>v</em>·Δ<em>x</em>/2 the upwind scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
               <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
             </tbody>
@@ -959,12 +964,29 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             gives the conserved totals without the page needing a table of elements. So writing <code>H+</code> at 10<sup>-3</sup> and
             <code>OH-</code> at 10<sup>-3</sup> gives 10<sup>-7</sup> of each, and the difference
             between them, which is a charge, is exactly what it was.</p>
-          <p>Give <code>kf</code> as well and the equilibrium is held <em>during</em> the run too,
-            as a fast reversible pair with <code>kb = kf/K</code>. Without it, it applies to the
-            initial state and nothing else — these are solvers for <code>y' = f(y)</code>, and an
-            equilibrium held exactly throughout is an algebraic constraint, a different kind of
-            problem. A <code>kf</code> a few orders above the fastest rate in the model holds the
-            relation to within the solver's tolerance; making it enormous only costs steps.</p>
+          <p>During the run a relation can be kept in two ways. Give it a <code>kf</code> and it
+            becomes a fast reversible pair, with <code>kb = kf/K</code>: two reactions that pull it
+            back to equilibrium whenever something moves it off. A <code>kf</code> a few orders above
+            the fastest rate in the model holds the relation to within the solver's tolerance, and
+            making it enormous only costs steps. But a pair always lags a little where the water
+            changes fast, as it does in the first cell of a column taking a new water.</p>
+          <p>With <code>EQUILIBRATE = always</code> the relations given no <code>kf</code> are held
+            exactly instead. In every cell each is then an algebraic equation,
+            Σ&nbsp;ν&nbsp;ln&nbsp;C&nbsp;=&nbsp;ln&nbsp;K, and the species they move are no longer integrated one by one. What
+            is integrated in their place are the totals the relations conserve, the same totals the
+            start is speciated with: a reaction or a flux between cells changes a total as it changes
+            the species in it, and the species are worked out from the totals at every step. That is a
+            speciation in every cell, solved together with the reactions and the transport in one
+            implicit system. The relations then hold to rounding at every stored point, and what they
+            conserve is conserved to rounding. A species with an <code>R</code> counts in a total
+            R times, so what is conserved is the inventory. A relation with a <code>kf</code> stays a
+            fast pair beside the held ones, and a <code>fixed</code> species in a held relation must
+            be above zero in every cell.</p>
+          <p>Such a system has algebraic equations in it, which only the NDF solves: Auto hands it
+            to the NDF, and the other methods decline it. Each held species is solved for as
+            ln&nbsp;C, and an error of <code>rtol</code> in ln&nbsp;C is a relative error of
+            <code>rtol</code> in C, so the tolerance means for these species what it means for the
+            others.</p>
 
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
@@ -1066,7 +1088,7 @@ NpO2+ &lt;=&gt; NpO2_s,      K = 2.0E4, kf = 1.0E3   # also held during the run<
             <li>every aqueous species above the floor, at PHREEQC's molality, in
               <code>&lt;SPECIES&gt;</code>;</li>
             <li>every complexation and acid–base reaction among them, as the database writes it and
-              with water left out, in <code>&lt;EQUILIBRIUM&gt;</code>, with <code>EQUILIBRATE = 1</code>;</li>
+              with water left out, in <code>&lt;EQUILIBRIUM&gt;</code>;</li>
             <li>no redox relation: a reaction with electrons is left out, so that each valence state
               keeps its own total and electrons move only through the reactions you write — which is
               what a kinetic model is for.</li>
@@ -1086,13 +1108,19 @@ Ca+2 + CO3-2 &lt;=&gt; CaCO3,    logK = 2.3122100860      # log K 3.1553
             and +0.20 in log K.</p>
           <p>The constants belong to that ionic strength. A run that adds or removes a lot of salt moves
             away from it, and the PHREEQC tab says how far.</p>
-          <p><em>Hold the equilibria during the run</em> also keeps each relation as a fast reversible
-            pair, with the backward constant <code>kb = kf/K</code>. One forward constant for every
-            relation would not do: water and carbonate need constants about thirteen orders apart to
-            move at the same speed. So each relation gets the <code>kf</code> that makes it relax back
-            to equilibrium at the rate given, at this water. Near equilibrium a relation relaxes at
-            k<sub>f</sub> times the product of its reactants times Σ ν²/c over its species, and that is
-            solved for k<sub>f</sub>. The <code>kf</code> are per second, so change
+          <p><em>The equilibria during the run</em> says what keeps the relations on equilibrium
+            once the run starts. <em>Held exactly</em>, the default, writes
+            <code>EQUILIBRATE = always</code>, and each relation is an algebraic equation in every
+            cell all through the run (see <em>&lt;EQUILIBRIUM&gt;</em> above). <em>On equilibrium at the
+            start only</em> writes <code>EQUILIBRATE = 1</code>, and only the reactions you add move
+            the species after that.</p>
+          <p><em>Held as fast reversible pairs</em> writes <code>EQUILIBRATE = 1</code> and gives each
+            relation a <code>kf</code>, with the backward constant <code>kb = kf/K</code>. One forward
+            constant for every relation would not do: water and carbonate need constants about
+            thirteen orders apart to move at the same speed. So each relation gets the <code>kf</code>
+            that makes it relax back to equilibrium at the rate given, at this water. Near equilibrium
+            a relation relaxes at k<sub>f</sub> times the product of its reactants times Σ ν²/c over its
+            species, and that is solved for k<sub>f</sub>. The <code>kf</code> are per second, so change
             <code>TIME_UNIT</code> and they have to change with it.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
@@ -1277,18 +1305,18 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20261005"></script>
-  <script src="./resources/js/ode-core.js?v=20261005"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20261006"></script>
+  <script src="./resources/js/ode-core.js?v=20261107"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20261107"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261006a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261107"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261006a"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261107"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261107a"></script>
 </body>
 </html>

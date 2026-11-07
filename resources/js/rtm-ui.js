@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261006a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -233,6 +233,14 @@
       return `${method} is not loaded on this page. Reload it, with a hard reload if that does `
         + 'not do it.';
     }
+    // Equilibria held throughout the run are algebraic equations, which the
+    // NDF solves and Auto hands to it at once; the others take no mass matrix.
+    const m = state.compiled;
+    if (m && m.heldEquilibria && method !== 'ndf' && method !== 'auto') {
+      return 'EQUILIBRATE = always holds the equilibria as algebraic equations, which only the NDF '
+        + 'solves (Auto hands such a model to it). Choose NDF, with or without its BDF formulas, or '
+        + 'give the equilibria a kf and EQUILIBRATE = 1 to run them as fast pairs.';
+    }
     return null;
   }
 
@@ -431,9 +439,12 @@
         + (m.extra ? `, ${m.extra.n} cell${m.extra.n === 1 ? '' : 's'} past the right-hand end` : ''));
     }
     if (m.nequilibria) {
+      const h = m.heldEquilibria;
       bits.push(`${m.nequilibria} equilibri${m.nequilibria === 1 ? 'um' : 'a'}`
         + `, ${m.nconserved} conserved total${m.nconserved === 1 ? '' : 's'}`
-        + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : ''));
+        + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : '')
+        + (h ? ` · ${h.relations === m.nequilibria ? 'all' : h.relations} held throughout the run, `
+          + `${h.species} species algebraic in every cell` : ''));
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -693,7 +704,9 @@
     const canvas = $('rtmJacCanvas');
     const m = state.compiled;
     if (!canvas || !m) return;
-    const n = m.states;
+    // The species' part: the totals of equilibria held throughout the run
+    // come after them in the state and are not drawn.
+    const n = m.speciesStates || m.states;
     const size = Math.min(620, Math.max(200, n));
     canvas.width = size;
     canvas.height = size;
@@ -747,8 +760,11 @@
     if (!note) return;
     const diag = blocks.find((blk) => blk.off === 0);
     const chem = diag ? diag.coords.length / 2 : 0;
-    const bits = [`${n} × ${n}, ${m.nnz} non-zeros (${(100 * m.density).toFixed(2)} % of the matrix)`,
-      `the chemistry of one cell is ${chem} of the ${ns * ns} it could be`];
+    const whole = `${m.nnz} non-zeros (${(100 * m.density).toFixed(2)} % of the matrix)`;
+    const bits = [n === m.states ? `${n} × ${n}, ${whole}`
+      : `the species' ${n} × ${n} of the ${m.states} × ${m.states} the solver works with, which has ${whole}; `
+        + `the ${m.states - n} totals the held equilibria conserve are not drawn`,
+    `the chemistry of one cell is ${chem} of the ${ns * ns} it could be`];
     if (m.cells > 1) bits.push(`${couplings} transport couplings across ${blocks.length - 1} kinds of neighbour`);
     note.textContent = `${bits.join('; ')}.`;
   }
@@ -1841,7 +1857,7 @@
         facts: [
           ['Default', SOLVER_DEFAULTS.maxPoints],
           ['Least', '1000'],
-          ['This model', m ? `${m.states} numbers a point, ${mb(8 * m.states * pts)} at ${pts}` : null],
+          ['This model', m ? `${m.speciesStates || m.states} numbers a point, ${mb(8 * (m.speciesStates || m.states) * pts)} at ${pts}` : null],
         ],
         sections: [
           { text: 'When the store is full, every other point is dropped and from then on every second step is kept, and so on. A long run ends with between half and all of this many, dense where the solver crept and sparse where it flew.' },
@@ -1981,7 +1997,7 @@
       sections: [
         { heading: 'What is written', list: [
           'Every aqueous species above the floor, at PHREEQC’s molality, in `<SPECIES>`.',
-          'Every complexation and acid–base reaction among them, as the database writes it and with water left out, in `<EQUILIBRIUM>`, with `EQUILIBRATE = 1`.',
+          'Every complexation and acid–base reaction among them, as the database writes it and with water left out, in `<EQUILIBRIUM>`: held exactly through the run (`EQUILIBRATE = always`), as fast pairs with a `kf`, or at the start only, as **The equilibria during the run** says.',
           'Each `logK` is **conditional**: the activity coefficients at this ionic strength and the activity of water are folded into it, so that the relations rtm.html holds between concentrations hold exactly where PHREEQC’s hold between activities. The comment on each line is the database’s own log K at the water’s temperature.',
           'No redox relation. A reaction with electrons is not written, so each valence state keeps its own total and electrons move only through the reactions you write.',
           'A name rtm.html cannot write, such as `(UO2)2(OH)2+2`, is renamed (`UO2_2(OH)2+2`), and the text lists each one at the top.',
@@ -2019,14 +2035,16 @@
     }),
 
     'pq:hold': () => ({
-      kicker: 'PHREEQC', title: 'Hold the equilibria during the run',
-      lead: 'Without this, the relations only put the start on equilibrium. With it, each is also held during the run, as a fast reversible pair whose backward constant is kf divided by K.',
-      facts: [['Relaxing at', `${$('rtmPqRelax').value || '(empty)'} per second`], ['Default', 'on, at 1e3 per second']],
-      sections: [
-        { text: 'One forward constant for every relation would not do. A water relation and a carbonate relation need constants about thirteen orders apart to move at the same speed. So each relation gets the **kf** that makes it relax back to equilibrium at the rate given, at this water. Near equilibrium a relation relaxes at kf times the product of its reactants times the sum of ν²/c over its species, and that is solved for kf.' },
-        { text: 'Faster than anything else in the model is what is wanted: 1e3 per second is a few milliseconds, against reactions over minutes or years. Much faster only costs the solver steps.' },
-        { text: 'The kf are per second: change `TIME_UNIT` in the text and they have to change with it.' },
-      ],
+      kicker: 'PHREEQC', title: 'The equilibria during the run',
+      lead: 'Every relation written puts the start on equilibrium. This says what keeps it there while the run goes on.',
+      facts: pq.eq === 'pairs'
+        ? [['Relaxing at', `${$('rtmPqRelax').value || '(empty)'} per second`], ['Default', 'held exactly']]
+        : [['Default', 'held exactly']],
+      sections: [{ choices: [
+        ['held exactly', 'Each relation is an algebraic equation in every cell, all through the run (`EQUILIBRATE = always`). What the relations conserve is integrated, and the species are worked out from it at every step, so the relations hold to rounding wherever the run is read. Only the NDF solves that; Auto hands the model to it.', pq.eq === 'exact'],
+        ['held as fast reversible pairs', 'Each relation is a pair of reactions, the backward constant `kb = kf/K`, which pull it back to equilibrium at the rate given. One forward constant for every relation would not do: a water relation and a carbonate relation need constants about thirteen orders apart to move at the same speed. So each gets the **kf** that makes it relax back at that rate, at this water: near equilibrium a relation relaxes at kf times the product of its reactants times the sum of ν²/c over its species, and that is solved for kf. The kf are per second: change `TIME_UNIT` in the text and they have to change with it.', pq.eq === 'pairs'],
+        ['on equilibrium at the start only', 'The relations put the start on equilibrium (`EQUILIBRATE = 1`) and nothing more: during the run only the reactions you write move the species.', pq.eq === 'start'],
+      ] }, { heading: 'Keep in mind', text: 'A fast pair lags its relation wherever the water changes faster than it relaxes, as it does where a new water comes in; one held exactly does not lag. Faster relaxation closes the gap and costs the solver steps.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2171,6 +2189,7 @@
     for (const [name, spec] of Object.entries(table)) {
       names.add(name.toLowerCase());
       for (const word of spec.of || []) values.add(String(word).toLowerCase());
+      for (const word of Object.keys(spec.words || {})) values.add(word);
     }
     hlSettings = { names, values };
     return hlSettings;
@@ -2499,12 +2518,12 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107',
-    'resources/js/rtm-phreeqc-engine.js?v=20261107',
+    'resources/js/rtm-phreeqc.js?v=20261107a',
+    'resources/js/rtm-phreeqc-engine.js?v=20261107a',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -2527,8 +2546,10 @@ SOLUTION 1
   Si     0.2
 END
 `;
+  /** How the relations written are kept during the run: see pq:hold. */
+  const PQ_HOLDS = ['exact', 'pairs', 'start'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', hold: true, relax: '1e3', diff: 'none', D: '2e-9',
+    water: '', db: 'builtin', floor: '1e-20', eq: 'exact', relax: '1e3', diff: 'none', D: '2e-9',
     times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
@@ -2546,7 +2567,7 @@ END
   function pqSave() {
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
-        water: pq.water, db: pq.db, floor: pq.floor, hold: pq.hold, relax: pq.relax, diff: pq.diff,
+        water: pq.water, db: pq.db, floor: pq.floor, eq: pq.eq, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open,
       }));
@@ -2560,7 +2581,9 @@ END
       for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
-      for (const k of ['hold', 'fill', 'logT', 'open']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      for (const k of ['fill', 'logT', 'open']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      if (PQ_HOLDS.includes(s.eq)) pq.eq = s.eq;
+      else if (typeof s.hold === 'boolean') pq.eq = s.hold ? 'exact' : 'start';
       // A database's text is not kept between visits: one opened last time is
       // named, and phreeqc.dat used until it is opened again.
       if (typeof s.db === 'string' && s.db !== 'builtin') pq.missingDb = s.db;
@@ -2570,7 +2593,7 @@ END
   function pqWriteControls() {
     $('rtmPqWater').value = pq.water;
     $('rtmPqFloor').value = pq.floor;
-    $('rtmPqHold').checked = pq.hold;
+    $('rtmPqHold').value = pq.eq;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
     $('rtmPqD').value = pq.D;
@@ -2587,13 +2610,13 @@ END
   /** What one setting decides about another being asked at all. */
   function pqDependents() {
     $('rtmPqDWrap').hidden = pq.diff !== 'one';
-    $('rtmPqRelax').disabled = !pq.hold;
+    $('rtmPqRelaxWrap').hidden = pq.eq !== 'pairs';
   }
 
   function pqReadControls() {
     pq.water = $('rtmPqWater').value;
     pq.floor = $('rtmPqFloor').value.trim();
-    pq.hold = $('rtmPqHold').checked;
+    pq.eq = PQ_HOLDS.includes($('rtmPqHold').value) ? $('rtmPqHold').value : 'exact';
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
     pq.D = $('rtmPqD').value.trim();
@@ -2826,9 +2849,9 @@ END
       return;
     }
     const floor = pqNumber($('rtmPqFloor'));
-    const relax = pq.hold ? pqNumber($('rtmPqRelax'), { positive: true }) : null;
+    const relax = pq.eq === 'pairs' ? pqNumber($('rtmPqRelax'), { positive: true }) : null;
     const D = pq.diff === 'one' ? pqNumber($('rtmPqD'), { positive: true }) : null;
-    if (floor === null || (pq.hold && relax === null) || (pq.diff === 'one' && D === null)) {
+    if (floor === null || (pq.eq === 'pairs' && relax === null) || (pq.diff === 'one' && D === null)) {
       pqReport('<p class="error">A number in the settings is not one: the field is marked. A comma or a '
         + 'point is the decimal mark, and 1e-20 is written as here.</p>');
       return;
@@ -2837,7 +2860,8 @@ END
     try {
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
-        options: { floor, relax, D, dw: pq.diff === 'dw', date: new Date().toISOString().slice(0, 10) },
+        options: { floor, exact: pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
+          date: new Date().toISOString().slice(0, 10) },
       });
       // As an example is loaded: the text replaced outright, and said so below the panel.
       state.text = reply.text;

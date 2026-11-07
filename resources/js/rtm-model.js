@@ -112,7 +112,13 @@
     TIME_UNIT: { def: 'second', kind: 'word',
       of: ['s', 'sec', 'second', 'seconds', 'min', 'minute', 'minutes',
         'h', 'hour', 'hours', 'd', 'day', 'days', 'a', 'y', 'yr', 'year', 'years'] },
-    EQUILIBRATE: { def: 0, kind: 'flag' },
+    /*
+      1 (or start) puts the starting state on the <EQUILIBRIUM> relations;
+      always also holds those relations exactly while the run goes on, as
+      algebraic equations (see holdEquilibria). A relation given a kf is a
+      fast reversible pair either way.
+    */
+    EQUILIBRATE: { def: 0, kind: 'flag', words: { start: 1, always: 2 } },
     /*
       DUAL POROSITY: a rock matrix beside the column.
 
@@ -272,7 +278,16 @@
         out[name] = { cauchy: 'robin', outflow: 'free' }[word] || word;
         if (name === 'TIME_UNIT') out[name] = TIME_UNITS[out[name]].name;
       } else if (spec.kind === 'flag') {
-        out[name] = /^(1|yes|true|on)$/i.test(raw) ? 1 : 0;
+        const word = raw.toLowerCase();
+        if (spec.words && Object.prototype.hasOwnProperty.call(spec.words, word)) {
+          out[name] = spec.words[word];
+        } else if (spec.words && !/^(1|yes|true|on|0|no|false|off)$/.test(word)) {
+          // A setting with words of its own says so rather than reading an
+          // unknown one as "no": EQUILIBRATE = alway would otherwise be 0.
+          throw new RtmError(`${name} is 0, 1, ${Object.keys(spec.words).join(' or ')}, not "${raw}".`, line);
+        } else {
+          out[name] = /^(1|yes|true|on)$/i.test(raw) ? 1 : 0;
+        }
       } else if (spec.kind === 'text') {
         out[name] = raw;
         Object.defineProperty(out, `${name}_line`, { value: line, enumerable: false });
@@ -1530,13 +1545,18 @@
     // takes part, since a pivot needs a non-zero entry to land on.
     const isPivot = new Set(pivotOf);
     const basis = [];
+    // The free column each total was made from: its own species, where it is 1
+    // and every other total 0. holdEquilibria puts the total's equation there.
+    const free = [];
     for (let col = 0; col < ns; col++) {
       if (isPivot.has(col) || !active.has(col)) continue;
       const u = new Float64Array(ns);
       u[col] = 1;
       pivotOf.forEach((pc, r) => { u[pc] = -A[r][col]; });
       basis.push(u);
+      free.push(col);
     }
+    basis.free = free;
     return basis;
   }
 
@@ -1549,6 +1569,12 @@
    * balances are not, so the iteration is well conditioned over the many
    * orders of magnitude a real speciation spans, and no concentration can be
    * driven negative on the way.
+   *
+   * Converged when every equilibrium is met to `tol` in ln K and every total
+   * to `tol` of its size -- relative, so that a trace total of 1e-9 is held as
+   * closely as one of 1e-3 -- and then given one more Newton step, which from
+   * there takes the residual to rounding: a run that holds the equilibria
+   * starts from this, and conserves to rounding what it starts with.
    *
    * @param {object} model   from compile()
    * @param {Float64Array} [y]  the state to equilibrate; the initial one by default
@@ -1616,27 +1642,36 @@
           F[j] = r;
         }
         // Mass-balance rows: d(sum v C)/du_i = v_i C_i.
+        norm = 0;
+        for (let j = 0; j < ne; j++) norm = Math.max(norm, Math.abs(F[j]));
         for (let k = 0; k < nb; k++) {
           const rowI = ne + k;
           let r = -totals[k];
+          let scale = Math.abs(totals[k]);
           J[rowI].fill(0);
           for (let i = 0; i < na; i++) {
-            r += basis[k][part[i]] * C[i];
-            J[rowI][i] = basis[k][part[i]] * C[i];
+            const v = basis[k][part[i]] * C[i];
+            r += v;
+            scale += Math.abs(v);
+            J[rowI][i] = v;
           }
           F[rowI] = r;
+          norm = Math.max(norm, Math.abs(r) / Math.max(scale, 1e-300));
         }
-        norm = 0;
-        for (let i = 0; i < na; i++) norm = Math.max(norm, Math.abs(F[i]));
-        if (norm < tol) { converged = true; break; }
+        if (norm < tol) converged = true;
         const step = solveDense(J, F, na);
-        if (!step) throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
+        if (!step) {
+          if (converged) break;
+          throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
+        }
         // Damped, and capped: an undamped step in log space can move a
         // concentration by e^40 and leave the iteration nowhere near where it
         // started. Two is the usual cap and behaves well here.
         let damp = 1;
         for (let i = 0; i < na; i++) damp = Math.min(damp, 2 / Math.max(Math.abs(step[i]), 2));
         for (let i = 0; i < na; i++) u[i] -= damp * step[i];
+        // Converged, and that was the step that takes it to rounding.
+        if (converged) break;
       }
       for (let k = 0; k < na; k++) out[b + part[k]] = Math.exp(u[k]);
       cells.push({ cell, converged, iterations: iter, residual: norm });
@@ -3212,7 +3247,8 @@
       const bad = held.filter((h) => inEq.has(h.si));
       if (bad.length) {
         throw new RtmError(`${bad.map((h) => h.species).join(', ')} ${bad.length > 1 ? 'are' : 'is'} held in `
-          + 'some cells only and takes part in an <EQUILIBRIUM>; EQUILIBRATE = 1 cannot speciate that. '
+          + `some cells only and takes part in an <EQUILIBRIUM>; EQUILIBRATE = ${settings.EQUILIBRATE === 2 ? 'always' : 1} `
+          + 'cannot speciate that. '
           + 'Hold it everywhere (fixed on its species line) or equilibrate without it.');
       }
     }
@@ -3299,6 +3335,8 @@
       conservation: equilibria.length ? conservationBasis(equilibria, ns, fixed) : [],
       parameters: params.order.slice(),
       anyMass,
+      // The coefficient on the left of each state's equation, R dC/dt = f.
+      massOf,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -3324,7 +3362,406 @@
       model.speciated = done.cells;
     }
 
+    if (settings.EQUILIBRATE === 2 && equilibria.length) {
+      const heldEqs = equilibria.filter((eq) => eq.kf === null);
+      if (heldEqs.length) return holdEquilibria(model, heldEqs);
+      warnings.push('EQUILIBRATE = always holds the equilibria given no kf, and every one here has a kf: '
+        + 'they stay the fast reversible pairs they were.');
+    }
     return model;
+  }
+
+  /* ======================================================================
+     2c. Equilibria held throughout the run
+     ====================================================================== */
+
+  /**
+   * Which species row each relation's equation goes on: one that takes part
+   * in it, every relation a different one, by augmenting paths (Kuhn). The
+   * iteration matrix then has a non-zero diagonal wherever one can be had;
+   * a relation left over takes any species still free, and the LU pivots.
+   */
+  function matchRelations(eqs, candidates) {
+    const owner = new Map();
+    const choice = new Array(eqs.length).fill(-1);
+    const can = eqs.map((eq) => eq.net.filter(([s]) => candidates.includes(s)).map(([s]) => s));
+    function claim(r, seen) {
+      for (const s of can[r]) {
+        if (seen.has(s)) continue;
+        seen.add(s);
+        if (!owner.has(s) || claim(owner.get(s), seen)) {
+          owner.set(s, r);
+          choice[r] = s;
+          return true;
+        }
+      }
+      return false;
+    }
+    for (let r = 0; r < eqs.length; r++) claim(r, new Set());
+    const left = candidates.filter((s) => !owner.has(s));
+    for (let r = 0; r < eqs.length; r++) if (choice[r] < 0) choice[r] = left.shift();
+    return choice;
+  }
+
+  /**
+   * The model with its equilibria held exactly while it runs, as algebraic
+   * equations: EQUILIBRATE = always.
+   *
+   * A relation held exactly is not a rate and cannot be integrated as one. In
+   * every cell the conserved totals of the held relations (conservationBasis)
+   * become state variables of their own, with the equation transport and the
+   * kinetic reactions give them -- each species' rate times its coefficient
+   * in the total, summed; an equilibrium adds nothing to a total, which is
+   * what makes it one -- and every species that takes part becomes an
+   * algebraic variable, fixed at each instant by the relations and the
+   * totals. That is M y' = f with M diagonal, ones and zeros, which the NDF
+   * integrates as it stands.
+   *
+   * The algebraic variables are the LOGARITHMS of the concentrations, u = ln C.
+   * In u every relation is linear, sum of nu*u = ln K, and no step can drive
+   * a concentration negative, which one falling by orders of magnitude in a
+   * step would otherwise be extrapolated to. The species stay in the error
+   * test, in u, beside the totals: left out, the step grew on the smooth
+   * totals alone to where the predictor missed a species by a factor of 1.5
+   * and the Newton iteration failed instead -- 49 failed steps in 51 on a
+   * groundwater taking acid, 7 with them in.
+   *
+   * Everything else is the compiled model's own: its rhs and jac are taken at
+   * the concentrations and composed with the change of variables. A species'
+   * coefficient R (mass) weighs it in the totals, so what is conserved is the
+   * inventory. The state is the compiled model's, the logarithms where the
+   * held species are, then the totals, cell by cell; toConcentrations gives
+   * back what the page shows.
+   */
+  function holdEquilibria(base, eqs) {
+    const ns = base.speciesNames.length;
+    const nc = base.cells;
+    const nBase = base.nspecies;
+    const fixed = base.fixed;
+    const massOf = base.massOf;
+    const basis = conservationBasis(eqs, ns, fixed);
+    const ne = eqs.length;
+    const nb = basis.length;
+    const active = equilibriumSpecies(eqs).filter((si) => !fixed[si]);
+    const na = active.length;
+    if (ne + nb !== na) {
+      throw new RtmError(`The equilibria held give ${ne} equations and ${nb} conserved totals, which is `
+        + `${ne + nb} for the ${na} species they are free to move: one of them repeats another, or a `
+        + 'species fixed in it leaves it without a free one.');
+    }
+    const start = base.initialState();
+    for (const eq of eqs) {
+      for (const [s] of eq.net) {
+        if (!fixed[s]) continue;
+        for (let c = 0; c < nc; c++) {
+          if (!(start[c * ns + s] > 0)) {
+            throw new RtmError(`${base.speciesNames[s]} is fixed and takes part in "${eq.text}", so it has to `
+              + 'be above zero everywhere for the relation to be held.', eq.line);
+          }
+        }
+      }
+    }
+
+    const free = basis.free;
+    const relRow = matchRelations(eqs, active.filter((s) => !free.includes(s)));
+    const pos = new Int32Array(ns).fill(-1);
+    active.forEach((s, k) => { pos[s] = k; });
+    const U = basis.map((u) => active.map((s) => u[s]));
+    const n = nBase + nc * nb;
+    const tIndex = (c, j) => nBase + c * nb + j;
+    const held = new Uint8Array(n);
+    for (let c = 0; c < nc; c++) for (const s of active) held[c * ns + s] = 1;
+
+    /* ---- the pattern: the compiled model's, composed, and the held rows ---- */
+    const bp = base.pattern;
+    const cols = Array.from({ length: n }, () => new Set());
+    const touch = (row, col) => cols[col].add(row);
+    for (let col = 0; col < nBase; col++) {
+      for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
+        const row = bp.rowIdx[k];
+        if (!held[row]) { touch(row, col); continue; }
+        const c = Math.floor(row / ns);
+        const kk = pos[row - c * ns];
+        for (let j = 0; j < nb; j++) if (U[j][kk]) touch(tIndex(c, j), col);
+      }
+    }
+    for (let c = 0; c < nc; c++) {
+      const b = c * ns;
+      for (let j = 0; j < nb; j++) {
+        touch(b + free[j], tIndex(c, j));
+        for (let k = 0; k < na; k++) if (U[j][k]) touch(b + free[j], b + active[k]);
+      }
+      eqs.forEach((eq, r) => { for (const [s] of eq.net) touch(b + relRow[r], b + s); });
+    }
+    for (let i = 0; i < n; i++) touch(i, i);
+    const colPtr = new Int32Array(n + 1);
+    for (let c = 0; c < n; c++) colPtr[c + 1] = colPtr[c] + cols[c].size;
+    const nnz = colPtr[n];
+    const rowIdx = new Int32Array(nnz);
+    for (let c = 0; c < n; c++) {
+      [...cols[c]].sort((a, b2) => a - b2).forEach((r, k) => { rowIdx[colPtr[c] + k] = r; });
+    }
+    const slot = (row, col) => {
+      let lo = colPtr[col];
+      let hi = colPtr[col + 1] - 1;
+      while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (rowIdx[mid] === row) return mid;
+        if (rowIdx[mid] < row) lo = mid + 1; else hi = mid - 1;
+      }
+      return -1;
+    };
+
+    // Where each value of the compiled Jacobian goes: to its own place when
+    // its row is not held, else into the rows of the totals it counts in.
+    const aSlot = new Int32Array(bp.nnz).fill(-1);
+    const tStart = new Int32Array(bp.nnz + 1);
+    const tAt = [];
+    const tUc = [];
+    const tRow = [];
+    for (let col = 0; col < nBase; col++) {
+      for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
+        const row = bp.rowIdx[k];
+        tStart[k] = tAt.length;
+        if (!held[row]) { aSlot[k] = slot(row, col); continue; }
+        const c = Math.floor(row / ns);
+        const kk = pos[row - c * ns];
+        for (let j = 0; j < nb; j++) {
+          if (!U[j][kk]) continue;
+          tAt.push(slot(tIndex(c, j), col));
+          tUc.push(U[j][kk]);
+          tRow.push(row);
+        }
+      }
+    }
+    tStart[bp.nnz] = tAt.length;
+    // The held rows' own entries, per cell.
+    const defT = [];
+    const defC = [];
+    const relC = [];
+    for (let c = 0; c < nc; c++) {
+      const b = c * ns;
+      defT.push(Int32Array.from({ length: nb }, (_, j) => slot(b + free[j], tIndex(c, j))));
+      defC.push(U.map((uj, j) => Int32Array.from(active, (s, k) => (uj[k] ? slot(b + free[j], b + s) : -1))));
+      relC.push(eqs.map((eq, r) => Int32Array.from(eq.net, ([s]) => slot(b + relRow[r], b + s))));
+    }
+
+    /* ---- concentrations, and back ---- */
+    const C = new Float64Array(nBase);
+    const f = new Float64Array(nBase);
+    const Vb = new Float64Array(base.nnz);
+    const concentrations = (y) => {
+      for (let k = 0; k < nBase; k++) C[k] = held[k] ? Math.exp(y[k]) : y[k];
+      return C;
+    };
+    const totalOf = (cIn, c, j) => {
+      const b = c * ns;
+      let t = 0;
+      for (let k = 0; k < na; k++) if (U[j][k]) t += U[j][k] * massOf[b + active[k]] * cIn[b + active[k]];
+      return t;
+    };
+
+    function rhs(t, y, out) {
+      concentrations(y);
+      base.rhs(t, C, f);
+      for (let k = 0; k < nBase; k++) out[k] = held[k] ? 0 : f[k];
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        for (let j = 0; j < nb; j++) {
+          let rate = 0;
+          for (let k = 0; k < na; k++) {
+            if (!U[j][k]) continue;
+            const at = b + active[k];
+            rate += U[j][k] * massOf[at] * f[at];
+          }
+          out[tIndex(c, j)] = rate;
+          // The total, as its species make it up, is the total.
+          out[b + free[j]] = y[tIndex(c, j)] - totalOf(C, c, j);
+        }
+        for (let r = 0; r < ne; r++) {
+          let g = -eqs[r].lnK;
+          for (const [s, nu] of eqs[r].net) g += nu * (held[b + s] ? y[b + s] : Math.log(C[b + s]));
+          out[b + relRow[r]] = g;
+        }
+      }
+      return out;
+    }
+
+    function jac(t, y, V) {
+      concentrations(y);
+      base.jac(t, C, Vb);
+      V.fill(0);
+      for (let col = 0; col < nBase; col++) {
+        // d/du of anything taken at C = e^u is C times d/dC.
+        const sc = held[col] ? C[col] : 1;
+        for (let k = bp.colPtr[col]; k < bp.colPtr[col + 1]; k++) {
+          const v = Vb[k];
+          if (v === 0) continue;
+          if (aSlot[k] >= 0) V[aSlot[k]] += v * sc;
+          for (let q = tStart[k]; q < tStart[k + 1]; q++) V[tAt[q]] += tUc[q] * massOf[tRow[q]] * v * sc;
+        }
+      }
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        for (let j = 0; j < nb; j++) {
+          V[defT[c][j]] += 1;
+          for (let k = 0; k < na; k++) {
+            const at = defC[c][j][k];
+            if (at < 0) continue;
+            const s = b + active[k];
+            V[at] -= U[j][k] * massOf[s] * C[s];
+          }
+        }
+        for (let r = 0; r < ne; r++) {
+          eqs[r].net.forEach(([s, nu], m) => {
+            V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
+          });
+        }
+      }
+      return V;
+    }
+
+    /**
+     * Puts every cell's held species on its relations and its totals, the
+     * totals and everything else held where they are: Newton in u, as the
+     * speciation of the starting state, one small system a cell.
+     */
+    function consistentInitial(t, y, opts = {}) {
+      const tol = Math.min(1e-10, (opts.rtol || 1e-6) * 1e-4);
+      let worstRes = 0;
+      let moved = 0;
+      let iterations = 0;
+      let why = '';
+      concentrations(y);
+      const J = Array.from({ length: na }, () => new Float64Array(na));
+      const F = new Float64Array(na);
+      for (let c = 0; c < nc && !why; c++) {
+        const b = c * ns;
+        const u = Float64Array.from(active, (s) => y[b + s]);
+        const u0 = Float64Array.from(u);
+        let done = false;
+        let res = Infinity;
+        for (let it = 0; it < 100; it++) {
+          for (let r = 0; r < ne; r++) {
+            let g = -eqs[r].lnK;
+            J[r].fill(0);
+            for (const [s, nu] of eqs[r].net) {
+              if (pos[s] < 0) { g += nu * Math.log(C[b + s]); continue; }
+              g += nu * u[pos[s]];
+              J[r][pos[s]] += nu;
+            }
+            F[r] = g;
+          }
+          res = 0;
+          for (let r = 0; r < ne; r++) res = Math.max(res, Math.abs(F[r]));
+          for (let j = 0; j < nb; j++) {
+            const row = ne + j;
+            J[row].fill(0);
+            let sum = 0;
+            let scale = Math.abs(y[tIndex(c, j)]);
+            for (let k = 0; k < na; k++) {
+              if (!U[j][k]) continue;
+              const v = U[j][k] * massOf[b + active[k]] * Math.exp(u[k]);
+              sum += v;
+              scale += Math.abs(v);
+              J[row][k] = v;
+            }
+            F[row] = sum - y[tIndex(c, j)];
+            res = Math.max(res, Math.abs(F[row]) / Math.max(scale, 1e-300));
+          }
+          iterations = Math.max(iterations, it);
+          if (res < tol) { done = true; break; }
+          const step = solveDense(J, F, na);
+          if (!step) { why = `the relations do not determine the held species in cell ${c}`; break; }
+          let damp = 1;
+          for (let k = 0; k < na; k++) damp = Math.min(damp, 2 / Math.max(Math.abs(step[k]), 2));
+          let largest = 0;
+          for (let k = 0; k < na; k++) {
+            u[k] -= damp * step[k];
+            largest = Math.max(largest, Math.abs(damp * step[k]));
+          }
+          // A step that changes no concentration by more than a few units in
+          // the last place has reached what the arithmetic can give: a tol
+          // under that would only be chased round in rounding.
+          if (largest < 1e-14 && res < 1e-8) { done = true; break; }
+        }
+        if (!done && !why) why = `the held equilibria did not settle in cell ${c} (residual ${res.toExponential(2)})`;
+        worstRes = Math.max(worstRes, res);
+        for (let k = 0; k < na; k++) {
+          moved = Math.max(moved, Math.abs(u[k] - u0[k]));
+          y[b + active[k]] = u[k];
+        }
+      }
+      return { solved: !why, iterations, residual: worstRes, moved, why };
+    }
+
+    // What the page shows of a state: its held species put exactly on the
+    // relations and the totals the state carries, then out of the logarithm.
+    // The solver leaves a step once its Newton correction is under the
+    // tolerance, which on the totals' rows is a part in 1e9 at rtol 1e-8; the
+    // totals themselves are integrated, and what is conserved is conserved to
+    // rounding there. So every point shown is the speciation of its totals.
+    const toConcentrations = (y) => {
+      const z = Float64Array.from(y);
+      consistentInitial(0, z, { rtol: 1e-12 });
+      const out = new Float64Array(nBase);
+      for (let k = 0; k < nBase; k++) out[k] = held[k] ? Math.exp(z[k]) : z[k];
+      return out;
+    };
+    const fromConcentrations = (cIn) => {
+      const y = new Float64Array(n);
+      for (let k = 0; k < nBase; k++) y[k] = held[k] ? Math.log(Math.max(cIn[k], 1e-300)) : cIn[k];
+      for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) y[tIndex(c, j)] = totalOf(cIn, c, j);
+      return y;
+    };
+
+    const mass = new Float64Array(n).fill(1);
+    const nonNegativeMask = new Uint8Array(n);
+    // The logarithms, which the solver weighs as they stand: see atolFor.
+    const absoluteMask = new Uint8Array(n);
+    for (let k = 0; k < nBase; k++) {
+      if (held[k]) { mass[k] = 0; absoluteMask[k] = 1; } else nonNegativeMask[k] = 1;
+    }
+    const names = base.species.concat(Array.from({ length: nc * nb }, (_, q) => {
+      const c = Math.floor(q / nb);
+      return `total ${q - c * nb + 1}${nc === 1 ? '' : `@${c}`}`;
+    }));
+    const initial = fromConcentrations(start);
+    return {
+      ...base,
+      nspecies: n,
+      nnz,
+      pattern: { n, nnz, colPtr, rowIdx },
+      species: names,
+      initialState: () => Float64Array.from(initial),
+      rhs,
+      jac,
+      jacobianConstant: false,
+      mass,
+      nalgebraic: nc * na,
+      algebraicNames: names.filter((_, k) => k < nBase && held[k]),
+      consistentInitial,
+      nonNegativeMask,
+      absoluteMask,
+      // A species held is ln C, and an error of rtol in it is an error of rtol
+      // in C, relative, which is what rtol asks of every species: so its atol
+      // is rtol and the solver weighs it against that alone (absoluteMask),
+      // whatever rtol and atol say of C and however large |ln C| is.
+      atolFor(atol, rtol) {
+        const out = new Float64Array(n);
+        const r = rtol > 0 ? rtol : 1e-6;
+        for (let k = 0; k < n; k++) {
+          if (k < nBase && held[k]) out[k] = r;
+          else out[k] = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
+        }
+        return out;
+      },
+      stateWidth: nBase,
+      toConcentrations,
+      fromConcentrations,
+      heldEquilibria: { relations: ne, totals: nb, species: na },
+      density: nnz / (n * n),
+    };
   }
 
   /**

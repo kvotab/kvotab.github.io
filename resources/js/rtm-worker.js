@@ -47,11 +47,14 @@ function rtmPatternBlocks(model) {
     that the page's caption need not change shape.
   */
   const blocks = new Map();
-  for (let col = 0; col < p.n; col++) {
+  // The species only: a model holding its equilibria has its totals after them.
+  const last = model.stateWidth || p.n;
+  for (let col = 0; col < last; col++) {
     const cc = Math.floor(col / ns);
     const c = col - cc * ns;
     for (let k = p.colPtr[col]; k < p.colPtr[col + 1]; k++) {
       const row = p.rowIdx[k];
+      if (row >= last) continue;
       const rc = Math.floor(row / ns);
       const off = cc - rc;
       let mask = blocks.get(off);
@@ -169,8 +172,24 @@ function rtmSummary(model) {
     timeUnit: model.timeUnit,
     settings: model.settings,
     warnings: model.warnings,
-    initial: Array.from(model.initialState()),
+    initial: Array.from(model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState()),
+    // Equilibria held throughout the run (EQUILIBRATE = always): how many
+    // relations, conserved totals and species, and the species' share of the state.
+    heldEquilibria: model.heldEquilibria || null,
+    speciesStates: model.stateWidth || model.nspecies,
   };
+}
+
+/**
+ * The stored states as concentrations: the model's own where it keeps
+ * concentrations, else converted -- logarithms back, totals dropped.
+ */
+function rtmConcentrations(model, ys, n, width) {
+  const states = new Float64Array(n * width);
+  for (let i = 0; i < n; i++) {
+    states.set(model.toConcentrations ? model.toConcentrations(ys[i]) : ys[i].subarray(0, width), i * width);
+  }
+  return states;
 }
 
 /** Which solvers this worker can actually run; asked for as it starts. */
@@ -214,7 +233,10 @@ function handleRtmMessage(msg, post) {
       checks.push({ label: 'the initial state', ...RtmModel.verifyJacobian(model, 0, y0) });
       // A state with everything present, which exercises rate laws that are
       // identically zero at the start and so are never tested by the first.
-      const y1 = Float64Array.from(y0, (v, i) => (v > 0 ? v : 1e-9 * (1 + (i % 5))));
+      // Made in concentrations: a model holding its equilibria keeps ln C.
+      const c0 = model.toConcentrations ? model.toConcentrations(y0) : y0;
+      const c1 = Float64Array.from(c0, (v, i) => (v > 0 ? v : 1e-9 * (1 + (i % 5))));
+      const y1 = model.fromConcentrations ? model.fromConcentrations(c1) : c1;
       checks.push({ label: 'every species present', ...RtmModel.verifyJacobian(model, 0, y1) });
       post({
         type: 'verified',
@@ -298,11 +320,12 @@ function handleRtmMessage(msg, post) {
     });
 
     // The state at every stored time, flattened: point-major, then cell-major
-    // within a point, which is the order the model itself uses.
+    // within a point, which is the order the model itself uses. A model that
+    // holds its equilibria keeps logarithms and totals in its state; what is
+    // stored is the concentrations, the shape every other model has.
     const n = res.t.length;
-    const width = model.nspecies;
-    const states = new Float64Array(n * width);
-    for (let i = 0; i < n; i++) states.set(res.y[i], i * width);
+    const width = model.stateWidth || model.nspecies;
+    const states = rtmConcentrations(model, res.y, n, width);
     const heldDrift = rtmHoldFixed(model, states, n, width);
     const payload = {
       type: 'result',
@@ -323,9 +346,8 @@ function handleRtmMessage(msg, post) {
     // the part that did run is usually where the trouble can be seen.
     if (e.partial && e.partial.t && e.partial.t.length > 1) {
       const n = e.partial.t.length;
-      const width = model.nspecies;
-      const states = new Float64Array(n * width);
-      for (let i = 0; i < n; i++) states.set(e.partial.y[i], i * width);
+      const width = model.stateWidth || model.nspecies;
+      const states = rtmConcentrations(model, e.partial.y, n, width);
       const heldDrift = rtmHoldFixed(model, states, n, width);
       out.partial = {
         t: e.partial.t, states, n, width, model: rtmSummary(model), stats: e.partial.stats || {},

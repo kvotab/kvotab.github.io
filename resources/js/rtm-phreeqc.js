@@ -460,9 +460,11 @@
    *   water       { name, text }      PHREEQC input holding the water
    *   solution    SOLUTION number to use (default: the last calculation)
    *   floor       mol/kgw below which a species is left out (1e-20)
-   *   relax       hold every relation during the run, each with the kf that
-   *               makes it relax back at this rate per second here
-   *   kf          ... or all with this one forward constant
+   *   exact       hold every relation exactly during the run: EQUILIBRATE =
+   *               always, no kf, each relation an algebraic equation
+   *   relax       ... or as fast pairs, each with the kf that makes it relax
+   *               back at this rate per second here
+   *   kf          ... or as fast pairs all with this one forward constant
    *   D, dw       one diffusion coefficient for every species; or the
    *               database's -dw where it has one
    *   date        the date to stamp (default today)
@@ -470,6 +472,9 @@
    */
   function waterToModel(o) {
     const floor = o.floor != null ? o.floor : 1e-20;
+    if (o.exact && (o.relax || o.kf)) {
+      throw new Error('The relations are held either exactly or as fast pairs with a kf, not both.');
+    }
     const db = readDatabase(o.database.text, o.water.text);
     let rows = runRows(o.engine, `${punchBlock()}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
@@ -528,8 +533,8 @@
       const nw = r.right.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0)
         - r.left.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0);
       const logk = logkC + sumLg(prod) - sumLg(reac) + nw * logAw;
-      let kf = o.kf || null;
-      if (o.relax) {
+      let kf = (!o.exact && o.kf) || null;
+      if (o.relax && !o.exact) {
         // Near equilibrium a relation relaxes at kf * prod(reactants) * sum(nu^2 / c).
         const forward = reac.reduce((p, t) => p * molal.get(t.n) ** t.c, 1);
         const spread = [...reac, ...prod].reduce((s, t) => s + (t.c * t.c) / molal.get(t.n), 0);
@@ -568,7 +573,11 @@
     out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
     out.push('# No redox relation is written: each valence state keeps its own total, and electrons');
     out.push('# move only through the reactions you add.');
-    if (o.relax) {
+    if (o.exact) {
+      out.push('# Every relation is also held exactly during the run (EQUILIBRATE = always): in every');
+      out.push('# cell it is an algebraic equation, and what the relations conserve is integrated in');
+      out.push('# place of the species they move. Only the NDF solves that; Auto hands it to the NDF.');
+    } else if (o.relax) {
       out.push('# Every relation is also held during the run, as a fast pair (kb = kf/K): each kf is');
       out.push(`# what makes that relation relax back at ${fmtG(o.relax, 6)} per second at this water. The kf are`);
       out.push('# per second: change TIME_UNIT and they have to change with it.');
@@ -582,8 +591,8 @@
       out.push('# Renamed, since rtm.html cannot write the name as PHREEQC does:');
       for (const [s, r] of renamed) out.push(`#   ${s}  ->  ${r}`);
     }
-    out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second', 'EQUILIBRATE = 1',
-      '', '<SPECIES>');
+    out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
+      `EQUILIBRATE = ${o.exact ? 'always' : '1'}`, '', '<SPECIES>');
     for (const s of order) {
       let d = '';
       if (o.dw && db.dw.has(s)) d = `  D=${fmtG(db.dw.get(s), 6)}`;

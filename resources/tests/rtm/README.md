@@ -27,6 +27,7 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **With 0.4 mol/kgw of salt added instead**, the conditional constants go wrong, and the drift of the activity coefficients says so: 0.48 in log K.
 - **Without a water**, the temperature is read from the top of the model text. A water PHREEQC refuses is reported, and the look goes on without it.
 - **The built-in model:** the seven species PHREEQC knows are counted; the hydrated electron, the radicals and the surface sites are not; the missing counter-ion is noticed.
+- **The water held exactly** (`EQUILIBRATE = always`, no `kf`): its start, read from the logarithms and totals the solver keeps, lands on PHREEQC's molalities as closely (2.4e-10). With the same acid it ends 7e-5 in pH from PHREEQC alone, where the fast pairs end 3.3e-4 from it. Exactly and as pairs at once is refused.
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
 With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge.py` drives it), the same inputs also go through that native PHREEQC on the same database. The WebAssembly build has to agree with it: 1.7e-13 on a model's numbers, and every number of a run's CSV identical.
@@ -34,7 +35,8 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 `test-phreeqc-ui.py` covers the page itself:
 
 - PHREEQC is not fetched until it is used, and then runs in a worker of its own.
-- The panel on the Model tab writes the example water and reports the check.
+- The panel on the Model tab writes the example water and reports the check. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
+- The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
 - A water PHREEQC refuses is answered in PHREEQC's words, and the text is left alone.
 - The PHREEQC tab's chart starts at the water's pH, 7.4 at 15 °C. Before the cache was cleared in this test, a cached worker script ran at 25 °C and gave 7.4012, which is how the test caught it.
 - The CSV has a row for each water.
@@ -283,6 +285,24 @@ What the conserved totals are is worked out from the stoichiometry alone — the
 left null space of the equilibrium matrix — so the check that the basis comes
 out as expected is a check on that derivation, not on a table of elements the
 page does not have.
+
+**Equilibria held throughout the run** (`EQUILIBRATE = always`). Held exactly,
+the relations are linear in ln C and the totals are integrated, so the checks
+are exact ones. Acid into a carbonate water: every stored point on all three
+relations (5e-15 in log K); carbon, the chloride the source put in and the
+charge to 1e-12 (about 1e-15 measured); and the state at the end equal to a
+speciation, worked out apart, of the totals the end has. Then the Jacobian with
+ln C and the totals in it, a state knocked off its relations put back, a method
+without a mass matrix refused, `R = 2.5` weighing the carbon inventory, `H+`
+fixed, a `kf` pair beside two held relations, and a closed ten-cell column with
+five diffusion coefficients, carbon and protons conserved over it to 1e-10
+(5e-12 after 800 steps). These checks found two faults, both fixed. The
+speciation's convergence test was absolute in mol/L, so a held run started
+6.6e-12 off its totals; it is relative now, and takes one Newton step more. And
+the NDF weighed ln C against |ln C|, which let the Newton leave a part in 1e9 on
+the totals and held a species at 1e-9 mol/L twenty times more loosely than
+`rtol` says; ln C is weighed as it stands now, and a point is shown as the exact
+speciation of its totals.
 
 **The model text.** Nine things that must be refused with a message that says
 what is wrong, and chemical names (`e-`, `H+`, `C2O4-2`, `UO2+2`) surviving the
