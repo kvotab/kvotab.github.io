@@ -238,6 +238,16 @@
       });
     }
 
+    // The temperature, where TEMPERATURE goes with the cell or the time: the shown cell's, in C.
+    if (run.temps && !end && run.temps.length >= run.n * cells) {
+      const series = new Float64Array(run.n);
+      for (let i = 0; i < run.n; i++) series[i] = run.temps[i * cells + shown];
+      put(root, ['Temperature'], dataset(series, F64, {
+        unit: 'C', name: 'Temperature', time_dependent: true, created_time: created,
+        description: `The temperature in ${where}, as TEMPERATURE gives it`,
+      }));
+    }
+
     /*
       /Ends: what crosses each end of the column, every species, positive to
       the right and per m2 of the water's cross-section. At an outlet that is

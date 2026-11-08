@@ -197,7 +197,26 @@ function rtmSummary(model) {
       ? { fixed: model.act.gas.fixed, volume: model.act.gas.volume, pressure: model.act.gas.pressure,
         species: model.act.gas.list.map((k) => model.speciesNames[k]) }
       : null,
+    // The temperature: what TEMPERATURE gives, whether it goes with the cell or the time, how many relations' and
+    // phases' log K go with it, and the cells' lowest and highest at the start.
+    temperature: model.temperature ? { ...model.temperature, start: rtmTemperatureRange(model, 0) } : null,
   };
+}
+
+/** The cells' lowest and highest temperature at time t, C; null where TEMPERATURE is a number. */
+function rtmTemperatureRange(model, t) {
+  if (!model.temperature || !model.temperature.varies) return null;
+  const tc = model.temperatures(t);
+  return [Math.min(...tc), Math.max(...tc)];
+}
+
+/** Each stored point's cells' temperatures, C, point by point, where TEMPERATURE goes with the cell or the time. */
+function rtmTemperatures(model, ts, n) {
+  if (!model.temperature || !model.temperature.varies) return null;
+  const nc = model.cells;
+  const out = new Float64Array(n * nc);
+  for (let i = 0; i < n; i++) out.set(model.temperatures(ts[i]), i * nc);
+  return out;
 }
 
 function rtmPotentialSummary(model, k) {
@@ -207,7 +226,8 @@ function rtmPotentialSummary(model, k) {
   let lo = Infinity;
   let hi = -Infinity;
   for (let i = 0; i < model.cells; i++) {
-    const psi = -Math.log(c[i * ns + k]) / pt.fRT;
+    // F/RT at the cell's temperature, at the start, where it goes with the cell or the time.
+    const psi = -Math.log(c[i * ns + k]) / (pt.fRTc ? pt.fRTc[i] : pt.fRT);
     if (Number.isFinite(psi)) { lo = Math.min(lo, psi); hi = Math.max(hi, psi); }
   }
   return { name: model.speciesNames[k], psi: Number.isFinite(lo) ? [lo, hi] : null };
@@ -233,12 +253,14 @@ function rtmRedoxSummary(model) {
 
 /**
  * The stored states as concentrations: the model's own where it keeps
- * concentrations, else converted -- logarithms back, totals dropped.
+ * concentrations, else converted -- logarithms back, totals dropped -- each
+ * at its time ts[i], which the relations are those of where the temperature
+ * goes with time.
  */
-function rtmConcentrations(model, ys, n, width) {
+function rtmConcentrations(model, ys, n, width, ts) {
   const states = new Float64Array(n * width);
   for (let i = 0; i < n; i++) {
-    states.set(model.toConcentrations ? model.toConcentrations(ys[i]) : ys[i].subarray(0, width), i * width);
+    states.set(model.toConcentrations ? model.toConcentrations(ys[i], ts[i]) : ys[i].subarray(0, width), i * width);
   }
   return states;
 }
@@ -376,13 +398,16 @@ function handleRtmMessage(msg, post) {
     // stored is the concentrations, the shape every other model has.
     const n = res.t.length;
     const width = model.stateWidth || model.nspecies;
-    const states = rtmConcentrations(model, res.y, n, width);
+    const states = rtmConcentrations(model, res.y, n, width, res.t);
     const heldDrift = rtmHoldFixed(model, states, n, width);
+    // Each stored point's cells' temperatures, where they go with the cell or the time: the PHREEQC tab reads them.
+    const temps = rtmTemperatures(model, res.t, n);
     const payload = {
       type: 'result',
       id,
       t: res.t,
       states,
+      temps,
       n,
       width,
       model: rtmSummary(model),
@@ -392,7 +417,7 @@ function handleRtmMessage(msg, post) {
       events: (res.events || []).map((e) => ({ t: e.t, what: e.expr })),
       seconds: (Date.now() - started) / 1000,
     };
-    post(payload, [res.t.buffer, states.buffer]);
+    post(payload, temps ? [res.t.buffer, states.buffer, temps.buffer] : [res.t.buffer, states.buffer]);
   } catch (e) {
     const out = { type: 'error', id, stage: 'run', error: rtmErrorMessage(e) };
     // Hand back whatever was integrated before the failure, as facsimile does:
@@ -400,11 +425,11 @@ function handleRtmMessage(msg, post) {
     if (e.partial && e.partial.t && e.partial.t.length > 1) {
       const n = e.partial.t.length;
       const width = model.stateWidth || model.nspecies;
-      const states = rtmConcentrations(model, e.partial.y, n, width);
+      const states = rtmConcentrations(model, e.partial.y, n, width, e.partial.t);
       const heldDrift = rtmHoldFixed(model, states, n, width);
       out.partial = {
         t: e.partial.t, states, n, width, model: rtmSummary(model), stats: e.partial.stats || {},
-        heldDrift,
+        heldDrift, temps: rtmTemperatures(model, e.partial.t, n),
       };
     }
     post(out);

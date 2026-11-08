@@ -258,6 +258,67 @@
     return out;
   }
 
+  /*
+    A REACTION'S LOG K AND HOW IT GOES WITH TEMPERATURE, as PHREEQC reads it:
+    the options of its read_species, read_phases, read_exchange_species,
+    read_surface_species and read_named_logk, in their order. A word after a
+    dash is the first option it begins, -l log_k, -d delta_h, -a the analytic
+    expression; a word without one is the option it is, exactly.
+  */
+  const LK_OPTIONS = {
+    SOLUTION_SPECIES: ['no_check', 'check', 'gamma', 'mb', 'mass_balance', 'log_k', 'logk', 'delta_h', 'deltah',
+      'analytical_expression', 'a_e', 'ae', 'mole_balance', 'llnl_gamma', 'co2_llnl_gamma', 'activity_water',
+      'add_logk', 'add_log_k', 'add_constant', 'dw', 'erm_ddl', 'millero', 'vm', 'viscosity'],
+    PHASES: ['no_check', 'check', 'log_k', 'logk', 'delta_h', 'deltah', 'analytical_expression', 'a_e', 'ae',
+      'add_logk', 'add_log_k', 'add_constant', 't_c', 'p_c', 'omega', 'vm'],
+    EXCHANGE_SPECIES: ['no_check', 'check', 'mb', 'mass_balance', 'log_k', 'logk', 'delta_h', 'deltah',
+      'analytical_expression', 'a_e', 'ae', 'mole_balance', 'gamma', 'davies', 'offset', 'llnl_gamma', 'add_logk',
+      'add_log_k', 'add_constant', 'vm'],
+    SURFACE_SPECIES: ['no_check', 'check', 'mb', 'mass_balance', 'log_k', 'logk', 'delta_h', 'deltah',
+      'analytical_expression', 'a_e', 'ae', 'mole_balance', 'offset', 'add_logk', 'add_log_k', 'add_constant',
+      'cd_music', 'music', 'vm'],
+    NAMED_EXPRESSIONS: ['log_k', 'logk', 'delta_h', 'deltah', 'analytical_expression', 'a_e', 'ae', 'ln_alpha1000',
+      'add_logk', 'add_log_k', 'vm'],
+  };
+
+  /** The option a line of `block` is, as PHREEQC's get_option finds it, and the words after it; or null. */
+  function lkOption(block, line) {
+    const list = LK_OPTIONS[block];
+    const s = String(line).trim();
+    if (!list || !s) return null;
+    const dashed = /^-[A-Za-z]/.test(s);
+    const first = s.split(/\s+/)[0];
+    const word = (dashed ? first.slice(1) : first).toLowerCase();
+    const opt = dashed ? list.find((o) => o.startsWith(word)) : list.find((o) => o === word);
+    if (!opt) return null;
+    // PHREEQC reads its numbers with the first = taken for a space.
+    return { opt, words: s.slice(first.length).replace('=', ' ').trim().split(/\s+/).filter(Boolean) };
+  }
+
+  /** The numbers at the start of `words`, as sscanf takes them: up to the first that is not one. */
+  function leadingNumbers(words, most) {
+    const out = [];
+    for (const t of words.slice(0, most)) {
+      const v = Number(t);
+      if (t === '' || !Number.isFinite(v)) break;
+      out.push(v);
+    }
+    return out;
+  }
+
+  /** PHREEQC's select_log_k_expression: an expression with a term not zero replaces log_k and delta_h. */
+  function selectTerms(k) {
+    return k.slice(2).some((v) => v !== 0) ? [0, 0, ...k.slice(2)] : [k[0], k[1], 0, 0, 0, 0, 0, 0];
+  }
+
+  /** PHREEQC's R, kJ/(mol K) (R_KJ_DEG_MOL), and its k_calc: log K at tk kelvin of terms [logK, dH, A1 ... A6]. */
+  const R_KJ = 0.00831470;
+  function kCalc(k, tk) {
+    const me = tk * R_KJ;
+    return k[0] - k[1] * (298.15 - tk) / (Math.LN10 * me * 298.15)
+      + k[2] + k[3] * tk + k[4] / tk + k[5] * Math.log10(tk) + k[6] / (tk * tk) + k[7] * tk * tk;
+  }
+
   /**
    * What the hand-off needs from a database, and from any
    * SOLUTION_MASTER_SPECIES or SOLUTION_SPECIES in an input read after it,
@@ -286,6 +347,94 @@
       this.critical = new Map();
       // GAS_BINARY_PARAMETERS: 'CO2(g) H2O(g)' (the pair, sorted) -> k.
       this.gasBinary = new Map();
+      // Each reaction's log K as PHREEQC reads it, by 'kind name' -- s a solution species, p a phase, x a species on
+      // an exchanger, f one on a surface -- {k: [log_k, delta_h in kJ/mol, A1 ... A6], add: [[name, coef]]}, add the
+      // named expressions it adds in; NAMED_EXPRESSIONS by lower-case name, likewise. See logKTerms.
+      this.lk = new Map();
+      this.named = new Map();
+    }
+
+    /**
+     * A reaction's log K terms, [log_k, delta_h, A1 ... A6], as PHREEQC puts
+     * them together (tidy.cpp): its own, the analytic expression replacing
+     * log_k and delta_h where it has one, and each named expression it adds,
+     * times its coefficient -- the expression's analytic terms where it has
+     * them, else its log_k and delta_h. Null where there is no reaction, or
+     * one adds an expression the database does not name.
+     */
+    logKTerms(kind, name) {
+      const e = this.lk.get(`${kind} ${name}`);
+      if (!e) return null;
+      const out = selectTerms(e.k);
+      for (const [nm, coef] of e.add) {
+        const n = this.namedTerms(nm, 0);
+        if (!n) return null;
+        if (n.slice(2).some((v) => v !== 0)) for (let j = 2; j < 8; j++) out[j] += n[j] * coef;
+        else { out[0] += n[0] * coef; out[1] += n[1] * coef; }
+      }
+      return out;
+    }
+
+    /** A named expression's terms, with those it adds in (PHREEQC's add_logks); add_constant's is 1. */
+    namedTerms(name, depth) {
+      const key = String(name).toLowerCase();
+      if (key === 'xconstantx') return [1, 0, 0, 0, 0, 0, 0, 0];
+      const e = this.named.get(key);
+      if (!e || depth > 15) return null;
+      const out = selectTerms(e.k);
+      for (const [nm, coef] of e.add) {
+        const n = this.namedTerms(nm, depth + 1);
+        if (!n) return null;
+        for (let j = 0; j < 8; j++) out[j] += n[j] * coef;
+      }
+      return out;
+    }
+
+    /** One option line of a reaction's log K into its entry e: true where it was one. */
+    readLogKOption(block, line, e) {
+      const o = lkOption(block, line);
+      if (!o || !e) return false;
+      const v = leadingNumbers(o.words, 1)[0];
+      switch (o.opt) {
+        case 'log_k': case 'logk':
+          if (Number.isFinite(v)) e.k[0] = v;
+          return true;
+        case 'delta_h': case 'deltah': {
+          if (!Number.isFinite(v)) return true;
+          // kJ/mol unless a unit says otherwise: not beginning with k, a thousandth; with a c in it, calories.
+          let dh = v;
+          const unit = o.words[1];
+          if (unit && /^[A-Za-z]/.test(unit)) {
+            const u = unit.toLowerCase();
+            if (!u.startsWith('k')) dh /= 1000;
+            if (u.includes('c')) dh *= 4.184;
+          }
+          e.k[1] = dh;
+          return true;
+        }
+        case 'analytical_expression': case 'a_e': case 'ae': case 'ln_alpha1000': {
+          const a = leadingNumbers(o.words, 6);
+          if (!a.length) return true;
+          for (let j = 0; j < 6; j++) e.k[2 + j] = j < a.length ? a[j] : 0;
+          // 1000 ln alpha into log K: A1 to A5 over 1000 ln 10, and A6 as it stands, as PHREEQC has it.
+          if (o.opt === 'ln_alpha1000') for (let j = 0; j < 5; j++) e.k[2 + j] /= 1000 * Math.LN10;
+          return true;
+        }
+        case 'add_logk': case 'add_log_k':
+          if (o.words.length) {
+            const c = leadingNumbers(o.words.slice(1), 1)[0];
+            e.add.push([o.words[0], Number.isFinite(c) ? c : 1]);
+          }
+          return true;
+        case 'add_constant':
+          if (Number.isFinite(v)) e.add.push(['XconstantX', v]);
+          return true;
+        case 'offset':
+          if (Number.isFinite(v)) e.k[0] += v;
+          return true;
+        default:
+          return false;
+      }
     }
 
     /**
@@ -341,12 +490,15 @@
               // 'Ca+2 = Ca+2' defines a master species and is kept as written.
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               this.reaction.set(last, identity ? { left, right } : normalise(left, right));
+              this.lk.set(`s ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
               // A reaction read again starts from PHREEQC's defaults: Davies
               // for an ion, 0.1 I for a neutral species.
               this.dw.delete(last);
               this.gamma.delete(last);
               this.otherGamma.delete(last);
             }
+          } else if (last && this.readLogKOption(block, line, this.lk.get(`s ${last}`))) {
+            // log_k, delta_h, the analytic expression or a named one: read.
           } else if (last && /^-?dw$/i.test(tokens[0]) && tokens.length > 1) {
             const v = Number(tokens[1]);
             if (Number.isFinite(v)) this.dw.set(last, v);
@@ -370,7 +522,10 @@
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               if (identity) this.exReaction.delete(last); else this.exReaction.set(last, normalise(left, right));
               this.exGamma.delete(last);
+              this.lk.set(`x ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
             }
+          } else if (last && this.readLogKOption(block, line, this.lk.get(`x ${last}`))) {
+            // log_k, delta_h, the analytic expression, an offset or a named one: read.
           } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
             const a = Number(tokens[1]);
             const b = Number(tokens[2]);
@@ -390,7 +545,18 @@
               // 'Hfo_wOH = Hfo_wOH' defines a site's master species.
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
+              this.lk.set(`f ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
             }
+          } else if (last) {
+            this.readLogKOption(block, line, this.lk.get(`f ${last}`));
+          }
+        } else if (block === 'NAMED_EXPRESSIONS') {
+          // A name on its own line, then its log K's options.
+          if (tokens.length === 1 && !tokens[0].startsWith('-') && !lkOption(block, line)) {
+            last = tokens[0].toLowerCase();
+            this.named.set(last, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
+          } else if (last) {
+            this.readLogKOption(block, line, this.named.get(last));
           }
         } else if (block === 'GAS_BINARY_PARAMETERS') {
           if (tokens.length >= 3 && Number.isFinite(Number(tokens[2]))) {
@@ -416,11 +582,16 @@
           this.sit.delete(key);
           this.sit.set(key, { type: sitType, s1: tokens[0], s2: tokens[1], a });
         } else if (block === 'PHASES') {
-          if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
+          // A phase's name: the first word of a line that is no reaction and no option, as PHREEQC's
+          // read_phases takes it -- phreeqc.dat has 'Willemite 289'.
+          if (!line.includes('=') && !tokens[0].startsWith('-') && !lkOption(block, line)) {
             if (!this.phases.includes(tokens[0])) this.phases.push(tokens[0]);
             last = tokens[0];
             phase = tokens[0];
             this.critical.delete(phase);
+            this.lk.set(`p ${phase}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
+          } else if (phase && this.readLogKOption(block, line, this.lk.get(`p ${phase}`))) {
+            // log_k, delta_h, the analytic expression or a named one: read.
           } else if (phase && /^-(t_c|p_c|omega)$/i.test(tokens[0]) && tokens.length > 1) {
             const v = Number(tokens[1]);
             if (Number.isFinite(v)) {
@@ -1483,9 +1654,14 @@
     }
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
+    // A relation whose log K goes with temperature reads it, without ACTIVITY too.
+    const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
+    const anyT = eqs.some((e) => withT(db.logKTerms('s', e.species))) || minerals.some((mn) => withT(db.logKTerms('p', mn.phase)))
+      || gases.some((g) => withT(db.logKTerms('p', g.phase))) || onEx.some((e) => withT(db.logKTerms('x', e.species)))
+      || onSf.some((e) => !e.master && withT(db.logKTerms('f', e.species)));
     if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
     // A double layer reads it too, without ACTIVITY, and a gas phase (R T).
-    else if (potentials.length || gases.length) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
+    else if (potentials.length || gases.length || anyT) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
     if (gases.length) {
       out.push(gasFixed.fixed === 'pressure' ? `GAS_PRESSURE = ${fmtG(gasFixed.pressure, 12)}`
         : `GAS_VOLUME = ${fmtG(gasFixed.volume, 12)}`);
@@ -1548,12 +1724,35 @@
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`);
     }
     out.push('', '<EQUILIBRIUM>');
+    /*
+      EACH RELATION'S LOG K AS IT GOES WITH TEMPERATURE: the database's terms
+      (logKTerms) -- logK and dH, or the analytic expression with log_k and
+      delta_h put into it where it has both -- so that a run at another
+      TEMPERATURE, or one that follows it, has PHREEQC's; moved by what
+      makes it, at this water's temperature, the one written here (`here`):
+      PHREEQC's at this water, its pressure in it, or with activity
+      coefficients fixed, those folded in. A number where the database gives
+      none that goes with temperature.
+    */
+    const tkW = tc + 273.15;
+    const kText = (terms, here) => {
+      if (!terms || (terms[1] === 0 && terms.slice(2).every((v) => v === 0))) return `logK = ${here.toFixed(10)}`;
+      const off = here - kCalc(terms, tkW);
+      if (terms.slice(2).every((v) => v === 0)) return `logK = ${(terms[0] + off).toFixed(10)}, dH = ${fmtG(terms[1], 12)}`;
+      const a = terms.slice(2);
+      a[0] += terms[0] + terms[1] / (Math.LN10 * R_KJ * 298.15) + off;
+      a[2] -= terms[1] / (Math.LN10 * R_KJ);
+      let n = 6;
+      while (n > 1 && a[n - 1] === 0) n--;
+      // Each term as the shortest decimal that is that number exactly.
+      return `analytic = ${a.slice(0, n).map((v) => String(v)).join(' ')}`;
+    };
     const lines = eqs.map((e) => {
       const reac = follow ? e.left : e.reac;
       const prod = follow ? e.right : e.prod;
       return {
         rel: reac.length ? `${side(reac)} <=> ${side(prod)}` : ` <=> ${side(prod)}`,
-        k: `logK = ${(follow ? e.logk : e.logkC).toFixed(10)}${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
+        k: `${kText(db.logKTerms('s', e.species), follow ? e.logk : e.logkC)}${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
         note: follow ? `# here ${e.logkC.toFixed(4)}` : `# log K ${e.logk.toFixed(4)}`,
       };
     });
@@ -1570,7 +1769,7 @@
       const prod = follow ? mn.prod : aq(mn.prod);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: `logK = ${(follow ? logk : logkC).toFixed(10)}`,
+        k: kText(db.logKTerms('p', mn.phase), follow ? logk : logkC),
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${logk.toFixed(4)}`}${mn.target ? `, SI ${fmtG(mn.target, 6)}` : ''}`,
       });
     }
@@ -1585,7 +1784,7 @@
       const prod = follow ? g.prod : aq(g.prod);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: `logK = ${(follow ? g.lk : logkC).toFixed(10)}`,
+        k: kText(db.logKTerms('p', g.phase), follow ? g.lk : logkC),
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${g.lk.toFixed(4)}`}, ${fmtG(g.pressure, 4)} atm`,
       });
     }
@@ -1595,7 +1794,7 @@
       const prod = follow ? e.right : aq(e.right);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: `logK = ${(follow ? e.logk : e.logkC).toFixed(10)}`,
+        k: kText(db.logKTerms('x', e.species), follow ? e.logk : e.logkC),
         note: follow ? `# here ${e.logkC.toFixed(4)}${e.folded ? `, the database's ${e.logkDb.toFixed(4)}` : ''}`
           : `# log K ${e.logkDb.toFixed(4)}`,
       });
@@ -1614,7 +1813,7 @@
       const prod = follow ? e.right : aq(e.right);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: `logK = ${(follow ? e.lk : logkC).toFixed(10)}`,
+        k: kText(db.logKTerms('f', e.species), follow ? e.lk : logkC),
         note: follow ? `# here ${logkC.toFixed(4)}` : `# log K ${e.lk.toFixed(4)}`,
       });
     }
@@ -1661,6 +1860,8 @@
         .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
+        // The relations written with the database's dH or analytic expression: their log K go with TEMPERATURE.
+        withTemperature: lines.filter((l) => /^analytic = |, dH = /.test(l.k)).length, relations: lines.length,
         pH: w.pH, chargeBalance: w.cb,
         dropped: dropped.length, droppedTop: top, droppedTopValue: top ? molal.get(top) : null,
         pulled: pulled.size, redox: [...redox].sort(), unknown: [...unknown].sort(), skipped, renamed,
@@ -1806,7 +2007,9 @@
    *   scale       model concentration unit -> mol/kgw (1)
    *   times       at most this many stored times per cell (100; 0 for all)
    *   cells       [fracture cell numbers] (all); rock: read the layers too
-   *   temp        C, overriding the water's (25 without either)
+   *   temp        C, overriding the water's (25 without either) and the run's
+   *               (run.temps: each stored point's cells in C, where the model's
+   *               TEMPERATURE goes with the cell or the time)
    *   phases      [names] to report, else any within siFloor (-3) of saturation
    *   unit        the model's time unit, for the CSV
    *   onProgress  (done, total) as PHREEQC works through the waters
@@ -1933,6 +2136,9 @@
       if (m) { temp = Number(m[1]); tempFrom = 'the model text'; }
     }
     if (temp === null) { temp = 25; tempFrom = 'none'; }
+    // A run whose TEMPERATURE goes with the cell or the time: each water at its own, unless one is given.
+    const temps = o.temp == null && run.temps && run.temps.length === run.n * model.cells ? run.temps : null;
+    if (temps) tempFrom = 'the run';
 
     // --- the waters: cells x times ------------------------------------------
     const nT = run.n;
@@ -1966,7 +2172,7 @@
         const h = hIndex >= 0 ? Math.max(value(g.state, hIndex, k), 0) * scale : null;
         const ae = eIndex >= 0 ? value(g.state, eIndex, k) : 0;
         rows.push({ t: run.t[k], cell: g.cell, layer: g.layer, totals, H: h, pH: h > 0 ? -Math.log10(h) : null,
-          pe: ae > 0 ? -Math.log10(ae) : null, state: g.state, k });
+          pe: ae > 0 ? -Math.log10(ae) : null, state: g.state, k, tc: temps ? temps[k * model.cells + g.state] : temp });
       }
     }
 
@@ -1974,7 +2180,7 @@
     // totals: the element totals to give PHREEQC, by valence state unless
     // `together` says to give an element's valence states as one.
     const solution = (k, r, together) => {
-      const lines = [`SOLUTION ${k}`, `  temp ${fmtG(temp, 10)}`, '  units mol/kgw',
+      const lines = [`SOLUTION ${k}`, `  temp ${fmtG(r.tc, 12)}`, '  units mol/kgw',
         `  pe ${r.pe !== null && r.pe !== undefined ? r.pe.toFixed(12) : '4'}`,
         r.pH !== null ? `  pH ${r.pH.toFixed(12)}` : '  pH 7 charge'];
       const totals = new Map();
@@ -2119,7 +2325,6 @@
           + 'PHREEQC loads the surfaces of one water together, all with a double layer or all without';
       }
       const potAt = layered.map((sn) => ({ sn, si: model.species.indexOf(potentials.get(sn).name), ...potentials.get(sn) }));
-      const tk = temp + 273.15;
       let worstPsi = { by: 0, at: null, name: null };
       let worst = { by: 0, at: null, species: null };
       for (let start = 0; start < good.length && !error; start += CHUNK) {
@@ -2161,7 +2366,7 @@
             const a = pp.si >= 0 ? value(r.state, pp.si, r.k) : NaN;
             const theirs = Number(q.x[i]);
             if (!(a > 0) || !Number.isFinite(theirs)) return;
-            const ours = -Math.log(a) * GAS_R * tk / FARADAY;
+            const ours = -Math.log(a) * GAS_R * (r.tc + 273.15) / FARADAY;
             if (Math.abs(ours - theirs) > Math.abs(worstPsi.by)) worstPsi = { by: ours - theirs, at: r, name: pp.name };
           });
         });
@@ -2258,7 +2463,6 @@
     */
     let gas = null;
     if (gasSpecies.length) {
-      const RT = 0.0820597 * (gasModel.temperature + 273.15);
       const at = gasSpecies.map((g) => model.species.indexOf(g.name));
       // Real gases: the model's own Peng and Robinson, phi times the partial pressure, its fugacity.
       const RtmG = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel) || null;
@@ -2274,6 +2478,9 @@
       for (const r of good) {
         const amt = at.map((si) => value(r.state, si, r.k));
         const N = amt.reduce((a, v) => a + Math.max(v, 0), 0);
+        // R T at this water's temperature, the run's where it has one, and Peng and Robinson's terms there.
+        const RT = 0.0820597 * ((temps ? r.tc : gasModel.temperature) + 273.15);
+        if (real && RtmG.prAt) RtmG.prAt(real.pr, (temps ? r.tc : gasModel.temperature) + 273.15);
         let lnPhi = null;
         let Ptot = gasModel.fixed === 'volume' ? 0 : gasModel.pressure;
         if (real && N > 0) {
@@ -2374,6 +2581,8 @@
         const gaps = rels.map((eq) => ({ rel: eq.text.split(',', 1)[0].trim(), eq, by: 0, at: null }));
         for (const r of good) {
           for (let si = 0; si < ns; si++) cw[si] = value(r.state, si, r.k);
+          // A and B at this water's time, where the temperature goes with it.
+          if (own.thermoAt) own.thermoAt(r.t);
           const w = Rtm.activityAt(own.act, cw, 0, lnG, dG, r.state);
           for (const g of gaps) {
             let pqSide = g.eq.water ? g.eq.water * log10(r.pq.aw) : 0;
@@ -2391,7 +2600,8 @@
         gaps.sort((a, b) => Math.abs(b.by) - Math.abs(a.by));
         activity = {
           kind: own.act.kind,
-          temperature: own.act.temperature,
+          // TEMPERATURE as the model gives it: a number, or the expression each cell's comes from.
+          temperature: own.temperature && own.temperature.varies ? own.temperature.given : own.act.temperature,
           gap: gaps.map((g) => ({ rel: g.rel, by: g.by, t: g.at ? g.at.t : null, cell: g.at ? g.at.cell : null })),
         };
       }
@@ -2419,6 +2629,8 @@
       > Math.abs(a.pq.cb) / Math.max(a.pq.mu, 1e-30) ? r : a));
     const report = {
       waters: rows.length, cells: groups.length, times: idx.length, temperature: temp, temperatureFrom: tempFrom,
+      // The run's, low and high, where each water is at its own.
+      temperatures: temps ? [Math.min(...rows.map((r) => r.tc)), Math.max(...rows.map((r) => r.tc))] : null,
       waterError,
       counted: [...mapped].map(([n, v]) => ({ name: n, as: v.p })),
       skipped: [...skipped].map(([n, why]) => ({ name: n, why })),
@@ -2466,6 +2678,6 @@
   return {
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
-    readGasPhases, modelGas,
+    readGasPhases, modelGas, kCalc, lkOption,
   };
 }));

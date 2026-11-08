@@ -141,11 +141,18 @@
       for any other ion, PHREEQC's rule; or sit, the specific ion interaction
       theory, each species' coefficient reading the species it is paired with
       in <SIT> as well. none, the default, holds them between concentrations.
-      TEMPERATURE, in degrees C, sets the Debye-Hueckel A and B and nothing
-      else. See activityModel.
+      See activityModel.
+
+      TEMPERATURE, in degrees C: a number, or an expression of the parameters
+      and the clock -- a parameter of <PARAMETERS> for a temperature that
+      differs from cell to cell, a table read at the clock, name(t), for one
+      that goes with time, or both. Each cell's sets its relations' log K
+      (logKAt), the Debye-Hueckel A and B, a gas's R T and a double layer's
+      F/RT and dielectric constant, and a rate law reads it as TK, kelvin,
+      and TC. See the temperature in compile.
     */
     ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit'] },
-    TEMPERATURE: { def: 25, kind: 'number' },
+    TEMPERATURE: { def: 25, kind: 'temperature' },
     /*
       A gas phase, PHREEQC's GAS_PHASE: the species given `gas`, each with its
       partial pressure in atm for its activity. GAS_VOLUME holds the gas in a
@@ -335,6 +342,12 @@
         }
       } else if (spec.kind === 'text') {
         out[name] = raw;
+        Object.defineProperty(out, `${name}_line`, { value: line, enumerable: false });
+      } else if (spec.kind === 'temperature') {
+        // A number, or the text of an expression the cells and the clock work out (compile).
+        let v = null;
+        try { v = constValue(raw, line, name); } catch (e) { v = null; }
+        out[name] = v !== null ? v : raw;
         Object.defineProperty(out, `${name}_line`, { value: line, enumerable: false });
       } else {
         const v = constValue(raw, line, name);
@@ -1625,6 +1638,15 @@
   }
 
   /**
+   * TEMPERATURE for what is set up before the cells are: the number given,
+   * or 25 C where it is an expression, each cell's own then put in place of
+   * what depends on it (the temperature in compile).
+   */
+  function setupTemperature(settings) {
+    return typeof settings.TEMPERATURE === 'number' ? settings.TEMPERATURE : 25;
+  }
+
+  /**
    * The Debye-Hueckel A, in (kg/mol)^1/2, and B, in (kg/mol)^1/2 per
    * angstrom, of water at tc degrees C and one atmosphere, worked out as
    * PHREEQC 3 works them out: the relative dielectric constant from Bradley
@@ -1688,15 +1710,9 @@
       throw new RtmError(`<SIT> holds the interaction coefficients of the specific ion interaction theory, and is read `
         + `under ACTIVITY = sit${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, sitLines[0].line);
     }
-    if (settings.ACTIVITY === 'none') {
-      // A surface's potential reads it too, the double layer's dielectric constant; and a gas, R T.
-      if (settings.given && settings.given.has('TEMPERATURE') && !species.some((sp) => sp.potential || sp.gas)) {
-        warnings.push('TEMPERATURE sets the activity model\'s A and B and nothing else, and ACTIVITY is none: '
-          + 'it does nothing here.');
-      }
-      return null;
-    }
-    const tc = settings.TEMPERATURE;
+    // Whether anything reads TEMPERATURE is said once the model is put together (compile).
+    if (settings.ACTIVITY === 'none') return null;
+    const tc = setupTemperature(settings);
     if (!(tc >= 0 && tc <= 350)) {
       throw new RtmError(`TEMPERATURE = ${tc}: the activity model's A and B are worked out for 0 to 350 C.`);
     }
@@ -1836,7 +1852,7 @@
     const at = cell === undefined ? Math.round(off / ns) : cell;
     if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
     coefficientsAt(act, I, low, lnG, dG, at);
-    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
     let aw = 1 - 0.017 * sum;
     const dry = !(aw > 1e-6);
     if (dry) aw = 1e-6;
@@ -1861,7 +1877,7 @@
   function sitAt(act, C, off, I, low, osum, lnG, dG, cell) {
     const ns = act.ns;
     const st = act.sit;
-    const A = act.A;
+    const A = act.Ac ? act.Ac[cell] : act.A;
     const sq = Math.sqrt(I);
     const T = 1 + 1.5 * sq;
     const F = (-A * sq) / T;
@@ -1885,7 +1901,7 @@
     const ex = act.ex;
     if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
     onSites(act, lnG, dG, cell);
-    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, cell);
     // The water.
     let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
     let osI = low ? 0 : (-A * sq) / (T * T);
@@ -1966,7 +1982,9 @@
   function coefficientsAt(act, I, low, lnG, dG, cell) {
     const ns = act.ns;
     const sq = Math.sqrt(I);
-    const A = act.A * Math.LN10;
+    // A and B at the cell's temperature where it differs between cells or goes with time.
+    const A = (act.Ac ? act.Ac[cell] : act.A) * Math.LN10;
+    const B = act.Bc ? act.Bc[cell] : act.B;
     for (let s = 0; s < ns; s++) {
       // The charge in the coefficient: the species' own, or on an exchanger its ion's.
       const z2 = act.zg[s] * act.zg[s];
@@ -1982,7 +2000,7 @@
           break;
         }
         case 3: {
-          const den = 1 + act.B * act.a[s] * sq;
+          const den = 1 + B * act.a[s] * sq;
           lnG[s] = -A * z2 * sq / den + Math.LN10 * act.b[s] * I;
           dG[s] = -A * z2 * 0.5 / (sq * den * den) + Math.LN10 * act.b[s];
           break;
@@ -2028,11 +2046,14 @@
     // A gas in a fixed volume: its partial pressure n R T/V.
     const gas = act.gas;
     if (gas && gas.fixed === 'volume') {
+      const g = gas.lnGc ? gas.lnGc[cell] : gas.lnG;
       for (const s of gas.list) {
-        lnG[s] = gas.lnG;
+        lnG[s] = g;
         dG[s] = 0;
       }
     }
+    // Real gases: Peng and Robinson's a alpha and R T at the cell's temperature, for what follows.
+    if (gas && gas.pr && act.tk) prAt(gas.pr, act.tk[cell]);
   }
 
   /**
@@ -2434,7 +2455,7 @@
       throw new RtmError(`${name(pots[0])} is a surface's potential, which is worked out with the relations of its `
         + 'surface: it needs EQUILIBRATE, always to follow the run.', species[pots[0]].line);
     }
-    const tc = settings.TEMPERATURE;
+    const tc = setupTemperature(settings);
     if (!(tc >= 0 && tc <= 350)) {
       throw new RtmError(`TEMPERATURE = ${tc}: the double layer's dielectric constant is worked out for 0 to 350 C.`);
     }
@@ -2460,14 +2481,16 @@
    * the ionic strength I (low: at its floor) and u = ln a = -F psi/RT, in
    * C/m2, with its derivatives in Q, I and u.
    */
-  function gouyChapman(pt, q, Q, I, low, u) {
+  function gouyChapman(pt, q, Q, I, low, u, cell) {
     const sq = Math.sqrt(I);
     const sh = Math.sinh(u / 2);
-    const S = pt.kS * sq;
+    // sqrt(8000 R T eps eps0) at the cell's temperature where it differs between cells or goes with time.
+    const kS = pt.kSc ? pt.kSc[cell] : pt.kS;
+    const S = kS * sq;
     return {
       r: pt.cQ[q] * Q + S * sh,
       dQ: pt.cQ[q],
-      dI: low ? 0 : (pt.kS / (2 * sq)) * sh,
+      dI: low ? 0 : (kS / (2 * sq)) * sh,
       du: S * Math.cosh(u / 2) / 2,
     };
   }
@@ -2550,22 +2573,39 @@
   const ONE_3 = 0.33333333333333333;
 
   /**
+   * Peng and Robinson's a alpha of each gas and R T at tk kelvin, into pr
+   * (gasSetup), where they are not for tk already: a cell's temperature
+   * (onSites) where it differs between cells or goes with time.
+   */
+  function prAt(pr, tk) {
+    if (pr.tk === tk) return;
+    const R = R_LITER_ATM;
+    for (let i = 0; i < pr.aa.length; i++) {
+      pr.aa[i] = ((0.457235 * R * R * pr.tc[i] * pr.tc[i]) / pr.pc[i])
+        * Math.pow(1 + pr.kk[i] * (1 - Math.sqrt(tk / pr.tc[i])), 2);
+    }
+    pr.RT = R * tk;
+    pr.tk = tk;
+  }
+
+  /**
    * A real gas in a fixed volume (gasSetup): each gas's coefficient ln(phi P
    * /N), its activity -- its fugacity -- phi n P/N, P from the equation at
    * V/N; and d(ln gamma_i)/dC_j between the gases into gas.dln, by
    * differences, for the relations' derivatives (sitPartners). With no gas
    * at all, the ideal coefficient R T/V.
    */
-  function prVolumeCoefficients(act, C, off, lnG) {
+  function prVolumeCoefficients(act, C, off, lnG, cell) {
     const gas = act.gas;
     const pr = gas.pr;
     const K = gas.list.length;
     const n = pr.n;
+    const ideal = gas.lnGc ? gas.lnGc[cell] : gas.lnG;
     for (let q = 0; q < K; q++) n[q] = Math.max(C[off + gas.list[q]], 0);
     const value = (nn, out) => {
       let N = 0;
       for (let q = 0; q < K; q++) N += nn[q];
-      if (!(N > 0)) { for (let q = 0; q < K; q++) out[q] = gas.lnG; return; }
+      if (!(N > 0)) { for (let q = 0; q < K; q++) out[q] = ideal; return; }
       for (let q = 0; q < K; q++) pr.x[q] = nn[q] / N;
       const st = prState(pr, pr.x, 0, gas.volume / N);
       for (let q = 0; q < K; q++) out[q] = pr.lnPhi[q] + Math.log(st.P / N);
@@ -2722,7 +2762,7 @@
     if (hasV && !(V > 0)) throw new RtmError(`GAS_VOLUME = ${V}: a gas phase's volume is above zero.`);
     if (hasP && !(P > 0)) throw new RtmError(`GAS_PRESSURE = ${P}: a gas phase's pressure is above zero.`);
     waterPressure(settings, species);
-    const tc = settings.TEMPERATURE;
+    const tc = setupTemperature(settings);
     if (!(tc >= 0 && tc <= 350)) {
       throw new RtmError(`TEMPERATURE = ${tc}: a gas phase is worked out for 0 to 350 C, as the activity model is.`);
     }
@@ -2796,11 +2836,9 @@
     if (real.length) {
       const K = gases.length;
       const R = R_LITER_ATM;
-      const aa = Float64Array.from(gases, (k) => {
-        const sp = species[k];
-        const om = sp.omega || 0;
-        const kk = 0.37464 + om * (1.54226 - 0.26992 * om);
-        return ((0.457235 * R * R * sp.tc * sp.tc) / sp.pc) * Math.pow(1 + kk * (1 - Math.sqrt(tk / sp.tc)), 2);
+      const kk = Float64Array.from(gases, (k) => {
+        const om = species[k].omega || 0;
+        return 0.37464 + om * (1.54226 - 0.26992 * om);
       });
       const bb = Float64Array.from(gases, (k) => (0.077796 * R * species[k].tc) / species[k].pc);
       const f = new Float64Array(K * K).fill(1);
@@ -2822,8 +2860,11 @@
         f[qs[0] * K + qs[1]] = 1 - k;
         f[qs[1] * K + qs[0]] = 1 - k;
       }
-      pr = { aa, b: bb, f, RT: R * tk, S: new Float64Array(K), lnPhi: new Float64Array(K), x: new Float64Array(K),
-        n: new Float64Array(K), g0: new Float64Array(K), g1: new Float64Array(K), g2: new Float64Array(K) };
+      pr = { aa: new Float64Array(K), b: bb, f, RT: 0, tk: NaN, kk, tc: Float64Array.from(gases, (k) => species[k].tc),
+        pc: Float64Array.from(gases, (k) => species[k].pc), S: new Float64Array(K), lnPhi: new Float64Array(K),
+        x: new Float64Array(K), n: new Float64Array(K), g0: new Float64Array(K), g1: new Float64Array(K),
+        g2: new Float64Array(K) };
+      prAt(pr, tk);
     } else if (pairLines.length) {
       throw new RtmError('<GAS_PAIRS> holds the binary parameters of real gases, and no gas is given Tc and Pc.', pairLines[0].line);
     }
@@ -2893,7 +2934,9 @@
    *
    * K is the constant for the reaction as written -- products over reactants,
    * each to its coefficient. `logK` is its base-ten logarithm, which is how a
-   * database gives it and how anyone writing one by hand will have it.
+   * database gives it and how anyone writing one by hand will have it; dH,
+   * kJ/mol, and analytic = A1 ... A6 say how it goes with temperature, as a
+   * PHREEQC database's delta_h and -analytic do (logKAt).
    *
    * Given `kf` as well, the equilibrium is ALSO enforced while the run goes
    * on, as a fast reversible pair with kb = kf/K. Without it the equilibrium
@@ -2901,6 +2944,91 @@
    * these solvers integrate y' = f and an equilibrium held exactly throughout
    * is an algebraic constraint, which is a different kind of problem.
    */
+  /*
+    A RELATION'S LOG K AT A TEMPERATURE, as PHREEQC's k_calc works it out
+    (prep.cpp), T in kelvin:
+
+      log K = logK - dH (298.15 - T)/(ln10 R T 298.15)
+              + A1 + A2 T + A3/T + A4 log10 T + A5/T^2 + A6 T^2
+
+    logK the relation's log K at 25 C, dH its enthalpy of reaction in kJ/mol,
+    taken through van 't Hoff's equation as constant, and A1 to A6 its
+    analytic expression, R PHREEQC's 0.00831470 kJ/(mol K). An analytic
+    expression with any term not zero replaces logK and dH, as PHREEQC's
+    select_log_k_expression has it. No pressure term: PHREEQC's comes in
+    above one atmosphere, from molar volumes the page does not carry.
+  */
+  const R_KJ = 0.00831470;
+  /** log10 K at tk kelvin of a relation's temperature terms th ({logK, dH, a}). */
+  function logKAt(th, tk) {
+    const a = th.a;
+    const me = tk * R_KJ;
+    return th.logK - th.dH * (298.15 - tk) / (Math.LN10 * me * 298.15)
+      + a[0] + a[1] * tk + a[2] / tk + a[3] * Math.log10(tk) + a[4] / (tk * tk) + a[5] * tk * tk;
+  }
+
+  /**
+   * ln K of a relation or a phase in a cell: its own there (lnKc) where the
+   * temperature differs between cells or goes with time, else the one ln K.
+   */
+  const lnKIn = (eq, cell) => (eq.lnKc ? eq.lnKc[cell] : eq.lnK);
+  /** Bumped whenever a model works its cells' ln K out afresh (thermoAt): what a reduced system keeps is then stale. */
+  let thermoStamp = 0;
+
+  /**
+   * A relation's NAME = value parts: logK or K, dH, analytic = A1 ... A6
+   * (up to six numbers, the rest zero), and kf where `kfToo`. Returns ln K
+   * at 25 C, kf or null, and th, the temperature terms logKAt reads, or null
+   * where log K does not go with temperature.
+   */
+  function readLogK(parts, line, what, kfToo) {
+    let lnK = null;
+    let logK = null;
+    let dH = null;
+    let a = null;
+    let kf = null;
+    for (const part of parts) {
+      const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
+      if (!m) throw new RtmError(`"${part}" is not NAME = value.`, line);
+      if (m[1] === 'analytic') {
+        const terms = m[2].trim().split(/\s+/);
+        if (terms.length > 6) {
+          throw new RtmError(`analytic = ${m[2].trim()} has ${terms.length} terms, and an analytic expression has at most six: `
+            + 'A1 + A2 T + A3/T + A4 log10 T + A5/T^2 + A6 T^2, T in kelvin.', line);
+        }
+        a = new Float64Array(6);
+        terms.forEach((s, i) => { a[i] = constValue(s, line, `Term A${i + 1} of analytic`); });
+        continue;
+      }
+      const v = constValue(m[2], line, m[1]);
+      if (m[1] === 'logK') { lnK = v * Math.LN10; logK = v; }
+      else if (m[1] === 'K') {
+        if (!(v > 0)) throw new RtmError('K must be greater than zero; use logK for a small one.', line);
+        lnK = Math.log(v);
+        logK = Math.log10(v);
+      } else if (m[1] === 'dH') dH = v;
+      else if (m[1] === 'kf' && kfToo) {
+        if (!(v > 0)) throw new RtmError('kf must be greater than zero.', line);
+        kf = v;
+      } else {
+        throw new RtmError(kfToo ? `"${m[1]}" is not K, logK, dH, analytic or kf.`
+          : `"${m[1]}" is not K, logK, dH or analytic: a phase is held by nothing, so it has no kf.`, line);
+      }
+    }
+    // PHREEQC's rule: an expression is there where one of its terms is not zero, and then it is log K.
+    if (a && a.every((x) => x === 0)) a = null;
+    if (a) {
+      const th = { logK: 0, dH: 0, a };
+      return { lnK: logKAt(th, 298.15) * Math.LN10, kf, th };
+    }
+    if (lnK === null) {
+      throw new RtmError(dH !== null ? `dH is how ${what}'s log K goes with temperature from its value at 25 C: give `
+        + 'logK = ... as well.' : `${what === 'an equilibrium' ? 'An equilibrium' : 'A phase'} needs K = ..., logK = ... `
+        + 'or analytic = ... .', line);
+    }
+    return { lnK, kf, th: dH ? { logK, dH, a: new Float64Array(6) } : null };
+  }
+
   function readEquilibria(lines, index) {
     return lines.map(({ text, line }) => {
       const parts = splitTop(text).map((p) => p.trim()).filter(Boolean);
@@ -2912,23 +3040,7 @@
       const [lhs, rhs] = equation.split(arrow).map((x) => x.trim());
       const reactants = parseSide(lhs, line);
       const products = parseSide(rhs, line);
-
-      let lnK = null;
-      let kf = null;
-      for (const part of parts) {
-        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
-        if (!m) throw new RtmError(`"${part}" is not NAME = value.`, line);
-        const v = constValue(m[2], line, m[1]);
-        if (m[1] === 'logK') lnK = v * Math.LN10;
-        else if (m[1] === 'K') {
-          if (!(v > 0)) throw new RtmError('K must be greater than zero; use logK for a small one.', line);
-          lnK = Math.log(v);
-        } else if (m[1] === 'kf') {
-          if (!(v > 0)) throw new RtmError('kf must be greater than zero.', line);
-          kf = v;
-        } else throw new RtmError(`"${m[1]}" is not K, logK or kf.`, line);
-      }
-      if (lnK === null) throw new RtmError('An equilibrium needs K = ... or logK = ... .', line);
+      const { lnK, kf, th } = readLogK(parts, line, 'an equilibrium', true);
 
       const stoich = new Map();
       /*
@@ -2952,7 +3064,8 @@
       const net = [...stoich.entries()].filter(([, c]) => c !== 0);
       if (!net.length) throw new RtmError('The equilibrium changes nothing.', line);
       const species = (side) => (solvent ? side.filter(([, name]) => name !== 'H2O') : side);
-      return { net, lnK, kf, line, text, reactants: species(reactants), products: species(products), water };
+      // lnKc: ln K cell by cell, where the temperature differs between cells or goes with time (compile).
+      return { net, lnK, kf, th, lnKc: null, line, text, reactants: species(reactants), products: species(products), water };
     });
   }
 
@@ -3117,6 +3230,8 @@
     // fixed ones -- the electron, at the pe a start is given.
     const eqs = opts.equilibria || model.equilibria;
     if (!eqs || !eqs.length) return { y: Float64Array.from(y || model.initialState()), cells: [] };
+    // At the temperature of time opts.t, 0 unless given, where it goes with time.
+    if (model.thermoAt) model.thermoAt(opts.t || 0);
     const ns = model.speciesNames.length;
     const out = Float64Array.from(y || model.initialState());
     // Species on an exchanger first, and last what counts in no total.
@@ -3226,7 +3341,7 @@
         lnA[k] = 0;
         slope[k] = 1;
         for (const { eq, j, nu } of order) {
-          let r = eq.lnK - (eq.water ? eq.water * water.lnAw : 0);
+          let r = lnKIn(eq, c) - (eq.water ? eq.water * water.lnAw : 0);
           let d = 0;
           for (const [si, v] of eq.net) {
             if (si === j) continue;
@@ -3327,7 +3442,7 @@
         slope[k0] = 1;
         pslope[k0] = 0;
         for (const { eq, j, nu } of pl.order) {
-          let r = eq.lnK - (eq.water ? eq.water * water.lnAw : 0);
+          let r = lnKIn(eq, c) - (eq.water ? eq.water * water.lnAw : 0);
           let d = 0;
           let pd = 0;
           for (const [si, v] of eq.net) {
@@ -3391,7 +3506,7 @@
             if (q >= 0) J[a][m] = dp / sum;
           });
           if (q >= 0) {
-            const gc = gouyChapman(pt, q, Q, water.I, !(water.I > 1e-10), u[m]);
+            const gc = gouyChapman(pt, q, Q, water.I, !(water.I > 1e-10), u[m], c);
             F[m] = gc.r;
             J[m][m] += gc.du;
           }
@@ -3610,7 +3725,7 @@
     // nothing; with `row`, its derivatives in x as well.
     const relation = (j, water, row) => {
       const eq = eqs[j];
-      let r = -eq.lnK;
+      let r = -lnKIn(eq, cell);
       let G = 0;
       for (const [si, nu] of eq.net) {
         if (isMin[si]) continue;
@@ -3726,7 +3841,7 @@
           let Q = 0;
           for (const [k, zq] of pot.members) Q += zq * val[k];
           for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
-          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k]);
+          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k], cell);
           F[row] = gc.r;
           J[row][pot.k] += gc.du;
           for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * val[k];
@@ -3824,11 +3939,39 @@
       }
     }
 
+    /*
+      TWO MINERALS THAT CANNOT BOTH BE THERE -- gypsum and anhydrite, the same
+      calcium sulfate: present together their amounts are not determined and
+      the matrix is singular, and only at the one temperature where they are
+      equally soluble could both relations hold. Where a set of minerals
+      comes to that, one goes: the one the water is then undersaturated in,
+      the others held, as a phase no longer stable goes over to the one that
+      is. attempt() tries a set, from x0, the state before the set that
+      failed; `drop` leaves it, `add` (or -1) comes in.
+    */
+    const x0 = Float64Array.from(x);
+    const G0 = sys.gas;
+    const mins = [];
+    for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !(G0 && G0.isRel[j])) mins.push(j);
+    const attempt = (drop, add) => {
+      x.set(x0);
+      present[drop] = 0;
+      x[minOf[drop]] = 0;
+      if (add >= 0) present[add] = 1;
+      why = '';
+      if (solve() && saturation(drop, evaluate()) <= 1e-9) return true;
+      present[drop] = 1;
+      if (add >= 0) present[add] = 0;
+      why = 'singular';
+      return false;
+    };
     let ok = solve();
+    if (opts.activeSet && !ok) {
+      // A start, or an event, that has two such minerals there at once; not the one an event brought in (opts.enter).
+      for (const j of mins) if (present[j] && j !== opts.enter && attempt(j, -1)) { ok = true; break; }
+    }
     if (opts.activeSet && ok) {
       const G = sys.gas;
-      const mins = [];
-      for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !(G && G.isRel[j])) mins.push(j);
       // A bubble comes and goes whole: its relations' present together.
       const setBubble = (v) => { for (const j of G.rel) { present[j] = v; if (!v) x[minOf[j]] = 0; } };
       let settled = !mins.length && !G;
@@ -3874,8 +4017,16 @@
           continue;
         }
         if (pick >= 0) {
+          x0.set(x);
           present[pick] = 1;
           ok = solve();
+          // It cannot be there beside one that is: that one goes over to it.
+          if (!ok) {
+            for (const j of mins) {
+              if (j === pick || !present[j]) continue;
+              if (attempt(j, pick)) { ok = true; break; }
+            }
+          }
           continue;
         }
         settled = true;
@@ -3966,7 +4117,7 @@
     for (const c of pivotOf) isPivot[c] = 1;
     const K = [];
     for (let i = 0; i < naq; i++) if (!isPivot[i]) K.push(i);
-    const constants = (j) => ({ lnK: eqs[j].lnK, water: eqs[j].water || 0,
+    const constants = (j) => ({ lnK: eqs[j].lnK, eq: eqs[j], water: eqs[j].water || 0,
       fixed: eqs[j].net.filter(([si]) => at[si] < 0 && !isMin[si]),
       pot: eqs[j].net.filter(([si]) => at[si] >= 0 && potOf[at[si]] >= 0).map(([si, nu]) => [potOf[at[si]], nu]) });
     const mins = minRel.map((j) => {
@@ -4024,6 +4175,9 @@
       // M times the relations' ln K and water, made once: alpha_D = mLnK - L mWater
       // - M (the fixed species' terms, a few relations have any) - E alpha_K.
       mLnK: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.lnK, 0)),
+      // ...and cell by cell where a relation's ln K is its cell's (reducedLnK).
+      thermo: rel.some((r) => r.eq.lnKc), mLnKc: new Float64Array(M.length),
+      mCell: -1, mStamp: -1,
       mWater: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.water, 0)),
       withFixed: rel.map((r, c) => (r.fixed.length ? c : -1)).filter((c) => c >= 0),
       mins, useI, useL,
@@ -4039,6 +4193,27 @@
         return out;
       }),
     };
+  }
+
+  /**
+   * M times the relations' ln K in cell `cell` (reducedSystem's mLnK): the
+   * one where no relation's ln K is its cell's, and otherwise made for the
+   * cell and kept until the next cell, or until the cells' ln K are worked
+   * out afresh (thermoStamp).
+   */
+  function reducedLnK(rs, cell) {
+    if (!rs.thermo) return rs.mLnK;
+    if (rs.mCell === cell && rs.mStamp === thermoStamp) return rs.mLnKc;
+    const { M, rel } = rs;
+    for (let r = 0; r < M.length; r++) {
+      const Mr = M[r];
+      let acc = 0;
+      for (let c = 0; c < rel.length; c++) acc += Mr[c] * lnKIn(rel[c].eq, cell);
+      rs.mLnKc[r] = acc;
+    }
+    rs.mCell = cell;
+    rs.mStamp = thermoStamp;
+    return rs.mLnKc;
   }
 
   /*
@@ -4109,7 +4284,8 @@
    * concentrations of `outside`: nz + outside.length columns.
    */
   function reducedStateSit(rs, z, C, off, cell, outside, grad) {
-    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, iI, iL, mLnK, mWater, withFixed, np, iP, mPot, nz } = rs;
+    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, iI, iL, mWater, withFixed, np, iP, mPot, nz } = rs;
+    const mLnK = reducedLnK(rs, cell);
     const { act, ns } = sys;
     const { V, vOf, spOfAq, aqOfSp, fixedSp, onEx, onSf, iS } = rs.sit;
     const rows = act.sit.rows;
@@ -4137,8 +4313,9 @@
     const Ie = low ? 1e-10 : I;
     const sq = Math.sqrt(Ie);
     const T = 1 + 1.5 * sq;
-    const Fd = (-act.A * sq) / T;
-    const dFd = low ? 0 : -act.A / (2 * sq * T * T);
+    const Ah = act.Ac ? act.Ac[cell] : act.A;
+    const Fd = (-Ah * sq) / T;
+    const dFd = low ? 0 : -Ah / (2 * sq * T * T);
     const at = cell * ns;
     const z2 = (s) => act.z[s] * act.z[s];
     // A coefficient V or the Debye-Hueckel term alone gives (a species paired outside V is done later).
@@ -4260,7 +4437,7 @@
       if (grad) Gl[s].fill(0);
       if (onEx[s]) return ex.shift[at + s];
       if (onSf[s]) return sf.shift[at + s];
-      if (act.form[s] === 6 && act.gas.fixed === 'volume') return act.gas.lnG;
+      if (act.form[s] === 6 && act.gas.fixed === 'volume') return act.gas.lnGc ? act.gas.lnGc[cell] : act.gas.lnG;
       return 0;
     };
     function rest(i) {
@@ -4344,7 +4521,7 @@
       const qb = bubbleOn ? Gb.qOf[p] : -1;
       if (qb >= 0) {
         // A bubble's relation: its gas's ln of pressure in the water, and its gradient over nx, for bubbleRows.
-        let r = mn.water * L - mn.lnK;
+        let r = mn.water * L - lnKIn(mn.eq, cell);
         const g = Gb.rows[qb];
         if (grad) g.fill(0);
         for (const [si, nu] of mn.fixed) {
@@ -4362,7 +4539,7 @@
         if (grad) for (let c = 0; c < sc.nx; c++) if (g[c]) g[c] *= f;
         continue;
       }
-      let r = mn.water * L - mn.lnK;
+      let r = mn.water * L - lnKIn(mn.eq, cell);
       for (const [si, nu] of mn.fixed) {
         r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + lnG[si]);
         if (grad) addG(row, nu, Gl[si]);
@@ -4412,8 +4589,9 @@
     if (useL) {
       const sq = Math.sqrt(Ie);
       const T = 1 + 1.5 * sq;
-      let os = (-2 * act.A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
-      let osI = low ? 0 : (-act.A * sq) / (T * T);
+      const Ah = act.Ac ? act.Ac[cell] : act.A;
+      let os = (-2 * Ah / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+      let osI = low ? 0 : (-Ah * sq) / (T * T);
       let osum = 0;
       const dm = sc.dm || (sc.dm = new Float64Array(sys.ns));
       dm.fill(0);
@@ -4476,7 +4654,7 @@
         Q += zq * val[i];
         if (dQ) { const g = Gr[i]; for (let c = 0; c < sc.nx; c++) if (g[c]) dQ[c] += zq * val[i] * g[c]; }
       }
-      const gc = gouyChapman(pt, sys.pots[p].q, Q, Ie, low, z[row]);
+      const gc = gouyChapman(pt, sys.pots[p].q, Q, Ie, low, z[row], cell);
       F[row] = gc.r;
       norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
       if (!grad) continue;
@@ -4493,7 +4671,8 @@
    * system's own.
    */
   function reducedState(rs, z, C, off, cell) {
-    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, mLnK, mWater, withFixed, np, iP, mPot } = rs;
+    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, mWater, withFixed, np, iP, mPot } = rs;
+    const mLnK = reducedLnK(rs, cell);
     const { part, act, ns } = sys;
     const sc = rs.scratch || (rs.scratch = {
       alpha: new Float64Array(naq), val: new Float64Array(naq), lnG: new Float64Array(ns), dG: new Float64Array(ns),
@@ -4631,7 +4810,7 @@
         norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
         continue;
       }
-      let r = mn.water * L - mn.lnK;
+      let r = mn.water * L - lnKIn(mn.eq, cell);
       let gI = 0;
       for (const [si, nu] of mn.fixed) { r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + sc.lnG[si]); gI += nu * dG[si]; }
       for (let i = 0; i < naq; i++) if (mn.nu[i]) r += mn.nu[i] * alpha[i];
@@ -4703,7 +4882,7 @@
     // Each surface's potential: Gouy and Chapman, its error measured as one in ln a.
     for (let p = 0; p < np; p++) {
       const row = iP + p;
-      const gc = gouyChapman(pt, sys.pots[p].q, Qp[p], I, low, z[row]);
+      const gc = gouyChapman(pt, sys.pots[p].q, Qp[p], I, low, z[row], cell);
       F[row] = gc.r;
       norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
       if (!J) continue;
@@ -5017,7 +5196,7 @@
         const j = G.rel[q];
         const eq = eqs[j];
         const f = -1 / G.nu[q];
-        let r = -eq.lnK;
+        let r = -lnKIn(eq, cell);
         for (const [si, nu] of eq.net) {
           if (isMin[si]) continue;
           r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + (act ? sys.lnG[si] : 0));
@@ -5063,7 +5242,7 @@
       let Q = 0;
       for (const [k, zq] of pot.members) Q += zq * C[off + part[k]];
       for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
-      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]));
+      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]), cell);
       J[row][pot.k] += gc.du;
       for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * C[off + part[k]];
       if (gc.dI) {
@@ -5266,18 +5445,7 @@
       const right = parseSide(rhs, line);
       if (!left.length) throw new RtmError(`"${text}": the phase comes first on the left.`, line);
       const [c0, name] = left[0];
-      let lnK = null;
-      for (const part of parts) {
-        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
-        if (!m) throw new RtmError(`"${part}" is not NAME = value.`, line);
-        const v = constValue(m[2], line, m[1]);
-        if (m[1] === 'logK') lnK = v * Math.LN10;
-        else if (m[1] === 'K') {
-          if (!(v > 0)) throw new RtmError('K must be greater than zero; use logK for a small one.', line);
-          lnK = Math.log(v);
-        } else throw new RtmError(`"${m[1]}" is not K or logK: a phase is held by nothing, so it has no kf.`, line);
-      }
-      if (lnK === null) throw new RtmError('A phase needs K = ... or logK = ... .', line);
+      const { lnK, th } = readLogK(parts, line, 'a phase', false);
       if (out.has(name)) throw new RtmError(`The phase ${name} is given twice.`, line);
       const net = new Map();
       let water = 0;
@@ -5289,7 +5457,7 @@
       };
       for (const [c, n] of left.slice(1)) bump(n, -c);
       for (const [c, n] of right) bump(n, c);
-      out.set(name, { name, c0, net: [...net].filter(([, c]) => c !== 0), water, lnK, sign: 1, line, text });
+      out.set(name, { name, c0, net: [...net].filter(([, c]) => c !== 0), water, lnK, th, lnKc: null, sign: 1, line, text });
     }
     return out;
   }
@@ -5899,10 +6067,13 @@
           } else if (id === 'I' && !params.index.has('I')) {
             // The ionic strength, unless the text has a parameter of that name.
             aq.push({ id, q: registerAQ({ kind: 'I' }, rx.line) });
+          } else if ((id === 'TK' || id === 'TC') && !params.index.has(id) && !rx.params.has(id)) {
+            // The cell's temperature, in kelvin or C, unless the text has a parameter or constant of that name.
+            aq.push({ id, q: registerAQ({ kind: id }, rx.line) });
           } else if (!rx.params.has(id) && !params.index.has(id) && id !== 't' && !/^__tv\d+__$/.test(id)) {
             throw new RtmError(`"${id}" in a rate law is not a parameter of this reaction, a `
               + 'parameter in <PARAMETERS>, the time t, a species in brackets, an activity in braces, '
-              + 'I, or SI(phase) or SR(phase). Write a concentration as [name].', rx.line);
+              + 'I, TK or TC, or SI(phase) or SR(phase). Write a concentration as [name].', rx.line);
           }
         }
         deps.sort((a, b) => a.si - b.si);
@@ -5952,12 +6123,80 @@
     }
 
     /*
+      THE TEMPERATURE: a number of degrees C, or an expression of the
+      parameters -- a temperature that differs from cell to cell -- and the
+      clock, t and the tables read at it as a rate law reads them -- one that
+      goes with time. A number is put in at once: each relation's log K and
+      all else that reads the temperature are worked out at it, and stay. An
+      expression is worked out in each cell, at the start and, where it reads
+      the clock, at every time the model is evaluated at (thermoAt, below),
+      and what reads it is worked out in each cell at its own.
+    */
+    const tcFixed = typeof settings.TEMPERATURE === 'number' ? settings.TEMPERATURE : null;
+    let tempCode = null;      // TEMPERATURE as code in P, pb, t and TV; null for a number
+    let tempCells = false;    // it reads a parameter, and differs from cell to cell
+    let tempClock = false;    // it reads the clock
+    if (tcFixed === null) {
+      const tline = settings.TEMPERATURE_line;
+      const src = settings.TEMPERATURE;
+      let ast;
+      try {
+        ast = FacsimileModel.parseExpression(src, tline);
+      } catch (e) {
+        throw new RtmError(`TEMPERATURE = "${src}": ${e.message.replace(/^Line \d+: /, '')}`, tline);
+      }
+      ast = (function atTheClock(node) {
+        if (!node || typeof node !== 'object') return node;
+        const call = node.type === 'call' ? tableCall(node, tables, tline) : null;
+        if (call) {
+          const arg = fold(call.arg, new Map());
+          for (const id of mentioned(arg)) {
+            if (id === 't') continue;
+            throw new RtmError(`"${node.name}(...)" in TEMPERATURE is read at a time: its argument may use t and nothing `
+              + `else, and "${id}" is not t. A temperature that differs from cell to cell is a parameter of `
+              + '<PARAMETERS>, which may read a table of place, and its name is used here.', tline);
+          }
+          const key = `${call.tab.name}#${call.col}#${JSON.stringify(arg)}`;
+          if (!clockReads.has(key)) clockReads.set(key, { k: clockReads.size, tab: call.tab, col: call.col, arg });
+          return { type: 'id', name: `__tv${clockReads.get(key).k}__` };
+        }
+        if (node.type === 'call') return { ...node, args: node.args.map(atTheClock) };
+        if (node.type === 'bin') return { ...node, l: atTheClock(node.l), r: atTheClock(node.r) };
+        if (node.type === 'neg') return { ...node, a: atTheClock(node.a) };
+        return node;
+      }(ast));
+      ast = fold(ast, new Map());
+      for (const id of mentioned(ast)) {
+        if (params.index.has(id)) tempCells = true;
+        else if (id === 't' || /^__tv\d+__$/.test(id)) tempClock = true;
+        else {
+          throw new RtmError(`"${id}" in TEMPERATURE is not a parameter in <PARAMETERS>, the time t or a table read at `
+            + 'it: TEMPERATURE is a number of degrees C, a parameter for one that differs from cell to cell, or '
+            + 'name(t), a table read at the clock, for one that goes with time.', tline);
+        }
+      }
+      tempCode = emit(ast, (id) => {
+        if (params.index.has(id)) return `P[pb + ${params.index.get(id)}]`;
+        if (id === 't') return 't';
+        return `TV[${/^__tv(\d+)__$/.exec(id)[1]}]`;
+      }, tline);
+    }
+    // Each cell's temperature, C and kelvin, once the cells are known (thermoAt).
+    const thermo = { tc: null, tk: null, t: NaN, varies: tempCode !== null, cells: tempCells, clock: tempClock };
+    // A relation's or a phase's log K at a TEMPERATURE that is a number.
+    const atFixedTemperature = (list) => {
+      if (tcFixed === null) return;
+      for (const r of list) if (r.th) r.lnK = logKAt(r.th, tcFixed + 273.15) * Math.LN10;
+    };
+
+    /*
       The equilibria. Those given a kf are ALSO enforced while the run goes on,
       as an ordinary reversible pair with kb = kf/K -- fast kinetics, which
       these solvers are built for, rather than a constraint, which they are
       not. Without a kf an equilibrium is used for speciation and nothing else.
     */
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
+    atFixedTemperature(equilibria);
     /*
       Under ACTIVITY a pair relaxes to its K in activities, so its backward
       constant follows the ionic strength: kb = kf*Gamma/K, Gamma the product
@@ -6015,28 +6254,33 @@
       if (act) { apairs.push(eq); continue; }
       const kb = eq.kf / Math.exp(eq.lnK);
       const net = eq.net.map(([i, c]) => [i, c]);
+      // A backward constant that goes with the cell's temperature is read from AQ, kf/K there.
+      const kbAQ = tempCode !== null && eq.th ? registerAQ({ kind: 'kb', name: `#${eq.line}`, eq }, eq.line) : -1;
       const mk = (side, sign, k) => {
         const terms = side.map(([c, name]) => (c === 1 ? `[${name}]` : `[${name}]**${c}`));
         const src = terms.length ? `(${k}) * ${terms.join(' * ')}` : `(${k})`;
         const { masked, names } = maskSpecies(src, eq.line);
         const ast = FacsimileModel.parseExpression(masked, eq.line);
         const deps = [];
+        const aq = [];
         const seen = new Set();
         for (const id of mentioned(ast)) {
+          if (id === 'KB_T__') { aq.push({ id, q: kbAQ }); continue; }
           if (!names.has(id)) continue;
           if (seen.has(id)) continue;
           seen.add(id);
           deps.push({ id, si: index.get(names.get(id)) });
         }
         deps.sort((a, b) => a.si - b.si);
-        return { ast, deps, params: new Map(), line: eq.line, whole: false, net: net.map(([i, c]) => [i, c * sign]) };
+        return { ast, deps, aq, params: new Map(), line: eq.line, whole: false, net: net.map(([i, c]) => [i, c * sign]) };
       };
       channels.push(mk(eq.reactants, +1, numberLiteral(eq.kf)));
-      channels.push(mk(eq.products, -1, numberLiteral(kb)));
+      channels.push(mk(eq.products, -1, kbAQ >= 0 ? 'KB_T__' : numberLiteral(kb)));
     }
 
     /* ---- what the rate laws read besides concentrations ---------------- */
     const phases = readPhases(sections.PHASES, index);
+    atFixedTemperature(phases.values());
     // Where the activities come from: ACTIVITY's model, or without it
     // activity coefficients of 1 and the charges the names give, for I.
     const aqAct = act || (aqList.length ? noActivity(species) : null);
@@ -6050,7 +6294,7 @@
       if (!ph) {
         const eq = equilibria.find((x) => x.mineral >= 0 && species[x.mineral].name === e.name);
         if (eq) {
-          ph = { name: e.name, net: eq.net.filter(([k]) => k !== eq.mineral), water: eq.water || 0, lnK: eq.lnK,
+          ph = { name: e.name, net: eq.net.filter(([k]) => k !== eq.mineral), water: eq.water || 0, lnK: eq.lnK, eq,
             sign: eq.mineralNu < 0 ? 1 : -1 };
         }
       }
@@ -6071,7 +6315,9 @@
       if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
       else if (e.kind === 'aw') { if (act) aqSolutes.forEach((k) => set.add(k)); }
       else if (e.kind === 'I') aqIons.forEach((k) => set.add(k));
-      else {
+      else if (e.kind === 'TK' || e.kind === 'TC' || e.kind === 'kb') {
+        // The cell's temperature, and a backward constant that goes with it: no species.
+      } else {
         e.phase.net.forEach(([k]) => set.add(k));
         if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k));
         if (act && e.phase.water) aqSolutes.forEach((k) => set.add(k));
@@ -6093,6 +6339,7 @@
     const aqAt = (y, b, derivs) => {
       const w = activityAt(aqAct, y, b, lnGq, dGq);
       const z = aqAct.z;
+      const cell = (b / ns) | 0;
       for (let q = 0; q < nq; q++) {
         const e = aqList[q];
         const d = derivs ? dAQ[q] : null;
@@ -6114,6 +6361,12 @@
         } else if (e.kind === 'I') {
           AQ[q] = w.I;
           if (d && w.I > 1e-10) for (const k of aqIons) d[k] += 0.5 * z[k] * z[k];
+        } else if (e.kind === 'TK') {
+          AQ[q] = thermo.tk[cell];
+        } else if (e.kind === 'TC') {
+          AQ[q] = thermo.tc[cell];
+        } else if (e.kind === 'kb') {
+          AQ[q] = e.eq.kf / Math.exp(lnKIn(e.eq, cell));
         } else {
           const ph = e.phase;
           let lnIAP = ph.water ? ph.water * w.lnAw : 0;
@@ -6122,7 +6375,7 @@
             lnIAP += nu * (Math.log(Math.max(y[b + k], 1e-300)) + lnGq[k]);
             G += nu * dGq[k];
           }
-          const x = ph.sign * (lnIAP - ph.lnK);
+          const x = ph.sign * (lnIAP - lnKIn(ph.eq || ph, cell));
           const val = e.kind === 'SI' ? x / Math.LN10 : Math.exp(x);
           AQ[q] = val;
           if (d) {
@@ -7130,6 +7383,87 @@
     }
     turns.sort((a, b2) => a - b2);
 
+    /*
+      THE TEMPERATURE CELL BY CELL (see the temperature above): thermo.tc and
+      thermo.tk, each cell's in C and in kelvin, and where TEMPERATURE is an
+      expression, from them in each cell what reads it: each relation's and
+      phase's ln K that goes with temperature (lnKc), which a fast pair's
+      backward constant follows, the Debye-Hueckel A and B (Ac, Bc), a gas's
+      ln(R T/V) in a fixed volume, and a double layer's sqrt(8000 R T eps
+      eps0) and F/RT; Peng and Robinson's terms are worked out from tk where
+      they are read (onSites). All of it at the start, and where TEMPERATURE
+      reads the clock, again at each time the model is evaluated at.
+    */
+    thermo.tc = new Float64Array(nc).fill(tcFixed === null ? 25 : tcFixed);
+    thermo.tk = Float64Array.from(thermo.tc, (v) => v + 273.15);
+    const relT = equilibria.filter((eq) => eq.th);
+    const phT = [...phases.values()].filter((ph) => ph.th);
+    const gasT = act && act.gas && (act.gas.fixed === 'volume' || act.gas.pr) ? act.gas : null;
+    const readsT = (act && act.kind !== 'none') || !!pt || !!gasT || relT.length > 0 || phT.length > 0
+      || aqList.some((e) => e.kind === 'TK' || e.kind === 'TC');
+    if (tcFixed !== null && readsT && !(tcFixed >= 0 && tcFixed <= 350)) {
+      throw new RtmError(`TEMPERATURE = ${tcFixed}: the water and its relations are worked out for 0 to 350 C.`,
+        settings.TEMPERATURE_line);
+    }
+    if (!readsT && settings.given && settings.given.has('TEMPERATURE')) {
+      warnings.push('TEMPERATURE sets the relations\' log K given a dH or an analytic expression, the activity model\'s '
+        + 'A and B, a gas\'s R T and a double layer\'s, and a rate law reads it as TK and TC: nothing here does.');
+    }
+    const tempAt = tempCode === null ? null
+      // eslint-disable-next-line no-new-func
+      : new Function('P', 'pb', 't', 'TV', `return ${tempCode};`);
+    const atmT = act || pt ? waterPressure(settings, species) : 1;
+    if (thermo.varies) {
+      for (const r of relT) r.lnKc = new Float64Array(nc);
+      for (const r of phT) r.lnKc = new Float64Array(nc);
+      if (act && act.kind !== 'none') { act.Ac = new Float64Array(nc); act.Bc = new Float64Array(nc); }
+      if (act) act.tk = thermo.tk;
+      if (pt) { pt.kSc = new Float64Array(nc); pt.fRTc = new Float64Array(nc); }
+      if (gasT && gasT.fixed === 'volume') gasT.lnGc = new Float64Array(nc);
+    }
+    const cellName = (c) => (nc === 1 ? '' : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
+    /** Each cell's temperature at time t, and what reads it there; nothing where it is a number. */
+    function thermoAt(t) {
+      if (!thermo.varies || (thermo.clock ? t === thermo.t : thermo.ready)) return;
+      if (ntv) atTheClock(t);
+      const { tc, tk } = thermo;
+      if (tempCells) for (let c = 0; c < nc; c++) tc[c] = tempAt(P, c * np, t, TV);
+      else tc.fill(tempAt(P, 0, t, TV));
+      for (let c = 0; c < nc; c++) {
+        if (!(tc[c] >= 0 && tc[c] <= 350)) {
+          throw new RtmError(`TEMPERATURE comes to ${tc[c]} C${cellName(c)}${thermo.clock ? ` at t = ${t}` : ''}: the water `
+            + 'and its relations are worked out for 0 to 350 C.', settings.TEMPERATURE_line);
+        }
+        tk[c] = tc[c] + 273.15;
+      }
+      // Cell by cell; once, and then copied, where every cell has the same.
+      const n1 = tempCells ? nc : 1;
+      for (let c = 0; c < n1; c++) {
+        for (const r of relT) r.lnKc[c] = logKAt(r.th, tk[c]) * Math.LN10;
+        for (const r of phT) r.lnKc[c] = logKAt(r.th, tk[c]) * Math.LN10;
+        if ((act && act.Ac) || pt) {
+          const ab = debyeHuckelAB(tc[c], atmT);
+          if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; }
+          if (pt) {
+            pt.kSc[c] = Math.sqrt(8000 * GAS_R * tk[c] * ab.eps * EPSILON0);
+            pt.fRTc[c] = FARADAY / (GAS_R * tk[c]);
+          }
+        }
+        if (gasT && gasT.lnGc) gasT.lnGc[c] = Math.log((R_LITER_ATM * tk[c]) / gasT.volume);
+      }
+      if (n1 < nc) {
+        for (const r of relT) r.lnKc.fill(r.lnKc[0]);
+        for (const r of phT) r.lnKc.fill(r.lnKc[0]);
+        if (act && act.Ac) { act.Ac.fill(act.Ac[0]); act.Bc.fill(act.Bc[0]); }
+        if (pt) { pt.kSc.fill(pt.kSc[0]); pt.fRTc.fill(pt.fRTc[0]); }
+        if (gasT && gasT.lnGc) gasT.lnGc.fill(gasT.lnGc[0]);
+      }
+      thermo.t = t;
+      thermo.ready = true;
+      thermoStamp++;
+    }
+    thermoAt(0);
+
     // The chemistry slots, resolved once. Three levels of small arrays rather
     // than a search per entry per step: on a hundred cells this is the
     // difference between a Jacobian that costs nothing and one that dominates.
@@ -7160,12 +7494,12 @@
      * One pair's rate in the cell at b; kb*Gamma kept in pr.kg and the
      * backward rate in pr.back, for the Jacobian.
      */
-    const pairRate = (pr, y, b, water) => {
+    const pairRate = (pr, y, b, water, cell) => {
       let fwd = pr.kf;
       for (const [k, e] of pr.reac) fwd *= e === 1 ? y[b + k] : y[b + k] ** e;
       let lnGamma = pr.water * water.lnAw;
       for (const [k, c] of pr.net) lnGamma += c * lnG[k];
-      pr.kg = pr.kb * Math.exp(lnGamma);
+      pr.kg = (pr.eq.lnKc ? pr.kf / Math.exp(pr.eq.lnKc[cell]) : pr.kb) * Math.exp(lnGamma);
       let back = pr.kg;
       for (const [k, e] of pr.prod) back *= e === 1 ? y[b + k] : y[b + k] ** e;
       pr.back = back;
@@ -7184,6 +7518,7 @@
 
     function rhs(t, y, out) {
       out.fill(0);
+      if (thermo.clock) thermoAt(t);
       if (ntv) atTheClock(t);
       if (pairInfo.length) {
         for (let i = 0; i < nc; i++) {
@@ -7191,7 +7526,7 @@
           const water = activityAt(act, y, b, lnG, dG);
           const sc = reactScale[i];
           for (const pr of pairInfo) {
-            const r = pairRate(pr, y, b, water) * sc;
+            const r = pairRate(pr, y, b, water, i) * sc;
             if (r === 0) continue;
             for (const [p, c] of pr.net) if (!fixedAt[b + p]) out[b + p] += c * r;
           }
@@ -7236,6 +7571,7 @@
 
     function jac(t, y, V) {
       V.fill(0);
+      if (thermo.clock) thermoAt(t);
       if (ntv) atTheClock(t);
       for (let i = 0; i < nc; i++) {
         const b = i * ns;
@@ -7275,7 +7611,7 @@
           const water = activityAt(act, y, b, lnG, dG);
           const sc = reactScale[i];
           pairInfo.forEach((pr, j) => {
-            pairRate(pr, y, b, water);
+            pairRate(pr, y, b, water, i);
             const d = pr.d;
             d.fill(0);
             // The mass action of each side...
@@ -7538,8 +7874,20 @@
       reactScale,
       // The activity model (activityModel), or null; and what of it to show.
       act,
-      activity: act && act.kind !== 'none' ? { kind: act.kind, temperature: act.temperature, A: act.A, B: act.B,
+      // A and B are at TEMPERATURE where it is a number; where it is an expression, at each cell's (Ac, Bc), and null here.
+      activity: act && act.kind !== 'none' ? { kind: act.kind, temperature: tcFixed !== null ? tcFixed : settings.TEMPERATURE,
+        A: thermo.varies ? null : act.A, B: thermo.varies ? null : act.B,
         ions: ions.length, pairs: pairInfo.length, sit: act.sit ? act.sit.pairs.length : 0 } : null,
+      /*
+        THE TEMPERATURE: the number, or the expression, TEMPERATURE gives;
+        whether it differs from cell to cell and goes with time; how many
+        relations' and phases' log K go with it; and each cell's, in C, at a
+        time t (temperatures), which is where the model is then evaluated at.
+      */
+      temperature: { given: tcFixed !== null ? tcFixed : settings.TEMPERATURE, varies: thermo.varies, cells: tempCells,
+        clock: tempClock, relations: relT.length, phases: phT.length, reads: readsT },
+      thermoAt,
+      temperatures(t) { thermoAt(t); return Float64Array.from(thermo.tc); },
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -7719,6 +8067,8 @@
    */
   function holdEquilibria(base, eqs) {
     const ns = base.speciesNames.length;
+    // Each cell's temperature, and what reads it, at the time asked for (compile's thermoAt).
+    const thermoAt = base.thermoAt || (() => {});
     const nc = base.cells;
     const nBase = base.nspecies;
     const fixed = base.fixed;
@@ -8012,7 +8362,7 @@
     // evaluation of the cell when there is ACTIVITY.
     const relationAt = (b, r, y, water) => {
       const eq = eqs[r];
-      let g = -eq.lnK;
+      let g = -lnKIn(eq, (b / ns) | 0);
       for (const [sp, nu] of eq.net) {
         if (isMin[sp]) continue;
         g += nu * (held[b + sp] ? y[b + sp] : Math.log(C[b + sp]));
@@ -8079,6 +8429,7 @@
     }
 
     function rhs(t, y, out) {
+      thermoAt(t);
       if (projected) return rhsProjected(t, y, out);
       concentrations(y);
       base.rhs(t, C, f);
@@ -8183,6 +8534,7 @@
     }
 
     function jac(t, y, V) {
+      thermoAt(t);
       if (projected) return jacProjected(t, y, V);
       concentrations(y);
       base.jac(t, C, Vb);
@@ -8344,7 +8696,10 @@
       for (let k = 0; k < na; k++) settled[c][k] = Cs[active[k]];
       return res.x;
     }
+    // The cell of the event just applied, and the mineral it brought in (or -1), for consistentInitial.
+    let lastEvent = null;
     function consistentInitial(t, y, opts = {}) {
+      thermoAt(t);
       // Not below 1e-13: a relation is ln K of 30 or 50 in size, and rounding
       // there is a few times 1e-15 whatever is asked.
       const tol = Math.max(Math.min(1e-10, (opts.rtol || 1e-6) * 1e-4), 1e-13);
@@ -8378,8 +8733,22 @@
           }
           if (r0.converged) for (const s of active) C[b + s] = Cs[s];
         }
-        const res = speciateCell(sys, C, b, totalsCell, wCell, pres,
+        // The cell an event has just brought a mineral into, as it was, in case that mineral cannot be there beside another.
+        const evHere = !!lastEvent && lastEvent.c === c && lastEvent.r >= 0 && !opts.fromState;
+        const kept = evHere ? C.slice(b, b + ns) : null;
+        let res = speciateCell(sys, C, b, totalsCell, wCell, pres,
           { tol, roundOff: true, activeSet: !!opts.fromState, cell: c });
+        if (evHere && !res.converged) {
+          // Gypsum where anhydrite comes in: the one it cannot be beside goes (speciateCell).
+          C.set(kept, b);
+          const before = Uint8Array.from(pres);
+          res = speciateCell(sys, C, b, totalsCell, wCell, pres,
+            { tol, roundOff: true, activeSet: true, cell: c, enter: lastEvent.r });
+          const gone = mins.filter((r) => before[r] && !pres[r]).map((r) => base.speciesNames[eqs[r].mineral]);
+          if (res.converged && gone.length) {
+            events[lastEvent.which].shown += `, and ${gone.join(' and ')} ${gone.length > 1 ? 'have' : 'has'} dissolved away`;
+          }
+        }
         iterations = Math.max(iterations, res.iterations);
         worstRes = Math.max(worstRes, res.residual);
         if (!res.converged && !why) {
@@ -8393,6 +8762,7 @@
           y[st] = res.x[k];
         }
       }
+      lastEvent = null;
       return { solved: !why, iterations, residual: worstRes, moved, why };
     }
 
@@ -8402,9 +8772,10 @@
     // tolerance, which on the totals' rows is a part in 1e9 at rtol 1e-8; the
     // totals themselves are integrated, and what is conserved is conserved to
     // rounding there. So every point shown is the speciation of its totals.
-    const toConcentrations = (y) => {
+    // t, the time of the state: where the temperature goes with time, the relations are those of that time.
+    const toConcentrations = (y, t = 0) => {
       const z = Float64Array.from(y);
-      consistentInitial(0, z, { rtol: 1e-12, fromState: true });
+      consistentInitial(t, z, { rtol: 1e-12, fromState: true });
       const out = new Float64Array(nBase);
       for (let k = 0; k < nBase; k++) out[k] = held[k] && !lin[k] ? Math.exp(z[k]) : z[k];
       return out;
@@ -8456,7 +8827,7 @@
     // A relation without its gas, at the concentrations Cc of the cell at b.
     const relationOf = (Cc, b, r, water) => {
       const eq = eqs[r];
-      let g = -eq.lnK;
+      let g = -lnKIn(eq, (b / ns) | 0);
       for (const [sp, nu] of eq.net) {
         if (isMin[sp]) continue;
         g += nu * Math.log(Math.max(Cc[b + sp], 1e-300));
@@ -8476,6 +8847,7 @@
       return top + Math.log(S) - bub.lnP;
     };
     function eventValues(t, y, out) {
+      thermoAt(t);
       /*
         Projected, a held species in the state is only near its projection
         -- it carries no weight in the error test -- and a mineral's
@@ -8493,7 +8865,7 @@
             if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] ? -y[b + m] : -1; continue; }
             if (present[c * ne + r]) { out[c * nmin + q] = -Cstar[b + m]; continue; }
             const eq = eqs[r];
-            let g = -eq.lnK;
+            let g = -lnKIn(eq, c);
             for (const [sp, nu] of eq.net) {
               if (isMin[sp]) continue;
               g += nu * Math.log(Math.max(Cstar[b + sp], 1e-300));
@@ -8536,6 +8908,7 @@
     function applyEvent(which) {
       if (which >= nc * nmin) {
         const c = which - nc * nmin;
+        lastEvent = { c, r: -1, which };
         const now = present[c * ne + bub.rel[0]] ? 0 : 1;
         for (const r of bub.rel) present[c * ne + r] = now;
         events[which].shown = now ? `a bubble forms${where(c)}` : `the bubble has dissolved${where(c)}`;
@@ -8545,6 +8918,7 @@
       const r = mins[which % nmin];
       const at = c * ne + r;
       present[at] = present[at] ? 0 : 1;
+      lastEvent = { c, r: present[at] ? r : -1, which };
       const name = base.speciesNames[eqs[r].mineral];
       events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
       return [name];
@@ -8793,7 +9167,7 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
-    chargeOf, debyeHuckelAB, activityModel, activityAt, prState,
+    chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.

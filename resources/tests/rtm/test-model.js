@@ -5110,6 +5110,221 @@ X => CO2, k = 1e-5
 }
 
 /* ======================================================================
+   2r. The temperature (dH, analytic, TEMPERATURE that varies, TK and TC)
+
+   A relation's log K at a temperature as PHREEQC's k_calc has it: van 't
+   Hoff's equation from dH, or the analytic expression, which replaces logK
+   and dH. TEMPERATURE a number; a parameter, a temperature that differs
+   from cell to cell, where each cell must be exactly the one-cell model at
+   its own temperature, whatever the chemistry; a table read at the clock,
+   where a closed batch must be at every stored point where a model at that
+   temperature puts it. A mineral that replaces another as the water heats
+   -- gypsum and anhydrite -- at the temperature the closed form gives;
+   rate laws reading TK and TC; a phase's saturation; fast pairs; and the
+   texts it refuses.
+   ====================================================================== */
+console.log('\n--- the temperature ---');
+{
+  const Rk = 0.00831470;
+  const vh = (logK, dH, T) => logK - dH * (298.15 - T) / (Math.LN10 * Rk * T * 298.15);
+  const an = (a, T) => a[0] + a[1] * T + a[2] / T + a[3] * Math.log10(T) + a[4] / (T * T) + a[5] * T * T;
+  const W = [-283.971, -0.05069842, 13323.0, 102.24447, -1119669.0, 0];
+  const one = (T, rel) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = start\nTEMPERATURE = ${T}\n\n`
+    + `<SPECIES>\nA 1\nB 0\nH+ 1e-7\nOH- 1e-7\n\n<EQUILIBRIUM>\n${rel}\n`);
+  const at50 = one(50, 'A <=> B, logK = 0.3, dH = 20\n <=> H+ + OH-, logK = -14, dH = 55.8, analytic = '
+    + W.slice(0, 5).join(' '));
+  const y50 = at50.initialState();
+  const lkB = Math.log10(y50[1] / y50[0]);
+  const lkW = Math.log10(y50[2] * y50[3]);
+  check('a relation\'s log K at TEMPERATURE: van \'t Hoff\'s from dH, and the analytic expression, which replaces '
+    + 'logK and dH as PHREEQC has it', Math.abs(lkB - vh(0.3, 20, 323.15)) < 1e-12 && Math.abs(lkW - an(W, 323.15)) < 1e-12,
+  `log K ${lkB.toFixed(12)} and ${lkW.toFixed(12)} at 50 C, for ${vh(0.3, 20, 323.15).toFixed(12)} and ${an(W, 323.15).toFixed(12)}`);
+  const at25 = one(25, 'A <=> B, K = 2, dH = 20\n <=> H+ + OH-, logK = -14');
+  check('  at 25 C, logK or K as written, dH or not',
+    Math.abs(at25.equilibria[0].lnK - Math.log(2)) < 1e-15 && at25.equilibria[1].lnK === -14 * Math.LN10);
+
+  // A heated batch: A <=> B from 10 to 80 C and back to 40 along a table read at the clock.
+  const heat = '<TABLE heat>\n0 10\n0.5 80\n1 40\n';
+  const Tof = (t) => 273.15 + (t <= 0.5 ? 10 + 140 * t : 80 - 80 * (t - 0.5));
+  const mh = RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\nTEMPERATURE = heat(t)\n\n${heat}\n`
+    + '<SPECIES>\nA 1\nB 0\n\n<EQUILIBRIUM>\nA <=> B, logK = 0.3, dH = 20\n');
+  const rh = run(mh, { tend: 1 });
+  let wh = 0;
+  for (let k = 0; k < rh.t.length; k++) {
+    const c = mh.toConcentrations(rh.y[k], rh.t[k]);
+    wh = Math.max(wh, Math.abs(Math.log10(c[1] / c[0]) - vh(0.3, 20, Tof(rh.t[k]))));
+  }
+  const tAt = mh.temperatures(0.25);
+  check('TEMPERATURE = heat(t), a table read at the clock: K at every stored point the one at its time, the run started '
+    + 'again where the table turns, and the Jacobian', wh < 1e-13 && mh.breaks(0, 1).join(',') === '0.5'
+    && Math.abs(tAt[0] - 45) < 1e-12 && mh.temperature.clock && !mh.temperature.cells
+    && RtmModel.verifyJacobian(mh, rh.t[rh.t.length >> 1], rh.y[rh.y.length >> 1]).discrepancies.length === 0,
+  `${rh.t.length} points, worst ${wh.toExponential(1)} in log K`);
+
+  /*
+    EACH CELL ITS OWN TEMPERATURE, AND EACH TIME ITS OWN: in a column where
+    nothing moves, cell i must be the one-cell model at its temperature to the
+    last bit, and in a closed batch heated along a table every stored state
+    the one a model at that time's temperature starts from -- the
+    relations' log K, the Debye-Hueckel A and B, an exchanger, a double
+    layer's constant, a gas's R T in a fixed volume, Peng and Robinson's
+    terms, the electron's held form and SIT's.
+  */
+  const temps = [5, 25, 60, 95];
+  const chem = [
+    ['ACTIVITY = debye-huckel', 'Na+ 1e-3 a=4.08 b=0.082\nCa+2 2e-4 a=5 b=0.165\nCl- 1.4e-3 a=3.63 b=0.017\nX- exchanger\n'
+      + 'NaX exchange 1e-3\nCaX2 exchange 0', 'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8, dH = 7.2', '',
+    'an exchanger'],
+    ['ACTIVITY = davies', 'H+ 1e-7 fixed\nNa+ 0.1\nCl- 0.1\nS_psi potential area=600 grams=0.09\nS_OH surface sites=2e-4\n'
+      + 'S_OH2+ surface', 'S_OH + H+ <=> S_OH2+, logK = 7.29, dH = -20', '', 'a double layer'],
+    ['GAS_VOLUME = 0.5', 'H+ 1e-4\nOH- 1e-10\nCO2 1e-3\nHCO3- 1e-6\nCO2(g) 0 gas', ' <=> H+ + OH-, logK = -14, dH = 55.8\n'
+      + 'CO2 <=> H+ + HCO3-, logK = -6.35, dH = 9.1\nCO2(g) <=> CO2, logK = -1.468, dH = -19.98', '', 'a gas in a fixed volume'],
+    ['GAS_VOLUME = 0.05', 'H+ 1e-4\nOH- 1e-10\nCO2 0.3\nHCO3- 1e-6\nCO2(g) 0.5 gas Tc=304.2 Pc=72.86 omega=0.225',
+      ' <=> H+ + OH-, logK = -14, dH = 55.8\nCO2 <=> H+ + HCO3-, logK = -6.35, dH = 9.1\nCO2(g) <=> CO2, logK = -1.468, '
+      + 'dH = -19.98', '', 'a real gas in one'],
+    ['GAS_PRESSURE = 10', 'CO2 0.5\nN2 0.05\nCO2(g) 0.1 gas Tc=304.2 Pc=72.86 omega=0.225\nN2(g) 0.1 gas Tc=126.2 Pc=33.5 '
+      + 'omega=0.039', 'CO2(g) <=> CO2, logK = -1.468, dH = -19.98\nN2(g) <=> N2, logK = -3.18, dH = -10.4', '',
+    'a bubble of real gases'],
+    ['ACTIVITY = davies', 'Fe+2 1e-3\nFe+3 1e-5\nCl- 2.03e-3\nH+ 1e-5\nOH- 1e-9\nFeOH+2 0\ne- electron',
+      'Fe+2 <=> Fe+3 + e-, logK = -13.02, dH = 40.5\n <=> H+ + OH-, logK = -14, dH = 55.8\nFe+3 <=> FeOH+2 + H+, logK = -2.19, '
+      + 'dH = 43.5', '', 'the electron'],
+    ['ACTIVITY = sit', 'Na+ 1\nCl- 1\nH+ 1e-7\nOH- 1e-7\nNaCl 0', ' <=> H+ + OH-, logK = -14, dH = 55.8\n'
+      + 'Na+ + Cl- <=> NaCl, logK = -0.5, dH = 5', '<SIT>\nNa+ Cl- 0.03\nH+ Cl- 0.12\nNa+ OH- 0.04\n', 'SIT'],
+    ['ACTIVITY = davies', 'Ca+2 1e-3\nCO3-2 1e-3\nHCO3- 0\nH+ 1e-8\nOH- 1e-6\nCalcite 0.01 mineral',
+      ' <=> H+ + OH-, logK = -14, dH = 55.8\nCO3-2 + H+ <=> HCO3-, logK = 10.329, dH = -14.9\n'
+      + 'Calcite <=> Ca+2 + CO3-2, logK = -8.48, dH = -9.6', '', 'a mineral'],
+  ];
+  const text = (head, T, more, [s, sp, rel, extra]) => `<SETTINGS>\n${head}\nTEND = 1\nEQUILIBRATE = always\n${s}\n`
+    + `TEMPERATURE = ${T}\n\n${more}\n<SPECIES>\n${sp}\n\n<EQUILIBRIUM>\n${rel}\n\n${extra}`;
+  const column = 'MODE = transport\nCELLS = 4\nLENGTH = 1\nDIFFUSION = 0\nLEFT = neumann\nRIGHT = neumann';
+  const profile = `<PARAMETERS>\nTc all ${temps[0]}\n${temps.slice(1).map((v, i) => `Tc ${i + 1} ${v}`).join('\n')}\n`;
+  const differ = (a, b) => {
+    let w = 0;
+    for (let s = 0; s < b.length; s++) {
+      if (Math.abs(a[s]) < 1e-25 && Math.abs(b[s]) < 1e-25) continue;
+      w = Math.max(w, Math.abs(a[s] - b[s]) / Math.max(Math.abs(b[s]), 1e-30));
+    }
+    return w;
+  };
+  const cellWorst = [];
+  const timeWorst = [];
+  for (const c of chem) {
+    const prof = RtmModel.compile(text(column, 'Tc', profile, c));
+    const cp = prof.toConcentrations(prof.initialState());
+    const ns = prof.speciesNames.length;
+    let w = 0;
+    temps.forEach((T, i) => {
+      const m1 = RtmModel.compile(text('MODE = batch', T, '', c));
+      w = Math.max(w, differ(cp.subarray(i * ns, (i + 1) * ns), m1.toConcentrations(m1.initialState())));
+    });
+    cellWorst.push(`${c[4]} ${w.toExponential(0)}`);
+    if (w > 1e-14) cellWorst.push('FAIL');
+    const mt = RtmModel.compile(text('MODE = batch', 'heat(t)', heat, c));
+    const rt = FacsimileODE.runModel(mt, { solver: 'ndf', tend: 1, rtol: 1e-9, atol: 1e-20 });
+    let wt = 0;
+    for (const k of [rt.t.length >> 2, rt.t.length >> 1, (3 * rt.t.length) >> 2, rt.t.length - 1]) {
+      const m1 = RtmModel.compile(text('MODE = batch', Tof(rt.t[k]) - 273.15, '', c));
+      wt = Math.max(wt, differ(mt.toConcentrations(rt.y[k], rt.t[k]), m1.toConcentrations(m1.initialState())));
+    }
+    timeWorst.push(`${c[4]} ${wt.toExponential(0)}`);
+    if (wt > 1e-13) timeWorst.push('FAIL');
+  }
+  check('TEMPERATURE = Tc, a parameter: each cell of a column the one-cell model at its own temperature, chemistry by '
+    + 'chemistry', !cellWorst.includes('FAIL'), cellWorst.join(', '));
+  check('  and heated along a table: each stored state the start of a model at that time\'s temperature',
+    !timeWorst.includes('FAIL'), timeWorst.join(', '));
+
+  /*
+    ONE MINERAL OVER TO ANOTHER, as gypsum goes over to anhydrite as a water
+    heats: P1 and P2 the same solid, P2 the less soluble at 25 C and P1 above
+    the temperature where their log K cross. Each is held while it is there;
+    when the water becomes supersaturated in P1, P2 cannot be there beside
+    it, and goes. The time is where log K1 = log K2 along the table, and the
+    water is at the stable one's solubility, sqrt K, before and after.
+  */
+  const poly = (start) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n`
+    + `TEMPERATURE = warm(t)\n\n<TABLE warm>\n0 25\n1 75\n\n<SPECIES>\nA 1e-3\nB 1e-3\n${start}\n\n<EQUILIBRIUM>\n`
+    + 'P1 <=> A + B, logK = -2, dH = 5\nP2 <=> A + B, logK = -2.3, dH = 40\n');
+  let lo = 280;
+  let hi = 400;
+  for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (vh(-2, 5, mid) > vh(-2.3, 40, mid)) lo = mid; else hi = mid; }
+  const tCross = ((lo + hi) / 2 - 298.15) / 50;
+  const mp = poly('P1 0.5 mineral\nP2 0 mineral');
+  const y0 = mp.toConcentrations(mp.initialState());
+  const rp = run(mp, { tend: 1 });
+  const ev = rp.events[0] || {};
+  const yEnd = mp.toConcentrations(rp.y[rp.y.length - 1], 1);
+  const both = poly('P1 0.25 mineral\nP2 0.25 mineral');
+  const yb = both.toConcentrations(both.initialState());
+  check('one mineral over to another as the water heats: P2, stable at the start, goes over to P1 where their log K '
+    + 'cross along the table', rp.events.length === 1 && Math.abs(ev.t - tCross) < 1e-8
+    && /P1 precipitates, and P2 has dissolved away/.test(ev.expr)
+    && Math.abs(y0[0] - Math.sqrt(10 ** -2.3)) < 1e-14 && y0[2] === 0 && Math.abs(y0[3] - 0.5 + y0[0] - 1e-3) < 1e-14
+    && Math.abs(yEnd[0] / Math.sqrt(10 ** vh(-2, 5, 348.15)) - 1) < 1e-12 && yEnd[3] === 0
+    && Math.abs(yb[3] - y0[3]) < 1e-14 && yb[2] === 0,
+  `at t = ${ev.t} for ${tCross.toFixed(10)} (${(25 + 50 * tCross).toFixed(4)} C): "${ev.expr}"; both given, P1 goes over to P2`);
+
+  // Rate laws: Arrhenius on TK cell by cell, TC along the clock, and a phase's saturation with its dH.
+  const col3 = (more, sp, body) => RtmModel.compile(`<SETTINGS>\n${column.replace('CELLS = 4', 'CELLS = 3')}\nTEND = 1\n`
+    + `TEMPERATURE = Tc\n\n<PARAMETERS>\nTc all 10 + 35*i\n\n${more}\n<SPECIES>\n${sp}\n\n${body}\n`);
+  const arr = col3('', 'A 1\nB 0', '<REACTIONS>\nA => B, r = k25*exp(-Ea/Rg*(1/TK - 1/298.15))*[A], k25 = 0.05, Ea = 60000, '
+    + 'Rg = 8.314\n');
+  const ya = last(run(arr, { tend: 1, rtol: 1e-11 }));
+  const kOf = (T) => 0.05 * Math.exp((-60000 / 8.314) * (1 / T - 1 / 298.15));
+  const wa = Math.max(...[0, 1, 2].map((i) => Math.abs(ya[2 * i] / Math.exp(-kOf(283.15 + 35 * i)) - 1)));
+  const tcm = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\nTEMPERATURE = ramp(t)\n\n<TABLE ramp>\n0 10\n1 90\n\n'
+    + '<SPECIES>\nA 1\n\n<REACTIONS>\nA => , r = 0.01*TC*[A]\n');
+  const wc = Math.abs(last(run(tcm, { tend: 1, rtol: 1e-11 }))[0] / Math.exp(-0.01 * 50) - 1);
+  const sim = col3('<PHASES>\nCalcite <=> Ca+2 + CO3-2, logK = -8.48, dH = -9.6\n', 'Ca+2 1e-3 fixed\nCO3-2 1e-5 fixed\nX 0',
+    '<REACTIONS>\n=> X, r = SI(Calcite)\n');
+  const ys = last(run(sim, { tend: 1 }));
+  const ws = Math.max(...[0, 1, 2].map((i) => Math.abs(ys[3 * i + 2] - (-8 - vh(-8.48, -9.6, 283.15 + 35 * i)))));
+  check('rate laws read the cell\'s temperature as TK and TC, and a phase\'s saturation its log K there',
+    wa < 1e-8 && wc < 1e-8 && ws < 1e-13, `Arrhenius ${wa.toExponential(1)}, TC along the clock ${wc.toExponential(1)}, `
+      + `SI ${ws.toExponential(1)}`);
+
+  // Fast pairs: kb = kf/K at the cell's temperature, with and without ACTIVITY, and along the clock.
+  const pair = (a) => RtmModel.compile(`<SETTINGS>\n${column.replace('CELLS = 4', 'CELLS = 3')}\nTEND = 1\nACTIVITY = ${a}\n`
+    + 'TEMPERATURE = Tc\n\n<PARAMETERS>\nTc all 10 + 35*i\n\n<SPECIES>\nA 1\nB 0\n\n<EQUILIBRIUM>\n'
+    + 'A <=> B, logK = 0.3, dH = 20, kf = 100\n');
+  const pw = ['none', 'davies'].map((a) => {
+    const m = pair(a);
+    const r = run(m, { tend: 1 });
+    const y = last(r);
+    return Math.max(...[0, 1, 2].map((i) => Math.abs(Math.log10(y[2 * i + 1] / y[2 * i]) - vh(0.3, 20, 283.15 + 35 * i))))
+      + (RtmModel.verifyJacobian(m, 0.5, r.y[r.y.length >> 1]).discrepancies.length ? 1 : 0);
+  });
+  const clockPair = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\nTEMPERATURE = ramp(t)\n\n<TABLE ramp>\n0 10\n1 90\n\n'
+    + '<SPECIES>\nA 1\nB 0\n\n<EQUILIBRIUM>\nA <=> B, logK = 0.3, dH = 20, kf = 1e6\n');
+  const rcp = run(clockPair, { tend: 1 });
+  let wcp = 0;
+  for (let k = 0; k < rcp.t.length; k++) {
+    if (rcp.t[k] < 1e-3) continue;
+    wcp = Math.max(wcp, Math.abs(Math.log10(rcp.y[k][1] / rcp.y[k][0]) - vh(0.3, 20, 283.15 + 80 * rcp.t[k])));
+  }
+  check('  a fast pair\'s kb = kf/K at the cell\'s temperature, without ACTIVITY and with, and one that follows the clock',
+    pw[0] < 1e-14 && pw[1] < 1e-14 && wcp < 1e-5, `${pw.map((v) => v.toExponential(1)).join(', ')} in log K; `
+      + `along the clock within ${wcp.toExponential(1)}, a pair with kf = 1e6 lagging its K`);
+
+  // What it refuses.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = (T, rel = 'A <=> B, logK = 0.3, dH = 20') => `<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n`
+    + `TEMPERATURE = ${T}\n\n<TABLE warm>\n0 25\n1 75\n\n<PARAMETERS>\nT0 all 400\n\n<SPECIES>\nA 1\nB 0\n\n<EQUILIBRIUM>\n${rel}\n`;
+  const cases = [
+    ['dH with no logK', base(25, 'A <=> B, dH = 20'), /give logK = \.\.\. as well/],
+    ['seven terms', base(25, 'A <=> B, analytic = 1 2 3 4 5 6 7'), /at most six/],
+    ['no log K at all', base(25, 'A <=> B, analytic = 0 0'), /needs K = \.\.\., logK = \.\.\. or analytic/],
+    ['a name that is not a parameter', base('Tx + 1'), /"Tx" in TEMPERATURE is not a parameter/],
+    ['a table read at a place', base('warm(x)'), /in TEMPERATURE is read at a time/],
+    ['a cell outside 0 to 350 C', base('T0'), /TEMPERATURE comes to 400 C/],
+    ['a number outside it', base(400), /0 to 350 C/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

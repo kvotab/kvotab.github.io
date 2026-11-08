@@ -228,9 +228,14 @@ async def main():
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await write_from_example(page)
             fixed = await page.ev("document.getElementById('rtmText').value")
+            # The water's dissociation is the database's analytic expression, moved to the conditional constant here.
+            kw_here = await page.ev("(() => { const m = RtmModel.compile(document.getElementById('rtmText').value);"
+                                    " const eq = m.equilibria.find((e) => /^\\s*<=> OH- \\+ H\\+,/.test(e.text));"
+                                    " return eq ? eq.lnK / Math.LN10 : null; })()")
             check('fixed at this water: conditional constants, the water left out of the relations',
                   isinstance(fixed, str) and 'ACTIVITY' not in fixed and ' <=> OH- + H+,' in fixed
-                  and 'logK = -14.1398953203' in fixed, True)
+                  and re.search(r'^ <=> OH- \+ H\+, +analytic = ', fixed, re.M) is not None
+                  and isinstance(kw_here, (int, float)) and abs(kw_here + 14.1398953203) < 1e-9, True)
             await page.ev("(() => { const s = document.getElementById('rtmPqAct'); s.value = 'follow';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await write_from_example(page)
@@ -529,6 +534,39 @@ async def main():
                               r"within ([0-9.e+-]+) in log", gas_summary or '')
             check('looked at through PHREEQC, the run\'s gas is at the pressure PHREEQC finds the water holds it at',
                   m_gas is not None and float(m_gas.group(1)) < 1e-4, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
+            # --- the temperature: the example water warmed along a table, run, and looked at through PHREEQC ---
+            warm_report = await write_from_example(page)
+            check('the hand-off says the relations\' log K go with temperature, as the database\'s do',
+                  isinstance(warm_report, str) and re.search(r"[0-9]+ of the [0-9]+ relations’ log K goes with temperature "
+                                                              r"as the database’s does", warm_report) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev("""(() => {
+              document.getElementById('rtmStatus').textContent = '';
+              const t = document.getElementById('rtmText');
+              t.value = t.value.replace(/^TEMPERATURE = 15$/m, 'TEMPERATURE = warm(t)')
+                .replace('TEND = 1\\n', 'TEND = 1e5\\n').replace('<SPECIES>', '<TABLE warm>\\n0 15\\n1e5 35\\n\\n<SPECIES>');
+              t.dispatchEvent(new Event('input', { bubbles: true }));
+            })()""")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await until(page, "/warm\\(t\\)/.test(document.getElementById('rtmFacts').textContent) || ''")
+            check('and with TEMPERATURE a table read at the clock the model facts say so', await page.ev(
+                "/the temperature TEMPERATURE = warm\\(t\\): 15 °C at the start, and it goes with time · [0-9]+ log K go with it/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            warm = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_warm = re.search(r"the model's own are within ([0-9.e−+-]+) of PHREEQC's in log K", warm or '')
+            check('looked at through PHREEQC, each water at its own temperature in the run, 15 to 35 °C, and the model\'s '
+                  'own activity coefficients PHREEQC\'s at it',
+                  isinstance(warm, str) and 'each at its own temperature in the run, 15 to 35 °C' in warm
+                  and m_warm is not None and float(m_warm.group(1).replace('−', '-')) < 1e-6, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
             # --- a column, looked at against distance ---

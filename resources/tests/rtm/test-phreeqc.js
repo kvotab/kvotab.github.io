@@ -430,7 +430,8 @@ function withPhreeqc(engine) {
   const carb = P.waterToModel({ engine, database, water: { name: 'carbonate', text: carbonate } });
   const line = carb.text.split('\n').find((l) => l.startsWith('CO3-2 + H+ <=> HCO3-'));
   const logk = Number(/# log K (\S+)/.exec(line)[1]);
-  const logkC = Number(/logK = (\S+?),?\s/.exec(line)[1]);
+  // Written as the database's analytic expression, moved to the conditional log K at this water.
+  const logkC = RtmModel.compile(carb.text).equilibria.find((eq) => eq.text.startsWith('CO3-2 + H+ <=> HCO3-')).lnK / Math.LN10;
   check('the database\'s log K, worked back from PHREEQC\'s activities', Math.abs(logk - 10.3289) < 2e-4,
     `HCO3- at 25 C: ${logk} (phreeqc.dat 10.329); conditional ${logkC.toFixed(4)} at I = 0.10`);
 
@@ -617,7 +618,10 @@ function withPhreeqc(engine) {
   check('following the ionic strength: ACTIVITY at the water\'s temperature, the water in the relations, '
     + 'the database\'s log K; the start on PHREEQC\'s molalities from the page\'s own activity coefficients',
   /^ACTIVITY = debye-huckel$/m.test(fol.text) && /^TEMPERATURE = 15$/m.test(fol.text)
-    && /^H2O <=> OH- \+ H\+, +logK = -14\.34328/m.test(fol.text) && /^Ca\+2 .* a=5 {2}b=0\.165$/m.test(fol.text)
+    // The water's dissociation as the database's analytic expression, -14.343286 at 15 C.
+    && /^H2O <=> OH- \+ H\+, +analytic = /m.test(fol.text)
+    && Math.abs(mf.equilibria.find((eq) => eq.text.startsWith('H2O <=> OH- + H+')).lnK / Math.LN10 + 14.343286) < 1e-6
+    && /^Ca\+2 .* a=5 {2}b=0\.165$/m.test(fol.text)
     && worstF < 1e-8 && mf.activity.kind === 'debye-huckel',
   `${worstF.toExponential(1)} from PHREEQC; A ${mf.activity.A.toFixed(6)} at ${mf.activity.temperature} C`);
   // Salt again, each kind of model against PHREEQC adding the same salt by itself.
@@ -1760,6 +1764,198 @@ function againstGas(engine) {
     vg ? `within ${Math.abs(vg.gap).toExponential(1)} in log over ${vg.compared} pressures` : 'no comparison');
 }
 
+/* ======================================================================
+   The temperature: each reaction's log K as PHREEQC has it at any, a
+   heated batch, and a column with a temperature profile
+
+   Every reaction of phreeqc.dat -- species, phases, exchange and surface
+   species -- its log K from the database's terms (log_k, delta_h with its
+   unit, -analytic, named expressions) as the page reads them, against
+   PHREEQC's LK_SPECIES and LK_PHASE at six temperatures. Calcite and gypsum
+   heated from 25 to 90 C along a table read at the clock, against PHREEQC's
+   REACTION_TEMPERATURE: the water and the minerals at every step, and
+   gypsum going over to anhydrite at the temperature PHREEQC's saturation
+   index of anhydrite crosses zero, found by bisection. A column whose cells
+   are held at 10 to 70 C, acid water in over calcite, against TRANSPORT with
+   its cells' temperatures held (-thermal_diffusion 1e30 0): the effluent
+   through the run, and the end, where each cell is the inflow at calcite
+   saturation at its own temperature in both.
+   ====================================================================== */
+function againstTemperature(engine) {
+  engine.load(dbText);
+  const db = P.readDatabase(dbText);
+  // Every reaction, at six temperatures; the BASIC program a hundred and fifty reads at a time.
+  const items = [...db.lk.keys()].map((key) => {
+    const cut = key.indexOf(' ');
+    const kind = key.slice(0, cut);
+    return { kind, name: key.slice(cut + 1), fn: kind === 'p' ? 'LK_PHASE' : 'LK_SPECIES' };
+  });
+  let lkWorst = 0;
+  let lkAt = '';
+  let compared = 0;
+  for (const T of [0.01, 10, 25, 50, 75, 90]) {
+    for (let c = 0; c < items.length; c += 150) {
+      const part = items.slice(c, c + 150);
+      const rows = P.parseRows(engine.run(`${P.punchBlock(part.map((it) => `STR_E$(${it.fn}("${it.name}"), 23, 15)`))}`
+        + `SOLUTION 1\n temp ${T}\n pH 7\n Na 1\n Cl 1\nEND\n`));
+      const r = rows[rows.length - 1];
+      part.forEach((it, i) => {
+        const d = Math.abs(P.kCalc(db.logKTerms(it.kind, it.name), T + 273.15) - Number(r.x[i]));
+        compared++;
+        if (!(d <= lkWorst)) { lkWorst = d; lkAt = `${it.name} at ${T} C`; }
+      });
+    }
+  }
+  const named = P.readDatabase('NAMED_EXPRESSIONS\nLog_K_A\n -log_k 2\n -delta_h -10 kcal\nLog_K_B\n -analytic 1 0 -300\n'
+    + ' -add_logk Log_K_A 0.5\nSOLUTION_SPECIES\nA+ = A+\n log_k 0\nA+ + B- = AB\n -l 1.5\n -d 4184 joules\n'
+    + ' -add_logk Log_K_B 2\n -add_constant 0.25\n');
+  const tAB = named.logKTerms('s', 'AB');
+  const wantAB = [1.5 + 0.25, 4.184, 2, 0, -600, 0, 0, 0];
+  check('each reaction\'s log K at a temperature from the database\'s terms: every one of phreeqc.dat against PHREEQC\'s '
+    + 'LK_SPECIES and LK_PHASE at 0 to 90 C; units, abbreviations and named expressions as PHREEQC reads them',
+  compared > 2000 && lkWorst < 1e-12 && tAB.every((v, k) => Math.abs(v - wantAB[k]) < 1e-12),
+  `${compared} log K, worst ${lkWorst.toExponential(1)} (${lkAt}); AB ${JSON.stringify(tAB)}`);
+
+  // --- calcite and gypsum heated from 25 to 90 C ---------------------------
+  const sol = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nEQUILIBRIUM_PHASES 1\n Calcite 0 0.01\n'
+    + ' Gypsum 0 0.02\n Anhydrite 0 0\n';
+  const res = P.waterToModel({ engine, database, water: { name: 'heated', text: `${sol}END\n` }, phases: true, exact: true,
+    activity: true, redox: false });
+  const text = res.text.replace(/^TEMPERATURE = 25$/m, 'TEMPERATURE = heat(t)')
+    .replace('<SPECIES>', '<TABLE heat>\n0 25\n1 90\n\n<SPECIES>').replace(/^EQUILIBRATE = .*$/m, 'EQUILIBRATE = always');
+  const m = RtmModel.compile(text);
+  const steps = 14;
+  const want = Array.from({ length: steps }, (_, k) => k / (steps - 1));
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 1, rtol: 1e-10, atol: 1e-20, outputTimes: want });
+  const pqRows = P.parseRows(engine.run(`${P.punchBlock(['STR_E$(EQUI("Calcite"), 23, 15)', 'STR_E$(EQUI("Gypsum"), 23, 15)',
+    'STR_E$(EQUI("Anhydrite"), 23, 15)', 'STR_E$(TOT("Ca"), 23, 15)', 'STR_E$(TOT("water"), 23, 15)'])}${sol}`
+    + `REACTION_TEMPERATURE 1\n 25 90 in ${steps} steps\nEND\n`)).filter((w) => w.state === 'react');
+  const idx = (n) => m.speciesNames.indexOf(n);
+  const caSp = [...res.names].filter(([sp]) => db.expand(sp).has('Ca')).map(([sp, n]) => [idx(n), db.expand(sp).get('Ca')]);
+  const iH = idx(res.names.get('H+'));
+  let wH = 0;
+  let wCa = 0;
+  let wMin = 0;
+  let after = { H: 0, Ca: 0, min: 0 };
+  for (let k = 0; k < steps; k++) {
+    const w = pqRows[k];
+    const c = m.toConcentrations(r.grid.y[k], r.grid.t[k]);
+    const kgw = Number(w.x[4]);
+    const dH = Math.abs(Math.log10(c[iH] / w.mH));
+    const dCa = Math.abs(caSp.reduce((s, [i, n]) => s + n * c[i], 0) / Number(w.x[3]) - 1);
+    const dMin = Math.max(...['Calcite', 'Gypsum', 'Anhydrite'].map((n, j) => Math.abs(c[idx(n)] - Number(w.x[j]) / kgw)));
+    // Past the change PHREEQC's kilogram of water has grown by gypsum's water of hydration; the page holds 1 kg.
+    if (Number(w.x[2]) > 0) after = { H: Math.max(after.H, dH), Ca: Math.max(after.Ca, dCa), min: Math.max(after.min, dMin) };
+    else { wH = Math.max(wH, dH); wCa = Math.max(wCa, dCa); wMin = Math.max(wMin, dMin); }
+  }
+  const siAnh = (T) => {
+    const rows = P.parseRows(engine.run(`${P.punchBlock(['STR_E$(SI("Anhydrite"), 23, 15)'])}`
+      + `${sol.replace(' Anhydrite 0 0\n', '')}REACTION_TEMPERATURE 1\n ${T}\nEND\n`)).filter((w) => w.state === 'react');
+    return Number(rows[rows.length - 1].x[0]);
+  };
+  let lo = 50;
+  let hi = 60;
+  for (let i = 0; i < 40; i++) { const mid = (lo + hi) / 2; if (siAnh(mid) < 0) lo = mid; else hi = mid; }
+  const ev = r.events.find((e) => /Anhydrite precipitates/.test(e.expr));
+  const tEv = ev ? 25 + 65 * ev.t : NaN;
+  check('calcite and gypsum heated from 25 to 90 C, TEMPERATURE a table read at the clock, against PHREEQC\'s '
+    + 'REACTION_TEMPERATURE: the water and the minerals at every step, and gypsum going over to anhydrite at PHREEQC\'s '
+    + 'temperature', pqRows.length === steps && wH < 1e-7 && wCa < 5e-7 && wMin < 1e-6 && after.H < 1e-6 && after.Ca < 1e-5
+    && after.min < 1e-5 && r.events.length === 1 && /and Gypsum has dissolved away/.test(ev.expr)
+    && Math.abs(tEv - (lo + hi) / 2) < 1e-6,
+  `gypsum: log m(H+) ${wH.toExponential(1)}, Ca ${wCa.toExponential(1)}, minerals ${wMin.toExponential(1)} mol/kgw; `
+    + `anhydrite, PHREEQC's water ${((Number(pqRows[steps - 1].x[4]) / Number(pqRows[0].x[4]) - 1) * 1e6).toFixed(0)} ppm `
+    + `heavier: ${after.H.toExponential(1)}, ${after.Ca.toExponential(1)}, ${after.min.toExponential(1)}; at `
+    + `${tEv.toFixed(7)} C for PHREEQC's ${((lo + hi) / 2).toFixed(7)}`);
+
+  // --- a column held at 10 to 70 C ------------------------------------------
+  const N = 20;
+  const L = 0.1;
+  const dx = L / N;
+  const dt = 1000;
+  const S = 4 * N;
+  const alpha = L / 40;
+  const Tof = (i) => 10 + (60 * i) / (N - 1);
+  const water = (n, T) => `SOLUTION ${n}\n temp ${T}\n units mmol/kgw\n pH 7 charge\n Na 2\n Ca 1\n Cl 2\n C(4) 3\n`;
+  const acid = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 6 charge\n Na 2\n Ca 2\n Cl 4\n C(4) 3\nEND\n';
+  let sols = '';
+  for (let i = 0; i < N; i++) sols += water(i + 1, Tof(i));
+  // A clean PHREEQC: TRANSPORT would apply the REACTION_TEMPERATURE 1 above to cell 1.
+  engine.load(dbText);
+  const rows = engine.run(`${sols}END\nEQUILIBRIUM_PHASES 1-${N}\n Calcite 0 0.1\nEND\nRUN_CELLS\n -cells 1-${N}\nEND\n${acid}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH Ca tc\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, STR_E$(-LA("H+"), 23, 15), STR_E$(TOT("Ca"), 23, 15), TC\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\n -thermal_diffusion 1e30 0\nEND\n`);
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map();
+  let held = 0;
+  for (const row of rows.slice(1)) {
+    const t = Number(row[head.indexOf('time')]);
+    if (!(t > 0)) continue;
+    const cell = Number(row[head.indexOf('cell')]);
+    held = Math.max(held, Math.abs(Number(row[head.indexOf('tc')]) - Tof(cell - 1)));
+    pq.set(`${cell}/${Math.round(t / dt)}`, { pH: Number(row[head.indexOf('pH')]), Ca: Number(row[head.indexOf('Ca')]) });
+  }
+  const col = P.waterToModel({ engine, database, water: { name: 'column', text: `${water(1, Tof(0))}EQUILIBRIUM_PHASES 1\n Calcite 0 0.1\nEND\n` },
+    activity: true, exact: true, phases: true, redox: false });
+  const inflow = P.parseRows(engine.run(`${P.punchBlock()}${acid}`)).pop();
+  const back = new Map([...col.names].map(([k, n]) => [n, k]));
+  const ctext = col.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${dx / dt}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace(/^TEMPERATURE = .*$/m, 'TEMPERATURE = Tc')
+    .replace('<SPECIES>', `<PARAMETERS>\nTc all 10 + 60*i/${N - 1}\n\n<SPECIES>`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral/.test(rest) || !back.has(name)) return line;
+      const sp = inflow.species.get(back.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const cm = RtmModel.compile(ctext);
+  const times = Array.from({ length: S }, (_, k) => (k + 1.5) * dt);
+  const cr = FacsimileODE.runModel(cm, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+    outputTimes: times });
+  const ns = cm.speciesNames.length;
+  const caOf = [];
+  cm.speciesNames.forEach((n, i) => { if (back.has(n) && db.expand(back.get(n)).has('Ca')) caOf.push([i, db.expand(back.get(n)).get('Ca')]); });
+  const ciH = cm.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  const at = (c, cell) => {
+    let Ca = 0;
+    for (const [i, k] of caOf) Ca += k * c[cell * ns + i];
+    RtmModel.activityAt(cm.act, c, cell * ns, lnG, dG, cell);
+    return { Ca, pH: -(Math.log(c[cell * ns + ciH]) + lnG[ciH]) / Math.LN10 };
+  };
+  let effpH = 0;
+  let effCa = 0;
+  for (let k = 1; k <= S; k++) {
+    const o = at(cm.toConcentrations(cr.grid.y[k - 1], times[k - 1]), N - 1);
+    const d = pq.get(`${N}/${k}`);
+    effpH = Math.max(effpH, Math.abs(o.pH - d.pH));
+    effCa = Math.max(effCa, Math.abs(o.Ca - d.Ca));
+  }
+  const end = cm.toConcentrations(cr.grid.y[S - 1], times[S - 1]);
+  let endpH = 0;
+  let endCa = 0;
+  for (let cell = 0; cell < N; cell++) {
+    const o = at(end, cell);
+    const d = pq.get(`${cell + 1}/${S}`);
+    endpH = Math.max(endpH, Math.abs(o.pH - d.pH));
+    endCa = Math.max(endCa, Math.abs(o.Ca / d.Ca - 1));
+  }
+  const tc = cm.temperatures(0);
+  check('a column held at 10 to 70 C, TEMPERATURE a parameter, acid water in over calcite, against TRANSPORT with its '
+    + 'cells\' temperatures held: the effluent through the run, and each cell at the end the inflow at calcite saturation at '
+    + 'its own temperature', held === 0 && Math.abs(tc[0] - 10) < 1e-12 && Math.abs(tc[N - 1] - 70) < 1e-12
+    && effpH < 0.01 && effCa < 3e-5 && endpH < 2e-5 && endCa < 3e-5,
+  `effluent pH within ${effpH.toFixed(4)}, Ca within ${(effCa * 1e3).toFixed(4)} mM; at the end pH within `
+    + `${endpH.toExponential(1)} and Ca ${endCa.toExponential(1)} in every cell, PHREEQC's water heavier by what `
+    + 'calcite and CO2 take of it');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -1784,6 +1980,8 @@ function againstGas(engine) {
   againstSit(wasm);
   console.log('\n--- a gas phase: ideal and real, a fixed pressure and a fixed volume, a bubble forming, the PHREEQC tab ---');
   againstGas(wasm);
+  console.log('\n--- the temperature: log K at any, a heated batch, a column held at 10 to 70 C ---');
+  againstTemperature(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

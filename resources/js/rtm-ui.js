@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -454,7 +454,8 @@
           + `${h.species} species algebraic in every cell`
           + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
         + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : a.kind === 'sit' ? 'SIT' : 'Debye–Hückel'} at `
-          + `${a.temperature} °C (${a.ions} ion${a.ions === 1 ? '' : 's'}`
+          + `${typeof a.temperature === 'number' ? `${a.temperature} °C` : 'each cell’s temperature'} `
+          + `(${a.ions} ion${a.ions === 1 ? '' : 's'}`
           + `${a.kind === 'sit' ? `, ${a.sit} pair${a.sit === 1 ? '' : 's'} in <SIT>` : ''})` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
           : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
@@ -468,6 +469,18 @@
         + (m.gas ? ` · ${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
           ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V`
           : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}` : ''));
+    }
+    // The temperature, where it goes with the cell or the time, and the log K that follow it.
+    const T = m.temperature;
+    if (T && (T.varies || T.relations || T.phases)) {
+      const range = T.start ? (T.start[0] === T.start[1] ? `${fmtNumber(T.start[0])} °C`
+        : `${fmtNumber(T.start[0])} to ${fmtNumber(T.start[1])} °C`) : '';
+      const how = !T.varies ? `${fmtNumber(T.given)} °C`
+        : `TEMPERATURE = ${T.given}: ${range}${T.cells ? ' from cell to cell' : ''}`
+          + `${T.clock ? `${T.cells ? ', ' : ' '}at the start, and it goes with time` : ''}`;
+      const k = T.relations + T.phases;
+      bits.push(`the temperature ${how}${k ? ` · ${k} log K ${k === 1 ? 'goes' : 'go'} with it, by dH or an analytic `
+        + 'expression' : ''}`);
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -2069,8 +2082,8 @@
       lead: 'PHREEQC holds its relations between activities. This says how the model written from the water holds them.',
       facts: [['Default', 'following the ionic strength']],
       sections: [{ choices: [
-        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`. Each relation is written with its water and the database’s own log K, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
-        ['fixed at this water', 'Each `logK` is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far.', pq.act === 'fixed'],
+        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`. Each relation is written with its water and the database’s own log K, as it goes with temperature, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
+        ['fixed at this water', 'Each log K is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far. The database’s temperature terms stay with it, and the coefficients folded in are this water’s at any temperature.', pq.act === 'fixed'],
       ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again. A database whose activity model is Pitzer or LLNL cannot be followed here; keep it fixed.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
@@ -2237,8 +2250,8 @@
     SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b', 'pe', 'sites',
       'area', 'grams']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
-    EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
-    PHASES: new Set(['k', 'logk']),
+    EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb', 'dh', 'analytic']),
+    PHASES: new Set(['k', 'logk', 'dh', 'analytic']),
     SIT: new Set(['eps1']),
   };
   /*
@@ -2591,11 +2604,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108b',
+    'resources/js/rtm-phreeqc.js?v=20261108c',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2896,6 +2909,13 @@ END
       + `equilibria</strong>, the water at ${pqNum(r.temperature)} °C and ionic strength `
       + `${pqNum(r.ionicStrength)} mol/kgw, pH ${r.pH.toFixed(3)} as PHREEQC has it; from ${esc(reply.database)}, `
       + `PHREEQC ${esc(reply.version)}.</p>`);
+    if (r.withTemperature) {
+      const who = r.withTemperature === r.relations ? 'Every relation’s'
+        : `${r.withTemperature} of the ${r.relations} relations’`;
+      out.push(`<p>${who} log K goes with temperature as the database’s does, by its <code>delta_h</code> or its `
+        + `analytic expression: <code>TEMPERATURE = ${pqNum(r.temperature)}</code> may be changed, or made to follow `
+        + 'the cells or the clock, and the relations follow it.</p>');
+    }
     const c = reply.check;
     if (c && c.error) {
       out.push(`<p class="error">rtm.html does not compile the text it was given: ${esc(c.error)}</p>`);
@@ -3059,7 +3079,8 @@ END
     try {
       const reply = await pqRequest({
         type: 'view', database: pqDatabase(), water,
-        run: { t: r.t, states: r.states, n: r.n, width: r.width, model: r.model },
+        // temps: each stored point's cells' temperatures, where the model's go with the cell or the time.
+        run: { t: r.t, states: r.states, temps: r.temps || null, n: r.n, width: r.width, model: r.model },
         modelText: (state.ran && state.ran.text) || state.text,
         options: { times, cells, phases, siFloor: -3, unit: timeUnit().symbol },
       }, (m) => setProgress(m.total ? m.done / m.total : 0));
@@ -3086,9 +3107,14 @@ END
       'the water': ', the water’s',
       none: ': nothing said otherwise',
     }[r.temperatureFrom] || '';
+    // A run whose temperature goes with the cell or the time: each water at its own.
+    const tempAt = r.temperatures
+      ? (r.temperatures[0] === r.temperatures[1] ? `at ${pqNum(r.temperatures[0])} °C, the run’s`
+        : `each at its own temperature in the run, ${pqNum(r.temperatures[0])} to ${pqNum(r.temperatures[1])} °C`)
+      : `at ${pqNum(r.temperature)} °C${tempWhy}`;
     const out = [];
     out.push(`<p>${r.waters.toLocaleString()} waters (${r.cells} cell${r.cells === 1 ? '' : 's'} × ${r.times} times) `
-      + `at ${pqNum(r.temperature)} °C${tempWhy}, through ${esc(v.database)} and PHREEQC ${esc(v.version)}: pH `
+      + `${tempAt}, through ${esc(v.database)} and PHREEQC ${esc(v.version)}: pH `
       + `${r.pH[0].toFixed(2)} to ${r.pH[1].toFixed(2)}, ionic strength ${pqNum(r.ionicStrength[0])} to `
       + `${pqNum(r.ionicStrength[1])} mol/kgw.</p>`);
     if (r.waterError) {
