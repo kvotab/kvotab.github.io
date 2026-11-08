@@ -1660,6 +1660,11 @@
    * gives it, pitzerAt).
    */
   function debyeHuckelAB(tc, atmGiven = 1, aw = 1) {
+    return waterAt(waterAtT(tc, atmGiven), aw);
+  }
+
+  /** What of debyeHuckelAB goes with the temperature and the pressure given alone, kept for waterAt. */
+  function waterAtT(tc, atmGiven) {
     const T = tc + 273.15;
     const th = 1 - T / 647.096;
     const rhoSat = 322.0 * (1 + 1.99274064 * th ** (1 / 3) + 1.09965342 * th ** (2 / 3)
@@ -1669,16 +1674,22 @@
     const p1 = -6.0251348e-06 + tc * (3.6696407e-07 + tc * (-9.2056269e-09 + tc * (6.7024182e-11 + tc * -1.5947241e-13)));
     const p2 = -2.2983596e-09 + tc * (-4.0133819e-10 + tc * (1.2619821e-11 + tc * (-9.8952363e-14 + tc * 2.3363281e-16)));
     const p3 = 7.0517647e-11 + tc * (6.8566831e-12 + tc * (-2.2829750e-13 + tc * (1.8113313e-15 + tc * -4.2475324e-18)));
-    // One atmosphere, or the pressure given, or the vapour pressure where that is higher.
-    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13)) * (aw <= 1.0 ? aw : 1);
-    const atm = Math.max(atmGiven, pSat);
-    const pa = atm - (pSat - 1e-6);
-    const rho = (rhoSat + pa * (p0 + pa * (p1 + pa * (p2 + Math.sqrt(pa) * p3)))) / 1e3; // g/cm3
+    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13));
     const d1000 = 3.4279e2 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7));
     const c = -2.0525 + 3.1159e3 / (-1.8289e2 + T);
     const b = -8.0325e3 + 4.2142e6 / T + 2.1417 * T;
-    const eps = d1000 + c * Math.log((b + atm * 1.01325) / (b + 1e3));
-    const e2 = 1.671008e-3 / (eps * T); // e^2/(eps k T), cm
+    return { T, atmGiven, rhoSat, p0, p1, p2, p3, pSat, d1000, c, b };
+  }
+
+  /** debyeHuckelAB from waterAtT's part and the water's activity aw: a few operations. */
+  function waterAt(w, aw) {
+    // One atmosphere, or the pressure given, or the vapour pressure (times a(H2O)) where that is higher.
+    const pSat = w.pSat * (aw <= 1.0 ? aw : 1);
+    const atm = Math.max(w.atmGiven, pSat);
+    const pa = atm - (pSat - 1e-6);
+    const rho = (w.rhoSat + pa * (w.p0 + pa * (w.p1 + pa * (w.p2 + Math.sqrt(pa) * w.p3)))) / 1e3; // g/cm3
+    const eps = w.d1000 + w.c * Math.log((w.b + atm * 1.01325) / (w.b + 1e3));
+    const e2 = 1.671008e-3 / (eps * w.T); // e^2/(eps k T), cm
     const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
     // A0: Pitzer's A_phi, PHREEQC's DH_B e2_DkT/6; atm the pressure the water is then at.
     return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps, A0: (kappa * e2) / 6.0, atm };
@@ -1726,7 +1737,9 @@
       throw new RtmError(`TEMPERATURE = ${tc}: the activity model's A and B are worked out for 0 to 350 C.`);
     }
     const ns = species.length;
-    const { A, B } = debyeHuckelAB(tc, waterPressure(settings, species));
+    // The water at TEMPERATURE: A and B at a(H2O) = 1, and what goes with the temperature alone, for waterAt.
+    const wt = waterAtT(tc, waterPressure(settings, species));
+    const { A, B } = waterAt(wt, 1);
     const z = new Float64Array(ns);
     const form = new Uint8Array(ns);
     const a = new Float64Array(ns);
@@ -1776,8 +1789,8 @@
       pz.tk = tc + 273.15;
       pz.A0 = pitzerValues(pz, tc, pz.patm, pz.val);
     }
-    return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, zg: Float64Array.from(z), form, a, b, solute,
-      ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz };
+    return { kind: settings.ACTIVITY, temperature: tc, A, B, wt, wtc: null, ns, z, zg: Float64Array.from(z), form, a, b,
+      solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz };
   }
 
   /**
@@ -1868,11 +1881,12 @@
     const at = cell === undefined ? Math.round(off / ns) : cell;
     if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
     if (act.pz) return pitzerAt(act, C, off, I, low, sum, lnG, dG, at);
-    coefficientsAt(act, I, low, lnG, dG, at);
-    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
     let aw = 1 - 0.017 * sum;
     const dry = !(aw > 1e-6);
     if (dry) aw = 1e-6;
+    // A and B at the water's activity, as PHREEQC has them (coefficientsAt).
+    coefficientsAt(act, I, low, lnG, dG, at, aw);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
     return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
   }
 
@@ -2424,7 +2438,7 @@
     if (!pz.aphi) {
       const os1 = pitzerOsmotic(pz, val, M, I, BIGZ, A0);
       const lnAw1 = osum > 0 ? (-osum * (1.0 + (2.0 * os1) / osum)) / PZ_WATER : (-2.0 * os1) / PZ_WATER;
-      const w = debyeHuckelAB(TK - 273.15, pz.patm, Math.exp(lnAw1));
+      const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, Math.exp(lnAw1));
       A0 = w.A0;
       patm = w.atm;
     }
@@ -2649,12 +2663,29 @@
    * speciation, which solves for it). `low`: I is the floor, and the
    * derivatives are zero.
    */
-  function coefficientsAt(act, I, low, lnG, dG, cell) {
+  function coefficientsAt(act, I, low, lnG, dG, cell, aw = 1) {
     const ns = act.ns;
     const sq = Math.sqrt(I);
-    // A and B at the cell's temperature where it differs between cells or goes with time.
-    const A = (act.Ac ? act.Ac[cell] : act.A) * Math.LN10;
-    const B = act.Bc ? act.Bc[cell] : act.B;
+    /*
+      A and B at the cell's temperature where it differs between cells or
+      goes with time, and at the water's activity: PHREEQC works the density
+      of water out at the vapour pressure times a(H2O) (calc_rho_0), afresh
+      at each iteration, and A and B go as its square root; above 100 C the
+      water's pressure, and with it the dielectric constant, is that vapour
+      pressure. At a(H2O) = 1 they are the ones kept. (Their derivative in
+      a(H2O), a part in 1e5 of a coefficient's at most, is left out of the
+      Jacobian.)
+    */
+    let A;
+    let B;
+    if (aw !== 1 && act.wt) {
+      const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, aw);
+      A = w.A * Math.LN10;
+      B = w.B;
+    } else {
+      A = (act.Ac ? act.Ac[cell] : act.A) * Math.LN10;
+      B = act.Bc ? act.Bc[cell] : act.B;
+    }
     for (let s = 0; s < ns; s++) {
       // The charge in the coefficient: the species' own, or on an exchanger its ion's.
       const z2 = act.zg[s] * act.zg[s];
@@ -5359,8 +5390,9 @@
     });
     // The ionic strength is an unknown wherever a coefficient or a potential reads it.
     const useI = !!act && ([...act.form].some((f) => f >= 1 && f <= 5) || np > 0);
+    // ...and the water's ln a where a relation has the water in it, or a Debye-Hueckel A and B read it (coefficientsAt).
     const useL = !!act && act.kind !== 'none'
-      && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water));
+      && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water) || [...act.form].some((f) => f === 2 || f === 3));
     const nK = K.length;
     const nm = mins.length;
     const M = A.map((rw) => rw.slice(naq));
@@ -5913,11 +5945,11 @@
     const { alpha, val, lnG, dG, fixedTerm, fixedDI, hI, hL } = sc;
     let I = 1e-10;
     let low = true;
+    const L = useL ? z[rs.iL] : 0;
     if (act) {
       if (useI) { I = z[rs.iI]; low = !(I > 1e-10); }
-      coefficientsAt(act, low ? 1e-10 : I, low, lnG, dG, cell);
+      coefficientsAt(act, low ? 1e-10 : I, low, lnG, dG, cell, useL ? Math.exp(L) : 1);
     } else { lnG.fill(0); dG.fill(0); }
-    const L = useL ? z[rs.iL] : 0;
     for (const c of withFixed) {
       let v = 0;
       let g = 0;
@@ -8658,7 +8690,7 @@
     if (thermo.varies) {
       for (const r of relT) r.lnKc = new Float64Array(nc);
       for (const r of phT) r.lnKc = new Float64Array(nc);
-      if (act && act.kind !== 'none') { act.Ac = new Float64Array(nc); act.Bc = new Float64Array(nc); }
+      if (act && act.kind !== 'none') { act.Ac = new Float64Array(nc); act.Bc = new Float64Array(nc); act.wtc = new Array(nc); }
       if (act) act.tk = thermo.tk;
       // Pitzer's parameters and A_phi at each cell's temperature (pitzerValues).
       if (act && act.pz) { act.pz.valc = new Float64Array(nc * act.pz.np); act.pz.A0c = new Float64Array(nc); act.pz.tkc = thermo.tk; }
@@ -8686,8 +8718,9 @@
         for (const r of relT) r.lnKc[c] = logKAt(r.th, tk[c]) * Math.LN10;
         for (const r of phT) r.lnKc[c] = logKAt(r.th, tk[c]) * Math.LN10;
         if ((act && act.Ac) || pt) {
-          const ab = debyeHuckelAB(tc[c], atmT);
-          if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; }
+          const wt = waterAtT(tc[c], atmT);
+          const ab = waterAt(wt, 1);
+          if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; act.wtc[c] = wt; }
           if (act && act.pz) {
             const pz = act.pz;
             pz.A0c[c] = pitzerValues(pz, tc[c], atmT, pz.valc.subarray(c * pz.np, (c + 1) * pz.np));
@@ -8702,7 +8735,7 @@
       if (n1 < nc) {
         for (const r of relT) r.lnKc.fill(r.lnKc[0]);
         for (const r of phT) r.lnKc.fill(r.lnKc[0]);
-        if (act && act.Ac) { act.Ac.fill(act.Ac[0]); act.Bc.fill(act.Bc[0]); }
+        if (act && act.Ac) { act.Ac.fill(act.Ac[0]); act.Bc.fill(act.Bc[0]); act.wtc.fill(act.wtc[0]); }
         if (act && act.pz) {
           const pz = act.pz;
           pz.A0c.fill(pz.A0c[0]);

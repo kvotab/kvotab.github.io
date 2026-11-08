@@ -2863,11 +2863,14 @@ console.log('\n--- activity ---');
   const lnG = new Float64Array(5);
   const dG = new Float64Array(5);
   const w = RtmModel.activityAt(act, C, 0, lnG, dG);
-  const A = ab25.A;
-  const B = ab25.B;
+  // A and B at the water's activity, 1 - 0.017 times the solutes, as PHREEQC takes them (calc_rho_0).
+  const abW = RtmModel.debyeHuckelAB(25, 1, 1 - 0.017 * 0.41);
+  const A = abW.A;
+  const B = abW.B;
   const sq = Math.sqrt(0.05);
   const want = [-A * (sq / (1 + sq) - 0.3 * 0.05), -A * 4 * sq / (1 + B * 5 * sq) + 0.165 * 0.05, 0.1 * 0.05, 0, 0];
-  check('Davies, WATEQ with a and b, b I for a neutral species, 1 for the water and for z=0 b=0',
+  check('Davies, WATEQ with a and b, b I for a neutral species, 1 for the water and for z=0 b=0, A and B at the '
+    + 'water\'s activity',
     Math.abs(w.I - 0.05) < 1e-15 && want.every((v, i) => Math.abs(lnG[i] / Math.LN10 - v) < 1e-14),
     `I ${w.I}, log gamma ${Array.from(lnG, (v) => (v / Math.LN10).toFixed(6)).join(' ')}`);
   check('  a(H2O) = 1 - 0.017 times the solutes, the water itself left out',
@@ -2939,12 +2942,12 @@ HCO3- <=> H+ + CO3-2,      logK = -10.4284
   // Every relation in activities, worked out apart from the page's own code.
   const gammaOf = { 'H+': [1, 9, 0], 'OH-': [-1, 3.5, 0], CO2: [0, null, 0.1], 'HCO3-': [-1, 5.4, 0],
     'CO3-2': [-2, 5.4, 0], 'Na+': [1, 4.08, 0.082], 'Cl-': [-1, 3.63, 0.017] };
-  const ab = RtmModel.debyeHuckelAB(15);
   const logA = (m, c) => {
     let I = 0;
     let sum = 0;
     m.speciesNames.forEach((n, i) => { I += 0.5 * gammaOf[n][0] ** 2 * c[i]; sum += c[i]; });
     const s = Math.sqrt(I);
+    const ab = RtmModel.debyeHuckelAB(15, 1, 1 - 0.017 * sum);
     const la = { H2O: Math.log10(1 - 0.017 * sum) };
     m.speciesNames.forEach((n, i) => {
       const [z, a, b] = gammaOf[n];
@@ -2980,6 +2983,54 @@ HCO3- <=> H+ + CO3-2,      logK = -10.4284
   const vh1 = RtmModel.verifyJacobian(held, 1e5, run.y[run.y.length - 1]);
   check('  the Jacobian, the ionic strength and the water included, at the start and the end',
     vh0.discrepancies.length === 0 && vh1.discrepancies.length === 0, `${vh0.checked} and ${vh1.checked} entries`);
+  {
+    /*
+      A AND B AT THE WATER'S ACTIVITY in a hot brine: held throughout, the
+      cells speciated in their components (an iron couple tied to the
+      electron) and whole (the same couple untied, which changes nothing else):
+      the same run, the water's ln a an unknown of the components' speciation
+      wherever A and B read it; and at the end every coefficient the closed
+      form at the water's own a(H2O).
+    */
+    const brine = (elec) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1e4\nACTIVITY = debye-huckel\nEQUILIBRATE = always\n`
+      + `TEMPERATURE = 90\n\n<SPECIES>\nH+ 1e-7 a=9\nOH- 1e-7 a=3.5\nNa+ 3 a=4.08 b=0.082\nCl- 3 a=3.63 b=0.017\nCO2 1e-3\n`
+      + `HCO3- 1e-3 a=5.4\nCO3-2 1e-6 a=5.4\nFe+2 1e-4 a=6\nFe+3 1e-6 a=9\n${elec ? 'e- electron\n' : ''}\n<EQUILIBRIUM>\n`
+      + 'H2O <=> H+ + OH-, logK = -12.4\nCO2 + H2O <=> H+ + HCO3-, logK = -6.3\nHCO3- <=> H+ + CO3-2, logK = -10.1\n'
+      + `${elec ? 'Fe+2 <=> Fe+3 + e-, logK = -13\n' : ''}\n<REACTIONS>\n=> Na+ + Cl-, k = 1e-4\n=> CO2, k = 1e-8\n`);
+    const times = [10, 3000, 9999];
+    const ends = [false, true].map((elec) => {
+      const m = brine(elec);
+      const r = FacsimileODE.runModel(m, { solver: 'ndf', rtol: 1e-10, atol: 1e-18, tend: 1e4, outputTimes: times });
+      return { m, c: times.map((t, k) => m.toConcentrations(r.grid.y[k], t)) };
+    });
+    let same = 0;
+    for (let k = 0; k < times.length; k++) {
+      for (const n of ['H+', 'OH-', 'Na+', 'CO2', 'HCO3-', 'CO3-2']) {
+        const i0 = ends[0].m.speciesNames.indexOf(n);
+        const i1 = ends[1].m.speciesNames.indexOf(n);
+        same = Math.max(same, Math.abs(ends[1].c[k][i1] / ends[0].c[k][i0] - 1));
+      }
+    }
+    const m0 = ends[0].m;
+    const c = ends[0].c[2];
+    const ns = m0.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const w = RtmModel.activityAt(m0.act, c, 0, lnG, new Float64Array(ns), 0);
+    let sum = 0;
+    let I = 0;
+    m0.speciesNames.forEach((n, i) => { sum += c[i]; I += 0.5 * RtmModel.chargeOf(n) ** 2 * c[i]; });
+    const aw = 1 - 0.017 * sum;
+    const ab = RtmModel.debyeHuckelAB(90, 1, aw);
+    const ab1 = RtmModel.debyeHuckelAB(90);
+    const sq = Math.sqrt(I);
+    const gNa = Math.LN10 * (-ab.A * sq / (1 + ab.B * 4.08 * sq) + 0.082 * I);
+    check('A and B at the water\'s activity: a 3 to 4 mol/kgw brine at 90 C held throughout, speciated in its components '
+      + 'and whole, the same run, and its coefficients the closed form at its own a(H2O)', same < 1e-9
+      && Math.abs(lnG[m0.speciesNames.indexOf('Na+')] - gNa) < 1e-13 && Math.abs(w.lnAw - Math.log(aw)) < 1e-15
+      && Math.abs(ab.A / ab1.A - 1) > 1e-7,
+    `the two within ${same.toExponential(1)}; a(H2O) ${aw.toFixed(5)}, A ${(ab.A / ab1.A - 1).toExponential(2)} from a(H2O) = 1's, `
+      + `ln gamma(Na+) within ${Math.abs(lnG[m0.speciesNames.indexOf('Na+')] - gNa).toExponential(1)}`);
+  }
   // The end apart: a fresh speciation of the totals the end has.
   const tEnd = run.t[run.t.length - 1];
   const apartText = water(`EQUILIBRATE = 1\n${settings}`)
@@ -3667,7 +3718,8 @@ ${rel}
 
   // The ion's activity coefficient: WATEQ with the a and b on the species'
   // line and its ion's charge, to the ion's power; Davies where both are 0.
-  const { A, B } = RtmModel.debyeHuckelAB(25);
+  // A and B at the water's activity: Na+, Ca+2 and Cl- its solutes.
+  const { A, B } = RtmModel.debyeHuckelAB(25, 1, 1 - 0.017 * 0.13);
   const act = (more) => {
     const m = batch(`Na+ 0.05\nCa+2 0.01\nCl- 0.07\nX- exchanger ${CEC}\nNaX exchange ${more[0]}\nCaX2 exchange ${more[1]}`,
       half, 'ACTIVITY = debye-huckel');
@@ -3722,7 +3774,9 @@ T => , r = k*{NaX}, k = 0.1
   const r0 = rate('');
   const r1 = rate('ACTIVITY = debye-huckel');
   const I2 = 0.05;
-  const g = Math.exp(Math.LN10 * (-A * Math.sqrt(I2) / (1 + B * 4.08 * Math.sqrt(I2)) + 0.082 * I2));
+  // The water's activity: Na+, Cl- and T, which goes from 1 to 1 - r1 (its middle, to 1e-10 in g).
+  const ab2 = RtmModel.debyeHuckelAB(25, 1, 1 - 0.017 * (0.1 + 1 - r1 / 2));
+  const g = Math.exp(Math.LN10 * (-ab2.A * Math.sqrt(I2) / (1 + ab2.B * 4.08 * Math.sqrt(I2)) + 0.082 * I2));
   check('{NaX} in a rate law is its equivalent fraction, times its ion\'s coefficient under ACTIVITY',
     Math.abs(r0 / 0.06 - 1) < 1e-9 && Math.abs(r1 / (0.06 * g) - 1) < 1e-9,
     `${r0.toFixed(9)} and ${r1.toFixed(9)} taken in 1 s`);

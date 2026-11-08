@@ -1129,11 +1129,15 @@ X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
             <li>a species named <code>H2O</code>: γ = 1.</li>
           </ul>
           <p>That is PHREEQC's rule, and on the same water the page's activity coefficients are
-            PHREEQC's to rounding. <em>A</em> and <em>B</em> come from each cell's temperature,
-            <code>TEMPERATURE</code>, as PHREEQC works them out, from the dielectric constant and the density of water at one
-            atmosphere; from 0 to 200 °C they are PHREEQC's to nine digits. The water's activity,
-            where a relation has <code>H2O</code> in it, is 1&nbsp;−&nbsp;0.017&nbsp;ΣC, PHREEQC's
-            too. A charge is read from the end of the name, <code>H+</code> 1 and
+            PHREEQC's to rounding: 6×10<sup>−16</sup> in log&nbsp;γ from a dilute water to 3&nbsp;mol/kgw of
+            NaCl, and from 25 to 150&nbsp;°C. <em>A</em> and <em>B</em> come from each cell's temperature,
+            <code>TEMPERATURE</code>, as PHREEQC works them out, from the dielectric constant and the density of water; from
+            0 to 200 °C they are PHREEQC's to nine digits. The water's activity is
+            1&nbsp;−&nbsp;0.017&nbsp;ΣC, PHREEQC's too, and as in PHREEQC it moves <em>A</em> and
+            <em>B</em> a little: PHREEQC takes the density of water at the vapour pressure times the
+            water's activity, Raoult's law, and above 100&nbsp;°C the water at that pressure, so a salty
+            or hot water's <em>A</em> and <em>B</em> are its own. (That part of them is left out of the
+            Jacobian, where it is a part in 10<sup>5</sup> of a coefficient's derivative at most.) A charge is read from the end of the name, <code>H+</code> 1 and
             <code>SO4-2</code> −2, and <code>z=</code> gives it where the name should not: a
             surface site is no ion in the water, and <code>z=0 b=0</code> leaves it out of the
             ionic strength with γ&nbsp;=&nbsp;1. Concentrations are read as molalities.</p>
@@ -2189,7 +2193,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108e"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108f"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108d"></script>
@@ -2197,6 +2201,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108f"></script>
 </body>
 </html>

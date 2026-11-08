@@ -2339,6 +2339,57 @@ function againstPitzer(engine) {
       + `${col.endPH.toExponential(1)}; 40 cells, 3 pore volumes: PHREEQC ${col.pqMs} ms, the page ${col.rtmMs} ms`);
 }
 
+/* ======================================================================
+   A and B at the water's activity
+
+   PHREEQC works the density of water out at the vapour pressure times the
+   water's activity (calc_rho_0), and with phreeqc.dat's molar volumes
+   k_temp does so again at every iteration, so a salty or hot water's
+   Debye-Hueckel A and B are its own; above 100 C the water's pressure, and
+   the dielectric constant with it, is that vapour pressure too. Its DH_A and
+   DH_B against the page's at the same a(H2O), and the page's coefficients at
+   PHREEQC's molalities, from 25 to 150 C.
+   ====================================================================== */
+function againstWaterActivity(engine) {
+  const salty = (nacl, tc) => `${KNOBS}SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH 7\n Na ${nacl}\n Cl ${nacl} charge\n`
+    + ' Ca 0.01\n S(6) 0.01\n C(4) 0.002\nEND\n';
+  engine.load(dbText);
+  const rows = engine.run(`${salty(3, 90).replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + ' -headings a b aw\n -start\n10 PUNCH STR_E$(DH_A, 23, 16), STR_E$(DH_B, 23, 16), STR_E$(ACT("H2O"), 23, 16)\n -end\nEND\n');
+  const [pa, pb, paw] = rows[rows.length - 1].map(Number);
+  const ab = RtmModel.debyeHuckelAB(90, 1, paw);
+  const ab1 = RtmModel.debyeHuckelAB(90);
+  check('Debye-Hueckel A and B at the water\'s activity: PHREEQC\'s DH_A and DH_B in a 3 mol/kgw NaCl water at 90 C are '
+    + 'the page\'s at its a(H2O), where they are not those of pure water',
+  Math.abs(ab.A / pa - 1) < 1e-13 && Math.abs(ab.B / pb - 1) < 1e-13 && Math.abs(ab1.A / pa - 1) > 1e-7,
+  `A ${pa.toFixed(12)} within ${Math.abs(ab.A / pa - 1).toExponential(1)}, ${Math.abs(ab1.A / pa - 1).toExponential(1)} `
+    + `from pure water's; a(H2O) ${paw.toFixed(5)}`);
+  const cases = [[0.01, 25], [1, 25], [1, 60], [1, 90], [3, 90], [0.5, 150]].map(([nacl, tc]) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'salty', text: salty(nacl, tc) }, activity: true,
+      exact: true, redox: false, floor: 1e-30 });
+    const m = RtmModel.compile(res.text);
+    const ns = m.speciesNames.length;
+    const C = new Float64Array(ns);
+    for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
+    const lnG = new Float64Array(ns);
+    RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+    let gam = 0;
+    for (const [p, n] of res.names) {
+      if (res.molal.get(p) > 0) gam = Math.max(gam, Math.abs(lnG[m.speciesNames.indexOf(n)] / Math.LN10 - res.water.species.get(p)[1]));
+    }
+    const y = m.toConcentrations(m.initialState());
+    let start = 0;
+    for (const [p, n] of res.names) {
+      if (res.molal.get(p) > 1e-25) start = Math.max(start, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
+    }
+    return { nacl, tc, gam, start };
+  });
+  check('  the page\'s Debye-Hueckel coefficients at PHREEQC\'s molalities, 0.01 to 3 mol/kgw of NaCl at 25 to 150 C, '
+    + 'and the start of the model written from each, PHREEQC\'s', cases.every((c) => c.gam < 1e-14 && c.start < 1e-9),
+  cases.map((c) => `${c.nacl} at ${c.tc} C: ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)}`).join('; '));
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -2369,6 +2420,8 @@ function againstPitzer(engine) {
   againstSolidSolutions(wasm);
   console.log('\n--- Pitzer: the coefficients, the hand-off, the electron, the PHREEQC tab, pitzer.dat ---');
   againstPitzer(wasm);
+  console.log('\n--- Debye-Hueckel A and B at the water\'s activity ---');
+  againstWaterActivity(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);
