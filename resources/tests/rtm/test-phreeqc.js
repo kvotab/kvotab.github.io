@@ -1616,6 +1616,150 @@ function againstSit(engine) {
       + `${scol.rtmMs} ms`);
 }
 
+/* ======================================================================
+   A gas phase: PHREEQC's GAS_PHASE
+
+   A water with a gas phase written as a model, at a fixed pressure and in a
+   fixed volume, with ideal gases (phreeqc.dat with the gases' critical
+   constants and the species' molar volumes taken out, so that PHREEQC
+   holds them ideal and moves no log K with pressure) and with real ones
+   (phreeqc.dat as it is: Peng and Robinson's equation). Its fugacity
+   coefficients against PHREEQC's own, CO2 added against PHREEQC's REACTION,
+   a bubble forming, and the PHREEQC tab.
+   ====================================================================== */
+function againstGas(engine) {
+  const ideal = { name: 'phreeqc.dat, ideal', text: dbText.split('\n').filter((l) => !/^\s*-(T_c|P_c|Omega|Vm)\b/i.test(l)).join('\n') };
+  const knobs = 'KNOBS\n -convergence_tolerance 1e-12\n';
+  // Reading, without PHREEQC.
+  const gp = P.readGasPhases('GAS_PHASE 2\n -fixed_volume\n -volume 0.5\n CO2(g) 0.1\n N2(g)\nEND\nGAS_PHASE 3\n -pressure 2\n H2(g) 0\n');
+  const g2 = gp.get('2');
+  const g3 = gp.get('3');
+  const db = P.readDatabase(`${dbText}`, 'GAS_BINARY_PARAMETERS\nCO2(g) N2(g) 0.05\n');
+  check('a GAS_PHASE is read as PHREEQC reads one; a gas\'s critical constants and the pairs\' binary parameters, '
+    + 'PHREEQC\'s own for water vapour where none is given',
+  g2.fixed === 'volume' && g2.volume === 0.5 && g2.comps.length === 2 && g2.comps[0].p === 0.1 && g3.fixed === 'pressure'
+    && g3.pressure === 2 && db.critical.get('CO2(g)').tc === 304.2 && db.critical.get('N2(g)').omega === 0.039
+    && db.gasK('N2(g)', 'CO2(g)') === 0.05 && Math.abs(db.gasK('H2O(g)', 'CO2(g)') - 0.19) < 1e-15
+    && Math.abs(db.gasK('CH4(g)', 'H2O(g)') - 0.49) < 1e-15 && db.gasK('H2(g)', 'CH4(g)') === 0,
+  `CO2(g) Tc ${db.critical.get('CO2(g)').tc} K; k(H2O, CO2) ${db.gasK('H2O(g)', 'CO2(g)').toFixed(2)}`);
+
+  const water = (fixed, opt, solutes) => `${knobs}SOLUTION 1\n units mmol/kgw\n temp 25\n pH 7 charge\n Na 10\n Cl 10\n`
+    + ` ${solutes}\nGAS_PHASE 1\n -fixed_${fixed}\n ${opt}\n CO2(g) 0\n N2(g) 0\nEND\n`;
+  const handOff = (dbx, w) => {
+    engine.load(dbx.text);
+    const res = P.waterToModel({ engine, database: dbx, water: { name: 'gassy', text: w }, activity: true, exact: true, redox: false });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    let worst = 0;
+    for (const [pq, nm] of res.names) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(nm)] / res.molal.get(pq) - 1));
+    for (const [nm, v] of res.amounts) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(nm)] / v - 1));
+    return { res, m, worst };
+  };
+  // CO2 added: PHREEQC's REACTION, and the page's model of the water with CO2 coming in at the same rate.
+  const added = (dbx, w, res, steps) => {
+    engine.load(dbx.text);
+    const rows = engine.run(`${w.replace('END\n', '')}REACTION 1\n CO2 1\n ${steps.map((s) => s * 1e-3).join(' ')} moles\n`
+      + 'INCREMENTAL_REACTIONS false\nSELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings step pH co2g\n -start\n'
+      + '10 PUNCH STEP_NO, -LA("H+"), GAS("CO2(g)")\n -end\nEND\n');
+    const head = rows[0].map((h) => String(h).trim());
+    const pq = rows.slice(1).filter((r) => Number(r[head.indexOf('step')]) > 0)
+      .map((r) => ({ pH: Number(r[head.indexOf('pH')]), co2g: Number(r[head.indexOf('co2g')]) }));
+    const k = 1e-6;
+    const tEnd = steps[steps.length - 1] * 1e-3 / k;
+    const text = `${res.text.replace('TEND = 1\n', `TEND = ${tEnd}\n`)}=> CO2, k = ${k}\n`;
+    const m = RtmModel.compile(text);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: tEnd, rtol: 1e-10, atol: 1e-22, nonNegative: true,
+      outputTimes: steps.map((s) => s * 1e-3 / k) });
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    let pH = 0;
+    let gas = 0;
+    steps.forEach((s, i) => {
+      const c = m.toConcentrations(r.grid.y[i]);
+      RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns));
+      const iH = m.speciesNames.indexOf('H+');
+      pH = Math.max(pH, Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - pq[i].pH));
+      if (pq[i].co2g > 0) gas = Math.max(gas, Math.abs(c[m.speciesNames.indexOf('CO2(g)')] / pq[i].co2g - 1));
+    });
+    return { pH, gas, run: r, text, m };
+  };
+
+  // At a fixed pressure: ideal at 1.1 atm, real at 10.
+  const fpI = handOff(ideal, water('pressure', '-pressure 1.1', 'C(4) 40\n N(0) 1.2'));
+  const fpIa = added(ideal, water('pressure', '-pressure 1.1', 'C(4) 40\n N(0) 1.2'), fpI.res, [2, 6, 10, 20]);
+  check('a bubble of ideal gases at 1.1 atm: the start PHREEQC\'s, and CO2 added as PHREEQC\'s REACTION adds it',
+    fpI.worst < 1e-8 && fpIa.pH < 1e-8 && fpIa.gas < 1e-6 && /^GAS_PRESSURE = 1.1$/m.test(fpI.res.text),
+    `the start within ${fpI.worst.toExponential(1)}; then pH within ${fpIa.pH.toExponential(1)}, the bubble's CO2 within `
+      + `${fpIa.gas.toExponential(1)}`);
+  const fpR = handOff(database, water('pressure', '-pressure 10', 'C(4) 600\n N(0) 40'));
+  const fpRa = added(database, water('pressure', '-pressure 10', 'C(4) 600\n N(0) 40'), fpR.res, [20, 60, 100]);
+  // PHREEQC's phi at its own composition, against the page's equation there.
+  engine.load(dbText);
+  const pr = engine.run(`${water('pressure', '-pressure 10', 'C(4) 600\n N(0) 40').replace('END\n', '')}SELECTED_OUTPUT 99\n`
+    + ' -reset false\nUSER_PUNCH 99\n -headings vm phiC phiN nC nN\n -start\n'
+    + '10 PUNCH GAS_VM, PR_PHI("CO2(g)"), PR_PHI("N2(g)"), GAS("CO2(g)"), GAS("N2(g)")\n -end\nEND\n');
+  const ph = pr[0].map((h) => String(h).trim());
+  const prow = pr[pr.length - 1];
+  const pv = (k) => Number(prow[ph.indexOf(k)]);
+  const gas = fpR.m.act.gas;
+  const nT = pv('nC') + pv('nN');
+  const qC = gas.qOf[fpR.m.speciesNames.indexOf('CO2(g)')];
+  const xs = new Float64Array(2);
+  xs[qC] = pv('nC') / nT;
+  xs[1 - qC] = pv('nN') / nT;
+  const st = RtmModel.prState(gas.pr, xs, 10, 0);
+  const dPhi = Math.max(Math.abs(gas.pr.lnPhi[qC] - Math.log(pv('phiC'))), Math.abs(gas.pr.lnPhi[1 - qC] - Math.log(pv('phiN'))));
+  check('  real gases at 10 atm (Peng and Robinson): the page\'s phi and molar volume at PHREEQC\'s composition are '
+    + 'PHREEQC\'s, the start PHREEQC\'s, and CO2 added as PHREEQC adds it',
+  dPhi < 1e-12 && Math.abs(st.Vm / pv('vm') - 1) < 1e-12 && fpR.worst < 1e-8 && fpRa.pH < 1e-6 && fpRa.gas < 1e-5
+    && /^CO2\(g\)\s+\S+\s+gas\s+Tc=304.2\s+Pc=72.86\s+omega=0.225$/m.test(fpR.res.text),
+  `phi(CO2) ${pv('phiC').toFixed(10)}, within ${dPhi.toExponential(1)} in ln; the start within ${fpR.worst.toExponential(1)}; `
+    + `then pH within ${fpRa.pH.toExponential(1)}, the bubble's CO2 within ${fpRa.gas.toExponential(1)} (PHREEQC's water `
+    + 'losing what CO2 hydrates)');
+
+  // In a fixed volume: the water at the gas phase's pressure, which then moves.
+  const fvI = handOff(ideal, water('volume', '-volume 0.5', 'C(4) 40\n N(0) 1.2'));
+  const fvIa = added(ideal, water('volume', '-volume 0.5', 'C(4) 40\n N(0) 1.2'), fvI.res, [4, 10, 20]);
+  const fvR = handOff(database, water('volume', '-volume 0.2', 'C(4) 600\n N(0) 40'));
+  const fvRa = added(database, water('volume', '-volume 0.2', 'C(4) 600\n N(0) 40'), fvR.res, [20, 60, 100]);
+  check('a fixed volume, ideal and real: the start PHREEQC\'s, the water at the gas phase\'s pressure; with CO2 '
+    + 'added, PHREEQC moves A and B with the pressure, and with the molar volumes its log K, which the run holds',
+  fvI.worst < 1e-8 && fvR.worst < 1e-8 && fvIa.pH < 1e-4 && fvRa.pH < 1e-3 && /^PRESSURE = 17.23854/m.test(fvR.res.text),
+  `the start within ${fvI.worst.toExponential(1)} and ${fvR.worst.toExponential(1)}; with CO2 added pH within `
+    + `${fvIa.pH.toExponential(1)} (ideal, 0.76 to 1.13 atm) and ${fvRa.pH.toExponential(1)} (real, 17 to 20 atm)`);
+
+  // A bubble forming: the water held at 1 atm and below it to start with, CO2 added a millimole at a time.
+  const under = water('pressure', '-pressure 1', 'C(4) 20\n N(0) 0.4');
+  const bf = handOff(ideal, under);
+  const steps = Array.from({ length: 25 }, (_, i) => i + 1);
+  engine.load(ideal.text);
+  const rows = engine.run(`${under.replace('END\n', '')}REACTION 1\n CO2 1\n ${steps.map((s) => s * 1e-3).join(' ')} moles\n`
+    + 'INCREMENTAL_REACTIONS false\nSELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings step g\n -start\n'
+    + '10 PUNCH STEP_NO, GAS("CO2(g)") + GAS("N2(g)")\n -end\nEND\n');
+  const head = rows[0].map((h) => String(h).trim());
+  // PHREEQC keeps 1e-25 mol of a gas phase that is not there: a bubble is more than that.
+  const first = rows.slice(1).find((r) => Number(r[head.indexOf('step')]) > 0 && Number(r[head.indexOf('g')]) > 1e-20);
+  const firstStep = first ? Number(first[head.indexOf('step')]) : -1;
+  const ba = added(ideal, under, bf.res, steps);
+  const formed = ba.run.events.find((e) => /a bubble forms/.test(e.expr));
+  const formedAt = formed ? formed.t * 1e-6 * 1e3 : -1;
+  check('  a bubble forming as CO2 comes in: the page\'s event between PHREEQC\'s last step with no gas phase and its '
+    + 'first with one, and the waters the same either side (to 1e-7 in pH: PHREEQC\'s water loses what CO2 hydrates, '
+    + 'the page\'s kilogram does not)', bf.res.report.gas && bf.res.report.gas.species
+    .every((g) => g.amount === 0) && formedAt > firstStep - 1 && formedAt < firstStep && ba.pH < 1e-7,
+  `PHREEQC first has a bubble at +${firstStep} mmol, the page forms one at +${formedAt.toFixed(4)}; pH within ${ba.pH.toExponential(1)}`);
+
+  // The PHREEQC tab on a run with a bubble: the run's partial pressures, the pressures the waters hold the gases at.
+  const reply = pageRun(fpIa.text, 2e4);
+  engine.load(ideal.text);
+  const view = P.viewRun({ engine, database: ideal, run: reply, modelText: fpIa.text,
+    water: { name: 'gassy', text: water('pressure', '-pressure 1.1', 'C(4) 40\n N(0) 1.2') }, unit: 's', times: 12 });
+  const vg = view.report.gas;
+  check('  the PHREEQC tab: each gas\'s partial pressure in the run is the pressure PHREEQC finds the water holds it at',
+    !!vg && vg.compared > 0 && Math.abs(vg.gap) < 1e-6 && view.report.skipped.some((s) => s.name === 'CO2(g)' && /a gas/.test(s.why)),
+    vg ? `within ${Math.abs(vg.gap).toExponential(1)} in log over ${vg.compared} pressures` : 'no comparison');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -1638,6 +1782,8 @@ function againstSit(engine) {
   againstDoubleLayer(wasm);
   console.log('\n--- SIT: the coefficients, the hand-off, the PHREEQC tab, an exchanger, brine, a pyrite column, sit.dat ---');
   againstSit(wasm);
+  console.log('\n--- a gas phase: ideal and real, a fixed pressure and a fixed volume, a bubble forming, the PHREEQC tab ---');
+  againstGas(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

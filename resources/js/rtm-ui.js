@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -464,7 +464,10 @@
           + (m.surface.potentials && m.surface.potentials.length ? `, ${m.surface.potentials.map((pp) => `the double layer's `
             + `potential ${pp.name}${pp.psi ? ` at ${fmtMv(pp.psi)} to start with` : ''}`).join(', ')}` : '') : '')
         + (m.redox ? ` · ${m.redox.relations} relation${m.redox.relations === 1 ? '' : 's'} tied to the electron `
-          + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : ''));
+          + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : '')
+        + (m.gas ? ` · ${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
+          ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V`
+          : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}` : ''));
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -2132,7 +2135,7 @@
         { heading: 'What PHREEQC is given', list: [
           'Each species of the run that the database has, under the same name or the renamed one, counted into the element totals PHREEQC takes: `HCO3-` into C(4), `H2` twice into H(0), `(UO2)2(OH)2+2` twice into U(6).',
           'The pH, walked until PHREEQC’s molality of H+ is the run’s [H+].',
-          'A mineral, an exchanger or a surface of the model, and the species on them, are not part of the water: a mineral is listed with the phases, an exchanger or a surface is looked at whole.',
+          'A mineral, an exchanger or a surface of the model, the species on them, and a gas, are not part of the water: a mineral is listed with the phases, an exchanger or a surface is looked at whole, and a gas against the pressure the water holds it at.',
           'Left out, and listed: water; rtm.html’s `e-`, which is the hydrated electron and not PHREEQC’s; radicals and anything else the database lacks.',
           'The temperature the model was written at, read from the top of its text; 25 °C for a model that does not say.',
           '**fill in from the water** (off unless ticked): the water in the panel on the Model tab gives the temperature, and any element the model does not carry at all, such as a background electrolyte, held at its totals. A model written from a water carries all of them already; this is for one that leaves its counter-ions out. A water PHREEQC will not take is said, and left out.',
@@ -2142,7 +2145,7 @@
           'Which phases are supersaturated anywhere, and where and when.',
           'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong; a model with `ACTIVITY` follows them, and then it says how close its own stay to PHREEQC’s.',
           'Each mineral of the model: the saturation index PHREEQC finds where the model has some of it, and where it has none.',
-          'An exchanger or a surface of the model: how close what the run has on it is to what PHREEQC loads onto one of the same sites from the same water. The electron: how close the run’s valence states are to PHREEQC’s at the run’s pe.',
+          'An exchanger or a surface of the model: how close what the run has on it is to what PHREEQC loads onto one of the same sites from the same water. The electron: how close the run’s valence states are to PHREEQC’s at the run’s pe. A gas phase: how close each gas’s partial pressure in the run, its fugacity for a real gas, is to the pressure PHREEQC finds the water holds it at.',
           'A water that is far from neutral, which usually means the model leaves out a counter-ion.',
         ] },
         { heading: 'Settings', text: '**Times per cell**: at most this many stored times, spread over the run (0 reads them all). **Cells**: a list such as `0, 5, 10-19`, or empty for all.' },
@@ -2224,7 +2227,7 @@
 
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
-    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
@@ -2334,7 +2337,7 @@
     let section = '';
     for (let i = 0; i < lines.length; i += 1) {
       // <TABLE name> carries a name after the word; the section is the word.
-      const sec = /^\s*<\s*([A-Za-z]+)(?:\s+[^<>]*)?>\s*$/.exec(lines[i]);
+      const sec = /^\s*<\s*([A-Za-z_]+)(?:\s+[^<>]*)?>\s*$/.exec(lines[i]);
       if (sec) section = sec[1].toUpperCase();
       secs[i] = section;
     }
@@ -2588,11 +2591,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108a',
+    'resources/js/rtm-phreeqc.js?v=20261108b',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2939,6 +2942,17 @@ END
         out.push(`<p class="warn">Not carried from the surface: ${r.surfaceSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
+      if (r.gas) {
+        out.push(`<p>A gas phase ${r.gas.fixed === 'volume' ? `in a fixed volume of ${pqNum(r.gas.volume)} L per kgw`
+          : `at a fixed total pressure of ${pqNum(r.gas.pressure)} atm`}: ${r.gas.species
+          .map((g) => `${esc(g.as)} (${pqNum(g.amount)} mol/kgw, ${pqNum(g.pressure)} atm)`).join(', ')}, each gas's `
+          + `activity its partial pressure${r.gas.fixed === 'volume' ? ', n R T/V' : ', its share of the bubble times the '
+            + 'total, the bubble there only while the water holds its gases at the total between them'}.</p>`);
+      }
+      if (r.gasSkipped && r.gasSkipped.length) {
+        out.push(`<p class="warn">Not carried from the gas phase: ${r.gasSkipped
+          .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
+      }
       if (r.electron) {
         const e = r.electron;
         const moved = e.settled && Math.abs(e.settled.to - e.settled.from) > 1e-6;
@@ -3145,6 +3159,17 @@ END
           + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
             + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
       }
+    }
+    // The model's gases, against the pressure each water holds them at.
+    if (r.gas && r.gas.compared) {
+      const x = r.gas;
+      const big = Math.abs(x.gap) > 1e-4;
+      out.push(`<p${big ? ' class="warn"' : ''}>The gas phase (${x.species.map(esc).join(', ')}, ${x.fixed === 'volume'
+        ? `in ${pqNum(x.volume)} L per kgw` : `at ${pqNum(x.pressure)} atm`}): each gas's partial pressure in the run is `
+        + `within ${pqNum(Math.abs(x.gap))} in log of the pressure PHREEQC finds each water holds it at`
+        + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
+        + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing species '
+          + 'PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
     }
     // The model's redox couples, against PHREEQC sharing out each element at the run's pe.
     if (r.redox) {

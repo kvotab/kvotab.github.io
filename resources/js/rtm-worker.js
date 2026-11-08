@@ -192,6 +192,11 @@ function rtmSummary(model) {
       : null,
     // Redox: the electron, the relations tied to it, and the pe the start has.
     redox: model.electron >= 0 ? rtmRedoxSummary(model) : null,
+    // A gas phase: its gases, and the volume or the total pressure it is held at.
+    gas: model.act && model.act.gas
+      ? { fixed: model.act.gas.fixed, volume: model.act.gas.volume, pressure: model.act.gas.pressure,
+        species: model.act.gas.list.map((k) => model.speciesNames[k]) }
+      : null,
   };
 }
 

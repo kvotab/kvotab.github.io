@@ -59,7 +59,8 @@
      1. The model text
      ====================================================================== */
 
-  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT'];
+  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
+    'GAS_PAIRS'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -146,6 +147,24 @@
     ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit'] },
     TEMPERATURE: { def: 25, kind: 'number' },
     /*
+      A gas phase, PHREEQC's GAS_PHASE: the species given `gas`, each with its
+      partial pressure in atm for its activity. GAS_VOLUME holds the gas in a
+      fixed volume, litres to each kilogram of water, and a gas's pressure is
+      n R T/V; GAS_PRESSURE holds the gas at a fixed total pressure, atm, as a
+      bubble that is there only while the gases dissolved in the water would
+      add up to that pressure, a gas's pressure its share of the total. One or
+      the other. See gasSetup.
+    */
+    GAS_VOLUME: { def: 0, kind: 'number' },
+    GAS_PRESSURE: { def: 0, kind: 'number' },
+    /*
+      PRESSURE: the water's pressure in atm, 1 unless given, which the
+      Debye-Hueckel A and B and a double layer's dielectric constant are
+      worked out at (a logK is taken as written). A bubble at a fixed
+      pressure puts the water at its own, as PHREEQC does.
+    */
+    PRESSURE: { def: 1, kind: 'number' },
+    /*
       DUAL POROSITY: a rock matrix beside the column.
 
       Every cell of the column -- the fracture, the flowing water -- has a
@@ -219,7 +238,7 @@
     String(text).split(/\r?\n/).forEach((raw, i) => {
       const line = raw.replace(/(^|\s)#.*$/, '').trim();
       if (!line) return;
-      const header = /^<\s*([A-Za-z]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(line);
+      const header = /^<\s*([A-Za-z_]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(line);
       if (header) {
         const name = header[1].toUpperCase();
         const args = header[2].trim().split(/\s+/).filter(Boolean);
@@ -368,9 +387,9 @@
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
         mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null, sites: null,
-        area: null, grams: null,
+        area: null, grams: null, tc: null, pc: null, omega: null,
         mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, surface: false,
-        potential: false, line };
+        potential: false, gas: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -420,9 +439,15 @@
             if (!(value > 0)) throw new RtmError(`${kv[1]} = ${value} for ${name}: it is above zero.`, line);
             entry[key] = value;
           }
+          // A real gas's: its critical temperature (K) and pressure (atm), and its acentric factor.
+          else if (key === 'tc' || key === 'pc') {
+            if (!(value > 0)) throw new RtmError(`${kv[1]} = ${value} for ${name}: a critical ${key === 'tc' ? 'temperature' : 'pressure'} is above zero.`, line);
+            entry[key] = value;
+          } else if (key === 'omega') entry.omega = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
             + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; for '
-            + 'the electron pe; for a surface sites; and for its potential area and grams.', line);
+            + 'the electron pe; for a surface sites; for its potential area and grams; and for a real gas Tc, Pc '
+            + 'and omega.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -441,6 +466,8 @@
         if (/^surface$/i.test(part)) { entry.surface = true; entry.immobile = true; continue; }
         // A surface's potential, Hfo_psi: no amount, its activity exp(-F psi/RT) solved for.
         if (/^potential$/i.test(part)) { entry.potential = true; entry.immobile = true; continue; }
+        // A gas, CO2(g): its amount in the gas phase, its activity its partial pressure.
+        if (/^gas$/i.test(part)) { entry.gas = true; entry.immobile = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
@@ -448,13 +475,21 @@
         }
         throw new RtmError(`"${part}" is not understood on a species line.`, line);
       }
-      const kinds = ['mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential'].filter((k) => entry[k]);
+      const kinds = ['mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas'].filter((k) => entry[k]);
       if (kinds.length > 1) throw new RtmError(`${name} is given as ${kinds.join(' and ')}: it is one of them.`, line);
       if (entry.pe !== null && !entry.electron) {
         throw new RtmError(`pe = ${entry.pe} for ${name}: pe is the electron's, e- electron pe=4.`, line);
       }
       if (entry.sites !== null && !entry.surface) {
         throw new RtmError(`sites = ${entry.sites} for ${name}: sites are a surface's, Hfo_wOH surface sites=2e-4.`, line);
+      }
+      if ((entry.tc !== null || entry.pc !== null || entry.omega !== null) && !entry.gas) {
+        throw new RtmError(`${name} is given a critical temperature, pressure or acentric factor, which are a real gas's: `
+          + 'CO2(g) gas Tc=304.2 Pc=72.86 omega=0.225.', line);
+      }
+      if (entry.gas && (entry.tc === null) !== (entry.pc === null)) {
+        throw new RtmError(`${name} is given ${entry.tc === null ? 'Pc without Tc' : 'Tc without Pc'}: a real gas takes both, `
+          + 'its critical temperature in K and pressure in atm.', line);
       }
       if ((entry.area !== null || entry.grams !== null) && !entry.potential) {
         throw new RtmError(`${entry.area !== null ? 'area' : 'grams'} is given to ${name}: area and grams are a surface's `
@@ -519,7 +554,7 @@
       } else if (kinds.length) {
         const kind = kinds[0];
         const what = { mineral: 'a mineral', exchange: 'on an exchanger', exchanger: 'an exchanger',
-          surface: 'on a surface' }[kind];
+          surface: 'on a surface', gas: 'a gas' }[kind];
         const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
           ['Kd', entry.Kd !== null], ['Kdf', entry.Kdf !== null], ['left', entry.left !== null],
           ['right', entry.right !== null], ['fixed', entry.fixed]].filter(([, given]) => given).map(([k]) => k);
@@ -531,7 +566,7 @@
           throw new RtmError(`${name} is ${what}, and its ${kind === 'exchanger' ? 'capacity' : 'amount'} is zero or more.`,
             line);
         }
-        if (kind !== 'mineral' && kind !== 'surface' && entry.z !== null) {
+        if (kind !== 'mineral' && kind !== 'surface' && kind !== 'gas' && entry.z !== null) {
           throw new RtmError(`${name} is ${what}: ${kind === 'exchanger' ? 'its sites are counted, not charged'
             : 'it carries no charge into the ionic strength, and its coefficient is its ion\'s, from its relation'}, so `
             + 'it takes no z.', line);
@@ -542,6 +577,9 @@
         if (kind === 'surface' && (entry.dha !== null || entry.dhb !== null)) {
           throw new RtmError(`${name} is on a surface, whose activity is its fraction of the sites: it takes no a or b.`,
             line);
+        }
+        if (kind === 'gas' && (entry.z !== null || entry.dha !== null || entry.dhb !== null)) {
+          throw new RtmError(`${name} is a gas, whose activity is its partial pressure: it takes no z, a or b.`, line);
         }
         if (kind === 'exchange' && (entry.dha === null) !== (entry.dhb === null)) {
           throw new RtmError(`${name} is on an exchanger: it takes a and b together, as PHREEQC's -gamma a b, `
@@ -1593,8 +1631,10 @@
    * and Pitzer (1979, J. Phys. Chem. 83, 1599), the density on the saturation
    * line from Wagner and Pruss (2002, J. Phys. Chem. Ref. Data 31, 387, eq.
    * 2.6) with PHREEQC's fit in pressure on top. At 25 C, 0.5100 and 0.3285.
+   * `atm`, the water's pressure, is 1 unless a gas phase at a fixed pressure
+   * gives another: PHREEQC then works the water out at that pressure.
    */
-  function debyeHuckelAB(tc) {
+  function debyeHuckelAB(tc, atmGiven = 1) {
     const T = tc + 273.15;
     const th = 1 - T / 647.096;
     const rhoSat = 322.0 * (1 + 1.99274064 * th ** (1 / 3) + 1.09965342 * th ** (2 / 3)
@@ -1604,9 +1644,9 @@
     const p1 = -6.0251348e-06 + tc * (3.6696407e-07 + tc * (-9.2056269e-09 + tc * (6.7024182e-11 + tc * -1.5947241e-13)));
     const p2 = -2.2983596e-09 + tc * (-4.0133819e-10 + tc * (1.2619821e-11 + tc * (-9.8952363e-14 + tc * 2.3363281e-16)));
     const p3 = 7.0517647e-11 + tc * (6.8566831e-12 + tc * (-2.2829750e-13 + tc * (1.8113313e-15 + tc * -4.2475324e-18)));
-    // One atmosphere, or the vapour pressure where that is higher.
+    // One atmosphere, or the pressure given, or the vapour pressure where that is higher.
     const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13));
-    const atm = Math.max(1, pSat);
+    const atm = Math.max(atmGiven, pSat);
     const pa = atm - (pSat - 1e-6);
     const rho = (rhoSat + pa * (p0 + pa * (p1 + pa * (p2 + Math.sqrt(pa) * p3)))) / 1e3; // g/cm3
     const d1000 = 3.4279e2 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7));
@@ -1649,8 +1689,8 @@
         + `under ACTIVITY = sit${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, sitLines[0].line);
     }
     if (settings.ACTIVITY === 'none') {
-      // A surface's potential reads it too: the double layer's dielectric constant.
-      if (settings.given && settings.given.has('TEMPERATURE') && !species.some((sp) => sp.potential)) {
+      // A surface's potential reads it too, the double layer's dielectric constant; and a gas, R T.
+      if (settings.given && settings.given.has('TEMPERATURE') && !species.some((sp) => sp.potential || sp.gas)) {
         warnings.push('TEMPERATURE sets the activity model\'s A and B and nothing else, and ACTIVITY is none: '
           + 'it does nothing here.');
       }
@@ -1661,7 +1701,7 @@
       throw new RtmError(`TEMPERATURE = ${tc}: the activity model's A and B are worked out for 0 to 350 C.`);
     }
     const ns = species.length;
-    const { A, B } = debyeHuckelAB(tc);
+    const { A, B } = debyeHuckelAB(tc, waterPressure(settings, species));
     const z = new Float64Array(ns);
     const form = new Uint8Array(ns);
     const a = new Float64Array(ns);
@@ -1674,7 +1714,8 @@
       // charge into I: their coefficients are set with the exchange (exchangeSetup).
       // Nor is the electron, whose coefficient is 1: its activity is solved for; nor a
       // species on a surface, whose activity is its fraction of the sites (surfaceSetup).
-      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface || sp.potential) {
+      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface || sp.potential
+        || sp.gas) {
         solute[s] = 0;
         return;
       }
@@ -1704,7 +1745,7 @@
           + `${ignored.length > 4 ? ', ...' : ''})`} are not used.`);
     }
     return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, zg: Float64Array.from(z), form, a, b, solute,
-      ex: null, sf: null, pt: null, sit: isSit ? readSit(sitLines, species, solute) : null };
+      ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null };
   }
 
   /**
@@ -1795,6 +1836,7 @@
     const at = cell === undefined ? Math.round(off / ns) : cell;
     if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
     coefficientsAt(act, I, low, lnG, dG, at);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG);
     let aw = 1 - 0.017 * sum;
     const dry = !(aw > 1e-6);
     if (dry) aw = 1e-6;
@@ -1843,6 +1885,7 @@
     const ex = act.ex;
     if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
     onSites(act, lnG, dG, cell);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG);
     // The water.
     let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
     let osI = low ? 0 : (-A * sq) / (T * T);
@@ -1880,21 +1923,38 @@
    */
   function sitPartners(act, net, I) {
     const st = act && act.sit;
-    if (!st) return null;
-    const d = st.d;
-    for (const [s, nu] of net) {
-      const r = st.rows[s];
-      if (!r) continue;
-      for (let q = 0; q < r.k.length; q++) d[r.k[q]] += nu * Math.LN10 * (r.e[q] + I * r.e1[q]);
+    const gas = act && act.gas && act.gas.dln ? act.gas : null;
+    if (!st && !gas) return null;
+    const d = st ? st.d : gas.d;
+    if (st) {
+      for (const [s, nu] of net) {
+        const r = st.rows[s];
+        if (!r) continue;
+        for (let q = 0; q < r.k.length; q++) d[r.k[q]] += nu * Math.LN10 * (r.e[q] + I * r.e1[q]);
+      }
+    }
+    // A real gas in a fixed volume reads every gas of its phase (prVolumeCoefficients).
+    if (gas) {
+      const K = gas.list.length;
+      for (const [s, nu] of net) {
+        const q = gas.qOf[s];
+        if (q < 0) continue;
+        for (let j = 0; j < K; j++) d[gas.list[j]] += nu * gas.dln[q * K + j];
+      }
     }
     return d;
   }
   function sitDone(act, net) {
     const st = act.sit;
-    for (const [s] of net) {
-      const r = st.rows[s];
-      if (r) for (let q = 0; q < r.k.length; q++) st.d[r.k[q]] = 0;
+    const gas = act.gas && act.gas.dln ? act.gas : null;
+    const d = st ? st.d : gas.d;
+    if (st) {
+      for (const [s] of net) {
+        const r = st.rows[s];
+        if (r) for (let q = 0; q < r.k.length; q++) d[r.k[q]] = 0;
+      }
     }
+    if (gas) for (const [s] of net) if (gas.qOf[s] >= 0) for (const k of gas.list) d[k] = 0;
   }
 
   /**
@@ -1965,6 +2025,14 @@
         dG[s] = 0;
       }
     }
+    // A gas in a fixed volume: its partial pressure n R T/V.
+    const gas = act.gas;
+    if (gas && gas.fixed === 'volume') {
+      for (const s of gas.list) {
+        lnG[s] = gas.lnG;
+        dG[s] = 0;
+      }
+    }
   }
 
   /**
@@ -1974,9 +2042,10 @@
   function noActivity(species) {
     const ns = species.length;
     const z = Float64Array.from(species, (sp) => (sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface
-      || sp.potential || sp.name === 'H2O' ? 0 : (sp.z !== null ? sp.z : chargeOf(sp.name))));
+      || sp.potential || sp.gas || sp.name === 'H2O' ? 0 : (sp.z !== null ? sp.z : chargeOf(sp.name))));
     return { kind: 'none', A: 0, B: 0, ns, z, zg: new Float64Array(ns), form: new Uint8Array(ns),
-      a: new Float64Array(ns), b: new Float64Array(ns), solute: new Uint8Array(ns), ex: null, sf: null, pt: null };
+      a: new Float64Array(ns), b: new Float64Array(ns), solute: new Uint8Array(ns), ex: null, sf: null, pt: null,
+      gas: null };
   }
 
   /**
@@ -2370,7 +2439,7 @@
       throw new RtmError(`TEMPERATURE = ${tc}: the double layer's dielectric constant is worked out for 0 to 350 C.`);
     }
     const T = tc + 273.15;
-    const { eps } = debyeHuckelAB(tc);
+    const { eps } = debyeHuckelAB(tc, waterPressure(settings, species));
     act.pt = {
       list: pots,
       of,
@@ -2401,6 +2470,372 @@
       dI: low ? 0 : (pt.kS / (2 * sq)) * sh,
       du: S * Math.cosh(u / 2) / 2,
     };
+  }
+
+  /** PHREEQC's gas constant, L atm/(K mol) (global_structures.h). */
+  const R_LITER_ATM = 0.0820597;
+
+  /**
+   * PENG AND ROBINSON'S equation of state for a gas mixture, as PHREEQC's
+   * calc_PR has it (prep.cpp), term for term: each gas's a alpha (aa) and b
+   * at the model's temperature, the binary factors f = 1 - k, R T. x the
+   * composition; given P, a fixed pressure, the molar volume is the root of
+   * the cubic PHREEQC takes, and given Vm, a fixed volume, the pressure
+   * follows. ln phi of each gas into pr.lnPhi, 0 for a gas with no share as
+   * PHREEQC has it, and ln phi held between -4.6 and 4.44 as there. Not
+   * carried: the search PHREEQC makes past the turning point of P(V) where
+   * the cubic has three roots, a gas dense enough to condense.
+   */
+  function prState(pr, x, P, Vm) {
+    const K = pr.b.length;
+    const RT = pr.RT;
+    let b = 0;
+    let A = 0;
+    const S = pr.S;
+    for (let i = 0; i < K; i++) {
+      b += x[i] * pr.b[i];
+      let s2 = 0;
+      for (let j = 0; j < K; j++) {
+        if (x[j] === 0) continue;
+        const aij = Math.sqrt(pr.aa[i] * pr.aa[j]) * pr.f[i * K + j];
+        A += x[i] * x[j] * aij;
+        s2 += x[j] * aij;
+      }
+      S[i] = s2;
+    }
+    const b2 = b * b;
+    if (Vm) {
+      P = RT / (Vm - b) - A / (Vm * (Vm + 2 * b) - b2);
+      if (P <= 0) P = 1;
+    } else {
+      if (P < 1e-10) P = 1e-10;
+      const r1 = b - RT / P;
+      const r12 = r1 * r1;
+      const r2 = -3.0 * b2 + (A - RT * 2.0 * b) / P;
+      const r3 = b2 * b + (RT * b2 - b * A) / P;
+      const rp = r2 - r12 / 3;
+      const rp3 = rp * rp * rp;
+      const rq = (2.0 * r12 * r1 - 9.0 * r1 * r2) / 27 + r3;
+      const rz = (rq * rq) / 4 + rp3 / 27;
+      if (rz >= 0) {
+        let ri = Math.sqrt(rz);
+        if (ri + rq / 2 <= 0) Vm = Math.pow(ri - rq / 2, ONE_3) + Math.pow(-ri - rq / 2, ONE_3) - r1 / 3;
+        else {
+          ri = -Math.pow(ri + rq / 2, ONE_3);
+          Vm = ri - rp / (3.0 * ri) - r1 / 3;
+        }
+      } else {
+        const ri = Math.sqrt(-rp3 / 27);
+        const ri1 = Math.acos(-rq / 2 / ri);
+        Vm = 2.0 * Math.pow(ri, ONE_3) * Math.cos(ri1 / 3) - r1 / 3;
+      }
+    }
+    const lnPhi = pr.lnPhi;
+    const Z = (P * Vm) / RT;
+    const Aa = (A * P) / (RT * RT);
+    const Bb = (b * P) / RT;
+    for (let i = 0; i < K; i++) {
+      if (x[i] === 0) { lnPhi[i] = 0; continue; }
+      const Br = pr.b[i] / b;
+      let phi = -4.6;
+      if (Z > Bb) {
+        phi = Br * (Z - 1) - Math.log(Z - Bb) + (Aa / (2.828427 * Bb)) * (Br - (2.0 * S[i]) / A)
+          * Math.log((Z + 2.41421356 * Bb) / (Z - 0.41421356 * Bb));
+        phi = phi > 4.44 ? 4.44 : (phi < -4.6 ? -4.6 : phi);
+      }
+      lnPhi[i] = phi;
+    }
+    return { P, Vm };
+  }
+  const ONE_3 = 0.33333333333333333;
+
+  /**
+   * A real gas in a fixed volume (gasSetup): each gas's coefficient ln(phi P
+   * /N), its activity -- its fugacity -- phi n P/N, P from the equation at
+   * V/N; and d(ln gamma_i)/dC_j between the gases into gas.dln, by
+   * differences, for the relations' derivatives (sitPartners). With no gas
+   * at all, the ideal coefficient R T/V.
+   */
+  function prVolumeCoefficients(act, C, off, lnG) {
+    const gas = act.gas;
+    const pr = gas.pr;
+    const K = gas.list.length;
+    const n = pr.n;
+    for (let q = 0; q < K; q++) n[q] = Math.max(C[off + gas.list[q]], 0);
+    const value = (nn, out) => {
+      let N = 0;
+      for (let q = 0; q < K; q++) N += nn[q];
+      if (!(N > 0)) { for (let q = 0; q < K; q++) out[q] = gas.lnG; return; }
+      for (let q = 0; q < K; q++) pr.x[q] = nn[q] / N;
+      const st = prState(pr, pr.x, 0, gas.volume / N);
+      for (let q = 0; q < K; q++) out[q] = pr.lnPhi[q] + Math.log(st.P / N);
+    };
+    value(n, pr.g0);
+    for (let q = 0; q < K; q++) lnG[gas.list[q]] = pr.g0[q];
+    let N = 0;
+    for (let q = 0; q < K; q++) N += n[q];
+    const dln = gas.dln;
+    for (let j = 0; j < K; j++) {
+      const h = 1e-6 * Math.max(n[j], 1e-6 * N, 1e-300);
+      const nj = n[j];
+      n[j] = nj + h;
+      value(n, pr.g1);
+      n[j] = nj - h;
+      value(n, pr.g2);
+      n[j] = nj;
+      for (let i = 0; i < K; i++) dln[i * K + j] = (pr.g1[i] - pr.g2[i]) / (2 * h);
+    }
+  }
+
+  /**
+   * A bubble of real gases (gasSetup): the pressures the water holds its
+   * gases at are their fugacities over phi, and phi is the bubble's, whose
+   * composition is those pressures' shares -- so, from G.lnE = ln f and
+   * G.rows its gradient, y = ln f - ln phi(w(y)), w = e^y/sum e^y, solved by
+   * Newton; and the rows (I + d ln phi/dy)^-1 times the gradient of ln f.
+   * In place, before bubbleRows. Nothing for ideal gases.
+   */
+  function bubbleReal(G, gas, nUnknowns, withRows) {
+    if (!gas || !gas.pr) return;
+    const pr = gas.pr;
+    const K = G.rel.length;
+    const lnf = Float64Array.from(G.lnE);
+    const y = Float64Array.from(lnf);
+    const x = pr.x;
+    const phiAt = (yy, out) => {
+      x.fill(0);
+      let top = -Infinity;
+      for (let q = 0; q < K; q++) top = Math.max(top, yy[q]);
+      let s = 0;
+      for (let q = 0; q < K; q++) { x[G.prIdx[q]] = Math.exp(yy[q] - top); s += x[G.prIdx[q]]; }
+      for (let q = 0; q < K; q++) x[G.prIdx[q]] /= s;
+      prState(pr, x, gas.pressure, 0);
+      for (let q = 0; q < K; q++) out[q] = pr.lnPhi[G.prIdx[q]];
+    };
+    const ph = new Float64Array(K);
+    const p1 = new Float64Array(K);
+    const p2 = new Float64Array(K);
+    const Jm = Array.from({ length: K }, () => new Float64Array(K));
+    const dphi = () => {
+      for (let j = 0; j < K; j++) {
+        const yj = y[j];
+        y[j] = yj + 1e-6;
+        phiAt(y, p1);
+        y[j] = yj - 1e-6;
+        phiAt(y, p2);
+        y[j] = yj;
+        for (let i = 0; i < K; i++) Jm[i][j] = (i === j ? 1 : 0) + (p1[i] - p2[i]) / 2e-6;
+      }
+    };
+    for (let it = 0; it < 60; it++) {
+      phiAt(y, ph);
+      const F = new Float64Array(K);
+      let big = 0;
+      for (let q = 0; q < K; q++) { F[q] = y[q] + ph[q] - lnf[q]; big = Math.max(big, Math.abs(F[q])); }
+      if (big < 1e-14) break;
+      dphi();
+      const step = solveInPlace(Jm, F, K);
+      if (!step) break;
+      for (let q = 0; q < K; q++) y[q] -= step[q];
+    }
+    for (let q = 0; q < K; q++) G.lnE[q] = y[q];
+    if (!withRows) return null;
+    dphi();
+    // rows <- (I + Phi)^-1 rows, column by column of the unknowns.
+    const piv = luFactor(Jm, K);
+    if (!piv) return null;
+    const col = new Float64Array(K);
+    for (let c = 0; c < nUnknowns; c++) {
+      let any = false;
+      for (let q = 0; q < K; q++) { col[q] = G.rows[q][c]; if (col[q]) any = true; }
+      if (!any) continue;
+      luSolve(Jm, piv, col, K);
+      for (let q = 0; q < K; q++) G.rows[q][c] = col[q];
+    }
+    // For a caller's other columns: (I + Phi) factored.
+    return { Jm, piv, K };
+  }
+
+  /**
+   * The water's pressure, atm: a bubble's at a fixed pressure, which PHREEQC
+   * puts the water at too (its A, B and dielectric constant); else 1.
+   */
+  function waterPressure(settings, species) {
+    const given = settings.given || new Set();
+    const bubble = given.has('GAS_PRESSURE') && settings.GAS_PRESSURE > 0 && species.some((sp) => sp.gas);
+    if (given.has('PRESSURE')) {
+      if (!(settings.PRESSURE > 0)) throw new RtmError(`PRESSURE = ${settings.PRESSURE}: the water's pressure is above zero.`);
+      if (bubble && settings.PRESSURE !== settings.GAS_PRESSURE) {
+        throw new RtmError(`PRESSURE = ${settings.PRESSURE} and GAS_PRESSURE = ${settings.GAS_PRESSURE}: a bubble at a fixed `
+          + 'pressure puts the water at its own pressure.');
+      }
+      return settings.PRESSURE;
+    }
+    return bubble ? settings.GAS_PRESSURE : 1;
+  }
+
+  /**
+   * A GAS PHASE, as PHREEQC's GAS_PHASE has it.
+   *
+   *   GAS_VOLUME = 0.1                    litres of gas to each kilogram of water
+   *   CO2(g)   1e-6   gas                 its amount in the gas, mol/kg of water
+   *   CO2(g) <=> CO2, logK = -1.468       its dissolution, as PHREEQC's PHASES write it
+   *
+   * A gas's activity is its partial pressure in atm, ideal. In a fixed volume
+   * that is n R T/V, R PHREEQC's 0.0820597 L atm/(K mol) and T TEMPERATURE:
+   * a coefficient R T/V that is the same in every cell, so that a relation
+   * with a gas in it holds as any other does and the gas phase is simply
+   * there, however little of a gas is in it. At a fixed total pressure,
+   * GAS_PRESSURE, it is the gas's share of the bubble times the total. The
+   * gas stays in its cell, as PHREEQC's TRANSPORT leaves a cell's gas phase,
+   * and counts in the totals as anything else does.
+   *
+   * Returns the activity model with the gas in it (one made for it when
+   * ACTIVITY is none), or `act` itself when there is no gas.
+   */
+  function gasSetup(species, equilibria, act, settings, warnings, pairLines = []) {
+    const gases = [];
+    species.forEach((sp, k) => { if (sp.gas) gases.push(k); });
+    const given = settings.given || new Set();
+    const V = settings.GAS_VOLUME;
+    const P = settings.GAS_PRESSURE;
+    if (!gases.length) {
+      for (const key of ['GAS_VOLUME', 'GAS_PRESSURE']) {
+        if (given.has(key)) warnings.push(`${key} is a gas phase's, and no species is a gas: it does nothing here.`);
+      }
+      if (pairLines.length) {
+        throw new RtmError('<GAS_PAIRS> holds the binary parameters of real gases in a gas phase, and no species is a gas.',
+          pairLines[0].line);
+      }
+      return act;
+    }
+    const names = gases.map((k) => species[k].name);
+    const hasV = given.has('GAS_VOLUME');
+    const hasP = given.has('GAS_PRESSURE');
+    if (hasV === hasP) {
+      throw new RtmError(hasV
+        ? 'GAS_VOLUME and GAS_PRESSURE are both given: a gas phase is held at a fixed volume or at a fixed total '
+          + 'pressure, not both.'
+        : `${names.join(', ')} ${names.length === 1 ? 'is a gas' : 'are gases'}: give the gas phase GAS_VOLUME, `
+          + 'litres to each kilogram of water, or GAS_PRESSURE, its total pressure in atm.');
+    }
+    if (hasV && !(V > 0)) throw new RtmError(`GAS_VOLUME = ${V}: a gas phase's volume is above zero.`);
+    if (hasP && !(P > 0)) throw new RtmError(`GAS_PRESSURE = ${P}: a gas phase's pressure is above zero.`);
+    waterPressure(settings, species);
+    const tc = settings.TEMPERATURE;
+    if (!(tc >= 0 && tc <= 350)) {
+      throw new RtmError(`TEMPERATURE = ${tc}: a gas phase is worked out for 0 to 350 C, as the activity model is.`);
+    }
+    for (const k of gases) {
+      if (!equilibria.some((eq) => eq.net.some(([s]) => s === k))) {
+        throw new RtmError(`${species[k].name} is a gas and in no relation: ${species[k].name} <=> ..., its `
+          + 'dissolution with its log K, puts it in equilibrium with the water.', species[k].line);
+      }
+    }
+    for (const eq of equilibria) {
+      const inGas = eq.net.filter(([s]) => species[s].gas);
+      if (!inGas.length) continue;
+      if (inGas.length > 1) {
+        throw new RtmError(`"${eq.text}" has two gases in it: a relation is one gas's dissolution.`, eq.line);
+      }
+      if (eq.net.some(([s]) => species[s].mineral || species[s].exchange || species[s].exchanger || species[s].surface)) {
+        throw new RtmError(`"${eq.text}" has a gas and a mineral, an exchanger or a surface in it: a gas dissolves into `
+          + 'the water.', eq.line);
+      }
+      if (hasP && eq.kf !== null) {
+        throw new RtmError(`"${eq.text}" puts a gas into a bubble at a fixed pressure, which comes and goes: it is held `
+          + '(EQUILIBRATE), and takes no kf.', eq.line);
+      }
+    }
+    /*
+      At a fixed pressure each gas is in one relation, its dissolution, and
+      that relation is the bubble's: while there is a bubble the relations
+      together say that the pressures the water holds its gases at add up to
+      the total, and that each gas's share of the bubble is its share of
+      them; while there is none, each gas's amount is zero. So, like a
+      mineral's, each relation marks its gas (eq.mineral), which is an amount
+      that may reach zero rather than ln C.
+    */
+    if (hasP) {
+      for (const k of gases) {
+        const eqs = equilibria.filter((eq) => eq.net.some(([s]) => s === k));
+        if (eqs.length > 1) {
+          throw new RtmError(`${species[k].name} is in two relations, lines ${eqs[0].line} and ${eqs[1].line}: in a bubble at a `
+            + 'fixed pressure a gas has one, its dissolution.', eqs[1].line);
+        }
+        const eq = eqs[0];
+        eq.mineral = k;
+        eq.mineralNu = eq.net.find(([s]) => s === k)[1];
+        eq.gas = true;
+      }
+    }
+    const out = act || noActivity(species);
+    out.form = Uint8Array.from(out.form);
+    for (const k of gases) out.form[k] = 6;
+    const tk = tc + 273.15;
+    const isGas = new Uint8Array(species.length);
+    for (const k of gases) isGas[k] = 1;
+    const qOf = new Int32Array(species.length).fill(-1);
+    gases.forEach((k, q) => { qOf[k] = q; });
+    /*
+      REAL GASES: given each a critical temperature and pressure, every gas
+      of the phase is held by Peng and Robinson's equation (prState), as
+      PHREEQC holds a gas the database gives them; a gas's activity is then
+      its fugacity, phi times its partial pressure. All or none: PHREEQC does
+      not mix ideal and real gases. <GAS_PAIRS> gives a pair of gases k, the
+      cross term of the equation's a taken 1 - k times, PHREEQC's
+      GAS_BINARY_PARAMETERS.
+    */
+    const real = gases.filter((k) => species[k].tc !== null);
+    if (real.length && real.length !== gases.length) {
+      throw new RtmError(`${real.map((k) => species[k].name).join(', ')} ${real.length === 1 ? 'is a real gas' : 'are real gases'} `
+        + `(Tc and Pc) and ${gases.filter((k) => species[k].tc === null).map((k) => species[k].name).join(', ')} not: a gas `
+        + 'phase is all real gases, held by Peng and Robinson\'s equation, or all ideal, as in PHREEQC.', species[gases[0]].line);
+    }
+    let pr = null;
+    if (real.length) {
+      const K = gases.length;
+      const R = R_LITER_ATM;
+      const aa = Float64Array.from(gases, (k) => {
+        const sp = species[k];
+        const om = sp.omega || 0;
+        const kk = 0.37464 + om * (1.54226 - 0.26992 * om);
+        return ((0.457235 * R * R * sp.tc * sp.tc) / sp.pc) * Math.pow(1 + kk * (1 - Math.sqrt(tk / sp.tc)), 2);
+      });
+      const bb = Float64Array.from(gases, (k) => (0.077796 * R * species[k].tc) / species[k].pc);
+      const f = new Float64Array(K * K).fill(1);
+      const seen = new Map();
+      for (const { text, line } of pairLines) {
+        const parts = text.split(/\s+/);
+        if (parts.length !== 3) {
+          throw new RtmError(`"${text}" is not two gases and their binary parameter: H2O(g)  CO2(g)  0.19.`, line);
+        }
+        const qs = parts.slice(0, 2).map((nm) => {
+          const k = species.findIndex((sp) => sp.name === nm);
+          if (k < 0 || !species[k].gas) throw new RtmError(`"${nm}" in <GAS_PAIRS> is not a gas of <SPECIES>.`, line);
+          return qOf[k];
+        });
+        const key = qs[0] < qs[1] ? `${qs[0]}:${qs[1]}` : `${qs[1]}:${qs[0]}`;
+        if (seen.has(key)) throw new RtmError(`${parts[0]} and ${parts[1]} are paired twice in <GAS_PAIRS>, on lines ${seen.get(key)} and ${line}.`, line);
+        seen.set(key, line);
+        const k = constValue(parts[2], line, `the binary parameter of ${parts[0]} and ${parts[1]}`);
+        f[qs[0] * K + qs[1]] = 1 - k;
+        f[qs[1] * K + qs[0]] = 1 - k;
+      }
+      pr = { aa, b: bb, f, RT: R * tk, S: new Float64Array(K), lnPhi: new Float64Array(K), x: new Float64Array(K),
+        n: new Float64Array(K), g0: new Float64Array(K), g1: new Float64Array(K), g2: new Float64Array(K) };
+    } else if (pairLines.length) {
+      throw new RtmError('<GAS_PAIRS> holds the binary parameters of real gases, and no gas is given Tc and Pc.', pairLines[0].line);
+    }
+    out.gas = { list: gases, isGas, qOf, fixed: hasV ? 'volume' : 'pressure', volume: hasV ? V : 0, pressure: hasP ? P : 0,
+      temperature: tc, RT: R_LITER_ATM * tk,
+      // In a fixed volume of ideal gases, ln(R T/V): every gas's coefficient, in every cell.
+      lnG: hasV ? Math.log((R_LITER_ATM * tk) / V) : 0,
+      pr,
+      // A real gas in a fixed volume: d(ln gamma_i)/dC_j between the gases, and the scratch their sums go into.
+      dln: pr && hasV ? new Float64Array(gases.length * gases.length) : null,
+      d: pr && hasV ? (out.sit ? out.sit.d : new Float64Array(species.length)) : null };
+    return out;
   }
 
   /**
@@ -2721,6 +3156,12 @@
         return t;
       });
       const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0 ? 1 : 0));
+      // A bubble is there where its gases have any amount between them.
+      if (sys.gas) {
+        let N = 0;
+        for (const k of sys.gas.k) N += out[b + part[k]];
+        for (const j of sys.gas.rel) present[j] = N > 0 ? 1 : 0;
+      }
       const res = speciateCell(sys, out, b, totals, w, present,
         { tol: opts.tol, maxIter: opts.maxIter, floor: opts.floor, activeSet: true, cell });
       if (res.why === 'singular') throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
@@ -3027,7 +3468,87 @@
       cellC: new Float64Array(ns),
       exch: exch && exch.some((v) => v) ? exch : null,
       rank: rank || null,
+      gas: bubbleSystem(eqs, part, at, act),
     };
+  }
+
+  /**
+   * A bubble at a fixed pressure in a cell system (gasSetup): its relations,
+   * each gas's place in part and coefficient, and the scratch its rows are
+   * made in (bubbleRows). Null where there is none.
+   */
+  function bubbleSystem(eqs, part, at, act) {
+    const rel = [];
+    eqs.forEach((eq, j) => { if (eq.gas && at[eq.mineral] >= 0) rel.push(j); });
+    if (!rel.length) return null;
+    const isRel = new Uint8Array(eqs.length);
+    for (const j of rel) isRel[j] = 1;
+    return { rel: Int32Array.from(rel), isRel, k: Int32Array.from(rel, (j) => at[eqs[j].mineral]),
+      prIdx: Int32Array.from(rel, (j) => act.gas.qOf[eqs[j].mineral]),
+      nu: Float64Array.from(rel, (j) => eqs[j].mineralNu), lnP: Math.log(act.gas.pressure),
+      lnE: new Float64Array(rel.length), w: new Float64Array(rel.length),
+      rows: rel.map(() => new Float64Array(part.length)), mean: new Float64Array(part.length) };
+  }
+
+  /**
+   * A bubble's rows while it is there. lnE[q] is the ln of the pressure the
+   * water holds gas q at, -(its relation without the gas)/nu, and rows[q]
+   * its gradient in the n unknowns; n(q) is gas q's amount. The first
+   * relation's row says the pressures add up to the total, ln sum e^lnE - ln
+   * P; each other's that its gas's amount is its share of the bubble, n_q -
+   * N w_q, N the gases' amounts together and w_q = e^lnE_q / sum e^lnE. Into
+   * F and, with J, J; returns the convergence measure, the first in ln and
+   * the rest against `big`, the largest total.
+   */
+  function bubbleRows(G, n, nUnknowns, F, J, big) {
+    const K = G.rel.length;
+    let top = -Infinity;
+    for (let q = 0; q < K; q++) top = Math.max(top, G.lnE[q]);
+    let S = 0;
+    for (let q = 0; q < K; q++) { G.w[q] = Math.exp(G.lnE[q] - top); S += G.w[q]; }
+    for (let q = 0; q < K; q++) G.w[q] /= S;
+    const lnS = top + Math.log(S);
+    let N = 0;
+    for (let q = 0; q < K; q++) N += n(q);
+    const j0 = G.rel[0];
+    F[j0] = lnS - G.lnP;
+    let norm = Math.abs(F[j0]);
+    if (J) {
+      const mean = G.mean;
+      mean.fill(0);
+      for (let q = 0; q < K; q++) {
+        const row = G.rows[q];
+        const w = G.w[q];
+        for (let c = 0; c < nUnknowns; c++) if (row[c]) mean[c] += w * row[c];
+      }
+      J[j0].fill(0);
+      for (let c = 0; c < nUnknowns; c++) J[j0][c] = mean[c];
+    }
+    for (let q = 1; q < K; q++) {
+      const j = G.rel[q];
+      F[j] = n(q) - N * G.w[q];
+      norm = Math.max(norm, Math.abs(F[j]) / Math.max(big, 1e-300));
+      if (!J) continue;
+      const Jr = J[j];
+      Jr.fill(0);
+      const row = G.rows[q];
+      const f = N * G.w[q];
+      for (let c = 0; c < nUnknowns; c++) {
+        const d = row[c] - G.mean[c];
+        if (d) Jr[c] = -f * d;
+      }
+      for (let h = 0; h < K; h++) Jr[G.k[h]] -= G.w[q];
+      Jr[G.k[q]] += 1;
+    }
+    return { norm, lnS, N };
+  }
+
+  /** A reduced system's bubble's gradient rows, `width` long. */
+  function bubbleScratch(G, width) {
+    if (G.width === width) return;
+    G.rows = Array.from(G.ps, () => new Float64Array(width));
+    G.mean = new Float64Array(width);
+    G.width = width;
   }
 
   /**
@@ -3121,6 +3642,28 @@
     };
     // A mineral's saturation index, ln(IAP/K), whichever side it is written on.
     const saturation = (j, water) => (minNu[j] < 0 ? 1 : -1) * relation(j, water, null);
+    // Each of a bubble's gases' ln of the pressure the water holds it at, and with rows its gradient.
+    const bubbleLnE = (water, rows) => {
+      const G = sys.gas;
+      for (let q = 0; q < G.rel.length; q++) {
+        const row = rows ? G.rows[q] : null;
+        if (row) row.fill(0);
+        const f = -1 / G.nu[q];
+        G.lnE[q] = f * relation(G.rel[q], water, row);
+        if (row) for (let c = 0; c < na; c++) if (row[c]) row[c] *= f;
+      }
+    };
+    // The bubble's ln of the pressures the water holds its gases at, together, less ln P.
+    const bubbleExcess = (water) => {
+      const G = sys.gas;
+      bubbleLnE(water, false);
+      bubbleReal(G, act.gas, na, false);
+      let top = -Infinity;
+      for (let q = 0; q < G.rel.length; q++) top = Math.max(top, G.lnE[q]);
+      let S = 0;
+      for (let q = 0; q < G.rel.length; q++) S += Math.exp(G.lnE[q] - top);
+      return top + Math.log(S) - G.lnP;
+    };
 
     // None of a mineral is exactly none: its amount is set, not iterated
     // towards -- a damped step would only halve it, and leave 1e-30 of a
@@ -3135,6 +3678,7 @@
         iterations++;
         const water = evaluate();
         let norm = 0;
+        const G = sys.gas;
         for (let j = 0; j < ne; j++) {
           J[j].fill(0);
           const km = minOf[j];
@@ -3145,8 +3689,15 @@
             norm = Math.max(norm, Math.abs(x[km]) / Math.max(big, 1e-300));
             continue;
           }
+          // A bubble's relations, while it is there, are its rows together (below).
+          if (G && G.isRel[j]) continue;
           F[j] = relation(j, water, J[j]);
           norm = Math.max(norm, Math.abs(F[j]));
+        }
+        if (G && present[G.rel[0]]) {
+          bubbleLnE(water, true);
+          bubbleReal(G, act.gas, na, true);
+          norm = Math.max(norm, bubbleRows(G, (q) => x[G.k[q]], na, F, J, big).norm);
         }
         // The totals: d(sum U w C)/du = U w C, and U w for an amount.
         for (let q = 0; q < nb; q++) {
@@ -3275,16 +3826,29 @@
 
     let ok = solve();
     if (opts.activeSet && ok) {
+      const G = sys.gas;
       const mins = [];
-      for (let j = 0; j < ne; j++) if (minOf[j] >= 0) mins.push(j);
-      let settled = !mins.length;
-      for (let round = 0; round < 4 * mins.length + 4 && !settled && ok; round++) {
-        // A mineral that would have to be less than none of: it dissolves away.
+      for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !(G && G.isRel[j])) mins.push(j);
+      // A bubble comes and goes whole: its relations' present together.
+      const setBubble = (v) => { for (const j of G.rel) { present[j] = v; if (!v) x[minOf[j]] = 0; } };
+      let settled = !mins.length && !G;
+      for (let round = 0; round < 4 * mins.length + (G ? 8 : 4) && !settled && ok; round++) {
+        // A mineral that would have to be less than none of: it dissolves away; and so does a bubble.
         let pick = -1;
         let by = 0;
         for (const j of mins) {
           const m = x[minOf[j]];
           if (present[j] && m < -1e-12 * big && -m > by) { by = -m; pick = j; }
+        }
+        if (G && present[G.rel[0]]) {
+          let N = 0;
+          for (const j of G.rel) N += x[minOf[j]];
+          if (N < -1e-12 * big && -N > by) { by = -N; pick = -2; }
+        }
+        if (pick === -2) {
+          setBubble(0);
+          ok = solve();
+          continue;
         }
         if (pick >= 0) {
           present[pick] = 0;
@@ -3292,12 +3856,22 @@
           ok = solve();
           continue;
         }
-        // One the water is supersaturated in, and none of it: it precipitates.
+        // One the water is supersaturated in, and none of it: it precipitates. Gases the water holds at more
+        // than the total pressure between them: a bubble forms.
         const water = evaluate();
         for (const j of mins) {
           if (present[j]) continue;
           const si = saturation(j, water);
           if (si > 1e-9 && si > by) { by = si; pick = j; }
+        }
+        if (G && !present[G.rel[0]]) {
+          const ex = bubbleExcess(water);
+          if (ex > 1e-9 && ex > by) { by = ex; pick = -2; }
+        }
+        if (pick === -2) {
+          setBubble(1);
+          ok = solve();
+          continue;
         }
         if (pick >= 0) {
           present[pick] = 1;
@@ -3337,6 +3911,8 @@
    */
   function reducedSystem(sys, prefer) {
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
+    // A real gas in a fixed volume reads every gas of its phase: the full speciation.
+    if (act && act.gas && act.gas.dln) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -3403,7 +3979,7 @@
       return { j, k: minOf[j], nu, ...constants(j) };
     });
     // The ionic strength is an unknown wherever a coefficient or a potential reads it.
-    const useI = !!act && ([...act.form].some((f) => f !== 0) || np > 0);
+    const useI = !!act && ([...act.form].some((f) => f >= 1 && f <= 5) || np > 0);
     const useL = !!act && act.kind !== 'none'
       && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water));
     const nK = K.length;
@@ -3414,8 +3990,21 @@
     const iS = nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0);
     const iP = iS + (sit ? sit.V.length : 0);
     if (sit) sit.iS = iS;
+    // A bubble at a fixed pressure: its relations among the minerals' rows, its gases among their amounts (bubbleRows).
+    const bubble = (() => {
+      const ps = [];
+      mins.forEach((mn, p) => { if (eqs[mn.j].gas) ps.push(p); });
+      if (!ps.length) return null;
+      const qOf = new Int32Array(nm).fill(-1);
+      ps.forEach((p, q) => { qOf[p] = q; });
+      return { ps: Int32Array.from(ps), qOf, rel: Int32Array.from(ps, (p) => nb + p), k: Int32Array.from(ps, (p) => nK + p),
+        prIdx: Int32Array.from(ps, (p) => act.gas.qOf[eqs[mins[p].j].mineral]),
+        nu: Float64Array.from(ps, (p) => eqs[mins[p].j].mineralNu), lnP: Math.log(act.gas.pressure),
+        lnE: new Float64Array(ps.length), w: new Float64Array(ps.length), rows: null, mean: null, width: 0, out: [] };
+    })();
     return {
       sit,
+      bubble,
       sys, aq, naq, aqOf, D: pivotOf, K, nK, nm, nr,
       E: A.map((rw) => Float64Array.from(K, (i) => rw[i])),
       M,
@@ -3671,6 +4260,7 @@
       if (grad) Gl[s].fill(0);
       if (onEx[s]) return ex.shift[at + s];
       if (onSf[s]) return sf.shift[at + s];
+      if (act.form[s] === 6 && act.gas.fixed === 'volume') return act.gas.lnG;
       return 0;
     };
     function rest(i) {
@@ -3736,9 +4326,12 @@
       }
     }
     for (let q = 0; q < nb; q++) norm = Math.max(norm, Math.abs(F[q]) / Math.max(scale[q], 1e-300));
-    // The minerals.
+    // The minerals, and a bubble.
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
+    const Gb = rs.bubble;
+    const bubbleOn = !!Gb && !!present[mins[Gb.ps[0]].j];
+    if (bubbleOn) bubbleScratch(Gb, sc.nx);
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
@@ -3746,6 +4339,27 @@
         F[row] = z[nK + p];
         if (J) J[row][nK + p] = 1;
         norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
+        continue;
+      }
+      const qb = bubbleOn ? Gb.qOf[p] : -1;
+      if (qb >= 0) {
+        // A bubble's relation: its gas's ln of pressure in the water, and its gradient over nx, for bubbleRows.
+        let r = mn.water * L - mn.lnK;
+        const g = Gb.rows[qb];
+        if (grad) g.fill(0);
+        for (const [si, nu] of mn.fixed) {
+          r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + lnG[si]);
+          if (grad) { const gl = Gl[si]; for (let c = 0; c < sc.nx; c++) if (gl[c]) g[c] += nu * gl[c]; }
+        }
+        for (let i = 0; i < naq; i++) {
+          if (!mn.nu[i]) continue;
+          r += mn.nu[i] * alpha[i];
+          if (grad) { const ga = Ga[i]; for (let c = 0; c < sc.nx; c++) if (ga[c]) g[c] += mn.nu[i] * ga[c]; }
+        }
+        if (grad && useL) g[iL] += mn.water;
+        const f = -1 / Gb.nu[qb];
+        Gb.lnE[qb] = f * r;
+        if (grad) for (let c = 0; c < sc.nx; c++) if (g[c]) g[c] *= f;
         continue;
       }
       let r = mn.water * L - mn.lnK;
@@ -3761,6 +4375,20 @@
       if (J && useL) J[row][iL] += mn.water;
       F[row] = r;
       norm = Math.max(norm, Math.abs(r));
+    }
+    if (bubbleOn) {
+      // Its rows over nx, then the unknowns' part into J and the outside species' into B.
+      const out = Gb.out;
+      for (const row of Gb.rel) if (!out[row] || out[row].length !== sc.nx) out[row] = new Float64Array(sc.nx);
+      bubbleReal(Gb, act.gas, sc.nx, grad);
+      norm = Math.max(norm, bubbleRows(Gb, (q) => z[Gb.k[q]], sc.nx, F, grad ? out : null, big).norm);
+      if (grad) {
+        for (const row of Gb.rel) {
+          const o = out[row];
+          if (J) { const Jr = J[row]; for (let c = 0; c < nz; c++) Jr[c] = o[c]; }
+          if (B) { const Br = B[row]; for (let q = 0; q < nOut; q++) Br[q] = o[nz + q]; }
+        }
+      }
     }
     // The ionic strength.
     if (useI) {
@@ -3991,6 +4619,9 @@
     // The minerals: saturation while there is some, none while there is none.
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
+    const G = rs.bubble;
+    const bubbleOn = !!G && !!present[mins[G.ps[0]].j];
+    if (bubbleOn && J) bubbleScratch(G, nz);
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
@@ -4004,10 +4635,16 @@
       let gI = 0;
       for (const [si, nu] of mn.fixed) { r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + sc.lnG[si]); gI += nu * dG[si]; }
       for (let i = 0; i < naq; i++) if (mn.nu[i]) r += mn.nu[i] * alpha[i];
-      F[row] = r;
-      norm = Math.max(norm, Math.abs(r));
+      // A bubble's relation: the ln of the pressure the water holds its gas at, and its gradient, for bubbleRows.
+      const qb = bubbleOn ? G.qOf[p] : -1;
+      if (qb >= 0) G.lnE[qb] = -r / G.nu[qb];
+      else {
+        F[row] = r;
+        norm = Math.max(norm, Math.abs(r));
+      }
       if (!J) continue;
-      const Jr = J[row];
+      const Jr = qb >= 0 ? G.rows[qb] : J[row];
+      if (qb >= 0) Jr.fill(0);
       for (let i = 0; i < naq; i++) {
         const nu = mn.nu[i];
         if (!nu) continue;
@@ -4022,6 +4659,11 @@
       }
       if (useI && !low) Jr[iI] += gI;
       if (useL) Jr[iL] += mn.water;
+      if (qb >= 0) { const f = -1 / G.nu[qb]; for (let c = 0; c < nz; c++) if (Jr[c]) Jr[c] *= f; }
+    }
+    if (bubbleOn) {
+      bubbleReal(G, act.gas, nz, !!J);
+      norm = Math.max(norm, bubbleRows(G, (q) => z[G.k[q]], nz, F, J, big).norm);
     }
     // The ionic strength, and the water's ln a.
     if (useI) {
@@ -4365,6 +5007,45 @@
       }
       if (O) outside.forEach((si, i) => { O[j][i] = d(si); });
       if (sd) sitDone(act, eq.net);
+    }
+    // A bubble at a fixed pressure, while it is there: its relations' rows together (bubbleRows).
+    const G = sys.gas;
+    if (G && present[G.rel[0]]) {
+      const K = G.rel.length;
+      const oRows = O ? G.rel.map(() => new Float64Array(outside.length)) : null;
+      for (let q = 0; q < K; q++) {
+        const j = G.rel[q];
+        const eq = eqs[j];
+        const f = -1 / G.nu[q];
+        let r = -eq.lnK;
+        for (const [si, nu] of eq.net) {
+          if (isMin[si]) continue;
+          r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + (act ? sys.lnG[si] : 0));
+        }
+        if (act && eq.water) r += eq.water * water.lnAw;
+        G.lnE[q] = f * r;
+        const row = G.rows[q];
+        for (let c = 0; c < na; c++) row[c] = f * J[j][c];
+        if (O) for (let i = 0; i < outside.length; i++) oRows[q][i] = f * O[j][i];
+      }
+      const lu = bubbleReal(G, act.gas, na, true);
+      if (lu && O) {
+        const col = new Float64Array(K);
+        for (let i = 0; i < outside.length; i++) {
+          for (let q = 0; q < K; q++) col[q] = oRows[q][i];
+          luSolve(lu.Jm, lu.piv, col, K);
+          for (let q = 0; q < K; q++) oRows[q][i] = col[q];
+        }
+      }
+      const res = bubbleRows(G, (q) => C[off + part[G.k[q]]], na, new Float64Array(ne), J, 1);
+      if (O) {
+        for (let i = 0; i < outside.length; i++) {
+          let mean = 0;
+          for (let q = 0; q < K; q++) mean += G.w[q] * oRows[q][i];
+          O[G.rel[0]][i] = mean;
+          for (let q = 1; q < K; q++) O[G.rel[q]][i] = -res.N * G.w[q] * (oRows[q][i] - mean);
+        }
+      }
     }
     for (let q = 0; q < nb; q++) {
       const row = ne + q;
@@ -5320,6 +6001,7 @@
     const sf = act ? act.sf : null;
     act = potentialSetup(species, equilibria, act, settings);
     const pt = act ? act.pt : null;
+    act = gasSetup(species, equilibria, act, settings, warnings, sections.GAS_PAIRS);
     const electron = electronSetup(species, equilibria);
     // The order the conserved totals are made in (conservationBasis): species
     // on an exchanger first, and last what is no amount, an exchanger or the
@@ -5825,8 +6507,9 @@
       const reac = side(eq.reactants);
       const prod = side(eq.products);
       // Under SIT a coefficient reads the species it is paired with, which may be neutral: every solute.
+      const realGas = act && act.gas && act.gas.dln && eq.net.some(([s]) => act.gas.isGas[s]) ? act.gas.list : [];
       const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && act.sit ? solutes : ions),
-        ...(eq.water ? solutes : [])])].sort((x, y) => x - y);
+        ...(eq.water ? solutes : []), ...realGas])].sort((x, y) => x - y);
       return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
         kf: eq.kf, kb: eq.kf / Math.exp(eq.lnK), water: eq.water || 0, d: new Float64Array(colsOf.length) };
     });
@@ -6830,7 +7513,9 @@
       mobile,
       fixed,
       // The minerals: pure phases, activity 1, amounts that may reach zero.
-      mineral: Uint8Array.from(species, (sp) => (sp.mineral ? 1 : 0)),
+      // What is an amount that may reach zero rather than ln C: a mineral, and a gas in a bubble at a fixed pressure.
+      mineral: Uint8Array.from(species, (sp) => (sp.mineral || (sp.gas && act && act.gas && act.gas.fixed === 'pressure')
+        ? 1 : 0)),
       // Held state by state, and the species held in some cells only.
       fixedAt,
       held: held.map((h) => ({ species: h.species, cells: h.cells })),
@@ -7093,7 +7778,8 @@
     const dG = act ? new Float64Array(ns) : null;
     // Under SIT a coefficient reads the species it is paired with as well, which may be neutral: every solute.
     const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
-      || ((eq.water || act.sit) && act.solute[k])) : []));
+      || ((eq.water || act.sit) && act.solute[k])
+      || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))) : []));
     const n = nBase + nc * nb;
     const tIndex = (c, j) => nBase + c * nb + j;
     const held = new Uint8Array(n);
@@ -7107,10 +7793,37 @@
     // none, the amount is zero and the water may be undersaturated. Which it
     // is changes at events (see eventValues), and a run starts from the state.
     const mins = [];
-    eqs.forEach((eq, r) => { if (eq.mineral >= 0) mins.push(r); });
+    eqs.forEach((eq, r) => { if (eq.mineral >= 0 && !eq.gas) mins.push(r); });
     const nmin = mins.length;
     const present = new Uint8Array(nc * ne).fill(1);
     const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
+    /*
+      A BUBBLE at a fixed pressure (gasSetup): its relations come and go
+      together, at one event a cell, and while it is there their rows are the
+      bubble's (bubbleRows), each reading every gas of the bubble and every
+      species of its relations -- the columns `cols`, a gas at `k` among them.
+    */
+    const gasRels = [];
+    eqs.forEach((eq, r) => { if (eq.gas) gasRels.push(r); });
+    const bub = gasRels.length ? (() => {
+      const colSet = new Set();
+      for (const r of gasRels) {
+        for (const [s] of eqs[r].net) colSet.add(s);
+        for (const k of actCols[r]) colSet.add(k);
+      }
+      const cols = [...colSet].sort((a, b2) => a - b2);
+      const loc = new Map(cols.map((s, i) => [s, i]));
+      return { rel: Int32Array.from(gasRels), cols, loc, k: Int32Array.from(gasRels, (r) => loc.get(eqs[r].mineral)),
+        prIdx: Int32Array.from(gasRels, (r) => act.gas.qOf[eqs[r].mineral]),
+        gas: Int32Array.from(gasRels, (r) => eqs[r].mineral), nu: Float64Array.from(gasRels, (r) => eqs[r].mineralNu),
+        lnP: Math.log(act.gas.pressure), lnE: new Float64Array(gasRels.length), w: new Float64Array(gasRels.length),
+        rows: gasRels.map(() => new Float64Array(cols.length)), mean: new Float64Array(cols.length) };
+    })() : null;
+    const bubF = new Float64Array(ne);
+    const bubJ = [];
+    if (bub) for (const r of bub.rel) bubJ[r] = new Float64Array(bub.cols.length);
+    // The gases' amounts together in the cell at b.
+    const bubbleN = (yy, b) => { let N = 0; for (const g of bub.gas) N += yy[b + g]; return N; };
     /*
       THE PROJECTED FORM, for a model with the electron in it. A redox front
       passes through a moment no couple buffers: the last of a reductant has
@@ -7182,6 +7895,7 @@
       eqs.forEach((eq, r) => {
         for (const [s] of eq.net) touch(b + relRow[r], b + s);
         for (const k of actCols[r]) touch(b + relRow[r], b + k);
+        if (bub && eq.gas) for (const s of bub.cols) touch(b + relRow[r], b + s);
       });
     }
     for (let i = 0; i < n; i++) touch(i, i);
@@ -7231,12 +7945,14 @@
     const defC = [];
     const relC = [];
     const relA = [];
+    const relG = [];
     for (let c = 0; c < nc; c++) {
       const b = c * ns;
       defT.push(Int32Array.from({ length: nb }, (_, j) => slot(b + defAt[j], tIndex(c, j))));
       defC.push(U.map((uj, j) => Int32Array.from(active, (s, k) => (uj[k] ? slot(b + defAt[j], b + s) : -1))));
       relC.push(eqs.map((eq, r) => Int32Array.from(eq.net, ([s]) => slot(b + relRow[r], b + s))));
       relA.push(eqs.map((eq, r) => Int32Array.from(actCols[r], (k) => slot(b + relRow[r], b + k))));
+      relG.push(bub ? eqs.map((eq, r) => (eq.gas ? Int32Array.from(bub.cols, (s) => slot(b + relRow[r], b + s)) : null)) : null);
     }
     // The projected rows' entries, per cell: each held species on itself, on
     // its cell's totals, and on what its cell's relations read besides.
@@ -7386,6 +8102,13 @@
           const m = eqs[r].mineral;
           out[b + relRow[r]] = m >= 0 && !present[c * ne + r] ? y[b + m] : relationAt(b, r, y, water);
         }
+        // The bubble, while it is there: its relations' rows together.
+        if (bub && present[c * ne + bub.rel[0]]) {
+          for (let q = 0; q < bub.rel.length; q++) bub.lnE[q] = -relationAt(b, bub.rel[q], y, water) / bub.nu[q];
+          bubbleReal(bub, act.gas, bub.cols.length, false);
+          bubbleRows(bub, (q) => y[b + bub.gas[q]], bub.cols.length, bubF, null, 1);
+          for (const r of bub.rel) out[b + relRow[r]] = bubF[r];
+        }
       }
       return out;
     }
@@ -7491,6 +8214,8 @@
             V[relC[c][r][minAt[r]]] += 1;
             continue;
           }
+          // A bubble's relations, while it is there: below.
+          if (bub && eqs[r].gas) continue;
           eqs[r].net.forEach(([s, nu], m) => {
             if (isMin[s]) return;
             V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
@@ -7509,6 +8234,41 @@
             if (d) V[relA[c][r][q]] += held[b + k] ? d * C[b + k] : d;
           });
           if (sd) sitDone(act, eqs[r].net);
+        }
+        if (bub && present[c * ne + bub.rel[0]]) {
+          // Each gas's ln of the pressure the water holds it at, and its gradient in the state, over the bubble's columns.
+          for (let q = 0; q < bub.rel.length; q++) {
+            const r = bub.rel[q];
+            const eq = eqs[r];
+            const f = -1 / bub.nu[q];
+            const row = bub.rows[q];
+            row.fill(0);
+            for (const [s, nu] of eq.net) {
+              if (isMin[s]) continue;
+              row[bub.loc.get(s)] += f * (held[b + s] ? nu : nu / C[b + s]);
+            }
+            if (act) {
+              let Gd = 0;
+              for (const [s, nu] of eq.net) Gd += nu * dG[s];
+              const w = eq.water || 0;
+              const sd = sitPartners(act, eq.net, water.I);
+              for (const k of actCols[r]) {
+                let d = Gd * 0.5 * act.z[k] * act.z[k];
+                if (w) d += w * awOf(act, water, k);
+                if (sd) d += sd[k];
+                if (d) row[bub.loc.get(k)] += f * (held[b + k] ? d * C[b + k] : d);
+              }
+              if (sd) sitDone(act, eq.net);
+            }
+            bub.lnE[q] = f * relationAt(b, r, y, water);
+          }
+          bubbleReal(bub, act.gas, bub.cols.length, true);
+          bubbleRows(bub, (q) => y[b + bub.gas[q]], bub.cols.length, bubF, bubJ, 1);
+          for (const r of bub.rel) {
+            const sl = relG[c][r];
+            const Jr = bubJ[r];
+            for (let i = 0; i < sl.length; i++) if (Jr[i]) V[sl[i]] += Jr[i];
+          }
         }
       }
       return V;
@@ -7600,7 +8360,7 @@
         for (let j = 0; j < nb; j++) totalsCell[j] = y[tIndex(c, j)];
         for (let k = 0; k < na; k++) wCell[k] = massOf[b + active[k]];
         const pres = opts.fromState
-          ? Uint8Array.from(eqs, (eq) => (eq.mineral < 0 || y[b + eq.mineral] > 0 ? 1 : 0))
+          ? Uint8Array.from(eqs, (eq) => (eq.mineral < 0 || (eq.gas ? bubbleN(y, b) : y[b + eq.mineral]) > 0 ? 1 : 0))
           : present.subarray(c * ne, (c + 1) * ne);
         /*
           Projected, the held species in the state carry no weight and may
@@ -7678,11 +8438,43 @@
       the mineral is switched, and the run starts again from the state put
       back on its constraints (runModel in facsimile-solver.js).
     */
+    /*
+      And a bubble's, one for each cell after the minerals': while it is
+      there, minus its gases' amounts together, which reaches zero from below
+      when the last of it dissolves; while there is none, ln of the pressures
+      the water holds its gases at, together, over the total, which reaches
+      zero from below when they come to the total and a bubble forms.
+    */
     const where = (c) => (nc > 1 ? ` in cell ${c}` : '');
+    const nbub = bub ? nc : 0;
     const events = Array.from({ length: nc * nmin }, (_, q) => ({
       expr: `${base.speciesNames[eqs[mins[q % nmin]].mineral]}${where(Math.floor(q / nmin))}`,
       shown: '', assigns: ['present'], once: false, stop: false,
-    }));
+    })).concat(Array.from({ length: nbub }, (_, c) => ({
+      expr: `the bubble${where(c)}`, shown: '', assigns: ['present'], once: false, stop: false,
+    })));
+    // A relation without its gas, at the concentrations Cc of the cell at b.
+    const relationOf = (Cc, b, r, water) => {
+      const eq = eqs[r];
+      let g = -eq.lnK;
+      for (const [sp, nu] of eq.net) {
+        if (isMin[sp]) continue;
+        g += nu * Math.log(Math.max(Cc[b + sp], 1e-300));
+        if (act) g += nu * lnG[sp];
+      }
+      if (act && eq.water) g += eq.water * water.lnAw;
+      return g;
+    };
+    // ln of the pressures the water holds the bubble's gases at, together, less ln P.
+    const bubbleExcessAt = (Cc, b, water) => {
+      let top = -Infinity;
+      for (let q = 0; q < bub.rel.length; q++) bub.lnE[q] = -relationOf(Cc, b, bub.rel[q], water) / bub.nu[q];
+      bubbleReal(bub, act.gas, bub.cols.length, false);
+      for (let q = 0; q < bub.rel.length; q++) top = Math.max(top, bub.lnE[q]);
+      let S = 0;
+      for (let q = 0; q < bub.rel.length; q++) S += Math.exp(bub.lnE[q] - top);
+      return top + Math.log(S) - bub.lnP;
+    };
     function eventValues(t, y, out) {
       /*
         Projected, a held species in the state is only near its projection
@@ -7710,6 +8502,11 @@
             if (act && eq.water) g += eq.water * water.lnAw;
             out[c * nmin + q] = (eq.mineralNu < 0 ? 1 : -1) * g;
           }
+          if (bub) {
+            const at = nc * nmin + c;
+            if (!xs[c]) out[at] = present[c * ne + bub.rel[0]] ? -bubbleN(y, b) : -1;
+            else out[at] = present[c * ne + bub.rel[0]] ? -bubbleN(Cstar, b) : bubbleExcessAt(Cstar, b, water);
+          }
         }
         return out;
       }
@@ -7725,10 +8522,25 @@
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
           out[c * nmin + q] = (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
         }
+        if (bub) {
+          const at = nc * nmin + c;
+          if (present[c * ne + bub.rel[0]]) out[at] = -bubbleN(y, b);
+          else {
+            if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
+            out[at] = bubbleExcessAt(C, b, water);
+          }
+        }
       }
       return out;
     }
     function applyEvent(which) {
+      if (which >= nc * nmin) {
+        const c = which - nc * nmin;
+        const now = present[c * ne + bub.rel[0]] ? 0 : 1;
+        for (const r of bub.rel) present[c * ne + r] = now;
+        events[which].shown = now ? `a bubble forms${where(c)}` : `the bubble has dissolved${where(c)}`;
+        return Array.from(bub.gas, (g) => base.speciesNames[g]);
+      }
       const c = Math.floor(which / nmin);
       const r = mins[which % nmin];
       const at = c * ne + r;
@@ -7737,10 +8549,14 @@
       events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
       return [name];
     }
-    // Each run starts from the state: some of a mineral is there or none is.
+    // Each run starts from the state: some of a mineral is there or none is; a bubble, or none.
     const resetModes = (y) => {
       for (let c = 0; c < nc; c++) {
         for (const r of mins) present[c * ne + r] = y[c * ns + eqs[r].mineral] > 0 ? 1 : 0;
+        if (bub) {
+          const v = bubbleN(y, c * ns) > 0 ? 1 : 0;
+          for (const r of bub.rel) present[c * ne + r] = v;
+        }
       }
     };
     // The scale an amount is measured against: the largest total its cell starts with.
@@ -7767,9 +8583,9 @@
       pattern: { n, nnz, colPtr, rowIdx },
       species: names,
       initialState: () => { resetModes(initial); return Float64Array.from(initial); },
-      ...(nmin ? {
-        nevents: nc * nmin,
-        eventDirections: new Int8Array(nc * nmin).fill(1),
+      ...(nmin || nbub ? {
+        nevents: nc * nmin + nbub,
+        eventDirections: new Int8Array(nc * nmin + nbub).fill(1),
         events,
         eventValues,
         applyEvent,
@@ -7803,7 +8619,7 @@
       stateWidth: nBase,
       toConcentrations,
       fromConcentrations,
-      heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin },
+      heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin, bubble: bub ? bub.rel.length : 0 },
       density: nnz / (n * n),
     };
   }
@@ -7977,7 +8793,7 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
-    chargeOf, debyeHuckelAB, activityModel, activityAt,
+    chargeOf, debyeHuckelAB, activityModel, activityAt, prState,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.

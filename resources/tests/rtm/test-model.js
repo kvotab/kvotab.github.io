@@ -4831,6 +4831,285 @@ ${sitMore}
 }
 
 /* ======================================================================
+   2s. A gas phase (gas, GAS_VOLUME, GAS_PRESSURE)
+
+   PHREEQC's GAS_PHASE, ideal: a gas's activity is its partial pressure, n R
+   T/V in a fixed volume, its share of the bubble times the total at a fixed
+   pressure, the bubble there only while the water holds its gases at the
+   total between them. Against the closed forms: CO2 shared between water and
+   a volume of gas, and CO2 coming into a water with N2 at a fixed pressure --
+   when the bubble forms, what it then holds, when it dissolves again --; the
+   electron's projected form with a bubble; and the texts it refuses.
+   ====================================================================== */
+console.log('\n--- a gas phase ---');
+{
+  const R = 0.0820597;
+  const T = 298.15;
+  const KC = 10 ** -1.468;
+  const KN = 10 ** -3.18;
+  // CO2 between water and 0.5 L of gas, carbonic acid taking some: the start, then CO2 coming in.
+  const vol = `
+<SETTINGS>
+MODE = batch
+TEND = 1e4
+EQUILIBRATE = always
+GAS_VOLUME = 0.5
+
+<SPECIES>
+H+      1e-4
+OH-     1e-10
+CO2     1e-3
+HCO3-   1e-6
+CO2(g)  0      gas
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,              logK = -14
+CO2 <=> H+ + HCO3-,         logK = -6.35
+CO2(g) <=> CO2,             logK = -1.468
+
+<REACTIONS>
+=> CO2, k = 1e-8
+`;
+  const mv = RtmModel.compile(vol);
+  const at = (m, c, n) => c[m.speciesNames.indexOf(n)];
+  const henry = (m, c) => {
+    const p = at(m, c, 'CO2(g)') * R * T / 0.5;
+    return Math.abs(Math.log10(at(m, c, 'CO2')) - Math.log10(KC * p));
+  };
+  // By hand: CO2 from the gas pressure p; H+ from what the relations conserve, H+ - OH- - HCO3- as the start
+  // gives it; all carbon 1.001e-3.
+  const Ctot = 1e-3 + 1e-6;
+  const Hx = 1e-4 - 1e-10 - 1e-6;
+  const solve = (f, a, b) => { for (let i = 0; i < 200; i++) { const m = 0.5 * (a + b); if (f(m) > 0) b = m; else a = m; } return 0.5 * (a + b); };
+  const pHand = solve((p) => {
+    const co2 = KC * p;
+    const h = (Hx + Math.sqrt(Hx * Hx + 4 * (1e-14 + 10 ** -6.35 * co2))) / 2;
+    return co2 + (10 ** -6.35 * co2) / h + p * 0.5 / (R * T) - Ctot;
+  }, 1e-12, 1);
+  const c0 = mv.toConcentrations(mv.initialState());
+  const p0 = at(mv, c0, 'CO2(g)') * R * T / 0.5;
+  check('a fixed volume: CO2 shared between the water and 0.5 L of gas as the closed form shares it, n R T/V its pressure',
+    Math.abs(p0 / pHand - 1) < 1e-12 && henry(mv, c0) < 1e-14, `${p0.toExponential(8)} atm for ${pHand.toExponential(8)}`);
+  const rv = FacsimileODE.runModel(mv, { solver: 'ndf', tend: 1e4, rtol: 1e-9, atol: 1e-20, nonNegative: true });
+  let hw = 0;
+  let cw = 0;
+  for (let k = 0; k < rv.t.length; k++) {
+    const c = mv.toConcentrations(rv.y[k]);
+    hw = Math.max(hw, henry(mv, c));
+    cw = Math.max(cw, Math.abs((at(mv, c, 'CO2') + at(mv, c, 'HCO3-') + at(mv, c, 'CO2(g)')) / (Ctot + 1e-8 * rv.t[k]) - 1));
+  }
+  const vv = [RtmModel.verifyJacobian(mv, 0, mv.initialState()), RtmModel.verifyJacobian(mv, 1e4, rv.y[rv.y.length - 1])];
+  check('  CO2 coming in: Henry\'s law at every stored point, the carbon all there, and the Jacobian',
+    hw < 1e-12 && cw < 1e-10 && vv.every((v) => v.discrepancies.length === 0),
+    `${hw.toExponential(1)} in log, carbon ${cw.toExponential(1)}; ${vv[0].checked} and ${vv[1].checked} entries`);
+
+  // A bubble at 1 atm: CO2 made at k into a water with N2, then used up.
+  const bubble = (n2, rx) => `
+<SETTINGS>
+MODE = batch
+TEND = 4e4
+EQUILIBRATE = always
+GAS_PRESSURE = 1
+
+<SPECIES>
+CO2     0.01
+N2      ${n2}
+X       0.05
+Y       0.1
+Z       0
+CO2(g)  0  gas
+N2(g)   0  gas
+
+<EQUILIBRIUM>
+CO2(g) <=> CO2,  logK = -1.468
+N2(g) <=> N2,    logK = -3.18
+
+<REACTIONS>
+${rx}
+`;
+  // CO2 at a steady 1e-6 mol/kg/s: the bubble forms when CO2/KC + N2/KN reaches 1, N2 all still dissolved.
+  const mb = RtmModel.compile(bubble(1e-4, 'X => X + CO2, k = 2e-5'));
+  const tForm = ((1 - 1e-4 / KN) * KC - 0.01) / 1e-6;
+  const rb = FacsimileODE.runModel(mb, { solver: 'ndf', tend: 4e4, rtol: 1e-10, atol: 1e-22, nonNegative: true });
+  const formed = rb.events.find((e) => /a bubble forms/.test(e.expr));
+  // After it, by hand: x the CO2 share of the bubble, the gases' amounts from what is not dissolved.
+  const shareAt = (t) => solve((x) => {
+    const nC = 0.01 + 1e-6 * t - KC * x;
+    const nN = 1e-4 - KN * (1 - x);
+    return x - nC / (nC + nN);
+  }, 0, 1);
+  const kEnd = rb.t.length - 1;
+  const cEnd = mb.toConcentrations(rb.y[kEnd]);
+  const xEnd = at(mb, cEnd, 'CO2(g)') / (at(mb, cEnd, 'CO2(g)') + at(mb, cEnd, 'N2(g)'));
+  const xHand = shareAt(rb.t[kEnd]);
+  let bw = 0;
+  for (const y of rb.y) {
+    const c = mb.toConcentrations(y);
+    const N = at(mb, c, 'CO2(g)') + at(mb, c, 'N2(g)');
+    const pc = at(mb, c, 'CO2') / KC;
+    const pn = at(mb, c, 'N2') / KN;
+    bw = Math.max(bw, N > 0 ? Math.max(Math.abs(Math.log(pc + pn)), Math.abs(at(mb, c, 'CO2(g)') / N - pc / (pc + pn)))
+      : Math.max(0, Math.log(pc + pn)));
+  }
+  check('a fixed pressure: the bubble forms when the water holds CO2 and N2 at 1 atm between them, as the closed form '
+    + 'says, and then holds them in the shares the closed form gives', !!formed && Math.abs(formed.t / tForm - 1) < 1e-6
+    && Math.abs(xEnd - xHand) < 1e-9 && bw < 1e-12,
+  `formed at ${formed ? formed.t.toFixed(3) : '-'} s for ${tForm.toFixed(3)}; CO2 ${(xEnd * 100).toFixed(6)} % of it at the end `
+    + `for ${(xHand * 100).toFixed(6)}; every stored point within ${bw.toExponential(1)}`);
+  // Made and then used up: the bubble forms, and dissolves again.
+  const mb2 = RtmModel.compile(bubble(1e-4, 'X => CO2, k = 1e-3\nCO2 + Y => Z, k = 1e-3'));
+  const rb2 = FacsimileODE.runModel(mb2, { solver: 'ndf', tend: 4e4, rtol: 1e-9, atol: 1e-20, nonNegative: true });
+  const ev = rb2.events.map((e) => e.expr);
+  let k2 = 0;
+  while (k2 < rb2.t.length - 1 && rb2.t[k2] < 5e3) k2++;
+  const vb = [RtmModel.verifyJacobian(mb2, rb2.t[k2], rb2.y[k2]), RtmModel.verifyJacobian(mb2, 4e4, rb2.y[rb2.y.length - 1])];
+  check('  CO2 made and then used up: the bubble forms and dissolves again, and the Jacobian with it there and gone',
+    ev.join(', ') === 'a bubble forms, the bubble has dissolved' && vb.every((v) => v.discrepancies.length === 0),
+    `${rb2.events.map((e) => `${e.expr} at ${e.t.toFixed(0)} s`).join(', ')}; ${vb[0].checked} and ${vb[1].checked} entries`);
+
+  // Hydrogen from a rate law into a saline water with the electron: the bubble in each cell's speciation.
+  const h2 = (act, cells = 1) => `
+<SETTINGS>
+MODE = ${cells > 1 ? 'transport' : 'batch'}
+${cells > 1 ? `CELLS = ${cells}\nLENGTH = 0.01\nDIFFUSION = 1` : ''}
+TEND = 2e4
+EQUILIBRATE = always
+GAS_PRESSURE = 1
+${act}
+
+<SPECIES>
+H+      1e-7     D=1e-9
+OH-     1e-7     D=1e-9
+Na+     0.1      D=1e-9
+Cl-     0.1      D=1e-9
+H2      1e-6     D=1e-9
+N2      5e-4     D=1e-9
+e-      electron pe=-4
+H2(g)   0  gas
+N2(g)   0  gas
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,          logK = -14
+2 H+ + 2 e- <=> H2,        logK = -3.15
+H2(g) <=> H2,              logK = -3.105
+N2(g) <=> N2,              logK = -3.18
+${act.includes('sit') ? '\n<SIT>\nNa+ Cl- 0.03\nH+ Cl- 0.12\nNa+ OH- 0.04\nH2 Na+ 0.01\nN2 Na+ 0.02\n' : ''}
+<REACTIONS>
+=> H2, k = 5e-8
+`;
+  const lines = ['', 'ACTIVITY = sit'].map((act) => {
+    const m = RtmModel.compile(h2(act));
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 2e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+    const lnG = new Float64Array(m.speciesNames.length);
+    let worst = 0;
+    for (const y of r.y) {
+      const c = m.toConcentrations(y);
+      if (m.act.kind !== 'none') RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(m.speciesNames.length));
+      const g = (n) => (m.act.kind !== 'none' ? Math.exp(lnG[m.speciesNames.indexOf(n)]) : 1);
+      const ph = at(m, c, 'H2') * g('H2') / 10 ** -3.105;
+      const pn = at(m, c, 'N2') * g('N2') / 10 ** -3.18;
+      const N = at(m, c, 'H2(g)') + at(m, c, 'N2(g)');
+      worst = Math.max(worst, N > 0 ? Math.max(Math.abs(Math.log(ph + pn)), Math.abs(at(m, c, 'H2(g)') / N - ph / (ph + pn)))
+        : Math.max(0, Math.log(ph + pn)));
+    }
+    const v = [RtmModel.verifyJacobian(m, 0, m.initialState()), RtmModel.verifyJacobian(m, 2e4, r.y[r.y.length - 1])];
+    return { act: act || 'no activity model', worst, events: r.events.map((e) => e.expr), v };
+  });
+  const hcol = RtmModel.compile(h2('ACTIVITY = sit', 3));
+  const rcol = FacsimileODE.runModel(hcol, { solver: 'ndf', tend: 2e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const vcol = RtmModel.verifyJacobian(hcol, 2e4, rcol.y[rcol.y.length - 1]);
+  check('the electron and a bubble: hydrogen from a rate law forms one, every stored point on it, each cell speciated '
+    + 'in its components, with no activity model and under SIT, and in a column of three cells',
+  lines.every((l) => l.worst < 1e-12 && l.events.join() === 'a bubble forms' && l.v.every((v) => v.discrepancies.length === 0))
+    && rcol.events.length === 3 && vcol.discrepancies.length === 0,
+  `${lines.map((l) => `${l.act}: ${l.worst.toExponential(1)}, ${l.v[0].checked} and ${l.v[1].checked} entries`).join('; ')}; `
+    + `the column ${vcol.checked} entries`);
+
+  // The texts it refuses.
+  const refuse = (t) => { try { RtmModel.compile(t); return ''; } catch (e) { return e.message; } };
+  const B1 = bubble(1e-4, '');
+  const cases = [
+    ['a gas with neither volume nor pressure', B1.replace('GAS_PRESSURE = 1\n', ''), /give the gas phase GAS_VOLUME/],
+    ['both', B1.replace('GAS_PRESSURE = 1', 'GAS_PRESSURE = 1\nGAS_VOLUME = 1'), /both given/],
+    ['a gas in no relation', B1.replace('N2(g) <=> N2,    logK = -3.18\n', ''), /N2\(g\) is a gas and in no relation/],
+    ['two gases in one relation', B1.replace('N2(g) <=> N2,    logK = -3.18', 'N2(g) <=> N2,    logK = -3.18\nN2(g) <=> CO2(g), logK = 0'),
+      /two gases in it/],
+    ['a gas in two relations at a fixed pressure', B1.replace('N2(g) <=> N2,    logK = -3.18',
+      'N2(g) <=> N2,    logK = -3.18\nN2(g) + X <=> Z, logK = 1'), /in two relations/],
+    ['a kf on a bubble\'s relation', B1.replace('logK = -3.18', 'logK = -3.18, kf = 1e3'), /takes no kf/],
+    ['a gas that moves', B1.replace('N2(g)   0  gas', 'N2(g)   0  gas  D=1e-9'), /takes no D/],
+    ['a charge on a gas', B1.replace('N2(g)   0  gas', 'N2(g)   0  gas  z=1'), /takes no z, a or b/],
+  ];
+  const wrong = cases.filter(([, t, re]) => !re.test(refuse(t)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, t]) => `${what}: "${refuse(t)}"`).join(' | '));
+  // Real gases: Peng and Robinson's equation, in a fixed volume and in a bubble.
+  const real = (fixed) => `
+<SETTINGS>
+MODE = batch
+TEND = 1e5
+EQUILIBRATE = always
+${fixed}
+
+<SPECIES>
+CO2     0.6
+N2      0.02
+X       0.5
+CO2(g)  0  gas  Tc=304.2  Pc=72.86  omega=0.225
+N2(g)   0  gas  Tc=126.2  Pc=33.5   omega=0.039
+
+<EQUILIBRIUM>
+CO2(g) <=> CO2,  logK = -1.468
+N2(g) <=> N2,    logK = -3.18
+
+<GAS_PAIRS>
+CO2(g)  N2(g)  -0.02
+
+<REACTIONS>
+X => CO2, k = 1e-5
+`;
+  const rl = ['GAS_VOLUME = 0.2', 'GAS_PRESSURE = 10'].map((fixed) => {
+    const m = RtmModel.compile(real(fixed));
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 1e5, rtol: 1e-9, atol: 1e-20, nonNegative: true });
+    const v = [RtmModel.verifyJacobian(m, 0, m.initialState()), RtmModel.verifyJacobian(m, 1e5, r.y[r.y.length - 1])];
+    const c = m.toConcentrations(r.y[r.y.length - 1]);
+    // The relations in fugacity at the end: phi from the equation at the run's own composition.
+    const gas = m.act.gas;
+    const n = [at(m, c, 'CO2(g)'), at(m, c, 'N2(g)')];
+    const N = n[0] + n[1];
+    const x = Float64Array.of(n[0] / N, n[1] / N);
+    const st = RtmModel.prState(gas.pr, x, gas.fixed === 'pressure' ? gas.pressure : 0, gas.fixed === 'volume' ? gas.volume / N : 0);
+    const off2 = Math.max(Math.abs(Math.log(at(m, c, 'CO2')) - Math.log(10 ** -1.468 * Math.exp(gas.pr.lnPhi[0]) * x[0] * st.P)),
+      Math.abs(Math.log(at(m, c, 'N2')) - Math.log(10 ** -3.18 * Math.exp(gas.pr.lnPhi[1]) * x[1] * st.P)));
+    return { fixed, v, off2, P: st.P, phi: Math.exp(gas.pr.lnPhi[0]), events: r.events.map((e) => e.expr) };
+  });
+  check('real gases (Tc, Pc, omega, <GAS_PAIRS>): each relation holds in fugacity, phi from Peng and Robinson\'s '
+    + 'equation, in a fixed volume and in a bubble at 10 atm; and the Jacobian, phi read through every gas',
+  rl.every((l) => l.off2 < 1e-10 && l.v.every((v) => v.discrepancies.length === 0)),
+  rl.map((l) => `${l.fixed}: ${l.off2.toExponential(1)} in ln f, P ${l.P.toFixed(3)} atm, phi(CO2) ${l.phi.toFixed(5)}, `
+    + `${l.v[0].checked} and ${l.v[1].checked} entries${l.events.length ? `, ${l.events.join(', ')}` : ''}`).join('; '));
+  const RF = real('GAS_VOLUME = 0.2');
+  const rcases = [
+    ['real and ideal gases in one phase', RF.replace('N2(g)   0  gas  Tc=126.2  Pc=33.5   omega=0.039', 'N2(g)   0  gas'),
+      /all real gases, held by Peng and Robinson's equation, or all ideal/],
+    ['Tc without Pc', RF.replace('Tc=126.2  Pc=33.5', 'Tc=126.2'), /Tc without Pc/],
+    ['a critical constant on a species that is no gas', RF.replace('X       0.5', 'X       0.5  Tc=300'), /a real gas's/],
+    ['a pair of a species that is no gas', RF.replace('CO2(g)  N2(g)  -0.02', 'CO2(g)  X  -0.02'), /"X" in <GAS_PAIRS> is not a gas/],
+    ['a pair given twice', RF.replace('CO2(g)  N2(g)  -0.02', 'CO2(g)  N2(g)  -0.02\nN2(g)  CO2(g)  0'), /paired twice/],
+    ['pairs for ideal gases', RF.replace(/  Tc=\S+  Pc=\S+\s+omega=\S+/g, ''), /no gas is given Tc and Pc/],
+    ['PRESSURE other than a bubble\'s', real('GAS_PRESSURE = 10\nPRESSURE = 3'), /a bubble at a fixed pressure puts the water at its own/],
+  ];
+  const rwrong = rcases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${rcases.map((c) => c[0]).join('; ')}`, !rwrong.length,
+    rwrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+  const noGas = RtmModel.compile(vol.replace('CO2(g)  0      gas\n', '').replace('CO2(g) <=> CO2,             logK = -1.468\n', ''));
+  check('  and GAS_VOLUME with no gas is said to do nothing; TEMPERATURE with a gas and no ACTIVITY is not',
+    noGas.warnings.some((x) => /GAS_VOLUME is a gas phase's, and no species is a gas/.test(x))
+    && !RtmModel.compile(vol.replace('GAS_VOLUME = 0.5', 'GAS_VOLUME = 0.5\nTEMPERATURE = 15')).warnings
+      .some((x) => /TEMPERATURE sets/.test(x)));
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

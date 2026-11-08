@@ -495,6 +495,42 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
 
+            # --- a gas phase in the water: carried as real gases, run, and looked at through PHREEQC ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/\\nEND\\s*$/, '\\nGAS_PHASE 1\\n  -fixed_volume\\n  -volume 0.5\\n"
+                          "  CO2(g) 0\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            ongas = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                      f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            gas_text = await page.ev("document.getElementById('rtmText').value")
+            check('a gas phase in the water is carried: a real gas in a fixed volume, the water at its pressure, and the '
+                  'report says so',
+                  isinstance(ongas, str) and 'A gas phase in a fixed volume of ' in ongas and isinstance(gas_text, str)
+                  and re.search(r'^GAS_VOLUME = 0\.(?:5|49999)[0-9]*$', gas_text, re.M) is not None
+                  and re.search(r'^PRESSURE = [0-9.e-]+$', gas_text, re.M) is not None
+                  and re.search(r'^CO2\(g\) +[0-9.e-]+ +gas +Tc=304\.2 +Pc=72\.86 +omega=0\.225$', gas_text, re.M) is not None,
+                  True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give the gas phase', await page.ev(
+                "/CO2\\(g\\) in a gas phase of 0\\.5 L to each kg of water/.test(document.getElementById('rtmFacts').textContent)"),
+                True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            gas_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_gas = re.search(r"The gas phase \(CO2\(g\), in 0\.5 L per kgw\): each gas's partial pressure in the run is "
+                              r"within ([0-9.e+-]+) in log", gas_summary or '')
+            check('looked at through PHREEQC, the run\'s gas is at the pressure PHREEQC finds the water holds it at',
+                  m_gas is not None and float(m_gas.group(1)) < 1e-4, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column, looked at against distance ---
             column = ('<SETTINGS>\\nMODE = transport\\nCELLS = 5\\nLENGTH = 0.05\\nDIFFUSION = 1\\nTEND = 1e4\\n'
                       'EQUILIBRATE = always\\n\\n<SPECIES>\\nH+      1e-7   D=1e-9\\nOH-     1e-7   D=1e-9\\n'

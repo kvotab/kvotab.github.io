@@ -67,7 +67,7 @@
     'ISOTOPE_ALPHAS', 'CALCULATE_VALUES', 'PITZER', 'SIT', 'SOLUTION', 'SOLUTION_SPREAD',
     'EQUILIBRIUM_PHASES', 'KINETICS', 'REACTION', 'REACTION_TEMPERATURE', 'REACTION_PRESSURE',
     'SELECTED_OUTPUT', 'USER_PUNCH', 'USER_PRINT', 'USER_GRAPH', 'TITLE', 'DATABASE', 'KNOBS',
-    'MIX', 'GAS_PHASE', 'SOLID_SOLUTIONS', 'SURFACE', 'EXCHANGE', 'SAVE', 'USE',
+    'MIX', 'GAS_PHASE', 'SOLID_SOLUTIONS', 'SURFACE', 'EXCHANGE', 'SAVE', 'USE', 'GAS_BINARY_PARAMETERS',
     'INCREMENTAL_REACTIONS', 'TRANSPORT', 'ADVECTION', 'PRINT', 'INVERSE_MODELING', 'COPY',
     'DELETE', 'RUN_CELLS', 'DUMP', 'MEAN_GAMMAS', 'SOLUTION_MODIFY', 'EQUILIBRIUM_PHASES_MODIFY',
     'EXCHANGE_MODIFY', 'SURFACE_MODIFY', 'KINETICS_MODIFY', 'GAS_PHASE_MODIFY',
@@ -281,6 +281,28 @@
       // SIT's interaction coefficients, by kind and pair: 'eps Cl- Na+' -> {type, s1, s2, a},
       // a its temperature terms as PHREEQC reads them (sitParam); a pair given again replaces it.
       this.sit = new Map();
+      // A phase's critical temperature (K) and pressure (atm) and acentric factor, where the database gives
+      // them: PHREEQC then holds that gas in a gas phase by Peng and Robinson's equation of state.
+      this.critical = new Map();
+      // GAS_BINARY_PARAMETERS: 'CO2(g) H2O(g)' (the pair, sorted) -> k.
+      this.gasBinary = new Map();
+    }
+
+    /**
+     * The binary parameter k of two gases as PHREEQC's
+     * calc_gas_binary_parameter takes it: GAS_BINARY_PARAMETERS where it is
+     * given, and otherwise PHREEQC's own for water vapour with CO2, H2S,
+     * CH4, N2, ethane and propane; 0 for any other pair.
+     */
+    gasK(g1, g2) {
+      const key = [g1, g2].sort().join(' ');
+      if (this.gasBinary.has(key)) return this.gasBinary.get(key);
+      const other = g1 === 'H2O(g)' ? g2 : g2 === 'H2O(g)' ? g1 : null;
+      if (other === null || g1 === g2) return 0;
+      if (['CO2(g)', 'H2S(g)', 'H2Sg(g)'].includes(other)) return 1 - 0.81;
+      if (['CH4(g)', 'Mtg(g)', 'Methane(g)', 'N2(g)', 'Ntg(g)', 'Ethane(g)'].includes(other)) return 1 - 0.51;
+      if (other === 'Propane(g)') return 1 - 0.45;
+      return 0;
     }
 
     /**
@@ -292,6 +314,7 @@
       let block = null;
       let last = null;
       let sitType = null;
+      let phase = null;
       for (const line of logicalLines(text)) {
         const tokens = line.trim().split(/\s+/).filter(Boolean);
         if (!tokens.length) continue;
@@ -369,6 +392,10 @@
               if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
             }
           }
+        } else if (block === 'GAS_BINARY_PARAMETERS') {
+          if (tokens.length >= 3 && Number.isFinite(Number(tokens[2]))) {
+            this.gasBinary.set([tokens[0], tokens[1]].sort().join(' '), Number(tokens[2]));
+          }
         } else if (block === 'SIT') {
           // -epsilon and -epsilon1 start a list of pairs; PHREEQC takes the first option a shorter word begins.
           if (tokens[0].startsWith('-')) {
@@ -392,6 +419,15 @@
           if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
             if (!this.phases.includes(tokens[0])) this.phases.push(tokens[0]);
             last = tokens[0];
+            phase = tokens[0];
+            this.critical.delete(phase);
+          } else if (phase && /^-(t_c|p_c|omega)$/i.test(tokens[0]) && tokens.length > 1) {
+            const v = Number(tokens[1]);
+            if (Number.isFinite(v)) {
+              const c = this.critical.get(phase) || { tc: 0, pc: 0, omega: 0 };
+              c[{ '-t_c': 'tc', '-p_c': 'pc', '-omega': 'omega' }[tokens[0].toLowerCase()]] = v;
+              this.critical.set(phase, c);
+            }
           } else if (last && line.includes('=') && !tokens[0].startsWith('-')) {
             // The phase's reaction as written: its own formula, then whatever
             // else it takes, on the left; what it dissolves to on the right.
@@ -511,6 +547,43 @@
       }
       const num = (x) => (x === undefined ? null : Number(x));
       cur.sites.push({ master: tokens[0], sites: num(tokens[1]), area: num(tokens[2]), mass: num(tokens[3]) });
+    }
+    return out;
+  }
+
+  /**
+   * The GAS_PHASE blocks of an input: how each is held -- 'pressure', PHREEQC's
+   * default, or 'volume' -- its total pressure (atm) and volume (L), as
+   * PHREEQC reads them (1 and 1 unless given), and its gases with the partial
+   * pressures they are given. A block numbered again takes the later one.
+   */
+  function readGasPhases(text) {
+    const out = new Map();
+    let cur = null;
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word)) {
+        cur = null;
+        if (word === 'GAS_PHASE') {
+          cur = { fixed: 'pressure', pressure: 1, volume: 1, comps: [] };
+          out.delete(tokens[1] || '1');
+          out.set(tokens[1] || '1', cur);
+        }
+        continue;
+      }
+      if (!cur) continue;
+      if (tokens[0].startsWith('-')) {
+        const opt = tokens[0].slice(1).toLowerCase();
+        const v = Number(tokens[1]);
+        if (opt === 'fixed_pressure') cur.fixed = 'pressure';
+        else if (opt === 'fixed_volume') cur.fixed = 'volume';
+        else if ('pressure'.startsWith(opt) && opt.length >= 2 && Number.isFinite(v)) cur.pressure = v;
+        else if ('volume'.startsWith(opt) && Number.isFinite(v)) cur.volume = v;
+        continue;
+      }
+      cur.comps.push({ name: tokens[0], p: tokens.length > 1 ? Number(tokens[1]) : null });
     }
     return out;
   }
@@ -734,6 +807,19 @@
     for (const a of assemblage) extras.push(`EQUI("${a.name}")`, `LK_PHASE("${a.name}")`, `SI("${a.name}")`);
     const waterAt = assemblage.length ? extras.length : -1;
     if (assemblage.length) extras.push('TOT("water")');
+    /*
+      A GAS_PHASE carried as a gas phase, held as PHREEQC held it: each gas's
+      moles in it, its log K at this temperature and pressure, and the
+      pressure the water holds it at (10^SI); the phase's pressure, and the
+      water's kilograms, which the amounts are per.
+    */
+    const gasBlock = (() => { const g = readGasPhases(o.water.text); return g.size ? [...g.values()].pop() : null; })();
+    const carryGas = !!gasBlock && o.gas !== false && !!o.exact;
+    const gasAt = extras.length;
+    if (carryGas) {
+      for (const c of gasBlock.comps) extras.push(`GAS("${c.name}")`, `LK_PHASE("${c.name}")`, `SI("${c.name}")`);
+      extras.push('GAS_P', 'TOT("water")');
+    }
     // Each exchanger's activity: its master species is no amount, and
     // SYS("ex") leaves it out.
     const exMasters = [...new Set(db.exMaster.values())];
@@ -889,6 +975,65 @@
         if (t.n !== 'H2O' && !isE(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
       }
     });
+    /*
+      THE GAS PHASE: each gas at the moles PHREEQC left in it, per kilogram of
+      water, with its dissolution as the database writes it, which a run
+      holds exactly. A gas PHREEQC holds as a real gas -- the database gives
+      it a critical temperature and pressure, and PHREEQC then uses Peng and
+      Robinson's equation of state -- is not carried, and nor is a bubble one
+      of whose gases is not.
+    */
+    const gases = [];
+    const gasSkipped = [];
+    let gasFixed = null;
+    if (gasBlock && !carryGas) {
+      gasSkipped.push({ name: 'GAS_PHASE', why: o.gas === false ? 'asked not to be carried'
+        : 'a gas phase is carried when the relations are held exactly' });
+    } else if (carryGas) {
+      const n = gasBlock.comps.length;
+      const kgw = Number(w.x[gasAt + 3 * n + 1]);
+      const dropped = [];
+      gasBlock.comps.forEach((c, i) => {
+        const r = db.phaseReaction.get(c.name);
+        const moles = Number(w.x[gasAt + 3 * i]);
+        const lk = Number(w.x[gasAt + 3 * i + 1]);
+        const si = Number(w.x[gasAt + 3 * i + 2]);
+        const skip = (why) => { gasSkipped.push({ name: c.name, why }); if (moles > 0) dropped.push(c.name); };
+        if (!r || !r.left.length) { skip('the database has no reaction for it'); return; }
+        const crit = db.critical.get(c.name);
+        const real = !!crit && crit.tc > 0 && crit.pc > 0;
+        const others = [...r.left.slice(1), ...r.right];
+        if (others.some((t) => t.n === 'e-') && !carryRedox) {
+          skip('it dissolves with electrons, and the valence states are not held at one pe');
+          return;
+        }
+        const missing = others.filter((t) => t.n !== 'H2O' && !isE(t.n) && !molal.has(t.n)).map((t) => t.n);
+        if (missing.length) { skip(`the water has no ${missing.join(', ')}`); return; }
+        if (!Number.isFinite(moles) || !Number.isFinite(lk) || !(kgw > 0)) { skip('PHREEQC gave no amount or log K for it'); return; }
+        // PHREEQC keeps 1e-25 mol of a gas phase that is not there (MIN_TOTAL): that is none.
+        gases.push({ phase: c.name, amount: moles > 1e-20 ? moles / kgw : 0, lk, pressure: Number.isFinite(si) ? 10 ** si : 0,
+          c0: r.left[0].c, reac: r.left.slice(1), prod: r.right, crit: real ? crit : null });
+      });
+      // PHREEQC does not mix ideal and real gases in a phase: neither is carried then.
+      if (gases.some((g) => g.crit) && gases.some((g) => !g.crit)) {
+        for (const g of gases) gasSkipped.push({ name: g.phase, why: 'the gas phase mixes real gases (a critical temperature '
+          + 'and pressure in the database) with ideal ones, which PHREEQC does not hold together' });
+        gases.length = 0;
+      }
+      if (dropped.length && gasBlock.fixed === 'pressure' && gases.length) {
+        for (const g of gases) gasSkipped.push({ name: g.phase, why: `its bubble holds ${dropped.join(', ')} as well, which is not carried` });
+        gases.length = 0;
+      }
+      if (gases.length) {
+        gasFixed = gasBlock.fixed === 'pressure' ? { fixed: 'pressure', pressure: gasBlock.pressure }
+          : { fixed: 'volume', volume: gasBlock.volume / kgw, atm: Number(w.x[gasAt + 3 * n]) };
+        for (const g of gases) {
+          for (const t of [...g.reac, ...g.prod]) {
+            if (t.n !== 'H2O' && !isE(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+      }
+    }
     /*
       THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
       its relation as the database writes it, which a run holds exactly.
@@ -1092,6 +1237,7 @@
     const outOfEq = !!peSpread && peSpread[1] - peSpread[0] > 1e-6;
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
+    for (const g of gases) g.name = rtmName(g.phase, taken);
     // The exchangers used, and the species on them, by the names written.
     const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
     const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
@@ -1100,6 +1246,7 @@
     for (const pp of potentials) pp.name = rtmName(pp.species, taken);
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
       .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]))
+      .concat(gases.filter((g) => g.name !== g.phase).map((g) => [g.phase, g.name]))
       .concat([...exName].filter(([sp, nm]) => sp !== nm));
     const side = (terms) => terms
       .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || exName.get(t.n) || t.n))
@@ -1179,6 +1326,7 @@
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
     const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length),
+      ...gases.map((g) => g.name.length),
       ...[...exName.values()].map((nm) => nm.length), ...onSf.map((e) => e.name.length),
       ...potentials.map((pp) => pp.name.length)) + 2;
     const out = [];
@@ -1259,6 +1407,29 @@
     if (phasesSkipped.length) {
       out.push(`# Phases not carried: ${phasesSkipped.map((ps) => `${ps.name}, ${ps.why}`).join('; ')}.`);
     }
+    if (gases.length) {
+      const list = gases.map((g) => `${g.name} ${fmtG(g.amount, 4)}`).join(', ');
+      if (gases[0].crit) {
+        out.push("# Its gases are real gases, as PHREEQC holds them where the database gives each its critical temperature");
+        out.push("# and pressure: each gas's activity is its fugacity, phi times its partial pressure, phi from Peng and");
+        out.push("# Robinson's equation of state (Tc, Pc, omega on its line, the pairs' binary parameters in <GAS_PAIRS>).");
+      }
+      if (gasFixed.fixed === 'pressure') {
+        out.push(`# A gas phase at a fixed total pressure of ${fmtG(gasFixed.pressure, 6)} atm (PHREEQC's GAS_PHASE), its gases at the`);
+        out.push(`# moles PHREEQC left in it to each kg of water (${list}). Each gas's activity is its partial`);
+        out.push("# pressure, its share of the bubble times the total, and the bubble is there only while the");
+        out.push('# pressures the water holds its gases at add up to the total.');
+      } else {
+        out.push(`# A gas phase in a fixed volume of ${fmtG(gasFixed.volume, 6)} L to each kg of water (PHREEQC's GAS_PHASE), its gases`);
+        out.push(`# at the moles PHREEQC left in it (${list}). Each gas's partial pressure is ${gases[0].crit ? 'its share of the'
+          + " equation's pressure at V/N" : 'n R T/V'}.`);
+        out.push(`# PHREEQC puts the water at the gas phase's pressure, ${fmtG(gasFixed.atm, 6)} atm here, and so does PRESSURE: the run`);
+        out.push('# holds it there, where PHREEQC follows the pressure as the gas phase fills or empties.');
+      }
+    }
+    if (gasSkipped.length) {
+      out.push(`# Not carried from the gas phase: ${gasSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
+    }
     if (onEx.length) {
       const cap = (sp) => onEx.filter((e) => e.master === sp)
         .reduce((acc, e) => acc + e.m * (e.right.concat(e.left).find((t) => t.n === sp) || { c: 0 }).c, 0);
@@ -1313,14 +1484,23 @@
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
-    // A double layer reads it too, without ACTIVITY.
-    else if (potentials.length) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
+    // A double layer reads it too, without ACTIVITY, and a gas phase (R T).
+    else if (potentials.length || gases.length) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
+    if (gases.length) {
+      out.push(gasFixed.fixed === 'pressure' ? `GAS_PRESSURE = ${fmtG(gasFixed.pressure, 12)}`
+        : `GAS_VOLUME = ${fmtG(gasFixed.volume, 12)}`);
+      // The water at the gas phase's pressure, as PHREEQC puts it: its A, B and dielectric constant.
+      if (gasFixed.fixed === 'volume' && gasFixed.atm > 0 && Math.abs(gasFixed.atm - 1) > 1e-12) {
+        out.push(`PRESSURE = ${fmtG(gasFixed.atm, 15)}`);
+      }
+    }
     // Each species its own D: the ions coupled, so the water stays neutral as they spread.
     if (o.dw) out.push('DIFFUSION = nernst-planck');
     out.push('', '<SPECIES>');
     const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length),
       ...minerals.map((mn) => fmtG(mn.amount, 15).length), ...onEx.map((e) => fmtG(e.m, 15).length),
-      ...onSf.map((e) => fmtG(e.m, 15).length), ...potentials.map((pp) => fmtG(pp.a, 15).length)) + 2;
+      ...onSf.map((e) => fmtG(e.m, 15).length), ...potentials.map((pp) => fmtG(pp.a, 15).length),
+      ...gases.map((g) => fmtG(g.amount, 15).length)) + 2;
     for (const s of order) {
       let d = '';
       if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
@@ -1346,6 +1526,11 @@
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
       out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+    }
+    for (const g of gases) {
+      const amount = fmtG(g.amount, 15);
+      const crit = g.crit ? `  Tc=${fmtG(g.crit.tc, 10)}  Pc=${fmtG(g.crit.pc, 10)}  omega=${fmtG(g.crit.omega, 10)}` : '';
+      out.push(`${g.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}gas` : `${amount}  gas`}${crit}`);
     }
     for (const sp of exUsed) out.push(`${exName.get(sp).padEnd(width)}${''.padEnd(follow ? width2 : 0)}exchanger`);
     for (const e of onEx) {
@@ -1389,6 +1574,21 @@
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${logk.toFixed(4)}`}${mn.target ? `, SI ${fmtG(mn.target, 6)}` : ''}`,
       });
     }
+    // A gas's dissolution: its activity is its partial pressure, and its log K the phase's at this temperature.
+    for (const g of gases) {
+      const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
+      const nw = g.prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
+        - g.reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+      const logkC = g.lk - sumLg(g.prod) + sumLg(g.reac) - nw * logAw;
+      const reac = [{ c: g.c0, n: g.name }, ...(follow ? g.reac : aq(g.reac))];
+      const prod = follow ? g.prod : aq(g.prod);
+      lines.push({
+        rel: `${side(reac)} <=> ${side(prod)}`,
+        k: `logK = ${(follow ? g.lk : logkC).toFixed(10)}`,
+        note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${g.lk.toFixed(4)}`}, ${fmtG(g.pressure, 4)} atm`,
+      });
+    }
     for (const e of onEx) {
       const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
       const reac = follow ? e.left : aq(e.left);
@@ -1430,6 +1630,21 @@
           + `${p.eps1 ? `  eps1=${fmtG(p.eps1, 15)}` : ''}`);
       }
     }
+    // Real gases: each pair's binary parameter, where PHREEQC's is not 0.
+    const gasPairs = [];
+    if (gases.some((g) => g.crit)) {
+      for (let i = 0; i < gases.length; i++) {
+        for (let j = i + 1; j < gases.length; j++) {
+          const k = db.gasK(gases[i].phase, gases[j].phase);
+          if (k) gasPairs.push([gases[i].name, gases[j].name, k]);
+        }
+      }
+    }
+    if (gasPairs.length) {
+      out.push('', '<GAS_PAIRS>');
+      const wn = Math.max(...gasPairs.map((pr) => Math.max(pr[0].length, pr[1].length))) + 2;
+      for (const [a, b, k] of gasPairs) out.push(`${a.padEnd(wn)}${b.padEnd(wn)}${fmtG(k, 15)}`);
+    }
     out.push('', '<REACTIONS>', '# Your kinetic reactions here, in the same species and units.');
     const text = `${out.join('\n')}\n`;
 
@@ -1442,6 +1657,7 @@
       molal,
       // The minerals' and exchange species' amounts as written, by their names in the model.
       amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))
+        .concat(gases.map((g) => [g.name, g.amount]))
         .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
@@ -1467,6 +1683,9 @@
           potentials: potentials.map((pp) => ({ name: pp.name, surface: pp.surface, psi: pp.psi, area: pp.area,
             grams: pp.grams })) } : null,
         surfaceSkipped: sfSkipped,
+        gas: gases.length ? { ...gasFixed, species: gases.map((g) => ({ phase: g.phase, as: g.name, amount: g.amount,
+          pressure: g.pressure })) } : null,
+        gasSkipped,
       },
     };
   }
@@ -1519,6 +1738,34 @@
       if (cut > 0) out.set(parts[0].slice(0, cut), { name: parts[0], area: num('area'), grams: num('grams') });
     }
     return out;
+  }
+
+  /**
+   * A model's gas phase: its gases, and how the phase is held -- GAS_VOLUME,
+   * litres to each kg of water, or GAS_PRESSURE, atm -- at TEMPERATURE. Null
+   * where the model has no gas.
+   */
+  function modelGas(text) {
+    const names = new Set();
+    const set = {};
+    let section = null;
+    for (const raw of String(text || '').split(/\r\n|\r|\n/)) {
+      const line = raw.split('#', 1)[0].trim();
+      if (!line) continue;
+      const m = /^<\s*([A-Za-z_]+)(?:\s[^>]*)?>$/.exec(line);
+      if (m) { section = m[1].toUpperCase(); continue; }
+      if (section === 'SETTINGS') {
+        const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(\S+)/.exec(line);
+        if (kv) set[kv[1].toUpperCase()] = Number(kv[2]);
+      } else if (section === 'SPECIES') {
+        const parts = line.split(/[\s,;]+/).filter(Boolean);
+        if (parts.slice(1).some((x) => /^gas$/i.test(x))) names.add(parts[0]);
+      }
+    }
+    if (!names.size) return null;
+    const volume = set.GAS_VOLUME > 0 ? set.GAS_VOLUME : 0;
+    return { names, fixed: volume ? 'volume' : 'pressure', volume, pressure: set.GAS_PRESSURE > 0 ? set.GAS_PRESSURE : 0,
+      temperature: Number.isFinite(set.TEMPERATURE) ? set.TEMPERATURE : 25 };
   }
 
   /** The <EQUILIBRIUM> lines of a model text as {rel, reac, prod}. */
@@ -1602,6 +1849,9 @@
     // The model's electron is PHREEQC's: its activity is the pe each water is given.
     const electron = modelElectron(o.modelText);
     const eIndex = electron ? model.species.indexOf(electron) : -1;
+    // A gas of the model is a phase of the database too: its pressure against the one each water holds it at.
+    const gasModel = modelGas(o.modelText);
+    const gasSpecies = [];
     model.species.forEach((n) => {
       let p;
       if (skip.has(n)) { skipped.set(n, 'asked'); return; }
@@ -1615,7 +1865,11 @@
       } else if (SKIP_ALWAYS.has(n)) { skipped.set(n, SKIP_ALWAYS.get(n)); return; }
       else if (db.reaction.has(n)) p = n;
       else if (back.has(n)) p = back.get(n);
-      else if (phaseBack.has(n)) {
+      else if (gasModel && gasModel.names.has(n) && phaseBack.has(n)) {
+        skipped.set(n, 'a gas: not in the water, and its partial pressure is compared with the one each water holds it at');
+        gasSpecies.push({ name: n, phase: phaseBack.get(n) });
+        return;
+      } else if (phaseBack.has(n)) {
         skipped.set(n, 'a mineral: not in the water, and its saturation index is among the phases');
         minerals.push({ name: n, phase: phaseBack.get(n) });
         return;
@@ -1992,8 +2246,60 @@
       const floor = o.siFloor != null ? o.siFloor : -3;
       phases = [...best].sort((a, b) => b[1] - a[1]).filter(([, si]) => si >= floor).map(([p]) => p);
     }
-    // The model's own minerals always: what it holds, PHREEQC can look at.
+    // The model's own minerals always: what it holds, PHREEQC can look at; and its gases.
     for (const mn of minerals) if (!phases.includes(mn.phase)) phases.push(mn.phase);
+    for (const g of gasSpecies) if (!phases.includes(g.phase)) phases.push(g.phase);
+
+    /*
+      --- the model's gases: each one's partial pressure in the run -- n R T/V
+      in a fixed volume, its share of the bubble times the total at a fixed
+      pressure -- against the pressure the water holds it at, 10^SI, where
+      the run has any of it. Held, they are the same.
+    */
+    let gas = null;
+    if (gasSpecies.length) {
+      const RT = 0.0820597 * (gasModel.temperature + 273.15);
+      const at = gasSpecies.map((g) => model.species.indexOf(g.name));
+      // Real gases: the model's own Peng and Robinson, phi times the partial pressure, its fugacity.
+      const RtmG = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel) || null;
+      let real = null;
+      if (RtmG && /\bTc\s*=/i.test(String(o.modelText || ''))) {
+        try {
+          const own = RtmG.compile(o.modelText);
+          if (own.act && own.act.gas && own.act.gas.pr) real = own.act.gas;
+        } catch (e) { real = null; }
+      }
+      let worst = { by: 0, at: null, name: '' };
+      let compared = 0;
+      for (const r of good) {
+        const amt = at.map((si) => value(r.state, si, r.k));
+        const N = amt.reduce((a, v) => a + Math.max(v, 0), 0);
+        let lnPhi = null;
+        let Ptot = gasModel.fixed === 'volume' ? 0 : gasModel.pressure;
+        if (real && N > 0) {
+          const x = new Float64Array(real.list.length);
+          gasSpecies.forEach((g, i) => { const q = real.qOf[model.species.indexOf(g.name)]; if (q >= 0) x[q] = Math.max(amt[i], 0) / N; });
+          const st = RtmG.prState(real.pr, x, real.fixed === 'pressure' ? real.pressure : 0, real.fixed === 'volume' ? real.volume / N : 0);
+          Ptot = st.P;
+          lnPhi = Float64Array.from(real.pr.lnPhi);
+        }
+        gasSpecies.forEach((g, i) => {
+          if (!(amt[i] > 0) || !r.pq.phases.has(g.phase)) return;
+          const si = r.pq.phases.get(g.phase);
+          if (!(si > -990)) return;
+          let pr;
+          if (lnPhi) pr = Math.exp(lnPhi[real.qOf[model.species.indexOf(g.name)]]) * (amt[i] / N) * Ptot;
+          else pr = gasModel.fixed === 'volume' ? amt[i] * RT / gasModel.volume : (amt[i] / N) * gasModel.pressure;
+          if (!(pr > 0)) return;
+          const by = Math.log10(pr) - si;
+          compared++;
+          if (Math.abs(by) > Math.abs(worst.by)) worst = { by, at: r, name: g.name };
+        });
+      }
+      gas = { fixed: gasModel.fixed, volume: gasModel.volume, pressure: gasModel.pressure,
+        species: gasSpecies.map((g) => g.name), compared, gap: worst.by, worst: worst.name,
+        t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null };
+    }
 
     // --- the model's minerals: PHREEQC's saturation index where the model has
     // some of each, which holding it means is its target, and where none ----
@@ -2131,6 +2437,7 @@
       surface,
       redox,
       minerals: mineralCheck,
+      gas,
       unchecked,
       phases,
     };
@@ -2159,5 +2466,6 @@
   return {
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
+    readGasPhases, modelGas,
   };
 }));

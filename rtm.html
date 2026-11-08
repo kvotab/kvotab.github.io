@@ -483,7 +483,7 @@
             remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
-          <p>Eight sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+          <p>Nine sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
             <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
@@ -523,7 +523,9 @@
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em>, <em>debye-huckel</em> or <em>sit</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength, and under <em>sit</em> the species paired in <code>&lt;SIT&gt;</code> as well. See <em>Activity</em> and <em>SIT</em> below.</td></tr>
-              <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: sets the activity model's Debye–Hückel <em>A</em> and <em>B</em>, and nothing else. A <code>logK</code> or a rate constant is taken as written.</td></tr>
+              <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: sets the activity model's Debye–Hückel <em>A</em> and <em>B</em>, and a gas phase's <em>R T</em>, and nothing else. A <code>logK</code> or a rate constant is taken as written.</td></tr>
+              <tr><td><code>GAS_VOLUME</code>, <code>GAS_PRESSURE</code></td><td>A gas phase, for the species given <code>gas</code>: held in a fixed volume, litres to each kilogram of water, or at a fixed total pressure in atm, as a bubble that comes and goes. One or the other; see <em>A gas phase</em> below.</td></tr>
+              <tr><td><code>PRESSURE</code></td><td>The water's pressure in atm, 1 unless given: the Debye–Hückel <em>A</em> and <em>B</em> and a double layer's dielectric constant are worked out there. A bubble at a fixed pressure puts the water at its own.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less, when advection is upwind, the <em>v</em>·Δ<em>x</em>/2 that scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
               <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
             </tbody>
@@ -546,7 +548,9 @@ UO2                      # no number: starts at zero, does not move</pre>
             and <code>potential</code> the surface's potential, with <code>area=</code> and
             <code>grams=</code>: see <em>Surface complexation</em> below.
             <code>electron</code> makes it PHREEQC's electron, with <code>pe=</code> its pe: see
-            <em>Redox: the electron</em> below.
+            <em>Redox: the electron</em> below. <code>gas</code> makes it a gas of a gas phase, and
+            <code>Tc=</code>, <code>Pc=</code> and <code>omega=</code> a real one: see <em>A gas
+            phase</em> below.
             With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
@@ -641,6 +645,12 @@ Fe+3   Cl-     0.56   eps1=0.01</pre>
             <code>ACTIVITY = sit</code>: two species on each line and their coefficient, and
             <code>eps1=</code> for one that goes with the ionic strength as well. See <em>SIT</em>
             below.</p>
+
+          <h4 id="help-gas-pairs-section">&lt;GAS_PAIRS&gt;</h4>
+          <pre>H2O(g)  CO2(g)  0.19</pre>
+          <p>The binary parameters of real gases in a gas phase, PHREEQC's
+            <code>GAS_BINARY_PARAMETERS</code>: two gases on each line and their <em>k</em>. See <em>A
+            gas phase</em> below.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -1327,6 +1337,52 @@ SO4-2 + 9 H+ + 8 e- &lt;=&gt; HS- + 4 H2O,    logK = 33.65</pre>
             pyrite gone, the oxygen coming in not yet built up — where the pe moves by ten while what is
             conserved moves by less than the arithmetic can tell.</p>
 
+          <h4 id="help-gas">A gas phase</h4>
+          <pre>GAS_VOLUME = 0.5          # litres of gas to each kilogram of water
+TEMPERATURE = 25
+
+CO2(g)   1e-4   gas
+N2(g)    0      gas
+
+CO2(g) &lt;=&gt; CO2,   logK = -1.468
+N2(g) &lt;=&gt; N2,     logK = -3.18</pre>
+          <p>PHREEQC's <code>GAS_PHASE</code>. <code>gas</code> makes a species a gas of the cell's gas
+            phase: its amount is the moles of it in the gas to each kilogram of water, it stays in its
+            cell, as PHREEQC's <code>TRANSPORT</code> leaves a gas phase, and it counts in the totals as
+            anything else does. Each gas is in a relation that dissolves it, written as PHREEQC's
+            <code>PHASES</code> write it, and a gas's activity is its partial pressure in atm. It takes
+            no <code>D</code>, <code>fixed</code>, <code>z=</code>, <code>a=</code> or <code>b=</code>.</p>
+          <p>In a fixed volume, <code>GAS_VOLUME</code>, a gas's partial pressure is <em>n R T</em>/<em>V</em>,
+            <em>R</em> PHREEQC's 0.0820597 L·atm/(K·mol) and <em>T</em> from <code>TEMPERATURE</code>. The
+            gas phase is simply there, however little of a gas is in it, and its relations hold as any
+            others do. At a fixed total pressure, <code>GAS_PRESSURE</code>, the gas is a bubble, and a
+            gas's partial pressure is its share of the bubble times the total. The bubble is there only
+            while the water holds its gases at that total between them. While it is there, its relations
+            say that the pressures the water holds its gases at add up to the total, and that each gas's
+            share of the bubble is its share of those pressures; while it is not, every gas's amount is
+            zero. It forms where the water comes to the total and dissolves where its last gas goes, and
+            the run stops there and goes on, as at a mineral's (see <em>Minerals</em>). A gas at a fixed
+            pressure is in one relation, held by <code>EQUILIBRATE</code> and with no <code>kf</code>; in a
+            fixed volume a relation with a gas may be a fast pair.</p>
+          <pre>CO2(g)   0   gas   Tc=304.2   Pc=72.86   omega=0.225</pre>
+          <p>Given its critical temperature in K and pressure in atm, and its acentric factor, a gas is a
+            real one, held by Peng and Robinson's equation of state as PHREEQC holds a gas the database
+            gives them: its activity is its fugacity, φ times its partial pressure. In a fixed volume the
+            pressure is the equation's at the molar volume <em>V</em>/<em>N</em>, <em>N</em> the gases'
+            amounts together; at a fixed pressure the molar volume is the root PHREEQC takes. φ is
+            PHREEQC's, term for term, the equation's <em>a</em> for a pair of gases taken 1&nbsp;−&nbsp;<em>k</em>
+            times where <code>&lt;GAS_PAIRS&gt;</code> gives the pair a <em>k</em>. A gas phase is all real
+            gases or all ideal, as in PHREEQC. Not carried: where the cubic has three roots — CO2 below its
+            critical temperature, dense enough to condense — PHREEQC looks past the turning point of the
+            pressure, and the page does not.</p>
+          <p>A bubble at a fixed pressure puts the water at that pressure, as PHREEQC does: the
+            Debye–Hückel <em>A</em> and <em>B</em> and a double layer's dielectric constant are worked out
+            there. Otherwise the water is at <code>PRESSURE</code>, 1&nbsp;atm unless given. PHREEQC puts a
+            water under a fixed volume of gas at the gas's pressure too, and follows it as the gas phase
+            fills or empties, moving <em>A</em> and <em>B</em> and, where the database gives the species
+            molar volumes, its log K; the page holds both where the run starts. For CO2 that is about
+            6×10<sup>−4</sup> in log K for each atmosphere the pressure moves.</p>
+
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
             <code>reaction.in</code>, <code>solutions.in</code>, <code>diffusion.in</code>, the
@@ -1555,6 +1611,18 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             <code>-no_edl</code>, such as <code>-cd_music</code> or <code>-diffuse_layer</code>, and an
             input with surfaces both with a double layer and without. The report names what was left
             out, and why.</p>
+          <p>A gas phase in the input, a <code>GAS_PHASE</code> that PHREEQC's last calculation holds,
+            is carried as a gas phase (see <em>A gas phase</em> above) when the relations are held
+            exactly: each gas at the moles PHREEQC left in it to each kilogram of water, with its relation
+            from the database's <code>PHASES</code> and PHREEQC's log K at the water's temperature and
+            pressure, and the phase at the pressure or in the volume, to each kilogram of water, it was
+            held at. A gas the database gives a critical temperature and pressure is a real one, and its
+            line takes <code>Tc=</code>, <code>Pc=</code> and <code>omega=</code>, with each pair's binary
+            parameter in <code>&lt;GAS_PAIRS&gt;</code> where PHREEQC's is not 0, its own for water vapour
+            with CO2, H2S, CH4, N2, ethane and propane among them. Under a fixed volume the water is put at
+            the gas phase's pressure as PHREEQC puts it, <code>PRESSURE</code>. Not carried: a gas whose
+            dissolution takes what the water does not have, and a bubble whose other gases are then not
+            all there; and a gas phase that mixes real gases with ideal ones.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -1612,6 +1680,9 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               species by species, at every water looked at: with its double layer, the potential's area
               and grams given, where the model has a potential, and then how close the run's potential is
               to PHREEQC's as well; without electrostatics where it has none;</li>
+            <li>for a gas phase of the model, how close each gas's partial pressure in the run — its
+              fugacity, for a real gas — is to the pressure PHREEQC finds the same water holds it at,
+              10<sup>SI</sup>, wherever the run has any of it;</li>
             <li>for the electron of the model, the pe over the waters, and how close the run's valence
               states are to the ones PHREEQC shares each element out to when it is given the water at
               that pe with the element as one total, as a part of the element;</li>
@@ -1679,6 +1750,23 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             coefficients of the tests' own on <code>phreeqc.dat</code>, ends within 0.0014 of PHREEQC's
             in pH and 0.002 in pe, the pyrite gone from the same 12 cells; PHREEQC takes 0.6 seconds
             and this page 3.6.</p>
+          <p>And a gas phase. A water of 40&nbsp;mmol/kgw of carbonate and 1.2 of N2 under a bubble of ideal
+            gases at 1.1&nbsp;atm (<code>phreeqc.dat</code> with the gases' critical constants and the
+            species' molar volumes taken out, so that PHREEQC holds them ideal and moves no log K with
+            pressure): the model written from it starts on PHREEQC's water and bubble to 3×10<sup>−10</sup>,
+            and with up to 20&nbsp;mmol/kgw of CO2 added it follows PHREEQC's <code>REACTION</code> to
+            6×10<sup>−10</sup> in pH. With <code>phreeqc.dat</code> as it is, the gases real, a bubble at
+            10&nbsp;atm over 600&nbsp;mmol/kgw of carbonate: the page's φ and molar volume at PHREEQC's
+            composition are PHREEQC's to 4×10<sup>−15</sup>, the start PHREEQC's to 1.2×10<sup>−9</sup>,
+            and with CO2 added the pH PHREEQC's to 8×10<sup>−9</sup>; the bubble's CO2 differs by
+            3×10<sup>−6</sup>, PHREEQC's kilogram of water losing what the CO2 hydrates, where the page's
+            stays a kilogram. In a fixed volume the start is PHREEQC's to 2×10<sup>−9</sup>, ideal or real,
+            and as CO2 comes in and the pressure rises, PHREEQC's <em>A</em>, <em>B</em> and, for the real
+            gases with their molar volumes, log K move with it: 2×10<sup>−5</sup> in pH as an ideal gas
+            phase goes from 0.76 to 1.13&nbsp;atm, and 4×10<sup>−4</sup> as a real one goes from 17 to
+            20&nbsp;atm. A bubble forms between PHREEQC's last step with no gas phase and its first with
+            one, and the PHREEQC tab finds the run's partial pressures within 10<sup>−7</sup> in log of
+            the pressures PHREEQC finds its waters hold the gases at.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -1827,14 +1915,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108b"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261108"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261108b"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108b"></script>
 </body>
 </html>
