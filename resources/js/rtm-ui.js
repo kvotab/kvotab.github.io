@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108d';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -468,7 +468,11 @@
           + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : '')
         + (m.gas ? ` · ${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
           ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V`
-          : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}` : ''));
+          : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}` : '')
+        + (m.solidSolutions && m.solidSolutions.length ? ` · ${m.solidSolutions.map((ss) => `the solid solution ${ss.name} `
+          + `(${ss.members.join(', ')}), ${ss.binary ? `a0 ${fmtNumber(ss.binary.a0)} and a1 ${fmtNumber(ss.binary.a1)} at 25 °C`
+            + `${ss.binary.gap ? ', a miscibility gap' : ''}` : 'ideal'}`).join(', ')}, there while the water is `
+          + 'saturated in it' : ''));
     }
     // The temperature, where it goes with the cell or the time, and the log K that follow it.
     const T = m.temperature;
@@ -2248,11 +2252,12 @@
   /** Names that mean something where they take a value: `NAME = ...`. */
   const HL_ASSIGN = {
     SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b', 'pe', 'sites',
-      'area', 'grams']),
+      'area', 'grams', 'tc', 'pc', 'omega']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb', 'dh', 'analytic']),
     PHASES: new Set(['k', 'logk', 'dh', 'analytic']),
     SIT: new Set(['eps1']),
+    SOLID_SOLUTIONS: new Set(['a0', 'a1', 'g0', 'g1', 'tc']),
   };
   /*
     A species name ends in a charge -- H+, OH-, C2O4-2 -- and the charge is
@@ -2604,11 +2609,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108c',
+    'resources/js/rtm-phreeqc.js?v=20261108d',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2973,6 +2978,17 @@ END
         out.push(`<p class="warn">Not carried from the gas phase: ${r.gasSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
+      for (const ss of r.solids || []) {
+        const there = ss.members.some((mb) => mb.amount > 0);
+        out.push(`<p>A solid solution, ${esc(ss.name)}: ${ss.members.map((mb) => `${esc(mb.as)}${there
+          ? ` (${pqNum(mb.amount)} mol/kgw)` : ''}`).join(', ')}${there ? '' : ', none of it, the water undersaturated in it'}`
+          + `, each member's activity its mole fraction${ss.binary ? ` times Guggenheim's lambda, a0 ${pqNum(ss.binary.a0)} and a1 `
+            + `${pqNum(ss.binary.a1)} at ${pqNum(ss.binary.tk - 273.15)} °C` : ', ideal'}.</p>`);
+      }
+      if (r.solidsSkipped && r.solidsSkipped.length) {
+        out.push(`<p class="warn">Not carried from the solid solutions: ${r.solidsSkipped
+          .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
+      }
       if (r.electron) {
         const e = r.electron;
         const moved = e.settled && Math.abs(e.settled.to - e.settled.from) > 1e-6;
@@ -3217,6 +3233,20 @@ END
           + (big ? ' That is further than holding the relations leaves it: the run may be missing a valence state '
             + 'PHREEQC has, or the relations are not the database\'s.' : '') + '</p>');
       }
+    }
+    // The model's solid solutions, each member against x lambda in the run.
+    for (const x of r.solids || []) {
+      if (!x.compared) {
+        out.push(`<p>The solid solution ${esc(x.name)}: the run has none of it in the waters looked at.</p>`);
+        continue;
+      }
+      const big = Math.abs(x.gap) > 1e-4;
+      out.push(`<p${big ? ' class="warn"' : ''}>The solid solution ${esc(x.name)} (${x.members.map(esc).join(', ')}): each `
+        + `member's saturation index PHREEQC finds in the water is log10 of its activity in the run's solid, its mole fraction`
+        + `${x.binary ? ' times lambda' : ''}, to within ${pqNum(Math.abs(x.gap))}`
+        + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
+        + (big ? ' That is further than holding the relations leaves it: the run may be missing species PHREEQC counts, or '
+          + 'the relations are not the database\'s.' : '') + '</p>');
     }
     // The model's minerals, as PHREEQC sees the water around them.
     for (const mn of r.minerals || []) {

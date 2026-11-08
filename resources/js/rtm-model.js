@@ -60,7 +60,7 @@
      ====================================================================== */
 
   const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
-    'GAS_PAIRS'];
+    'GAS_PAIRS', 'SOLID_SOLUTIONS'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -2628,6 +2628,19 @@
   }
 
   /**
+   * A group's members' coefficients worked into its rows, in place, before
+   * bubbleRows: real gases' phi (bubbleReal), a binary solid solution's
+   * lambda (binaryReal); nothing for ideal members. Returns the factored
+   * matrix the rows were solved through, for a caller's other columns, or
+   * null.
+   */
+  function groupReal(G, nUnknowns, withRows, cell) {
+    if (G.def.coef === 'pr') return bubbleReal(G, G.def.gas, nUnknowns, withRows);
+    if (G.def.coef === 'binary') return binaryReal(G, nUnknowns, withRows, cell);
+    return null;
+  }
+
+  /**
    * A bubble of real gases (gasSetup): the pressures the water holds its
    * gases at are their fugacities over phi, and phi is the bubble's, whose
    * composition is those pressures' shares -- so, from G.lnE = ln f and
@@ -2876,7 +2889,476 @@
       // A real gas in a fixed volume: d(ln gamma_i)/dC_j between the gases, and the scratch their sums go into.
       dln: pr && hasV ? new Float64Array(gases.length * gases.length) : null,
       d: pr && hasV ? (out.sit ? out.sit.d : new Float64Array(species.length)) : null };
+    // A bubble is a group (groupSystems): its relations come and go together, their total the pressure.
+    if (hasP) {
+      const def = { kind: 'gas', name: 'the bubble', lnP: Math.log(P), coef: pr ? 'pr' : null, gas: out.gas };
+      out.gas.group = def;
+      for (const eq of equilibria) if (eq.gas) eq.grp = def;
+    }
     return out;
+  }
+
+  /**
+   * SOLID SOLUTIONS, as PHREEQC's SOLID_SOLUTIONS has them.
+   *
+   *   <SOLID_SOLUTIONS>
+   *   CaSrCO3   Aragonite  Strontianite   a0=3.43  a1=-1.82
+   *   BaRaSO4   Barite  RaSO4
+   *
+   * Each line a solid solution: its name, its end members -- species given
+   * `mineral`, each in the one relation that dissolves it, with the pure
+   * phase's log K -- and for two members, Guggenheim's a0 and a1,
+   * dimensionless, or g0 and g1 in kJ/mol, at tc= degrees C (25 unless
+   * given), where PHREEQC keeps them to 0.01 K. An end member's activity is its mole fraction in its solid
+   * solution times lambda: 1 for an ideal one, and for a binary one
+   *
+   *   ln lambda_1 = x2^2 (a0 - a1 (3 - 4 x2)),   ln lambda_2 = x1^2 (a0 + a1 (4 x2 - 1))
+   *
+   * as PHREEQC writes Guggenheim's expansion, x2 the second member's mole
+   * fraction; a0 and a1 go as 1/T from the temperature they are given at,
+   * PHREEQC's energies g = a R T held (binaryAt). A solid solution is there
+   * or not as a whole: there while the water holds it at saturation -- each
+   * member's IAP/K over its lambda, at the composition the water gives it,
+   * adding up to 1 -- each member's amount its share of the solid solution
+   * at that composition; not there while that sum is below 1, and then each
+   * member's amount is zero. It is a group (groupSystems), as a bubble is,
+   * its total 1. Where Guggenheim's parameters give a miscibility gap at the
+   * cell's temperature, a composition inside it is two solids of the gap's
+   * compositions, and the water is held at the activities the gap's edge
+   * gives each member, as PHREEQC holds it.
+   *
+   * Returns the solid solutions' definitions.
+   */
+  function solidSolutionSetup(species, equilibria, lines, settings) {
+    const index = new Map(species.map((sp, k) => [sp.name, k]));
+    const out = [];
+    const taken = new Map();
+    for (const { text, line } of lines) {
+      const parts = text.split(/\s+/).filter(Boolean);
+      const name = parts.shift();
+      const members = parts.filter((p) => !p.includes('='));
+      const opts = parts.filter((p) => p.includes('='));
+      if (out.some((d) => d.name === name)) throw new RtmError(`The solid solution ${name} is given twice.`, line);
+      if (members.length < 2) {
+        throw new RtmError(`"${text}" is a solid solution's name and its end members, two or more: CaSrCO3  Aragonite  `
+          + 'Strontianite.', line);
+      }
+      const ks = members.map((m) => {
+        if (!index.has(m)) throw new RtmError(`"${m}" in <SOLID_SOLUTIONS> is not in <SPECIES>.`, line);
+        const k = index.get(m);
+        if (!species[k].mineral) {
+          throw new RtmError(`${m} is an end member of the solid solution ${name}, and an end member is a mineral: `
+            + `${m}  0  mineral.`, line);
+        }
+        if (taken.has(k)) {
+          throw new RtmError(`${m} is an end member of two solid solutions, ${taken.get(k)} and ${name}: of one only.`, line);
+        }
+        taken.set(k, name);
+        return k;
+      });
+      const rels = ks.map((k) => {
+        const eqs = equilibria.filter((eq) => eq.mineral === k);
+        if (!eqs.length) {
+          throw new RtmError(`${species[k].name} is an end member of the solid solution ${name}, and in no relation: `
+            + `${species[k].name} <=> ..., its dissolution with the pure phase's log K.`, line);
+        }
+        return eqs[0];
+      });
+      const prm = {};
+      for (const o of opts) {
+        const [key, raw] = o.split('=');
+        const k = key.toLowerCase();
+        if (!['a0', 'a1', 'g0', 'g1', 'tc'].includes(k)) {
+          throw new RtmError(`"${o}": a solid solution takes a0= and a1= (Guggenheim's, dimensionless), with tc= the `
+            + 'temperature they are given at, or g0= and g1= (kJ/mol), and nothing else.', line);
+        }
+        prm[k] = constValue(raw, line, `${k} of ${name}`);
+      }
+      const hasA = prm.a0 !== undefined || prm.a1 !== undefined;
+      const hasG = prm.g0 !== undefined || prm.g1 !== undefined;
+      if (hasA && hasG) throw new RtmError(`${name} is given a0/a1 and g0/g1: one or the other.`, line);
+      if ((hasA || hasG) && ks.length !== 2) {
+        throw new RtmError(`${name} has ${ks.length} end members, and Guggenheim's a0 and a1 are for two: a solid solution of `
+          + 'more is ideal, as in PHREEQC.', line);
+      }
+      if (prm.tc !== undefined && !hasA && !hasG) {
+        throw new RtmError(`tc= is the temperature a0 and a1, or g0 and g1, are given at: ${name} has none.`, line);
+      }
+      if (prm.tc !== undefined && !(prm.tc >= 0 && prm.tc <= 350)) throw new RtmError(`tc = ${prm.tc}: 0 to 350 C.`, line);
+      if (!settings.EQUILIBRATE) {
+        throw new RtmError(`The solid solution ${name} is held at equilibrium with the water: it needs EQUILIBRATE, and `
+          + 'always to follow the run.', line);
+      }
+      // PHREEQC's ss_calc_a0_a1 and ss_prep: the energies at the temperature given, a0 = g0/RT at any other.
+      const tk0 = prm.tc !== undefined ? prm.tc + 273.15 : 298.15;
+      const rt0 = tk0 * R_KJ;
+      const a0 = hasA ? (prm.a0 || 0) : (prm.g0 || 0) / rt0;
+      const a1 = hasA ? (prm.a1 || 0) : (prm.g1 || 0) / rt0;
+      const binary = a0 !== 0 || a1 !== 0;
+      const def = { kind: 'ss', name, line, lnP: 0, coef: binary ? 'binary' : null, members: ks,
+        ag0: a0 * rt0, ag1: a1 * rt0, tk0, tk: null, cache: new Map() };
+      for (const eq of rels) {
+        if (eq.grp) throw new RtmError(`"${eq.text}" is a gas's and an end member's: one or the other.`, eq.line);
+        eq.grp = def;
+      }
+      out.push(def);
+    }
+    return out;
+  }
+
+  /*
+    PHREEQC's root finders for a binary solid solution (tidy.cpp), step for
+    step: scan for a sign change on a grid of 1, 10 and 100 divisions (the
+    start not reset between them, as there), and halve the interval to tol.
+  */
+  function ssScan(f, xx0, xx1) {
+    let x0 = xx0;
+    let x1 = xx1;
+    const diff = x1 - x0;
+    for (let j = 0; j < 3; j++) {
+      let fx0 = f(x0);
+      const divisions = Math.trunc(Math.pow(10, j));
+      for (let i = 1; i < divisions; i++) {
+        x1 = xx0 + (diff * i) / divisions;
+        const fx1 = f(x1);
+        if (fx0 * fx1 <= 0) return [x0, x1];
+        x0 = x1;
+        fx0 = fx1;
+      }
+    }
+    return null;
+  }
+  function ssHalve(f, x0in, x1, tol) {
+    let x0 = x0in;
+    let y0 = f(x0);
+    let dx = x1 - x0;
+    for (let i = 0; i < 100; i++) {
+      dx *= 0.5;
+      const x = x0 + dx;
+      const y = f(x);
+      if (dx < tol || y === 0) break;
+      if (y0 * y >= 0) { x0 = x; y0 = y; }
+    }
+    return x0 + dx;
+  }
+
+  /*
+    solve_misc's equations at xc1 and xc2: the two members' activities the
+    same at both compositions, as the augmented 2 x 3 matrix, the residuals
+    in a[2] and a[5] and their gradient beside them.
+  */
+  function ssMiscSystem(a0, a1, xc1, xc2) {
+    const xb1 = 1 - xc1;
+    const xb2 = 1 - xc2;
+    const xc12 = xc1 * xc1;
+    const xc13 = xc12 * xc1;
+    const xc22 = xc2 * xc2;
+    const xc23 = xc22 * xc2;
+    const lc1 = Math.exp(xb1 * xb1 * (a0 - a1 * (3 - 4 * xb1)));
+    const lb1 = Math.exp(xc1 * xc1 * (a0 + a1 * (4 * xb1 - 1)));
+    const lc2 = Math.exp(xb2 * xb2 * (a0 - a1 * (3 - 4 * xb2)));
+    const lb2 = Math.exp(xc2 * xc2 * (a0 + a1 * (4 * xb2 - 1)));
+    const a = new Float64Array(6);
+    a[2] = -(xb1 * lb1 - xb2 * lb2);
+    a[5] = -(xc1 * lc1 - xc2 * lc2);
+    let t = Math.exp(a0 * xc12 - 4 * a1 * xc13 + 3 * a1 * xc12);
+    a[0] = (2 * a0 * xc1 + 6 * a1 * xc1 - 2 * a0 * xc12 + 12 * a1 * xc13 - 18 * a1 * xc12 - 1) * t;
+    t = Math.exp(a0 * xc22 - 4 * a1 * xc23 + 3 * a1 * xc22);
+    a[1] = (2 * a0 * xc22 - 12 * a1 * xc23 - 2 * a0 * xc2 + 18 * a1 * xc22 - 6 * a1 * xc2 + 1) * t;
+    t = Math.exp(a0 * xc12 - 2 * a0 * xc1 + a0 - 4 * a1 * xc13 + 9 * a1 * xc12 - 6 * a1 * xc1 + a1);
+    a[3] = (2 * a0 * xc12 - 2 * a0 * xc1 - 12 * a1 * xc13 + 18 * a1 * xc12 - 6 * a1 * xc1 + 1) * t;
+    t = Math.exp(a0 * xc22 - 2 * a0 * xc2 + a0 - 4 * a1 * xc23 + 9 * a1 * xc22 - 6 * a1 * xc2 + a1);
+    a[4] = (-2 * a0 * xc22 + 2 * a0 * xc2 + 12 * a1 * xc23 - 18 * a1 * xc22 + 6 * a1 * xc2 - 1) * t;
+    return a;
+  }
+
+  /** PHREEQC's solve_misc: the two compositions of a miscibility gap, xc1 and xc2, by Newton from the start given. */
+  function ssSolveMisc(a0, a1, xc1in, xc2in, tol) {
+    let xc1 = xc1in;
+    let xc2 = xc2in;
+    let converged = true;
+    const maxIter = 25;
+    let i;
+    for (i = 0; i < maxIter; i++) {
+      const a = ssMiscSystem(a0, a1, xc1, xc2);
+      if (Math.abs(a[2]) < tol && Math.abs(a[5]) < tol) break;
+      const d = ssSlnq2(a);
+      for (;;) {
+        const x1 = xc1 + d[0];
+        const x2 = xc2 + d[1];
+        if (x1 > 1 || x1 < 0 || x2 > 1 || x2 < 0) { d[0] *= 0.5; d[1] *= 0.5; } else { xc1 = x1; xc2 = x2; break; }
+      }
+      if (Math.abs(xc1 - xc2) < 0.01) { converged = false; break; }
+    }
+    if (i === maxIter) converged = false;
+    return { xc1, xc2, converged };
+  }
+
+  /*
+    THE GAP TO ROUND-OFF. PHREEQC's solve_misc stops where the activities
+    agree to 1e-6, and where it stops moves in jumps as the temperature
+    does: by 2e-6 in a composition within a thousandth of a kelvin. A run
+    whose temperature goes with time holds the water at the gap's edge, and
+    a jump there is one the integrator cannot step across. So there Newton
+    goes on from where PHREEQC's stops, on the same equations, until the
+    residual stops falling: the same gap, its compositions a smooth function
+    of the temperature, and the activities at both the same to round-off.
+    At a temperature that stays as it is, the gap is PHREEQC's own, where its
+    search leaves it, and a water starts on PHREEQC's to 1e-10 where the
+    round-off one would be up to 1e-6 from it.
+  */
+  function ssPolish(a0, a1, xc1in, xc2in) {
+    let xc1 = xc1in;
+    let xc2 = xc2in;
+    let keep = [xc1, xc2];
+    let best = Infinity;
+    for (let i = 0; i < 30; i++) {
+      const a = ssMiscSystem(a0, a1, xc1, xc2);
+      const norm = Math.max(Math.abs(a[2]), Math.abs(a[5]));
+      if (!(norm < best)) break;
+      best = norm;
+      keep = [xc1, xc2];
+      if (norm === 0) break;
+      const d = ssSlnq2(a);
+      xc1 += d[0];
+      xc2 += d[1];
+      if (!(xc1 > 0 && xc1 < 1 && xc2 > 0 && xc2 < 1)) break;
+    }
+    return keep;
+  }
+
+  /** PHREEQC's slnq for two unknowns, a the 2 x 3 augmented matrix row by row: the solution, [0, 0] where singular. */
+  function ssSlnq2(a) {
+    const n = 2;
+    const ncols = 3;
+    const d = [0, 0];
+    for (let i = 0; i < n - 1; i++) {
+      let b = Math.abs(a[i * ncols + i]);
+      let m = i;
+      for (let j = i + 1; j < n; j++) if (Math.abs(a[j * ncols + i]) > b) { b = Math.abs(a[j * ncols + i]); m = j; }
+      if (b < 1e-30) return d;
+      if (m !== i) {
+        for (let j = i; j <= n; j++) { b = a[i * ncols + j]; a[i * ncols + j] = a[m * ncols + j]; a[m * ncols + j] = b; }
+      }
+      for (let j = n; j >= i; j--) a[i * ncols + j] /= a[i * ncols + i];
+      for (let j = i + 1; j < n; j++) {
+        if (a[j * ncols + i] === 0) continue;
+        b = -a[j * ncols + i];
+        for (let k = i + 1; k <= n; k++) a[j * ncols + k] += b * a[i * ncols + k];
+      }
+    }
+    if (!(Math.abs(a[(n - 1) * ncols + n - 1]) > 1e-30)) return d;
+    d[n - 1] = a[(n - 1) * ncols + n] / a[(n - 1) * ncols + n - 1];
+    for (let i = n - 2; i >= 0; i--) {
+      d[i] = a[i * ncols + n];
+      for (let j = i + 1; j < n; j++) d[i] -= a[i * ncols + j] * d[j];
+    }
+    return d;
+  }
+
+  /**
+   * A binary solid solution's a0 and a1 at tk kelvin, and its miscibility
+   * gap there, as PHREEQC's ss_prep finds it: none, or the spinodal xsm1 and
+   * xsm2 and the gap's xb1 and xb2 (the second member's mole fractions), and
+   * ln of each member's activity at xb1, where PHREEQC holds the water while
+   * the solid's composition is inside the gap. Kept by temperature.
+   */
+  function binaryAt(def, tk) {
+    let p = def.cache.get(tk);
+    if (p) return p;
+    // PHREEQC keeps the parameters of the solid solution's own temperature within 0.01 K of it.
+    const t = Math.abs(tk - def.tk0) > 0.01 ? tk : def.tk0;
+    const r = R_KJ;
+    const rt = r * t;
+    const a0 = def.ag0 / rt;
+    const a1 = def.ag1 / rt;
+    const tol = 1e-6;
+    let gap = null;
+    if (Math.abs(a0) + Math.abs(a1) >= tol) {
+      const ag0 = a0 * rt;
+      const ag1 = a1 * rt;
+      let xc;
+      let tc;
+      if (Math.abs(a1) < tol) {
+        xc = 0.5;
+        tc = ag0 / (2 * r);
+      } else {
+        xc = 0.5 + (Math.pow(ag0 * ag0 + 27 * ag1 * ag1, 0.5) - ag0) / (18 * ag1);
+        tc = ((12 * ag1 * xc - 6 * ag1 + 2 * ag0) * (xc - xc * xc)) / r;
+      }
+      const fsp = (x) => -12 * a1 * x * x * x + (18 * a1 - 2 * a0) * x * x + (2 * a0 - 6 * a1) * x - 1.0;
+      const s1 = tc >= t ? ssScan(fsp, 0, 1) : null;
+      if (s1) {
+        const xsm1 = ssHalve(fsp, s1[0], s1[1], tol);
+        const s2 = ssScan(fsp, s1[1], 1);
+        if (!s2) throw new RtmError(`The solid solution ${def.name}: PHREEQC's second spinodal point is not found.`, def.line);
+        const xsm2 = ssHalve(fsp, s2[0], s2[1], tol);
+        let res = null;
+        for (let i = 1; i < 3 && !(res && res.converged); i++) {
+          const divisions = Math.trunc(Math.pow(10, i));
+          for (let j = 0; j < divisions && !(res && res.converged); j++) {
+            for (let k = divisions; k > 0; k--) {
+              res = ssSolveMisc(a0, a1, j / divisions + 0.001, k / divisions, tol);
+              if (res.converged) break;
+            }
+          }
+        }
+        if (!res || !res.converged) throw new RtmError(`The solid solution ${def.name}: its miscibility gap is not found.`, def.line);
+        const [pc1, pc2] = def.smooth ? ssPolish(a0, a1, res.xc1, res.xc2) : [res.xc1, res.xc2];
+        let xb1;
+        let xb2;
+        if (pc1 < pc2) { xb1 = 1 - pc2; xb2 = 1 - pc1; } else { xb1 = 1 - pc1; xb2 = 1 - pc2; }
+        const xc1 = 1 - xb1;
+        gap = { xb1, xb2, xsm1, xsm2,
+          lnAc: Math.log(xc1) + xb1 * xb1 * (a0 - a1 * (3 - 4 * xb1)),
+          lnAb: Math.log(xb1) + xc1 * xc1 * (a0 + a1 * (4 * xb1 - 1)) };
+      }
+    }
+    p = { a0, a1, gap };
+    if (def.cache.size > 4096) def.cache.clear();
+    def.cache.set(tk, p);
+    return p;
+  }
+
+  /**
+   * A binary solid solution's composition from the water, worked into its
+   * rows in place before bubbleRows (groupReal): G.lnE holds each member's ln
+   * IAP/K, and the second member's mole fraction x is the one at which
+   * ln(x/(1 - x)) + ln lambda_2 - ln lambda_1 is ln(IAP2 K1/(IAP1 K2)) --
+   * on the branch below a miscibility gap (G.mode 1), above it (3), or where
+   * the water puts it (not there, 0) -- by Newton in ln(x/(1 - x)), held in
+   * its bracket. Then lnE less ln lambda, whose shares are x and whose sum
+   * is the saturation, and with rows, the rows through x: each less d ln
+   * lambda/dx dx/dL times the gradient of L. Returns the 2 x 2 map the rows
+   * went through, factored, for a caller's other columns.
+   */
+  function binaryReal(G, nUnknowns, withRows, cell) {
+    const def = G.def;
+    const tk = def.tk ? def.tk[cell] : def.tk0;
+    const { a0, a1, gap } = binaryAt(def, tk);
+    const L = G.lnE[1] - G.lnE[0];
+    let lo = -800;
+    let hi = 800;
+    const logit = (x) => Math.log(x / (1 - x));
+    if (gap) {
+      const upper = G.mode === 3 || (G.mode !== 1 && L > gap.lnAb - gap.lnAc);
+      if (upper) lo = logit(gap.xsm2); else hi = logit(gap.xsm1);
+    }
+    const D = (x) => (1 - x) * (1 - x) * (a0 + a1 * (4 * x - 1)) - x * x * (a0 - a1 * (3 - 4 * x));
+    const dD = (x) => -2 * (1 - x) * (a0 + a1 * (4 * x - 1)) + 4 * a1 * (1 - x) * (1 - x)
+      - (2 * a0 * x - 6 * a1 * x + 12 * a1 * x * x);
+    const xOf = (u) => (u >= 0 ? 1 / (1 + Math.exp(-u)) : Math.exp(u) / (1 + Math.exp(u)));
+    const h = (u) => u + D(xOf(u)) - L;
+    let ulo = lo;
+    let uhi = hi;
+    let u = Math.min(Math.max(L - D(0.5), lo), hi);
+    if (!(h(lo) < 0)) u = lo;
+    else if (!(h(hi) > 0)) u = hi;
+    else {
+      for (let it = 0; it < 200; it++) {
+        const x = xOf(u);
+        const f = u + D(x) - L;
+        if (f === 0) break;
+        if (f < 0) ulo = u; else uhi = u;
+        const dh = 1 + dD(x) * x * (1 - x);
+        let next = dh > 0 ? u - f / dh : NaN;
+        if (!(next > ulo && next < uhi)) next = 0.5 * (ulo + uhi);
+        if (Math.abs(next - u) <= 1e-15 * Math.max(1, Math.abs(u)) || uhi - ulo <= 1e-15 * Math.max(1, Math.abs(u))) {
+          u = next;
+          break;
+        }
+        u = next;
+      }
+    }
+    const x = xOf(u);
+    const lnLc = x * x * (a0 - a1 * (3 - 4 * x));
+    const lnLb = (1 - x) * (1 - x) * (a0 + a1 * (4 * x - 1));
+    G.lnE[0] -= lnLc;
+    G.lnE[1] -= lnLb;
+    G.x = x;
+    if (!withRows) return null;
+    const dh = 1 + dD(x) * x * (1 - x);
+    const dxdL = dh > 0 ? (x * (1 - x)) / dh : 0;
+    const s0 = (2 * a0 * x - 6 * a1 * x + 12 * a1 * x * x) * dxdL;
+    const s1 = (-2 * (1 - x) * (a0 + a1 * (4 * x - 1)) + 4 * a1 * (1 - x) * (1 - x)) * dxdL;
+    const r0 = G.rows[0];
+    const r1 = G.rows[1];
+    for (let c = 0; c < nUnknowns; c++) {
+      const d = r1[c] - r0[c];
+      if (!d) continue;
+      r0[c] -= s0 * d;
+      r1[c] -= s1 * d;
+    }
+    // The rows went through T = I - s (-1 1); a caller's other columns go through it too: T^-1, factored, solves to T.
+    const det = 1 + s0 - s1;
+    const Jm = [Float64Array.from([(1 - s1) / det, s0 / det]), Float64Array.from([-s1 / det, (1 + s0) / det])];
+    const piv = luFactor(Jm, 2);
+    return piv ? { Jm, piv, K: 2 } : null;
+  }
+
+  /**
+   * A binary solid solution inside its miscibility gap (mode 2): each
+   * member's relation holds at the activity the gap's edge gives it, as
+   * PHREEQC holds it, its amounts free -- the totals settle them. Rows into F
+   * and J from G.lnE and G.rows; returns the convergence measure.
+   */
+  function gapRows(G, nUnknowns, F, J, cell) {
+    const def = G.def;
+    const { gap } = binaryAt(def, def.tk ? def.tk[cell] : def.tk0);
+    const lnA = gap ? [gap.lnAc, gap.lnAb] : [0, 0];
+    let norm = 0;
+    for (let q = 0; q < 2; q++) {
+      const j = G.rel[q];
+      F[j] = G.lnE[q] - lnA[q];
+      norm = Math.max(norm, Math.abs(F[j]));
+      if (!J) continue;
+      const Jr = J[j];
+      const row = G.rows[q];
+      for (let c = 0; c < nUnknowns; c++) Jr[c] = row[c];
+    }
+    return norm;
+  }
+
+  /**
+   * A group's rows while it is there, whatever it is: inside a miscibility
+   * gap (mode 2) gapRows; otherwise its coefficients (groupReal) and then
+   * bubbleRows. Returns bubbleRows' result with lu, groupReal's.
+   */
+  /**
+   * Where a group that is there stands, from its members' amounts (amount(q)):
+   * 1, or for a binary solid solution with a miscibility gap at the cell's
+   * temperature, 2 with its composition inside the gap and 3 above it; 0
+   * where there is none of it.
+   */
+  function groupMode(G, amount, cell) {
+    let N = 0;
+    for (let q = 0; q < G.rel.length; q++) N += amount(q);
+    if (!(N > 0)) return 0;
+    if (G.def.coef !== 'binary') return 1;
+    const { gap } = binaryAt(G.def, G.def.tk ? G.def.tk[cell] : G.def.tk0);
+    if (!gap) return 1;
+    const xb = amount(1) / N;
+    return xb >= gap.xb2 ? 3 : xb > gap.xb1 ? 2 : 1;
+  }
+
+  /**
+   * Where a group that forms goes: a binary solid solution with a gap above
+   * it (3) where the water's ratio of its members is past the gap's, below it
+   * (1) otherwise. G.lnE the members' ln IAP/K.
+   */
+  function groupFormsAt(G, cell) {
+    if (G.def.coef !== 'binary') return 1;
+    const { gap } = binaryAt(G.def, G.def.tk ? G.def.tk[cell] : G.def.tk0);
+    return gap && G.lnE[1] - G.lnE[0] > gap.lnAb - gap.lnAc ? 3 : 1;
+  }
+
+  function groupRowsAt(G, mode, cell, n, nUnknowns, F, J, big) {
+    if (mode === 2) return { norm: gapRows(G, nUnknowns, F, J, cell), lnS: 0, N: 0, lu: null, gap: true };
+    G.mode = mode;
+    const lu = groupReal(G, nUnknowns, !!J, cell);
+    const res = bubbleRows(G, n, nUnknowns, F, J, big);
+    res.lu = lu;
+    return res;
   }
 
   /**
@@ -3271,11 +3753,11 @@
         return t;
       });
       const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0 ? 1 : 0));
-      // A bubble is there where its gases have any amount between them.
-      if (sys.gas) {
-        let N = 0;
-        for (const k of sys.gas.k) N += out[b + part[k]];
-        for (const j of sys.gas.rel) present[j] = N > 0 ? 1 : 0;
+      // A group is there where its members have any amount between them; a binary solid solution where
+      // its composition has it, inside its miscibility gap or either side.
+      for (const G of sys.groups) {
+        const mode = groupMode(G, (q) => out[b + part[G.k[q]]], cell);
+        for (const j of G.rel) present[j] = mode;
       }
       const res = speciateCell(sys, out, b, totals, w, present,
         { tol: opts.tol, maxIter: opts.maxIter, floor: opts.floor, activeSet: true, cell });
@@ -3583,26 +4065,51 @@
       cellC: new Float64Array(ns),
       exch: exch && exch.some((v) => v) ? exch : null,
       rank: rank || null,
-      gas: bubbleSystem(eqs, part, at, act),
+      // The groups -- a bubble, solid solutions -- and each relation's (groupSystems).
+      ...groupSystems(eqs, part, at),
     };
   }
 
+  /*
+    GROUPS: relations whose amounts come and go together, each a member's --
+    a bubble at a fixed pressure (gasSetup), whose members are its gases, and
+    a solid solution (solidSolutionSetup), whose members are its end members.
+    Each relation of one has eq.grp, the group's definition: kind ('gas' or
+    'ss'), name, lnP, ln of the total the members' shares of the water add up
+    to while it is there (the bubble's pressure; 1 for a solid solution), and
+    coef, how a member's activity departs from its share: null for ideal,
+    'pr' for real gases (Peng and Robinson's phi), 'binary' for a binary solid
+    solution (Guggenheim's lambda, binaryAt). While a group is there its rows
+    are bubbleRows' -- the first says the shares add up to the total, each
+    other that its member's amount is its share of the group -- and while it
+    is not, each member's amount is zero.
+  */
+
   /**
-   * A bubble at a fixed pressure in a cell system (gasSetup): its relations,
-   * each gas's place in part and coefficient, and the scratch its rows are
-   * made in (bubbleRows). Null where there is none.
+   * The groups of a cell system: for each, its relations, each member's
+   * place in part and coefficient, and the scratch its rows are made in
+   * (bubbleRows); and inGroup, each relation's group or -1.
    */
-  function bubbleSystem(eqs, part, at, act) {
-    const rel = [];
-    eqs.forEach((eq, j) => { if (eq.gas && at[eq.mineral] >= 0) rel.push(j); });
-    if (!rel.length) return null;
-    const isRel = new Uint8Array(eqs.length);
-    for (const j of rel) isRel[j] = 1;
-    return { rel: Int32Array.from(rel), isRel, k: Int32Array.from(rel, (j) => at[eqs[j].mineral]),
-      prIdx: Int32Array.from(rel, (j) => act.gas.qOf[eqs[j].mineral]),
-      nu: Float64Array.from(rel, (j) => eqs[j].mineralNu), lnP: Math.log(act.gas.pressure),
-      lnE: new Float64Array(rel.length), w: new Float64Array(rel.length),
-      rows: rel.map(() => new Float64Array(part.length)), mean: new Float64Array(part.length) };
+  function groupSystems(eqs, part, at) {
+    const inGroup = new Int32Array(eqs.length).fill(-1);
+    const groups = [];
+    const defs = [];
+    eqs.forEach((eq, j) => {
+      if (!eq.grp || at[eq.mineral] < 0) return;
+      let g = defs.indexOf(eq.grp);
+      if (g < 0) { g = defs.length; defs.push(eq.grp); groups.push([]); }
+      groups[g].push(j);
+      inGroup[j] = g;
+    });
+    return {
+      inGroup,
+      groups: groups.map((rel, g) => ({
+        def: defs[g], rel: Int32Array.from(rel), k: Int32Array.from(rel, (j) => at[eqs[j].mineral]),
+        prIdx: defs[g].coef === 'pr' ? Int32Array.from(rel, (j) => defs[g].gas.qOf[eqs[j].mineral]) : null,
+        nu: Float64Array.from(rel, (j) => eqs[j].mineralNu), lnP: defs[g].lnP,
+        lnE: new Float64Array(rel.length), w: new Float64Array(rel.length),
+        rows: rel.map(() => new Float64Array(part.length)), mean: new Float64Array(part.length) })),
+    };
   }
 
   /**
@@ -3757,9 +4264,9 @@
     };
     // A mineral's saturation index, ln(IAP/K), whichever side it is written on.
     const saturation = (j, water) => (minNu[j] < 0 ? 1 : -1) * relation(j, water, null);
-    // Each of a bubble's gases' ln of the pressure the water holds it at, and with rows its gradient.
-    const bubbleLnE = (water, rows) => {
-      const G = sys.gas;
+    // Each of a group's members' ln of its share of the water -- the pressure the water holds a gas at, a
+    // solid solution's member's saturation ratio -- and with rows its gradient.
+    const bubbleLnE = (G, water, rows) => {
       for (let q = 0; q < G.rel.length; q++) {
         const row = rows ? G.rows[q] : null;
         if (row) row.fill(0);
@@ -3768,11 +4275,13 @@
         if (row) for (let c = 0; c < na; c++) if (row[c]) row[c] *= f;
       }
     };
-    // The bubble's ln of the pressures the water holds its gases at, together, less ln P.
-    const bubbleExcess = (water) => {
-      const G = sys.gas;
-      bubbleLnE(water, false);
-      bubbleReal(G, act.gas, na, false);
+    // A group's ln of its members' shares of the water, together, less ln of their total.
+    const bubbleExcess = (G, water) => {
+      bubbleLnE(G, water, false);
+      // Where it would go if it formed: a binary solid solution's side of its gap.
+      G.formMode = groupFormsAt(G, cell);
+      G.mode = 0;
+      groupReal(G, na, false, cell);
       let top = -Infinity;
       for (let q = 0; q < G.rel.length; q++) top = Math.max(top, G.lnE[q]);
       let S = 0;
@@ -3786,14 +4295,25 @@
     const pin = () => {
       for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !present[j]) x[minOf[j]] = 0;
     };
+    /*
+      A STEP THAT MAKES IT WORSE IS HALVED, where a binary solid solution is
+      in the cell: near the composition where its members mix most readily
+      the composition the water gives it moves steeply with the water, and
+      the capped steps went back and forth between two points without end.
+      Only there: every other cell takes its steps as they come.
+    */
+    const backtrack = sys.groups.some((G) => G.def.coef === 'binary');
+    const xPrev = backtrack ? new Float64Array(na) : null;
+    const taken = backtrack ? new Float64Array(na) : null;
     const solve = () => {
       let converged = false;
+      let normPrev = Infinity;
+      let halvings = 0;
       pin();
       for (let it = 0; it < maxIter; it++) {
         iterations++;
         const water = evaluate();
         let norm = 0;
-        const G = sys.gas;
         for (let j = 0; j < ne; j++) {
           J[j].fill(0);
           const km = minOf[j];
@@ -3804,15 +4324,15 @@
             norm = Math.max(norm, Math.abs(x[km]) / Math.max(big, 1e-300));
             continue;
           }
-          // A bubble's relations, while it is there, are its rows together (below).
-          if (G && G.isRel[j]) continue;
+          // A group's relations, while it is there, are its rows together (below).
+          if (sys.inGroup[j] >= 0) continue;
           F[j] = relation(j, water, J[j]);
           norm = Math.max(norm, Math.abs(F[j]));
         }
-        if (G && present[G.rel[0]]) {
-          bubbleLnE(water, true);
-          bubbleReal(G, act.gas, na, true);
-          norm = Math.max(norm, bubbleRows(G, (q) => x[G.k[q]], na, F, J, big).norm);
+        for (const G of sys.groups) {
+          if (!present[G.rel[0]]) continue;
+          bubbleLnE(G, water, true);
+          norm = Math.max(norm, groupRowsAt(G, present[G.rel[0]], cell, (q) => x[G.k[q]], na, F, J, big).norm);
         }
         // The totals: d(sum U w C)/du = U w C, and U w for an amount.
         for (let q = 0; q < nb; q++) {
@@ -3854,6 +4374,14 @@
           norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
         }
         residual = norm;
+        if (backtrack && norm > normPrev && halvings < 12) {
+          halvings++;
+          for (let k = 0; k < na; k++) { taken[k] *= 0.5; x[k] = xPrev[k] - taken[k]; }
+          pin();
+          continue;
+        }
+        halvings = 0;
+        normPrev = norm;
         if (norm < tol) converged = true;
         // Settled where it started, and asked for no more than that: a held
         // run's projection, at an iterate that is already its speciation.
@@ -3871,6 +4399,7 @@
         // not in log space and sets no cap of its own.
         let damp = 1;
         for (let k = 0; k < na; k++) if (!lin[k]) damp = Math.min(damp, 2 / Math.max(Math.abs(step[k]), 2));
+        if (backtrack) for (let k = 0; k < na; k++) { xPrev[k] = x[k]; taken[k] = damp * step[k]; }
         let largest = 0;
         for (let k = 0; k < na; k++) {
           x[k] -= damp * step[k];
@@ -3950,9 +4479,8 @@
       failed; `drop` leaves it, `add` (or -1) comes in.
     */
     const x0 = Float64Array.from(x);
-    const G0 = sys.gas;
     const mins = [];
-    for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !(G0 && G0.isRel[j])) mins.push(j);
+    for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && sys.inGroup[j] < 0) mins.push(j);
     const attempt = (drop, add) => {
       x.set(x0);
       present[drop] = 0;
@@ -3971,25 +4499,27 @@
       for (const j of mins) if (present[j] && j !== opts.enter && attempt(j, -1)) { ok = true; break; }
     }
     if (opts.activeSet && ok) {
-      const G = sys.gas;
-      // A bubble comes and goes whole: its relations' present together.
-      const setBubble = (v) => { for (const j of G.rel) { present[j] = v; if (!v) x[minOf[j]] = 0; } };
-      let settled = !mins.length && !G;
-      for (let round = 0; round < 4 * mins.length + (G ? 8 : 4) && !settled && ok; round++) {
-        // A mineral that would have to be less than none of: it dissolves away; and so does a bubble.
+      const groups = sys.groups;
+      // A group comes and goes whole: its relations' present together.
+      const setGroup = (G, v) => { for (const j of G.rel) { present[j] = v; if (!v) x[minOf[j]] = 0; } };
+      let settled = !mins.length && !groups.length;
+      for (let round = 0; round < 4 * mins.length + 8 * groups.length + 4 && !settled && ok; round++) {
+        // A mineral that would have to be less than none of: it dissolves away; and so does a group.
         let pick = -1;
+        let pickG = null;
         let by = 0;
         for (const j of mins) {
           const m = x[minOf[j]];
           if (present[j] && m < -1e-12 * big && -m > by) { by = -m; pick = j; }
         }
-        if (G && present[G.rel[0]]) {
+        for (const G of groups) {
+          if (!present[G.rel[0]]) continue;
           let N = 0;
           for (const j of G.rel) N += x[minOf[j]];
-          if (N < -1e-12 * big && -N > by) { by = -N; pick = -2; }
+          if (N < -1e-12 * big && -N > by) { by = -N; pickG = G; }
         }
-        if (pick === -2) {
-          setBubble(0);
+        if (pickG) {
+          setGroup(pickG, 0);
           ok = solve();
           continue;
         }
@@ -4000,19 +4530,21 @@
           continue;
         }
         // One the water is supersaturated in, and none of it: it precipitates. Gases the water holds at more
-        // than the total pressure between them: a bubble forms.
+        // than the total pressure between them: a bubble forms; and so does a solid solution the water is
+        // supersaturated in.
         const water = evaluate();
         for (const j of mins) {
           if (present[j]) continue;
           const si = saturation(j, water);
           if (si > 1e-9 && si > by) { by = si; pick = j; }
         }
-        if (G && !present[G.rel[0]]) {
-          const ex = bubbleExcess(water);
-          if (ex > 1e-9 && ex > by) { by = ex; pick = -2; }
+        for (const G of groups) {
+          if (present[G.rel[0]]) continue;
+          const ex = bubbleExcess(G, water);
+          if (ex > 1e-9 && ex > by) { by = ex; pickG = G; }
         }
-        if (pick === -2) {
-          setBubble(1);
+        if (pickG) {
+          setGroup(pickG, pickG.formMode || 1);
           ok = solve();
           continue;
         }
@@ -4027,6 +4559,30 @@
               if (attempt(j, pick)) { ok = true; break; }
             }
           }
+          continue;
+        }
+        // A binary solid solution whose composition has crossed into its miscibility gap, or out of it.
+        let moved = false;
+        for (const G of groups) {
+          const mode = present[G.rel[0]];
+          if (!mode || G.def.coef !== 'binary') continue;
+          const { gap } = binaryAt(G.def, G.def.tk ? G.def.tk[cell] : G.def.tk0);
+          let next = mode;
+          if (!gap) next = 1;
+          else if (mode === 2) {
+            let N = 0;
+            for (const k of G.k) N += x[k];
+            const xb = x[G.k[1]] / N;
+            next = xb > gap.xb2 + 1e-9 ? 3 : xb < gap.xb1 - 1e-9 ? 1 : 2;
+          } else {
+            bubbleLnE(G, evaluate(), false);
+            const over = G.lnE[1] - G.lnE[0] - (gap.lnAb - gap.lnAc);
+            if ((mode === 1 && over > 1e-9) || (mode === 3 && over < -1e-9)) next = 2;
+          }
+          if (next !== mode) { for (const j of G.rel) present[j] = next; moved = true; break; }
+        }
+        if (moved) {
+          ok = solve();
           continue;
         }
         settled = true;
@@ -4141,21 +4697,23 @@
     const iS = nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0);
     const iP = iS + (sit ? sit.V.length : 0);
     if (sit) sit.iS = iS;
-    // A bubble at a fixed pressure: its relations among the minerals' rows, its gases among their amounts (bubbleRows).
-    const bubble = (() => {
+    // The groups -- a bubble, solid solutions: their relations among the minerals' rows, their members among
+    // their amounts (bubbleRows); and each mineral's group, or -1, and place in it.
+    const groupOfMin = new Int32Array(nm).fill(-1);
+    const qOfMin = new Int32Array(nm).fill(-1);
+    const groups = sys.groups.map((Gs, g) => {
       const ps = [];
-      mins.forEach((mn, p) => { if (eqs[mn.j].gas) ps.push(p); });
-      if (!ps.length) return null;
-      const qOf = new Int32Array(nm).fill(-1);
-      ps.forEach((p, q) => { qOf[p] = q; });
-      return { ps: Int32Array.from(ps), qOf, rel: Int32Array.from(ps, (p) => nb + p), k: Int32Array.from(ps, (p) => nK + p),
-        prIdx: Int32Array.from(ps, (p) => act.gas.qOf[eqs[mins[p].j].mineral]),
-        nu: Float64Array.from(ps, (p) => eqs[mins[p].j].mineralNu), lnP: Math.log(act.gas.pressure),
+      mins.forEach((mn, p) => { if (sys.inGroup[mn.j] === g) ps.push(p); });
+      ps.forEach((p, q) => { groupOfMin[p] = g; qOfMin[p] = q; });
+      const def = Gs.def;
+      return { def, ps: Int32Array.from(ps), rel: Int32Array.from(ps, (p) => nb + p), k: Int32Array.from(ps, (p) => nK + p),
+        prIdx: def.coef === 'pr' ? Int32Array.from(ps, (p) => def.gas.qOf[eqs[mins[p].j].mineral]) : null,
+        nu: Float64Array.from(ps, (p) => eqs[mins[p].j].mineralNu), lnP: def.lnP,
         lnE: new Float64Array(ps.length), w: new Float64Array(ps.length), rows: null, mean: null, width: 0, out: [] };
-    })();
+    });
     return {
       sit,
-      bubble,
+      groups, groupOfMin, qOfMin,
       sys, aq, naq, aqOf, D: pivotOf, K, nK, nm, nr,
       E: A.map((rw) => Float64Array.from(K, (i) => rw[i])),
       M,
@@ -4506,9 +5064,7 @@
     // The minerals, and a bubble.
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
-    const Gb = rs.bubble;
-    const bubbleOn = !!Gb && !!present[mins[Gb.ps[0]].j];
-    if (bubbleOn) bubbleScratch(Gb, sc.nx);
+    for (const Gq of rs.groups) if (present[mins[Gq.ps[0]].j]) bubbleScratch(Gq, sc.nx);
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
@@ -4518,7 +5074,9 @@
         norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
         continue;
       }
-      const qb = bubbleOn ? Gb.qOf[p] : -1;
+      // A member of a group that is there: its share of the water, and its gradient over nx, for bubbleRows.
+      const Gb = rs.groupOfMin[p] >= 0 ? rs.groups[rs.groupOfMin[p]] : null;
+      const qb = Gb ? rs.qOfMin[p] : -1;
       if (qb >= 0) {
         // A bubble's relation: its gas's ln of pressure in the water, and its gradient over nx, for bubbleRows.
         let r = mn.water * L - lnKIn(mn.eq, cell);
@@ -4553,12 +5111,13 @@
       F[row] = r;
       norm = Math.max(norm, Math.abs(r));
     }
-    if (bubbleOn) {
+    for (const Gb of rs.groups) {
+      if (!present[mins[Gb.ps[0]].j]) continue;
       // Its rows over nx, then the unknowns' part into J and the outside species' into B.
       const out = Gb.out;
       for (const row of Gb.rel) if (!out[row] || out[row].length !== sc.nx) out[row] = new Float64Array(sc.nx);
-      bubbleReal(Gb, act.gas, sc.nx, grad);
-      norm = Math.max(norm, bubbleRows(Gb, (q) => z[Gb.k[q]], sc.nx, F, grad ? out : null, big).norm);
+      norm = Math.max(norm, groupRowsAt(Gb, present[mins[Gb.ps[0]].j], cell, (q) => z[Gb.k[q]], sc.nx, F, grad ? out : null,
+        big).norm);
       if (grad) {
         for (const row of Gb.rel) {
           const o = out[row];
@@ -4798,9 +5357,7 @@
     // The minerals: saturation while there is some, none while there is none.
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
-    const G = rs.bubble;
-    const bubbleOn = !!G && !!present[mins[G.ps[0]].j];
-    if (bubbleOn && J) bubbleScratch(G, nz);
+    if (J) for (const Gq of rs.groups) if (present[mins[Gq.ps[0]].j]) bubbleScratch(Gq, nz);
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
@@ -4814,8 +5371,9 @@
       let gI = 0;
       for (const [si, nu] of mn.fixed) { r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + sc.lnG[si]); gI += nu * dG[si]; }
       for (let i = 0; i < naq; i++) if (mn.nu[i]) r += mn.nu[i] * alpha[i];
-      // A bubble's relation: the ln of the pressure the water holds its gas at, and its gradient, for bubbleRows.
-      const qb = bubbleOn ? G.qOf[p] : -1;
+      // A member of a group that is there: its share of the water, and its gradient, for bubbleRows.
+      const G = rs.groupOfMin[p] >= 0 ? rs.groups[rs.groupOfMin[p]] : null;
+      const qb = G ? rs.qOfMin[p] : -1;
       if (qb >= 0) G.lnE[qb] = -r / G.nu[qb];
       else {
         F[row] = r;
@@ -4840,9 +5398,9 @@
       if (useL) Jr[iL] += mn.water;
       if (qb >= 0) { const f = -1 / G.nu[qb]; for (let c = 0; c < nz; c++) if (Jr[c]) Jr[c] *= f; }
     }
-    if (bubbleOn) {
-      bubbleReal(G, act.gas, nz, !!J);
-      norm = Math.max(norm, bubbleRows(G, (q) => z[G.k[q]], nz, F, J, big).norm);
+    for (const G of rs.groups) {
+      if (!present[mins[G.ps[0]].j]) continue;
+      norm = Math.max(norm, groupRowsAt(G, present[mins[G.ps[0]].j], cell, (q) => z[G.k[q]], nz, F, J, big).norm);
     }
     // The ionic strength, and the water's ln a.
     if (useI) {
@@ -5187,9 +5745,11 @@
       if (O) outside.forEach((si, i) => { O[j][i] = d(si); });
       if (sd) sitDone(act, eq.net);
     }
-    // A bubble at a fixed pressure, while it is there: its relations' rows together (bubbleRows).
-    const G = sys.gas;
-    if (G && present[G.rel[0]]) {
+    // Each group while it is there -- a bubble, a solid solution: its relations' rows together (bubbleRows). Inside a
+    // miscibility gap (mode 2) each relation holds at a constant activity, and its row is the relation's own, above.
+    for (const G of sys.groups) {
+      if (!present[G.rel[0]] || present[G.rel[0]] === 2) continue;
+      G.mode = present[G.rel[0]];
       const K = G.rel.length;
       const oRows = O ? G.rel.map(() => new Float64Array(outside.length)) : null;
       for (let q = 0; q < K; q++) {
@@ -5207,7 +5767,7 @@
         for (let c = 0; c < na; c++) row[c] = f * J[j][c];
         if (O) for (let i = 0; i < outside.length; i++) oRows[q][i] = f * O[j][i];
       }
-      const lu = bubbleReal(G, act.gas, na, true);
+      const lu = groupReal(G, na, true, cell);
       if (lu && O) {
         const col = new Float64Array(K);
         for (let i = 0; i < outside.length; i++) {
@@ -6241,6 +6801,7 @@
     act = potentialSetup(species, equilibria, act, settings);
     const pt = act ? act.pt : null;
     act = gasSetup(species, equilibria, act, settings, warnings, sections.GAS_PAIRS);
+    const solids = solidSolutionSetup(species, equilibria, sections.SOLID_SOLUTIONS, settings);
     const electron = electronSetup(species, equilibria);
     // The order the conserved totals are made in (conservationBasis): species
     // on an exchanger first, and last what is no amount, an exchanger or the
@@ -7396,11 +7957,14 @@
     */
     thermo.tc = new Float64Array(nc).fill(tcFixed === null ? 25 : tcFixed);
     thermo.tk = Float64Array.from(thermo.tc, (v) => v + 273.15);
+    // A binary solid solution's a0, a1 and miscibility gap are its cell's temperature's (binaryAt), its gap to
+    // round-off where that goes with time.
+    for (const d of solids) { d.tk = thermo.tk; d.smooth = !!tempClock; d.cache.clear(); }
     const relT = equilibria.filter((eq) => eq.th);
     const phT = [...phases.values()].filter((ph) => ph.th);
     const gasT = act && act.gas && (act.gas.fixed === 'volume' || act.gas.pr) ? act.gas : null;
     const readsT = (act && act.kind !== 'none') || !!pt || !!gasT || relT.length > 0 || phT.length > 0
-      || aqList.some((e) => e.kind === 'TK' || e.kind === 'TC');
+      || aqList.some((e) => e.kind === 'TK' || e.kind === 'TC') || solids.some((d) => d.coef === 'binary');
     if (tcFixed !== null && readsT && !(tcFixed >= 0 && tcFixed <= 350)) {
       throw new RtmError(`TEMPERATURE = ${tcFixed}: the water and its relations are worked out for 0 to 350 C.`,
         settings.TEMPERATURE_line);
@@ -7884,6 +8448,10 @@
         relations' and phases' log K go with it; and each cell's, in C, at a
         time t (temperatures), which is where the model is then evaluated at.
       */
+      // The solid solutions: each one's name, end members and, for a binary one, a0 and a1 at 25 C (binaryAt).
+      solidSolutions: solids.map((d) => ({ name: d.name, members: d.members.map((k) => nameOf[k]),
+        binary: d.coef === 'binary' ? { a0: d.ag0 / (R_KJ * 298.15), a1: d.ag1 / (R_KJ * 298.15),
+          gap: !!binaryAt(d, 298.15).gap } : null })),
       temperature: { given: tcFixed !== null ? tcFixed : settings.TEMPERATURE, varies: thermo.varies, cells: tempCells,
         clock: tempClock, relations: relT.length, phases: phT.length, reads: readsT },
       thermoAt,
@@ -8143,37 +8711,43 @@
     // none, the amount is zero and the water may be undersaturated. Which it
     // is changes at events (see eventValues), and a run starts from the state.
     const mins = [];
-    eqs.forEach((eq, r) => { if (eq.mineral >= 0 && !eq.gas) mins.push(r); });
+    eqs.forEach((eq, r) => { if (eq.mineral >= 0 && !eq.grp) mins.push(r); });
     const nmin = mins.length;
     const present = new Uint8Array(nc * ne).fill(1);
     const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
     /*
-      A BUBBLE at a fixed pressure (gasSetup): its relations come and go
-      together, at one event a cell, and while it is there their rows are the
-      bubble's (bubbleRows), each reading every gas of the bubble and every
-      species of its relations -- the columns `cols`, a gas at `k` among them.
+      THE GROUPS -- a bubble at a fixed pressure (gasSetup), a solid solution
+      (solidSolutionSetup): each one's relations come and go together, at one
+      event a cell, and while it is there their rows are the group's
+      (bubbleRows), each reading every member of the group and every species
+      of its relations -- the columns `cols`, a member at `k` among them.
+      grpOf: each relation's group, or null.
     */
-    const gasRels = [];
-    eqs.forEach((eq, r) => { if (eq.gas) gasRels.push(r); });
-    const bub = gasRels.length ? (() => {
+    const grpDefs = [];
+    eqs.forEach((eq) => { if (eq.grp && !grpDefs.includes(eq.grp)) grpDefs.push(eq.grp); });
+    const grps = grpDefs.map((def) => {
+      const rels = [];
+      eqs.forEach((eq, r) => { if (eq.grp === def) rels.push(r); });
       const colSet = new Set();
-      for (const r of gasRels) {
+      for (const r of rels) {
         for (const [s] of eqs[r].net) colSet.add(s);
         for (const k of actCols[r]) colSet.add(k);
       }
       const cols = [...colSet].sort((a, b2) => a - b2);
       const loc = new Map(cols.map((s, i) => [s, i]));
-      return { rel: Int32Array.from(gasRels), cols, loc, k: Int32Array.from(gasRels, (r) => loc.get(eqs[r].mineral)),
-        prIdx: Int32Array.from(gasRels, (r) => act.gas.qOf[eqs[r].mineral]),
-        gas: Int32Array.from(gasRels, (r) => eqs[r].mineral), nu: Float64Array.from(gasRels, (r) => eqs[r].mineralNu),
-        lnP: Math.log(act.gas.pressure), lnE: new Float64Array(gasRels.length), w: new Float64Array(gasRels.length),
-        rows: gasRels.map(() => new Float64Array(cols.length)), mean: new Float64Array(cols.length) };
-    })() : null;
+      return { def, rel: Int32Array.from(rels), cols, loc, k: Int32Array.from(rels, (r) => loc.get(eqs[r].mineral)),
+        prIdx: def.coef === 'pr' ? Int32Array.from(rels, (r) => def.gas.qOf[eqs[r].mineral]) : null,
+        mem: Int32Array.from(rels, (r) => eqs[r].mineral), nu: Float64Array.from(rels, (r) => eqs[r].mineralNu),
+        lnP: def.lnP, lnE: new Float64Array(rels.length), w: new Float64Array(rels.length),
+        rows: rels.map(() => new Float64Array(cols.length)), mean: new Float64Array(cols.length) };
+    });
+    const ngrp = grps.length;
+    const grpOf = eqs.map((eq) => (eq.grp ? grps[grpDefs.indexOf(eq.grp)] : null));
     const bubF = new Float64Array(ne);
     const bubJ = [];
-    if (bub) for (const r of bub.rel) bubJ[r] = new Float64Array(bub.cols.length);
-    // The gases' amounts together in the cell at b.
-    const bubbleN = (yy, b) => { let N = 0; for (const g of bub.gas) N += yy[b + g]; return N; };
+    for (const G of grps) for (const r of G.rel) bubJ[r] = new Float64Array(G.cols.length);
+    // A group's members' amounts together in the cell at b.
+    const groupN = (G, yy, b) => { let N = 0; for (const g of G.mem) N += yy[b + g]; return N; };
     /*
       THE PROJECTED FORM, for a model with the electron in it. A redox front
       passes through a moment no couple buffers: the last of a reductant has
@@ -8245,7 +8819,7 @@
       eqs.forEach((eq, r) => {
         for (const [s] of eq.net) touch(b + relRow[r], b + s);
         for (const k of actCols[r]) touch(b + relRow[r], b + k);
-        if (bub && eq.gas) for (const s of bub.cols) touch(b + relRow[r], b + s);
+        if (grpOf[r]) for (const s of grpOf[r].cols) touch(b + relRow[r], b + s);
       });
     }
     for (let i = 0; i < n; i++) touch(i, i);
@@ -8302,7 +8876,8 @@
       defC.push(U.map((uj, j) => Int32Array.from(active, (s, k) => (uj[k] ? slot(b + defAt[j], b + s) : -1))));
       relC.push(eqs.map((eq, r) => Int32Array.from(eq.net, ([s]) => slot(b + relRow[r], b + s))));
       relA.push(eqs.map((eq, r) => Int32Array.from(actCols[r], (k) => slot(b + relRow[r], b + k))));
-      relG.push(bub ? eqs.map((eq, r) => (eq.gas ? Int32Array.from(bub.cols, (s) => slot(b + relRow[r], b + s)) : null)) : null);
+      relG.push(ngrp ? eqs.map((eq, r) => (grpOf[r] ? Int32Array.from(grpOf[r].cols, (s) => slot(b + relRow[r], b + s)) : null))
+        : null);
     }
     // The projected rows' entries, per cell: each held species on itself, on
     // its cell's totals, and on what its cell's relations read besides.
@@ -8453,12 +9028,12 @@
           const m = eqs[r].mineral;
           out[b + relRow[r]] = m >= 0 && !present[c * ne + r] ? y[b + m] : relationAt(b, r, y, water);
         }
-        // The bubble, while it is there: its relations' rows together.
-        if (bub && present[c * ne + bub.rel[0]]) {
-          for (let q = 0; q < bub.rel.length; q++) bub.lnE[q] = -relationAt(b, bub.rel[q], y, water) / bub.nu[q];
-          bubbleReal(bub, act.gas, bub.cols.length, false);
-          bubbleRows(bub, (q) => y[b + bub.gas[q]], bub.cols.length, bubF, null, 1);
-          for (const r of bub.rel) out[b + relRow[r]] = bubF[r];
+        // Each group, while it is there: its relations' rows together.
+        for (const G of grps) {
+          if (!present[c * ne + G.rel[0]]) continue;
+          for (let q = 0; q < G.rel.length; q++) G.lnE[q] = -relationAt(b, G.rel[q], y, water) / G.nu[q];
+          groupRowsAt(G, present[c * ne + G.rel[0]], c, (q) => y[b + G.mem[q]], G.cols.length, bubF, null, 1);
+          for (const r of G.rel) out[b + relRow[r]] = bubF[r];
         }
       }
       return out;
@@ -8566,8 +9141,8 @@
             V[relC[c][r][minAt[r]]] += 1;
             continue;
           }
-          // A bubble's relations, while it is there: below.
-          if (bub && eqs[r].gas) continue;
+          // A group's relations, while it is there: below.
+          if (grpOf[r]) continue;
           eqs[r].net.forEach(([s, nu], m) => {
             if (isMin[s]) return;
             V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
@@ -8587,8 +9162,9 @@
           });
           if (sd) sitDone(act, eqs[r].net);
         }
-        if (bub && present[c * ne + bub.rel[0]]) {
-          // Each gas's ln of the pressure the water holds it at, and its gradient in the state, over the bubble's columns.
+        for (const bub of grps) {
+          if (!present[c * ne + bub.rel[0]]) continue;
+          // Each member's ln of its share of the water, and its gradient in the state, over the group's columns.
           for (let q = 0; q < bub.rel.length; q++) {
             const r = bub.rel[q];
             const eq = eqs[r];
@@ -8614,8 +9190,7 @@
             }
             bub.lnE[q] = f * relationAt(b, r, y, water);
           }
-          bubbleReal(bub, act.gas, bub.cols.length, true);
-          bubbleRows(bub, (q) => y[b + bub.gas[q]], bub.cols.length, bubF, bubJ, 1);
+          groupRowsAt(bub, present[c * ne + bub.rel[0]], c, (q) => y[b + bub.mem[q]], bub.cols.length, bubF, bubJ, 1);
           for (const r of bub.rel) {
             const sl = relG[c][r];
             const Jr = bubJ[r];
@@ -8715,7 +9290,8 @@
         for (let j = 0; j < nb; j++) totalsCell[j] = y[tIndex(c, j)];
         for (let k = 0; k < na; k++) wCell[k] = massOf[b + active[k]];
         const pres = opts.fromState
-          ? Uint8Array.from(eqs, (eq) => (eq.mineral < 0 || (eq.gas ? bubbleN(y, b) : y[b + eq.mineral]) > 0 ? 1 : 0))
+          ? Uint8Array.from(eqs, (eq, r) => (grpOf[r] ? groupMode(grpOf[r], (q) => y[b + grpOf[r].mem[q]], c)
+            : (eq.mineral < 0 || y[b + eq.mineral] > 0 ? 1 : 0)))
           : present.subarray(c * ne, (c + 1) * ne);
         /*
           Projected, the held species in the state carry no weight and may
@@ -8734,7 +9310,7 @@
           if (r0.converged) for (const s of active) C[b + s] = Cs[s];
         }
         // The cell an event has just brought a mineral into, as it was, in case that mineral cannot be there beside another.
-        const evHere = !!lastEvent && lastEvent.c === c && lastEvent.r >= 0 && !opts.fromState;
+        const evHere = !!lastEvent && lastEvent.c === c && !opts.fromState;
         const kept = evHere ? C.slice(b, b + ns) : null;
         let res = speciateCell(sys, C, b, totalsCell, wCell, pres,
           { tol, roundOff: true, activeSet: !!opts.fromState, cell: c });
@@ -8743,7 +9319,7 @@
           C.set(kept, b);
           const before = Uint8Array.from(pres);
           res = speciateCell(sys, C, b, totalsCell, wCell, pres,
-            { tol, roundOff: true, activeSet: true, cell: c, enter: lastEvent.r });
+            { tol, roundOff: true, activeSet: true, cell: c, enter: lastEvent.r >= 0 ? lastEvent.r : undefined });
           const gone = mins.filter((r) => before[r] && !pres[r]).map((r) => base.speciesNames[eqs[r].mineral]);
           if (res.converged && gone.length) {
             events[lastEvent.which].shown += `, and ${gone.join(' and ')} ${gone.length > 1 ? 'have' : 'has'} dissolved away`;
@@ -8817,12 +9393,24 @@
       zero from below when they come to the total and a bubble forms.
     */
     const where = (c) => (nc > 1 ? ` in cell ${c}` : '');
-    const nbub = bub ? nc : 0;
+    // One event a cell for each group, after the minerals': nc * nmin + c * ngrp + g; and for each binary solid
+    // solution its miscibility gap's, after those: nc * nmin + nc * ngrp + c * nbin + i.
+    const nbub = nc * ngrp;
+    const bins = grps.filter((G) => G.def.coef === 'binary');
+    const nbin = bins.length;
+    const gapStart = nc * nmin + nbub;
+    // Where eventValues last found that a group forming would go, and one leaving its gap.
+    const formAt = new Uint8Array(nbub);
+    const exitAt = new Uint8Array(nc * nbin);
     const events = Array.from({ length: nc * nmin }, (_, q) => ({
       expr: `${base.speciesNames[eqs[mins[q % nmin]].mineral]}${where(Math.floor(q / nmin))}`,
       shown: '', assigns: ['present'], once: false, stop: false,
-    })).concat(Array.from({ length: nbub }, (_, c) => ({
-      expr: `the bubble${where(c)}`, shown: '', assigns: ['present'], once: false, stop: false,
+    })).concat(Array.from({ length: nbub }, (_, q) => ({
+      expr: `${grps[q % ngrp].def.name}${where(Math.floor(q / ngrp))}`, shown: '', assigns: ['present'], once: false,
+      stop: false,
+    }))).concat(Array.from({ length: nc * nbin }, (_, q) => ({
+      expr: `${bins[q % nbin].def.name}'s miscibility gap${where(Math.floor(q / nbin))}`, shown: '', assigns: ['present'],
+      once: false, stop: false,
     })));
     // A relation without its gas, at the concentrations Cc of the cell at b.
     const relationOf = (Cc, b, r, water) => {
@@ -8836,15 +9424,43 @@
       if (act && eq.water) g += eq.water * water.lnAw;
       return g;
     };
-    // ln of the pressures the water holds the bubble's gases at, together, less ln P.
-    const bubbleExcessAt = (Cc, b, water) => {
+    // ln of a group's members' shares of the water, together, less ln of their total.
+    const bubbleExcessAt = (bub, Cc, b, water) => {
       let top = -Infinity;
       for (let q = 0; q < bub.rel.length; q++) bub.lnE[q] = -relationOf(Cc, b, bub.rel[q], water) / bub.nu[q];
-      bubbleReal(bub, act.gas, bub.cols.length, false);
+      bub.formMode = groupFormsAt(bub, (b / ns) | 0);
+      bub.mode = 0;
+      groupReal(bub, bub.cols.length, false, (b / ns) | 0);
       for (let q = 0; q < bub.rel.length; q++) top = Math.max(top, bub.lnE[q]);
       let S = 0;
       for (let q = 0; q < bub.rel.length; q++) S += Math.exp(bub.lnE[q] - top);
       return top + Math.log(S) - bub.lnP;
+    };
+    /*
+      A binary solid solution's miscibility gap, as an event: below the gap
+      (mode 1) the water's ln(IAP2 K1/(IAP1 K2)) less the gap's, reaching
+      zero where the solid comes to the gap; above it (3) the other way; in
+      it (2), the second member's amount less xb2 of the whole, or xb1 of the
+      whole less it, the larger, reaching zero where the solid's composition
+      leaves the gap -- that side noted in exitAt. -1 where there is no
+      solid solution or no gap; 1 in a gap that has closed.
+    */
+    const gapValue = (G, i, c, Cc, b, water, amt) => {
+      const mode = present[c * ne + G.rel[0]];
+      if (!mode) return -1;
+      const { gap } = binaryAt(G.def, G.def.tk[c]);
+      if (!gap) { exitAt[c * nbin + i] = 1; return mode === 2 ? 1 : -1; }
+      if (mode === 2) {
+        const nb2 = amt(1);
+        const N = amt(0) + nb2;
+        const up = nb2 - gap.xb2 * N;
+        const down = gap.xb1 * N - nb2;
+        exitAt[c * nbin + i] = up > down ? 3 : 1;
+        return Math.max(up, down);
+      }
+      const L = -relationOf(Cc, b, G.rel[1], water) / G.nu[1] + relationOf(Cc, b, G.rel[0], water) / G.nu[0];
+      const Lg = gap.lnAb - gap.lnAc;
+      return mode === 1 ? L - Lg : Lg - L;
     };
     function eventValues(t, y, out) {
       thermoAt(t);
@@ -8874,11 +9490,15 @@
             if (act && eq.water) g += eq.water * water.lnAw;
             out[c * nmin + q] = (eq.mineralNu < 0 ? 1 : -1) * g;
           }
-          if (bub) {
-            const at = nc * nmin + c;
-            if (!xs[c]) out[at] = present[c * ne + bub.rel[0]] ? -bubbleN(y, b) : -1;
-            else out[at] = present[c * ne + bub.rel[0]] ? -bubbleN(Cstar, b) : bubbleExcessAt(Cstar, b, water);
-          }
+          grps.forEach((bub, g) => {
+            const at = nc * nmin + c * ngrp + g;
+            if (!xs[c]) out[at] = present[c * ne + bub.rel[0]] ? -groupN(bub, y, b) : -1;
+            else if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, Cstar, b);
+            else { out[at] = bubbleExcessAt(bub, Cstar, b, water); formAt[c * ngrp + g] = bub.formMode; }
+          });
+          bins.forEach((G, i) => {
+            out[gapStart + c * nbin + i] = xs[c] ? gapValue(G, i, c, Cstar, b, water, (q) => Cstar[b + G.mem[q]]) : -1;
+          });
         }
         return out;
       }
@@ -8894,25 +9514,46 @@
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
           out[c * nmin + q] = (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
         }
-        if (bub) {
-          const at = nc * nmin + c;
-          if (present[c * ne + bub.rel[0]]) out[at] = -bubbleN(y, b);
+        grps.forEach((bub, g) => {
+          const at = nc * nmin + c * ngrp + g;
+          if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, y, b);
           else {
             if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
-            out[at] = bubbleExcessAt(C, b, water);
+            out[at] = bubbleExcessAt(bub, C, b, water);
+            formAt[c * ngrp + g] = bub.formMode;
           }
-        }
+        });
+        bins.forEach((G, i) => {
+          if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
+          out[gapStart + c * nbin + i] = gapValue(G, i, c, C, b, water, (q) => y[b + G.mem[q]]);
+        });
       }
       return out;
     }
     function applyEvent(which) {
-      if (which >= nc * nmin) {
-        const c = which - nc * nmin;
+      if (which >= gapStart) {
+        const q = which - gapStart;
+        const c = Math.floor(q / nbin);
+        const G = bins[q % nbin];
+        const next = present[c * ne + G.rel[0]] === 2 ? exitAt[q] || 1 : 2;
+        for (const r of G.rel) present[c * ne + r] = next;
         lastEvent = { c, r: -1, which };
-        const now = present[c * ne + bub.rel[0]] ? 0 : 1;
+        events[which].shown = next === 2 ? `${G.def.name} comes to its miscibility gap${where(c)}`
+          : `${G.def.name} leaves its miscibility gap${where(c)}`;
+        return Array.from(G.mem, (g) => base.speciesNames[g]);
+      }
+      if (which >= nc * nmin) {
+        const c = Math.floor((which - nc * nmin) / ngrp);
+        const g = (which - nc * nmin) % ngrp;
+        const bub = grps[g];
+        lastEvent = { c, r: -1, which };
+        const now = present[c * ne + bub.rel[0]] ? 0 : (formAt[c * ngrp + g] || 1);
         for (const r of bub.rel) present[c * ne + r] = now;
-        events[which].shown = now ? `a bubble forms${where(c)}` : `the bubble has dissolved${where(c)}`;
-        return Array.from(bub.gas, (g) => base.speciesNames[g]);
+        events[which].shown = bub.def.kind === 'gas'
+          ? (now ? `a bubble forms${where(c)}` : `the bubble has dissolved${where(c)}`)
+          : (now ? `the solid solution ${bub.def.name} precipitates${where(c)}`
+            : `the solid solution ${bub.def.name} has dissolved away${where(c)}`);
+        return Array.from(bub.mem, (g) => base.speciesNames[g]);
       }
       const c = Math.floor(which / nmin);
       const r = mins[which % nmin];
@@ -8923,12 +9564,18 @@
       events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
       return [name];
     }
-    // Each run starts from the state: some of a mineral is there or none is; a bubble, or none.
+    /*
+      Each run starts from the state: some of a mineral is there or none is;
+      a bubble, or none; a solid solution, and which side of its gap -- at
+      the temperatures of t = 0, where a run starts, and not those of the
+      end of the run before, which the gap may not be there at.
+    */
     const resetModes = (y) => {
+      thermoAt(0);
       for (let c = 0; c < nc; c++) {
         for (const r of mins) present[c * ne + r] = y[c * ns + eqs[r].mineral] > 0 ? 1 : 0;
-        if (bub) {
-          const v = bubbleN(y, c * ns) > 0 ? 1 : 0;
+        for (const bub of grps) {
+          const v = groupMode(bub, (q) => y[c * ns + bub.mem[q]], c);
           for (const r of bub.rel) present[c * ne + r] = v;
         }
       }
@@ -8958,8 +9605,8 @@
       species: names,
       initialState: () => { resetModes(initial); return Float64Array.from(initial); },
       ...(nmin || nbub ? {
-        nevents: nc * nmin + nbub,
-        eventDirections: new Int8Array(nc * nmin + nbub).fill(1),
+        nevents: nc * nmin + nbub + nc * nbin,
+        eventDirections: new Int8Array(nc * nmin + nbub + nc * nbin).fill(1),
         events,
         eventValues,
         applyEvent,
@@ -8993,7 +9640,9 @@
       stateWidth: nBase,
       toConcentrations,
       fromConcentrations,
-      heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin, bubble: bub ? bub.rel.length : 0 },
+      heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin,
+        bubble: grps.filter((G) => G.def.kind === 'gas').reduce((acc, G) => acc + G.rel.length, 0),
+        solidSolutions: grps.filter((G) => G.def.kind === 'ss').length },
       density: nnz / (n * n),
     };
   }
@@ -9167,7 +9816,7 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
-    chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt,
+    chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.

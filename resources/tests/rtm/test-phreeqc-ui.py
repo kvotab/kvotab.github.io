@@ -536,6 +536,42 @@ async def main():
                   m_gas is not None and float(m_gas.group(1)) < 1e-4, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a solid solution in the water: aragonite and strontianite, run, and looked at through PHREEQC ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/^( *Mg +5)$/m, '$1\\n  Sr     0.5').replace(/\\nEND\\s*$/, '\\nSOLID_SOLUTIONS 1\\n"
+                          "  CaSrCO3\\n  -comp1 Aragonite 0\\n  -comp2 Strontianite 0\\n  -Gugg_nondimensional 3.43 -1.82\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            onss = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ss_text = await page.ev("document.getElementById('rtmText').value")
+            check('a solid solution in the water is carried: aragonite and strontianite as minerals, Guggenheim\'s a0 and a1, '
+                  'and the report says so',
+                  isinstance(onss, str) and 'A solid solution, CaSrCO3: Aragonite (' in onss
+                  and 'a0 3.43 and a1 -1.82 at 25 °C' in onss and isinstance(ss_text, str)
+                  and re.search(r'^CaSrCO3 +Aragonite +Strontianite +a0=3\.43 +a1=-1\.82$', ss_text, re.M) is not None
+                  and re.search(r'^Aragonite +[0-9.e-]+ +mineral$', ss_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give the solid solution and its miscibility gap', await page.ev(
+                "/the solid solution CaSrCO3 \\(Aragonite, Strontianite\\), a0 3\\.43 and a1 -1\\.82 at 25 °C, a miscibility gap, "
+                "there while the water is saturated in it/.test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ss_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_ss = re.search(r"The solid solution CaSrCO3 \(Aragonite, Strontianite\): each member's saturation index PHREEQC "
+                             r"finds in the water is log10 of its activity in the run's solid, its mole fraction times lambda, "
+                             r"to within ([0-9.e+-]+)", ss_summary or '')
+            check('looked at through PHREEQC, each member\'s activity in the run\'s solid is the one PHREEQC finds the water '
+                  'holds the pure member at', m_ss is not None and float(m_ss.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- the temperature: the example water warmed along a table, run, and looked at through PHREEQC ---
             warm_report = await write_from_example(page)
             check('the hand-off says the relations\' log K go with temperature, as the database\'s do',

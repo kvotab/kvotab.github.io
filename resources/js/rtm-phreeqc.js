@@ -759,6 +759,228 @@
     return out;
   }
 
+  /*
+    SOLID_SOLUTIONS as PHREEQC's read_solid_solutions reads them: a line that
+    is no option names a solid solution; -comp (or -component) adds a member
+    with its moles, -comp1 and -comp2 are the two of a binary one, first and
+    second whatever their order; the parameters are any one of PHREEQC's ten
+    forms, kept as given (input, p) for ssEnergies; -tempk is its
+    temperature in kelvin, -tempc and -temp in C, which PHREEQC adds to
+    298.15, and so does this.
+  */
+  const SS_OPTIONS = ['component', 'comp', 'parms', 'gugg_nondimensional', 'gugg_kj', 'activity_coefficients',
+    'distribution_coefficients', 'miscibility_gap', 'spinodal_gap', 'critical_point', 'alyotropic_point', 'temp', 'tempk',
+    'tempc', 'thompson', 'margules', 'comp1', 'comp2'];
+  const SS_INPUT = { parms: 'a0a1', gugg_nondimensional: 'a0a1', gugg_kj: 'kj', activity_coefficients: 'gammas',
+    distribution_coefficients: 'dist', miscibility_gap: 'misc', spinodal_gap: 'spinodal', critical_point: 'critical',
+    alyotropic_point: 'alyotropic', thompson: 'thompson', margules: 'margules' };
+
+  /** The SOLID_SOLUTIONS blocks of an input, by number: each its solid solutions, in order. */
+  function readSolidSolutions(text) {
+    const out = new Map();
+    let block = null;
+    let cur = null;
+    const finish = () => {
+      if (!cur) return;
+      cur.comps = [...(cur.c1 ? [cur.c1] : []), ...(cur.c2 ? [cur.c2] : []), ...cur.comps];
+      delete cur.c1;
+      delete cur.c2;
+      block.push(cur);
+      cur = null;
+    };
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word)) {
+        if (block) finish();
+        block = null;
+        if (word === 'SOLID_SOLUTIONS') {
+          block = [];
+          out.delete(tokens[1] || '1');
+          out.set(tokens[1] || '1', block);
+        }
+        continue;
+      }
+      if (!block) continue;
+      const dashed = /^-[A-Za-z]/.test(tokens[0]);
+      const key = (dashed ? tokens[0].slice(1) : tokens[0]).toLowerCase();
+      const opt = dashed ? SS_OPTIONS.find((o) => o.startsWith(key)) : SS_OPTIONS.find((o) => o === key);
+      if (!opt) {
+        finish();
+        cur = { name: tokens[0], comps: [], c1: null, c2: null, input: null, p: [0, 0, 0, 0], tk: 298.15 };
+        continue;
+      }
+      const nums = tokens.slice(1).map(Number);
+      const comp = () => ({ name: tokens[1], moles: tokens.length > 2 ? Number(tokens[2]) : NaN });
+      if (opt === 'component' || opt === 'comp') { if (cur && tokens[1]) cur.comps.push(comp()); continue; }
+      if (opt === 'comp1') { if (cur && tokens[1]) cur.c1 = comp(); continue; }
+      if (opt === 'comp2') { if (cur && tokens[1]) cur.c2 = comp(); continue; }
+      if (!cur) continue;
+      if (opt === 'tempk') { cur.tk = Number.isFinite(nums[0]) ? nums[0] : 298.15; continue; }
+      if (opt === 'temp' || opt === 'tempc') { cur.tk = Number.isFinite(nums[0]) ? nums[0] + 298.15 : 298.15; continue; }
+      cur.input = SS_INPUT[opt];
+      if (cur.input === 'a0a1' || cur.input === 'kj') {
+        if (Number.isFinite(nums[0])) cur.p[0] = nums[0];
+        if (Number.isFinite(nums[1])) cur.p[1] = nums[1];
+      } else {
+        cur.p = nums.filter((v) => Number.isFinite(v));
+      }
+    }
+    if (block) finish();
+    return out;
+  }
+
+  /**
+   * PHREEQC's ss_calc_a0_a1: a binary solid solution's Guggenheim energies
+   * g0 and g1, kJ/mol, from whichever form its parameters were given in, at
+   * its temperature tk; kc and kb its two members' K there. Null for an
+   * ideal one (no parameters, or both zero).
+   */
+  function ssEnergies(ss, kc, kb) {
+    const tol = 1e-6;
+    const rt = ss.tk * R_KJ;
+    const p = ss.p;
+    let a0 = 0;
+    let a1 = 0;
+    let ag0 = 0;
+    let ag1 = 0;
+    switch (ss.input) {
+      case 'a0a1':
+        a0 = p[0]; a1 = p[1]; ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      case 'gammas': {
+        const [q1, q2, xbq1, xbq2] = p;
+        let done = false;
+        let dq1 = 0;
+        let dq2 = 0;
+        if (Math.abs(1 - xbq1) > 0 && q1 > 0) {
+          dq1 = Math.log(q1) / ((1 - xbq1) * (1 - xbq1));
+          if (xbq2 <= 0 || xbq2 > 1) { a0 = dq1; a1 = 0; done = true; }
+        }
+        if (!done && q2 <= 0) done = true;
+        if (!done) {
+          dq2 = Math.log(q2) / (xbq2 * xbq2);
+          if (xbq1 < 0 || xbq2 > 1) { a0 = dq2; a1 = 0; done = true; }
+        }
+        if (!done) {
+          const denom = 4 * (xbq1 - xbq2) + 2;
+          if (Math.abs(denom) >= tol && Math.abs(1 - xbq1) > 0 && q1 > 0) {
+            dq1 = Math.log(q1) / ((1 - xbq1) * (1 - xbq1));
+            a0 = (dq1 * (3 - 4 * xbq2) + dq2 * (4 * xbq1 - 1)) / denom;
+            a1 = (dq1 - dq2) / denom;
+          }
+        }
+        ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      }
+      case 'dist': {
+        const [q1, q2, xbq1, xbq2] = p;
+        const ratio = kc / kb;
+        const dr1 = Math.log(q1 / ratio);
+        const x21 = 2 * xbq1 - 1;
+        if (Math.abs(xbq1 - xbq2) < tol || xbq2 < 0) { a0 = dr1 / x21; a1 = 0; }
+        else {
+          const dr2 = Math.log(q2 / ratio);
+          const x22 = 2 * xbq2 - 1;
+          if (xbq1 < 0) { a0 = dr2 / x22; a1 = 0; }
+          else {
+            const x61 = 6 * xbq1 * xbq1 - 6 * xbq1 + 1;
+            const x62 = 6 * xbq2 * xbq2 - 6 * xbq2 + 1;
+            a0 = (x61 * dr2 - x62 * dr1) / (x22 * x61 - x21 * x62);
+            a1 = (x21 * dr2 - x22 * dr1) / (x21 * x62 - x22 * x61);
+          }
+        }
+        ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      }
+      case 'misc': {
+        const xb1 = p[0];
+        const xb2 = p[1];
+        const xc1 = 1 - xb1;
+        const xc2 = 1 - xb2;
+        const r1 = Math.log(xb1 / xb2);
+        const r2 = Math.log(xc1 / xc2);
+        const pa1 = xc2 * xc2 - xc1 * xc1;
+        const pb1 = 3 * (xc2 * xc2 - xc1 * xc1) - 4 * (xc2 * xc2 * xc2 - xc1 * xc1 * xc1);
+        const pa2 = xb2 * xb2 - xb1 * xb1;
+        const pb2 = -(3 * (xb2 * xb2 - xb1 * xb1) - 4 * (xb2 * xb2 * xb2 - xb1 * xb1 * xb1));
+        a0 = (r1 - (pb1 / pb2) * r2) / (pa1 - (pa2 * pb1) / pb2);
+        a1 = (r1 - (pa1 / pa2) * r2) / (pb1 - (pb2 * pa1) / pa2);
+        ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      }
+      case 'spinodal': {
+        const xsm1 = p[0];
+        const xsm2 = p[1];
+        const pn9 = 1 / xsm1;
+        const pn10 = 1 / xsm2;
+        const c5 = 1 - xsm1;
+        const c6 = 1 - xsm2;
+        const pl9 = 6 * c5 - 12 * c5 * c5;
+        const pl10 = 6 * c6 - 12 * c6 * c6;
+        const pj9 = 2 * c5;
+        const pj10 = 2 * c6;
+        a0 = (pn9 - (pl9 / pl10) * pn10) / (pj9 - (pl9 / pl10) * pj10);
+        a1 = (pn9 - (pj9 / pj10) * pn10) / (pl9 - (pj9 / pj10) * pl10);
+        ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      }
+      case 'critical': {
+        const xc = p[0];
+        const tc = p[1];
+        const r = R_KJ;
+        ag1 = (r * tc * (2 * xc - 1)) / (12 * xc * xc * (1 - xc) * (1 - xc));
+        ag0 = ((r * tc) / (xc * (1 - xc)) - (12 * xc - 6) * ag1) / 2;
+        a0 = ag0 / rt; a1 = ag1 / rt;
+        break;
+      }
+      case 'alyotropic': {
+        const xaly = p[0];
+        const r = Math.log(kb / kc);
+        const alpha0 = 2 * xaly - 1;
+        const alpha1 = 6 * xaly * (xaly - 1) + 1;
+        const spialy = Math.pow(10, p[1]);
+        a0 = -999;
+        a1 = -999;
+        if (Math.abs(alpha0) >= tol) {
+          let azero = r / alpha0;
+          const xcaly = 1 - xaly;
+          let i;
+          for (i = 0; i < 50; i++) {
+            let phi1 = xcaly * xcaly * (azero + ((r - azero * alpha0) * (4 * xaly - 1)) / alpha1);
+            let phi2 = xaly * xaly * (azero + ((3 - 4 * xaly) * (azero * alpha0 - r)) / alpha1);
+            phi1 = xaly * kb * Math.exp(phi1);
+            phi2 = xcaly * kc * Math.exp(phi2);
+            const fx = phi1 + phi2 - spialy;
+            const fx1 = xcaly * xcaly * (1 - (alpha0 * (4 * xaly - 1)) / alpha1) * phi1
+              + xaly * xaly * (1 + (alpha0 * (3 - 4 * xaly)) / alpha1) * phi2;
+            if (Math.abs(fx1) < 1e-10) break;
+            a0 = azero - fx / fx1;
+            const test = Math.abs(a0 - azero) + Math.abs(fx);
+            azero = a0;
+            if (test < tol) break;
+          }
+          if (i < 50) { a1 = (r - a0 * alpha0) / alpha1; ag0 = a0 * rt; ag1 = a1 * rt; }
+        }
+        break;
+      }
+      case 'kj':
+        ag0 = p[0]; ag1 = p[1]; a0 = ag0 / rt; a1 = ag1 / rt;
+        break;
+      case 'thompson':
+        ag0 = (p[0] + p[1]) / 2; ag1 = (p[0] - p[1]) / 2; a0 = ag0 / rt; a1 = ag1 / rt;
+        break;
+      case 'margules':
+        a0 = p[0] + (3 * p[1]) / 4; a1 = p[1] / 4; ag0 = a0 * rt; ag1 = a1 * rt;
+        break;
+      default:
+        return null;
+    }
+    if (a0 === 0 && a1 === 0) return null;
+    return { a0, a1, ag0, ag1 };
+  }
+
   /** The database, read as PHREEQC reads one, and then any inputs after it. */
   function readDatabase(...texts) {
     const db = new Database();
@@ -991,6 +1213,18 @@
       for (const c of gasBlock.comps) extras.push(`GAS("${c.name}")`, `LK_PHASE("${c.name}")`, `SI("${c.name}")`);
       extras.push('GAS_P', 'TOT("water")');
     }
+    /*
+      SOLID_SOLUTIONS carried as the page's: each member's moles in its solid
+      solution, S_S (none while the solid solution is not there), and its log
+      K at this water, and the water's kilograms the amounts are per.
+    */
+    const ssBlock = (() => { const g = readSolidSolutions(o.water.text); return g.size ? [...g.values()].pop() : null; })();
+    const carrySs = !!ssBlock && ssBlock.length > 0 && o.solids !== false && !!o.exact;
+    const ssAt = extras.length;
+    if (carrySs) {
+      for (const ss of ssBlock) for (const c of ss.comps) extras.push(`S_S("${c.name}")`, `LK_PHASE("${c.name}")`);
+      extras.push('TOT("water")');
+    }
     // Each exchanger's activity: its master species is no amount, and
     // SYS("ex") leaves it out.
     const exMasters = [...new Set(db.exMaster.values())];
@@ -1206,6 +1440,62 @@
       }
     }
     /*
+      THE SOLID SOLUTIONS: each member a mineral at the moles PHREEQC left in
+      its solid solution, per kilogram of water, with its dissolution as the
+      database writes it; and for a binary one PHREEQC's Guggenheim energies
+      and temperature, from whichever form its parameters were given in
+      (ssEnergies). A solid solution one of whose members cannot be written
+      is not carried.
+    */
+    const solids = [];
+    const solidsSkipped = [];
+    if (ssBlock && ssBlock.length && !carrySs) {
+      solidsSkipped.push({ name: 'SOLID_SOLUTIONS', why: o.solids === false ? 'asked not to be carried'
+        : 'a solid solution is carried when the relations are held exactly' });
+    } else if (carrySs) {
+      const nComp = ssBlock.reduce((acc, ss) => acc + ss.comps.length, 0);
+      const kgw = Number(w.x[ssAt + 2 * nComp]);
+      let at = ssAt;
+      for (const ss of ssBlock) {
+        const comps = ss.comps.map((c) => {
+          const moles = Number(w.x[at]);
+          const lk = Number(w.x[at + 1]);
+          at += 2;
+          return { phase: c.name, moles, lk, r: db.phaseReaction.get(c.name) };
+        });
+        let why = '';
+        for (const c of comps) {
+          if (!c.r || !c.r.left.length) { why = `the database has no reaction for ${c.phase}`; break; }
+          const others = [...c.r.left.slice(1), ...c.r.right];
+          if (others.some((t) => t.n === 'e-') && !carryRedox) { why = `${c.phase} dissolves with electrons`; break; }
+          const missing = others.filter((t) => t.n !== 'H2O' && !isE(t.n) && !molal.has(t.n)).map((t) => t.n);
+          if (missing.length) { why = `the water has no ${missing.join(', ')} for ${c.phase}`; break; }
+          if (!Number.isFinite(c.moles) || !Number.isFinite(c.lk) || !(kgw > 0)) { why = 'PHREEQC gave no amount or log K'; break; }
+        }
+        if (!why && comps.length < 2) why = 'it has one member, a pure phase';
+        let energy = null;
+        if (!why && ss.input) {
+          if (comps.length !== 2) why = `Guggenheim's parameters are for two members, and it has ${comps.length}`;
+          else {
+            const kAt = (ph) => 10 ** kCalc(db.logKTerms('p', ph) || [0, 0, 0, 0, 0, 0, 0, 0], ss.tk);
+            energy = ssEnergies(ss, kAt(comps[0].phase), kAt(comps[1].phase));
+          }
+        }
+        if (why) { solidsSkipped.push({ name: ss.name, why }); continue; }
+        // PHREEQC keeps 1e-27 mol of a member of a solid solution that is not there: none.
+        for (const c of comps) {
+          c.amount = c.moles > 1e-20 ? c.moles / kgw : 0;
+          c.c0 = c.r.left[0].c;
+          c.reac = c.r.left.slice(1);
+          c.prod = c.r.right;
+          for (const t of [...c.reac, ...c.prod]) {
+            if (t.n !== 'H2O' && !isE(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+        solids.push({ name: ss.name, comps, energy, tk: ss.tk, input: ss.input });
+      }
+    }
+    /*
       THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
       its relation as the database writes it, which a run holds exactly.
       Its activity is its equivalent fraction (Gaines-Thomas), times its
@@ -1409,6 +1699,7 @@
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
     for (const g of gases) g.name = rtmName(g.phase, taken);
+    for (const ss of solids) for (const c of ss.comps) c.name = rtmName(c.phase, taken);
     // The exchangers used, and the species on them, by the names written.
     const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
     const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
@@ -1418,6 +1709,7 @@
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
       .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]))
       .concat(gases.filter((g) => g.name !== g.phase).map((g) => [g.phase, g.name]))
+      .concat(solids.flatMap((ss) => ss.comps.filter((c) => c.name !== c.phase).map((c) => [c.phase, c.name])))
       .concat([...exName].filter(([sp, nm]) => sp !== nm));
     const side = (terms) => terms
       .map((t) => (Math.abs(t.c - 1) > 1e-12 ? `${fmtCoef(t.c)} ` : '') + (name.get(t.n) || exName.get(t.n) || t.n))
@@ -1497,7 +1789,7 @@
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
     const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length),
-      ...gases.map((g) => g.name.length),
+      ...gases.map((g) => g.name.length), ...solids.flatMap((ss) => ss.comps.map((c) => c.name.length)),
       ...[...exName.values()].map((nm) => nm.length), ...onSf.map((e) => e.name.length),
       ...potentials.map((pp) => pp.name.length)) + 2;
     const out = [];
@@ -1601,6 +1893,15 @@
     if (gasSkipped.length) {
       out.push(`# Not carried from the gas phase: ${gasSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
     }
+    for (const ss of solids) {
+      const present = ss.comps.some((c) => c.amount > 0);
+      out.push(`# The solid solution ${ss.name} (PHREEQC's SOLID_SOLUTIONS): ${ss.comps.map((c) => c.name).join(', ')}, `
+        + `${present ? 'at the moles PHREEQC left in it' : 'which PHREEQC finds the water undersaturated in: none of it'}`
+        + `${ss.energy ? `; Guggenheim's a0 ${fmtG(ss.energy.a0, 6)} and a1 ${fmtG(ss.energy.a1, 6)} at ${fmtG(ss.tk, 6)} K` : '; ideal'}.`);
+    }
+    if (solidsSkipped.length) {
+      out.push(`# Not carried from the solid solutions: ${solidsSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
+    }
     if (onEx.length) {
       const cap = (sp) => onEx.filter((e) => e.master === sp)
         .reduce((acc, e) => acc + e.m * (e.right.concat(e.left).find((t) => t.n === sp) || { c: 0 }).c, 0);
@@ -1657,6 +1958,7 @@
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
     const anyT = eqs.some((e) => withT(db.logKTerms('s', e.species))) || minerals.some((mn) => withT(db.logKTerms('p', mn.phase)))
+      || solids.some((ss) => !!ss.energy || ss.comps.some((c) => withT(db.logKTerms('p', c.phase))))
       || gases.some((g) => withT(db.logKTerms('p', g.phase))) || onEx.some((e) => withT(db.logKTerms('x', e.species)))
       || onSf.some((e) => !e.master && withT(db.logKTerms('f', e.species)));
     if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
@@ -1676,7 +1978,8 @@
     const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length),
       ...minerals.map((mn) => fmtG(mn.amount, 15).length), ...onEx.map((e) => fmtG(e.m, 15).length),
       ...onSf.map((e) => fmtG(e.m, 15).length), ...potentials.map((pp) => fmtG(pp.a, 15).length),
-      ...gases.map((g) => fmtG(g.amount, 15).length)) + 2;
+      ...gases.map((g) => fmtG(g.amount, 15).length), ...solids.flatMap((ss) => ss.comps.map((c) => fmtG(c.amount, 15).length)))
+      + 2;
     for (const s of order) {
       let d = '';
       if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
@@ -1702,6 +2005,12 @@
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
       out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+    }
+    for (const ss of solids) {
+      for (const c of ss.comps) {
+        const amount = fmtG(c.amount, 15);
+        out.push(`${c.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+      }
     }
     for (const g of gases) {
       const amount = fmtG(g.amount, 15);
@@ -1788,6 +2097,23 @@
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${g.lk.toFixed(4)}`}, ${fmtG(g.pressure, 4)} atm`,
       });
     }
+    // A solid solution's member's dissolution: its log K the pure phase's at this temperature.
+    for (const ss of solids) {
+      for (const c of ss.comps) {
+        const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+        const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
+        const nw = c.prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
+          - c.reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+        const logkC = c.lk - sumLg(c.prod) + sumLg(c.reac) - nw * logAw;
+        const reac = [{ c: c.c0, n: c.name }, ...(follow ? c.reac : aq(c.reac))];
+        const prod = follow ? c.prod : aq(c.prod);
+        lines.push({
+          rel: `${side(reac)} <=> ${side(prod)}`,
+          k: kText(db.logKTerms('p', c.phase), follow ? c.lk : logkC),
+          note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${c.lk.toFixed(4)}`}, in ${ss.name}`,
+        });
+      }
+    }
     for (const e of onEx) {
       const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
       const reac = follow ? e.left : aq(e.left);
@@ -1844,6 +2170,21 @@
       const wn = Math.max(...gasPairs.map((pr) => Math.max(pr[0].length, pr[1].length))) + 2;
       for (const [a, b, k] of gasPairs) out.push(`${a.padEnd(wn)}${b.padEnd(wn)}${fmtG(k, 15)}`);
     }
+    if (solids.length) {
+      /*
+        PHREEQC's Guggenheim parameters, a0 and a1, at the temperature it
+        holds their energies a R T at: tc, the kelvin it reads less 273.15,
+        where that is not 25 C. PHREEQC's own a0 is g0/RT there, which is
+        what the page works out from these.
+      */
+      out.push('', '<SOLID_SOLUTIONS>');
+      for (const ss of solids) {
+        const tc = ss.tk - 273.15;
+        const prm = ss.energy ? `  a0=${String(ss.energy.a0)}  a1=${String(ss.energy.a1)}`
+          + `${Math.abs(ss.tk - 298.15) > 1e-9 ? `  tc=${fmtG(tc, 15)}` : ''}` : '';
+        out.push(`${ss.name}  ${ss.comps.map((c) => c.name).join('  ')}${prm}`);
+      }
+    }
     out.push('', '<REACTIONS>', '# Your kinetic reactions here, in the same species and units.');
     const text = `${out.join('\n')}\n`;
 
@@ -1857,6 +2198,7 @@
       // The minerals' and exchange species' amounts as written, by their names in the model.
       amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))
         .concat(gases.map((g) => [g.name, g.amount]))
+        .concat(solids.flatMap((ss) => ss.comps.map((c) => [c.name, c.amount])))
         .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
@@ -1887,6 +2229,9 @@
         gas: gases.length ? { ...gasFixed, species: gases.map((g) => ({ phase: g.phase, as: g.name, amount: g.amount,
           pressure: g.pressure })) } : null,
         gasSkipped,
+        solids: solids.map((ss) => ({ name: ss.name, members: ss.comps.map((c) => ({ phase: c.phase, as: c.name,
+          amount: c.amount })), binary: ss.energy ? { a0: ss.energy.a0, a1: ss.energy.a1, tk: ss.tk } : null })),
+        solidsSkipped,
       },
     };
   }
@@ -2508,9 +2853,58 @@
         t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null };
     }
 
+    /*
+      --- the model's solid solutions: where the run has one, each member's
+      saturation index PHREEQC finds in the water against log10 of its
+      activity in the run's solid, x lambda, lambda the run's at the water's
+      temperature -- or inside a miscibility gap the gap's edge's, as the run
+      holds it. Held, they are the same. Its members are not looked at as
+      pure minerals below.
+    */
+    let solidCheck = null;
+    const RtmS = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel) || null;
+    if (RtmS && /<\s*SOLID_SOLUTIONS\s*>/i.test(String(o.modelText || ''))) {
+      let own = null;
+      try { own = RtmS.compile(o.modelText); } catch (e) { own = null; }
+      const defs = own ? [...new Set(own.equilibria.map((eq) => eq.grp).filter((d) => d && d.kind === 'ss'))] : [];
+      solidCheck = defs.map((def) => {
+        const names = def.members.map((k) => own.speciesNames[k]);
+        const at = names.map((n) => model.species.indexOf(n));
+        const phase = names.map((n) => (minerals.find((mn) => mn.name === n) || { phase: n }).phase);
+        let worst = { by: 0, at: null, name: '' };
+        let compared = 0;
+        for (const r of good) {
+          const amt = at.map((si) => Math.max(value(r.state, si, r.k), 0));
+          const N = amt.reduce((a, v) => a + v, 0);
+          if (!(N > 0)) continue;
+          const lnA = amt.map((v) => Math.log(v / N));
+          if (def.coef === 'binary') {
+            const { a0, a1, gap } = RtmS.binaryAt(def, (r.tc != null ? r.tc : temp) + 273.15);
+            const xb = amt[1] / N;
+            if (gap && xb > gap.xb1 && xb < gap.xb2) { lnA[0] = gap.lnAc; lnA[1] = gap.lnAb; }
+            else {
+              lnA[0] += xb * xb * (a0 - a1 * (3 - 4 * xb));
+              lnA[1] += (1 - xb) * (1 - xb) * (a0 + a1 * (4 * xb - 1));
+            }
+          }
+          names.forEach((n, j) => {
+            if (!r.pq.phases.has(phase[j])) return;
+            const si = r.pq.phases.get(phase[j]);
+            if (!(si > -990) || !Number.isFinite(lnA[j])) return;
+            const by = lnA[j] / Math.LN10 - si;
+            compared++;
+            if (Math.abs(by) > Math.abs(worst.by)) worst = { by, at: r, name: n };
+          });
+        }
+        return { name: def.name, members: names, binary: def.coef === 'binary', compared, gap: worst.by, worst: worst.name,
+          t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null };
+      });
+    }
+    const ssMember = new Set((solidCheck || []).flatMap((ss) => ss.members));
+
     // --- the model's minerals: PHREEQC's saturation index where the model has
     // some of each, which holding it means is its target, and where none ----
-    const mineralCheck = minerals.map((mn) => {
+    const mineralCheck = minerals.filter((mn) => !ssMember.has(mn.name)).map((mn) => {
       const si = model.species.indexOf(mn.name);
       let present = null;
       let absent = null;
@@ -2650,6 +3044,8 @@
       redox,
       minerals: mineralCheck,
       gas,
+      // Each solid solution's members against x lambda in the run, where it has the solid solution.
+      solids: solidCheck,
       unchecked,
       phases,
     };
@@ -2678,6 +3074,6 @@
   return {
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
-    readGasPhases, modelGas, kCalc, lkOption,
+    readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies,
   };
 }));

@@ -197,6 +197,9 @@ function rtmSummary(model) {
       ? { fixed: model.act.gas.fixed, volume: model.act.gas.volume, pressure: model.act.gas.pressure,
         species: model.act.gas.list.map((k) => model.speciesNames[k]) }
       : null,
+    // The solid solutions: each one's name, its members and, for a binary one, a0 and a1 at 25 C and whether there is
+    // a miscibility gap.
+    solidSolutions: model.solidSolutions && model.solidSolutions.length ? model.solidSolutions : null,
     // The temperature: what TEMPERATURE gives, whether it goes with the cell or the time, how many relations' and
     // phases' log K go with it, and the cells' lowest and highest at the start.
     temperature: model.temperature ? { ...model.temperature, start: rtmTemperatureRange(model, 0) } : null,

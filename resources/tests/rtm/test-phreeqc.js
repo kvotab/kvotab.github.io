@@ -1956,6 +1956,163 @@ function againstTemperature(engine) {
     + 'calcite and CO2 take of it');
 }
 
+/* ======================================================================
+   Solid solutions: PHREEQC's SOLID_SOLUTIONS
+
+   Aragonite and strontianite, phreeqc.dat's, in a water that holds them
+   at saturation: the solid solution ideal, and binary in each of the ten
+   forms PHREEQC takes Guggenheim's parameters in, from its tenth example's
+   a0 = 3.43 and a1 = -1.82 or near them, inside the miscibility gap and
+   either side of it; given at another temperature, by -tempc (PHREEQC adds
+   298.15) and -tempk, and in a water at 50 C. Each written as a model, the
+   start against PHREEQC's. Strontianite added as PHREEQC's REACTION adds
+   it, the solid's composition through the gap, where it comes to it and
+   leaves it found by bisection on PHREEQC's; and the PHREEQC tab.
+   ====================================================================== */
+function againstSolidSolutions(engine) {
+  // Reading, without PHREEQC.
+  const read = P.readSolidSolutions('SOLID_SOLUTIONS 1\nCa(x)Sr(1-x)CO3\n -comp1 Aragonite 0\n -comp2 Strontianite 0.1\n'
+    + ' -Gugg_nondim 3.43 -1.82\n -tempc 25\nIdeal\n -comp Calcite 0\n -comp Otavite 0\n -comp Rhodochrosite 0\nEND\n');
+  const s1 = read.get('1');
+  check('a SOLID_SOLUTIONS is read as PHREEQC reads one: -comp1 and -comp2 first, the options by its prefix rule, '
+    + '-tempc as degrees above 25 C, as PHREEQC adds 298.15 to them',
+  !!s1 && s1.length === 2 && s1[0].name === 'Ca(x)Sr(1-x)CO3' && s1[0].comps.map((c) => c.name).join() === 'Aragonite,Strontianite'
+    && s1[0].comps[1].moles === 0.1 && s1[0].input === 'a0a1' && s1[0].p[0] === 3.43 && s1[0].p[1] === -1.82
+    && Math.abs(s1[0].tk - 323.15) < 1e-12 && s1[1].comps.length === 3 && !s1[1].input,
+  s1 ? `${s1.map((ss) => `${ss.name}: ${ss.comps.map((c) => c.name).join(', ')}`).join('; ')}; tk ${s1[0].tk}` : 'nothing read');
+
+  const water = (temp, sr, ss, ca = 3, c = 7) => `SOLUTION 1\n units mmol/kgw\n temp ${temp}\n pH 7.2 charge\n Ca ${ca}\n C ${c}\n Sr ${sr}\n`
+    + ` Na 1\n Cl 1\nSOLID_SOLUTIONS 1\nCa(x)Sr(1-x)CO3\n -comp1 Aragonite 0\n -comp2 Strontianite 0\n${ss}END\n`;
+  const handOff = (w) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'carbonates', text: w }, activity: true, exact: true, redox: false });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    let worst = 0;
+    for (const [pq, nm] of res.names) {
+      const want = res.molal.get(pq);
+      if (want > 0) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(nm)] / want - 1));
+    }
+    for (const [nm, v] of res.amounts) if (v > 0) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(nm)] / v - 1));
+    const am = y[m.speciesNames.indexOf('Aragonite')];
+    const st = y[m.speciesNames.indexOf('Strontianite')];
+    return { res, m, worst, xSr: st / (am + st) };
+  };
+  const forms = [
+    ['ideal', ''],
+    ['-Gugg_nondimensional', ' -Gugg_nondimensional 3.43 -1.82\n'],
+    ['-Gugg_kJ', ' -Gugg_kJ 8.5 -4.5\n'],
+    ['-activity_coefficients', ' -activity_coefficients 134.6 5.4 0.02 0.98\n'],
+    ['-distribution_coefficients', ' -distribution_coefficients 0.2397 57.96 0.1 0.9\n'],
+    ['-miscibility_gap', ' -miscibility_gap 0.0048 0.858\n'],
+    ['-spinodal_gap', ' -spinodal_gap 0.0654 0.62\n'],
+    ['-critical_point', ' -critical_point 0.3 702\n'],
+    ['-alyotropic_point', ' -alyotropic_point 0.199 -8.212\n'],
+    ['-Thompson', ' -Thompson 5 12\n'],
+    ['-Margules', ' -Margules 2.0 0.5\n'],
+  ];
+  const starts = forms.map(([label, ss]) => ({ label, ...handOff(water(25, 0.5, ss)) }))
+    .concat([['below the gap', 0.02, 3, 7], ['above it', 10, 1, 13]].map(([label, sr, ca, c]) => ({ label,
+      ...handOff(water(25, sr, ' -Gugg_nondimensional 3.43 -1.82\n', ca, c)) })));
+  const prm = (h) => (h.res.report.solids[0].binary ? `a0 ${h.res.report.solids[0].binary.a0.toFixed(4)}` : 'ideal');
+  check('the solid solution written as a model starts on PHREEQC\'s water and solid, ideal and in each of the ten '
+    + 'forms PHREEQC takes Guggenheim\'s parameters in', starts.every((h) => h.worst < 1e-9 && h.res.report.solids.length === 1),
+  starts.map((h) => `${h.label} ${h.worst.toExponential(1)} (${prm(h)}, x_Sr ${h.xSr.toFixed(4)})`).join('; '));
+  const gapAt = RtmModel.binaryAt(starts[1].m.equilibria.find((eq) => eq.grp).grp, 298.15).gap;
+  const sides = starts.slice(-2).map((h) => h.xSr);
+  check('  the binary one below its miscibility gap, inside it and above it, as PHREEQC has it',
+    sides[0] < gapAt.xb1 && starts[1].xSr > gapAt.xb1 && starts[1].xSr < gapAt.xb2 && sides[1] > gapAt.xb2
+    && /^Ca\(x\)Sr\(1-x\)CO3\s+Aragonite\s+Strontianite\s+a0=3.43\s+a1=-1.82$/m.test(starts[1].res.text),
+  `x_Sr ${sides[0].toFixed(6)}, ${starts[1].xSr.toFixed(6)} and ${sides[1].toFixed(6)}, the gap ${gapAt.xb1.toFixed(6)} to `
+    + `${gapAt.xb2.toFixed(6)}`);
+
+  // At another temperature: -tempc (PHREEQC's 298.15 more), -tempk, and the water at 50 C.
+  const temps = [['-tempc 25', water(25, 0.5, ' -Gugg_nondimensional 3.43 -1.82\n -tempc 25\n'), /tc=50\b/],
+    ['-tempk 310', water(25, 0.5, ' -Gugg_nondimensional 3.43 -1.82\n -tempk 310\n'), /tc=36.85\b/],
+    ['the water at 50 C', water(50, 0.5, ' -Gugg_nondimensional 3.43 -1.82\n'), /TEMPERATURE = 50/]]
+    .map(([label, w, re]) => ({ label, re, ...handOff(w) }));
+  check('  given at another temperature, by -tempc and -tempk, and in a water at 50 C: a0 and a1 there as PHREEQC has '
+    + 'them, and the start PHREEQC\'s', temps.every((h) => h.worst < 1e-9 && h.re.test(h.res.text)),
+  temps.map((h) => `${h.label} ${h.worst.toExponential(1)} (${prm(h)})`).join('; '));
+
+  /*
+    Strontianite added: PHREEQC's REACTION, 0.2 mmol at a time, and the
+    page's model of the water with SrCO3 coming in at the same rate. The
+    solid's composition through the gap: where it comes to it and leaves
+    it, PHREEQC's found by bisection on the amount added.
+  */
+  const sol = 'SOLUTION 1\n units mmol/kgw\n pH 7.2 charge\n Ca 3\n C 7\n Sr 0.001\n Na 1\n Cl 1\n';
+  const ssBlock = (p) => `SOLID_SOLUTIONS 1\nCa(x)Sr(1-x)CO3\n -comp1 Aragonite 0\n -comp2 Strontianite 0\n${p}`;
+  const extras = ['STR_E$(S_S("Aragonite"), 23, 15)', 'STR_E$(S_S("Strontianite"), 23, 15)', 'STR_E$(-LA("H+"), 23, 15)',
+    'STR_E$(TOT("Sr"), 23, 15)'];
+  const pqAt = (p, amounts) => {
+    engine.load(dbText);
+    return P.parseRows(engine.run(`${P.punchBlock(extras)}${sol}${ssBlock(p)}REACTION 1\n SrCO3 1.0\n `
+      + `${amounts.map((a) => String(a)).join(' ')} moles\nINCREMENTAL_REACTIONS false\nEND\n`)).filter((w) => w.state === 'react')
+      .map((w) => { const a = Number(w.x[0]); const b = Number(w.x[1]); return { x: a + b > 0 ? b / (a + b) : 0, pH: Number(w.x[2]), sr: Number(w.x[3]) }; });
+  };
+  const dn = 2e-4;
+  const steps = Array.from({ length: 30 }, (_, k) => (k + 1) * dn);
+  const rate = 1e-6;
+  const added = ['', ' -Gugg_nondimensional 3.43 -1.82\n'].map((p) => {
+    const pq = pqAt(p, steps);
+    const res = handOff(`${sol}${ssBlock(p)}END\n`).res;
+    const text = res.text.replace('TEND = 1\n', `TEND = ${steps[29] / rate}\n`) + `=> Sr+2 + CO3-2, k = ${rate}\n`;
+    const m = RtmModel.compile(text);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: steps[29] / rate, rtol: 1e-10, atol: 1e-20,
+      outputTimes: steps.map((a) => a / rate) });
+    const ns = m.speciesNames.length;
+    const am = m.speciesNames.indexOf('Aragonite');
+    const st = m.speciesNames.indexOf('Strontianite');
+    const iH = m.speciesNames.indexOf('H+');
+    const lnG = new Float64Array(ns);
+    let x = 0;
+    let pH = 0;
+    steps.forEach((a, k) => {
+      const c = m.toConcentrations(r.grid.y[k], a / rate);
+      RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns), 0);
+      x = Math.max(x, Math.abs(c[st] / (c[am] + c[st]) - pq[k].x));
+      pH = Math.max(pH, Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - pq[k].pH));
+    });
+    return { p, x, pH, r, m, text, events: r.events.map((e) => ({ at: e.t * rate, expr: e.expr })) };
+  });
+  // PHREEQC's amount added where its solid's composition crosses an edge of the gap, by bisection.
+  const cross = (edge, lo0, hi0) => {
+    let lo = lo0;
+    let hi = hi0;
+    for (let i = 0; i < 40; i++) {
+      const mid = (lo + hi) / 2;
+      if (pqAt(' -Gugg_nondimensional 3.43 -1.82\n', [mid])[0].x < edge) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const bin = added[1];
+  const into = bin.events.find((e) => /comes to its miscibility gap/.test(e.expr));
+  const out = bin.events.find((e) => /leaves its miscibility gap/.test(e.expr));
+  const pqIn = into ? cross(gapAt.xb1, into.at * 0.9, into.at * 1.1) : NaN;
+  const pqOut = out ? cross(gapAt.xb2, out.at * 0.9, out.at * 1.1) : NaN;
+  check('strontianite added as PHREEQC\'s REACTION adds it: the solid\'s composition and the pH PHREEQC\'s, ideal and '
+    + 'binary, and the binary one coming to its miscibility gap and leaving it where PHREEQC\'s does',
+  added.every((a) => a.x < 5e-6 && a.pH < 5e-6) && added[0].events.length === 0 && bin.events.length === 2
+    && Math.abs(into.at / pqIn - 1) < 5e-5 && Math.abs(out.at / pqOut - 1) < 5e-5,
+  `x_Sr within ${added.map((a) => a.x.toExponential(1)).join(' and ')}, pH within ${added.map((a) => a.pH.toExponential(1))
+    .join(' and ')} (PHREEQC's water growing by what bicarbonate gives up as it goes to CO2); into the gap at `
+    + `${into ? (into.at * 1e3).toFixed(8) : '-'} mmol for PHREEQC's ${(pqIn * 1e3).toFixed(8)}, out at `
+    + `${out ? (out.at * 1e3).toFixed(8) : '-'} for ${(pqOut * 1e3).toFixed(8)}`);
+
+  // The PHREEQC tab on the binary run: each member's activity in the run, PHREEQC's 10^SI of the pure member.
+  const reply = pageRun(bin.text, steps[29] / rate);
+  engine.load(dbText);
+  const view = P.viewRun({ engine, database, run: reply, modelText: bin.text,
+    water: { name: 'carbonates', text: `${sol}END\n` }, unit: 's', times: 12 });
+  const vs = view.report.solids && view.report.solids[0];
+  check('  the PHREEQC tab: each member\'s activity in the run, x lambda or the gap\'s edge\'s, is the one PHREEQC finds the '
+    + 'water holds the pure member at, and the members are not looked at as pure minerals',
+  !!vs && vs.compared > 0 && Math.abs(vs.gap) < 1e-6 && vs.binary
+    && !(view.report.minerals || []).some((mn) => /Aragonite|Strontianite/.test(mn.name)),
+  vs ? `within ${Math.abs(vs.gap).toExponential(1)} in log over ${vs.compared} activities (${vs.worst})` : 'no comparison');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -1982,6 +2139,8 @@ function againstTemperature(engine) {
   againstGas(wasm);
   console.log('\n--- the temperature: log K at any, a heated batch, a column held at 10 to 70 C ---');
   againstTemperature(wasm);
+  console.log('\n--- solid solutions: the ten forms, another temperature, strontianite added through the gap, the PHREEQC tab ---');
+  againstSolidSolutions(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

@@ -523,7 +523,7 @@
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em>, <em>debye-huckel</em> or <em>sit</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength, and under <em>sit</em> the species paired in <code>&lt;SIT&gt;</code> as well. See <em>Activity</em> and <em>SIT</em> below.</td></tr>
-              <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: a number; the name of a parameter, for a temperature that differs from cell to cell; a table read at the clock, <code>heat(t)</code>, for one that goes with time; or arithmetic on these. Each cell's sets the log K of every relation given <code>dH</code> or <code>analytic</code>, the Debye–Hückel <em>A</em> and <em>B</em>, a gas phase's <em>R T</em> and a double layer's constants, and a rate law reads it as <code>TK</code> and <code>TC</code>. A <code>logK</code> alone, and a rate constant, are taken as written. See <em>The temperature</em> below.</td></tr>
+              <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: a number; the name of a parameter, for a temperature that differs from cell to cell; a table read at the clock, <code>heat(t)</code>, for one that goes with time; or arithmetic on these. Each cell's sets the log K of every relation given <code>dH</code> or <code>analytic</code>, the Debye–Hückel <em>A</em> and <em>B</em>, a gas phase's <em>R T</em>, a double layer's constants and a binary solid solution's <em>a</em><sub>0</sub> and <em>a</em><sub>1</sub>, and a rate law reads it as <code>TK</code> and <code>TC</code>. A <code>logK</code> alone, and a rate constant, are taken as written. See <em>The temperature</em> below.</td></tr>
               <tr><td><code>GAS_VOLUME</code>, <code>GAS_PRESSURE</code></td><td>A gas phase, for the species given <code>gas</code>: held in a fixed volume, litres to each kilogram of water, or at a fixed total pressure in atm, as a bubble that comes and goes. One or the other; see <em>A gas phase</em> below.</td></tr>
               <tr><td><code>PRESSURE</code></td><td>The water's pressure in atm, 1 unless given: the Debye–Hückel <em>A</em> and <em>B</em> and a double layer's dielectric constant are worked out there. A bubble at a fixed pressure puts the water at its own.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less, when advection is upwind, the <em>v</em>·Δ<em>x</em>/2 that scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
@@ -542,7 +542,8 @@ UO2                      # no number: starts at zero, does not move</pre>
             <code>ADVECTION</code> the water carries every species that is not fixed, <code>D</code> or
             no <code>D</code>. <code>immobile</code> keeps a species where it is whatever the column
             does, and <code>mineral</code> makes it a pure
-            phase: see <em>Minerals</em> below. <code>exchanger</code> makes it the sites of an ion
+            phase: see <em>Minerals</em> below, and for a mineral that is an end member of a solid
+            solution <em>Solid solutions</em>. <code>exchanger</code> makes it the sites of an ion
             exchanger and <code>exchange</code> a species on them: see <em>Ion exchange</em> below.
             <code>surface</code> makes it a species on a surface, with <code>sites=</code> its sites,
             and <code>potential</code> the surface's potential, with <code>area=</code> and
@@ -654,6 +655,15 @@ Fe+3   Cl-     0.56   eps1=0.01</pre>
           <p>The binary parameters of real gases in a gas phase, PHREEQC's
             <code>GAS_BINARY_PARAMETERS</code>: two gases on each line and their <em>k</em>. See <em>A
             gas phase</em> below.</p>
+
+          <h4 id="help-solid-solutions-section">&lt;SOLID_SOLUTIONS&gt;</h4>
+          <pre>CaSrCO3   Aragonite  Strontianite   a0=3.43  a1=-1.82
+BaRaSO4   Barite  RaSO4</pre>
+          <p>Solid solutions, PHREEQC's <code>SOLID_SOLUTIONS</code>: a name on each line, its end members,
+            minerals of <code>&lt;SPECIES&gt;</code>, and for two members Guggenheim's <code>a0=</code> and
+            <code>a1=</code>, dimensionless, or <code>g0=</code> and <code>g1=</code> in kJ/mol, with
+            <code>tc=</code> the temperature in °C they are given at. See <em>Solid solutions</em>
+            below.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -1398,6 +1408,59 @@ N2(g) &lt;=&gt; N2,     logK = -3.18</pre>
             molar volumes, its log K; the page holds both where the run starts. For CO2 that is about
             6×10<sup>−4</sup> in log K for each atmosphere the pressure moves.</p>
 
+          <h4 id="help-solid-solutions">Solid solutions</h4>
+          <pre>EQUILIBRATE = always
+
+Aragonite      0   mineral
+Strontianite   0   mineral
+
+&lt;EQUILIBRIUM&gt;
+Aragonite &lt;=&gt; Ca+2 + CO3-2,      logK = -8.336
+Strontianite &lt;=&gt; Sr+2 + CO3-2,   logK = -9.271
+
+&lt;SOLID_SOLUTIONS&gt;
+CaSrCO3   Aragonite  Strontianite   a0=3.43  a1=-1.82</pre>
+          <p>PHREEQC's <code>SOLID_SOLUTIONS</code>. A solid solution's end members are minerals (see
+            <em>Minerals</em>), each in the one relation that dissolves it with the pure phase's log K, and
+            each of one solid solution only. In it a member's activity is not 1 but its mole fraction
+            <em>x</em> in the solid solution times λ: the members' amounts are its composition, and their
+            relations hold the water at it. In an ideal solid solution λ is 1, and so it is in one of three
+            members or more. Two members may be given Guggenheim's <code>a0</code> and <code>a1</code>,
+            dimensionless, as PHREEQC's <code>-Gugg_nondimensional</code> gives them, or <code>g0</code> and
+            <code>g1</code> in kJ/mol, its <code>-Gugg_kJ</code>, and then, as PHREEQC writes them,</p>
+          <pre>ln λ1 = x2² (a0 − a1 (3 − 4 x2))
+ln λ2 = x1² (a0 + a1 (4 x2 − 1))</pre>
+          <p><em>x</em><sub>2</sub> the second member's mole fraction. They are given at 25&nbsp;°C, or at
+            <code>tc=</code>; at any other temperature <em>a</em><sub>0</sub> and <em>a</em><sub>1</sub> go as
+            1/<em>T</em>, their energies <em>a R T</em> held, as in PHREEQC.</p>
+          <p>A solid solution is there or not as a whole. It is there while the water holds it at
+            saturation — each member's IAP/<em>K</em> over its λ, at the composition the water gives the
+            solid, adding up to 1, which for two members is Lippmann's total solubility product — and each
+            member's amount is then its share of what the totals leave. With <code>EQUILIBRATE</code> the
+            start is put on it as PHREEQC puts a water on its <code>SOLID_SOLUTIONS</code>: where the water
+            is supersaturated in it, it precipitates, at the composition the water then gives it; where there
+            is some of it and the water is undersaturated, it dissolves until the water is saturated or none
+            is left. With <code>EQUILIBRATE = always</code> that goes on through the run, as for a mineral:
+            where the last of it dissolves the run stops at that instant, and every member's amount is held
+            at zero; where the water becomes supersaturated in it again the run stops there and it
+            precipitates. The status names it: <em>the solid solution CaSrCO3 precipitates</em>. A member
+            counts in the totals, and under <code>ACTIVITY</code> its relation reads every ion of its cell,
+            as a mineral's does.</p>
+          <p>Where <em>a</em><sub>0</sub> and <em>a</em><sub>1</sub> are large enough, the two members do not
+            mix in every proportion. The page finds the miscibility gap at each cell's temperature as
+            PHREEQC's <code>ss_prep</code> does, step for step: none above the solid solution's critical
+            temperature, and below it the spinodal and the two compositions the gap lies between, where
+            PHREEQC's search stops, at 10<sup>−6</sup> in the activities. Where <code>TEMPERATURE</code> goes
+            with time, the page then takes the two compositions on to round-off: PHREEQC's stopping point
+            moves in jumps of up to 10<sup>−6</sup> as the temperature moves, and a run held at the gap's
+            edge cannot step across a jump. A composition inside the gap is two solids, one at each of
+            them: the water is held at the activities the gap's edge gives each member, as PHREEQC holds it,
+            and the amounts move between them. Where the composition comes to the gap, from either side, or leaves it, the run stops there
+            and goes on, and the status says so: <em>CaSrCO3 comes to its miscibility gap</em>. Aragonite and
+            strontianite, with Plummer and Busenberg's <em>a</em><sub>0</sub> = 3.43 and
+            <em>a</em><sub>1</sub> = −1.82 as in PHREEQC's tenth example, have one between strontianite
+            fractions of 0.0048 and 0.858 at 25&nbsp;°C.</p>
+
           <h4 id="help-temperature">The temperature</h4>
           <pre>TEMPERATURE = heat(t)          # a table read at the clock
 
@@ -1427,6 +1490,7 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             every relation's log K, the Debye–Hückel <em>A</em> and <em>B</em> of <code>ACTIVITY</code>
             (and SIT's), a gas's <em>R T</em> in a fixed volume and Peng and Robinson's terms for a real
             gas, a double layer's √(8000&nbsp;<em>R T</em>&nbsp;ε&nbsp;ε₀) and its dielectric constant, a
+            binary solid solution's <em>a</em><sub>0</sub>, <em>a</em><sub>1</sub> and miscibility gap, a
             fast pair's backward constant <code>kf/K</code>, and a saturation index in a rate law. A rate
             law reads it as <code>TK</code>, in kelvin, and <code>TC</code>, in °C:
             <code>k25*exp(-Ea/8.314*(1/TK - 1/298.15))</code> is Arrhenius's law. It is worked out for
@@ -1695,6 +1759,20 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             the gas phase's pressure as PHREEQC puts it, <code>PRESSURE</code>. Not carried: a gas whose
             dissolution takes what the water does not have, and a bubble whose other gases are then not
             all there; and a gas phase that mixes real gases with ideal ones.</p>
+          <p>Solid solutions in the input, a <code>SOLID_SOLUTIONS</code> that PHREEQC's last calculation
+            holds, are carried when the relations are held exactly (see <em>Solid solutions</em> above): each
+            end member a
+            <code>mineral</code> at the moles PHREEQC left in its solid solution, to each kilogram of water,
+            with its relation from the database's <code>PHASES</code> and PHREEQC's log K at the water's
+            temperature, and for two members PHREEQC's Guggenheim parameters, written as <code>a0</code> and
+            <code>a1</code> at the temperature PHREEQC holds their energies at, <code>tc</code> where that
+            is not 25&nbsp;°C, from whichever form the input gives them in: <code>-Gugg_nondimensional</code>, <code>-Gugg_kJ</code>, activity or
+            distribution coefficients, a miscibility or spinodal gap, a critical or alyotropic point,
+            Thompson and Waldbaum's or Margules's. PHREEQC reads <code>-tempc</code> and <code>-temp</code>
+            as the degrees above 25&nbsp;°C, adding 298.15 to them, and the text keeps the temperature
+            PHREEQC used. Not carried: a solid solution with a member the database has no reaction for, or
+            whose dissolution takes what the water does not have, or electrons where the valence states are
+            not held at one pe; one of a single member; and Guggenheim's parameters for more than two.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -1712,8 +1790,8 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               the element totals PHREEQC takes: <code>HCO3-</code> into C(4), <code>H2</code> twice
               into H(0), <code>(UO2)2(OH)2+2</code> twice into U(6).</li>
             <li>The pH is walked until PHREEQC's molality of H<sup>+</sup> is the run's [H<sup>+</sup>].</li>
-            <li>A mineral of the model is not part of the water: it is listed with the phases, its
-              saturation index beside theirs. Nor is an exchanger, a surface or a species on either:
+            <li>A mineral of the model, or an end member of a solid solution, is not part of the water: it
+              is listed with the phases, its saturation index beside theirs. Nor is an exchanger, a surface or a species on either:
               each is looked at whole, below.</li>
             <li>The model's electron, if it has one, is PHREEQC's: each water is given the pe the run
               has there, and the valence states are looked at against it, below.</li>
@@ -1756,6 +1834,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             <li>for a gas phase of the model, how close each gas's partial pressure in the run — its
               fugacity, for a real gas — is to the pressure PHREEQC finds the same water holds it at,
               10<sup>SI</sup>, wherever the run has any of it;</li>
+            <li>for a solid solution of the model, how close each member's activity in the run — its mole
+              fraction times λ, or inside a miscibility gap the gap's edge's — is to the one PHREEQC finds the
+              same water holds the pure member at, 10<sup>SI</sup>, wherever the run has any of it;</li>
             <li>for the electron of the model, the pe over the waters, and how close the run's valence
               states are to the ones PHREEQC shares each element out to when it is given the water at
               that pe with the element as one total, as a part of the element;</li>
@@ -1856,6 +1937,18 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             cell, the inflow at calcite saturation at its own temperature in both, is within
             7×10<sup>−6</sup> in pH and 10<sup>−5</sup> in calcium. PHREEQC takes 0.3 seconds and this
             page 0.4.</p>
+          <p>And solid solutions. Aragonite and strontianite, <code>phreeqc.dat</code>'s, in a water of
+            3&nbsp;mmol/kgw of calcium and 0.5 of strontium: written as a model, ideal or with Guggenheim's
+            parameters in any of the ten forms PHREEQC takes them in, below the miscibility gap, inside it or
+            above it, given at another temperature or in a water at 50&nbsp;°C, the start is PHREEQC's water
+            and solid to 3×10<sup>−10</sup>. With strontianite added as PHREEQC's <code>REACTION</code> adds
+            it, 0.2&nbsp;mmol at a time to 6, the solid's strontium fraction is PHREEQC's within
+            2×10<sup>−6</sup> and the pH within 5×10<sup>−6</sup>, PHREEQC's kilogram of water growing by
+            what bicarbonate gives up as it goes to CO2, up to 14&nbsp;mg, where the page's stays a
+            kilogram. Plummer and Busenberg's solid comes to its gap with 0.27104&nbsp;mmol added and leaves
+            it at 2.40382, within 2×10<sup>−6</sup> and 5×10<sup>−6</sup> of where PHREEQC's does, found by
+            bisection on the amount added. The PHREEQC tab finds each member's activity in the run within
+            3×10<sup>−10</sup> in log of the one PHREEQC finds the water holds the pure member at.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -2004,14 +2097,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108c"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108d"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261108c"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261108d"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108d"></script>
 </body>
 </html>

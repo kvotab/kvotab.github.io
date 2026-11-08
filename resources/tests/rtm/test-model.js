@@ -5324,6 +5324,294 @@ console.log('\n--- the temperature ---');
     wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
 }
 
+/*
+   SOLID SOLUTIONS, against what holds them. MA and MB the end members of
+   MAB, dissolving to A + X and B + X: where the solid is there, each
+   relation holds the water at the member's activity in it, its mole
+   fraction times Guggenheim's lambda, or inside a miscibility gap the
+   activity the gap's edge gives it, and the totals are what they were.
+   The gap is where the two members' activities are the same at two
+   compositions, PHREEQC's tolerance 1e-6, and for a regular solution (a1 =
+   0) where ln((1 - x)/x) = a0 (1 - 2x). A solid that forms does so where
+   the water first holds it at saturation: for an ideal one where
+   IAP_A/K_A + IAP_B/K_B comes to 1, a time the source of X gives in closed
+   form; a0 goes as 1/T, so a0 at 25 C is a0 (T/298.15) at T.
+*/
+console.log('\n--- solid solutions ---');
+{
+  const lam = (a0, a1, xb) => {
+    const xc = 1 - xb;
+    return [xb * xb * (a0 - a1 * (3 - 4 * xb)), xc * xc * (a0 + a1 * (4 * xb - 1))];
+  };
+  const ssText = (o) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1}\nEQUILIBRATE = always\n${o.settings || ''}\n`
+    + `<SPECIES>\nA  ${o.a}\nB  ${o.b}\nX  ${o.x || 2e-3}\nMA ${o.ma} mineral\nMB ${o.mb} mineral\n${o.sp || ''}\n`
+    + `<EQUILIBRIUM>\nMA <=> A + X, logK = -6\nMB <=> B + X, logK = -7\n${o.rel || ''}\n`
+    + `<SOLID_SOLUTIONS>\nMAB  MA  MB  ${o.prm || ''}\n${o.more || ''}`;
+  const ssModel = (o) => RtmModel.compile(ssText(o));
+  const defOf = (m) => m.equilibria.find((eq) => eq.grp && eq.grp.kind === 'ss').grp;
+  // ln of each member's activity in the solid: x lambda, or inside the gap the gap's edge's.
+  const lnAct = (a0, a1, gap, xb) => {
+    if (gap && xb > gap.xb1 && xb < gap.xb2) return [gap.lnAc, gap.lnAb];
+    const [lc, lb] = lam(a0, a1, xb);
+    return [Math.log(1 - xb) + lc, Math.log(xb) + lb];
+  };
+  // How far the water is from the solid: ln(A X/K_A) less ln a_A, and the same for B, the larger.
+  const off = (c, a0, a1, gap) => {
+    const [A, B, X, nA, nB] = c;
+    const [la, lb] = lnAct(a0, a1, gap, nB / (nA + nB));
+    return Math.max(Math.abs(Math.log(A * X) + 6 * Math.LN10 - la), Math.abs(Math.log(B * X) + 7 * Math.LN10 - lb));
+  };
+  /*
+    The most any composition of the solid is supersaturated by: the largest
+    sum x_q ln(IAP_q/(K_q a_q(x))) over x, on a grid and then, about its best
+    point, by ternary search, which finds the top where there is no gap and
+    the function is concave.
+  */
+  const drive = (c, a0, a1) => {
+    const [A, B, X] = c;
+    const f = (xb) => {
+      const [lc, lb] = lam(a0, a1, xb);
+      return (1 - xb) * (Math.log(A * X) + 6 * Math.LN10 - Math.log(1 - xb) - lc)
+        + xb * (Math.log(B * X) + 7 * Math.LN10 - Math.log(xb) - lb);
+    };
+    let at = 1;
+    for (let i = 2; i < 2000; i++) if (f(i / 2000) > f(at / 2000)) at = i;
+    let lo = (at - 1) / 2000 || 1e-12;
+    let hi = Math.min((at + 1) / 2000, 1 - 1e-12);
+    for (let i = 0; i < 200; i++) {
+      const m1 = lo + (hi - lo) / 3;
+      const m2 = hi - (hi - lo) / 3;
+      if (f(m1) < f(m2)) lo = m1; else hi = m2;
+    }
+    return f((lo + hi) / 2);
+  };
+
+  // 1. The start, ideal, binary and binary with a gap.
+  const sets = [['', 0, 0], ['a0=1.5 a1=0.3', 1.5, 0.3], ['a0=3.43 a1=-1.82', 3.43, -1.82]];
+  const starts = [[1e-3, 1e-3, 1e-3, 1e-3], [1e-3, 1e-4, 1e-3, 0], [1e-3, 2e-3, 1e-4, 1e-3], [1e-4, 3e-3, 0, 1e-3],
+    [1e-9, 1e-9, 0, 0]];
+  let worstRel = 0;
+  let worstTot = 0;
+  let inGap = 0;
+  let absent = 0;
+  let worstDrive = -Infinity;
+  for (const [prm, a0, a1] of sets) {
+    for (const [a, b, ma, mb] of starts) {
+      const m = ssModel({ a, b, ma, mb, prm });
+      const gap = a0 || a1 ? RtmModel.binaryAt(defOf(m), 298.15).gap : null;
+      const c = m.toConcentrations(m.initialState());
+      const [A, B, X, nA, nB] = c;
+      worstTot = Math.max(worstTot, Math.abs(A + nA - a - ma) / (a + ma), Math.abs(B + nB - b - mb) / (b + mb),
+        Math.abs(X + nA + nB - 2e-3 - ma - mb) / (2e-3 + ma + mb));
+      if (nA + nB > 0) {
+        worstRel = Math.max(worstRel, off(c, a0, a1, gap));
+        const xb = nB / (nA + nB);
+        if (gap && xb > gap.xb1 && xb < gap.xb2) inGap++;
+      } else {
+        absent++;
+        worstDrive = Math.max(worstDrive, drive(c, a0, a1));
+      }
+    }
+  }
+  check('a solid solution at the start, ideal, binary, and binary with a miscibility gap: each relation holds the water '
+    + 'at the member\'s x lambda, or the gap\'s edge\'s, and the totals stay', worstRel < 1e-12 && worstTot < 1e-14
+    && inGap >= 1 && absent === 3 && worstDrive < 0,
+  `relations within ${worstRel.toExponential(1)} in ln, totals ${worstTot.toExponential(1)}; ${inGap} start(s) inside the `
+    + `gap; ${absent} with none of it, no composition supersaturated (best ${worstDrive.toFixed(2)})`);
+
+  // 2. The gap: equal activities at its two compositions, the spinodal between, and the regular solution's.
+  const mGap = ssModel({ a: 1e-3, b: 1e-3, ma: 0, mb: 0, prm: 'a0=3.43 a1=-1.82' });
+  const g = RtmModel.binaryAt(defOf(mGap), 298.15).gap;
+  const actAt = (a0, a1, xb) => { const [lc, lb] = lam(a0, a1, xb); return [(1 - xb) * Math.exp(lc), xb * Math.exp(lb)]; };
+  const [c1, b1] = actAt(3.43, -1.82, g.xb1);
+  const [c2, b2] = actAt(3.43, -1.82, g.xb2);
+  // d2(G/RT)/dxb2 of PHREEQC's Guggenheim solid: zero at the spinodal, below it between.
+  const g2 = (a0, a1, u) => 1 / (u * (1 - u)) + 2 * (3 * a1 - a0) - 12 * a1 * u;
+  const spin = Math.max(...[g.xsm1, g.xsm2].map((u) => Math.abs(g2(3.43, -1.82, u) * u * (1 - u))));
+  const regular = (a0) => {
+    // ln((1 - x)/x) = a0 (1 - 2x) on (0, 1/2), by bisection
+    let lo = 1e-12;
+    let hi = 0.5 - 1e-12;
+    for (let i = 0; i < 200; i++) {
+      const mid = (lo + hi) / 2;
+      if (Math.log((1 - mid) / mid) - a0 * (1 - 2 * mid) > 0) lo = mid; else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const reg = (a0) => RtmModel.binaryAt(defOf(ssModel({ a: 1e-3, b: 1e-3, ma: 0, mb: 0, prm: `a0=${a0}` })), 298.15).gap;
+  const r25 = reg(2.5);
+  const xr = regular(2.5);
+  check('  its miscibility gap: the two compositions where the members\' activities are the same, the spinodal '
+    + 'between them, and for a1 = 0 the regular solution\'s, none at a0 = 1.9 below PHREEQC\'s critical 2',
+  Math.abs(c1 - c2) < 1e-6 && Math.abs(b1 - b2) < 1e-6 && g.xb1 < g.xsm1 && g.xsm1 < g.xsm2 && g.xsm2 < g.xb2
+    && spin < 1e-4 && g2(3.43, -1.82, (g.xsm1 + g.xsm2) / 2) < 0
+    && Math.abs(r25.xb1 - xr) < 1e-6 && Math.abs(r25.xb2 - (1 - xr)) < 1e-6 && reg(1.9) === null && reg(2.05) !== null,
+  `xSr ${g.xb1.toFixed(6)} to ${g.xb2.toFixed(6)}, activities the same to ${Math.max(Math.abs(c1 - c2), Math.abs(b1 - b2))
+    .toExponential(1)}, spinodal ${g.xsm1.toFixed(4)} to ${g.xsm2.toFixed(4)} (${spin.toExponential(1)}); a0 = 2.5: `
+    + `${r25.xb1.toFixed(8)} for ${xr.toFixed(8)}`);
+
+  // 3. Forming where the water first holds it at saturation: X comes in at 1e-3 a unit of time.
+  const forms = [['', 1, 0], ['a0=1.5', Math.exp(1.5 / 4), 1.5]].map(([prm, lambda, a0]) => {
+    const m = ssModel({ a: 1e-4, b: 1e-5, x: 1e-3, ma: 0, mb: 0, prm, tend: 30, more: '\n<REACTIONS>\n=> X, k = 1e-3\n' });
+    const r = run(m, { tend: 30 });
+    const e = r.events[0] || { t: NaN, expr: '' };
+    // A/K_A = B/K_B, so x = 1/2 and lambda the same for both: 200 X/lambda = 1.
+    const want = (lambda / 200 - 1e-3) / 1e-3;
+    let worst = 0;
+    for (let k = 0; k < r.t.length; k++) {
+      if (r.t[k] <= e.t) continue;
+      worst = Math.max(worst, off(m.toConcentrations(r.y[k], r.t[k]), a0, 0, null));
+    }
+    return { by: Math.abs(e.t - want), n: r.events.length, ok: /^the solid solution MAB precipitates/.test(e.expr), worst, t: e.t };
+  });
+  check('  forming where the water first holds it at saturation, sum IAP/(K lambda) = 1: ideal, and binary, '
+    + 'at the time the source gives in closed form', forms.every((f) => f.by < 1e-8 && f.n === 1 && f.ok && f.worst < 1e-9),
+  forms.map((f) => `t = ${f.t.toFixed(9)}, within ${f.by.toExponential(1)}, relations after ${f.worst.toExponential(1)}`)
+    .join('; '));
+
+  // 4. Through the gap: B comes in, the solid's composition rises into the gap, across it and out above it.
+  const mThrough = ssModel({ a: 1e-3, b: 1e-7, ma: 1e-3, mb: 0, prm: 'a0=3.43 a1=-1.82', tend: 60,
+    more: '\n<REACTIONS>\n=> B + X, k = 3e-4\n' });
+  const rThrough = run(mThrough, { tend: 60, rtol: 1e-9 });
+  const ev = rThrough.events;
+  let worstT = 0;
+  let modes = '';
+  for (let k = 0; k < rThrough.t.length; k++) {
+    const c = mThrough.toConcentrations(rThrough.y[k], rThrough.t[k]);
+    const xb = c[4] / (c[3] + c[4]);
+    worstT = Math.max(worstT, off(c, 3.43, -1.82, g));
+    const mode = xb >= g.xb2 ? '3' : xb > g.xb1 ? '2' : '1';
+    if (mode !== modes[modes.length - 1]) modes += mode;
+  }
+  const atEv = ev.length === 2 ? run(mThrough, { tend: 60, rtol: 1e-9, outputTimes: [ev[0].t, ev[1].t] }).grid.y
+    .map((y, k) => { const c = mThrough.toConcentrations(y, ev[k].t); return c[4] / (c[3] + c[4]); }) : [NaN, NaN];
+  check('  through the gap: the run stops where the composition comes to the gap and where it leaves it, each '
+    + 'relation held all the way', ev.length === 2 && /MAB comes to its miscibility gap/.test(ev[0].expr)
+    && /MAB leaves its miscibility gap/.test(ev[1].expr) && modes === '123' && worstT < 1e-9
+    && Math.abs(atEv[0] - g.xb1) < 1e-7 && Math.abs(atEv[1] - g.xb2) < 1e-7,
+  `at t = ${ev.map((e) => e.t.toFixed(5)).join(' and ')}, x_B there ${atEv.map((v) => v.toFixed(8)).join(' and ')}; `
+    + `branches ${modes}; relations within ${worstT.toExponential(1)}`);
+
+  // 5. Dissolving away: X taken out, the solid goes; after it the water is undersaturated in every composition.
+  const mAway = ssModel({ a: 1e-3, b: 1e-4, ma: 1e-4, mb: 1e-5, prm: 'a0=1.5', tend: 30, more: '\n<REACTIONS>\nX => , k = 0.2\n' });
+  const rAway = run(mAway, { tend: 30 });
+  const ea = rAway.events[0] || { t: NaN, expr: '' };
+  let afterZero = true;
+  let afterDrive = -Infinity;
+  let before = 0;
+  for (let k = 0; k < rAway.t.length; k++) {
+    const c = mAway.toConcentrations(rAway.y[k], rAway.t[k]);
+    if (rAway.t[k] < ea.t) before = Math.max(before, off(c, 1.5, 0, null));
+    else if (rAway.t[k] > ea.t) {
+      if (c[3] !== 0 || c[4] !== 0) afterZero = false;
+      afterDrive = Math.max(afterDrive, drive(c, 1.5, 0));
+    }
+  }
+  const endDrive = drive(mAway.toConcentrations(last(rAway), 30), 1.5, 0);
+  check('  dissolving away: the run stops where the last of it goes, both members held at none after it, the water '
+    + 'undersaturated in every composition', rAway.events.length === 1
+    && /the solid solution MAB has dissolved away/.test(ea.expr) && afterZero && afterDrive < 1e-12 && endDrive < -1
+    && before < 1e-9,
+  `at t = ${ea.t.toFixed(6)}; relations before within ${before.toExponential(1)}; after it the most any composition `
+    + `is supersaturated by ${afterDrive.toExponential(2)}, ${endDrive.toFixed(2)} at the end`);
+
+  /*
+    6. Under ACTIVITY, and held in the projected form a model with an
+    electron takes: ions, a run through the gap, Davies and SIT; with an
+    iron couple tied to the electron beside it, which changes nothing of the
+    rest, the run is the same, and the Jacobian is a difference's at the end
+    of a run below the gap, inside it and above it.
+  */
+  const ionic = (act, elec, tend) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = ${tend}\nEQUILIBRATE = always\n${act}\n\n`
+    + '<SPECIES>\nA+ 1e-3\nB+ 1e-7\nX- 2e-3\nNa+ 1e-3\nMA 1e-3 mineral\nMB 0 mineral\nFe+2 1e-4\nFe+3 1e-6\n'
+    + `${elec ? 'e- electron\n' : ''}\n<EQUILIBRIUM>\nMA <=> A+ + X-, logK = -6\nMB <=> B+ + X-, logK = -7\n`
+    + `${elec ? 'Fe+2 <=> Fe+3 + e-, logK = -13.02\n' : ''}\n<SOLID_SOLUTIONS>\nMAB  MA  MB  a0=3.43 a1=-1.82\n\n`
+    + '<REACTIONS>\n=> B+ + X-, k = 3e-4\n');
+  const acts = [['', 'none'], ['ACTIVITY = davies', 'Davies'], ['ACTIVITY = sit', 'SIT']];
+  const held = acts.map(([act, label]) => {
+    let worst = 0;
+    let bad = 0;
+    let measured = 0;
+    let projected = true;
+    for (const tend of [0.1, 10, 39]) {
+      const ends = [false, true].map((elec) => {
+        const m = ionic(act, elec, tend);
+        if (elec) projected = projected && !!m.heldEquilibria;
+        const r = run(m, { tend });
+        const v = RtmModel.verifyJacobian(m, tend, last(r));
+        bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+        measured += v.checked;
+        return m.toConcentrations(last(r), tend);
+      });
+      for (let s = 0; s < 8; s++) worst = Math.max(worst, Math.abs(ends[1][s] / ends[0][s] - 1));
+    }
+    return { label, worst, bad, measured, projected };
+  });
+  check('  under ACTIVITY, none, Davies and SIT, with an electron and without: the same run, and the Jacobian a '
+    + 'difference\'s below the gap, inside it and above it', held.every((h) => h.worst < 1e-8 && h.bad === 0 && h.projected),
+  held.map((h) => `${h.label} ${h.worst.toExponential(1)}, ${h.measured} entries`).join('; '));
+
+  /*
+    7. The temperature: a0 and a1 go as 1/T from where they are given, their
+    energies held, so a0 at 25 C is a0 (298.15/T) at T, and g0 = a0 R T is
+    the same solid; heated along a table, a composition inside the gap of a
+    regular solution leaves it where the gap's edge, ln((1 - x)/x) = a0(T)
+    (1 - 2x), comes to it.
+  */
+  const at50 = (prm) => {
+    const m = RtmModel.compile(ssText({ a: 1e-3, b: 1e-3, ma: 1e-3, mb: 1e-3, prm, settings: 'TEMPERATURE = 50\n' }));
+    return { m, c: m.toConcentrations(m.initialState()) };
+  };
+  const R = 0.00831470;
+  const given = at50('a0=3.43 a1=-1.82');
+  const forms50 = [at50(`a0=${3.43 * 298.15 / 323.15} a1=${-1.82 * 298.15 / 323.15} tc=50`),
+    at50(`g0=${3.43 * R * 298.15} g1=${-1.82 * R * 298.15}`)];
+  let worst50 = 0;
+  for (const f of forms50) for (let s = 0; s < 5; s++) worst50 = Math.max(worst50, Math.abs(f.c[s] / given.c[s] - 1));
+  const p50 = RtmModel.binaryAt(defOf(given.m), 323.15);
+  const heat = RtmModel.compile(ssText({ a: 1e-6, b: 1e-7, x: 1e-6, ma: 0.7, mb: 0.3, prm: 'a0=2.2',
+    settings: 'TEMPERATURE = warm(t)\n\n<TABLE warm>\n0 25\n1 75\n' }));
+  const rh = run(heat, { tend: 1 });
+  const eh = rh.events[0] || { t: NaN, expr: '' };
+  const xh = (() => { const c = heat.toConcentrations(run(heat, { tend: 1, outputTimes: [eh.t] }).grid.y[0], eh.t); return c[4] / (c[3] + c[4]); })();
+  const xEdge = regular(2.2 * 298.15 / (298.15 + 50 * eh.t));
+  // With the temperature going with time the gap is solved to round-off: the regular solution's edge, exactly.
+  const heatDef = defOf(heat);
+  const smooth = Math.max(...[300, 305.123, 310, 320].map((tk) => Math.abs(RtmModel.binaryAt(heatDef, tk).gap.xb1
+    - regular(2.2 * 298.15 / tk))));
+  const start = heat.toConcentrations(heat.initialState());
+  const xs = start[4] / (start[3] + start[4]);
+  check('  a0 and a1 go as 1/T, g0 = a0 R T is the same solid, and a water heated along a table leaves the gap where '
+    + 'its edge comes to the composition', worst50 < 1e-13 && Math.abs(p50.a0 / (3.43 * 298.15 / 323.15) - 1) < 1e-15
+    && rh.events.length === 1 && /MAB leaves its miscibility gap/.test(eh.expr) && Math.abs(xh - xEdge) < 1e-7
+    && xs > regular(2.2) && xs < 1 - regular(2.2) && smooth < 1e-12,
+  `at 50 C the three forms within ${worst50.toExponential(1)}; heated, x_B ${xs.toFixed(6)} inside the gap at 25 C leaves it `
+    + `at ${(25 + 50 * eh.t).toFixed(5)} C, x_B there ${xh.toFixed(9)} and the edge ${xEdge.toFixed(9)} `
+    + `(${Math.abs(xh - xEdge).toExponential(1)}), the gap the exact one to ${smooth.toExponential(1)}`);
+
+  // 8. What it refuses.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const one = { a: 1e-3, b: 1e-3, ma: 0, mb: 0 };
+  const cases = [
+    ['one member', ssText({ ...one, prm: '' }).replace('MAB  MA  MB', 'MAB  MA'), /two or more/],
+    ['a member not in <SPECIES>', ssText({ ...one }).replace('MAB  MA  MB', 'MAB  MA  MC'), /"MC" in <SOLID_SOLUTIONS> is not in <SPECIES>/],
+    ['a member that is not a mineral', ssText({ ...one }).replace('MAB  MA  MB', 'MAB  MA  A'), /an end member is a mineral/],
+    ['a member of two', ssText({ ...one, more: 'MAC  MA  MB\n' }), /end member of two solid solutions/],
+    ['a member in no relation', ssText({ ...one, sp: 'MC 0 mineral\n' }).replace('MAB  MA  MB', 'MAB  MA  MC'), /in no relation/],
+    ['a word it does not take', ssText({ ...one, prm: 'a2=1' }), /takes a0= and a1=/],
+    ['a0 and g0', ssText({ ...one, prm: 'a0=1 g0=2' }), /one or the other/],
+    ['a0 for three members', ssText({ ...one, sp: 'MC 0 mineral\nC 1e-3\n', rel: 'MC <=> C + X, logK = -8\n', prm: 'a0=1' })
+      .replace('MAB  MA  MB', 'MAB  MA  MB  MC'), /are for two/],
+    ['tc with nothing given at it', ssText({ ...one, prm: 'tc=50' }), /tc= is the temperature/],
+    ['tc outside 0 to 350 C', ssText({ ...one, prm: 'a0=1 tc=400' }), /0 to 350 C/],
+    ['no EQUILIBRATE', ssText({ ...one }).replace('EQUILIBRATE = always\n', ''), /needs EQUILIBRATE/],
+    ['a name twice', ssText({ ...one, more: 'MAB  MA  MB\n' }), /is given twice/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
 /* ======================================================================
    3. The Jacobian
    ====================================================================== */
