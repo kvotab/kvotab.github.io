@@ -59,7 +59,7 @@
      1. The model text
      ====================================================================== */
 
-  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES'];
+  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -137,11 +137,13 @@
       species' concentration times its activity coefficient, and those follow
       the ionic strength of the cell as the run goes on: davies, or
       debye-huckel, which is the WATEQ form for a species given a= and Davies
-      for any other ion, PHREEQC's rule. none, the default, holds them between
-      concentrations. TEMPERATURE, in degrees C, sets the Debye-Hueckel A and
-      B and nothing else. See activityModel.
+      for any other ion, PHREEQC's rule; or sit, the specific ion interaction
+      theory, each species' coefficient reading the species it is paired with
+      in <SIT> as well. none, the default, holds them between concentrations.
+      TEMPERATURE, in degrees C, sets the Debye-Hueckel A and B and nothing
+      else. See activityModel.
     */
-    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel'] },
+    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit'] },
     TEMPERATURE: { def: 25, kind: 'number' },
     /*
       DUAL POROSITY: a rock matrix beside the column.
@@ -1630,8 +1632,22 @@
    * which is PHREEQC's rule, a= and b= being a database's -gamma. I is half
    * the sum of z^2 C over the cell, and the water's activity 1 - 0.017 times
    * the sum of C, both PHREEQC's, with the concentrations read as molalities.
+   *
+   *   4  any solute under sit: log gamma = -A z^2 sqrt(I)/(1 + 1.5 sqrt(I))
+   *      + sum over the species j it is paired with in <SIT> of
+   *      (eps + eps1 I) m_j, PHREEQC's SIT (sit.cpp); a neutral species has
+   *      the sum alone. The water's activity is SIT's own (sitWater).
+   *
+   * `sitLines` is the <SIT> section: two species and eps on each line, and
+   * eps1= where the pair's coefficient goes with I as well (PHREEQC's
+   * -epsilon1).
    */
-  function activityModel(settings, species, warnings) {
+  function activityModel(settings, species, warnings, sitLines = []) {
+    const isSit = settings.ACTIVITY === 'sit';
+    if (sitLines.length && !isSit) {
+      throw new RtmError(`<SIT> holds the interaction coefficients of the specific ion interaction theory, and is read `
+        + `under ACTIVITY = sit${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, sitLines[0].line);
+    }
     if (settings.ACTIVITY === 'none') {
       // A surface's potential reads it too: the double layer's dielectric constant.
       if (settings.given && settings.given.has('TEMPERATURE') && !species.some((sp) => sp.potential)) {
@@ -1651,6 +1667,7 @@
     const a = new Float64Array(ns);
     const b = new Float64Array(ns);
     const solute = new Uint8Array(ns).fill(1);
+    const ignored = [];
     species.forEach((sp, s) => {
       // The water itself, and a pure phase: activity 1, and no solute. An
       // exchanger and the species on it are no solutes either, and carry no
@@ -1662,6 +1679,11 @@
         return;
       }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
+      if (isSit) {
+        form[s] = 4;
+        if (sp.dha !== null || sp.dhb !== null) ignored.push(sp.name);
+        return;
+      }
       if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
       if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
         form[s] = 3;
@@ -1676,8 +1698,77 @@
             : 'b without a is not used; give a as well for the WATEQ form.'));
       }
     });
+    if (ignored.length) {
+      warnings.push(`ACTIVITY = sit takes no a or b: SIT's coefficients come from the charge and <SIT>, and the a and b `
+        + `given to ${ignored.length === 1 ? ignored[0] : `${ignored.length} species (${ignored.slice(0, 4).join(', ')}`
+          + `${ignored.length > 4 ? ', ...' : ''})`} are not used.`);
+    }
     return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, zg: Float64Array.from(z), form, a, b, solute,
-      ex: null, sf: null, pt: null };
+      ex: null, sf: null, pt: null, sit: isSit ? readSit(sitLines, species, solute) : null };
+  }
+
+  /**
+   * The <SIT> section: each line two species and their interaction
+   * coefficient eps, in kg/mol for log10 gamma as PHREEQC's SIT -epsilon has
+   * it, and eps1= for one that goes with I as well, eps + eps1 I (its
+   * -epsilon1). Both species are solutes; a pair is given once, either way
+   * round, and a species may be paired with itself.
+   *
+   * Returns the pairs, and for each species the species its coefficient
+   * reads (rows: k, eps, eps1 -- a pair with itself counted twice, as
+   * PHREEQC's sum counts it), with the scratch the derivatives use.
+   */
+  function readSit(lines, species, solute) {
+    const ns = species.length;
+    const index = new Map(species.map((sp, s) => [sp.name, s]));
+    const pairs = [];
+    const seen = new Map();
+    for (const { text, line } of lines) {
+      const parts = text.split(/\s+/);
+      const opts = parts.filter((p) => /^[A-Za-z0-9_]+=/.test(p));
+      const plain = parts.filter((p) => !/^[A-Za-z0-9_]+=/.test(p));
+      if (plain.length !== 3) {
+        throw new RtmError(`"${text}" is not two species and their coefficient: Na+  Cl-  0.03, and eps1= after it for `
+          + 'one that goes with the ionic strength as well.', line);
+      }
+      const [n1, n2, raw] = plain;
+      const ks = [n1, n2].map((name) => {
+        if (!index.has(name)) throw new RtmError(`"${name}" in <SIT> is not in <SPECIES>.`, line);
+        const k = index.get(name);
+        if (!solute[k]) {
+          throw new RtmError(`${name} is no solute -- the water, a mineral, an exchanger or what is on one, a surface, `
+            + 'its potential or the electron -- and SIT pairs solutes.', line);
+        }
+        return k;
+      });
+      const eps = constValue(raw, line, `The coefficient of ${n1} and ${n2}`);
+      let eps1 = 0;
+      for (const o of opts) {
+        const [key, val] = o.split('=');
+        if (key.toLowerCase() !== 'eps1') {
+          throw new RtmError(`"${o}": a pair in <SIT> takes eps1= (its coefficient's slope in the ionic strength) and `
+            + 'nothing else.', line);
+        }
+        eps1 = constValue(val, line, `eps1 of ${n1} and ${n2}`);
+      }
+      const key = ks[0] < ks[1] ? `${ks[0]}:${ks[1]}` : `${ks[1]}:${ks[0]}`;
+      if (seen.has(key)) {
+        throw new RtmError(`${n1} and ${n2} are paired twice in <SIT>, on lines ${seen.get(key)} and ${line}.`, line);
+      }
+      seen.set(key, line);
+      // PHREEQC halves a pair of two neutral species in the osmotic coefficient.
+      const neutral = !(species[ks[0]].z !== null ? species[ks[0]].z : chargeOf(n1))
+        && !(species[ks[1]].z !== null ? species[ks[1]].z : chargeOf(n2));
+      pairs.push({ i: ks[0], j: ks[1], e: eps, e1: eps1, c: neutral ? 0.5 : 1 });
+    }
+    const lists = Array.from({ length: ns }, () => []);
+    for (const p of pairs) {
+      lists[p.i].push([p.j, p.e, p.e1]);
+      lists[p.j].push([p.i, p.e, p.e1]);
+    }
+    const rows = lists.map((l) => (l.length ? { k: Int32Array.from(l, (x) => x[0]), e: Float64Array.from(l, (x) => x[1]),
+      e1: Float64Array.from(l, (x) => x[2]) } : null));
+    return { pairs, rows, d: new Float64Array(ns), dAwv: new Float64Array(ns), any1: pairs.some((p) => p.e1 !== 0) };
   }
 
   /**
@@ -1701,11 +1792,109 @@
     I *= 0.5;
     const low = !(I > 1e-10);
     if (low) I = 1e-10;
-    coefficientsAt(act, I, low, lnG, dG, cell === undefined ? Math.round(off / ns) : cell);
+    const at = cell === undefined ? Math.round(off / ns) : cell;
+    if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
+    coefficientsAt(act, I, low, lnG, dG, at);
     let aw = 1 - 0.017 * sum;
     const dry = !(aw > 1e-6);
     if (dry) aw = 1e-6;
     return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
+  }
+
+  /**
+   * activityAt under SIT, PHREEQC's (sit.cpp): each solute's coefficient
+   * (activityModel's form 4), with d(ln gamma)/dI into dG -- what it reads of
+   * the species paired with it is sitPartners' -- a species on an exchanger
+   * its ion's (form 5, as PHREEQC's -pitzer_exchange_gammas has it), and the
+   * water's activity from SIT's osmotic coefficient,
+   *
+   *   ln a(H2O) = -(sum m + ln10 S) / 55.50837,
+   *   S = -2A/1.5^3 (T - 2 ln T - 1/T) + sum over the pairs of m_i m_j eps
+   *       (half of it for two neutral species), T = 1 + 1.5 sqrt(I),
+   *
+   * with its derivative in each species' concentration, dAwv. A is the
+   * Debye-Hueckel A of the other forms: 3 A_phi/ln 10 in PHREEQC is the same
+   * number.
+   */
+  function sitAt(act, C, off, I, low, osum, lnG, dG, cell) {
+    const ns = act.ns;
+    const st = act.sit;
+    const A = act.A;
+    const sq = Math.sqrt(I);
+    const T = 1 + 1.5 * sq;
+    const F = (-A * sq) / T;
+    const dF = low ? 0 : -A / (2 * sq * T * T);
+    for (let s = 0; s < ns; s++) {
+      if (act.form[s] !== 4) { lnG[s] = 0; dG[s] = 0; continue; }
+      const z2 = act.z[s] * act.z[s];
+      let lg = z2 * F;
+      let dg = z2 * dF;
+      const r = st.rows[s];
+      if (r) {
+        for (let q = 0; q < r.k.length; q++) {
+          const m = C[off + r.k[q]];
+          lg += (r.e[q] + I * r.e1[q]) * m;
+          dg += r.e1[q] * m;
+        }
+      }
+      lnG[s] = Math.LN10 * lg;
+      dG[s] = low ? 0 : Math.LN10 * dg;
+    }
+    const ex = act.ex;
+    if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
+    onSites(act, lnG, dG, cell);
+    // The water.
+    let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+    let osI = low ? 0 : (-A * sq) / (T * T);
+    for (const p of st.pairs) {
+      const mi = C[off + p.i];
+      const mj = C[off + p.j];
+      os += mi * mj * (p.e * p.c + p.e1 * (1 + p.c * I));
+      if (!low) osI += mi * mj * p.e1 * p.c;
+    }
+    const dAwv = st.dAwv;
+    for (let k = 0; k < ns; k++) dAwv[k] = act.solute[k] ? 1 + Math.LN10 * osI * 0.5 * act.z[k] * act.z[k] : 0;
+    for (const p of st.pairs) {
+      const f = Math.LN10 * (p.e * p.c + p.e1 * (1 + p.c * I));
+      dAwv[p.i] += f * C[off + p.j];
+      dAwv[p.j] += f * C[off + p.i];
+    }
+    for (let k = 0; k < ns; k++) dAwv[k] /= -SIT_WATER;
+    return { I, lnAw: -(osum + Math.LN10 * os) / SIT_WATER, dAw: 0, dAwv };
+  }
+
+  /** Moles of water in a kilogram, as PHREEQC's SIT has it. */
+  const SIT_WATER = 55.50837;
+
+  /** d(ln a(H2O))/dC of species k, from an activityAt evaluation. */
+  function awOf(act, water, k) {
+    return water.dAwv ? water.dAwv[k] : (act.solute[k] ? water.dAw : 0);
+  }
+
+  /**
+   * Under SIT, what the coefficients of a relation's species read besides
+   * the ionic strength: d(sum nu ln gamma)/dC_k for each species k paired
+   * with one of them in <SIT>, added into act.sit.d, which is zero elsewhere
+   * and is returned (null without SIT). sitDone(act, net) puts the zeros
+   * back. `net` is [species, nu] pairs; I the cell's ionic strength.
+   */
+  function sitPartners(act, net, I) {
+    const st = act && act.sit;
+    if (!st) return null;
+    const d = st.d;
+    for (const [s, nu] of net) {
+      const r = st.rows[s];
+      if (!r) continue;
+      for (let q = 0; q < r.k.length; q++) d[r.k[q]] += nu * Math.LN10 * (r.e[q] + I * r.e1[q]);
+    }
+    return d;
+  }
+  function sitDone(act, net) {
+    const st = act.sit;
+    for (const [s] of net) {
+      const r = st.rows[s];
+      if (r) for (let q = 0; q < r.k.length; q++) st.d[r.k[q]] = 0;
+    }
   }
 
   /**
@@ -1744,6 +1933,15 @@
       }
       if (low) dG[s] = 0;
     }
+    onSites(act, lnG, dG, cell);
+  }
+
+  /**
+   * The coefficients of what is on an exchanger or a surface, once the rest
+   * are known (coefficientsAt, sitAt).
+   */
+  function onSites(act, lnG, dG, cell) {
+    const ns = act.ns;
     /*
       On an exchanger, PHREEQC's Gaines-Thomas: the activity is the
       equivalent fraction, n C over the capacity of the cell, n the sites the
@@ -1885,6 +2083,8 @@
     const pw = new Float64Array(ns);
     const ion = new Int32Array(ns).fill(-1);
     let unused = false;
+    const sitAlone = [];
+    const sitAB = [];
     for (const k of onSites) {
       const sp = species[k];
       pw[k] = 1;
@@ -1896,6 +2096,21 @@
         ion[k] = others[0][0];
         pw[k] = Math.abs(others[0][1] / eq.net.find(([s]) => s === k)[1]);
         break;
+      }
+      /*
+        Under SIT every species on an exchanger takes its ion's coefficient to
+        the ion's power, a and b or not: PHREEQC's EXCHANGE does, unless told
+        -pitzer_exchange_gammas false. Its coefficient reads what the ion's
+        does, so its row of partners is the ion's, times the power.
+      */
+      if (out.sit) {
+        if (ion[k] >= 0 && out.form[ion[k]] === 4) {
+          out.form[k] = 5;
+          const r = out.sit.rows[ion[k]];
+          if (r) out.sit.rows[k] = { k: r.k, e: r.e.map((v) => v * pw[k]), e1: r.e1.map((v) => v * pw[k]) };
+        } else sitAlone.push(sp.name);
+        if (sp.dha !== null) sitAB.push(sp.name);
+        continue;
       }
       if (sp.dha === null) continue;
       if (!act) { unused = true; continue; }
@@ -1915,6 +2130,14 @@
     if (unused) {
       warnings.push('ACTIVITY is none: a species on an exchanger has its equivalent fraction for its activity, and '
         + 'the a and b given to one are not used.');
+    }
+    if (sitAB.length) {
+      warnings.push(`ACTIVITY = sit: a species on an exchanger takes its ion's SIT coefficient, and the a and b given to `
+        + `${sitAB.join(', ')} are not used.`);
+    }
+    if (sitAlone.length) {
+      warnings.push(`ACTIVITY = sit: no relation forms ${sitAlone.join(', ')} from its exchanger and one ion in the `
+        + 'water, so its activity is its equivalent fraction alone, with no ion\'s coefficient.');
     }
     const site = Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger ? 2 : 0));
     out.ex = { list: onSites, exchangers, n, of, pw, ion, site, shift: null, capacity: null };
@@ -2881,13 +3104,17 @@
         const wv = eq.water || 0;
         if (wv) r += wv * water.lnAw;
         if (row) {
+          // Under SIT a coefficient also reads the species it is paired with.
+          const sd = sitPartners(act, eq.net, water.I);
           for (let k = 0; k < na; k++) {
             if (lin[k]) continue;
             const si = part[k];
             let d = G * 0.5 * act.z[si] * act.z[si];
-            if (wv && act.solute[si]) d += wv * water.dAw;
+            if (wv) d += wv * awOf(act, water, si);
+            if (sd) d += sd[si];
             if (d) row[k] += d * val[k];
           }
+          if (sd) sitDone(act, eq.net);
         }
       }
       return r;
@@ -3183,8 +3410,12 @@
     const nm = mins.length;
     const M = A.map((rw) => rw.slice(naq));
     const rel = aqRel.map(constants);
-    const iP = nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0);
+    const sit = act && act.sit ? reducedSitSetup(sys, aq, rel, mins) : null;
+    const iS = nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0);
+    const iP = iS + (sit ? sit.V.length : 0);
+    if (sit) sit.iS = iS;
     return {
+      sit,
       sys, aq, naq, aqOf, D: pivotOf, K, nK, nm, nr,
       E: A.map((rw) => Float64Array.from(K, (i) => rw[i])),
       M,
@@ -3219,6 +3450,412 @@
         return out;
       }),
     };
+  }
+
+  /*
+    THE REDUCED SPECIATION UNDER SIT. A coefficient reads the species it is
+    paired with as well as the ionic strength, so the ln a of the components
+    no longer make every species explicit: a species' concentration needs
+    its coefficient, which needs its partners' concentrations. So V, a set of
+    the cell's species that touches every pair between two of its aqueous
+    unknowns, each get their SIT sum Q = sum (eps + eps1 I) m as an unknown
+    with an equation of its own, as the ionic strength has; every other
+    species' partners are then in V or known, and its coefficient follows.
+    The pairs of a water mostly run through its own few ions, Na+ and Cl-
+    say, so V is small: found greedily, the species in most pairs first.
+  */
+
+  /**
+   * V for a reduced system under SIT, and the maps the evaluation needs. A
+   * species paired with itself is in V, and so is a fixed species paired at
+   * all (its coefficient goes into the relations' constants, which every
+   * other species reads), and a species on an exchanger that is fixed has
+   * its ion in V where the ion is paired.
+   */
+  function reducedSitSetup(sys, aq, rel, mins) {
+    const { part, act, ns } = sys;
+    const rows = act.sit.rows;
+    const ex = act.ex;
+    const spOfAq = Int32Array.from(aq, (k) => part[k]);
+    const aqOfSp = new Int32Array(ns).fill(-1);
+    spOfAq.forEach((s, i) => { aqOfSp[s] = i; });
+    const fixedSp = [...new Set([...rel.flatMap((r) => r.fixed.map(([s]) => s)),
+      ...mins.flatMap((mn) => mn.fixed.map(([s]) => s))])];
+    const inV = new Uint8Array(ns);
+    const paired = (s) => act.form[s] === 4 && !!rows[s];
+    for (const s of fixedSp) {
+      if (paired(s)) inV[s] = 1;
+      if (act.form[s] === 5 && paired(ex.ion[s])) inV[ex.ion[s]] = 1;
+    }
+    for (const s of spOfAq) if (paired(s) && rows[s].k.includes(s)) inV[s] = 1;
+    const edges = act.sit.pairs.filter((p) => p.i !== p.j && aqOfSp[p.i] >= 0 && aqOfSp[p.j] >= 0).map((p) => [p.i, p.j]);
+    for (;;) {
+      const open = edges.filter(([i, j]) => !inV[i] && !inV[j]);
+      if (!open.length) break;
+      const deg = new Map();
+      for (const [i, j] of open) { deg.set(i, (deg.get(i) || 0) + 1); deg.set(j, (deg.get(j) || 0) + 1); }
+      let best = -1;
+      let most = 0;
+      for (const [s, d] of deg) if (d > most || (d === most && s < best)) { best = s; most = d; }
+      inV[best] = 1;
+    }
+    const V = [];
+    for (let s = 0; s < ns; s++) if (inV[s]) V.push(s);
+    const vOf = new Int32Array(ns).fill(-1);
+    V.forEach((s, v) => { vOf[s] = v; });
+    // On an exchanger (its share of the sites, and its ion's coefficient), and on a surface (its share).
+    const onEx = new Uint8Array(ns);
+    if (ex) for (const s of ex.list) onEx[s] = 1;
+    const onSf = new Uint8Array(ns);
+    if (act.sf) for (const s of act.sf.list) onSf[s] = 1;
+    return { V, vOf, spOfAq, aqOfSp, fixedSp, onEx, onSf, iS: -1 };
+  }
+
+  /**
+   * One state of a reduced cell under SIT, as reducedState: every aqueous
+   * unknown's ln a (alpha), concentration (val) and coefficient (lnG), V's
+   * coefficients from their sums at rs.sit.iS. With `grad`, the gradients
+   * of each aqueous unknown's ln a (Ga) and ln C (Gr), and of each fixed or
+   * aqueous species' ln gamma (Gl), over the unknowns and then over the
+   * concentrations of `outside`: nz + outside.length columns.
+   */
+  function reducedStateSit(rs, z, C, off, cell, outside, grad) {
+    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, iI, iL, mLnK, mWater, withFixed, np, iP, mPot, nz } = rs;
+    const { act, ns } = sys;
+    const { V, vOf, spOfAq, aqOfSp, fixedSp, onEx, onSf, iS } = rs.sit;
+    const rows = act.sit.rows;
+    const ex = act.ex;
+    const sf = act.sf;
+    const nOut = outside.length;
+    const nx = nz + nOut;
+    let sc = rs.scratch;
+    if (!sc || sc.nx !== nx) {
+      const outOf = new Int32Array(ns).fill(-1);
+      outside.forEach((s, o) => { outOf[s] = o; });
+      const Gl = new Array(ns).fill(null);
+      for (const s of spOfAq) Gl[s] = new Float64Array(nx);
+      for (const s of fixedSp) Gl[s] = new Float64Array(nx);
+      sc = rs.scratch = { nx, outOf, Gl, alpha: new Float64Array(naq), val: new Float64Array(naq),
+        lnG: new Float64Array(ns), fixedTerm: new Float64Array(nr),
+        Gfix: Array.from({ length: nr }, () => new Float64Array(nx)),
+        Ga: Array.from({ length: naq }, () => new Float64Array(nx)),
+        Gr: Array.from({ length: naq }, () => new Float64Array(nx)) };
+    }
+    const { outOf, Gl, alpha, val, lnG, fixedTerm, Gfix, Ga, Gr } = sc;
+    const LN = Math.LN10;
+    const I = useI ? z[iI] : 1e-10;
+    const low = !(I > 1e-10);
+    const Ie = low ? 1e-10 : I;
+    const sq = Math.sqrt(Ie);
+    const T = 1 + 1.5 * sq;
+    const Fd = (-act.A * sq) / T;
+    const dFd = low ? 0 : -act.A / (2 * sq * T * T);
+    const at = cell * ns;
+    const z2 = (s) => act.z[s] * act.z[s];
+    // A coefficient V or the Debye-Hueckel term alone gives (a species paired outside V is done later).
+    const base = (s) => {
+      if (vOf[s] >= 0) return LN * (z2(s) * Fd + z[iS + vOf[s]]);
+      if (act.form[s] === 4) return LN * z2(s) * Fd;
+      return 0;
+    };
+    const baseGrad = (s, g) => {
+      g.fill(0);
+      if (useI && act.form[s] === 4) g[iI] = LN * z2(s) * dFd;
+      if (vOf[s] >= 0) g[iS + vOf[s]] = LN;
+    };
+    // 1. The fixed species: in V, unpaired, or on an exchanger with an ion that is either.
+    for (const f of fixedSp) {
+      if (act.form[f] === 5) {
+        const ion = ex.ion[f];
+        lnG[f] = ex.pw[f] * base(ion) + ex.shift[at + f];
+        if (grad) { baseGrad(ion, Gl[f]); for (let c = 0; c < nx; c++) Gl[f][c] *= ex.pw[f]; }
+      } else if (onEx[f]) {
+        lnG[f] = ex.shift[at + f];
+        if (grad) Gl[f].fill(0);
+      } else if (onSf[f]) {
+        lnG[f] = sf.shift[at + f];
+        if (grad) Gl[f].fill(0);
+      } else {
+        lnG[f] = base(f);
+        if (grad) baseGrad(f, Gl[f]);
+      }
+    }
+    // 2. Each relation's fixed species, and the components' and the rest's ln a.
+    for (const c of withFixed) {
+      let v = 0;
+      if (grad) Gfix[c].fill(0);
+      for (const [si, nu] of rel[c].fixed) {
+        v += nu * (Math.log(Math.max(C[off + si], 1e-300)) + lnG[si]);
+        if (grad) { const g = Gl[si]; const gf = Gfix[c]; for (let q = 0; q < nx; q++) if (g[q]) gf[q] += nu * g[q]; }
+      }
+      fixedTerm[c] = v;
+    }
+    const L = useL ? z[iL] : 0;
+    for (let j = 0; j < nK; j++) {
+      alpha[K[j]] = z[j];
+      if (grad) { Ga[K[j]].fill(0); Ga[K[j]][j] = 1; }
+    }
+    for (let r = 0; r < nr; r++) {
+      const Mr = M[r];
+      const Er = E[r];
+      let a = mLnK[r] - L * mWater[r];
+      for (const c of withFixed) a -= Mr[c] * fixedTerm[c];
+      for (let j = 0; j < nK; j++) a -= Er[j] * z[j];
+      for (let p = 0; p < np; p++) a -= mPot[r][p] * z[iP + p];
+      alpha[D[r]] = a;
+      if (!grad) continue;
+      const g = Ga[D[r]];
+      g.fill(0);
+      for (let j = 0; j < nK; j++) g[j] = -Er[j];
+      if (useL) g[iL] = -mWater[r];
+      for (let p = 0; p < np; p++) g[iP + p] = -mPot[r][p];
+      for (const c of withFixed) {
+        const f = Mr[c];
+        if (!f) continue;
+        const gf = Gfix[c];
+        for (let q = 0; q < nx; q++) if (gf[q]) g[q] -= f * gf[q];
+      }
+    }
+    // 3. V's own concentrations, then the coefficients that read them, then everything else's.
+    const mOf = (j) => (aqOfSp[j] >= 0 ? val[aqOfSp[j]] : C[off + j]);
+    const done = new Uint8Array(naq);
+    for (let i = 0; i < naq; i++) {
+      const s = spOfAq[i];
+      if (vOf[s] < 0) continue;
+      lnG[s] = base(s);
+      val[i] = Math.exp(alpha[i] - lnG[s]);
+      done[i] = 1;
+      if (grad) {
+        baseGrad(s, Gl[s]);
+        const ga = Ga[i];
+        const gr = Gr[i];
+        const gl = Gl[s];
+        for (let q = 0; q < nx; q++) gr[q] = ga[q] - gl[q];
+      }
+    }
+    // 4. The rest: paired ones from V and what is known; on an exchanger its ion's; on a surface its share.
+    const lnGrest = (s, i) => {
+      if (act.form[s] === 4) {
+        let lg = z2(s) * Fd;
+        let dI = z2(s) * dFd;
+        const r = rows[s];
+        const gl = grad ? Gl[s] : null;
+        if (gl) gl.fill(0);
+        if (r) {
+          for (let q = 0; q < r.k.length; q++) {
+            const j = r.k[q];
+            const e = r.e[q] + Ie * r.e1[q];
+            const m = mOf(j);
+            lg += e * m;
+            dI += r.e1[q] * m;
+            if (!gl) continue;
+            const ja = aqOfSp[j];
+            if (ja >= 0) {
+              if (!done[ja] || vOf[j] < 0) throw new RtmError('The SIT pairs were not covered (reducedSitSetup).');
+              const gr = Gr[ja];
+              const f = LN * e * val[ja];
+              for (let c = 0; c < nx; c++) if (gr[c]) gl[c] += f * gr[c];
+            } else if (outOf[j] >= 0) gl[nz + outOf[j]] += LN * e;
+          }
+        }
+        if (gl && useI && !low) gl[iI] += LN * dI;
+        return LN * lg;
+      }
+      if (act.form[s] === 5) {
+        const ion = ex.ion[s];
+        const ia = aqOfSp[ion];
+        if (ia >= 0 && !done[ia]) rest(ia);
+        if (grad) { const gl = Gl[s]; const gi = Gl[ion]; for (let c = 0; c < nx; c++) gl[c] = ex.pw[s] * gi[c]; }
+        return ex.pw[s] * lnG[ion] + ex.shift[at + s];
+      }
+      if (grad) Gl[s].fill(0);
+      if (onEx[s]) return ex.shift[at + s];
+      if (onSf[s]) return sf.shift[at + s];
+      return 0;
+    };
+    function rest(i) {
+      const s = spOfAq[i];
+      lnG[s] = lnGrest(s, i);
+      val[i] = Math.exp(alpha[i] - lnG[s]);
+      done[i] = 1;
+      if (grad) {
+        const ga = Ga[i];
+        const gr = Gr[i];
+        const gl = Gl[s];
+        for (let q = 0; q < nx; q++) gr[q] = ga[q] - gl[q];
+      }
+    }
+    for (let i = 0; i < naq; i++) if (!done[i]) rest(i);
+    return { I, low, Ie, L, Fd, dFd, mOf };
+  }
+
+  /**
+   * reducedResidual under SIT: the same rows, and V's sums, Q - sum (eps +
+   * eps1 I) m = 0, after the water's; the water's ln a SIT's. With J, the
+   * Jacobian in the unknowns, and with B (rows nz of outside.length) the
+   * derivatives in the concentrations of `outside`, for reducedSensitivity.
+   */
+  function reducedResidualSit(rs, z, C, off, totals, w, present, cell, outside, F, J, B) {
+    const { sys, aq, naq, nK, nm, mins, useI, useL, iI, iL, nz, inTotals, np, iP } = rs;
+    const { nb, part, act } = sys;
+    const { V, spOfAq, aqOfSp, iS } = rs.sit;
+    const sit = act.sit;
+    const nOut = outside.length;
+    const grad = !!(J || B);
+    const { Ie, L, low, mOf } = reducedStateSit(rs, z, C, off, cell, outside, grad);
+    const sc = rs.scratch;
+    const { alpha, val, lnG, Ga, Gr, Gl, outOf } = sc;
+    const LN = Math.LN10;
+    if (J) for (let r = 0; r < nz; r++) J[r].fill(0);
+    if (B) for (let r = 0; r < nz; r++) B[r].fill(0);
+    const addG = (row, f, g) => {
+      if (!f) return;
+      if (J) { const Jr = J[row]; for (let c = 0; c < nz; c++) if (g[c]) Jr[c] += f * g[c]; }
+      if (B) { const Br = B[row]; for (let o = 0; o < nOut; o++) if (g[nz + o]) Br[o] += f * g[nz + o]; }
+    };
+    let norm = 0;
+    // The totals, minerals included.
+    const scale = sc.scale || (sc.scale = new Float64Array(nb));
+    for (let q = 0; q < nb; q++) { F[q] = -totals[q]; scale[q] = Math.abs(totals[q]); }
+    for (let i = 0; i < naq; i++) {
+      const k = aq[i];
+      for (const [q, u] of inTotals[k]) {
+        const f = u * (w ? w[k] : 1);
+        F[q] += f * val[i];
+        scale[q] += Math.abs(f * val[i]);
+        if (grad) addG(q, f * val[i], Gr[i]);
+      }
+    }
+    for (let p = 0; p < nm; p++) {
+      const k = mins[p].k;
+      for (const [q, u] of inTotals[k]) {
+        const f = u * (w ? w[k] : 1);
+        F[q] += f * z[nK + p];
+        scale[q] += Math.abs(f * z[nK + p]);
+        if (J) J[q][nK + p] += f;
+      }
+    }
+    for (let q = 0; q < nb; q++) norm = Math.max(norm, Math.abs(F[q]) / Math.max(scale[q], 1e-300));
+    // The minerals.
+    let big = 0;
+    for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
+    for (let p = 0; p < nm; p++) {
+      const row = nb + p;
+      const mn = mins[p];
+      if (!present[mn.j]) {
+        F[row] = z[nK + p];
+        if (J) J[row][nK + p] = 1;
+        norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
+        continue;
+      }
+      let r = mn.water * L - mn.lnK;
+      for (const [si, nu] of mn.fixed) {
+        r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + lnG[si]);
+        if (grad) addG(row, nu, Gl[si]);
+      }
+      for (let i = 0; i < naq; i++) {
+        if (!mn.nu[i]) continue;
+        r += mn.nu[i] * alpha[i];
+        if (grad) addG(row, mn.nu[i], Ga[i]);
+      }
+      if (J && useL) J[row][iL] += mn.water;
+      F[row] = r;
+      norm = Math.max(norm, Math.abs(r));
+    }
+    // The ionic strength.
+    if (useI) {
+      let Isum = 0;
+      for (let i = 0; i < naq; i++) {
+        const zz = act.z[spOfAq[i]];
+        if (!zz) continue;
+        Isum += 0.5 * zz * zz * val[i];
+        if (grad) addG(iI, -0.5 * zz * zz * val[i], Gr[i]);
+      }
+      outside.forEach((si, o) => {
+        const zz = act.z[si];
+        Isum += 0.5 * zz * zz * C[off + si];
+        if (B) B[iI][o] -= 0.5 * zz * zz;
+      });
+      F[iI] = z[iI] - Isum;
+      norm = Math.max(norm, Math.abs(F[iI]) / Math.max(Isum, 1e-300));
+      if (J) J[iI][iI] += 1;
+    }
+    // The water: SIT's osmotic coefficient, the ionic strength the unknown.
+    if (useL) {
+      const sq = Math.sqrt(Ie);
+      const T = 1 + 1.5 * sq;
+      let os = (-2 * act.A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+      let osI = low ? 0 : (-act.A * sq) / (T * T);
+      let osum = 0;
+      const dm = sc.dm || (sc.dm = new Float64Array(sys.ns));
+      dm.fill(0);
+      for (let i = 0; i < naq; i++) if (act.solute[spOfAq[i]]) osum += val[i];
+      for (const si of outside) if (act.solute[si]) osum += C[off + si];
+      for (const p of sit.pairs) {
+        const mi = mOf(p.i);
+        const mj = mOf(p.j);
+        const f = p.e * p.c + p.e1 * (1 + p.c * Ie);
+        os += mi * mj * f;
+        if (!low) osI += mi * mj * p.e1 * p.c;
+        dm[p.i] += f * mj;
+        dm[p.j] += f * mi;
+      }
+      F[iL] = L + (osum + LN * os) / SIT_WATER;
+      norm = Math.max(norm, Math.abs(F[iL]));
+      if (grad) {
+        if (J) { J[iL][iL] += 1; if (useI) J[iL][iI] += (LN * osI) / SIT_WATER; }
+        for (let i = 0; i < naq; i++) {
+          const s = spOfAq[i];
+          const d = (act.solute[s] ? 1 : 0) + LN * dm[s];
+          if (d) addG(iL, (d * val[i]) / SIT_WATER, Gr[i]);
+        }
+        if (B) outside.forEach((si, o) => { B[iL][o] += ((act.solute[si] ? 1 : 0) + LN * dm[si]) / SIT_WATER; });
+      }
+    }
+    // V's sums.
+    for (let v = 0; v < V.length; v++) {
+      const s = V[v];
+      const row = iS + v;
+      const r = sit.rows[s];
+      let sum = 0;
+      let dI = 0;
+      for (let q = 0; q < r.k.length; q++) {
+        const j = r.k[q];
+        const e = r.e[q] + Ie * r.e1[q];
+        const m = mOf(j);
+        sum += e * m;
+        dI += r.e1[q] * m;
+        if (!grad) continue;
+        const ja = aqOfSp[j];
+        if (ja >= 0) addG(row, -e * val[ja], Gr[ja]);
+        else if (B && outOf[j] >= 0) B[row][outOf[j]] -= e;
+      }
+      F[row] = z[row] - sum;
+      norm = Math.max(norm, Math.abs(F[row]));
+      if (J) { J[row][row] += 1; if (useI && !low) J[row][iI] -= dI; }
+    }
+    // Each surface's potential: Gouy and Chapman.
+    const pt = sys.pt;
+    for (let p = 0; p < np; p++) {
+      const row = iP + p;
+      let Q = 0;
+      for (const [si, zq] of sys.pots[p].fixedQ) Q += zq * C[off + si];
+      const dQ = grad ? (sc.dQ || (sc.dQ = new Float64Array(sc.nx))) : null;
+      if (dQ) dQ.fill(0);
+      for (let i = 0; i < naq; i++) {
+        if (rs.onPot[i] !== p) continue;
+        const zq = pt.zs[spOfAq[i]];
+        Q += zq * val[i];
+        if (dQ) { const g = Gr[i]; for (let c = 0; c < sc.nx; c++) if (g[c]) dQ[c] += zq * val[i] * g[c]; }
+      }
+      const gc = gouyChapman(pt, sys.pots[p].q, Q, Ie, low, z[row]);
+      F[row] = gc.r;
+      norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
+      if (!grad) continue;
+      addG(row, gc.dQ, dQ);
+      if (J) { if (useI) J[row][iI] += gc.dI; J[row][row] += gc.du; }
+    }
+    return norm;
   }
 
   /**
@@ -3475,6 +4112,19 @@
     if (useI) z[iI] = I0;
     if (useL) z[iL] = lnAw;
     for (let p = 0; p < np; p++) z[iP + p] = Math.log(Math.max(C[off + sys.pots[p].si], 1e-300));
+    // Under SIT, V's sums as the start has them.
+    const st = rs.sit;
+    if (st) {
+      st.V.forEach((s, v) => {
+        const r = act.sit.rows[s];
+        let q = 0;
+        for (let u = 0; u < r.k.length; u++) q += (r.e[u] + I0 * r.e1[u]) * C[off + r.k[u]];
+        z[st.iS + v] = q;
+      });
+    }
+    const residualAt = st
+      ? (FF, JJ) => reducedResidualSit(rs, z, C, off, totals, w, present, cell, outside, FF, JJ, null)
+      : (FF, JJ) => reducedResidual(rs, z, C, off, totals, w, present, cell, outside, FF, JJ);
     let iterations = 0;
     let residual = Infinity;
     let converged = false;
@@ -3484,25 +4134,36 @@
       // Where it starts settled, as a projection mostly does, the residual
       // alone says so; the Jacobian is made only for a step.
       const lazy = it === 0 && opts.asStarted;
-      const norm = reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, lazy ? null : J);
+      const norm = residualAt(F, lazy ? null : J);
       residual = norm;
       if (!(norm === norm)) break;
       if (norm < tol) converged = true;
       if (converged && lazy) break;
-      if (lazy) reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, J);
+      if (lazy) residualAt(F, J);
       const step = solveInPlace(J, F, nz);
       if (!step) { if (converged) break; return { converged: false, iterations, residual, x: null, why: 'singular' }; }
-      // The change each species' ln a would make: the components', and the rest through E, hI, hL.
-      const { hI, hL } = rs.scratch;
-      for (let j = 0; j < nK; j++) dAlpha[K[j]] = step[j];
-      for (let r = 0; r < D.length; r++) {
-        const Er = E[r];
-        let d = 0;
-        for (let j = 0; j < nK; j++) d -= Er[j] * step[j];
-        if (useI) d += hI[r] * step[iI];
-        if (useL) d += hL[r] * step[iL];
-        for (let p = 0; p < np; p++) d -= mPot[r][p] * step[iP + p];
-        dAlpha[D[r]] = d;
+      if (st) {
+        // Under SIT, the change each species' ln C would make, from its gradient.
+        const { Gr } = rs.scratch;
+        for (let i = 0; i < naq; i++) {
+          const g = Gr[i];
+          let d = 0;
+          for (let c = 0; c < nz; c++) if (g[c]) d += g[c] * step[c];
+          dAlpha[i] = d;
+        }
+      } else {
+        // The change each species' ln a would make: the components', and the rest through E, hI, hL.
+        const { hI, hL } = rs.scratch;
+        for (let j = 0; j < nK; j++) dAlpha[K[j]] = step[j];
+        for (let r = 0; r < D.length; r++) {
+          const Er = E[r];
+          let d = 0;
+          for (let j = 0; j < nK; j++) d -= Er[j] * step[j];
+          if (useI) d += hI[r] * step[iI];
+          if (useL) d += hL[r] * step[iL];
+          for (let p = 0; p < np; p++) d -= mPot[r][p] * step[iP + p];
+          dAlpha[D[r]] = d;
+        }
       }
       /*
         Damped by the species that matter: none moves its ln C by more than 2
@@ -3535,7 +4196,7 @@
     }
     if (!converged) return { converged: false, iterations, residual, x: null, why: '' };
     // Back into C, and the unknowns as speciateCell has them.
-    reducedState(rs, z, C, off, cell);
+    if (st) reducedStateSit(rs, z, C, off, cell, outside, false); else reducedState(rs, z, C, off, cell);
     const { alpha, val, lnG: lg } = rs.scratch;
     const x = new Float64Array(sys.na);
     for (let i = 0; i < naq; i++) {
@@ -3563,6 +4224,7 @@
    * of `outside` (dO): the implicit function theorem on reducedResidual.
    */
   function reducedSensitivity(rs, C, off, totals, w, present, cell, z, outside) {
+    if (rs.sit) return reducedSensitivitySit(rs, C, off, totals, w, present, cell, z, outside);
     const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, kOf, dOf, np, iP, mPot } = rs;
     const { na, nb, part, act } = sys;
     const F = new Float64Array(nz);
@@ -3623,6 +4285,51 @@
   }
 
   /**
+   * reducedSensitivity under SIT: the implicit function theorem on
+   * reducedResidualSit, whose gradients run over the outside species'
+   * concentrations as well -- a coefficient reads them directly where they
+   * are paired with its species.
+   */
+  function reducedSensitivitySit(rs, C, off, totals, w, present, cell, z, outside) {
+    const { sys, aq, naq, nK, nm, mins, nz, np, iP } = rs;
+    const { na, nb } = sys;
+    const nOut = outside.length;
+    const F = new Float64Array(nz);
+    const J = Array.from({ length: nz }, () => new Float64Array(nz));
+    const B = Array.from({ length: nz }, () => new Float64Array(nOut));
+    reducedResidualSit(rs, z, C, off, totals, w, present, cell, outside, F, J, B);
+    const { Gr } = rs.scratch;
+    const piv = luFactor(J, nz);
+    if (!piv) return null;
+    // dx of every part position from dz, and directly from outside species o where o >= 0.
+    const expand = (dz, out, col, o) => {
+      for (let i = 0; i < naq; i++) {
+        const g = Gr[i];
+        let d = o >= 0 ? g[nz + o] : 0;
+        for (let c = 0; c < nz; c++) if (g[c]) d += g[c] * dz[c];
+        out[aq[i]][col] = d;
+      }
+      for (let p = 0; p < nm; p++) out[mins[p].k][col] = dz[nK + p];
+      for (let p = 0; p < np; p++) out[sys.pots[p].k][col] = dz[iP + p];
+    };
+    const dT = Array.from({ length: na }, () => new Float64Array(nb));
+    const dO = Array.from({ length: na }, () => new Float64Array(nOut));
+    const b = new Float64Array(nz);
+    for (let q = 0; q < nb; q++) {
+      b.fill(0);
+      b[q] = 1;
+      luSolve(J, piv, b, nz);
+      expand(b, dT, q, -1);
+    }
+    for (let o = 0; o < nOut; o++) {
+      for (let r = 0; r < nz; r++) b[r] = -B[r][o];
+      luSolve(J, piv, b, nz);
+      expand(b, dO, o, o);
+    }
+    return { dT, dO };
+  }
+
+  /**
    * The Jacobian of a cell's speciation (speciateCell) at the unknowns in C
    * from `off`: its relations and its totals, rows in that order, in the
    * unknowns of sys.part -- ln C, or an amount -- as speciateCell iterates
@@ -3649,13 +4356,15 @@
       }
       if (!act) continue;
       const wv = eq.water || 0;
-      const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv && act.solute[si] ? wv * water.dAw : 0);
+      const sd = sitPartners(act, eq.net, water.I);
+      const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv ? wv * awOf(act, water, si) : 0) + (sd ? sd[si] : 0);
       for (let k = 0; k < na; k++) {
         if (lin[k]) continue;
         const v = d(part[k]);
         if (v) J[j][k] += v * C[off + part[k]];
       }
       if (O) outside.forEach((si, i) => { O[j][i] = d(si); });
+      if (sd) sitDone(act, eq.net);
     }
     for (let q = 0; q < nb; q++) {
       const row = ne + q;
@@ -4287,7 +4996,7 @@
     const warnings = [];
     // Null unless ACTIVITY asks for one (activityModel), or there is an
     // exchanger (exchangeSetup, once the relations are read).
-    let act = activityModel(settings, species, warnings);
+    let act = activityModel(settings, species, warnings, sections.SIT);
     const transport = settings.MODE === 'transport';
     flowFromTravelTime(settings, grid);
     const surface = wettedSurface(settings, grid);
@@ -4672,15 +5381,17 @@
     }
     // The species each is made of, which its derivatives run over: with
     // ACTIVITY every ion, through the ionic strength, and every solute where
-    // the water's activity comes in.
+    // the water's activity comes in -- or under SIT, where a coefficient reads
+    // the species it is paired with, which may be neutral, every solute.
+    const sitAQ = !!(act && act.sit);
     for (const e of aqList) {
       const set = new Set();
-      if (e.kind === 'a') { set.add(e.s); if (act) aqIons.forEach((k) => set.add(k)); }
+      if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
       else if (e.kind === 'aw') { if (act) aqSolutes.forEach((k) => set.add(k)); }
       else if (e.kind === 'I') aqIons.forEach((k) => set.add(k));
       else {
         e.phase.net.forEach(([k]) => set.add(k));
-        if (act) aqIons.forEach((k) => set.add(k));
+        if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k));
         if (act && e.phase.water) aqSolutes.forEach((k) => set.add(k));
       }
       e.cols = [...set].sort((x, y) => x - y);
@@ -4711,11 +5422,13 @@
           if (d) {
             d[e.s] += g;
             if (dGq[e.s]) for (const k of aqIons) d[k] += a * dGq[e.s] * 0.5 * z[k] * z[k];
+            const r = sitAQ ? aqAct.sit.rows[e.s] : null;
+            if (r) for (let u = 0; u < r.k.length; u++) d[r.k[u]] += a * Math.LN10 * (r.e[u] + w.I * r.e1[u]);
           }
         } else if (e.kind === 'aw') {
           const aw = Math.exp(w.lnAw);
           AQ[q] = aw;
-          if (d && w.dAw) for (const k of aqSolutes) d[k] += aw * w.dAw;
+          if (d) for (const k of aqSolutes) d[k] += aw * awOf(aqAct, w, k);
         } else if (e.kind === 'I') {
           AQ[q] = w.I;
           if (d && w.I > 1e-10) for (const k of aqIons) d[k] += 0.5 * z[k] * z[k];
@@ -4734,7 +5447,12 @@
             const f = ph.sign * (e.kind === 'SI' ? 1 / Math.LN10 : val);
             for (const [k, nu] of ph.net) if (y[b + k] > 0) d[k] += (f * nu) / y[b + k];
             if (G) for (const k of aqIons) d[k] += f * G * 0.5 * z[k] * z[k];
-            if (ph.water && w.dAw) for (const k of aqSolutes) d[k] += f * ph.water * w.dAw;
+            if (ph.water) for (const k of aqSolutes) d[k] += f * ph.water * awOf(aqAct, w, k);
+            const sd = sitAQ ? sitPartners(aqAct, ph.net, w.I) : null;
+            if (sd) {
+              for (const k of aqSolutes) if (sd[k]) d[k] += f * sd[k];
+              sitDone(aqAct, ph.net);
+            }
           }
         }
       }
@@ -5106,7 +5824,8 @@
       };
       const reac = side(eq.reactants);
       const prod = side(eq.products);
-      const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...ions,
+      // Under SIT a coefficient reads the species it is paired with, which may be neutral: every solute.
+      const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && act.sit ? solutes : ions),
         ...(eq.water ? solutes : [])])].sort((x, y) => x - y);
       return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
         kf: eq.kf, kb: eq.kf / Math.exp(eq.lnK), water: eq.water || 0, d: new Float64Array(colsOf.length) };
@@ -5879,15 +6598,18 @@
             // The mass action of each side...
             for (const [k] of pr.reac) d[pr.at.get(k)] += pr.kf * sideDerivative(pr.reac, y, b, k);
             for (const [k] of pr.prod) d[pr.at.get(k)] -= pr.kg * sideDerivative(pr.prod, y, b, k);
-            // ...and Gamma through the ionic strength and the water.
+            // ...and Gamma through the ionic strength and the water, and under SIT the partners.
             let G = 0;
             for (const [k, c] of pr.net) G += c * dG[k];
             if (pr.back !== 0) {
+              const sd = sitPartners(act, pr.net, water.I);
               pr.cols.forEach((k, q) => {
                 let g = G * 0.5 * act.z[k] * act.z[k];
-                if (pr.water && act.solute[k]) g += pr.water * water.dAw;
+                if (pr.water) g += pr.water * awOf(act, water, k);
+                if (sd) g += sd[k];
                 if (g) d[q] -= pr.back * g;
               });
+              if (sd) sitDone(act, pr.net);
             }
             const at = pairSlots[i][j];
             const ncol = pr.cols.length;
@@ -6132,7 +6854,7 @@
       // The activity model (activityModel), or null; and what of it to show.
       act,
       activity: act && act.kind !== 'none' ? { kind: act.kind, temperature: act.temperature, A: act.A, B: act.B,
-        ions: ions.length, pairs: pairInfo.length } : null,
+        ions: ions.length, pairs: pairInfo.length, sit: act.sit ? act.sit.pairs.length : 0 } : null,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -6369,8 +7091,9 @@
     const act = base.act || null;
     const lnG = act ? new Float64Array(ns) : null;
     const dG = act ? new Float64Array(ns) : null;
+    // Under SIT a coefficient reads the species it is paired with as well, which may be neutral: every solute.
     const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
-      || (eq.water && act.solute[k])) : []));
+      || ((eq.water || act.sit) && act.solute[k])) : []));
     const n = nBase + nc * nb;
     const tIndex = (c, j) => nBase + c * nb + j;
     const held = new Uint8Array(n);
@@ -6778,11 +7501,14 @@
           let G = 0;
           for (const [s, nu] of eqs[r].net) G += nu * dG[s];
           const w = eqs[r].water || 0;
+          const sd = sitPartners(act, eqs[r].net, water.I);
           actCols[r].forEach((k, q) => {
             let d = G * 0.5 * act.z[k] * act.z[k];
-            if (w && act.solute[k]) d += w * water.dAw;
+            if (w) d += w * awOf(act, water, k);
+            if (sd) d += sd[k];
             if (d) V[relA[c][r][q]] += held[b + k] ? d * C[b + k] : d;
           });
+          if (sd) sitDone(act, eqs[r].net);
         }
       }
       return V;

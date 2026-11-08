@@ -140,6 +140,33 @@ Fe+3 + OH- = FeOH+2 ; log_k 11.8    # defined again: this one counts, as in PHRE
   const eqs = P.modelEquilibria('<EQUILIBRIUM>\n <=> OH- + H+, logK = -14\nCO3-2 + 2 H+ <=> CO2, logK = 16.7 # x\n');
   check('a model\'s equilibria are read', eqs.length === 2 && eqs[1].reac[1].c === 2 && eqs[0].reac.length === 0,
     JSON.stringify(eqs));
+
+  // SIT's coefficients, as PHREEQC reads them: by kind and pair, either way round, a later one replacing.
+  const sdb = P.readDatabase(`SIT
+-epsilon
+  Na+   Cl-    0.03
+  Cl-   Na+    0.04            # the same pair again: this one counts
+  Ca+2  Cl-    0.14  -50  0  0.001
+  CO2   CO2    0.05
+-epsilon1
+  Na+   Cl-    0.002
+SOLUTION_SPECIES
+H+ = H+
+END
+SIT
+-epsilon
+  K+  Cl-  0.0                 # after the database's END: not in the database
+`, 'SIT\n-epsilon\n  H+ Cl- 0.12\n');
+  const sitOf = (k) => sdb.sit.get(k);
+  check('a database\'s SIT block: each pair by kind, either way round, the later one counting, a species with itself',
+    sdb.model === 'SIT' && sdb.sit.size === 5 && sitOf('eps Cl- Na+').a[0] === 0.04 && sitOf('eps1 Cl- Na+').a[0] === 0.002
+      && sitOf('eps CO2').a[0] === 0.05 && sitOf('eps Cl- H+').a[0] === 0.12 && !sdb.sit.has('eps Cl- K+'),
+    [...sdb.sit.keys()].join(', '));
+  const tk = 323.15;
+  const want = 0.14 - 50 * (1 / tk - 1 / 298.15) + 0.001 * (tk - 298.15);
+  check('  read to the database\'s first END, as PHREEQC reads one; its temperature terms as PHREEQC works them out',
+    Math.abs(P.sitParam(sitOf('eps Ca+2 Cl-').a, tk) - want) < 1e-15 && P.sitParam(sitOf('eps Ca+2 Cl-').a, 298.155) === 0.14,
+    `${P.sitParam(sitOf('eps Ca+2 Cl-').a, tk).toFixed(8)} at 50 C`);
 }
 
 /* ======================================================================
@@ -575,7 +602,8 @@ function withPhreeqc(engine) {
       && dbRead.gamma.get('Na+').b === 0.082 && dbRead.model === null);
   let pitzer = '';
   try {
-    P.waterToModel({ engine, database: { name: 'pz', text: `${dbText}\nPITZER\n-B0\n Na+ Cl- 0.0765\n` }, water,
+    // Before the database: PHREEQC reads one to its first END, and so does the page.
+    P.waterToModel({ engine, database: { name: 'pz', text: `PITZER\n-B0\n Na+ Cl- 0.0765\n${dbText}` }, water,
       activity: true });
   } catch (e) { pitzer = e.message; }
   check('... and a database with the Pitzer model is not followed, and says so', /Pitzer activity model/.test(pitzer),
@@ -1280,6 +1308,314 @@ function againstDoubleLayer(engine) {
     + `${x.psiGap ? Math.abs(x.psiGap.by).toExponential(1) : '?'} V, over ${view.report.waters} waters` : 'no surface');
 }
 
+/* ======================================================================
+   SIT: PHREEQC's specific ion interaction theory
+
+   A database with a SIT block gives PHREEQC SIT's activity coefficients,
+   and the page follows them: ACTIVITY = sit, the database's coefficients
+   between the species written in <SIT>. The checks always run on
+   phreeqc.dat with a SIT block of our own -- made-up coefficients, put
+   before the database because PHREEQC reads a database to its first END --
+   and, where this machine has it, on PHREEQC's own sit.dat (ThermoChimie;
+   never shipped, read where the PHREEQC build left it or RTM_SIT_DAT says).
+   KNOBS asks PHREEQC for its gammas to 1e-14 (1e-12 in TRANSPORT, which
+   does not settle every shift closer): by default its SIT stops at 1e-7.
+   ====================================================================== */
+const SIT_OWN = `SIT
+# Made-up coefficients for these tests, nobody's data.
+-epsilon
+  Na+     Cl-     0.05
+  K+      Cl-     0.02
+  Ca+2    Cl-     0.1
+  Mg+2    Cl-     0.2
+  H+      Cl-     0.1
+  Na+     OH-     0.05
+  Na+     HCO3-   0.0
+  Na+     CO3-2  -0.05
+  Na+     SO4-2  -0.1
+  Na+     NO3-   -0.05
+  K+      NO3-   -0.1
+  Ca+2    NO3-    0.05
+  CaHCO3+ Cl-     0.1
+  Fe+2    Cl-     0.15
+  Fe+3    Cl-     0.3
+  Na+     HS-     0.05
+  CO2     Na+     0.02
+  CO2     Cl-     0.02
+-epsilon1
+  Na+     Cl-     0.001
+`;
+const KNOBS = 'KNOBS\n -convergence_tolerance 1e-14\n';
+// TRANSPORT does not settle every shift at 1e-14.
+const KNOBS_COLUMN = 'KNOBS\n -convergence_tolerance 1e-12\n';
+
+/** Brine into a column of fresh water at calcite saturation, against PHREEQC's TRANSPORT. */
+function sitColumn(engine, db, N, pv) {
+  const L = 0.1;
+  const dx = L / N;
+  const dt = 1000;
+  const S = pv * N;
+  const alpha = L / 40;
+  const v = dx / dt;
+  const water = (n) => `SOLUTION ${n}\n temp 25\n units mol/kgw\n pH 7.5\n Na 0.01\n Ca 0.001\n Cl 0.01 charge\n C(4) 0.003\n`;
+  const brine = 'SOLUTION 0\n temp 25\n units mol/kgw\n pH 7.5\n Na 2\n Ca 0.001\n Cl 2 charge\n C(4) 0.003\nEND\n';
+  engine.load(db.text);
+  let started = Date.now();
+  const rows = engine.run(`${KNOBS_COLUMN}${water(`1-${N}`)}END\nEQUILIBRIUM_PHASES 1-${N}\n Calcite 0 0.01\nEND\n`
+    + `RUN_CELLS\n -cells 1-${N}\nEND\n${brine}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH Ca Na\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), TOT("Ca"), TOT("Na")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells ${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const r of rows.slice(1)) {
+    const t = Number(r[head.indexOf('time')]);
+    if (t > 0) pq.set(Math.round(t / dt), { pH: Number(r[head.indexOf('pH')]), Ca: Number(r[head.indexOf('Ca')]), Na: Number(r[head.indexOf('Na')]) });
+  }
+  engine.load(db.text);
+  const res = P.waterToModel({ engine, database: db, water: { name: 'column', text: `${KNOBS_COLUMN}${water(1)}EQUILIBRIUM_PHASES 1\n Calcite 0 0.01\nEND\n` },
+    activity: true, exact: true, phases: true, redox: false });
+  const inflow = P.parseRows(engine.run(`${KNOBS_COLUMN}${P.punchBlock()}${brine}`)).pop();
+  const back = new Map([...res.names].map(([k, n]) => [n, k]));
+  const text = res.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral/.test(rest) || !back.has(name)) return line;
+      const sp = inflow.species.get(back.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const m = RtmModel.compile(text);
+  started = Date.now();
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+  const rtmMs = Date.now() - started;
+  const ns = m.speciesNames.length;
+  const rdb = P.readDatabase(db.text);
+  const of = { Ca: [], Na: [] };
+  m.speciesNames.forEach((n, i) => {
+    if (!back.has(n)) return;
+    const ex = rdb.expand(back.get(n));
+    for (const el of ['Ca', 'Na']) if (ex.has(el)) of[el].push([i, ex.get(el)]);
+  });
+  const iH = m.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  const out = { pH: 0, Ca: 0, Na: 0, endPH: 0, endCa: 0, pqMs, rtmMs, I: 0 };
+  for (let k = 1; k <= S; k++) {
+    const c = m.toConcentrations(r.grid.y[k - 1]);
+    const b = (N - 1) * ns;
+    const w = RtmModel.activityAt(m.act, c, b, lnG, dG);
+    const o = { pH: -(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10 };
+    for (const el of ['Ca', 'Na']) o[el] = of[el].reduce((a, [i, kk]) => a + kk * c[b + i], 0);
+    const d = pq.get(k);
+    out.pH = Math.max(out.pH, Math.abs(o.pH - d.pH));
+    out.Ca = Math.max(out.Ca, Math.abs(o.Ca - d.Ca));
+    out.Na = Math.max(out.Na, Math.abs(o.Na - d.Na));
+    out.I = Math.max(out.I, w.I);
+    if (k === S) { out.endPH = Math.abs(o.pH - d.pH); out.endCa = Math.abs(o.Ca / d.Ca - 1); out.plateau = o.pH; }
+  }
+  return out;
+}
+
+function againstSit(engine) {
+  const own = { name: 'phreeqc.dat with a SIT block', text: `${SIT_OWN}${dbText}` };
+  // A saline water: the page's coefficients at PHREEQC's molalities, and its start on them.
+  const saline = `${KNOBS}SOLUTION 1\n temp 25\n units mol/kgw\n pH 7.5\n Na 1.5\n K 0.1\n Ca 0.02\n Mg 0.01\n`
+    + ' Cl 1.66 charge\n C(4) 0.003\n S(6) 0.005\nEND\n';
+  engine.load(own.text);
+  const res = P.waterToModel({ engine, database: own, water: { name: 'saline', text: saline }, activity: true, exact: true,
+    redox: false });
+  const m = RtmModel.compile(res.text);
+  const ns = m.speciesNames.length;
+  const C = new Float64Array(ns);
+  for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
+  const lnG = new Float64Array(ns);
+  const w = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+  let worstG = 0;
+  let at = '';
+  for (const [p, n] of res.names) {
+    const d = Math.abs(lnG[m.speciesNames.indexOf(n)] / Math.LN10 - res.water.species.get(p)[1]);
+    if (d > worstG) { worstG = d; at = n; }
+  }
+  const dAw = Math.abs(w.lnAw / Math.LN10 - Math.log10(res.water.aw));
+  check('SIT: the page\'s coefficients at PHREEQC\'s molalities are PHREEQC\'s, and so is the water\'s activity',
+    worstG < 1e-12 && dAw < 1e-14, `log gamma within ${worstG.toExponential(1)} (${at}), log a(H2O) within `
+      + `${dAw.toExponential(1)}, at I = ${res.water.mu.toFixed(3)}`);
+  const y = m.toConcentrations(m.initialState());
+  let worst = 0;
+  for (const [p, n] of res.names) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
+  const sitLines = res.text.split('\n<SIT>\n')[1].split('\n<REACTIONS>')[0].trim().split('\n');
+  check('  the hand-off: ACTIVITY = sit and the database\'s coefficients between the species written, no a or b, and '
+    + 'the page starts on PHREEQC\'s water', /^ACTIVITY = sit$/m.test(res.text) && sitLines.length === res.report.activity.sitPairs
+    && res.report.activity.kind === 'sit' && !/^\S+\s+\S+\s+.*\ba=/m.test(res.text.split('<SPECIES>')[1].split('<EQUILIBRIUM>')[0])
+    && worst < 1e-8, `${sitLines.length} pairs written; the start within ${worst.toExponential(1)}`);
+
+  // The PHREEQC tab: salt goes in; PHREEQC's coefficients move, and the model's own stay on them.
+  const saltText = `${res.text.replace('TEND = 1\n', 'TEND = 1e5\n')}=> Na+ + Cl-, k = 1e-5\n`;
+  const view = P.viewRun({ engine, database: own, run: pageRun(saltText, 1e5), modelText: saltText,
+    water: { name: 'saline', text: saline }, unit: 's', times: 12 });
+  const gap = view.report.activity && view.report.activity.gap[0];
+  check('  the PHREEQC tab, a run that adds 1 mol/kgw of salt: PHREEQC\'s coefficients move, and the model\'s own '
+    + 'under SIT stay on them', !!gap && view.report.activity.kind === 'sit' && Math.abs(gap.by) < 1e-6
+    && Math.abs(view.report.drift[0].by) > 0.05, gap ? `PHREEQC's moved ${view.report.drift[0].by.toFixed(3)} in log K, `
+      + `the model's ${Math.abs(gap.by).toExponential(1)} from them (${gap.rel})` : 'no comparison');
+
+  // An exchanger: each species on it takes its ion's coefficient, as PHREEQC's does.
+  const exWater = `${KNOBS}SOLUTION 1\n units mol/kgw\n temp 25\n pH 7 charge\n Na 0.5\n K 0.1\n N(5) 0.6\n Ca 0.001\n`
+    + ' Cl 0.002\nEXCHANGE 1\n -equilibrate 1\n X 0.0011\nEND\n';
+  engine.load(own.text);
+  const xres = P.waterToModel({ engine, database: own, water: { name: 'exchanger', text: exWater }, activity: true,
+    exact: true, redox: false });
+  const xm = RtmModel.compile(xres.text);
+  const xy = xm.toConcentrations(xm.initialState());
+  let xw = 0;
+  for (const [n, v] of xres.amounts) xw = Math.max(xw, Math.abs(xy[xm.speciesNames.indexOf(n)] / v - 1));
+  for (const [p, n] of xres.names) xw = Math.max(xw, Math.abs(xy[xm.speciesNames.indexOf(n)] / xres.molal.get(p) - 1));
+  check('  an exchanger in a saline water: its species written without a or b, taking their ions\' SIT coefficients, '
+    + 'and the page starts on PHREEQC\'s exchanger', /^CaX2\s+\S+\s+exchange$/m.test(xres.text)
+    && xres.report.exchange.species.every((e) => !e.folded) && xw < 1e-7, `within ${xw.toExponential(1)}`);
+
+  // Brine into fresh water over calcite.
+  const col = sitColumn(engine, own, 40, 3);
+  check('  brine (2 mol/kgw NaCl) into fresh water over calcite, against PHREEQC\'s TRANSPORT: the effluent all the way, '
+    + 'and where it settles', col.pH < 0.03 && col.Ca < 1e-5 && col.Na < 0.02 && col.endPH < 1e-4 && col.endCa < 1e-4
+    && col.I > 1.9, `pH within ${col.pH.toFixed(4)}, Ca ${(col.Ca * 1e3).toFixed(5)} mM, Na ${(col.Na * 1e3).toFixed(2)} mM `
+      + `(of 2000) in the front; at the end pH ${col.plateau.toFixed(4)} within ${col.endPH.toExponential(1)}, Ca within `
+      + `${col.endCa.toExponential(1)}; 40 cells, 3 pore volumes: PHREEQC ${col.pqMs} ms, the page ${col.rtmMs} ms`);
+
+  // Redox under SIT: the pyrite column in a saline water, each cell speciated in its components and V's sums.
+  const N = 20;
+  const L = 0.1;
+  const dx = L / N;
+  const dt = 2000;
+  const S = 30;
+  const alpha = L / 40;
+  const v = dx / dt;
+  const pw = (n) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH 7.5\n Na 500\n Ca 1\n Cl 500 charge\n C(4) 3\n S(6) 0.5\n Fe 0.001\n`;
+  const phases = (n) => `EQUILIBRIUM_PHASES ${n}\n Pyrite 0 5e-5\n Calcite 0 0.01\n Goethite 0 0\n`;
+  const inflow = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 7.5\n Na 500\n Ca 1\n Cl 500 charge\n C(4) 3\n S(6) 0.5\n'
+    + ' O(0) 0.25\n Fe 1e-9\nEND\n';
+  engine.load(own.text);
+  let started = Date.now();
+  const prow = engine.run(`${pw(`1-${N}`)}END\n${phases(`1-${N}`)}END\nRUN_CELLS\n -cells 1-${N}\nEND\n${inflow}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH pe S6 py\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), -LA("e-"), TOT("S(6)"), EQUI("Pyrite")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = prow[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const row of prow.slice(1)) {
+    const t = Number(row[head.indexOf('time')]);
+    if (!(t > 0)) continue;
+    const o = {};
+    for (const key of ['pH', 'pe', 'S6', 'py']) o[key] = Number(row[head.indexOf(key)]);
+    pq.set(`${Number(row[head.indexOf('cell')])}/${Math.round(t / dt)}`, o);
+  }
+  engine.load(own.text);
+  const cres = P.waterToModel({ engine, database: own, water: { name: 'column', text: `${pw(1)}${phases(1)}END\n` },
+    activity: true, exact: true, phases: true, floor: 0 });
+  engine.load(own.text);
+  const inRow = P.parseRows(engine.run(`${P.punchBlock()}${inflow}MIX 1\n 0 1.0\nEND\n`)).pop();
+  const cb = new Map([...cres.names].map(([k, n]) => [n, k]));
+  const ctext = cres.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral/.test(rest) || !cb.has(name)) return line;
+      const sp = inRow.species.get(cb.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const cm = RtmModel.compile(ctext);
+  started = Date.now();
+  const cr = FacsimileODE.runModel(cm, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-6, atol: 1e-20, nonNegative: true,
+    stagnationTol: 0.5, belowTolRun: 5, outputTimes: Array.from({ length: S }, (_, kk) => (kk + 1.5) * dt) });
+  const rtmMs = Date.now() - started;
+  const cns = cm.speciesNames.length;
+  const rdb = P.readDatabase(own.text);
+  const s6 = [];
+  cm.speciesNames.forEach((n, i) => {
+    if (!cb.has(n)) return;
+    for (const [kk, cc] of rdb.expand(cb.get(n))) if (P.normLabel(kk) === 'S(6)') s6.push([i, cc]);
+  });
+  const iH = cm.speciesNames.indexOf('H+');
+  const iE = cm.speciesNames.indexOf('e-');
+  const iPy = cm.speciesNames.indexOf('Pyrite');
+  const clnG = new Float64Array(cns);
+  const cdG = new Float64Array(cns);
+  const worstR = { pH: 0, pe: 0, S6: 0 };
+  for (let kk = 1; kk <= S; kk++) {
+    const c = cm.toConcentrations(cr.grid.y[kk - 1]);
+    const b = (N - 1) * cns;
+    RtmModel.activityAt(cm.act, c, b, clnG, cdG);
+    const o = { pH: -(Math.log(c[b + iH]) + clnG[iH]) / Math.LN10, pe: -Math.log10(c[b + iE]),
+      S6: s6.reduce((a, [i, cc]) => a + cc * c[b + i], 0) };
+    const d = pq.get(`${N}/${kk}`);
+    for (const key of Object.keys(worstR)) worstR[key] = Math.max(worstR[key], Math.abs(o[key] - d[key]));
+  }
+  const end = cm.toConcentrations(cr.grid.y[S - 1]);
+  let gone = 0;
+  let pqGone = 0;
+  for (let cell = 0; cell < N; cell++) {
+    if (!(end[cell * cns + iPy] > 0)) gone++;
+    if (!(pq.get(`${cell + 1}/${S}`).py > 0)) pqGone++;
+  }
+  check('  the pyrite column in 0.5 mol/kgw NaCl under SIT, against PHREEQC\'s TRANSPORT: each cell speciated in its '
+    + 'components and V\'s sums', worstR.pH < 0.005 && worstR.pe < 0.005 && worstR.S6 < 3e-6 && Math.abs(gone - pqGone) <= 1,
+  `effluent pH within ${worstR.pH.toFixed(4)}, pe ${worstR.pe.toFixed(4)}, sulfate ${(worstR.S6 * 1e3).toFixed(5)} mM; `
+    + `pyrite gone from ${gone} cells (PHREEQC ${pqGone}); PHREEQC ${pqMs} ms, the page ${rtmMs} ms`);
+
+  // PHREEQC's own sit.dat, where this machine has it.
+  const sitDat = process.env.RTM_SIT_DAT || path.join(require('os').homedir(), '.cache', 'kvotab-phreeqc', 'obj',
+    'database', 'sit.dat');
+  if (!fs.existsSync(sitDat)) {
+    console.log(`skip  PHREEQC's sit.dat: not at ${sitDat} (set RTM_SIT_DAT)`);
+    return;
+  }
+  const sd = { name: 'sit.dat', text: fs.readFileSync(sitDat, 'latin1') };
+  const waters = [
+    ['1 mol/kgw NaCl with Ca, Mg, sulfate and carbonate, 15 C', 'SOLUTION 1\n units mol/kgw\n temp 15\n pH 7.5\n Na 1.0\n'
+      + ' Cl 1.0 charge\n Ca 0.01\n Mg 0.005\n S(6) 0.01\n C(4) 0.002\nEND\n'],
+    ['uranium(6) carbonate in 3 mol/kgw NaCl, 25 C', 'SOLUTION 1\n units mol/kgw\n temp 25\n pH 8\n Na 3.0\n Cl 3.0 charge\n'
+      + ' C(4) 0.01\n U(6) 1e-6\nEND\n'],
+    ['0.5 mol/kgw NaCl at 60 C', 'SOLUTION 1\n units mol/kgw\n temp 60\n pH 7\n Na 0.5\n Cl 0.5 charge\n Ca 0.002\n C(4) 0.001\nEND\n'],
+  ];
+  const lines = waters.map(([label, wt]) => {
+    engine.load(sd.text);
+    const sres = P.waterToModel({ engine, database: sd, water: { name: label, text: `${KNOBS}${wt}` }, activity: true,
+      exact: true, redox: false });
+    const sm = RtmModel.compile(sres.text);
+    const n = sm.speciesNames.length;
+    const sc = new Float64Array(n);
+    for (const [p, nm] of sres.names) sc[sm.speciesNames.indexOf(nm)] = sres.molal.get(p);
+    const g = new Float64Array(n);
+    const sw = RtmModel.activityAt(sm.act, sc, 0, g, new Float64Array(n));
+    let gw = 0;
+    for (const [p, nm] of sres.names) gw = Math.max(gw, Math.abs(g[sm.speciesNames.indexOf(nm)] / Math.LN10 - sres.water.species.get(p)[1]));
+    const sy = sm.toConcentrations(sm.initialState());
+    let sw2 = 0;
+    for (const [p, nm] of sres.names) sw2 = Math.max(sw2, Math.abs(sy[sm.speciesNames.indexOf(nm)] / sres.molal.get(p) - 1));
+    return { label, gw, aw: Math.abs(sw.lnAw / Math.LN10 - Math.log10(sres.water.aw)), start: sw2, pairs: sres.report.activity.sitPairs };
+  });
+  check('PHREEQC\'s sit.dat: the coefficients and the water\'s activity at PHREEQC\'s molalities, and the hand-off\'s start, '
+    + 'in three waters', lines.every((l) => l.gw < 1e-12 && l.aw < 1e-14 && l.start < 1e-8),
+  lines.map((l) => `${l.label}: ${l.pairs} pairs, log gamma within ${l.gw.toExponential(1)}, the start within `
+    + `${l.start.toExponential(1)}`).join('; '));
+  const scol = sitColumn(engine, sd, 40, 3);
+  check('  brine into fresh water over calcite on sit.dat, against PHREEQC\'s TRANSPORT',
+    scol.pH < 0.03 && scol.Ca < 1e-5 && scol.Na < 0.02 && scol.endPH < 1e-4 && scol.endCa < 1e-4,
+    `pH within ${scol.pH.toFixed(4)}, Ca ${(scol.Ca * 1e3).toFixed(5)} mM, Na ${(scol.Na * 1e3).toFixed(2)} mM in the front; `
+      + `at the end pH ${scol.plateau.toFixed(4)} within ${scol.endPH.toExponential(1)}; PHREEQC ${scol.pqMs} ms, the page `
+      + `${scol.rtmMs} ms`);
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -1300,6 +1636,8 @@ function againstDoubleLayer(engine) {
   againstSurface(wasm);
   console.log('\n--- the double layer: the hand-off, a surface loaded, zinc through a column, and the PHREEQC tab ---');
   againstDoubleLayer(wasm);
+  console.log('\n--- SIT: the coefficients, the hand-off, the PHREEQC tab, an exchanger, brine, a pyrite column, sit.dat ---');
+  againstSit(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

@@ -278,17 +278,28 @@
       this.exGamma = new Map();     // exchange species -> {a, b}: -gamma; Davies as a = b = 0
       this.sfMaster = new Map();    // surface site type -> master species: 'Hfo_w' -> 'Hfo_wOH'
       this.sfReaction = new Map();  // surface species -> {left, right}, right[0] the species
+      // SIT's interaction coefficients, by kind and pair: 'eps Cl- Na+' -> {type, s1, s2, a},
+      // a its temperature terms as PHREEQC reads them (sitParam); a pair given again replaces it.
+      this.sit = new Map();
     }
 
-    read(text) {
+    /**
+     * `asDatabase`: the text is the database, which PHREEQC reads to its
+     * first END and no further (read_database is one read_input): a block
+     * after it is not in the database. An input is read whole.
+     */
+    read(text, asDatabase = false) {
       let block = null;
       let last = null;
+      let sitType = null;
       for (const line of logicalLines(text)) {
         const tokens = line.trim().split(/\s+/).filter(Boolean);
         if (!tokens.length) continue;
         if (KEYWORDS.has(tokens[0].toUpperCase())) {
           block = tokens[0].toUpperCase();
+          if (asDatabase && block === 'END') break;
           last = null;
+          sitType = null;
           // Activity models other than the Debye-Hueckel ones this page has.
           if (block === 'PITZER') this.model = 'Pitzer';
           else if (block === 'SIT') this.model = 'SIT';
@@ -358,6 +369,25 @@
               if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
             }
           }
+        } else if (block === 'SIT') {
+          // -epsilon and -epsilon1 start a list of pairs; PHREEQC takes the first option a shorter word begins.
+          if (tokens[0].startsWith('-')) {
+            const opt = tokens[0].slice(1).toLowerCase();
+            sitType = opt && 'epsilon'.startsWith(opt) ? 'eps' : opt === 'epsilon1' ? 'eps1' : null;
+            continue;
+          }
+          if (!sitType || tokens.length < 3) continue;
+          const a = [];
+          for (const t of tokens.slice(2, 8)) {
+            const v = Number(t);
+            if (!Number.isFinite(v)) break;
+            a.push(v);
+          }
+          if (!a.length) continue;
+          // PHREEQC keys a pair by its species as a set: either way round, and once for a species with itself.
+          const key = `${sitType} ${[...new Set([tokens[0], tokens[1]])].sort().join(' ')}`;
+          this.sit.delete(key);
+          this.sit.set(key, { type: sitType, s1: tokens[0], s2: tokens[1], a });
         } else if (block === 'PHASES') {
           if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
             if (!this.phases.includes(tokens[0])) this.phases.push(tokens[0]);
@@ -485,10 +515,24 @@
     return out;
   }
 
+  /** The database, read as PHREEQC reads one, and then any inputs after it. */
   function readDatabase(...texts) {
     const db = new Database();
-    for (const t of texts) if (t) db.read(t);
+    texts.forEach((t, i) => { if (t) db.read(t, i === 0); });
     return db;
+  }
+
+  /**
+   * A SIT coefficient at tk kelvin from its terms, as PHREEQC's
+   * calc_sit_param works it out: a0 + a1 (1/T - 1/Tr) + a2 ln(T/Tr) +
+   * a3 (T - Tr) + a4 (T^2 - Tr^2), Tr = 298.15 K, and a0 itself within a
+   * hundredth of a degree of that.
+   */
+  function sitParam(a, tk) {
+    const TR = 298.15;
+    if (Math.abs(tk - TR) < 0.01) return a[0];
+    return (a[0] || 0) + (a[1] || 0) * (1 / tk - 1 / TR) + (a[2] || 0) * Math.log(tk / TR)
+      + (a[3] || 0) * (tk - TR) + (a[4] || 0) * (tk * tk - TR * TR);
   }
 
   /* ======================================================================
@@ -638,7 +682,9 @@
    *   activity    the activity coefficients follow the ionic strength:
    *               ACTIVITY = debye-huckel at the water's temperature, each
    *               species' -gamma as a= and b=, the relations with their
-   *               water and the database's own log K; else each log K is
+   *               water and the database's own log K -- or with a SIT
+   *               database ACTIVITY = sit, its interaction coefficients
+   *               between the species written in <SIT>; else each log K is
    *               conditional, the coefficients at this water folded in
    *   exact       hold every relation exactly during the run: EQUILIBRATE =
    *               always, no kf, each relation an algebraic equation
@@ -669,7 +715,9 @@
     }
     const db = readDatabase(o.database.text, o.water.text);
     const follow = !!o.activity;
-    if (follow && db.model) {
+    // A SIT database: the page has SIT, and follows it.
+    const sit = follow && db.model === 'SIT';
+    if (follow && db.model && !sit) {
       throw new Error(`${o.database.name || 'This database'} gives PHREEQC the ${db.model} activity model, which `
         + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
         + 'them fixed at this water instead.');
@@ -1069,15 +1117,30 @@
       const ions = aq([...e.left, ...e.right.slice(1)]).filter((t) => !laMaster.has(t.n));
       const g = db.exGamma.get(e.species);
       const hasWater = [...e.left, ...e.right].some((t) => t.n === 'H2O');
-      e.gamma = follow && e.lg !== 0 && g && ions.length === 1 && !hasWater && db.masterLabel(ions[0].n) !== null
-        ? g : null;
-      e.folded = follow && e.lg !== 0 && !e.gamma;
+      /*
+        Under SIT the page gives a species on an exchanger its ion's
+        coefficient to the ion's power whenever its relation forms it from the
+        exchanger and one ion, as PHREEQC does from the master species of its
+        reaction (-pitzer_exchange_gammas): its log a here is its fraction and
+        that (sitLg), and the log K takes whatever differs from PHREEQC's.
+      */
+      if (sit) {
+        const one = ions.length === 1 && !hasWater ? ions[0] : null;
+        e.sitLg = one ? Math.abs(one.c / e.right[0].c) * lg.get(one.n) : 0;
+        e.gamma = one ? { sit: true } : null;
+        e.folded = Math.abs(e.sitLg - e.lg) > 1e-12;
+      } else {
+        e.gamma = follow && e.lg !== 0 && g && ions.length === 1 && !hasWater && db.masterLabel(ions[0].n) !== null
+          ? g : null;
+        e.folded = follow && e.lg !== 0 && !e.gamma;
+      }
       // log a: PHREEQC's ('db'); or this page's, an ion its molality alone
       // ('conditional') or times its coefficient ('follow'), the species its
       // fraction, times its ion's coefficient where it keeps it. The
       // exchanger's activity is PHREEQC's throughout.
       const laOf = (n, how) => {
         if (laMaster.has(n)) return laMaster.get(n);
+        if (n === e.species && sit && how === 'follow') return e.la - e.lg + e.sitLg;
         if (n === e.species) return how === 'db' || (how === 'follow' && e.gamma) ? e.la : e.la - e.lg;
         return log10(molal.get(n)) + (how === 'conditional' ? 0 : lg.get(n));
       };
@@ -1091,7 +1154,27 @@
     // With activities: each species' -gamma, and a charge where a new name
     // would read differently; and the species whose activity PHREEQC works
     // out in a way this page does not.
-    const unsupported = follow ? order.filter((sp) => db.otherGamma.has(sp)) : [];
+    // (Under SIT every solute has SIT's coefficient, whatever its line says.)
+    const unsupported = follow && !sit ? order.filter((sp) => db.otherGamma.has(sp)) : [];
+    /*
+      SIT's interaction coefficients between the species written, at this
+      water's temperature as PHREEQC works them out (sitParam), one line a
+      pair: eps, and eps1 where the database gives the pair an -epsilon1.
+    */
+    const sitPairs = [];
+    if (sit) {
+      const tk = w.tc + 273.15;
+      const written = new Set(order);
+      const byPair = new Map();
+      for (const p of db.sit.values()) {
+        if (!written.has(p.s1) || !written.has(p.s2)) continue;
+        const key = [...new Set([p.s1, p.s2])].sort().join(' ');
+        const pair = byPair.get(key) || { s1: p.s1, s2: p.s2, eps: 0, eps1: 0 };
+        pair[p.type] = sitParam(p.a, tk);
+        byPair.set(key, pair);
+      }
+      sitPairs.push(...byPair.values());
+    }
 
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
@@ -1106,7 +1189,14 @@
       + `a(H2O) ${w.aw.toFixed(6)}, charge balance ${fmtG(w.cb, 3)} eq/kgw.`);
     out.push('#');
     out.push('# Concentrations are molalities (mol/kgw); rate constants you add must use the same unit.');
-    if (follow) {
+    if (sit) {
+      out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
+      out.push("# ACTIVITY = sit works out each species' activity coefficient in its cell as the run goes on,");
+      out.push("# as PHREEQC's SIT does: a Debye-Hueckel term in the ionic strength and, for each species it");
+      out.push("# is paired with in <SIT>, the database's interaction coefficient times that species' molality");
+      out.push(`# (${sitPairs.length} pair${sitPairs.length === 1 ? '' : 's'} among the species here); and the activity of water from SIT's osmotic`);
+      out.push('# coefficient. The comment gives the conditional log K at this water, the coefficients folded in.');
+    } else if (follow) {
       out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
       out.push("# ACTIVITY works out each species' activity coefficient from the ionic strength of its cell");
       out.push("# as the run goes on, by the database's -gamma (a= and b=) where it gives one and Davies for");
@@ -1177,7 +1267,8 @@
       out.push('# it at their molalities: an exchanger is no amount, its activity is solved for, and each');
       out.push("# species on it has its equivalent fraction for its activity (Gaines-Thomas)"
         + (follow ? ", times its ion's activity" : '.'));
-      if (follow) out.push('# coefficient where the database gives it -gamma (a= and b=).');
+      if (sit) out.push("# coefficient, as PHREEQC's SIT has it.");
+      else if (follow) out.push('# coefficient where the database gives it -gamma (a= and b=).');
       const folded = onEx.filter((e) => e.folded);
       if (folded.length) {
         out.push(`# PHREEQC takes the coefficient of ${folded.map((e) => e.name).join(', ')} from more than its one ion; `
@@ -1221,7 +1312,7 @@
     }
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
-    if (follow) out.push('ACTIVITY = debye-huckel', `TEMPERATURE = ${fmtG(tc, 10)}`);
+    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
     // A double layer reads it too, without ACTIVITY.
     else if (potentials.length) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
     // Each species its own D: the ions coupled, so the water stays neutral as they spread.
@@ -1240,7 +1331,8 @@
       }
       const bits = [];
       if (chargeOf(name.get(s)) !== chargeOf(s)) bits.push(`z=${chargeOf(s)}`);
-      const g = db.gamma.get(s);
+      // SIT takes no a or b.
+      const g = sit ? null : db.gamma.get(s);
       if (g) {
         if (chargeOf(s)) bits.push(`a=${fmtG(g.a, 6)}`);
         bits.push(`b=${fmtG(g.b, 6)}`);
@@ -1258,7 +1350,7 @@
     for (const sp of exUsed) out.push(`${exName.get(sp).padEnd(width)}${''.padEnd(follow ? width2 : 0)}exchanger`);
     for (const e of onEx) {
       const amount = fmtG(e.m, 15);
-      const g = e.gamma ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
+      const g = e.gamma && !sit ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
     }
     for (const pp of potentials) {
@@ -1329,6 +1421,15 @@
     const wrel = Math.max(0, ...lines.map((l) => l.rel.length)) + 1;
     const wk = Math.max(0, ...lines.map((l) => l.k.length)) + 3;
     for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}${l.note}`);
+    if (sit) {
+      out.push('', '<SIT>');
+      if (!sitPairs.length) out.push('# The database pairs none of the species written here.');
+      const wn = Math.max(0, ...sitPairs.map((p) => Math.max(name.get(p.s1).length, name.get(p.s2).length))) + 2;
+      for (const p of sitPairs) {
+        out.push(`${name.get(p.s1).padEnd(wn)}${name.get(p.s2).padEnd(wn)}${fmtG(p.eps, 15)}`
+          + `${p.eps1 ? `  eps1=${fmtG(p.eps1, 15)}` : ''}`);
+      }
+    }
     out.push('', '<REACTIONS>', '# Your kinetic reactions here, in the same species and units.');
     const text = `${out.join('\n')}\n`;
 
@@ -1354,7 +1455,8 @@
           atNone: [...atNone].map((sp) => name.get(sp) || sp),
           // PHREEQC's next step, where the input ended on a water as given: the pe it was given, and the one it settles at.
           settled } : null,
-        activity: follow ? { temperature: tc, unsupported } : null,
+        activity: follow ? { kind: sit ? 'sit' : 'debye-huckel', temperature: tc, unsupported,
+          sitPairs: sit ? sitPairs.length : 0 } : null,
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
@@ -2056,6 +2158,6 @@
 
   return {
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
-    punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL,
+    punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
   };
 }));

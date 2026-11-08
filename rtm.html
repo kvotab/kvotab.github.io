@@ -483,7 +483,7 @@
             remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
-          <p>Seven sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+          <p>Eight sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
             <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
@@ -522,7 +522,7 @@
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
-              <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em> or <em>debye-huckel</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength. See <em>Activity</em> below.</td></tr>
+              <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em>, <em>debye-huckel</em> or <em>sit</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength, and under <em>sit</em> the species paired in <code>&lt;SIT&gt;</code> as well. See <em>Activity</em> and <em>SIT</em> below.</td></tr>
               <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: sets the activity model's Debye–Hückel <em>A</em> and <em>B</em>, and nothing else. A <code>logK</code> or a rate constant is taken as written.</td></tr>
               <tr><td><code>PECLET</code></td><td>Gives every mobile species the same longitudinal dispersion <em>v·L</em>/Pe along the column, on top of its own <code>D</code>, less, when advection is upwind, the <em>v</em>·Δ<em>x</em>/2 that scheme already puts in — see <em>A rock matrix</em> below.</td></tr>
               <tr><td><code>MATRIX_CELLS</code>, <code>MATRIX_DEPTH</code>, <code>MATRIX_FIRST</code>, <code>MATRIX_GRID</code>, <code>MATRIX_POROSITY</code>, <code>MATRIX_DENSITY</code>, <code>WETTED_SURFACE</code>, <code>APERTURE</code>, <code>TRANSPORT_RESISTANCE</code></td><td>A stagnant rock matrix beside the column, of twelve layers unless <code>MATRIX_CELLS</code> says otherwise; see <em>A rock matrix</em> below.</td></tr>
@@ -550,7 +550,8 @@ UO2                      # no number: starts at zero, does not move</pre>
             With a rock matrix a species also takes <code>De=</code> (or
             <code>Dm=</code>), <code>Kd=</code> or <code>Rm=</code>, and <code>Kdf=</code>: see
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
-            <code>a=</code> and <code>b=</code>: see <em>Activity</em> below.</p>
+            <code>a=</code> and <code>b=</code>: see <em>Activity</em> below; under
+            <code>ACTIVITY = sit</code>, <code>z=</code> alone.</p>
           <p><code>fixed</code> is a statement about the equation, not a nudge: that species' row
             in the right-hand side and in the Jacobian is set to exactly zero, so nothing —
             reaction, diffusion, advection, a Dirichlet face, an equilibrium — can move it. It
@@ -631,6 +632,15 @@ Gypsum   &lt;=&gt; Ca+2 + SO4-2 + 2 H2O,   logK = -4.58</pre>
             must be, or <code>H2O</code> for the water. A mineral held at saturation goes in
             <code>&lt;EQUILIBRIUM&gt;</code> instead (see <em>Minerals</em>); a phase here is only
             measured against.</p>
+
+          <h4 id="help-sit-section">&lt;SIT&gt;</h4>
+          <pre>Na+    Cl-     0.03
+Ca+2   Cl-     0.14
+Fe+3   Cl-     0.56   eps1=0.01</pre>
+          <p>The interaction coefficients of the specific ion interaction theory, read under
+            <code>ACTIVITY = sit</code>: two species on each line and their coefficient, and
+            <code>eps1=</code> for one that goes with the ionic strength as well. See <em>SIT</em>
+            below.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -1096,6 +1106,48 @@ X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
             relation then reads every ion in its cell, through the ionic strength, so the Jacobian is
             fuller within a cell, and a little more work.</p>
 
+          <h4 id="help-sit">SIT</h4>
+          <pre>ACTIVITY = sit
+TEMPERATURE = 25
+
+&lt;SIT&gt;
+Na+    Cl-     0.03
+H+     Cl-     0.12
+Na+    CO3-2  -0.08
+Fe+3   Cl-     0.56   eps1=0.01
+CO2    Na+     0.02</pre>
+          <p><code>ACTIVITY = sit</code> is the specific ion interaction theory, the activity model
+            of databases made for salt waters and for radionuclides, ThermoChimie's among them (the
+            <code>sit.dat</code> that comes with PHREEQC), as PHREEQC has it. Each species' activity coefficient reads the ionic
+            strength and, besides, every species it is paired with in <code>&lt;SIT&gt;</code>:</p>
+          <p>log&nbsp;γ<sub><em>i</em></sub> = −<em>A</em>&nbsp;<em>z<sub>i</sub></em>²&nbsp;√<em>I</em>/(1&nbsp;+&nbsp;1.5&nbsp;√<em>I</em>)
+            +&nbsp;Σ<sub><em>j</em></sub>&nbsp;(ε<sub><em>ij</em></sub>&nbsp;+&nbsp;ε1<sub><em>ij</em></sub>&nbsp;<em>I</em>)&nbsp;<em>m<sub>j</sub></em></p>
+          <p><em>A</em> is the same Debye–Hückel <em>A</em>, from <code>TEMPERATURE</code>, and
+            <em>m<sub>j</sub></em> the concentration of each species <em>j</em> paired with
+            <em>i</em>, read as a molality. A pair counts both ways, so <code>Na+ Cl- 0.03</code>
+            puts 0.03&nbsp;<em>m</em>(Cl<sup>−</sup>) into Na<sup>+</sup>'s coefficient and
+            0.03&nbsp;<em>m</em>(Na<sup>+</sup>) into Cl<sup>−</sup>'s, and a species paired with itself
+            counts twice. A neutral species has its pairs and nothing else, and one paired with
+            nothing has γ&nbsp;=&nbsp;1. The water's activity is SIT's, from its osmotic
+            coefficient,</p>
+          <p>ln&nbsp;<em>a</em>(H<sub>2</sub>O) = −(Σ&nbsp;<em>m</em> + ln&nbsp;10&nbsp;<em>S</em>)/55.50837,
+            &nbsp; <em>S</em> = −(2<em>A</em>/1.5³)&nbsp;(<em>T</em>&nbsp;−&nbsp;2&nbsp;ln&nbsp;<em>T</em>&nbsp;−&nbsp;1/<em>T</em>)
+            +&nbsp;Σ<sub>pairs</sub>&nbsp;<em>m<sub>i</sub></em>&nbsp;<em>m<sub>j</sub></em>&nbsp;ε<sub><em>ij</em></sub>,
+            &nbsp; <em>T</em> = 1&nbsp;+&nbsp;1.5&nbsp;√<em>I</em>,</p>
+          <p>a pair of two neutral species counting half. That is PHREEQC's SIT, and on the same water
+            the page's coefficients and water activity are PHREEQC's to rounding. A species takes no
+            <code>a=</code> or <code>b=</code> under SIT, and one given them is said not to use them.
+            A species on an exchanger takes its ion's coefficient, to the ion's power, as PHREEQC's
+            does (see <em>Ion exchange</em>). Each pair is given once, between two species of
+            <code>&lt;SPECIES&gt;</code> that are in the water: a mineral, an exchanger or what is on
+            one, a surface and the electron are refused.</p>
+          <p>A coefficient that reads other species makes a relation read them too, so the Jacobian
+            has more in each cell. A run held throughout with the electron or a surface's potential,
+            whose cells are speciated in their components at every step (see <em>Redox: the
+            electron</em>), takes one more unknown in each cell for each of a few species, the sum of
+            its pairs: enough of them that every pair has one at an end, the water's own ions mostly.
+            Every other species' coefficient follows from those.</p>
+
           <h4 id="help-minerals">Minerals</h4>
           <pre>Calcite   5e-4   mineral
 
@@ -1148,7 +1200,9 @@ Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
             the relation that forms it from the exchanger, to the ion's power there, as PHREEQC's
             <code>-gamma a b</code> does. That coefficient is the WATEQ form under
             <code>ACTIVITY = debye-huckel</code>, and Davies under <code>davies</code> or where
-            <code>a</code> and <code>b</code> are both 0. Without <code>ACTIVITY</code> the fraction
+            <code>a</code> and <code>b</code> are both 0. Under <code>ACTIVITY = sit</code> every
+            species on the exchanger takes its ion's SIT coefficient, <code>a</code> and <code>b</code>
+            or not, as PHREEQC's <code>EXCHANGE</code> does. Without <code>ACTIVITY</code> the fraction
             stands alone, so the exchange is Gaines–Thomas whatever the water does.</p>
           <p>The capacity of a cell is what its species on the exchanger take, in the model's
             concentration unit. Or it is the number on the exchanger's line, and then, before
@@ -1438,6 +1492,13 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
           <p>Those three lines are from <em>An example water</em>, a groundwater at 15 °C and ionic
             strength 0.11 mol/kgw, where the activity coefficients move the constants by −0.40, −0.84
             and +0.20 in log K.</p>
+          <p>With a database that gives PHREEQC the SIT model — a <code>SIT</code> block, as
+            <code>sit.dat</code> has — following writes <code>ACTIVITY = sit</code> instead (see
+            <em>SIT</em> above): no <code>a=</code> or <code>b=</code>, and in
+            <code>&lt;SIT&gt;</code> each of the database's interaction coefficients between two species
+            written, at the water's temperature as PHREEQC works it out from its temperature terms. A
+            database is read as PHREEQC reads one, to its first <code>END</code>. One with the Pitzer
+            model, or LLNL's, is not followed here: keep its coefficients fixed at the water.</p>
           <p><em>Fixed at this water</em> writes those conditional constants instead, with the water
             left out of the relations, and the relations hold between concentrations exactly where
             PHREEQC's hold between activities. The comment then gives the database's own log K. Such
@@ -1605,11 +1666,25 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             On 40 cells the page's effluent is within 0.34&nbsp;µmol/kgw of PHREEQC's in zinc and 0.011 in
             pH, and the potential the PHREEQC tab finds in each water of a run is the run's to
             10<sup>−11</sup>&nbsp;V. PHREEQC takes 0.7 seconds and this page 1.9.</p>
+          <p>And SIT. On PHREEQC's <code>sit.dat</code>, in 1&nbsp;mol/kgw of NaCl with calcium,
+            magnesium, sulfate and carbonate at 15&nbsp;°C, in uranium(VI) carbonate in 3&nbsp;mol/kgw of
+            NaCl, and in 0.5&nbsp;mol/kgw of NaCl at 60&nbsp;°C, the page's activity coefficients and
+            water activity at PHREEQC's molalities are PHREEQC's to 5×10<sup>−16</sup>, and the model it
+            writes from each water starts on PHREEQC's molalities to 4×10<sup>−10</sup>. Brine,
+            2&nbsp;mol/kgw of NaCl, flows for three pore volumes into 0.1&nbsp;m of fresh water at
+            saturation with calcite, the ionic strength rising from 0.013 to 2: on 40 cells the page's
+            effluent is within 0.016 of PHREEQC's in pH and 4.6&nbsp;µmol/kgw in calcium where the front
+            passes, and where it settles, at pH 8.2384, within 6×10<sup>−6</sup>. PHREEQC takes 3.7
+            seconds and this page 1.1. The pyrite column above in 0.5&nbsp;mol/kgw of NaCl, under SIT
+            coefficients of the tests' own on <code>phreeqc.dat</code>, ends within 0.0014 of PHREEQC's
+            in pH and 0.002 in pe, the pyrite gone from the same 12 cells; PHREEQC takes 0.6 seconds
+            and this page 3.6.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
             3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,
-            <code>wateq4f.dat</code>, <code>minteq.v4.dat</code> or a project's own. PHREEQC reads it
+            <code>wateq4f.dat</code>, <code>minteq.v4.dat</code>, <code>sit.dat</code> or a
+            project's own. PHREEQC reads it
             at once and says whether it can. A database you open is used for the visit and never
             stored in the browser.</p>
           <p>PHREEQC is the U.S. Geological Survey's, by David Parkhurst and Tony Appelo: Parkhurst,
@@ -1752,7 +1827,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108"></script>
@@ -1760,6 +1835,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108a"></script>
 </body>
 </html>

@@ -4543,6 +4543,294 @@ Yr <=> Yo + e-, logK = -5
 }
 
 /* ======================================================================
+   2t. The specific ion interaction theory (ACTIVITY = sit, <SIT>)
+
+   PHREEQC's SIT (sit.cpp): log gamma = -A z^2 sqrt(I)/(1 + 1.5 sqrt(I)) +
+   sum over the species paired with it of (eps + eps1 I) m, and the water's
+   activity from SIT's osmotic coefficient. Here against the same formulas
+   written out apart from the page's code: the coefficients and their
+   derivatives, the start, a run held throughout as salt raises I, a fast
+   pair, an exchanger, a rate law, the electron's projected form with its
+   reduced speciation, and a column; and the texts it refuses. Against
+   PHREEQC itself in test-phreeqc.js.
+   ====================================================================== */
+console.log('\n--- SIT ---');
+{
+  // SIT written out apart from the page: log10 gamma of each species and log10 a(H2O).
+  const A25 = RtmModel.debyeHuckelAB(25).A;
+  const sitHand = (names, c, pairs, A = A25) => {
+    const z = names.map((n) => (n === 'H2O' ? 0 : RtmModel.chargeOf(n)));
+    let I = 0;
+    let osum = 0;
+    names.forEach((n, i) => { if (n !== 'H2O') { I += 0.5 * z[i] * z[i] * c[i]; osum += c[i]; } });
+    const sq = Math.sqrt(I);
+    const D = (-A * sq) / (1 + 1.5 * sq);
+    const lg = names.map((n, i) => (n === 'H2O' ? 0 : z[i] * z[i] * D));
+    const T = 1 + 1.5 * sq;
+    let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+    for (const [a, b, e, e1 = 0] of pairs) {
+      const i = names.indexOf(a);
+      const j = names.indexOf(b);
+      lg[i] += (e + e1 * I) * c[j];
+      lg[j] += (e + e1 * I) * c[i];
+      const half = !z[i] && !z[j] ? 0.5 : 1;
+      os += c[i] * c[j] * (e * half + e1 * (1 + half * I));
+    }
+    return { lg, I, law: -(osum + Math.LN10 * os) / 55.50837 / Math.LN10 };
+  };
+
+  // The coefficients, by hand.
+  const sp = (name) => ({ name, z: null, dha: null, dhb: null, line: 1 });
+  const names = ['Na+', 'Cl-', 'Ca+2', 'HCO3-', 'CO2', 'UO2(CO3)3-4'];
+  const pairs = [['Na+', 'Cl-', 0.03], ['Ca+2', 'Cl-', 0.14], ['Na+', 'HCO3-', 0, 0.01], ['CO2', 'CO2', 0.05],
+    ['CO2', 'Na+', 0.02], ['Na+', 'UO2(CO3)3-4', -0.01]];
+  const act = RtmModel.activityModel({ ACTIVITY: 'sit', TEMPERATURE: 25, given: new Set() }, names.map(sp), [],
+    pairs.map(([a, b, e, e1], i) => ({ text: `${a} ${b} ${e}${e1 ? ` eps1=${e1}` : ''}`, line: i + 1 })));
+  const C = Float64Array.of(1.0, 1.2, 0.1, 0.003, 0.01, 1e-6);
+  const lnG = new Float64Array(6);
+  const dG = new Float64Array(6);
+  const w = RtmModel.activityAt(act, C, 0, lnG, dG);
+  const hand = sitHand(names, C, pairs);
+  const worst = Math.max(...names.map((n, i) => Math.abs(lnG[i] / Math.LN10 - hand.lg[i])));
+  check('each coefficient by hand: the Debye-Hueckel term, the pairs, a neutral species paired with itself, eps1 I',
+    worst < 1e-15 && Math.abs(w.I - hand.I) < 1e-15, `within ${worst.toExponential(1)} in log gamma at I = ${w.I}; `
+      + `${names.map((n, i) => `${n} ${(lnG[i] / Math.LN10).toFixed(5)}`).join(', ')}`);
+  check('  and the water\'s activity, from SIT\'s osmotic coefficient', Math.abs(w.lnAw / Math.LN10 - hand.law) < 1e-16,
+    `log a(H2O) ${(w.lnAw / Math.LN10).toFixed(10)}`);
+  // The derivatives the Jacobians read: in I, in each partner, and the water's in each species.
+  let dWorst = 0;
+  const dAwv = Float64Array.from(w.dAwv);
+  for (let k = 0; k < 6; k++) {
+    const h = 1e-4 * Math.max(C[k], 1e-3);
+    const up = Float64Array.from(C);
+    const dn = Float64Array.from(C);
+    up[k] += h;
+    dn[k] -= h;
+    const g1 = new Float64Array(6);
+    const g2 = new Float64Array(6);
+    const w1 = RtmModel.activityAt(act, up, 0, g1, new Float64Array(6));
+    const w2 = RtmModel.activityAt(act, dn, 0, g2, new Float64Array(6));
+    dWorst = Math.max(dWorst, Math.abs((w1.lnAw - w2.lnAw) / (2 * h) - dAwv[k]) / Math.max(Math.abs(dAwv[k]), 1e-6));
+    for (let s = 0; s < 6; s++) {
+      const r = act.sit.rows[s];
+      let an = dG[s] * 0.5 * act.z[k] * act.z[k];
+      if (r) for (let q = 0; q < r.k.length; q++) if (r.k[q] === k) an += Math.LN10 * (r.e[q] + w.I * r.e1[q]);
+      dWorst = Math.max(dWorst, Math.abs((g1[s] - g2[s]) / (2 * h) - an) / Math.max(Math.abs(an), 1e-3));
+    }
+  }
+  check('  their derivatives, in I, in each species paired, and the water\'s in each species, against differences',
+    dWorst < 1e-6, dWorst.toExponential(1));
+
+  // A water held throughout as salt goes in.
+  const water = (more, pairsText = '') => `
+<SETTINGS>
+MODE = batch
+TEND = 1e5
+ACTIVITY = sit
+${more}
+
+<SPECIES>
+H+      1e-7
+OH-     1e-7
+CO2     2e-4
+HCO3-   2e-3
+CO3-2   1e-9
+Na+     0.1
+Cl-     0.098
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,          logK = -14.0
+CO2 + H2O <=> H+ + HCO3-,  logK = -6.35
+HCO3- <=> H+ + CO3-2,      logK = -10.33
+
+<SIT>
+H+    Cl-     0.12
+Na+   Cl-     0.03
+Na+   OH-     0.04
+Na+   HCO3-   0.0
+Na+   CO3-2  -0.08
+CO2   Na+     0.02   eps1=0.001
+${pairsText}
+<REACTIONS>
+`;
+  const wPairs = [['H+', 'Cl-', 0.12], ['Na+', 'Cl-', 0.03], ['Na+', 'OH-', 0.04], ['Na+', 'HCO3-', 0],
+    ['Na+', 'CO3-2', -0.08], ['CO2', 'Na+', 0.02, 0.001]];
+  const off = (m, c) => {
+    const h = sitHand(m.speciesNames, c, wPairs);
+    const la = (n) => Math.log10(c[m.speciesNames.indexOf(n)]) + h.lg[m.speciesNames.indexOf(n)];
+    return { by: Math.max(Math.abs(la('H+') + la('OH-') - h.law + 14), Math.abs(la('H+') + la('HCO3-') - la('CO2') - h.law + 6.35),
+      Math.abs(la('H+') + la('CO3-2') - la('HCO3-') + 10.33)), I: h.I };
+  };
+  const start = RtmModel.compile(water('EQUILIBRATE = 1'));
+  const c0 = start.initialState();
+  check('the start speciated in SIT\'s activities: every relation, the water in two of them',
+    off(start, c0).by < 1e-12 && Math.abs((c0[2] + c0[3] + c0[4]) / 2.200001e-3 - 1) < 1e-14,
+    `${off(start, c0).by.toExponential(1)} in log K`);
+  const held = RtmModel.compile(`${water('EQUILIBRATE = always')}=> Na+ + Cl-, k = 1.5e-5\n`);
+  const run1 = FacsimileODE.runModel(held, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let hw = 0;
+  for (const y of run1.y) hw = Math.max(hw, off(held, held.toConcentrations(y)).by);
+  const hEnd = held.toConcentrations(run1.y[run1.y.length - 1]);
+  const vh0 = RtmModel.verifyJacobian(held, 0, held.initialState());
+  const vh1 = RtmModel.verifyJacobian(held, 1e5, run1.y[run1.y.length - 1]);
+  check('held throughout as salt raises I from 0.1 to 1.6: every stored point on every relation, in SIT\'s activities',
+    hw < 1e-12 && off(held, hEnd).I > 1.5, `${hw.toExponential(1)} in log K over ${run1.t.length} points, I `
+      + `${off(held, hEnd).I.toFixed(3)} at the end`);
+  check('  the Jacobian, the partners and the water included, at the start and the end',
+    vh0.discrepancies.length === 0 && vh1.discrepancies.length === 0, `${vh0.checked} and ${vh1.checked} entries`);
+  const pair = RtmModel.compile(`${water('EQUILIBRATE = 1').replace('logK = -14.0', 'logK = -14.0, kf = 1e3')}`
+    + '=> Na+ + Cl-, k = 1.5e-5\n');
+  const rp = FacsimileODE.runModel(pair, { solver: 'ndf', tend: 1e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const pEnd = rp.y[rp.y.length - 1];
+  const ph = sitHand(pair.speciesNames, pEnd, wPairs);
+  const kw = Math.log10(pEnd[0]) + ph.lg[0] + Math.log10(pEnd[1]) + ph.lg[1] - ph.law + 14;
+  const vp = [RtmModel.verifyJacobian(pair, 0, pair.initialState()), RtmModel.verifyJacobian(pair, 1e5, pEnd)];
+  check('a fast pair relaxes to its K in SIT\'s activities, and its Jacobian reads the partners',
+    Math.abs(kw) < 1e-7 && vp.every((v) => v.discrepancies.length === 0), `${kw.toExponential(1)} in log K; `
+      + `${vp[0].checked} entries`);
+  // A rate law reading an activity and a saturation.
+  const rated = RtmModel.compile(`${water('EQUILIBRATE = always')}=> Na+ + Cl-, k = 1.5e-5\n`
+    + 'CO2 => HCO3- + H+, r = 1e-7 * {CO2} * (1 - SR(Natron))\n'
+    + '<PHASES>\nNatron <=> 2 Na+ + CO3-2, logK = -1.3\n');
+  const vr = RtmModel.verifyJacobian(rated, 0, rated.initialState());
+  check('  a rate law reading {CO2} and SR(phase) under SIT: its Jacobian through the partners', vr.discrepancies.length === 0,
+    `${vr.checked} entries`);
+  // A column held throughout: the Jacobian across the cells.
+  const col = RtmModel.compile(water('EQUILIBRATE = always')
+    .replace('MODE = batch', 'MODE = transport\nCELLS = 5\nLENGTH = 0.01\nDIFFUSION = 1')
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)$/gm, (m0, n, s1, v) => `${n}${s1}${v}  D=1e-9`));
+  const colY = col.initialState();
+  for (let k = 0; k < colY.length; k++) colY[k] += 1e-3 * Math.sin(k);
+  const vc = RtmModel.verifyJacobian(col, 0, colY);
+  check('  and in a column with every relation held, the Jacobian across the cells', vc.discrepancies.length === 0
+    && col.nalgebraic === 5 * 5, `${vc.checked} entries`);
+
+  // An exchanger: each species on it takes its ion's coefficient to the ion's power.
+  const ex = RtmModel.compile(water('EQUILIBRATE = always')
+    .replace('Cl-     0.098', 'Cl-     0.098\nCa+2    0.001\nX-      exchanger 1e-3\nNaX     exchange\nCaX2    exchange  a=5 b=0.1')
+    .replace('HCO3- <=> H+ + CO3-2,      logK = -10.33', 'HCO3- <=> H+ + CO3-2,      logK = -10.33\n'
+      + 'Na+ + X- <=> NaX,           logK = 0\nCa+2 + 2 X- <=> CaX2,      logK = 0.8')
+    .replace('CO2   Na+     0.02   eps1=0.001', 'CO2   Na+     0.02   eps1=0.001\nCa+2  Cl-     0.14'));
+  const ey = ex.toConcentrations(ex.initialState());
+  const eg = new Float64Array(ex.speciesNames.length);
+  RtmModel.activityAt(ex.act, ey, 0, eg, new Float64Array(ex.speciesNames.length));
+  const at = (n) => ex.speciesNames.indexOf(n);
+  const cap = ey[at('NaX')] + 2 * ey[at('CaX2')];
+  const exOff = Math.max(Math.abs(eg[at('NaX')] - eg[at('Na+')] - Math.log(1 / cap)),
+    Math.abs(eg[at('CaX2')] - eg[at('Ca+2')] - Math.log(2 / cap)));
+  const ve = RtmModel.verifyJacobian(ex, 0, ex.initialState());
+  check('a species on an exchanger takes its ion\'s SIT coefficient, as PHREEQC\'s does: NaX Na+\'s, CaX2 Ca+2\'s; '
+    + 'a and b given to one are not used, and said so', exOff < 1e-13 && ve.discrepancies.length === 0
+    && ex.warnings.some((x) => /a and b given to CaX2 are not used/.test(x)), `within ${exOff.toExponential(1)}; `
+      + `${ve.checked} Jacobian entries`);
+
+  // The electron under SIT: the projected form, each cell speciated in its components and V's sums.
+  const redox = (more = '', species = '', rels = '', sitMore = '') => `
+<SETTINGS>
+MODE = batch
+TEND = 1e4
+ACTIVITY = sit
+EQUILIBRATE = always
+${more}
+
+<SPECIES>
+H+      1e-7
+OH-     1e-7
+Na+     0.5
+Cl-     0.5
+Fe+2    1e-4
+Fe+3    1e-9
+FeCl+   1e-6
+SO4-2   1e-3
+HS-     1e-6
+NaSO4-  1e-4
+O2      1e-12
+e-      electron pe=-2
+${species}
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,                    logK = -14.0
+Fe+2 <=> Fe+3 + e-,                  logK = -13.02
+Fe+2 + Cl- <=> FeCl+,                logK = 0.14
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O, logK = 33.65
+Na+ + SO4-2 <=> NaSO4-,              logK = 0.7
+2 H2O <=> O2 + 4 H+ + 4 e-,          logK = -86.08
+${rels}
+<SIT>
+Na+    Cl-     0.03
+H+     Cl-     0.12
+Na+    OH-     0.04
+Fe+2   Cl-     0.17
+Fe+3   Cl-     0.56   eps1=0.01
+FeCl+  Cl-     0.2
+Na+    SO4-2  -0.12
+Na+    HS-     0.05
+Na+    NaSO4-  0.0
+O2     Na+     0.03
+O2     O2      0.01
+${sitMore}
+<REACTIONS>
+=> O2, k = 2e-9
+`;
+  const rPairs = [['Na+', 'Cl-', 0.03], ['H+', 'Cl-', 0.12], ['Na+', 'OH-', 0.04], ['Fe+2', 'Cl-', 0.17],
+    ['Fe+3', 'Cl-', 0.56, 0.01], ['FeCl+', 'Cl-', 0.2], ['Na+', 'SO4-2', -0.12], ['Na+', 'HS-', 0.05],
+    ['Na+', 'NaSO4-', 0], ['O2', 'Na+', 0.03], ['O2', 'O2', 0.01]];
+  const ox = RtmModel.compile(redox());
+  const ro = FacsimileODE.runModel(ox, { solver: 'ndf', tend: 1e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  let rw = 0;
+  for (const y of ro.y) {
+    const c = ox.toConcentrations(y);
+    const nm = ox.speciesNames.filter((n) => n !== 'e-');
+    const cc = nm.map((n) => c[ox.speciesNames.indexOf(n)]);
+    const h = sitHand(nm, cc, rPairs);
+    const la = (n) => (n === 'e-' ? Math.log10(c[ox.speciesNames.indexOf('e-')]) : Math.log10(cc[nm.indexOf(n)]) + h.lg[nm.indexOf(n)]);
+    rw = Math.max(rw, Math.abs(la('H+') + la('OH-') - h.law + 14), Math.abs(la('Fe+3') + la('e-') - la('Fe+2') + 13.02),
+      Math.abs(la('FeCl+') - la('Fe+2') - la('Cl-') - 0.14),
+      Math.abs(la('HS-') + 4 * h.law - la('SO4-2') - 9 * la('H+') - 8 * la('e-') - 33.65),
+      Math.abs(la('NaSO4-') - la('Na+') - la('SO4-2') - 0.7), Math.abs(la('O2') + 4 * la('H+') + 4 * la('e-') - 2 * h.law + 86.08));
+  }
+  const oEnd = ox.toConcentrations(ro.y[ro.y.length - 1]);
+  const vo = [RtmModel.verifyJacobian(ox, 0, ox.initialState()), RtmModel.verifyJacobian(ox, 1e4, ro.y[ro.y.length - 1])];
+  check('the electron under SIT, oxygen into a saline Fe and S water: every stored point on every relation in SIT\'s '
+    + 'activities, the pe from -2 to above 11', rw < 1e-12 && -Math.log10(oEnd[ox.speciesNames.indexOf('e-')]) > 11,
+  `${rw.toExponential(1)} in log K over ${ro.t.length} points; pe ${(-Math.log10(oEnd[ox.speciesNames.indexOf('e-')])).toFixed(4)} `
+    + `at the end, ${ro.stats.nfailed} steps failed`);
+  check('  its Jacobian through each cell\'s speciation, at the start and the end',
+    vo.every((v) => v.discrepancies.length === 0), `${vo[0].checked} and ${vo[1].checked} entries`);
+  // An ion in no relation but paired, a species on an exchanger, a column: the Jacobian.
+  const variants = [
+    ['an ion outside every relation, paired in <SIT>', redox('', 'K+      0.1', '', 'K+     Cl-     0.0\nK+     SO4-2  -0.06\nK+     HS-     0.02')],
+    ['an exchanger', redox('', 'X-      exchanger 1e-3\nNaX     exchange\nFeX2    exchange',
+      'Na+ + X- <=> NaX, logK = 0\nFe+2 + 2 X- <=> FeX2, logK = 0.44')],
+  ];
+  const vv = variants.map(([label, t]) => {
+    const m = RtmModel.compile(t.replace('MODE = batch', 'MODE = transport\nCELLS = 3\nLENGTH = 0.01\nDIFFUSION = 1')
+      .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)$/gm, (m0, n, s1, v) => `${n}${s1}${v}  D=1e-9`));
+    const y = m.initialState();
+    return [label, RtmModel.verifyJacobian(m, 0, y)];
+  });
+  check(`  and with ${vv.map(([l]) => l).join(', and with ')}, in a column of three cells`,
+    vv.every(([, v]) => v.discrepancies.length === 0 && v.checked > 200), vv.map(([l, v]) => `${v.checked} entries`).join(', '));
+
+  // The texts it refuses.
+  const refuse = (t) => { try { RtmModel.compile(t); return ''; } catch (e) { return e.message; } };
+  const cases = [
+    ['<SIT> without ACTIVITY = sit', water('').replace('ACTIVITY = sit', 'ACTIVITY = davies'), /is read under ACTIVITY = sit, not davies/],
+    ['a species not in <SPECIES>', water('', 'K+ Cl- 0.0'), /"K\+" in <SIT> is not in <SPECIES>/],
+    ['a species that is no solute', water('').replace('Cl-     0.098', 'Cl-     0.098\nCalcite 1 mineral')
+      .replace('<REACTIONS>', 'Calcite Na+ 0.1\n<REACTIONS>'), /Calcite is no solute/],
+    ['a pair given twice, either way round', water('', 'Cl- Na+ 0.05'), /Cl- and Na\+ are paired twice in <SIT>, on lines/],
+    ['a line that is not two species and a number', water('', 'Na+ 0.03'), /is not two species and their coefficient/],
+    ['anything but eps1=', water('', 'H+ OH- 0.1 eps2=0.1'), /takes eps1= .* and nothing else/],
+  ];
+  const wrong = cases.filter(([, t, re]) => !re.test(refuse(t)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, t]) => `${what}: "${refuse(t)}"`).join(' | '));
+  check('  and a and b on a species under SIT are said not to be used',
+    RtmModel.compile(water('').replace('Na+     0.1', 'Na+     0.1  a=4 b=0.06')).warnings
+      .some((x) => /ACTIVITY = sit takes no a or b/.test(x)));
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');

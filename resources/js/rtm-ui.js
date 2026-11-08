@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -453,8 +453,9 @@
         + (h ? ` · ${h.relations === m.nequilibria ? 'all' : h.relations} held throughout the run, `
           + `${h.species} species algebraic in every cell`
           + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
-        + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : 'Debye–Hückel'} at ${a.temperature} °C `
-          + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : '')
+        + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : a.kind === 'sit' ? 'SIT' : 'Debye–Hückel'} at `
+          + `${a.temperature} °C (${a.ions} ion${a.ions === 1 ? '' : 's'}`
+          + `${a.kind === 'sit' ? `, ${a.sit} pair${a.sit === 1 ? '' : 's'} in <SIT>` : ''})` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
           : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
         + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
@@ -2065,9 +2066,9 @@
       lead: 'PHREEQC holds its relations between activities. This says how the model written from the water holds them.',
       facts: [['Default', 'following the ionic strength']],
       sections: [{ choices: [
-        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion. Each relation is written with its water and the database’s own log K, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
+        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`. Each relation is written with its water and the database’s own log K, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
         ['fixed at this water', 'Each `logK` is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far.', pq.act === 'fixed'],
-      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. A database whose activity model is Pitzer, SIT or LLNL cannot be followed here; keep it fixed.' }],
+      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again. A database whose activity model is Pitzer or LLNL cannot be followed here; keep it fixed.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2235,6 +2236,7 @@
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
     PHASES: new Set(['k', 'logk']),
+    SIT: new Set(['eps1']),
   };
   /*
     A species name ends in a charge -- H+, OH-, C2O4-2 -- and the charge is
@@ -2586,11 +2588,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108',
+    'resources/js/rtm-phreeqc.js?v=20261108a',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2903,6 +2905,12 @@ END
       out.push(`<p${good ? '' : ' class="warn"'}>rtm.html's own speciation, ${from}, `
         + `${c.converged ? 'lands on' : 'does not converge to'} PHREEQC's molalities`
         + `${c.converged ? ` to ${c.worst.toExponential(1)}` : ''}.</p>`);
+      if (r.activity && r.activity.kind === 'sit') {
+        const np = r.activity.sitPairs;
+        out.push(`<p>The activity coefficients are SIT's, as PHREEQC's are with this database: <code>ACTIVITY = sit</code> `
+          + `and, in <code>&lt;SIT&gt;</code>, ${np} of its interaction coefficient${np === 1 ? '' : 's'} between the `
+          + `species written, at ${pqNum(r.activity.temperature)} °C.</p>`);
+      }
       if (r.minerals && r.minerals.length) {
         out.push(`<p>Kept at saturation: ${r.minerals.map((mn) => `${esc(mn.as)} (${pqNum(mn.amount)} mol/kgw`
           + `${mn.si ? `, SI ${pqNum(mn.si)}` : ''})`).join(', ')}.</p>`);

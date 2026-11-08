@@ -21,6 +21,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 
 import websockets
@@ -451,6 +452,48 @@ async def main():
             check('looked at through PHREEQC, the run\'s surface and potential are the ones PHREEQC loads from its water',
                   m_sf is not None and float(m_sf.group(1)) < 1e-6 and float(m_sf.group(2)) < 1e-3, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
+            # --- a SIT database: followed, run, and looked at through PHREEQC ---
+            # phreeqc.dat with a SIT block of our own in front (PHREEQC reads a database to its first END).
+            with open(os.path.join(ROOT, 'vendors', 'phreeqc', 'phreeqc.dat'), encoding='latin-1') as fh:
+                pqdat = fh.read()
+            with tempfile.TemporaryDirectory() as tmp:
+                sit_path = os.path.join(tmp, 'sit-test.dat')
+                with open(sit_path, 'w', encoding='latin-1') as fh:
+                    fh.write('SIT\n-epsilon\n  Na+ Cl- 0.05\n  Ca+2 Cl- 0.1\n  Mg+2 Cl- 0.2\n  H+ Cl- 0.1\n'
+                             '  Na+ HCO3- 0.0\n  Na+ CO3-2 -0.05\n  Na+ SO4-2 -0.1\n  Na+ OH- 0.05\n' + pqdat)
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                await page.set_files('#rtmPqDbFile', [sit_path])
+                loaded = await until(page, f"(() => {{ const t = {STATUS}; return / is loaded: |cannot read/.test(t) ? t : ''; }})()")
+            check('a SIT database opened is read by PHREEQC', isinstance(loaded, str)
+                  and loaded.startswith('sit-test.dat is loaded:'), True)
+            sit_report = await write_from_example(page)
+            sit_text = await page.ev("document.getElementById('rtmText').value")
+            check('with it, the water is written following SIT: ACTIVITY = sit and the database\'s coefficients in <SIT>, '
+                  'and the report says so',
+                  isinstance(sit_report, str) and "The activity coefficients are SIT's" in sit_report
+                  and isinstance(sit_text, str) and re.search(r'^ACTIVITY = sit$', sit_text, re.M) is not None
+                  and re.search(r'^Na\+ +Cl- +0\.05$', sit_text, re.M) is not None
+                  and re.search(r'^Na\+ +[0-9.e-]+ +a=', sit_text, re.M) is None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give SIT and its pairs', await page.ev(
+                "/in activities, SIT at [0-9.]+ °C \\([0-9]+ ions, [0-9]+ pairs in <SIT>\\)/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            sit_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_sit = re.search(r'\(ACTIVITY = sit\)\. PHREEQC\'s .*?, and the model\'s own are within ([0-9.e+-]+) of '
+                              r'PHREEQC\'s in log K', sit_summary or '')
+            check('looked at through PHREEQC on the same database, the model\'s own SIT coefficients are PHREEQC\'s',
+                  m_sit is not None and float(m_sit.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
 
             # --- a column, looked at against distance ---
             column = ('<SETTINGS>\\nMODE = transport\\nCELLS = 5\\nLENGTH = 0.05\\nDIFFUSION = 1\\nTEND = 1e4\\n'
