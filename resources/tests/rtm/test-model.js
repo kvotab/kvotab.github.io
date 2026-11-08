@@ -6364,6 +6364,135 @@ console.log('\n--- sites that go with a mineral ---');
     /dissolved away/.test(usedUp) ? '' : ` used up: "${usedUp.slice(0, 160)}"`}`);
 }
 
+/*
+   CD-MUSIC (PHREEQC's SURFACE with -cd_music): a surface with three
+   potentials, planes 0, 1 and 2, the species' charges split over them by
+   dz0, dz1 and dz2. Against PHREEQC's equations written out here: at every
+   stored point of a run that adds acid, each relation holds with each
+   plane's potential to the charge it puts there, sigma0 = c0 (psi0 - psi1),
+   sigma0 + sigma1 = c1 (psi1 - psi2), and sigma0 + sigma1 + sigma2 +
+   sigmad = 0 with the diffuse layer's charge from every ion and a
+   fictitious one for the water's own charge; the Jacobian against
+   differences, the water given a charge of its own (in charge balance its
+   derivative has a corner, PHREEQC's fictitious ion). Made-up constants.
+*/
+console.log('\n--- CD-MUSIC ---');
+{
+  const F = 96493.5;
+  const R = 8.31470;
+  const T = 298.15;
+  const fRT = F / (R * T);
+  const area = 98;
+  const grams = 1;
+  const c0 = 0.9;
+  const c1 = 0.74;
+  // name, charge, dz0, dz1, dz2, type
+  const SURF = [['S_uOH', -0.5, 0, 0, 0, 'u'], ['S_uOH2', 0.5, 1, 0, 0, 'u'], ['S_uOHNa', 0.5, 0, 1, 0, 'u'],
+    ['S_uOH2Cl', -0.5, 1, -1, 0, 'u'], ['S_uOHZn', 1.5, 0.6, 1.4, 0, 'u'], ['S_tO', -0.5, 0, 0, 0, 't'],
+    ['S_tOH', 0.5, 1, 0, 0, 't'], ['S_tONa', 0.5, 0, 0, 1, 't']];
+  const text = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1e4}\nEQUILIBRATE = always\nACTIVITY = davies\n\n<SPECIES>\n`
+    + 'H+ 1e-7\nOH- 1e-7\nNa+ 0.01\nCl- 0.0098\nZn+2 1e-6\nZnOH+ 1e-9\n'
+    + `${SURF.map(([n, z, d0, d1, d2]) => `${n} ${n === 'S_uOH' ? 0.00345 : n === 'S_tO' ? 0.0027 : 0} surface z=${z}`
+      + `${d0 ? ` dz0=${d0}` : ''}${d1 ? ` dz1=${d1}` : ''}${d2 ? ` dz2=${d2}` : ''}`).join('\n')}\n`
+    + `S_psi 1 potential area=${area} grams=${grams} c0=${c0} c1=${c1}\nS_psib 1 potential\nS_psid 1 potential\n${o.species || ''}\n`
+    + '<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\nZn+2 + H2O <=> ZnOH+ + H+, logK = -9\n'
+    + 'S_uOH + H+ <=> S_uOH2, logK = 9.2\nS_uOH + Na+ <=> S_uOHNa, logK = -0.6\nS_uOH + H+ + Cl- <=> S_uOH2Cl, logK = 8.4\n'
+    + 'S_uOH + Zn+2 <=> S_uOHZn, logK = 3\nS_tO + H+ <=> S_tOH, logK = 9.2\nS_tO + Na+ <=> S_tONa, logK = -0.6\n'
+    + `\n<REACTIONS>\n${o.react || '=> H+ + Cl-, k = 1e-7'}\n`;
+  const m = RtmModel.compile(text());
+  const r = run(m, { tend: 1e4 });
+  const k = (n) => m.speciesNames.indexOf(n);
+  const eps = RtmModel.debyeHuckelAB(25).eps;
+  const kS = Math.sqrt(8000 * R * T * eps * 8.854e-12);
+  const ions = m.speciesNames.map((n, i) => [i, m.act.z[i]]).filter(([, z]) => z);
+  let rel = 0;
+  let planes = 0;
+  let u20 = 0;
+  let u21 = 0;
+  r.y.forEach((yy, step) => {
+    const C = m.toConcentrations(yy);
+    const lnG = new Float64Array(C.length);
+    RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(C.length));
+    const u = ['S_psi', 'S_psib', 'S_psid'].map((n) => Math.log(C[k(n)]));
+    const psi = u.map((v) => -v / fRT);
+    const sites = { u: 0, t: 0 };
+    for (const [n, , , , , t] of SURF) sites[t] += C[k(n)];
+    const lnA = (n) => {
+      const s = SURF.find((x) => x[0] === n);
+      return s ? Math.log(C[k(n)] / sites[s[5]]) : Math.log(C[k(n)]) + lnG[k(n)];
+    };
+    const dz = (n) => SURF.find((x) => x[0] === n).slice(2, 5);
+    // Each relation on the surface: sum nu ln a = ln K + sum over the planes of (charge put there) u.
+    const check = (prod, reac, logK) => {
+      let lhs = 0;
+      const put = [0, 0, 0];
+      for (const n of prod) { lhs += lnA(n); if (SURF.some((x) => x[0] === n)) dz(n).forEach((v, i) => { put[i] += v; }); }
+      for (const n of reac) { lhs -= lnA(n); if (SURF.some((x) => x[0] === n)) dz(n).forEach((v, i) => { put[i] -= v; }); }
+      return Math.abs(lhs - logK * Math.LN10 - (put[0] * u[0] + put[1] * u[1] + put[2] * u[2]));
+    };
+    rel = Math.max(rel, check(['S_uOH2'], ['S_uOH', 'H+'], 9.2), check(['S_uOHNa'], ['S_uOH', 'Na+'], -0.6),
+      check(['S_uOH2Cl'], ['S_uOH', 'H+', 'Cl-'], 8.4), check(['S_uOHZn'], ['S_uOH', 'Zn+2'], 3),
+      check(['S_tOH'], ['S_tO', 'H+'], 9.2), check(['S_tONa'], ['S_tO', 'Na+'], -0.6));
+    // The planes' charges, C/m2: plane 0 the sites' own with dz0, planes 1 and 2 their dz.
+    const cq = F / (area * grams);
+    let s0 = 0;
+    let s1 = 0;
+    let s2 = 0;
+    for (const [n, z, d0, d1, d2] of SURF) { s0 += (z - d1 - d2) * C[k(n)]; s1 += d1 * C[k(n)]; s2 += d2 * C[k(n)]; }
+    s0 *= cq;
+    s1 *= cq;
+    s2 *= cq;
+    // The diffuse layer's, PHREEQC's: every ion, and a fictitious one for the water's own charge.
+    let D = 0;
+    let net = 0;
+    for (const [i, z] of ions) { D += C[i] * (Math.exp(z * u[2]) - 1); net += C[i] * z; }
+    D += Math.abs(net) * (Math.exp(-(net >= 0 ? 1 : -1) * u[2]) - 1);
+    const sd = (u[2] < 0 ? -1 : 1) * 0.5 * kS * Math.sqrt(D);
+    const scale = Math.abs(s0) + Math.abs(s1) + Math.abs(s2) + Math.abs(sd);
+    planes = Math.max(planes, Math.abs(s0 - c0 * (psi[0] - psi[1])) / scale, Math.abs(s0 + s1 - c1 * (psi[1] - psi[2])) / scale,
+      Math.abs(s0 + s1 + s2 + sd) / scale);
+    if (step === 0) u20 = psi[0];
+    u21 = psi[0];
+  });
+  let bad = 0;
+  let checked = 0;
+  for (const tend of [10, 5000, 9000]) {
+    const m2 = RtmModel.compile(text({ tend }));
+    const r2 = run(m2, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+    bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    checked += v.checked;
+  }
+  check('CD-MUSIC: while acid goes in, every stored point holds each relation with each plane\'s potential to the charge it '
+    + 'puts there, and PHREEQC\'s three equations, the capacitances between planes 0, 1 and 2 and the diffuse layer\'s charge '
+    + 'from every ion and a fictitious one; the Jacobian against differences, the water given a charge of its own',
+  rel < 1e-10 && planes < 1e-10 && bad === 0 && u21 > u20,
+  `the relations within ${rel.toExponential(1)}, the planes ${planes.toExponential(1)} of their charges; psi0 ${(u20 * 1e3).toFixed(2)} `
+    + `to ${(u21 * 1e3).toFixed(2)} mV; the Jacobian ${bad} of ${checked} off`);
+
+  // What is refused, each with its reason.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = text();
+  const cases = [
+    ['plane 2 missing', base.replace('S_psid 1 potential\n', ''), /three potentials, S_psi, S_psib and S_psid: S_psid is not in/],
+    ['plane 1 without plane 0', base.replace(/^S_psi 1 potential[^\n]*\n/m, ''), /S_psib is plane 1 of a CD-MUSIC surface, whose first/],
+    ['no capacitances', base.replace(' c0=0.9 c1=0.74', ''), /takes its capacitances, c0 between planes 0 and 1/],
+    ['an area on plane 1', base.replace('S_psib 1 potential', 'S_psib 1 potential area=98 grams=1'), /its area, grams and capacitances are given on/],
+    ['capacitances on a double layer', base.replace('S_psib 1 potential\nS_psid 1 potential\n', ''), /given c0 and c1, a CD-MUSIC surface's capacitances, and has no planes 1/],
+    ['dz that do not add up to the charge', base.replace('S_uOH2Cl 0 surface z=-0.5 dz0=1 dz1=-1', 'S_uOH2Cl 0 surface z=-0.5 dz0=1'),
+      /puts 0 of charge on its CD-MUSIC surface and 1, 0 and 0 on its planes/],
+    ['dz off a CD-MUSIC surface', `${base}Q_OH 1e-3 surface dz0=1\n`.replace('<EQUILIBRIUM>\n', '<EQUILIBRIUM>\nQ_OH + H+ <=> Q_OH2+, logK = 7\n')
+      .replace('Q_OH 1e-3 surface dz0=1\n', '').replace('S_psid 1 potential\n', 'S_psid 1 potential\nQ_OH 1e-3 surface dz0=1\nQ_OH2+ 0 surface\n'),
+    /Q_OH is given dz0, dz1 and dz2, the charges a species puts on the planes of a CD-MUSIC surface, and its surface is none/],
+    ['sites loaded from the water', base.replace('S_uOH 0.00345 surface z=-0.5', 'S_uOH 0 surface z=-0.5 sites=0.00345'),
+      /on a CD-MUSIC surface, which is not loaded so/],
+    ['a half charge off a surface', base.replace('Na+ 0.01', 'Na+ 0.01 z=0.5'), /a charge is a whole number, but on a surface/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
 /* ======================================================================
    3. The Jacobian
    ====================================================================== */

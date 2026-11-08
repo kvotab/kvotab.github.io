@@ -232,6 +232,13 @@
     return (m[1] === '+' ? 1 : -1) * (m[2] ? Number(m[2]) : 1);
   }
 
+  /** A species' charge as its name ends, halves and all: Goe_uniOH-0.5 -0.5, Hfo_wOH2+ 1. */
+  function chargeFraction(name) {
+    const m = /([+-])([0-9]*\.?[0-9]*)$/.exec(String(name));
+    if (!m) return 0;
+    return (m[1] === '+' ? 1 : -1) * (m[2] && m[2] !== '.' ? Number(m[2]) : 1);
+  }
+
   function rtmName(name, taken) {
     let out = String(name);
     if (!RTM_NAME.test(out)) {
@@ -379,6 +386,8 @@
       this.vm = new Map();
       this.millero = new Map();
       this.phaseVm = new Map();
+      // A surface species' -cd_music: the charges it puts on planes 0, 1 and 2 of a CD-MUSIC surface.
+      this.sfCd = new Map();
       // GAS_BINARY_PARAMETERS: 'CO2(g) H2O(g)' (the pair, sorted) -> k.
       this.gasBinary = new Map();
       // Each reaction's log K as PHREEQC reads it, by 'kind name' -- s a solution species, p a phase, x a species on
@@ -611,7 +620,17 @@
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
               this.lk.set(`f ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
+              this.sfCd.delete(last);
             }
+          } else if (last && lkOption(block, line) && ['cd_music', 'music'].includes(lkOption(block, line).opt)) {
+            /*
+              CD-MUSIC: the charges the species puts on the planes 0, 1 and 2,
+              from PHREEQC's five numbers -- dz0 + f z, dz1 + (1 - f) z and dz2,
+              z a central ion's charge split between planes 0 and 1 (read.cpp).
+            */
+            const v = leadingNumbers(lkOption(block, line).words, 5);
+            while (v.length < 5) v.push(0);
+            this.sfCd.set(last, [v[0] + v[3] * v[4], v[1] + (1 - v[3]) * v[4], v[2]]);
           } else if (last) {
             this.readLogKOption(block, line, this.lk.get(`f ${last}`));
           }
@@ -823,6 +842,12 @@
       if (tokens[0].startsWith('-')) {
         const opt = tokens[0].toLowerCase();
         if (/^-no_e/.test(opt)) cur.model = 'none';
+        // CD-MUSIC, and the capacitances of the surface of the site line before, F/m2.
+        else if (/^-cd/.test(opt)) cur.model = 'cd';
+        else if (/^-cap/.test(opt)) {
+          const last = cur.sites[cur.sites.length - 1];
+          if (last) last.cap = [Number(tokens[1]), Number(tokens[2])];
+        }
         // How the sites are given (moles, or sites per nm2) says nothing once PHREEQC has loaded them.
         else if (/^-s/.test(opt) && /^d/i.test(tokens[1] || '')) cur.units = 'density';
         else if (/^-s/.test(opt) && /^a/i.test(tokens[1] || '')) cur.units = 'absolute';
@@ -1385,7 +1410,7 @@
     const layers = new Map();
     if (sfSpecies.length) {
       for (const b of sfBlocks.values()) {
-        if (b.model !== 'ddl') continue;
+        if (b.model !== 'ddl' && b.model !== 'cd') continue;
         for (const x of b.sites) {
           const cut = x.master.indexOf('_');
           if (cut < 1) continue;
@@ -1394,13 +1419,22 @@
           if (!had || (had.area === null && Number.isFinite(x.area))) {
             // Sites that go with a phase: m2 to each mole of it, the phase in the grams' place.
             layers.set(name, { area: Number.isFinite(x.area) ? x.area : null, mass: Number.isFinite(x.mass) ? x.mass : null,
-              phase: x.phase || null });
+              phase: x.phase || null, cd: b.model === 'cd', cap: had ? had.cap : null });
           }
+          // CD-MUSIC: the capacitances, given after one of the surface's site lines.
+          if (x.cap) layers.get(name).cap = x.cap;
         }
       }
     }
-    const layerAt = extras.length;
-    for (const name of layers.keys()) extras.push(`EDL("psi", "${name}")`);
+    // Each surface's potential, psi, and CD-MUSIC's on planes 1 and 2 as well, psi1 and psi2 (EDL), volts.
+
+    const layerCols = new Map();
+    for (const [name, l] of layers) {
+      layerCols.set(name, (l.cd ? ['psi', 'psi1', 'psi2'] : ['psi']).map((what) => {
+        extras.push(`EDL("${what}", "${name}")`);
+        return extras.length - 1;
+      }));
+    }
     const massAt = layers.size ? extras.length : -1;
     if (layers.size) extras.push('TOT("water")');
     // The water's pressure (volumesAt, below).
@@ -1706,7 +1740,8 @@
     if (w.surface && w.surface.size && o.surface !== false) {
       const all = [...w.surface.keys()].join(', ');
       const models = new Set([...sfBlocks.values()].map((b) => b.model));
-      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && (l.mass > 0 || l.phase))).map(([n]) => n);
+      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && (l.mass > 0 || l.phase)
+        && (!l.cd || (l.cap && l.cap.every((v) => v > 0))))).map(([n]) => n);
       if (!o.exact) sfSkipped.push({ name: all, why: 'a surface needs the relations held exactly' });
       else if (models.size > 1) {
         sfSkipped.push({ name: all, why: 'the input has a surface with a double layer and one without (-no_edl)' });
@@ -1716,7 +1751,7 @@
         sfSkipped.push({ name: all, why: 'its sites follow a phase that is not carried as a mineral' });
       } else if (noLayer.length) {
         sfSkipped.push({ name: all, why: `the double layer of ${noLayer.join(', ')} needs its area and grams, which `
-          + 'its first site\'s line gives' });
+          + 'its first site\'s line gives, and under CD-MUSIC its two capacitances' });
       } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !x.phase && !Number.isFinite(x.sites)))) {
         sfSkipped.push({ name: all, why: 'its sites are given in a way this page does not read' });
       } else if ([...sfBlocks.values()].some((b) => b.other.length)) {
@@ -1773,11 +1808,15 @@
     if (onSf.length && layers.size) {
       const tk = w.tc + 273.15;
       const kgw = massAt >= 0 && Number(w.x[massAt]) > 0 ? Number(w.x[massAt]) : 1;
-      [...layers].forEach(([surface, l], i) => {
+      [...layers].forEach(([surface, l]) => {
         if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
-        const psi = Number(w.x[layerAt + i]);
-        potentials.push({ surface, species: `${surface}_psi`, psi, a: Math.exp(-FARADAY * psi / (GAS_R * tk)),
-          area: l.area, grams: l.phase ? null : l.mass / kgw, phase: l.phase });
+        // CD-MUSIC: its three planes, Hfo_psi with the area and capacitances, Hfo_psib and Hfo_psid.
+        layerCols.get(surface).forEach((col, plane) => {
+          const psi = Number(w.x[col]);
+          potentials.push({ surface, species: `${surface}_psi${['', 'b', 'd'][plane]}`, psi, plane, cd: l.cd,
+            a: Math.exp(-FARADAY * psi / (GAS_R * tk)), area: plane ? null : l.area,
+            grams: plane || l.phase ? null : l.mass / kgw, phase: plane ? null : l.phase, cap: plane ? null : l.cap });
+        });
       });
     }
 
@@ -2200,14 +2239,24 @@
           .reduce((acc, x) => acc + x.m * (x === e ? 1 : [...x.left, ...x.right.slice(1)].find((t) => t.n === e.species).c), 0);
         return `${e.name} (${fmtG(total, 4)} mol/kgw)`;
       });
-      if (potentials.length) {
+      if (potentials.some((pp) => pp.cd)) {
+        out.push(`# On a surface, by CD-MUSIC: the sites ${sites.join(' and ')},`);
+      } else if (potentials.length) {
         out.push(`# On a surface, with its diffuse double layer: the sites ${sites.join(' and ')},`);
       } else {
         out.push(`# On a surface, without electrostatics (-no_edl): the sites ${sites.join(' and ')},`);
       }
       out.push('# with the species PHREEQC put on them at their molalities. Each has its fraction of its');
       out.push("# sites for its activity, and its relation the database's log K.");
-      for (const pp of potentials) {
+      for (const pp of potentials.filter((x) => x.cd && !x.plane)) {
+        const [b, d] = potentials.filter((x) => x.surface === pp.surface && x.plane).map((x) => x);
+        out.push(`# ${pp.name}, ${b.name} and ${d.name} are the potentials of the planes 0, 1 and 2 of the CD-MUSIC surface`);
+        out.push(`# ${pp.surface}, ${fmtG(pp.psi * 1e3, 5)}, ${fmtG(b.psi * 1e3, 5)} and ${fmtG(d.psi * 1e3, 5)} mV here, with the capacitances`);
+        out.push(`# ${fmtG(pp.cap[0], 6)} and ${fmtG(pp.cap[1], 6)} F/m2 between them: rtm.html puts each into the relations on ${pp.surface} by`);
+        out.push('# the charge they put on its plane (dz0, dz1 and dz2, the database\'s -cd_music), as PHREEQC does,');
+        out.push("# and solves for them with PHREEQC's three equations, the diffuse layer's from every ion.");
+      }
+      for (const pp of potentials.filter((x) => !x.cd)) {
         out.push(pp.phase ? `# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2 to each mole of ${pp.phase},`
           + ' whose amount it goes with,'
           : `# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2/g and ${fmtG(pp.grams, 6)} g of it`
@@ -2316,8 +2365,10 @@
     for (const pp of potentials) {
       const amount = fmtG(pp.a, 15);
       const mn = pp.phase ? minerals.find((m) => m.phase === pp.phase) : null;
-      out.push(`${pp.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}potential  `
-        + `area=${fmtG(pp.area, 10)}  ${mn ? `per=${mn.name}` : `grams=${fmtG(pp.grams, 8)}`}`);
+      // CD-MUSIC's planes 1 and 2 take nothing; its first the area and the capacitances too.
+      out.push(`${pp.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}potential`
+        + (pp.plane ? '' : `  area=${fmtG(pp.area, 10)}  ${mn ? `per=${mn.name}` : `grams=${fmtG(pp.grams, 8)}`}`
+          + (pp.cd ? `  c0=${fmtG(pp.cap[0], 12)}  c1=${fmtG(pp.cap[1], 12)}` : '')));
     }
     // A site whose sites go with a phase: so many per mole of the mineral it is carried as (sites= per=).
     const perOf = new Map();
@@ -2333,8 +2384,15 @@
     }
     for (const e of onSf) {
       const amount = fmtG(e.m, 15);
+      // A charge the page's name does not give, a half on a CD-MUSIC site; and what the species puts on each plane.
+      const zq = chargeFraction(e.species);
+      const cut = e.species.indexOf('_');
+      const dz = cut > 0 && layers.has(e.species.slice(0, cut)) && layers.get(e.species.slice(0, cut)).cd
+        ? db.sfCd.get(e.species) : null;
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`
-        + `${e.master && perOf.has(e.species) ? perOf.get(e.species) : ''}`);
+        + `${e.master && perOf.has(e.species) ? perOf.get(e.species) : ''}`
+        + `${zq !== chargeOf(e.name) ? `  z=${fmtG(zq, 12)}` : ''}`
+        + `${dz ? dz.map((v, i) => (v ? `  dz${i}=${fmtG(v, 12)}` : '')).join('') : ''}`);
     }
     out.push('', '<EQUILIBRIUM>');
     /*
@@ -2567,7 +2625,7 @@
           per: onSf.filter((e) => e.master && perInfo.has(e.species)).map((e) => ({ site: e.name, ...perInfo.get(e.species) })),
           species: onSf.map((e) => ({ species: e.species, as: e.name, amount: e.m })),
           potentials: potentials.map((pp) => ({ name: pp.name, surface: pp.surface, psi: pp.psi, area: pp.area,
-            grams: pp.grams, phase: pp.phase })) } : null,
+            grams: pp.grams, phase: pp.phase, cd: pp.cd, plane: pp.plane, cap: pp.cap })) } : null,
         surfaceSkipped: sfSkipped,
         gas: gases.length ? { ...gasFixed, species: gases.map((g) => ({ phase: g.phase, as: g.name, amount: g.amount,
           pressure: g.pressure })) } : null,
@@ -2626,7 +2684,18 @@
       const cut = parts[0].indexOf('_');
       // per=: the area to each mole of a mineral of the model, whose amount in a water then takes the grams' place.
       const per = (parts.find((p) => /^per=/i.test(p)) || '').split('=')[1] || null;
-      if (cut > 0) out.set(parts[0].slice(0, cut), { name: parts[0], area: num('area'), grams: num('grams'), per });
+      if (cut <= 0) continue;
+      const sn = parts[0].slice(0, cut);
+      // CD-MUSIC: planes 1 and 2, Hfo_psib and Hfo_psid, beside the first with its capacitances c0 and c1.
+      const plane = /_psib$/.test(parts[0]) ? 1 : /_psid$/.test(parts[0]) ? 2 : 0;
+      const had = out.get(sn) || { planes: [null, null, null] };
+      if (plane) {
+        had.planes[plane] = parts[0];
+        out.set(sn, had);
+        continue;
+      }
+      out.set(sn, { ...had, name: parts[0], area: num('area'), grams: num('grams'), per, c0: num('c0'), c1: num('c1'),
+        planes: [parts[0], had.planes[1], had.planes[2]] });
     }
     return out;
   }
@@ -2738,7 +2807,7 @@
     const onSurface = [];
     // And each surface's potential, with the area and grams PHREEQC's double layer is given.
     const potentials = modelPotentials(o.modelText);
-    const potNames = new Set([...potentials.values()].map((pp) => pp.name));
+    const potNames = new Set([...potentials.values()].flatMap((pp) => [pp.name, ...pp.planes]).filter(Boolean));
     // The model's electron is PHREEQC's: its activity is the pe each water is given.
     const electron = modelElectron(o.modelText);
     const eIndex = electron ? model.species.indexOf(electron) : -1;
@@ -3025,7 +3094,13 @@
         error = `${surfaces.filter((sn) => !potentials.has(sn)).join(', ')} has no potential and ${layered.join(', ')} has: `
           + 'PHREEQC loads the surfaces of one water together, all with a double layer or all without';
       }
-      const potAt = layered.map((sn) => ({ sn, si: model.species.indexOf(potentials.get(sn).name), ...potentials.get(sn) }));
+      // Each potential the run has against PHREEQC's EDL: psi, and on a CD-MUSIC surface psi1 and psi2 too.
+      const cdOf = (pp) => Number.isFinite(pp.c0) && Number.isFinite(pp.c1) && pp.planes[1] && pp.planes[2];
+      const potAt = layered.flatMap((sn) => {
+        const pp = potentials.get(sn);
+        return (cdOf(pp) ? [0, 1, 2] : [0]).map((plane) => ({ sn, plane, si: model.species.indexOf(pp.planes[plane]), ...pp,
+          name: pp.planes[plane], what: ['psi', 'psi1', 'psi2'][plane] }));
+      });
       let worstPsi = { by: 0, at: null, name: null };
       let worst = { by: 0, at: null, species: null };
       for (let start = 0; start < good.length && !error; start += CHUNK) {
@@ -3039,14 +3114,16 @@
             if (!layered.length || first.has(sn) || !pp) return ` ${sp} ${fmtG(v, 15)}`;
             first.add(sn);
             const grams = pp.per ? Math.max(value(r.state, model.species.indexOf(pp.per), r.k), 0) * scale : pp.grams;
-            return ` ${sp} ${fmtG(v, 15)} ${fmtG(pp.area, 15)} ${fmtG(grams, 15)}`;
+            return ` ${sp} ${fmtG(v, 15)} ${fmtG(pp.area, 15)} ${fmtG(grams, 15)}`
+              + (cdOf(pp) ? `\n -capacitances ${fmtG(pp.c0, 15)} ${fmtG(pp.c1, 15)}` : '');
           });
-          return lines.length ? `SURFACE ${k + 1}\n -equilibrate ${k + 1}\n${layered.length ? '' : ' -no_edl\n'}`
+          const cdm = layered.some((sn) => cdOf(potentials.get(sn)));
+          return lines.length ? `SURFACE ${k + 1}\n -equilibrate ${k + 1}\n${layered.length ? (cdm ? ' -cd_music\n' : '') : ' -no_edl\n'}`
             + `${lines.join('\n')}\n` : '';
         }).join('');
         let out;
         try {
-          out = runRows(o.engine, `${punchBlock(layered.map((sn) => `EDL("psi", "${sn}")`))}`
+          out = runRows(o.engine, `${punchBlock(potAt.map((pp) => `EDL("${pp.what}", "${pp.sn}")`))}`
             + `${sub.map((r, k) => solution(k + 1, r)).join('')}END\n${blocks}END\n`);
         } catch (e) {
           error = String(e.message || e).trim().split('\n')[0];
@@ -3078,8 +3155,9 @@
         species: sfOf.map((e) => e.name),
         gap: worst.by, worst: worst.species,
         t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null,
-        // With a double layer: the potentials, and how far the run's are from PHREEQC's, in volts.
+        // With a double layer, or by CD-MUSIC: the potentials, and how far the run's are from PHREEQC's, in volts.
         potentials: potAt.map((pp) => pp.name),
+        cd: potAt.some((pp) => pp.plane > 0),
         psiGap: potAt.length ? { by: worstPsi.by, name: worstPsi.name, t: worstPsi.at ? worstPsi.at.t : null,
           cell: worstPsi.at ? worstPsi.at.cell : null } : null,
         error,

@@ -628,6 +628,59 @@ async def main():
                   'PHREEQC\'s', m_p is not None and float(m_p.group(1)) < 1e-6, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a CD-MUSIC surface: written by CD-MUSIC, run, and looked at through PHREEQC ---
+            # phreeqc.dat with the tests' own goethite-like block in front (test-phreeqc.js, OWN_CD).
+            cd_block = ('SURFACE_MASTER_SPECIES\n  Goe_uni  Goe_uniOH-0.5\n  Goe_tri  Goe_triO-0.5\nSURFACE_SPECIES\n'
+                        '  Goe_uniOH-0.5 = Goe_uniOH-0.5\n    log_k 0\n'
+                        '  Goe_uniOH-0.5 + H+ = Goe_uniOH2+0.5\n    log_k 9.2\n    -cd_music 1 0 0 0 0\n'
+                        '  Goe_uniOH-0.5 + Na+ = Goe_uniOHNa+0.5\n    log_k -0.6\n    -cd_music 0 1 0 0 0\n'
+                        '  Goe_triO-0.5 = Goe_triO-0.5\n    log_k 0\n'
+                        '  Goe_triO-0.5 + H+ = Goe_triOH+0.5\n    log_k 9.2\n    -cd_music 1 0 0 0 0\n')
+            with tempfile.TemporaryDirectory() as tmp:
+                cd_path = os.path.join(tmp, 'cd-test.dat')
+                with open(cd_path, 'w', encoding='latin-1') as fh:
+                    fh.write(cd_block + pqdat)
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                await page.set_files('#rtmPqDbFile', [cd_path])
+                loaded = await until(page, f"(() => {{ const t = {STATUS}; return / is loaded: |cannot read/.test(t) ? t : ''; }})()")
+            check('a database with a CD-MUSIC surface opened is read by PHREEQC', isinstance(loaded, str)
+                  and loaded.startswith('cd-test.dat is loaded:'), True)
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = 'SOLUTION 1\\n  pH 7\\n  units mol/kgw\\n  Na 0.01\\n  Cl 0.01 charge\\n"
+                          "SURFACE 1\\n  -cd_music\\n  Goe_uniOH 3.45e-3 98 1\\n  -capacitances 0.9 0.74\\n"
+                          "  Goe_triO 2.7e-3\\n  -equilibrate 1\\nEND\\n';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            oncd = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            cd_text = await page.ev("document.getElementById('rtmText').value")
+            check('a CD-MUSIC surface in the water is written by CD-MUSIC: its three potentials, the first with its '
+                  'capacitances, each species\' planes and half charges, and the report says so',
+                  isinstance(oncd, str) and 'by CD-MUSIC: the planes 0, 1 and 2 of Goe' in oncd and isinstance(cd_text, str)
+                  and re.search(r'^Goe_psi +[0-9.e-]+ +potential +area=98 +grams=1 +c0=0\.9 +c1=0\.74$', cd_text, re.M) is not None
+                  and re.search(r'^Goe_psib +[0-9.e-]+ +potential$', cd_text, re.M) is not None
+                  and re.search(r'^Goe_uniOHNa_0_5 +[0-9.e-]+ +surface +z=0\.5 +dz1=1$', cd_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give CD-MUSIC\'s planes', await page.ev(
+                "/CD-MUSIC's plane 0 potential Goe_psi.*CD-MUSIC's plane 2 potential Goe_psid/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            cd_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_cd = re.search(r'loaded by PHREEQC from each water with the sites the run has there, by CD-MUSIC, every species '
+                             r'on it is within ([0-9.e+-]+).*and every potential within ([0-9.e+-]+) mV', cd_summary or '')
+            check('looked at through PHREEQC, the run\'s CD-MUSIC surface and its three potentials are the ones PHREEQC loads '
+                  'from its water', m_cd is not None and float(m_cd.group(1)) < 1e-6 and float(m_cd.group(2)) < 1e-3, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+
             # --- a gas phase in the water: carried as real gases, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

@@ -233,7 +233,10 @@ function rtmPotentialSummary(model, k) {
     const psi = -Math.log(c[i * ns + k]) / (pt.fRTc ? pt.fRTc[i] : pt.fRT);
     if (Number.isFinite(psi)) { lo = Math.min(lo, psi); hi = Math.max(hi, psi); }
   }
-  return { name: model.speciesNames[k], psi: Number.isFinite(lo) ? [lo, hi] : null };
+  // CD-MUSIC's planes: 0, 1 and 2 of a surface with three potentials; a double layer's has none.
+  const q = pt.list.indexOf(k);
+  const plane = q >= 0 && pt.kind ? { c0: 0, c1: 1, cd: 2 }[pt.kind[q]] : undefined;
+  return { name: model.speciesNames[k], psi: Number.isFinite(lo) ? [lo, hi] : null, plane: plane === undefined ? null : plane };
 }
 
 function rtmRedoxSummary(model) {

@@ -2828,6 +2828,90 @@ function againstSurfaceMineral(engine) {
 /** RT/F at tc, in volts, with PHREEQC's constants: a potential from its activity exp(-F psi/RT). */
 function GAS_R_T(tc) { return (8.31470 * (tc + 273.15)) / 96493.5; }
 
+/* ======================================================================
+   CD-MUSIC: PHREEQC's SURFACE with -cd_music, read, handed off, acid added
+   against REACTION, and looked at through the PHREEQC tab
+   ====================================================================== */
+// A goethite-like surface of the tests' own, made-up constants: protons on plane 0, sodium on plane 1, a chloride
+// pair across both, zinc split between them by PHREEQC's five numbers (f 0.3 of a charge of 2 on plane 0).
+const OWN_CD = 'SURFACE_MASTER_SPECIES\n  Goe_uni  Goe_uniOH-0.5\n  Goe_tri  Goe_triO-0.5\nSURFACE_SPECIES\n'
+  + '  Goe_uniOH-0.5 = Goe_uniOH-0.5\n    log_k 0\n'
+  + '  Goe_uniOH-0.5 + H+ = Goe_uniOH2+0.5\n    log_k 9.2\n    -cd_music 1 0 0 0 0\n'
+  + '  Goe_uniOH-0.5 + Na+ = Goe_uniOHNa+0.5\n    log_k -0.6\n    -cd_music 0 1 0 0 0\n'
+  + '  Goe_uniOH-0.5 + H+ + Cl- = Goe_uniOH2Cl-0.5\n    log_k 8.4\n    -cd_music 1 -1 0 0 0\n'
+  + '  Goe_uniOH-0.5 + Zn+2 = Goe_uniOHZn+1.5\n    log_k 3\n    -cd_music 0 0 0 0.3 2\n'
+  + '  Goe_triO-0.5 = Goe_triO-0.5\n    log_k 0\n'
+  + '  Goe_triO-0.5 + H+ = Goe_triOH+0.5\n    log_k 9.2\n    -cd_music 1 0 0 0 0\n'
+  + '  Goe_triO-0.5 + Na+ = Goe_triONa+0.5\n    log_k -0.6\n    -cd_music 0 1 0 0 0\n';
+
+function againstCdMusic(engine) {
+  const cdText = OWN_CD + dbText;
+  const db = { name: 'cd-test.dat', text: cdText };
+  engine.load(cdText);
+  const rd = P.readDatabase(cdText);
+  const zn = rd.sfCd.get('Goe_uniOHZn+1.5');
+  check('CD-MUSIC: -cd_music read as PHREEQC reads it, the planes\' charges from its five numbers, dz0 + f z, dz1 + (1 - f) z '
+    + 'and dz2', !!zn && Math.abs(zn[0] - 0.6) < 1e-15 && Math.abs(zn[1] - 1.4) < 1e-15 && zn[2] === 0
+    && rd.sfCd.get('Goe_uniOH2Cl-0.5').join() === '1,-1,0', zn ? zn.join(', ') : 'none');
+
+  const water = (cl) => `${KNOBS}SOLUTION 1\n pH 7\n units mol/kgw\n Na 0.01\n Cl ${cl}\n Zn 1e-6\nSURFACE 1\n -cd_music\n`
+    + ' Goe_uniOH 3.45e-3 98 1\n -capacitances 0.9 0.74\n Goe_triO 2.7e-3\n -equilibrate 1\nSAVE solution 1\nSAVE surface 1\nEND\n';
+  const handOff = (w) => P.waterToModel({ engine, database: db, water: { name: 'cd', text: w }, activity: true, exact: true,
+    redox: false, floor: 1e-30 });
+  const startOf = (res) => {
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    let worst = 0;
+    for (const [n, a] of res.amounts) {
+      const k = m.speciesNames.indexOf(n);
+      if (a > 1e-25 && k >= 0) worst = Math.max(worst, Math.abs(y[k] / a - 1));
+    }
+    for (const [p, n] of res.names) {
+      const k = m.speciesNames.indexOf(n);
+      if (res.molal.get(p) > 1e-25 && k >= 0) worst = Math.max(worst, Math.abs(y[k] / res.molal.get(p) - 1));
+    }
+    return { m, worst };
+  };
+  const bal = handOff(water('0.01 charge'));
+  const imb = handOff(water('0.0098'));
+  const sb = startOf(bal);
+  const si = startOf(imb);
+  const pots = bal.report.surface.potentials;
+  check('  the hand-off writes the surface by CD-MUSIC -- its three potentials at PHREEQC\'s EDL psi, psi1 and psi2, the '
+    + 'first with the area and capacitances, each species\' planes as dz0 to dz2 and a half charge as z= -- and the model '
+    + 'starts on PHREEQC\'s water and surface, in charge balance and with a charge of its own',
+  sb.worst < 1e-11 && si.worst < 1e-11 && pots.length === 3 && pots.every((pp) => pp.cd)
+    && /^Goe_psi\s+\S+\s+potential\s+area=98\s+grams=1\s+c0=0\.9\s+c1=0\.74$/m.test(bal.text)
+    && /^Goe_psid\s+\S+\s+potential$/m.test(bal.text) && /^Goe_uniOHZn_1_5\s+\S+\s+surface\s+z=1\.5\s+dz0=0\.6\s+dz1=1\.4$/m.test(bal.text),
+  `the start ${sb.worst.toExponential(1)} and ${si.worst.toExponential(1)}; psi ${pots.map((pp) => (pp.psi * 1e3).toFixed(3)).join(', ')} mV`);
+
+  // 1 mmol of HCl against REACTION: the pH and the three potentials; and through the PHREEQC tab.
+  const rtext = `${bal.text.replace(/TEND = [^\n]*\n/, 'TEND = 1e4\n').replace(/EQUILIBRATE = [^\n]*\n/, 'EQUILIBRATE = always\n')}`
+    + '\n<REACTIONS>\n=> H+ + Cl-, k = 1e-7\n';
+  const m2 = RtmModel.compile(rtext);
+  const r = FacsimileODE.runModel(m2, { solver: 'ndf', tend: 1e4, rtol: 1e-10, atol: 1e-20 });
+  const ye = m2.toConcentrations(r.y[r.y.length - 1]);
+  const at = (n) => ye[m2.speciesNames.indexOf(n)];
+  const lnG = new Float64Array(ye.length);
+  RtmModel.activityAt(m2.act, ye, 0, lnG, new Float64Array(ye.length));
+  const kH = m2.speciesNames.indexOf('H+');
+  const pH = -(Math.log(ye[kH]) + lnG[kH]) / Math.LN10;
+  const psi = ['Goe_psi', 'Goe_psib', 'Goe_psid'].map((n) => -Math.log(at(n)) * GAS_R_T(25));
+  const pq = P.parseRows(engine.run(`${P.punchBlock(['EDL("psi", "Goe")', 'EDL("psi1", "Goe")', 'EDL("psi2", "Goe")'])}`
+    + `${water('0.01 charge')}USE solution 1\nUSE surface 1\nREACTION 1\n HCl 1\n 0.001 moles\nEND\n`)).pop();
+  const dpsi = Math.max(...psi.map((v, i) => Math.abs(v - Number(pq.x[i]))));
+  const view = P.viewRun({ engine, database: db, run: pageRun(rtext, 1e4), modelText: rtext,
+    water: { name: 'cd', text: water('0.01 charge') }, unit: 's', times: 8 });
+  const sfr = view.report.surface;
+  check('  1 mmol of HCl added against REACTION: the pH and the three potentials as PHREEQC has them; looked at through '
+    + 'the PHREEQC tab, the surface PHREEQC loads from each water and its potentials the run\'s',
+  Math.abs(pH - pq.pH) < 1e-8 && dpsi < 1e-9 && !!sfr && !sfr.error && Math.abs(sfr.gap) < 1e-9 && sfr.potentials.length === 3
+    && Math.abs(sfr.psiGap.by) < 1e-9,
+  `pH ${pH.toFixed(8)} for ${pq.pH.toFixed(8)}, the potentials within ${dpsi.toExponential(1)} V; the tab: the surface `
+    + `${sfr ? Number(sfr.gap).toExponential(1) : '-'}, the potentials ${sfr && sfr.psiGap ? Math.abs(sfr.psiGap.by).toExponential(1) : '-'} V`);
+  engine.load(dbText);
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -2866,6 +2950,8 @@ function GAS_R_T(tc) { return (8.31470 * (tc + 273.15)) / 96493.5; }
   againstVolumes(wasm);
   console.log('\n--- sites that go with a phase: the hand-off, salt against REACTION ---');
   againstSurfaceMineral(wasm);
+  console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
+  againstCdMusic(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

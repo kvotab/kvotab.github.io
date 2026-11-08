@@ -400,12 +400,12 @@
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
         mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null, sites: null,
-        area: null, grams: null, per: null, tc: null, pc: null, omega: null,
+        area: null, grams: null, per: null, dz: null, c0: null, c1: null, tc: null, pc: null, omega: null,
         mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, surface: false,
         potential: false, gas: false, drummond: false, line };
       let first = true;
       for (const part of parts) {
-        const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
+        const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
         if (kv) {
           const key = kv[1].toLowerCase();
           /*
@@ -435,7 +435,8 @@
           // The activity model's: the charge, where the name does not give
           // it, and the WATEQ Debye-Hueckel a (angstrom) and b (kg/mol).
           else if (key === 'z') {
-            if (!Number.isInteger(value)) throw new RtmError(`z = ${value} for ${name}: a charge is a whole number.`, line);
+            // A whole number, but on a surface any: CD-MUSIC's sites carry halves (Goe_uniOH-0.5).
+            if (!Number.isFinite(value)) throw new RtmError(`z = ${value} for ${name}: a charge is a number.`, line);
             entry.z = value;
           } else if (key === 'a') {
             if (!(value >= 0)) throw new RtmError(`a = ${value} for ${name}: an ion size is zero or more.`, line);
@@ -447,6 +448,16 @@
           else if (key === 'sites') {
             if (!(value > 0)) throw new RtmError(`sites = ${value} for ${name}: a number of sites is above zero.`, line);
             entry.sites = value;
+          }
+          // CD-MUSIC: the charge a species on a surface puts on each of its three planes, against its bare site.
+          else if (key === 'dz0' || key === 'dz1' || key === 'dz2') {
+            if (!entry.dz) entry.dz = [0, 0, 0];
+            entry.dz[Number(key[2])] = value;
+          }
+          // CD-MUSIC: the capacitances between planes 0 and 1, and 1 and 2, F/m2, on a surface's first potential.
+          else if (key === 'c0' || key === 'c1') {
+            if (!(value > 0)) throw new RtmError(`${kv[1]} = ${value} for ${name}: a capacitance is above zero.`, line);
+            entry[key] = value;
           }
           // A surface's potential's: the specific area of the solid, m2/g, and
           // the grams of it to each kilogram of water.
@@ -461,8 +472,8 @@
           } else if (key === 'omega') entry.omega = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
             + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; for '
-            + 'the electron pe; for a surface sites and per; for its potential area, grams and per; and for a real gas '
-            + 'Tc, Pc and omega.', line);
+            + 'the electron pe; for a surface sites, per and, under CD-MUSIC, dz0, dz1 and dz2; for its potential area, '
+            + 'grams, per, c0 and c1; and for a real gas Tc, Pc and omega.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -519,6 +530,17 @@
             + 'cell has, and takes no grams.', line);
         }
       }
+      if (entry.z !== null && !Number.isInteger(entry.z) && !entry.surface) {
+        throw new RtmError(`z = ${entry.z} for ${name}: a charge is a whole number, but on a surface.`, line);
+      }
+      if (entry.dz && !entry.surface) {
+        throw new RtmError(`dz0, dz1 and dz2 are given to ${name}: they are a species on a surface's, the charge it puts on `
+          + 'each plane of a CD-MUSIC surface.', line);
+      }
+      if ((entry.c0 !== null || entry.c1 !== null) && !entry.potential) {
+        throw new RtmError(`c0 and c1 are given to ${name}: they are a CD-MUSIC surface's capacitances, on its potential `
+          + 'Hfo_psi.', line);
+      }
       if ((entry.area !== null || entry.grams !== null) && !entry.potential) {
         throw new RtmError(`${entry.area !== null ? 'area' : 'grams'} is given to ${name}: area and grams are a surface's `
           + 'potential\'s, Hfo_psi potential area=600 grams=0.09.', line);
@@ -573,7 +595,13 @@
           throw new RtmError(`${name} is a surface's potential, whose activity is solved for and which carries no charge `
             + 'into the ionic strength: it takes no z, a or b.', line);
         }
-        if (entry.area === null || (entry.grams === null && entry.per === null)) {
+        // A CD-MUSIC surface's planes 1 and 2, Hfo_psib and Hfo_psid: what the surface is given is on its first, Hfo_psi.
+        if (/_psi[bd]$/.test(name)) {
+          if (entry.area !== null || entry.grams !== null || entry.per !== null || entry.c0 !== null || entry.c1 !== null) {
+            throw new RtmError(`${name} is plane ${name.endsWith('b') ? 1 : 2} of a CD-MUSIC surface: its area, grams and `
+              + `capacitances are given on its first potential, ${name.slice(0, -1)}.`, line);
+          }
+        } else if (entry.area === null || (entry.grams === null && entry.per === null)) {
           throw new RtmError(`${name} is a surface's potential and needs the surface's area, in m2/g, and grams of the `
             + `solid to each kilogram of water: ${name} potential area=600 grams=0.09.`, line);
         }
@@ -3650,8 +3678,66 @@
       throw new RtmError(`${name(pots[0])} is a surface's potential, and no species is on a surface: Hfo_wOH surface `
         + 'sites=2e-4 is one.', species[pots[0]].line);
     }
+    /*
+      CD-MUSIC, PHREEQC's SURFACE with -cd_music: a surface with three
+      potentials, its planes 0, 1 and 2, Hfo_psi, Hfo_psib and Hfo_psid, the
+      first given the capacitances between them, c0 and c1 (F/m2). Each
+      species on it puts the charges dz0, dz1 and dz2 on them, against its
+      bare site, and the plane-0 charge of the site itself, z less dz1 and
+      dz2; a relation takes each plane's potential to the charge it puts
+      there. Its equations, PHREEQC's: sigma0 = c0 (psi0 - psi1), sigma0 +
+      sigma1 = c1 (psi1 - psi2), and sigma0 + sigma1 + sigma2 + sigmad = 0,
+      sigmad the diffuse layer's charge at psi2 from every ion of the water
+      (potentialRow).
+    */
+    const planeOf = (k) => (/_psib$/.test(name(k)) ? 1 : /_psid$/.test(name(k)) ? 2 : 0);
+    const qOf = new Map(pots.map((k, q) => [name(k), q]));
+    const np = pots.length;
+    const kind = new Array(np).fill('gc');
+    const next = new Int32Array(np).fill(-1);
+    const cap = new Float64Array(np);
+    const first = new Int32Array(np).fill(-1);
+    pots.forEach((k, q) => {
+      if (planeOf(k)) {
+        if (!qOf.has(name(k).slice(0, -1))) {
+          throw new RtmError(`${name(k)} is plane ${planeOf(k)} of a CD-MUSIC surface, whose first potential, `
+            + `${name(k).slice(0, -1)}, is not in <SPECIES>.`, species[k].line);
+        }
+        return;
+      }
+      first[q] = q;
+      const qb = qOf.get(`${name(k)}b`);
+      const qd = qOf.get(`${name(k)}d`);
+      const sp = species[k];
+      if (qb === undefined && qd === undefined) {
+        if (sp.c0 !== null || sp.c1 !== null) {
+          throw new RtmError(`${name(k)} is given c0 and c1, a CD-MUSIC surface's capacitances, and has no planes 1 and 2: `
+            + `${name(k)}b and ${name(k)}d, potentials of their own.`, sp.line);
+        }
+        return;
+      }
+      if (qb === undefined || qd === undefined) {
+        throw new RtmError(`A CD-MUSIC surface has three potentials, ${name(k)}, ${name(k)}b and ${name(k)}d: ${qb === undefined
+          ? `${name(k)}b` : `${name(k)}d`} is not in <SPECIES>.`, sp.line);
+      }
+      if (sp.c0 === null || sp.c1 === null) {
+        throw new RtmError(`${name(k)} is the first potential of a CD-MUSIC surface and takes its capacitances, c0 between `
+          + `planes 0 and 1 and c1 between 1 and 2, F/m2: ${name(k)} potential area=600 grams=1 c0=1.1 c1=5.`, sp.line);
+      }
+      kind[q] = 'c0';
+      next[q] = qb;
+      cap[q] = sp.c0;
+      kind[qb] = 'c1';
+      next[qb] = qd;
+      cap[qb] = sp.c1;
+      kind[qd] = 'cd';
+      first[qb] = q;
+      first[qd] = q;
+    });
+    // Each species on a surface: the first potential of its surface, by the name's prefix up to the underscore.
     const of = new Int32Array(ns).fill(-1);
     pots.forEach((k, q) => {
+      if (first[q] !== q) return;
       const n = name(k);
       const cut = n.indexOf('_');
       if (cut < 1) {
@@ -3683,8 +3769,22 @@
           + `named ${prefix}...: Hfo_psi is the potential of Hfo_wOH.`, species[k].line);
       }
     });
-    // The charge each species on a surface carries onto it.
+    // The charge each species on a surface carries onto it, and under CD-MUSIC onto each plane.
     const zs = Float64Array.from(species, (sp) => (sp.surface ? (sp.z !== null ? sp.z : chargeOf(sp.name)) : 0));
+    const dzOf = (j) => species[j].dz || [0, 0, 0];
+    for (const j of sf.list) {
+      if (species[j].dz && (of[j] < 0 || kind[of[j]] !== 'c0')) {
+        throw new RtmError(`${name(j)} is given dz0, dz1 and dz2, the charges a species puts on the planes of a CD-MUSIC `
+          + 'surface, and its surface is none.', species[j].line);
+      }
+    }
+    // Each potential's weights on the species of its surface: plane 0 the site's charge less what goes to planes 1
+    // and 2, plane 1 less what goes to 2, plane 2 and a double layer the whole charge.
+    const w = pots.map((k, q) => Float64Array.from(species, (sp, j) => {
+      if (of[j] < 0 || of[j] !== first[q]) return 0;
+      const d = dzOf(j);
+      return kind[q] === 'c0' ? zs[j] - d[1] - d[2] : kind[q] === 'c1' ? zs[j] - d[2] : zs[j];
+    }));
     const isPot = (k) => species[k].potential;
     for (const eq of equilibria) {
       const p = eq.net.find(([k]) => isPot(k));
@@ -3701,16 +3801,37 @@
       const q = of[on[0][0]];
       let dz = 0;
       for (const [k, c] of on) dz += c * zs[k];
-      if (Math.abs(dz) < 1e-12) continue;
+      // CD-MUSIC: the charge the relation puts on each plane, which together are what it puts on the surface.
+      const planes = [0, 0, 0];
+      if (kind[q] === 'c0') {
+        let scale = 0;
+        for (const [k, c] of on) {
+          const d = dzOf(k);
+          for (let i = 0; i < 3; i++) planes[i] += c * d[i];
+          scale += Math.abs(c * zs[k]);
+        }
+        if (Math.abs(planes[0] + planes[1] + planes[2] - dz) > 1e-9 * Math.max(scale, 1)) {
+          throw new RtmError(`"${eq.text}" puts ${fmtSites(dz)} of charge on its CD-MUSIC surface and ${fmtSites(planes[0])}, `
+            + `${fmtSites(planes[1])} and ${fmtSites(planes[2])} on its planes, by dz0, dz1 and dz2: they add up to the charge.`,
+          eq.line);
+        }
+      }
+      if (Math.abs(dz) < 1e-12 && !planes.some((v) => Math.abs(v) > 1e-12)) continue;
       if (eq.kf !== null) {
         throw new RtmError(`"${eq.text}" puts a charge on a surface with a potential, which is solved for and cannot be `
           + 'moved at a rate: the relation is held (EQUILIBRATE), and takes no kf.', eq.line);
       }
-      // A reactant to the charge the relation puts on the surface: K exp(-dz F psi/RT).
-      eq.net.push([pots[q], -dz]);
+      // A reactant to the charge the relation puts on the surface, or on each plane: K exp(-dz F psi/RT).
+      if (kind[q] === 'gc') eq.net.push([pots[q], -dz]);
+      else {
+        const qq = [q, next[q], next[next[q]]];
+        for (let i = 0; i < 3; i++) if (Math.abs(planes[i]) > 1e-12) eq.net.push([pots[qq[i]], -planes[i]]);
+        eq.cdPots = qq.map((x) => pots[x]);
+      }
       eq.potential = { at: pots[q], dz };
     }
     for (const k of pots) {
+      if (planeOf(k)) continue;
       if (!equilibria.some((eq) => eq.potential && eq.potential.at === k)) {
         throw new RtmError(`No relation puts a charge on the surface of ${name(k)}, and a potential acts through them: `
           + 'Hfo_wOH + H+ <=> Hfo_wOH2+ is one.', species[k].line);
@@ -3726,14 +3847,25 @@
     }
     const T = tc + 273.15;
     const { eps } = debyeHuckelAB(tc, waterPressure(settings, species));
+    const firstSp = (q) => species[pots[first[q]]];
     act.pt = {
       list: pots,
       of,
       zs,
-      // F/(A M), C/m2 for each mol/kgw of charge -- with per=, F/A, to be divided by the mineral's amount in the cell
-      // (perM, gouyChapman); and sqrt(8000 R T eps eps0), C/m2 at I = 1.
-      cQ: Float64Array.from(pots, (k) => FARADAY / (species[k].area * (species[k].per === null ? species[k].grams : 1))),
-      perM: Int32Array.from(pots, (k) => (species[k].per === null ? -1 : species.findIndex((x) => x.name === species[k].per))),
+      // Each potential's weights on the species of its surface (see above); its kind -- 'gc' a double layer's Gouy and
+      // Chapman, 'c0' and 'c1' CD-MUSIC's planes 0 and 1 with their capacitance to the next plane, 'cd' its plane 2 and
+      // diffuse layer -- the next plane's potential, and the first potential of its surface.
+      w,
+      kind,
+      next,
+      cap,
+      first,
+      cd: kind.includes('cd'),
+      // F/(A M), C/m2 for each mol/kgw of charge, the surface's -- with per=, F/A, to be divided by the mineral's amount
+      // in the cell (perM, potentialRow); and sqrt(8000 R T eps eps0), C/m2 at I = 1.
+      cQ: Float64Array.from(pots, (k, q) => FARADAY / (firstSp(q).area * (firstSp(q).per === null ? firstSp(q).grams : 1))),
+      perM: Int32Array.from(pots, (k, q) => (firstSp(q).per === null ? -1
+        : species.findIndex((x) => x.name === firstSp(q).per))),
       kS: Math.sqrt(8000 * GAS_R * T * eps * EPSILON0),
       // F/RT: psi = -ln(a)/fRT, in volts.
       fRT: FARADAY / (GAS_R * T),
@@ -3764,6 +3896,86 @@
       du: S * Math.cosh(u / 2) / 2,
       dM: per ? (-cq * Q) / M : 0,
     };
+  }
+
+  /**
+   * One potential's row in the speciation and the run, of any kind (act.pt):
+   * its surface's charge on its plane, Q in mol/kgw by its weights, as a
+   * charge density cQ Q, and what balances it -- a double layer's Gouy and
+   * Chapman (gouyChapman); CD-MUSIC's planes 0 and 1, c (u - uNext) RT/F,
+   * the capacitance to the next plane; its plane 2, the diffuse layer's
+   * charge from every ion of the water, PHREEQC's
+   *
+   *   sigmad = sign(u) sqrt(8000 R T eps eps0)/2 sqrt(D),
+   *   D = sum m (e^(z u) - 1) + |n| (e^(-s u) - 1),
+   *
+   * n = sum m z, the water's own charge, balanced by a fictitious ion of
+   * charge -s, s its sign; at no potential its limit, sqrt(D) -> |u|
+   * sqrt(K), K = (sum m z^2 + |n|)/2. u = ln a = -F psi/RT. With the
+   * derivatives in Q, u, the next plane's u, I, the mineral's amount M where
+   * the area is per mole of it, and each ion's molality (ions.dm).
+   */
+  function potentialRow(pt, q, Q, I, low, u, cell, M, uNext, ions) {
+    const kind = pt.kind[q];
+    if (kind === 'gc') {
+      const g = gouyChapman(pt, q, Q, I, low, u, cell, M);
+      g.duNext = 0;
+      return g;
+    }
+    const per = pt.perM[q] >= 0;
+    const cq = per ? pt.cQ[q] / M : pt.cQ[q];
+    const out = { r: cq * Q, dQ: cq, du: 0, duNext: 0, dI: 0, dM: per ? (-cq * Q) / M : 0, dm: null };
+    if (kind === 'c0' || kind === 'c1') {
+      const fRT = pt.fRTc ? pt.fRTc[cell] : pt.fRT;
+      const g = pt.cap[q] / fRT;
+      out.r += g * (u - uNext);
+      out.du = g;
+      out.duNext = -g;
+      return out;
+    }
+    const kS = pt.kSc ? pt.kSc[cell] : pt.kS;
+    const { z, m, dm } = ions;
+    const n = z.length;
+    let D = 0;
+    let Dp = 0;
+    let net = 0;
+    for (let i = 0; i < n; i++) {
+      const e = Math.exp(z[i] * u);
+      D += m[i] * (e - 1);
+      Dp += m[i] * z[i] * e;
+      net += m[i] * z[i];
+    }
+    const sg = net >= 0 ? 1 : -1;
+    const ef = Math.exp(-sg * u);
+    D += Math.abs(net) * (ef - 1);
+    Dp -= sg * Math.abs(net) * ef;
+    /*
+      A water in charge balance has n at nothing, where |n| has its corner:
+      the fictitious ion's derivative in each molality is then the mean of
+      its two sides, -z sinh(u), as a difference across it finds it. Its
+      value there is nothing either way.
+    */
+    let scale = 0;
+    for (let i = 0; i < n; i++) scale += m[i] * Math.abs(z[i]);
+    const balanced = Math.abs(net) <= 1e-12 * scale;
+    const fict = (zi) => (balanced ? -zi * Math.sinh(u) : sg * zi * (ef - 1));
+    if (Math.abs(u) < 1e-8 || !(D > 0)) {
+      let K = Math.abs(net);
+      for (let i = 0; i < n; i++) K += m[i] * z[i] * z[i];
+      K *= 0.5;
+      const rk = Math.sqrt(K);
+      out.r += 0.5 * kS * u * rk;
+      out.du = 0.5 * kS * rk;
+      for (let i = 0; i < n; i++) dm[i] = rk > 0 ? (0.5 * kS * u * (z[i] * z[i] + (balanced ? 0 : sg * z[i]))) / (4 * rk) : 0;
+    } else {
+      const su = u < 0 ? -1 : 1;
+      const rD = Math.sqrt(D);
+      out.r += su * 0.5 * kS * rD;
+      out.du = (su * 0.5 * kS * Dp) / (2 * rD);
+      for (let i = 0; i < n; i++) dm[i] = (su * 0.5 * kS * (Math.exp(z[i] * u) - 1 + fict(z[i]))) / (2 * rD);
+    }
+    out.dm = dm;
+    return out;
   }
 
   /** PHREEQC's gas constant, L atm/(K mol) (global_structures.h). */
@@ -4850,7 +5062,11 @@
 
   function equilibriumSpecies(equilibria) {
     const seen = new Set();
-    for (const eq of equilibria) for (const [si] of eq.net) seen.add(si);
+    for (const eq of equilibria) {
+      for (const [si] of eq.net) seen.add(si);
+      // A CD-MUSIC surface's three potentials, each with its equation, whatever charge the relation puts on its plane.
+      if (eq.cdPots) for (const si of eq.cdPots) seen.add(si);
+    }
     return [...seen].sort((a, b) => a - b);
   }
 
@@ -5323,11 +5539,22 @@
         if (at[si] < 0) return;
         const members = [];
         const fixedQ = [];
+        const w = pt.w[q];
         for (let j = 0; j < ns; j++) {
-          if (pt.of[j] !== q || !pt.zs[j]) continue;
-          if (at[j] >= 0) members.push([at[j], pt.zs[j]]); else fixedQ.push([j, pt.zs[j]]);
+          if (!w[j]) continue;
+          if (at[j] >= 0) members.push([at[j], w[j]]); else fixedQ.push([j, w[j]]);
         }
-        pots.push({ k: at[si], q, si, members, fixedQ });
+        // CD-MUSIC: the next plane's potential (planes 0 and 1), and every ion of the water (plane 2).
+        const nsi = pt.next[q] >= 0 ? pt.list[pt.next[q]] : -1;
+        let ions = null;
+        if (pt.kind[q] === 'cd') {
+          const list = [];
+          // The water's ions: act.z is 0 on a surface, an exchanger, a mineral, a gas and the rest that are no ion.
+          for (let j = 0; j < ns; j++) if (act.z[j]) list.push(j);
+          ions = { si: Int32Array.from(list), k: Int32Array.from(list, (j) => at[j]), z: Float64Array.from(list, (j) => act.z[j]),
+            m: new Float64Array(list.length), dm: new Float64Array(list.length) };
+        }
+        pots.push({ k: at[si], q, si, members, fixedQ, nsi, next: nsi >= 0 ? at[nsi] : -1, ions });
       });
     }
     return {
@@ -5643,9 +5870,17 @@
           const pm = sys.pt.perM[pot.q];
           const km = pm >= 0 ? at[pm] : -1;
           const M = pm < 0 ? 1 : km >= 0 ? val[km] : C[off + pm];
-          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k], cell, M);
+          // CD-MUSIC: the next plane's potential, and plane 2's ions.
+          const uNext = pot.nsi < 0 ? 0 : pot.next >= 0 ? x[pot.next] : Math.log(C[off + pot.nsi]);
+          if (pot.ions) {
+            const io = pot.ions;
+            for (let i = 0; i < io.si.length; i++) io.m[i] = io.k[i] >= 0 ? val[io.k[i]] : C[off + io.si[i]];
+          }
+          const gc = potentialRow(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k], cell, M, uNext, pot.ions);
           F[row] = gc.r;
           J[row][pot.k] += gc.du;
+          if (pot.next >= 0) J[row][pot.next] += gc.duNext;
+          if (gc.dm) for (let i = 0; i < gc.dm.length; i++) if (pot.ions.k[i] >= 0) J[row][pot.ions.k[i]] += gc.dm[i] * pot.ions.m[i];
           if (km >= 0) J[row][km] += gc.dM;
           for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * val[k];
           if (gc.dI) {
@@ -5904,7 +6139,7 @@
     // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
     // the full speciation.
     if (act && ((act.gas && act.gas.dln) || act.pz || (act.vol && !act.vol.idle)
-      || (act.pt && act.pt.perM.some((m) => m >= 0)))) return null;
+      || (act.pt && (act.pt.cd || act.pt.perM.some((m) => m >= 0))))) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -7091,9 +7326,22 @@
       for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
       const pm = sys.pt.perM[pot.q];
       const km = pm >= 0 ? sys.at[pm] : -1;
-      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]), cell,
-        pm >= 0 ? C[off + pm] : 1);
+      if (pot.ions) {
+        const io = pot.ions;
+        for (let i = 0; i < io.si.length; i++) io.m[i] = C[off + io.si[i]];
+      }
+      const gc = potentialRow(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]), cell,
+        pm >= 0 ? C[off + pm] : 1, pot.nsi >= 0 ? Math.log(C[off + pot.nsi]) : 0, pot.ions);
       J[row][pot.k] += gc.du;
+      if (pot.next >= 0) J[row][pot.next] += gc.duNext;
+      // CD-MUSIC's plane 2: every ion, in its column, or with what is outside where it is not an unknown.
+      if (gc.dm) {
+        const io = pot.ions;
+        for (let i = 0; i < gc.dm.length; i++) {
+          if (io.k[i] >= 0) J[row][io.k[i]] += gc.dm[i] * io.m[i];
+          else if (O) { const o = outside.indexOf(io.si[i]); if (o >= 0) O[row][o] += gc.dm[i]; }
+        }
+      }
       // An area per mole of a mineral: in its column, or with what is outside where it is not an unknown.
       if (km >= 0) J[row][km] += gc.dM;
       else if (pm >= 0 && O) { const i = outside.indexOf(pm); if (i >= 0) O[row][i] += gc.dM; }
@@ -9927,6 +10175,19 @@
         initial.set(speciate(model, initial, { equilibria: waterOnly }).y);
       }
       if (ex && ex.load.length) loadExchangers(model, initial);
+      // A CD-MUSIC surface is not loaded from the water: its species are given their amounts.
+      if (sf && sf.load.length && act.pt && act.pt.cd) {
+        const nt = sf.types.length;
+        for (const q of sf.load) {
+          const t = sf.types[q % nt];
+          const k = t.members.find((j) => act.pt.of[j] >= 0 && act.pt.kind[act.pt.of[j]] === 'c0');
+          if (k !== undefined) {
+            throw new RtmError(`${nameOf[t.sitesFrom]} is given its sites to be loaded from the water, on a CD-MUSIC surface, `
+              + 'which is not loaded so: give its species their amounts, the bare site all of them if need be, and the '
+              + 'start puts them on the relations.', species[t.sitesFrom].line);
+          }
+        }
+      }
       // Sites per mole of a mineral: at what the water's own speciation has left of it, which they then go with.
       if (sf && sf.load.length) {
         const nt = sf.types.length;
@@ -11231,7 +11492,7 @@
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
     chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
-    pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP,
+    pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP, potentialRow,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.

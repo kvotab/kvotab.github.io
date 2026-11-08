@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108g';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108h';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -467,7 +467,8 @@
         + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
           : `${m.surface.sites.length} kinds of surface site`} (${m.surface.sites.join(', ')}), each with its fraction `
           + 'of the sites for its activity'
-          + (m.surface.potentials && m.surface.potentials.length ? `, ${m.surface.potentials.map((pp) => `the double layer's `
+          + (m.surface.potentials && m.surface.potentials.length ? `, ${m.surface.potentials.map((pp) => (pp.plane !== null
+            && pp.plane !== undefined ? `CD-MUSIC's plane ${pp.plane} ` : 'the double layer\'s ')
             + `potential ${pp.name}${pp.psi ? ` at ${fmtMv(pp.psi)} to start with` : ''}`).join(', ')}` : '') : '')
         + (m.redox ? ` · ${m.redox.relations} relation${m.redox.relations === 1 ? '' : 's'} tied to the electron `
           + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : '')
@@ -2619,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108g';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108h';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108g',
+    'resources/js/rtm-phreeqc.js?v=20261108h',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2990,7 +2991,11 @@ END
           + 'for its activity, '
           + ((r.surface.per || []).length ? `the sites of ${r.surface.per.map((x) => `${esc(x.site)} ${pqNum(x.ratio)} to each `
             + `mole of ${esc(x.mineral)}`).join(' and ')}, going with it, ` : '')
-          + (pots.length ? `with the diffuse double layer: ${pots.map((pp) => `${esc(pp.name)}, the potential of `
+          + (pots.some((pp) => pp.cd) ? `by CD-MUSIC: ${pots.filter((pp) => !pp.plane).map((pp) => `the planes 0, 1 and 2 of `
+            + `${esc(pp.surface)}, ${pots.filter((x) => x.surface === pp.surface).map((x) => `${esc(x.name)} at `
+              + `${pqNum(x.psi * 1e3)} mV`).join(', ')}, with the capacitances ${pqNum(pp.cap[0])} and ${pqNum(pp.cap[1])} `
+            + 'F/m² between them').join('; ')}.</p>`
+            : pots.length ? `with the diffuse double layer: ${pots.map((pp) => `${esc(pp.name)}, the potential of `
             + `${esc(pp.surface)} (${pp.phase ? `${pqNum(pp.area)} m² to each mole of ${esc(pp.phase)}`
               : `${pqNum(pp.area)} m² per gram, ${pqNum(pp.grams)} g per kgw`}), at `
             + `${pqNum(pp.psi * 1e3)} mV`).join('; ')}.</p>` : 'without electrostatics as PHREEQC\'s -no_edl.</p>'));
@@ -3225,10 +3230,11 @@ END
         const pg = x.psiGap;
         const big = Math.abs(x.gap) > 1e-3 || (pg && Math.abs(pg.by) > 1e-4);
         out.push(`<p${big ? ' class="warn"' : ''}>The surface (sites ${x.sites.map(esc).join(', ')}): loaded by PHREEQC `
-          + `from each water with the sites the run has there, ${pg ? 'with its double layer' : 'without electrostatics'}, `
+          + `from each water with the sites the run has there, ${pg ? (x.cd ? 'by CD-MUSIC' : 'with its double layer')
+            : 'without electrostatics'}, `
           + `every species on it is within ${pqNum(Math.abs(x.gap))} of the run's fraction of its sites`
           + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}`
-          + (pg ? `, and the potential within ${pqNum(Math.abs(pg.by) * 1e3)} mV of the run's`
+          + (pg ? `, and ${x.potentials.length > 1 ? 'every potential' : 'the potential'} within ${pqNum(Math.abs(pg.by) * 1e3)} mV of the run's`
             + `${pg.name ? ` (${esc(pg.name)}${pg.t !== null ? `; ${where(pg)}` : ''})` : ''}` : '') + '.'
           + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
             + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');

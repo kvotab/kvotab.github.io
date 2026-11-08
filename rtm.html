@@ -1500,6 +1500,33 @@ Hfo_wOH       surface  sites=0.2  per=Ferrihydrite</pre>
             the run is then solved as one with the electron is (see <em>Redox: the electron</em>), each
             cell's species the speciation of its totals. Given <code>sites=</code>, the sites and the
             potential are loaded from the water together, as PHREEQC's <code>-equilibrate</code> does.</p>
+          <pre>Goe_uniOH    surface  z=-0.5
+Goe_uniOH2   surface  z=0.5   dz0=1
+Goe_uniOHNa  surface  z=0.5   dz1=1
+Goe_psi      potential  area=98  grams=1  c0=0.9  c1=0.74
+Goe_psib     potential
+Goe_psid     potential</pre>
+          <p>CD-MUSIC, PHREEQC's <code>SURFACE</code> with <code>-cd_music</code>: a surface with three
+            potentials, its planes 0, 1 and 2, named for it with <code>_psi</code>, <code>_psib</code> and
+            <code>_psid</code>. The first takes the area and grams, or <code>per=</code>, and
+            <code>c0=</code> and <code>c1=</code>, the capacitances between planes 0 and 1 and between 1 and 2
+            in F/m². A species on the surface puts <code>dz0=</code>, <code>dz1=</code> and <code>dz2=</code> of
+            charge on the planes, against its bare site, PHREEQC's <code>-cd_music</code>; together they are
+            its charge less the bare site's, and a charge its name cannot give, a half, is <code>z=</code>.
+            Each relation takes each plane's potential to the charge it puts there. The planes hold
+            PHREEQC's three equations,</p>
+          <p>σ<sub>0</sub> = c<sub>0</sub> (Ψ<sub>0</sub> − Ψ<sub>1</sub>), &nbsp;
+            σ<sub>0</sub> + σ<sub>1</sub> = c<sub>1</sub> (Ψ<sub>1</sub> − Ψ<sub>2</sub>), &nbsp;
+            σ<sub>0</sub> + σ<sub>1</sub> + σ<sub>2</sub> + σ<sub>d</sub> = 0,</p>
+          <p>each σ a plane's charge over the area — plane 0's the bare sites' own charge with what dz0 adds
+            — and σ<sub>d</sub> the diffuse layer's at Ψ<sub>2</sub> from every ion of the water, PHREEQC's
+            −sign(Ψ<sub>2</sub>)·√(2000 R T ε ε₀ Σ m (e<sup>−zFΨ<sub>2</sub>/RT</sup> − 1)), with a fictitious
+            ion of one charge for whatever charge the water has. The water in charge balance is where that
+            ion is none, a corner in its derivative, where the Jacobian takes the mean of the two sides. A
+            CD-MUSIC surface is given its species' amounts, not loaded from the water by
+            <code>sites=</code>. On a goethite-like surface of the tests' own, the page starts on PHREEQC's
+            water and surface to 6×10<sup>−13</sup>, and with 1&nbsp;mmol of HCl added ends on PHREEQC's pH
+            and its three potentials to 10<sup>−8</sup>.</p>
 
           <h4 id="help-redox">Redox: the electron</h4>
           <pre>e-     electron   pe=4
@@ -1947,9 +1974,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             <code>equilibrium_phase</code> and so many to each mole, are written <code>sites=</code> and
             <code>per=</code> on the bare site, the phase carried as a mineral. The run starts from the surface
             PHREEQC loaded, and with its double layer the potential's area is written <code>per=</code> the
-            mineral too. Not carried: a surface whose sites follow a kinetic reactant; one whose block says
-            more than its sites and
-            <code>-no_edl</code>, such as <code>-cd_music</code> or <code>-diffuse_layer</code>; and an
+            mineral too. With <code>-cd_music</code> the surface is written by CD-MUSIC: its three potentials
+            at PHREEQC's (<code>EDL</code>'s psi, psi1 and psi2), the first with the capacitances, and each
+            species' <code>-cd_music</code> as <code>dz0=</code>, <code>dz1=</code> and <code>dz2=</code>, a half
+            charge as <code>z=</code>. Not carried: a surface whose sites follow a kinetic reactant; one whose
+            block says more than its sites and
+            <code>-no_edl</code> or <code>-cd_music</code>, such as <code>-diffuse_layer</code>; and an
             input with surfaces both with a double layer and without. The report names what was left
             out, and why.</p>
           <p>A gas phase in the input, a <code>GAS_PHASE</code> that PHREEQC's last calculation holds,
@@ -2037,7 +2067,8 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               PHREEQC puts on it when it loads a surface with the run's sites from the same water,
               species by species, at every water looked at: with its double layer, the potential's area
               and grams given, where the model has a potential, and then how close the run's potential is
-              to PHREEQC's as well; without electrostatics where it has none;</li>
+              to PHREEQC's as well; by CD-MUSIC, with its capacitances, where it has three, and then each
+              of its potentials against PHREEQC's; without electrostatics where it has none;</li>
             <li>for a gas phase of the model, how close each gas's partial pressure in the run — its
               fugacity, for a real gas — is to the pressure PHREEQC finds the same water holds it at,
               10<sup>SI</sup>, wherever the run has any of it;</li>
@@ -2321,14 +2352,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108g"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108h"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261108d"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108h"></script>
 </body>
 </html>
