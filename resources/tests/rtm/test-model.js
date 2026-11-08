@@ -6458,7 +6458,8 @@ console.log('\n--- sites that go with a mineral ---');
   const cases = [
     ['per= naming no mineral', text({ per: 'Ca+2' }), /which is no mineral in <SPECIES>/],
     ['per= without sites=', text().replace('sites=0.05 per=Anh', 'per=Anh'), /per names the mineral a surface's sites, or its potential's area, go with/],
-    ['a mineral with no relation', text().replace('Anh <=> Ca+2 + SO4-2, logK = -4.4\n', ''), /has no relation in <EQUILIBRIUM>/],
+    ['a mineral with two relations', text({ species: 'CaSO4 0', eq: 'Anh <=> CaSO4, logK = -2.3' }),
+      /Anh is in two relations/],
     ['a relation taking more of the surface than it makes', text({ species: 'Sx_O2Zn 0 surface',
       eq: '2 Sx_OH + Zn+2 <=> Sx_O2Zn + 2 H+, logK = -2' }), /takes more species of the surface of Sx_OH than it makes/],
     ['a rate law changing the mineral', text({ react: 'Anh => Ca+2 + SO4-2, k = 1e-6' }), /changes Anh, which carries the sites/],
@@ -6518,6 +6519,65 @@ console.log('\n--- sites that go with a mineral ---');
   sameStart && !wrong.length && /Anh has dissolved away, and the sites of the surface that goes with it/.test(usedUp),
   `${sameStart ? '' : 'the start differs; '}${wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | ')}${
     /dissolved away/.test(usedUp) ? '' : ` used up: "${usedUp.slice(0, 160)}"`}`);
+
+  /*
+    Made and used at a rate, PHREEQC's kinetic_reactant: the mineral with no
+    relation, dissolving at a rate law. Each reaction that changes it takes
+    its sites with it, so many per mole, and the zinc on them comes off as
+    above; a reaction that writes the surface's species as well is refused,
+    and one that uses the mineral up stops the run, as above.
+  */
+  const kinText = (o = {}) => text({ tend: o.tend || 1e4, react: o.react || 'Anh => Ca+2 + SO4-2, r = 2e-4*[Anh]' })
+    .replace('Anh <=> Ca+2 + SO4-2, logK = -4.4\n', '');
+  const mk = RtmModel.compile(kinText());
+  const rk = run(mk, { tend: 1e4 });
+  const atk = (n) => mk.speciesNames.indexOf(n);
+  const onK = ['Sx_OH', 'Sx_OH2+', 'Sx_O-', 'Sx_OZn+'].map(atk);
+  let kRatio = 0;
+  let kRel = 0;
+  let kZn = 0;
+  let kZn0 = 0;
+  let kM = [0, 0];
+  let kOn = [0, 0];
+  rk.y.forEach((yy, i) => {
+    const C = mk.toConcentrations(yy);
+    const sites = onK.reduce((acc, k) => acc + C[k], 0);
+    kRatio = Math.max(kRatio, Math.abs(sites / (0.05 * C[atk('Anh')]) - 1));
+    const lnA = (n) => Math.log(C[atk(n)]) - (onK.includes(atk(n)) ? Math.log(sites) : 0);
+    kRel = Math.max(kRel, Math.abs(lnA('H+') + lnA('OH-') + 14 * Math.LN10),
+      Math.abs(lnA('Sx_OH2+') - lnA('Sx_OH') - lnA('H+') - 7 * Math.LN10),
+      Math.abs(lnA('Sx_OZn+') + lnA('H+') - lnA('Sx_OH') - lnA('Zn+2') - Math.LN10));
+    if (i === 0) { kM[0] = C[atk('Anh')]; kOn[0] = C[atk('Sx_OZn+')]; kZn0 = C[atk('Zn+2')] + kOn[0]; }
+    kZn = Math.max(kZn, Math.abs(C[atk('Zn+2')] + C[atk('Sx_OZn+')] - kZn0) / kZn0);
+    kM[1] = C[atk('Anh')];
+    kOn[1] = C[atk('Sx_OZn+')];
+  });
+  let kBad = 0;
+  let kChecked = 0;
+  for (const tend of [10, 3000, 9000]) {
+    const m2 = RtmModel.compile(kinText({ tend }));
+    const r2 = run(m2, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+    kBad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    kChecked += v.checked;
+  }
+  const kBoth = refuse(kinText({ react: 'Anh + 0.05 Sx_OH => Ca+2 + SO4-2, r = 2e-4*[Anh]' }));
+  let kUsedUp = '';
+  try {
+    const mu = RtmModel.compile(kinText({ tend: 2e6, react: 'Anh => Ca+2 + SO4-2, r = 1e-7*(m/0.05)^0.6, m = ramp([Anh])' }));
+    run(mu, { tend: 2e6 });
+    kUsedUp = '(ran)';
+  } catch (e) { kUsedUp = e.message; }
+  check('sites that go with a mineral made and used at a rate, no relation of its own: each reaction that changes it '
+    + 'takes its sites with it, 0.05 to each mole, at every stored point; the relations hold, the zinc on them comes off and '
+    + 'the total stays; the Jacobian against differences; a reaction that writes the surface\'s species as well is refused, '
+    + 'and one that uses it up stops the run and says why', kRatio < 1e-12 && kRel < 1e-10 && kZn < 1e-12 && kM[1] < 0.2 * kM[0]
+    && kOn[1] < kOn[0] && kBad === 0 && /and the species on them as well/.test(kBoth)
+    && /Anh has dissolved away, and the sites of the surface that goes with it/.test(kUsedUp),
+  `the mineral ${kM[0].toFixed(5)} to ${kM[1].toFixed(5)}, the sites within ${kRatio.toExponential(1)} of 0.05 times it, the `
+    + `relations ${kRel.toExponential(1)}, zinc on them ${kOn[0].toExponential(3)} to ${kOn[1].toExponential(3)}; the `
+    + `Jacobian ${kBad} of ${kChecked} off${/and the species/.test(kBoth) ? '' : `; both: "${kBoth}"`}${
+      /dissolved away/.test(kUsedUp) ? '' : `; used up: "${kUsedUp.slice(0, 160)}"`}`);
 }
 
 /*

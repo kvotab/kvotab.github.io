@@ -1480,6 +1480,56 @@
     return out.join('\n');
   }
 
+  /**
+   * An input's SURFACE lines whose sites go with a kinetic reactant, as the
+   * sites, and the area, they come to at its -m: what PHREEQC loads at the
+   * start, which it will not without the KINETICS (withoutKinetics).
+   * `Hfo_wOH Ferrihydrite kinetic_reactant 0.2 5.33e4` with -m 0.002 is
+   * `Hfo_wOH 0.0004 5.33e4 0.002`, the area per mole of it times its moles
+   * as the grams.
+   */
+  function kineticSurfacesAtStart(text, comps) {
+    let block = null;
+    return String(text).split(/\r\n|\r|\n/).map((raw) => {
+      const tokens = raw.split('#', 1)[0].trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) return raw;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word) && !tokens[0].startsWith('-')) {
+        block = word === 'SURFACE' || word === 'EXCHANGE' ? word : null;
+        return raw;
+      }
+      if (!block || tokens[0].startsWith('-') || tokens.length < 4 || !/^k/i.test(tokens[2])) return raw;
+      const c = comps.find((x) => x.name.toLowerCase() === tokens[1].toLowerCase());
+      if (!c) return raw;
+      // An exchanger's capacity, so many per mole of the reactant: at its -m.
+      if (block === 'EXCHANGE') return ` ${tokens[0]}  ${fmtG(Number(tokens[3]) * c.m, 15)}`;
+      const area = tokens[4];
+      return ` ${tokens[0]}  ${fmtG(Number(tokens[3]) * c.m, 15)}${area !== undefined ? `  ${area}  ${fmtG(c.m, 15)}` : ''}`;
+    }).join('\n');
+  }
+
+  /**
+   * The exchangers of an input's EXCHANGE blocks whose capacity goes with a
+   * phase or a kinetic reactant -- `X Calcite equilibrium_phase 0.1`,
+   * `X Organic_C kinetic_reactant 0.5` -- each with the phase or reactant,
+   * which, and the capacity to each mole of it.
+   */
+  function linkedExchangers(text) {
+    const out = [];
+    let inBlock = false;
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word) && !tokens[0].startsWith('-')) { inBlock = word === 'EXCHANGE'; continue; }
+      if (!inBlock || tokens[0].startsWith('-') || tokens.length < 4 || Number.isFinite(Number(tokens[1]))) continue;
+      if (!/^(e|k)/i.test(tokens[2])) continue;
+      out.push({ master: tokens[0], phase: tokens[1], kind: /^e/i.test(tokens[2]) ? 'equilibrium_phase' : 'kinetic_reactant',
+        ratio: Number(tokens[3]) });
+    }
+    return out;
+  }
+
   /*
     A RATE PROGRAM AS A RATE LAW. PHREEQC runs a rate's BASIC at each step
     of its integration, with M the reactant's moles, M0 its initial moles,
@@ -2254,7 +2304,7 @@
     */
     const kinBlock = (() => { const k = readKinetics(o.water.text); return k.size ? [...k.values()].pop() : null; })();
     const carryKin = !!kinBlock && kinBlock.comps.length > 0 && o.kinetics !== false;
-    let waterText = carryKin ? withoutKinetics(o.water.text) : o.water.text;
+    let waterText = carryKin ? kineticSurfacesAtStart(withoutKinetics(o.water.text), kinBlock.comps) : o.water.text;
     const rateDefs = carryKin ? readRates(o.database.text, o.water.text) : new Map();
     const phaseKey = new Map([...db.phaseReaction.keys()].map((k) => [k.toLowerCase(), k]));
     const kinPhases = [];
@@ -2319,7 +2369,7 @@
           if (!had || (had.area === null && Number.isFinite(x.area))) {
             // Sites that go with a phase: m2 to each mole of it, the phase in the grams' place.
             layers.set(name, { area: Number.isFinite(x.area) ? x.area : null, mass: Number.isFinite(x.mass) ? x.mass : null,
-              phase: x.phase || null, cd: b.model === 'cd', cap: had ? had.cap : null });
+              phase: x.phase || null, kind: x.kind || null, cd: b.model === 'cd', cap: had ? had.cap : null });
           }
           // CD-MUSIC: the capacitances, given after one of the surface's site lines.
           if (x.cap) layers.get(name).cap = x.cap;
@@ -2622,137 +2672,6 @@
       }
     }
     /*
-      THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
-      its relation as the database writes it, which a run holds exactly.
-      Its activity is its equivalent fraction (Gaines-Thomas), times its
-      ion's activity coefficient where PHREEQC gives it one (-gamma).
-    */
-    const onEx = [];
-    const exSkipped = [];
-    const laMaster = new Map(exMasters.map((sp, i) => [sp, Number(w.x[laAt + i])]));
-    if (w.exchange && w.exchange.size && o.exchange !== false) {
-      if (!o.exact) {
-        exSkipped.push({ name: [...w.exchange.keys()].join(', '), why: 'an exchanger needs the relations held exactly' });
-      } else {
-        for (const [n, e] of w.exchange) {
-          if (!(e.m >= floor)) continue;
-          const skip = (why) => exSkipped.push({ name: n, why });
-          const r = db.exReaction.get(n);
-          if (!r) { skip('the database has no reaction for it'); continue; }
-          const terms = [...r.left, ...r.right.slice(1)];
-          const masters = terms.filter((t) => laMaster.has(t.n));
-          if (masters.length !== 1 || terms.some((t) => db.exReaction.has(t.n))) {
-            skip('it is not formed from one exchanger');
-            continue;
-          }
-          if (!Number.isFinite(laMaster.get(masters[0].n)) || laMaster.get(masters[0].n) < -99) {
-            skip(`PHREEQC gave no activity for ${masters[0].n}`);
-            continue;
-          }
-          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
-          const missing = terms.filter((t) => t.n !== 'H2O' && !laMaster.has(t.n) && !molal.has(t.n)).map((t) => t.n);
-          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
-          onEx.push({ species: n, master: masters[0].n, m: e.m, la: e.la, lg: e.lg, left: r.left, right: r.right });
-          for (const t of terms) {
-            if (t.n !== 'H2O' && !laMaster.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
-          }
-        }
-      }
-    }
-    /*
-      THE SURFACES: each species PHREEQC put on one, at its molality, with
-      its relation as the database writes it and the database's log K, which
-      a run holds exactly; its activity is its fraction of its type's sites.
-      Without electrostatics (-no_edl) only, for now.
-    */
-    const onSf = [];
-    const sfSkipped = [];
-    const sfMasters = new Set(db.sfMaster.values());
-    const sfLk = new Map(sfSpecies.map((sp, i) => [sp, Number(w.x[sfLkAt + i])]));
-    if (w.surface && w.surface.size && o.surface !== false) {
-      const all = [...w.surface.keys()].join(', ');
-      const models = new Set([...sfBlocks.values()].map((b) => b.model));
-      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && (l.mass > 0 || l.phase)
-        && (!l.cd || (l.cap && l.cap.every((v) => v > 0))))).map(([n]) => n);
-      if (!o.exact) sfSkipped.push({ name: all, why: 'a surface needs the relations held exactly' });
-      else if (models.size > 1) {
-        sfSkipped.push({ name: all, why: 'the input has a surface with a double layer and one without (-no_edl)' });
-      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.kind === 'kinetic_reactant'))) {
-        sfSkipped.push({ name: all, why: 'its sites follow a kinetic reactant, which this page does not carry' });
-      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.phase && !minerals.some((mn) => mn.phase === x.phase)))) {
-        sfSkipped.push({ name: all, why: 'its sites follow a phase that is not carried as a mineral' });
-      } else if (noLayer.length) {
-        sfSkipped.push({ name: all, why: `the double layer of ${noLayer.join(', ')} needs its area and grams, which `
-          + 'its first site\'s line gives, and under CD-MUSIC its two capacitances' });
-      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !x.phase && !Number.isFinite(x.sites)))) {
-        sfSkipped.push({ name: all, why: 'its sites are given in a way this page does not read' });
-      } else if ([...sfBlocks.values()].some((b) => b.other.length)) {
-        sfSkipped.push({ name: all, why: `its block says more than this page carries (${[...sfBlocks.values()]
-          .flatMap((b) => b.other).join('; ')})` });
-      } else {
-        for (const [n, e] of w.surface) {
-          if (!(e.m >= floor)) continue;
-          const skip = (why) => sfSkipped.push({ name: n, why });
-          if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
-          const r = db.sfReaction.get(n);
-          if (!r) { skip('the database has no reaction for it'); continue; }
-          const terms = [...r.left, ...r.right.slice(1)];
-          const kinds = new Set(terms.filter((t) => sfMasters.has(t.n)).map((t) => t.n));
-          if (!kinds.size) { skip('it is formed from no site'); continue; }
-          if (kinds.size > 1) { skip('it is formed from two kinds of site'); continue; }
-          if (terms.some((t) => db.sfReaction.has(t.n) && !sfMasters.has(t.n))) {
-            skip('it is formed from a species on the surface that is not a site'); continue;
-          }
-          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
-          if (!Number.isFinite(sfLk.get(n))) { skip('PHREEQC gave no log K for it'); continue; }
-          const missing = terms.filter((t) => t.n !== 'H2O' && !sfMasters.has(t.n) && !molal.has(t.n)).map((t) => t.n);
-          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
-          onSf.push({ species: n, master: false, m: e.m, left: r.left, right: r.right, lk: sfLk.get(n) });
-          for (const t of terms) {
-            if (t.n !== 'H2O' && !sfMasters.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
-          }
-        }
-        // A species formed from a site that is not carried is not carried either.
-        const have = new Set(onSf.map((e) => e.species));
-        for (let i = onSf.length - 1; i >= 0; i--) {
-          const e = onSf[i];
-          if (e.master) continue;
-          const sites = [...e.left, ...e.right.slice(1)].filter((t) => sfMasters.has(t.n));
-          if (sites.every((t) => have.has(t.n))) continue;
-          sfSkipped.push({ name: e.species, why: `its site ${sites.find((t) => !have.has(t.n)).n} is not carried` });
-          onSf.splice(i, 1);
-        }
-        // By site, in the order the input lists them: each bare site first, then what is on it, the most first.
-        const listed = [...sfBlocks.values()].flatMap((b) => b.sites.map((x) => db.sfMaster.get(x.master) || x.master));
-        const siteOf = (e) => (e.master ? e.species
-          : [...e.left, ...e.right.slice(1)].find((t) => sfMasters.has(t.n)).n);
-        const rank = (sp) => (listed.includes(sp) ? listed.indexOf(sp) : listed.length);
-        onSf.sort((a, b) => rank(siteOf(a)) - rank(siteOf(b)) || (siteOf(a) < siteOf(b) ? -1 : siteOf(a) > siteOf(b) ? 1 : 0)
-          || Number(b.master) - Number(a.master) || b.m - a.m);
-      }
-    }
-    /*
-      Each surface's potential, where its double layer is carried: PHREEQC's,
-      written as its activity exp(-F psi/RT), with the surface's area and the
-      grams of the solid to each kilogram of the water.
-    */
-    const potentials = [];
-    if (onSf.length && layers.size) {
-      const tk = w.tc + 273.15;
-      const kgw = massAt >= 0 && Number(w.x[massAt]) > 0 ? Number(w.x[massAt]) : 1;
-      [...layers].forEach(([surface, l]) => {
-        if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
-        // CD-MUSIC: its three planes, Hfo_psi with the area and capacitances, Hfo_psib and Hfo_psid.
-        layerCols.get(surface).forEach((col, plane) => {
-          const psi = Number(w.x[col]);
-          potentials.push({ surface, species: `${surface}_psi${['', 'b', 'd'][plane]}`, psi, plane, cd: l.cd,
-            a: Math.exp(-FARADAY * psi / (GAS_R * tk)), area: plane ? null : l.area,
-            grams: plane || l.phase ? null : l.mass / kgw, phase: plane ? null : l.phase, cap: plane ? null : l.cap });
-        });
-      });
-    }
-
-    /*
       THE KINETIC REACTANTS. Each a mineral species at PHREEQC's -m, per
       kilogram of water, and a reaction at the rate its RATES program comes
       to: its formula's dissolution -- a phase's as the database writes it,
@@ -2848,21 +2767,162 @@
         let law;
         try { law = rateLaw(def, ctx); } catch (e) { skip(`its rate: ${e.message}`); continue; }
         for (const [n] of rx) if (n !== 'e-' && !kept.has(n)) { kept.add(n); pulled.add(n); }
-        // Every species of the elements it brings or takes, whatever the floor: they grow, or go.
+        /*
+          Every species of what it brings or takes, whatever the floor: they
+          grow, or go. Of the element, where the valence states are held at one
+          pe; else of the valence states it moves, the others staying where
+          they are (a trace of Fe(2) beside the Fe(3) it brings, at 1e-29, is
+          a total no factorisation resolves).
+        */
+        const key = (lb) => (carryRedox ? elementOf(lb) : normLabel(lb));
         const els = new Set();
         for (const [n] of rx) {
           if (n === 'e-' || n === 'H+') continue;
-          try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(elementOf(lb)); } catch (e) { /* no terms */ }
+          try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(key(lb)); } catch (e) { /* no terms */ }
         }
         for (const sp of molal.keys()) {
           if (kept.has(sp)) continue;
           let ex;
           try { ex = db.expand(sp); } catch (e) { continue; }
-          if ([...ex.keys()].some((lb) => els.has(elementOf(lb)))) { kept.add(sp); pulled.add(sp); }
+          if ([...ex.keys()].some((lb) => els.has(key(lb)))) { kept.add(sp); pulled.add(sp); }
         }
         kinetics.push({ comp, rate: def, amount: Math.max(comp.m, 0) / W, rx, law, name: null });
       }
     }
+    /*
+      THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
+      its relation as the database writes it, which a run holds exactly.
+      Its activity is its equivalent fraction (Gaines-Thomas), times its
+      ion's activity coefficient where PHREEQC gives it one (-gamma).
+    */
+    const onEx = [];
+    const exSkipped = [];
+    const laMaster = new Map(exMasters.map((sp, i) => [sp, Number(w.x[laAt + i])]));
+    if (w.exchange && w.exchange.size && o.exchange !== false) {
+      if (!o.exact) {
+        exSkipped.push({ name: [...w.exchange.keys()].join(', '), why: 'an exchanger needs the relations held exactly' });
+      } else {
+        for (const [n, e] of w.exchange) {
+          if (!(e.m >= floor)) continue;
+          const skip = (why) => exSkipped.push({ name: n, why });
+          const r = db.exReaction.get(n);
+          if (!r) { skip('the database has no reaction for it'); continue; }
+          const terms = [...r.left, ...r.right.slice(1)];
+          const masters = terms.filter((t) => laMaster.has(t.n));
+          if (masters.length !== 1 || terms.some((t) => db.exReaction.has(t.n))) {
+            skip('it is not formed from one exchanger');
+            continue;
+          }
+          if (!Number.isFinite(laMaster.get(masters[0].n)) || laMaster.get(masters[0].n) < -99) {
+            skip(`PHREEQC gave no activity for ${masters[0].n}`);
+            continue;
+          }
+          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
+          const missing = terms.filter((t) => t.n !== 'H2O' && !laMaster.has(t.n) && !molal.has(t.n)).map((t) => t.n);
+          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
+          onEx.push({ species: n, master: masters[0].n, m: e.m, la: e.la, lg: e.lg, left: r.left, right: r.right });
+          for (const t of terms) {
+            if (t.n !== 'H2O' && !laMaster.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+      }
+    }
+    /*
+      THE SURFACES: each species PHREEQC put on one, at its molality, with
+      its relation as the database writes it and the database's log K, which
+      a run holds exactly; its activity is its fraction of its type's sites.
+      Without electrostatics (-no_edl) only, for now.
+    */
+    const onSf = [];
+    const sfSkipped = [];
+    const sfMasters = new Set(db.sfMaster.values());
+    const sfLk = new Map(sfSpecies.map((sp, i) => [sp, Number(w.x[sfLkAt + i])]));
+    if (w.surface && w.surface.size && o.surface !== false) {
+      const all = [...w.surface.keys()].join(', ');
+      const models = new Set([...sfBlocks.values()].map((b) => b.model));
+      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && (l.mass > 0 || l.phase)
+        && (!l.cd || (l.cap && l.cap.every((v) => v > 0))))).map(([n]) => n);
+      if (!o.exact) sfSkipped.push({ name: all, why: 'a surface needs the relations held exactly' });
+      else if (models.size > 1) {
+        sfSkipped.push({ name: all, why: 'the input has a surface with a double layer and one without (-no_edl)' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.kind === 'kinetic_reactant'
+        && !kinetics.some((k) => k.comp.name.toLowerCase() === x.phase.toLowerCase())))) {
+        sfSkipped.push({ name: all, why: 'its sites follow a kinetic reactant that is not carried' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.phase && x.kind !== 'kinetic_reactant'
+        && !minerals.some((mn) => mn.phase === x.phase)))) {
+        sfSkipped.push({ name: all, why: 'its sites follow a phase that is not carried as a mineral' });
+      } else if (noLayer.length) {
+        sfSkipped.push({ name: all, why: `the double layer of ${noLayer.join(', ')} needs its area and grams, which `
+          + 'its first site\'s line gives, and under CD-MUSIC its two capacitances' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !x.phase && !Number.isFinite(x.sites)))) {
+        sfSkipped.push({ name: all, why: 'its sites are given in a way this page does not read' });
+      } else if ([...sfBlocks.values()].some((b) => b.other.length)) {
+        sfSkipped.push({ name: all, why: `its block says more than this page carries (${[...sfBlocks.values()]
+          .flatMap((b) => b.other).join('; ')})` });
+      } else {
+        for (const [n, e] of w.surface) {
+          if (!(e.m >= floor)) continue;
+          const skip = (why) => sfSkipped.push({ name: n, why });
+          if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
+          const r = db.sfReaction.get(n);
+          if (!r) { skip('the database has no reaction for it'); continue; }
+          const terms = [...r.left, ...r.right.slice(1)];
+          const kinds = new Set(terms.filter((t) => sfMasters.has(t.n)).map((t) => t.n));
+          if (!kinds.size) { skip('it is formed from no site'); continue; }
+          if (kinds.size > 1) { skip('it is formed from two kinds of site'); continue; }
+          if (terms.some((t) => db.sfReaction.has(t.n) && !sfMasters.has(t.n))) {
+            skip('it is formed from a species on the surface that is not a site'); continue;
+          }
+          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
+          if (!Number.isFinite(sfLk.get(n))) { skip('PHREEQC gave no log K for it'); continue; }
+          const missing = terms.filter((t) => t.n !== 'H2O' && !sfMasters.has(t.n) && !molal.has(t.n)).map((t) => t.n);
+          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
+          onSf.push({ species: n, master: false, m: e.m, left: r.left, right: r.right, lk: sfLk.get(n) });
+          for (const t of terms) {
+            if (t.n !== 'H2O' && !sfMasters.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+        // A species formed from a site that is not carried is not carried either.
+        const have = new Set(onSf.map((e) => e.species));
+        for (let i = onSf.length - 1; i >= 0; i--) {
+          const e = onSf[i];
+          if (e.master) continue;
+          const sites = [...e.left, ...e.right.slice(1)].filter((t) => sfMasters.has(t.n));
+          if (sites.every((t) => have.has(t.n))) continue;
+          sfSkipped.push({ name: e.species, why: `its site ${sites.find((t) => !have.has(t.n)).n} is not carried` });
+          onSf.splice(i, 1);
+        }
+        // By site, in the order the input lists them: each bare site first, then what is on it, the most first.
+        const listed = [...sfBlocks.values()].flatMap((b) => b.sites.map((x) => db.sfMaster.get(x.master) || x.master));
+        const siteOf = (e) => (e.master ? e.species
+          : [...e.left, ...e.right.slice(1)].find((t) => sfMasters.has(t.n)).n);
+        const rank = (sp) => (listed.includes(sp) ? listed.indexOf(sp) : listed.length);
+        onSf.sort((a, b) => rank(siteOf(a)) - rank(siteOf(b)) || (siteOf(a) < siteOf(b) ? -1 : siteOf(a) > siteOf(b) ? 1 : 0)
+          || Number(b.master) - Number(a.master) || b.m - a.m);
+      }
+    }
+    /*
+      Each surface's potential, where its double layer is carried: PHREEQC's,
+      written as its activity exp(-F psi/RT), with the surface's area and the
+      grams of the solid to each kilogram of the water.
+    */
+    const potentials = [];
+    if (onSf.length && layers.size) {
+      const tk = w.tc + 273.15;
+      const kgw = massAt >= 0 && Number(w.x[massAt]) > 0 ? Number(w.x[massAt]) : 1;
+      [...layers].forEach(([surface, l]) => {
+        if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
+        // CD-MUSIC: its three planes, Hfo_psi with the area and capacitances, Hfo_psib and Hfo_psid.
+        layerCols.get(surface).forEach((col, plane) => {
+          const psi = Number(w.x[col]);
+          potentials.push({ surface, species: `${surface}_psi${['', 'b', 'd'][plane]}`, psi, plane, cd: l.cd,
+            a: Math.exp(-FARADAY * psi / (GAS_R * tk)), area: plane ? null : l.area,
+            grams: plane || l.phase ? null : l.mass / kgw, phase: plane ? null : l.phase, kind: plane ? null : l.kind,
+            cap: plane ? null : l.cap });
+        });
+      });
+    }
+
 
     let changed = true;
     while (changed) {
@@ -3461,20 +3521,24 @@
         : `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}`) : '';
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
     }
+    // What a surface's sites, and its area, go with: a mineral, or a kinetic reactant, as written.
+    const carrierOf = (phase, kind) => (!phase ? null : kind === 'kinetic_reactant'
+      ? kinetics.find((k) => k.comp.name.toLowerCase() === phase.toLowerCase()) || null
+      : minerals.find((m) => m.phase === phase) || null);
     for (const pp of potentials) {
       const amount = fmtG(pp.a, 15);
-      const mn = pp.phase ? minerals.find((m) => m.phase === pp.phase) : null;
+      const mn = carrierOf(pp.phase, pp.kind);
       // CD-MUSIC's planes 1 and 2 take nothing; its first the area and the capacitances too.
       out.push(`${pp.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}potential`
         + (pp.plane ? '' : `  area=${fmtG(pp.area, 10)}  ${mn ? `per=${mn.name}` : `grams=${fmtG(pp.grams, 8)}`}`
           + (pp.cd ? `  c0=${fmtG(pp.cap[0], 12)}  c1=${fmtG(pp.cap[1], 12)}` : '')));
     }
-    // A site whose sites go with a phase: so many per mole of the mineral it is carried as (sites= per=).
+    // A site whose sites go with a phase or a kinetic reactant: so many per mole of the mineral it is carried as (sites= per=).
     const perOf = new Map();
     const perInfo = new Map();
     for (const b of sfBlocks.values()) {
       for (const x of b.sites) {
-        const mn = x.phase ? minerals.find((m) => m.phase === x.phase) : null;
+        const mn = carrierOf(x.phase, x.kind);
         if (!mn) continue;
         const site = db.sfMaster.get(x.master) || x.master;
         perOf.set(site, `  sites=${fmtG(x.ratio, 12)}  per=${mn.name}`);
@@ -3753,7 +3817,10 @@
         pressure: { atm, vapour: atVapour, volumes: volumes ? volLines.length : 0 },
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
+        // An exchanger whose capacity goes with a phase or a kinetic reactant in PHREEQC, held here at PHREEQC's at the start.
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
+          linked: linkedExchangers(o.water.text).map((x) => ({ exchanger: x.master, phase: x.phase, kind: x.kind,
+            ratio: x.ratio })),
           species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
         exchangeSkipped: exSkipped,
         surface: onSf.length ? { sites: onSf.filter((e) => e.master).map((e) => e.name),

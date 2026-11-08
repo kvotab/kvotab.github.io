@@ -3174,6 +3174,166 @@ function againstKineticsHandOff(engine) {
   /^Calcite\s+0\.001\s+mineral$/m.test(calcite) && /^#\s+20 IF \(M <= 0 and si_cc < 0\) THEN GOTO 200$/m.test(calcite)
     && /^Calcite => CO3-2 \+ Ca\+2, r = /m.test(calcite) && /^<PHASES>\nCalcite <=> CO3-2 \+ Ca\+2, /m.test(calcite)
     && /^TEND = 36000$/m.test(calcite), calcite.split('\n').filter((l) => /=>/.test(l)).join(' | ').slice(0, 200));
+
+  /*
+    4. A column: a CO2-charged water through 0.1 m of calcite dissolving at
+    phreeqc.dat's rate, two pore volumes, against PHREEQC's TRANSPORT with
+    KINETICS in every cell. The model is the hand-off's of the column's
+    water with its KINETICS, made a column as in 4 above. The two schemes
+    differ -- PHREEQC shifts a cell's water whole and then reacts it for the
+    step, where the page's cells are mixed as the water goes -- and meet as
+    the cells are refined, the velocity and the time kept.
+  */
+  const column = (N) => {
+    const L = 0.1;
+    const dx = L / N;
+    const dt = (3600 * 20) / N;
+    const S = 2 * N;
+    const alpha = dx / 2;
+    const cw = (n) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH 7.5\n Na 2\n Ca 1\n Cl 2 charge\n C(4) 3\n`;
+    const ck = (n) => `KINETICS ${n}\nCalcite\n -m 1e-3\n -parms 5000 0.6\n -tol 1e-10\n`;
+    const co2 = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 4.5\n Na 1\n Cl 1 charge\n C(4) 10\nEND\n';
+    engine.load(dbText);
+    const t1 = Date.now();
+    const rows = engine.run(`${cw(`1-${N}`)}END\n${ck(`1-${N}`)}END\n${co2}`
+      + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH Ca cal\n -start\n'
+      + '10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), TOT("Ca"), KIN("Calcite")\n -end\n'
+      + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+      + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+      + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+    const pqMs = Date.now() - t1;
+    const head = rows[0].map((h) => String(h).trim());
+    const pq = new Map();
+    for (const r of rows.slice(1)) {
+      const t = Number(r[head.indexOf('time')]);
+      if (!(t > 0)) continue;
+      pq.set(`${Number(r[head.indexOf('cell')])}/${Math.round(t / dt)}`, { pH: Number(r[head.indexOf('pH')]),
+        Ca: Number(r[head.indexOf('Ca')]), cal: Number(r[head.indexOf('cal')]) });
+    }
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+      water: { name: 'column', text: `${cw(1)}${ck(1)} -steps ${S * dt}\nEND\n` }, activity: true, exact: true });
+    const inflow = P.parseRows(engine.run(`${P.punchBlock()}${co2}`)).pop();
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    const text = res.text
+      .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+        + `ADVECTION_SCHEME = limited\nVELOCITY = ${dx / dt}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+      .replace(/^TEND = .*$/m, `TEND = ${(S + 0.5) * dt}`)
+      .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+        if (/mineral/.test(rest) || !back.has(name)) return line;
+        const sp = inflow.species.get(back.get(name));
+        return `${line}  left=${sp ? sp[0] : 0}`;
+      });
+    const mdl = RtmModel.compile(text);
+    const t0 = Date.now();
+    const r = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+      outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+    const ms = Date.now() - t0;
+    const ns = mdl.speciesNames.length;
+    const dbr = P.readDatabase(dbText);
+    const caOf = [];
+    mdl.speciesNames.forEach((n, i) => {
+      if (back.has(n) && dbr.expand(back.get(n)).has('Ca')) caOf.push([i, dbr.expand(back.get(n)).get('Ca')]);
+    });
+    const iH = mdl.speciesNames.indexOf('H+');
+    const iCal = mdl.speciesNames.indexOf('Calcite');
+    const lnG = new Float64Array(ns);
+    let pH = 0;
+    let Ca = 0;
+    for (let k = 1; k <= S; k++) {
+      const c = mdl.toConcentrations(r.grid.y[k - 1]);
+      const b = (N - 1) * ns;
+      let ca = 0;
+      for (const [i, n] of caOf) ca += n * c[b + i];
+      RtmModel.activityAt(mdl.act, c, b, lnG, new Float64Array(ns));
+      const d = pq.get(`${N}/${k}`);
+      pH = Math.max(pH, Math.abs(-(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10 - d.pH));
+      Ca = Math.max(Ca, Math.abs(ca - d.Ca));
+    }
+    const end = mdl.toConcentrations(r.grid.y[S - 1]);
+    let dis = 0;
+    let pqDis = 0;
+    for (let cell = 0; cell < N; cell++) {
+      dis += 1e-3 - end[cell * ns + iCal];
+      pqDis += 1e-3 - pq.get(`${cell + 1}/${S}`).cal;
+    }
+    return { N, pH, Ca, dis: dis / pqDis - 1, ms, pqMs };
+  };
+  /*
+    5. A surface whose sites go with a kinetic reactant, PHREEQC's SURFACE
+    `Hfo_wOH NaOHs kinetic_reactant 0.2`: a host of the test's own, NaOH,
+    dissolving at a first-order rate into a CO2 water with zinc, its sites
+    going with it, the zinc on them taken up as the pH rises and coming off
+    as they go; without
+    electrostatics, and with a double layer of 53300 m2 to each mole. The
+    host gives OH-, not water, so PHREEQC's kilogram moves little -- by the
+    water its OH- makes with the carbonic acid, 3e-6 -- and amounts are
+    compared, PHREEQC's molality times its kilograms. And an exchanger whose
+    capacity goes with the reactant: carried at what PHREEQC loads at the
+    start, and said to be.
+  */
+  const hostRun = (edl) => {
+    const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 5\n Na 1\n Cl 1 charge\n C(4) 2\n Zn 0.01\n';
+    const rt = 'PHASES\nNaOHs\n NaOH = Na+ + OH-\n log_k 20\nRATES\nNaOHs\n-start\n10 rate = PARM(1) * M\n20 SAVE rate * TIME\n-end\n';
+    const kn = 'KINETICS 1\nNaOHs\n -m 0.001\n -parms 1e-5\n -tol 1e-12\n -steps 2e5 in 10\n -runge_kutta 6\n';
+    const sf = `SURFACE 1\n${edl ? '' : ' -no_edl\n'} Hfo_wOH NaOHs kinetic_reactant 0.2${edl ? ' 53300' : ''}\n -equilibrate 1\n`;
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+      water: { name: 'host', text: `${KIN}${rt}${sw}${kn}${sf}END\n` }, activity: true, exact: true });
+    engine.load(dbText);
+    const rows = engine.run(`${KIN}${rt}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t M Zn ZnS pH w\n -start\n`
+      + `10 PUNCH TOTAL_TIME, KIN("NaOHs"), MOL("Zn+2"), MOL("Hfo_wOZn+"), -LA("H+"), TOT("water")\n -end\n${sw}${kn}${sf}END\n`);
+    const pq = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+    const mdl = RtmModel.compile(res.text);
+    const times = pq.map((r) => r[0]);
+    const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22, breaks: times });
+    const at = (n) => mdl.speciesNames.indexOf(n);
+    const ns = mdl.speciesNames.length;
+    const zn = new Map(res.names).get('Zn+2');
+    const d = { M: 0, Zn: 0, on: 0, pH: 0 };
+    let first = null;
+    let lastOn = 0;
+    for (const row of pq) {
+      const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+      const y = mdl.toConcentrations(run.y[k], run.t[k]);
+      const lnG = new Float64Array(ns);
+      RtmModel.activityAt(mdl.act, y, 0, lnG, new Float64Array(ns), 0);
+      d.M = Math.max(d.M, Math.abs(y[at('NaOHs')] / row[1] - 1));
+      d.Zn = Math.max(d.Zn, Math.abs(y[at(zn)] / (row[2] * row[5]) - 1));
+      d.on = Math.max(d.on, Math.abs(y[at('Hfo_wOZn+')] / (row[3] * row[5]) - 1));
+      d.pH = Math.max(d.pH, Math.abs(-(Math.log(y[at('H+')]) + lnG[at('H+')]) / Math.LN10 - row[4]));
+      if (!first) first = row;
+      lastOn = row[3];
+    }
+    const per = /^Hfo_wOH\s+\S+\s+surface\s+sites=0\.2\s+per=NaOHs$/m.test(res.text)
+      && (!edl || /^Hfo_psi\s+\S+\s+potential\s+area=53300\s+per=NaOHs$/m.test(res.text));
+    return { edl, d, per, used: 1 - pq[pq.length - 1][1] / 1e-3, rise: lastOn / first[3], skipped: res.report.surfaceSkipped };
+  };
+  const hosts = [hostRun(false), hostRun(true)];
+  engine.load(dbText);
+  const linked = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText }, water: { name: 'x', text: `${KIN}`
+    + 'PHASES\nNaOHs\n NaOH = Na+ + OH-\n log_k 20\nRATES\nNaOHs\n-start\n10 rate = PARM(1) * M\n20 SAVE rate * TIME\n-end\n'
+    + 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 5\n Na 1\n Ca 0.5\n Cl 2 charge\n C(4) 2\nKINETICS 1\nNaOHs\n -m 0.001\n'
+    + ' -parms 1e-5\n -steps 2e5\nEXCHANGE 1\n X NaOHs kinetic_reactant 0.1\n -equilibrate 1\nEND\n' }, activity: true, exact: true });
+  const lx = linked.report.exchange && linked.report.exchange.linked;
+  check('  a surface whose sites go with a kinetic reactant: a host dissolving at a rate, 86 % of it, the sites going with '
+    + 'it (sites= per=, and with a double layer its area per= too), the zinc on them taken up as the pH rises and coming '
+    + 'off as they go, '
+    + 'against PHREEQC\'s KINETICS with SURFACE kinetic_reactant; an exchanger whose capacity goes with the reactant '
+    + 'carried at its start and said to be', hosts.every((x) => x.per && !x.skipped.length && x.d.M < 1e-8 && x.d.Zn < 1e-6
+    && x.d.on < 1e-5 && x.d.pH < 1e-7 && x.used > 0.8) && !!lx && lx.length === 1 && lx[0].phase === 'NaOHs'
+    && lx[0].kind === 'kinetic_reactant',
+  hosts.map((x) => `${x.edl ? 'with a double layer' : 'no electrostatics'}: ${(x.used * 100).toFixed(0)} % used, the host `
+    + `within ${x.d.M.toExponential(1)}, Zn+2 ${x.d.Zn.toExponential(1)} and on the sites ${x.d.on.toExponential(1)} in moles, `
+    + `pH ${x.d.pH.toExponential(1)}`).join('; ') + `; the exchanger ${lx ? JSON.stringify(lx) : 'not reported'}`);
+
+  const cols = [column(20), column(40)];
+  check('  a column, CO2 water through calcite dissolving at phreeqc.dat\'s rate, against PHREEQC\'s TRANSPORT with '
+    + 'KINETICS in each cell: the effluent and the calcite dissolved, meeting as the cells are refined',
+  cols[1].pH < 0.1 && cols[1].Ca < 1e-5 && Math.abs(cols[1].dis) < 0.005 && cols[1].pH < 0.6 * cols[0].pH
+    && cols[1].Ca < 0.6 * cols[0].Ca,
+  cols.map((x) => `${x.N} cells: pH within ${x.pH.toFixed(3)}, Ca ${(x.Ca * 1e3).toFixed(4)} mM, the calcite dissolved `
+    + `${(x.dis * 100).toFixed(2)} %, PHREEQC ${x.pqMs} ms, the page ${x.ms} ms`).join('; '));
   engine.load(dbText);
 }
 

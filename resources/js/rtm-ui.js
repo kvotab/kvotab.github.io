@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108k';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108l';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108k';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108l';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108k',
+    'resources/js/rtm-phreeqc.js?v=20261108l',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2979,6 +2979,10 @@ END
       if (r.exchange) {
         out.push(`<p>On the exchanger ${r.exchange.exchangers.map(esc).join(', ')}: ${r.exchange.species
           .map((e) => `${esc(e.as)} (${pqNum(e.amount)} mol/kgw)`).join(', ')}, held on it by Gaines–Thomas.</p>`);
+        for (const x of r.exchange.linked || []) {
+          out.push(`<p class="warn">In PHREEQC the capacity of ${esc(x.exchanger)} goes with ${esc(x.phase)}, `
+            + `${pqNum(x.ratio)} to each mole of it; here it is held at what PHREEQC loaded at the start.</p>`);
+        }
       }
       if (r.exchangeSkipped && r.exchangeSkipped.length) {
         out.push(`<p class="warn">Not carried from the exchanger: ${r.exchangeSkipped

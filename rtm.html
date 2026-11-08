@@ -1478,10 +1478,15 @@ Hfo_wOH       surface  sites=0.2  per=Ferrihydrite</pre>
             PHREEQC's <code>SURFACE</code> has them with <code>equilibrium_phase</code>: the sites of the
             kind are 0.2 times the mineral in the cell at every moment. As it dissolves its sites go with it,
             and what was on them comes off into the water; as it precipitates there are more. The mineral is
-            held at saturation by its relation, and its saturation reads none of the surface. The surface is
+            held at saturation by its relation, and its saturation reads none of the surface; or it has no
+            relation and is made and used at a rate, as a kinetic reactant of PHREEQC's
+            (<code>kinetic_reactant</code>), and each reaction in <code>&lt;REACTIONS&gt;</code> that changes
+            it takes or gives its sites with it, 0.2 of the bare site to each mole. The surface is
             loaded from the water as with <code>sites=</code>, at the mineral the water's own relations leave,
             or its species are given amounts that take that many sites. On such a surface each relation
-            takes as many of its species as it makes, and a rate law of its own on the mineral is refused.
+            takes as many of its species as it makes; a rate law of its own on a mineral held at
+            saturation is refused, and so is a reaction that writes the surface's species beside the
+            mineral it changes.
             A double layer on it has its area go with the mineral too, as in PHREEQC:
             <code>Hfo_psi potential area=600 per=Ferrihydrite</code>, m² to each mole, no grams. A run in
             which the mineral is used up in a cell stops there, when 10<sup>−4</sup> of what the cell started
@@ -1987,7 +1992,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             database's <code>-gamma</code>. A species whose coefficient PHREEQC takes from more than
             its one ion has it folded into its log K at this water, and the text says so. The
             run then starts from the exchanger PHREEQC loaded. Held as fast pairs instead, the
-            exchanger is not carried, and the report says so.</p>
+            exchanger is not carried, and the report says so. An exchanger whose capacity goes with a
+            phase or a kinetic reactant (<code>X Calcite equilibrium_phase 0.1</code>) is carried at the
+            capacity PHREEQC loaded at the start, which the run holds, and the report says that too.</p>
           <p>A surface in the input, a <code>SURFACE</code> that PHREEQC's last calculation holds, is
             carried in the same way. Each species PHREEQC put on it becomes a <code>surface</code> species
             at PHREEQC's molality, the bare sites among them (see <em>Surface complexation</em> above),
@@ -1996,14 +2003,15 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             potential is written too, <code>Hfo_psi</code>, at PHREEQC's potential, with the area and the
             grams to each kilogram of water from the surface's first line; with <code>-no_edl</code>
             there is none. Sites that go with a phase of <code>EQUILIBRIUM_PHASES</code>,
-            <code>equilibrium_phase</code> and so many to each mole, are written <code>sites=</code> and
-            <code>per=</code> on the bare site, the phase carried as a mineral. The run starts from the surface
-            PHREEQC loaded, and with its double layer the potential's area is written <code>per=</code> the
-            mineral too. With <code>-cd_music</code> the surface is written by CD-MUSIC: its three potentials
+            <code>equilibrium_phase</code> and so many to each mole, or with a reactant of its
+            <code>KINETICS</code>, <code>kinetic_reactant</code>, are written <code>sites=</code> and
+            <code>per=</code> on the bare site, the phase carried as a mineral or the reactant as its own.
+            The run starts from the surface PHREEQC loaded, and with its double layer the potential's area
+            is written <code>per=</code> the mineral too. With <code>-cd_music</code> the surface is written by CD-MUSIC: its three potentials
             at PHREEQC's (<code>EDL</code>'s psi, psi1 and psi2), the first with the capacitances, and each
             species' <code>-cd_music</code> as <code>dz0=</code>, <code>dz1=</code> and <code>dz2=</code>, a half
-            charge as <code>z=</code>. Not carried: a surface whose sites follow a kinetic reactant; one whose
-            block says more than its sites and
+            charge as <code>z=</code>. Not carried: a surface whose sites follow a kinetic reactant that is
+            not carried; one whose block says more than its sites and
             <code>-no_edl</code> or <code>-cd_music</code>, such as <code>-diffuse_layer</code>; and an
             input with surfaces both with a double layer and without. The report names what was left
             out, and why.</p>
@@ -2158,6 +2166,15 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             exchanger, as above. On 40 cells its effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's
             in sodium, 0.033 in potassium, 0.017 in calcium and 0.005 in chloride. On 80 cells that is
             0.016, 0.017, 0.007 and 0.001.</p>
+          <p>And kinetics. Water with 10&nbsp;mmol/kgw of CO<sub>2</sub> at pH 4.5 flows for two pore
+            volumes through 0.1&nbsp;m of calcite dissolving at <code>phreeqc.dat</code>'s rate, PHREEQC's
+            <code>KINETICS</code> in each of its cells; the page runs the model it writes from the
+            column's water with its <code>KINETICS</code>. The effluent is within 0.15 of PHREEQC's in pH
+            where the front passes and 0.015&nbsp;mmol/kgw in calcium on 20 cells, and the calcite
+            dissolved within 0.8&nbsp;%; on 40 cells 0.07, 0.008 and 0.3&nbsp;%, and on 80, 0.03, 0.005
+            and 0.13&nbsp;%: PHREEQC shifts a cell's water whole and then reacts it for the step, where the
+            page's cells are mixed as the water goes, and the two meet as the cells are refined, the
+            velocity and the time kept.</p>
           <p>And redox. Water with 0.25&nbsp;mmol/kgw of oxygen enters 0.1&nbsp;m of an aquifer at
             saturation with pyrite, 0.05&nbsp;mmol/kgw of it, and calcite, with goethite free to
             precipitate, for 1.5 pore volumes. Each cell's pyrite dissolves as the oxygen reaches it; when
@@ -2279,7 +2296,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             2×10<sup>−9</sup> in pe. PHREEQC integrates its kinetics by Runge–Kutta to its own tolerance,
             <code>-tol</code>; at 10<sup>−10</sup> rather than 10<sup>−14</sup> the calcite is
             2×10<sup>−9</sup> from the page's. A reaction that takes or gives water moves PHREEQC's
-            kilogram, quartz's by a part in 10<sup>5</sup>, where the page's stays a kilogram.</p>
+            kilogram, quartz's by a part in 10<sup>5</sup>, where the page's stays a kilogram. A host of the
+            tests' own, NaOH, dissolving at a rate into a water with CO<sub>2</sub> and zinc, with a surface
+            of 0.2 sites to each mole of it, which go as it does: with 86&nbsp;% of it gone, the host is
+            PHREEQC's to 10<sup>−9</sup>, the pH to 7×10<sup>−8</sup> and the zinc on the sites, taken up
+            as the pH rises and let go as they go, to 10<sup>−6</sup>, counted in moles, PHREEQC's
+            kilogram moving by 3×10<sup>−6</sup>; with a double layer of 53&nbsp;300&nbsp;m² to each mole,
+            to 3×10<sup>−10</sup>, 4×10<sup>−9</sup> and 2×10<sup>−7</sup>.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -2428,7 +2451,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108k"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108l"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2436,6 +2459,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108k"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108l"></script>
 </body>
 </html>

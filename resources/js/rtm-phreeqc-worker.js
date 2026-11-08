@@ -13,8 +13,8 @@ importScripts(
   '../../vendors/phreeqc/phreeqc.js?v=20261107',
   '../../vendors/phreeqc/phreeqc-dat.js?v=20261107',
   './facsimile-model.js?v=20261005',
-  './rtm-model.js?v=20261108k',
-  './rtm-phreeqc.js?v=20261108k',
+  './rtm-model.js?v=20261108l',
+  './rtm-phreeqc.js?v=20261108l',
   './rtm-phreeqc-engine.js?v=20261107b',
 );
 

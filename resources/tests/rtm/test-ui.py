@@ -1046,7 +1046,10 @@ async def main():
             check('the page carries the HDF5 writer', await page.ev(
                 "typeof RtmHDF5 === 'object' && typeof KvotHDF5 === 'object'"), True)
             await page.ev("[...document.querySelectorAll('[data-on-click=\"rtm:downloadHdf5\"]')][0].click()")
-            await asyncio.sleep(3)
+            # The file is some 60 MB: on a busy machine writing it takes longer
+            # than any fixed wait, so the status line is watched for a minute.
+            await settle(page, "/ written \\(/.test(document.getElementById('rtmStatus').textContent)",
+                         True, tries=120, pause=0.5)
             written = await page.ev("document.getElementById('rtmStatus').textContent")
             check(f'writing the file says what it wrote ({written!r})',
                   bool(re.match(r'^rtm[\w.-]*\.h5 written \(\d+\.\d MB\)\.$', str(written))), True)

@@ -3870,9 +3870,9 @@
           + 'the sites go with, a mole of it at a time.', sp.line);
       }
       const rel = equilibria.filter((eq) => eq.net.some(([si]) => si === m));
-      if (rel.length !== 1) {
-        throw new RtmError(`${sp.name} has its sites per ${sp.per}: they go with the amount of a mineral held at saturation, `
-          + `and ${sp.per} has ${rel.length ? 'more than one relation' : 'no relation'} in <EQUILIBRIUM>.`, sp.line);
+      if (rel.length > 1) {
+        throw new RtmError(`${sp.name} has its sites per ${sp.per}: they go with the amount of a mineral held at saturation `
+          + `by its relation, or made and used at a rate, and ${sp.per} has more than one relation in <EQUILIBRIUM>.`, sp.line);
       }
       for (const eq of equilibria) {
         let count = 0;
@@ -3884,9 +3884,17 @@
             + 'makes.', eq.line);
         }
       }
-      const nuM = rel[0].net.find(([si]) => si === m)[1];
-      rel[0].carry = (rel[0].carry || []).concat([[t.sitesFrom, (sp.sites * nuM) / n[t.sitesFrom]]]);
-      t.per = { mineral: m, ratio: sp.sites, eq: rel[0] };
+      /*
+        Held at saturation, its relation carries the sites. Made and used at
+        a rate -- a kinetic reactant, PHREEQC's kinetic_reactant -- every
+        reaction that changes it carries them instead (compile): as it
+        dissolves its sites go, and what was on them comes off.
+      */
+      if (rel.length === 1) {
+        const nuM = rel[0].net.find(([si]) => si === m)[1];
+        rel[0].carry = (rel[0].carry || []).concat([[t.sitesFrom, (sp.sites * nuM) / n[t.sitesFrom]]]);
+      }
+      t.per = { mineral: m, ratio: sp.sites, eq: rel.length ? rel[0] : null };
     });
     const out = act || noActivity(species);
     out.sf = { list: on, n, typeOf, types, shift: null, sites: null, load: [] };
@@ -8645,15 +8653,35 @@
     const ex = act ? act.ex : null;
     act = surfaceSetup(species, equilibria, act);
     const sf = act ? act.sf : null;
-    // A mineral that carries a surface's sites changes by its relation alone: a rate law of its own would leave them behind.
+    /*
+      A mineral that carries a surface's sites: held at saturation, it changes
+      by its relation alone, which carries them (a rate law of its own would
+      leave them behind); made and used at a rate, each reaction that changes
+      it takes or gives its sites with it, so many per mole, as the bare site,
+      and the relations on the surface share out what is left.
+    */
     if (sf) {
       for (const t of sf.types) {
         if (!t.per) continue;
         const mn = species[t.per.mineral].name;
-        const rx = reactions.find((x) => [...x.reactants, ...x.products].some(([, n]) => n === mn));
-        if (rx) {
-          throw new RtmError(`"${rx.text}" changes ${mn}, which carries the sites of ${species[t.sitesFrom].name}: a mineral `
-            + 'whose amount a surface\'s sites go with is held at saturation by its relation, and changes by it alone.', rx.line);
+        if (t.per.eq) {
+          const rx = reactions.find((x) => [...x.reactants, ...x.products].some(([, nm]) => nm === mn));
+          if (rx) {
+            throw new RtmError(`"${rx.text}" changes ${mn}, which carries the sites of ${species[t.sitesFrom].name} and is `
+              + 'held at saturation by its relation: it changes by that alone. A mineral whose sites go with it at a rate '
+              + 'has no relation.', rx.line);
+          }
+          continue;
+        }
+        const perSite = t.per.ratio / sf.n[t.sitesFrom];
+        for (const ch of channels) {
+          const own = ch.net.find(([p]) => p === t.per.mineral);
+          if (!own) continue;
+          if (ch.net.some(([p]) => sf.typeOf[p] === sf.typeOf[t.sitesFrom])) {
+            throw new RtmError(`A reaction changes ${mn}, which carries the sites of ${species[t.sitesFrom].name}, and the `
+              + 'species on them as well: the sites go with it by themselves.', ch.line);
+          }
+          ch.net.push([t.sitesFrom, own[1] * perSite]);
         }
       }
     }
@@ -11379,6 +11407,23 @@
     const bins = grps.filter((G) => G.def.coef === 'binary');
     const nbin = bins.length;
     const gapStart = nc * nmin + nbub;
+    /*
+      A mineral made and used at a rate whose sites go with it (per=, its
+      reactions carrying them): used up at 1e-4 of what its cell starts with,
+      where the run stops, as for one held at saturation (applyEvent).
+    */
+    const kinSites = act && act.sf
+      ? [...new Set(act.sf.types.filter((t) => t.per && !t.per.eq).map((t) => t.per.mineral))] : [];
+    const nks = kinSites.length;
+    const ksStart = gapStart + nc * nbin;
+    const ksUsedUp = new Float64Array(nc * nks);
+    for (let c = 0; c < nc; c++) kinSites.forEach((m, i) => { ksUsedUp[c * nks + i] = 1e-4 * start[c * ns + m]; });
+    const kinSiteValues = (y, out) => {
+      for (let c = 0; c < nc; c++) {
+        for (let i = 0; i < nks; i++) out[ksStart + c * nks + i] = ksUsedUp[c * nks + i] - y[c * ns + kinSites[i]];
+      }
+      return out;
+    };
     // Where eventValues last found that a group forming would go, and one leaving its gap.
     const formAt = new Uint8Array(nbub);
     const exitAt = new Uint8Array(nc * nbin);
@@ -11391,6 +11436,9 @@
     }))).concat(Array.from({ length: nc * nbin }, (_, q) => ({
       expr: `${bins[q % nbin].def.name}'s miscibility gap${where(Math.floor(q / nbin))}`, shown: '', assigns: ['present'],
       once: false, stop: false,
+    }))).concat(Array.from({ length: nc * nks }, (_, q) => ({
+      expr: `${base.speciesNames[kinSites[q % nks]]}${where(Math.floor(q / nks))}`, shown: '', assigns: ['sites'], once: true,
+      stop: false,
     })));
     // A relation without its gas, at the concentrations Cc of the cell at b.
     const relationOf = (Cc, b, r, water) => {
@@ -11480,7 +11528,7 @@
             out[gapStart + c * nbin + i] = xs[c] ? gapValue(G, i, c, Cstar, b, water, (q) => Cstar[b + G.mem[q]]) : -1;
           });
         }
-        return out;
+        return kinSiteValues(y, out);
       }
       concentrations(y);
       for (let c = 0; c < nc; c++) {
@@ -11508,9 +11556,15 @@
           out[gapStart + c * nbin + i] = gapValue(G, i, c, C, b, water, (q) => y[b + G.mem[q]]);
         });
       }
-      return out;
+      return kinSiteValues(y, out);
     }
     function applyEvent(which) {
+      if (which >= ksStart) {
+        const c = Math.floor((which - ksStart) / nks);
+        const name = base.speciesNames[kinSites[(which - ksStart) % nks]];
+        throw new RtmError(`${name} has dissolved away${where(c)}, and the sites of the surface that goes with it, so many per `
+          + 'mole of it, with it: the page carries no surface with no sites. Give more of it, or end the run before.');
+      }
       if (which >= gapStart) {
         const q = which - gapStart;
         const c = Math.floor(q / nbin);
@@ -11593,9 +11647,9 @@
       pattern: { n, nnz, colPtr, rowIdx },
       species: names,
       initialState: () => { resetModes(initial); return Float64Array.from(initial); },
-      ...(nmin || nbub ? {
-        nevents: nc * nmin + nbub + nc * nbin,
-        eventDirections: new Int8Array(nc * nmin + nbub + nc * nbin).fill(1),
+      ...(nmin || nbub || nks ? {
+        nevents: nc * nmin + nbub + nc * nbin + nc * nks,
+        eventDirections: new Int8Array(nc * nmin + nbub + nc * nbin + nc * nks).fill(1),
         events,
         eventValues,
         applyEvent,
