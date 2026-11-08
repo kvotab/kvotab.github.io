@@ -539,9 +539,12 @@ UO2                      # no number: starts at zero, does not move</pre>
             species with no <code>D</code> does not diffuse; but in a column with
             <code>ADVECTION</code> the water carries every species that is not fixed, <code>D</code> or
             no <code>D</code>. <code>immobile</code> keeps a species where it is whatever the column
-            does, which is how a surface site is written, and <code>mineral</code> makes it a pure
+            does, and <code>mineral</code> makes it a pure
             phase: see <em>Minerals</em> below. <code>exchanger</code> makes it the sites of an ion
             exchanger and <code>exchange</code> a species on them: see <em>Ion exchange</em> below.
+            <code>surface</code> makes it a species on a surface, with <code>sites=</code> its sites,
+            and <code>potential</code> the surface's potential, with <code>area=</code> and
+            <code>grams=</code>: see <em>Surface complexation</em> below.
             <code>electron</code> makes it PHREEQC's electron, with <code>pe=</code> its pe: see
             <em>Redox: the electron</em> below.
             With a rock matrix a species also takes <code>De=</code> (or
@@ -1164,6 +1167,69 @@ Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
             Na, moves a calcium front at the water's speed over 1 + 1/(2 × 0.6), with the exchanger all
             calcium behind it and the sodium pushed out ahead.</p>
 
+          <h4 id="help-surface">Surface complexation</h4>
+          <pre>Hfo_wOH    surface  sites=2e-4
+Hfo_wOH2+  surface
+Hfo_wO-    surface
+Hfo_wOZn+  surface
+
+&lt;EQUILIBRIUM&gt;
+Hfo_wOH + H+ &lt;=&gt; Hfo_wOH2+,          logK = 7.29
+Hfo_wOH &lt;=&gt; Hfo_wO- + H+,            logK = -8.93
+Hfo_wOH + Zn+2 &lt;=&gt; Hfo_wOZn+ + H+,   logK = -1.99</pre>
+          <p>Surface complexation as PHREEQC has it. Without a potential (below) it is PHREEQC's
+            <code>SURFACE</code> with <code>-no_edl</code>: the charge a surface takes on does not act on
+            the ions near it. <code>surface</code> makes a species one on a surface. It never moves, counts in no ionic
+            strength and no water, and takes no <code>D</code>, <code>R</code>, rock-matrix
+            properties, <code>fixed</code>, <code>a=</code> or <code>b=</code>. Unlike an exchanger's,
+            the bare site, <code>Hfo_wOH</code>, is an amount like the species formed on it.</p>
+          <p>The relations make the surface. The species they join are one kind of site, and each
+            relation must keep the sites, so that a kind of site has a total of its own in every cell:
+            above, all four are PHREEQC's weak sites, and its strong sites, <code>Hfo_sOH</code> and
+            the species formed on them, would be a second kind. The relations also say how many sites
+            each species takes, the least of a kind one: <code>2 Hfo_wOH + UO2+2 &lt;=&gt; (Hfo_wO)2UO2 +
+            2 H+</code> makes one that takes two. A species' activity is its fraction of the sites, the
+            sites it takes times its amount over the sites of its kind in its cell, as PHREEQC's is. A
+            relation that joins a surface to an exchanger or a mineral is refused.</p>
+          <p>The sites of a cell are what the species on the surface take there. Or one species of a
+            kind is given <code>sites=</code>, and then, before anything else, the surface is loaded
+            from the water of that cell, which stays as it is: PHREEQC's <code>SURFACE</code> with
+            <code>-equilibrate</code>. Under <code>EQUILIBRATE</code> the water is first put on its own
+            relations. Give one or the other in a cell, not both. Every cell the relations hold in
+            needs some sites.</p>
+          <p>The relations with a surface in them are held by <code>EQUILIBRATE</code>, or are fast
+            pairs with a <code>kf</code>, the fractions' sites going into the backward constant. A rate
+            law may read <code>{Hfo_wOZn+}</code>, the species' fraction. In a column the surface holds
+            back what it takes up, and lets go of what the relations trade for it: zinc taken onto
+            Hfo_wOH sets an H<sup>+</sup> free, so water carrying zinc into a column lowers its pH ahead
+            of the zinc.</p>
+          <pre>Hfo_psi    potential  area=600  grams=0.09</pre>
+          <p>With a potential it is PHREEQC's <code>SURFACE</code> as PHREEQC has it unless told
+            <code>-no_edl</code>: Dzombak and Morel's diffuse double layer. <code>potential</code> makes a
+            species a surface's potential. A potential is named for its surface, up to the underscore:
+            <code>Hfo_psi</code> is the potential of <code>Hfo_wOH</code>, <code>Hfo_sOZn+</code> and every
+            other species on a surface whose name begins <code>Hfo_</code>, PHREEQC's surface Hfo, strong
+            sites and weak together. <code>area=</code> is the solid's specific area in m²/g and
+            <code>grams=</code> the grams of it to each kilogram of water, or litre, in whatever the
+            concentrations are. Like the electron it is no amount. Its value is its activity,
+            exp(−FΨ/RT), solved for in every cell, and it is in no ionic strength and no total. A number
+            on its line is where its activity starts; without one it starts at 1, no potential at all.</p>
+          <p>The page puts the potential into each relation on its surface itself, as PHREEQC does, as
+            a reactant to the charge the relation puts on the surface. <code>Hfo_wOH + H+ &lt;=&gt;
+            Hfo_wOH2+</code> then holds with K exp(−FΨ/RT): a surface already charged positive takes
+            another proton less readily. A relation written with the potential in it is refused, and so is
+            a <code>kf</code> on one that charges the surface. With each potential goes Gouy and Chapman's
+            equation, which ties it to the charge Q of the species on its surface:</p>
+          <pre>F Q / (A M)  =  √(8000 R T ε ε₀ I) · sinh(FΨ / 2RT)</pre>
+          <p>A the area, M the grams, I the ionic strength of the cell and ε the dielectric constant of
+            water at <code>TEMPERATURE</code>, from Bradley and Pitzer as PHREEQC has it. The constants
+            are PHREEQC's own, F = 96493.5 C/mol, R = 8.31470 J/(mol K) and ε₀ = 8.854×10<sup>−12</sup>
+            F/m, which are older than CODATA's; CODATA's would put a zinc water's molalities
+            5×10<sup>−5</sup> from PHREEQC's. A potential needs <code>EQUILIBRATE</code>, and <code>always</code> to follow a run;
+            the run is then solved as one with the electron is (see <em>Redox: the electron</em>), each
+            cell's species the speciation of its totals. Given <code>sites=</code>, the sites and the
+            potential are loaded from the water together, as PHREEQC's <code>-equilibrate</code> does.</p>
+
           <h4 id="help-redox">Redox: the electron</h4>
           <pre>e-     electron   pe=4
 Fe+2   1e-4
@@ -1416,6 +1482,18 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             its one ion has it folded into its log K at this water, and the text says so. The
             run then starts from the exchanger PHREEQC loaded. Held as fast pairs instead, the
             exchanger is not carried, and the report says so.</p>
+          <p>A surface in the input, a <code>SURFACE</code> that PHREEQC's last calculation holds, is
+            carried in the same way. Each species PHREEQC put on it becomes a <code>surface</code> species
+            at PHREEQC's molality, the bare sites among them (see <em>Surface complexation</em> above),
+            with its relation from the database's <code>SURFACE_SPECIES</code> and the database's log K at
+            the water's temperature. With its diffuse double layer, PHREEQC's default, each surface's
+            potential is written too, <code>Hfo_psi</code>, at PHREEQC's potential, with the area and the
+            grams to each kilogram of water from the surface's first line; with <code>-no_edl</code>
+            there is none. The run starts from the surface PHREEQC loaded. Not carried: a surface whose
+            sites follow a phase or a kinetic reactant, one whose block says more than its sites and
+            <code>-no_edl</code>, such as <code>-cd_music</code> or <code>-diffuse_layer</code>, and an
+            input with surfaces both with a double layer and without. The report names what was left
+            out, and why.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -1434,13 +1512,13 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
               into H(0), <code>(UO2)2(OH)2+2</code> twice into U(6).</li>
             <li>The pH is walked until PHREEQC's molality of H<sup>+</sup> is the run's [H<sup>+</sup>].</li>
             <li>A mineral of the model is not part of the water: it is listed with the phases, its
-              saturation index beside theirs. Nor is an exchanger or a species on one: the exchanger
-              is looked at whole, below.</li>
+              saturation index beside theirs. Nor is an exchanger, a surface or a species on either:
+              each is looked at whole, below.</li>
             <li>The model's electron, if it has one, is PHREEQC's: each water is given the pe the run
               has there, and the valence states are looked at against it, below.</li>
             <li>Left out, and listed with their largest concentration: water; an <code>e-</code> that
-              is not the electron, the hydrated electron of a radiolysis model; radicals, surface
-              sites and whatever else the database lacks.</li>
+              is not the electron, the hydrated electron of a radiolysis model; radicals and whatever
+              else the database lacks.</li>
             <li>The temperature is the one the model was written at, read from the top of its text, or
               25 °C for a model that does not say.</li>
             <li><em>fill in from the water</em>, off unless ticked, takes the temperature from the water in
@@ -1468,6 +1546,11 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             <li>for an exchanger of the model, how close the run's equivalent fractions are to the ones
               PHREEQC puts on it when it loads an exchanger of the run's capacity from the same water,
               species by species, at every water looked at;</li>
+            <li>for a surface of the model, how close the run's fractions of the sites are to the ones
+              PHREEQC puts on it when it loads a surface with the run's sites from the same water,
+              species by species, at every water looked at: with its double layer, the potential's area
+              and grams given, where the model has a potential, and then how close the run's potential is
+              to PHREEQC's as well; without electrostatics where it has none;</li>
             <li>for the electron of the model, the pe over the waters, and how close the run's valence
               states are to the ones PHREEQC shares each element out to when it is given the water at
               that pe with the element as one total, as a part of the element;</li>
@@ -1508,6 +1591,20 @@ H2O &lt;=&gt; OH- + H+,           logK = -14.3432862960   # here -14.1399</pre>
             PHREEQC's in pH, 0.0016 in pe, 1.5&nbsp;µmol/kgw in sulfate and 0.6&nbsp;nmol/kgw in iron, and
             the pyrite is gone from the same 12 cells, with 3.4&nbsp;% less of it left. PHREEQC takes 2
             seconds and this page 3. (On 40 cells PHREEQC itself stops: sulfur has not converged.)</p>
+          <p>And a surface. Water with 0.1&nbsp;mmol/kgw of zinc in 10 of NaCl, at pH 6.5, flows for three
+            pore volumes into 0.08&nbsp;m of a column whose ferrihydrite has PHREEQC's strong and weak
+            sites, 0.005 and 0.2&nbsp;mmol/kgw of them, loaded without electrostatics from the same water
+            without the zinc, at a dispersivity of 2&nbsp;mm. The zinc the sites take up sets protons
+            free, so the pH falls to 5.96 just ahead of the zinc, which comes through after a little more
+            than one pore volume. The page runs the model it writes from the column water with its
+            surface. On 40 cells its effluent is within 0.34&nbsp;µmol/kgw of PHREEQC's in zinc and 0.009
+            in pH, and on 20 cells within 2.7 and 0.08, the difference all in the front; by the third pore
+            volume they agree to 0.002&nbsp;µmol/kgw and 0.0001. PHREEQC takes 0.6 seconds and this page
+            1.8. With the double layer, the ferrihydrite 600&nbsp;m²/g and 0.09&nbsp;g of it to each kilogram
+            of water, the charge the surface takes on holds protons off it, and the pH falls only to 6.02.
+            On 40 cells the page's effluent is within 0.34&nbsp;µmol/kgw of PHREEQC's in zinc and 0.011 in
+            pH, and the potential the PHREEQC tab finds in each water of a run is the run's to
+            10<sup>−11</sup>&nbsp;V. PHREEQC takes 0.7 seconds and this page 1.9.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -1655,14 +1752,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261107e"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261107d"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261108"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261006"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261107f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108"></script>
 </body>
 </html>

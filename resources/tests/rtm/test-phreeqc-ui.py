@@ -414,6 +414,44 @@ async def main():
                   m_gap is not None and float(m_gap.group(1)) < 1e-6, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a surface in the water, with its double layer: carried, run, and looked at through PHREEQC ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/\\nEND\\s*$/, '\\nSURFACE 1\\n  -equilibrate 1\\n"
+                          "  Hfo_sOH 5e-6 600 0.09\\n  Hfo_wOH 2e-4\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            onsf = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            sf_text = await page.ev("document.getElementById('rtmText').value")
+            check('a surface in the water is carried with its double layer: its sites, the species PHREEQC put on them '
+                  'and its potential, and the report says so',
+                  isinstance(onsf, str) and 'On the surface, the sites Hfo_sOH, Hfo_wOH: ' in onsf
+                  and 'with the diffuse double layer: Hfo_psi, the potential of Hfo' in onsf
+                  and isinstance(sf_text, str)
+                  and re.search(r'^Hfo_wOH +[0-9.e-]+ +surface$', sf_text, re.M) is not None
+                  and re.search(r'^Hfo_psi +[0-9.e-]+ +potential +area=600 +grams=0\.09$', sf_text, re.M) is not None
+                  and re.search(r'^Hfo_sOH \+ H\+ <=> Hfo_sOH2\+, +logK = 7\.29', sf_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts count the species on its two kinds of site, and give the potential', await page.ev(
+                "/species on 2 kinds of surface site \\(Hfo_sOH, Hfo_wOH\\).*the double layer's potential Hfo_psi at -?[0-9.]+ mV/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            sf_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_sf = re.search(r'The surface \(sites Hfo_sOH, Hfo_wOH\): loaded by PHREEQC from each water with the sites '
+                             r'the run has there, with its double layer, every species on it is within ([0-9.e+-]+).*'
+                             r'and the potential within ([0-9.e+-]+) mV', sf_summary or '')
+            check('looked at through PHREEQC, the run\'s surface and potential are the ones PHREEQC loads from its water',
+                  m_sf is not None and float(m_sf.group(1)) < 1e-6 and float(m_sf.group(2)) < 1e-3, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column, looked at against distance ---
             column = ('<SETTINGS>\\nMODE = transport\\nCELLS = 5\\nLENGTH = 0.05\\nDIFFUSION = 1\\nTEND = 1e4\\n'
                       'EQUILIBRATE = always\\n\\n<SPECIES>\\nH+      1e-7   D=1e-9\\nOH-     1e-7   D=1e-9\\n'

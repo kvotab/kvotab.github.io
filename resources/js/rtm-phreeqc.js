@@ -276,6 +276,8 @@
       this.exMaster = new Map();    // exchanger label -> master species: 'X' -> 'X-'
       this.exReaction = new Map();  // exchange species -> {left, right}, right[0] the species
       this.exGamma = new Map();     // exchange species -> {a, b}: -gamma; Davies as a = b = 0
+      this.sfMaster = new Map();    // surface site type -> master species: 'Hfo_w' -> 'Hfo_wOH'
+      this.sfReaction = new Map();  // surface species -> {left, right}, right[0] the species
     }
 
     read(text) {
@@ -341,6 +343,20 @@
             if (Number.isFinite(a) && Number.isFinite(b)) this.exGamma.set(last, { a, b });
           } else if (last && /^-dav(i(e(s)?)?)?$/i.test(tokens[0])) {
             this.exGamma.set(last, { a: 0, b: 0 });
+          }
+        } else if (block === 'SURFACE_MASTER_SPECIES' && tokens.length >= 2) {
+          this.sfMaster.set(tokens[0], tokens[1]);
+        } else if (block === 'SURFACE_SPECIES') {
+          if (line.includes('=')) {
+            const at = line.indexOf('=');
+            const left = parseSide(line.slice(0, at));
+            const right = parseSide(line.slice(at + 1));
+            if (right.length && right[0].c > 0) {
+              last = right[0].n;
+              // 'Hfo_wOH = Hfo_wOH' defines a site's master species.
+              const identity = left.length === 1 && right.length === 1 && left[0].n === last;
+              if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
+            }
           }
         } else if (block === 'PHASES') {
           if (!line.includes('=') && !tokens[0].startsWith('-') && tokens.length === 1) {
@@ -430,6 +446,45 @@
     return [...out.values()];
   }
 
+  /**
+   * The SURFACE blocks of an input: each site type's master species with its
+   * sites (mol), and for the first of a surface its specific area (m2/g) and
+   * mass (g), as PHREEQC reads `Hfo_wOH 2e-4 600 0.09`; and how the block is
+   * electrostatic -- 'none' for -no_edl, 'ddl' by default -- with anything
+   * else it says that this page does not carry (`other`). A block numbered
+   * again takes the later one.
+   */
+  function readSurfaces(text) {
+    const out = new Map();
+    let cur = null;
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word)) {
+        cur = null;
+        if (word === 'SURFACE') {
+          cur = { sites: [], model: 'ddl', units: 'absolute', other: [] };
+          out.set(tokens[1] || '1', cur);
+        }
+        continue;
+      }
+      if (!cur) continue;
+      if (tokens[0].startsWith('-')) {
+        const opt = tokens[0].toLowerCase();
+        if (/^-no_e/.test(opt)) cur.model = 'none';
+        // How the sites are given (moles, or sites per nm2) says nothing once PHREEQC has loaded them.
+        else if (/^-s/.test(opt) && /^d/i.test(tokens[1] || '')) cur.units = 'density';
+        else if (/^-s/.test(opt) && /^a/i.test(tokens[1] || '')) cur.units = 'absolute';
+        else if (!/^-(eq|equilibrate)/.test(opt)) cur.other.push(tokens.join(' '));
+        continue;
+      }
+      const num = (x) => (x === undefined ? null : Number(x));
+      cur.sites.push({ master: tokens[0], sites: num(tokens[1]), area: num(tokens[2]), mass: num(tokens[3]) });
+    }
+    return out;
+  }
+
   function readDatabase(...texts) {
     const db = new Database();
     for (const t of texts) if (t) db.read(t);
@@ -455,7 +510,7 @@
     const lines = [
       `SELECTED_OUTPUT ${SEL}`, '  -reset false', '  -solution true', '  -state true',
       `USER_PUNCH ${SEL}`,
-      `  -headings aq phases elements mu pH mH cb aw tc pe ex${more.map((_, i) => ` x${i}`).join('')}`,
+      `  -headings aq phases elements mu pH mH cb aw tc pe ex sf${more.map((_, i) => ` x${i}`).join('')}`,
       '  -start',
       '  10 t = SYS("aq", n, nm$, ty$, mo)',
       '  20 s$ = ""',
@@ -487,6 +542,16 @@
       '  186   x$ = x$ + xn$(i) + "," + STR_E$(MOL(xn$(i)), 23, 15) + "," + STR_E$(LA(xn$(i)), 23, 15) + "," + STR_E$(LG(xn$(i)), 23, 15) + "|"',
       '  187 NEXT i',
       '  188 PUNCH x$',
+      // The species on a surface, as on an exchanger: mol/kgw, log activity
+      // (its fraction of the sites), log of what the fraction adds. Jumped
+      // over when there are none, for the same reason.
+      '  190 t = SYS("surf", n5, sn$, st$, sm)',
+      '  191 f$ = ""',
+      '  192 IF n5 < 1 THEN GOTO 196',
+      '  193 FOR i = 1 TO n5',
+      '  194   f$ = f$ + sn$(i) + "," + STR_E$(MOL(sn$(i)), 23, 15) + "," + STR_E$(LA(sn$(i)), 23, 15) + "," + STR_E$(LG(sn$(i)), 23, 15) + "|"',
+      '  195 NEXT i',
+      '  196 PUNCH f$',
     ];
     more.forEach((expr, i) => lines.push(`  ${200 + 10 * i} PUNCH ${expr}`));
     lines.push('  -end');
@@ -518,11 +583,13 @@
       for (const [n, v] of pairs(r[at('elements')])) elements.set(n, v);
       const exchange = new Map();
       if (at('ex') >= 0) for (const [n, m, la, g] of pairs(r[at('ex')])) exchange.set(n, { m, la, lg: g });
+      const surface = new Map();
+      if (at('sf') >= 0) for (const [n, m, la, g] of pairs(r[at('sf')])) surface.set(n, { m, la, lg: g });
       const num = (name) => Number(r[at(name)]);
       return {
         soln: at('soln') >= 0 ? r[at('soln')] : null,
         state: at('state') >= 0 ? String(r[at('state')]).trim() : '',
-        species, phases, elements, exchange,
+        species, phases, elements, exchange, surface,
         mu: num('mu'), pH: num('pH'), mH: num('mH'), cb: num('cb'), aw: num('aw'), tc: num('tc'),
         pe: num('pe'),
         x: xs.map((i) => r[i]),
@@ -552,6 +619,10 @@
   }
 
   const log10 = (x) => (x > 0 ? Math.log10(x) : -Infinity);
+  // PHREEQC's own Faraday constant and gas constant, with which it reports a
+  // potential in volts: that potential as an activity, exp(-F psi/RT).
+  const FARADAY = 96493.5;
+  const GAS_R = 8.31470;
 
   /* ======================================================================
      A water into a model
@@ -634,6 +705,36 @@
       && (everything || db.isRedox(sp))) : [];
     const lkAt = extras.length;
     for (const sp of lkSpecies) extras.push(`LK_SPECIES("${sp}")`);
+    // Each surface species' log K, the database's at this temperature, where the input has a surface.
+    const sfBlocks = readSurfaces(o.water.text);
+    const sfSpecies = sfBlocks.size && o.exact && o.surface !== false ? [...db.sfReaction.keys()] : [];
+    const sfLkAt = extras.length;
+    for (const sp of sfSpecies) extras.push(`LK_SPECIES("${sp}")`);
+    /*
+      With a diffuse double layer, each surface's potential, in volts, and
+      the water's mass, for the grams of the solid to each kilogram of it:
+      the surface is the part of a site's name before the underscore, and
+      its area and mass are on the first of its sites' lines that gives them.
+    */
+    const layers = new Map();
+    if (sfSpecies.length) {
+      for (const b of sfBlocks.values()) {
+        if (b.model !== 'ddl') continue;
+        for (const x of b.sites) {
+          const cut = x.master.indexOf('_');
+          if (cut < 1) continue;
+          const name = x.master.slice(0, cut);
+          const had = layers.get(name);
+          if (!had || (had.area === null && Number.isFinite(x.area))) {
+            layers.set(name, { area: Number.isFinite(x.area) ? x.area : null, mass: Number.isFinite(x.mass) ? x.mass : null });
+          }
+        }
+      }
+    }
+    const layerAt = extras.length;
+    for (const name of layers.keys()) extras.push(`EDL("psi", "${name}")`);
+    const massAt = layers.size ? extras.length : -1;
+    if (layers.size) extras.push('TOT("water")');
     let rows = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
@@ -778,6 +879,89 @@
         }
       }
     }
+    /*
+      THE SURFACES: each species PHREEQC put on one, at its molality, with
+      its relation as the database writes it and the database's log K, which
+      a run holds exactly; its activity is its fraction of its type's sites.
+      Without electrostatics (-no_edl) only, for now.
+    */
+    const onSf = [];
+    const sfSkipped = [];
+    const sfMasters = new Set(db.sfMaster.values());
+    const sfLk = new Map(sfSpecies.map((sp, i) => [sp, Number(w.x[sfLkAt + i])]));
+    if (w.surface && w.surface.size && o.surface !== false) {
+      const all = [...w.surface.keys()].join(', ');
+      const models = new Set([...sfBlocks.values()].map((b) => b.model));
+      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && l.mass > 0)).map(([n]) => n);
+      if (!o.exact) sfSkipped.push({ name: all, why: 'a surface needs the relations held exactly' });
+      else if (models.size > 1) {
+        sfSkipped.push({ name: all, why: 'the input has a surface with a double layer and one without (-no_edl)' });
+      } else if (noLayer.length) {
+        sfSkipped.push({ name: all, why: `the double layer of ${noLayer.join(', ')} needs its area and grams, which `
+          + 'its first site\'s line gives' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !Number.isFinite(x.sites)))) {
+        sfSkipped.push({ name: all, why: 'its sites follow a phase or a kinetic reactant, which this page does not carry' });
+      } else if ([...sfBlocks.values()].some((b) => b.other.length)) {
+        sfSkipped.push({ name: all, why: `its block says more than this page carries (${[...sfBlocks.values()]
+          .flatMap((b) => b.other).join('; ')})` });
+      } else {
+        for (const [n, e] of w.surface) {
+          if (!(e.m >= floor)) continue;
+          const skip = (why) => sfSkipped.push({ name: n, why });
+          if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
+          const r = db.sfReaction.get(n);
+          if (!r) { skip('the database has no reaction for it'); continue; }
+          const terms = [...r.left, ...r.right.slice(1)];
+          const kinds = new Set(terms.filter((t) => sfMasters.has(t.n)).map((t) => t.n));
+          if (!kinds.size) { skip('it is formed from no site'); continue; }
+          if (kinds.size > 1) { skip('it is formed from two kinds of site'); continue; }
+          if (terms.some((t) => db.sfReaction.has(t.n) && !sfMasters.has(t.n))) {
+            skip('it is formed from a species on the surface that is not a site'); continue;
+          }
+          if (terms.some((t) => t.n === 'e-')) { skip('it is formed with electrons'); continue; }
+          if (!Number.isFinite(sfLk.get(n))) { skip('PHREEQC gave no log K for it'); continue; }
+          const missing = terms.filter((t) => t.n !== 'H2O' && !sfMasters.has(t.n) && !molal.has(t.n)).map((t) => t.n);
+          if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
+          onSf.push({ species: n, master: false, m: e.m, left: r.left, right: r.right, lk: sfLk.get(n) });
+          for (const t of terms) {
+            if (t.n !== 'H2O' && !sfMasters.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+          }
+        }
+        // A species formed from a site that is not carried is not carried either.
+        const have = new Set(onSf.map((e) => e.species));
+        for (let i = onSf.length - 1; i >= 0; i--) {
+          const e = onSf[i];
+          if (e.master) continue;
+          const sites = [...e.left, ...e.right.slice(1)].filter((t) => sfMasters.has(t.n));
+          if (sites.every((t) => have.has(t.n))) continue;
+          sfSkipped.push({ name: e.species, why: `its site ${sites.find((t) => !have.has(t.n)).n} is not carried` });
+          onSf.splice(i, 1);
+        }
+        // By site, in the order the input lists them: each bare site first, then what is on it, the most first.
+        const listed = [...sfBlocks.values()].flatMap((b) => b.sites.map((x) => db.sfMaster.get(x.master) || x.master));
+        const siteOf = (e) => (e.master ? e.species
+          : [...e.left, ...e.right.slice(1)].find((t) => sfMasters.has(t.n)).n);
+        const rank = (sp) => (listed.includes(sp) ? listed.indexOf(sp) : listed.length);
+        onSf.sort((a, b) => rank(siteOf(a)) - rank(siteOf(b)) || (siteOf(a) < siteOf(b) ? -1 : siteOf(a) > siteOf(b) ? 1 : 0)
+          || Number(b.master) - Number(a.master) || b.m - a.m);
+      }
+    }
+    /*
+      Each surface's potential, where its double layer is carried: PHREEQC's,
+      written as its activity exp(-F psi/RT), with the surface's area and the
+      grams of the solid to each kilogram of the water.
+    */
+    const potentials = [];
+    if (onSf.length && layers.size) {
+      const tk = w.tc + 273.15;
+      const kgw = massAt >= 0 && Number(w.x[massAt]) > 0 ? Number(w.x[massAt]) : 1;
+      [...layers].forEach(([surface, l], i) => {
+        if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
+        const psi = Number(w.x[layerAt + i]);
+        potentials.push({ surface, species: `${surface}_psi`, psi, a: Math.exp(-FARADAY * psi / (GAS_R * tk)),
+          area: l.area, grams: l.mass / kgw });
+      });
+    }
 
     let changed = true;
     while (changed) {
@@ -864,6 +1048,8 @@
     const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
     const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
     for (const e of onEx) { e.name = rtmName(e.species, taken); exName.set(e.species, e.name); }
+    for (const e of onSf) { e.name = rtmName(e.species, taken); exName.set(e.species, e.name); }
+    for (const pp of potentials) pp.name = rtmName(pp.species, taken);
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
       .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]))
       .concat([...exName].filter(([sp, nm]) => sp !== nm));
@@ -910,7 +1096,8 @@
     const tc = w.tc;
     const date = o.date || new Date().toISOString().slice(0, 10);
     const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length),
-      ...[...exName.values()].map((nm) => nm.length)) + 2;
+      ...[...exName.values()].map((nm) => nm.length), ...onSf.map((e) => e.name.length),
+      ...potentials.map((pp) => pp.name.length)) + 2;
     const out = [];
     out.push(`# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
     out.push(`# Database: ${o.database.name || 'unnamed'}.`);
@@ -1000,6 +1187,29 @@
     if (exSkipped.length) {
       out.push(`# Not carried from the exchanger: ${exSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
     }
+    if (onSf.length) {
+      const sites = onSf.filter((e) => e.master).map((e) => {
+        const total = onSf.filter((x) => x === e || (!x.master && [...x.left, ...x.right.slice(1)].some((t) => t.n === e.species)))
+          .reduce((acc, x) => acc + x.m * (x === e ? 1 : [...x.left, ...x.right.slice(1)].find((t) => t.n === e.species).c), 0);
+        return `${e.name} (${fmtG(total, 4)} mol/kgw)`;
+      });
+      if (potentials.length) {
+        out.push(`# On a surface, with its diffuse double layer: the sites ${sites.join(' and ')},`);
+      } else {
+        out.push(`# On a surface, without electrostatics (-no_edl): the sites ${sites.join(' and ')},`);
+      }
+      out.push('# with the species PHREEQC put on them at their molalities. Each has its fraction of its');
+      out.push("# sites for its activity, and its relation the database's log K.");
+      for (const pp of potentials) {
+        out.push(`# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2/g and ${fmtG(pp.grams, 6)} g of it`);
+        out.push(`# to each kg of water, at ${fmtG(pp.psi * 1e3, 5)} mV here: rtm.html puts it into each relation on ${pp.surface}`);
+        out.push("# by the charge the relation puts on the surface, as PHREEQC does, and solves for it with Gouy");
+        out.push("# and Chapman's equation. Its value is its activity, exp(-F psi/RT).");
+      }
+    }
+    if (sfSkipped.length) {
+      out.push(`# Not carried from the surface: ${sfSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
+    }
     if (unsupported.length) {
       out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
         unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
@@ -1012,10 +1222,14 @@
     out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     if (follow) out.push('ACTIVITY = debye-huckel', `TEMPERATURE = ${fmtG(tc, 10)}`);
+    // A double layer reads it too, without ACTIVITY.
+    else if (potentials.length) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
     // Each species its own D: the ions coupled, so the water stays neutral as they spread.
     if (o.dw) out.push('DIFFUSION = nernst-planck');
     out.push('', '<SPECIES>');
-    const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length)) + 2;
+    const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length),
+      ...minerals.map((mn) => fmtG(mn.amount, 15).length), ...onEx.map((e) => fmtG(e.m, 15).length),
+      ...onSf.map((e) => fmtG(e.m, 15).length), ...potentials.map((pp) => fmtG(pp.a, 15).length)) + 2;
     for (const s of order) {
       let d = '';
       if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
@@ -1046,6 +1260,15 @@
       const amount = fmtG(e.m, 15);
       const g = e.gamma ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
+    }
+    for (const pp of potentials) {
+      const amount = fmtG(pp.a, 15);
+      out.push(`${pp.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}potential  `
+        + `area=${fmtG(pp.area, 10)}  grams=${fmtG(pp.grams, 8)}`);
+    }
+    for (const e of onSf) {
+      const amount = fmtG(e.m, 15);
+      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`);
     }
     out.push('', '<EQUILIBRIUM>');
     const lines = eqs.map((e) => {
@@ -1085,6 +1308,24 @@
           : `# log K ${e.logkDb.toFixed(4)}`,
       });
     }
+    // A surface species' relation: the database's log K, its aqueous partners'
+    // coefficients folded in where the constants are conditional.
+    for (const e of onSf) {
+      if (e.master) continue;
+      const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      const water = (terms) => terms.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+      const sumLg = (terms) => aq(terms).filter((t) => !sfMasters.has(t.n) && t.n !== e.species)
+        .reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
+      const nw = water(e.right) - water(e.left);
+      const logkC = e.lk - sumLg(e.right) + sumLg(e.left) - nw * logAw;
+      const reac = follow ? e.left : aq(e.left);
+      const prod = follow ? e.right : aq(e.right);
+      lines.push({
+        rel: `${side(reac)} <=> ${side(prod)}`,
+        k: `logK = ${(follow ? e.lk : logkC).toFixed(10)}`,
+        note: follow ? `# here ${logkC.toFixed(4)}` : `# log K ${e.lk.toFixed(4)}`,
+      });
+    }
     const wrel = Math.max(0, ...lines.map((l) => l.rel.length)) + 1;
     const wk = Math.max(0, ...lines.map((l) => l.k.length)) + 3;
     for (const l of lines) out.push(`${`${l.rel},`.padEnd(wrel)} ${l.k.padEnd(wk)}${l.note}`);
@@ -1099,7 +1340,8 @@
       names: name,
       molal,
       // The minerals' and exchange species' amounts as written, by their names in the model.
-      amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))),
+      amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))
+        .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
         pH: w.pH, chargeBalance: w.cb,
@@ -1118,6 +1360,11 @@
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
           species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
         exchangeSkipped: exSkipped,
+        surface: onSf.length ? { sites: onSf.filter((e) => e.master).map((e) => e.name),
+          species: onSf.map((e) => ({ species: e.species, as: e.name, amount: e.m })),
+          potentials: potentials.map((pp) => ({ name: pp.name, surface: pp.surface, psi: pp.psi, area: pp.area,
+            grams: pp.grams })) } : null,
+        surfaceSkipped: sfSkipped,
       },
     };
   }
@@ -1144,6 +1391,32 @@
       if (parts.slice(1).some((p) => /^electron$/i.test(p))) return parts[0];
     }
     return null;
+  }
+
+  /**
+   * The surfaces' potentials a model text has (`potential` on a line), by
+   * the surface each is of -- its name up to the underscore -- with its name,
+   * area and grams.
+   */
+  function modelPotentials(text) {
+    const out = new Map();
+    let section = null;
+    for (const raw of String(text || '').split(/\r\n|\r|\n/)) {
+      const line = raw.split('#', 1)[0].trim();
+      if (!line) continue;
+      const m = /^<\s*([A-Za-z_]+)(?:\s[^>]*)?>$/.exec(line);
+      if (m) { section = m[1].toUpperCase(); continue; }
+      if (section !== 'SPECIES') continue;
+      const parts = line.split(/[\s,;]+/).filter(Boolean);
+      if (!parts.slice(1).some((p) => /^potential$/i.test(p))) continue;
+      const num = (key) => {
+        const kv = parts.find((p) => new RegExp(`^${key}=`, 'i').test(p));
+        return kv ? Number(kv.split('=')[1]) : NaN;
+      };
+      const cut = parts[0].indexOf('_');
+      if (cut > 0) out.set(parts[0].slice(0, cut), { name: parts[0], area: num('area'), grams: num('grams') });
+    }
+    return out;
   }
 
   /** The <EQUILIBRIUM> lines of a model text as {rel, reac, prod}. */
@@ -1216,6 +1489,14 @@
     const exMasterOf = new Map([...db.exMaster].map(([lb, sp]) => [sp, lb]));
     const exMasterBack = new Map([...db.exMaster.values()].map((sp) => [rtmName(sp), sp]));
     const onExchanger = [];
+    // A species on a surface, likewise: the surface is looked at as PHREEQC
+    // would load it from each water, with the sites the run has there.
+    const sfMasterSet = new Set(db.sfMaster.values());
+    const sfBack = new Map([...db.sfReaction.keys(), ...sfMasterSet].map((sp) => [rtmName(sp), sp]));
+    const onSurface = [];
+    // And each surface's potential, with the area and grams PHREEQC's double layer is given.
+    const potentials = modelPotentials(o.modelText);
+    const potNames = new Set([...potentials.values()].map((pp) => pp.name));
     // The model's electron is PHREEQC's: its activity is the pe each water is given.
     const electron = modelElectron(o.modelText);
     const eIndex = electron ? model.species.indexOf(electron) : -1;
@@ -1223,6 +1504,7 @@
       let p;
       if (skip.has(n)) { skipped.set(n, 'asked'); return; }
       if (n === electron) { skipped.set(n, "the electron: its activity is the run's pe, which each water is given"); return; }
+      if (potNames.has(n)) { skipped.set(n, "a surface's potential: no amount, and looked at with its surface"); return; }
       if (map[n]) {
         p = map[n];
         if (!db.reaction.has(p) && db.masterLabel(p) === null) {
@@ -1241,6 +1523,10 @@
         return;
       } else if (exMasterBack.has(n)) {
         skipped.set(n, 'an exchanger: no amount, its activity solved for');
+        return;
+      } else if (sfBack.has(n)) {
+        skipped.set(n, 'on a surface: not in the water, and looked at with its surface');
+        onSurface.push({ name: n, p: sfBack.get(n) });
         return;
       } else { unmapped.push(n); return; }
       if (p === 'H+') { mapped.set(n, { p, contrib: new Map() }); return; }
@@ -1442,6 +1728,101 @@
       };
     }
 
+    // --- the model's surfaces: the run's fractions against PHREEQC's --------
+    // Each water given to PHREEQC with the sites the run has there, each type
+    // its own total, loaded from it without electrostatics (SURFACE
+    // -equilibrate -no_edl, the water left as it is): how far the fraction of
+    // its sites each species the run has on a surface takes is from the
+    // fraction PHREEQC puts there.
+    let surface = null;
+    const sfOf = [];
+    for (const e of onSurface) {
+      const si = model.species.indexOf(e.name);
+      if (sfMasterSet.has(e.p)) { sfOf.push({ ...e, si, site: e.p, n: 1 }); continue; }
+      const r = db.sfReaction.get(e.p);
+      const t = r.left.find((x) => sfMasterSet.has(x.n));
+      if (t) sfOf.push({ ...e, si, site: t.n, n: t.c });
+    }
+    if (sfOf.length) {
+      const sitesOf = (r) => {
+        const sites = new Map();
+        for (const e of sfOf) sites.set(e.site, (sites.get(e.site) || 0) + e.n * Math.max(value(r.state, e.si, r.k), 0) * scale);
+        return sites;
+      };
+      /*
+        With potentials, PHREEQC's double layer: each surface's area and
+        grams on the first of its sites' lines; and each potential the run
+        has, against PHREEQC's (EDL "psi"), in volts.
+      */
+      const surfaceOf = (site) => site.slice(0, Math.max(site.indexOf('_'), 0));
+      const surfaces = [...new Set(sfOf.map((e) => surfaceOf(e.site)))];
+      const layered = surfaces.filter((sn) => potentials.has(sn));
+      let error = null;
+      if (layered.length && layered.length < surfaces.length) {
+        error = `${surfaces.filter((sn) => !potentials.has(sn)).join(', ')} has no potential and ${layered.join(', ')} has: `
+          + 'PHREEQC loads the surfaces of one water together, all with a double layer or all without';
+      }
+      const potAt = layered.map((sn) => ({ sn, si: model.species.indexOf(potentials.get(sn).name), ...potentials.get(sn) }));
+      const tk = temp + 273.15;
+      let worstPsi = { by: 0, at: null, name: null };
+      let worst = { by: 0, at: null, species: null };
+      for (let start = 0; start < good.length && !error; start += CHUNK) {
+        const sub = good.slice(start, start + CHUNK);
+        const sites = sub.map(sitesOf);
+        const blocks = sub.map((r, k) => {
+          const first = new Set();
+          const lines = [...sites[k]].filter(([, v]) => v > 0).map(([sp, v]) => {
+            const sn = surfaceOf(sp);
+            const pp = potentials.get(sn);
+            if (!layered.length || first.has(sn) || !pp) return ` ${sp} ${fmtG(v, 15)}`;
+            first.add(sn);
+            return ` ${sp} ${fmtG(v, 15)} ${fmtG(pp.area, 15)} ${fmtG(pp.grams, 15)}`;
+          });
+          return lines.length ? `SURFACE ${k + 1}\n -equilibrate ${k + 1}\n${layered.length ? '' : ' -no_edl\n'}`
+            + `${lines.join('\n')}\n` : '';
+        }).join('');
+        let out;
+        try {
+          out = runRows(o.engine, `${punchBlock(layered.map((sn) => `EDL("psi", "${sn}")`))}`
+            + `${sub.map((r, k) => solution(k + 1, r)).join('')}END\n${blocks}END\n`);
+        } catch (e) {
+          error = String(e.message || e).trim().split('\n')[0];
+          break;
+        }
+        const byK = new Map(out.filter((q) => q.state === 'i_surf').map((q) => [Number(q.soln), q]));
+        sub.forEach((r, k) => {
+          const q = byK.get(k + 1);
+          if (!q) return;
+          for (const e of sfOf) {
+            const total = sites[k].get(e.site);
+            if (!(total > 0)) continue;
+            const ours = (e.n * Math.max(value(r.state, e.si, r.k), 0) * scale) / total;
+            const theirs = q.surface && q.surface.has(e.p) ? (e.n * q.surface.get(e.p).m) / total : 0;
+            if (Math.abs(ours - theirs) > Math.abs(worst.by)) worst = { by: ours - theirs, at: r, species: e.name };
+          }
+          // The potentials: the run's, -RT ln(a)/F, against PHREEQC's.
+          potAt.forEach((pp, i) => {
+            const a = pp.si >= 0 ? value(r.state, pp.si, r.k) : NaN;
+            const theirs = Number(q.x[i]);
+            if (!(a > 0) || !Number.isFinite(theirs)) return;
+            const ours = -Math.log(a) * GAS_R * tk / FARADAY;
+            if (Math.abs(ours - theirs) > Math.abs(worstPsi.by)) worstPsi = { by: ours - theirs, at: r, name: pp.name };
+          });
+        });
+      }
+      surface = {
+        sites: [...new Set(sfOf.map((e) => e.site))].map((sp) => rtmName(sp)),
+        species: sfOf.map((e) => e.name),
+        gap: worst.by, worst: worst.species,
+        t: worst.at ? worst.at.t : null, cell: worst.at ? worst.at.cell : null,
+        // With a double layer: the potentials, and how far the run's are from PHREEQC's, in volts.
+        potentials: potAt.map((pp) => pp.name),
+        psiGap: potAt.length ? { by: worstPsi.by, name: worstPsi.name, t: worstPsi.at ? worstPsi.at.t : null,
+          cell: worstPsi.at ? worstPsi.at.cell : null } : null,
+        error,
+      };
+    }
+
     // --- the model's redox couples: the run's valence states against PHREEQC's ----
     // Each water given to PHREEQC at the run's pe with each element of
     // several valence states as one total, which PHREEQC shares out between
@@ -1537,8 +1918,8 @@
       const reac = e.reac.filter((t) => !isWater(t));
       const prod = e.prod.filter((t) => !isWater(t));
       const all = [...reac, ...prod].every((t) => mapped.has(t.n));
-      // An exchanger's relations are looked at with the exchanger, whole.
-      const onEx = (t) => exBack.has(t.n) || exMasterBack.has(t.n) || t.n === electron;
+      // An exchanger's relations are looked at with the exchanger, whole; a surface's with the surface.
+      const onEx = (t) => exBack.has(t.n) || exMasterBack.has(t.n) || sfBack.has(t.n) || t.n === electron;
       if (!all) { if (![...reac, ...prod].every((t) => mapped.has(t.n) || onEx(t))) unchecked.push(e.rel); continue; }
       const conv = (terms) => terms.map((t) => ({ c: t.c, n: mapped.get(t.n).p }));
       const water = e.prod.filter(isWater).reduce((a, t) => a + t.c, 0) - e.reac.filter(isWater).reduce((a, t) => a + t.c, 0);
@@ -1645,6 +2026,7 @@
       drift: drifts.map((d) => ({ rel: d.rel, by: d.by, t: d.at ? d.at.t : null, cell: d.at ? d.at.cell : null })),
       activity,
       exchange,
+      surface,
       redox,
       minerals: mineralCheck,
       unchecked,
@@ -1673,7 +2055,7 @@
   }
 
   return {
-    readDatabase, readAssemblage, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
-    punchBlock, parseRows, modelEquilibria, modelElectron, waterToModel, viewRun, fmtG, SEL,
+    readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
+    punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL,
   };
 }));

@@ -183,9 +183,29 @@ function rtmSummary(model) {
     exchange: model.act && model.act.ex
       ? { exchangers: model.act.ex.exchangers.map((k) => model.speciesNames[k]), species: model.act.ex.list.length }
       : null,
+    // Surface complexation: the sites of each type (the species of each that
+    // comes first), how many species are on them, and in how many types.
+    surface: model.act && model.act.sf
+      ? { sites: model.act.sf.types.map((t) => model.speciesNames[t.members[0]]), species: model.act.sf.list.length,
+        // Each double layer's potential, and its psi at the start, in volts, over the cells.
+        potentials: model.act.pt ? model.act.pt.list.map((k) => rtmPotentialSummary(model, k)) : [] }
+      : null,
     // Redox: the electron, the relations tied to it, and the pe the start has.
     redox: model.electron >= 0 ? rtmRedoxSummary(model) : null,
   };
+}
+
+function rtmPotentialSummary(model, k) {
+  const ns = model.speciesNames.length;
+  const c = model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState();
+  const pt = model.act.pt;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < model.cells; i++) {
+    const psi = -Math.log(c[i * ns + k]) / pt.fRT;
+    if (Number.isFinite(psi)) { lo = Math.min(lo, psi); hi = Math.max(hi, psi); }
+  }
+  return { name: model.speciesNames[k], psi: Number.isFinite(lo) ? [lo, hi] : null };
 }
 
 function rtmRedoxSummary(model) {

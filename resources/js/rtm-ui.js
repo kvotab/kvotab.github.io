@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261107e';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -310,6 +310,9 @@
 
   /** A pe, or the range of pe over the cells: [lowest, highest]. */
   const fmtPe = ([lo, hi]) => (Math.abs(hi - lo) < 5e-3 ? lo.toFixed(2) : `${lo.toFixed(2)} to ${hi.toFixed(2)}`);
+  // A potential, from volts, in millivolts: one, or the range over the cells.
+  const fmtMv = ([lo, hi]) => (Math.abs(hi - lo) < 5e-5 ? `${(lo * 1e3).toFixed(1)} mV`
+    : `${(lo * 1e3).toFixed(1)} to ${(hi * 1e3).toFixed(1)} mV`);
 
   /** A thickness, in mm or µm where that reads better than metres. */
   const fmtLength = (x) => {
@@ -454,6 +457,11 @@
           + `(${a.ions} ion${a.ions === 1 ? '' : 's'})` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
           : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
+        + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
+          : `${m.surface.sites.length} kinds of surface site`} (${m.surface.sites.join(', ')}), each with its fraction `
+          + 'of the sites for its activity'
+          + (m.surface.potentials && m.surface.potentials.length ? `, ${m.surface.potentials.map((pp) => `the double layer's `
+            + `potential ${pp.name}${pp.psi ? ` at ${fmtMv(pp.psi)} to start with` : ''}`).join(', ')}` : '') : '')
         + (m.redox ? ` · ${m.redox.relations} relation${m.redox.relations === 1 ? '' : 's'} tied to the electron `
           + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : ''));
     }
@@ -2123,7 +2131,8 @@
         { heading: 'What PHREEQC is given', list: [
           'Each species of the run that the database has, under the same name or the renamed one, counted into the element totals PHREEQC takes: `HCO3-` into C(4), `H2` twice into H(0), `(UO2)2(OH)2+2` twice into U(6).',
           'The pH, walked until PHREEQC’s molality of H+ is the run’s [H+].',
-          'Left out, and listed: water; rtm.html’s `e-`, which is the hydrated electron and not PHREEQC’s; radicals, surface sites and anything else the database lacks.',
+          'A mineral, an exchanger or a surface of the model, and the species on them, are not part of the water: a mineral is listed with the phases, an exchanger or a surface is looked at whole.',
+          'Left out, and listed: water; rtm.html’s `e-`, which is the hydrated electron and not PHREEQC’s; radicals and anything else the database lacks.',
           'The temperature the model was written at, read from the top of its text; 25 °C for a model that does not say.',
           '**fill in from the water** (off unless ticked): the water in the panel on the Model tab gives the temperature, and any element the model does not carry at all, such as a background electrolyte, held at its totals. A model written from a water carries all of them already; this is for one that leaves its counter-ions out. A water PHREEQC will not take is said, and left out.',
         ] },
@@ -2132,6 +2141,7 @@
           'Which phases are supersaturated anywhere, and where and when.',
           'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong; a model with `ACTIVITY` follows them, and then it says how close its own stay to PHREEQC’s.',
           'Each mineral of the model: the saturation index PHREEQC finds where the model has some of it, and where it has none.',
+          'An exchanger or a surface of the model: how close what the run has on it is to what PHREEQC loads onto one of the same sites from the same water. The electron: how close the run’s valence states are to PHREEQC’s at the run’s pe.',
           'A water that is far from neutral, which usually means the model leaves out a counter-ion.',
         ] },
         { heading: 'Settings', text: '**Times per cell**: at most this many stored times, spread over the run (0 reads them all). **Cells**: a list such as `0, 5, 10-19`, or empty for all.' },
@@ -2213,14 +2223,15 @@
 
   /** Words that mean something on their own, by section. */
   const HL_WORDS = {
-    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
   };
   /** Names that mean something where they take a value: `NAME = ...`. */
   const HL_ASSIGN = {
-    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b', 'pe']),
+    SPECIES: new Set(['d', 'dm', 'de', 'kd', 'kdf', 'left', 'right', 'mass', 'r', 'rm', 'z', 'a', 'b', 'pe', 'sites',
+      'area', 'grams']),
     REACTIONS: new Set(['k', 'kf', 'kb', 'r', 'rb', 'on']),
     EQUILIBRIUM: new Set(['k', 'logk', 'kf', 'kb']),
     PHASES: new Set(['k', 'logk']),
@@ -2575,11 +2586,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261107f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261107e',
+    'resources/js/rtm-phreeqc.js?v=20261108',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2907,6 +2918,19 @@ END
         out.push(`<p class="warn">Not carried from the exchanger: ${r.exchangeSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
+      if (r.surface) {
+        const pots = r.surface.potentials || [];
+        out.push(`<p>On the surface, the sites ${r.surface.sites.map(esc).join(', ')}: ${r.surface.species
+          .map((e) => `${esc(e.as)} (${pqNum(e.amount)} mol/kgw)`).join(', ')}, each with its fraction of the sites `
+          + 'for its activity, '
+          + (pots.length ? `with the diffuse double layer: ${pots.map((pp) => `${esc(pp.name)}, the potential of `
+            + `${esc(pp.surface)} (${pqNum(pp.area)} m² per gram, ${pqNum(pp.grams)} g per kgw), at `
+            + `${pqNum(pp.psi * 1e3)} mV`).join('; ')}.</p>` : 'without electrostatics as PHREEQC\'s -no_edl.</p>'));
+      }
+      if (r.surfaceSkipped && r.surfaceSkipped.length) {
+        out.push(`<p class="warn">Not carried from the surface: ${r.surfaceSkipped
+          .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
+      }
       if (r.electron) {
         const e = r.electron;
         const moved = e.settled && Math.abs(e.settled.to - e.settled.from) > 1e-6;
@@ -3092,6 +3116,24 @@ END
           + 'from each water at the capacity the run has there, every species on it is within '
           + `${pqNum(Math.abs(x.gap))} of the run's equivalent fraction`
           + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}.`
+          + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
+            + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
+      }
+    }
+    // The model's surface, against PHREEQC's loaded from the same water.
+    if (r.surface) {
+      const x = r.surface;
+      if (x.error) {
+        out.push(`<p class="warn">PHREEQC would not load the surface from the waters: ${esc(x.error)}.</p>`);
+      } else {
+        const pg = x.psiGap;
+        const big = Math.abs(x.gap) > 1e-3 || (pg && Math.abs(pg.by) > 1e-4);
+        out.push(`<p${big ? ' class="warn"' : ''}>The surface (sites ${x.sites.map(esc).join(', ')}): loaded by PHREEQC `
+          + `from each water with the sites the run has there, ${pg ? 'with its double layer' : 'without electrostatics'}, `
+          + `every species on it is within ${pqNum(Math.abs(x.gap))} of the run's fraction of its sites`
+          + `${x.worst ? ` (${esc(x.worst)}${x.t !== null ? `; ${where(x)}` : ''})` : ''}`
+          + (pg ? `, and the potential within ${pqNum(Math.abs(pg.by) * 1e3)} mV of the run's`
+            + `${pg.name ? ` (${esc(pg.name)}${pg.t !== null ? `; ${where(pg)}` : ''})` : ''}` : '') + '.'
           + (big ? ' That is further than holding the relations leaves it: the water the run has may be missing '
             + 'species PHREEQC counts, or the relations are not the database\'s.' : '') + '</p>');
       }

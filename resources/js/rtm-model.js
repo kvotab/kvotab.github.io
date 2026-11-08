@@ -365,8 +365,10 @@
       }
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
-        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null,
-        mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, line };
+        mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null, sites: null,
+        area: null, grams: null,
+        mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, surface: false,
+        potential: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -405,9 +407,20 @@
           } else if (key === 'b') entry.dhb = value;
           // The electron's: the pe its activity starts at, 10^-pe.
           else if (key === 'pe') entry.pe = value;
+          // A surface's: the sites of its type in every cell, loaded from the water.
+          else if (key === 'sites') {
+            if (!(value > 0)) throw new RtmError(`sites = ${value} for ${name}: a number of sites is above zero.`, line);
+            entry.sites = value;
+          }
+          // A surface's potential's: the specific area of the solid, m2/g, and
+          // the grams of it to each kilogram of water.
+          else if (key === 'area' || key === 'grams') {
+            if (!(value > 0)) throw new RtmError(`${kv[1]} = ${value} for ${name}: it is above zero.`, line);
+            entry[key] = value;
+          }
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
-            + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; and for '
-            + 'the electron pe.', line);
+            + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; for '
+            + 'the electron pe; for a surface sites; and for its potential area and grams.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -422,6 +435,10 @@
         if (/^exchange$/i.test(part)) { entry.exchange = true; entry.immobile = true; continue; }
         // PHREEQC's electron: no amount, its activity 10^-pe solved for.
         if (/^electron$/i.test(part)) { entry.electron = true; entry.immobile = true; continue; }
+        // A species on a surface, Hfo_wOH: its activity is its fraction of the sites.
+        if (/^surface$/i.test(part)) { entry.surface = true; entry.immobile = true; continue; }
+        // A surface's potential, Hfo_psi: no amount, its activity exp(-F psi/RT) solved for.
+        if (/^potential$/i.test(part)) { entry.potential = true; entry.immobile = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
@@ -429,10 +446,21 @@
         }
         throw new RtmError(`"${part}" is not understood on a species line.`, line);
       }
-      const kinds = ['mineral', 'exchange', 'exchanger', 'electron'].filter((k) => entry[k]);
+      const kinds = ['mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential'].filter((k) => entry[k]);
       if (kinds.length > 1) throw new RtmError(`${name} is given as ${kinds.join(' and ')}: it is one of them.`, line);
       if (entry.pe !== null && !entry.electron) {
         throw new RtmError(`pe = ${entry.pe} for ${name}: pe is the electron's, e- electron pe=4.`, line);
+      }
+      if (entry.sites !== null && !entry.surface) {
+        throw new RtmError(`sites = ${entry.sites} for ${name}: sites are a surface's, Hfo_wOH surface sites=2e-4.`, line);
+      }
+      if ((entry.area !== null || entry.grams !== null) && !entry.potential) {
+        throw new RtmError(`${entry.area !== null ? 'area' : 'grams'} is given to ${name}: area and grams are a surface's `
+          + 'potential\'s, Hfo_psi potential area=600 grams=0.09.', line);
+      }
+      if (entry.sites !== null && entry.initial !== 0) {
+        throw new RtmError(`${name} is given both an amount and the sites of its surface: the sites are loaded from the `
+          + 'water, which puts every species on the surface where it has to be. Give one.', line);
       }
       if (entry.electron) {
         /*
@@ -463,9 +491,33 @@
         } else if (!(entry.initial >= 0)) {
           throw new RtmError(`${name} is the electron, and its activity is above zero: pe=4 is 1e-4.`, line);
         }
+      } else if (entry.potential) {
+        /*
+          A surface's potential is no amount and never moves either: what it
+          is given is its activity, exp(-F psi/RT), where the start's
+          speciation begins, 1 -- no potential -- if nothing is given.
+        */
+        const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
+          ['Kd', entry.Kd !== null], ['Kdf', entry.Kdf !== null], ['left', entry.left !== null],
+          ['right', entry.right !== null], ['fixed', entry.fixed]].filter(([, given]) => given).map(([k]) => k);
+        if (moves.length) {
+          throw new RtmError(`${name} is a surface's potential, which is no amount, never moves and is solved for: it `
+            + `takes no ${moves.join(', ')}.`, line);
+        }
+        if (entry.z !== null || entry.dha !== null || entry.dhb !== null) {
+          throw new RtmError(`${name} is a surface's potential, whose activity is solved for and which carries no charge `
+            + 'into the ionic strength: it takes no z, a or b.', line);
+        }
+        if (entry.area === null || entry.grams === null) {
+          throw new RtmError(`${name} is a surface's potential and needs the surface's area, in m2/g, and grams of the `
+            + `solid to each kilogram of water: ${name} potential area=600 grams=0.09.`, line);
+        }
+        if (!(entry.initial >= 0)) throw new RtmError(`${name} is a surface's potential, and its activity is above zero.`, line);
+        if (entry.initial === 0) entry.initial = 1;
       } else if (kinds.length) {
         const kind = kinds[0];
-        const what = { mineral: 'a mineral', exchange: 'on an exchanger', exchanger: 'an exchanger' }[kind];
+        const what = { mineral: 'a mineral', exchange: 'on an exchanger', exchanger: 'an exchanger',
+          surface: 'on a surface' }[kind];
         const moves = [['D', entry.D > 0], ['Dm', entry.Dm > 0], ['R', entry.mass !== null], ['Rm', entry.Rm !== null],
           ['Kd', entry.Kd !== null], ['Kdf', entry.Kdf !== null], ['left', entry.left !== null],
           ['right', entry.right !== null], ['fixed', entry.fixed]].filter(([, given]) => given).map(([k]) => k);
@@ -477,13 +529,17 @@
           throw new RtmError(`${name} is ${what}, and its ${kind === 'exchanger' ? 'capacity' : 'amount'} is zero or more.`,
             line);
         }
-        if (kind !== 'mineral' && entry.z !== null) {
+        if (kind !== 'mineral' && kind !== 'surface' && entry.z !== null) {
           throw new RtmError(`${name} is ${what}: ${kind === 'exchanger' ? 'its sites are counted, not charged'
             : 'it carries no charge into the ionic strength, and its coefficient is its ion\'s, from its relation'}, so `
             + 'it takes no z.', line);
         }
         if (kind === 'exchanger' && (entry.dha !== null || entry.dhb !== null)) {
           throw new RtmError(`${name} is an exchanger, whose activity is solved for: it takes no a or b.`, line);
+        }
+        if (kind === 'surface' && (entry.dha !== null || entry.dhb !== null)) {
+          throw new RtmError(`${name} is on a surface, whose activity is its fraction of the sites: it takes no a or b.`,
+            line);
         }
         if (kind === 'exchange' && (entry.dha === null) !== (entry.dhb === null)) {
           throw new RtmError(`${name} is on an exchanger: it takes a and b together, as PHREEQC's -gamma a b, `
@@ -1557,7 +1613,7 @@
     const eps = d1000 + c * Math.log((b + atm * 1.01325) / (b + 1e3));
     const e2 = 1.671008e-3 / (eps * T); // e^2/(eps k T), cm
     const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
-    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8 };
+    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps };
   }
 
   /**
@@ -1577,7 +1633,8 @@
    */
   function activityModel(settings, species, warnings) {
     if (settings.ACTIVITY === 'none') {
-      if (settings.given && settings.given.has('TEMPERATURE')) {
+      // A surface's potential reads it too: the double layer's dielectric constant.
+      if (settings.given && settings.given.has('TEMPERATURE') && !species.some((sp) => sp.potential)) {
         warnings.push('TEMPERATURE sets the activity model\'s A and B and nothing else, and ACTIVITY is none: '
           + 'it does nothing here.');
       }
@@ -1598,8 +1655,12 @@
       // The water itself, and a pure phase: activity 1, and no solute. An
       // exchanger and the species on it are no solutes either, and carry no
       // charge into I: their coefficients are set with the exchange (exchangeSetup).
-      // Nor is the electron, whose coefficient is 1: its activity is solved for.
-      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron) { solute[s] = 0; return; }
+      // Nor is the electron, whose coefficient is 1: its activity is solved for; nor a
+      // species on a surface, whose activity is its fraction of the sites (surfaceSetup).
+      if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface || sp.potential) {
+        solute[s] = 0;
+        return;
+      }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
       if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
       if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
@@ -1616,7 +1677,7 @@
       }
     });
     return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, zg: Float64Array.from(z), form, a, b, solute,
-      ex: null };
+      ex: null, sf: null, pt: null };
   }
 
   /**
@@ -1697,6 +1758,15 @@
         dG[s] *= ex.pw[s];
       }
     }
+    // On a surface, the fraction of its type's sites in the cell: n/sites, set when they are known.
+    const sf = act.sf;
+    if (sf) {
+      const at = cell * ns;
+      for (const s of sf.list) {
+        lnG[s] = sf.shift[at + s];
+        dG[s] = 0;
+      }
+    }
   }
 
   /**
@@ -1705,10 +1775,10 @@
    */
   function noActivity(species) {
     const ns = species.length;
-    const z = Float64Array.from(species, (sp) => (sp.mineral || sp.exchange || sp.exchanger || sp.electron
-      || sp.name === 'H2O' ? 0 : (sp.z !== null ? sp.z : chargeOf(sp.name))));
+    const z = Float64Array.from(species, (sp) => (sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface
+      || sp.potential || sp.name === 'H2O' ? 0 : (sp.z !== null ? sp.z : chargeOf(sp.name))));
     return { kind: 'none', A: 0, B: 0, ns, z, zg: new Float64Array(ns), form: new Uint8Array(ns),
-      a: new Float64Array(ns), b: new Float64Array(ns), solute: new Uint8Array(ns), ex: null };
+      a: new Float64Array(ns), b: new Float64Array(ns), solute: new Uint8Array(ns), ex: null, sf: null, pt: null };
   }
 
   /**
@@ -1853,6 +1923,262 @@
 
   /** A number of sites as a reader would write it. */
   function fmtSites(v) { return String(+v.toPrecision(6)); }
+
+  /**
+   * SURFACE COMPLEXATION, as PHREEQC's SURFACE has it without electrostatics
+   * (its -no_edl).
+   *
+   *   Hfo_wOH    surface  sites=2e-4     a site, and the sites of its type, loaded from the water
+   *   Hfo_wOH2+  surface
+   *   Hfo_wOZn+  surface
+   *   Hfo_wOH + H+ <=> Hfo_wOH2+,         logK = 7.29
+   *   Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+,  logK = -1.99
+   *
+   * A species on a surface stays where it is, counts in no ionic strength
+   * and no water, and has for its activity its fraction of the sites of its
+   * type, n C over the sites in its cell: n the sites it takes, read off the
+   * relations as an exchanger's are, the least of a type taking one -- as
+   * PHREEQC has it, a species on two sites counting twice. A type is the
+   * species the relations join, and its sites a total of their own, which
+   * the relations keep. Unlike an exchanger's, a surface's master species is
+   * an amount like the rest.
+   *
+   * Returns the activity model with the surface in it (one made for it when
+   * ACTIVITY is none), or `act` itself when there is no surface.
+   */
+  function surfaceSetup(species, equilibria, act) {
+    const ns = species.length;
+    const on = [];
+    species.forEach((sp, k) => { if (sp.surface) on.push(k); });
+    if (!on.length) return act;
+    const name = (k) => species[k].name;
+    // The types: the species the relations join.
+    const parent = Int32Array.from({ length: ns }, (_, i) => i);
+    const find = (i) => { let r = i; while (parent[r] !== r) r = parent[r]; return r; };
+    for (const eq of equilibria) {
+      const sfs = eq.net.filter(([k]) => species[k].surface).map(([k]) => k);
+      if (sfs.length && eq.net.some(([k]) => species[k].exchange || species[k].exchanger)) {
+        throw new RtmError(`"${eq.text}" has a surface and an exchanger in it: a relation is on one.`, eq.line);
+      }
+      if (sfs.length && eq.mineral >= 0) {
+        throw new RtmError(`"${eq.text}" has a mineral and a surface in it: a relation is one or the other.`, eq.line);
+      }
+      for (let i = 1; i < sfs.length; i++) {
+        const a = find(sfs[0]);
+        const b = find(sfs[i]);
+        if (a !== b) parent[b] = a;
+      }
+    }
+    const typeOf = new Int32Array(ns).fill(-1);
+    const types = [];
+    const rootType = new Map();
+    for (const k of on) {
+      const r = find(k);
+      if (!rootType.has(r)) { rootType.set(r, types.length); types.push({ members: [] }); }
+      typeOf[k] = rootType.get(r);
+      types[typeOf[k]].members.push(k);
+    }
+    // The sites each takes: one for the first of a type, then through the relations.
+    const n = new Float64Array(ns).fill(NaN);
+    for (const t of types) n[t.members[0]] = 1;
+    for (let changed = true; changed;) {
+      changed = false;
+      for (const eq of equilibria) {
+        const sfs = eq.net.filter(([k]) => species[k].surface);
+        const open = sfs.filter(([k]) => Number.isNaN(n[k]));
+        if (open.length !== 1 || sfs.length < 2) continue;
+        const [j, nu] = open[0];
+        let sum = 0;
+        for (const [k, c] of sfs) if (k !== j) sum += c * n[k];
+        const v = -sum / nu;
+        if (!(v > 0)) {
+          throw new RtmError(`"${eq.text}" gives ${name(j)} no sites: a species on a surface is formed from another `
+            + 'on it, Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+.', eq.line);
+        }
+        n[j] = v;
+        changed = true;
+      }
+    }
+    const lost = on.filter((k) => Number.isNaN(n[k]));
+    if (lost.length) {
+      throw new RtmError(`The relations do not say how many sites ${lost.map(name).join(', ')} ${lost.length > 1 ? 'take'
+        : 'takes'}: form each from one other species on its surface.`, species[lost[0]].line);
+    }
+    for (const t of types) {
+      const least = Math.min(...t.members.map((k) => n[k]));
+      for (const k of t.members) n[k] /= least;
+    }
+    for (const eq of equilibria) {
+      const sfs = eq.net.filter(([k]) => species[k].surface);
+      if (!sfs.length) continue;
+      let sum = 0;
+      let scale = 0;
+      for (const [k, c] of sfs) { sum += c * n[k]; scale += Math.abs(c * n[k]); }
+      if (Math.abs(sum) > 1e-9 * scale) {
+        const side = (sg) => sfs.filter(([, c]) => c * sg > 0).reduce((acc, [k, c]) => acc + Math.abs(c) * n[k], 0);
+        throw new RtmError(`"${eq.text}" does not keep the surface's sites: ${fmtSites(side(-1))} on the left and `
+          + `${fmtSites(side(1))} on the right.`, eq.line);
+      }
+    }
+    types.forEach((t) => {
+      const given = t.members.filter((k) => species[k].sites !== null);
+      if (given.length > 1) {
+        throw new RtmError(`${given.map(name).join(' and ')} are on one surface and each given its sites: give them once.`,
+          species[given[1]].line);
+      }
+      t.sitesFrom = given.length ? given[0] : -1;
+    });
+    const out = act || noActivity(species);
+    out.sf = { list: on, n, typeOf, types, shift: null, sites: null, load: [] };
+    return out;
+  }
+
+  /*
+    PHREEQC's constants for the double layer, its own and older than CODATA's:
+    Faraday's 96493.5 C/mol, the gas constant 8.31470 J/(mol K), the
+    permittivity of vacuum 8.854e-12 F/m. Its surfaces are worked out with
+    these, and its potentials reported in volts with them; CODATA's would
+    put a zinc water's molalities 5e-5 from PHREEQC's.
+  */
+  const FARADAY = 96493.5;
+  const GAS_R = 8.31470;
+  const EPSILON0 = 8.854e-12;
+
+  /**
+   * THE DIFFUSE DOUBLE LAYER, as PHREEQC's SURFACE has it unless told
+   * -no_edl: Dzombak and Morel's model.
+   *
+   *   Hfo_psi    potential  area=600  grams=0.09     the potential of the surface Hfo
+   *
+   * A potential is a surface's: the species on a surface whose names begin
+   * as its own does, up to and with the first underscore -- Hfo_psi is the
+   * potential of Hfo_wOH, Hfo_sOZn+ and every other Hfo_ species, PHREEQC's
+   * surface Hfo. It is no amount: its activity, exp(-F psi/RT), is solved for
+   * in every cell. Each relation on its surface takes it as a reactant to
+   * the charge the relation puts on the surface, dz, so that it holds with
+   * K exp(-dz F psi/RT), as PHREEQC's do; and with each potential goes an
+   * equation of its own, Gouy and Chapman's:
+   *
+   *   F Q/(A M) = sqrt(8000 R T eps eps0 I) sinh(F psi/2RT)
+   *
+   * Q the charge of the species on the surface, A its area in m2/g, M the
+   * grams of the solid to each kilogram of water, I the ionic strength and
+   * eps the dielectric constant of water at the TEMPERATURE (Bradley and
+   * Pitzer, as PHREEQC has it). The potential counts in no total and is in
+   * no ionic strength; a relation written with it is refused, the page
+   * putting it in.
+   *
+   * Returns the activity model with the potentials in it (act.pt).
+   */
+  function potentialSetup(species, equilibria, act, settings) {
+    const ns = species.length;
+    const pots = [];
+    species.forEach((sp, k) => { if (sp.potential) pots.push(k); });
+    if (!pots.length) return act;
+    const name = (k) => species[k].name;
+    const sf = act ? act.sf : null;
+    if (!sf) {
+      throw new RtmError(`${name(pots[0])} is a surface's potential, and no species is on a surface: Hfo_wOH surface `
+        + 'sites=2e-4 is one.', species[pots[0]].line);
+    }
+    const of = new Int32Array(ns).fill(-1);
+    pots.forEach((k, q) => {
+      const n = name(k);
+      const cut = n.indexOf('_');
+      if (cut < 1) {
+        throw new RtmError(`${n} is a potential, and a potential is named for its surface, up to an underscore: `
+          + 'Hfo_psi is the potential of Hfo_wOH and the other Hfo_ species.', species[k].line);
+      }
+      const prefix = n.slice(0, cut + 1);
+      let any = false;
+      for (const j of sf.list) {
+        if (!name(j).startsWith(prefix)) continue;
+        if (of[j] >= 0) {
+          throw new RtmError(`${name(pots[of[j]])} and ${n} are each the potential of ${name(j)}: a surface has one.`,
+            species[k].line);
+        }
+        of[j] = q;
+        any = true;
+      }
+      if (!any) {
+        throw new RtmError(`${n} is the potential of the surface ${prefix.slice(0, -1)}, and no species on a surface is `
+          + `named ${prefix}...: Hfo_psi is the potential of Hfo_wOH.`, species[k].line);
+      }
+    });
+    // The charge each species on a surface carries onto it.
+    const zs = Float64Array.from(species, (sp) => (sp.surface ? (sp.z !== null ? sp.z : chargeOf(sp.name)) : 0));
+    const isPot = (k) => species[k].potential;
+    for (const eq of equilibria) {
+      const p = eq.net.find(([k]) => isPot(k));
+      if (p) {
+        throw new RtmError(`"${eq.text}" has ${name(p[0])} in it, a surface's potential: the page puts the potential in `
+          + 'each relation on its surface itself, by the charge the relation puts on the surface.', eq.line);
+      }
+      const on = eq.net.filter(([k]) => of[k] >= 0);
+      if (!on.length) continue;
+      const qs = new Set(on.map(([k]) => of[k]));
+      if (qs.size > 1) {
+        throw new RtmError(`"${eq.text}" is on two surfaces, each with its potential: a relation is on one.`, eq.line);
+      }
+      const q = of[on[0][0]];
+      let dz = 0;
+      for (const [k, c] of on) dz += c * zs[k];
+      if (Math.abs(dz) < 1e-12) continue;
+      if (eq.kf !== null) {
+        throw new RtmError(`"${eq.text}" puts a charge on a surface with a potential, which is solved for and cannot be `
+          + 'moved at a rate: the relation is held (EQUILIBRATE), and takes no kf.', eq.line);
+      }
+      // A reactant to the charge the relation puts on the surface: K exp(-dz F psi/RT).
+      eq.net.push([pots[q], -dz]);
+      eq.potential = { at: pots[q], dz };
+    }
+    for (const k of pots) {
+      if (!equilibria.some((eq) => eq.potential && eq.potential.at === k)) {
+        throw new RtmError(`No relation puts a charge on the surface of ${name(k)}, and a potential acts through them: `
+          + 'Hfo_wOH + H+ <=> Hfo_wOH2+ is one.', species[k].line);
+      }
+    }
+    if (!settings.EQUILIBRATE) {
+      throw new RtmError(`${name(pots[0])} is a surface's potential, which is worked out with the relations of its `
+        + 'surface: it needs EQUILIBRATE, always to follow the run.', species[pots[0]].line);
+    }
+    const tc = settings.TEMPERATURE;
+    if (!(tc >= 0 && tc <= 350)) {
+      throw new RtmError(`TEMPERATURE = ${tc}: the double layer's dielectric constant is worked out for 0 to 350 C.`);
+    }
+    const T = tc + 273.15;
+    const { eps } = debyeHuckelAB(tc);
+    act.pt = {
+      list: pots,
+      of,
+      zs,
+      // F/(A M), C/m2 for each mol/kgw of charge; and sqrt(8000 R T eps eps0), C/m2 at I = 1.
+      cQ: Float64Array.from(pots, (k) => FARADAY / (species[k].area * species[k].grams)),
+      kS: Math.sqrt(8000 * GAS_R * T * eps * EPSILON0),
+      // F/RT: psi = -ln(a)/fRT, in volts.
+      fRT: FARADAY / (GAS_R * T),
+      temperature: tc,
+      eps,
+    };
+    return act;
+  }
+
+  /**
+   * One potential's Gouy-Chapman residual at the charge Q of its surface,
+   * the ionic strength I (low: at its floor) and u = ln a = -F psi/RT, in
+   * C/m2, with its derivatives in Q, I and u.
+   */
+  function gouyChapman(pt, q, Q, I, low, u) {
+    const sq = Math.sqrt(I);
+    const sh = Math.sinh(u / 2);
+    const S = pt.kS * sq;
+    return {
+      r: pt.cQ[q] * Q + S * sh,
+      dQ: pt.cQ[q],
+      dI: low ? 0 : (pt.kS / (2 * sq)) * sh,
+      du: S * Math.cosh(u / 2) / 2,
+    };
+  }
 
   /**
    * REDOX, as PHREEQC has it: the electron.
@@ -2020,13 +2346,18 @@
       what a buffered pH means. So the null space is taken over the free
       species alone.
     */
-    const active = new Set(equilibriumSpecies(equilibria)
-      .filter((si) => !(fixed && fixed[si])));
+    /*
+      Nor does a surface's potential (site 3): it is no amount, and a total
+      with it in would be the surface's charge, which the relations move and
+      Gouy and Chapman's equation decides. It is an unknown of its own.
+    */
+    const out = (si) => (fixed && fixed[si]) || (site && site[si] === 3);
+    const active = new Set(equilibriumSpecies(equilibria).filter((si) => !out(si)));
     const ne = equilibria.length;
     // A = S transpose: one row per equilibrium, one column per species.
     const A = Array.from({ length: ne }, () => new Float64Array(ns));
     equilibria.forEach((eq, j) => {
-      for (const [si, c] of eq.net) if (!(fixed && fixed[si])) A[j][si] = c;
+      for (const [si, c] of eq.net) if (!out(si)) A[j][si] = c;
     });
 
     /*
@@ -2143,7 +2474,9 @@
     const cells = [];
     const part = equilibriumSpecies(eqs).filter((si) => !held[si]);
     const na = part.length;
-    if (ne + nb !== na) {
+    // A surface's potential has Gouy and Chapman's equation for its own.
+    const npot = part.filter((si) => site && site[si] === 3).length;
+    if (ne + nb + npot !== na) {
       const nheld = equilibriumSpecies(eqs).length - na;
       throw new RtmError(`The equilibria give ${ne} equations and ${nb} conserved totals, which is `
         + `${ne + nb} for the ${na} species they are free to move`
@@ -2153,8 +2486,8 @@
     }
     const sys = cellSystem(eqs, part, basis.map((v) => Float64Array.from(part, (si) => v[si])), model.mineral,
       model.act || null, ns, site);
-    // An exchanger, or the electron, counts in no total: it is no amount.
-    const w = Float64Array.from(part, (si) => (site && site[si] === 2 ? 0 : 1));
+    // An exchanger, the electron or a potential counts in no total: it is no amount.
+    const w = Float64Array.from(part, (si) => (site && site[si] >= 2 ? 0 : 1));
     for (let cell = 0; cell < model.cells; cell++) {
       const b = cell * ns;
       // The totals to hold, taken from the state as it stands; a mineral
@@ -2270,6 +2603,158 @@
   }
 
   /**
+   * Loads each surface type given its sites from the water of its cell: the
+   * species on it in equilibrium with that water, which is left as it is,
+   * their sites the given ones. PHREEQC's SURFACE with -equilibrate.
+   *
+   * With the water fixed, each species of the type follows from the one
+   * given the sites, through the relations that form it: ln a = c + (n/n0) u,
+   * u that species' ln a. Their activities are their fractions of the sites,
+   * so what is left is ln(sum of e^(c + (n/n0) u)) = 0, convex and rising in
+   * u, which Newton settles from anywhere.
+   */
+  function loadSurfaces(model, y) {
+    const sf = model.act.sf;
+    const pt = model.act.pt;
+    const act = model.act;
+    const ns = model.speciesNames.length;
+    const nt = sf.types.length;
+    const lnG = new Float64Array(ns);
+    const dG = new Float64Array(ns);
+    // Each loaded type: the order its relations form its species in, from the
+    // one given the sites, and the potential it is on, or -1.
+    const plan = sf.types.map((t) => {
+      if (t.sitesFrom < 0) return null;
+      const mine = new Set(t.members);
+      const eqs = model.equilibria.filter((eq) => eq.net.some(([si]) => mine.has(si)));
+      const k0 = t.sitesFrom;
+      if (eqs.length !== t.members.length - 1) {
+        throw new RtmError(`The surface of ${model.speciesNames[k0]} has ${t.members.length} species and ${eqs.length} `
+          + 'relations for them: each species on it but one is formed in one relation of its own, and then the load a '
+          + 'water gives it is settled.');
+      }
+      const known = new Set([k0]);
+      const order = [];
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const eq of eqs) {
+          if (order.some((o) => o.eq === eq)) continue;
+          const open = eq.net.filter(([si]) => mine.has(si) && !known.has(si));
+          if (open.length !== 1) continue;
+          order.push({ eq, j: open[0][0], nu: open[0][1] });
+          known.add(open[0][0]);
+          grew = true;
+        }
+      }
+      const on = pt ? t.members.find((j) => pt.of[j] >= 0) : undefined;
+      return { t, mine, k0, order, q: on !== undefined ? pt.of[on] : -1,
+        lnA: new Float64Array(ns), slope: new Float64Array(ns), pslope: new Float64Array(ns) };
+    });
+    const cells = new Set(sf.load.map((q) => Math.floor(q / nt)));
+    for (const c of cells) {
+      const b = c * ns;
+      const water = activityAt(act, y, b, lnG, dG, c);
+      const here = plan.filter((pl, ti) => pl && sf.load.includes(c * nt + ti));
+      // ln a of each species of a type: lnA + slope u + pslope psi, u the ln a
+      // of the one given the sites and psi its potential's ln a.
+      for (const pl of here) {
+        const { lnA, slope, pslope, mine, k0 } = pl;
+        lnA[k0] = 0;
+        slope[k0] = 1;
+        pslope[k0] = 0;
+        for (const { eq, j, nu } of pl.order) {
+          let r = eq.lnK - (eq.water ? eq.water * water.lnAw : 0);
+          let d = 0;
+          let pd = 0;
+          for (const [si, v] of eq.net) {
+            if (si === j) continue;
+            if (mine.has(si)) { r -= v * lnA[si]; d -= v * slope[si]; pd -= v * pslope[si]; } else if (pt && model.speciesList[si].potential) {
+              pd -= v;
+            } else r -= v * (Math.log(y[b + si]) + lnG[si]);
+          }
+          lnA[j] = r / nu;
+          slope[j] = d / nu;
+          pslope[j] = pd / nu;
+        }
+      }
+      // The types on no potential, one at a time; those on one with it, together.
+      const groups = [];
+      for (const pl of here) {
+        if (pl.q < 0) { groups.push({ q: -1, pls: [pl] }); continue; }
+        const g = groups.find((gg) => gg.q === pl.q);
+        if (g) g.pls.push(pl); else groups.push({ q: pl.q, pls: [pl] });
+      }
+      for (const { q, pls } of groups) {
+        const m = pls.length;
+        const n = m + (q >= 0 ? 1 : 0);
+        const u = new Float64Array(n);
+        const psiAt = q >= 0 ? pt.list[q] : -1;
+        if (q >= 0) u[m] = Math.log(Math.max(y[b + psiAt], 1e-300));
+        // The charge of what is on the surface and not loaded here, as it stands.
+        let Qfixed = 0;
+        if (q >= 0) {
+          const loaded = new Set(pls.flatMap((pl) => pl.t.members));
+          for (let j = 0; j < ns; j++) if (pt.of[j] === q && pt.zs[j] && !loaded.has(j)) Qfixed += pt.zs[j] * y[b + j];
+        }
+        const la = (pl, j) => pl.lnA[j] + pl.slope[j] * u[pls.indexOf(pl)] + (q >= 0 ? pl.pslope[j] * u[m] : 0);
+        const F = new Float64Array(n);
+        const J = Array.from({ length: n }, () => new Float64Array(n));
+        let ok = false;
+        for (let it = 0; it < 200; it++) {
+          for (const row of J) row.fill(0);
+          let Q = Qfixed;
+          pls.forEach((pl, a) => {
+            let top = -Infinity;
+            for (const j of pl.t.members) top = Math.max(top, la(pl, j));
+            let sum = 0;
+            let ds = 0;
+            let dp = 0;
+            for (const j of pl.t.members) {
+              const e = Math.exp(la(pl, j) - top);
+              sum += e;
+              ds += e * pl.slope[j];
+              dp += e * pl.pslope[j];
+              if (q >= 0 && pt.zs[j]) {
+                const cj = Math.exp(la(pl, j) - sf.shift[b + j]);
+                Q += pt.zs[j] * cj;
+                J[m][a] += pt.cQ[q] * pt.zs[j] * cj * pl.slope[j];
+                J[m][m] += pt.cQ[q] * pt.zs[j] * cj * pl.pslope[j];
+              }
+            }
+            // The fractions of the type's sites add up to one.
+            F[a] = top + Math.log(sum);
+            J[a][a] = ds / sum;
+            if (q >= 0) J[a][m] = dp / sum;
+          });
+          if (q >= 0) {
+            const gc = gouyChapman(pt, q, Q, water.I, !(water.I > 1e-10), u[m]);
+            F[m] = gc.r;
+            J[m][m] += gc.du;
+          }
+          if (!F.every(Number.isFinite)) break;
+          const step = solveInPlace(J, F, n);
+          if (!step) break;
+          let damp = 1;
+          for (let a = 0; a < n; a++) if (Math.abs(step[a]) * damp > 20) damp = 20 / Math.abs(step[a]);
+          let done = true;
+          for (let a = 0; a < n; a++) {
+            u[a] -= damp * step[a];
+            if (Math.abs(step[a]) >= 1e-14 * Math.max(1, Math.abs(u[a]))) done = false;
+          }
+          if (done && damp === 1) { ok = true; break; }
+        }
+        if (!ok) {
+          throw new RtmError(`The surface of ${model.speciesNames[pls[0].k0]} could not be loaded from the water`
+            + `${model.cells > 1 ? ` of cell ${c}` : ''}.`);
+        }
+        // Its activity is its fraction, n C/sites: C = e^(ln a - shift).
+        for (const pl of pls) for (const j of pl.t.members) y[b + j] = Math.exp(la(pl, j) - sf.shift[b + j]);
+        if (q >= 0) y[b + psiAt] = Math.exp(u[m]);
+      }
+    }
+  }
+
+  /**
    * The small system a cell is speciated in, set up once for a set of
    * relations: who takes part and how each is solved for, and what each
    * total counts.
@@ -2283,14 +2768,33 @@
    *   minNu    that mineral's coefficient: which way its saturation runs
    *   exch     1 where the unknown is no amount -- an exchanger, the
    *            electron -- whose ln a it is and which no total counts
-   *   rank     the model's: 1 on an exchanger, 2 no amount (see conservationBasis)
+   *   rank     the model's: 1 on an exchanger, 2 no amount, 3 a potential (see conservationBasis)
+   *   pots     each surface's potential taking part: its place in part k,
+   *            which of act.pt's it is q, and the species on its surface,
+   *            [place, charge] where they take part and [species, charge]
+   *            where they do not; rows ne + nb + p hold Gouy and Chapman
    */
   function cellSystem(eqs, part, U, mineral, act, ns, rank) {
     const at = new Int32Array(ns).fill(-1);
     part.forEach((si, k) => { at[si] = k; });
     const isMin = Uint8Array.from({ length: ns }, (_, si) => (mineral && mineral[si] ? 1 : 0));
-    const exch = rank ? Uint8Array.from(part, (si) => (rank[si] === 2 ? 1 : 0)) : null;
+    const exch = rank ? Uint8Array.from(part, (si) => (rank[si] >= 2 ? 1 : 0)) : null;
+    const pt = act && act.pt ? act.pt : null;
+    const pots = [];
+    if (pt) {
+      pt.list.forEach((si, q) => {
+        if (at[si] < 0) return;
+        const members = [];
+        const fixedQ = [];
+        for (let j = 0; j < ns; j++) {
+          if (pt.of[j] !== q || !pt.zs[j]) continue;
+          if (at[j] >= 0) members.push([at[j], pt.zs[j]]); else fixedQ.push([j, pt.zs[j]]);
+        }
+        pots.push({ k: at[si], q, si, members, fixedQ });
+      });
+    }
     return {
+      pots, np: pots.length, pt,
       eqs, ne: eqs.length, nb: U.length, na: part.length, part, at, U, act, ns, isMin,
       lin: Uint8Array.from(part, (si) => isMin[si]),
       minOf: Int32Array.from(eqs, (eq) => (eq.mineral >= 0 && at[eq.mineral] >= 0 ? at[eq.mineral] : -1)),
@@ -2435,6 +2939,26 @@
           }
           F[row] = r;
           norm = Math.max(norm, Math.abs(r) / Math.max(scale, 1e-300));
+        }
+        // Each surface's potential: Gouy and Chapman, its error measured as one in ln a.
+        for (let p = 0; p < sys.np; p++) {
+          const row = ne + nb + p;
+          const pot = sys.pots[p];
+          J[row].fill(0);
+          let Q = 0;
+          for (const [k, zq] of pot.members) Q += zq * val[k];
+          for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
+          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k]);
+          F[row] = gc.r;
+          J[row][pot.k] += gc.du;
+          for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * val[k];
+          if (gc.dI) {
+            for (let k = 0; k < na; k++) {
+              const zz = lin[k] ? 0 : act.z[part[k]];
+              if (zz) J[row][k] += gc.dI * 0.5 * zz * zz * val[k];
+            }
+          }
+          norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
         }
         residual = norm;
         if (norm < tol) converged = true;
@@ -2586,8 +3110,13 @@
    */
   function reducedSystem(sys, prefer) {
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
+    // A surface's potential is no component and worked out from none: an
+    // unknown of its own, as the ionic strength is, with Gouy and Chapman.
+    const potOf = new Int32Array(na).fill(-1);
+    sys.pots.forEach((pot, p) => { potOf[pot.k] = p; });
+    const np = sys.np;
     const aq = [];
-    for (let k = 0; k < na; k++) if (!lin[k]) aq.push(k);
+    for (let k = 0; k < na; k++) if (!lin[k] && potOf[k] < 0) aq.push(k);
     const naq = aq.length;
     const aqOf = new Int32Array(na).fill(-1);
     aq.forEach((k, i) => { aqOf[k] = i; });
@@ -2602,7 +3131,7 @@
       for (const [si, nu] of eqs[j].net) {
         if (isMin[si]) continue;
         const k = at[si];
-        if (k >= 0) row[aqOf[k]] += nu;
+        if (k >= 0 && potOf[k] < 0) row[aqOf[k]] += nu;
       }
       row[naq + r] = 1;
       return row;
@@ -2635,35 +3164,50 @@
     const K = [];
     for (let i = 0; i < naq; i++) if (!isPivot[i]) K.push(i);
     const constants = (j) => ({ lnK: eqs[j].lnK, water: eqs[j].water || 0,
-      fixed: eqs[j].net.filter(([si]) => at[si] < 0 && !isMin[si]) });
+      fixed: eqs[j].net.filter(([si]) => at[si] < 0 && !isMin[si]),
+      pot: eqs[j].net.filter(([si]) => at[si] >= 0 && potOf[at[si]] >= 0).map(([si, nu]) => [potOf[at[si]], nu]) });
     const mins = minRel.map((j) => {
       const nu = new Float64Array(naq);
       for (const [si, v] of eqs[j].net) {
         if (isMin[si]) continue;
         const k = at[si];
-        if (k >= 0) nu[aqOf[k]] += v;
+        if (k >= 0 && potOf[k] < 0) nu[aqOf[k]] += v;
       }
       return { j, k: minOf[j], nu, ...constants(j) };
     });
-    const useI = !!act && [...act.form].some((f) => f !== 0);
+    // The ionic strength is an unknown wherever a coefficient or a potential reads it.
+    const useI = !!act && ([...act.form].some((f) => f !== 0) || np > 0);
     const useL = !!act && act.kind !== 'none'
       && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water));
     const nK = K.length;
     const nm = mins.length;
     const M = A.map((rw) => rw.slice(naq));
     const rel = aqRel.map(constants);
+    const iP = nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0);
     return {
       sys, aq, naq, aqOf, D: pivotOf, K, nK, nm, nr,
       E: A.map((rw) => Float64Array.from(K, (i) => rw[i])),
       M,
       rel,
+      // The potentials: alpha_D less mPot u, u each potential's ln a; and
+      // the potential each aqueous unknown is on, with its charge, or -1.
+      np, iP, potOf,
+      onPot: Int32Array.from(aq, (k) => {
+        const s = sys.part[k];
+        return np && sys.pt.of[s] >= 0 && sys.pt.zs[s] ? sys.pots.findIndex((pot) => pot.q === sys.pt.of[s]) : -1;
+      }),
+      mPot: M.map((Mr) => {
+        const out = new Float64Array(np);
+        rel.forEach((r, c) => { for (const [p, nu] of r.pot) out[p] += Mr[c] * nu; });
+        return out;
+      }),
       // M times the relations' ln K and water, made once: alpha_D = mLnK - L mWater
       // - M (the fixed species' terms, a few relations have any) - E alpha_K.
       mLnK: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.lnK, 0)),
       mWater: Float64Array.from(M, (Mr) => rel.reduce((acc, r, c) => acc + Mr[c] * r.water, 0)),
       withFixed: rel.map((r, c) => (r.fixed.length ? c : -1)).filter((c) => c >= 0),
       mins, useI, useL,
-      iI: nK + nm, iL: nK + nm + (useI ? 1 : 0), nz: nK + nm + (useI ? 1 : 0) + (useL ? 1 : 0),
+      iI: nK + nm, iL: nK + nm + (useI ? 1 : 0), nz: iP + np,
       // Where each aqueous unknown is a component, or -1.
       kOf: Int32Array.from({ length: naq }, (_, i) => K.indexOf(i)),
       dOf: Int32Array.from({ length: naq }, (_, i) => pivotOf.indexOf(i)),
@@ -2684,7 +3228,7 @@
    * system's own.
    */
   function reducedState(rs, z, C, off, cell) {
-    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, mLnK, mWater, withFixed } = rs;
+    const { sys, aq, naq, D, K, nK, nr, E, M, rel, useI, useL, mLnK, mWater, withFixed, np, iP, mPot } = rs;
     const { part, act, ns } = sys;
     const sc = rs.scratch || (rs.scratch = {
       alpha: new Float64Array(naq), val: new Float64Array(naq), lnG: new Float64Array(ns), dG: new Float64Array(ns),
@@ -2717,6 +3261,7 @@
       let gi = 0;
       for (const c of withFixed) { a -= Mr[c] * fixedTerm[c]; gi -= Mr[c] * fixedDI[c]; }
       for (let j = 0; j < nK; j++) a -= Er[j] * z[j];
+      for (let p = 0; p < np; p++) a -= mPot[r][p] * z[iP + p];
       alpha[D[r]] = a;
       hI[r] = gi;
       hL[r] = -mWater[r];
@@ -2733,7 +3278,7 @@
    * relative to their size.
    */
   function reducedResidual(rs, z, C, off, totals, w, present, cell, outside, F, J) {
-    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, kOf, dOf, E, inTotals } = rs;
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, kOf, dOf, E, inTotals, np, iP, mPot } = rs;
     const { nb, part, act, lin, ns } = sys;
     const { I, low, L, sc } = reducedState(rs, z, C, off, cell);
     const { alpha, val, dG, hI, hL } = sc;
@@ -2751,6 +3296,16 @@
     let Isum = Iout;
     let Ssum = Sout;
     const g = sc.g || (sc.g = new Float64Array(nz));
+    // Each potential's surface charge, and its derivatives in z.
+    const pt = sys.pt;
+    const Qp = sc.Qp || (sc.Qp = new Float64Array(np));
+    const dQ = sc.dQ || (sc.dQ = Array.from({ length: np }, () => new Float64Array(nz)));
+    for (let p = 0; p < np; p++) {
+      let q0 = 0;
+      for (const [si, zq] of sys.pots[p].fixedQ) q0 += zq * C[off + si];
+      Qp[p] = q0;
+      if (J) dQ[p].fill(0);
+    }
     for (let i = 0; i < naq; i++) {
       const k = aq[i];
       const s = part[k];
@@ -2760,8 +3315,10 @@
       if (act && act.solute[s]) Ssum += v;
       const tl = inTotals[k];
       for (const [q, u] of tl) { const x = u * (w ? w[k] : 1) * v; F[q] += x; scale[q] += Math.abs(x); }
-      // A species in no total and neither ion nor solute adds nothing to the Jacobian.
-      if (!J || (!tl.length && !(useI && zz))) continue;
+      const p = rs.onPot[i];
+      if (p >= 0) Qp[p] += pt.zs[s] * v;
+      // A species in no total, neither ion nor solute and on no charged surface adds nothing to the Jacobian.
+      if (!J || (!tl.length && !(useI && zz) && p < 0)) continue;
       // d val_i / dz: val (d alpha - dG dI).
       g.fill(0);
       const kk = kOf[i];
@@ -2772,6 +3329,7 @@
         for (let j = 0; j < nK; j++) g[j] = -v * Er[j];
         if (useI) g[iI] = v * hI[r];
         if (useL) g[iL] = v * hL[r];
+        for (let pp = 0; pp < np; pp++) g[iP + pp] = -v * mPot[r][pp];
       }
       if (useI && !low) g[iI] -= v * dG[s];
       for (const [q, u] of tl) {
@@ -2780,6 +3338,7 @@
         for (let c = 0; c < nz; c++) if (g[c]) Jq[c] += f * g[c];
       }
       if (useI && zz) { const Ji = J[iI]; const f = 0.5 * zz * zz; for (let c = 0; c < nz; c++) if (g[c]) Ji[c] -= f * g[c]; }
+      if (p >= 0) { const dq = dQ[p]; const f = pt.zs[s]; for (let c = 0; c < nz; c++) if (g[c]) dq[c] += f * g[c]; }
     }
     for (let p = 0; p < nm; p++) {
       const k = mins[p].k;
@@ -2822,6 +3381,7 @@
         for (let j = 0; j < nK; j++) Jr[j] -= nu * Er[j];
         if (useI) Jr[iI] += nu * hI[d];
         if (useL) Jr[iL] += nu * hL[d];
+        for (let p = 0; p < np; p++) Jr[iP + p] -= nu * mPot[d][p];
       }
       if (useI && !low) Jr[iI] += gI;
       if (useL) Jr[iL] += mn.water;
@@ -2854,11 +3414,25 @@
               for (let j = 0; j < nK; j++) J[iL][j] -= f * v * Er[j];
               if (useI) J[iL][iI] += f * v * hI[r];
               J[iL][iL] += f * v * hL[r];
+              for (let p = 0; p < np; p++) J[iL][iP + p] -= f * v * mPot[r][p];
             }
             if (useI && !low) J[iL][iI] -= f * v * dG[s];
           }
         }
       }
+    }
+    // Each surface's potential: Gouy and Chapman, its error measured as one in ln a.
+    for (let p = 0; p < np; p++) {
+      const row = iP + p;
+      const gc = gouyChapman(pt, sys.pots[p].q, Qp[p], I, low, z[row]);
+      F[row] = gc.r;
+      norm = Math.max(norm, Math.abs(gc.r) / Math.max(gc.du, 1e-300));
+      if (!J) continue;
+      const Jr = J[row];
+      const dq = dQ[p];
+      for (let c = 0; c < nz; c++) if (dq[c]) Jr[c] += gc.dQ * dq[c];
+      Jr[iI] += gc.dI;
+      Jr[row] += gc.du;
     }
     return norm;
   }
@@ -2871,7 +3445,7 @@
    * any species' ln a. No active set: `present` is as given.
    */
   function reducedSpeciate(rs, C, off, totals, w, present, opts = {}) {
-    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, D } = rs;
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, D, np, iP, mPot } = rs;
     const { part, act, ns } = sys;
     const tol = opts.tol || 1e-10;
     const maxIter = opts.maxIter || 100;
@@ -2900,6 +3474,7 @@
     for (let p = 0; p < nm; p++) z[nK + p] = present[mins[p].j] ? C[off + part[mins[p].k]] : 0;
     if (useI) z[iI] = I0;
     if (useL) z[iL] = lnAw;
+    for (let p = 0; p < np; p++) z[iP + p] = Math.log(Math.max(C[off + sys.pots[p].si], 1e-300));
     let iterations = 0;
     let residual = Infinity;
     let converged = false;
@@ -2926,6 +3501,7 @@
         for (let j = 0; j < nK; j++) d -= Er[j] * step[j];
         if (useI) d += hI[r] * step[iI];
         if (useL) d += hL[r] * step[iL];
+        for (let p = 0; p < np; p++) d -= mPot[r][p] * step[iP + p];
         dAlpha[D[r]] = d;
       }
       /*
@@ -2949,6 +3525,8 @@
         if (lnC - damp * d > lnCap && d < 0) damp = Math.max((lnCap - lnC) / -d, 0);
       }
       if (!(damp > 0)) damp = 2 / Math.max(...Array.from(dAlpha, Math.abs), 2);
+      // A potential's ln a moves by no more than 2 either.
+      for (let p = 0; p < np; p++) if (Math.abs(step[iP + p]) * damp > 2) damp = 2 / Math.abs(step[iP + p]);
       // The ionic strength stays above a tenth of what it was.
       if (useI && step[iI] > 0 && z[iI] - damp * step[iI] < 0.1 * z[iI]) damp = (0.9 * z[iI]) / step[iI];
       for (let c = 0; c < nz; c++) z[c] -= damp * step[c];
@@ -2970,6 +3548,11 @@
       C[off + part[k]] = z[nK + p];
       x[k] = z[nK + p];
     }
+    for (let p = 0; p < np; p++) {
+      const pot = sys.pots[p];
+      C[off + pot.si] = Math.exp(z[iP + p]);
+      x[pot.k] = z[iP + p];
+    }
     return { converged: true, iterations, residual, x, why: '', z };
   }
 
@@ -2980,7 +3563,7 @@
    * of `outside` (dO): the implicit function theorem on reducedResidual.
    */
   function reducedSensitivity(rs, C, off, totals, w, present, cell, z, outside) {
-    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, kOf, dOf } = rs;
+    const { sys, aq, naq, K, nK, nm, mins, useI, useL, iI, iL, nz, E, kOf, dOf, np, iP, mPot } = rs;
     const { na, nb, part, act } = sys;
     const F = new Float64Array(nz);
     const J = Array.from({ length: nz }, () => new Float64Array(nz));
@@ -3004,11 +3587,13 @@
           for (let j = 0; j < nK; j++) d -= Er[j] * dz[j];
           if (useI) d += hI[r] * dz[iI];
           if (useL) d += hL[r] * dz[iL];
+          for (let p = 0; p < np; p++) d -= mPot[r][p] * dz[iP + p];
         }
         if (useI && !low) d -= dG[s] * dz[iI];
         out[k][col] = d;
       }
       for (let p = 0; p < nm; p++) out[mins[p].k][col] = dz[nK + p];
+      for (let p = 0; p < np; p++) out[sys.pots[p].k][col] = dz[iP + p];
     };
     const dT = Array.from({ length: na }, () => new Float64Array(nb));
     const dO = Array.from({ length: na }, () => new Float64Array(outside.length));
@@ -3079,6 +3664,24 @@
         if (!u || (sys.exch && sys.exch[k])) continue;
         const uw = w ? u * w[k] : u;
         J[row][k] = lin[k] ? uw : uw * C[off + part[k]];
+      }
+    }
+    // Gouy and Chapman, each potential's: its charge, the ionic strength, itself.
+    for (let p = 0; p < sys.np; p++) {
+      const row = ne + nb + p;
+      const pot = sys.pots[p];
+      let Q = 0;
+      for (const [k, zq] of pot.members) Q += zq * C[off + part[k]];
+      for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
+      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]));
+      J[row][pot.k] += gc.du;
+      for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * C[off + part[k]];
+      if (gc.dI) {
+        for (let k = 0; k < na; k++) {
+          const zz = lin[k] ? 0 : act.z[part[k]];
+          if (zz) J[row][k] += gc.dI * 0.5 * zz * zz * C[off + part[k]];
+        }
+        if (O) outside.forEach((si, i) => { O[row][i] = gc.dI * 0.5 * act.z[si] * act.z[si]; });
       }
     }
     return { J, O };
@@ -4004,12 +4607,17 @@
     }
     act = exchangeSetup(species, equilibria, act, settings, warnings);
     const ex = act ? act.ex : null;
+    act = surfaceSetup(species, equilibria, act);
+    const sf = act ? act.sf : null;
+    act = potentialSetup(species, equilibria, act, settings);
+    const pt = act ? act.pt : null;
     const electron = electronSetup(species, equilibria);
     // The order the conserved totals are made in (conservationBasis): species
     // on an exchanger first, and last what is no amount, an exchanger or the
-    // electron, which counts in no total.
-    const rank = ex || electron >= 0
-      ? Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger || sp.electron ? 2 : 0)) : null;
+    // electron, which counts in no total. A surface's potential (3) is in
+    // no total at all: it has an equation of its own.
+    const rank = ex || electron >= 0 || pt
+      ? Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger || sp.electron ? 2 : sp.potential ? 3 : 0)) : null;
     const apairs = [];
     for (const eq of equilibria) {
       if (eq.kf === null) continue;
@@ -5390,6 +5998,42 @@
         });
       }
     }
+    /*
+      THE SURFACES' SITES, cell by cell, type by type: what its species take
+      there, or what one of them is given -- sites= -- which the cell's water
+      loads at the start, as PHREEQC's SURFACE with -equilibrate does (see
+      loadSurfaces). A species on a surface has for its activity n/sites
+      times its amount.
+    */
+    if (sf) {
+      const nt = sf.types.length;
+      sf.shift = new Float64Array(nc * ns);
+      sf.sites = new Float64Array(nc * nt);
+      sf.load = [];
+      const where = (c) => (nc === 1 ? '' : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        sf.types.forEach((t, ti) => {
+          const given = t.sitesFrom >= 0 ? species[t.sitesFrom].sites : 0;
+          let held = 0;
+          for (const k of t.members) held += sf.n[k] * initial[b + k];
+          if (given > 0 && held > 0) {
+            throw new RtmError(`${nameOf[t.sitesFrom]} is given the sites of its surface, and the species on it amounts`
+              + `${where(c)} as well: give the sites, which the water there loads at the start, or what is on it, not both.`,
+            species[t.sitesFrom].line);
+          }
+          const total = given > 0 ? given : held;
+          if (!(total > 0)) {
+            throw new RtmError(`The surface of ${t.members.map((k) => nameOf[k]).join(', ')} has no sites${where(c)}: give `
+              + 'one of them sites=, or amounts to the species on it, in every cell its relations are to hold in.',
+            species[t.members[0]].line);
+          }
+          sf.sites[c * nt + ti] = total;
+          for (const k of t.members) sf.shift[b + k] = Math.log(sf.n[k] / total);
+          if (given > 0) sf.load.push(c * nt + ti);
+        });
+      }
+    }
 
     const stateNames = [];
     for (let c = 0; c < nc; c++) {
@@ -5508,6 +6152,12 @@
           + 'here there is neither: nothing uses it.'
         : `ACTIVITY = ${act.kind} acts on the <EQUILIBRIUM> relations, and there are none: nothing uses it.`);
     }
+    // ...and a surface only a surface while its relations hold.
+    if (sf && transport && settings.EQUILIBRATE !== 2
+      && !equilibria.some((eq) => eq.kf !== null && eq.net.some(([k]) => species[k].surface))) {
+      warnings.push(`What is on the surface is put on its relations ${settings.EQUILIBRATE ? 'at the start only' : 'never'}`
+        + ', and then stays as it is while the water moves past: EQUILIBRATE = always holds it all through the run.');
+    }
     // In a column the exchanger is only an exchanger while its relations hold.
     if (ex && transport && settings.EQUILIBRATE !== 2
       && !equilibria.some((eq) => eq.kf !== null && eq.net.some(([k]) => ex.site[k]))) {
@@ -5546,11 +6196,14 @@
           + 'it does to the couples. EQUILIBRATE = always holds them all through the run.');
       }
     }
+    // The relations of the water alone: none with an exchanger or a surface in it.
+    const loading = !!((ex && ex.load.length) || (sf && sf.load.length));
+    const waterOnly = equilibria.filter((eq) => !eq.net.some(([k]) => (ex && ex.site[k]) || species[k].surface));
     if (peStart && settings.EQUILIBRATE) {
       const fx = Uint8Array.from(fixed, (v) => (v ? 1 : 0));
       fx[electron] = 1;
-      // Without what goes on an exchanger loaded from this water: that comes next.
-      const rel = ex && ex.load.length ? equilibria.filter((eq) => !eq.net.some(([k]) => ex.site[k])) : equilibria;
+      // Without what goes on an exchanger or a surface loaded from this water: that comes next.
+      const rel = loading ? waterOnly : equilibria;
       if (rel.length) {
         const done = speciate(model, initial, { equilibria: rel, fixed: fx });
         initial.set(done.y);
@@ -5567,12 +6220,12 @@
       cell, which stays as it is: after that water's own speciation, under
       EQUILIBRATE, and from the water as written without.
     */
-    if (ex && ex.load.length) {
-      const water = equilibria.filter((eq) => !eq.net.some(([k]) => ex.site[k]));
-      if (settings.EQUILIBRATE && water.length && !peStart) {
-        initial.set(speciate(model, initial, { equilibria: water }).y);
+    if (loading) {
+      if (settings.EQUILIBRATE && waterOnly.length && !peStart) {
+        initial.set(speciate(model, initial, { equilibria: waterOnly }).y);
       }
-      loadExchangers(model, initial);
+      if (ex && ex.load.length) loadExchangers(model, initial);
+      if (sf && sf.load.length) loadSurfaces(model, initial);
     }
     if (settings.EQUILIBRATE && equilibria.length) {
       const done = speciate(model, initial);
@@ -5662,17 +6315,19 @@
     const nc = base.cells;
     const nBase = base.nspecies;
     const fixed = base.fixed;
-    // An exchanger, or the electron, is no amount: it counts in no total, whatever its R.
+    // An exchanger, the electron or a potential is no amount: it counts in no total, whatever its R.
     const site = base.rank || null;
-    const massless = (s) => !!site && site[s] === 2;
-    const massOf = site ? Float64Array.from(base.massOf, (m, i) => (site[i % ns] === 2 ? 0 : m)) : base.massOf;
+    const massless = (s) => !!site && site[s] >= 2;
+    const massOf = site ? Float64Array.from(base.massOf, (m, i) => (site[i % ns] >= 2 ? 0 : m)) : base.massOf;
     const start = base.initialState();
     const basis = conservationBasis(eqs, ns, fixed, abundanceOf(start, ns, nc), site);
     const ne = eqs.length;
     const nb = basis.length;
     const active = equilibriumSpecies(eqs).filter((si) => !fixed[si]);
     const na = active.length;
-    if (ne + nb !== na) {
+    // Each surface's potential has an equation of its own, Gouy and Chapman's.
+    const npot = active.filter((si) => site && site[si] === 3).length;
+    if (ne + nb + npot !== na) {
       throw new RtmError(`The equilibria held give ${ne} equations and ${nb} conserved totals, which is `
         + `${ne + nb} for the ${na} species they are free to move: one of them repeats another, or a `
         + 'species fixed in it leaves it without a free one.');
@@ -5747,7 +6402,11 @@
       and only they, with what is not held, are held to the tolerance: the
       species are what the totals make them, at every step.
     */
-    const projected = base.electron >= 0;
+    /*
+      And for a model with a surface's potential: its equation is no relation
+      and no total, and the speciation of each cell is where it is solved.
+    */
+    const projected = base.electron >= 0 || npot > 0;
     // What else the relations read: each ion and solute not held, through I and a(H2O).
     const outside = projected && act
       ? [...Array(ns).keys()].filter((k) => pos[k] < 0 && (act.z[k] !== 0 || act.solute[k])) : [];
@@ -6165,7 +6824,7 @@
     let rsys = null;
     if (projected) {
       const abundance = abundanceOf(start, ns, nc);
-      const rankOf = (k) => (site && site[active[k]] === 1 ? 0 : site && site[active[k]] === 2 ? 2 : 1);
+      const rankOf = (k) => (site && site[active[k]] === 1 ? 0 : site && site[active[k]] >= 2 ? 2 : 1);
       const prefer = [...Array(na).keys()].sort((a, b2) => (rankOf(a) - rankOf(b2))
         || (Math.abs(abundance[active[a]]) - Math.abs(abundance[active[b2]])) || a - b2);
       rsys = reducedSystem(sys, prefer);

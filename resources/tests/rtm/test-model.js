@@ -3880,6 +3880,423 @@ Na+ + X- <=> NaX, logK = 0
     && !col.warnings.some((w) => /stays as it is while the water moves/.test(w)));
 }
 
+/* ======================================================================
+   2w. Surface complexation (surface, sites=)
+
+   PHREEQC's SURFACE without electrostatics (-no_edl): species on a surface
+   whose activity is their fraction of the sites of their kind, the bare
+   site an amount like the rest. Against the closed solution of a one-site
+   isotherm, as sites loaded from a water that stays as it is, with a
+   bidentate species, with two kinds of site, read by a rate law, as a pair
+   with a kf, under ACTIVITY, as a column whose zinc front moves at v/R with
+   R = 1 + q(C)/C; and the texts it refuses.
+   ====================================================================== */
+console.log('\n--- surface complexation ---');
+{
+  const batch = (species, rel, more = '', reactions = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+${more}
+
+<SPECIES>
+${species}
+
+<EQUILIBRIUM>
+${rel}
+${reactions ? `\n<REACTIONS>\n${reactions}\n` : ''}`);
+  const val = (m, y, name) => y[m.speciesNames.indexOf(name)];
+  const W = 'Hfo_wOH + H+ <=> Hfo_wOH2+, logK = 7.29\nHfo_wOH <=> Hfo_wO- + H+, logK = -8.93\n'
+    + 'Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+, logK = -1.99';
+  const sp4 = 'Hfo_wOH2+ surface\nHfo_wO- surface\nHfo_wOZn+ surface';
+
+  // Sites loaded from a water, which stays as it is: each fraction the
+  // relations give it, the four summing to one.
+  const H = 1e-7;
+  const Zn = 1e-6;
+  const T = 2e-4;
+  const loaded = batch(`H+ ${H}\nOH- 1e-7\nZn+2 ${Zn}\nNa+ 1e-3\nCl- 1.002e-3\nHfo_wOH surface sites=${T}\n${sp4}`,
+    `${W}\n <=> H+ + OH-, logK = -14`);
+  const yl = loaded.initialState();
+  const w = [1, 10 ** 7.29 * H, 10 ** -8.93 / H, 10 ** -1.99 * Zn / H];
+  const sum = w.reduce((a, b) => a + b, 0);
+  const names = ['Hfo_wOH', 'Hfo_wOH2+', 'Hfo_wO-', 'Hfo_wOZn+'];
+  const dl = Math.max(...names.map((n, i) => Math.abs(val(loaded, yl, n) / (T * w[i] / sum) - 1)));
+  check('sites on a species\' line are loaded from the water, which stays as it is: each fraction the closed form\'s',
+    dl < 1e-13 && val(loaded, yl, 'H+') === H && val(loaded, yl, 'Zn+2') === Zn,
+    `within ${dl.toExponential(1)}; ${names.map((n) => `${n} ${(val(loaded, yl, n) / T).toFixed(6)}`).join(', ')}`);
+  check('  a surface species counts in no ionic strength and no water, and its coefficient is n/sites',
+    !loaded.act.solute[loaded.speciesNames.indexOf('Hfo_wOZn+')] && loaded.act.z[loaded.speciesNames.indexOf('Hfo_wOZn+')] === 0
+    && Math.abs(loaded.act.sf.shift[loaded.speciesNames.indexOf('Hfo_wOZn+')] - Math.log(1 / T)) < 1e-12);
+
+  // Amounts given, the water and the surface put on the relations together:
+  // a one-site isotherm at a fixed pH, x H = K (T - x)(Zn0 - x).
+  const K = 10 ** -1.99;
+  const Zn0 = 1e-4;
+  const qa = K;
+  const qb = -(K * (T + Zn0) + H);
+  const qc = K * T * Zn0;
+  const x = (-qb - Math.sqrt(qb * qb - 4 * qa * qc)) / (2 * qa);
+  const one = batch(`H+ ${H} fixed\nZn+2 ${Zn0}\nHfo_wOH ${T} surface\nHfo_wOZn+ surface`,
+    'Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+, logK = -1.99', 'EQUILIBRATE = start');
+  const yo = one.initialState();
+  const d1 = Math.max(Math.abs(val(one, yo, 'Hfo_wOZn+') / x - 1), Math.abs(val(one, yo, 'Zn+2') / (Zn0 - x) - 1),
+    Math.abs(val(one, yo, 'Hfo_wOH') / (T - x) - 1));
+  check('a one-site isotherm at a fixed pH, the zinc and the sites given, against the closed solution',
+    d1 < 1e-10 && one.speciated[0].converged, `within ${d1.toExponential(1)}; ${(x / Zn0 * 100).toFixed(4)} % of the zinc taken up`);
+
+  // Bidentate: 2 Hfo_wOH + Zn+2 <=> (Hfo_wO)2Zn + 2 H+ takes two sites, its
+  // fraction 2C/T, as PHREEQC has it.
+  const bi = batch(`H+ ${H} fixed\nZn+2 ${Zn0}\nHfo_wOH ${T} surface\nHfo_wO_2Zn surface`,
+    '2 Hfo_wOH + Zn+2 <=> Hfo_wO_2Zn + 2 H+, logK = -6', 'EQUILIBRATE = start');
+  const yb = bi.initialState();
+  const f0 = val(bi, yb, 'Hfo_wOH') / T;
+  const f2 = 2 * val(bi, yb, 'Hfo_wO_2Zn') / T;
+  const relB = Math.log10(f2 * H * H / (f0 * f0 * val(bi, yb, 'Zn+2')));
+  check('a bidentate species takes two sites: its fraction 2C/sites, the sites kept, the relation in fractions',
+    bi.act.sf.n[bi.speciesNames.indexOf('Hfo_wO_2Zn')] === 2 && Math.abs(f0 + f2 - 1) < 1e-13 && Math.abs(relB + 6) < 1e-10
+    && Math.abs((val(bi, yb, 'Zn+2') + val(bi, yb, 'Hfo_wO_2Zn')) / Zn0 - 1) < 1e-13,
+    `fractions ${f0.toFixed(6)} and ${f2.toFixed(6)}, log K ${relB.toFixed(10)}`);
+
+  // Two kinds of site, PHREEQC's strong and weak: each its own total.
+  const two = batch(`H+ ${H} fixed\nZn+2 ${Zn0}\nHfo_sOH 5e-6 surface\nHfo_sOZn+ surface\nHfo_wOH ${T} surface\nHfo_wOZn+ surface`,
+    'Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+, logK = 0.99\nHfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+, logK = -1.99', 'EQUILIBRATE = start');
+  const yt = two.initialState();
+  const sS = val(two, yt, 'Hfo_sOH') + val(two, yt, 'Hfo_sOZn+');
+  const sW = val(two, yt, 'Hfo_wOH') + val(two, yt, 'Hfo_wOZn+');
+  const rS = Math.log10((val(two, yt, 'Hfo_sOZn+') / sS) * H / ((val(two, yt, 'Hfo_sOH') / sS) * val(two, yt, 'Zn+2')));
+  check('  two kinds of site, strong and weak: each kind\'s sites kept apart, each species its fraction of its own',
+    two.act.sf.types.length === 2 && Math.abs(sS / 5e-6 - 1) < 1e-13 && Math.abs(sW / T - 1) < 1e-13 && Math.abs(rS - 0.99) < 1e-10,
+    `strong sites ${(val(two, yt, 'Hfo_sOZn+') / sS * 100).toFixed(3)} % zinc, weak ${(val(two, yt, 'Hfo_wOZn+') / sW * 100).toFixed(3)} %`);
+
+  // {Hfo_wOZn+} in a rate law: the fraction.
+  const rl = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+
+<SPECIES>
+H+ ${H} fixed
+Zn+2 1e-6
+Tr 1
+Hfo_wOH surface sites=${T}
+Hfo_wOZn+ surface
+
+<EQUILIBRIUM>
+Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+, logK = -1.99
+
+<REACTIONS>
+Tr => , r = k*{Hfo_wOZn+}, k = 1
+`);
+  const frac = val(rl, rl.initialState(), 'Hfo_wOZn+') / T;
+  const used = 1 - last(run(rl, { tend: 1 }))[rl.speciesNames.indexOf('Tr')];
+  check('{Hfo_wOZn+} in a rate law is the species\' fraction of its sites',
+    Math.abs(used / frac - 1) < 1e-9, `${used.toExponential(6)} taken in 1 s for a fraction of ${frac.toExponential(6)}`);
+
+  // A relation with a kf relaxes to the same isotherm.
+  const kin = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1e4
+
+<SPECIES>
+H+ ${H} fixed
+Zn+2 ${Zn0}
+Hfo_wOH ${T} surface
+Hfo_wOZn+ surface
+
+<EQUILIBRIUM>
+Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+, logK = -1.99, kf = 1e3
+`);
+  const yk = last(run(kin, { tend: 1e4 }));
+  check('a sorption with a kf relaxes to the same isotherm',
+    Math.abs(yk[kin.speciesNames.indexOf('Hfo_wOZn+')] / x - 1) < 1e-6,
+    `within ${Math.abs(yk[kin.speciesNames.indexOf('Hfo_wOZn+')] / x - 1).toExponential(1)}`);
+
+  // Under ACTIVITY the water's ions take their coefficients and the surface
+  // species keep their fractions: the relation holds between the zinc's and
+  // the proton's activities and the fractions.
+  const ac = batch(`H+ 1e-6\nOH- 1e-8\nZn+2 ${Zn0}\nNa+ 0.05\nCl- 0.0502\nHfo_wOH surface sites=${T}\n${sp4}`,
+    `${W}\n <=> H+ + OH-, logK = -14`, 'ACTIVITY = debye-huckel\nEQUILIBRATE = start');
+  const ya = ac.initialState();
+  const lnG = new Float64Array(ac.speciesNames.length);
+  RtmModel.activityAt(ac.act, ya, 0, lnG, new Float64Array(ac.speciesNames.length), 0);
+  const la = (n) => Math.log10(val(ac, ya, n)) + lnG[ac.speciesNames.indexOf(n)] / Math.LN10;
+  const relA = la('Hfo_wOZn+') + la('H+') - la('Hfo_wOH') - la('Zn+2');
+  const fr = names.reduce((a, n) => a + val(ac, ya, n), 0) / T;
+  check('  under ACTIVITY: the ions\' coefficients, the surface species\' fractions, and the relation between them',
+    Math.abs(relA + 1.99) < 1e-10 && Math.abs(fr - 1) < 1e-13 && lnG[ac.speciesNames.indexOf('Zn+2')] < -0.5
+    && Math.abs(lnG[ac.speciesNames.indexOf('Hfo_wOZn+')] - Math.log(1 / T)) < 1e-12,
+    `log K ${relA.toFixed(10)}; ln gamma of Zn+2 ${lnG[ac.speciesNames.indexOf('Zn+2')].toFixed(4)}`);
+
+  // A column: zinc into one whose sites are bare. A Langmuir isotherm,
+  // S + Zn+2 <=> SZn+2: behind the front the sites hold q(C) = T K C/(1 + K C),
+  // so the front moves at v/R, R = 1 + q(Cin)/Cin.
+  const N = 80;
+  const L = 0.08;
+  const v = 1e-5;
+  const Cin = 1e-4;
+  const KL = 1e4;
+  const Ts = 1e-3;
+  const Rf = 1 + (Ts * KL / (1 + KL * Cin));
+  const Tend = (0.04 * Rf) / v;
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = ${N}
+LENGTH = ${L}
+VELOCITY = ${v}
+DIFFUSION = 1
+ADVECTION = 1
+EQUILIBRATE = always
+TEND = ${Tend}
+
+<SPECIES>
+Zn+2   1e-12   D=1e-10  left=${Cin}
+S      surface sites=${Ts}
+SZn+2  surface
+
+<EQUILIBRIUM>
+S + Zn+2 <=> SZn+2, logK = ${Math.log10(KL)}
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: Tend, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+    outputTimes: [Tend / 4, Tend / 2, Tend] });
+  const nsc = col.speciesNames.length;
+  let sites = 0;
+  let iso = 0;
+  for (const yy of rc.grid.y) {
+    const c = col.toConcentrations(yy);
+    for (let i = 0; i < N; i++) {
+      const b = i * nsc;
+      sites = Math.max(sites, Math.abs((c[b + 1] + c[b + 2]) / Ts - 1));
+      if (c[b] > 1e-9) iso = Math.max(iso, Math.abs(Math.log10((c[b + 2] / Ts) / ((c[b + 1] / Ts) * c[b]) / KL)));
+    }
+  }
+  const cEnd = col.toConcentrations(rc.grid.y[rc.grid.y.length - 1]);
+  let xZn = NaN;
+  for (let i = 0; i < N - 1; i++) {
+    const a = cEnd[i * nsc];
+    const b2 = cEnd[(i + 1) * nsc];
+    if (a >= Cin / 2 && b2 < Cin / 2) {
+      xZn = col.grid.centres[i] + ((a - Cin / 2) / (a - b2)) * (col.grid.centres[i + 1] - col.grid.centres[i]);
+      break;
+    }
+  }
+  check('a column, zinc into bare sites: the sites and the isotherm held in every cell throughout',
+    sites < 1e-12 && iso < 1e-9, `sites within ${sites.toExponential(1)}, the relation within ${iso.toExponential(1)} in log`);
+  check('  and the zinc front at v t/R, R = 1 + q(C)/C', Math.abs(xZn - 0.04) < 2 * (L / N),
+    `at ${(xZn * 100).toFixed(3)} cm for 4 cm (R = ${Rf})`);
+  const yv = col.initialState();
+  for (let k = 0; k < yv.length; k++) yv[k] += 1e-3 * Math.sin(k);
+  const vj = RtmModel.verifyJacobian(col, 0, yv);
+  check('  its Jacobian, the sites a total of their own', vj.discrepancies.length === 0, `${vj.checked} entries`);
+
+  // The texts it refuses.
+  const refusal = (species, rel, more = '') => {
+    try { batch(species, rel, more); } catch (e) { return e.message; }
+    return '';
+  };
+  const R1 = 'S + Zn+2 <=> SZn+2, logK = 4';
+  const cases = [
+    ['sites on a species not on a surface', 'Zn+2 1e-6 sites=1e-3\nS surface 1e-3\nSZn+2 surface', R1, /sites are a surface's/],
+    ['sites and an amount on one line', 'Zn+2 1e-6\nS surface 1e-3 sites=1e-3\nSZn+2 surface', R1, /both an amount and the sites/],
+    ['sites given twice on one surface', 'Zn+2 1e-6\nS surface sites=1e-3\nSZn+2 surface sites=1e-3', R1, /each given its sites/],
+    ['sites and amounts in the same cell', 'Zn+2 1e-6\nS surface sites=1e-3\nSZn+2 surface 1e-4', R1, /amounts.*as well/],
+    ['no sites at all', 'Zn+2 1e-6\nS surface\nSZn+2 surface', R1, /has no sites/],
+    ['a relation that loses sites', 'Zn+2 1e-6\nS surface 1e-3\nSZn+2 surface\nS2Zn+2 surface',
+      `${R1}\n2 S + Zn+2 <=> S2Zn+2, logK = 6\nSZn+2 + Zn+2 <=> S2Zn+2, logK = 1`, /does not keep the surface's sites/],
+    ['two species on a surface on one side', 'Zn+2 1e-6\nS surface 1e-3\nSZn+2 surface', 'S + SZn+2 <=> Zn+2, logK = 4',
+      /gives SZn\+2 no sites/],
+    ['a surface and an exchanger in one relation', 'Na+ 1e-3\nX- exchanger 1e-3\nNaX exchange\nS surface 1e-3\nSNa+ surface',
+      'Na+ + X- <=> NaX, logK = 0\nS + NaX <=> SNa+ + X-, logK = 1', /a surface and an exchanger/],
+    ['a mineral and a surface in one relation', 'Zn+2 1e-6\nOH- 1e-7\nZnO 1 mineral\nS surface 1e-3\nSZn+2 surface',
+      `${R1}\nZnO + S <=> SZn+2 + 2 OH-, logK = -10`, /a mineral and a surface/],
+    ['a species on a surface that moves', 'Zn+2 1e-6\nS surface 1e-3 D=1e-9\nSZn+2 surface', R1, /stays where it is.*takes no D/],
+    ['a and b on a species on a surface', 'Zn+2 1e-6\nS surface 1e-3\nSZn+2 surface a=4 b=0', R1, /takes no a or b/],
+  ];
+  const wrong = cases.filter(([, sp, rel, re, more]) => !re.test(refusal(sp, rel, more)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, sp, rel, , more]) => `${what}: "${refusal(sp, rel, more)}"`).join(' | '));
+  const start = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 4
+LENGTH = 0.01
+VELOCITY = 1e-6
+ADVECTION = 1
+EQUILIBRATE = start
+
+<SPECIES>
+Zn+2 1e-6
+S surface sites=1e-3
+SZn+2 surface
+
+<EQUILIBRIUM>
+${R1}
+`);
+  check('  and in a column whose surface is put on its relations at the start only, that is said',
+    start.warnings.some((wn) => /on the surface is put on its relations at the start only/.test(wn))
+    && !col.warnings.some((wn) => /stays as it is while the water moves/.test(wn)));
+}
+
+/* ======================================================================
+   2x. The diffuse double layer (potential, area=, grams=)
+
+   PHREEQC's SURFACE unless told -no_edl: the surface's potential in each
+   relation by the charge it puts on the surface, and Gouy and Chapman's
+   equation for it. Against the same two equations solved by bisection, as
+   amounts speciated and as sites loaded from a water that stays; a column
+   of acid into a charged surface, the relation and the equation held in
+   every cell and its Jacobian; and the texts it refuses.
+   ====================================================================== */
+console.log('\n--- the diffuse double layer ---');
+{
+  const batch = (species, rel, more = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = start
+${more}
+
+<SPECIES>
+${species}
+
+<EQUILIBRIUM>
+${rel}
+`);
+  const val = (m, y, name) => y[m.speciesNames.indexOf(name)];
+  // PHREEQC's constants, and the dielectric constant of water at 25 C.
+  const F = 96493.5;
+  const Rg = 8.31470;
+  const eps0 = 8.854e-12;
+  const eps = RtmModel.debyeHuckelAB(25).eps;
+  const T = 298.15;
+  const H = 1e-7;
+  const lk = 7.29;
+  const sites = 2e-4;
+  const AM = 600 * 0.09;
+  const I = 0.5 * (0.1 + 0.1 + H);
+  const S = Math.sqrt(8000 * Rg * T * eps * eps0 * I);
+  // theta = K H e^(-F psi/RT) / (1 + ...); F sites theta/(A M) = S sinh(F psi/2RT): bisection in psi.
+  const theta = (psi) => { const x = 10 ** lk * H * Math.exp(-F * psi / (Rg * T)); return x / (1 + x); };
+  const g = (psi) => F * sites * theta(psi) / AM - S * Math.sinh(F * psi / (2 * Rg * T));
+  let lo = 0;
+  let hi = 1;
+  for (let i = 0; i < 200; i++) { const mid = (lo + hi) / 2; if (g(mid) > 0) lo = mid; else hi = mid; }
+  const psi = (lo + hi) / 2;
+  const sp = (s1) => `H+ ${H} fixed\nNa+ 0.1\nCl- 0.1\nS_psi potential area=600 grams=0.09\n${s1}\nS_OH2+ surface`;
+  const rel = 'S_OH + H+ <=> S_OH2+, logK = 7.29';
+  for (const [how, s1] of [['the amounts given and speciated', `S_OH ${sites} surface`],
+    ['the sites loaded from the water', `S_OH surface sites=${sites}`]]) {
+    const m = batch(sp(s1), rel);
+    const y = m.initialState();
+    const a = val(m, y, 'S_psi');
+    const psiPage = -Math.log(a) * Rg * T / F;
+    const th = val(m, y, 'S_OH2+') / sites;
+    check(`${how}: the potential and the charge Gouy and Chapman's equation gives, against bisection`,
+      Math.abs(psiPage / psi - 1) < 1e-10 && Math.abs(th / theta(psi) - 1) < 1e-10
+      && Math.abs((val(m, y, 'S_OH') + val(m, y, 'S_OH2+')) / sites - 1) < 1e-13,
+      `psi ${(psiPage * 1e3).toFixed(6)} mV for ${(psi * 1e3).toFixed(6)}; ${(th * 100).toFixed(4)} % of the sites charged `
+        + `where without the layer it would be ${(100 * 10 ** lk * H / (1 + 10 ** lk * H)).toFixed(2)} %`);
+  }
+  const m0 = batch(sp(`S_OH ${sites} surface`), rel);
+  check('  the potential is in the relation by the charge it puts on the surface, and in no total',
+    m0.equilibria[0].net.some(([k, c]) => m0.speciesNames[k] === 'S_psi' && c === -1)
+    && m0.rank[m0.speciesNames.indexOf('S_psi')] === 3
+    && m0.conservation.every((u) => u[m0.speciesNames.indexOf('S_psi')] === 0));
+
+  // A column: acid into water over a surface that takes the protons up and
+  // charges. Held in every cell, the relation with the potential in it and
+  // Gouy and Chapman, and the Jacobian of the projected form.
+  const col = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.02
+VELOCITY = 1e-5
+DIFFUSION = 1
+ADVECTION = 1
+EQUILIBRATE = always
+TEND = 4000
+
+<SPECIES>
+H+      1e-8    D=1e-9  left=1e-4
+OH-     1e-6    D=1e-9  left=1e-10
+Na+     0.01    D=1e-9  left=0.01
+Cl-     0.01    D=1e-9  left=0.0101
+S_psi   potential  area=600  grams=0.09
+S_OH    surface  sites=${sites}
+S_OH2+  surface
+S_O-    surface
+
+<EQUILIBRIUM>
+ <=> H+ + OH-, logK = -14
+${rel}
+S_OH <=> S_O- + H+, logK = -8.93
+`);
+  const rc = FacsimileODE.runModel(col, { solver: 'ndf', tend: 4000, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: [1000, 2000, 4000] });
+  const nsc = col.speciesNames.length;
+  const at = (n) => col.speciesNames.indexOf(n);
+  let worstGC = 0;
+  let worstRel = 0;
+  let lowPH = 14;
+  for (const yy of rc.grid.y) {
+    const c = col.toConcentrations(yy);
+    for (let i = 0; i < 20; i++) {
+      const b = i * nsc;
+      const a = c[b + at('S_psi')];
+      const u = Math.log(a);
+      const Q = c[b + at('S_OH2+')] - c[b + at('S_O-')];
+      const Ii = 0.5 * (c[b + at('H+')] + c[b + at('OH-')] + c[b + at('Na+')] + c[b + at('Cl-')]);
+      const Si = Math.sqrt(8000 * Rg * T * eps * eps0 * Ii);
+      worstGC = Math.max(worstGC, Math.abs(F * Q / AM + Si * Math.sinh(u / 2)) / (Si * Math.cosh(u / 2) / 2));
+      worstRel = Math.max(worstRel, Math.abs(Math.log10(c[b + at('S_OH2+')] / (c[b + at('S_OH')] * c[b + at('H+')] * a)) - lk));
+      lowPH = Math.min(lowPH, -Math.log10(c[b + at('H+')]));
+    }
+  }
+  check('a column of acid into a surface that charges: the relation with its potential and Gouy and Chapman held in '
+    + 'every cell', worstGC < 1e-9 && worstRel < 1e-9 && rc.stats.stoppedBy === null && lowPH < 4.5,
+  `Gouy-Chapman within ${worstGC.toExponential(1)} in ln a, the relation within ${worstRel.toExponential(1)}; `
+    + `${rc.stats.nsteps} steps, pH down to ${lowPH.toFixed(3)}`);
+  const vj0 = RtmModel.verifyJacobian(col, 0, col.initialState());
+  const vj1 = RtmModel.verifyJacobian(col, 2000, rc.grid.y[1]);
+  check('  its Jacobian, the potential through the speciation, at the start and on the way',
+    vj0.discrepancies.length === 0 && vj1.discrepancies.length === 0, `${vj0.checked} and ${vj1.checked} entries`);
+
+  // The texts it refuses.
+  const refusal = (species, rl, more = '') => {
+    try { batch(species, rl, more); } catch (e) { return e.message; }
+    return '';
+  };
+  const base = `H+ ${H} fixed\nNa+ 0.1\nCl- 0.1\nS_OH ${sites} surface\nS_OH2+ surface`;
+  const cases = [
+    ['a potential with no surface', `H+ ${H}\nS_psi potential area=600 grams=0.09`, ' <=> H+, logK = -7', /no species is on a surface/],
+    ['a potential not named for its surface', `${base}\nPsi potential area=600 grams=0.09`, rel, /named for its surface/],
+    ['a potential of no surface there is', `${base}\nX_psi potential area=600 grams=0.09`, rel, /no species on a surface is named X_/],
+    ['two potentials on one surface', `${base}\nS_psi potential area=600 grams=0.09\nS_p2 potential area=600 grams=0.09`, rel,
+      /each the potential of/],
+    ['a relation written with the potential', `${base}\nS_psi potential area=600 grams=0.09`,
+      'S_OH + H+ + S_psi <=> S_OH2+, logK = 7.29', /puts the potential in/],
+    ['a charge put on at a rate', `${base}\nS_psi potential area=600 grams=0.09`, `${rel}, kf = 1e6`, /takes no kf/],
+    ['a potential without its area and grams', `${base}\nS_psi potential`, rel, /needs the surface's area/],
+    ['area given to a species that is no potential', `${base} area=600\nS_psi potential area=600 grams=0.09`, rel,
+      /area and grams are a surface's/],
+    ['a potential that moves', `${base}\nS_psi potential area=600 grams=0.09 D=1e-9`, rel, /takes no D/],
+    ['a charge on a potential', `${base}\nS_psi potential area=600 grams=0.09 z=1`, rel, /takes no z, a or b/],
+    ['a potential no relation acts through', `${base}\nS_psi potential area=600 grams=0.09\nS_OHNa+ surface`,
+      'S_OH2+ + Na+ <=> S_OHNa+ + H+, logK = -3', /No relation puts a charge on the surface/],
+    ['a potential without EQUILIBRATE', `${base}\nS_psi potential area=600 grams=0.09`, rel, /needs EQUILIBRATE/,
+      'EQUILIBRATE = 0'],
+  ];
+  const wrong = cases.filter(([, sp2, rl, re, more]) => !re.test(refusal(sp2, rl, more)));
+  check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, sp2, rl, , more]) => `${what}: "${refusal(sp2, rl, more)}"`).join(' | '));
+  const quiet = batch(`${base}\nS_psi potential area=600 grams=0.09`, rel, 'TEMPERATURE = 40');
+  check('  and TEMPERATURE, which the double layer reads, is not said to do nothing without ACTIVITY',
+    !quiet.warnings.some((wn) => /TEMPERATURE/.test(wn)));
+}
+
 console.log('\n--- redox: the electron ---');
 {
   const batch = (species, rel, more = '', reactions = '') => RtmModel.compile(`

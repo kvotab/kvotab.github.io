@@ -36,6 +36,8 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 
   These found that a BASIC `FOR` over an empty range, as `SYS("ex")` gives for a water with no exchanger, spoils the WebAssembly PHREEQC's memory: a later load of the database failed with "memory access out of bounds", three tests on. The punch block jumps the loop when there is nothing to loop over.
 - **Redox**: the groundwater, given as an analysis at pe −3, is written as PHREEQC's next step: its couples on one pe (−2.946), sulfide, methane, H2 and Fe(3) tied to the electron with the database's log K at 15 °C, and the page's start is that water to 1e-8 (9e-10 measured) and its pe to 1e-9, in both activity modes. A water given sulfate and sulfide, Fe(2) and Fe(3) at pe 4 settles at pe −3.42, as PHREEQC's next step has it. Held as fast pairs, no couple is tied. Oxygen fed into the groundwater at 1e-8 mol/kgw/s against PHREEQC adding the same in REACTION: through the iron's equivalence point (where the pe jumps from 1 to 10) and past it, every species above 1e-12 within 1e-4 (5.9e-5 measured, Fe+2 at the point itself) and the pe within 1e-4 (2.6e-5). The PHREEQC tab on that run gives each water its pe, with C, Fe and S each one total, and PHREEQC shares the valence states out as the run has them, to 4e-10. Then a pyrite column: oxygenated water into an aquifer with pyrite, calcite and goethite (20 cells, 30 shifts), PHREEQC's TRANSPORT against the page's model of the column water (floor 0, so that oxygen has a species to arrive as): the effluent within 0.0011 in pH, 0.0016 in pe, 1.5e-6 mol/kgw in sulfate and 6e-10 in iron, the pyrite gone from the same 12 cells and 3.4 % less of it left. On 40 cells PHREEQC itself fails ("S has not converged").
+- **A surface** (`SURFACE` with `-no_edl`): PHREEQC's Example 8 water, zinc on hydrous ferric oxide's strong and weak sites. The hand-off writes the bare sites and the species PHREEQC put on them as `surface` species, grouped by site in the order the input lists them, with the database's log K (conditional in the other mode), and the page's start is PHREEQC's surface to 1e-8 (1.5e-9 measured; 2.3e-10 conditional: the relations take the database's log K, not one read back off the water, so PHREEQC's own convergence shows). Not held exactly, the surface is not carried and the report says why. Then zinc, 0.1 mmol/kgw in 10 of NaCl at pH 6.5, into 40 cells of the same sites loaded from that water without the zinc, for three pore volumes against PHREEQC's TRANSPORT: the effluent within 0.34 µmol/kgw of zinc and 0.0094 in pH (on 20 cells, measured once: 2.7 and 0.078, all in the front), and after three pore volumes 0.002 µmol/kgw and 5e-5. NaCl, not Example 8's NaNO3: PHREEQC's every reaction step puts the nitrate on one pe with a trace of N2 and O2, which takes protons, and a model whose valence states are kept apart then sits 5e-5 mmol/kgw of zinc off on the plateau; held at one pe (the default) it does not. The PHREEQC tab loads PHREEQC's surface from each water of a run with the run's sites, without electrostatics, and the run's fractions are within 4.7e-9 of it over 150 waters.
+- **The double layer** (`SURFACE` as PHREEQC has it by default): Example 8 itself. The hand-off writes `Hfo_psi potential area=600 grams=0.09` at PHREEQC's potential (9.094343 mV), and the page's start is PHREEQC's water, surface and potential to 1e-8 (1.7e-9 measured; 2.3e-10 conditional, `TEMPERATURE` written for the double layer without `ACTIVITY`). PHREEQC's constants are its own, F 96493.5, R 8.31470 and eps0 8.854e-12 (`global_structures.h`), older than CODATA's: with CODATA's the start was 4.7e-5 off, and PHREEQC's `EDL("psi")` is reported with the same F and R. Sites given as `sites=` and loaded from PHREEQC's first water (in NaCl, so that no redox couple moves its reaction step's pH), the potential with them, then the whole speciated: PHREEQC's `-equilibrate` and its reaction step, to 2e-9. The zinc column with the double layer, 40 cells against TRANSPORT: within 0.34 µmol/kgw of zinc and 0.011 in pH, the plateau at pH 6.02 (5.96 without the layer). The PHREEQC tab loads the surface with its double layer, area and grams from the model's potential, and finds the run's fractions within 4.7e-9 and its potential within 4.6e-12 V.
 - **The jobs as the page sends them**, through the handler its worker runs. The database the page loads as a script is the file, character for character, and plain ASCII.
 
 With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge.py` drives it), the same inputs also go through that native PHREEQC on the same database. The WebAssembly build has to agree with it: 1.7e-13 on a model's numbers, and every number of a run's CSV identical.
@@ -46,6 +48,7 @@ With `RTM_PHREEQC_PYTHON` naming a Python that has phreeqpython (`phreeqc-bridge
 - The panel on the Model tab writes the example water and reports the check. By default the activity coefficients follow the ionic strength (`ACTIVITY = debye-huckel` at 15 °C, `H2O` in the relations); fixed at this water, the constants are conditional and the water is left out. By default the relations are held exactly, and the model facts and the Jacobian tab say so (the tab draws the species' 41 × 41 of the 51 × 51 and names the 10 totals it leaves out). Chosen as fast pairs, the rate they relax at is asked for and each of the 30 relations gets its `kf`.
 - Keeping the phases needs the relations held exactly (the box is greyed otherwise); with a calcite phase in the example water, calcite becomes a mineral, the report says so, and the model facts count it.
 - An `EXCHANGE` in the example water is carried: `X- exchanger`, CaX2 with the database's a and b, the report and the model facts saying so. Run and looked at, the PHREEQC tab finds the run's exchanger within 1e-6 of the one PHREEQC loads from its waters (6e-10 measured).
+- A `SURFACE` in the example water is carried with its double layer: the strong and weak sites, what PHREEQC put on them and `Hfo_psi potential area=600 grams=0.09`, the report and the model facts (two kinds of surface site, the potential in mV) saying so. Run and looked at, the PHREEQC tab finds the run's surface within 1e-6 of the one PHREEQC loads from its waters, and its potential within 1e-3 mV.
 - The example water's couples are tied to the electron by default, the water PHREEQC's next step (51 species, 41 relations, pe −2.95): the report and the model facts say so, and the run looked at through PHREEQC shares C, Fe and S out at the run's pe as the run has them, within 1e-6.
 - A column is offered against distance as well: each cell at its centre down the column, at one of the times looked at.
 - The look takes up to 100 of the waters the run kept. How many the run kept is the solver's business, and a held run keeps fewer than fast pairs do, so the number is read off the run's own status.
@@ -357,6 +360,32 @@ in every cell to rounding, the Ca front sits at v t/R with R = 1 + CEC/(2 Ca)
 and the chloride at v t, each within two cells, and the Jacobian holds, the
 exchanger in the relations and out of the totals. Eleven texts are refused,
 each with its reason.
+
+**Surface complexation** (`surface`, `sites=`). Sites loaded from a water that
+stays as it is, each fraction the closed form's (2e-15), the species out of I
+and the water with n/sites for their coefficient; a one-site isotherm at a
+fixed pH, the zinc and the sites given, against its closed solution (4e-15); a
+bidentate species taking two sites, its fraction 2C/sites, the relation held in
+fractions (1e-10); strong and weak sites, each kind its own total; `{Hfo_wOZn+}`
+in a rate law the fraction; a sorption with a `kf` relaxing to the same
+isotherm; under `ACTIVITY` the ions' coefficients and the surface's fractions in
+one relation; and a column of zinc into bare sites with a Langmuir isotherm,
+where the sites and the relation hold in every cell to rounding, the front sits
+at v t/R with R = 1 + q(C)/C within two cells, and the Jacobian holds. Eleven
+texts are refused, each with its reason, and a column whose surface is put on
+its relations at the start only is warned of.
+
+**The diffuse double layer** (`potential`, `area=`, `grams=`). A surface whose
+one charged species takes protons at a fixed pH, against the same two
+equations -- the relation with K exp(-F psi/RT), and Gouy and Chapman's --
+solved by bisection: the potential to 1e-10 (60.92 mV, 15.4 % of the sites
+charged where without the layer it would be 66 %), as amounts speciated and as
+sites loaded from a water that stays. The potential is in the relation by the
+charge it puts on the surface and in no total. A column of acid into a surface
+that charges: the relation and Gouy and Chapman held in every cell to 1e-14,
+and the Jacobian of the projected form at the start and on the way. Twelve
+texts are refused, each with its reason, and `TEMPERATURE` is not said to do
+nothing without `ACTIVITY` where a potential reads it.
 
 **Redox** (`electron`, `pe=`). One couple at a given pe shares its element as
 K/a(e-) has it, from none of one state (1e-12); given no pe, the valence

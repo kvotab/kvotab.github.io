@@ -1007,6 +1007,279 @@ function againstExchange(engine) {
     x ? `within ${Math.abs(x.gap).toExponential(1)} (${x.worst}) over ${view.report.waters} waters` : 'no exchanger');
 }
 
+function againstSurface(engine) {
+  // PHREEQC's Example 8 water, zinc on hydrous ferric oxide, without electrostatics.
+  const ex8 = (sfOpts) => 'SOLUTION 1\n units mmol/kgw\n pH 8.0\n Zn 0.0001\n Na 100 charge\n N(5) 100\n'
+    + `SURFACE 1\n Hfo_sOH 5e-6 600 0.09\n Hfo_wOH 2e-4\n -equilibrate 1\n${sfOpts}END\n`;
+  for (const activity of [true, false]) {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'Example 8', text: ex8(' -no_edl\n') }, activity,
+      exact: true });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    let worst = 0;
+    m.speciesNames.forEach((n, i) => {
+      const ref = back.has(n) ? res.molal.get(back.get(n)) : res.amounts.get(n);
+      if (ref !== undefined) worst = Math.max(worst, Math.abs(y[i] - ref) / Math.max(ref, 1e-15));
+    });
+    const sf = res.report.surface;
+    const lines = /^Hfo_wOH\s+\S+\s+surface$/m.test(res.text) && /^Hfo_sOZn\+\s+\S+\s+surface$/m.test(res.text)
+      && (activity ? /^Hfo_wOH \+ Zn\+2 <=> Hfo_wOZn\+ \+ H\+,\s+logK = -1\.9900000000/m.test(res.text)
+        : /^Hfo_wOH \+ Zn\+2 <=> Hfo_wOZn\+ \+ H\+,\s+logK = -2\.3\d+\s+# log K -1\.9900/m.test(res.text));
+    check(`a surface in the water (-no_edl), ${activity ? 'with its activity coefficients' : 'conditional'}: the sites `
+      + 'and the species on them written, and the page starts from what PHREEQC put there',
+    lines && worst < 1e-8 && sf && sf.species.length === 8 && sf.sites.join() === 'Hfo_sOH,Hfo_wOH'
+      && !res.report.surfaceSkipped.length,
+    `${sf ? sf.species.length : 0} species on ${sf ? sf.sites.join(', ') : 'nothing'}; within ${worst.toExponential(1)}`);
+  }
+  engine.load(dbText);
+  const apart = P.waterToModel({ engine, database, water: { name: 'Example 8', text: ex8(' -no_edl\n') }, activity: true,
+    exact: false });
+  check('  not held exactly, the surface is said and not carried',
+    !/ surface$/m.test(apart.text) && /held exactly/.test(apart.report.surfaceSkipped.map((x) => x.why).join()));
+
+  // Zinc into a column of ferrihydrite against PHREEQC's TRANSPORT. The
+  // background NaCl, so that no redox couple moves the pH.
+  const N = 40;
+  const L = 0.08;
+  const dx = L / N;
+  const dt = 720;
+  const S = 3 * N;
+  const alpha = 0.002;
+  const v = dx / dt;
+  const bg = (n) => `SOLUTION ${n}\n units mmol/kgw\n temp 25\n pH 6.5\n Na 10 charge\n Cl 10\n Zn 1e-9\n`;
+  const sfBlock = (n) => `SURFACE ${n}\n -equilibrate 1\n -no_edl\n Hfo_sOH 5e-6\n Hfo_wOH 2e-4\n`;
+  const loaded = `${bg(1)}${sfBlock(1)}END\n`;
+  const inflow = 'SOLUTION 0\n units mmol/kgw\n temp 25\n pH 6.5\n Na 10 charge\n Cl 10\n Zn 0.1\nEND\n';
+  engine.load(dbText);
+  const started = Date.now();
+  const rows = engine.run(`${bg(`1-${N}`)}END\n${sfBlock(`1-${N}`)}END\n${inflow}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time Zn pH\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, TOT("Zn"), -LA("H+")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells ${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const r of rows.slice(1)) {
+    const t = Number(r[head.indexOf('time')]);
+    if (t > 0) pq.set(Math.round(t / dt), { Zn: Number(r[head.indexOf('Zn')]), pH: Number(r[head.indexOf('pH')]) });
+  }
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'column', text: loaded }, activity: true, exact: true });
+  const inRow = P.parseRows(engine.run(`${P.punchBlock()}${inflow}`)).pop();
+  const back = new Map([...res.names].map(([k, n]) => [n, k]));
+  const text = res.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral|exchange|surface/.test(rest) || !back.has(name)) return line;
+      const sp = inRow.species.get(back.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const m = RtmModel.compile(text);
+  const t0 = Date.now();
+  const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+  const rtmMs = Date.now() - t0;
+  const ns = m.speciesNames.length;
+  const db = P.readDatabase(dbText);
+  const zn = [];
+  m.speciesNames.forEach((n, i) => {
+    if (!back.has(n)) return;
+    const ex = db.expand(back.get(n));
+    if (ex.has('Zn')) zn.push([i, ex.get('Zn')]);
+  });
+  const iH = m.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  let wZn = 0;
+  let wpH = 0;
+  let end = null;
+  for (let k = 1; k <= S; k++) {
+    const c = m.toConcentrations(r.grid.y[k - 1]);
+    const cell = c.subarray((N - 1) * ns, N * ns);
+    let tot = 0;
+    for (const [i, kk] of zn) tot += kk * cell[i];
+    RtmModel.activityAt(m.act, cell, 0, lnG, dG, N - 1);
+    const pH = -Math.log10(cell[iH]) - lnG[iH] / Math.LN10;
+    wZn = Math.max(wZn, Math.abs(tot - pq.get(k).Zn));
+    wpH = Math.max(wpH, Math.abs(pH - pq.get(k).pH));
+    if (k === S) end = { Zn: Math.abs(tot - pq.get(k).Zn), pH: Math.abs(pH - pq.get(k).pH), at: pH };
+  }
+  check('zinc into a column of ferrihydrite (-no_edl) against PHREEQC\'s TRANSPORT: the effluent, the pH falling ahead '
+    + 'of the zinc', wZn < 6e-7 && wpH < 0.02 && end.Zn < 2e-8 && end.pH < 5e-4,
+  `within ${(wZn * 1e6).toFixed(3)} umol/kgw of zinc (of 100) and ${wpH.toFixed(4)} in pH; after three pore volumes `
+    + `${(end.Zn * 1e6).toFixed(4)} and ${end.pH.toFixed(5)}, at pH ${end.at.toFixed(3)}; ${N} cells: PHREEQC ${pqMs} ms, `
+    + `the page ${rtmMs} ms`);
+
+  // The PHREEQC tab: the run's surface against PHREEQC's loaded from each water.
+  const reply = pageRun(text.replace(/^CELLS = \d+$/m, 'CELLS = 10').replace(`LENGTH = ${L}`, `LENGTH = ${L / 4}`)
+    .replace(/^TEND = .*$/m, `TEND = ${30 * dt}`), 30 * dt);
+  engine.load(dbText);
+  const view = P.viewRun({ engine, database, run: reply, modelText: text, water: { name: 'column', text: loaded },
+    unit: 's', times: 15 });
+  const x = view.report.surface;
+  check('  the PHREEQC tab loads PHREEQC\'s surface from each water of a run: the fractions the run holds',
+    x && !x.error && Math.abs(x.gap) < 1e-6 && view.report.unmapped.length === 0 && !view.report.unchecked.length
+    && view.report.skipped.some((sk) => sk.name === 'Hfo_wOZn+' && /on a surface/.test(sk.why)),
+    x ? `within ${Math.abs(x.gap).toExponential(1)} (${x.worst}) over ${view.report.waters} waters` : 'no surface');
+}
+
+function againstDoubleLayer(engine) {
+  const F = 96493.5;
+  const Rg = 8.31470;
+  // Example 8 as PHREEQC has it, with its double layer: the hand-off, both ways.
+  const ex8 = 'SOLUTION 1\n units mmol/kgw\n pH 8.0\n Zn 0.0001\n Na 100 charge\n N(5) 100\n'
+    + 'SURFACE 1\n Hfo_sOH 5e-6 600 0.09\n Hfo_wOH 2e-4\n -equilibrate 1\nEND\n';
+  engine.load(dbText);
+  const probe = engine.run('SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings psi\n -start\n'
+    + `10 PUNCH EDL("psi", "Hfo")\n -end\n${ex8}`);
+  const psiPq = Number(probe[probe.length - 1][0]);
+  for (const activity of [true, false]) {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'Example 8', text: ex8 }, activity, exact: true });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    let worst = 0;
+    m.speciesNames.forEach((n, i) => {
+      const ref = back.has(n) ? res.molal.get(back.get(n)) : res.amounts.get(n);
+      if (ref !== undefined) worst = Math.max(worst, Math.abs(y[i] - ref) / Math.max(ref, 1e-15));
+    });
+    const psi = -Math.log(y[m.speciesNames.indexOf('Hfo_psi')]) * Rg * 298.15 / F;
+    const pots = res.report.surface && res.report.surface.potentials;
+    check(`a surface with its double layer, ${activity ? 'with its activity coefficients' : 'conditional'}: its potential `
+      + 'written with the area and grams, and the page starts from PHREEQC\'s water, surface and potential',
+    /^Hfo_psi\s+\S+\s+potential\s+area=600\s+grams=0\.09$/m.test(res.text) && worst < 1e-8
+      && Math.abs(psi - psiPq) < 1e-9 && pots && pots.length === 1 && Math.abs(pots[0].psi - psiPq) < 1e-15
+      && (activity || /^TEMPERATURE = 25$/m.test(res.text)),
+    `within ${worst.toExponential(1)}; psi ${(psi * 1e3).toFixed(6)} mV, PHREEQC's ${(psiPq * 1e3).toFixed(6)}`);
+  }
+
+  // Sites loaded from PHREEQC's first water, then the whole speciated: the
+  // page's two steps against PHREEQC's -equilibrate and its reaction step.
+  // NaCl, so that no redox couple moves the pH in PHREEQC's reaction step.
+  const sol = 'SOLUTION 1\n units mmol/kgw\n pH 8.0\n Zn 0.0001\n Na 100 charge\n Cl 100\n';
+  const water = `${sol}SURFACE 1\n Hfo_sOH 5e-6 600 0.09\n Hfo_wOH 2e-4\n -equilibrate 1\nEND\n`;
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'Example 8', text: water }, activity: true, exact: true });
+  const init = P.parseRows(engine.run(`${P.punchBlock()}${sol}END\n`)).pop();
+  const back = new Map([...res.names].map(([k, n]) => [n, k]));
+  const text = res.text.replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    if (/potential/.test(rest)) return `${name}${gap}${rest.trim()}`;
+    if (/surface/.test(rest)) {
+      return `${name}${gap}surface${{ Hfo_sOH: ' sites=5e-6', Hfo_wOH: ' sites=2e-4' }[name] || ''}`;
+    }
+    if (!back.has(name)) return line;
+    const sp = init.species.get(back.get(name));
+    return `${name}${gap}${sp ? sp[0] : 0}${rest}`;
+  });
+  const m = RtmModel.compile(text);
+  const y = m.toConcentrations(m.initialState());
+  let worst = 0;
+  m.speciesNames.forEach((n, i) => {
+    const ref = back.has(n) ? res.molal.get(back.get(n)) : res.amounts.get(n);
+    if (ref !== undefined) worst = Math.max(worst, Math.abs(y[i] - ref) / Math.max(ref, 1e-15));
+  });
+  check('  sites loaded from the first water, its potential with them, then the whole speciated: PHREEQC\'s '
+    + '-equilibrate and its reaction step', worst < 1e-8 && /Hfo_wOH +surface sites=2e-4/.test(text),
+  `within ${worst.toExponential(1)}`);
+
+  // Zinc into a column of ferrihydrite with its double layer, against PHREEQC's TRANSPORT.
+  const N = 40;
+  const L = 0.08;
+  const dx = L / N;
+  const dt = 720;
+  const S = 3 * N;
+  const alpha = 0.002;
+  const v = dx / dt;
+  const bg = (n) => `SOLUTION ${n}\n units mmol/kgw\n temp 25\n pH 6.5\n Na 10 charge\n Cl 10\n Zn 1e-9\n`;
+  const sfBlock = (n) => `SURFACE ${n}\n -equilibrate 1\n Hfo_sOH 5e-6 600 0.09\n Hfo_wOH 2e-4\n`;
+  const loaded = `${bg(1)}${sfBlock(1)}END\n`;
+  const inflow = 'SOLUTION 0\n units mmol/kgw\n temp 25\n pH 6.5\n Na 10 charge\n Cl 10\n Zn 0.1\nEND\n';
+  engine.load(dbText);
+  const started = Date.now();
+  const rows = engine.run(`${bg(`1-${N}`)}END\n${sfBlock(`1-${N}`)}END\n${inflow}`
+    + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time Zn pH\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, TOT("Zn"), -LA("H+")\n -end\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+    + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells ${N}\n`
+    + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+  const pqMs = Date.now() - started;
+  const head = rows[0].map((h) => String(h).trim());
+  const pq = new Map();
+  for (const r of rows.slice(1)) {
+    const t = Number(r[head.indexOf('time')]);
+    if (t > 0) pq.set(Math.round(t / dt), { Zn: Number(r[head.indexOf('Zn')]), pH: Number(r[head.indexOf('pH')]) });
+  }
+  engine.load(dbText);
+  const cres = P.waterToModel({ engine, database, water: { name: 'column', text: loaded }, activity: true, exact: true });
+  const inRow = P.parseRows(engine.run(`${P.punchBlock()}${inflow}`)).pop();
+  const cback = new Map([...cres.names].map(([k, n]) => [n, k]));
+  const ctext = cres.text
+    .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+      + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+    .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      if (/mineral|exchange|surface|potential/.test(rest) || !cback.has(name)) return line;
+      const sp = inRow.species.get(cback.get(name));
+      return `${line}  left=${sp ? sp[0] : 0}`;
+    });
+  const cm = RtmModel.compile(ctext);
+  const t0 = Date.now();
+  const r = FacsimileODE.runModel(cm, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+  const rtmMs = Date.now() - t0;
+  const ns = cm.speciesNames.length;
+  const db = P.readDatabase(dbText);
+  const zn = [];
+  cm.speciesNames.forEach((n, i) => {
+    if (!cback.has(n)) return;
+    const ex = db.expand(cback.get(n));
+    if (ex.has('Zn')) zn.push([i, ex.get('Zn')]);
+  });
+  const iH = cm.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  const dG = new Float64Array(ns);
+  let wZn = 0;
+  let wpH = 0;
+  let end = null;
+  for (let k = 1; k <= S; k++) {
+    const c = cm.toConcentrations(r.grid.y[k - 1]);
+    const cell = c.subarray((N - 1) * ns, N * ns);
+    let tot = 0;
+    for (const [i, kk] of zn) tot += kk * cell[i];
+    RtmModel.activityAt(cm.act, cell, 0, lnG, dG, N - 1);
+    const pH = -Math.log10(cell[iH]) - lnG[iH] / Math.LN10;
+    wZn = Math.max(wZn, Math.abs(tot - pq.get(k).Zn));
+    wpH = Math.max(wpH, Math.abs(pH - pq.get(k).pH));
+    if (k === S) end = { Zn: Math.abs(tot - pq.get(k).Zn), pH: Math.abs(pH - pq.get(k).pH), at: pH };
+  }
+  check('zinc into a column of ferrihydrite with its double layer against PHREEQC\'s TRANSPORT: the effluent',
+    wZn < 6e-7 && wpH < 0.02 && end.Zn < 3e-8 && end.pH < 5e-4,
+    `within ${(wZn * 1e6).toFixed(3)} umol/kgw of zinc (of 100) and ${wpH.toFixed(4)} in pH; after three pore volumes `
+      + `${(end.Zn * 1e6).toFixed(4)} and ${end.pH.toFixed(5)}, at pH ${end.at.toFixed(3)}; ${N} cells: PHREEQC ${pqMs} ms, `
+      + `the page ${rtmMs} ms`);
+
+  // The PHREEQC tab: the run's surface and potential against PHREEQC's loaded from each water.
+  const reply = pageRun(ctext.replace(/^CELLS = \d+$/m, 'CELLS = 10').replace(`LENGTH = ${L}`, `LENGTH = ${L / 4}`)
+    .replace(/^TEND = .*$/m, `TEND = ${30 * dt}`), 30 * dt);
+  engine.load(dbText);
+  const view = P.viewRun({ engine, database, run: reply, modelText: ctext, water: { name: 'column', text: loaded },
+    unit: 's', times: 15 });
+  const x = view.report.surface;
+  check('  the PHREEQC tab loads PHREEQC\'s surface with its double layer from each water: the fractions and the '
+    + 'potential the run holds',
+  x && !x.error && Math.abs(x.gap) < 1e-6 && x.psiGap && Math.abs(x.psiGap.by) < 1e-9
+    && view.report.skipped.some((sk) => sk.name === 'Hfo_psi' && /potential/.test(sk.why)) && !view.report.unmapped.length,
+  x ? `within ${Math.abs(x.gap).toExponential(1)} (${x.worst}), the potential within `
+    + `${x.psiGap ? Math.abs(x.psiGap.by).toExponential(1) : '?'} V, over ${view.report.waters} waters` : 'no surface');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -1023,6 +1296,10 @@ function againstExchange(engine) {
   againstExchange(wasm);
   console.log('\n--- redox: the hand-off, oxygen in, a pyrite column, and the PHREEQC tab ---');
   againstRedox(wasm);
+  console.log('\n--- a surface: the hand-off, zinc through a column, and the PHREEQC tab ---');
+  againstSurface(wasm);
+  console.log('\n--- the double layer: the hand-off, a surface loaded, zinc through a column, and the PHREEQC tab ---');
+  againstDoubleLayer(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);
