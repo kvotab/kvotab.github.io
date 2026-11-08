@@ -2071,6 +2071,26 @@ console.log('\n--- names with groups, constants as arithmetic, aliases ---');
     skb.at('Fe+2'), 5.45e-13 * 6.141 * 1 * (1e-3 / 1.8e-3) * (1 - 1e-6 / 1.8e-6), 1e-14);
   check('  and its Jacobian agrees', skb.clean.discrepancies.length === 0);
 
+  // A name may stand for an expression that reads the water, as a step of a program: the law reads it in brackets.
+  const named = batch('A 2\nB 5\nC 0',
+    'A => C, r = k*x*y, c = [A], x = c*(1 - [B]/cmax), b2 = [B], y = exp(-0.1*b2), k = 0.3, cmax = 10');
+  const plain = batch('A 2\nB 5\nC 0', 'A => C, r = 0.3*[A]*(1 - [B]/10)*exp(-0.1*[B])');
+  close('a name may stand for an expression of the water, x = c*(1 - [B]/cmax), y = exp(-0.1*b2), the law reading each '
+    + 'in brackets', named.at('A'), plain.at('A'), 1e-15);
+  check('  and its Jacobian agrees', named.clean.discrepancies.length === 0 && !named.clean.outsidePattern);
+  const refusedName = (rx) => { try { batch('A 2\nB 5', rx); return '(no error)'; } catch (err) { return err.message; } };
+  const before = refusedName('A => , r = y, y = 2*b2, b2 = [B]');
+  const word = refusedName('A => , r = TK*[A], TK = [B]');
+  const twice = refusedName('A => , r = x, x = [A], x = [B]');
+  check('  refused: a name used before it is given, a name a rate law reads already, a name given twice',
+    /uses b2, which is given after it on the line/.test(before) && /names something a rate law reads already/.test(word)
+    && /x is given twice on the line/.test(twice), `${before} | ${word} | ${twice}`);
+  // A power's exponent may go with the temperature, which no species moves, and be negated.
+  const pk = batch('A 2', 'A => , r = 10^(-pk)*[A]^(-n)*[A]^2, pk = 2 + 300*(1/TK - 1/298.15), n = 0.5');
+  close('a power\'s exponent may read the temperature and be negated: 10^(-pk), pk in TK, [A]^(-n)',
+    pk.at('A'), -0.01 * 2 ** 1.5, 1e-15);
+  check('  and its Jacobian agrees', pk.clean.discrepancies.length === 0 && !pk.clean.outsidePattern);
+
   const s = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 2\nLENGTH = 2*0.5\nTEND = 365*86400\n\n'
     + '<SPECIES>\nA 2*3 D=1e-9*2\n\n<REACTIONS>\n');
   check('a setting may be arithmetic: TEND = 365*86400', s.settings.TEND === 31536000, String(s.settings.TEND));
@@ -4578,8 +4598,8 @@ Yr <=> Yo + e-, logK = -5
       /is the electron and in no relation/],
     ['the electron in a fast pair', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', `${FE}, kf = 1`,
       /no amount and cannot react at a rate/],
-    ['the electron in a reaction', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', FE, /cannot react at a rate/, '',
-      'Fe+3 + e- => Fe+2, k = 1'],
+    ['the electron in a reaction, the relations not held', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4', FE,
+      /can take or give electrons only where the relations with it are held/, '', 'Fe+3 + e- => Fe+2, k = 1'],
     ['an electron that moves', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4 D=1e-9', FE, /never moves: it takes no D/],
     ['a charge on the electron', 'Fe+2 1e-4\nFe+3 1e-6\ne- electron pe=4 z=-1', FE, /takes no z, a or b/],
     ['a pe on anything else', 'Fe+2 1e-4 pe=4\nFe+3 1e-6\ne- electron', FE, /pe is the electron's/],
@@ -4590,6 +4610,27 @@ Yr <=> Yo + e-, logK = -5
   const wrong = cases.filter(([, sp, rel, re, more, rx]) => !re.test(refusal(sp, rel, more, rx)));
   check(`refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
     wrong.map(([what, sp, rel, , more, rx]) => `${what}: "${refusal(sp, rel, more, rx)}"`).join(' | '));
+  /*
+    A reaction that takes or gives electrons, held all through the run: the
+    couples tied to the electron share out what it moves, so X + e- => Fe+2
+    is X => Fe+3 with the couple at one pe -- O2 taking its share of the
+    electrons as the iron is oxidised -- run for run, and its Jacobian.
+  */
+  const eRx = (rx) => batch('Fe+2 1e-3\nFe+3 1e-6\ne- electron\nO2 0\nH+ 1e-7 fixed\nX 1e-3 mineral',
+    `${FE}\n0.5 H2O <=> 0.25 O2 + H+ + e-, logK = -20.78`, 'EQUILIBRATE = always', rx);
+  const viaE = eRx('X + e- => Fe+2, r = 2*[X]');
+  const viaFe3 = eRx('X => Fe+3, r = 2*[X]');
+  const rE = run(viaE, { tend: 1, rtol: 1e-10 });
+  const rF = run(viaFe3, { tend: 1, rtol: 1e-10 });
+  const yE = viaE.toConcentrations(last(rE), rE.t[rE.t.length - 1]);
+  const yF = viaFe3.toConcentrations(last(rF), rF.t[rF.t.length - 1]);
+  const dE = Math.max(...yE.map((v, i) => Math.abs(v - yF[i]) / Math.max(Math.abs(yF[i]), 1e-30)));
+  const jE = RtmModel.verifyJacobian(viaE, rE.t[rE.t.length >> 1], rE.y[rE.y.length >> 1]);
+  check('a reaction that takes electrons, the relations held: X + e- => Fe+2 is X => Fe+3, the couples sharing out '
+    + 'the electrons, O2 its part of them; and the Jacobian', dE < 1e-12 && yE[viaE.speciesNames.indexOf('O2')] > 1e-6
+    && jE.discrepancies.length === 0,
+  `the two runs apart by ${dE.toExponential(1)}, Fe+3 ${yE[viaE.speciesNames.indexOf('Fe+3')].toExponential(4)}, O2 `
+    + `${yE[viaE.speciesNames.indexOf('O2')].toExponential(4)}; the Jacobian ${jE.discrepancies.length} of ${jE.checked} off`);
   const startOnly = batch('Fe+2 9e-4\nFe+3 1e-4\ne- electron', FE, 'EQUILIBRATE = start');
   check('  and relations with the electron put on at the start only are said to be, the pe staying put after',
     startOnly.warnings.some((w) => /put on at the start only: the pe then stays as it was/.test(w))
@@ -5277,6 +5318,11 @@ console.log('\n--- the temperature ---');
     ['ACTIVITY = davies', 'Ca+2 1e-3\nCO3-2 1e-3\nHCO3- 0\nH+ 1e-8\nOH- 1e-6\nCalcite 0.01 mineral',
       ' <=> H+ + OH-, logK = -14, dH = 55.8\nCO3-2 + H+ <=> HCO3-, logK = 10.329, dH = -14.9\n'
       + 'Calcite <=> Ca+2 + CO3-2, logK = -8.48, dH = -9.6', '', 'a mineral'],
+    ['ACTIVITY = davies\nPRESSURE = 500', 'Ca+2 1e-3\nCO3-2 1e-3\nHCO3- 0\nH+ 1e-8\nOH- 1e-6\nCalcite 0.01 mineral',
+      ' <=> H+ + OH-, logK = -14, dH = 55.8\nCO3-2 + H+ <=> HCO3-, logK = 10.329, dH = -14.9\n'
+      + 'Calcite <=> Ca+2 + CO3-2, logK = -8.48, dH = -9.6', '<VOLUMES>\nCa+2  -0.35 -7.3 6.1 -2.5 1.2 5 1.6 -57 -6e-3 1\n'
+      + 'CO3-2  6 0 0 -5.7 6.9 0 1.4 106 -0.034 1\nHCO3-  8.5 0 -11.7 0 1.6 0 0 116 0 1\nCalcite  36.9\n',
+    'molar volumes at 500 atm'],
   ];
   const text = (head, T, more, [s, sp, rel, extra]) => `<SETTINGS>\n${head}\nTEND = 1\nEQUILIBRATE = always\n${s}\n`
     + `TEMPERATURE = ${T}\n\n${more}\n<SPECIES>\n${sp}\n\n<EQUILIBRIUM>\n${rel}\n\n${extra}`;

@@ -611,6 +611,14 @@ A => B, r = k*c^(2/3)*(1 - [B]/cmax), k = 5e-13, c = [A], cmax = 1.8e-6</pre>
             databases, and they mean here what they say. (skbrtm itself pastes each constant into
             the law as text, so it reads <code>(kr/kh)</code> above as
             <code>1.33*10**12/1.3*10**-3</code> — a million times less.)</p>
+          <pre>Calcite => Ca+2 + CO3-2, r = area*(k1*{H+} + k2*{CO2})*(1 - SR(Calcite)), m = [Calcite], area = A0*(m/m0)^0.6, k1 = 10^(0.198 - 444/TK), k2 = 3.5e-5, A0 = 0.05, m0 = 1e-3</pre>
+          <p>A name given an expression that reads the water — a concentration, an activity,
+            <code>SI()</code> or <code>SR()</code>, <code>I</code>, <code>TK</code>, <code>TC</code>,
+            <code>t</code>, or a name of this kind before it — stands for that expression, in brackets,
+            wherever the law or a later name uses it: a rate written step by step, as a program would
+            work it out. Such a name may use the names before it on its line and the line's constants
+            wherever they are given, and may not be one a rate law reads already. A power's exponent
+            may go with <code>TK</code> or <code>TC</code>, which no species moves.</p>
           <pre>Calcite => Ca+2 + CO3-2, r = k*A*(1 - SR(Calcite)), k = 1e-7, A = 0.5
 => X, r = kx*{H+}^0.5                     # an activity: gamma times the concentration
 => Y, r = ky*exp(-0.5*I)                  # I, the ionic strength of the cell
@@ -1564,11 +1572,14 @@ SO4-2 + 9 H+ + 8 e- &lt;=&gt; HS- + 4 H2O,    logK = 33.65</pre>
             in <code>&lt;REACTIONS&gt;</code> that moves electrons — oxygen arriving, iron oxidised at
             a rate — moves every couple together, and where the last of a reductant has gone the pe
             jumps as the oxidant builds up. A couple not tied to it keeps its valence states apart, as
-            PHREEQC's decoupled elements do. The electron itself is in no reaction and no fast pair:
-            redox at a rate is written between species, <code>Fe+2 + 0.25 O2 + H+ =&gt; Fe+3 + 0.5
-            H2O</code>, and a rate law may read the electron's activity as <code>[e-]</code>. A phase
-            that dissolves with electrons, such as pyrite, is a <code>mineral</code> with the electron
-            in its relation.</p>
+            PHREEQC's decoupled elements do. Redox at a rate is written between species, <code>Fe+2 +
+            0.25 O2 + H+ =&gt; Fe+3 + 0.5 H2O</code>, or with the electron in it where the relations are
+            held all through the run (<code>EQUILIBRATE = always</code>): <code>Pyrite + 2 H+ + 2 e-
+            =&gt; Fe+2 + 2 HS-</code>, as PHREEQC's <code>PHASES</code> write it, takes two electrons
+            from what the couples hold, and they share out the rest at their one pe, as PHREEQC does
+            when a kinetic reactant's elements go into the water. The electron is in no fast pair, and
+            a rate law may read its activity as <code>[e-]</code>. A phase that dissolves with
+            electrons, such as pyrite, is a <code>mineral</code> with the electron in its relation.</p>
           <p>Given <code>pe=</code>, or an activity, the start is speciated at that pe first, as
             PHREEQC's <code>SOLUTION</code> is: each element tied to it is shared out between its
             valence states as that pe has it, which is how one given none of a state gets some. Given
@@ -1729,10 +1740,11 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             it is not carried by the water or conducted through the rock. PHREEQC's
             <code>TRANSPORT</code> moves a solution's temperature with it unless told to hold each cell's,
             <code>-thermal_diffusion 1e30 0</code>, which is the page's column. Not carried with the
-            temperature: diffusion coefficients, which stay as given; SIT's interaction coefficients,
-            which stay as written (<code>sit.dat</code> gives none that go with temperature); and
-            PHREEQC's pressure term in log K, which comes in above one atmosphere, from molar volumes
-            the page does not carry.</p>
+            temperature: diffusion coefficients, which stay as given; and SIT's interaction coefficients,
+            which stay as written (<code>sit.dat</code> gives none that go with temperature). The pressure
+            term in log K, which comes in above one atmosphere from the molar volumes of
+            <code>&lt;VOLUMES&gt;</code>, is worked out at each cell's temperature at each instant, as the
+            rest is (see <em>Pressure</em>).</p>
 
           <h4>Opening skbrtm and BRUM databases</h4>
           <p><em>Open…</em> takes skbrtm's database files as well as a model text: select any of
@@ -2021,6 +2033,29 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             PHREEQC used. Not carried: a solid solution with a member the database has no reaction for, or
             whose dissolution takes what the water does not have, or electrons where the valence states are
             not held at one pe; one of a single member; and Guggenheim's parameters for more than two.</p>
+          <p>Kinetic reactants in the input, a <code>KINETICS</code> with its rates in the database's or
+            the input's <code>RATES</code>, are carried as reactions at a rate. Each reactant is a
+            <code>mineral</code> at its <code>-m</code> to each kilogram of water, and its formula's
+            dissolution — a phase's as the database's <code>PHASES</code> write it, or a chemical
+            formula's, <code>-formula CH2O</code>, into the master species of its elements with H+, the
+            water and the electrons — a reaction in <code>&lt;REACTIONS&gt;</code> at the rate its program
+            comes to, the program written above it. The program becomes the rate law: each of its
+            variables a name on the line, <code>M</code> the reactant (never below none), <code>M0</code>
+            and <code>PARM(i)</code> constants, what the water decides read as the page reads it —
+            <code>ACT</code>, <code>MOL</code>, <code>LM</code>, <code>LA</code>, <code>TOT</code> of an
+            element or a valence state, <code>SI</code> and <code>SR</code> of a phase (written in
+            <code>&lt;PHASES&gt;</code> where it is no mineral), <code>MU</code>, <code>TK</code>,
+            <code>TC</code> — an <code>IF</code> on those <code>step()</code>, and what it
+            <code>SAVE</code>s over <code>TIME</code> the rate. PHREEQC's own arithmetic is kept: x/0 is
+            0, 0^y is 0, and a minus binds before ^, so <code>10^-pk</code> is 10<sup>−pk</sup>. A
+            program that loops, saves other than moles in a step, or reads what a rate law here cannot
+            (<code>PUT</code>, <code>GET</code>, <code>CALC_VALUE</code>) is not carried, and the report
+            says why. The water the run starts from is the input's without its <code>KINETICS</code>:
+            the run is what PHREEQC's kinetic steps are, <code>TEND</code> their sum. Where the reactants
+            bring what the water has none of, it is taken with 10<sup>−20</sup>&nbsp;mol of them in it, so
+            that there is something to grow from; and every species of what they bring or take is
+            written, whatever the floor. A reaction that moves electrons needs the valence states held
+            at one pe.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -2232,6 +2267,19 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             2.4×10<sup>−5</sup> in pH where it settles; PHREEQC takes 2.2 seconds and this page 1.7. The
             PHREEQC tab finds the model's own coefficients within 5×10<sup>−14</sup> of PHREEQC's as 1&nbsp;mol/kgw
             of salt goes into a 3&nbsp;mol/kgw brine, PHREEQC's moving 0.25 in log K.</p>
+          <p>And kinetics. Each of <code>phreeqc.dat</code>'s seven <code>RATES</code>, written as a rate
+            law, comes to what its program does as PHREEQC's BASIC runs it, at an oxic water at
+            25&nbsp;°C and an anoxic one at 40&nbsp;°C, which take its branches both ways, to
+            3×10<sup>−14</sup>. Waters handed off with a <code>KINETICS</code> and run follow PHREEQC's
+            kinetic steps: calcite into a water with CO<sub>2</sub> and no calcium, the calcite left within
+            8×10<sup>−11</sup> and the pH 2×10<sup>−10</sup>; K-feldspar, 2×10<sup>−13</sup> and
+            5×10<sup>−9</sup>; organic carbon, CH<sub>2</sub>O, using up the water's oxygen and going on
+            to its nitrate, 3×10<sup>−8</sup>, 2×10<sup>−7</sup> and the pe 5×10<sup>−5</sup> where it
+            drops as the oxygen goes; and pyrite with oxygen, 8×10<sup>−12</sup>, 3×10<sup>−10</sup> and
+            2×10<sup>−9</sup> in pe. PHREEQC integrates its kinetics by Runge–Kutta to its own tolerance,
+            <code>-tol</code>; at 10<sup>−10</sup> rather than 10<sup>−14</sup> the calcite is
+            2×10<sup>−9</sup> from the page's. A reaction that takes or gives water moves PHREEQC's
+            kilogram, quartz's by a part in 10<sup>5</sup>, where the page's stays a kilogram.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -2380,7 +2428,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108j"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108k"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2388,6 +2436,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108j"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108k"></script>
 </body>
 </html>

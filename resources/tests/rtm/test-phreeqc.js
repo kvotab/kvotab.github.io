@@ -3022,6 +3022,161 @@ function againstCdMusic(engine) {
   engine.load(dbText);
 }
 
+/* ======================================================================
+   KINETICS: PHREEQC's kinetic reactants and their RATES programs
+
+   Each of phreeqc.dat's seven RATES programs as the rate law the hand-off
+   writes, against the program run by PHREEQC's own BASIC at the same water
+   (M, M0 and PARM put in as numbers, TIME 1, SAVE as PUNCH), at an oxic
+   water at 25 C and an anoxic one at 40 C, which take the programs'
+   branches both ways. Reading KINETICS and RATES; what a program does that
+   a rate law cannot be, refused with its reason. Then waters handed off
+   with their KINETICS and run, against PHREEQC's KINETICS at its steps:
+   calcite into a water with CO2 and no calcium, K-feldspar into a water
+   with CO2, organic carbon (CH2O, Monod) through the water's O2 and into
+   its nitrate, pyrite with O2; the last two moving electrons.
+   ====================================================================== */
+function againstKineticsHandOff(engine) {
+  engine.load(dbText);
+  const rates = P.readRates(dbText);
+  // 1. Each program against PHREEQC's BASIC at a water.
+  const PARMS = { quartz: [0.146, 1.5], 'k-feldspar': [6.41, 0.1], albite: [6.04, 0.1], calcite: [5, 0.6],
+    pyrite: [-5, 0.1, 0.5, -0.11], organic_c: [], pyrolusite: [] };
+  const waters = {
+    'oxic, 25 C': 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7.5\n pe 12\n Na 6; K 0.1; Ca 1; Mg 0.5; Al 1e-3; Si 0.2; Fe 0.01\n'
+      + ' Mn 0.01\n Cl 1 charge\n S(6) 1\n N(5) 0.5\n C 2\n',
+    'anoxic, 40 C': 'SOLUTION 1\n temp 40\n units mmol/kgw\n pH 6.8\n pe -2\n Na 6; K 0.1; Ca 1; Mg 0.5; Al 1e-3; Si 0.2\n'
+      + ' Fe(2) 0.05; Mn 0.01\n Cl 1 charge\n S(6) 1\n N(5) 0.5\n C 4\n',
+  };
+  const fns = { exp: Math.exp, ln: Math.log, log10: Math.log10, sqrt: Math.sqrt, abs: Math.abs, sign: Math.sign,
+    step: (x) => (x > 0 ? 1 : 0), ramp: (x) => (x > 0 ? x : 0) };
+  const punchOne = (water, lines, head) => engine.run(`${water}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + ` -headings ${head}\n -start\n${lines}\n -end\nEND\n`).pop().map(Number);
+  let worst = 0;
+  let where = '';
+  let compared = 0;
+  const m = 5e-4;
+  const m0 = 1e-3;
+  for (const [wname, water] of Object.entries(waters)) {
+    for (const r of rates.values()) {
+      const parms = PARMS[r.name.toLowerCase()];
+      const prog = r.lines.map((l) => l.replace(/\bPARM\s*\(\s*([0-9]+)\s*\)/gi, (_, i) => `(${parms[Number(i) - 1]})`)
+        .replace(/\bM0\b/gi, `(${m0})`).replace(/\bM\b/gi, `(${m})`).replace(/\bTIME\b/gi, '1')
+        .replace(/\bSAVE\b/gi, 'PUNCH')).join('\n');
+      const pq = punchOne(water, prog, 'rate')[0];
+      // The law, what it reads taken from PHREEQC at the same water: a molality as 10^LM, which keeps the smallest.
+      const reads = [];
+      const read = (what, kind) => { reads.push(what); return `${kind}__${reads.length - 1}`; };
+      const ctx = { m: 'MM', m0, parms, W: 1, solnVol: punchOne(water, '10 PUNCH SOLN_VOL', 'v')[0],
+        phase: (p, kind) => read(`${kind}("${p}")`, kind), act: (s) => read(`ACT("${s}")`, 'V'),
+        mol: (s) => read(`10^LM("${s}")`, 'V'), tot: (l) => read(`TOT("${l}")`, 'V'), kin: () => null, equi: () => null };
+      const law = P.rateLaw(r, ctx);
+      const vals = punchOne(water, `${reads.map((x, i) => `${10 + i} PUNCH ${x}`).join('\n')}\n900 PUNCH TK, TC, MU`,
+        `${reads.map((_, i) => `v${i}`).join(' ')} tk tc mu`);
+      const scope = { MM: m, TK: vals[reads.length], TC: vals[reads.length + 1], I: vals[reads.length + 2], ...fns };
+      reads.forEach((x, i) => { scope[`${x.slice(0, 2) === 'SI' ? 'SI' : x.slice(0, 2) === 'SR' ? 'SR' : 'V'}__${i}`] = vals[i]; });
+      // eslint-disable-next-line no-new-func
+      const ev = (text) => Function(...Object.keys(scope), `return (${text.replace(/\^/g, '**')});`)(...Object.values(scope));
+      for (const [k, v] of law.names) scope[k] = ev(v);
+      const page = ev(law.r);
+      const rel = pq === 0 && page === 0 ? 0 : Math.abs(page - pq) / Math.abs(pq);
+      compared++;
+      if (rel > worst) { worst = rel; where = `${r.name}, ${wname}`; }
+    }
+  }
+  check('Kinetics: phreeqc.dat\'s seven RATES as rate laws, each against its program run by PHREEQC\'s BASIC at an oxic '
+    + 'water at 25 C and an anoxic one at 40 C: IF and GOTO taken both ways, DATA and READ, SI, SR, ACT, LM, TOT of a '
+    + 'valence state, SOLN_VOL', compared === 14 && worst < 1e-12,
+  `${compared} rates within ${worst.toExponential(1)} (${where})`);
+
+  // 2. Reading: KINETICS's defaults and steps, RATES given again.
+  const kb = P.readKinetics('KINETICS 2\nA\n -m 0.5\nB\n -m0 2\n -formula CaCO3 1 MgCO3 0.5\n -parms 1 two 3\nC\n'
+    + ' -steps 1 day in 4\nKINETICS 3\nD\n -steps 10 4*5\n').get(2);
+  const k3 = P.readKinetics('KINETICS 3\nD\n -steps 10 4*5\n').get(3);
+  const rr = P.readRates('RATES\nX\n -start\n10 SAVE 1\n -end\n', 'RATES\nx\n -start\n10 SAVE 2\n20 END\n -end\n');
+  check('  KINETICS read as PHREEQC reads it: -m and -m0 each the other\'s where not given, the formula the name unless '
+    + 'given, -parms numbers and words, -steps 1 day in 4 four of 21600 s, 10 4*5 five steps; a RATES given again replaces',
+  kb.comps.length === 3 && kb.comps[0].m0 === 0.5 && kb.comps[1].m === 2 && kb.comps[2].m === 1 && kb.comps[2].m0 === 1
+    && kb.comps[1].formula.join('|') === 'CaCO3,1|MgCO3,0.5' && kb.comps[0].formula.join() === 'A,1'
+    && kb.comps[1].parms.join() === '1,two,3' && kb.steps.join() === '21600,21600,21600,21600'
+    && k3.steps.join() === '10,5,5,5,5' && rr.size === 1 && rr.get('x').lines.join('|') === '10 SAVE 2|20 END',
+  `${JSON.stringify(kb.comps.map((c) => [c.m, c.m0, c.formula, c.parms]))}; steps ${kb.steps}; ${k3.steps}`);
+  const refuse = (lines) => {
+    try { P.rateLaw({ name: 'x', lines }, { m: '[x]', m0: 1, parms: [], W: 1, phase: () => null, act: () => null,
+      mol: () => null, tot: () => null, kin: () => null, equi: () => null, solnVol: null }); } catch (e) { return e.message; }
+    return '(no refusal)';
+  };
+  const refusals = [
+    ['a loop', ['10 x = 1', '20 IF M > 0 THEN GOTO 10', '30 SAVE x*TIME'], /goes back, a loop/],
+    ['moles not a rate times TIME', ['10 SAVE M*(1 - EXP(-TIME))'], /not moles in a step|other than as moles in a step/],
+    ['a way that saves nothing', ['10 IF M > 0 THEN GOTO 30', '20 END', '30 SAVE M*TIME'], /saves nothing/],
+    ['PUT', ['10 PUT(1, 1)', '20 SAVE M*TIME'], /cannot read|cannot be made of/],
+    ['a PARM not given', ['10 SAVE PARM(2)*TIME'], /PARM\(2\), which -parms does not give/],
+  ];
+  const badR = refusals.filter(([, lines, re]) => !re.test(refuse(lines)));
+  check(`  a program a rate law cannot be is refused, with its reason: ${refusals.map((x) => x[0]).join('; ')}`, !badR.length,
+    badR.map(([what, lines]) => `${what}: ${refuse(lines)}`).join(' | '));
+
+  // 3. Waters handed off with their KINETICS, run against PHREEQC's KINETICS at its steps.
+  const KIN = 'KNOBS\n -convergence_tolerance 1e-12\n';
+  const runs = [
+    { label: 'calcite', water: 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 5.5\n Na 1\n Cl 1\n C(4) 10\n',
+      kin: 'KINETICS 1\nCalcite\n -m 1e-3\n -parms 50 0.6\n -tol 1e-14\n -steps 36000 in 12\n -runge_kutta 6\n',
+      reactant: 'Calcite', redox: false, tol: { M: 1e-7, pH: 1e-8, pe: Infinity } },
+    { label: 'K-feldspar', water: 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 6\n Na 1\n Cl 1 charge\n C(4) 5\n Al 1e-4\n'
+      + ' Si 0.1\n Ca 0.2\n Mg 0.1\n K 0.05\n', kin: 'KINETICS 1\nK-feldspar\n -m 2.18\n -parms 6.41 0.1\n -tol 1e-12\n'
+      + ' -steps 3e7 in 12\n -runge_kutta 6\n', reactant: 'K-feldspar', redox: false, tol: { M: 1e-10, pH: 1e-7, pe: Infinity } },
+    { label: 'organic carbon', water: 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n Na 2 charge\n Cl 1\n N(5) 0.5\n'
+      + ' S(6) 0.25\n C(4) 1\n O(0) 0.5\n', kin: 'KINETICS 1\nOrganic_C\n -formula CH2O\n -m 5e-3\n -tol 1e-12\n'
+      + ' -steps 3e8 in 15\n -runge_kutta 6\n', reactant: 'Organic_C', redox: true, tol: { M: 1e-6, pH: 1e-6, pe: 1e-3 } },
+    { label: 'pyrite', water: 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n Na 2 charge\n Cl 1\n C(4) 2\n O(0) 0.6\n',
+      kin: 'KINETICS 1\nPyrite\n -m 1e-3\n -parms -1 0.1 0.5 -0.11\n -tol 1e-12\n -steps 3e7 in 12\n -runge_kutta 6\n',
+      reactant: 'Pyrite', redox: true, tol: { M: 1e-9, pH: 1e-8, pe: 1e-7 } },
+  ].map((c) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+      water: { name: c.label, text: `${KIN}${c.water}${c.kin}END\n` }, activity: true, exact: true, redox: c.redox, floor: 0 });
+    const kin = res.report.kinetics;
+    const rows = engine.run(`${KIN}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t M pH pe\n -start\n`
+      + `10 PUNCH TOTAL_TIME, KIN("${c.reactant}"), -LA("H+"), -LA("e-")\n -end\n${c.water}${c.kin}END\n`);
+    const pq = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+    const mdl = RtmModel.compile(res.text);
+    const times = pq.map((r) => r[0]);
+    const t0 = Date.now();
+    const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22, breaks: times });
+    const ms = Date.now() - t0;
+    const at = (n) => mdl.speciesNames.indexOf(n);
+    const ns = mdl.speciesNames.length;
+    const d = { M: 0, pH: 0, pe: 0 };
+    for (const row of pq) {
+      const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+      const y = mdl.toConcentrations(run.y[k], run.t[k]);
+      const lnG = new Float64Array(ns);
+      RtmModel.activityAt(mdl.act, y, 0, lnG, new Float64Array(ns), 0);
+      d.M = Math.max(d.M, Math.abs(y[at(kin.reactants[0].as)] - row[1]) / row[1]);
+      d.pH = Math.max(d.pH, Math.abs(-(Math.log(y[at('H+')]) + lnG[at('H+')]) / Math.LN10 - row[2]));
+      if (c.redox) d.pe = Math.max(d.pe, Math.abs(-Math.log10(y[at('e-')]) - row[3]));
+    }
+    const first = pq[0];
+    const last = pq[pq.length - 1];
+    return { ...c, res, kin, d, ms, steps: pq.length, used: (first[1] - last[1]) / first[1] };
+  });
+  check('  waters handed off with their KINETICS and run, against PHREEQC\'s KINETICS at its steps: calcite into a water '
+    + 'with CO2 and no calcium (its species from a trace of the reactant), K-feldspar, organic carbon through O2 into '
+    + 'nitrate, pyrite with O2, the last two moving electrons, each reactant left and the pH and pe as PHREEQC has them',
+  runs.every((x) => x.kin && x.d.M < x.tol.M && x.d.pH < x.tol.pH && (!x.redox || x.d.pe < x.tol.pe))
+    && runs[0].kin.trace === 1e-20 && runs.every((x) => !x.res.report.kineticsSkipped.length),
+  runs.map((x) => `${x.label}: ${x.kin ? `${x.d.M.toExponential(1)} in what is left, pH ${x.d.pH.toExponential(1)}`
+    + `${x.redox ? `, pe ${x.d.pe.toExponential(1)}` : ''} over ${x.steps} steps (${x.ms} ms)` : 'not carried'}`).join('; '));
+  const calcite = runs[0].res.text;
+  check('  the model written: the reactant a mineral at -m, its dissolution a reaction with PHREEQC\'s program above it, '
+    + 'the phase its rate reads in <PHASES>, TEND PHREEQC\'s steps together',
+  /^Calcite\s+0\.001\s+mineral$/m.test(calcite) && /^#\s+20 IF \(M <= 0 and si_cc < 0\) THEN GOTO 200$/m.test(calcite)
+    && /^Calcite => CO3-2 \+ Ca\+2, r = /m.test(calcite) && /^<PHASES>\nCalcite <=> CO3-2 \+ Ca\+2, /m.test(calcite)
+    && /^TEND = 36000$/m.test(calcite), calcite.split('\n').filter((l) => /=>/.test(l)).join(' | ').slice(0, 200));
+  engine.load(dbText);
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -3062,6 +3217,8 @@ function againstCdMusic(engine) {
   againstSurfaceMineral(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
   againstCdMusic(wasm);
+  console.log('\n--- KINETICS: RATES as rate laws against PHREEQC\'s BASIC, the hand-off, runs against KINETICS ---');
+  againstKineticsHandOff(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

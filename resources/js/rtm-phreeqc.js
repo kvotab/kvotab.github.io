@@ -220,6 +220,56 @@
     return parse().get(element) || 0;
   }
 
+  /** Every element of a formula and its atoms; 'CaSO4:2H2O' with its waters. */
+  function atomsOf(formula) {
+    const out = new Map();
+    for (const part of String(formula).replace(/[+-][0-9.]*$/, '').split(':')) {
+      const m = /^([0-9.]*)(.*)$/.exec(part.trim());
+      const n = m[1] ? Number(m[1]) : 1;
+      const els = new Set((m[2].match(/[A-Z][a-z_]*/g) || []));
+      for (const el of els) out.set(el, (out.get(el) || 0) + n * countAtoms(m[2], el));
+    }
+    return out;
+  }
+
+  /**
+   * A chemical formula's dissolution, as PHREEQC adds a kinetic reactant's
+   * elements to the water: each element as its master species, the oxygen
+   * left over as water, the hydrogen as H+, and the charge that leaves as
+   * electrons -- CH2O is CO3-2 + 6 H+ + 4 e- less 2 H2O. A Map, species to
+   * its coefficient, products positive.
+   */
+  function formulaReaction(formula, db) {
+    const atoms = atomsOf(formula);
+    if (!atoms.size) throw new Error(`"${formula}" is no phase or chemical formula`);
+    const out = new Map();
+    let O = atoms.get('O') || 0;
+    let H = atoms.get('H') || 0;
+    let charge = 0;
+    for (const [el, n] of atoms) {
+      if (el === 'H' || el === 'O') continue;
+      const master = db.master.get(el);
+      if (!master) throw new Error(`the database has no element ${el}, which ${formula} has`);
+      const ma = atomsOf(master);
+      if ([...ma.keys()].some((e) => e !== el && e !== 'H' && e !== 'O')) {
+        throw new Error(`${el}'s master species, ${master}, has another element in it`);
+      }
+      const k = n / (ma.get(el) || 1);
+      out.set(master, (out.get(master) || 0) + k);
+      O -= k * (ma.get('O') || 0);
+      H -= k * (ma.get('H') || 0);
+      charge += k * chargeOf(master);
+    }
+    const water = O;
+    const hplus = H - 2 * water;
+    if (water) out.set('H2O', water);
+    if (hplus) out.set('H+', hplus);
+    // What the products' charge comes to, as electrons given up.
+    const e = charge + hplus;
+    if (Math.abs(e) > 1e-12) out.set('e-', e);
+    return out;
+  }
+
   /**
    * The name as rtm.html can write it. Most PHREEQC names already are; a
    * leading group is not, so (UO2)2(OH)2+2 becomes UO2_2(OH)2+2. `taken`
@@ -1280,6 +1330,821 @@
   const GAS_R = 8.31470;
 
   /* ======================================================================
+     KINETICS and RATES: PHREEQC's kinetic reactants, and their BASIC rate
+     programs as rate laws of rtm.html
+     ====================================================================== */
+
+  /**
+   * The RATES of a database and of inputs read after it: each rate's BASIC
+   * program by name (any case, as PHREEQC finds one), its numbered lines as
+   * written; a rate given again replaces the first.
+   */
+  function readRates(...texts) {
+    const out = new Map();
+    for (const text of texts) {
+      let inBlock = false;
+      let cur = null;
+      for (const line of logicalLines(text)) {
+        const s = line.trim();
+        if (!s) continue;
+        const first = s.split(/\s+/)[0];
+        if (!/^[0-9]/.test(first) && KEYWORDS.has(first.toUpperCase())) {
+          inBlock = first.toUpperCase() === 'RATES';
+          cur = null;
+          continue;
+        }
+        if (!inBlock) continue;
+        if (/^-s(t(a(r(t)?)?)?)?$/i.test(first)) continue;
+        if (/^-e(n(d)?)?$/i.test(first)) { cur = null; continue; }
+        if (/^[0-9]/.test(first)) { if (cur) cur.lines.push(s); continue; }
+        cur = { name: first, lines: [] };
+        out.set(first.toLowerCase(), cur);
+      }
+    }
+    return out;
+  }
+
+  /** Seconds in PHREEQC's time unit, as Utilities::convert_time reads its first letter. */
+  function secondsIn(unit) {
+    const u = String(unit || 's').toLowerCase()[0];
+    return u === 'm' ? 60 : u === 'h' ? 3600 : u === 'd' ? 86400 : u === 'y' ? 86400 * 365.25 : 1;
+  }
+
+  /**
+   * The KINETICS blocks of an input, as PHREEQC's read_kinetics reads them:
+   * each reactant -- its rate's name, -formula (phase or formula names with
+   * their coefficients; the name itself by default), -m and -m0 (each the
+   * other's where not given, else 1), -parms, -tol -- and the block's steps
+   * in seconds, `-steps 3600 in 10` ten of 360, `4*10` four of ten, a unit
+   * word converting them. A block numbered again replaces the first.
+   */
+  function readKinetics(text) {
+    const out = new Map();
+    const OPTS = ['tol', 'm', 'm0', 'parms', 'formula', 'steps', 'step_divide', 'parameters', 'runge-kutta',
+      'runge_kutta', 'rk', 'bad_step_max', 'cvode', 'cvode_steps', 'cvode_order', 'time_steps'];
+    const option = (word) => {
+      const w = word.toLowerCase();
+      return OPTS.includes(w) ? w : OPTS.find((o) => o.startsWith(w)) || null;
+    };
+    let cur = null;
+    let comp = null;
+    const finish = (b) => {
+      if (!b) return;
+      if (b.count > 0 && b.steps.length === 1) {
+        const total = b.steps[0];
+        b.steps = Array.from({ length: b.count }, () => total / b.count);
+      }
+      if (!b.steps.length) b.steps.push(1);
+      b.steps = b.steps.map((s) => s * secondsIn(b.units));
+      for (const c of b.comps) {
+        if (c.m0 === null) c.m0 = c.m === null ? 1 : c.m;
+        if (c.m === null) c.m = c.m0;
+        if (!c.formula.length) c.formula.push([c.name, 1]);
+      }
+    };
+    for (const line of logicalLines(text)) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const word = tokens[0].toUpperCase();
+      if (KEYWORDS.has(word) && !tokens[0].startsWith('-')) {
+        finish(cur);
+        cur = null;
+        comp = null;
+        if (word === 'KINETICS') {
+          const n = parseInt(tokens[1], 10);
+          cur = { n: Number.isFinite(n) ? n : 1, comps: [], steps: [], count: 0, units: null, opts: {} };
+          out.set(cur.n, cur);
+        }
+        continue;
+      }
+      if (!cur) continue;
+      if (!tokens[0].startsWith('-')) {
+        comp = { name: tokens[0], formula: [], m: null, m0: null, parms: [], tol: 1e-8 };
+        cur.comps.push(comp);
+        continue;
+      }
+      const opt = option(tokens[0].slice(1));
+      const rest = tokens.slice(1);
+      const num = (s) => (s !== undefined && /^[-+]?[0-9.]/.test(s) ? Number(s) : NaN);
+      switch (opt) {
+        case 'tol': if (comp && Number.isFinite(num(rest[0]))) comp.tol = num(rest[0]); break;
+        case 'm': if (comp && Number.isFinite(num(rest[0]))) comp.m = num(rest[0]); break;
+        case 'm0': if (comp && Number.isFinite(num(rest[0]))) comp.m0 = num(rest[0]); break;
+        case 'parms': case 'parameters':
+          if (comp) for (const s of rest) comp.parms.push(Number.isFinite(num(s)) ? num(s) : s);
+          break;
+        case 'formula':
+          if (comp) {
+            let name = null;
+            for (const s of rest) {
+              if (/^[A-Za-z([]/.test(s)) { if (name) comp.formula.push([name, 1]); name = s; } else if (name) {
+                comp.formula.push([name, Number(s)]);
+                name = null;
+              }
+            }
+            if (name) comp.formula.push([name, 1]);
+          }
+          break;
+        case 'steps': case 'time_steps':
+          for (let i = 0; i < rest.length; i++) {
+            const s = rest[i];
+            if (/^[0-9.]/.test(s)) {
+              const rep = /^([0-9]+)\*(.+)$/.exec(s);
+              if (rep) for (let k = 0; k < Number(rep[1]); k++) cur.steps.push(Number(rep[2]));
+              else cur.steps.push(Number(s));
+            } else if (/^i/i.test(s)) {
+              const n = parseInt(rest[i + 1], 10);
+              if (Number.isFinite(n)) { cur.count = Math.abs(n); i++; }
+            } else cur.units = s;
+          }
+          break;
+        default:
+          if (opt) cur.opts[opt] = rest.join(' ');
+          break;
+      }
+    }
+    finish(cur);
+    return out;
+  }
+
+  /** An input without its KINETICS (and KINETICS_MODIFY) blocks: the water a kinetic run starts from. */
+  function withoutKinetics(text) {
+    const out = [];
+    let skip = false;
+    for (const raw of String(text).split(/\r\n|\r|\n/)) {
+      const first = raw.trim().split(/\s+/)[0] || '';
+      const word = first.toUpperCase();
+      if (KEYWORDS.has(word) && !first.startsWith('-')) skip = word === 'KINETICS' || word === 'KINETICS_MODIFY';
+      if (!skip) out.push(raw);
+    }
+    return out.join('\n');
+  }
+
+  /*
+    A RATE PROGRAM AS A RATE LAW. PHREEQC runs a rate's BASIC at each step
+    of its integration, with M the reactant's moles, M0 its initial moles,
+    PARM(i) its -parms, TIME the step, and the program SAVEs the moles that
+    react in it. Here the program is run once, symbolically: each variable
+    holds the expression it comes to, numbers worked out as they go, and
+    what the water decides -- M, an activity, a saturation, the
+    temperature -- left standing, in rtm.html's words. A condition on those
+    becomes step() (1 where it holds, 0 where not, PHREEQC's comparison
+    giving 1 and 0); an IF that only sets variables sets each to its two
+    values weighed by the condition, and one that jumps (GOTO, END, SAVE)
+    takes both ways, each weighed by its own condition. The rate is what is
+    saved, over TIME, summed over the ways. PHREEQC's own arithmetic is
+    kept where it differs: x/0 is 0, 0^y is 0, and a unary minus binds
+    before ^ (10^-pk is 10^(-pk), and -x^2 is (-x)^2). A power whose
+    exponent reads the water is written exp(y ln x), the page's rate laws
+    taking powers to exponents that do not.
+  */
+  const BASIC_FUNCS = new Set(['act', 'la', 'lm', 'lg', 'mol', 'tot', 'gamma', 'si', 'sr', 'parm', 'kin', 'equi',
+    'sqrt', 'sqr', 'exp', 'log', 'log10', 'abs', 'sgn', 'sin', 'cos', 'tan', 'arctan', 'ceil', 'floor']);
+  const BASIC_VALUES = new Set(['m', 'm0', 'time', 'tc', 'tk', 'mu', 'soln_vol', 'sim_time', 'total_time']);
+  const BASIC_WORDS = new Set(['and', 'or', 'xor', 'not', 'mod', 'then', 'else', 'to', 'step']);
+
+  /** One line of BASIC as tokens: {k: 'num'|'str'|'id'|'op', v}. */
+  function basicTokens(text, line) {
+    const out = [];
+    for (let i = 0; i < text.length;) {
+      const ch = text[i];
+      if (/\s/.test(ch)) { i++; continue; }
+      if (ch === '"') {
+        const end = text.indexOf('"', i + 1);
+        if (end < 0) throw new Error(`line ${line}: a string is never closed`);
+        out.push({ k: 'str', v: text.slice(i + 1, end) });
+        i = end + 1;
+        continue;
+      }
+      const num = /^(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?/.exec(text.slice(i));
+      if (num) { out.push({ k: 'num', v: Number(num[0]) }); i += num[0].length; continue; }
+      const id = /^[A-Za-z_][A-Za-z0-9_]*\$?/.exec(text.slice(i));
+      if (id) {
+        out.push({ k: 'id', v: id[0].toLowerCase(), raw: id[0] });
+        i += id[0].length;
+        // REM: the rest of the line is words.
+        if (id[0].toLowerCase() === 'rem') break;
+        continue;
+      }
+      const op = /^(<=|>=|<>|[-+*/^()[\]=<>,:])/.exec(text.slice(i));
+      if (op) {
+        out.push({ k: 'op', v: op[0] === '[' ? '(' : op[0] === ']' ? ')' : op[0] });
+        i += op[0].length;
+        continue;
+      }
+      throw new Error(`line ${line}: "${ch}" is not BASIC this page reads`);
+    }
+    return out;
+  }
+
+  /** Expressions of the rate law, worked out where they can be: rtm.html's own words in `s`. */
+  const RL = {
+    num: (v) => ({ k: 'n', v }),
+    // An atom of the page's: w, read by the Jacobian (the water); d, moving otherwise (TK, TC, t).
+    atom: (s, w, d) => ({ k: 'a', s, w: !!w, d: !!d }),
+    isNum: (a, v) => a.k === 'n' && (v === undefined || a.v === v),
+  };
+  // A number, or a name for one (M0, PARM(i), a constant of the program): its value, else undefined.
+  const numOf = (a) => (a.k === 'n' ? a.v : a.k === 'ref' && a.value && a.value.k === 'n' ? a.value.v : undefined);
+  const flagsOf = (...xs) => ({ w: xs.some((x) => x.w), d: xs.some((x) => x.d), t: xs.some((x) => x.t) });
+  function rlBin(op, l, r) {
+    if (l.k === 'n' && r.k === 'n') {
+      switch (op) {
+        case '+': return RL.num(l.v + r.v);
+        case '-': return RL.num(l.v - r.v);
+        case '*': return RL.num(l.v * r.v);
+        case '/': return RL.num(r.v !== 0 ? l.v / r.v : 0);
+        default: break;
+      }
+    }
+    if (op === '+') { if (RL.isNum(l, 0)) return r; if (RL.isNum(r, 0)) return l; }
+    if (op === '-' && RL.isNum(r, 0)) return l;
+    if (op === '-' && RL.isNum(l, 0)) return rlNeg(r);
+    // 1 - (1 - x), a condition turned twice: x.
+    if (op === '-' && RL.isNum(l, 1) && r.k === 'bin' && r.op === '-' && RL.isNum(r.l, 1)) return r.r;
+    if (op === '*') {
+      if (RL.isNum(l, 0) || RL.isNum(r, 0)) return RL.num(0);
+      if (RL.isNum(l, 1)) return r;
+      if (RL.isNum(r, 1)) return l;
+    }
+    if (op === '/') {
+      // PHREEQC's BASIC: x/0 is 0.
+      if (RL.isNum(r, 0)) return RL.num(0);
+      if (RL.isNum(r, 1)) return l;
+      if (RL.isNum(l, 0)) return RL.num(0);
+    }
+    return { k: 'bin', op, l, r, ...flagsOf(l, r), b: (op === '*' && l.b && r.b) || undefined };
+  }
+  function rlNeg(a) {
+    if (a.k === 'n') return RL.num(-a.v);
+    if (a.k === 'neg') return a.a;
+    return { k: 'neg', a, ...flagsOf(a) };
+  }
+  function rlFn(f, a) {
+    if (a.k === 'n') {
+      const v = { exp: Math.exp, ln: Math.log, log10: Math.log10, sqrt: Math.sqrt, abs: Math.abs, sign: Math.sign,
+        step: (x) => (x > 0 ? 1 : 0), ramp: (x) => (x > 0 ? x : 0) }[f](a.v);
+      if (Number.isFinite(v)) return RL.num(v);
+    }
+    return { k: 'fn', f, a, ...flagsOf(a), b: f === 'step' || undefined };
+  }
+  /** PHREEQC's x^y: x > 0 exp(y ln x); 0 for x = 0 whatever y; a negative x to a whole y only. */
+  function rlPow(x, y) {
+    if (x.k === 'n' && y.k === 'n') {
+      if (x.v > 0) return RL.num(Math.exp(y.v * Math.log(x.v)));
+      if (x.v === 0) return RL.num(0);
+      if (y.v !== Math.trunc(y.v)) throw new Error('a negative number to a fractional power, which PHREEQC refuses');
+      const v = Math.exp(y.v * Math.log(-x.v));
+      return RL.num(Math.trunc(y.v) % 2 ? -v : v);
+    }
+    if (RL.isNum(x, 0)) return RL.num(0);
+    if (numOf(y) !== undefined) {
+      if (numOf(y) === 1) return x;
+      // 0^0 is 0 in PHREEQC's BASIC, anything else to 0 is 1.
+      if (numOf(y) === 0) return rlBin('+', rlFn('step', x), rlFn('step', rlNeg(x)));
+    }
+    if (y.w) {
+      // An exponent that reads the water: exp(y ln x).
+      const ln = x.k === 'n' ? RL.num(Math.log(x.v)) : rlFn('ln', x);
+      return rlFn('exp', rlBin('*', y, ln));
+    }
+    return { k: 'bin', op: '^', l: x, r: y, ...flagsOf(x, y) };
+  }
+  /** A comparison, PHREEQC's 1 or 0. */
+  function rlRel(op, a, b) {
+    const x = numOf(a);
+    const y = numOf(b);
+    if (x !== undefined && y !== undefined) {
+      const v = { '=': x === y, '<>': x !== y, '<': x < y, '>': x > y, '<=': x <= y, '>=': x >= y }[op];
+      return RL.num(v ? 1 : 0);
+    }
+    const d = rlBin('-', a, b);
+    const gt = rlFn('step', d);
+    const lt = rlFn('step', rlNeg(d));
+    const one = RL.num(1);
+    let out;
+    switch (op) {
+      case '>': out = gt; break;
+      case '<': out = lt; break;
+      case '>=': out = rlBin('-', one, lt); break;
+      case '<=': out = rlBin('-', one, gt); break;
+      case '=': out = rlBin('*', rlBin('-', one, gt), rlBin('-', one, lt)); break;
+      default: out = rlBin('-', one, rlBin('*', rlBin('-', one, gt), rlBin('-', one, lt))); break;
+    }
+    return { ...out, b: true };
+  }
+  const isBool = (a) => (a.k === 'n' ? a.v === 0 || a.v === 1 : !!a.b);
+
+  /** The expression as rtm.html writes it. */
+  function rlText(a, ctx = 0) {
+    const wrap = (s, p) => (p < ctx ? `(${s})` : s);
+    switch (a.k) {
+      case 'n': {
+        const s = String(a.v);
+        return a.v < 0 && ctx > 1 ? `(${s})` : s;
+      }
+      case 'a': return a.s;
+      case 'ref': return a.name;
+      case 'time': return 'TIME';
+      case 'neg': return wrap(`-${rlText(a.a, 4)}`, 2);
+      case 'fn': return `${a.f}(${rlText(a.a, 0)})`;
+      case 'bin': {
+        if (a.op === '+' || a.op === '-') return wrap(`${rlText(a.l, 1)} ${a.op} ${rlText(a.r, 2)}`, 1);
+        if (a.op === '*' || a.op === '/') return wrap(`${rlText(a.l, 2)}${a.op}${rlText(a.r, 3)}`, 2);
+        return wrap(`${rlText(a.l, 4)}^${rlText(a.r, 3)}`, 3);
+      }
+      default: return '?';
+    }
+  }
+
+  /** The moles a way saves, over TIME: the rate, or null where TIME is not a factor of it. */
+  function overTime(a) {
+    if (!a.t) return RL.isNum(a, 0) ? a : null;
+    switch (a.k) {
+      case 'time': return RL.num(1);
+      case 'neg': { const x = overTime(a.a); return x && rlNeg(x); }
+      case 'ref': return a.over || null;
+      case 'bin': {
+        if (a.op === '+' || a.op === '-') {
+          const l = overTime(a.l);
+          const r = overTime(a.r);
+          return l && r ? rlBin(a.op, l, r) : null;
+        }
+        if (a.op === '*') {
+          if (a.l.t && !a.r.t) { const x = overTime(a.l); return x && rlBin('*', x, a.r); }
+          if (a.r.t && !a.l.t) { const x = overTime(a.r); return x && rlBin('*', a.l, x); }
+          return null;
+        }
+        if (a.op === '/' && a.l.t && !a.r.t) { const x = overTime(a.l); return x && rlBin('/', x, a.r); }
+        return null;
+      }
+      default: return null;
+    }
+  }
+
+  /**
+   * A RATES program (readRates' entry) as a rate law. `ctx` says how the
+   * water is read, in the model's words:
+   *   m        the reactant's moles, M, as text: 'ramp([Calcite])'
+   *   m0, parms  M0 and PARM(i), numbers
+   *   W        PHREEQC's kilograms of water, which TOT("water") is
+   *   phase(name, 'SI'|'SR')  the saturation as text, or null where the database has no such phase
+   *   act(name), mol(name)   '{X}' and '[X]', or null where the water has no such species
+   *   tot(label)  the total of an element or a valence state as text, or null where the water has none
+   *   kin(name), equi(name)  another reactant's or a mineral's moles as text, or null
+   *   solnVol  the water's volume, L (SOLN_VOL), or null
+   * Returns { r, names: [[name, text]] }, the law and the names it uses in
+   * order; throws an Error saying what the program does that a rate law
+   * here cannot.
+   */
+  function rateLaw(rate, ctx) {
+    // The lines: number and tokens; DATA gathered, with the line each comes from.
+    // The lines by number, as BASIC keeps them, a number given again replacing the line.
+    const byNum = new Map();
+    for (const src of rate.lines) {
+      const m = /^([0-9]+)\s*(.*)$/.exec(src);
+      byNum.set(Number(m[1]), { num: Number(m[1]), tokens: basicTokens(m[2], m[1]), src });
+    }
+    const lines = [...byNum.values()].sort((a, b) => a.num - b.num);
+    // A variable as the program first spells it.
+    const spelling = new Map();
+    for (const ln of lines) for (const t of ln.tokens) if (t.k === 'id' && !spelling.has(t.v)) spelling.set(t.v, t.raw);
+    const data = [];
+    for (const ln of lines) {
+      const tk = ln.tokens;
+      if (!tk.length || tk[0].k !== 'id' || tk[0].v !== 'data') continue;
+      let sign = 1;
+      for (const t of tk.slice(1)) {
+        if (t.k === 'op' && t.v === '-') { sign = -1; continue; }
+        if (t.k === 'num') { data.push({ line: ln.num, v: sign * t.v }); sign = 1; }
+      }
+    }
+    // The names the law will use, in the order made.
+    const names = [];
+    const taken = new Set(['r', 'rb', 'on', 'k', 'kf', 'kb', ...['I', 'TK', 'TC', 't', 'SI', 'SR', 'exp', 'log', 'ln',
+      'log10', 'sqrt', 'abs', 'sign', 'step', 'ramp', 'min', 'max', 'pow']]);
+    const nameFor = (base) => {
+      let n = base;
+      for (let i = 2; taken.has(n); i++) n = `${base}_${i}`;
+      taken.add(n);
+      return n;
+    };
+    const ref = (base, value) => {
+      if (value.k === 'n' && base === null) return value;
+      if (value.k === 'a' || value.k === 'ref' || (value.k === 'n' && base === null)) return value;
+      if (value.k === 'time') return value;
+      const name = nameFor(spelling.get(base) || base);
+      const r = { k: 'ref', name, value, w: value.w, d: value.d, t: value.t, b: value.b };
+      if (value.t) {
+        // Moles over a step: kept as the rate it is per TIME, for overTime.
+        r.over = overTime(value);
+        if (!r.over) throw new Error(`${base} goes with TIME other than as moles in a step, rate times TIME`);
+      }
+      names.push(r);
+      return r;
+    };
+    const fixedNames = new Map();
+    const fixed = (key, value) => {
+      if (!fixedNames.has(key)) {
+        const name = nameFor(key);
+        const r = { k: 'ref', name, value, w: value.w, d: value.d };
+        names.push(r);
+        fixedNames.set(key, r);
+      }
+      return fixedNames.get(key);
+    };
+    const str = (node) => {
+      if (node.t !== 'str') throw new Error('a name is given other than as a "string"');
+      return node.v;
+    };
+    const missing = (what) => { throw new Error(what); };
+
+    // Expressions: PHREEQC's precedence (PBasic expr, andexpr, relexpr, sexpr, term, upexpr, factor).
+    function parseExpr(st) {
+      const peek = () => st.tk[st.i];
+      const isOp = (v) => peek() && peek().k === 'op' && peek().v === v;
+      const isWord = (v) => peek() && peek().k === 'id' && peek().v === v;
+      const next = () => st.tk[st.i++];
+      function factor() {
+        const t = next();
+        if (!t) throw new Error(`line ${st.line}: an expression ends too soon`);
+        if (t.k === 'num') return { t: 'num', v: t.v };
+        if (t.k === 'str') return { t: 'str', v: t.v };
+        if (t.k === 'op' && t.v === '(') {
+          const e = expr();
+          if (!isOp(')')) throw new Error(`line ${st.line}: a bracket is never closed`);
+          next();
+          return e;
+        }
+        if (t.k === 'op' && t.v === '-') return { t: 'neg', a: factor() };
+        if (t.k === 'op' && t.v === '+') return factor();
+        if (t.k === 'id' && t.v === 'not') return { t: 'not', a: factor() };
+        if (t.k === 'id') {
+          if (BASIC_FUNCS.has(t.v)) {
+            if (!isOp('(')) throw new Error(`line ${st.line}: ${t.v.toUpperCase()} needs its argument in brackets`);
+            next();
+            const args = [expr()];
+            while (isOp(',')) { next(); args.push(expr()); }
+            if (!isOp(')')) throw new Error(`line ${st.line}: a bracket is never closed`);
+            next();
+            return { t: 'call', name: t.v, args };
+          }
+          if (BASIC_VALUES.has(t.v)) return { t: 'value', name: t.v };
+          if (isOp('(') || t.v.endsWith('$')) {
+            throw new Error(`line ${st.line}: ${t.v.toUpperCase()}, which a rate law here cannot read`);
+          }
+          return { t: 'var', name: t.v };
+        }
+        throw new Error(`line ${st.line}: "${t.v}" where a value should be`);
+      }
+      function upexpr() {
+        const n = factor();
+        if (isOp('^')) { next(); return { t: 'bin', op: '^', l: n, r: upexpr() }; }
+        return n;
+      }
+      function term() {
+        let n = upexpr();
+        while (isOp('*') || isOp('/') || isWord('mod')) {
+          const op = next().v;
+          if (op === 'mod') throw new Error(`line ${st.line}: MOD, which a rate law here cannot write`);
+          n = { t: 'bin', op, l: n, r: upexpr() };
+        }
+        return n;
+      }
+      function sexpr() {
+        let n = term();
+        while (isOp('+') || isOp('-')) { const op = next().v; n = { t: 'bin', op, l: n, r: term() }; }
+        return n;
+      }
+      function relexpr() {
+        let n = sexpr();
+        while (peek() && peek().k === 'op' && ['=', '<>', '<', '>', '<=', '>='].includes(peek().v)) {
+          const op = next().v;
+          n = { t: 'rel', op, l: n, r: sexpr() };
+        }
+        return n;
+      }
+      function andexpr() {
+        let n = relexpr();
+        while (isWord('and')) { next(); n = { t: 'and', l: n, r: relexpr() }; }
+        return n;
+      }
+      function expr() {
+        let n = andexpr();
+        while (isWord('or') || isWord('xor')) {
+          const op = next().v;
+          if (op === 'xor') throw new Error(`line ${st.line}: XOR, which a rate law here cannot write`);
+          n = { t: 'or', l: n, r: andexpr() };
+        }
+        return n;
+      }
+      return expr();
+    }
+
+    // Values: the program's expressions in the page's words.
+    function value(node, env) {
+      switch (node.t) {
+        case 'num': return RL.num(node.v);
+        case 'str': throw new Error('a string where a number should be');
+        case 'neg': return rlNeg(value(node.a, env));
+        case 'not': {
+          const a = value(node.a, env);
+          if (a.k !== 'n') throw new Error('NOT of what the water decides, which PHREEQC takes bit by bit');
+          return RL.num(-Math.trunc(a.v) - 1);
+        }
+        case 'var': return env.vars.has(node.name) ? env.vars.get(node.name) : RL.num(0);
+        case 'value': return builtin(node.name);
+        case 'bin': {
+          const l = value(node.l, env);
+          const r = value(node.r, env);
+          return node.op === '^' ? rlPow(l, r) : rlBin(node.op, l, r);
+        }
+        case 'rel': return rlRel(node.op, value(node.l, env), value(node.r, env));
+        case 'and': case 'or': {
+          const l = value(node.l, env);
+          const r = value(node.r, env);
+          if (l.k === 'n' && r.k === 'n') {
+            return RL.num(node.t === 'and' ? (Math.trunc(l.v) & Math.trunc(r.v)) : (Math.trunc(l.v) | Math.trunc(r.v)));
+          }
+          if (!isBool(l) || !isBool(r)) throw new Error(`${node.t.toUpperCase()} of other than comparisons`);
+          const v = node.t === 'and' ? rlBin('*', l, r) : rlBin('-', rlBin('+', l, r), rlBin('*', l, r));
+          return { ...v, b: true };
+        }
+        case 'call': return call(node.name, node.args.map((a) => (a.t === 'str' ? a : value(a, env))));
+        default: throw new Error('an expression this page does not read');
+      }
+    }
+    function builtin(name) {
+      switch (name) {
+        case 'm': return fixed('m', RL.atom(ctx.m, true, false));
+        case 'm0': return fixed('m0', RL.num(ctx.m0));
+        case 'time': return { k: 'time', t: true };
+        case 'tc': return RL.atom('TC', false, true);
+        case 'tk': return RL.atom('TK', false, true);
+        case 'mu': return RL.atom('I', true, false);
+        case 'sim_time': case 'total_time': return RL.atom('t', false, true);
+        case 'soln_vol':
+          if (!(ctx.solnVol > 0)) missing('SOLN_VOL, the water\'s volume, which PHREEQC did not give');
+          return fixed('soln_vol', RL.num(ctx.solnVol));
+        default: return missing(`${name.toUpperCase()}, which a rate law here cannot read`);
+      }
+    }
+    function call(name, args) {
+      const one = args[0];
+      const num = (a) => (a && a.k === 'n' ? a.v : NaN);
+      switch (name) {
+        case 'parm': {
+          const i = num(one);
+          if (!(Number.isInteger(i) && i >= 1 && i <= ctx.parms.length)) {
+            missing(`PARM(${Number.isFinite(i) ? i : '?'}), which -parms does not give`);
+          }
+          const p = ctx.parms[i - 1];
+          if (typeof p !== 'number') missing(`PARM(${i}), "${p}", which is no number`);
+          return fixed(`p${i}`, RL.num(p));
+        }
+        case 'si': case 'sr': {
+          const s = ctx.phase(str(one), name.toUpperCase());
+          if (s === null) missing(`${name.toUpperCase()}("${one.v}"): the database has no such phase`);
+          return RL.atom(s, true, false);
+        }
+        case 'act': case 'mol': case 'la': case 'lm': case 'lg': case 'gamma': {
+          const sp = str(one);
+          const a = ctx.act(sp);
+          const c = ctx.mol(sp);
+          if (name === 'act') return a === null ? RL.num(0) : RL.atom(a, true, false);
+          if (name === 'mol') return c === null ? RL.num(0) : RL.atom(c, true, false);
+          // PHREEQC's -999.999 for a species the water has none of.
+          if (name === 'la') return a === null ? RL.num(-999.999) : rlFn('log10', RL.atom(a, true, false));
+          if (name === 'lm') return c === null ? RL.num(-999.999) : rlFn('log10', RL.atom(c, true, false));
+          if (a === null || c === null) return RL.num(name === 'gamma' ? 0 : 0);
+          const g = rlBin('/', RL.atom(a, true, false), RL.atom(c, true, false));
+          return name === 'gamma' ? g : rlFn('log10', g);
+        }
+        case 'tot': {
+          const label = str(one);
+          if (/^water$/i.test(label)) return RL.num(ctx.W);
+          const s = ctx.tot(label);
+          return s === null ? RL.num(0) : RL.atom(s, true, false);
+        }
+        case 'kin': case 'equi': {
+          const s = ctx[name](str(one));
+          return s === null ? RL.num(0) : RL.atom(s, true, false);
+        }
+        case 'sqrt': return rlFn('sqrt', one);
+        case 'sqr': return rlBin('*', one, one);
+        case 'exp': return rlFn('exp', one);
+        case 'log': return rlFn('ln', one);
+        case 'log10': return rlFn('log10', one);
+        case 'abs': return rlFn('abs', one);
+        case 'sgn': return rlFn('sign', one);
+        default: {
+          const f = { sin: Math.sin, cos: Math.cos, tan: Math.tan, arctan: Math.atan, ceil: Math.ceil,
+            floor: Math.floor }[name];
+          if (f && one && one.k === 'n') return RL.num(f(one.v));
+          return missing(`${name.toUpperCase()} of what the water decides, which a rate law here cannot write`);
+        }
+      }
+    }
+
+    /*
+      Running it: ways through the program, each with its condition, its
+      variables, where it is, and what it saved. A way ends at END or the
+      last line.
+    */
+    const lineAt = new Map(lines.map((ln, i) => [ln.num, i]));
+    const ways = [{ cond: RL.num(1), vars: new Map(), li: 0, ti: 0, saved: null, dataAt: 0 }];
+    const ended = [];
+    let made = 1;
+    const clone = (w) => ({ ...w, vars: new Map(w.vars) });
+    // The THEN and ELSE of an IF: token positions in the line, as PHREEQC's cmdif finds them.
+    const elseOf = (tk, from) => {
+      let depth = 0;
+      for (let i = from; i < tk.length; i++) {
+        if (tk[i].k !== 'id') continue;
+        if (tk[i].v === 'if') depth++;
+        if (tk[i].v === 'else') { if (depth === 0) return i; depth--; }
+      }
+      return -1;
+    };
+    const jumps = (tk, a, b) => tk.slice(a, b).some((t) => t.k === 'id' && ['goto', 'go', 'end', 'stop', 'save', 'if',
+      'return', 'gosub'].includes(t.v)) || (tk[a] && tk[a].k === 'num');
+    function gotoLine(w, num, from) {
+      if (!lineAt.has(num)) throw new Error(`line ${from}: GOTO ${num}, a line the program does not have`);
+      if (num <= from) throw new Error(`line ${from}: GOTO ${num} goes back, a loop, which a rate law cannot be`);
+      w.li = lineAt.get(num);
+      w.ti = 0;
+    }
+    // One statement of way w at its place; returns false where the way has ended.
+    function statement(w) {
+      const ln = lines[w.li];
+      const tk = ln.tokens;
+      const st = { tk, i: w.ti, line: ln.num };
+      const t = tk[st.i];
+      const endLine = () => { w.li++; w.ti = 0; };
+      // After a statement: ':' goes on, ELSE skips the rest of the line, the end of the line the next.
+      const after = () => {
+        const n = tk[st.i];
+        if (!n) { endLine(); return; }
+        if (n.k === 'op' && n.v === ':') { w.ti = st.i + 1; return; }
+        if (n.k === 'id' && n.v === 'else') { endLine(); return; }
+        throw new Error(`line ${ln.num}: "${n.v}" after a statement`);
+      };
+      if (!t) { endLine(); return true; }
+      if (t.k === 'op' && t.v === ':') { w.ti = st.i + 1; return true; }
+      if (t.k !== 'id') throw new Error(`line ${ln.num}: "${t.v}" where a statement should be`);
+      const kw = t.v;
+      if (kw === 'rem') { endLine(); return true; }
+      if (kw === 'data' || kw === 'print' || kw === 'punch') {
+        // DATA was read before; PRINT and PUNCH write, and change nothing.
+        let i = st.i + 1;
+        while (tk[i] && !(tk[i].k === 'op' && tk[i].v === ':') && !(tk[i].k === 'id' && tk[i].v === 'else')) i++;
+        st.i = i;
+        after();
+        return true;
+      }
+      if (kw === 'restore') {
+        st.i++;
+        const n = tk[st.i] && tk[st.i].k === 'num' ? tk[st.i++].v : 0;
+        w.dataAt = data.findIndex((d) => d.line >= n);
+        if (w.dataAt < 0) w.dataAt = data.length;
+        after();
+        return true;
+      }
+      if (kw === 'read') {
+        st.i++;
+        for (;;) {
+          const v = tk[st.i];
+          if (!v || v.k !== 'id') throw new Error(`line ${ln.num}: READ needs a variable`);
+          if (w.dataAt >= data.length) throw new Error(`line ${ln.num}: READ past the last DATA`);
+          w.vars.set(v.v, RL.num(data[w.dataAt++].v));
+          st.i++;
+          if (tk[st.i] && tk[st.i].k === 'op' && tk[st.i].v === ',') { st.i++; continue; }
+          break;
+        }
+        after();
+        return true;
+      }
+      if (kw === 'end' || kw === 'stop') return false;
+      if (kw === 'goto' || (kw === 'go' && tk[st.i + 1] && tk[st.i + 1].v === 'to')) {
+        st.i += kw === 'go' ? 2 : 1;
+        const n = tk[st.i];
+        if (!n || n.k !== 'num') throw new Error(`line ${ln.num}: GOTO needs a line number`);
+        gotoLine(w, n.v, ln.num);
+        return true;
+      }
+      if (kw === 'save') {
+        st.i++;
+        w.saved = value(parseExpr(st), w);
+        after();
+        return true;
+      }
+      if (kw === 'if') {
+        st.i++;
+        const cond = value(parseExpr(st), w);
+        if (!(tk[st.i] && tk[st.i].k === 'id' && tk[st.i].v === 'then')) throw new Error(`line ${ln.num}: IF without THEN`);
+        const thenAt = st.i + 1;
+        const elseAt = elseOf(tk, thenAt);
+        const elseFrom = elseAt < 0 ? -1 : elseAt + 1;
+        // THEN or ELSE with a line number: a GOTO.
+        const go = (ww, at) => {
+          if (at >= 0 && tk[at] && tk[at].k === 'num') { gotoLine(ww, tk[at].v, ln.num); return; }
+          if (at < 0 || at >= tk.length) { ww.li = w.li + 1; ww.ti = 0; return; }
+          ww.ti = at;
+          ww.li = w.li;
+        };
+        if (cond.k === 'n') {
+          if (cond.v !== 0) go(w, thenAt); else go(w, elseFrom);
+          return true;
+        }
+        const c = cond;
+        const notC = rlBin('-', RL.num(1), c);
+        const thenEnd = elseAt < 0 ? tk.length : elseAt;
+        if (!jumps(tk, thenAt, thenEnd) && (elseFrom < 0 || !jumps(tk, elseFrom, tk.length))) {
+          // Only variables set: each to its two values, weighed.
+          const a = clone(w);
+          const b = clone(w);
+          const runPart = (ww, from, to) => {
+            ww.li = w.li;
+            ww.ti = from;
+            while (ww.li === w.li && ww.ti < to) statement(ww);
+          };
+          runPart(a, thenAt, thenEnd);
+          if (elseFrom >= 0) runPart(b, elseFrom, tk.length);
+          const keys = new Set([...a.vars.keys(), ...b.vars.keys()]);
+          for (const key of keys) {
+            const va = a.vars.has(key) ? a.vars.get(key) : RL.num(0);
+            const vb = b.vars.has(key) ? b.vars.get(key) : RL.num(0);
+            if (va === vb) { w.vars.set(key, va); continue; }
+            const mixed = rlBin('+', rlBin('*', c, va), rlBin('*', notC, vb));
+            w.vars.set(key, ref(key, mixed));
+          }
+          if (a.saved !== b.saved) throw new Error(`line ${ln.num}: SAVE in an IF`);
+          w.dataAt = a.dataAt;
+          w.li++;
+          w.ti = 0;
+          return true;
+        }
+        // It jumps: both ways, each with its condition.
+        const other = clone(w);
+        w.cond = rlBin('*', w.cond, c);
+        other.cond = rlBin('*', other.cond, notC);
+        go(w, thenAt);
+        go(other, elseFrom);
+        ways.push(other);
+        if (++made > 64) throw new Error('the program takes more than 64 ways through it');
+        return true;
+      }
+      // An assignment, LET or not.
+      if (kw === 'let') st.i++;
+      const v = tk[st.i];
+      if (!v || v.k !== 'id' || !(tk[st.i + 1] && tk[st.i + 1].k === 'op' && tk[st.i + 1].v === '=')) {
+        throw new Error(`line ${ln.num}: ${kw.toUpperCase()}, which a rate law here cannot be made of`);
+      }
+      if (BASIC_FUNCS.has(v.v) || BASIC_VALUES.has(v.v) || BASIC_WORDS.has(v.v) || v.v.endsWith('$')) {
+        throw new Error(`line ${ln.num}: ${v.v.toUpperCase()} cannot be set`);
+      }
+      st.i += 2;
+      w.vars.set(v.v, ref(v.v, value(parseExpr(st), w)));
+      after();
+      return true;
+    }
+    while (ways.length) {
+      const w = ways.pop();
+      for (let guard = 0; ; guard++) {
+        if (guard > 100000) throw new Error('the program does not end');
+        if (w.li >= lines.length) { ended.push(w); break; }
+        if (!statement(w)) { ended.push(w); break; }
+      }
+    }
+    // The rate: what each way saved, over TIME, weighed by its condition.
+    let law = RL.num(0);
+    for (const w of ended) {
+      if (w.saved === null) throw new Error('a way through the program saves nothing, where PHREEQC would stop');
+      const per = overTime(w.saved);
+      if (!per) throw new Error('what it saves is not moles in a step, a rate times TIME');
+      law = rlBin('+', law, rlBin('*', w.cond, per));
+    }
+    if (ctx.W !== 1) law = rlBin('/', law, RL.num(ctx.W));
+    // The names the rate reads, and those they read, in the order made.
+    const used = new Set();
+    const mark = (a) => {
+      if (!a || typeof a !== 'object') return;
+      if (a.k === 'ref') {
+        if (used.has(a.name)) return;
+        used.add(a.name);
+        mark(a.over || a.value);
+        return;
+      }
+      for (const key of ['a', 'l', 'r']) if (a[key]) mark(a[key]);
+    };
+    mark(law);
+    return {
+      r: rlText(law),
+      names: names.filter((n) => used.has(n.name)).map((n) => [n.name, rlText(n.over || n.value)]),
+    };
+  }
+
+  /* ======================================================================
      A water into a model
      ====================================================================== */
 
@@ -1377,6 +2242,41 @@
       for (const ss of ssBlock) for (const c of ss.comps) extras.push(`S_S("${c.name}")`, `LK_PHASE("${c.name}")`);
       extras.push('TOT("water")');
     }
+    /*
+      KINETICS carried as reactions at a rate: each kinetic reactant a
+      mineral species at its -m, its formula's dissolution a reaction of
+      <REACTIONS>, its rate the RATES program as a rate law (rateLaw). The
+      water the run starts from is the input's without its KINETICS -- the
+      run is what PHREEQC's kinetic steps are -- and the run goes as long as
+      they do. The phases the formulas are and the rates read the
+      saturation of: each one's log K here; and the water's kilograms and
+      volume, which M and SOLN_VOL are in.
+    */
+    const kinBlock = (() => { const k = readKinetics(o.water.text); return k.size ? [...k.values()].pop() : null; })();
+    const carryKin = !!kinBlock && kinBlock.comps.length > 0 && o.kinetics !== false;
+    let waterText = carryKin ? withoutKinetics(o.water.text) : o.water.text;
+    const rateDefs = carryKin ? readRates(o.database.text, o.water.text) : new Map();
+    const phaseKey = new Map([...db.phaseReaction.keys()].map((k) => [k.toLowerCase(), k]));
+    const kinPhases = [];
+    if (carryKin) {
+      const want = new Set();
+      for (const c of kinBlock.comps) {
+        for (const [f] of c.formula) if (phaseKey.has(f.toLowerCase())) want.add(phaseKey.get(f.toLowerCase()));
+        const def = rateDefs.get(c.name.toLowerCase());
+        if (!def) continue;
+        for (const ln of def.lines) {
+          for (const m of ln.matchAll(/\b(?:SI|SR)\s*[([]\s*"([^"]+)"/gi)) {
+            if (phaseKey.has(m[1].toLowerCase())) want.add(phaseKey.get(m[1].toLowerCase()));
+          }
+        }
+      }
+      kinPhases.push(...want);
+    }
+    const kinAt = extras.length;
+    if (carryKin) {
+      for (const p of kinPhases) extras.push(`LK_PHASE("${p}")`);
+      extras.push('TOT("water")', 'SOLN_VOL');
+    }
     // Each exchanger's activity: its master species is no amount, and
     // SYS("ex") leaves it out.
     const exMasters = [...new Set(db.exMaster.values())];
@@ -1442,14 +2342,46 @@
     const presAt = extras.length;
     extras.push('PRESSURE');
     const punch = punchBlock(extras);
-    let rows = runRows(o.engine, `${punch}${o.water.text}\nEND\n`);
-    if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
-    if (!rows.length) {
-      throw new Error('PHREEQC calculated no water from that input'
-        + (o.solution != null ? ` with SOLUTION ${o.solution}` : '')
-        + ': it needs a SOLUTION, or something PHREEQC calculates.');
+    const takeWater = (text) => {
+      let rows = runRows(o.engine, `${punch}${text}\nEND\n`);
+      if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
+      if (!rows.length) {
+        throw new Error('PHREEQC calculated no water from that input'
+          + (o.solution != null ? ` with SOLUTION ${o.solution}` : '')
+          + ': it needs a SOLUTION, or something PHREEQC calculates.');
+      }
+      return rows[rows.length - 1];
+    };
+    let w = takeWater(waterText);
+    /*
+      A kinetic reactant may bring what the water has none of -- calcite
+      into a water without calcium -- and a total at none cannot be held:
+      the water is then taken again with 1e-20 mol of the reactants added
+      (PHREEQC's REACTION), so that their species are there to grow from.
+      Where the input reacts already, that is left as it is.
+    */
+    let traced = false;
+    if (carryKin) {
+      const has = new Set([...w.species].filter(([, [m]]) => m > 0).map(([n]) => n));
+      const of = (c) => c.formula.flatMap(([f]) => {
+        const pk = phaseKey.get(f.toLowerCase());
+        if (pk) { const r = db.phaseReaction.get(pk); return [...r.left.slice(1), ...r.right].map((t) => t.n); }
+        try { return [...formulaReaction(f, db).keys()]; } catch (e) { return []; }
+      }).filter((n) => n !== 'H2O' && n !== 'e-');
+      const lacking = kinBlock.comps.some((c) => of(c).some((n) => !has.has(n)));
+      if (lacking && !/^\s*REACTION\b/im.test(waterText)) {
+        // In the last simulation: before its END, where it has one.
+        const trace = `REACTION 1\n${kinBlock.comps.flatMap((c) => c.formula.map(([f, k]) => ` ${f}  ${k}`)).join('\n')}`
+          + '\n 1e-20 moles\n';
+        const lines = waterText.split(/\r\n|\r|\n/);
+        let at = lines.length;
+        while (at > 0 && !lines[at - 1].trim()) at--;
+        if (at > 0 && /^END$/i.test(lines[at - 1].trim())) at--;
+        waterText = [...lines.slice(0, at), trace, ...lines.slice(at)].join('\n');
+        w = takeWater(waterText);
+        traced = true;
+      }
     }
-    let w = rows[rows.length - 1];
     /*
       ONE PE. PHREEQC keeps the valence states an initial solution is given,
       whatever its pe says: sulfate given, there is no sulfide in it, however
@@ -1460,7 +2392,7 @@
     */
     let settled = null;
     if (carryRedox && w.state === 'i_soln' && Number.isFinite(Number(w.soln))) {
-      const more = runRows(o.engine, `${punch}${o.water.text}\nEND\nMIX 1\n ${Number(w.soln)} 1.0\nEND\n`);
+      const more = runRows(o.engine, `${punch}${waterText}\nEND\nMIX 1\n ${Number(w.soln)} 1.0\nEND\n`);
       const w2 = more[more.length - 1];
       if (w2 && w2.state === 'react') {
         settled = { from: w.pe, to: w2.pe };
@@ -1820,6 +2752,118 @@
       });
     }
 
+    /*
+      THE KINETIC REACTANTS. Each a mineral species at PHREEQC's -m, per
+      kilogram of water, and a reaction at the rate its RATES program comes
+      to: its formula's dissolution -- a phase's as the database writes it,
+      a chemical formula's into the master species of its elements with H+,
+      the water and the electrons (formulaReaction). What the rate reads is
+      pulled into the model as a mineral's species are: the species, the
+      phases it reads the saturation of (written in <PHASES>), and an
+      element's total, a sum over the species written (filled in below).
+    */
+    const kinetics = [];
+    const kinSkipped = [];
+    const kinPhaseUse = new Map();
+    const holes = [];
+    const hole = (kind, key) => { holes.push({ kind, key }); return `\u0001${holes.length - 1}\u0001`; };
+    if (carryKin) {
+      const kgw = Number(w.x[kinAt + kinPhases.length]);
+      const solnVol = Number(w.x[kinAt + kinPhases.length + 1]);
+      // PHREEQC's kilogram, 1 where it is 1 but for rounding (0.999999999999994 after an initial solution).
+      const W = kgw > 0 && Math.abs(kgw - 1) > 1e-9 ? kgw : 1;
+      const perW = W !== 1 ? `${fmtG(W, 15)}*` : '';
+      const lkPhase = new Map(kinPhases.map((p, i) => [p, Number(w.x[kinAt + i])]));
+      const usePhase = (pk) => {
+        const r = db.phaseReaction.get(pk);
+        const others = [...r.left.slice(1), ...r.right];
+        if (others.some((t) => t.n === 'e-') && !carryRedox) {
+          throw new Error(`${pk} dissolves with electrons, and the valence states are not held at one pe`);
+        }
+        const missing = others.filter((t) => t.n !== 'H2O' && t.n !== 'e-' && !molal.has(t.n)).map((t) => t.n);
+        if (missing.length) throw new Error(`${pk}'s saturation: the water has no ${missing.join(', ')}`);
+        if (!Number.isFinite(lkPhase.get(pk))) throw new Error(`PHREEQC gave no log K for ${pk}`);
+        for (const t of others) if (t.n !== 'H2O' && t.n !== 'e-' && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
+        kinPhaseUse.set(pk, lkPhase.get(pk));
+      };
+      const useSpecies = (sp) => {
+        if (!molal.has(sp)) return false;
+        if (!kept.has(sp)) { kept.add(sp); pulled.add(sp); }
+        return true;
+      };
+      for (const comp of kinBlock.comps) {
+        const skip = (why) => kinSkipped.push({ name: comp.name, why });
+        const def = rateDefs.get(comp.name.toLowerCase());
+        if (!def) { skip('the database and the input have no RATES for it'); continue; }
+        // Its reaction, per mole of it.
+        const terms = new Map();
+        const add = (n, c) => terms.set(n, (terms.get(n) || 0) + c);
+        let why = null;
+        for (const [f, coef] of comp.formula) {
+          const pk = phaseKey.get(f.toLowerCase());
+          if (pk) {
+            const r = db.phaseReaction.get(pk);
+            const c0 = r.left[0].c;
+            for (const t of r.left.slice(1)) add(t.n, (-t.c * coef) / c0);
+            for (const t of r.right) add(t.n, (t.c * coef) / c0);
+            continue;
+          }
+          try {
+            for (const [n, c] of formulaReaction(f, db)) add(n, c * coef);
+          } catch (e) { why = e.message; break; }
+        }
+        if (why) { skip(why); continue; }
+        const rx = [...terms].filter(([n, c]) => n !== 'H2O' && Math.abs(c) > 1e-12);
+        if (rx.some(([n]) => n === 'e-') && !carryRedox) {
+          skip('it reacts with electrons, and the valence states are not held at one pe');
+          continue;
+        }
+        const missing = rx.filter(([n]) => n !== 'e-' && !molal.has(n)).map(([n]) => n);
+        if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
+        // Its rate, what the program reads in the model's words.
+        const ctx = {
+          m: `${perW}ramp([${hole('kin', comp.name)}])`, m0: comp.m0, parms: comp.parms, W,
+          solnVol: solnVol > 0 ? solnVol : null,
+          phase: (p, kind) => {
+            const pk = phaseKey.get(p.toLowerCase());
+            if (!pk) return null;
+            if (minerals.some((mn) => mn.phase === pk)) return `${kind}(${hole('mineral', pk)})`;
+            usePhase(pk);
+            return `${kind}(${hole('phase', pk)})`;
+          },
+          act: (sp) => (sp === 'H2O' ? '{H2O}' : useSpecies(sp) ? `{${hole('sp', sp)}}` : null),
+          mol: (sp) => (sp === 'H2O' ? '55.50837' : useSpecies(sp) ? `[${hole('sp', sp)}]` : null),
+          tot: (label) => {
+            if (/^(H|O)(\(|$)/.test(label)) {
+              throw new Error(`TOT("${label}"), hydrogen or oxygen, which the model does not count`);
+            }
+            return hole('tot', label);
+          },
+          kin: (n) => (kinBlock.comps.some((c) => c.name === n) ? `${perW}[${hole('kin', n)}]` : null),
+          equi: (n) => {
+            const pk = phaseKey.get(n.toLowerCase());
+            return pk && minerals.some((mn) => mn.phase === pk) ? `${perW}[${hole('mineral', pk)}]` : null;
+          },
+        };
+        let law;
+        try { law = rateLaw(def, ctx); } catch (e) { skip(`its rate: ${e.message}`); continue; }
+        for (const [n] of rx) if (n !== 'e-' && !kept.has(n)) { kept.add(n); pulled.add(n); }
+        // Every species of the elements it brings or takes, whatever the floor: they grow, or go.
+        const els = new Set();
+        for (const [n] of rx) {
+          if (n === 'e-' || n === 'H+') continue;
+          try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(elementOf(lb)); } catch (e) { /* no terms */ }
+        }
+        for (const sp of molal.keys()) {
+          if (kept.has(sp)) continue;
+          let ex;
+          try { ex = db.expand(sp); } catch (e) { continue; }
+          if ([...ex.keys()].some((lb) => els.has(elementOf(lb)))) { kept.add(sp); pulled.add(sp); }
+        }
+        kinetics.push({ comp, rate: def, amount: Math.max(comp.m, 0) / W, rx, law, name: null });
+      }
+    }
+
     let changed = true;
     while (changed) {
       changed = false;
@@ -1892,7 +2936,9 @@
     // The electron, when a relation written has it: PHREEQC's e-, under that name.
     const withE = (terms) => terms.some((t) => t.n === 'e-');
     const tied = carryRedox ? eqs.filter((e) => withE(e.reac) || withE(e.prod)) : [];
-    const eUsed = carryRedox && (tied.length > 0 || minerals.some((mn) => withE(mn.reac) || withE(mn.prod)));
+    const eUsed = carryRedox && (tied.length > 0 || minerals.some((mn) => withE(mn.reac) || withE(mn.prod))
+      || kinetics.some((k) => k.rx.some(([n]) => n === 'e-'))
+      || [...kinPhaseUse.keys()].some((pk) => withE(db.phaseReaction.get(pk).left) || withE(db.phaseReaction.get(pk).right)));
     if (eUsed) taken.set('e-', 'e-');
     // The pe each couple stands at in PHREEQC's water: one, unless it was given
     // two valence states of an element, which the run then settles on one pe.
@@ -1903,6 +2949,52 @@
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
     for (const g of gases) g.name = rtmName(g.phase, taken);
     for (const ss of solids) for (const c of ss.comps) c.name = rtmName(c.phase, taken);
+    /*
+      The kinetic reactants' names, and the phases of <PHASES>, which may have
+      a species' name (Calcite the reactant, Calcite the phase its rate reads
+      the saturation of); then what each rate law reads, in the names
+      written: an element's total the sum of the species written that hold
+      it, each to its atoms (TOT, which counts the water's species alone).
+    */
+    for (const k of kinetics) k.name = rtmName(k.comp.name, taken);
+    const phaseName = new Map([...kinPhaseUse.keys()].map((pk) => [pk, rtmName(pk, new Map())]));
+    const totText = (label) => {
+      const want = normLabel(label);
+      const whole = !label.includes('(');
+      const parts = [];
+      for (const sp of order) {
+        let ex;
+        try { ex = db.expand(sp); } catch (e) { continue; }
+        let n = 0;
+        for (const [lb, c] of ex) if (lb !== 'e-' && (whole ? elementOf(lb) === label : normLabel(lb) === want)) n += c;
+        if (n) parts.push(`${Math.abs(n - 1) > 1e-12 ? `${fmtCoef(n)}*` : ''}[${name.get(sp)}]`);
+      }
+      return parts.length ? `(${parts.join(' + ')})` : '0';
+    };
+    const holeText = (h) => {
+      if (h.kind === 'sp') return name.get(h.key) || null;
+      if (h.kind === 'kin') { const k = kinetics.find((x) => x.comp.name === h.key); return k ? k.name : null; }
+      if (h.kind === 'mineral') { const mn = minerals.find((x) => x.phase === h.key); return mn ? mn.name : null; }
+      if (h.kind === 'phase') return phaseName.get(h.key) || null;
+      return totText(h.key);
+    };
+    for (let pass = 0; pass < 2; pass++) {
+      for (let i = kinetics.length - 1; i >= 0; i--) {
+        const k = kinetics[i];
+        const fill = (text) => text.replace(/\u0001(\d+)\u0001/g, (_, j) => {
+          const t = holeText(holes[Number(j)]);
+          if (t === null) throw new Error(`its rate reads ${holes[Number(j)].key}, which is not carried`);
+          return t;
+        });
+        try {
+          k.r = fill(k.law.r);
+          k.names = k.law.names.map(([n, v]) => [n, fill(v)]);
+        } catch (e) {
+          kinSkipped.push({ name: k.comp.name, why: e.message });
+          kinetics.splice(i, 1);
+        }
+      }
+    }
     /*
       <VOLUMES>: each species written that the database gives a molar volume
       -- -Vm with a1 not 0, PHREEQC's supcrt form, or else -Millero -- and
@@ -1933,7 +3025,7 @@
     if (volumes) {
       const names = [...new Set([...kept].filter((n) => db.reaction.has(n) && n !== 'e-'))].concat('H2O');
       const more = settled ? `MIX 1\n ${Number(w.soln)} 1.0\nEND\n` : '';
-      let vr = runRows(o.engine, `${punchBlock(names.map((n) => `VM("${n}")`))}${o.water.text}\nEND\n${more}`);
+      let vr = runRows(o.engine, `${punchBlock(names.map((n) => `VM("${n}")`))}${waterText}\nEND\n${more}`);
       if (o.solution != null && !settled) vr = vr.filter((r) => Number(r.soln) === Number(o.solution));
       const last = vr[vr.length - 1];
       names.forEach((n, i) => vmAt.set(n, Number(last.x[i])));
@@ -2078,7 +3170,7 @@
     const width = Math.max(...order.map((s) => name.get(s).length), ...minerals.map((mn) => mn.name.length),
       ...gases.map((g) => g.name.length), ...solids.flatMap((ss) => ss.comps.map((c) => c.name.length)),
       ...[...exName.values()].map((nm) => nm.length), ...onSf.map((e) => e.name.length),
-      ...potentials.map((pp) => pp.name.length)) + 2;
+      ...potentials.map((pp) => pp.name.length), ...kinetics.map((k) => k.name.length)) + 2;
     const out = [];
     out.push(`# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
     out.push(`# Database: ${o.database.name || 'unnamed'}.`);
@@ -2278,7 +3370,9 @@
       out.push('# Renamed, since rtm.html cannot write the name as PHREEQC does:');
       for (const [s, r] of renamed) out.push(`#   ${s}  ->  ${r}`);
     }
-    out.push('', '<SETTINGS>', 'MODE = batch', 'TEND = 1', 'TIME_UNIT = second',
+    // A kinetic run goes as long as PHREEQC's steps.
+    const kinTime = kinetics.length ? kinBlock.steps.reduce((a, b) => a + b, 0) : 0;
+    out.push('', '<SETTINGS>', 'MODE = batch', `TEND = ${kinTime > 0 ? fmtG(kinTime, 15) : 1}`, 'TIME_UNIT = second',
       `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
@@ -2311,8 +3405,8 @@
     const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length),
       ...minerals.map((mn) => fmtG(mn.amount, 15).length), ...onEx.map((e) => fmtG(e.m, 15).length),
       ...onSf.map((e) => fmtG(e.m, 15).length), ...potentials.map((pp) => fmtG(pp.a, 15).length),
-      ...gases.map((g) => fmtG(g.amount, 15).length), ...solids.flatMap((ss) => ss.comps.map((c) => fmtG(c.amount, 15).length)))
-      + 2;
+      ...gases.map((g) => fmtG(g.amount, 15).length), ...solids.flatMap((ss) => ss.comps.map((c) => fmtG(c.amount, 15).length)),
+      ...kinetics.map((k) => fmtG(k.amount, 15).length)) + 2;
     for (const s of order) {
       let d = '';
       if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
@@ -2349,6 +3443,11 @@
         const amount = fmtG(c.amount, 15);
         out.push(`${c.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
       }
+    }
+    // A kinetic reactant: what is left of it, which its rate takes and gives.
+    for (const k of kinetics) {
+      const amount = fmtG(k.amount, 15);
+      out.push(`${k.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
     }
     for (const g of gases) {
       const amount = fmtG(g.amount, 15);
@@ -2579,7 +3678,43 @@
         out.push(`${ss.name}  ${ss.comps.map((c) => c.name).join('  ')}${prm}`);
       }
     }
-    out.push('', '<REACTIONS>', '# Your kinetic reactions here, in the same species and units.');
+    /*
+      <PHASES>: the phases the rates read the saturation of, that are no
+      mineral of the model, each as the database writes its dissolution,
+      its log K as a mineral's is (above).
+    */
+    if (kinPhaseUse.size) {
+      out.push('', '<PHASES>');
+      for (const [pk, lk] of kinPhaseUse) {
+        const r = db.phaseReaction.get(pk);
+        const c0 = r.left[0].c;
+        const reac = r.left.slice(1);
+        const prod = r.right;
+        const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+        const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
+        const nw = prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
+          - reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
+        const logkC = lk - sumLg(prod) + sumLg(reac) - nw * logAw;
+        const left = [{ c: c0, n: phaseName.get(pk) }, ...(follow ? reac : aq(reac))];
+        out.push(`${side(left)} <=> ${side(follow ? prod : aq(prod))}, `
+          + `${kText(db.logKTerms('p', pk), follow ? atOneAtm(lk, [{ c: c0, n: pk }, ...reac], prod, pk) : logkC)}`);
+      }
+    }
+    out.push('', '<REACTIONS>');
+    if (!kinetics.length) out.push('# Your kinetic reactions here, in the same species and units.');
+    /*
+      Each kinetic reactant's dissolution at its rate, PHREEQC's program
+      above it: M is the reactant (ramp, so never below none), each line's
+      names the program's variables, conditions on the water step().
+    */
+    for (const k of kinetics) {
+      out.push(`# ${k.comp.name}: PHREEQC's RATES ${k.rate.name}, M its moles, M0 ${fmtG(k.comp.m0, 15)}`
+        + `${k.comp.parms.length ? `, PARM ${k.comp.parms.join(' ')}` : ''}, a time step TIME:`);
+      for (const ln of k.rate.lines) out.push(`#   ${ln}`);
+      const reac = [{ c: 1, n: k.name }].concat(k.rx.filter(([, c]) => c < 0).map(([n, c]) => ({ c: -c, n })));
+      const prod = k.rx.filter(([, c]) => c > 0).map(([n, c]) => ({ c, n }));
+      out.push(`${side(reac)} => ${side(prod)}, r = ${k.r}${k.names.map(([n, v]) => `, ${n} = ${v}`).join('')}`);
+    }
     const text = `${out.join('\n')}\n`;
 
     const dropped = [...molal.keys()].filter((n) => !kept.has(n));
@@ -2595,7 +3730,8 @@
       amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))
         .concat(gases.map((g) => [g.name, g.amount]))
         .concat(solids.flatMap((ss) => ss.comps.map((c) => [c.name, c.amount])))
-        .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))),
+        .concat(onSf.map((e) => [e.name, e.m])).concat(potentials.map((pp) => [pp.name, pp.a]))
+        .concat(kinetics.map((k) => [k.name, k.amount]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
         // The relations written with the database's dH or analytic expression: their log K go with TEMPERATURE.
@@ -2633,6 +3769,11 @@
         solids: solids.map((ss) => ({ name: ss.name, members: ss.comps.map((c) => ({ phase: c.phase, as: c.name,
           amount: c.amount })), binary: ss.energy ? { a0: ss.energy.a0, a1: ss.energy.a1, tk: ss.tk } : null })),
         solidsSkipped,
+        // KINETICS: each reactant as written, its rate's program and its amount; the steps, s, and the run's end.
+        kinetics: kinetics.length ? { reactants: kinetics.map((k) => ({ name: k.comp.name, as: k.name, rate: k.rate.name,
+          amount: k.amount, m0: k.comp.m0, parms: k.comp.parms })), phases: [...kinPhaseUse.keys()],
+        steps: kinBlock.steps, tend: kinTime, trace: traced ? 1e-20 : 0 } : null,
+        kineticsSkipped: kinSkipped,
       },
     };
   }
@@ -3536,6 +4677,7 @@
   return {
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
-    readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies,
+    readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
+    rateLaw,
   };
 }));

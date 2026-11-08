@@ -753,6 +753,30 @@ async def main():
                   'holds the pure member at', m_ss is not None and float(m_ss.group(1)) < 1e-6, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a kinetic reactant: calcite at phreeqc.dat's rate, written as a rate law by the page's worker, and run ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/\\nEND\\s*$/, '\\nKINETICS 1\\nCalcite\\n -m 1e-3\\n -parms 50 0.6\\n"
+                          " -steps 86400 in 4\\nEND\\n');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            onkin = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                      f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            kin_text = await page.ev("document.getElementById('rtmText').value")
+            check('a kinetic reactant in the water is carried: calcite a mineral at its -m, its dissolution in <REACTIONS> at '
+                  'the rate its RATES program comes to, the program above it, the run as long as PHREEQC\'s steps, and the '
+                  'report says so',
+                  isinstance(onkin, str) and 'Kinetics: Calcite (0.001 mol/kgw)' in onkin and isinstance(kin_text, str)
+                  and re.search(r'^Calcite => CO3-2 \+ Ca\+2, r = ', kin_text, re.M) is not None
+                  and re.search(r'^#\s+130 moles = rate \* 0\.001 \* TIME', kin_text, re.M) is not None
+                  and re.search(r'^TEND = 86400$', kin_text, re.M) is not None
+                  and re.search(r'^Calcite +0\.001 +mineral$', kin_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            kin_done = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('and it runs', kin_done, 'Done')
+
             # --- the temperature: the example water warmed along a table, run, and looked at through PHREEQC ---
             warm_report = await write_from_example(page)
             check('the hand-off says the relations\' log K go with temperature, as the database\'s do',

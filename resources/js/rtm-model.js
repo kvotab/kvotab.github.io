@@ -1611,6 +1611,17 @@
       concentration. Both are how skbrtm writes its databases.
     */
     const aliases = new Map();
+    /*
+      A name given an expression that reads the water -- a concentration, an
+      activity, SI() or SR(), I, TK, TC, t, or a name of this kind before it
+      on the line -- stands for that expression wherever the law (or a later
+      such name) uses it, as if written there in brackets: si = SI(Calcite),
+      area = A0*(m/m0)^0.6, m = [Calcite]. So a rate PHREEQC writes as a
+      program reads as one here, step by step (compile, expandNames).
+    */
+    const exprs = new Map();
+    const readsWater = (value) => /[[{]/.test(value) || /\b(SI|SR)\s*\(/.test(value) || /\b(I|TK|TC|t)\b/.test(value)
+      || [...exprs.keys(), ...aliases.keys()].some((k) => new RegExp(`(^|[^A-Za-z0-9_])${k}([^A-Za-z0-9_(]|$)`).test(value));
     for (const [key, value] of assigned) {
       if (key === 'on') {
         if (/^inventory$/i.test(value)) whole = true;
@@ -1623,13 +1634,31 @@
         rates[key] = { src: value, line };
         continue;
       }
+      if (params.has(key) || aliases.has(key) || exprs.has(key)) {
+        throw new RtmError(`${key} is given twice on the line.`, line);
+      }
       const alias = /^\[\s*([^\]]+?)\s*\]$/.exec(value);
+      // An alias or an expression may not take the name of what a rate law reads (a constant may: TK = 298).
+      if ((alias || readsWater(value)) && RATE_WORDS.has(key)) {
+        throw new RtmError(`"${key}" names something a rate law reads already; give it another name.`, line);
+      }
       if (alias) {
         if (!SPECIES_NAME.test(alias[1])) {
           throw new RtmError(`"${key} = [${alias[1]}]": "${alias[1]}" is not a species name.`, line);
         }
         aliases.set(key, alias[1]);
         continue;
+      }
+      if (readsWater(value)) {
+        exprs.set(key, value);
+        continue;
+      }
+      // A name that is given only further on: a constant may use those before it, and so may an expression.
+      const later = assigned.slice(assigned.findIndex(([k]) => k === key) + 1).map(([k]) => k)
+        .find((k) => new RegExp(`(^|[^A-Za-z0-9_])${k}([^A-Za-z0-9_(]|$)`).test(value));
+      if (later) {
+        throw new RtmError(`${key} = "${value}" uses ${later}, which is given after it on the line: a name may use `
+          + 'the names given before it.', line);
       }
       const v = constValue(value, line, `Parameter ${key}`, (id) => params.get(id));
       params.set(key, v);
@@ -1642,7 +1671,58 @@
     if (!reversible && !(rates.k || rates.r || rates.kf)) {
       throw new RtmError('A reaction needs k = ... (mass action) or r = ... (a rate law of your own).', line);
     }
-    return { reactants, products, params, aliases, rates, reversible, whole, line, text };
+    return { reactants, products, params, aliases, exprs, rates, reversible, whole, line, text };
+  }
+
+  // What a rate law reads by name, and its functions: no name on a line may be one of them.
+  const RATE_WORDS = new Set(['I', 'TK', 'TC', 't', 'SI', 'SR', 'exp', 'log', 'ln', 'log10', 'sqrt', 'abs', 'sign',
+    'step', 'ramp', 'min', 'max', 'pow']);
+
+  /**
+   * A rate law with the names its line gives expressions (parseReaction's
+   * exprs) put in, each in brackets: each expression first with those before
+   * it in, then the law. A name is a whole word outside [...], {...} and the
+   * phase of SI() and SR(), and not a function's name before its bracket.
+   */
+  function expandNames(src, exprs) {
+    if (!exprs || !exprs.size) return src;
+    const swap = (text, done) => {
+      let out = '';
+      for (let i = 0; i < text.length;) {
+        const ch = text[i];
+        // [A] and {A}, whole.
+        if (ch === '[' || ch === '{') {
+          const close = text.indexOf(ch === '[' ? ']' : '}', i);
+          const end = close < 0 ? text.length : close + 1;
+          out += text.slice(i, end);
+          i = end;
+          continue;
+        }
+        const m = /^[A-Za-z_][A-Za-z0-9_]*/.exec(text.slice(i));
+        if (m && (i === 0 || !/[A-Za-z0-9_.]/.test(text[i - 1]))) {
+          const word = m[0];
+          let j = i + word.length;
+          while (j < text.length && /\s/.test(text[j])) j++;
+          // SI(phase) and SR(phase): the phase as written.
+          if ((word === 'SI' || word === 'SR') && text[j] === '(') {
+            const close = text.indexOf(')', j);
+            const end = close < 0 ? text.length : close + 1;
+            out += text.slice(i, end);
+            i = end;
+            continue;
+          }
+          out += done.has(word) && text[j] !== '(' ? `(${done.get(word)})` : word;
+          i += word.length;
+          continue;
+        }
+        out += ch;
+        i++;
+      }
+      return out;
+    };
+    const done = new Map();
+    for (const [key, value] of exprs) done.set(key, swap(value, done));
+    return swap(String(src), done);
   }
 
   /** Split on commas that are not inside brackets or parentheses. */
@@ -7846,7 +7926,11 @@
     switch (node.type) {
       case 'num': return NUM(0);
       case 'id': return NUM(node.name === id ? 1 : 0);
-      case 'neg': return { type: 'neg', a: derivative(node.a, id, line) };
+      case 'neg': {
+        // Folded, so that an exponent -(n) reads as not depending on what n does not.
+        const d = derivative(node.a, id, line);
+        return d.type === 'num' ? NUM(-d.v === 0 ? 0 : -d.v) : { type: 'neg', a: d };
+      }
       case 'bin': {
         const { l, r, op } = node;
         const dl = derivative(l, id, line);
@@ -8280,15 +8364,25 @@
       const net = [...stoich.entries()].filter(([, c]) => c !== 0);
       if (!net.length) warnings.push(`Line ${rx.line}: the reaction changes nothing.`);
       // What is no amount cannot be made or used up at a rate.
-      const none = net.find(([i]) => species[i].electron || species[i].exchanger);
+      const none = net.find(([i]) => species[i].exchanger);
       if (none) {
-        const sp = species[none[0]];
-        throw new RtmError(sp.electron
-          ? `${sp.name} is the electron, which is no amount and cannot react at a rate: a redox reaction in `
-            + '<REACTIONS> is written between species, Fe+2 + 0.25 O2 + H+ => Fe+3 + 0.5 H2O, and the couples '
-            + 'tied to the electron in <EQUILIBRIUM> share out what it moves. A rate law may read it, as [e-].'
-          : `${sp.name} is an exchanger, which is no amount and cannot react at a rate: exchange at a rate is a `
-            + 'relation between species on it with a kf, Ca+2 + 2 NaX <=> CaX2 + 2 Na+.', rx.line);
+        throw new RtmError(`${species[none[0]].name} is an exchanger, which is no amount and cannot react at a rate: `
+          + 'exchange at a rate is a relation between species on it with a kf, Ca+2 + 2 NaX <=> CaX2 + 2 Na+.', rx.line);
+      }
+      /*
+        The electron is no amount either, but what the couples tied to it
+        hold is a total, the electrons, and a reaction that takes or gives
+        them -- Pyrite + 2 H+ + 2 e- => Fe+2 + 2 HS-, as PHREEQC's PHASES
+        write it -- moves that total, which the couples then share out at
+        their one pe (holdEquilibria). So it needs them held all through the
+        run; with the pe fixed, the electrons come and go from outside.
+      */
+      const eIn = net.find(([i]) => species[i].electron);
+      if (eIn && settings.EQUILIBRATE !== 2 && !species[eIn[0]].fixed) {
+        throw new RtmError(`${species[eIn[0]].name} is the electron: a reaction can take or give electrons only where the `
+          + 'relations with it are held all through the run, EQUILIBRATE = always, and the couples tied to it share out '
+          + 'what the reaction moves. Or write the reaction between species, Fe+2 + 0.25 O2 + H+ => Fe+3 + 0.5 H2O.',
+        rx.line);
       }
 
       const build = (spec, side, sign) => {
@@ -8300,6 +8394,8 @@
         } else {
           src = spec.src;
         }
+        // The names the line gives expressions, put in.
+        src = expandNames(src, rx.exprs);
         const { masked, names, acts, sats } = maskRate(src, rx.line);
         let ast;
         try {
@@ -8789,6 +8885,14 @@
       // species through aqAt's derivatives.
       ch.aqD = [];
       for (const aqd of ch.aq || []) {
+        // The cell's temperature reads no species: nothing to carry, and a power may have it in its exponent.
+        const kind = aqList[aqd.q].kind;
+        if (kind === 'TK' || kind === 'TC') {
+          derivBody.push(`  D[${nd}] = 0;`);
+          ch.aqD.push(nd);
+          nd++;
+          continue;
+        }
         derivBody.push(`  D[${nd}] = ${emit(derivative(ch.ast, aqd.id, ch.line), resolve, ch.line)};`);
         ch.aqD.push(nd);
         jacobianMoves = true;
@@ -10501,6 +10605,15 @@
     const site = base.rank || null;
     const massless = (s) => !!site && site[s] >= 2;
     const massOf = site ? Float64Array.from(base.massOf, (m, i) => (site[i % ns] >= 2 ? 0 : m)) : base.massOf;
+    /*
+      What a reaction gives a total: each species' rate weighed as it is in
+      the total, and the electron's own as well. Its value, the pe, counts
+      in no total, but a reaction that takes or gives electrons moves the
+      electrons the couples hold, and its rate on the electron -- nothing
+      else moves it, as it neither moves nor is fixed -- is that.
+    */
+    const eSp = base.electron >= 0 ? base.electron : -1;
+    const rateMass = eSp >= 0 ? Float64Array.from(massOf, (m, i) => (i % ns === eSp ? base.massOf[i] : m)) : massOf;
     const start = base.initialState();
     const basis = conservationBasis(eqs, ns, fixed, abundanceOf(start, ns, nc), site);
     const ne = eqs.length;
@@ -10922,7 +11035,7 @@
           for (let k = 0; k < na; k++) {
             if (!U[j][k]) continue;
             const at = b + active[k];
-            rate += U[j][k] * massOf[at] * f[at];
+            rate += U[j][k] * rateMass[at] * f[at];
           }
           out[tIndex(c, j)] = ok ? rate : NaN;
         }
@@ -10953,7 +11066,7 @@
           const v = Vb[k];
           if (v === 0) continue;
           for (let t2 = pRow0[k]; t2 < pRow0[k + 1]; t2++) {
-            const w = pW[t2] * (pMass[t2] >= 0 ? massOf[pMass[t2]] : 1) * v;
+            const w = pW[t2] * (pMass[t2] >= 0 ? rateMass[pMass[t2]] : 1) * v;
             const at = t2 * pWidth;
             if (!heldCol) { V[pSlot[at]] += w; continue; }
             const dTk = sc.dT[kq];

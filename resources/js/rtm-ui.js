@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108j';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108k';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108j';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108k';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108h',
+    'resources/js/rtm-phreeqc.js?v=20261108k',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -3024,6 +3024,19 @@ END
       }
       if (r.solidsSkipped && r.solidsSkipped.length) {
         out.push(`<p class="warn">Not carried from the solid solutions: ${r.solidsSkipped
+          .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
+      }
+      if (r.kinetics) {
+        const k = r.kinetics;
+        out.push(`<p>Kinetics: ${k.reactants.map((x) => `${esc(x.as)} (${pqNum(x.amount)} mol/kgw)`).join(', ')}, each `
+          + 'reacting at the rate its RATES program comes to, written as a rate law in <code>&lt;REACTIONS&gt;</code> '
+          + `below the program${k.phases.length ? `, the phases it reads the saturation of, ${k.phases.map(esc).join(', ')}, `
+            + 'in <code>&lt;PHASES&gt;</code>' : ''}. The run goes as long as PHREEQC\'s steps, ${pqNum(k.tend)} s`
+          + (k.trace ? `, from the water with ${pqNum(k.trace)} mol of the reactants in it, so that what they bring that `
+            + 'it had none of is there to grow' : '') + '.</p>');
+      }
+      if (r.kineticsSkipped && r.kineticsSkipped.length) {
+        out.push(`<p class="warn">Not carried from the kinetics: ${r.kineticsSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
       if (r.electron) {
