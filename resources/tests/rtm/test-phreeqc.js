@@ -2281,11 +2281,11 @@ function againstPitzer(engine) {
   // The page's coefficients at PHREEQC's molalities, and its start on them, on phreeqc.dat with the block.
   const saline = (tc) => `${KNOBS}SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH 7\n Na 3\n K 0.2\n Ca 0.1\n Mg 0.2\n`
     + ' Cl 3.7 charge\n S(6) 0.05\n C(4) 0.02\nEND\n';
-  const handOff = (db, water, label, redox = false) => {
+  const handOff = (db, water, label, redox = false, edit = (t) => t) => {
     engine.load(db.text);
     const res = P.waterToModel({ engine, database: db, water: { name: label, text: water }, activity: true, exact: true,
       redox, floor: 1e-30 });
-    const m = RtmModel.compile(res.text);
+    const m = RtmModel.compile(edit(res.text));
     const ns = m.speciesNames.length;
     const C = new Float64Array(ns);
     for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
@@ -2306,16 +2306,19 @@ function againstPitzer(engine) {
   };
   const own = (opts) => ({ name: 'phreeqc.dat with a PITZER block', text: `${PITZER_OWN(opts)}${dbText}` });
   const cases = [['25 C', '', 25], ['70 C', '', 70], ['no MacInnes, no E-theta', '-MacInnes false\n-use_etheta false\n', 40],
-    ['APHI', '-Aphi\n  0.392 -11 0 0 0.0001\n', 50]].map(([label, opts, tc]) => ({ label, ...handOff(own(opts), saline(tc), label) }));
-  check('  the page\'s coefficients and water at PHREEQC\'s molalities are PHREEQC\'s: every type of parameter, at 25 and '
-    + '70 C, without the MacInnes scaling and E-theta, and with APHI', cases.every((c) => c.gam < 1e-11 && c.aw < 1e-12),
+    ['APHI', '-Aphi\n  0.392 -11 0 0 0.0001\n', 50], ['150 C', '', 150]]
+    .map(([label, opts, tc]) => ({ label, ...handOff(own(opts), saline(tc), label) }));
+  check('  the page\'s coefficients and water at PHREEQC\'s molalities are PHREEQC\'s: every type of parameter, at 25, 70 '
+    + 'and 150 C (on the vapour pressure times a(H2O), A_phi the water\'s own), without the MacInnes scaling and E-theta, '
+    + 'and with APHI', cases.every((c) => c.gam < 1e-13 && c.aw < 1e-13),
   cases.map((c) => `${c.label}: log gamma ${c.gam.toExponential(1)}, ln a(H2O) ${c.aw.toExponential(1)}`).join('; ')
     + `; I = ${cases[0].I.toFixed(2)}`);
-  const pzBody = (t) => t.split('\n<PITZER>\n')[1].split('\n<REACTIONS>')[0].trim().split('\n');
+  // <PITZER>'s lines, to the next section (<VOLUMES> where the water is above one atmosphere, or <REACTIONS>).
+  const pzBody = (t) => t.split('\n<PITZER>\n')[1].split('\n<')[0].trim().split('\n');
   const species = (t) => t.split('<SPECIES>')[1].split('<EQUILIBRIUM>')[0];
   check('  the hand-off: ACTIVITY = pitzer, the database\'s parameters between the species written with their terms in '
     + 'the temperature, MACINNES no, ETHETA no and APHI where the database says so, no a or b, and the page starts on '
-    + 'PHREEQC\'s water', cases.every((c) => /^ACTIVITY = pitzer$/m.test(c.res.text) && c.start < 1e-10
+    + 'PHREEQC\'s water', cases.every((c) => /^ACTIVITY = pitzer$/m.test(c.res.text) && c.start < 1e-12
       && pzBody(c.res.text).filter((l) => !/^(MACINNES|ETHETA|APHI)\b/.test(l)).length === c.res.report.activity.pitzer
       && !/\ba=/.test(species(c.res.text)))
     && /^B0\s+Na\+\s+Cl-\s+0\.08\s+-700\s+-4\s+0\.009\s+-0\.000003$/m.test(cases[0].res.text)
@@ -2323,6 +2326,23 @@ function againstPitzer(engine) {
     && /^APHI  0\.392  -11  0  0  0\.0001$/m.test(cases[3].res.text),
   cases.map((c) => `${c.label}: ${c.res.report.activity.pitzer} parameters, the start within ${c.start.toExponential(1)}`)
     .join('; '));
+
+  /*
+    At 150 C with the PRESSURE the hand-off writes taken out: the page puts
+    the water on the vapour pressure times its own a(H2O), as PHREEQC does
+    an initial solution's, A_phi there, and F of charges 1 and 2 at that
+    pressure, APHI or not (with the pressure left at one atmosphere, F1 and
+    F2 would be 2.5e-3 off in log gamma).
+  */
+  const noP = (t) => t.replace(/^PRESSURE = .*\n/m, '');
+  const hot = [['150 C', '', 150], ['150 C with APHI', '-Aphi\n  0.392 -11 0 0.0005\n', 150]]
+    .map(([label, opts, tc]) => ({ label, ...handOff(own(opts), saline(tc), label, false, noP) }));
+  check('  at 150 C with the PRESSURE PHREEQC\'s water is at left out of the model: the page puts the water on the vapour '
+    + 'pressure times its own a(H2O), A_phi and F of charges 1 and 2 there, with APHI too, and its coefficients and water '
+    + 'are PHREEQC\'s', hot.every((c) => c.gam < 1e-12 && c.aw < 1e-13 && c.start < 1e-11
+      && /^PRESSURE = /m.test(c.res.text) && !/^PRESSURE = /m.test(noP(c.res.text))),
+  hot.map((c) => `${c.label}: log gamma ${c.gam.toExponential(1)}, ln a(H2O) ${c.aw.toExponential(1)}, the start `
+    + `${c.start.toExponential(1)}; PHREEQC at ${/^PRESSURE = (\S+)/m.exec(c.res.text)[1].slice(0, 7)} atm`).join('; '));
 
   // The electron: PHREEQC's Pitzer model holds the pe where the water has it unless its PITZER says -redox.
   const gw = 'SOLUTION 1\n temp 15\n pH 7.4\n pe -3\n units mmol/kgw\n Na 50; K 0.5; Ca 15; Mg 5\n Cl 85 charge\n'
@@ -2369,11 +2389,11 @@ function againstPitzer(engine) {
   const hotBrine = `${KNOBS}SOLUTION 1\n temp 60\n units mol/kgw\n pH 7\n Na 4\n Ca 0.05\n Cl 4.1 charge\n S(6) 0.02\n`
     + ' C(4) 0.001\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.1\n Anhydrite 0 0\nEND\n';
   const noCl = `${KNOBS}SOLUTION 1\n temp 25\n units mol/kgw\n pH 7\n Na 1\n S(6) 0.5 charge\n C(4) 0.001\nEND\n`;
-  const pzCases = [['seawater', seawater], ['a 60 C brine over gypsum', hotBrine], ['no chloride', noCl]]
-    .map(([label, w]) => ({ label, ...handOff(pzdb, w.replace('EQUILIBRIUM_PHASES', 'EQUILIBRIUM_PHASES'), label) }));
-  check('  pitzer.dat: seawater, a 60 C brine over gypsum and a water with no chloride, scaled by the Cl- it would have: '
-    + 'the coefficients at PHREEQC\'s molalities, and the start of the model written from each, PHREEQC\'s',
-  pzCases.every((c) => c.gam < 1e-11 && c.aw < 1e-12 && c.start < 1e-9),
+  const pzCases = [['seawater', seawater], ['a 60 C brine over gypsum', hotBrine], ['no chloride', noCl],
+    ['a 150 C brine', saline(150)]].map(([label, w]) => ({ label, ...handOff(pzdb, w, label) }));
+  check('  pitzer.dat: seawater, a 60 C brine over gypsum, a water with no chloride, scaled by the Cl- it would have, and '
+    + 'a brine at 150 C, on the vapour pressure: the coefficients at PHREEQC\'s molalities, and the start of the model '
+    + 'written from each, PHREEQC\'s', pzCases.every((c) => c.gam < 1e-13 && c.aw < 1e-13 && c.start < 1e-12),
   pzCases.map((c) => `${c.label}: log gamma ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)} `
     + `(${c.res.report.activity.pitzer} parameters)`).join('; '));
 

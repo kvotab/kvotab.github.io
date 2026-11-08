@@ -5854,14 +5854,15 @@ console.log('\n--- Pitzer ---');
     + 'PSI K+ Na+ Cl- -0.002\nPSI Ca+2 Na+ Cl- -0.007\nPSI Cl- SO4-2 Na+ 0.0014\n'
     + 'MU CO2 CO2 Na+ -0.001\nMU CO2 CO2 CO2 0.0005\nETA CO2 Ca+2 Na+ 0.002\nALPHAS Ca+2 SO4-2 1.4 12';
   const heldText = (extra = {}) => `<SETTINGS>\nMODE = ${extra.column ? 'transport\nCELLS = 3\nLENGTH = 0.03\nDIFFUSION = 1' : 'batch'}\n`
-    + `TEND = 1e4\nACTIVITY = pitzer\nEQUILIBRATE = ${extra.pairs ? 'start' : 'always'}\nTEMPERATURE = 25\n\n<SPECIES>\n`
+    + `TEND = 1e4\nACTIVITY = pitzer\nEQUILIBRATE = ${extra.pairs ? 'start' : 'always'}\nTEMPERATURE = ${extra.tc || 25}\n`
+    + `${extra.atm ? `PRESSURE = ${extra.atm}\n` : ''}\n<SPECIES>\n`
     + `H+ 1e-7 ${extra.column ? 'D=1e-9' : ''}\nOH- 1e-7\nNa+ 3\nK+ 0.1\nCl- 3.1\nCa+2 0.1\nSO4-2 0.1\nHSO4- 1e-9\nCO2 1e-3\n`
     + `HCO3- 1e-3\nCO3-2 1e-5\nAnhydrite 0.1 mineral\n${extra.sp || ''}\n<EQUILIBRIUM>\n`
     + `H2O <=> H+ + OH-, logK = -14${extra.pairs ? ', kf = 1e6' : ''}\n`
     + `CO2 + H2O <=> H+ + HCO3-, logK = -6.35${extra.pairs ? ', kf = 1e3' : ''}\n`
     + `HCO3- <=> H+ + CO3-2, logK = -10.33${extra.pairs ? ', kf = 1e3' : ''}\n`
     + `HSO4- <=> H+ + SO4-2, logK = -1.98${extra.pairs ? ', kf = 1e3' : ''}\n`
-    + `${extra.pairs ? '' : 'Anhydrite <=> Ca+2 + SO4-2, logK = -4.36\n'}${extra.rel || ''}\n<PITZER>\n${all}\n\n`
+    + `${extra.pairs ? '' : 'Anhydrite <=> Ca+2 + SO4-2, logK = -4.36\n'}${extra.rel || ''}\n<PITZER>\n${extra.pz || ''}${all}\n\n`
     + '<REACTIONS>\n=> Na+ + Cl-, k = 2e-4\n=> CO2, k = 1e-7\n';
   const jac = (label, extra) => {
     const out = { label, bad: 0, checked: 0, events: 0 };
@@ -5879,6 +5880,85 @@ console.log('\n--- Pitzer ---');
   check('  the Jacobian of a water with every kind of parameter, held, as fast pairs, in a column and with an exchanger, '
     + 'against differences', jacs.every((j) => j.bad === 0),
   jacs.map((j) => `${j.label} ${j.bad} of ${j.checked}`).join('; '));
+
+  /*
+    5b. Hot. At 150 C, on the vapour pressure times a(H2O), A_phi is the
+    water's own a(H2O)'s, the a(H2O) the osmotic coefficient gives with
+    that A_phi (PHREEQC works A_phi out afresh at every iteration), and F of
+    a charge of 1 or 2 reads the pressure the water is at there. NaCl alone
+    by hand at that A_phi and pressure; then the derivatives the Jacobians
+    read, against differences, which without A_phi's and the pressure's
+    part in ln a(H2O) are a percent off at 150 C and half at 250 C.
+  */
+  const salt = pzModel('TEMPERATURE = 150', 'Na+ 3\nCl- 3', `B0 Na+ Cl- ${b0}\nB1 Na+ Cl- ${b1}\nC0 Na+ Cl- ${cphi}`);
+  const hotSalt = coefficients(salt, salt.initialState());
+  const wSalt = RtmModel.debyeHuckelAB(150, 1, Math.exp(hotSalt.w.lnAw));
+  const sh = Math.sqrt(3);
+  const B1h = 1.2 - (7e-5 + 1.93e-9 * (423.15 - 250) ** 2) * wSalt.atm;
+  const fh = -wSalt.A0 * (sh / (1 + B1h * sh) + (2 / B1h) * Math.log(1 + B1h * sh));
+  const lngh = fh + 3 * (2 * b0 + ((2 * b1) / 12) * (1 - (1 + 2 * sh - 6) * Math.exp(-2 * sh))) + 1.5 * 9 * cphi;
+  const phih = 1 - (wSalt.A0 * sh) / (1 + 1.2 * sh) + 3 * (b0 + b1 * Math.exp(-2 * sh)) + 9 * cphi;
+  const dSaltG = Math.abs((hotSalt.at('Na+') + hotSalt.at('Cl-')) / 2 - lngh);
+  const dSaltW = Math.abs(hotSalt.w.lnAw + (6 * phih) / 55.50837);
+  const A0pure = RtmModel.debyeHuckelAB(150).A0;
+  check('  at 150 C, on the vapour pressure times a(H2O): A_phi is the water\'s own a(H2O)\'s, the one the osmotic '
+    + 'coefficient gives with it, and F of a charge of 1 is at the pressure the water is at there',
+  dSaltG < 1e-14 && dSaltW < 1e-14 && wSalt.atm > 1 && Math.abs(wSalt.A0 - A0pure) > 1e-6,
+  `3 mol/kg NaCl: ln gamma+- within ${dSaltG.toExponential(1)}, ln a(H2O) within ${dSaltW.toExponential(1)}; A_phi `
+    + `${wSalt.A0.toPrecision(10)} at a(H2O) = ${Math.exp(hotSalt.w.lnAw).toFixed(5)} (${A0pure.toPrecision(10)} at 1), `
+    + `${wSalt.atm.toFixed(4)} atm`);
+  const derivs = [['150 C, on the vapour pressure', 'TEMPERATURE = 150', ''],
+    ['150 C at 10 atm', 'TEMPERATURE = 150\nPRESSURE = 10', ''], ['150 C with APHI', 'TEMPERATURE = 150', 'APHI 0.392 -11 0 0.0005\n'],
+    ['250 C', 'TEMPERATURE = 250', '']].map(([label, settings, more]) => {
+    const m = pzModel(settings, 'H+ 1e-7\nOH- 1e-7\nNa+ 3\nK+ 0.1\nCl- 3.1\nCa+2 0.1\nSO4-2 0.1\nCO2 1e-3\nHCO3- 1e-3\n'
+      + 'CO3-2 1e-5', `${more}${all}`);
+    const act = m.act;
+    const ns = m.speciesNames.length;
+    const C = Float64Array.from(m.initialState());
+    const dG = new Float64Array(ns);
+    const w = RtmModel.activityAt(act, C, 0, new Float64Array(ns), dG, 0);
+    const dAwv = Float64Array.from(w.dAwv);
+    const dGw = w.dGw ? Float64Array.from(w.dGw) : new Float64Array(ns);
+    const { n, sysOf } = act.pz;
+    const D = Float64Array.from(act.pz.D);
+    const diff = (k, h) => {
+      const up = Float64Array.from(C);
+      const dn = Float64Array.from(C);
+      up[k] += h;
+      dn[k] -= h;
+      const g1 = new Float64Array(ns);
+      const g2 = new Float64Array(ns);
+      const w1 = RtmModel.activityAt(act, up, 0, g1, new Float64Array(ns), 0);
+      const w2 = RtmModel.activityAt(act, dn, 0, g2, new Float64Array(ns), 0);
+      return { g: g1.map((v, i) => (v - g2[i]) / (2 * h)), w: (w1.lnAw - w2.lnAw) / (2 * h) };
+    };
+    let worst = 0;
+    let without = 0;
+    for (let k = 0; k < ns; k++) {
+      if (!(C[k] >= 1e-4)) continue;
+      // Central differences at h and 2h, extrapolated (Richardson).
+      const a = diff(k, 2e-3 * C[k]);
+      const b = diff(k, 1e-3 * C[k]);
+      worst = Math.max(worst, Math.abs((4 * b.w - a.w) / 3 - dAwv[k]) / Math.abs(dAwv[k]));
+      for (let s = 0; s < ns; s++) {
+        const fixed = dG[s] * 0.5 * act.z[k] * act.z[k] + D[sysOf[s] * n + sysOf[k]];
+        const an = fixed + dGw[s] * dAwv[k];
+        const fd = (4 * b.g[s] - a.g[s]) / 3;
+        worst = Math.max(worst, Math.abs(fd - an) / Math.max(Math.abs(an), 1e-3));
+        without = Math.max(without, Math.abs(fd - fixed) / Math.max(Math.abs(fixed), 1e-3));
+      }
+    }
+    return { label, worst, without, dGw: Math.max(...Array.from(dGw, Math.abs)) };
+  });
+  check('  the derivatives the Jacobians read, in I, in each species, and through A_phi and the pressure in ln a(H2O), '
+    + 'and ln a(H2O)\'s own, against differences: on the vapour pressure and above it, with APHI, at 150 and 250 C',
+  derivs.every((d) => d.worst < 1e-6 && d.dGw > 0),
+  derivs.map((d) => `${d.label} ${d.worst.toExponential(1)} (${d.without.toExponential(1)} without A_phi's and the `
+    + 'pressure\'s part)').join('; '));
+  const hotJacs = [jac('held', { tc: 150 }), jac('with APHI', { tc: 150, pz: 'APHI 0.392 -11 0 0.0005\n' }),
+    jac('at 10 atm', { tc: 150, atm: 10 })];
+  check('  and the Jacobian of the held water at 150 C, on the vapour pressure, with APHI, and at 10 atm, against '
+    + 'differences', hotJacs.every((j) => j.bad === 0), hotJacs.map((j) => `${j.label} ${j.bad} of ${j.checked}`).join('; '));
 
   // 6. What it refuses.
   const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };

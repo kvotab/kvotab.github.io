@@ -1263,9 +1263,14 @@ LAMBDA CO2   Na+    0.1</pre>
             <em>T</em>²&nbsp;−&nbsp;<em>T</em><sub>r</sub>² and 1/<em>T</em>²&nbsp;−&nbsp;1/<em>T</em><sub>r</sub>²,
             and at each cell's. A<sub>φ</sub> is the water's, as PHREEQC works it out from the dielectric
             constant and the density of water at the cell's temperature, the density at the vapour
-            pressure times <em>a</em>(H<sub>2</sub>O), Raoult's law, as PHREEQC takes it; or
-            <code>APHI</code>'s, with its terms, where given. Above one atmosphere the Debye–Hückel term of
-            ions of charge 1 and 2 takes PHREEQC's pressure corrections. Two of PHREEQC's rules are
+            pressure times <em>a</em>(H<sub>2</sub>O), Raoult's law, as PHREEQC takes it. PHREEQC works
+            it out afresh at every step of its solution, so A<sub>φ</sub> is that of the water's own
+            <em>a</em>(H<sub>2</sub>O), the one the osmotic coefficient gives with that A<sub>φ</sub>,
+            and so is the page's. <code>APHI</code>, where given, is A<sub>φ</sub> with its terms
+            whatever the water. Above one atmosphere the Debye–Hückel term of ions of charge 1 and 2
+            takes PHREEQC's pressure corrections, at the pressure the water is at: above 100&nbsp;°C its
+            vapour pressure times <em>a</em>(H<sub>2</sub>O) where that is the higher, with
+            <code>APHI</code> too. Two of PHREEQC's rules are
             kept too: nothing below 10<sup>−40</sup> mol/kg counts, and a term of three species is left
             out where the third is at 10<sup>−25</sup> or less.</p>
           <p>A species takes no <code>a=</code> or <code>b=</code> under Pitzer, and one on an exchanger
@@ -1273,8 +1278,9 @@ LAMBDA CO2   Na+    0.1</pre>
             of <code>&lt;SPECIES&gt;</code> of the charges its type names, and is given once, either way
             round. Every coefficient reads every solute of its cell, so a cell is speciated whole, in all
             its species, where SIT's can be speciated in its components; the Jacobian has every solute of
-            the cell in each relation's row. It leaves out the part of A<sub>φ</sub> that goes with
-            <em>a</em>(H<sub>2</sub>O), a part in 10<sup>5</sup> of a coefficient's derivative at most.</p>
+            the cell in each relation's row, and the part of A<sub>φ</sub> and of the water's pressure
+            that goes with <em>a</em>(H<sub>2</sub>O), a percent of a coefficient's derivative at
+            150&nbsp;°C on the vapour pressure.</p>
 
           <h4 id="help-llnl">LLNL</h4>
           <pre>ACTIVITY = llnl
@@ -2207,12 +2213,16 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             3×10<sup>−10</sup> in log of the one PHREEQC finds the water holds the pure member at.</p>
           <p>And Pitzer. On <code>phreeqc.dat</code> with Pitzer parameters of every type in front of it,
             with terms in the temperature, the page's coefficients and water activity at PHREEQC's molalities
-            are PHREEQC's at an ionic strength of 4 to 5×10<sup>−13</sup> in log&nbsp;γ and
-            10<sup>−14</sup> in ln&nbsp;<em>a</em>(H<sub>2</sub>O), at 25 and 70&nbsp;°C, with the MacInnes
-            scaling and E-theta off, and with <code>APHI</code>; and the model written from the water starts
-            on PHREEQC's to 2×10<sup>−12</sup>. On PHREEQC's <code>pitzer.dat</code>, seawater's coefficients
-            are PHREEQC's to 6×10<sup>−16</sup> and a 60&nbsp;°C brine's to 2×10<sup>−13</sup>, and the models
-            written from them start on PHREEQC's waters to 3×10<sup>−13</sup>, one with no chloride among them.
+            are PHREEQC's at an ionic strength of 4 to 4×10<sup>−15</sup> in log&nbsp;γ and
+            9×10<sup>−15</sup> in ln&nbsp;<em>a</em>(H<sub>2</sub>O), at 25, 70 and 150&nbsp;°C, with the
+            MacInnes scaling and E-theta off, and with <code>APHI</code>; and the model written from the water
+            starts on PHREEQC's to 3×10<sup>−14</sup>. At 150&nbsp;°C the water is on its vapour pressure
+            times <em>a</em>(H<sub>2</sub>O), and a model written from it without its <code>PRESSURE</code>
+            puts it there itself, its coefficients PHREEQC's to 2×10<sup>−15</sup>, and with
+            <code>APHI</code> to 7×10<sup>−14</sup>. On PHREEQC's <code>pitzer.dat</code>, the coefficients
+            of seawater, a 60&nbsp;°C brine and a 150&nbsp;°C one are PHREEQC's to 8×10<sup>−15</sup>, and the
+            models written from them start on PHREEQC's waters to 3×10<sup>−14</sup>, one with no chloride
+            among them.
             NaCl added to a water over anhydrite up to 7&nbsp;mol/kgw follows PHREEQC's
             <code>REACTION</code> to 1.7×10<sup>−7</sup> in calcium and 1.3×10<sup>−8</sup>&nbsp;mol in the
             minerals, the anhydrite's solubility rising and falling as Pitzer's equations have it, and halite
@@ -2220,7 +2230,7 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             NaCl, through a column of fresh water over calcite: the effluent within 0.013 of
             <code>TRANSPORT</code>'s in pH and 4&nbsp;µmol/kgw in calcium where the front passes, and within
             2.4×10<sup>−5</sup> in pH where it settles; PHREEQC takes 2.2 seconds and this page 1.7. The
-            PHREEQC tab finds the model's own coefficients within 6×10<sup>−14</sup> of PHREEQC's as 1&nbsp;mol/kgw
+            PHREEQC tab finds the model's own coefficients within 5×10<sup>−14</sup> of PHREEQC's as 1&nbsp;mol/kgw
             of salt goes into a 3&nbsp;mol/kgw brine, PHREEQC's moving 0.25 in log K.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
@@ -2370,7 +2380,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108i"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108j"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2378,6 +2388,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108i"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108j"></script>
 </body>
 </html>

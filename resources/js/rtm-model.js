@@ -1729,8 +1729,8 @@
    * as PHREEQC's patm_x is with a gas phase: its density then at that or
    * the vapour pressure times a(H2O), whichever is higher, its dielectric
    * constant at that pressure (calc_rho_0, calc_dielectrics). With `out`,
-   * the result goes into it, the same object each time (sitAt's, called
-   * at every evaluation).
+   * the result goes into it, the same object each time (sitAt's and
+   * pitzerAt's, called at every evaluation).
    */
   function waterAt(w, aw, gasAtm, out) {
     // One atmosphere, or the pressure given, or the vapour pressure (times a(H2O)) where that is higher.
@@ -1752,11 +1752,15 @@
     */
     let dlnRho = 0;
     let dlnEps = 0;
+    let dAtm = 0;
     if (aw <= 1) {
       if (atmRho > pSat) {
         dlnRho = (-pSat * (w.p0 + pa * (2 * w.p1 + pa * (3 * w.p2 + spa * 3.5 * w.p3)))) / 1e3 / rho;
       }
-      if (gasAtm === undefined && atm === pSat && pSat > w.atmGiven) dlnEps = (w.c * 1.01325 * pSat) / (w.b + atm * 1.01325) / eps;
+      if (gasAtm === undefined && atm === pSat && pSat > w.atmGiven) {
+        dlnEps = (w.c * 1.01325 * pSat) / (w.b + atm * 1.01325) / eps;
+        dAtm = atm;
+      }
     }
     // A0: Pitzer's A_phi, PHREEQC's DH_B e2_DkT/6; atm the pressure the water is then at.
     const r = out || {};
@@ -1773,6 +1777,8 @@
     r.dlnB = 0.5 * dlnRho - 0.5 * dlnEps;
     r.dlnRho = dlnRho;
     r.pSat = pSat;
+    // d atm/d ln a(H2O): on the vapour pressure, the pressure itself.
+    r.dAtm = dAtm;
     return r;
   }
 
@@ -2236,9 +2242,10 @@
       Where the water can be above 100 C, A and B's derivative in ln a(H2O),
       species by species, for the Jacobian (coefficientsAt): the water is
       then on its vapour pressure, or the density goes with it, enough to see.
-      Under SIT at any temperature, as the water already reads every solute.
+      Under SIT and Pitzer at any temperature, as the water already reads
+      every solute; under Pitzer A_phi's and the pressure's (pitzerAt).
     */
-    const hot = !isPz && !llnl && (isSit || !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6));
+    const hot = !llnl && (isSit || isPz || !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6));
     return { kind: settings.ACTIVITY, temperature: tc, A, B, wt, wtc: null, ns, z, zg: Float64Array.from(z), form, a, b,
       dGw: hot ? new Float64Array(ns) : null,
       solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz,
@@ -2811,7 +2818,9 @@
       // Scratch: molalities, ln gamma, d ln gamma/dI, d ln gamma_i/d m_k at fixed I (D, n x n), and the sums' gradients.
       M: new Float64Array(N), LG: new Float64Array(N), LI: new Float64Array(N), D: new Float64Array(N * N),
       dF: new Float64Array(N), dCS: new Float64Array(N), zc: new Float64Array(N), dOS: new Float64Array(N),
-      row: new Float64Array(N), J: new Float64Array(4), stamp: 0,
+      row: new Float64Array(N), J: new Float64Array(5), stamp: 0,
+      // ln gamma's derivatives in A_phi (times A_phi) and in the pressure, for its derivative in ln a(H2O); waterAt's out.
+      LA: new Float64Array(N), LP: new Float64Array(N), osA: 0, ws: {},
       d: new Float64Array(ns), dAwv: new Float64Array(ns),
     };
   }
@@ -2909,9 +2918,14 @@
   const pzJjk = new Float64Array(4);
   const pzJjj = new Float64Array(4);
   const pzJkk = new Float64Array(4);
-  /** E-theta of charges zj and zk at I, and its first and second derivatives in I, into out[0..2]. */
+  /**
+   * E-theta of charges zj and zk at I, and its first and second derivatives
+   * in I, into out[0..2]; and A_phi times E-theta's and E-theta''s
+   * derivatives in A_phi into out[3] and out[4], x going as A_phi as it goes
+   * as sqrt(I).
+   */
   function pzEtheta(ZJ, ZK, I, A0, out) {
-    out[0] = 0; out[1] = 0; out[2] = 0;
+    out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 0; out[4] = 0;
     if (ZJ === ZK) return;
     const XCON = 6.0 * A0 * Math.sqrt(I);
     const ZZ = ZJ * ZK;
@@ -2930,6 +2944,9 @@
     out[0] = et;
     out[1] = etp;
     out[2] = (ZZ * dL) / (8 * I * I) - (ZZ * L) / (4 * I * I * I) - etp / I + et / (I * I);
+    // In A_phi: each J(x) by x J'(x), and L by its derivative in I times 2I.
+    out[3] = (ZZ * L) / (4.0 * I);
+    out[4] = (ZZ * dL) / (4 * I) - (ZZ * L) / (4 * I * I);
   }
 
   /** PHREEQC's G and GP of Pitzer's B and B' (pitzer.cpp), and their derivatives in y. */
@@ -2944,12 +2961,15 @@
 
   /**
    * PHREEQC's OSMOT alone (pitzer()), the sum the osmotic coefficient is 1 +
-   * 2/sum m of: the first pass of pitzerAt, for the water's activity.
+   * 2/sum m of: the first pass of pitzerAt, for the water's activity. A_phi
+   * times OSMOT's derivative in it, its Debye-Hueckel term's and E-theta's,
+   * into pz.osA.
    */
   function pitzerOsmotic(pz, val, M, I, BIGZ, A0) {
     const { z, params } = pz;
     const DI = Math.sqrt(I);
     let OSMOT = (-A0 * Math.pow(I, 1.5)) / (1.0 + 1.2 * DI);
+    let osA = OSMOT;
     const present3 = (q) => M[q] > 1e-25 || (pz.icon && q === pz.cl);
     for (let j = 0; j < params.length; j++) {
       const p = params[j];
@@ -2974,7 +2994,9 @@
     for (const [i0, i1] of pz.ethetaPairs) {
       pzEtheta(z[i0], z[i1], I, A0, et);
       OSMOT += M[i0] * M[i1] * (et[0] + I * et[1]);
+      osA += M[i0] * M[i1] * (et[3] + I * et[4]);
     }
+    pz.osA = osA;
     return OSMOT;
   }
 
@@ -2992,57 +3014,105 @@
    * excepted under the MacInnes scaling; B = 1.2, with PHREEQC's pressure
    * corrections of F for ions of charge 1 and 2 above one atmosphere; ln
    * gamma of every ion moved by its charge times ln gamma(Cl-) less that of
-   * KCl at the ionic strength, the MacInnes scaling. And A_phi, which
-   * PHREEQC works out from the density of water at the vapour pressure times
-   * a(H2O) (calc_rho_0, every iteration): a first pass gives a(H2O) at the
-   * pure water's A_phi, and the second is made at that a(H2O)'s, which is
-   * then the same to 1e-14. (A_phi's part in the derivatives through a(H2O),
-   * a part in 1e-5 of them at most, is left out.) APHI, where given, is
-   * PHREEQC's A_phi whatever the water.
+   * KCl at the ionic strength, the MacInnes scaling.
+   *
+   * And A_phi, which PHREEQC works out afresh at every iteration from the
+   * water at the vapour pressure times the a(H2O) it has (k_temp, with
+   * calc_rho_0 and calc_dielectrics), so that where it settles A_phi is the
+   * one of the water's own a(H2O), the a(H2O) OSMOT gives with that A_phi.
+   * OSMOT goes with A_phi as its Debye-Hueckel term and E-theta do, A_phi
+   * with ln a(H2O) as waterAt has it; from a first pass at the pure water's
+   * A_phi, one Newton step on that line reaches it to round-off, and where
+   * the step crosses one of A_phi's corners it is taken afresh until it
+   * settles. The corrections of F for charges 1 and 2 above one atmosphere
+   * read the pressure the water is at there, the vapour pressure times
+   * a(H2O) where that is the higher (PHREEQC's patm_x). Both go into the
+   * derivatives: each ln gamma's in ln a(H2O) into dGw, and A_phi's part in
+   * a(H2O)'s own gradient into dAwv. APHI, where given, is PHREEQC's A_phi
+   * whatever the water, and the pressure still the water's.
    */
   function pitzerAt(act, C, off, I, low, osum, lnG, dG, cell) {
     const ns = act.ns;
     const pz = act.pz;
     const n = pz.n;
-    const { M, LG, LI, D, dF, dCS, zc, dOS, z, modelOf, params } = pz;
+    const { M, LG, LI, D, dF, dCS, zc, dOS, LA, LP, z, modelOf, params } = pz;
     const val = pz.valc ? pz.valc.subarray(cell * pz.np, (cell + 1) * pz.np) : pz.val;
     const TK = pz.tkc ? pz.tkc[cell] : pz.tk;
     for (let q = 0; q < n; q++) {
       const s = modelOf[q];
       const c = s >= 0 ? C[off + s] : 0;
       M[q] = c < 1e-40 ? 0 : c;
-      LG[q] = 0; LI[q] = 0; dF[q] = 0; dCS[q] = 0; zc[q] = 0; dOS[q] = 0;
+      LG[q] = 0; LI[q] = 0; dF[q] = 0; dCS[q] = 0; zc[q] = 0; dOS[q] = 0; LA[q] = 0; LP[q] = 0;
     }
     D.fill(0);
     let BIGZ = 0;
     for (let q = 0; q < n; q++) BIGZ += M[q] * Math.abs(z[q]);
     let A0 = pz.A0c ? pz.A0c[cell] : pz.A0;
+    const wt = act.wtc ? act.wtc[cell] : act.wt;
     let patm = pz.patm;
-    if (!pz.aphi) {
-      const os1 = pitzerOsmotic(pz, val, M, I, BIGZ, A0);
-      const lnAw1 = osum > 0 ? (-osum * (1.0 + (2.0 * os1) / osum)) / PZ_WATER : (-2.0 * os1) / PZ_WATER;
-      const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, Math.exp(lnAw1));
-      A0 = w.A0;
-      patm = w.atm;
+    // d ln A_phi/d ln a(H2O), and d patm/d ln a(H2O).
+    let dlnA0 = 0;
+    let dAtm = 0;
+    if (wt && (!pz.aphi || wt.pSat > wt.atmGiven)) {
+      // ln a(H2O) = -(sum m + 2 OSMOT)/55.50837, OSMOT = os1 + osA (A_phi/A1 - 1) on the line through the first pass.
+      const A1 = A0;
+      const os1 = pitzerOsmotic(pz, val, M, I, BIGZ, A1);
+      const L0 = -(osum + 2.0 * os1) / PZ_WATER;
+      const ws = waterAt(wt, Math.exp(L0), undefined, pz.ws);
+      if (!pz.aphi) {
+        const c = (2.0 * pz.osA) / PZ_WATER;
+        const r0 = ws.A0 / A1;
+        let L = L0 - (c * (r0 - 1)) / (1 + c * r0 * ws.dlnA);
+        if (waterSide(wt, L) !== waterSide(wt, L0)) {
+          for (let it = 0; it < 8; it++) {
+            const next = L0 - c * (waterAt(wt, Math.exp(L), undefined, ws).A0 / A1 - 1);
+            const step = Math.abs(next - L);
+            L = next;
+            if (step <= 1e-16 * Math.max(1, Math.abs(L))) break;
+          }
+        }
+        waterAt(wt, Math.exp(L), undefined, ws);
+        A0 = ws.A0;
+        dlnA0 = ws.dlnA;
+      }
+      patm = ws.atm;
+      dAtm = ws.dAtm;
     }
     const DI = Math.sqrt(I);
     const B = 1.2;
     // F, and F1 and F2 for ions of charge 1 and 2 above one atmosphere, with their derivatives in I.
     const fDH = (b) => -A0 * (DI / (1.0 + b * DI) + (2.0 * Math.log(1.0 + b * DI)) / b);
     const fDHI = (b) => (-A0 * (3 + 2 * b * DI)) / (2 * DI * (1 + b * DI) * (1 + b * DI));
+    const fDHb = (b) => {
+      const u = 1.0 + b * DI;
+      return -A0 * (-(DI * DI) / (u * u) + (2.0 * DI) / (b * u) - (2.0 * Math.log(u)) / (b * b));
+    };
     let F = fDH(B);
     let F1 = F;
     let F2 = F;
     let FI = fDHI(B);
     let F1I = FI;
     let F2I = FI;
+    // A_phi times their derivatives in it (the Debye-Hueckel terms' are themselves), and F1's and F2's in the pressure.
+    let FA = F;
+    let F1A = F;
+    let F2A = F;
+    let F1P = 0;
+    let F2P = 0;
     if (patm > 1.0) {
-      let pap = (7e-5 + 1.93e-9 * Math.pow(TK - 250.0, 2.0)) * patm;
+      const k1 = 7e-5 + 1.93e-9 * Math.pow(TK - 250.0, 2.0);
+      let pap = k1 * patm;
       const B1 = B - (pap > 0.2 ? 0.2 : pap);
-      if (TK > 263.0) pap = 9.65e-10 * Math.pow(TK - 263.0, 2.773) * Math.pow(patm, 0.623);
+      const dB1 = pap > 0.2 ? 0 : -k1;
+      let dpap = k1;
+      if (TK > 263.0) {
+        pap = 9.65e-10 * Math.pow(TK - 263.0, 2.773) * Math.pow(patm, 0.623);
+        dpap = (0.623 * pap) / patm;
+      }
       const B2 = B - (pap > 0.2 ? 0.2 : pap);
-      if (B1 !== 0) { F1 = fDH(B1); F1I = fDHI(B1); }
-      if (B2 !== 0) { F2 = fDH(B2); F2I = fDHI(B2); }
+      const dB2 = pap > 0.2 ? 0 : -dpap;
+      if (B1 !== 0) { F1 = fDH(B1); F1I = fDHI(B1); F1A = F1; F1P = fDHb(B1) * dB1; }
+      if (B2 !== 0) { F2 = fDH(B2); F2I = fDHI(B2); F2A = F2; F2P = fDHb(B2) * dB2; }
     }
     // ln gamma of KCl at I, the MacInnes scaling's reference, and its derivative.
     let XXX = 2.0 * DI;
@@ -3051,6 +3121,8 @@
     const XXXy = ((2 * y - (y * y) / 2) * Math.exp(-y)) / (y * y) - (2 * XXX) / y;
     let GAMCLM = F1;
     let GAMCLMI = F1I;
+    const GAMCLMA = F1A;
+    const GAMCLMP = F1P;
     const { mc } = pz;
     if (mc.b0 >= 0) { GAMCLM += I * 2.0 * val[mc.b0]; GAMCLMI += 2.0 * val[mc.b0]; }
     if (mc.b1 >= 0) {
@@ -3061,6 +3133,7 @@
     let CSUM = 0;
     let OSMOT = (-A0 * Math.pow(I, 1.5)) / (1.0 + B * DI);
     let OSI = -A0 * ((1.5 * DI) / (1 + B * DI) - (B * I) / (2 * (1 + B * DI) * (1 + B * DI)));
+    let osA = OSMOT;
     let osZ = 0;
     const present3 = (q) => M[q] > 1e-25 || (pz.icon && q === pz.cl);
     const Dat = (i, k, v) => { D[i * n + k] += v; };
@@ -3170,14 +3243,19 @@
         F += Fvar; F1 += Fvar; F2 += Fvar;
         const FvarI = M0 * M1 * et[2];
         FI += FvarI; F1I += FvarI; F2I += FvarI;
+        const FvarA = M0 * M1 * et[4];
+        FA += FvarA; F1A += FvarA; F2A += FvarA;
         dF[i0] += M1 * et[1]; dF[i1] += M0 * et[1];
         LG[i0] += 2.0 * M1 * et[0];
         LG[i1] += 2.0 * M0 * et[0];
+        LA[i0] += 2.0 * M1 * et[3];
+        LA[i1] += 2.0 * M0 * et[3];
         LI[i0] += 2.0 * M1 * et[1];
         LI[i1] += 2.0 * M0 * et[1];
         Dat(i0, i1, 2.0 * et[0]); Dat(i1, i0, 2.0 * et[0]);
         OSMOT += M0 * M1 * (et[0] + I * et[1]);
         OSI += M0 * M1 * (2 * et[1] + I * et[2]);
+        osA += M0 * M1 * (et[3] + I * et[4]);
         dOS[i0] += M1 * (et[0] + I * et[1]); dOS[i1] += M0 * (et[0] + I * et[1]);
       }
     }
@@ -3190,6 +3268,8 @@
         const FvI = z0 === 1 ? F1I : z0 === 2.0 ? F2I : FI;
         LG[q] += z0 * z0 * Fv + z0 * CSUM;
         LI[q] += z0 * z0 * FvI;
+        LA[q] += z0 * z0 * (z0 === 1 ? F1A : z0 === 2.0 ? F2A : FA);
+        LP[q] += z0 * z0 * (z0 === 1 ? F1P : z0 === 2.0 ? F2P : 0);
         const z2 = z0 * z0;
         const at = q * n;
         for (let k = 0; k < n; k++) D[at + k] += z2 * dF[k] + z0 * dCS[k];
@@ -3204,6 +3284,8 @@
       const cl = pz.cl;
       const PHIMAC = LG[cl] - GAMCLM;
       const PHII = LI[cl] - GAMCLMI;
+      const PHIA = LA[cl] - GAMCLMA;
+      const PHIP = LP[cl] - GAMCLMP;
       const row = pz.row;
       for (let k = 0; k < n; k++) row[k] = D[cl * n + k];
       for (let q = 0; q < n; q++) {
@@ -3211,33 +3293,49 @@
         if (!zq) continue;
         LG[q] += zq * PHIMAC;
         LI[q] += zq * PHII;
+        LA[q] += zq * PHIA;
+        LP[q] += zq * PHIP;
         const at = q * n;
         for (let k = 0; k < n; k++) D[at + k] += zq * row[k];
       }
     }
-    // The species of the model.
+    // The species of the model, and how each ln gamma goes with ln a(H2O): through A_phi and the pressure.
+    const dGw = act.dGw;
     for (let s = 0; s < ns; s++) {
-      if (act.form[s] !== 6) { lnG[s] = 0; dG[s] = 0; continue; }
+      if (act.form[s] !== 6) { lnG[s] = 0; dG[s] = 0; if (dGw) dGw[s] = 0; continue; }
       const q = pz.sysOf[s];
       lnG[s] = LG[q];
       dG[s] = low ? 0 : LI[q];
+      if (dGw) dGw[s] = LA[q] * dlnA0 + LP[q] * dAtm;
     }
     const ex = act.ex;
-    if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
+    if (ex) {
+      for (const s of ex.list) {
+        if (act.form[s] !== 5) continue;
+        lnG[s] = lnG[ex.ion[s]];
+        dG[s] = dG[ex.ion[s]];
+        if (dGw) dGw[s] = dGw[ex.ion[s]];
+      }
+    }
     onSites(act, lnG, dG, cell);
     if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, cell);
-    // The water: ln a = -(sum m) COSMOT/55.50837, COSMOT = 1 + 2 OSMOT/sum m, and its gradient.
+    /*
+      The water: ln a = -(sum m) COSMOT/55.50837, COSMOT = 1 + 2 OSMOT/sum m,
+      and its gradient, OSMOT's at A_phi as it is, over 1 + 2 A_phi
+      dOSMOT/dA_phi dln A_phi/dln a(H2O)/55.50837 for A_phi going with it.
+    */
     for (let k = 0; k < n; k++) dOS[k] += osZ * Math.abs(z[k]);
     const dAwv = pz.dAwv;
     const osIe = low ? 0 : OSI;
+    const fix = PZ_WATER + 2.0 * osA * dlnA0;
     for (let s = 0; s < ns; s++) {
       if (!act.solute[s]) { dAwv[s] = 0; continue; }
       const q = pz.sysOf[s];
-      dAwv[s] = -(1 + 2 * (dOS[q] + osIe * 0.5 * z[q] * z[q])) / PZ_WATER;
+      dAwv[s] = -(1 + 2 * (dOS[q] + osIe * 0.5 * z[q] * z[q])) / fix;
     }
     const lnAw = osum > 0 ? (-osum * (1.0 + (2.0 * OSMOT) / osum)) / PZ_WATER : (-2.0 * OSMOT) / PZ_WATER;
     pz.stamp++;
-    return { I, lnAw, dAw: 0, dAwv, pz: pz.stamp };
+    return { I, lnAw, dAw: 0, dAwv, dGw, pz: pz.stamp };
   }
 
   /**
