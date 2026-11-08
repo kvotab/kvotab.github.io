@@ -601,14 +601,14 @@ function withPhreeqc(engine) {
   check('the database\'s -gamma is read: Ca+2 a = 5, b = 0.165; Na+ 4.08 and 0.082',
     dbRead.gamma.get('Ca+2').a === 5 && dbRead.gamma.get('Ca+2').b === 0.165 && dbRead.gamma.get('Na+').a === 4.08
       && dbRead.gamma.get('Na+').b === 0.082 && dbRead.model === null);
-  let pitzer = '';
+  let llnl = '';
   try {
     // Before the database: PHREEQC reads one to its first END, and so does the page.
-    P.waterToModel({ engine, database: { name: 'pz', text: `PITZER\n-B0\n Na+ Cl- 0.0765\n${dbText}` }, water,
-      activity: true });
-  } catch (e) { pitzer = e.message; }
-  check('... and a database with the Pitzer model is not followed, and says so', /Pitzer activity model/.test(pitzer),
-    pitzer.slice(0, 90));
+    P.waterToModel({ engine, database: { name: 'llnl', text: `LLNL_AQUEOUS_MODEL_PARAMETERS\n-temperatures\n 0 25\n${dbText}` },
+      water, activity: true });
+  } catch (e) { llnl = e.message; }
+  check('... and a database with LLNL\'s activity model is not followed, and says so', /LLNL activity model/.test(llnl),
+    llnl.slice(0, 90));
   const fol = P.waterToModel({ engine, database, water, activity: true, exact: true, redox: false });
   const mf = RtmModel.compile(fol.text);
   const backF = new Map([...fol.names].map(([k, v]) => [v, k]));
@@ -2113,6 +2113,232 @@ function againstSolidSolutions(engine) {
   vs ? `within ${Math.abs(vs.gap).toExponential(1)} in log over ${vs.compared} activities (${vs.worst})` : 'no comparison');
 }
 
+/* ======================================================================
+   Pitzer: PHREEQC's PITZER
+
+   Always on phreeqc.dat with a PITZER block of the tests' own in front of
+   it, round numbers, every type of parameter and terms in the temperature;
+   and on PHREEQC's own pitzer.dat where it is on this machine
+   (~/.cache/kvotab-phreeqc/obj/database/pitzer.dat from the PHREEQC build,
+   or RTM_PITZER_DAT), skipped otherwise: no Pitzer database comes with the
+   page. The page's coefficients and water at PHREEQC's molalities, the
+   hand-off and its start, the electron PHREEQC's Pitzer model holds, the
+   PHREEQC tab; and on pitzer.dat seawater, a hot brine over gypsum, NaCl
+   added to a water over anhydrite until halite forms, against REACTION,
+   and brine through a column, against TRANSPORT.
+   ====================================================================== */
+const PITZER_OWN = (opts = '') => `PITZER
+-B0
+  Na+    Cl-     0.08  -700  -4  0.009  -3e-6
+  K+     Cl-     0.05  0  0  5e-4
+  Ca+2   Cl-     0.3   0  0  -3e-4  1.4e-7
+  Mg+2   Cl-     0.35  0  0  -2e-4  2e-6
+  Na+    SO4-2   0.02  0  0  2e-3
+  Ca+2   SO4-2   0.2
+  Na+    HCO3-   0.03
+-B1
+  Na+    Cl-     0.27  0  0  6e-5  1e-6
+  K+     Cl-     0.21  0  0  1e-3
+  Ca+2   Cl-     1.6   0  0  7.6e-3  -8e-7
+  Mg+2   Cl-     1.7   0  0  3.7e-3
+  Na+    SO4-2   1.1   0  0  5.6e-3
+  Ca+2   SO4-2   3.2   0  0  5e-2
+-B2
+  Ca+2   SO4-2   -54   0  0  -0.5
+-C0
+  Na+    Cl-     0.001   30  0.09  -5e-5
+  K+     Cl-     -0.0008  0  0  -5e-5
+  Ca+2   Cl-     -0.0003
+  Mg+2   Cl-     0.005  0  0  -1.6e-4
+  Na+    SO4-2   0.005  0  0  -1.2e-4
+-THETA
+  K+     Na+     -0.01
+  Ca+2   Na+     0.07
+  Mg+2   Na+     0.07
+  Cl-    SO4-2   0.03
+-LAMDA
+  CO2    Na+     0.1
+  CO2    Cl-     -0.005
+  CO2    CO2     0.02
+  CaSO4  Na+     0.05
+-ZETA
+  CO2    Na+     Cl-     -0.003
+-PSI
+  K+     Na+     Cl-     -0.002
+  Ca+2   Na+     Cl-     -0.007
+  Mg+2   Na+     Cl-     -0.012
+  Cl-    SO4-2   Na+     0.0014
+-MU
+  CO2    CO2     Na+     -0.001
+  CO2    CO2     CO2     0.0005
+-ETA
+  CO2    Ca+2    Na+     0.002
+-ALPHAS
+  Ca+2   SO4-2   1.4  12
+${opts}`;
+
+function againstPitzer(engine) {
+  // Reading, without PHREEQC: the options by PHREEQC's prefix rule, a parameter given again replaces it.
+  const rd = P.readDatabase('PITZER\n -mac false\n -use_e false\n -redox\n -B0\n  Na+ Cl- 0.1 1\n -b0\n  Cl- Na+ 0.2\n'
+    + ' -lambda\n  CO2 Na+ 0.1\n -Aphi\n  0.39 -10\nEND\n');
+  const b0 = rd.pitzer.get('B0 Cl- Na+');
+  check('Pitzer: a PITZER block is read as PHREEQC reads one: its options by the prefix rule, true unless they say f..., '
+    + 'and a parameter given again, either way round, replacing the first',
+  rd.model === 'Pitzer' && rd.pitzer.size === 2 && !!b0 && b0.a.length === 1 && b0.a[0] === 0.2 && b0.sp[0] === 'Cl-'
+    && rd.pitzer.has('LAMBDA CO2 Na+') && !rd.pitzerOpts.macinnes && !rd.pitzerOpts.etheta && rd.pitzerOpts.redox
+    && rd.aphi.join() === '0.39,-10', `${[...rd.pitzer.keys()].join(', ')}; ${JSON.stringify(rd.pitzerOpts)}`);
+
+  // The page's coefficients at PHREEQC's molalities, and its start on them, on phreeqc.dat with the block.
+  const saline = (tc) => `${KNOBS}SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH 7\n Na 3\n K 0.2\n Ca 0.1\n Mg 0.2\n`
+    + ' Cl 3.7 charge\n S(6) 0.05\n C(4) 0.02\nEND\n';
+  const handOff = (db, water, label, redox = false) => {
+    engine.load(db.text);
+    const res = P.waterToModel({ engine, database: db, water: { name: label, text: water }, activity: true, exact: true,
+      redox, floor: 1e-30 });
+    const m = RtmModel.compile(res.text);
+    const ns = m.speciesNames.length;
+    const C = new Float64Array(ns);
+    for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
+    const lnG = new Float64Array(ns);
+    const w = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+    let gam = 0;
+    for (const [p, n] of res.names) {
+      if (!(res.molal.get(p) > 0)) continue;
+      gam = Math.max(gam, Math.abs(lnG[m.speciesNames.indexOf(n)] / Math.LN10 - res.water.species.get(p)[1]));
+    }
+    const y = m.toConcentrations(m.initialState());
+    let start = 0;
+    for (const [p, n] of res.names) {
+      if (res.molal.get(p) > 1e-25) start = Math.max(start, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
+    }
+    for (const [n, v] of res.amounts) if (v > 0) start = Math.max(start, Math.abs(y[m.speciesNames.indexOf(n)] / v - 1));
+    return { res, m, gam, aw: Math.abs(w.lnAw - Math.log(res.water.aw)), start, I: res.water.mu };
+  };
+  const own = (opts) => ({ name: 'phreeqc.dat with a PITZER block', text: `${PITZER_OWN(opts)}${dbText}` });
+  const cases = [['25 C', '', 25], ['70 C', '', 70], ['no MacInnes, no E-theta', '-MacInnes false\n-use_etheta false\n', 40],
+    ['APHI', '-Aphi\n  0.392 -11 0 0 0.0001\n', 50]].map(([label, opts, tc]) => ({ label, ...handOff(own(opts), saline(tc), label) }));
+  check('  the page\'s coefficients and water at PHREEQC\'s molalities are PHREEQC\'s: every type of parameter, at 25 and '
+    + '70 C, without the MacInnes scaling and E-theta, and with APHI', cases.every((c) => c.gam < 1e-11 && c.aw < 1e-12),
+  cases.map((c) => `${c.label}: log gamma ${c.gam.toExponential(1)}, ln a(H2O) ${c.aw.toExponential(1)}`).join('; ')
+    + `; I = ${cases[0].I.toFixed(2)}`);
+  const pzBody = (t) => t.split('\n<PITZER>\n')[1].split('\n<REACTIONS>')[0].trim().split('\n');
+  const species = (t) => t.split('<SPECIES>')[1].split('<EQUILIBRIUM>')[0];
+  check('  the hand-off: ACTIVITY = pitzer, the database\'s parameters between the species written with their terms in '
+    + 'the temperature, MACINNES no, ETHETA no and APHI where the database says so, no a or b, and the page starts on '
+    + 'PHREEQC\'s water', cases.every((c) => /^ACTIVITY = pitzer$/m.test(c.res.text) && c.start < 1e-10
+      && pzBody(c.res.text).filter((l) => !/^(MACINNES|ETHETA|APHI)\b/.test(l)).length === c.res.report.activity.pitzer
+      && !/\ba=/.test(species(c.res.text)))
+    && /^B0\s+Na\+\s+Cl-\s+0\.08\s+-700\s+-4\s+0\.009\s+-0\.000003$/m.test(cases[0].res.text)
+    && /^MACINNES  no$/m.test(cases[2].res.text) && /^ETHETA  no$/m.test(cases[2].res.text)
+    && /^APHI  0\.392  -11  0  0  0\.0001$/m.test(cases[3].res.text),
+  cases.map((c) => `${c.label}: ${c.res.report.activity.pitzer} parameters, the start within ${c.start.toExponential(1)}`)
+    .join('; '));
+
+  // The electron: PHREEQC's Pitzer model holds the pe where the water has it unless its PITZER says -redox.
+  const gw = 'SOLUTION 1\n temp 15\n pH 7.4\n pe -3\n units mmol/kgw\n Na 50; K 0.5; Ca 15; Mg 5\n Cl 85 charge\n'
+    + ' S(6) 2; C(4) 2.5; Fe(2) 0.02; Si 0.2\nEND\n';
+  const held = handOff(own(''), gw, 'groundwater', true);
+  const free = handOff(own('-redox true\n'), gw, 'groundwater', true);
+  const peOf = (db) => {
+    engine.load(db.text);
+    const rows = engine.run(`${gw.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings pe\n -start\n`
+      + '10 PUNCH -LA("e-")\n -end\nREACTION 1\n O2 1\n 0.003 moles\nEND\n');
+    return Number(rows[rows.length - 1][0]);
+  };
+  const peHeld = peOf(own(''));
+  const peFree = peOf(own('-redox true\n'));
+  check('  the electron: PHREEQC\'s Pitzer model holds the pe where the water has it, O2 added or not, unless -redox, and '
+    + 'the hand-off fixes the electron there; with -redox it is free, as with the other models',
+  Math.abs(peHeld + 3) < 1e-9 && peFree > 10 && /^e-\s+electron\s+pe=-3\s+fixed$/m.test(held.res.text)
+    && /^e-\s+electron$/m.test(free.res.text) && held.start < 1e-10 && free.start < 1e-10,
+  `PHREEQC's pe with 3 mmol O2 added: ${peHeld.toFixed(4)} held, ${peFree.toFixed(3)} with -redox; the starts within `
+    + `${held.start.toExponential(1)} and ${free.start.toExponential(1)}`);
+
+  // The PHREEQC tab: salt goes in; PHREEQC's coefficients move, and the model's own stay on them.
+  const salty = cases[0].res.text;
+  const saltText = `${salty.replace('TEND = 1\n', 'TEND = 1e5\n')}=> Na+ + Cl-, k = 1e-5\n`;
+  engine.load(own('').text);
+  const view = P.viewRun({ engine, database: own(''), run: pageRun(saltText, 1e5), modelText: saltText,
+    water: { name: 'saline', text: saline(25) }, unit: 's', times: 12 });
+  const gap = view.report.activity && view.report.activity.gap[0];
+  check('  the PHREEQC tab, a run that adds 1 mol/kgw of salt to a 3 mol/kgw brine: PHREEQC\'s coefficients move, and the '
+    + 'model\'s own under Pitzer stay on them', !!gap && view.report.activity.kind === 'pitzer' && Math.abs(gap.by) < 1e-6
+    && Math.abs(view.report.drift[0].by) > 0.05, gap ? `PHREEQC's moved ${view.report.drift[0].by.toFixed(3)} in log K, `
+      + `the model's ${Math.abs(gap.by).toExponential(1)} from them (${gap.rel})` : 'no comparison');
+
+  // PHREEQC's own pitzer.dat, where it is on this machine.
+  const pzPath = process.env.RTM_PITZER_DAT
+    || path.join(require('os').homedir(), '.cache', 'kvotab-phreeqc', 'obj', 'database', 'pitzer.dat');
+  if (!fs.existsSync(pzPath)) {
+    console.log(`skip  pitzer.dat: not at ${pzPath} (set RTM_PITZER_DAT)`);
+    return;
+  }
+  const pzdb = { name: 'pitzer.dat', text: fs.readFileSync(pzPath, 'latin1') };
+  const seawater = `${KNOBS}SOLUTION 1\n temp 25\n units mol/kgw\n pH 8.2\n Na 0.4861\n K 0.0106\n Mg 0.0548\n Ca 0.0107\n`
+    + ' Cl 0.5658 charge\n S(6) 0.0293\n C(4) 0.0021\n Br 0.00087\n B 0.00042\nEND\n';
+  const hotBrine = `${KNOBS}SOLUTION 1\n temp 60\n units mol/kgw\n pH 7\n Na 4\n Ca 0.05\n Cl 4.1 charge\n S(6) 0.02\n`
+    + ' C(4) 0.001\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.1\n Anhydrite 0 0\nEND\n';
+  const noCl = `${KNOBS}SOLUTION 1\n temp 25\n units mol/kgw\n pH 7\n Na 1\n S(6) 0.5 charge\n C(4) 0.001\nEND\n`;
+  const pzCases = [['seawater', seawater], ['a 60 C brine over gypsum', hotBrine], ['no chloride', noCl]]
+    .map(([label, w]) => ({ label, ...handOff(pzdb, w.replace('EQUILIBRIUM_PHASES', 'EQUILIBRIUM_PHASES'), label) }));
+  check('  pitzer.dat: seawater, a 60 C brine over gypsum and a water with no chloride, scaled by the Cl- it would have: '
+    + 'the coefficients at PHREEQC\'s molalities, and the start of the model written from each, PHREEQC\'s',
+  pzCases.every((c) => c.gam < 1e-11 && c.aw < 1e-12 && c.start < 1e-9),
+  pzCases.map((c) => `${c.label}: log gamma ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)} `
+    + `(${c.res.report.activity.pitzer} parameters)`).join('; '));
+
+  // NaCl added to a water over anhydrite until halite forms: REACTION, and the page's model of the water.
+  const anh = 'SOLUTION 1\n temp 25\n units mol/kgw\n pH 7 charge\n Ca 0.01\n S(6) 0.01\n Na 1e-6\n Cl 1e-6\n'
+    + 'EQUILIBRIUM_PHASES 1\n Anhydrite 0 0.2\n Halite 0 0\n';
+  const extras = ['STR_E$(TOT("Ca"), 23, 16)', 'STR_E$(EQUI("Anhydrite"), 23, 16)', 'STR_E$(EQUI("Halite"), 23, 16)'];
+  const pqAt = (amounts) => {
+    engine.load(pzdb.text);
+    return P.parseRows(engine.run(`${P.punchBlock(extras)}${anh}REACTION 1\n NaCl 1\n ${amounts.join(' ')} moles\n`
+      + 'INCREMENTAL_REACTIONS false\nEND\n')).filter((w) => w.state === 'react')
+      .map((w) => ({ ca: Number(w.x[0]), anh: Number(w.x[1]), hal: Number(w.x[2]) }));
+  };
+  const steps = Array.from({ length: 14 }, (_, k) => 0.5 * (k + 1));
+  const pq = pqAt(steps);
+  engine.load(pzdb.text);
+  const ares = P.waterToModel({ engine, database: pzdb, water: { name: 'anhydrite', text: `${anh}END\n` }, activity: true,
+    exact: true, phases: true });
+  const rate = 1e-4;
+  const atext = `${ares.text.replace('TEND = 1\n', `TEND = ${steps[13] / rate}\n`)}=> Na+ + Cl-, k = ${rate}\n`;
+  const am = RtmModel.compile(atext);
+  const ar = FacsimileODE.runModel(am, { solver: 'ndf', tend: steps[13] / rate, rtol: 1e-10, atol: 1e-20,
+    outputTimes: steps.map((a) => a / rate) });
+  const caOf = am.speciesNames.map((n, i) => (/^Ca/.test(n) && n !== 'Anhydrite' ? i : -1)).filter((i) => i >= 0);
+  let wCa = 0;
+  let wMin = 0;
+  steps.forEach((a, k) => {
+    const c = am.toConcentrations(ar.grid.y[k], a / rate);
+    wCa = Math.max(wCa, Math.abs(caOf.reduce((acc, i) => acc + c[i], 0) / pq[k].ca - 1));
+    wMin = Math.max(wMin, Math.abs(c[am.speciesNames.indexOf('Anhydrite')] - pq[k].anh),
+      Math.abs(c[am.speciesNames.indexOf('Halite')] - pq[k].hal));
+  });
+  const ev = ar.events.find((e) => /Halite precipitates/.test(e.expr));
+  let lo = ev ? ev.t * rate * 0.95 : 0;
+  let hi = ev ? ev.t * rate * 1.05 : 0;
+  for (let i = 0; ev && i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (pqAt([mid])[0].hal > 1e-20) hi = mid; else lo = mid;
+  }
+  const pqHal = (lo + hi) / 2;
+  check('  pitzer.dat: NaCl added to a water over anhydrite to 7 mol/kgw, against REACTION: calcium and the minerals '
+    + 'PHREEQC\'s, and halite forming where PHREEQC\'s does (bisection on the amount added)',
+  wCa < 1e-6 && wMin < 1e-7 && !!ev && Math.abs((ev.t * rate) / pqHal - 1) < 1e-7,
+  `Ca within ${wCa.toExponential(1)}, the minerals ${wMin.toExponential(1)} mol; halite at ${ev ? (ev.t * rate).toFixed(8) : '-'} `
+    + `mol for PHREEQC's ${pqHal.toFixed(8)}`);
+
+  // Brine into fresh water over calcite, against TRANSPORT.
+  const col = sitColumn(engine, pzdb, 40, 3);
+  check('  pitzer.dat: brine (2 mol/kgw NaCl) into fresh water over calcite, against PHREEQC\'s TRANSPORT: the effluent '
+    + 'all the way, and where it settles', col.pH < 0.03 && col.Ca < 1e-5 && col.Na < 0.02 && col.endPH < 1e-4
+    && col.endCa < 1e-4 && col.I > 1.9, `pH within ${col.pH.toFixed(4)}, Ca ${(col.Ca * 1e3).toFixed(5)} mM, Na `
+      + `${(col.Na * 1e3).toFixed(2)} mM (of 2000) in the front; at the end pH ${col.plateau.toFixed(4)} within `
+      + `${col.endPH.toExponential(1)}; 40 cells, 3 pore volumes: PHREEQC ${col.pqMs} ms, the page ${col.rtmMs} ms`);
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -2141,6 +2367,8 @@ function againstSolidSolutions(engine) {
   againstTemperature(wasm);
   console.log('\n--- solid solutions: the ten forms, another temperature, strontianite added through the gap, the PHREEQC tab ---');
   againstSolidSolutions(wasm);
+  console.log('\n--- Pitzer: the coefficients, the hand-off, the electron, the PHREEQC tab, pitzer.dat ---');
+  againstPitzer(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

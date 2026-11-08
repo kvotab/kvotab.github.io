@@ -500,6 +500,50 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
 
+            # --- a Pitzer database: followed, run, and looked at through PHREEQC ---
+            # phreeqc.dat with a PITZER block of our own in front, round numbers, K+ and Cl- for the MacInnes scaling.
+            with tempfile.TemporaryDirectory() as tmp:
+                pz_path = os.path.join(tmp, 'pitzer-test.dat')
+                with open(pz_path, 'w', encoding='latin-1') as fh:
+                    fh.write('PITZER\n-B0\n  Na+ Cl- 0.08 -700 -4 0.009 -3e-6\n  K+ Cl- 0.05\n  Ca+2 Cl- 0.3\n  Mg+2 Cl- 0.35\n'
+                             '  Na+ SO4-2 0.02\n  Ca+2 SO4-2 0.2\n-B1\n  Na+ Cl- 0.27\n  K+ Cl- 0.21\n  Ca+2 Cl- 1.6\n'
+                             '  Mg+2 Cl- 1.7\n  Na+ SO4-2 1.1\n  Ca+2 SO4-2 3.2\n-C0\n  Na+ Cl- 0.001\n  K+ Cl- -0.0008\n'
+                             '-THETA\n  Ca+2 Na+ 0.07\n  Cl- SO4-2 0.03\n-PSI\n  Ca+2 Na+ Cl- -0.007\n' + pqdat)
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                await page.set_files('#rtmPqDbFile', [pz_path])
+                loaded = await until(page, f"(() => {{ const t = {STATUS}; return / is loaded: |cannot read/.test(t) ? t : ''; }})()")
+            check('a Pitzer database opened is read by PHREEQC', isinstance(loaded, str)
+                  and loaded.startswith('pitzer-test.dat is loaded:'), True)
+            pz_report = await write_from_example(page)
+            pz_text = await page.ev("document.getElementById('rtmText').value")
+            check('with it, the water is written following Pitzer: ACTIVITY = pitzer, the database\'s parameters in <PITZER> '
+                  'with their terms in the temperature, the electron held where PHREEQC\'s Pitzer model holds it, and the '
+                  'report says so',
+                  isinstance(pz_report, str) and "The activity coefficients are Pitzer's" in pz_report
+                  and isinstance(pz_text, str) and re.search(r'^ACTIVITY = pitzer$', pz_text, re.M) is not None
+                  and re.search(r'^B0 +Na\+ +Cl- +0\.08 +-700 +-4 +0\.009 +-0\.000003$', pz_text, re.M) is not None
+                  and re.search(r'^e- +electron +pe=-?[0-9.]+ +fixed$', pz_text, re.M) is not None
+                  and re.search(r'^Na\+ +[0-9.e-]+ +a=', pz_text, re.M) is None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give Pitzer, its parameters and the MacInnes scaling', await page.ev(
+                "/in activities, Pitzer at [0-9.]+ °C \\([0-9]+ ions, [0-9]+ parameters in <PITZER>, MacInnes scaled\\)/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            pz_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_pz = re.search(r'\(ACTIVITY = pitzer\)\. PHREEQC\'s .*?, and the model\'s own are within ([0-9.e+-]+) of '
+                             r'PHREEQC\'s in log K', pz_summary or '')
+            check('looked at through PHREEQC on the same database, the model\'s own Pitzer coefficients are PHREEQC\'s',
+                  m_pz is not None and float(m_pz.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+
             # --- a gas phase in the water: carried as real gases, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

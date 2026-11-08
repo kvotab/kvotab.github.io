@@ -60,7 +60,7 @@
      ====================================================================== */
 
   const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
-    'GAS_PAIRS', 'SOLID_SOLUTIONS'];
+    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -151,7 +151,7 @@
       F/RT and dielectric constant, and a rate law reads it as TK, kelvin,
       and TC. See the temperature in compile.
     */
-    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit'] },
+    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit', 'pitzer'] },
     TEMPERATURE: { def: 25, kind: 'temperature' },
     /*
       A gas phase, PHREEQC's GAS_PHASE: the species given `gas`, each with its
@@ -1654,9 +1654,12 @@
    * line from Wagner and Pruss (2002, J. Phys. Chem. Ref. Data 31, 387, eq.
    * 2.6) with PHREEQC's fit in pressure on top. At 25 C, 0.5100 and 0.3285.
    * `atm`, the water's pressure, is 1 unless a gas phase at a fixed pressure
-   * gives another: PHREEQC then works the water out at that pressure.
+   * gives another: PHREEQC then works the water out at that pressure. `aw`,
+   * the water's activity, takes the vapour pressure down by Raoult's law, as
+   * PHREEQC's calc_rho_0 does with the water it has: 1 unless given (Pitzer
+   * gives it, pitzerAt).
    */
-  function debyeHuckelAB(tc, atmGiven = 1) {
+  function debyeHuckelAB(tc, atmGiven = 1, aw = 1) {
     const T = tc + 273.15;
     const th = 1 - T / 647.096;
     const rhoSat = 322.0 * (1 + 1.99274064 * th ** (1 / 3) + 1.09965342 * th ** (2 / 3)
@@ -1667,7 +1670,7 @@
     const p2 = -2.2983596e-09 + tc * (-4.0133819e-10 + tc * (1.2619821e-11 + tc * (-9.8952363e-14 + tc * 2.3363281e-16)));
     const p3 = 7.0517647e-11 + tc * (6.8566831e-12 + tc * (-2.2829750e-13 + tc * (1.8113313e-15 + tc * -4.2475324e-18)));
     // One atmosphere, or the pressure given, or the vapour pressure where that is higher.
-    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13));
+    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13)) * (aw <= 1.0 ? aw : 1);
     const atm = Math.max(atmGiven, pSat);
     const pa = atm - (pSat - 1e-6);
     const rho = (rhoSat + pa * (p0 + pa * (p1 + pa * (p2 + Math.sqrt(pa) * p3)))) / 1e3; // g/cm3
@@ -1677,7 +1680,8 @@
     const eps = d1000 + c * Math.log((b + atm * 1.01325) / (b + 1e3));
     const e2 = 1.671008e-3 / (eps * T); // e^2/(eps k T), cm
     const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
-    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps };
+    // A0: Pitzer's A_phi, PHREEQC's DH_B e2_DkT/6; atm the pressure the water is then at.
+    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps, A0: (kappa * e2) / 6.0, atm };
   }
 
   /**
@@ -1704,11 +1708,16 @@
    * eps1= where the pair's coefficient goes with I as well (PHREEQC's
    * -epsilon1).
    */
-  function activityModel(settings, species, warnings, sitLines = []) {
+  function activityModel(settings, species, warnings, sitLines = [], pzLines = []) {
     const isSit = settings.ACTIVITY === 'sit';
+    const isPz = settings.ACTIVITY === 'pitzer';
     if (sitLines.length && !isSit) {
       throw new RtmError(`<SIT> holds the interaction coefficients of the specific ion interaction theory, and is read `
         + `under ACTIVITY = sit${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, sitLines[0].line);
+    }
+    if (pzLines.length && !isPz) {
+      throw new RtmError(`<PITZER> holds the parameters of Pitzer's equations, and is read under ACTIVITY = pitzer`
+        + `${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, pzLines[0].line);
     }
     // Whether anything reads TEMPERATURE is said once the model is put together (compile).
     if (settings.ACTIVITY === 'none') return null;
@@ -1736,8 +1745,8 @@
         return;
       }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
-      if (isSit) {
-        form[s] = 4;
+      if (isSit || isPz) {
+        form[s] = isSit ? 4 : 6;
         if (sp.dha !== null || sp.dhb !== null) ignored.push(sp.name);
         return;
       }
@@ -1756,12 +1765,19 @@
       }
     });
     if (ignored.length) {
-      warnings.push(`ACTIVITY = sit takes no a or b: SIT's coefficients come from the charge and <SIT>, and the a and b `
+      warnings.push(`ACTIVITY = ${isSit ? 'sit' : 'pitzer'} takes no a or b: ${isSit ? 'SIT\'s coefficients come from '
+        + 'the charge and <SIT>' : 'the coefficients come from the charges and <PITZER>'}, and the a and b `
         + `given to ${ignored.length === 1 ? ignored[0] : `${ignored.length} species (${ignored.slice(0, 4).join(', ')}`
           + `${ignored.length > 4 ? ', ...' : ''})`} are not used.`);
     }
+    const pz = isPz ? readPitzer(pzLines, species, solute, z, warnings) : null;
+    if (pz) {
+      pz.patm = waterPressure(settings, species);
+      pz.tk = tc + 273.15;
+      pz.A0 = pitzerValues(pz, tc, pz.patm, pz.val);
+    }
     return { kind: settings.ACTIVITY, temperature: tc, A, B, ns, z, zg: Float64Array.from(z), form, a, b, solute,
-      ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null };
+      ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz };
   }
 
   /**
@@ -1851,6 +1867,7 @@
     if (low) I = 1e-10;
     const at = cell === undefined ? Math.round(off / ns) : cell;
     if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
+    if (act.pz) return pitzerAt(act, C, off, I, low, sum, lnG, dG, at);
     coefficientsAt(act, I, low, lnG, dG, at);
     if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
     let aw = 1 - 0.017 * sum;
@@ -1934,19 +1951,38 @@
    * Under SIT, what the coefficients of a relation's species read besides
    * the ionic strength: d(sum nu ln gamma)/dC_k for each species k paired
    * with one of them in <SIT>, added into act.sit.d, which is zero elsewhere
-   * and is returned (null without SIT). sitDone(act, net) puts the zeros
-   * back. `net` is [species, nu] pairs; I the cell's ionic strength.
+   * and is returned (null without SIT). Under Pitzer the same from pz.D, the
+   * evaluation `water` is (pitzerAt): every solute's. sitDone(act, net) puts
+   * the zeros back. `net` is [species, nu] pairs; `water` activityAt's
+   * result for the cell.
    */
-  function sitPartners(act, net, I) {
+  function sitPartners(act, net, water) {
     const st = act && act.sit;
+    const pz = act && act.pz;
     const gas = act && act.gas && act.gas.dln ? act.gas : null;
-    if (!st && !gas) return null;
-    const d = st ? st.d : gas.d;
+    if (!st && !pz && !gas) return null;
+    const I = water.I;
+    const d = st ? st.d : pz ? pz.d : gas.d;
     if (st) {
       for (const [s, nu] of net) {
         const r = st.rows[s];
         if (!r) continue;
         for (let q = 0; q < r.k.length; q++) d[r.k[q]] += nu * Math.LN10 * (r.e[q] + I * r.e1[q]);
+      }
+    }
+    if (pz) {
+      // The rows are the last evaluation's: it must be this one.
+      if (water.pz !== pz.stamp) throw new Error('Pitzer: a coefficient\'s partners read from another evaluation.');
+      const { n, D, sysOf, modelOf } = pz;
+      for (const [s, nu] of net) {
+        let src = s;
+        let f = nu;
+        if (act.form[s] === 5) { src = act.ex.ion[s]; f = nu * act.ex.pw[s]; } else if (act.form[s] !== 6) continue;
+        const at = sysOf[src] * n;
+        for (let k = 0; k < n; k++) {
+          const m = modelOf[k];
+          if (m >= 0 && D[at + k]) d[m] += f * D[at + k];
+        }
       }
     }
     // A real gas in a fixed volume reads every gas of its phase (prVolumeCoefficients).
@@ -1962,15 +1998,649 @@
   }
   function sitDone(act, net) {
     const st = act.sit;
+    const pz = act.pz;
     const gas = act.gas && act.gas.dln ? act.gas : null;
-    const d = st ? st.d : gas.d;
+    const d = st ? st.d : pz ? pz.d : gas.d;
     if (st) {
       for (const [s] of net) {
         const r = st.rows[s];
         if (r) for (let q = 0; q < r.k.length; q++) d[r.k[q]] = 0;
       }
     }
+    if (pz) for (const m of pz.modelOf) if (m >= 0) d[m] = 0;
     if (gas) for (const [s] of net) if (gas.qOf[s] >= 0) for (const k of gas.list) d[k] = 0;
+  }
+
+  /* ======================================================================
+     2a'. Pitzer's equations, as PHREEQC has them (pitzer.cpp)
+     ====================================================================== */
+
+  /*
+    THE <PITZER> SECTION, PHREEQC's PITZER keyword a line at a time: the
+    parameter's type, its species, and its value at 25 C followed by up to
+    five terms of its temperature dependence, PHREEQC's six (calc_pitz_param):
+
+      p(T) = a0 + a1 (1/T - 1/Tr) + a2 ln(T/Tr) + a3 (T - Tr)
+             + a4 (T^2 - Tr^2) + a5 (1/T^2 - 1/Tr^2),   Tr = 298.15 K
+
+      B0     Na+   Cl-    0.0765   -777.03  -4.4706  0.008946  -3.3158e-6
+      THETA  K+    Na+   -0.012
+      PSI    K+    Na+   Cl-   -0.0018
+      LAMBDA CO2   Na+    0.1
+      ALPHAS Ca+2  SO4-2  1.4  12      the pair's alpha1 and alpha2, its B1 and B2 lines in that order
+      APHI   0.39147                   A_phi, where it is not the water's own
+      MACINNES  no                     the MacInnes scaling off
+      ETHETA    no                     E-theta off
+
+    B0, B1, B2 and C0 pair a cation and an anion; THETA two ions of one sign;
+    PSI two of one sign and one of the other; LAMBDA a neutral species and
+    any; ZETA a neutral species, a cation and an anion; MU three with two
+    neutral; ETA three with one neutral.
+  */
+  const PZ_TYPES = { B0: 2, B1: 2, B2: 2, C0: 2, THETA: 2, LAMDA: 2, LAMBDA: 2, ZETA: 3, PSI: 3, MU: 3, ETA: 3,
+    ALPHAS: 2, APHI: 0 };
+  /** Moles of water in a kilogram, as PHREEQC's Pitzer and SIT have it. */
+  const PZ_WATER = 55.50837;
+
+  /**
+   * The <PITZER> section read: the parameters among the model's solutes (and
+   * K+ and Cl-, which the MacInnes scaling reads whether or not they are
+   * species of the model: a water with no chloride is scaled by the ln gamma
+   * Cl- would have in it, as PHREEQC scales it), each with PHREEQC's alpha,
+   * ln_coef and os_coef (pitzer_tidy), the pairs of ions of one sign whose
+   * E-theta is not zero, and the scratch pitzerAt works in.
+   */
+  function readPitzer(lines, species, solute, zOf, warnings) {
+    const ns = species.length;
+    const index = new Map(species.map((sp, s) => [sp.name, s]));
+    // The system: every solute of the model, then K+ and Cl- where named and not species.
+    const modelOf = [];
+    const sysOf = new Int32Array(ns).fill(-1);
+    for (let s = 0; s < ns; s++) if (solute[s]) { sysOf[s] = modelOf.length; modelOf.push(s); }
+    const z = [];
+    for (const s of modelOf) z.push(zOf[s]);
+    const virtual = new Map();
+    const sysIndex = (name, line) => {
+      if (index.has(name)) {
+        const s = index.get(name);
+        if (!solute[s]) {
+          throw new RtmError(`${name} is no solute -- the water, a mineral, an exchanger or what is on one, a surface, `
+            + 'its potential, the electron or a gas -- and Pitzer\'s parameters are between solutes.', line);
+        }
+        return sysOf[s];
+      }
+      if (name === 'K+' || name === 'Cl-') {
+        if (!virtual.has(name)) { virtual.set(name, modelOf.length); modelOf.push(-1); z.push(name === 'K+' ? 1 : -1); }
+        return virtual.get(name);
+      }
+      throw new RtmError(`"${name}" in <PITZER> is not in <SPECIES> (only K+ and Cl-, which the MacInnes scaling reads, `
+        + 'may be named without being species).', line);
+    };
+    const params = [];
+    const seen = new Map();
+    let aphi = null;
+    let macinnes = null;
+    let etheta = true;
+    const alphas = [];
+    for (const { text, line } of lines) {
+      const parts = text.split(/\s+/).filter(Boolean);
+      const kw = parts[0].toUpperCase();
+      if (kw === 'MACINNES' || kw === 'ETHETA') {
+        const v = (parts[1] || '').toLowerCase();
+        if (parts.length !== 2 || !['yes', 'no', 'true', 'false'].includes(v)) {
+          throw new RtmError(`"${text}": ${kw} yes or ${kw} no.`, line);
+        }
+        if (kw === 'MACINNES') macinnes = v === 'yes' || v === 'true'; else etheta = v === 'yes' || v === 'true';
+        continue;
+      }
+      if (!(kw in PZ_TYPES)) {
+        throw new RtmError(`"${parts[0]}" is no Pitzer parameter: B0, B1, B2, C0, THETA, LAMBDA, ZETA, PSI, MU, ETA, `
+          + 'ALPHAS or APHI, or MACINNES or ETHETA and yes or no.', line);
+      }
+      const nsp = PZ_TYPES[kw];
+      const names = parts.slice(1, 1 + nsp);
+      const nums = parts.slice(1 + nsp);
+      if (names.length !== nsp || nums.length < 1 || nums.length > 6) {
+        throw new RtmError(`"${text}": ${kw} takes ${nsp ? `${nsp === 2 ? 'two' : 'three'} species and ` : ''}its value `
+          + 'at 25 C, and up to five more terms in the temperature, as PHREEQC writes them.', line);
+      }
+      const a = new Float64Array(6);
+      nums.forEach((v, i) => { a[i] = constValue(v, line, `${kw}${names.length ? ` of ${names.join(' ')}` : ''}`); });
+      if (kw === 'APHI') {
+        if (aphi) throw new RtmError(`APHI is given twice, on lines ${aphi.line} and ${line}.`, line);
+        aphi = { a, line };
+        continue;
+      }
+      const q = names.map((nm) => sysIndex(nm, line));
+      const type = kw === 'LAMDA' ? 'LAMBDA' : kw;
+      if (type === 'ALPHAS') {
+        if (nums.length > 2) throw new RtmError(`"${text}": ALPHAS takes the pair's alpha1 and alpha2.`, line);
+        alphas.push({ q, a, line, n: nums.length });
+        continue;
+      }
+      const zs = q.map((i) => z[i]);
+      const nPos = zs.filter((v) => v > 0).length;
+      const nNeg = zs.filter((v) => v < 0).length;
+      const nNeu = zs.filter((v) => v === 0).length;
+      const distinct = new Set(q).size;
+      let why = '';
+      if (['B0', 'B1', 'B2', 'C0'].includes(type) && !(nPos === 1 && nNeg === 1)) why = 'a cation and an anion';
+      else if (type === 'THETA' && !(distinct === 2 && (nPos === 2 || nNeg === 2))) why = 'two ions of one sign';
+      else if (type === 'PSI' && !(distinct === 3 && ((nPos === 2 && nNeg === 1) || (nNeg === 2 && nPos === 1)))) {
+        why = 'two ions of one sign and one of the other';
+      } else if (type === 'LAMBDA' && nNeu < 1) why = 'a neutral species and any other';
+      else if (type === 'ZETA' && !(nNeu === 1 && nPos === 1 && nNeg === 1)) why = 'a neutral species, a cation and an anion';
+      else if (type === 'MU' && nNeu < 2) why = 'three species, two of them neutral';
+      else if (type === 'ETA' && nNeu < 1) why = 'three species, one of them neutral';
+      if (why) throw new RtmError(`"${text}": ${type} is between ${why}.`, line);
+      const key = `${type} ${[...new Set(names)].sort().join(' ')}`;
+      if (seen.has(key)) throw new RtmError(`${type} ${names.join(' ')} is given twice, on lines ${seen.get(key)} and ${line}.`, line);
+      seen.set(key, line);
+      params.push({ type, q, a, line, alpha: 0, lc: [0, 0, 0], os: 0 });
+    }
+    const n = modelOf.length;
+    // PHREEQC's alpha for B1 and B2 by the pair's charges (pitzer_tidy), then ALPHAS for the pair in that order.
+    for (const p of params) {
+      if (p.type !== 'B1' && p.type !== 'B2') continue;
+      const z0 = Math.abs(z[p.q[0]]);
+      const z1 = Math.abs(z[p.q[1]]);
+      const order = z0 === 1 || z1 === 1 ? 1 : z0 === 2 && z1 === 2 ? 2 : 3;
+      p.alpha = p.type === 'B1' ? (order === 2 ? 1.4 : 2.0) : (order === 3 ? 50.0 : 12.0);
+    }
+    for (const al of alphas) {
+      let used = false;
+      for (const [t, i] of [['B1', 0], ['B2', 1]]) {
+        const p = params.find((pp) => pp.type === t && pp.q[0] === al.q[0] && pp.q[1] === al.q[1]);
+        if (p) { p.alpha = al.a[i]; used = true; }
+      }
+      if (!used) {
+        warnings.push(`Line ${al.line}: ALPHAS reads the B1 and B2 of its pair named in the same order, as PHREEQC's `
+          + 'does, and there are none: it is not used.');
+      }
+    }
+    // PHREEQC's coefficients of LAMBDA and MU in ln gamma and in the osmotic coefficient (pitzer_tidy).
+    for (const p of params) {
+      if (p.type === 'LAMBDA') {
+        if (p.q[0] === p.q[1]) { p.os = 0.5; p.lc = [1, 1, 0]; } else { p.os = 1; p.lc = [2, 2, 0]; }
+      } else if (p.type === 'MU') {
+        const [i0, i1, i2] = p.q;
+        const neutral = p.q.filter((i) => z[i] === 0).length;
+        if (neutral === 3) p.os = i0 === i1 && i1 === i2 ? 1 : i0 === i1 || i1 === i2 || i0 === i2 ? 3 : 6;
+        else p.os = i0 === i1 || i1 === i2 || i0 === i2 ? 3 : 6;
+        const count = p.q.map((i) => p.q.filter((k) => k === i).length);
+        for (let j = 0; j < 3; j++) {
+          if (z[p.q[j]] !== 0) p.lc[j] = count[0] > 1 || count[1] > 1 ? 3 : 6;
+          else if (count[j] === 3) p.lc[j] = 1;
+          else if (count[j] === 2) p.lc[j] = 3;
+          else p.lc[j] = count[0] > 1 || count[1] > 1 ? 3 : 6;
+        }
+      }
+    }
+    // The MacInnes scaling: on unless said otherwise, and off without K+ and Cl-'s B0, B1 or C0, as in PHREEQC.
+    const kcl = (t) => params.findIndex((p) => p.type === t && new Set(p.q).size === 2
+      && p.q.some((i) => (modelOf[i] >= 0 ? species[modelOf[i]].name : [...virtual].find(([, v]) => v === i)[0]) === 'K+')
+      && p.q.some((i) => (modelOf[i] >= 0 ? species[modelOf[i]].name : [...virtual].find(([, v]) => v === i)[0]) === 'Cl-'));
+    const mc = { b0: kcl('B0'), b1: kcl('B1'), c0: kcl('C0') };
+    let icon = macinnes !== false;
+    if (icon && mc.b0 < 0 && mc.b1 < 0 && mc.c0 < 0) {
+      if (macinnes === true) {
+        throw new RtmError('MACINNES yes needs the B0, B1 or C0 of K+ and Cl-, which the scaling reads.', lines[0].line);
+      }
+      icon = false;
+      warnings.push('<PITZER> gives no B0, B1 or C0 of K+ and Cl-: the MacInnes scaling is off, as PHREEQC turns it off.');
+    }
+    const nameOf = (i) => (modelOf[i] >= 0 ? species[modelOf[i]].name : [...virtual].find(([, v]) => v === i)[0]);
+    let cl = -1;
+    if (icon) {
+      for (let i = 0; i < n; i++) if (nameOf(i) === 'Cl-') cl = i;
+      if (cl < 0) { cl = modelOf.length; modelOf.push(-1); z.push(-1); virtual.set('Cl-', cl); }
+    }
+    const N = modelOf.length;
+    // E-theta between every two ions of one sign whose charges differ: zero where they are the same.
+    const ethetaPairs = [];
+    if (etheta) {
+      for (let i = 0; i < N; i++) {
+        for (let j = i + 1; j < N; j++) {
+          if (z[i] * z[j] > 0 && z[i] !== z[j]) ethetaPairs.push([i, j]);
+        }
+      }
+    }
+    const zz = Float64Array.from(z);
+    return {
+      n: N, modelOf: Int32Array.from(modelOf), sysOf, z: zz, names: Array.from({ length: N }, (_, i) => nameOf(i)),
+      params, np: params.length, aphi, icon, mc, cl, etheta, ethetaPairs,
+      // The values at the temperature (pitzerValues): one set, or one a cell where the temperature goes with it.
+      val: new Float64Array(params.length), A0: 0, tk: 298.15, patm: 1, valc: null, A0c: null,
+      // Scratch: molalities, ln gamma, d ln gamma/dI, d ln gamma_i/d m_k at fixed I (D, n x n), and the sums' gradients.
+      M: new Float64Array(N), LG: new Float64Array(N), LI: new Float64Array(N), D: new Float64Array(N * N),
+      dF: new Float64Array(N), dCS: new Float64Array(N), zc: new Float64Array(N), dOS: new Float64Array(N),
+      row: new Float64Array(N), J: new Float64Array(4), stamp: 0,
+      d: new Float64Array(ns), dAwv: new Float64Array(ns),
+    };
+  }
+
+  /** PHREEQC's calc_pitz_param: a parameter's value at tk kelvin from its six terms. */
+  function pitzerParam(a, tk) {
+    const TR = 298.15;
+    if (Math.abs(tk - TR) < 0.001) return a[0];
+    return (a[0] + a[1] * (1 / tk - 1 / TR) + a[2] * Math.log(tk / TR) + a[3] * (tk - TR) + a[4] * (tk * tk - TR * TR))
+      + a[5] * (1 / (tk * tk) - 1 / (TR * TR));
+  }
+
+  /**
+   * Every parameter's value at tc degrees C into out, and A_phi: APHI's where
+   * given, else the water's, PHREEQC's DH_B e^2/(eps k T)/6 (calc_dielectrics).
+   */
+  function pitzerValues(pz, tc, atm, out) {
+    const tk = tc + 273.15;
+    for (let i = 0; i < pz.np; i++) out[i] = pitzerParam(pz.params[i].a, tk);
+    return pz.aphi ? pitzerParam(pz.aphi.a, Math.min(tc, 350) + 273.15) : debyeHuckelAB(tc, atm).A0;
+  }
+
+  /*
+    E-THETA, the higher-order electrostatic terms of two ions of one sign,
+    as PHREEQC works them out (ETHETAS, with Harvie's Chebyshev approximation
+    of J in ETHETA_PARAMS): x = 6 z_i z_j A_phi sqrt(I), and
+
+      E-theta  = z_j z_k (J(x_jk) - J(x_jj)/2 - J(x_kk)/2) / (4 I)
+      E-theta' = z_j z_k (x J'(x) ...) / (8 I^2) - E-theta / I
+
+    and its second derivative in I, which the Jacobian reads, from the
+    series' second derivative.
+  */
+  const PZ_AK = Float64Array.from([
+    1.925154014814667e0, -.060076477753119e0, -.029779077456514e0,
+    -.007299499690937e0, 0.000388260636404e0, 0.000636874599598e0,
+    0.000036583601823e0, -.000045036975204e0, -.000004537895710e0,
+    0.000002937706971e0, 0.000000396566462e0, -.000000202099617e0,
+    -.000000025267769e0, 0.000000013522610e0, 0.000000001229405e0,
+    -.000000000821969e0, -.000000000050847e0, 0.000000000046333e0,
+    0.000000000001943e0, -.000000000002563e0, -.000000000010991e0,
+    0.628023320520852e0, 0.462762985338493e0, 0.150044637187895e0,
+    -.028796057604906e0, -.036552745910311e0, -.001668087945272e0,
+    0.006519840398744e0, 0.001130378079086e0, -.000887171310131e0,
+    -.000242107641309e0, 0.000087294451594e0, 0.000034682122751e0,
+    -.000004583768938e0, -.000003548684306e0, -.000000250453880e0,
+    0.000000216991779e0, 0.000000080779570e0, 0.000000004558555e0,
+    -.000000006944757e0, -.000000002849257e0, 0.000000000237816e0,
+  ]);
+  const pzBK = new Float64Array(23);
+  const pzDK = new Float64Array(23);
+  const pzEK = new Float64Array(23);
+  /** J(x) into out[0], PHREEQC's x J'(x) into out[1], J'(x) into out[2] and J''(x) into out[3]. */
+  function pzJ(X, out) {
+    let L_Z;
+    let L_DZ;
+    let dz;
+    let ddz;
+    let o;
+    if (X <= 1.0) {
+      const p = Math.pow(X, 0.2);
+      L_Z = 4.0 * p - 2.0;
+      L_DZ = (0.8 * p) / 2.0;
+      dz = (0.8 * p) / X;
+      ddz = (-0.64 * p) / (X * X);
+      o = 0;
+    } else {
+      const p = Math.pow(X, -0.1);
+      L_Z = (40.0 * p - 22.0) / 9.0;
+      L_DZ = (-4.0 * p) / 18.0;
+      dz = (-4.0 * p) / (9.0 * X);
+      ddz = (4.4 * p) / (9.0 * X * X);
+      o = 21;
+    }
+    const BK = pzBK;
+    const DK = pzDK;
+    const EK = pzEK;
+    BK[20] = PZ_AK[o + 20];
+    BK[19] = L_Z * PZ_AK[o + 20] + PZ_AK[o + 19];
+    DK[20] = 0;
+    DK[19] = PZ_AK[o + 20];
+    EK[20] = 0;
+    EK[19] = 0;
+    for (let i = 18; i >= 0; i--) {
+      BK[i] = L_Z * BK[i + 1] - BK[i + 2] + PZ_AK[o + i];
+      DK[i] = BK[i + 1] + L_Z * DK[i + 1] - DK[i + 2];
+      EK[i] = 2 * DK[i + 1] + L_Z * EK[i + 1] - EK[i + 2];
+    }
+    out[0] = X / 4.0 - 1.0 + 0.5 * (BK[0] - BK[2]);
+    out[1] = X * 0.25 + L_DZ * (DK[0] - DK[2]);
+    const Sz = 0.5 * (DK[0] - DK[2]);
+    out[2] = 0.25 + Sz * dz;
+    out[3] = 0.5 * (EK[0] - EK[2]) * dz * dz + Sz * ddz;
+  }
+  const pzJjk = new Float64Array(4);
+  const pzJjj = new Float64Array(4);
+  const pzJkk = new Float64Array(4);
+  /** E-theta of charges zj and zk at I, and its first and second derivatives in I, into out[0..2]. */
+  function pzEtheta(ZJ, ZK, I, A0, out) {
+    out[0] = 0; out[1] = 0; out[2] = 0;
+    if (ZJ === ZK) return;
+    const XCON = 6.0 * A0 * Math.sqrt(I);
+    const ZZ = ZJ * ZK;
+    const XJK = XCON * ZZ;
+    const XJJ = XCON * ZJ * ZJ;
+    const XKK = XCON * ZK * ZK;
+    pzJ(XJK, pzJjk);
+    pzJ(XJJ, pzJjj);
+    pzJ(XKK, pzJkk);
+    const et = (ZZ * (pzJjk[0] - pzJjj[0] / 2.0 - pzJkk[0] / 2.0)) / (4.0 * I);
+    const L = pzJjk[1] - pzJjj[1] / 2.0 - pzJkk[1] / 2.0;
+    const etp = (ZZ * L) / (8.0 * I * I) - et / I;
+    // dL/dI: each x J'(x) term's (J' + x J'') x/(2I).
+    const dL = ((pzJjk[2] + XJK * pzJjk[3]) * XJK - ((pzJjj[2] + XJJ * pzJjj[3]) * XJJ) / 2
+      - ((pzJkk[2] + XKK * pzJkk[3]) * XKK) / 2) / (2 * I);
+    out[0] = et;
+    out[1] = etp;
+    out[2] = (ZZ * dL) / (8 * I * I) - (ZZ * L) / (4 * I * I * I) - etp / I + et / (I * I);
+  }
+
+  /** PHREEQC's G and GP of Pitzer's B and B' (pitzer.cpp), and their derivatives in y. */
+  function pzG(y) { return y !== 0 ? (2.0 * (1.0 - (1.0 + y) * Math.exp(-y))) / (y * y) : 0; }
+  function pzGP(y) { return y !== 0 ? (-2.0 * (1.0 - (1.0 + y + (y * y) / 2.0) * Math.exp(-y))) / (y * y) : 0; }
+  /** d GP/dy: GP = -2Q/y^2 with dQ/dy = y^2 e^-y / 2. */
+  function pzGPy(y) {
+    if (y === 0) return 0;
+    const Q = 1.0 - (1.0 + y + (y * y) / 2.0) * Math.exp(-y);
+    return -Math.exp(-y) + (4 * Q) / (y * y * y);
+  }
+
+  /**
+   * PHREEQC's OSMOT alone (pitzer()), the sum the osmotic coefficient is 1 +
+   * 2/sum m of: the first pass of pitzerAt, for the water's activity.
+   */
+  function pitzerOsmotic(pz, val, M, I, BIGZ, A0) {
+    const { z, params } = pz;
+    const DI = Math.sqrt(I);
+    let OSMOT = (-A0 * Math.pow(I, 1.5)) / (1.0 + 1.2 * DI);
+    const present3 = (q) => M[q] > 1e-25 || (pz.icon && q === pz.cl);
+    for (let j = 0; j < params.length; j++) {
+      const p = params[j];
+      const [i0, i1, i2] = p.q;
+      const param = val[j];
+      const mm = M[i0] * M[i1];
+      switch (p.type) {
+        case 'B0':
+        case 'THETA': OSMOT += mm * param; break;
+        case 'B1':
+        case 'B2': if (param !== 0.0) OSMOT += mm * param * Math.exp(-p.alpha * DI); break;
+        case 'C0': OSMOT += (mm * BIGZ * param) / (2.0 * Math.sqrt(Math.abs(z[i0] * z[i1]))); break;
+        case 'PSI':
+        case 'ZETA':
+        case 'ETA': if (present3(i2)) OSMOT += mm * M[i2] * param; break;
+        case 'LAMBDA': OSMOT += mm * param * p.os; break;
+        case 'MU': if (present3(i2)) OSMOT += mm * M[i2] * param * p.os; break;
+        default: break;
+      }
+    }
+    const et = pz.J;
+    for (const [i0, i1] of pz.ethetaPairs) {
+      pzEtheta(z[i0], z[i1], I, A0, et);
+      OSMOT += M[i0] * M[i1] * (et[0] + I * et[1]);
+    }
+    return OSMOT;
+  }
+
+  /**
+   * activityAt under Pitzer, PHREEQC's (pitzer.cpp, pitzer()): each solute's
+   * ln gamma into lnG and d(ln gamma)/dI at fixed molalities into dG, the
+   * water's ln a from the osmotic coefficient, and with them what sitPartners
+   * reads: d(ln gamma_i)/d(m_k) at fixed I, in pz.D over the system's species
+   * (n x n), and d(ln a(H2O))/dC_k in dAwv. A species on an exchanger takes its
+   * ion's coefficient (activityModel's form 5), as PHREEQC's
+   * -pitzer_exchange_gammas has it.
+   *
+   * PHREEQC's rules, kept: nothing below 1e-40 mol/kg (its under()); a term
+   * of three species is left out where the third is at 1e-25 or less, Cl-
+   * excepted under the MacInnes scaling; B = 1.2, with PHREEQC's pressure
+   * corrections of F for ions of charge 1 and 2 above one atmosphere; ln
+   * gamma of every ion moved by its charge times ln gamma(Cl-) less that of
+   * KCl at the ionic strength, the MacInnes scaling. And A_phi, which
+   * PHREEQC works out from the density of water at the vapour pressure times
+   * a(H2O) (calc_rho_0, every iteration): a first pass gives a(H2O) at the
+   * pure water's A_phi, and the second is made at that a(H2O)'s, which is
+   * then the same to 1e-14. (A_phi's part in the derivatives through a(H2O),
+   * a part in 1e-5 of them at most, is left out.) APHI, where given, is
+   * PHREEQC's A_phi whatever the water.
+   */
+  function pitzerAt(act, C, off, I, low, osum, lnG, dG, cell) {
+    const ns = act.ns;
+    const pz = act.pz;
+    const n = pz.n;
+    const { M, LG, LI, D, dF, dCS, zc, dOS, z, modelOf, params } = pz;
+    const val = pz.valc ? pz.valc.subarray(cell * pz.np, (cell + 1) * pz.np) : pz.val;
+    const TK = pz.tkc ? pz.tkc[cell] : pz.tk;
+    for (let q = 0; q < n; q++) {
+      const s = modelOf[q];
+      const c = s >= 0 ? C[off + s] : 0;
+      M[q] = c < 1e-40 ? 0 : c;
+      LG[q] = 0; LI[q] = 0; dF[q] = 0; dCS[q] = 0; zc[q] = 0; dOS[q] = 0;
+    }
+    D.fill(0);
+    let BIGZ = 0;
+    for (let q = 0; q < n; q++) BIGZ += M[q] * Math.abs(z[q]);
+    let A0 = pz.A0c ? pz.A0c[cell] : pz.A0;
+    let patm = pz.patm;
+    if (!pz.aphi) {
+      const os1 = pitzerOsmotic(pz, val, M, I, BIGZ, A0);
+      const lnAw1 = osum > 0 ? (-osum * (1.0 + (2.0 * os1) / osum)) / PZ_WATER : (-2.0 * os1) / PZ_WATER;
+      const w = debyeHuckelAB(TK - 273.15, pz.patm, Math.exp(lnAw1));
+      A0 = w.A0;
+      patm = w.atm;
+    }
+    const DI = Math.sqrt(I);
+    const B = 1.2;
+    // F, and F1 and F2 for ions of charge 1 and 2 above one atmosphere, with their derivatives in I.
+    const fDH = (b) => -A0 * (DI / (1.0 + b * DI) + (2.0 * Math.log(1.0 + b * DI)) / b);
+    const fDHI = (b) => (-A0 * (3 + 2 * b * DI)) / (2 * DI * (1 + b * DI) * (1 + b * DI));
+    let F = fDH(B);
+    let F1 = F;
+    let F2 = F;
+    let FI = fDHI(B);
+    let F1I = FI;
+    let F2I = FI;
+    if (patm > 1.0) {
+      let pap = (7e-5 + 1.93e-9 * Math.pow(TK - 250.0, 2.0)) * patm;
+      const B1 = B - (pap > 0.2 ? 0.2 : pap);
+      if (TK > 263.0) pap = 9.65e-10 * Math.pow(TK - 263.0, 2.773) * Math.pow(patm, 0.623);
+      const B2 = B - (pap > 0.2 ? 0.2 : pap);
+      if (B1 !== 0) { F1 = fDH(B1); F1I = fDHI(B1); }
+      if (B2 !== 0) { F2 = fDH(B2); F2I = fDHI(B2); }
+    }
+    // ln gamma of KCl at I, the MacInnes scaling's reference, and its derivative.
+    let XXX = 2.0 * DI;
+    const y = XXX;
+    XXX = (1.0 - (1.0 + XXX - XXX * XXX * 0.5) * Math.exp(-XXX)) / (XXX * XXX);
+    const XXXy = ((2 * y - (y * y) / 2) * Math.exp(-y)) / (y * y) - (2 * XXX) / y;
+    let GAMCLM = F1;
+    let GAMCLMI = F1I;
+    const { mc } = pz;
+    if (mc.b0 >= 0) { GAMCLM += I * 2.0 * val[mc.b0]; GAMCLMI += 2.0 * val[mc.b0]; }
+    if (mc.b1 >= 0) {
+      GAMCLM += I * 2.0 * val[mc.b1] * XXX;
+      GAMCLMI += 2.0 * val[mc.b1] * (XXX + (I * XXXy) / DI);
+    }
+    if (mc.c0 >= 0) { GAMCLM += 1.5 * val[mc.c0] * I * I; GAMCLMI += 3.0 * val[mc.c0] * I; }
+    let CSUM = 0;
+    let OSMOT = (-A0 * Math.pow(I, 1.5)) / (1.0 + B * DI);
+    let OSI = -A0 * ((1.5 * DI) / (1 + B * DI) - (B * I) / (2 * (1 + B * DI) * (1 + B * DI)));
+    let osZ = 0;
+    const present3 = (q) => M[q] > 1e-25 || (pz.icon && q === pz.cl);
+    const Dat = (i, k, v) => { D[i * n + k] += v; };
+    for (let j = 0; j < params.length; j++) {
+      const p = params[j];
+      const [i0, i1, i2] = p.q;
+      const param = val[j];
+      const M0 = M[i0];
+      const M1 = M[i1];
+      switch (p.type) {
+        case 'B0':
+          LG[i0] += M1 * 2.0 * param;
+          LG[i1] += M0 * 2.0 * param;
+          OSMOT += M0 * M1 * param;
+          Dat(i0, i1, 2.0 * param); Dat(i1, i0, 2.0 * param);
+          dOS[i0] += M1 * param; dOS[i1] += M0 * param;
+          break;
+        case 'B1':
+        case 'B2': {
+          if (param === 0.0) break;
+          const x = p.alpha * DI;
+          const g = pzG(x);
+          const gp = pzGP(x);
+          const e = Math.exp(-x);
+          const Fvar = (M0 * M1 * param * gp) / I;
+          F += Fvar; F1 += Fvar; F2 += Fvar;
+          const FvarI = M0 * M1 * param * ((pzGPy(x) * p.alpha) / (2 * DI * I) - gp / (I * I));
+          FI += FvarI; F1I += FvarI; F2I += FvarI;
+          dF[i0] += (M1 * param * gp) / I; dF[i1] += (M0 * param * gp) / I;
+          LG[i0] += M1 * 2.0 * param * g;
+          LG[i1] += M0 * 2.0 * param * g;
+          LI[i0] += (M1 * 2.0 * param * gp) / I;
+          LI[i1] += (M0 * 2.0 * param * gp) / I;
+          Dat(i0, i1, 2.0 * param * g); Dat(i1, i0, 2.0 * param * g);
+          OSMOT += M0 * M1 * param * e;
+          OSI += (-M0 * M1 * param * p.alpha * e) / (2 * DI);
+          dOS[i0] += M1 * param * e; dOS[i1] += M0 * param * e;
+          break;
+        }
+        case 'C0': {
+          const c = param / (2.0 * Math.sqrt(Math.abs(z[i0] * z[i1])));
+          CSUM += M0 * M1 * c;
+          dCS[i0] += M1 * c; dCS[i1] += M0 * c;
+          LG[i0] += M1 * BIGZ * c;
+          LG[i1] += M0 * BIGZ * c;
+          Dat(i0, i1, BIGZ * c); Dat(i1, i0, BIGZ * c);
+          zc[i0] += M1 * c; zc[i1] += M0 * c;
+          OSMOT += M0 * M1 * BIGZ * c;
+          dOS[i0] += M1 * BIGZ * c; dOS[i1] += M0 * BIGZ * c;
+          osZ += M0 * M1 * c;
+          break;
+        }
+        case 'THETA':
+          LG[i0] += 2.0 * M1 * param;
+          LG[i1] += 2.0 * M0 * param;
+          OSMOT += M0 * M1 * param;
+          Dat(i0, i1, 2.0 * param); Dat(i1, i0, 2.0 * param);
+          dOS[i0] += M1 * param; dOS[i1] += M0 * param;
+          break;
+        case 'PSI':
+        case 'ZETA':
+        case 'ETA': {
+          if (!present3(i2)) break;
+          const M2 = M[i2];
+          LG[i0] += M1 * M2 * param;
+          LG[i1] += M0 * M2 * param;
+          LG[i2] += M0 * M1 * param;
+          OSMOT += M0 * M1 * M2 * param;
+          Dat(i0, i1, M2 * param); Dat(i0, i2, M1 * param);
+          Dat(i1, i0, M2 * param); Dat(i1, i2, M0 * param);
+          Dat(i2, i0, M1 * param); Dat(i2, i1, M0 * param);
+          dOS[i0] += M1 * M2 * param; dOS[i1] += M0 * M2 * param; dOS[i2] += M0 * M1 * param;
+          break;
+        }
+        case 'LAMBDA':
+          LG[i0] += M1 * param * p.lc[0];
+          LG[i1] += M0 * param * p.lc[1];
+          OSMOT += M0 * M1 * param * p.os;
+          Dat(i0, i1, param * p.lc[0]); Dat(i1, i0, param * p.lc[1]);
+          dOS[i0] += M1 * param * p.os; dOS[i1] += M0 * param * p.os;
+          break;
+        case 'MU': {
+          if (!present3(i2)) break;
+          const M2 = M[i2];
+          LG[i0] += M1 * M2 * param * p.lc[0];
+          LG[i1] += M0 * M2 * param * p.lc[1];
+          LG[i2] += M0 * M1 * param * p.lc[2];
+          OSMOT += M0 * M1 * M2 * param * p.os;
+          Dat(i0, i1, M2 * param * p.lc[0]); Dat(i0, i2, M1 * param * p.lc[0]);
+          Dat(i1, i0, M2 * param * p.lc[1]); Dat(i1, i2, M0 * param * p.lc[1]);
+          Dat(i2, i0, M1 * param * p.lc[2]); Dat(i2, i1, M0 * param * p.lc[2]);
+          dOS[i0] += M1 * M2 * param * p.os; dOS[i1] += M0 * M2 * param * p.os; dOS[i2] += M0 * M1 * param * p.os;
+          break;
+        }
+        default:
+          break;
+      }
+    }
+    // E-theta, a pair at a time, from the tables of the charges at I.
+    if (pz.ethetaPairs.length) {
+      const et = pz.J;
+      for (const [i0, i1] of pz.ethetaPairs) {
+        const M0 = M[i0];
+        const M1 = M[i1];
+        pzEtheta(z[i0], z[i1], I, A0, et);
+        const Fvar = M0 * M1 * et[1];
+        F += Fvar; F1 += Fvar; F2 += Fvar;
+        const FvarI = M0 * M1 * et[2];
+        FI += FvarI; F1I += FvarI; F2I += FvarI;
+        dF[i0] += M1 * et[1]; dF[i1] += M0 * et[1];
+        LG[i0] += 2.0 * M1 * et[0];
+        LG[i1] += 2.0 * M0 * et[0];
+        LI[i0] += 2.0 * M1 * et[1];
+        LI[i1] += 2.0 * M0 * et[1];
+        Dat(i0, i1, 2.0 * et[0]); Dat(i1, i0, 2.0 * et[0]);
+        OSMOT += M0 * M1 * (et[0] + I * et[1]);
+        OSI += M0 * M1 * (2 * et[1] + I * et[2]);
+        dOS[i0] += M1 * (et[0] + I * et[1]); dOS[i1] += M0 * (et[0] + I * et[1]);
+      }
+    }
+    // F and CSUM into every ion's, the charge's F; C's Z into every row it is in.
+    for (let q = 0; q < n; q++) {
+      const zq = z[q];
+      if (zq !== 0) {
+        const z0 = Math.abs(zq);
+        const Fv = z0 === 1 ? F1 : z0 === 2.0 ? F2 : F;
+        const FvI = z0 === 1 ? F1I : z0 === 2.0 ? F2I : FI;
+        LG[q] += z0 * z0 * Fv + z0 * CSUM;
+        LI[q] += z0 * z0 * FvI;
+        const z2 = z0 * z0;
+        const at = q * n;
+        for (let k = 0; k < n; k++) D[at + k] += z2 * dF[k] + z0 * dCS[k];
+      }
+      if (zc[q] !== 0) {
+        const at = q * n;
+        for (let k = 0; k < n; k++) D[at + k] += zc[q] * Math.abs(z[k]);
+      }
+    }
+    // The MacInnes scaling.
+    if (pz.icon) {
+      const cl = pz.cl;
+      const PHIMAC = LG[cl] - GAMCLM;
+      const PHII = LI[cl] - GAMCLMI;
+      const row = pz.row;
+      for (let k = 0; k < n; k++) row[k] = D[cl * n + k];
+      for (let q = 0; q < n; q++) {
+        const zq = z[q];
+        if (!zq) continue;
+        LG[q] += zq * PHIMAC;
+        LI[q] += zq * PHII;
+        const at = q * n;
+        for (let k = 0; k < n; k++) D[at + k] += zq * row[k];
+      }
+    }
+    // The species of the model.
+    for (let s = 0; s < ns; s++) {
+      if (act.form[s] !== 6) { lnG[s] = 0; dG[s] = 0; continue; }
+      const q = pz.sysOf[s];
+      lnG[s] = LG[q];
+      dG[s] = low ? 0 : LI[q];
+    }
+    const ex = act.ex;
+    if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
+    onSites(act, lnG, dG, cell);
+    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, cell);
+    // The water: ln a = -(sum m) COSMOT/55.50837, COSMOT = 1 + 2 OSMOT/sum m, and its gradient.
+    for (let k = 0; k < n; k++) dOS[k] += osZ * Math.abs(z[k]);
+    const dAwv = pz.dAwv;
+    const osIe = low ? 0 : OSI;
+    for (let s = 0; s < ns; s++) {
+      if (!act.solute[s]) { dAwv[s] = 0; continue; }
+      const q = pz.sysOf[s];
+      dAwv[s] = -(1 + 2 * (dOS[q] + osIe * 0.5 * z[q] * z[q])) / PZ_WATER;
+    }
+    const lnAw = osum > 0 ? (-osum * (1.0 + (2.0 * OSMOT) / osum)) / PZ_WATER : (-2.0 * OSMOT) / PZ_WATER;
+    pz.stamp++;
+    return { I, lnAw, dAw: 0, dAwv, pz: pz.stamp };
   }
 
   /**
@@ -2193,10 +2863,10 @@
         -pitzer_exchange_gammas false. Its coefficient reads what the ion's
         does, so its row of partners is the ion's, times the power.
       */
-      if (out.sit) {
-        if (ion[k] >= 0 && out.form[ion[k]] === 4) {
+      if (out.sit || out.pz) {
+        if (ion[k] >= 0 && out.form[ion[k]] === (out.sit ? 4 : 6)) {
           out.form[k] = 5;
-          const r = out.sit.rows[ion[k]];
+          const r = out.sit ? out.sit.rows[ion[k]] : null;
           if (r) out.sit.rows[k] = { k: r.k, e: r.e.map((v) => v * pw[k]), e1: r.e1.map((v) => v * pw[k]) };
         } else sitAlone.push(sp.name);
         if (sp.dha !== null) sitAB.push(sp.name);
@@ -2221,12 +2891,13 @@
       warnings.push('ACTIVITY is none: a species on an exchanger has its equivalent fraction for its activity, and '
         + 'the a and b given to one are not used.');
     }
+    const kindName = out.pz ? 'pitzer' : 'sit';
     if (sitAB.length) {
-      warnings.push(`ACTIVITY = sit: a species on an exchanger takes its ion's SIT coefficient, and the a and b given to `
-        + `${sitAB.join(', ')} are not used.`);
+      warnings.push(`ACTIVITY = ${kindName}: a species on an exchanger takes its ion's ${out.pz ? 'Pitzer' : 'SIT'} `
+        + `coefficient, and the a and b given to ${sitAB.join(', ')} are not used.`);
     }
     if (sitAlone.length) {
-      warnings.push(`ACTIVITY = sit: no relation forms ${sitAlone.join(', ')} from its exchanger and one ion in the `
+      warnings.push(`ACTIVITY = ${kindName}: no relation forms ${sitAlone.join(', ')} from its exchanger and one ion in the `
         + 'water, so its activity is its equivalent fraction alone, with no ion\'s coefficient.');
     }
     const site = Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger ? 2 : 0));
@@ -2888,7 +3559,7 @@
       pr,
       // A real gas in a fixed volume: d(ln gamma_i)/dC_j between the gases, and the scratch their sums go into.
       dln: pr && hasV ? new Float64Array(gases.length * gases.length) : null,
-      d: pr && hasV ? (out.sit ? out.sit.d : new Float64Array(species.length)) : null };
+      d: pr && hasV ? (out.sit ? out.sit.d : out.pz ? out.pz.d : new Float64Array(species.length)) : null };
     // A bubble is a group (groupSystems): its relations come and go together, their total the pressure.
     if (hasP) {
       const def = { kind: 'gas', name: 'the bubble', lnP: Math.log(P), coef: pr ? 'pr' : null, gas: out.gas };
@@ -4248,7 +4919,7 @@
         if (wv) r += wv * water.lnAw;
         if (row) {
           // Under SIT a coefficient also reads the species it is paired with.
-          const sd = sitPartners(act, eq.net, water.I);
+          const sd = sitPartners(act, eq.net, water);
           for (let k = 0; k < na; k++) {
             if (lin[k]) continue;
             const si = part[k];
@@ -4618,8 +5289,9 @@
    */
   function reducedSystem(sys, prefer) {
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
-    // A real gas in a fixed volume reads every gas of its phase: the full speciation.
-    if (act && act.gas && act.gas.dln) return null;
+    // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
+    // the full speciation.
+    if (act && ((act.gas && act.gas.dln) || act.pz)) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -5735,7 +6407,7 @@
       }
       if (!act) continue;
       const wv = eq.water || 0;
-      const sd = sitPartners(act, eq.net, water.I);
+      const sd = sitPartners(act, eq.net, water);
       const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv ? wv * awOf(act, water, si) : 0) + (sd ? sd[si] : 0);
       for (let k = 0; k < na; k++) {
         if (lin[k]) continue;
@@ -6405,7 +7077,7 @@
     const warnings = [];
     // Null unless ACTIVITY asks for one (activityModel), or there is an
     // exchanger (exchangeSetup, once the relations are read).
-    let act = activityModel(settings, species, warnings, sections.SIT);
+    let act = activityModel(settings, species, warnings, sections.SIT, sections.PITZER);
     const transport = settings.MODE === 'transport';
     flowFromTravelTime(settings, grid);
     const surface = wettedSurface(settings, grid);
@@ -6870,7 +7542,7 @@
     // ACTIVITY every ion, through the ionic strength, and every solute where
     // the water's activity comes in -- or under SIT, where a coefficient reads
     // the species it is paired with, which may be neutral, every solute.
-    const sitAQ = !!(act && act.sit);
+    const sitAQ = !!(act && (act.sit || act.pz));
     for (const e of aqList) {
       const set = new Set();
       if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
@@ -6912,8 +7584,14 @@
           if (d) {
             d[e.s] += g;
             if (dGq[e.s]) for (const k of aqIons) d[k] += a * dGq[e.s] * 0.5 * z[k] * z[k];
-            const r = sitAQ ? aqAct.sit.rows[e.s] : null;
+            const r = sitAQ && aqAct.sit ? aqAct.sit.rows[e.s] : null;
             if (r) for (let u = 0; u < r.k.length; u++) d[r.k[u]] += a * Math.LN10 * (r.e[u] + w.I * r.e1[u]);
+            // Under Pitzer every solute's, from the evaluation's rows (pitzerAt).
+            if (sitAQ && aqAct.pz) {
+              const sd = sitPartners(aqAct, [[e.s, 1]], w);
+              for (const k of aqSolutes) if (sd[k]) d[k] += a * sd[k];
+              sitDone(aqAct, [[e.s, 1]]);
+            }
           }
         } else if (e.kind === 'aw') {
           const aw = Math.exp(w.lnAw);
@@ -6944,7 +7622,7 @@
             for (const [k, nu] of ph.net) if (y[b + k] > 0) d[k] += (f * nu) / y[b + k];
             if (G) for (const k of aqIons) d[k] += f * G * 0.5 * z[k] * z[k];
             if (ph.water) for (const k of aqSolutes) d[k] += f * ph.water * awOf(aqAct, w, k);
-            const sd = sitAQ ? sitPartners(aqAct, ph.net, w.I) : null;
+            const sd = sitAQ ? sitPartners(aqAct, ph.net, w) : null;
             if (sd) {
               for (const k of aqSolutes) if (sd[k]) d[k] += f * sd[k];
               sitDone(aqAct, ph.net);
@@ -7322,7 +8000,7 @@
       const prod = side(eq.products);
       // Under SIT a coefficient reads the species it is paired with, which may be neutral: every solute.
       const realGas = act && act.gas && act.gas.dln && eq.net.some(([s]) => act.gas.isGas[s]) ? act.gas.list : [];
-      const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && act.sit ? solutes : ions),
+      const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && (act.sit || act.pz) ? solutes : ions),
         ...(eq.water ? solutes : []), ...realGas])].sort((x, y) => x - y);
       return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
         kf: eq.kf, kb: eq.kf / Math.exp(eq.lnK), water: eq.water || 0, d: new Float64Array(colsOf.length) };
@@ -7982,6 +8660,8 @@
       for (const r of phT) r.lnKc = new Float64Array(nc);
       if (act && act.kind !== 'none') { act.Ac = new Float64Array(nc); act.Bc = new Float64Array(nc); }
       if (act) act.tk = thermo.tk;
+      // Pitzer's parameters and A_phi at each cell's temperature (pitzerValues).
+      if (act && act.pz) { act.pz.valc = new Float64Array(nc * act.pz.np); act.pz.A0c = new Float64Array(nc); act.pz.tkc = thermo.tk; }
       if (pt) { pt.kSc = new Float64Array(nc); pt.fRTc = new Float64Array(nc); }
       if (gasT && gasT.fixed === 'volume') gasT.lnGc = new Float64Array(nc);
     }
@@ -8008,6 +8688,10 @@
         if ((act && act.Ac) || pt) {
           const ab = debyeHuckelAB(tc[c], atmT);
           if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; }
+          if (act && act.pz) {
+            const pz = act.pz;
+            pz.A0c[c] = pitzerValues(pz, tc[c], atmT, pz.valc.subarray(c * pz.np, (c + 1) * pz.np));
+          }
           if (pt) {
             pt.kSc[c] = Math.sqrt(8000 * GAS_R * tk[c] * ab.eps * EPSILON0);
             pt.fRTc[c] = FARADAY / (GAS_R * tk[c]);
@@ -8019,6 +8703,11 @@
         for (const r of relT) r.lnKc.fill(r.lnKc[0]);
         for (const r of phT) r.lnKc.fill(r.lnKc[0]);
         if (act && act.Ac) { act.Ac.fill(act.Ac[0]); act.Bc.fill(act.Bc[0]); }
+        if (act && act.pz) {
+          const pz = act.pz;
+          pz.A0c.fill(pz.A0c[0]);
+          for (let c = 1; c < nc; c++) pz.valc.copyWithin(c * pz.np, 0, pz.np);
+        }
         if (pt) { pt.kSc.fill(pt.kSc[0]); pt.fRTc.fill(pt.fRTc[0]); }
         if (gasT && gasT.lnGc) gasT.lnGc.fill(gasT.lnGc[0]);
       }
@@ -8185,7 +8874,7 @@
             let G = 0;
             for (const [k, c] of pr.net) G += c * dG[k];
             if (pr.back !== 0) {
-              const sd = sitPartners(act, pr.net, water.I);
+              const sd = sitPartners(act, pr.net, water);
               pr.cols.forEach((k, q) => {
                 let g = G * 0.5 * act.z[k] * act.z[k];
                 if (pr.water) g += pr.water * awOf(act, water, k);
@@ -8441,7 +9130,8 @@
       // A and B are at TEMPERATURE where it is a number; where it is an expression, at each cell's (Ac, Bc), and null here.
       activity: act && act.kind !== 'none' ? { kind: act.kind, temperature: tcFixed !== null ? tcFixed : settings.TEMPERATURE,
         A: thermo.varies ? null : act.A, B: thermo.varies ? null : act.B,
-        ions: ions.length, pairs: pairInfo.length, sit: act.sit ? act.sit.pairs.length : 0 } : null,
+        ions: ions.length, pairs: pairInfo.length, sit: act.sit ? act.sit.pairs.length : 0,
+        pitzer: act.pz ? { params: act.pz.np, macinnes: act.pz.icon, etheta: act.pz.etheta } : null } : null,
       /*
         THE TEMPERATURE: the number, or the expression, TEMPERATURE gives;
         whether it differs from cell to cell and goes with time; how many
@@ -8696,7 +9386,7 @@
     const dG = act ? new Float64Array(ns) : null;
     // Under SIT a coefficient reads the species it is paired with as well, which may be neutral: every solute.
     const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
-      || ((eq.water || act.sit) && act.solute[k])
+      || ((eq.water || act.sit || act.pz) && act.solute[k])
       || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))) : []));
     const n = nBase + nc * nb;
     const tIndex = (c, j) => nBase + c * nb + j;
@@ -9153,7 +9843,7 @@
           let G = 0;
           for (const [s, nu] of eqs[r].net) G += nu * dG[s];
           const w = eqs[r].water || 0;
-          const sd = sitPartners(act, eqs[r].net, water.I);
+          const sd = sitPartners(act, eqs[r].net, water);
           actCols[r].forEach((k, q) => {
             let d = G * 0.5 * act.z[k] * act.z[k];
             if (w) d += w * awOf(act, water, k);
@@ -9179,7 +9869,7 @@
               let Gd = 0;
               for (const [s, nu] of eq.net) Gd += nu * dG[s];
               const w = eq.water || 0;
-              const sd = sitPartners(act, eq.net, water.I);
+              const sd = sitPartners(act, eq.net, water);
               for (const k of actCols[r]) {
                 let d = Gd * 0.5 * act.z[k] * act.z[k];
                 if (w) d += w * awOf(act, water, k);
@@ -9817,6 +10507,7 @@
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
     chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
+    pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.

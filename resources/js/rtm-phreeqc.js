@@ -281,6 +281,17 @@
       'add_logk', 'add_log_k', 'vm'],
   };
 
+  /*
+    PITZER's options in PHREEQC's read_pitzer order, the first a word after
+    a dash begins, and what each parameter type is and how many species it
+    names.
+  */
+  const PZ_OPTIONS = ['b0', 'b1', 'b2', 'c0', 'theta', 'lamda', 'zeta', 'psi', 'macinnes', 'macinnis', 'mac', 'redox',
+    'pe', 'alphas', 'mu', 'eta', 'etheta', 'use_etheta', 'lambda', 'aphi'];
+  const PZ_KINDS = { b0: ['B0', 2], b1: ['B1', 2], b2: ['B2', 2], c0: ['C0', 2], theta: ['THETA', 2], lamda: ['LAMBDA', 2],
+    lambda: ['LAMBDA', 2], zeta: ['ZETA', 3], psi: ['PSI', 3], alphas: ['ALPHAS', 2], mu: ['MU', 3], eta: ['ETA', 3],
+    aphi: ['APHI', 0] };
+
   /** The option a line of `block` is, as PHREEQC's get_option finds it, and the words after it; or null. */
   function lkOption(block, line) {
     const list = LK_OPTIONS[block];
@@ -342,6 +353,12 @@
       // SIT's interaction coefficients, by kind and pair: 'eps Cl- Na+' -> {type, s1, s2, a},
       // a its temperature terms as PHREEQC reads them (sitParam); a pair given again replaces it.
       this.sit = new Map();
+      // Pitzer's parameters, by type and species as a set: 'B0 Cl- Na+' -> {type, sp, a}, sp the species in the
+      // order given and a its terms in the temperature, as PHREEQC reads them; one given again replaces it.
+      this.pitzer = new Map();
+      // PITZER's options (PHREEQC's defaults: the MacInnes scaling, E-theta, and no redox) and its -Aphi.
+      this.pitzerOpts = { macinnes: true, etheta: true, redox: false };
+      this.aphi = null;
       // A phase's critical temperature (K) and pressure (atm) and acentric factor, where the database gives
       // them: PHREEQC then holds that gas in a gas phase by Peng and Robinson's equation of state.
       this.critical = new Map();
@@ -463,6 +480,7 @@
       let block = null;
       let last = null;
       let sitType = null;
+      let pzType = null;
       let phase = null;
       for (const line of logicalLines(text)) {
         const tokens = line.trim().split(/\s+/).filter(Boolean);
@@ -472,6 +490,7 @@
           if (asDatabase && block === 'END') break;
           last = null;
           sitType = null;
+          pzType = null;
           // Activity models other than the Debye-Hueckel ones this page has.
           if (block === 'PITZER') this.model = 'Pitzer';
           else if (block === 'SIT') this.model = 'SIT';
@@ -562,6 +581,29 @@
           if (tokens.length >= 3 && Number.isFinite(Number(tokens[2]))) {
             this.gasBinary.set([tokens[0], tokens[1]].sort().join(' '), Number(tokens[2]));
           }
+        } else if (block === 'PITZER') {
+          // An option starts a list of parameters, or is MacInnes, E-theta or redox and true or false (read_pitzer).
+          if (/^-[A-Za-z]/.test(tokens[0])) {
+            const word = tokens[0].slice(1).toLowerCase();
+            const opt = PZ_OPTIONS.find((o) => o.startsWith(word));
+            pzType = null;
+            // PHREEQC's get_true_false: false where the word begins with an f, true otherwise or with none.
+            const yes = !(tokens[1] && /^f/i.test(tokens[1]));
+            if (opt === 'macinnes' || opt === 'macinnis' || opt === 'mac') this.pitzerOpts.macinnes = yes;
+            else if (opt === 'redox' || opt === 'pe') this.pitzerOpts.redox = yes;
+            else if (opt === 'etheta' || opt === 'use_etheta') this.pitzerOpts.etheta = yes;
+            else if (opt) pzType = PZ_KINDS[opt];
+            continue;
+          }
+          if (!pzType) continue;
+          const [type, n] = pzType;
+          const sp = tokens.slice(0, n);
+          const a = leadingNumbers(tokens.slice(n), 6);
+          if (sp.length < n || !a.length) continue;
+          if (type === 'APHI') { this.aphi = a; continue; }
+          const key = `${type} ${[...new Set(sp)].sort().join(' ')}`;
+          this.pitzer.delete(key);
+          this.pitzer.set(key, { type, sp, a });
         } else if (block === 'SIT') {
           // -epsilon and -epsilon1 start a list of pairs; PHREEQC takes the first option a shorter word begins.
           if (tokens[0].startsWith('-')) {
@@ -1150,7 +1192,9 @@
    *               species' -gamma as a= and b=, the relations with their
    *               water and the database's own log K -- or with a SIT
    *               database ACTIVITY = sit, its interaction coefficients
-   *               between the species written in <SIT>; else each log K is
+   *               between the species written in <SIT>; with a Pitzer one
+   *               ACTIVITY = pitzer, its parameters between them in
+   *               <PITZER> with their terms in the temperature; else each log K is
    *               conditional, the coefficients at this water folded in
    *   exact       hold every relation exactly during the run: EQUILIBRATE =
    *               always, no kf, each relation an algebraic equation
@@ -1181,9 +1225,12 @@
     }
     const db = readDatabase(o.database.text, o.water.text);
     const follow = !!o.activity;
-    // A SIT database: the page has SIT, and follows it.
+    // A SIT database: the page has SIT, and follows it; and Pitzer's.
     const sit = follow && db.model === 'SIT';
-    if (follow && db.model && !sit) {
+    const pitz = follow && db.model === 'Pitzer';
+    // Under SIT and Pitzer the same: every solute's coefficient from the model, a species on an exchanger its ion's.
+    const sitLike = sit || pitz;
+    if (follow && db.model && !sitLike) {
       throw new Error(`${o.database.name || 'This database'} gives PHREEQC the ${db.model} activity model, which `
         + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
         + 'them fixed at this water instead.');
@@ -1734,7 +1781,7 @@
         reaction (-pitzer_exchange_gammas): its log a here is its fraction and
         that (sitLg), and the log K takes whatever differs from PHREEQC's.
       */
-      if (sit) {
+      if (sitLike) {
         const one = ions.length === 1 && !hasWater ? ions[0] : null;
         e.sitLg = one ? Math.abs(one.c / e.right[0].c) * lg.get(one.n) : 0;
         e.gamma = one ? { sit: true } : null;
@@ -1750,7 +1797,7 @@
       // exchanger's activity is PHREEQC's throughout.
       const laOf = (n, how) => {
         if (laMaster.has(n)) return laMaster.get(n);
-        if (n === e.species && sit && how === 'follow') return e.la - e.lg + e.sitLg;
+        if (n === e.species && sitLike && how === 'follow') return e.la - e.lg + e.sitLg;
         if (n === e.species) return how === 'db' || (how === 'follow' && e.gamma) ? e.la : e.la - e.lg;
         return log10(molal.get(n)) + (how === 'conditional' ? 0 : lg.get(n));
       };
@@ -1765,7 +1812,7 @@
     // would read differently; and the species whose activity PHREEQC works
     // out in a way this page does not.
     // (Under SIT every solute has SIT's coefficient, whatever its line says.)
-    const unsupported = follow && !sit ? order.filter((sp) => db.otherGamma.has(sp)) : [];
+    const unsupported = follow && !sitLike ? order.filter((sp) => db.otherGamma.has(sp)) : [];
     /*
       SIT's interaction coefficients between the species written, at this
       water's temperature as PHREEQC works them out (sitParam), one line a
@@ -1784,6 +1831,31 @@
         byPair.set(key, pair);
       }
       sitPairs.push(...byPair.values());
+    }
+    /*
+      PITZER'S PARAMETERS between the species written, each with the
+      database's terms in the temperature, so that the run follows them as
+      PHREEQC does (calc_pitz_param). And for the MacInnes scaling, which
+      reads the ln gamma of Cl- whether the water has chloride or not, and the
+      B0, B1 and C0 of K+ and Cl-: those, and every parameter of Cl- with the
+      species written, where Cl- or K+ is not among them. The scaling is
+      written off where PHREEQC turns it off.
+    */
+    const pzLines = [];
+    const pzOpts = [];
+    // PHREEQC's Pitzer model holds the pe where the water has it unless its PITZER says -redox (model.cpp).
+    const holdPe = pitz && !db.pitzerOpts.redox;
+    if (pitz) {
+      const written = new Set(order);
+      const kcl = (p) => ['B0', 'B1', 'C0'].includes(p.type) && new Set(p.sp).size === 2 && p.sp.includes('K+')
+        && p.sp.includes('Cl-');
+      const hasKcl = [...db.pitzer.values()].some(kcl);
+      const icon = db.pitzerOpts.macinnes && hasKcl;
+      const ok = (p) => p.sp.every((x) => written.has(x))
+        || (icon && (kcl(p) || p.sp.every((x) => written.has(x) || x === 'Cl-')));
+      for (const p of db.pitzer.values()) if (ok(p)) pzLines.push(p);
+      if (!icon) pzOpts.push('MACINNES  no');
+      if (!db.pitzerOpts.etheta) pzOpts.push('ETHETA  no');
     }
 
     const tc = w.tc;
@@ -1807,6 +1879,13 @@
       out.push("# is paired with in <SIT>, the database's interaction coefficient times that species' molality");
       out.push(`# (${sitPairs.length} pair${sitPairs.length === 1 ? '' : 's'} among the species here); and the activity of water from SIT's osmotic`);
       out.push('# coefficient. The comment gives the conditional log K at this water, the coefficients folded in.');
+    } else if (pitz) {
+      out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
+      out.push("# ACTIVITY = pitzer works out each species' activity coefficient in its cell as the run goes on,");
+      out.push("# as PHREEQC's Pitzer model does: the Debye-Hueckel term and, between the species here, the");
+      out.push(`# database's parameters in <PITZER> (${pzLines.length}, each with its terms in the temperature); and the activity`);
+      out.push("# of water from the osmotic coefficient. The comment gives the conditional log K at this water,");
+      out.push('# the coefficients folded in.');
     } else if (follow) {
       out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
       out.push("# ACTIVITY works out each species' activity coefficient from the ionic strength of its cell");
@@ -1841,6 +1920,10 @@
         out.push(`# given ${fmtG(settled.from, 6)} and the valence states as written.`);
       } else {
         out.push(`# The start is PHREEQC's water, at its pe of ${fmtG(w.pe, 6)}.`);
+      }
+      if (holdPe) {
+        out.push("# PHREEQC's Pitzer model holds the pe where the water has it, its PITZER giving no -redox, and so");
+        out.push(`# does the run: the electron is fixed at pe ${fmtG(w.pe, 6)}.`);
       }
     } else if (carryRedox) {
       out.push('# Redox: no species written here is one the database writes with electrons, so none is');
@@ -1910,7 +1993,7 @@
       out.push('# it at their molalities: an exchanger is no amount, its activity is solved for, and each');
       out.push("# species on it has its equivalent fraction for its activity (Gaines-Thomas)"
         + (follow ? ", times its ion's activity" : '.'));
-      if (sit) out.push("# coefficient, as PHREEQC's SIT has it.");
+      if (sitLike) out.push(`# coefficient, as PHREEQC's ${sit ? 'SIT' : 'Pitzer model'} has it.`);
       else if (follow) out.push('# coefficient where the database gives it -gamma (a= and b=).');
       const folded = onEx.filter((e) => e.folded);
       if (folded.length) {
@@ -1961,7 +2044,7 @@
       || solids.some((ss) => !!ss.energy || ss.comps.some((c) => withT(db.logKTerms('p', c.phase))))
       || gases.some((g) => withT(db.logKTerms('p', g.phase))) || onEx.some((e) => withT(db.logKTerms('x', e.species)))
       || onSf.some((e) => !e.master && withT(db.logKTerms('f', e.species)));
-    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
+    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : pitz ? 'pitzer' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
     // A double layer reads it too, without ACTIVITY, and a gas phase (R T).
     else if (potentials.length || gases.length || anyT) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
     if (gases.length) {
@@ -1991,7 +2074,7 @@
       const bits = [];
       if (chargeOf(name.get(s)) !== chargeOf(s)) bits.push(`z=${chargeOf(s)}`);
       // SIT takes no a or b.
-      const g = sit ? null : db.gamma.get(s);
+      const g = sitLike ? null : db.gamma.get(s);
       if (g) {
         if (chargeOf(s)) bits.push(`a=${fmtG(g.a, 6)}`);
         bits.push(`b=${fmtG(g.b, 6)}`);
@@ -2001,7 +2084,9 @@
       out.push(`${name.get(s).padEnd(width)}${more ? fmtG(molal.get(s), 15).padEnd(width2) + more
         : fmtG(molal.get(s), 15)}`);
     }
-    if (eUsed) out.push(`${'e-'.padEnd(width)}${''.padEnd(follow ? width2 : 0)}electron`);
+    if (eUsed) {
+      out.push(`${'e-'.padEnd(width)}${''.padEnd(follow ? width2 : 0)}electron${holdPe ? `  pe=${fmtG(w.pe, 15)}  fixed` : ''}`);
+    }
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
       out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
@@ -2020,7 +2105,7 @@
     for (const sp of exUsed) out.push(`${exName.get(sp).padEnd(width)}${''.padEnd(follow ? width2 : 0)}exchanger`);
     for (const e of onEx) {
       const amount = fmtG(e.m, 15);
-      const g = e.gamma && !sit ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
+      const g = e.gamma && !sitLike ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
     }
     for (const pp of potentials) {
@@ -2155,6 +2240,21 @@
           + `${p.eps1 ? `  eps1=${fmtG(p.eps1, 15)}` : ''}`);
       }
     }
+    if (pitz) {
+      // Each parameter as the database gives it: its type, species and terms, up to the last that is not zero.
+      out.push('', '<PITZER>');
+      if (!pzLines.length) out.push('# The database gives no parameter between the species written here.');
+      const nm = (x) => name.get(x) || x;
+      const wt = Math.max(0, ...pzLines.map((p) => p.type.length)) + 2;
+      const wn = Math.max(0, ...pzLines.flatMap((p) => p.sp.map((x) => nm(x).length))) + 2;
+      for (const p of pzLines) {
+        let n = p.a.length;
+        while (n > 1 && p.a[n - 1] === 0) n--;
+        out.push(`${p.type.padEnd(wt)}${p.sp.map((x) => nm(x).padEnd(wn)).join('')}${p.a.slice(0, n).map((v) => String(v)).join('  ')}`);
+      }
+      if (db.aphi) out.push(`APHI  ${db.aphi.map((v) => String(v)).join('  ')}`);
+      out.push(...pzOpts);
+    }
     // Real gases: each pair's binary parameter, where PHREEQC's is not 0.
     const gasPairs = [];
     if (gases.some((g) => g.crit)) {
@@ -2214,7 +2314,8 @@
           atNone: [...atNone].map((sp) => name.get(sp) || sp),
           // PHREEQC's next step, where the input ended on a water as given: the pe it was given, and the one it settles at.
           settled } : null,
-        activity: follow ? { kind: sit ? 'sit' : 'debye-huckel', temperature: tc, unsupported,
+        activity: follow ? { kind: sit ? 'sit' : pitz ? 'pitzer' : 'debye-huckel', temperature: tc, unsupported,
+          pitzer: pitz ? pzLines.length : 0,
           sitPairs: sit ? sitPairs.length : 0 } : null,
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,

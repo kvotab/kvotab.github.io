@@ -2912,9 +2912,9 @@ HCO3- <=> H+ + CO3-2,      logK = -10.4284
 <REACTIONS>
 `;
   let refused = '';
-  try { RtmModel.compile(water('ACTIVITY = pitzer')); } catch (e) { refused = e.message; }
-  check('ACTIVITY is none, davies or debye-huckel', /ACTIVITY must be one of none, davies, debye-huckel/.test(refused),
-    refused);
+  try { RtmModel.compile(water('ACTIVITY = llnl')); } catch (e) { refused = e.message; }
+  check('ACTIVITY is none, davies, debye-huckel, sit or pitzer',
+    /ACTIVITY must be one of none, davies, debye-huckel.*sit, pitzer/.test(refused), refused);
   check('  and debye-hückel is debye-huckel', RtmModel.compile(water('ACTIVITY = debye-hückel')).act.kind === 'debye-huckel');
   refused = '';
   try { RtmModel.compile(water('ACTIVITY = davies\nTEMPERATURE = 400')); } catch (e) { refused = e.message; }
@@ -5610,6 +5610,218 @@ console.log('\n--- solid solutions ---');
   const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
   check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
     wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/*
+   PITZER'S EQUATIONS, against what has to come out of them. One salt alone
+   is Pitzer's single-electrolyte form, ln gamma+- and the osmotic
+   coefficient in closed form. J(x), which E-theta is made of and which
+   PHREEQC takes from Harvie's Chebyshev series, is Pitzer's integral, here
+   by Gauss-Legendre quadrature, to that series' 1e-9. Under the MacInnes
+   scaling ln gamma(Cl-) is KCl's at the ionic strength, and a water with no
+   chloride is scaled by the Cl- it would have. A parameter goes with the
+   temperature only by its six terms. The coefficients are the tests' own,
+   round numbers, no database's. The Jacobian of a held water with every
+   kind of parameter, against differences.
+*/
+console.log('\n--- Pitzer ---');
+{
+  const pzModel = (settings, species, pitzer, more = '') => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\n`
+    + `ACTIVITY = pitzer\n${settings}\n\n<SPECIES>\n${species}\n\n${more}<PITZER>\n${pitzer}\n`);
+  const coefficients = (m, c) => {
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const dG = new Float64Array(ns);
+    const w = RtmModel.activityAt(m.act, c, 0, lnG, dG, 0);
+    return { lnG, w, at: (n) => lnG[m.speciesNames.indexOf(n)] };
+  };
+
+  // 1. One salt, NaCl: ln gamma+- = f + m (2 b0 + 2 b1 h(x)) + 1.5 m^2 C, phi - 1 = -A sqrt(I)/(1 + b sqrt(I)) + m B + m^2 C.
+  const b0 = 0.08;
+  const b1 = 0.27;
+  const cphi = 0.001;
+  let worstG = 0;
+  let worstW = 0;
+  let warned = true;
+  for (const m of [0.1, 1, 3, 6]) {
+    const mod = pzModel('TEMPERATURE = 25', `Na+ ${m}\nCl- ${m}`, `B0 Na+ Cl- ${b0}\nB1 Na+ Cl- ${b1}\nC0 Na+ Cl- ${cphi}`);
+    warned = warned && mod.warnings.some((w) => /MacInnes scaling is off, as PHREEQC turns it off/.test(w));
+    const { at, w } = coefficients(mod, mod.initialState());
+    const A = RtmModel.debyeHuckelAB(25, 1, Math.exp(w.lnAw)).A0;
+    const s = Math.sqrt(m);
+    const f = -A * (s / (1 + 1.2 * s) + (2 / 1.2) * Math.log(1 + 1.2 * s));
+    const lng = f + m * (2 * b0 + (2 * b1 / (4 * m)) * (1 - (1 + 2 * s - 2 * m) * Math.exp(-2 * s))) + 1.5 * m * m * cphi;
+    const phi = 1 - (A * s) / (1 + 1.2 * s) + m * (b0 + b1 * Math.exp(-2 * s)) + m * m * cphi;
+    worstG = Math.max(worstG, Math.abs((at('Na+') + at('Cl-')) / 2 - lng));
+    worstW = Math.max(worstW, Math.abs(w.lnAw + (2 * m * phi) / 55.50837));
+  }
+  check('Pitzer: NaCl alone is the single-salt form, ln gamma+- and the osmotic coefficient, at 0.1 to 6 mol/kg; '
+    + 'without K+ and Cl- the MacInnes scaling is off, as in PHREEQC', worstG < 1e-14 && worstW < 1e-14 && warned,
+  `ln gamma+- within ${worstG.toExponential(1)}, ln a(H2O) within ${worstW.toExponential(1)}`);
+
+  // 2. J(x) against Pitzer's integral, J = (1/x) int (1 + q + q^2/2 - e^q) y^2 dy, q = -(x/y) e^-y.
+  const GL = (() => {
+    const n = 20;
+    const xs = [];
+    const ws = [];
+    for (let i = 1; i <= n; i++) {
+      let z = Math.cos((Math.PI * (i - 0.25)) / (n + 0.5));
+      for (let it = 0; it < 100; it++) {
+        let p0 = 1;
+        let p1 = 0;
+        for (let k = 1; k <= n; k++) { const p2 = p1; p1 = p0; p0 = ((2 * k - 1) * z * p1 - (k - 1) * p2) / k; }
+        const dp = (n * (z * p0 - p1)) / (z * z - 1);
+        const dz = p0 / dp;
+        z -= dz;
+        if (Math.abs(dz) < 1e-16) { xs.push(z); ws.push(2 / ((1 - z * z) * dp * dp)); break; }
+      }
+    }
+    return { xs, ws };
+  })();
+  const Jq = (x) => {
+    const f = (y) => { const q = -(x / y) * Math.exp(-y); return (1 + q + (q * q) / 2 - (q < -700 ? 0 : Math.exp(q))) * y * y; };
+    const edges = [0];
+    for (let k = -12; k <= 2; k += 0.05) edges.push(10 ** k);
+    edges.push(150);
+    let sum = 0;
+    for (let i = 0; i + 1 < edges.length; i++) {
+      const h = (edges[i + 1] - edges[i]) / 2;
+      const mid = (edges[i] + edges[i + 1]) / 2;
+      for (let j = 0; j < GL.xs.length; j++) sum += GL.ws[j] * h * f(mid + h * GL.xs[j]);
+    }
+    return sum / x;
+  };
+  const jo = new Float64Array(4);
+  let worstJ = 0;
+  for (const x of [0.001, 0.01, 0.1, 0.5, 1, 1.5, 3, 10, 30, 100]) {
+    RtmModel.pitzerJ(x, jo);
+    worstJ = Math.max(worstJ, Math.abs(jo[0] - Jq(x)));
+  }
+  const et = new Float64Array(3);
+  const ep = new Float64Array(3);
+  const em = new Float64Array(3);
+  let worstE = 0;
+  for (const [zj, zk] of [[1, 2], [-1, -2], [2, 3]]) {
+    for (const I of [0.01, 0.1, 1, 6]) {
+      RtmModel.pitzerEtheta(zj, zk, I, 0.39, et);
+      const h = I * 1e-5;
+      RtmModel.pitzerEtheta(zj, zk, I + h, 0.39, ep);
+      RtmModel.pitzerEtheta(zj, zk, I - h, 0.39, em);
+      worstE = Math.max(worstE, Math.abs((ep[0] - em[0]) / (2 * h) / et[1] - 1), Math.abs((ep[1] - em[1]) / (2 * h) / et[2] - 1));
+    }
+  }
+  check('  E-theta: J(x) from Harvie\'s series, as PHREEQC has it, is Pitzer\'s integral by quadrature at x = 0.001 to 100, '
+    + 'and E-theta\'s derivatives in I its differences', worstJ < 1e-9 && worstE < 1e-7,
+  `J within ${worstJ.toExponential(1)}, the derivatives ${worstE.toExponential(1)}`);
+
+  // 3. The MacInnes scaling: ln gamma(Cl-) = KCl's ln gamma+- at I; and a water with no chloride.
+  const block = 'B0 Na+ Cl- 0.08\nB1 Na+ Cl- 0.27\nC0 Na+ Cl- 0.001\nB0 K+ Cl- 0.05\nB1 K+ Cl- 0.21\nC0 K+ Cl- -0.0008\n'
+    + 'B0 Na+ SO4-2 0.02\nB1 Na+ SO4-2 1.1\nC0 Na+ SO4-2 0.005\nTHETA Cl- SO4-2 0.03\nPSI Cl- SO4-2 Na+ 0.0014';
+  const mac = pzModel('TEMPERATURE = 25', 'Na+ 2.5\nCl- 1.5\nSO4-2 0.5', block);
+  const { at: atMac, w: wMac } = coefficients(mac, mac.initialState());
+  const I = wMac.I;
+  const A = RtmModel.debyeHuckelAB(25, 1, Math.exp(wMac.lnAw)).A0;
+  const s = Math.sqrt(I);
+  const x = 2 * s;
+  const xxx = (1 - (1 + x - (x * x) / 2) * Math.exp(-x)) / (x * x);
+  const gamclm = -A * (s / (1 + 1.2 * s) + (2 / 1.2) * Math.log(1 + 1.2 * s)) + 2 * I * 0.05 + 2 * I * 0.21 * xxx
+    + 1.5 * -0.0008 * I * I;
+  const noCl = pzModel('TEMPERATURE = 25', 'Na+ 1\nSO4-2 0.5', block);
+  const trace = pzModel('TEMPERATURE = 25', 'Na+ 1\nSO4-2 0.5\nCl- 1e-30', block);
+  const g1 = coefficients(noCl, noCl.initialState());
+  const g2 = coefficients(trace, trace.initialState());
+  const dNoCl = Math.max(Math.abs(g1.at('Na+') - g2.at('Na+')), Math.abs(g1.at('SO4-2') - g2.at('SO4-2')),
+    Math.abs(g1.w.lnAw - g2.w.lnAw));
+  check('  the MacInnes scaling: ln gamma(Cl-) is KCl\'s at the ionic strength, and a water with no chloride is scaled by '
+    + 'the Cl- it would have, K+ and Cl- named in <PITZER> without being species',
+  Math.abs(atMac('Cl-') - gamclm) < 1e-14 && dNoCl < 1e-14 && mac.act.pz.icon && noCl.act.pz.icon,
+  `ln gamma(Cl-) within ${Math.abs(atMac('Cl-') - gamclm).toExponential(1)}; no chloride against a trace of it `
+    + `${dNoCl.toExponential(1)}`);
+
+  // 4. The temperature: at 60 C as at 25 C with each parameter's value at 60 C (A_phi given, the same at both).
+  const terms = 'B0 Na+ Cl- 0.08 -700 -4 0.009 -3e-6 2e4\nB1 Na+ Cl- 0.27 0 0 6e-5 1e-6\nC0 Na+ Cl- 0.001 30 0.09 -5e-5\n'
+    + 'B0 Ca+2 Cl- 0.31 0 0 -3e-4 1.4e-7\nB1 Ca+2 Cl- 1.6 0 0 7.6e-3\nTHETA Ca+2 Na+ 0.07 1 0.01\nPSI Ca+2 Na+ Cl- -0.007 0 0 1e-5\n'
+    + 'APHI 0.39 -10 0 0 1e-4';
+  const hot = pzModel('TEMPERATURE = 60', 'Na+ 2\nCa+2 0.5\nCl- 3', terms);
+  const val = (line) => {
+    const parts = line.split(/\s+/);
+    const n = parts[0] === 'PSI' ? 3 : parts[0] === 'APHI' ? 0 : 2;
+    const a = new Float64Array(6);
+    parts.slice(1 + n).forEach((v, i) => { a[i] = Number(v); });
+    return `${parts.slice(0, 1 + n).join(' ')} ${n ? RtmModel.pitzerParam(a, 333.15) : RtmModel.pitzerParam(a, 333.15)}`;
+  };
+  const cold = pzModel('TEMPERATURE = 25', 'Na+ 2\nCa+2 0.5\nCl- 3', terms.split('\n').map(val).join('\n'));
+  const gh = coefficients(hot, hot.initialState());
+  const gc = coefficients(cold, cold.initialState());
+  const dT = Math.max(...['Na+', 'Ca+2', 'Cl-'].map((n) => Math.abs(gh.at(n) - gc.at(n))), Math.abs(gh.w.lnAw - gc.w.lnAw));
+  const p60 = 0.08 - 700 * (1 / 333.15 - 1 / 298.15) - 4 * Math.log(333.15 / 298.15) + 0.009 * 35 - 3e-6 * (333.15 ** 2 - 298.15 ** 2)
+    + 2e4 * (1 / 333.15 ** 2 - 1 / 298.15 ** 2);
+  const a6 = Float64Array.from([0.08, -700, -4, 0.009, -3e-6, 2e4]);
+  check('  a parameter goes with the temperature by its six terms, as PHREEQC\'s calc_pitz_param has them, and only so',
+    dT < 1e-14 && Math.abs(RtmModel.pitzerParam(a6, 333.15) - p60) < 1e-15 && RtmModel.pitzerParam(a6, 298.1505) === 0.08,
+    `at 60 C the same as at 25 C with the values at 60 C to ${dT.toExponential(1)}`);
+
+  // 5. A held water with every kind of parameter: NaCl and CO2 coming in, the Jacobian against differences.
+  const all = 'B0 Na+ Cl- 0.08\nB0 K+ Cl- 0.05\nB0 Ca+2 Cl- 0.3\nB0 Na+ SO4-2 0.02\nB0 Ca+2 SO4-2 0.2\nB0 Na+ HCO3- 0.03\n'
+    + 'B1 Na+ Cl- 0.27\nB1 K+ Cl- 0.21\nB1 Ca+2 Cl- 1.6\nB1 Na+ SO4-2 1.1\nB1 Ca+2 SO4-2 3.2\nB2 Ca+2 SO4-2 -54\n'
+    + 'C0 Na+ Cl- 0.001\nC0 K+ Cl- -0.0008\nC0 Ca+2 Cl- -0.0003\nC0 Na+ SO4-2 0.005\n'
+    + 'THETA K+ Na+ -0.01\nTHETA Ca+2 Na+ 0.07\nTHETA Cl- SO4-2 0.03\n'
+    + 'LAMBDA CO2 Na+ 0.1\nLAMBDA CO2 Cl- -0.005\nLAMBDA CO2 CO2 0.02\nZETA CO2 Na+ Cl- -0.003\n'
+    + 'PSI K+ Na+ Cl- -0.002\nPSI Ca+2 Na+ Cl- -0.007\nPSI Cl- SO4-2 Na+ 0.0014\n'
+    + 'MU CO2 CO2 Na+ -0.001\nMU CO2 CO2 CO2 0.0005\nETA CO2 Ca+2 Na+ 0.002\nALPHAS Ca+2 SO4-2 1.4 12';
+  const heldText = (extra = {}) => `<SETTINGS>\nMODE = ${extra.column ? 'transport\nCELLS = 3\nLENGTH = 0.03\nDIFFUSION = 1' : 'batch'}\n`
+    + `TEND = 1e4\nACTIVITY = pitzer\nEQUILIBRATE = ${extra.pairs ? 'start' : 'always'}\nTEMPERATURE = 25\n\n<SPECIES>\n`
+    + `H+ 1e-7 ${extra.column ? 'D=1e-9' : ''}\nOH- 1e-7\nNa+ 3\nK+ 0.1\nCl- 3.1\nCa+2 0.1\nSO4-2 0.1\nHSO4- 1e-9\nCO2 1e-3\n`
+    + `HCO3- 1e-3\nCO3-2 1e-5\nAnhydrite 0.1 mineral\n${extra.sp || ''}\n<EQUILIBRIUM>\n`
+    + `H2O <=> H+ + OH-, logK = -14${extra.pairs ? ', kf = 1e6' : ''}\n`
+    + `CO2 + H2O <=> H+ + HCO3-, logK = -6.35${extra.pairs ? ', kf = 1e3' : ''}\n`
+    + `HCO3- <=> H+ + CO3-2, logK = -10.33${extra.pairs ? ', kf = 1e3' : ''}\n`
+    + `HSO4- <=> H+ + SO4-2, logK = -1.98${extra.pairs ? ', kf = 1e3' : ''}\n`
+    + `${extra.pairs ? '' : 'Anhydrite <=> Ca+2 + SO4-2, logK = -4.36\n'}${extra.rel || ''}\n<PITZER>\n${all}\n\n`
+    + '<REACTIONS>\n=> Na+ + Cl-, k = 2e-4\n=> CO2, k = 1e-7\n';
+  const jac = (label, extra) => {
+    const out = { label, bad: 0, checked: 0, events: 0 };
+    for (const tend of [10, 3000, 9999]) {
+      const m = RtmModel.compile(heldText(extra).replace('TEND = 1e4', `TEND = ${tend}`));
+      const r = run(m, { tend, rtol: 1e-9 });
+      const v = RtmModel.verifyJacobian(m, tend, last(r));
+      out.bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      out.checked += v.checked;
+    }
+    return out;
+  };
+  const jacs = [jac('held', {}), jac('fast pairs', { pairs: true }), jac('a column of three cells', { column: true }),
+    jac('an exchanger', { sp: 'X- 0.05 exchanger\nNaX 0 exchange\nCaX2 0 exchange', rel: 'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\n' })];
+  check('  the Jacobian of a water with every kind of parameter, held, as fast pairs, in a column and with an exchanger, '
+    + 'against differences', jacs.every((j) => j.bad === 0),
+  jacs.map((j) => `${j.label} ${j.bad} of ${j.checked}`).join('; '));
+
+  // 6. What it refuses.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const sp = 'Na+ 1\nCl- 1\nCa+2 0.1\nSO4-2 0.1\nCO2 0.01\nAnhydrite 0 mineral';
+  const tx = (p, act = 'pitzer') => `<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = ${act}\n\n<SPECIES>\n${sp}\n\n<PITZER>\n${p}\n`;
+  const cases = [
+    ['a <PITZER> without ACTIVITY = pitzer', tx('B0 Na+ Cl- 0.08', 'davies'), /read under ACTIVITY = pitzer, not davies/],
+    ['an unknown type', tx('B3 Na+ Cl- 0.08'), /"B3" is no Pitzer parameter/],
+    ['too few numbers', tx('B0 Na+ Cl-'), /takes two species and its value/],
+    ['seven numbers', tx('B0 Na+ Cl- 1 2 3 4 5 6 7'), /up to five more terms/],
+    ['a species not in <SPECIES>', tx('B0 Na+ Br- 0.1'), /"Br-" in <PITZER> is not in <SPECIES>/],
+    ['a mineral', tx('LAMBDA CO2 Anhydrite 0.1'), /Anhydrite is no solute/],
+    ['B0 between two cations', tx('B0 Na+ Ca+2 0.1'), /B0 is between a cation and an anion/],
+    ['THETA between a cation and an anion', tx('THETA Na+ Cl- 0.1'), /THETA is between two ions of one sign/],
+    ['PSI of three cations', tx('PSI Na+ Ca+2 Na+ 0.1'), /PSI is between two ions of one sign and one of the other/],
+    ['LAMBDA of two ions', tx('LAMBDA Na+ Cl- 0.1'), /LAMBDA is between a neutral species and any other/],
+    ['ZETA without a neutral species', tx('ZETA Na+ Ca+2 Cl- 0.1'), /ZETA is between a neutral species, a cation and an anion/],
+    ['MU with one neutral species', tx('MU CO2 Na+ Cl- 0.1'), /MU is between three species, two of them neutral/],
+    ['a parameter twice, either way round', tx('B0 Na+ Cl- 0.08\nB0 Cl- Na+ 0.07'), /B0 Cl- Na\+ is given twice, on lines/],
+    ['APHI twice', tx('APHI 0.39\nAPHI 0.4'), /APHI is given twice/],
+    ['ALPHAS with three numbers', tx('ALPHAS Ca+2 SO4-2 1 2 3'), /ALPHAS takes the pair's alpha1 and alpha2/],
+    ['MACINNES yes with no K+ and Cl-', tx('B0 Na+ Cl- 0.08\nMACINNES yes'), /MACINNES yes needs the B0, B1 or C0 of K\+ and Cl-/],
+    ['MACINNES maybe', tx('MACINNES maybe'), /MACINNES yes or MACINNES no/],
+  ];
+  const wrong = cases.filter(([, t, re]) => !re.test(refuse(t)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, t]) => `${what}: "${refuse(t)}"`).join(' | '));
 }
 
 /* ======================================================================
