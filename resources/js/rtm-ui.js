@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108h';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108i';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2620,7 +2620,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108h';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108i';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

@@ -1187,7 +1187,8 @@ CO2    Na+     0.02</pre>
             strength and, besides, every species it is paired with in <code>&lt;SIT&gt;</code>:</p>
           <p>log&nbsp;γ<sub><em>i</em></sub> = −<em>A</em>&nbsp;<em>z<sub>i</sub></em>²&nbsp;√<em>I</em>/(1&nbsp;+&nbsp;1.5&nbsp;√<em>I</em>)
             +&nbsp;Σ<sub><em>j</em></sub>&nbsp;(ε<sub><em>ij</em></sub>&nbsp;+&nbsp;ε1<sub><em>ij</em></sub>&nbsp;<em>I</em>)&nbsp;<em>m<sub>j</sub></em></p>
-          <p><em>A</em> is the same Debye–Hückel <em>A</em>, from <code>TEMPERATURE</code>, and
+          <p><em>A</em> is the same Debye–Hückel <em>A</em>, from <code>TEMPERATURE</code> and the
+            water's own activity (see <em>Activity</em>), and
             <em>m<sub>j</sub></em> the concentration of each species <em>j</em> paired with
             <em>i</em>, read as a molality. A pair counts both ways, so <code>Na+ Cl- 0.03</code>
             puts 0.03&nbsp;<em>m</em>(Cl<sup>−</sup>) into Na<sup>+</sup>'s coefficient and
@@ -1199,8 +1200,14 @@ CO2    Na+     0.02</pre>
             &nbsp; <em>S</em> = −(2<em>A</em>/1.5³)&nbsp;(<em>T</em>&nbsp;−&nbsp;2&nbsp;ln&nbsp;<em>T</em>&nbsp;−&nbsp;1/<em>T</em>)
             +&nbsp;Σ<sub>pairs</sub>&nbsp;<em>m<sub>i</sub></em>&nbsp;<em>m<sub>j</sub></em>&nbsp;ε<sub><em>ij</em></sub>,
             &nbsp; <em>T</em> = 1&nbsp;+&nbsp;1.5&nbsp;√<em>I</em>,</p>
-          <p>a pair of two neutral species counting half. That is PHREEQC's SIT, and on the same water
-            the page's coefficients and water activity are PHREEQC's to rounding. A species takes no
+          <p>a pair of two neutral species counting half. That is PHREEQC's SIT. <em>A</em> is taken at
+            the <em>a</em>(H<sub>2</sub>O) the formula gives, and its part in the derivatives is in the
+            Jacobian. PHREEQC takes it at the <em>a</em>(H<sub>2</sub>O) a calculation starts from: 1 for
+            an initial solution, and for a reaction step or a shift that of the water it starts from.
+            So the page's coefficients and water activity are PHREEQC's to rounding for a water that a
+            step has started from (a <code>MIX</code> of it alone), and an initial solution's are
+            <em>A</em>'s part apart: 3.6×10<sup>−8</sup> in log&nbsp;γ of Ca<sup>2+</sup> at
+            <em>I</em>&nbsp;=&nbsp;1.7 and 25&nbsp;°C, 1.5×10<sup>−5</sup> at 150&nbsp;°C. A species takes no
             <code>a=</code> or <code>b=</code> under SIT, and one given them is said not to use them.
             A species on an exchanger takes its ion's coefficient, to the ion's power, as PHREEQC's
             does (see <em>Ion exchange</em>). Each pair is given once, between two species of
@@ -2054,7 +2061,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               wrong: a few hundredths is fine, and a tenth or more means a fresh water nearer the run.
               A model with <code>ACTIVITY</code> follows them itself, and then the tab says instead
               how close its own activity coefficients stay to PHREEQC's along the run, relation by
-              relation. PHREEQC's waters are put at the model's <code>PRESSURE</code>, and with
+              relation. Under SIT PHREEQC's waters there are initial solutions, with <em>A</em> at
+              <em>a</em>(H<sub>2</sub>O)&nbsp;=&nbsp;1 (see <em>SIT</em>), and a salt water's
+              coefficients are that far apart: 1.3×10<sup>−7</sup> in log K at
+              <em>I</em>&nbsp;=&nbsp;2.7 and 25&nbsp;°C, more when hot. PHREEQC's waters are put at the
+              model's <code>PRESSURE</code>, and with
               <code>&lt;VOLUMES&gt;</code> the part of each log K that goes with the pressure is counted on
               both sides, PHREEQC's from its own molar volumes;</li>
             <li>for each mineral of the model, the saturation index PHREEQC finds where the model has
@@ -2131,9 +2142,16 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             10<sup>−11</sup>&nbsp;V. PHREEQC takes 0.7 seconds and this page 1.9.</p>
           <p>And SIT. On PHREEQC's <code>sit.dat</code>, in 1&nbsp;mol/kgw of NaCl with calcium,
             magnesium, sulfate and carbonate at 15&nbsp;°C, in uranium(VI) carbonate in 3&nbsp;mol/kgw of
-            NaCl, and in 0.5&nbsp;mol/kgw of NaCl at 60&nbsp;°C, the page's activity coefficients and
-            water activity at PHREEQC's molalities are PHREEQC's to 5×10<sup>−16</sup>, and the model it
-            writes from each water starts on PHREEQC's molalities to 4×10<sup>−10</sup>. Brine,
+            NaCl, and in 0.5&nbsp;mol/kgw of NaCl at 60&nbsp;°C, each taken through two steps of nothing
+            (<code>MIX</code>) so that PHREEQC's <em>A</em> is at the water's own
+            <em>a</em>(H<sub>2</sub>O), the page's activity coefficients and water activity at PHREEQC's
+            molalities are PHREEQC's to 6×10<sup>−14</sup>, and the model it writes from each water
+            starts on PHREEQC's molalities to 1.1×10<sup>−13</sup>. With coefficients of the tests' own
+            on <code>phreeqc.dat</code>, at <em>I</em>&nbsp;=&nbsp;1.7, they are PHREEQC's to
+            7×10<sup>−16</sup> at 25&nbsp;°C, and at 150&nbsp;°C, on the vapour pressure, to
+            9×10<sup>−12</sup>: PHREEQC keeps the highest pressure a water reaches and takes <em>A</em>
+            at the pressure a step starts from, 7×10<sup>−8</sup>&nbsp;atm below the one it ends at and
+            hands off, and at that pressure they are PHREEQC's to 5×10<sup>−16</sup>. Brine,
             2&nbsp;mol/kgw of NaCl, flows for three pore volumes into 0.1&nbsp;m of fresh water at
             saturation with calcite, the ionic strength rising from 0.013 to 2: on 40 cells the page's
             effluent is within 0.016 of PHREEQC's in pH and 4.6&nbsp;µmol/kgw in calcium where the front
@@ -2352,7 +2370,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108h"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108i"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2360,6 +2378,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108h"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108i"></script>
 </body>
 </html>

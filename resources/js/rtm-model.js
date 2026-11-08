@@ -1717,7 +1717,10 @@
     const d1000 = 3.4279e2 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7));
     const c = -2.0525 + 3.1159e3 / (-1.8289e2 + T);
     const b = -8.0325e3 + 4.2142e6 / T + 2.1417 * T;
-    return { T, atmGiven, rhoSat, p0, p1, p2, p3, pSat, d1000, c, b };
+    // The dielectric constant at the pressure given, and e^2/(eps k T), as waterAt has them where the water is at it.
+    const epsGiven = d1000 + c * Math.log((b + atmGiven * 1.01325) / (b + 1e3));
+    return { T, atmGiven, rhoSat, p0, p1, p2, p3, pSat, d1000, c, b, lnSat: Math.log(pSat), lnGiven: Math.log(atmGiven),
+      epsGiven, e2Given: 1.671008e-3 / (epsGiven * T) };
   }
 
   /**
@@ -1725,17 +1728,21 @@
    * operations. `gasAtm`, a fixed volume of gas's pressure, is the water's,
    * as PHREEQC's patm_x is with a gas phase: its density then at that or
    * the vapour pressure times a(H2O), whichever is higher, its dielectric
-   * constant at that pressure (calc_rho_0, calc_dielectrics).
+   * constant at that pressure (calc_rho_0, calc_dielectrics). With `out`,
+   * the result goes into it, the same object each time (sitAt's, called
+   * at every evaluation).
    */
-  function waterAt(w, aw, gasAtm) {
+  function waterAt(w, aw, gasAtm, out) {
     // One atmosphere, or the pressure given, or the vapour pressure (times a(H2O)) where that is higher.
     const pSat = w.pSat * (aw <= 1.0 ? aw : 1);
     const atmRho = Math.max(gasAtm === undefined ? w.atmGiven : gasAtm, pSat);
     const atm = gasAtm === undefined ? atmRho : gasAtm;
     const pa = atmRho - (pSat - 1e-6);
-    const rho = (w.rhoSat + pa * (w.p0 + pa * (w.p1 + pa * (w.p2 + Math.sqrt(pa) * w.p3)))) / 1e3; // g/cm3
-    const eps = w.d1000 + w.c * Math.log((w.b + atm * 1.01325) / (w.b + 1e3));
-    const e2 = 1.671008e-3 / (eps * w.T); // e^2/(eps k T), cm
+    const spa = Math.sqrt(pa);
+    const rho = (w.rhoSat + pa * (w.p0 + pa * (w.p1 + pa * (w.p2 + spa * w.p3)))) / 1e3; // g/cm3
+    const given = atm === w.atmGiven;
+    const eps = given ? w.epsGiven : w.d1000 + w.c * Math.log((w.b + atm * 1.01325) / (w.b + 1e3));
+    const e2 = given ? w.e2Given : 1.671008e-3 / (eps * w.T); // e^2/(eps k T), cm
     const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
     /*
       How A and B go with ln a(H2O): the density through the vapour
@@ -1747,13 +1754,38 @@
     let dlnEps = 0;
     if (aw <= 1) {
       if (atmRho > pSat) {
-        dlnRho = (-pSat * (w.p0 + pa * (2 * w.p1 + pa * (3 * w.p2 + Math.sqrt(pa) * 3.5 * w.p3)))) / 1e3 / rho;
+        dlnRho = (-pSat * (w.p0 + pa * (2 * w.p1 + pa * (3 * w.p2 + spa * 3.5 * w.p3)))) / 1e3 / rho;
       }
       if (gasAtm === undefined && atm === pSat && pSat > w.atmGiven) dlnEps = (w.c * 1.01325 * pSat) / (w.b + atm * 1.01325) / eps;
     }
     // A0: Pitzer's A_phi, PHREEQC's DH_B e2_DkT/6; atm the pressure the water is then at.
-    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps, A0: (kappa * e2) / 6.0, atm, rho, pa, e2, kappa,
-      dlnA: 0.5 * dlnRho - 1.5 * dlnEps, dlnB: 0.5 * dlnRho - 0.5 * dlnEps, dlnRho, pSat };
+    const r = out || {};
+    r.A = kappa * e2 / (2 * Math.LN10);
+    r.B = kappa / 1e8;
+    r.eps = eps;
+    r.A0 = (kappa * e2) / 6.0;
+    r.atm = atm;
+    r.rho = rho;
+    r.pa = pa;
+    r.e2 = e2;
+    r.kappa = kappa;
+    r.dlnA = 0.5 * dlnRho - 1.5 * dlnEps;
+    r.dlnB = 0.5 * dlnRho - 0.5 * dlnEps;
+    r.dlnRho = dlnRho;
+    r.pSat = pSat;
+    return r;
+  }
+
+  /**
+   * Which of waterAt's pieces (no gas phase) the water is on at ln a(H2O) =
+   * L: a(H2O) above 1 or not, and the pressure given above the vapour
+   * pressure times a(H2O), below it or on it -- in logarithms, which can
+   * put a water within a rounding of a corner on its other side. Between
+   * two a(H2O) on the same piece A and B are smooth.
+   */
+  function waterSide(w, L) {
+    const lnSat = w.lnSat + (L <= 0 ? L : 0);
+    return (L <= 0 ? 0 : 3) + (w.lnGiven > lnSat ? 1 : w.lnGiven < lnSat ? 2 : 0);
   }
 
   /**
@@ -2204,8 +2236,9 @@
       Where the water can be above 100 C, A and B's derivative in ln a(H2O),
       species by species, for the Jacobian (coefficientsAt): the water is
       then on its vapour pressure, or the density goes with it, enough to see.
+      Under SIT at any temperature, as the water already reads every solute.
     */
-    const hot = !isSit && !isPz && !llnl && !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6);
+    const hot = !isPz && !llnl && (isSit || !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6));
     return { kind: settings.ACTIVITY, temperature: tc, A, B, wt, wtc: null, ns, z, zg: Float64Array.from(z), form, a, b,
       dGw: hot ? new Float64Array(ns) : null,
       solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz,
@@ -2401,21 +2434,70 @@
    *
    * with its derivative in each species' concentration, dAwv. A is the
    * Debye-Hueckel A of the other forms: 3 A_phi/ln 10 in PHREEQC is the same
-   * number.
+   * number. It is the water's own, at the density of water at the vapour
+   * pressure times a(H2O) (calc_rho_0), and so at the a(H2O) it gives: a
+   * fixed point, which one Newton step from the pure water's A reaches to
+   * round-off, as A moves a part in 1e6 as far as ln a(H2O) at 25 C and a
+   * part in 1e3 or so at 150 C. PHREEQC's sit.cpp takes it at the a(H2O) a
+   * calculation starts from: 1 for an initial solution, and for a reaction
+   * step or a shift that of the water it starts from. A's derivative in ln
+   * a(H2O) goes into dGw (coefficientsAt) and into dAwv.
    */
   function sitAt(act, C, off, I, low, osum, lnG, dG, cell) {
     const ns = act.ns;
     const st = act.sit;
-    const A = act.Ac ? act.Ac[cell] : act.A;
     const sq = Math.sqrt(I);
     const T = 1 + 1.5 * sq;
+    // The pairs' part of the osmotic coefficient, which A does not touch.
+    let osPairs = 0;
+    let osI = 0;
+    for (const p of st.pairs) {
+      const mi = C[off + p.i];
+      const mj = C[off + p.j];
+      osPairs += mi * mj * (p.e * p.c + p.e1 * (1 + p.c * I));
+      if (!low) osI += mi * mj * p.e1 * p.c;
+    }
+    const shape = T - 2 * Math.log(T) - 1 / T;
+    let A = act.Ac ? act.Ac[cell] : act.A;
+    let dlnA = 0;
+    if (act.wt) {
+      /*
+        ln a(H2O) = a + b A, b A the Debye-Hueckel part, with A at that
+        a(H2O). b A dlnA is a part in 1e5 or less, so from a(H2O) at the pure
+        water's A one Newton step on A's slope there lands on it to round-off
+        -- unless the step crosses one of A's corners (waterSide), where A is
+        taken afresh at each a(H2O) until it settles.
+      */
+      const wt = act.wtc ? act.wtc[cell] : act.wt;
+      const a = -(osum + Math.LN10 * osPairs) / SIT_WATER;
+      const b = (2 * Math.LN10 * shape) / (3.375 * SIT_WATER);
+      const L0 = a + b * A;
+      const ws = st.ws || (st.ws = {});
+      const w0 = waterAt(wt, Math.exp(L0), undefined, ws);
+      dlnA = w0.dlnA;
+      let L = (a + b * w0.A * (1 - dlnA * L0)) / (1 - b * w0.A * dlnA);
+      A = w0.A * (1 + dlnA * (L - L0));
+      if (waterSide(wt, L) !== waterSide(wt, L0)) {
+        for (let it = 0; it < 8; it++) {
+          const w = waterAt(wt, Math.exp(L), undefined, ws);
+          A = w.A;
+          dlnA = w.dlnA;
+          const next = a + b * A;
+          const step = Math.abs(next - L);
+          L = next;
+          if (step <= 1e-16 * Math.max(1, Math.abs(L))) break;
+        }
+      }
+    }
     const F = (-A * sq) / T;
     const dF = low ? 0 : -A / (2 * sq * T * T);
+    const dGw = act.dGw;
     for (let s = 0; s < ns; s++) {
-      if (act.form[s] !== 4) { lnG[s] = 0; dG[s] = 0; continue; }
+      if (act.form[s] !== 4) { lnG[s] = 0; dG[s] = 0; if (dGw) dGw[s] = 0; continue; }
       const z2 = act.z[s] * act.z[s];
       let lg = z2 * F;
       let dg = z2 * dF;
+      if (dGw) dGw[s] = Math.LN10 * z2 * F * dlnA;
       const r = st.rows[s];
       if (r) {
         for (let q = 0; q < r.k.length; q++) {
@@ -2428,18 +2510,19 @@
       dG[s] = low ? 0 : Math.LN10 * dg;
     }
     const ex = act.ex;
-    if (ex) for (const s of ex.list) if (act.form[s] === 5) { lnG[s] = lnG[ex.ion[s]]; dG[s] = dG[ex.ion[s]]; }
+    if (ex) {
+      for (const s of ex.list) {
+        if (act.form[s] !== 5) continue;
+        lnG[s] = lnG[ex.ion[s]];
+        dG[s] = dG[ex.ion[s]];
+        if (dGw) dGw[s] = dGw[ex.ion[s]];
+      }
+    }
     onSites(act, lnG, dG, cell);
     if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, cell);
     // The water.
-    let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
-    let osI = low ? 0 : (-A * sq) / (T * T);
-    for (const p of st.pairs) {
-      const mi = C[off + p.i];
-      const mj = C[off + p.j];
-      os += mi * mj * (p.e * p.c + p.e1 * (1 + p.c * I));
-      if (!low) osI += mi * mj * p.e1 * p.c;
-    }
+    const os = (-2 * A / 3.375) * shape + osPairs;
+    if (!low) osI += (-A * sq) / (T * T);
     const dAwv = st.dAwv;
     for (let k = 0; k < ns; k++) dAwv[k] = act.solute[k] ? 1 + Math.LN10 * osI * 0.5 * act.z[k] * act.z[k] : 0;
     for (const p of st.pairs) {
@@ -2447,8 +2530,10 @@
       dAwv[p.i] += f * C[off + p.j];
       dAwv[p.j] += f * C[off + p.i];
     }
-    for (let k = 0; k < ns; k++) dAwv[k] /= -SIT_WATER;
-    return { I, lnAw: -(osum + Math.LN10 * os) / SIT_WATER, dAw: 0, dAwv };
+    // ...and through A, which goes with the a(H2O) it gives: d ln a = (that at a fixed A) - b A dlnA d ln a.
+    const fix = -SIT_WATER - Math.LN10 * (-2 * A / 3.375) * shape * dlnA;
+    for (let k = 0; k < ns; k++) dAwv[k] /= fix;
+    return { I, lnAw: -(osum + Math.LN10 * os) / SIT_WATER, dAw: 0, dAwv, dGw };
   }
 
   /** Moles of water in a kilogram, as PHREEQC's SIT has it. */
@@ -6209,7 +6294,8 @@
     const useI = !!act && ([...act.form].some((f) => (f >= 1 && f <= 5) || f === 7 || f === 8) || np > 0);
     // ...and the water's ln a where a relation has the water in it, or a Debye-Hueckel A and B read it (coefficientsAt).
     const useL = !!act && act.kind !== 'none'
-      && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water) || [...act.form].some((f) => f === 2 || f === 3));
+      && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water)
+        || [...act.form].some((f) => f === 2 || f === 3 || f === 4));
     const nK = K.length;
     const nm = mins.length;
     const M = A.map((rw) => rw.slice(naq));
@@ -6392,7 +6478,14 @@
     const Ie = low ? 1e-10 : I;
     const sq = Math.sqrt(Ie);
     const T = 1 + 1.5 * sq;
-    const Ah = act.Ac ? act.Ac[cell] : act.A;
+    // A at the water's own a(H2O), the unknown ln a, as the full speciation has it (sitAt), with its derivative.
+    let Ah = act.Ac ? act.Ac[cell] : act.A;
+    let dlnAh = 0;
+    if (useL && act.wt) {
+      const wA = waterAt(act.wtc ? act.wtc[cell] : act.wt, Math.exp(z[iL]));
+      Ah = wA.A;
+      dlnAh = wA.dlnA;
+    }
     const Fd = (-Ah * sq) / T;
     const dFd = low ? 0 : -Ah / (2 * sq * T * T);
     const at = cell * ns;
@@ -6406,6 +6499,7 @@
     const baseGrad = (s, g) => {
       g.fill(0);
       if (useI && act.form[s] === 4) g[iI] = LN * z2(s) * dFd;
+      if (dlnAh && act.form[s] === 4) g[iL] += LN * z2(s) * Fd * dlnAh;
       if (vOf[s] >= 0) g[iS + vOf[s]] = LN;
     };
     // 1. The fixed species: in V, unpaired, or on an exchanger with an ion that is either.
@@ -6504,6 +6598,7 @@
           }
         }
         if (gl && useI && !low) gl[iI] += LN * dI;
+        if (gl && dlnAh) gl[iL] += LN * z2(s) * Fd * dlnAh;
         return LN * lg;
       }
       if (act.form[s] === 5) {
@@ -6669,8 +6764,16 @@
     if (useL) {
       const sq = Math.sqrt(Ie);
       const T = 1 + 1.5 * sq;
-      const Ah = act.Ac ? act.Ac[cell] : act.A;
+      // A at the water's own a(H2O), its unknown ln a (sitAt, reducedStateSit).
+      let Ah = act.Ac ? act.Ac[cell] : act.A;
+      let dlnAh = 0;
+      if (act.wt) {
+        const wA = waterAt(act.wtc ? act.wtc[cell] : act.wt, Math.exp(L));
+        Ah = wA.A;
+        dlnAh = wA.dlnA;
+      }
       let os = (-2 * Ah / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+      if (J && dlnAh) J[iL][iL] += (LN * os * dlnAh) / SIT_WATER;
       let osI = low ? 0 : (-Ah * sq) / (T * T);
       let osum = 0;
       const dm = sc.dm || (sc.dm = new Float64Array(sys.ns));

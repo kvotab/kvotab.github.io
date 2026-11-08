@@ -4610,27 +4610,36 @@ Yr <=> Yo + e-, logK = -5
    ====================================================================== */
 console.log('\n--- SIT ---');
 {
-  // SIT written out apart from the page: log10 gamma of each species and log10 a(H2O).
-  const A25 = RtmModel.debyeHuckelAB(25).A;
-  const sitHand = (names, c, pairs, A = A25) => {
+  /*
+    SIT written out apart from the page: log10 gamma of each species and
+    log10 a(H2O), A the water's own, at the a(H2O) it gives (a fixed point
+    from the pure water's A; debyeHuckelAB's A at an a(H2O) is PHREEQC's,
+    test-phreeqc.js).
+  */
+  const sitHand = (names, c, pairs, tc = 25) => {
     const z = names.map((n) => (n === 'H2O' ? 0 : RtmModel.chargeOf(n)));
     let I = 0;
     let osum = 0;
     names.forEach((n, i) => { if (n !== 'H2O') { I += 0.5 * z[i] * z[i] * c[i]; osum += c[i]; } });
     const sq = Math.sqrt(I);
-    const D = (-A * sq) / (1 + 1.5 * sq);
-    const lg = names.map((n, i) => (n === 'H2O' ? 0 : z[i] * z[i] * D));
     const T = 1 + 1.5 * sq;
-    let os = (-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T);
+    const lg = names.map(() => 0);
+    let osPairs = 0;
     for (const [a, b, e, e1 = 0] of pairs) {
       const i = names.indexOf(a);
       const j = names.indexOf(b);
       lg[i] += (e + e1 * I) * c[j];
       lg[j] += (e + e1 * I) * c[i];
       const half = !z[i] && !z[j] ? 0.5 : 1;
-      os += c[i] * c[j] * (e * half + e1 * (1 + half * I));
+      osPairs += c[i] * c[j] * (e * half + e1 * (1 + half * I));
     }
-    return { lg, I, law: -(osum + Math.LN10 * os) / 55.50837 / Math.LN10 };
+    const lawAt = (A) => -(osum + Math.LN10 * ((-2 * A / 3.375) * (T - 2 * Math.log(T) - 1 / T) + osPairs)) / 55.50837
+      / Math.LN10;
+    let A = RtmModel.debyeHuckelAB(tc).A;
+    for (let it = 0; it < 20; it++) A = RtmModel.debyeHuckelAB(tc, 1, 10 ** lawAt(A)).A;
+    const D = (-A * sq) / T;
+    names.forEach((n, i) => { if (n !== 'H2O') lg[i] += z[i] * z[i] * D; });
+    return { lg, I, law: lawAt(A), A };
   };
 
   // The coefficients, by hand.
@@ -4646,14 +4655,18 @@ console.log('\n--- SIT ---');
   const w = RtmModel.activityAt(act, C, 0, lnG, dG);
   const hand = sitHand(names, C, pairs);
   const worst = Math.max(...names.map((n, i) => Math.abs(lnG[i] / Math.LN10 - hand.lg[i])));
-  check('each coefficient by hand: the Debye-Hueckel term, the pairs, a neutral species paired with itself, eps1 I',
-    worst < 1e-15 && Math.abs(w.I - hand.I) < 1e-15, `within ${worst.toExponential(1)} in log gamma at I = ${w.I}; `
-      + `${names.map((n, i) => `${n} ${(lnG[i] / Math.LN10).toFixed(5)}`).join(', ')}`);
+  const A1 = RtmModel.debyeHuckelAB(25).A;
+  check('each coefficient by hand: the Debye-Hueckel term, A at the water\'s own a(H2O), the pairs, a neutral species '
+    + 'paired with itself, eps1 I', worst < 1e-15 && Math.abs(w.I - hand.I) < 1e-15 && hand.A !== A1,
+  `within ${worst.toExponential(1)} in log gamma at I = ${w.I}; `
+      + `${names.map((n, i) => `${n} ${(lnG[i] / Math.LN10).toFixed(5)}`).join(', ')}; A ${hand.A.toPrecision(12)} for `
+      + `${A1.toPrecision(12)} at a(H2O) = 1`);
   check('  and the water\'s activity, from SIT\'s osmotic coefficient', Math.abs(w.lnAw / Math.LN10 - hand.law) < 1e-16,
     `log a(H2O) ${(w.lnAw / Math.LN10).toFixed(10)}`);
   // The derivatives the Jacobians read: in I, in each partner, and the water's in each species.
   let dWorst = 0;
   const dAwv = Float64Array.from(w.dAwv);
+  const dGw = w.dGw ? Float64Array.from(w.dGw) : null;
   for (let k = 0; k < 6; k++) {
     const h = 1e-4 * Math.max(C[k], 1e-3);
     const up = Float64Array.from(C);
@@ -4667,13 +4680,13 @@ console.log('\n--- SIT ---');
     dWorst = Math.max(dWorst, Math.abs((w1.lnAw - w2.lnAw) / (2 * h) - dAwv[k]) / Math.max(Math.abs(dAwv[k]), 1e-6));
     for (let s = 0; s < 6; s++) {
       const r = act.sit.rows[s];
-      let an = dG[s] * 0.5 * act.z[k] * act.z[k];
+      let an = dG[s] * 0.5 * act.z[k] * act.z[k] + dGw[s] * dAwv[k];
       if (r) for (let q = 0; q < r.k.length; q++) if (r.k[q] === k) an += Math.LN10 * (r.e[q] + w.I * r.e1[q]);
       dWorst = Math.max(dWorst, Math.abs((g1[s] - g2[s]) / (2 * h) - an) / Math.max(Math.abs(an), 1e-3));
     }
   }
-  check('  their derivatives, in I, in each species paired, and the water\'s in each species, against differences',
-    dWorst < 1e-6, dWorst.toExponential(1));
+  check('  their derivatives, in I, in each species paired, through A in the water\'s, and the water\'s in each '
+    + 'species, against differences', dWorst < 1e-6 && dGw.some((v) => v !== 0), dWorst.toExponential(1));
 
   // A water held throughout as salt goes in.
   const water = (more, pairsText = '') => `
@@ -4828,20 +4841,26 @@ ${sitMore}
   const rPairs = [['Na+', 'Cl-', 0.03], ['H+', 'Cl-', 0.12], ['Na+', 'OH-', 0.04], ['Fe+2', 'Cl-', 0.17],
     ['Fe+3', 'Cl-', 0.56, 0.01], ['FeCl+', 'Cl-', 0.2], ['Na+', 'SO4-2', -0.12], ['Na+', 'HS-', 0.05],
     ['Na+', 'NaSO4-', 0], ['O2', 'Na+', 0.03], ['O2', 'O2', 0.01]];
+  // Every relation at every stored point against SIT written out, at the run's temperature.
+  const redoxOff = (mdl, run, tc = 25) => {
+    let off = 0;
+    for (const y of run.y) {
+      const c = mdl.toConcentrations(y);
+      const nm = mdl.speciesNames.filter((n) => n !== 'e-');
+      const cc = nm.map((n) => c[mdl.speciesNames.indexOf(n)]);
+      const h = sitHand(nm, cc, rPairs, tc);
+      const la = (n) => (n === 'e-' ? Math.log10(c[mdl.speciesNames.indexOf('e-')])
+        : Math.log10(cc[nm.indexOf(n)]) + h.lg[nm.indexOf(n)]);
+      off = Math.max(off, Math.abs(la('H+') + la('OH-') - h.law + 14), Math.abs(la('Fe+3') + la('e-') - la('Fe+2') + 13.02),
+        Math.abs(la('FeCl+') - la('Fe+2') - la('Cl-') - 0.14),
+        Math.abs(la('HS-') + 4 * h.law - la('SO4-2') - 9 * la('H+') - 8 * la('e-') - 33.65),
+        Math.abs(la('NaSO4-') - la('Na+') - la('SO4-2') - 0.7), Math.abs(la('O2') + 4 * la('H+') + 4 * la('e-') - 2 * h.law + 86.08));
+    }
+    return off;
+  };
   const ox = RtmModel.compile(redox());
   const ro = FacsimileODE.runModel(ox, { solver: 'ndf', tend: 1e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
-  let rw = 0;
-  for (const y of ro.y) {
-    const c = ox.toConcentrations(y);
-    const nm = ox.speciesNames.filter((n) => n !== 'e-');
-    const cc = nm.map((n) => c[ox.speciesNames.indexOf(n)]);
-    const h = sitHand(nm, cc, rPairs);
-    const la = (n) => (n === 'e-' ? Math.log10(c[ox.speciesNames.indexOf('e-')]) : Math.log10(cc[nm.indexOf(n)]) + h.lg[nm.indexOf(n)]);
-    rw = Math.max(rw, Math.abs(la('H+') + la('OH-') - h.law + 14), Math.abs(la('Fe+3') + la('e-') - la('Fe+2') + 13.02),
-      Math.abs(la('FeCl+') - la('Fe+2') - la('Cl-') - 0.14),
-      Math.abs(la('HS-') + 4 * h.law - la('SO4-2') - 9 * la('H+') - 8 * la('e-') - 33.65),
-      Math.abs(la('NaSO4-') - la('Na+') - la('SO4-2') - 0.7), Math.abs(la('O2') + 4 * la('H+') + 4 * la('e-') - 2 * h.law + 86.08));
-  }
+  const rw = redoxOff(ox, ro);
   const oEnd = ox.toConcentrations(ro.y[ro.y.length - 1]);
   const vo = [RtmModel.verifyJacobian(ox, 0, ox.initialState()), RtmModel.verifyJacobian(ox, 1e4, ro.y[ro.y.length - 1])];
   check('the electron under SIT, oxygen into a saline Fe and S water: every stored point on every relation in SIT\'s '
@@ -4850,6 +4869,17 @@ ${sitMore}
     + `at the end, ${ro.stats.nfailed} steps failed`);
   check('  its Jacobian through each cell\'s speciation, at the start and the end',
     vo.every((v) => v.discrepancies.length === 0), `${vo[0].checked} and ${vo[1].checked} entries`);
+  // At 150 C the water is on its vapour pressure and A goes a part in 1e3 as far as ln a(H2O): the speciation's ln a column.
+  const hox = RtmModel.compile(redox('TEMPERATURE = 150'));
+  const hro = FacsimileODE.runModel(hox, { solver: 'ndf', tend: 1e4, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const hmid = Math.floor(hro.y.length / 2);
+  const hvo = [[0, hox.initialState()], [hro.t[hmid], hro.y[hmid]], [1e4, hro.y[hro.y.length - 1]]]
+    .map(([t, y]) => RtmModel.verifyJacobian(hox, t, y));
+  const hrw = redoxOff(hox, hro, 150);
+  check('  and at 150 C, on the vapour pressure, where A goes a part in 1e3 as far as ln a(H2O): every stored point on '
+    + 'every relation, and the Jacobian at the start, the middle and the end', hrw < 1e-12
+    && hvo.every((v) => v.discrepancies.length === 0), `${hrw.toExponential(1)} in log K over ${hro.t.length} points; `
+      + `${hvo.map((v) => v.checked).join(', ')} entries`);
   // An ion in no relation but paired, a species on an exchanger, a column: the Jacobian.
   const variants = [
     ['an ion outside every relation, paired in <SIT>', redox('', 'K+      0.1', '', 'K+     Cl-     0.0\nK+     SO4-2  -0.06\nK+     HS-     0.02')],

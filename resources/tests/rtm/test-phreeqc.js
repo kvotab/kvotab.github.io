@@ -1426,30 +1426,119 @@ function sitColumn(engine, db, N, pv) {
   return out;
 }
 
-function againstSit(engine) {
-  const own = { name: 'phreeqc.dat with a SIT block', text: `${SIT_OWN}${dbText}` };
-  // A saline water: the page's coefficients at PHREEQC's molalities, and its start on them.
-  const saline = `${KNOBS}SOLUTION 1\n temp 25\n units mol/kgw\n pH 7.5\n Na 1.5\n K 0.1\n Ca 0.02\n Mg 0.01\n`
-    + ' Cl 1.66 charge\n C(4) 0.003\n S(6) 0.005\nEND\n';
-  engine.load(own.text);
-  const res = P.waterToModel({ engine, database: own, water: { name: 'saline', text: saline }, activity: true, exact: true,
-    redox: false });
+/*
+  PHREEQC's SIT takes its Debye-Hueckel A at the a(H2O) a calculation starts
+  from (sit.cpp's PTEMP_SIT, once a calculation): 1 for an initial solution,
+  the water's own when a reaction step starts from it. The page's A is at the
+  water's own a(H2O), so a water to hold the page against goes through two
+  steps of nothing, MIX, the second starting from the a(H2O) the first gave.
+*/
+const SIT_STEP = 'MIX 1\n 1 1.0\nSAVE solution 1\nEND\n';
+const SIT_STEPS = SIT_STEP.repeat(2);
+
+/** The page's log10 gamma of each species PHREEQC has, at PHREEQC's molalities, and the water's. */
+function sitAtPhreeqc(res) {
   const m = RtmModel.compile(res.text);
   const ns = m.speciesNames.length;
   const C = new Float64Array(ns);
   for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
   const lnG = new Float64Array(ns);
   const w = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+  const lg = new Map([...res.names].map(([p, n]) => [p, { n, page: lnG[m.speciesNames.indexOf(n)] / Math.LN10,
+    pq: res.water.species.get(p)[1], z: m.act.z[m.speciesNames.indexOf(n)] }]));
+  return { m, w, lg, law: w.lnAw / Math.LN10 };
+}
+
+function againstSit(engine) {
+  const own = { name: 'phreeqc.dat with a SIT block', text: `${SIT_OWN}${dbText}` };
+  // A saline water: the page's coefficients at PHREEQC's molalities, and its start on them.
+  const salineSolution = 'SOLUTION 1\n temp 25\n units mol/kgw\n pH 7.5\n Na 1.5\n K 0.1\n Ca 0.02\n Mg 0.01\n'
+    + ' Cl 1.66 charge\n C(4) 0.003\n S(6) 0.005\nEND\n';
+  const saline = `${KNOBS}${salineSolution}${SIT_STEPS}`;
+  engine.load(own.text);
+  const res = P.waterToModel({ engine, database: own, water: { name: 'saline', text: saline }, activity: true, exact: true,
+    redox: false });
+  const at0 = sitAtPhreeqc(res);
+  const m = at0.m;
   let worstG = 0;
   let at = '';
-  for (const [p, n] of res.names) {
-    const d = Math.abs(lnG[m.speciesNames.indexOf(n)] / Math.LN10 - res.water.species.get(p)[1]);
-    if (d > worstG) { worstG = d; at = n; }
+  for (const g of at0.lg.values()) if (Math.abs(g.page - g.pq) > worstG) { worstG = Math.abs(g.page - g.pq); at = g.n; }
+  const dAw = Math.abs(at0.law - Math.log10(res.water.aw));
+  check('SIT: the page\'s coefficients at PHREEQC\'s molalities are PHREEQC\'s, and so is the water\'s activity, '
+    + 'PHREEQC\'s A at the water\'s own a(H2O) as the page\'s is', worstG < 1e-12 && dAw < 1e-14 && res.water.state === 'react',
+  `log gamma within ${worstG.toExponential(1)} (${at}), log a(H2O) within ${dAw.toExponential(1)}, at I = `
+      + `${res.water.mu.toFixed(3)}`);
+  // PHREEQC's initial solution has its A at a(H2O) = 1: the coefficients apart by z^2 times A's part alone.
+  engine.load(own.text);
+  const ires = P.waterToModel({ engine, database: own, water: { name: 'saline', text: `${KNOBS}${salineSolution}` },
+    activity: true, exact: true, redox: false });
+  const ia = sitAtPhreeqc(ires);
+  const sq = Math.sqrt(ia.w.I);
+  const Aown = RtmModel.debyeHuckelAB(25, 1, Math.exp(ia.w.lnAw)).A;
+  const A1 = RtmModel.debyeHuckelAB(25).A;
+  let iApart = 0;
+  let iOff = 0;
+  let iAt = '';
+  for (const g of ia.lg.values()) {
+    const d = g.page - g.pq;
+    if (Math.abs(d) > Math.abs(iApart)) { iApart = d; iAt = g.n; }
+    iOff = Math.max(iOff, Math.abs(d - (g.z * g.z * -sq * (Aown - A1)) / (1 + 1.5 * sq)));
   }
-  const dAw = Math.abs(w.lnAw / Math.LN10 - Math.log10(res.water.aw));
-  check('SIT: the page\'s coefficients at PHREEQC\'s molalities are PHREEQC\'s, and so is the water\'s activity',
-    worstG < 1e-12 && dAw < 1e-14, `log gamma within ${worstG.toExponential(1)} (${at}), log a(H2O) within `
-      + `${dAw.toExponential(1)}, at I = ${res.water.mu.toFixed(3)}`);
+  check('  against PHREEQC\'s initial solution, its A at a(H2O) = 1: apart by z^2 times A\'s part alone',
+    iOff < 1e-12 && Math.abs(iApart) > 1e-9 && ires.water.state === 'i_soln',
+    `${iApart.toExponential(2)} in log gamma (${iAt}), A ${Aown.toPrecision(10)} for ${A1.toPrecision(10)}; the rest `
+      + `within ${iOff.toExponential(1)}`);
+  /*
+    At 150 C, the water on its vapour pressure, A goes a part in 1e3 as far
+    as ln a(H2O): the same, and the Jacobian. PHREEQC keeps the highest
+    pressure a water reaches (calc_rho_0) and takes A at the pressure its
+    step starts from, the step before's; the hand-off writes the one the
+    last step ended at, 7e-8 atm higher here, and A is that far apart too.
+  */
+  const hotSolution = salineSolution.replace('temp 25', 'temp 150');
+  const hotWater = (steps) => {
+    engine.load(own.text);
+    return P.waterToModel({ engine, database: own, water: { name: 'saline at 150 C', text: `${KNOBS}${hotSolution}${steps}` },
+      activity: true, exact: true, redox: false });
+  };
+  const hres = hotWater(SIT_STEPS);
+  const ha = sitAtPhreeqc(hres);
+  const pressureOf = (r) => Number(/^PRESSURE = (\S+)$/m.exec(r.text)[1]);
+  const pEnd = pressureOf(hres);
+  const pStart = pressureOf(hotWater(SIT_STEP));
+  const hA = (atm) => RtmModel.debyeHuckelAB(150, atm, Math.exp(ha.w.lnAw)).A;
+  const hsq = Math.sqrt(ha.w.I);
+  const hD = -hsq / (1 + 1.5 * hsq);
+  let hG = 0;
+  let hRest = 0;
+  for (const g of ha.lg.values()) {
+    hG = Math.max(hG, Math.abs(g.page - g.pq));
+    hRest = Math.max(hRest, Math.abs(g.page - g.pq - g.z * g.z * hD * (hA(pEnd) - hA(pStart))));
+  }
+  const hAw = Math.abs(ha.law - Math.log10(hres.water.aw));
+  const hy = ha.m.toConcentrations(ha.m.initialState());
+  let hStart = 0;
+  for (const [p, n] of hres.names) hStart = Math.max(hStart, Math.abs(hy[ha.m.speciesNames.indexOf(n)] / hres.molal.get(p) - 1));
+  // The Jacobian on the vapour pressure (A through the dielectric constant) and above it (through the density): at
+  // PHREEQC's own pressure, a hair above the vapour pressure, a difference would straddle the corner between them.
+  const hJ = ['1', '10'].map((atm) => {
+    const hm = RtmModel.compile(hres.text.replace(/^PRESSURE = .*$/m, `PRESSURE = ${atm}`));
+    return RtmModel.verifyJacobian(hm, 0, hm.initialState());
+  });
+  engine.load(own.text);
+  const hi = sitAtPhreeqc(P.waterToModel({ engine, database: own, water: { name: 'saline at 150 C', text: `${KNOBS}${hotSolution}` },
+    activity: true, exact: true, redox: false }));
+  let hiApart = 0;
+  for (const g of hi.lg.values()) if (Math.abs(g.page - g.pq) > Math.abs(hiApart)) hiApart = g.page - g.pq;
+  check('  at 150 C, on the vapour pressure: the coefficients, the water\'s activity and the start PHREEQC\'s after two '
+    + 'steps of nothing, A at the pressure the step started at, and the Jacobian through A\'s a(H2O), on the vapour '
+    + 'pressure and above it', hRest < 1e-13
+    && hAw < 1e-13 && hStart < 1e-8 && pEnd > pStart && hJ.every((v) => v.discrepancies.length === 0)
+    && Math.abs(hiApart) > 1e-6,
+  `log gamma within ${hG.toExponential(1)}, ${hRest.toExponential(1)} once A is taken at ${pStart} atm for ${pEnd}; `
+      + `log a(H2O) ${hAw.toExponential(1)}, the start ${hStart.toExponential(1)}; ${hJ[0].checked} and ${hJ[1].checked} `
+      + 'Jacobian entries at 1 and 10 atm; '
+      + `PHREEQC's initial solution ${hiApart.toExponential(2)} off`);
   const y = m.toConcentrations(m.initialState());
   let worst = 0;
   for (const [p, n] of res.names) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
@@ -1465,7 +1554,8 @@ function againstSit(engine) {
     water: { name: 'saline', text: saline }, unit: 's', times: 12 });
   const gap = view.report.activity && view.report.activity.gap[0];
   check('  the PHREEQC tab, a run that adds 1 mol/kgw of salt: PHREEQC\'s coefficients move, and the model\'s own '
-    + 'under SIT stay on them', !!gap && view.report.activity.kind === 'sit' && Math.abs(gap.by) < 1e-6
+    + 'under SIT stay on them (PHREEQC\'s waters there initial solutions, their A at a(H2O) = 1)', !!gap
+    && view.report.activity.kind === 'sit' && Math.abs(gap.by) < 1e-6
     && Math.abs(view.report.drift[0].by) > 0.05, gap ? `PHREEQC's moved ${view.report.drift[0].by.toFixed(3)} in log K, `
       + `the model's ${Math.abs(gap.by).toExponential(1)} from them (${gap.rel})` : 'no comparison');
 
@@ -1593,8 +1683,8 @@ function againstSit(engine) {
   ];
   const lines = waters.map(([label, wt]) => {
     engine.load(sd.text);
-    const sres = P.waterToModel({ engine, database: sd, water: { name: label, text: `${KNOBS}${wt}` }, activity: true,
-      exact: true, redox: false });
+    const sres = P.waterToModel({ engine, database: sd, water: { name: label, text: `${KNOBS}${wt}${SIT_STEPS}` },
+      activity: true, exact: true, redox: false });
     const sm = RtmModel.compile(sres.text);
     const n = sm.speciesNames.length;
     const sc = new Float64Array(n);
@@ -1609,7 +1699,7 @@ function againstSit(engine) {
     return { label, gw, aw: Math.abs(sw.lnAw / Math.LN10 - Math.log10(sres.water.aw)), start: sw2, pairs: sres.report.activity.sitPairs };
   });
   check('PHREEQC\'s sit.dat: the coefficients and the water\'s activity at PHREEQC\'s molalities, and the hand-off\'s start, '
-    + 'in three waters', lines.every((l) => l.gw < 1e-12 && l.aw < 1e-14 && l.start < 1e-8),
+    + 'in three waters, each after two steps of nothing', lines.every((l) => l.gw < 1e-12 && l.aw < 1e-14 && l.start < 1e-8),
   lines.map((l) => `${l.label}: ${l.pairs} pairs, log gamma within ${l.gw.toExponential(1)}, the start within `
     + `${l.start.toExponential(1)}`).join('; '));
   const scol = sitColumn(engine, sd, 40, 3);
