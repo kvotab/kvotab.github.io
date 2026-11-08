@@ -2095,6 +2095,37 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             that there is something to grow from; and every species of what they bring or take is
             written, whatever the floor. A reaction that moves electrons needs the valence states held
             at one pe.</p>
+          <p>An input with a <code>TRANSPORT</code> becomes a column, its first one, or where there is
+            none its first <code>ADVECTION</code>. Everything the input does before it is done as
+            written. Then each cell, and the water at each end, is put on what is numbered as it, as
+            PHREEQC's <code>TRANSPORT</code> does before its first shift, and the column starts every cell
+            as cell 1 comes out of that. <code>-cells</code> and <code>-lengths</code> give
+            <code>CELLS</code> and <code>LENGTH</code>. The time step is the time the water takes to cross
+            a cell, which gives <code>VELOCITY</code>, to the left with <code>-flow_direction back</code>,
+            and <code>-shifts</code> of them give <code>TEND</code>. The dispersivity gives a
+            <code>PECLET</code> over the column, and <code>-diffusion_coefficient</code>, 0.3×10<sup>−9</sup>
+            m²/s unless given, every species' <code>D</code>; with <code>-correct_disp</code> both are
+            multiplied as PHREEQC multiplies them, by 1 + 1/<em>cells</em> for each end with flux. An end
+            with flux where the water comes in is <code>robin</code>, with <code>SOLUTION 0</code>'s species
+            as PHREEQC speciates it as <code>left=</code> (<code>SOLUTION</code> <em>cells</em>+1 and
+            <code>right=</code> flowing back), and where it leaves <code>free</code>. A constant end is
+            <code>dirichlet</code>, with its solution's species; a closed one <code>neumann</code>. With
+            diffusion only the cells may differ in length, and are written <code>FACES</code>. The column
+            takes 10<sup>−12</sup> of the water at each end, and that water as much of the column's, so
+            that what only one of them has, the calcium of Example 11 that only its inflow brings, is
+            there to be held. The species written are those above the floor in either water, and in the
+            two mixed half and half on what cell 1 holds, its exchanger and surfaces included. PHREEQC
+            shifts each cell's water whole and then reacts it, where here the water moves through the
+            cells as it reacts: a cell of PHREEQC's after shift <em>k</em> is the page's half a time step
+            later, and the two meet as the cells are refined. Refused, each with its reason: stagnant cells,
+            multicomponent or interlayer diffusion, a fixed current, cells that start apart, cells of
+            their own lengths or dispersivities with the water moving, a closed end the water comes in
+            through, water coming in at another temperature, which PHREEQC carries the heat of, and a
+            <code>REACTION</code> numbered as a cell, which PHREEQC adds at every shift. An input like
+            PHREEQC's Example 11 — <code>ADVECTION</code> first, the cells put back, then
+            <code>TRANSPORT</code> — gives a column whose effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's in
+            sodium, 0.030 in potassium, 0.016 in calcium and 0.005 in chloride; acid through calcite in
+            every cell within 0.009 in pH, and calcite dissolving at a rate as below.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -2493,6 +2524,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108n"></script>
 </body>
 </html>

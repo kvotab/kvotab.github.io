@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108m';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108n';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108m',
+    'resources/js/rtm-phreeqc.js?v=20261108n',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2925,6 +2925,23 @@ END
       + `equilibria</strong>, the water at ${pqNum(r.temperature)} °C and ionic strength `
       + `${pqNum(r.ionicStrength)} mol/kgw, pH ${r.pH.toFixed(3)} as PHREEQC has it; from ${esc(reply.database)}, `
       + `PHREEQC ${esc(reply.version)}.</p>`);
+    // The column of the input's TRANSPORT (or ADVECTION): what the water above starts every cell as.
+    if (r.transport) {
+      const c = r.transport;
+      const end = (kind, s, where) => (kind === 'robin' ? `SOLUTION ${s} flows in at the ${where}`
+        : kind === 'dirichlet' ? `SOLUTION ${s} holds the ${where} end` : kind === 'free'
+          ? `the water leaves at the ${where}` : `the ${where} end is closed`);
+      out.push(`<p>A column, the input's <code>${esc(c.kind)}</code>: ${c.cells} cells, ${pqNum(c.length)} m, `
+        + (c.velocity ? `the water crossing a cell in ${pqNum(c.timeStep)} s (${pqNum(Math.abs(c.velocity))} m/s) for `
+          + `${c.shifts} shifts` : `diffusing for ${c.shifts} periods of ${pqNum(c.timeStep)} s`)
+        + `${c.dispersivity ? `, dispersivity ${pqNum(c.dispersivity)} m` : ''}`
+        + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, diffusion coefficient `
+        + `${pqNum(c.diffusion)} m²/s; ${end(c.left, c.leftSolution, 'left')}, ${end(c.right, c.rightSolution, 'right')}. `
+        + 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>');
+      if (c.after) {
+        out.push('<p class="warn">The input goes on after this column; what it does then is not carried.</p>');
+      }
+    }
     if (r.withTemperature) {
       const who = r.withTemperature === r.relations ? 'Every relation’s'
         : `${r.withTemperature} of the ${r.relations} relations’`;

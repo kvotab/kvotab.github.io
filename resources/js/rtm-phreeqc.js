@@ -1531,6 +1531,271 @@
   }
 
   /*
+    PHREEQC's TRANSPORT and ADVECTION options, in the order its readtr.cpp
+    and read_advection list them: a word with its dash is the first of them
+    it begins, one without the whole word (find_option); a line that is
+    neither goes on with the list before it.
+  */
+  const TRANSPORT_OPTS = ['cells', 'shifts', 'print', 'selected_output', 'bcond', 'timest', 'diffc', 'tempr', 'length',
+    'disp', 'punch', 'stagnant', 'bc', 'boundary_conditions', 'time_step', 'temp_retardation_factor',
+    'diffusion_coefficient', 'dispersivity', 'direction', 'temperature_retardation_factor', 'print_cells',
+    'selected_cells', 'flow_direction', 'flow', 'lengths', 'dispersivities', 'dump', 'output', 'output_frequency',
+    'selected_output_frequency', 'punch_cells', 'dump_frequency', 'dump_restart', 'punch_frequency', 'print_frequency',
+    'correct_disp', 'initial_time', 'warning', 'warnings', 'thermal_diffusion', 'multi_d', 'interlayer_d', 'porosities',
+    'porosity', 'fix_current', 'current', 'implicit', 'same_model'];
+  const ADVECTION_OPTS = ['cells', 'shifts', 'print', 'selected_output', 'punch', 'print_cells', 'selected_cells',
+    'time_step', 'timest', 'output', 'output_frequency', 'selected_output_frequency', 'punch_frequency',
+    'print_frequency', 'punch_cells', 'initial_time', 'warning', 'warnings'];
+
+  /**
+   * The input's first TRANSPORT block -- or, where it has none, its first
+   * ADVECTION -- as PHREEQC reads it, with PHREEQC's defaults: one cell of
+   * 1 m, one shift, a time step of 0, the water flowing forward, flux at
+   * both ends, no dispersivity, a diffusion coefficient of 0.3e-9 m2/s.
+   * Returns null without either, else {kind, cells, shifts, dt (seconds),
+   * dir (1 forward, -1 back, 0 diffusion only), bc [first, last] (1
+   * constant, 2 closed, 3 flux), lengths and disp (one a cell), correctDisp,
+   * diffc, heat (thermal diffusion asked for), others (what it says that no
+   * column of the page has: stagnant cells, multicomponent or interlayer
+   * diffusion, a current), before (the input up to the END of the block's
+   * simulation, without the block), after (whether anything is calculated
+   * after that)}.
+   */
+  function readTransport(text) {
+    const lines = logicalLines(text);
+    const first = (ln) => ln.trim().split(/\s+/)[0] || '';
+    const isKey = (ln) => { const w = first(ln); return !!w && !w.startsWith('-') && KEYWORDS.has(w.toUpperCase()); };
+    let kind = 'TRANSPORT';
+    let at = lines.findIndex((ln) => isKey(ln) && first(ln).toUpperCase() === kind);
+    if (at < 0) {
+      kind = 'ADVECTION';
+      at = lines.findIndex((ln) => isKey(ln) && first(ln).toUpperCase() === kind);
+    }
+    if (at < 0) return null;
+    let stop = at + 1;
+    while (stop < lines.length && !isKey(lines[stop])) stop++;
+    let end = stop;
+    while (end < lines.length && !(isKey(lines[end]) && first(lines[end]).toUpperCase() === 'END')) end++;
+    const quiet = /^(END|PRINT|SELECTED_OUTPUT|USER_PUNCH|USER_GRAPH|USER_PRINT|TITLE|KNOBS)$/i;
+    const t = { kind, cells: 1, shifts: 1, dt: 0, dir: 1, bc: [3, 3], lengths: [], disp: [], correctDisp: false,
+      diffc: 0.3e-9, heat: false, others: [],
+      before: `${[...lines.slice(0, at), ...lines.slice(stop, end)].join('\n')}\nEND\n`,
+      after: lines.slice(end + 1).some((ln) => isKey(ln) && !quiet.test(first(ln))) };
+    const opts = kind === 'TRANSPORT' ? TRANSPORT_OPTS : ADVECTION_OPTS;
+    // A list: numbers, a repeat written n*x.
+    const values = (tokens) => tokens.flatMap((s) => {
+      const rep = /^([0-9]+)\*(.+)$/.exec(s);
+      return rep ? Array.from({ length: Number(rep[1]) }, () => Number(rep[2])) : [Number(s)];
+    }).filter((v) => Number.isFinite(v));
+    const bcOf = (s) => {
+      if (s === undefined) return 3;
+      const w = s.toLowerCase();
+      if (/^[123]$/.test(w)) return Number(w);
+      return w.startsWith('co') ? 1 : w.startsWith('cl') ? 2 : w.startsWith('f') ? 3 : NaN;
+    };
+    const yes = (s) => s === undefined || !/^f/i.test(s);
+    let list = null;
+    for (const raw of lines.slice(at + 1, stop)) {
+      const tokens = raw.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      const w = tokens[0].toLowerCase();
+      let opt = null;
+      if (/^-[a-z]/.test(w)) opt = opts.find((x) => x.startsWith(w.slice(1))) || `?${tokens[0]}`;
+      else if (opts.includes(w)) opt = w;
+      const args = opt ? tokens.slice(1) : tokens;
+      if (!opt) {
+        if (list === 'lengths') t.lengths.push(...values(args));
+        else if (list === 'disp') t.disp.push(...values(args));
+        continue;
+      }
+      list = null;
+      switch (opt) {
+        case 'cells': t.cells = parseInt(args[0], 10); break;
+        case 'shifts':
+          t.shifts = parseInt(args[0], 10);
+          // An old form: the direction after the shifts, 1, -1 or 0.
+          if (/^-?[01]$/.test(args[1] || '')) t.dir = Number(args[1]);
+          break;
+        case 'timest': case 'time_step':
+          t.dt = Number(args[0]) * (/^[a-z]/i.test(args[1] || '') ? secondsIn(args[1]) : 1);
+          break;
+        case 'bcond': case 'bc': case 'boundary_conditions': t.bc = [bcOf(args[0]), bcOf(args[1])]; break;
+        case 'diffc': case 'diffusion_coefficient': t.diffc = Number(args[0]); break;
+        case 'length': case 'lengths': t.lengths.push(...values(args)); list = 'lengths'; break;
+        case 'disp': case 'dispersivity': case 'dispersivities': t.disp.push(...values(args)); list = 'disp'; break;
+        case 'direction': case 'flow_direction': case 'flow': {
+          const d = (args[0] || '').toLowerCase()[0];
+          t.dir = d === 'f' ? 1 : d === 'b' ? -1 : d === 'd' || d === 'n' ? 0 : NaN;
+          break;
+        }
+        case 'correct_disp': t.correctDisp = yes(args[0]); break;
+        case 'stagnant': if (parseInt(args[0], 10) > 0) t.others.push('stagnant cells (-stagnant)'); break;
+        case 'multi_d': if (yes(args[0])) t.others.push('multicomponent diffusion (-multi_D)'); break;
+        case 'interlayer_d': if (yes(args[0])) t.others.push('interlayer diffusion (-interlayer_D)'); break;
+        case 'fix_current': case 'current': t.others.push('a fixed current (-fix_current)'); break;
+        case 'tempr': case 'temp_retardation_factor': case 'temperature_retardation_factor': case 'thermal_diffusion':
+          t.heat = true;
+          break;
+        default:
+          // Printing, punching, dumping, warnings, the time it starts at, the implicit scheme, porosities (for -multi_D).
+          if (opt.startsWith('?')) t.others.push(`an option PHREEQC does not have, ${opt.slice(1)}`);
+          else if (['print', 'print_cells', 'punch', 'punch_cells', 'selected_cells'].includes(opt)) list = 'cells';
+      }
+    }
+    const fill = (given, def) => Array.from({ length: Math.max(t.cells, 0) }, (_, i) => (given.length
+      ? given[Math.min(i, given.length - 1)] : def));
+    t.lengths = fill(t.lengths, 1);
+    t.disp = fill(t.disp, 0);
+    if (kind === 'ADVECTION') t.diffc = 0;
+    // A REACTION numbered as a cell, which PHREEQC adds to it at every shift.
+    t.reactions = [];
+    for (const ln of lines.slice(0, at)) {
+      const m = /^\s*REACTION\s+([0-9]+)(?:-([0-9]+))?/i.exec(ln);
+      if (!m || !isKey(ln)) continue;
+      const lo = Number(m[1]);
+      const hi = m[2] !== undefined ? Number(m[2]) : lo;
+      if (lo <= t.cells && hi >= 1) t.reactions.push(lo === hi ? `${lo}` : `${lo}-${hi}`);
+    }
+    return t;
+  }
+
+  /**
+   * The column of an input's TRANSPORT (or ADVECTION) for waterToModel:
+   * what it starts from, what comes in, and what has to be written.
+   *
+   * PHREEQC's TRANSPORT begins by equilibrating each cell, and the water at
+   * each end, with whatever is numbered as it (transport.cpp, "Equilibrating
+   * initial solutions"); RUN_CELLS with no time does the same here, after
+   * everything the input does before. Every cell has to come out of that
+   * alike: the page writes one water for the whole column, cell 1's. The
+   * water at each end that comes in, or that a constant end holds the
+   * column to, is speciated as PHREEQC has it; each takes a trace of the
+   * other, and cell 1 a trace of each, so that what only one of them has is
+   * a total that can be held everywhere -- 1e-12, as 1e-20 left totals of
+   * 1e-24 that the solver could not start from. The species written are those
+   * above the floor in any of them or in the column's water and the
+   * incoming one mixed half and half: NaCl in a column without chloride is
+   * nothing until the chloride comes.
+   *
+   * Returns null without TRANSPORT or ADVECTION, else {t, cellInput (the
+   * input whose last calculation is cell 1, with its traces), left and
+   * right (each end's water: species -> molality, or null), keep (species
+   * to write whatever the floor), corr (-correct_disp's factor), tc}.
+   */
+  function columnSetup(o, floor) {
+    const t = readTransport(o.water.text);
+    if (!t) return null;
+    const n = t.cells;
+    const no = (s) => { throw new Error(`From PHREEQC carries the column of the input's ${t.kind} block, and ${s}.`); };
+    if (!(n >= 1)) no('it has no cells');
+    if (!Number.isFinite(t.dir)) no('its -flow_direction is not forward, back or diffusion_only');
+    if (t.bc.some((b) => !Number.isFinite(b))) no('its -boundary_conditions are not constant, closed or flux');
+    if (t.others.length) no(`it has ${t.others.join(' and ')}, which no column of the page has`);
+    if (t.reactions.length) {
+      no(`the input has a REACTION numbered as a cell (${t.reactions.join(', ')}), which PHREEQC adds to the cell at every `
+        + 'shift: write it as a rate in <REACTIONS> instead');
+    }
+    if (!(t.shifts >= 1)) no('it has no shifts');
+    if (!(t.dt > 0)) {
+      no(t.dir ? 'it gives no -time_step: the water moves a cell in each, and the page needs to know how fast that is'
+        : 'it gives no -time_step: the diffusion goes on for -shifts of them');
+    }
+    if (t.dir && t.bc[t.dir > 0 ? 0 : 1] === 2) no('the water comes in through an end that is closed');
+    const alike = (a) => a.every((v) => Math.abs(v - a[0]) <= 1e-12 * Math.abs(a[0]));
+    if (t.dir && !alike(t.lengths)) {
+      no('its cells are of different lengths, which PHREEQC\'s water crosses each in one time step, at a speed of its '
+        + 'own there: the page\'s column has one velocity');
+    }
+    if (t.dir && !alike(t.disp)) no('its cells have dispersivities of their own, where the page\'s column has one');
+    // The water at each end that the column needs: coming in, or held at a constant end.
+    const leftSol = (t.dir > 0 && t.bc[0] === 3) || t.bc[0] === 1 ? 0 : -1;
+    const rightSol = (t.dir < 0 && t.bc[1] === 3) || t.bc[1] === 1 ? n + 1 : -1;
+    const ends = [leftSol, rightSol].filter((s) => s >= 0);
+    const cells = [`1-${n}`, ...ends.map(String)].join(' ');
+    const equil = `${t.before}RUN_CELLS\n -cells ${cells}\n -time_step 0\nEND\n`;
+    // Every cell alike: its water, what is on its exchangers and surfaces, its phases, reactants and gases.
+    const extras = [...readAssemblage(t.before).map((a) => `EQUI("${a.name}")`),
+      ...[...readKinetics(t.before).values()].flatMap((b) => b.comps.map((c) => `KIN("${c.name}")`)),
+      ...[...readGasPhases(t.before).values()].flatMap((b) => b.comps.map((c) => `GAS("${c.name}")`)),
+      ...[...readSolidSolutions(t.before).values()].flatMap((b) => b.flatMap((ss) => ss.comps.map((c) => `S_S("${c.name}")`)))];
+    let rows;
+    try {
+      rows = runRows(o.engine, `${punchBlock(extras)}${equil}`);
+    } catch (e) {
+      no(`PHREEQC could not equilibrate its cells before the first shift: ${String(e.message || e).split('\n')[0]}`);
+    }
+    const last = new Map();
+    for (const r of rows) last.set(Number(r.soln), r);
+    for (let c = 1; c <= n; c++) if (!last.has(c)) no(`PHREEQC has no water for cell ${c}`);
+    for (const s of ends) {
+      if (!last.has(s)) no(`PHREEQC has no SOLUTION ${s}, the water ${s ? 'at its last end' : 'coming in'}`);
+    }
+    const same = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(Math.abs(a), Math.abs(b)) + 1e-25;
+    const differs = (a, b) => {
+      if (!same(a.tc, b.tc)) return 'its temperature';
+      for (const [k, [m]] of a.species) if (!b.species.has(k) || !same(m, b.species.get(k)[0])) return k;
+      for (const [k, e] of a.exchange) if (!b.exchange.has(k) || !same(e.m, b.exchange.get(k).m)) return k;
+      for (const [k, e] of a.surface) if (!b.surface.has(k) || !same(e.m, b.surface.get(k).m)) return k;
+      const i = a.x.findIndex((v, j) => !same(Number(v), Number(b.x[j])));
+      return i >= 0 ? extras[i] : null;
+    };
+    const one = last.get(1);
+    for (let c = 2; c <= n; c++) {
+      const d = differs(one, last.get(c));
+      if (d) {
+        no(`its cells start apart -- cell ${c} is not cell 1 in ${d} -- where the page writes one water for the whole `
+          + 'column');
+      }
+    }
+    for (const s of ends) {
+      if (Math.abs(last.get(s).tc - one.tc) > 1e-9) {
+        no(`SOLUTION ${s} is at ${fmtG(last.get(s).tc, 6)} C and the column at ${fmtG(one.tc, 6)} C: PHREEQC carries the `
+          + 'heat as well, which the page does not');
+      }
+    }
+    /*
+      Each end's water with 1e-20 of the column's, and cell 1 with 1e-20 of
+      each end's. PHREEQC keeps a MIX from one run to the next, and RUN_CELLS
+      takes a cell's MIX for its water: these have a number no cell has, and
+      go when done.
+    */
+    const MIXED = 9999991;
+    const TRACE = o.columnTrace || 1e-12;
+    const mixed = (parts) => `MIX ${MIXED}\n${parts}`;
+    const gone = `DELETE\n -mix ${MIXED}\nEND\n`;
+    const side = (s) => {
+      if (s < 0) return null;
+      const r = runRows(o.engine, `${punchBlock()}${equil}${mixed(` ${s} 1\n 1 ${TRACE}\n`)}END\n${gone}`).pop();
+      return new Map([...r.species].map(([k, [m]]) => [k, m]));
+    };
+    const left = side(leftSol);
+    const right = side(rightSol);
+    const trace = ends.length ? `${mixed(` 1 1\n${ends.map((s) => ` ${s} ${TRACE}\n`).join('')}`)}SAVE solution 1\nEND\n${gone}`
+      : '';
+    const cellInput = `${equil}${trace}RUN_CELLS\n -cells 1\n -time_step 0\nEND\n`;
+    /*
+      The species that matter anywhere the column goes: in the water at
+      each end, and in the column's cell 1 with that water, alone and half
+      and half with its own, put on what the cell holds -- calcium coming
+      into a column with none goes onto its exchanger as CaX2.
+    */
+    const keep = new Set();
+    const keepOn = new Set();
+    for (const s of ends) {
+      for (const [k, [m]] of last.get(s).species) if (m >= floor) keep.add(k);
+      for (const mix of [` ${s} 1\n`, ` 1 0.5\n ${s} 0.5\n`]) {
+        const r = runRows(o.engine, `${punchBlock()}${equil}${mixed(mix)}SAVE solution 1\nEND\n${gone}RUN_CELLS\n`
+          + ' -cells 1\n -time_step 0\nEND\n').pop();
+        for (const [k, [m]] of r.species) if (m >= floor) keep.add(k);
+        for (const [k, e] of r.exchange) if (e.m >= floor) keepOn.add(k);
+        for (const [k, e] of r.surface) if (e.m >= floor) keepOn.add(k);
+      }
+    }
+    const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
+    return { t, cellInput, left, right, leftSol, rightSol, keep, keepOn, corr, tc: one.tc, trace: TRACE };
+  }
+
+  /*
     A RATE PROGRAM AS A RATE LAW. PHREEQC runs a rate's BASIC at each step
     of its integration, with M the reactant's moles, M0 its initial moles,
     PARM(i) its -parms, TIME the step, and the program SAVEs the moles that
@@ -2241,6 +2506,20 @@
     if (o.exact && (o.relax || o.kf)) {
       throw new Error('The relations are held either exactly or as fast pairs with a kf, not both.');
     }
+    /*
+      A TRANSPORT (or ADVECTION) in the input: its column, every cell
+      starting from cell 1's water as PHREEQC equilibrates it before the
+      first shift, with the water at each end flowing in or holding it
+      (columnSetup). What follows is that water's, as for any other.
+    */
+    const column = o.transport === false ? null : columnSetup(o, floor);
+    if (column) {
+      if (!o.exact) {
+        throw new Error(`A column needs the relations held exactly, as the input's ${column.t.kind} holds them in every `
+          + 'cell at every shift.');
+      }
+      o = { ...o, water: { ...o.water, text: column.cellInput } };
+    }
     const db = readDatabase(o.database.text, o.water.text);
     const follow = !!o.activity;
     // A SIT database: the page has SIT, and follows it; and Pitzer's.
@@ -2526,6 +2805,8 @@
     const redox = new Set();
     const unknown = new Set();
     const pulled = new Set();
+    // A column: what the water at its ends has, and what that and the column's water make together (columnSetup).
+    if (column) for (const n of column.keep) if (molal.has(n) && !kept.has(n)) { kept.add(n); pulled.add(n); }
 
     // The phases, each as its reaction: its formula first on the left, then
     // what else it takes, and what it dissolves to.
@@ -2803,7 +3084,8 @@
         exSkipped.push({ name: [...w.exchange.keys()].join(', '), why: 'an exchanger needs the relations held exactly' });
       } else {
         for (const [n, e] of w.exchange) {
-          if (!(e.m >= floor)) continue;
+          // In a column, whatever goes on the exchanger as the water at its ends comes in (columnSetup).
+          if (!(e.m >= floor) && !(column && column.keepOn.has(n))) continue;
           const skip = (why) => exSkipped.push({ name: n, why });
           const r = db.exReaction.get(n);
           if (!r) { skip('the database has no reaction for it'); continue; }
@@ -2902,7 +3184,7 @@
           .flatMap((b) => b.other).join('; ')})` });
       } else {
         for (const [n, e] of w.surface) {
-          if (!(e.m >= floor)) continue;
+          if (!(e.m >= floor) && !(column && column.keepOn.has(n))) continue;
           const skip = (why) => sfSkipped.push({ name: n, why });
           if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
           const r = db.sfReaction.get(n);
@@ -3482,10 +3764,68 @@
       out.push('# Renamed, since rtm.html cannot write the name as PHREEQC does:');
       for (const [s, r] of renamed) out.push(`#   ${s}  ->  ${r}`);
     }
-    // A kinetic run goes as long as PHREEQC's steps.
+    /*
+      THE COLUMN (columnSetup): PHREEQC's cells, each as long; its time step
+      the time the water takes to cross one; its dispersivity a Peclet number
+      over the column and its diffusion coefficient every species' D, both
+      times -correct_disp's factor where it has one, as PHREEQC's mixing
+      takes it (transport.cpp); its ends, each water at an end that flows in
+      or holds the column on every species that moves.
+    */
+    let colSettings = null;
+    let colReport = null;
+    let colD = 0;
+    let leftAt = null;
+    let rightAt = null;
+    if (column) {
+      const { t, corr } = column;
+      const L = t.lengths.reduce((a, b) => a + b, 0);
+      const even = t.lengths.every((x) => Math.abs(x - t.lengths[0]) <= 1e-12 * t.lengths[0]);
+      const v = t.dir ? (t.dir * t.lengths[0]) / t.dt : 0;
+      const alpha = t.dir ? t.disp[0] * corr : 0;
+      colD = t.diffc * corr;
+      const face = (b, isIn) => (b === 1 ? 'dirichlet' : b === 2 ? 'neumann' : isIn ? 'robin' : t.dir ? 'free' : 'neumann');
+      const leftKind = face(t.bc[0], t.dir > 0);
+      const rightKind = face(t.bc[1], t.dir < 0);
+      if (leftKind === 'dirichlet' || leftKind === 'robin') leftAt = column.left;
+      if (rightKind === 'dirichlet' || rightKind === 'robin') rightAt = column.right;
+      let x = 0;
+      const faces = [0, ...t.lengths.map((l) => { x += l; return x; })];
+      colSettings = ['MODE = transport', `CELLS = ${t.cells}`,
+        ...(even ? [`LENGTH = ${fmtG(L, 15)}`] : ['GRID = faces', `FACES = ${faces.map((f) => fmtG(f, 15)).join(', ')}`]),
+        ...(colD > 0 || alpha > 0 ? ['DIFFUSION = 1'] : []),
+        ...(t.dir ? ['ADVECTION = 1', 'ADVECTION_SCHEME = limited', `VELOCITY = ${fmtG(v, 15)}`] : []),
+        ...(alpha > 0 ? [`PECLET = ${fmtG(L / alpha, 15)}`] : []),
+        `LEFT = ${leftKind}`, `RIGHT = ${rightKind}`];
+      colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: t.shifts,
+        timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
+        left: leftKind, right: rightKind, leftSolution: leftAt ? column.leftSol : null,
+        rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after };
+      const sol = (s) => `SOLUTION ${s}`;
+      const endSay = (kind, s, where) => (kind === 'robin' ? `${sol(s)} flows in at the ${where}`
+        : kind === 'dirichlet' ? `${sol(s)} holds the ${where} end (constant)`
+          : kind === 'free' ? `the water leaves at the ${where}` : `the ${where} end is closed`);
+      out.push(`# The column of the input's ${t.kind}: ${t.cells} cells${even ? ` of ${fmtG(t.lengths[0], 6)} m`
+        : `, ${fmtG(L, 6)} m in all`}, ${t.dir ? `the water moving a cell in each time step of ${fmtG(t.dt, 6)} s, `
+        + `${fmtG(Math.abs(v), 6)} m/s ${t.dir > 0 ? 'to the right' : 'to the left'}, for ${t.shifts} shifts`
+        : `diffusing for ${t.shifts} periods of ${fmtG(t.dt, 6)} s`}, ${fmtG(t.shifts * t.dt, 6)} s;`);
+      out.push(`# dispersivity ${fmtG(t.dir ? t.disp[0] : 0, 6)} m${corr !== 1 ? ` (times ${fmtG(corr, 6)}, -correct_disp)` : ''}, `
+        + `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `
+        + `${endSay(leftKind, column.leftSol, 'left')}; ${endSay(rightKind, column.rightSol, 'right')}.`);
+      out.push('# Every cell starts from the water of cell 1 as PHREEQC equilibrates it before the first shift,');
+      out.push(`# with ${fmtG(column.trace, 3)} of ${[column.leftSol, column.rightSol].filter((s) => s >= 0).map(sol).join(' and ')
+        || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: what only one has is then a total everywhere.`);
+      if (t.dir) {
+        out.push('# PHREEQC shifts each cell\'s water whole and then reacts it; here the water moves through the cells as');
+        out.push('# it reacts: a cell of PHREEQC\'s after shift k is this one half a time step later, and the two meet');
+        out.push('# as the cells are refined, the velocity and the time kept.');
+      }
+    }
+    // A kinetic run goes as long as PHREEQC's steps; a column as long as its shifts.
     const kinTime = kinetics.length ? kinBlock.steps.reduce((a, b) => a + b, 0) : 0;
-    out.push('', '<SETTINGS>', 'MODE = batch', `TEND = ${kinTime > 0 ? fmtG(kinTime, 15) : 1}`, 'TIME_UNIT = second',
-      `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
+    const tend = column ? column.t.shifts * column.t.dt : kinTime;
+    out.push('', '<SETTINGS>', ...(colSettings || ['MODE = batch']), `TEND = ${tend > 0 ? fmtG(tend, 15) : 1}`,
+      'TIME_UNIT = second', `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
     const anyT = eqs.some((e) => withT(db.logKTerms('s', e.species))) || minerals.some((mn) => withT(db.logKTerms('p', mn.phase)))
@@ -3511,8 +3851,8 @@
       phase sets its own.
     */
     if (!gases.length && Number.isFinite(atm) && Math.abs(atm - 1) > 1e-12) out.push(`PRESSURE = ${fmtG(atm, 15)}`);
-    // Each species its own D: the ions coupled, so the water stays neutral as they spread.
-    if (o.dw) out.push('DIFFUSION = nernst-planck');
+    // Each species its own D: the ions coupled, so the water stays neutral as they spread. A column has TRANSPORT's.
+    if (o.dw && !column) out.push('DIFFUSION = nernst-planck');
     out.push('', '<SPECIES>');
     const width2 = Math.max(...order.map((sp) => fmtG(molal.get(sp), 15).length),
       ...minerals.map((mn) => fmtG(mn.amount, 15).length), ...onEx.map((e) => fmtG(e.m, 15).length),
@@ -3521,7 +3861,11 @@
       ...kinetics.map((k) => fmtG(k.amount, 15).length)) + 2;
     for (const s of order) {
       let d = '';
-      if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
+      if (column) {
+        // In a column: TRANSPORT's D, and the water at each end that flows in or holds it.
+        d = [colD > 0 ? `D=${fmtG(colD, 6)}` : '', leftAt ? `left=${fmtG(leftAt.get(s) || 0, 15)}` : '',
+          rightAt ? `right=${fmtG(rightAt.get(s) || 0, 15)}` : ''].filter(Boolean).join('  ');
+      } else if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
       else if (o.D) d = `D=${fmtG(o.D, 6)}`;
       if (!follow) {
         out.push(`${name.get(s).padEnd(width)}${fmtG(molal.get(s), 15)}${d ? `  ${d}` : ''}`);
@@ -3883,6 +4227,8 @@
           linked: exHeld,
           species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
         exchangeSkipped: exSkipped,
+        // The column of the input's TRANSPORT (or ADVECTION), where it has one (columnSetup).
+        transport: colReport,
         surface: onSf.length ? { sites: onSf.filter((e) => e.master).map((e) => e.name),
           // Sites so many per mole of a mineral (sites= per=): the site, the number and the mineral.
           per: onSf.filter((e) => e.master && perInfo.has(e.species)).map((e) => ({ site: e.name, ...perInfo.get(e.species) })),
@@ -4805,6 +5151,6 @@
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
     readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
-    rateLaw,
+    rateLaw, readTransport,
   };
 }));

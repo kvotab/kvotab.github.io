@@ -420,6 +420,31 @@ async def main():
                   m_gap is not None and float(m_gap.group(1)) < 1e-6, True)
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a TRANSPORT in the input: its column written, compiled and run ---
+            column_input = ('SOLUTION 0\\n  units mmol/kgw\\n  pH 7 charge\\n  Na 1\\n  Cl 1\\n'
+                            'SOLUTION 1-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\nEND\\n'
+                            'TRANSPORT\\n  -cells 5\\n  -shifts 5\\n  -time_step 3600\\n  -lengths 0.01\\n'
+                            '  -dispersivities 0.002\\nEND\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{column_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            col = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') || /TRANSPORT block, and/.test(t) ? t : ''; }})()")
+            col_text = await page.ev("document.getElementById('rtmText').value")
+            check('a TRANSPORT in the input becomes a column: its cells, the water crossing one a time step, SOLUTION 0 '
+                  'flowing in, and the report says so', isinstance(col, str)
+                  and "A column, the input's TRANSPORT: 5 cells, 0.05 m" in col and isinstance(col_text, str)
+                  and re.search(r'^MODE = transport$', col_text, re.M) is not None
+                  and re.search(r'^CELLS = 5$', col_text, re.M) is not None
+                  and re.search(r'^LEFT = robin$', col_text, re.M) is not None
+                  and re.search(r'^Na\+ .*left=0\.001', col_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran, 'Done')
+
             # --- a surface in the water, with its double layer: carried, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

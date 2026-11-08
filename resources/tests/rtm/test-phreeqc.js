@@ -3049,6 +3049,262 @@ function againstExchangeMineral(engine) {
     + `NaX ${f(k.NaX)} in moles, pH ${f(k.pH)}; the capacity held: CaX2 ${f(kh.CaX)}, NaX ${f(kh.NaX)}`);
 }
 
+/* ======================================================================
+   A COLUMN FROM PHREEQC's TRANSPORT: the input's TRANSPORT read and its
+   column written -- cells, time step, dispersivity, ends -- every cell
+   starting from cell 1 as PHREEQC equilibrates it before the first shift;
+   Example 11's column as a user writes it, acid through calcite and calcite at
+   a rate, each against PHREEQC's own TRANSPORT; the options; what is
+   refused
+   ====================================================================== */
+/*
+  An input of the tests' own in Example 11's manner: its chemistry -- a
+  column of sodium and potassium nitrate, its exchanger loaded from it, then
+  calcium chloride -- and its steps, as a PHREEQC user writes them: the
+  column kept aside by COPY, an ADVECTION run, the cells put back, output
+  and a graph, then the TRANSPORT. Calcium and chloride are only in
+  SOLUTION 0, sodium, potassium and nitrate only in the column.
+*/
+const EXAMPLE_11 = `TITLE A column of nitrates flushed with calcium chloride.
+SOLUTION 0  the water flowing in
+  units  mmol/kgw
+  temp   25
+  pH     7  charge
+  pe     12.5  O2(g)  -0.68
+  Ca     0.6
+  Cl     1.2
+SOLUTION 1-40  the column's water
+  units  mmol/kgw
+  temp   25
+  pH     7  charge
+  pe     12.5  O2(g)  -0.68
+  Na     1.0
+  K      0.2
+  N(5)   1.2
+END
+EXCHANGE 1-40
+  -equilibrate 1
+  X  0.0011
+COPY cell 1 101
+END
+ADVECTION
+  -cells 40
+  -shifts 100
+  -punch_cells 40
+  -punch_frequency 1
+PRINT; -reset false; -status false
+SELECTED_OUTPUT
+  -file  column-advection.sel
+  -reset false
+  -step
+  -totals Na Cl K Ca
+USER_PUNCH
+  -heading volumes
+  10 PUNCH (STEP_NO + 0.5) / 40
+USER_GRAPH 1 the column by advection alone
+  -headings Cl Na K Ca
+  -plot_concentration_vs time
+  -start
+  10 PLOT_XY (STEP_NO + 0.5) / 40, TOT("Cl") * 1000, symbol = None
+  -end
+COPY cell 101 1-40
+END
+USER_GRAPH 1
+  -detach
+END
+TRANSPORT
+  -cells 40
+  -lengths 0.002
+  -shifts 100
+  -time_step 720.0
+  -flow_direction forward
+  -boundary_conditions flux flux
+  -diffusion_coefficient 0.0
+  -dispersivities 0.002
+  -correct_disp true
+  -punch_cells 40
+  -punch_frequency 1
+SELECTED_OUTPUT
+  -file  column-transport.sel
+  -reset false
+  -step
+  -totals Na Cl K Ca
+USER_GRAPH 2 the column with dispersion
+  -headings Cl Na K Ca
+  -plot_concentration_vs time
+  10 PLOT_XY (STEP_NO + 0.5) / 40, TOT("Cl") * 1000, symbol = Plus
+END
+`;
+function againstTransportHandOff(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const handOff = (name, text) => {
+    engine.load(dbText);
+    return P.waterToModel({ engine, database, water: { name, text }, activity: true, exact: true, phases: true,
+      redox: false });
+  };
+  /*
+    PHREEQC's TRANSPORT of the input against the page's run of the column
+    written from it: the last cell's totals of `els` (and pH, and `amount`,
+    a mineral or a reactant, in every cell at the last shift), PHREEQC's
+    after shift k against the page's half a time step later.
+  */
+  const compare = (text, res, els, amount) => {
+    const t = P.readTransport(text);
+    const N = t.cells;
+    const S = t.shifts;
+    const dt = t.dt;
+    const at = text.search(/^TRANSPORT\b/m);
+    engine.load(dbText);
+    const rows = engine.run(`${text.slice(0, at)}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH `
+      + `${els.join(' ')}${amount ? ' am' : ''}\n -start\n10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), ${els.map((el) => `TOT("${el}")`)
+        .join(', ')}${amount ? `, ${amount}` : ''}\n -end\n${text.slice(at)}`);
+    const head = rows[0].map((h) => String(h).trim());
+    const pq = new Map();
+    for (const r of rows.slice(1)) {
+      const time = Number(r[head.indexOf('time')]);
+      if (time > 0) pq.set(`${Number(r[head.indexOf('cell')])}/${Math.round(time / dt)}`, r.map(Number));
+    }
+    const m = RtmModel.compile(res.text);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+      outputTimes: Array.from({ length: S }, (_, k) => (k + 1.5) * dt) });
+    const ns = m.speciesNames.length;
+    const db = P.readDatabase(dbText);
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    const of = Object.fromEntries(els.map((el) => [el, []]));
+    m.speciesNames.forEach((n, i) => {
+      if (!back.has(n)) return;
+      const ex = db.expand(back.get(n));
+      for (const el of els) if (ex.has(el)) of[el].push([i, ex.get(el)]);
+    });
+    const iH = m.speciesNames.indexOf('H+');
+    const lnG = new Float64Array(ns);
+    const worst = Object.fromEntries(['pH', ...els].map((k) => [k, 0]));
+    for (let k = 1; k <= S; k++) {
+      const c = m.toConcentrations(run.grid.y[k - 1]);
+      const b = (N - 1) * ns;
+      const d = pq.get(`${N}/${k}`);
+      for (const el of els) {
+        let tot = 0;
+        for (const [i, kk] of of[el]) tot += kk * c[b + i];
+        worst[el] = Math.max(worst[el], Math.abs(tot - d[head.indexOf(el)]));
+      }
+      RtmModel.activityAt(m.act, c, b, lnG, new Float64Array(ns));
+      worst.pH = Math.max(worst.pH, Math.abs(-(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10 - d[head.indexOf('pH')]));
+    }
+    const out = { worst, N, S };
+    if (amount) {
+      const name = /"([^"]+)"/.exec(amount)[1];
+      const iM = m.speciesNames.indexOf(res.report.minerals.concat(res.report.kinetics ? res.report.kinetics.reactants.map((x) => ({ phase: x.name, as: x.as })) : [])
+        .find((x) => x.phase === name).as);
+      const end = m.toConcentrations(run.grid.y[S - 1]);
+      let page = 0;
+      let theirs = 0;
+      out.gone = 0;
+      out.pqGone = 0;
+      for (let cell = 0; cell < N; cell++) {
+        page += end[cell * ns + iM];
+        const v = pq.get(`${cell + 1}/${S}`)[head.indexOf('am')];
+        theirs += v;
+        if (!(end[cell * ns + iM] > 0)) out.gone++;
+        if (!(v > 0)) out.pqGone++;
+      }
+      out.page = page;
+      out.theirs = theirs;
+    }
+    return out;
+  };
+
+  // Example 11's column, written as a user writes it: its TRANSPORT made a column, every cell as COPY puts it back.
+  const r11 = handOff('Example 11', EXAMPLE_11);
+  const c11 = compare(EXAMPLE_11, r11, ['Na', 'K', 'Ca', 'Cl']);
+  const w = c11.worst;
+  const t11 = r11.report.transport;
+  check('a column from PHREEQC\'s TRANSPORT: Example 11\'s column as a user writes it -- ADVECTION first, the cells put back, then '
+    + 'TRANSPORT -- its column written (40 cells, PECLET with -correct_disp, SOLUTION 0 flowing in), every cell starting as '
+    + 'cell 1 after the COPY, calcium and chloride, which only SOLUTION 0 has, there to come; the effluent against PHREEQC\'s '
+    + 'TRANSPORT', !!t11 && t11.cells === 40 && t11.left === 'robin' && t11.right === 'free' && Math.abs(t11.correction - 1.05) < 1e-12
+    && /^PECLET = 38\.0952380952381$/m.test(r11.text) && /^CaX2\s+\S+\s+exchange/m.test(r11.text)
+    && /^Cl-\s+\S+.*\sleft=0\.0011999/m.test(r11.text) && w.Na < 3e-5 && w.K < 5e-5 && w.Ca < 3e-5 && w.Cl < 1e-5,
+  `within ${['Na', 'K', 'Ca', 'Cl'].map((el) => `${el} ${(w[el] * 1e3).toFixed(4)}`).join(', ')} mM; ${t11 ? `velocity `
+    + `${t11.velocity.toExponential(4)} m/s, the end ${t11.tend} s` : 'no column'}`);
+
+  // Acid through calcite in every cell (EQUILIBRIUM_PHASES), and calcite at a rate (KINETICS), each from its TRANSPORT.
+  const N = 40;
+  const water = (n) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH 7.5\n Na 2\n Ca 1\n Cl 2 charge\n C(4) 3\n`;
+  const acid = 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 3 charge\n Na 2\n Ca 1\n Cl 7\n C(4) 3\n';
+  const calcite = `${water(`1-${N}`)}${acid}END\nEQUILIBRIUM_PHASES 1-${N}\n Calcite 0 0.01\nEND\nTRANSPORT\n -cells ${N}\n`
+    + ` -shifts ${2 * N}\n -time_step 1000\n -lengths ${N}*0.0025\n -dispersivities 0.0025\n -diffusion_coefficient 0\n`
+    + ` -punch_cells 1-${N}\nEND\n`;
+  const ca = compare(calcite, handOff('calcite', calcite), ['Ca'], 'EQUI("Calcite")');
+  const K = 20;
+  const kin = `${water(`1-${K}`)}END\nKINETICS 1-${K}\nCalcite\n -m 1e-3\n -parms 5000 0.6\n -tol 1e-10\nEND\n`
+    + 'SOLUTION 0\n temp 25\n units mmol/kgw\n pH 4.5\n Na 1\n Cl 1 charge\n C(4) 10\nEND\n'
+    + `TRANSPORT\n -cells ${K}\n -shifts ${2 * K}\n -time_step ${72000 / K}\n -lengths ${0.1 / K}\n -dispersivities `
+    + `${0.05 / K}\n -diffusion_coefficient 0\n -punch_cells 1-${K}\nEND\n`;
+  const rk = handOff('calcite at a rate', kin);
+  const ck = compare(kin, rk, ['Ca'], 'KIN("Calcite")');
+  const dis = (c, m0) => (c.N * m0 - c.page) / (c.N * m0 - c.theirs) - 1;
+  check('  acid through calcite in every cell, EQUILIBRIUM_PHASES, and calcite dissolving at a rate, KINETICS, each '
+    + 'from its TRANSPORT: the effluent, and the calcite left, against PHREEQC\'s', ca.worst.pH < 0.02 && ca.worst.Ca < 5e-5
+    && Math.abs(ca.gone - ca.pqGone) <= 1 && ck.worst.pH < 0.2 && ck.worst.Ca < 2e-5 && Math.abs(dis(ck, 1e-3)) < 0.01,
+  `calcite in every cell: pH within ${ca.worst.pH.toFixed(4)}, Ca ${(ca.worst.Ca * 1e3).toFixed(4)} mM, gone from `
+    + `${ca.gone} cells, PHREEQC ${ca.pqGone}; at a rate on ${K} cells: pH within ${ck.worst.pH.toFixed(3)}, Ca `
+    + `${(ck.worst.Ca * 1e3).toFixed(4)} mM, the calcite dissolved ${(dis(ck, 1e-3) * 100).toFixed(2)} % apart`);
+
+  // The options, as the column comes out of them.
+  const small = (o) => 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n pH 7 charge\n'
+    + ` K 1\n Br 1\nSOLUTION 6\n units mmol/kgw\n pH 7 charge\n Ca 0.5\n Cl 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n ${o}\nEND\n`;
+  const settings = (o) => {
+    const res = handOff('options', small(o));
+    RtmModel.compile(res.text);
+    return res.text.split('\n').filter((l) => /^(CELLS|LENGTH|GRID|FACES|DIFFUSION|ADVECTION =|VELOCITY|PECLET|LEFT|RIGHT|TEND) /.test(l))
+      .join('; ');
+  };
+  const options = [
+    ['a day a shift, lengths as 5*0.1', '-time_step 1 day\n -lengths 5*0.1\n -dispersivities 0.01',
+      'CELLS = 5; LENGTH = 0.5; DIFFUSION = 1; ADVECTION = 1; VELOCITY = 0.00000115740740740741; PECLET = 50; LEFT = robin; '
+      + 'RIGHT = free; TEND = 345600'],
+    ['flowing back, SOLUTION 6 coming in at the right', '-time_step 3600\n -flow_direction back\n -dispersivities 0.05',
+      'CELLS = 5; LENGTH = 5; DIFFUSION = 1; ADVECTION = 1; VELOCITY = -0.000277777777777778; PECLET = 100; LEFT = free; '
+      + 'RIGHT = robin; TEND = 14400'],
+    ['both ends constant', '-time_step 3600\n -boundary_conditions constant constant\n -dispersivities 0.02\n'
+      + ' -diffusion_coefficient 1e-9', 'CELLS = 5; LENGTH = 5; DIFFUSION = 1; ADVECTION = 1; VELOCITY = 0.000277777777777778; '
+      + 'PECLET = 250; LEFT = dirichlet; RIGHT = dirichlet; TEND = 14400'],
+    ['diffusion only, cells of their own lengths', '-time_step 3600\n -flow_direction diffusion_only\n -boundary_conditions '
+      + 'closed constant\n -lengths 0.1 0.1 0.2 0.2 0.4', 'CELLS = 5; GRID = faces; FACES = 0, 0.1, 0.2, 0.4, 0.6, 1; '
+      + 'DIFFUSION = 1; LEFT = neumann; RIGHT = dirichlet; TEND = 14400'],
+    ['-correct_disp, flux at both ends', '-time_step 3600\n -dispersivities 0.01\n -correct_disp true',
+      'CELLS = 5; LENGTH = 5; DIFFUSION = 1; ADVECTION = 1; VELOCITY = 0.000277777777777778; PECLET = 357.142857142857; '
+      + 'LEFT = robin; RIGHT = free; TEND = 14400'],
+  ];
+  const wrongOpts = options.filter(([, o, want]) => settings(o) !== want);
+  const back = handOff('back', small('-time_step 3600\n -shifts 4 -1'));
+  const refusals = [
+    ['stagnant cells', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1'), /stagnant cells \(-stagnant\), which no column/],
+    ['multicomponent diffusion', small('-time_step 3600\n -multi_d true 1e-9 0.3 0.05 1.0'), /multicomponent diffusion/],
+    ['no time step', small('-dispersivities 0.01'), /it gives no -time_step/],
+    ['a closed end the water comes in through', small('-time_step 3600\n -boundary_conditions closed flux'), /comes in through an end that is closed/],
+    ['cells of their own lengths with the water moving', small('-time_step 3600\n -lengths 0.1 0.2'), /the page's column has one velocity/],
+    ['dispersivities of their own', small('-time_step 3600\n -dispersivities 0.1 0.2'), /dispersivities of their own/],
+    ['cells that start apart', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-2\n units mmol/kgw\n K 1\n Br 1\n'
+      + 'SOLUTION 3-5\n units mmol/kgw\n K 2\n Br 2\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n',
+    /cell 3 is not cell 1 in/],
+    ['water coming in warmer', 'SOLUTION 0\n temp 40\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n K 1\n'
+      + ' Br 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n', /carries the heat as well/],
+    ['a REACTION in the cells', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n K 1\n Br 1\n'
+      + 'REACTION 1-5\n NaCl 1\n 1e-5 moles\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n',
+    /a REACTION numbered as a cell \(1-5\)/],
+  ];
+  const refused = (text) => { try { handOff('refused', text); return '(carried)'; } catch (e) { return e.message; } };
+  const wrongRef = refusals.filter(([, text, re]) => !re.test(refused(text)));
+  check('  the options as the column comes out of them -- a time unit, lengths written n*x, the water flowing back, ends held '
+    + 'constant, diffusion alone between cells of their own lengths, -correct_disp, the old direction after -shifts -- and, '
+    + `refused with their reasons: ${refusals.map((x) => x[0]).join('; ')}`, !wrongOpts.length && !wrongRef.length
+    && /^VELOCITY = -0\.000277777777777778$/m.test(back.text) && /^RIGHT = robin$/m.test(back.text),
+  `${wrongOpts.map(([what, o]) => `${what}: "${settings(o)}"`).join(' | ')}${wrongRef.map(([what, text]) => ` ${what}: `
+    + `"${refused(text).slice(0, 160)}"`).join(' |')}`);
+}
+
 /** RT/F at tc, in volts, with PHREEQC's constants: a potential from its activity exp(-F psi/RT). */
 function GAS_R_T(tc) { return (8.31470 * (tc + 273.15)) / 96493.5; }
 
@@ -3491,6 +3747,8 @@ function againstKineticsHandOff(engine) {
   againstSurfaceMineral(wasm);
   console.log('\n--- an exchanger\'s sites that go with a phase or a kinetic reactant: salt against REACTION, a host against KINETICS ---');
   againstExchangeMineral(wasm);
+  console.log('\n--- a column from PHREEQC\'s TRANSPORT: Example 11, calcite, calcite at a rate, the options, the refusals ---');
+  againstTransportHandOff(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
   againstCdMusic(wasm);
   console.log('\n--- KINETICS: RATES as rate laws against PHREEQC\'s BASIC, the hand-off, runs against KINETICS ---');
