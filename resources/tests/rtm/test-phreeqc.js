@@ -607,8 +607,8 @@ function withPhreeqc(engine) {
     P.waterToModel({ engine, database: { name: 'llnl', text: `LLNL_AQUEOUS_MODEL_PARAMETERS\n-temperatures\n 0 25\n${dbText}` },
       water, activity: true });
   } catch (e) { llnl = e.message; }
-  check('... and a database with LLNL\'s activity model is not followed, and says so', /LLNL activity model/.test(llnl),
-    llnl.slice(0, 90));
+  check('... and a database with LLNL\'s activity model and none of its tables is not followed, and says so',
+    /LLNL's activity model without its tables/.test(llnl), llnl.slice(0, 90));
   const fol = P.waterToModel({ engine, database, water, activity: true, exact: true, redox: false });
   const mf = RtmModel.compile(fol.text);
   const backF = new Map([...fol.names].map(([k, v]) => [v, k]));
@@ -2390,6 +2390,444 @@ function againstWaterActivity(engine) {
   cases.map((c) => `${c.nacl} at ${c.tc} C: ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)}`).join('; '));
 }
 
+/* ======================================================================
+   LLNL's activity model: PHREEQC's LLNL_AQUEOUS_MODEL_PARAMETERS
+
+   Always on a small database of the tests' own, round numbers and LLNL's
+   tables with five temperatures, an ion and a neutral species with
+   -llnl_gamma, CO2, O2 and H2 with -co2_llnl_gamma and a neutral species
+   with neither; and on PHREEQC's own llnl.dat where it is on this machine
+   (~/.cache/kvotab-phreeqc/obj/database/llnl.dat or RTM_LLNL_DAT), skipped
+   otherwise. The reading, the page's coefficients and water at PHREEQC's
+   molalities between the tables' temperatures, the hand-off and its start,
+   and the PHREEQC tab.
+   ====================================================================== */
+const OWN_LLNL = `SOLUTION_MASTER_SPECIES
+H        H+       -1   H       1.008
+H(1)     H+       -1   0.0
+H(0)     H2        0   H
+E        e-        0   0.0     0.0
+O        H2O       0   O       16.0
+O(-2)    H2O       0   0.0
+O(0)     O2        0   O
+Na       Na+       0   Na      22.99
+Cl       Cl-       0   Cl      35.45
+Ca       Ca+2      0   Ca      40.08
+C        HCO3-     1   HCO3    12.01
+C(4)     HCO3-     1   HCO3    12.01
+Alkalinity HCO3-   1   HCO3    61.02
+SOLUTION_SPECIES
+H+ = H+
+  -llnl_gamma 9
+  log_k 0
+e- = e-
+  log_k 0
+H2O = H2O
+  -llnl_gamma 3
+  log_k 0
+Na+ = Na+
+  -llnl_gamma 4
+  log_k 0
+Cl- = Cl-
+  -llnl_gamma 3
+  log_k 0
+Ca+2 = Ca+2
+  -llnl_gamma 6
+  log_k 0
+HCO3- = HCO3-
+  -llnl_gamma 4
+  log_k 0
+H2O = OH- + H+
+  -llnl_gamma 3.5
+  log_k -14
+  -delta_h 56 kJ
+HCO3- + H+ = CO2 + H2O
+  -co2_llnl_gamma
+  log_k 6.3
+  -delta_h -9 kJ
+HCO3- = CO3-2 + H+
+  -llnl_gamma 4.5
+  log_k -10.3
+  -delta_h 15 kJ
+Na+ + Cl- = NaCl
+  -llnl_gamma 3
+  log_k -0.5
+Ca+2 + HCO3- = CaHCO3+
+  -llnl_gamma 4
+  log_k 1.1
+Ca+2 + Cl- = CaCl+
+  -llnl_gamma 4
+  log_k -0.3
+Na+ + HCO3- = NaHCO3
+  log_k -0.2
+2 H2O = O2 + 4 H+ + 4 e-
+  -co2_llnl_gamma
+  log_k -86
+2 H+ + 2 e- = H2
+  -co2_llnl_gamma
+  log_k -3.1
+LLNL_AQUEOUS_MODEL_PARAMETERS
+-temp
+  0.01 25 60 100 150
+-dh_a
+  0.49 0.51 0.55 0.60 0.69
+-dh_b
+  0.325 0.329 0.335 0.342 0.353
+-b_dot
+  0.037 0.041 0.044 0.046 0.047
+-c_co2
+  -1.03 0.00128 256 0.44 -0.0016
+`;
+
+function againstLlnl(engine) {
+  const rd = P.readDatabase(OWN_LLNL);
+  const re = P.readDatabase('SOLUTION_SPECIES\nNa+ = Na+\n  -llnl_gamma 4\n  -gamma 4.1 0.08\nK+ = K+\n  -gamma 3 0\n'
+    + '  -llnl_g 3.5\n');
+  check('LLNL: LLNL_AQUEOUS_MODEL_PARAMETERS is read as PHREEQC reads it, its options by the prefix rule and their numbers '
+    + 'on the lines after them; -llnl_gamma and -co2_llnl_gamma, the last of them and -gamma the species\' rule',
+  rd.model === 'LLNL' && rd.llnl.temps.join() === '0.01,25,60,100,150' && rd.llnl.bdot.length === 5
+    && rd.llnl.co2.length === 5 && rd.llnlGamma.get('Na+') === 4 && rd.co2Gamma.has('CO2') && rd.co2Gamma.has('H2')
+    && !rd.llnlGamma.has('NaHCO3') && re.gamma.has('Na+') && !re.llnlGamma.has('Na+') && re.llnlGamma.get('K+') === 3.5
+    && !re.gamma.has('K+'), `tables at ${rd.llnl.temps.join(', ')} C; ${rd.llnlGamma.size} species with -llnl_gamma, `
+      + `${rd.co2Gamma.size} with -co2_llnl_gamma`);
+
+  const own = { name: 'own-llnl.dat', text: OWN_LLNL };
+  const water = (tc, more = '') => `${KNOBS}SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH 7.5\n Na 2\n Cl 2 charge\n`
+    + ` Ca 0.05\n C(4) 0.01\n${more}END\n`;
+  const handOff = (db, w) => {
+    engine.load(db.text);
+    const res = P.waterToModel({ engine, database: db, water: { name: 'llnl', text: w }, activity: true, exact: true,
+      redox: false, floor: 1e-30 });
+    const m = RtmModel.compile(res.text);
+    const ns = m.speciesNames.length;
+    const C = new Float64Array(ns);
+    for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
+    const lnG = new Float64Array(ns);
+    const wa = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+    let gam = 0;
+    for (const [p, n] of res.names) {
+      if (res.molal.get(p) > 0) gam = Math.max(gam, Math.abs(lnG[m.speciesNames.indexOf(n)] / Math.LN10 - res.water.species.get(p)[1]));
+    }
+    const y = m.toConcentrations(m.initialState());
+    let start = 0;
+    for (const [p, n] of res.names) {
+      if (res.molal.get(p) > 1e-25) start = Math.max(start, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
+    }
+    return { res, gam, aw: Math.abs(wa.lnAw - Math.log(res.water.aw)), start };
+  };
+  const cases = [40, 120].map((tc) => ({ tc, ...handOff(own, water(tc)) }));
+  const t40 = cases[0].res.text;
+  check('  the page\'s coefficients and water at PHREEQC\'s molalities in 2 mol/kgw of NaCl at 40 and 120 C, each between '
+    + 'two of the tables\' temperatures, are PHREEQC\'s; the hand-off writes ACTIVITY = llnl, -llnl_gamma as a=, '
+    + 'drummond and the tables, and the page starts on PHREEQC\'s water', cases.every((c) => c.gam < 1e-14 && c.aw < 1e-14
+      && c.start < 1e-12) && /^ACTIVITY = llnl$/m.test(t40) && /^Na\+\s+\S+\s+a=4$/m.test(t40)
+    && /^CO2\s+\S+\s+drummond$/m.test(t40) && /^NaHCO3\s+\S+$/m.test(t40)
+    && /^TEMPERATURES\s+0\.01\s+25\s+60\s+100\s+150$/m.test(t40) && /^CO2\s+-1\.03\s+0\.00128\s+256\s+0\.44\s+-0\.0016$/m.test(t40),
+  cases.map((c) => `${c.tc} C: log gamma ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)}`).join('; '));
+
+  // An ion the database gives no -llnl_gamma: PHREEQC has no coefficient for it under this model, nor the page.
+  let bare = '';
+  try {
+    handOff({ name: 'own-llnl.dat', text: OWN_LLNL.replace('Ca+2 + Cl- = CaCl+\n  -llnl_gamma 4\n', 'Ca+2 + Cl- = CaCl+\n') },
+      water(40));
+  } catch (e) { bare = e.message; }
+  check('  a water with an ion the database gives no -llnl_gamma is not followed, and says why',
+    /gives CaCl\+ no -llnl_gamma/.test(bare), bare.slice(0, 120));
+
+  // The PHREEQC tab: salt goes in; PHREEQC's coefficients move, and the model's own stay on them.
+  const saltText = `${t40.replace('TEND = 1\n', 'TEND = 1e5\n')}=> Na+ + Cl-, k = 1e-5\n`;
+  engine.load(OWN_LLNL);
+  const view = P.viewRun({ engine, database: own, run: pageRun(saltText, 1e5), modelText: saltText,
+    water: { name: 'llnl', text: water(40) }, unit: 's', times: 12 });
+  const gap = view.report.activity && view.report.activity.gap[0];
+  check('  the PHREEQC tab, a run that adds 1 mol/kgw of salt: PHREEQC\'s coefficients move, and the model\'s own under '
+    + 'LLNL\'s model stay on them', !!gap && view.report.activity.kind === 'llnl' && Math.abs(gap.by) < 1e-6
+    && Math.abs(view.report.drift[0].by) > 0.01, gap ? `PHREEQC's moved ${view.report.drift[0].by.toFixed(3)} in log K, `
+      + `the model's ${Math.abs(gap.by).toExponential(1)} from them (${gap.rel})` : 'no comparison');
+
+  // PHREEQC's own llnl.dat, where it is on this machine.
+  const llPath = process.env.RTM_LLNL_DAT
+    || path.join(require('os').homedir(), '.cache', 'kvotab-phreeqc', 'obj', 'database', 'llnl.dat');
+  if (!fs.existsSync(llPath)) {
+    console.log(`skip  llnl.dat: not at ${llPath} (set RTM_LLNL_DAT)`);
+    return;
+  }
+  const lldb = { name: 'llnl.dat', text: fs.readFileSync(llPath, 'latin1') };
+  const salty = (tc) => `${KNOBS}SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH 7\n Na 1\n Cl 1 charge\n Ca 0.01\n`
+    + ' S(6) 0.01\n C(4) 0.002\n K 0.01\nEND\n';
+  const llCases = [25, 90, 200].map((tc) => ({ tc, ...handOff(lldb, salty(tc)) }));
+  check('  llnl.dat: a 1 mol/kgw NaCl water at 25, 90 and 200 C, the coefficients at PHREEQC\'s molalities and the start of '
+    + 'the model written from it PHREEQC\'s', llCases.every((c) => c.gam < 1e-14 && c.aw < 1e-14 && c.start < 1e-12),
+  llCases.map((c) => `${c.tc} C: log gamma ${c.gam.toExponential(1)}, the start ${c.start.toExponential(1)}`).join('; '));
+}
+
+/* ======================================================================
+   MOLAR VOLUMES, log K at the pressure: PHREEQC's -Vm read, each species'
+   volume against PHREEQC's VM(), waters at 100 to 500 atm and at 150 C on
+   the vapour pressure handed off, the relations at PHREEQC's water after
+   salt went in, anhydrite and salt against REACTION, and the PHREEQC tab
+   ====================================================================== */
+function againstVolumes(engine) {
+  engine.load(dbText);
+  const db = { name: 'phreeqc.dat', text: dbText };
+  const rd = P.readDatabase(dbText);
+  const re = P.readDatabase('SOLUTION_SPECIES\nNa+ = Na+\n  -Vm 1 2 3\nNa+ = Na+\nK+ = K+\n  -Millero 3 0.1 0 1 0 0 9\n'
+    + 'PHASES\nFoo\n  Foo = Na+\n  -Vm 0.0369 dm3/mol\nBar\n  Bar = K+\n  -Vm 20 # cm3/mol\n');
+  check('volumes: -Vm and -Millero read as PHREEQC reads them, a species\' ten numbers and six, a phase\'s with its unit; '
+    + 'a reaction read again starts without', rd.vm.get('Na+').join() === '2.28,-4.38,-4.1,-0.586,0.09,4,0.3,52,-0.00333,0.566'
+    && rd.phaseVm.get('Calcite') === 36.9 && !re.vm.has('Na+') && re.millero.get('K+').length === 6
+    && Math.abs(re.phaseVm.get('Foo') - 36.9) < 1e-12 && re.phaseVm.get('Bar') === 20,
+  `phreeqc.dat: ${rd.vm.size} species with -Vm, ${rd.phaseVm.size} phases`);
+
+  const water = (tc, atm) => `${KNOBS}SOLUTION 1\n temp ${tc}\n pressure ${atm}\n units mol/kgw\n pH 7.5\n Na 1\n Cl 1 charge\n`
+    + ' Ca 0.02\n Mg 0.01\n C(4) 0.01\n S(6) 0.01\nEQUILIBRIUM_PHASES 1\n Calcite 0 0.1\nSAVE solution 1\nEND\n';
+  const handOff = (w) => P.waterToModel({ engine, database: db, water: { name: 'pressure', text: w }, activity: true,
+    exact: true, redox: false, floor: 1e-30, phases: true });
+  const at = (res, m) => {
+    const C = new Float64Array(m.speciesNames.length);
+    for (const [p, n] of res.names) C[m.speciesNames.indexOf(n)] = res.molal.get(p);
+    return C;
+  };
+  const cases = [[25, 300], [60, 100], [150, 1], [150, 50]].map(([tc, atm]) => {
+    const res = handOff(water(tc, atm));
+    const m = RtmModel.compile(res.text);
+    const mv = RtmModel.molarVolumes(m.act, at(res, m), 0, 0);
+    let dv = 0;
+    let n = 0;
+    for (const [p, nm] of res.names) {
+      if (!res.volumes.has(p)) continue;
+      const k = m.speciesNames.indexOf(nm);
+      if (!mv.V[k]) continue;
+      dv = Math.max(dv, Math.abs(mv.V[k] - res.volumes.get(p)));
+      n++;
+    }
+    dv = Math.max(dv, Math.abs(mv.Vw - res.volumes.get('H2O')));
+    const y = m.toConcentrations(m.initialState());
+    let start = 0;
+    for (const [p, nm] of res.names) {
+      if (res.molal.get(p) > 1e-25) start = Math.max(start, Math.abs(y[m.speciesNames.indexOf(nm)] / res.molal.get(p) - 1));
+    }
+    const pLine = /^PRESSURE = (\S+)$/m.exec(res.text);
+    return { tc, atm, res, m, dv, n, start, P: res.report.pressure.atm, pLine: pLine ? Number(pLine[1]) : null,
+      vols: res.report.pressure.volumes };
+  });
+  check('  each species\' molar volume and the water\'s at PHREEQC\'s water, the page\'s against PHREEQC\'s VM(), at 25 C and 300 atm, 60 C and '
+    + '100 atm, 150 C on the vapour pressure times a(H2O) and at 50 atm; the hand-off writes PRESSURE, PHREEQC\'s, and '
+    + '<VOLUMES>, the database\'s -Vm, and the model starts on PHREEQC\'s water', cases.every((c) => c.dv < 1e-12 && c.n > 10
+    && c.start < 1e-12 && c.vols > 10 && c.pLine === c.P),
+  cases.map((c) => `${c.tc} C ${c.P.toFixed(4)} atm: ${c.n} volumes within ${c.dv.toExponential(1)} cm3/mol, `
+    + `${c.vols} written, the start ${c.start.toExponential(1)}`).join('; '));
+
+  // The log K written are at one atmosphere: the same from the water before and after 2 mol/kgw of salt went in.
+  const lkOf = (text) => {
+    const out = new Map();
+    for (const l of text.split('<EQUILIBRIUM>')[1].split(/\n\n/)[0].split('\n')) {
+      const mm = /^(.*?<=>.*?),\s*(?:logK = ([^,\s]+)|analytic = ([^,#]+))/.exec(l);
+      if (mm) out.set(mm[1].trim(), mm[2] !== undefined ? Number(mm[2]) : Number(mm[3].trim().split(/\s+/)[0]));
+    }
+    return out;
+  };
+  const salted = (tc, atm) => `${water(tc, atm)}USE solution 1\nREACTION 1\n NaCl 1\n 2 moles\nSAVE solution 2\nEND\n`;
+  const ends = [[25, 500], [150, 1], [150, 200]].map(([tc, atm]) => {
+    const a = handOff(water(tc, atm));
+    const b = handOff(salted(tc, atm));
+    const la = lkOf(a.text);
+    const lb = lkOf(b.text);
+    let lk = 0;
+    for (const [k, v] of la) if (lb.has(k)) lk = Math.max(lk, Math.abs(v - lb.get(k)));
+    // Every relation of the model written at the start, at PHREEQC's water after the salt.
+    const m = RtmModel.compile(a.text);
+    const C = new Float64Array(m.speciesNames.length);
+    for (const [p, n] of a.names) { const sp = b.water.species.get(p); C[m.speciesNames.indexOf(n)] = sp ? sp[0] : 0; }
+    const lnG = new Float64Array(C.length);
+    const w = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(C.length), 0);
+    let worst = 0;
+    let without = 0;
+    for (const eq of m.equilibria) {
+      if (eq.mineral >= 0 || eq.net.some(([s]) => !(C[s] > 1e-25))) continue;
+      let r = RtmModel.lnKAtP(eq, 0, w) - (eq.water || 0) * w.lnAw;
+      for (const [s, nu] of eq.net) r -= nu * (Math.log(C[s]) + lnG[s]);
+      worst = Math.max(worst, Math.abs(r));
+      without = Math.max(without, Math.abs(r - RtmModel.lnKAtP(eq, 0, w) + RtmModel.lnKAtP(eq, 0, null)));
+    }
+    return { tc, P: a.report.pressure.atm, I0: a.water.mu, I1: b.water.mu, lk, worst: worst / Math.LN10, without: without / Math.LN10 };
+  });
+  check('  the log K written are at one atmosphere, the same from PHREEQC\'s water before and after 2 mol/kgw of NaCl went in; '
+    + 'every relation of the model written before holds at PHREEQC\'s water after, its log K at the pressure going with I',
+  ends.every((e) => e.lk < 1e-12 && e.worst < 1e-12 && e.without > 1e-3),
+  ends.map((e) => `${e.tc} C ${e.P.toFixed(3)} atm, I ${e.I0.toFixed(2)} to ${e.I1.toFixed(2)}: log K ${e.lk.toExponential(1)}, `
+    + `the relations ${e.worst.toExponential(1)} (${e.without.toFixed(3)} without the volumes)`).join('; '));
+
+  // Anhydrite and salt at 500 atm against REACTION, and at one atmosphere for how far the pressure takes it.
+  const anh = (atm) => `${KNOBS}SOLUTION 1\n temp 25\n pressure ${atm}\n units mol/kgw\n pH 7\n Na 0.5\n Cl 0.5 charge\n Ca 0.01\n`
+    + ' S(6) 0.01\nEQUILIBRIUM_PHASES 1\n Anhydrite 0 1\nSAVE solution 1\nSAVE equilibrium_phases 1\nEND\n';
+  const anhRun = (atm) => {
+    const res = handOff(anh(atm));
+    const text = `${res.text.replace(/TEND = [^\n]*\n/, 'TEND = 1e5\n').replace(/EQUILIBRATE = [^\n]*\n/, 'EQUILIBRATE = always\n')}`
+      + '\n<REACTIONS>\n=> Na+ + Cl-, k = 3e-5\n';
+    const m = RtmModel.compile(text.replace(/\n<REACTIONS>\n([^<]*)\n<REACTIONS>\n/, '\n<REACTIONS>\n$1'));
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 1e5, rtol: 1e-10, atol: 1e-20 });
+    const y = m.toConcentrations(r.y[r.y.length - 1]);
+    const pq = P.parseRows(engine.run(`${P.punchBlock(['EQUI("Anhydrite")', 'TOT("Ca")'])}${anh(atm)}USE solution 1\n`
+      + 'USE equilibrium_phases 1\nREACTION 1\n NaCl 1\n 3 moles\nEND\n')).pop();
+    const amount = y[m.speciesNames.indexOf('Anhydrite')];
+    let ca = 0;
+    m.speciesNames.forEach((n, k) => { if (/^Ca/.test(n) && n !== 'Anhydrite') ca += y[k]; });
+    return { amount, pqAmount: Number(pq.x[0]), ca, pqCa: Number(pq.x[1]), I: pq.mu };
+  };
+  const a500 = anhRun(500);
+  const a1 = anhRun(1);
+  check('  3 mol/kgw of NaCl added to a water over anhydrite at 500 atm, against REACTION: calcium and the anhydrite left as '
+    + 'PHREEQC has them, the pressure taking them well away from the same at one atmosphere',
+  Math.abs(a500.ca / a500.pqCa - 1) < 1e-7 && Math.abs(a500.amount - a500.pqAmount) < 1e-8
+    && Math.abs(a500.pqCa / a1.pqCa - 1) > 0.05,
+  `calcium ${a500.ca.toExponential(6)}, within ${Math.abs(a500.ca / a500.pqCa - 1).toExponential(1)} of PHREEQC's `
+    + `(${a1.pqCa.toExponential(4)} at 1 atm), anhydrite left within ${Math.abs(a500.amount - a500.pqAmount).toExponential(1)} mol, `
+    + `I ${a500.I.toFixed(2)}`);
+
+  // The PHREEQC tab at 500 atm: PHREEQC's coefficients and log K move, and the model's own stay on them.
+  const res = handOff(water(25, 500));
+  const saltText = `${res.text.replace('TEND = 1\n', 'TEND = 1e5\n')}`.replace(/(<REACTIONS>\n)?$/, '')
+    + (/<REACTIONS>/.test(res.text) ? '=> Na+ + Cl-, k = 1e-5\n' : '\n<REACTIONS>\n=> Na+ + Cl-, k = 1e-5\n');
+  const view = P.viewRun({ engine, database: db, run: pageRun(saltText, 1e5), modelText: saltText,
+    water: { name: 'pressure', text: water(25, 500) }, unit: 's', times: 12 });
+  const gap = view.report.activity && view.report.activity.gap[0];
+  check('  the PHREEQC tab at 500 atm, a run that adds 1 mol/kgw of salt: PHREEQC\'s waters at the model\'s pressure, its '
+    + 'coefficients and log K move, and the model\'s own stay on them', !!gap && Math.abs(gap.by) < 1e-6
+    && Math.abs(view.report.drift[0].by) > 0.01, gap ? `PHREEQC's moved ${view.report.drift[0].by.toFixed(3)} in log K, `
+      + `the model's ${Math.abs(gap.by).toExponential(1)} from them (${gap.rel})` : 'no comparison');
+
+  // PHREEQC's own pitzer.dat, where it is on this machine: its molar volumes under Pitzer's model at 500 atm.
+  const pzPath = process.env.RTM_PITZER_DAT
+    || path.join(require('os').homedir(), '.cache', 'kvotab-phreeqc', 'obj', 'database', 'pitzer.dat');
+  if (!fs.existsSync(pzPath)) {
+    console.log(`skip  pitzer.dat at pressure: not at ${pzPath} (set RTM_PITZER_DAT)`);
+    return;
+  }
+  const pzdb = { name: 'pitzer.dat', text: fs.readFileSync(pzPath, 'latin1') };
+  engine.load(pzdb.text);
+  const brine = `${KNOBS}SOLUTION 1\n temp 90\n pressure 500\n units mol/kgw\n pH 7\n Na 3\n Cl 3 charge\n Ca 0.05\n`
+    + ' S(6) 0.03\n C(4) 0.002\n Mg 0.05\nEQUILIBRIUM_PHASES 1\n Anhydrite 0 0.1\nSAVE solution 1\nEND\n';
+  const ho = (w) => P.waterToModel({ engine, database: pzdb, water: { name: 'brine', text: w }, activity: true, exact: true,
+    redox: false, floor: 1e-30, phases: true });
+  const pa = ho(brine);
+  const pb = ho(`${brine}USE solution 1\nREACTION 1\n NaCl 1\n 1.5 moles\nEND\n`);
+  const pm = RtmModel.compile(pa.text);
+  const py = pm.toConcentrations(pm.initialState());
+  let pStart = 0;
+  for (const [p, n] of pa.names) if (pa.molal.get(p) > 1e-25) pStart = Math.max(pStart, Math.abs(py[pm.speciesNames.indexOf(n)] / pa.molal.get(p) - 1));
+  const pC = new Float64Array(py.length);
+  for (const [p, n] of pa.names) { const sp = pb.water.species.get(p); pC[pm.speciesNames.indexOf(n)] = sp ? sp[0] : 0; }
+  const pG = new Float64Array(py.length);
+  const pw = RtmModel.activityAt(pm.act, pC, 0, pG, new Float64Array(py.length), 0);
+  let pWorst = 0;
+  for (const eq of pm.equilibria) {
+    if (eq.mineral >= 0 || eq.net.some(([s]) => !(pC[s] > 1e-25))) continue;
+    let r = RtmModel.lnKAtP(eq, 0, pw) - (eq.water || 0) * pw.lnAw;
+    for (const [s, nu] of eq.net) r -= nu * (Math.log(pC[s]) + pG[s]);
+    pWorst = Math.max(pWorst, Math.abs(r) / Math.LN10);
+  }
+  check('  pitzer.dat: a brine at 90 C and 500 atm handed off under Pitzer with the database\'s volumes starts on PHREEQC\'s '
+    + 'water, and its relations hold at PHREEQC\'s after 1.5 mol/kgw of NaCl went in', pStart < 1e-10 && pWorst < 1e-10
+    && pa.report.pressure.volumes > 5, `the start ${pStart.toExponential(1)}, the relations ${pWorst.toExponential(1)} in log K `
+      + `(I ${pa.water.mu.toFixed(2)} to ${pb.water.mu.toFixed(2)}), ${pa.report.pressure.volumes} volumes`);
+  engine.load(dbText);
+}
+
+/* ======================================================================
+   SITES THAT GO WITH A PHASE: PHREEQC's SURFACE with equilibrium_phase,
+   handed off as sites= per=, salt added against REACTION
+   ====================================================================== */
+function againstSurfaceMineral(engine) {
+  engine.load(dbText);
+  const db = { name: 'phreeqc.dat', text: dbText };
+  // Hfo's sites on anhydrite, which dissolves into salt without making water (a ferrihydrite would: 3 H2O a mole).
+  const water = (more = '') => `${KNOBS}SOLUTION 1\n pH 7\n units mol/kgw\n Na 0.1\n Cl 0.1 charge\n Ca 0.01\n S(6) 0.01\n`
+    + ' Zn 1e-6\nEQUILIBRIUM_PHASES 1\n Anhydrite 0 0.1\nSURFACE 1\n -equilibrate 1\n'
+    + ` Hfo_wOH Anhydrite equilibrium_phase 0.02\n Hfo_sOH Anhydrite equilibrium_phase 0.0005\n -no_edl\n${more}`
+    + 'SAVE solution 1\nSAVE equilibrium_phases 1\nSAVE surface 1\nEND\n';
+  const res = P.waterToModel({ engine, database: db, water: { name: 'on anhydrite', text: water() }, activity: true,
+    exact: true, redox: false, floor: 1e-30, phases: true });
+  const m = RtmModel.compile(res.text);
+  const y = m.toConcentrations(m.initialState());
+  let start = 0;
+  for (const [n, a] of res.amounts) {
+    const k = m.speciesNames.indexOf(n);
+    if (a > 1e-25 && k >= 0) start = Math.max(start, Math.abs(y[k] / a - 1));
+  }
+  for (const [p, n] of res.names) {
+    const k = m.speciesNames.indexOf(n);
+    if (res.molal.get(p) > 1e-25 && k >= 0) start = Math.max(start, Math.abs(y[k] / res.molal.get(p) - 1));
+  }
+  check('sites that go with a phase: PHREEQC\'s Hfo_wOH and Hfo_sOH on anhydrite (equilibrium_phase 0.02 and 0.0005) are '
+    + 'written so many per mole of the mineral, sites= per=, and the model starts on PHREEQC\'s water and surface',
+  start < 1e-12 && /^Hfo_wOH\s+\S+\s+surface\s+sites=0\.02\s+per=Anhydrite$/m.test(res.text)
+    && /^Hfo_sOH\s+\S+\s+surface\s+sites=0\.0005\s+per=Anhydrite$/m.test(res.text), `the start ${start.toExponential(1)}`);
+
+  // 0.3 mol/kgw of NaCl: anhydrite dissolves, the sites go with it, and what was on them comes off.
+  const text = `${res.text.replace(/TEND = [^\n]*\n/, 'TEND = 1e5\n').replace(/EQUILIBRATE = [^\n]*\n/, 'EQUILIBRATE = always\n')}`
+    + '\n<REACTIONS>\n=> Na+ + Cl-, k = 3e-6\n';
+  const m2 = RtmModel.compile(text);
+  const r = FacsimileODE.runModel(m2, { solver: 'ndf', tend: 1e5, rtol: 1e-10, atol: 1e-20 });
+  const ye = m2.toConcentrations(r.y[r.y.length - 1]);
+  const at = (n) => ye[m2.speciesNames.indexOf(n)];
+  const lnG = new Float64Array(ye.length);
+  RtmModel.activityAt(m2.act, ye, 0, lnG, new Float64Array(ye.length));
+  const kH = m2.speciesNames.indexOf('H+');
+  const pH = -(Math.log(ye[kH]) + lnG[kH]) / Math.LN10;
+  const sites = m2.speciesNames.filter((n) => /^Hfo_w/.test(n)).reduce((acc, n) => acc + at(n), 0);
+  const pq = P.parseRows(engine.run(`${P.punchBlock(['EQUI("Anhydrite")', 'TOT("water")'])}${water()}USE solution 1\n`
+    + 'USE equilibrium_phases 1\nUSE surface 1\nREACTION 1\n NaCl 1\n 0.3 moles\nEND\n')).pop();
+  let pqSites = 0;
+  for (const [n, e] of pq.surface) if (/^Hfo_w/.test(n)) pqSites += e.m;
+  const pqZn = (pq.surface.get('Hfo_wOZn+') || { m: 0 }).m + (pq.surface.get('Hfo_sOZn+') || { m: 0 }).m;
+  const zn = (at('Hfo_wOZn+') || 0) + (at('Hfo_sOZn+') || 0);
+  const M = at('Anhydrite');
+  const pqM = Number(pq.x[0]);
+  check('  0.3 mol/kgw of NaCl into it against REACTION: the anhydrite left, the zinc on the surface and the pH as PHREEQC '
+    + 'has them, the sites 0.02 per mole of anhydrite as PHREEQC keeps them', Math.abs(M / pqM - 1) < 1e-6
+    && Math.abs(zn / pqZn - 1) < 1e-5 && Math.abs(pH - pq.pH) < 1e-6 && Math.abs(sites / (0.02 * M) - 1) < 1e-12
+    && Math.abs(pqSites / (0.02 * pqM) - 1) < 1e-6,
+  `anhydrite ${M.toFixed(8)} for PHREEQC's ${pqM.toFixed(8)}, zinc on it within ${Math.abs(zn / pqZn - 1).toExponential(1)}, `
+    + `pH ${Math.abs(pH - pq.pH).toExponential(1)}; PHREEQC's water ${Number(pq.x[1]).toFixed(9)} kg`);
+
+  // With PHREEQC's double layer, its area 600 m2 to each mole of anhydrite: written area= per=, and salt as before.
+  const ddlWater = () => water().replace(' -no_edl\n', '').replace('equilibrium_phase 0.02\n', 'equilibrium_phase 0.02 600\n');
+  const rd = P.waterToModel({ engine, database: db, water: { name: 'with its double layer', text: ddlWater() },
+    activity: true, exact: true, redox: false, floor: 1e-30, phases: true });
+  const md = RtmModel.compile(`${rd.text.replace(/TEND = [^\n]*\n/, 'TEND = 1e5\n').replace(/EQUILIBRATE = [^\n]*\n/,
+    'EQUILIBRATE = always\n')}\n<REACTIONS>\n=> Na+ + Cl-, k = 3e-6\n`);
+  const yd0 = md.toConcentrations(md.initialState());
+  let dStart = 0;
+  for (const [n, a] of rd.amounts) {
+    const k = md.speciesNames.indexOf(n);
+    if (a > 1e-25 && k >= 0) dStart = Math.max(dStart, Math.abs(yd0[k] / a - 1));
+  }
+  const rr = FacsimileODE.runModel(md, { solver: 'ndf', tend: 1e5, rtol: 1e-10, atol: 1e-20 });
+  const yd = md.toConcentrations(rr.y[rr.y.length - 1]);
+  const atd = (n) => yd[md.speciesNames.indexOf(n)];
+  const lnGd = new Float64Array(yd.length);
+  RtmModel.activityAt(md.act, yd, 0, lnGd, new Float64Array(yd.length));
+  const kHd = md.speciesNames.indexOf('H+');
+  const pHd = -(Math.log(yd[kHd]) + lnGd[kHd]) / Math.LN10;
+  const pqd = P.parseRows(engine.run(`${P.punchBlock(['EQUI("Anhydrite")', 'EDL("psi", "Hfo")'])}${ddlWater()}USE solution 1\n`
+    + 'USE equilibrium_phases 1\nUSE surface 1\nREACTION 1\n NaCl 1\n 0.3 moles\nEND\n')).pop();
+  const znd = (atd('Hfo_wOZn+') || 0) + (atd('Hfo_sOZn+') || 0);
+  const pqZnd = (pqd.surface.get('Hfo_wOZn+') || { m: 0 }).m + (pqd.surface.get('Hfo_sOZn+') || { m: 0 }).m;
+  const psi = -Math.log(atd('Hfo_psi')) * GAS_R_T(25);
+  check('  with PHREEQC\'s double layer, its area 600 m2 to each mole of anhydrite: written area= per=, the start PHREEQC\'s, '
+    + 'and 0.3 mol/kgw of NaCl against REACTION: the anhydrite, the zinc on the surface, the pH and the potential',
+  /^Hfo_psi\s+\S+\s+potential\s+area=600\s+per=Anhydrite$/m.test(rd.text) && dStart < 1e-12
+    && Math.abs(atd('Anhydrite') / Number(pqd.x[0]) - 1) < 1e-6 && Math.abs(znd / pqZnd - 1) < 1e-5
+    && Math.abs(pHd - pqd.pH) < 1e-6 && Math.abs(psi - Number(pqd.x[1])) < 1e-6,
+  `the start ${dStart.toExponential(1)}; anhydrite within ${Math.abs(atd('Anhydrite') / Number(pqd.x[0]) - 1).toExponential(1)}, `
+    + `zinc on it ${Math.abs(znd / pqZnd - 1).toExponential(1)}, pH ${Math.abs(pHd - pqd.pH).toExponential(1)}, the potential `
+    + `${(psi * 1e3).toFixed(4)} mV for PHREEQC's ${(Number(pqd.x[1]) * 1e3).toFixed(4)}`);
+}
+
+/** RT/F at tc, in volts, with PHREEQC's constants: a potential from its activity exp(-F psi/RT). */
+function GAS_R_T(tc) { return (8.31470 * (tc + 273.15)) / 96493.5; }
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -2422,6 +2860,12 @@ function againstWaterActivity(engine) {
   againstPitzer(wasm);
   console.log('\n--- Debye-Hueckel A and B at the water\'s activity ---');
   againstWaterActivity(wasm);
+  console.log('\n--- LLNL: the reading, the coefficients, the hand-off, the PHREEQC tab, llnl.dat ---');
+  againstLlnl(wasm);
+  console.log('\n--- molar volumes: log K at the pressure, VM(), the hand-off at 100 to 500 atm, REACTION, the PHREEQC tab ---');
+  againstVolumes(wasm);
+  console.log('\n--- sites that go with a phase: the hand-off, salt against REACTION ---');
+  againstSurfaceMineral(wasm);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

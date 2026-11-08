@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108f';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108g';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -454,12 +454,14 @@
           + `${h.species} species algebraic in every cell`
           + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
         + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : a.kind === 'sit' ? 'SIT' : a.kind === 'pitzer' ? 'Pitzer'
-          : 'Debye–Hückel'} at `
+          : a.kind === 'llnl' ? 'LLNL’s B-dot' : 'Debye–Hückel'} at `
           + `${typeof a.temperature === 'number' ? `${a.temperature} °C` : 'each cell’s temperature'} `
           + `(${a.ions} ion${a.ions === 1 ? '' : 's'}`
           + `${a.kind === 'sit' ? `, ${a.sit} pair${a.sit === 1 ? '' : 's'} in <SIT>` : ''}`
           + `${a.kind === 'pitzer' && a.pitzer ? `, ${a.pitzer.params} parameter${a.pitzer.params === 1 ? '' : 's'} in <PITZER>`
-            + `${a.pitzer.macinnes ? ', MacInnes scaled' : ''}` : ''})` : '')
+            + `${a.pitzer.macinnes ? ', MacInnes scaled' : ''}` : ''}`
+          + `${a.volumes ? `, log K at ${a.volumes.idle ? '1 atm: the' : `the pressure from ${a.volumes.given}`} molar `
+            + `volume${a.volumes.given === 1 ? '' : 's'} in <VOLUMES>${a.volumes.idle ? ' correct nothing' : ''}` : ''})` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
           : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
         + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
@@ -2089,9 +2091,9 @@
       lead: 'PHREEQC holds its relations between activities. This says how the model written from the water holds them.',
       facts: [['Default', 'following the ionic strength']],
       sections: [{ choices: [
-        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`; with a Pitzer database `ACTIVITY = pitzer`, its parameters between them in `<PITZER>`, each with its terms in the temperature. Each relation is written with its water and the database’s own log K, as it goes with temperature, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
+        ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`; with a Pitzer database `ACTIVITY = pitzer`, its parameters between them in `<PITZER>`, each with its terms in the temperature; with an LLNL database (`llnl.dat`) `ACTIVITY = llnl`, each species’ `-llnl_gamma` as `a=` and the database’s tables in `<LLNL>`. Each relation is written with its water and the database’s own log K, as it goes with temperature, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
         ['fixed at this water', 'Each log K is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far. The database’s temperature terms stay with it, and the coefficients folded in are this water’s at any temperature.', pq.act === 'fixed'],
-      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again, and under Pitzer every solute of its cell, so a cell is speciated whole. A database whose activity model is LLNL’s cannot be followed here; keep it fixed.' }],
+      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again, and under Pitzer every solute of its cell, so a cell is speciated whole.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2249,7 +2251,10 @@
   const HL_WORDS = {
     PITZER: new Set(['b0', 'b1', 'b2', 'c0', 'theta', 'lamda', 'lambda', 'zeta', 'psi', 'mu', 'eta', 'alphas', 'aphi',
       'macinnes', 'etheta', 'yes', 'no', 'true', 'false']),
-    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas']),
+    LLNL: new Set(['temperatures', 'dh_a', 'dh_b', 'bdot', 'co2']),
+    VOLUMES: new Set(['millero']),
+    SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas',
+      'drummond']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
@@ -2614,11 +2619,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108g';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108e',
+    'resources/js/rtm-phreeqc.js?v=20261108g',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2944,6 +2949,19 @@ END
           + `and, in <code>&lt;SIT&gt;</code>, ${np} of its interaction coefficient${np === 1 ? '' : 's'} between the `
           + `species written, at ${pqNum(r.activity.temperature)} °C.</p>`);
       }
+      if (r.activity && r.activity.kind === 'llnl') {
+        out.push('<p>The activity coefficients are LLNL’s, as PHREEQC’s are with this database: <code>ACTIVITY = llnl</code>, '
+          + 'each ion’s B-dot form with the database’s <code>-llnl_gamma</code> as <code>a=</code>, CO2 and its like by '
+          + 'Drummond’s formula, and A, B and B-dot from its tables in <code>&lt;LLNL&gt;</code>.</p>');
+      }
+      if (r.pressure && r.pressure.atm > 0 && Math.abs(r.pressure.atm - 1) > 1e-12) {
+        const pr = r.pressure;
+        out.push(`<p>The water is at ${pqNum(pr.atm)} atm${pr.vapour ? ', its vapour pressure times a(H2O)' : ''}, written as `
+          + '<code>PRESSURE</code>'
+          + (pr.volumes ? `: PHREEQC corrects each log K for the pressure with the reaction's molar volumes, and so does the `
+            + `model with the database's <code>-Vm</code> in <code>&lt;VOLUMES&gt;</code> (${pr.volumes}), each going with `
+            + 'the ionic strength; the log K are written at one atmosphere.</p>' : '.</p>'));
+      }
       if (r.activity && r.activity.kind === 'pitzer') {
         const np = r.activity.pitzer;
         out.push(`<p>The activity coefficients are Pitzer's, as PHREEQC's are with this database: <code>ACTIVITY = pitzer</code> `
@@ -2970,8 +2988,11 @@ END
         out.push(`<p>On the surface, the sites ${r.surface.sites.map(esc).join(', ')}: ${r.surface.species
           .map((e) => `${esc(e.as)} (${pqNum(e.amount)} mol/kgw)`).join(', ')}, each with its fraction of the sites `
           + 'for its activity, '
+          + ((r.surface.per || []).length ? `the sites of ${r.surface.per.map((x) => `${esc(x.site)} ${pqNum(x.ratio)} to each `
+            + `mole of ${esc(x.mineral)}`).join(' and ')}, going with it, ` : '')
           + (pots.length ? `with the diffuse double layer: ${pots.map((pp) => `${esc(pp.name)}, the potential of `
-            + `${esc(pp.surface)} (${pqNum(pp.area)} m² per gram, ${pqNum(pp.grams)} g per kgw), at `
+            + `${esc(pp.surface)} (${pp.phase ? `${pqNum(pp.area)} m² to each mole of ${esc(pp.phase)}`
+              : `${pqNum(pp.area)} m² per gram, ${pqNum(pp.grams)} g per kgw`}), at `
             + `${pqNum(pp.psi * 1e3)} mV`).join('; ')}.</p>` : 'without electrostatics as PHREEQC\'s -no_edl.</p>'));
       }
       if (r.surfaceSkipped && r.surfaceSkipped.length) {

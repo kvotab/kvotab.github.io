@@ -2915,9 +2915,9 @@ HCO3- <=> H+ + CO3-2,      logK = -10.4284
 <REACTIONS>
 `;
   let refused = '';
-  try { RtmModel.compile(water('ACTIVITY = llnl')); } catch (e) { refused = e.message; }
-  check('ACTIVITY is none, davies, debye-huckel, sit or pitzer',
-    /ACTIVITY must be one of none, davies, debye-huckel.*sit, pitzer/.test(refused), refused);
+  try { RtmModel.compile(water('ACTIVITY = truesdell')); } catch (e) { refused = e.message; }
+  check('ACTIVITY is none, davies, debye-huckel, sit, pitzer or llnl',
+    /ACTIVITY must be one of none, davies, debye-huckel.*sit, pitzer, llnl/.test(refused), refused);
   check('  and debye-hückel is debye-huckel', RtmModel.compile(water('ACTIVITY = debye-hückel')).act.kind === 'debye-huckel');
   refused = '';
   try { RtmModel.compile(water('ACTIVITY = davies\nTEMPERATURE = 400')); } catch (e) { refused = e.message; }
@@ -5876,6 +5876,492 @@ console.log('\n--- Pitzer ---');
   const wrong = cases.filter(([, t, re]) => !re.test(refuse(t)));
   check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
     wrong.map(([what, t]) => `${what}: "${refuse(t)}"`).join(' | '));
+}
+
+/*
+   LLNL'S ACTIVITY MODEL, against its closed form: an ion's B-dot form with
+   A, B and B-dot straight between the tables' two temperatures either side
+   (a table temperature's own at it), a neutral species given a= at 1, one
+   given drummond Drummond's formula in kelvin, a neutral species given
+   neither 0.1 I; a species on an exchanger its ion's form and its fraction.
+   The tables are the tests' own.
+*/
+console.log('\n--- LLNL ---');
+{
+  const tables = 'TEMPERATURES 0 25 60 100\nDH_A 0.49 0.51 0.55 0.60\nDH_B 0.325 0.329 0.335 0.342\nBDOT 0.037 0.041 0.044 0.046\n'
+    + 'CO2 -1.03 0.00128 256 0.44 -0.0016';
+  const tab = [0, 25, 60, 100];
+  const lin = (T, v) => {
+    let i = 0;
+    while (i + 1 < tab.length && T > tab[i + 1]) i++;
+    const f = T === tab[i] ? 0 : (T - tab[i]) / (tab[i + 1] - tab[i]);
+    return (1 - f) * v[i] + f * v[Math.min(i + 1, tab.length - 1)];
+  };
+  let worst = 0;
+  for (const T of [0, 25, 40, 80, 100]) {
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = llnl\nTEMPERATURE = ${T}\n\n<SPECIES>\n`
+      + `Na+ 1 a=4\nCl- 1 a=3\nCa+2 0.1 a=6\nCO2 0.01 drummond\nSiO2 0.001 a=3\nNH3 0.001\n\n<LLNL>\n${tables}\n`);
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const w = RtmModel.activityAt(m.act, m.initialState(), 0, lnG, new Float64Array(ns), 0);
+    const I = w.I;
+    const s = Math.sqrt(I);
+    const A = lin(T, [0.49, 0.51, 0.55, 0.60]);
+    const B = lin(T, [0.325, 0.329, 0.335, 0.342]);
+    const bd = lin(T, [0.037, 0.041, 0.044, 0.046]);
+    const g = (z, a) => -A * z * z * s / (1 + a * B * s) + bd * I;
+    const tk = T + 273.15;
+    const co2 = ((-1.03 + 0.00128 * tk + 256 / tk) * I - (0.44 - 0.0016 * tk) * I / (I + 1)) / Math.LN10;
+    const at = (n) => lnG[m.speciesNames.indexOf(n)] / Math.LN10;
+    worst = Math.max(worst, Math.abs(at('Na+') - g(1, 4)), Math.abs(at('Ca+2') - g(2, 6)), Math.abs(at('CO2') - co2),
+      Math.abs(at('SiO2')), Math.abs(at('NH3') - 0.1 * I), Math.abs(w.lnAw - Math.log(1 - 0.017 * 2.112)));
+  }
+  check('LLNL: an ion\'s B-dot form, A, B and B-dot straight between the tables\' temperatures, a neutral species given a= at '
+    + '1, Drummond\'s CO2, 0.1 I without either, at 0 to 100 C on and between the tables\' rows', worst < 1e-15,
+  `within ${worst.toExponential(1)} in log gamma`);
+
+  // An exchanger: NaX takes Na+'s form with its own a, and its fraction; the Jacobian of a held water with CO2 coming in.
+  const held = (tend, more = '') => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = ${tend}\nACTIVITY = llnl\n`
+    + `EQUILIBRATE = always\nTEMPERATURE = 40\n${more}\n<SPECIES>\nH+ 1e-7 a=9\nOH- 1e-7 a=3.5\nNa+ 1 a=4\nCl- 1 a=3\n`
+    + 'Ca+2 0.01 a=6\nCO2 1e-3 drummond\nHCO3- 1e-3 a=4\nCO3-2 1e-6 a=4.5\nNaHCO3 1e-5\nX- 0.05 exchanger\n'
+    + 'NaX 0 exchange a=4\nCaX2 0 exchange a=6\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -13.5\n'
+    + 'CO2 + H2O <=> H+ + HCO3-, logK = -6.3\nHCO3- <=> H+ + CO3-2, logK = -10.2\nNa+ + HCO3- <=> NaHCO3, logK = -0.2\n'
+    + 'Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\n\n<REACTIONS>\n=> CO2, k = 1e-7\n=> Na+ + Cl-, k = 1e-4\n'
+    + `\n<LLNL>\n${tables}\n`);
+  const mx = held(1);
+  const cx = mx.toConcentrations(mx.initialState());
+  const nx = mx.speciesNames.length;
+  const lx = new Float64Array(nx);
+  const wx = RtmModel.activityAt(mx.act, cx, 0, lx, new Float64Array(nx), 0);
+  const sx = Math.sqrt(wx.I);
+  const A40 = lin(40, [0.49, 0.51, 0.55, 0.60]);
+  const B40 = lin(40, [0.325, 0.329, 0.335, 0.342]);
+  const bd40 = lin(40, [0.037, 0.041, 0.044, 0.046]);
+  // ln gamma of NaX: ln(n/capacity), its share of the sites per mole, and Na+'s form with NaX's own a.
+  const iNaX = mx.speciesNames.indexOf('NaX');
+  const dEx = Math.abs(lx[iNaX] - Math.log(1 / 0.05) - Math.LN10 * (-A40 * sx / (1 + 4 * B40 * sx) + bd40 * wx.I));
+  let bad = 0;
+  let measured = 0;
+  for (const tend of [10, 3000, 9999]) {
+    const m = held(tend);
+    const r = run(m, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m, tend, last(r));
+    bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    measured += v.checked;
+  }
+  check('  a species on an exchanger its ion\'s B-dot form with its own a, and its fraction; the Jacobian of a held water '
+    + 'with an exchanger and Drummond\'s CO2, against differences', dEx < 1e-13 && bad === 0,
+  `NaX within ${dEx.toExponential(1)}; the Jacobian ${bad} of ${measured} entries off`);
+
+  // What it refuses.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = (act, sp, ll) => `<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = ${act}\nTEMPERATURE = 25\n\n<SPECIES>\n${sp}\n`
+    + `${ll === null ? '' : `\n<LLNL>\n${ll}\n`}`;
+  const ok = 'Na+ 1 a=4\nCl- 1 a=3';
+  const cases = [
+    ['an <LLNL> without ACTIVITY = llnl', base('davies', ok, tables), /read under ACTIVITY = llnl, not davies/],
+    ['drummond without it', base('davies', 'Na+ 1\nCl- 1\nCO2 1e-3 drummond', null), /read under ACTIVITY = llnl/],
+    ['ACTIVITY = llnl without its tables', base('llnl', ok, null), /takes its tables in <LLNL>/],
+    ['tables of different lengths', base('llnl', ok, tables.replace('DH_B 0.325 0.329 0.335 0.342', 'DH_B 0.325 0.329')),
+      /DH_B has 2 values and TEMPERATURES 4/],
+    ['temperatures that do not rise', base('llnl', ok, tables.replace('TEMPERATURES 0 25 60 100', 'TEMPERATURES 0 60 25 100')),
+      /TEMPERATURES in <LLNL> rise/],
+    ['a temperature outside them', base('llnl', ok, tables).replace('TEMPERATURE = 25', 'TEMPERATURE = 150'),
+      /150 C, is outside LLNL's tables in <LLNL>, 0 to 100 C/],
+    ['an ion with no a=', base('llnl', 'Na+ 1\nCl- 1 a=3', tables), /Na\+ is an ion and ACTIVITY = llnl: it takes a=/],
+    ['drummond and a=', base('llnl', `${ok}\nCO2 1e-3 drummond a=3`, tables), /drummond and a or b/],
+    ['drummond with no CO2 coefficients', base('llnl', `${ok}\nCO2 1e-3 drummond`, tables.split('\nCO2')[0]),
+      /needs CO2 with Drummond's five coefficients/],
+    ['a word it does not take', base('llnl', ok, `${tables}\nBDOT2 1 2 3 4`), /"BDOT2" in <LLNL>/],
+    ['a table given twice', base('llnl', ok, `${tables}\nBDOT 1 2 3 4`), /BDOT is given twice in <LLNL>/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/*
+   MOLAR VOLUMES AND LOG K AT THE PRESSURE (<VOLUMES>), against PHREEQC's
+   formulas written out here from its calc_rho_0, calc_dielectrics and
+   calc_vm: each species' volume at the temperature, pressure and ionic
+   strength, the water's own, and each relation's ln K less sum nu V (P - 1
+   atm)/(R T); the water at the pressure given or at the vapour pressure
+   times a(H2O), whichever is higher. The volumes are the tests' own.
+*/
+console.log('\n--- molar volumes and log K at the pressure ---');
+{
+  // PHREEQC's water, written out: its density at the pressure, compressibility and dielectric constant, Av and QBrn.
+  const pWater = (tc, atm, aw) => {
+    const T = tc + 273.15;
+    const th = 1 - T / 647.096;
+    const rhoSat = 322 * (1 + 1.99274064 * th ** (1 / 3) + 1.09965342 * th ** (2 / 3) - 0.510839303 * th ** (5 / 3)
+      - 1.75493479 * th ** (16 / 3) - 45.5170352 * th ** (43 / 3) - 6.7469445e5 * th ** (110 / 3));
+    const poly = (c) => c[0] + tc * (c[1] + tc * (c[2] + tc * (c[3] + tc * c[4])));
+    const p0 = poly([5.1880000e-02, -4.1885519e-04, 6.6780748e-06, -3.6648699e-08, 8.3501912e-11]);
+    const p1 = poly([-6.0251348e-06, 3.6696407e-07, -9.2056269e-09, 6.7024182e-11, -1.5947241e-13]);
+    const p2 = poly([-2.2983596e-09, -4.0133819e-10, 1.2619821e-11, -9.8952363e-14, 2.3363281e-16]);
+    const p3 = poly([7.0517647e-11, 6.8566831e-12, -2.2829750e-13, 1.8113313e-15, -4.2475324e-18]);
+    const pSat = Math.exp(11.6702 - 3816.44 / (T - 46.13)) * Math.min(aw, 1);
+    const P = Math.max(atm, pSat);
+    const pa = P - (pSat - 1e-6);
+    const rho = rhoSat + pa * (p0 + pa * (p1 + pa * (p2 + Math.sqrt(pa) * p3)));
+    const kappa0 = (p0 + pa * (2 * p1 + pa * (3 * p2 + Math.sqrt(pa) * 3.5 * p3))) / rho;
+    const d1000 = 342.79 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7));
+    const c = -2.0525 + 3115.9 / (T - 182.89);
+    const b = -8032.5 + 4.2142e6 / T + 2.1417 * T;
+    const pb = P * 1.01325;
+    const eps = d1000 + c * Math.log((b + pb) / (b + 1000));
+    const e2 = 1.671008e-3 / (eps * T);
+    const kap = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * (rho / 1e3) / 1e3);
+    return { T, P, pSat, Vw: 18.016 / (rho / 1e3), B: kap / 1e8, QBrn: c / (b + pb) / eps / eps * 41.84004,
+      Av: kap * e2 * 0.0820597 * 1e3 * T * (c / (b + pb) * 1.01325 / eps - kappa0 / 3) };
+  };
+  // calc_vm, written out: -Vm's ten numbers in PHREEQC's units, or millero's six; an ion's terms in I.
+  const pVolume = (v, z, tc, w, I) => {
+    if (v.millero) {
+      const m = v.millero;
+      let V = m[0] + tc * (m[1] + tc * m[2]);
+      if (z) V += z * z * 0.5 * w.Av * Math.sqrt(I) + (m[3] + tc * (m[4] + tc * m[5])) * I;
+      return V;
+    }
+    const q = [...v, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0].slice(0, 10);
+    if (v.length < 10) q[9] = 1;
+    const pbS = 2600 + w.P * 1.01325;
+    const TKs = tc + 45.15;
+    let V = q[0] * 4.184004 + q[1] * 4184.004 / pbS + (q[2] * 41.84004 + q[3] * 418400.4 / pbS) / TKs - q[4] * 1e5 * w.QBrn;
+    if (z) {
+      V += z * z * 0.5 * w.Av * Math.sqrt(I) / (q[5] < 1e-5 ? 1 : 1 + q[5] * w.B * Math.sqrt(I));
+      if (q[6] || q[7] || q[8]) V += (q[6] + q[7] / TKs + q[8] * TKs) * I ** q[9];
+    }
+    return V;
+  };
+  const VOLS = { 'Na+': [1.5, -3, -2, -0.5, 0.1, 4, 0.3, 50, -0.003, 0.6], 'Cl-': [4, 5, 4, -3, 1.7, 0, -0.3, 20, 0, 1],
+    'Ca+2': Object.assign([], { millero: [18, 0.02, -0.0001, 1.5, 0.01, 0] }), 'CO3-2': [6, -3, 0, -5, 5, 0, 0.2, 100, -0.014, 0.9],
+    'HCO3-': [8, 0.4], CaCO3: [-0.25, -8, 9, -2.5, -0.03] };
+  const VM0 = { Calcite: 37 };
+  const volText = `${Object.entries(VOLS).map(([n, v]) => `${n}  ${v.millero ? `millero  ${v.millero.join(' ')}` : v.join(' ')}`).join('\n')}\n`
+    + 'Calcite  37\n';
+  const charge = { 'Na+': 1, 'Cl-': -1, 'Ca+2': 2, 'CO3-2': -2, 'HCO3-': -1, CaCO3: 0, 'H+': 1, 'OH-': -1 };
+  const text = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1}\nACTIVITY = debye-huckel\nTEMPERATURE = ${o.tc}\n`
+    + `${o.atm ? `PRESSURE = ${o.atm}\n` : ''}${o.held ? 'EQUILIBRATE = always\n' : ''}\n<SPECIES>\nH+ 1e-8 a=9\nOH- 1e-6 a=3.5\n`
+    + 'Na+ 1 a=4 b=0.08\nCl- 1 a=3.5\nCa+2 0.02 a=5 b=0.16\nCO3-2 1e-4 a=5.4\nHCO3- 0.005 a=5.4\nCaCO3 1e-4\nCalcite 0.1 mineral\n'
+    + `${o.species || ''}\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\nHCO3- <=> H+ + CO3-2, logK = -10.3${o.kf ? `, kf = ${o.kf}` : ''}\n`
+    + 'Ca+2 + CO3-2 <=> CaCO3, logK = 3.2\nCalcite <=> Ca+2 + CO3-2, logK = -8.5\n'
+    + `${o.eq || ''}\n<REACTIONS>\n${o.react || '=> Na+ + Cl-, k = 0'}\n\n<VOLUMES>\n${volText}${o.vol || ''}`;
+  // Each relation's ln K at the pressure, written out: less sum nu V (P - 1) 101325e-9/(R T), the water's too.
+  const lnKP = (m, eq, C, I, aw, w) => {
+    const f = w.P > 1 ? 1e-9 * (w.P * 101325 - 101325) / (0.0083147 * w.T) : 0;
+    let dv = (eq.water || 0) * w.Vw;
+    for (const [s, nu] of eq.net) {
+      const n = m.speciesNames[s];
+      if (VM0[n] !== undefined) dv += nu * VM0[n];
+      else if (VOLS[n]) dv += nu * pVolume(VOLS[n], charge[n], w.T - 273.15, w, I);
+    }
+    return eq.lnK - f * dv;
+  };
+  const residuals = (m, C, cell = 0) => {
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const wa = RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns), cell);
+    const w = pWater(m.act.temperature, m.act.wt.atmGiven, Math.exp(wa.lnAw));
+    let worst = 0;
+    for (const eq of m.equilibria) {
+      let r = lnKP(m, eq, C, wa.I, Math.exp(wa.lnAw), w) - (eq.water || 0) * wa.lnAw;
+      for (const [s, nu] of eq.net) if (eq.mineral !== s) r -= nu * (Math.log(C[s]) + lnG[s]);
+      if (eq.mineral >= 0 && !(C[eq.mineral] > 0)) continue;
+      worst = Math.max(worst, Math.abs(r));
+    }
+    return { worst, w, wa };
+  };
+
+  // 1. Each species' volume and the water's, at 25 C and 500 atm, 80 C and 50 atm, and 150 C at its vapour pressure.
+  let dV = 0;
+  let dK = 0;
+  for (const [tc, atm] of [[25, 500], [80, 50], [150, 0]]) {
+    const m = RtmModel.compile(text({ tc, atm }));
+    const y = m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState();
+    const mv = RtmModel.molarVolumes(m.act, y, 0, 0);
+    const w = pWater(tc, atm || 1, Math.exp(mv.water.lnAw));
+    for (const [n, v] of Object.entries(VOLS)) {
+      dV = Math.max(dV, Math.abs(mv.V[m.speciesNames.indexOf(n)] - pVolume(v, charge[n], tc, w, mv.water.I)));
+    }
+    dV = Math.max(dV, Math.abs(mv.Vw - w.Vw), Math.abs(mv.V[m.speciesNames.indexOf('Calcite')] - 37), Math.abs(mv.P - w.P));
+    for (const eq of m.equilibria) {
+      dK = Math.max(dK, Math.abs(RtmModel.lnKAtP(eq, 0, mv.water) - lnKP(m, eq, y, mv.water.I, 0, w)));
+    }
+  }
+  check('volumes: each species\' molar volume, -Vm\'s ten numbers in PHREEQC\'s units with b and the terms in I, millero\'s six, '
+    + 'a mineral\'s own and the water\'s, and each relation\'s ln K less sum nu V (P - 1)/(R T), at 25 C and 500 atm, 80 C and 50 '
+    + 'atm, and 150 C at the vapour pressure times a(H2O), against PHREEQC\'s formulas written out', dV < 1e-11 && dK < 1e-13,
+  `volumes within ${dV.toExponential(1)} cm3/mol, ln K ${dK.toExponential(1)}`);
+
+  // 2. Held while 1 mol/kgw of salt goes in at 500 atm: every stored point on its relations at the pressure; the Jacobian.
+  const held = (tc, atm, tend) => RtmModel.compile(text({ tc, atm, held: true, tend, react: `=> Na+ + Cl-, k = ${1 / 1e5}` }));
+  const runs = [[25, 500], [150, 0], [110, 0]].map(([tc, atm]) => {
+    const m = held(tc, atm, 1e5);
+    const r = run(m, { tend: 1e5 });
+    let worst = 0;
+    let I0 = 0;
+    let I1 = 0;
+    let P0 = 0;
+    let P1 = 0;
+    r.y.forEach((yy, i) => {
+      const C = m.toConcentrations ? m.toConcentrations(yy) : yy;
+      const rs = residuals(m, C);
+      worst = Math.max(worst, rs.worst);
+      if (i === 0) { I0 = rs.wa.I; P0 = rs.w.P; }
+      I1 = rs.wa.I;
+      P1 = rs.w.P;
+    });
+    let bad = 0;
+    let checked = 0;
+    for (const tend of [10, 3e4, 9e4]) {
+      const m2 = held(tc, atm, tend);
+      const r2 = run(m2, { tend, rtol: 1e-9 });
+      const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+      bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      checked += v.checked;
+    }
+    return { tc, atm, worst, I0, I1, P0, P1, bad, checked, points: r.y.length };
+  });
+  check('  held while 1 mol/kgw of NaCl goes in, at 500 atm and at 150 and 110 C on the vapour pressure: every stored point '
+    + 'on its relations at the pressure, the volumes going with I, and with a(H2O) the pressure; the Jacobian against '
+    + 'differences', runs.every((x) => x.worst < 1e-10 && x.bad === 0),
+  runs.map((x) => `${x.tc} C ${x.atm ? `${x.atm} atm` : `${x.P0.toFixed(4)} to ${x.P1.toFixed(4)} atm`}, I ${x.I0.toFixed(2)} to `
+    + `${x.I1.toFixed(2)}: ${x.worst.toExponential(1)} in ln K at ${x.points} points, the Jacobian ${x.bad} of ${x.checked} off`).join('; '));
+
+  // 3. A fast pair at 500 atm: its backward constant kf/K at the pressure; a phase of <PHASES> and a mineral's saturation
+  //    in a rate law; an exchanger's relations, whose species have no volume of their own.
+  const pairText = (o = {}) => '<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = debye-huckel\nTEMPERATURE = 25\nPRESSURE = 500\n'
+    + `${o.held ? 'EQUILIBRATE = always\n' : ''}\n<SPECIES>\nH+ 1e-8 a=9\nNa+ 1 a=4 b=0.08\nCl- 1 a=3.5\nCa+2 0.02 a=5 b=0.16\n`
+    + `HCO3- 0.005 a=5.4\nCO3-2 1e-4 a=5.4\nX 0\n${o.species || ''}\n<EQUILIBRIUM>\n`
+    + `${o.eq || 'HCO3- <=> H+ + CO3-2, logK = -10.3, kf = 2'}\n\n<PHASES>\nAragonite <=> Ca+2 + CO3-2, logK = -8.3\n\n`
+    + `<REACTIONS>\n${o.react || '=> Na+ + Cl-, k = 1e-3'}\n\n<VOLUMES>\n${volText.split('\n')
+      .filter((l) => /^(Na\+|Cl-|Ca\+2|CO3-2|HCO3-) /.test(l)).join('\n')}\nAragonite  34\n`;
+  const pm = RtmModel.compile(pairText());
+  const y0 = pm.initialState();
+  const ns = pm.speciesNames.length;
+  const f0 = new Float64Array(ns);
+  pm.rhs(0, y0, f0);
+  const lnG0 = new Float64Array(ns);
+  const wa0 = RtmModel.activityAt(pm.act, y0, 0, lnG0, new Float64Array(ns), 0);
+  const w0 = pWater(25, 500, Math.exp(wa0.lnAw));
+  const at = (n) => pm.speciesNames.indexOf(n);
+  const vOf = (n) => (VM0[n] !== undefined ? VM0[n] : pVolume(VOLS[n], charge[n], 25, w0, wa0.I));
+  const fP = 1e-9 * (500 * 101325 - 101325) / (0.0083147 * w0.T);
+  const lnK1 = -10.3 * Math.LN10 - fP * (vOf('CO3-2') - vOf('HCO3-'));
+  const back = (2 / Math.exp(lnK1)) * Math.exp(lnG0[at('H+')] + lnG0[at('CO3-2')] - lnG0[at('HCO3-')]) * y0[at('H+')] * y0[at('CO3-2')];
+  const pairApart = Math.abs(f0[at('CO3-2')] / (2 * y0[at('HCO3-')] - back) - 1);
+  const pr = run(pm, { tend: 300 });
+  const vp0 = RtmModel.verifyJacobian(pm, 0, y0);
+  const vp1 = RtmModel.verifyJacobian(pm, 300, last(pr));
+  // Saturation in a rate law: Aragonite of <PHASES> with its own volume; Calcite, a mineral held in <EQUILIBRIUM>.
+  const sm = RtmModel.compile(pairText({ react: '=> X, r = SI(Aragonite)' }));
+  const fs = new Float64Array(ns);
+  sm.rhs(0, sm.initialState(), fs);
+  const siArag = (Math.log(y0[at('Ca+2')]) + lnG0[at('Ca+2')] + Math.log(y0[at('CO3-2')]) + lnG0[at('CO3-2')]
+    - (-8.3 * Math.LN10 - fP * (vOf('Ca+2') + vOf('CO3-2') - 34))) / Math.LN10;
+  const siApart = Math.abs(fs[at('X')] - siArag);
+  const vs = RtmModel.verifyJacobian(sm, 0, sm.initialState());
+  // An exchanger: NaX and CaX2 on X-, at 500 atm; ln K less sum nu V of the ions alone.
+  const ex = RtmModel.compile(pairText({ held: true, species: 'Xx- 0.05 exchanger\nNaXx 0 exchange\nCaXx2 0 exchange\n',
+    eq: 'HCO3- <=> H+ + CO3-2, logK = -10.3\nNa+ + Xx- <=> NaXx, logK = 0\nCa+2 + 2 Xx- <=> CaXx2, logK = 0.8',
+    react: '=> Na+ + Cl-, k = 1e-5' }));
+  const cx = ex.toConcentrations(ex.initialState());
+  const mvx = RtmModel.molarVolumes(ex.act, cx, 0, 0);
+  const wx = pWater(25, 500, Math.exp(mvx.water.lnAw));
+  const vx = (n) => pVolume(VOLS[n], charge[n], 25, wx, mvx.water.I);
+  const eqNa = ex.equilibria.find((e) => /NaXx/.test(e.text));
+  const eqCa = ex.equilibria.find((e) => /CaXx2/.test(e.text));
+  const exApart = Math.max(Math.abs(RtmModel.lnKAtP(eqNa, 0, mvx.water) - (0 + fP * vx('Na+'))),
+    Math.abs(RtmModel.lnKAtP(eqCa, 0, mvx.water) - (0.8 * Math.LN10 + fP * vx('Ca+2'))));
+  let exBad = 0;
+  let exChecked = 0;
+  for (const tend of [1, 3e4]) {
+    const m2 = RtmModel.compile(pairText({ held: true, species: 'Xx- 0.05 exchanger\nNaXx 0 exchange\nCaXx2 0 exchange\n',
+      eq: 'HCO3- <=> H+ + CO3-2, logK = -10.3\nNa+ + Xx- <=> NaXx, logK = 0\nCa+2 + 2 Xx- <=> CaXx2, logK = 0.8',
+      react: '=> Na+ + Cl-, k = 1e-5' }).replace('TEND = 1\n', `TEND = ${tend}\n`));
+    const r2 = run(m2, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+    exBad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    exChecked += v.checked;
+  }
+  check('  a fast pair\'s backward constant kf/K at the pressure; SI in a rate law of a phase of <PHASES> with its own '
+    + 'volume; an exchanger\'s relations, ln K less sum nu V of the ions alone; each with its Jacobian against differences',
+  pairApart < 1e-12 && siApart < 1e-12 && exApart < 1e-12 && vp0.discrepancies.length + vp1.discrepancies.length === 0
+    && vs.discrepancies.length === 0 && exBad === 0,
+  `the pair's rate within ${pairApart.toExponential(1)}, SI ${siApart.toExponential(1)} (${fs[at('X')].toFixed(4)}), `
+    + `the exchanger's ln K ${exApart.toExponential(1)}; the Jacobians ${vp0.checked + vp1.checked + vs.checked + exChecked} entries, `
+    + `${vp0.discrepancies.length + vp1.discrepancies.length + vs.discrepancies.length + exBad} off`);
+
+  // 4. At one atmosphere and below 100 C nothing is corrected, and the text says so; what is refused.
+  const idle = RtmModel.compile(text({ tc: 25 }));
+  const idleSaid = idle.warnings.some((x) => /<VOLUMES>: the water is at 1 atm at 25 C/.test(x));
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = text({ tc: 25, atm: 100 });
+  const cases = [
+    ['<VOLUMES> without ACTIVITY', base.replace('ACTIVITY = debye-huckel', 'ACTIVITY = none').replace(/ a=[0-9.]+| b=[0-9.]+/g, ''),
+      /it is read with ACTIVITY/],
+    ['<VOLUMES> under ACTIVITY = llnl', `${base.replace('ACTIVITY = debye-huckel', 'ACTIVITY = llnl')}\n<LLNL>\n`
+      + 'TEMPERATURES 0 25 60 100\nDH_A 0.49 0.51 0.55 0.6\nDH_B 0.325 0.329 0.335 0.342\nBDOT 0.037 0.041 0.044 0.046\n',
+    /not read under ACTIVITY = llnl/],
+    ['a species not in <SPECIES> or <PHASES>', `${base}Nope  3\n`, /"Nope" in <VOLUMES> is not in <SPECIES> or <PHASES>/],
+    ['H2O', `${base}H2O  18\n`, /the water's molar volume is its own/],
+    ['a mineral given two numbers', base.replace('Calcite  37', 'Calcite  37 1'), /it takes one number, its molar volume/],
+    ['eleven numbers', base.replace('CaCO3  -0.25 -8 9 -2.5 -0.03', 'CaCO3  1 2 3 4 5 6 7 8 9 10 11'), /has 11 numbers/],
+    ['millero with seven', base.replace('millero  18 0.02 -0.0001 1.5 0.01 0', 'millero  18 0.02 -0.0001 1.5 0.01 0 1'),
+      /millero takes up to six/],
+    ['a1 0', base.replace('CaCO3  -0.25', 'CaCO3  0'), /a1, the first number, where it is not 0/],
+    ['a species given twice', `${base}CaCO3  1\n`, /CaCO3 is given twice in <VOLUMES>/],
+    ['a word that is no number', base.replace('HCO3-  8 0.4', 'HCO3-  8 abc'), /"abc" is no number/],
+  ];
+  const exRefused = refuse(pairText({ species: 'Xx- 0.05 exchanger\nNaXx 0 exchange\n',
+    eq: 'Na+ + Xx- <=> NaXx, logK = 0' }).replace('Aragonite  34\n', 'Aragonite  34\nNaXx  10\n'));
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  at 1 atm and 25 C the volumes change nothing, and a warning says so; refused, each with its reason: `
+    + `${cases.map((c) => c[0]).join('; ')}; a species on an exchanger`, idleSaid && !wrong.length
+    && /PHREEQC works out a molar volume for a solute, a mineral and a gas, and no other/.test(exRefused),
+  `${idleSaid ? '' : 'no warning; '}${wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | ')}${
+    /no other/.test(exRefused) ? '' : ` exchanger: "${exRefused}"`}`);
+}
+
+/*
+   SITES THAT GO WITH A MINERAL (sites= per=, PHREEQC's equilibrium_phase):
+   a surface's sites so many per mole of a mineral held at saturation, as it
+   dissolves. The sites are 0.05 times the mineral at every stored point,
+   the relations hold, the zinc on them comes off into the water as they go
+   and the total stays (what loading the surface from the water put on it
+   included, as PHREEQC's -equilibrate has it); the Jacobian against
+   differences. Made-up constants.
+*/
+console.log('\n--- sites that go with a mineral ---');
+{
+  const text = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1e4}\nEQUILIBRATE = always\n\n<SPECIES>\n`
+    + 'H+ 1e-7\nOH- 1e-7\nCa+2 0.01\nSO4-2 0.01\nZn+2 1e-6\nAnh 0.05 mineral\n'
+    + `Sx_OH ${o.amount || 0} surface sites=${o.sites || 0.05} per=${o.per || 'Anh'}\nSx_OH2+ 0 surface\nSx_O- 0 surface\n`
+    + `Sx_OZn+ 0 surface\n${o.species || ''}\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\n`
+    + 'Anh <=> Ca+2 + SO4-2, logK = -4.4\nSx_OH + H+ <=> Sx_OH2+, logK = 7\nSx_OH <=> Sx_O- + H+, logK = -9\n'
+    + `Sx_OH + Zn+2 <=> Sx_OZn+ + H+, logK = 1\n${o.eq || ''}\n<REACTIONS>\n${o.react || 'Ca+2 =>, r = 1e-4*[Ca+2]'}\n`;
+  const m = RtmModel.compile(text());
+  const r = run(m, { tend: 1e4 });
+  const at = (n) => m.speciesNames.indexOf(n);
+  const onSf = ['Sx_OH', 'Sx_OH2+', 'Sx_O-', 'Sx_OZn+'].map(at);
+  let ratio = 0;
+  let rel = 0;
+  let zn = 0;
+  let zn0 = 0;
+  let M0 = 0;
+  let M1 = 0;
+  let znOn0 = 0;
+  let znOn1 = 0;
+  r.y.forEach((yy, i) => {
+    const C = m.toConcentrations(yy);
+    const sites = onSf.reduce((acc, k) => acc + C[k], 0);
+    ratio = Math.max(ratio, Math.abs(sites / (0.05 * C[at('Anh')]) - 1));
+    // The relations, at the concentrations: a surface species' activity its fraction of the sites.
+    const lnA = (n) => Math.log(C[at(n)]) - (onSf.includes(at(n)) ? Math.log(sites) : 0);
+    rel = Math.max(rel, Math.abs(lnA('H+') + lnA('OH-') + 14 * Math.LN10),
+      Math.abs(lnA('Ca+2') + lnA('SO4-2') + 4.4 * Math.LN10),
+      Math.abs(lnA('Sx_OH2+') - lnA('Sx_OH') - lnA('H+') - 7 * Math.LN10),
+      Math.abs(lnA('Sx_O-') + lnA('H+') - lnA('Sx_OH') + 9 * Math.LN10),
+      Math.abs(lnA('Sx_OZn+') + lnA('H+') - lnA('Sx_OH') - lnA('Zn+2') - Math.LN10));
+    if (i === 0) { M0 = C[at('Anh')]; znOn0 = C[at('Sx_OZn+')]; zn0 = C[at('Zn+2')] + znOn0; }
+    zn = Math.max(zn, Math.abs(C[at('Zn+2')] + C[at('Sx_OZn+')] - zn0) / zn0);
+    M1 = C[at('Anh')];
+    znOn1 = C[at('Sx_OZn+')];
+  });
+  let bad = 0;
+  let checked = 0;
+  for (const tend of [10, 3000, 9000]) {
+    const m2 = RtmModel.compile(text({ tend }));
+    const r2 = run(m2, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+    bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    checked += v.checked;
+  }
+  check('sites that go with a mineral: as calcium is taken out and the mineral dissolves, its surface\'s sites are 0.05 '
+    + 'times it at every stored point, the relations hold with each species\' fraction of them, the zinc on them comes '
+    + 'off into the water and the total stays; the Jacobian against differences', ratio < 1e-12 && rel < 1e-10 && zn < 1e-12
+    && M1 < M0 - 0.002 && znOn1 < znOn0 && bad === 0,
+  `the mineral ${M0.toFixed(5)} to ${M1.toFixed(5)}, the sites within ${ratio.toExponential(1)} of 0.05 times it, the `
+    + `relations ${rel.toExponential(1)}, zinc on them ${znOn0.toExponential(3)} to ${znOn1.toExponential(3)}; the Jacobian `
+    + `${bad} of ${checked} off`);
+
+  // Amounts given with the sites: they make 0.05 per mole, or are refused; and what else is refused.
+  // The whole state the start puts the water, the mineral and the surface at, given as amounts.
+  const C0 = m.toConcentrations(m.initialState());
+  let gtext = text();
+  m.speciesNames.forEach((n, k) => {
+    const esc = n.replace(/[+()]/g, (ch) => `\\${ch}`);
+    gtext = gtext.replace(new RegExp(`^${esc} [^ \\n]+`, 'm'), `${n} ${C0[k]}`);
+  });
+  const given = RtmModel.compile(gtext);
+  const Cg = given.toConcentrations(given.initialState());
+  const sameStart = m.speciesNames.every((n, k) => C0[k] === 0 || Math.abs(Cg[k] / C0[k] - 1) < 1e-10);
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const cases = [
+    ['per= naming no mineral', text({ per: 'Ca+2' }), /which is no mineral in <SPECIES>/],
+    ['per= without sites=', text().replace('sites=0.05 per=Anh', 'per=Anh'), /per names the mineral a surface's sites, or its potential's area, go with/],
+    ['a mineral with no relation', text().replace('Anh <=> Ca+2 + SO4-2, logK = -4.4\n', ''), /has no relation in <EQUILIBRIUM>/],
+    ['a relation taking more of the surface than it makes', text({ species: 'Sx_O2Zn 0 surface',
+      eq: '2 Sx_OH + Zn+2 <=> Sx_O2Zn + 2 H+, logK = -2' }), /takes more species of the surface of Sx_OH than it makes/],
+    ['a rate law changing the mineral', text({ react: 'Anh => Ca+2 + SO4-2, k = 1e-6' }), /changes Anh, which carries the sites/],
+    ['amounts that do not make the sites', text().replace(/^Sx_OH [^\n]*$/m, 'Sx_OH 1e-3 surface sites=0.05 per=Anh'),
+      /take 0\.001 sites, and 0\.05 per Anh make 0\.0025/],
+    ['a double layer on them given grams', `${text()}`.replace('Sx_OZn+ 0 surface\n', 'Sx_OZn+ 0 surface\nSx_psi 1 potential area=600 grams=1\n'),
+      /whose sites go with Anh, and its area goes with it too/],
+    ['an area per mole on sites that are not', text({ species: 'Sy_OH 1e-4 surface\nSy_psi 1 potential area=600 per=Anh' }),
+      /has its area per mole of Anh, and the sites of Sy_OH on its surface are not/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  // Used up: the run stops, and says why.
+  let usedUp = '';
+  try {
+    const mu = RtmModel.compile(text({ tend: 1e6, react: 'Ca+2 =>, r = 1e-3*[Ca+2]' }).replace('Anh 0.05 mineral', 'Anh 0.002 mineral'));
+    run(mu, { tend: 1e6 });
+    usedUp = '(ran)';
+  } catch (e) { usedUp = e.message; }
+  // With a double layer whose area goes with the mineral too, 500 m2 to each mole: Gouy and Chapman at the area it has.
+  const ddl = (tend) => RtmModel.compile(text({ tend }).replace('Sx_OZn+ 0 surface\n',
+    'Sx_OZn+ 0 surface\nSx_psi 1 potential area=500 per=Anh\n'));
+  const md = ddl(1e4);
+  const rd = run(md, { tend: 1e4 });
+  const eps = RtmModel.debyeHuckelAB(25).eps;
+  const kS = Math.sqrt(8000 * 8.31470 * 298.15 * eps * 8.854e-12);
+  let gcWorst = 0;
+  let Mfirst = 0;
+  let Mlast = 0;
+  rd.y.forEach((yy, i) => {
+    const C = md.toConcentrations(yy);
+    const k = (n) => md.speciesNames.indexOf(n);
+    const Q = C[k('Sx_OH2+')] - C[k('Sx_O-')] + C[k('Sx_OZn+')];
+    const M = C[k('Anh')];
+    const lnG = new Float64Array(C.length);
+    const w = RtmModel.activityAt(md.act, C, 0, lnG, new Float64Array(C.length));
+    const u = Math.log(C[k('Sx_psi')]);
+    const sigma = (96493.5 * Q) / (500 * M);
+    gcWorst = Math.max(gcWorst, Math.abs(sigma + kS * Math.sqrt(w.I) * Math.sinh(u / 2)) / Math.abs(sigma));
+    if (i === 0) Mfirst = M;
+    Mlast = M;
+  });
+  let dBad = 0;
+  let dChecked = 0;
+  for (const tend of [10, 5000]) {
+    const m2 = ddl(tend);
+    const r2 = run(m2, { tend, rtol: 1e-9 });
+    const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+    dBad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+    dChecked += v.checked;
+  }
+  check('  with a double layer whose area goes with the mineral as well, 500 m2 to each mole of it: Gouy and Chapman hold at '
+    + 'every stored point at the area the mineral has there; the Jacobian against differences', gcWorst < 1e-9 && dBad === 0
+    && Mlast < Mfirst, `the mineral ${Mfirst.toFixed(5)} to ${Mlast.toFixed(5)}, the charge's balance within `
+      + `${gcWorst.toExponential(1)}; the Jacobian ${dBad} of ${dChecked} off`);
+  check('  amounts given with the sites start where loading them puts them; refused, each with its reason: '
+    + `${cases.map((c) => c[0]).join('; ')}; and a run in which the mineral is used up stops and says why`,
+  sameStart && !wrong.length && /Anh has dissolved away, and the sites of the surface that goes with it/.test(usedUp),
+  `${sameStart ? '' : 'the start differs; '}${wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | ')}${
+    /dissolved away/.test(usedUp) ? '' : ` used up: "${usedUp.slice(0, 160)}"`}`);
 }
 
 /* ======================================================================

@@ -544,6 +544,90 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
 
+            # --- an LLNL database: followed, run, and looked at through PHREEQC ---
+            # The tests' own (test-phreeqc.js, OWN_LLNL): LLNL's tables, -llnl_gamma and -co2_llnl_gamma, and a water of
+            # what it knows.
+            with open(os.path.join(ROOT, 'resources', 'tests', 'rtm', 'test-phreeqc.js'), encoding='utf-8') as fh:
+                own_llnl = re.search(r'const OWN_LLNL = `(.*?)`;', fh.read(), re.S).group(1)
+            with tempfile.TemporaryDirectory() as tmp:
+                ll_path = os.path.join(tmp, 'llnl-test.dat')
+                with open(ll_path, 'w', encoding='latin-1') as fh:
+                    fh.write(own_llnl)
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                await page.set_files('#rtmPqDbFile', [ll_path])
+                loaded = await until(page, f"(() => {{ const t = {STATUS}; return / is loaded: |cannot read/.test(t) ? t : ''; }})()")
+            check('an LLNL database opened is read by PHREEQC', isinstance(loaded, str)
+                  and loaded.startswith('llnl-test.dat is loaded:'), True)
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = 'SOLUTION 1\\n  temp 40\\n  units mol/kgw\\n  pH 7.5\\n  Na 1\\n  Cl 1 charge\\n"
+                          "  Ca 0.02\\n  C(4) 0.01\\nEND\\n';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            ll_report = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                          f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ll_text = await page.ev("document.getElementById('rtmText').value")
+            check('with it, the water is written following LLNL\'s model: ACTIVITY = llnl, -llnl_gamma as a=, drummond and the '
+                  'tables in <LLNL>, and the report says so',
+                  isinstance(ll_report, str) and 'The activity coefficients are LLNL\u2019s' in ll_report
+                  and isinstance(ll_text, str) and re.search(r'^ACTIVITY = llnl$', ll_text, re.M) is not None
+                  and re.search(r'^Na\+ +[0-9.e-]+ +a=4$', ll_text, re.M) is not None
+                  and re.search(r'^CO2 +[0-9.e-]+ +drummond$', ll_text, re.M) is not None
+                  and re.search(r'^TEMPERATURES +0\.01 +25 +60 +100 +150$', ll_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give LLNL\'s B-dot', await page.ev(
+                "/in activities, LLNL\u2019s B-dot at [0-9.]+ °C/.test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            ll_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_ll = re.search(r'\(ACTIVITY = llnl\)\. PHREEQC\'s .*?, and the model\'s own are within ([0-9.e+-]+) of '
+                             r'PHREEQC\'s in log K', ll_summary or '')
+            check('looked at through PHREEQC on the same database, the model\'s own LLNL coefficients are PHREEQC\'s',
+                  m_ll is not None and float(m_ll.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmPqDb'); s.value = 'builtin';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+
+            # --- the example water at 300 atm: PRESSURE and <VOLUMES> written, run, and looked at through PHREEQC ---
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          " w.value = w.value.replace(/^(SOLUTION[^\\n]*)$/m, '$1\\n  pressure 300');"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            onp = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            p_text = await page.ev("document.getElementById('rtmText').value")
+            check('a water at 300 atm is written with its pressure and the database\'s molar volumes, the log K at one '
+                  'atmosphere, and the report says so',
+                  isinstance(onp, str) and 'The water is at 300 atm, written as PRESSURE: PHREEQC corrects each log K' in onp
+                  and isinstance(p_text, str) and re.search(r'^PRESSURE = 300$', p_text, re.M) is not None
+                  and re.search(r'^<VOLUMES>$', p_text, re.M) is not None
+                  and re.search(r'^Na\+ +2\.28 +-4\.38 +-4\.1 +-0\.586 +0\.09 +4 +0\.3 +52 +-0\.00333 +0\.566$', p_text, re.M)
+                  is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('and the model facts give the log K at the pressure', await page.ev(
+                "/log K at the pressure from [0-9]+ molar volumes in <VOLUMES>/"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqLook'))
+            await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC looked at') "
+                              f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            p_summary = await page.ev("document.getElementById('rtmPqSummary').textContent")
+            m_p = re.search(r'\(ACTIVITY = debye-huckel\)\. PHREEQC\'s .*?, and the model\'s own are within ([0-9.e+-]+) of '
+                            r'PHREEQC\'s in log K', p_summary or '')
+            check('looked at through PHREEQC at the model\'s pressure, the model\'s own coefficients and log K at 300 atm are '
+                  'PHREEQC\'s', m_p is not None and float(m_p.group(1)) < 1e-6, True)
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a gas phase in the water: carried as real gases, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

@@ -281,6 +281,12 @@
       'add_logk', 'add_log_k', 'vm'],
   };
 
+  /** LLNL_AQUEOUS_MODEL_PARAMETERS's options in PHREEQC's order, and the table each fills. */
+  const LLNL_OPTIONS = ['temperatures', 'temperature', 'temp', 'adh', 'debye_huckel_a', 'dh_a', 'bdh', 'debye_huckel_b',
+    'dh_b', 'bdot', 'b_dot', 'c_co2', 'co2_coefs'];
+  const LLNL_KINDS = { temperatures: 'temps', temperature: 'temps', temp: 'temps', adh: 'adh', debye_huckel_a: 'adh',
+    dh_a: 'adh', bdh: 'bdh', debye_huckel_b: 'bdh', dh_b: 'bdh', bdot: 'bdot', b_dot: 'bdot', c_co2: 'co2', co2_coefs: 'co2' };
+
   /*
     PITZER's options in PHREEQC's read_pitzer order, the first a word after
     a dash begins, and what each parameter type is and how many species it
@@ -356,12 +362,23 @@
       // Pitzer's parameters, by type and species as a set: 'B0 Cl- Na+' -> {type, sp, a}, sp the species in the
       // order given and a its terms in the temperature, as PHREEQC reads them; one given again replaces it.
       this.pitzer = new Map();
+      // LLNL_AQUEOUS_MODEL_PARAMETERS: its tables, and each species' -llnl_gamma a, -co2_llnl_gamma, and an
+      // exchange species' -llnl_gamma.
+      this.llnl = { temps: [], adh: [], bdh: [], bdot: [], co2: [] };
+      this.llnlGamma = new Map();
+      this.co2Gamma = new Set();
+      this.exLlnl = new Map();
       // PITZER's options (PHREEQC's defaults: the MacInnes scaling, E-theta, and no redox) and its -Aphi.
       this.pitzerOpts = { macinnes: true, etheta: true, redox: false };
       this.aphi = null;
       // A phase's critical temperature (K) and pressure (atm) and acentric factor, where the database gives
       // them: PHREEQC then holds that gas in a gas phase by Peng and Robinson's equation of state.
       this.critical = new Map();
+      // Molar volumes, for log K at the pressure: a species' -Vm (up to ten numbers, as written) and -Millero (up to
+      // six), and a phase's -Vm, cm3/mol (read_aq_species_vm_parms, read_millero_abcdef, read_vm_only).
+      this.vm = new Map();
+      this.millero = new Map();
+      this.phaseVm = new Map();
       // GAS_BINARY_PARAMETERS: 'CO2(g) H2O(g)' (the pair, sorted) -> k.
       this.gasBinary = new Map();
       // Each reaction's log K as PHREEQC reads it, by 'kind name' -- s a solution species, p a phase, x a species on
@@ -481,6 +498,7 @@
       let last = null;
       let sitType = null;
       let pzType = null;
+      let llnlKey = null;
       let phase = null;
       for (const line of logicalLines(text)) {
         const tokens = line.trim().split(/\s+/).filter(Boolean);
@@ -491,6 +509,7 @@
           last = null;
           sitType = null;
           pzType = null;
+          llnlKey = null;
           // Activity models other than the Debye-Hueckel ones this page has.
           if (block === 'PITZER') this.model = 'Pitzer';
           else if (block === 'SIT') this.model = 'SIT';
@@ -515,18 +534,41 @@
               this.dw.delete(last);
               this.gamma.delete(last);
               this.otherGamma.delete(last);
+              this.llnlGamma.delete(last);
+              this.co2Gamma.delete(last);
+              this.vm.delete(last);
+              this.millero.delete(last);
             }
           } else if (last && this.readLogKOption(block, line, this.lk.get(`s ${last}`))) {
             // log_k, delta_h, the analytic expression or a named one: read.
+          } else if (last && lkOption(block, line) && ['vm', 'millero'].includes(lkOption(block, line).opt)) {
+            // A species' molar volume: -Vm's ten numbers, a1 to a4, W, b and i1 to i4, or -Millero's.
+            const { opt, words } = lkOption(block, line);
+            const v = leadingNumbers(words, opt === 'vm' ? 10 : 6);
+            if (v.length) this[opt === 'vm' ? 'vm' : 'millero'].set(last, v);
           } else if (last && /^-?dw$/i.test(tokens[0]) && tokens.length > 1) {
             const v = Number(tokens[1]);
             if (Number.isFinite(v)) this.dw.set(last, v);
           } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
             const a = Number(tokens[1]);
             const b = Number(tokens[2]);
-            if (Number.isFinite(a) && Number.isFinite(b)) this.gamma.set(last, { a, b });
-          } else if (last && /^-(llnl_gamma|co2_llnl_gamma|activity_water)$/i.test(tokens[0])) {
-            this.otherGamma.set(last, tokens[0].replace(/^-/, '').toLowerCase());
+            if (Number.isFinite(a) && Number.isFinite(b)) {
+              // The last of -gamma, -llnl_gamma and -co2_llnl_gamma is the species' rule, as PHREEQC's gflag.
+              this.gamma.set(last, { a, b });
+              this.llnlGamma.delete(last);
+              this.co2Gamma.delete(last);
+            }
+          } else if (last && lkOption(block, line) && ['llnl_gamma', 'co2_llnl_gamma', 'activity_water']
+            .includes(lkOption(block, line).opt)) {
+            const { opt, words } = lkOption(block, line);
+            if (opt === 'llnl_gamma') {
+              const a = Number(words[0]);
+              if (Number.isFinite(a)) { this.llnlGamma.set(last, a); this.co2Gamma.delete(last); this.gamma.delete(last); }
+            } else if (opt === 'co2_llnl_gamma') {
+              this.co2Gamma.add(last);
+              this.llnlGamma.delete(last);
+              this.gamma.delete(last);
+            } else this.otherGamma.set(last, opt);
           }
         } else if (block === 'EXCHANGE_MASTER_SPECIES' && tokens.length >= 2) {
           this.exMaster.set(tokens[0], tokens[1]);
@@ -541,6 +583,7 @@
               const identity = left.length === 1 && right.length === 1 && left[0].n === last;
               if (identity) this.exReaction.delete(last); else this.exReaction.set(last, normalise(left, right));
               this.exGamma.delete(last);
+              this.exLlnl.delete(last);
               this.lk.set(`x ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
             }
           } else if (last && this.readLogKOption(block, line, this.lk.get(`x ${last}`))) {
@@ -551,6 +594,9 @@
             if (Number.isFinite(a) && Number.isFinite(b)) this.exGamma.set(last, { a, b });
           } else if (last && /^-dav(i(e(s)?)?)?$/i.test(tokens[0])) {
             this.exGamma.set(last, { a: 0, b: 0 });
+          } else if (last && lkOption(block, line) && lkOption(block, line).opt === 'llnl_gamma') {
+            const a = Number(lkOption(block, line).words[0]);
+            if (Number.isFinite(a)) this.exLlnl.set(last, a);
           }
         } else if (block === 'SURFACE_MASTER_SPECIES' && tokens.length >= 2) {
           this.sfMaster.set(tokens[0], tokens[1]);
@@ -580,6 +626,21 @@
         } else if (block === 'GAS_BINARY_PARAMETERS') {
           if (tokens.length >= 3 && Number.isFinite(Number(tokens[2]))) {
             this.gasBinary.set([tokens[0], tokens[1]].sort().join(' '), Number(tokens[2]));
+          }
+        } else if (block === 'LLNL_AQUEOUS_MODEL_PARAMETERS') {
+          // An option, and its numbers on its line and the lines after it (read_llnl_aqueous_model_parameters).
+          let rest = tokens;
+          if (/^-[A-Za-z]/.test(tokens[0])) {
+            const word = tokens[0].slice(1).toLowerCase();
+            const opt = LLNL_OPTIONS.find((o) => o.startsWith(word));
+            llnlKey = opt ? LLNL_KINDS[opt] : null;
+            rest = tokens.slice(1);
+          }
+          if (!llnlKey) continue;
+          for (const t of rest) {
+            const v = Number(t);
+            if (t === '' || !Number.isFinite(v)) break;
+            this.llnl[llnlKey].push(v);
           }
         } else if (block === 'PITZER') {
           // An option starts a list of parameters, or is MacInnes, E-theta or redox and true or false (read_pitzer).
@@ -631,9 +692,19 @@
             last = tokens[0];
             phase = tokens[0];
             this.critical.delete(phase);
+            this.phaseVm.delete(phase);
             this.lk.set(`p ${phase}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
           } else if (phase && this.readLogKOption(block, line, this.lk.get(`p ${phase}`))) {
             // log_k, delta_h, the analytic expression or a named one: read.
+          } else if (phase && lkOption(block, line) && lkOption(block, line).opt === 'vm') {
+            // A phase's molar volume, cm3/mol unless a unit after it says dm3 or m3 (read_vm_only).
+            const { words } = lkOption(block, line);
+            const v = leadingNumbers(words, 8);
+            if (v.length) {
+              const unit = (words[v.length] || '').toLowerCase();
+              const f = unit.includes('cm3') ? 1 : unit.includes('dm3') ? 1e3 : unit.includes('m3') ? 1e6 : 1;
+              this.phaseVm.set(phase, v[0] * f);
+            }
           } else if (phase && /^-(t_c|p_c|omega)$/i.test(tokens[0]) && tokens.length > 1) {
             const v = Number(tokens[1]);
             if (Number.isFinite(v)) {
@@ -759,6 +830,13 @@
         continue;
       }
       const num = (x) => (x === undefined ? null : Number(x));
+      // Sites that go with a phase: `Hfo_wOH Fe(OH)3(a) equilibrium_phase 0.2 5.34e4`, sites and m2 per mole of it.
+      if (tokens.length > 2 && !Number.isFinite(Number(tokens[1])) && /^(e|k)/i.test(tokens[2])) {
+        cur.sites.push({ master: tokens[0], sites: null, phase: tokens[1],
+          kind: /^e/i.test(tokens[2]) ? 'equilibrium_phase' : 'kinetic_reactant', ratio: num(tokens[3]), area: num(tokens[4]),
+          mass: null });
+        continue;
+      }
       cur.sites.push({ master: tokens[0], sites: num(tokens[1]), area: num(tokens[2]), mass: num(tokens[3]) });
     }
     return out;
@@ -1230,7 +1308,9 @@
     const pitz = follow && db.model === 'Pitzer';
     // Under SIT and Pitzer the same: every solute's coefficient from the model, a species on an exchanger its ion's.
     const sitLike = sit || pitz;
-    if (follow && db.model && !sitLike) {
+    // LLNL's B-dot model: each species' own rule, from the database's tables.
+    const llnl = follow && db.model === 'LLNL';
+    if (follow && db.model && !sitLike && !llnl) {
       throw new Error(`${o.database.name || 'This database'} gives PHREEQC the ${db.model} activity model, which `
         + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
         + 'them fixed at this water instead.');
@@ -1312,7 +1392,9 @@
           const name = x.master.slice(0, cut);
           const had = layers.get(name);
           if (!had || (had.area === null && Number.isFinite(x.area))) {
-            layers.set(name, { area: Number.isFinite(x.area) ? x.area : null, mass: Number.isFinite(x.mass) ? x.mass : null });
+            // Sites that go with a phase: m2 to each mole of it, the phase in the grams' place.
+            layers.set(name, { area: Number.isFinite(x.area) ? x.area : null, mass: Number.isFinite(x.mass) ? x.mass : null,
+              phase: x.phase || null });
           }
         }
       }
@@ -1321,7 +1403,12 @@
     for (const name of layers.keys()) extras.push(`EDL("psi", "${name}")`);
     const massAt = layers.size ? extras.length : -1;
     if (layers.size) extras.push('TOT("water")');
-    let rows = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\n`);
+    // The water's pressure (volumesAt, below).
+    const withVm = follow && !llnl && (db.vm.size > 0 || db.millero.size > 0 || db.phaseVm.size > 0);
+    const presAt = extras.length;
+    extras.push('PRESSURE');
+    const punch = punchBlock(extras);
+    let rows = runRows(o.engine, `${punch}${o.water.text}\nEND\n`);
     if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
     if (!rows.length) {
       throw new Error('PHREEQC calculated no water from that input'
@@ -1339,7 +1426,7 @@
     */
     let settled = null;
     if (carryRedox && w.state === 'i_soln' && Number.isFinite(Number(w.soln))) {
-      const more = runRows(o.engine, `${punchBlock(extras)}${o.water.text}\nEND\nMIX 1\n ${Number(w.soln)} 1.0\nEND\n`);
+      const more = runRows(o.engine, `${punch}${o.water.text}\nEND\nMIX 1\n ${Number(w.soln)} 1.0\nEND\n`);
       const w2 = more[more.length - 1];
       if (w2 && w2.state === 'react') {
         settled = { from: w.pe, to: w2.pe };
@@ -1354,6 +1441,32 @@
       if (m > 0 && !NOT_A_SPECIES.has(n)) molal.set(n, m);
     }
     const logAw = log10(w.aw);
+    /*
+      THE PRESSURE. PHREEQC's water is at the pressure given, or at the
+      vapour pressure times a(H2O) where that is higher (calc_rho_0); the
+      model works the latter out itself, and is given the former (PRESSURE).
+      Above one atmosphere PHREEQC's log K are less dV (P - 1)/(R T ln 10),
+      dV the reaction's molar volumes at the water: with <VOLUMES> written
+      the model takes the same off, and each log K is written at one
+      atmosphere, PHREEQC's own dV put back (atOneAtm).
+    */
+    const atm = Number(w.x[presAt]);
+    const tkP = w.tc + 273.15;
+    const pSatAw = Math.exp(11.6702 - 3816.44 / (tkP - 46.13)) * Math.min(w.aw, 1);
+    const atVapour = Number.isFinite(atm) && Math.abs(atm - pSatAw) <= 1e-9 * atm;
+    const fP = atm > 1 ? (1e-9 * (atm * 101325 - 101325)) / (R_KJ * tkP) : 0;
+    // Set once the species written are known: with a molar volume to write, and the water above one atmosphere.
+    let volumes = false;
+    const vmOf = (n) => (vmAt.has(n) ? vmAt.get(n) : 0);
+    const vmAt = new Map();
+    // A log K PHREEQC has at this water's pressure, at one atmosphere: `phase` the phase on the left, if any.
+    const atOneAtm = (here, left, right, phase) => {
+      if (!volumes) return here;
+      let dv = 0;
+      for (const t of right) dv += t.c * vmOf(t.n);
+      for (const t of left) dv -= t.c * (phase && t.n === phase ? (db.phaseVm.get(phase) || 0) : vmOf(t.n));
+      return here + (fP * dv) / Math.LN10;
+    };
     /*
       REDOX: each species the database writes with electrons tied to the
       electron by that reaction, which a run holds exactly, so that the
@@ -1593,15 +1706,19 @@
     if (w.surface && w.surface.size && o.surface !== false) {
       const all = [...w.surface.keys()].join(', ');
       const models = new Set([...sfBlocks.values()].map((b) => b.model));
-      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && l.mass > 0)).map(([n]) => n);
+      const noLayer = [...layers].filter(([, l]) => !(l.area > 0 && (l.mass > 0 || l.phase))).map(([n]) => n);
       if (!o.exact) sfSkipped.push({ name: all, why: 'a surface needs the relations held exactly' });
       else if (models.size > 1) {
         sfSkipped.push({ name: all, why: 'the input has a surface with a double layer and one without (-no_edl)' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.kind === 'kinetic_reactant'))) {
+        sfSkipped.push({ name: all, why: 'its sites follow a kinetic reactant, which this page does not carry' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => x.phase && !minerals.some((mn) => mn.phase === x.phase)))) {
+        sfSkipped.push({ name: all, why: 'its sites follow a phase that is not carried as a mineral' });
       } else if (noLayer.length) {
         sfSkipped.push({ name: all, why: `the double layer of ${noLayer.join(', ')} needs its area and grams, which `
           + 'its first site\'s line gives' });
-      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !Number.isFinite(x.sites)))) {
-        sfSkipped.push({ name: all, why: 'its sites follow a phase or a kinetic reactant, which this page does not carry' });
+      } else if ([...sfBlocks.values()].some((b) => b.sites.some((x) => !x.phase && !Number.isFinite(x.sites)))) {
+        sfSkipped.push({ name: all, why: 'its sites are given in a way this page does not read' });
       } else if ([...sfBlocks.values()].some((b) => b.other.length)) {
         sfSkipped.push({ name: all, why: `its block says more than this page carries (${[...sfBlocks.values()]
           .flatMap((b) => b.other).join('; ')})` });
@@ -1660,7 +1777,7 @@
         if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
         const psi = Number(w.x[layerAt + i]);
         potentials.push({ surface, species: `${surface}_psi`, psi, a: Math.exp(-FARADAY * psi / (GAS_R * tk)),
-          area: l.area, grams: l.mass / kgw });
+          area: l.area, grams: l.phase ? null : l.mass / kgw, phase: l.phase });
       });
     }
 
@@ -1747,6 +1864,41 @@
     for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
     for (const g of gases) g.name = rtmName(g.phase, taken);
     for (const ss of solids) for (const c of ss.comps) c.name = rtmName(c.phase, taken);
+    /*
+      <VOLUMES>: each species written that the database gives a molar volume
+      -- -Vm with a1 not 0, PHREEQC's supcrt form, or else -Millero -- and
+      each phase its -Vm, as PHREEQC's calc_vm reads them; where there is one
+      and the water is above one atmosphere, the log K are written at one.
+    */
+    const volLines = [];
+    if (withVm && fP > 0) {
+      for (const sp of order) {
+        const v = db.vm.get(sp);
+        const m = db.millero.get(sp);
+        if (v && v[0] !== 0) volLines.push([name.get(sp), v.map(String).join('  ')]);
+        else if (m && m[0] !== 0) volLines.push([name.get(sp), `millero  ${m.map(String).join('  ')}`]);
+      }
+      const ph = (n, phase) => { if (db.phaseVm.get(phase)) volLines.push([n, String(db.phaseVm.get(phase))]); };
+      for (const mn of minerals) ph(mn.name, mn.phase);
+      for (const g of gases) ph(g.name, g.phase);
+      for (const ss of solids) for (const c of ss.comps) ph(c.name, c.phase);
+      volumes = volLines.length > 0;
+    }
+    /*
+      Each species' molar volume in PHREEQC's water, VM(), PHREEQC's at its
+      pressure (calc_vm), for the log K written at one atmosphere: a column
+      each, from the same input run again. (A volume put into the string of
+      every species' molality instead left PHREEQC's memory spoiled for a
+      later load of the database, a few runs on.)
+    */
+    if (volumes) {
+      const names = [...new Set([...kept].filter((n) => db.reaction.has(n) && n !== 'e-'))].concat('H2O');
+      const more = settled ? `MIX 1\n ${Number(w.soln)} 1.0\nEND\n` : '';
+      let vr = runRows(o.engine, `${punchBlock(names.map((n) => `VM("${n}")`))}${o.water.text}\nEND\n${more}`);
+      if (o.solution != null && !settled) vr = vr.filter((r) => Number(r.soln) === Number(o.solution));
+      const last = vr[vr.length - 1];
+      names.forEach((n, i) => vmAt.set(n, Number(last.x[i])));
+    }
     // The exchangers used, and the species on them, by the names written.
     const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
     const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
@@ -1787,8 +1939,10 @@
         e.gamma = one ? { sit: true } : null;
         e.folded = Math.abs(e.sitLg - e.lg) > 1e-12;
       } else {
-        e.gamma = follow && e.lg !== 0 && g && ions.length === 1 && !hasWater && db.masterLabel(ions[0].n) !== null
-          ? g : null;
+        // Under LLNL's model its -llnl_gamma a, with its ion's B-dot form.
+        const gg = llnl ? (db.exLlnl.has(e.species) ? { a: db.exLlnl.get(e.species), llnl: true } : null) : g;
+        e.gamma = follow && e.lg !== 0 && gg && ions.length === 1 && !hasWater && db.masterLabel(ions[0].n) !== null
+          ? gg : null;
         e.folded = follow && e.lg !== 0 && !e.gamma;
       }
       // log a: PHREEQC's ('db'); or this page's, an ion its molality alone
@@ -1813,6 +1967,28 @@
     // out in a way this page does not.
     // (Under SIT every solute has SIT's coefficient, whatever its line says.)
     const unsupported = follow && !sitLike ? order.filter((sp) => db.otherGamma.has(sp)) : [];
+    /*
+      LLNL's: its tables, and every ion written with its -llnl_gamma: PHREEQC
+      works out no coefficient of its own for one without (its A is not read
+      under LLNL's model), and neither does this page. The water within the
+      tables' temperatures, where PHREEQC stops otherwise.
+    */
+    if (llnl) {
+      const T = db.llnl.temps;
+      if (!T.length || [db.llnl.adh, db.llnl.bdh, db.llnl.bdot].some((x) => x.length !== T.length)) {
+        throw new Error(`${o.database.name || 'This database'} gives LLNL's activity model without its tables at each `
+          + 'temperature (-temperatures, -dh_a, -dh_b, -bdot).');
+      }
+      const bare = order.filter((sp) => chargeOf(sp) && !db.llnlGamma.has(sp) && !db.co2Gamma.has(sp));
+      if (bare.length) {
+        throw new Error(`${o.database.name || 'This database'} gives ${bare.slice(0, 4).join(', ')}${bare.length > 4 ? ', ...' : ''} `
+          + 'no -llnl_gamma, and under LLNL\'s model PHREEQC has no coefficient for such an ion: keep the coefficients '
+          + 'fixed at this water instead.');
+      }
+      if (order.some((sp) => db.co2Gamma.has(sp)) && db.llnl.co2.length !== 5) {
+        throw new Error(`${o.database.name || 'This database'} gives a species -co2_llnl_gamma and no -co2_coefs, Drummond's five.`);
+      }
+    }
     /*
       SIT's interaction coefficients between the species written, at this
       water's temperature as PHREEQC works them out (sitParam), one line a
@@ -1879,6 +2055,13 @@
       out.push("# is paired with in <SIT>, the database's interaction coefficient times that species' molality");
       out.push(`# (${sitPairs.length} pair${sitPairs.length === 1 ? '' : 's'} among the species here); and the activity of water from SIT's osmotic`);
       out.push('# coefficient. The comment gives the conditional log K at this water, the coefficients folded in.');
+    } else if (llnl) {
+      out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
+      out.push("# ACTIVITY = llnl works out each species' activity coefficient in its cell as the run goes on, as");
+      out.push("# PHREEQC's LLNL model does: an ion by its B-dot form with the database's -llnl_gamma (a=) and A, B");
+      out.push('# and B-dot from the tables in <LLNL> at the temperature, a neutral species given -llnl_gamma at 1,');
+      out.push("# CO2 and its like by Drummond's formula (drummond); and the activity of water where a relation has");
+      out.push('# H2O. The comment gives the conditional log K at this water, the coefficients folded in.');
     } else if (pitz) {
       out.push(`# Each log K is the database's own at ${fmtG(tc, 6)} C, and the relations hold between activities:`);
       out.push("# ACTIVITY = pitzer works out each species' activity coefficient in its cell as the run goes on,");
@@ -1898,6 +2081,12 @@
       out.push("# where PHREEQC's hold between activities. The comment gives the database's own log K at");
       out.push(`# ${fmtG(tc, 6)} C. If a run moves the ionic strength far from ${fmtG(w.mu, 3)}, look at it through`);
       out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
+    }
+    if (volumes) {
+      out.push(`# The water is at ${fmtG(atm, 6)} atm${atVapour ? ', its vapour pressure times a(H2O)' : ''}: PHREEQC corrects each log K for the`);
+      out.push("# pressure with the reaction's molar volumes, less dV (P - 1)/(R T ln 10), and so does the model with");
+      out.push(`# the database's -Vm in <VOLUMES> (${volLines.length}) and the water's own, each going with the ionic strength. The`);
+      out.push('# log K written are at one atmosphere.');
     }
     if (eUsed) {
       const list = tied.map((e) => name.get(e.species) || e.species);
@@ -1994,6 +2183,7 @@
       out.push("# species on it has its equivalent fraction for its activity (Gaines-Thomas)"
         + (follow ? ", times its ion's activity" : '.'));
       if (sitLike) out.push(`# coefficient, as PHREEQC's ${sit ? 'SIT' : 'Pitzer model'} has it.`);
+      else if (llnl) out.push("# coefficient where the database gives it -llnl_gamma (a=), LLNL's B-dot form.");
       else if (follow) out.push('# coefficient where the database gives it -gamma (a= and b=).');
       const folded = onEx.filter((e) => e.folded);
       if (folded.length) {
@@ -2018,8 +2208,11 @@
       out.push('# with the species PHREEQC put on them at their molalities. Each has its fraction of its');
       out.push("# sites for its activity, and its relation the database's log K.");
       for (const pp of potentials) {
-        out.push(`# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2/g and ${fmtG(pp.grams, 6)} g of it`);
-        out.push(`# to each kg of water, at ${fmtG(pp.psi * 1e3, 5)} mV here: rtm.html puts it into each relation on ${pp.surface}`);
+        out.push(pp.phase ? `# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2 to each mole of ${pp.phase},`
+          + ' whose amount it goes with,'
+          : `# ${pp.name} is the potential of the surface ${pp.surface}, ${fmtG(pp.area, 6)} m2/g and ${fmtG(pp.grams, 6)} g of it`
+            + ' to each kg of water,');
+        out.push(`# at ${fmtG(pp.psi * 1e3, 5)} mV here: rtm.html puts it into each relation on ${pp.surface}`);
         out.push("# by the charge the relation puts on the surface, as PHREEQC does, and solves for it with Gouy");
         out.push("# and Chapman's equation. Its value is its activity, exp(-F psi/RT).");
       }
@@ -2044,7 +2237,7 @@
       || solids.some((ss) => !!ss.energy || ss.comps.some((c) => withT(db.logKTerms('p', c.phase))))
       || gases.some((g) => withT(db.logKTerms('p', g.phase))) || onEx.some((e) => withT(db.logKTerms('x', e.species)))
       || onSf.some((e) => !e.master && withT(db.logKTerms('f', e.species)));
-    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : pitz ? 'pitzer' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
+    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
     // A double layer reads it too, without ACTIVITY, and a gas phase (R T).
     else if (potentials.length || gases.length || anyT) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
     if (gases.length) {
@@ -2055,6 +2248,14 @@
         out.push(`PRESSURE = ${fmtG(gasFixed.atm, 15)}`);
       }
     }
+    /*
+      The water's own pressure where it is another than one atmosphere, as
+      PHREEQC keeps it with the solution: the vapour pressure times a(H2O)
+      where that is higher than the pressure given, which a later step holds
+      the water at while its vapour pressure is no higher (calc_rho_0). A gas
+      phase sets its own.
+    */
+    if (!gases.length && Number.isFinite(atm) && Math.abs(atm - 1) > 1e-12) out.push(`PRESSURE = ${fmtG(atm, 15)}`);
     // Each species its own D: the ions coupled, so the water stays neutral as they spread.
     if (o.dw) out.push('DIFFUSION = nernst-planck');
     out.push('', '<SPECIES>');
@@ -2073,9 +2274,12 @@
       }
       const bits = [];
       if (chargeOf(name.get(s)) !== chargeOf(s)) bits.push(`z=${chargeOf(s)}`);
-      // SIT takes no a or b.
-      const g = sitLike ? null : db.gamma.get(s);
-      if (g) {
+      // SIT and Pitzer take no a or b; LLNL's model the database's -llnl_gamma a, or drummond for -co2_llnl_gamma.
+      const g = sitLike || llnl ? null : db.gamma.get(s);
+      if (llnl) {
+        if (db.co2Gamma.has(s)) bits.push('drummond');
+        else if (db.llnlGamma.has(s)) bits.push(`a=${fmtG(db.llnlGamma.get(s), 15)}`);
+      } else if (g) {
         if (chargeOf(s)) bits.push(`a=${fmtG(g.a, 6)}`);
         bits.push(`b=${fmtG(g.b, 6)}`);
       }
@@ -2105,17 +2309,32 @@
     for (const sp of exUsed) out.push(`${exName.get(sp).padEnd(width)}${''.padEnd(follow ? width2 : 0)}exchanger`);
     for (const e of onEx) {
       const amount = fmtG(e.m, 15);
-      const g = e.gamma && !sitLike ? `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}` : '';
+      const g = e.gamma && !sitLike ? (e.gamma.llnl ? `  a=${fmtG(e.gamma.a, 15)}`
+        : `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}`) : '';
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
     }
     for (const pp of potentials) {
       const amount = fmtG(pp.a, 15);
+      const mn = pp.phase ? minerals.find((m) => m.phase === pp.phase) : null;
       out.push(`${pp.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}potential  `
-        + `area=${fmtG(pp.area, 10)}  grams=${fmtG(pp.grams, 8)}`);
+        + `area=${fmtG(pp.area, 10)}  ${mn ? `per=${mn.name}` : `grams=${fmtG(pp.grams, 8)}`}`);
+    }
+    // A site whose sites go with a phase: so many per mole of the mineral it is carried as (sites= per=).
+    const perOf = new Map();
+    const perInfo = new Map();
+    for (const b of sfBlocks.values()) {
+      for (const x of b.sites) {
+        const mn = x.phase ? minerals.find((m) => m.phase === x.phase) : null;
+        if (!mn) continue;
+        const site = db.sfMaster.get(x.master) || x.master;
+        perOf.set(site, `  sites=${fmtG(x.ratio, 12)}  per=${mn.name}`);
+        perInfo.set(site, { ratio: x.ratio, mineral: mn.name });
+      }
     }
     for (const e of onSf) {
       const amount = fmtG(e.m, 15);
-      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`);
+      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`
+        + `${e.master && perOf.has(e.species) ? perOf.get(e.species) : ''}`);
     }
     out.push('', '<EQUILIBRIUM>');
     /*
@@ -2146,7 +2365,8 @@
       const prod = follow ? e.right : e.prod;
       return {
         rel: reac.length ? `${side(reac)} <=> ${side(prod)}` : ` <=> ${side(prod)}`,
-        k: `${kText(db.logKTerms('s', e.species), follow ? e.logk : e.logkC)}${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
+        k: `${kText(db.logKTerms('s', e.species), follow ? atOneAtm(e.logk, e.left, e.right) : e.logkC)}`
+          + `${e.kf ? `, kf = ${fmtG(e.kf, 6)}` : ''}`,
         note: follow ? `# here ${e.logkC.toFixed(4)}` : `# log K ${e.logk.toFixed(4)}`,
       };
     });
@@ -2163,7 +2383,8 @@
       const prod = follow ? mn.prod : aq(mn.prod);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: kText(db.logKTerms('p', mn.phase), follow ? logk : logkC),
+        k: kText(db.logKTerms('p', mn.phase), follow ? atOneAtm(logk, [{ c: mn.c0, n: mn.phase }, ...mn.reac], mn.prod,
+          mn.phase) : logkC),
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${logk.toFixed(4)}`}${mn.target ? `, SI ${fmtG(mn.target, 6)}` : ''}`,
       });
     }
@@ -2178,7 +2399,8 @@
       const prod = follow ? g.prod : aq(g.prod);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: kText(db.logKTerms('p', g.phase), follow ? g.lk : logkC),
+        k: kText(db.logKTerms('p', g.phase), follow ? atOneAtm(g.lk, [{ c: g.c0, n: g.phase }, ...g.reac], g.prod, g.phase)
+          : logkC),
         note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${g.lk.toFixed(4)}`}, ${fmtG(g.pressure, 4)} atm`,
       });
     }
@@ -2194,7 +2416,8 @@
         const prod = follow ? c.prod : aq(c.prod);
         lines.push({
           rel: `${side(reac)} <=> ${side(prod)}`,
-          k: kText(db.logKTerms('p', c.phase), follow ? c.lk : logkC),
+          k: kText(db.logKTerms('p', c.phase), follow ? atOneAtm(c.lk, [{ c: c.c0, n: c.phase }, ...c.reac], c.prod, c.phase)
+            : logkC),
           note: `${follow ? `# here ${logkC.toFixed(4)}` : `# log K ${c.lk.toFixed(4)}`}, in ${ss.name}`,
         });
       }
@@ -2205,7 +2428,7 @@
       const prod = follow ? e.right : aq(e.right);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: kText(db.logKTerms('x', e.species), follow ? e.logk : e.logkC),
+        k: kText(db.logKTerms('x', e.species), follow ? atOneAtm(e.logk, e.left, e.right) : e.logkC),
         note: follow ? `# here ${e.logkC.toFixed(4)}${e.folded ? `, the database's ${e.logkDb.toFixed(4)}` : ''}`
           : `# log K ${e.logkDb.toFixed(4)}`,
       });
@@ -2224,7 +2447,7 @@
       const prod = follow ? e.right : aq(e.right);
       lines.push({
         rel: `${side(reac)} <=> ${side(prod)}`,
-        k: kText(db.logKTerms('f', e.species), follow ? e.lk : logkC),
+        k: kText(db.logKTerms('f', e.species), follow ? atOneAtm(e.lk, e.left, e.right) : logkC),
         note: follow ? `# here ${logkC.toFixed(4)}` : `# log K ${e.lk.toFixed(4)}`,
       });
     }
@@ -2254,6 +2477,19 @@
       }
       if (db.aphi) out.push(`APHI  ${db.aphi.map((v) => String(v)).join('  ')}`);
       out.push(...pzOpts);
+    }
+    if (llnl) {
+      // LLNL_AQUEOUS_MODEL_PARAMETERS: A, B and B-dot at each temperature, and Drummond's CO2 where a species reads it.
+      out.push('', '<LLNL>');
+      out.push(`TEMPERATURES  ${db.llnl.temps.map((v) => String(v)).join('  ')}`);
+      out.push(`DH_A          ${db.llnl.adh.map((v) => String(v)).join('  ')}`);
+      out.push(`DH_B          ${db.llnl.bdh.map((v) => String(v)).join('  ')}`);
+      out.push(`BDOT          ${db.llnl.bdot.map((v) => String(v)).join('  ')}`);
+      if (order.some((sp) => db.co2Gamma.has(sp))) out.push(`CO2           ${db.llnl.co2.map((v) => String(v)).join('  ')}`);
+    }
+    if (volumes) {
+      const wv = Math.max(...volLines.map(([n]) => n.length)) + 2;
+      out.push('', '<VOLUMES>', ...volLines.map(([n, v]) => `${n.padEnd(wv)}${v}`));
     }
     // Real gases: each pair's binary parameter, where PHREEQC's is not 0.
     const gasPairs = [];
@@ -2295,6 +2531,8 @@
       water: w,
       names: name,
       molal,
+      // PHREEQC's molar volumes of the species, where <VOLUMES> is written (VM(), cm3/mol), by PHREEQC's names.
+      volumes: vmAt,
       // The minerals' and exchange species' amounts as written, by their names in the model.
       amounts: new Map(minerals.map((mn) => [mn.name, mn.amount]).concat(onEx.map((e) => [e.name, e.m]))
         .concat(gases.map((g) => [g.name, g.amount]))
@@ -2314,18 +2552,22 @@
           atNone: [...atNone].map((sp) => name.get(sp) || sp),
           // PHREEQC's next step, where the input ended on a water as given: the pe it was given, and the one it settles at.
           settled } : null,
-        activity: follow ? { kind: sit ? 'sit' : pitz ? 'pitzer' : 'debye-huckel', temperature: tc, unsupported,
+        activity: follow ? { kind: sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel', temperature: tc, unsupported,
           pitzer: pitz ? pzLines.length : 0,
           sitPairs: sit ? sitPairs.length : 0 } : null,
+        // The water's pressure, and the molar volumes written for each log K at it.
+        pressure: { atm, vapour: atVapour, volumes: volumes ? volLines.length : 0 },
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
           species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
         exchangeSkipped: exSkipped,
         surface: onSf.length ? { sites: onSf.filter((e) => e.master).map((e) => e.name),
+          // Sites so many per mole of a mineral (sites= per=): the site, the number and the mineral.
+          per: onSf.filter((e) => e.master && perInfo.has(e.species)).map((e) => ({ site: e.name, ...perInfo.get(e.species) })),
           species: onSf.map((e) => ({ species: e.species, as: e.name, amount: e.m })),
           potentials: potentials.map((pp) => ({ name: pp.name, surface: pp.surface, psi: pp.psi, area: pp.area,
-            grams: pp.grams })) } : null,
+            grams: pp.grams, phase: pp.phase })) } : null,
         surfaceSkipped: sfSkipped,
         gas: gases.length ? { ...gasFixed, species: gases.map((g) => ({ phase: g.phase, as: g.name, amount: g.amount,
           pressure: g.pressure })) } : null,
@@ -2382,7 +2624,9 @@
         return kv ? Number(kv.split('=')[1]) : NaN;
       };
       const cut = parts[0].indexOf('_');
-      if (cut > 0) out.set(parts[0].slice(0, cut), { name: parts[0], area: num('area'), grams: num('grams') });
+      // per=: the area to each mole of a mineral of the model, whose amount in a water then takes the grams' place.
+      const per = (parts.find((p) => /^per=/i.test(p)) || '').split('=')[1] || null;
+      if (cut > 0) out.set(parts[0].slice(0, cut), { name: parts[0], area: num('area'), grams: num('grams'), per });
     }
     return out;
   }
@@ -2625,8 +2869,17 @@
     // --- PHREEQC, with the pH walked onto the run's [H+] -------------------
     // totals: the element totals to give PHREEQC, by valence state unless
     // `together` says to give an element's valence states as one.
+    /*
+      The model's water's pressure, PRESSURE, which PHREEQC's waters are put
+      at; with <VOLUMES> each species' molar volume as well, for the log K at
+      that pressure on both sides (pressurePart).
+    */
+    const mText = String(o.modelText || '');
+    const pGiven = (() => { const m = /^[ \t]*PRESSURE[ \t]*=[ \t]*(\S+)/m.exec(mText); return m ? Number(m[1]) : 1; })();
+    const withVol = /^[ \t]*<VOLUMES>[ \t]*$/m.test(mText);
     const solution = (k, r, together) => {
       const lines = [`SOLUTION ${k}`, `  temp ${fmtG(r.tc, 12)}`, '  units mol/kgw',
+        ...(pGiven > 0 && pGiven !== 1 ? [`  pressure ${fmtG(pGiven, 15)}`] : []),
         `  pe ${r.pe !== null && r.pe !== undefined ? r.pe.toFixed(12) : '4'}`,
         r.pH !== null ? `  pH ${r.pH.toFixed(12)}` : '  pH 7 charge'];
       const totals = new Map();
@@ -2640,8 +2893,10 @@
       }
       return `${lines.join('\n')}\n`;
     };
+    // With <VOLUMES>, each mapped species' molar volume, VM(), a column each, and the water's.
+    const vmNames = withVol ? [...new Set([...mapped.values()].map((v) => v.p))].concat('H2O') : [];
     const runSome = (sub) => runRows(o.engine,
-      `${punchBlock()}${sub.map((r, k) => solution(k + 1, r)).join('')}END\n`);
+      `${punchBlock(vmNames.map((n) => `VM("${n}")`))}${sub.map((r, k) => solution(k + 1, r)).join('')}END\n`);
     const CHUNK = 400;
     let done = 0;
     for (let start = 0; start < rows.length; start += CHUNK) {
@@ -2783,7 +3038,8 @@
             const pp = potentials.get(sn);
             if (!layered.length || first.has(sn) || !pp) return ` ${sp} ${fmtG(v, 15)}`;
             first.add(sn);
-            return ` ${sp} ${fmtG(v, 15)} ${fmtG(pp.area, 15)} ${fmtG(pp.grams, 15)}`;
+            const grams = pp.per ? Math.max(value(r.state, model.species.indexOf(pp.per), r.k), 0) * scale : pp.grams;
+            return ` ${sp} ${fmtG(v, 15)} ${fmtG(pp.area, 15)} ${fmtG(grams, 15)}`;
           });
           return lines.length ? `SURFACE ${k + 1}\n -equilibrate ${k + 1}\n${layered.length ? '' : ' -no_edl\n'}`
             + `${lines.join('\n')}\n` : '';
@@ -3019,6 +3275,27 @@
       return { name: mn.name, phase: mn.phase, present, absent };
     });
 
+    /*
+      With <VOLUMES>, the part of PHREEQC's log K that goes with the pressure
+      at a water r, dV (P - 1)/(R T ln 10) for a relation as written, dV from
+      its species' molar volumes there (VM) and the water's own: PHREEQC's
+      log K is less it, so a conditional constant moves with it as with the
+      coefficients. 0 at one atmosphere or without volumes.
+    */
+    const vmCol = new Map(vmNames.map((n, i) => [n, i]));
+    const vmOf = (r, n) => (vmCol.has(n) ? Number(r.pq.x[vmCol.get(n)]) || 0 : 0);
+    const pressurePart = (r, prod, reac, water) => {
+      if (!withVol || !r.pq.x || r.pq.x.length < vmNames.length) return 0;
+      const tk = r.pq.tc + 273.15;
+      const P = Math.max(pGiven, Math.exp(11.6702 - 3816.44 / (tk - 46.13)) * Math.min(r.pq.aw, 1));
+      if (!(P > 1)) return 0;
+      const f = (1e-9 * (P * 101325 - 101325)) / (R_KJ * tk);
+      let dv = water ? water * vmOf(r, 'H2O') : 0;
+      for (const t of prod) dv += t.c * vmOf(r, t.n);
+      for (const t of reac) dv -= t.c * vmOf(r, t.n);
+      return (f * dv) / Math.LN10;
+    };
+
     // --- the equilibria's activity coefficients along the run --------------
     // H2O in a relation is the water, whose activity enters it.
     const drift = [];
@@ -3040,7 +3317,7 @@
       let s = d.water ? d.water * log10(r.pq.aw) : 0;
       for (const t of d.prod) { if (!sp.has(t.n)) return null; s += t.c * sp.get(t.n)[1]; }
       for (const t of d.reac) { if (!sp.has(t.n)) return null; s -= t.c * sp.get(t.n)[1]; }
-      return s;
+      return s + pressurePart(r, d.prod, d.reac, d.water);
     };
     const first = new Map();
     for (const r of good) {
@@ -3081,14 +3358,20 @@
           const w = Rtm.activityAt(own.act, cw, 0, lnG, dG, r.state);
           for (const g of gaps) {
             let pqSide = g.eq.water ? g.eq.water * log10(r.pq.aw) : 0;
-            let ours = g.eq.water ? g.eq.water * w.lnAw / Math.LN10 : 0;
+            // With <VOLUMES> the log K's part at the pressure on each side, the model's its own (lnKAtP).
+            let ours = (g.eq.water ? g.eq.water * w.lnAw / Math.LN10 : 0)
+              + (Rtm.lnKAtP(g.eq, r.state, null) - Rtm.lnKAtP(g.eq, r.state, w)) / Math.LN10;
             let ok = true;
+            const prod = [];
+            const reac = [];
             for (const [si, c] of g.eq.net) {
               const p = mapped.get(own.speciesNames[si]).p;
               if (!r.pq.species.has(p)) { ok = false; break; }
               pqSide += c * r.pq.species.get(p)[1];
               ours += c * lnG[si] / Math.LN10;
+              (c > 0 ? prod : reac).push({ c: Math.abs(c), n: p });
             }
+            if (ok) pqSide += pressurePart(r, prod, reac, g.eq.water || 0);
             if (ok && Math.abs(pqSide - ours) > Math.abs(g.by)) { g.by = pqSide - ours; g.at = r; }
           }
         }

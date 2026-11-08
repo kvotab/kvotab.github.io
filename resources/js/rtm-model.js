@@ -60,7 +60,7 @@
      ====================================================================== */
 
   const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
-    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER'];
+    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -151,7 +151,7 @@
       F/RT and dielectric constant, and a rate law reads it as TK, kelvin,
       and TC. See the temperature in compile.
     */
-    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit', 'pitzer'] },
+    ACTIVITY: { def: 'none', kind: 'word', of: ['none', 'davies', 'debye-huckel', 'debye-hückel', 'sit', 'pitzer', 'llnl'] },
     TEMPERATURE: { def: 25, kind: 'temperature' },
     /*
       A gas phase, PHREEQC's GAS_PHASE: the species given `gas`, each with its
@@ -400,9 +400,9 @@
       if (seen.has(name)) throw new RtmError(`Species "${name}" is given twice.`, line);
       const entry = { name, initial: 0, fixed: false, D: 0, left: null, right: null,
         mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null, sites: null,
-        area: null, grams: null, tc: null, pc: null, omega: null,
+        area: null, grams: null, per: null, tc: null, pc: null, omega: null,
         mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, surface: false,
-        potential: false, gas: false, line };
+        potential: false, gas: false, drummond: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_]+)\s*=\s*(.+)$/.exec(part);
@@ -419,6 +419,8 @@
           // SKB reports -- the coefficient on the left of the matrix equation
           // -- and like R it may name a parameter.
           if (key === 'rm') { entry.Rm = kv[2].trim(); continue; }
+          // A surface's sites, or its potential's area, to each mole of a mineral (surfaceSetup, potentialSetup).
+          if (key === 'per') { entry.per = kv[2].trim(); continue; }
           const value = constValue(kv[2], line, kv[1]);
           if (key === 'd') entry.D = value;
           // De is what the SKB reports call the matrix diffusivity, and
@@ -459,8 +461,8 @@
           } else if (key === 'omega') entry.omega = value;
           else throw new RtmError(`"${kv[1]}" is not a species property. Use D, left, right, `
             + 'mass or R; with a rock matrix Dm (or De), Rm, Kd or Kdf; for ACTIVITY z, a and b; for '
-            + 'the electron pe; for a surface sites; for its potential area and grams; and for a real gas Tc, Pc '
-            + 'and omega.', line);
+            + 'the electron pe; for a surface sites and per; for its potential area, grams and per; and for a real gas '
+            + 'Tc, Pc and omega.', line);
           continue;
         }
         if (/^fixed$/i.test(part)) { entry.fixed = true; continue; }
@@ -481,6 +483,8 @@
         if (/^potential$/i.test(part)) { entry.potential = true; entry.immobile = true; continue; }
         // A gas, CO2(g): its amount in the gas phase, its activity its partial pressure.
         if (/^gas$/i.test(part)) { entry.gas = true; entry.immobile = true; continue; }
+        // Under ACTIVITY = llnl, Drummond's coefficient of CO2: PHREEQC's -co2_llnl_gamma.
+        if (/^drummond$/i.test(part)) { entry.drummond = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
@@ -504,11 +508,22 @@
         throw new RtmError(`${name} is given ${entry.tc === null ? 'Pc without Tc' : 'Tc without Pc'}: a real gas takes both, `
           + 'its critical temperature in K and pressure in atm.', line);
       }
+      if (entry.per !== null) {
+        if (!(entry.surface && entry.sites !== null) && !(entry.potential && entry.area !== null)) {
+          throw new RtmError(`per=${entry.per} for ${name}: per names the mineral a surface's sites, or its potential's `
+            + 'area, go with, a mole of it at a time: Hfo_wOH surface sites=0.2 per=Ferrihydrite, Hfo_psi potential '
+            + 'area=5.34e4 per=Ferrihydrite.', line);
+        }
+        if (entry.grams !== null) {
+          throw new RtmError(`${name} is given grams and per=${entry.per}: its area is per mole of ${entry.per}, which the `
+            + 'cell has, and takes no grams.', line);
+        }
+      }
       if ((entry.area !== null || entry.grams !== null) && !entry.potential) {
         throw new RtmError(`${entry.area !== null ? 'area' : 'grams'} is given to ${name}: area and grams are a surface's `
           + 'potential\'s, Hfo_psi potential area=600 grams=0.09.', line);
       }
-      if (entry.sites !== null && entry.initial !== 0) {
+      if (entry.sites !== null && entry.initial !== 0 && entry.per === null) {
         throw new RtmError(`${name} is given both an amount and the sites of its surface: the sites are loaded from the `
           + 'water, which puts every species on the surface where it has to be. Give one.', line);
       }
@@ -558,7 +573,7 @@
           throw new RtmError(`${name} is a surface's potential, whose activity is solved for and which carries no charge `
             + 'into the ionic strength: it takes no z, a or b.', line);
         }
-        if (entry.area === null || entry.grams === null) {
+        if (entry.area === null || (entry.grams === null && entry.per === null)) {
           throw new RtmError(`${name} is a surface's potential and needs the surface's area, in m2/g, and grams of the `
             + `solid to each kilogram of water: ${name} potential area=600 grams=0.09.`, line);
         }
@@ -593,10 +608,6 @@
         }
         if (kind === 'gas' && (entry.z !== null || entry.dha !== null || entry.dhb !== null)) {
           throw new RtmError(`${name} is a gas, whose activity is its partial pressure: it takes no z, a or b.`, line);
-        }
-        if (kind === 'exchange' && (entry.dha === null) !== (entry.dhb === null)) {
-          throw new RtmError(`${name} is on an exchanger: it takes a and b together, as PHREEQC's -gamma a b, `
-            + 'or neither.', line);
         }
       }
       // Each pair says one thing two ways, and two answers to it cannot both stand.
@@ -1681,18 +1692,347 @@
     return { T, atmGiven, rhoSat, p0, p1, p2, p3, pSat, d1000, c, b };
   }
 
-  /** debyeHuckelAB from waterAtT's part and the water's activity aw: a few operations. */
-  function waterAt(w, aw) {
+  /**
+   * debyeHuckelAB from waterAtT's part and the water's activity aw: a few
+   * operations. `gasAtm`, a fixed volume of gas's pressure, is the water's,
+   * as PHREEQC's patm_x is with a gas phase: its density then at that or
+   * the vapour pressure times a(H2O), whichever is higher, its dielectric
+   * constant at that pressure (calc_rho_0, calc_dielectrics).
+   */
+  function waterAt(w, aw, gasAtm) {
     // One atmosphere, or the pressure given, or the vapour pressure (times a(H2O)) where that is higher.
     const pSat = w.pSat * (aw <= 1.0 ? aw : 1);
-    const atm = Math.max(w.atmGiven, pSat);
-    const pa = atm - (pSat - 1e-6);
+    const atmRho = Math.max(gasAtm === undefined ? w.atmGiven : gasAtm, pSat);
+    const atm = gasAtm === undefined ? atmRho : gasAtm;
+    const pa = atmRho - (pSat - 1e-6);
     const rho = (w.rhoSat + pa * (w.p0 + pa * (w.p1 + pa * (w.p2 + Math.sqrt(pa) * w.p3)))) / 1e3; // g/cm3
     const eps = w.d1000 + w.c * Math.log((w.b + atm * 1.01325) / (w.b + 1e3));
     const e2 = 1.671008e-3 / (eps * w.T); // e^2/(eps k T), cm
     const kappa = Math.sqrt(8 * 3.14159265358979 * 6.02252e23 * e2 * rho / 1e3); // 1/cm (mol/kg)^-1/2
+    /*
+      How A and B go with ln a(H2O): the density through the vapour
+      pressure below the pressure it is at, and on the vapour pressure the
+      dielectric constant through the pressure. A goes as rho^1/2 eps^-3/2,
+      B as rho^1/2 eps^-1/2.
+    */
+    let dlnRho = 0;
+    let dlnEps = 0;
+    if (aw <= 1) {
+      if (atmRho > pSat) {
+        dlnRho = (-pSat * (w.p0 + pa * (2 * w.p1 + pa * (3 * w.p2 + Math.sqrt(pa) * 3.5 * w.p3)))) / 1e3 / rho;
+      }
+      if (gasAtm === undefined && atm === pSat && pSat > w.atmGiven) dlnEps = (w.c * 1.01325 * pSat) / (w.b + atm * 1.01325) / eps;
+    }
     // A0: Pitzer's A_phi, PHREEQC's DH_B e2_DkT/6; atm the pressure the water is then at.
-    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps, A0: (kappa * e2) / 6.0, atm };
+    return { A: kappa * e2 / (2 * Math.LN10), B: kappa / 1e8, eps, A0: (kappa * e2) / 6.0, atm, rho, pa, e2, kappa,
+      dlnA: 0.5 * dlnRho - 1.5 * dlnEps, dlnB: 0.5 * dlnRho - 0.5 * dlnEps, dlnRho, pSat };
+  }
+
+  /**
+   * What the molar volumes read of the water at waterAt's state `ws`
+   * (calc_rho_0 and calc_dielectrics): its compressibility kappa_0, 1/atm;
+   * the Debye-Hueckel slope of the volume, Av, cm3/mol (mol/kg)^-1/2; the
+   * Born function's QBrn; and the water's own molar volume, cm3/mol.
+   */
+  function waterVolume(w, ws) {
+    const pa = ws.pa;
+    const kappa0 = (w.p0 + pa * (2 * w.p1 + pa * (3 * w.p2 + Math.sqrt(pa) * 3.5 * w.p3))) / (ws.rho * 1e3);
+    const pb = ws.atm * 1.01325;
+    const Av = ws.kappa * ws.e2 * R_LITER_ATM * 1e3 * w.T * (((w.c / (w.b + pb)) * 1.01325) / ws.eps - kappa0 / 3);
+    const QBrn = (w.c / (w.b + pb) / ws.eps / ws.eps) * 41.84004;
+    const Vw = 18.016 / ws.rho;
+    // Their derivatives in ln a(H2O) through the density, where the water is above its vapour pressure (waterAt).
+    let dAv = 0;
+    let dVw = 0;
+    if (ws.dlnRho) {
+      const gp = 2 * w.p1 + pa * (6 * w.p2 + 8.75 * Math.sqrt(pa) * w.p3);
+      const dk0 = (gp * -ws.pSat) / (ws.rho * 1e3) - kappa0 * ws.dlnRho;
+      dAv = Av * 0.5 * ws.dlnRho - (ws.kappa * ws.e2 * R_LITER_ATM * 1e3 * w.T * dk0) / 3;
+      dVw = -Vw * ws.dlnRho;
+    }
+    return { Av, QBrn, Vw, pbS: 2600 + ws.atm * 1.01325, TKs: w.T - 273.15 + 45.15, dAv, dVw };
+  }
+
+  /**
+   * <VOLUMES>: the molar volumes PHREEQC corrects each log K for the
+   * pressure with, a species to a line, in cm3/mol:
+   *
+   *   Na+      1.403  -2.285  4.419  -2.726  -5.125e-5  4  0.162  47.67  -3.09e-3  0.725
+   *   Mg+2     millero  -1.41  0.0213  0  0.85  0  0
+   *   Calcite  36.9
+   *
+   * A solute takes PHREEQC's -Vm, up to ten numbers, a1 to a4, W, b and i1
+   * to i4, in its units (calc_vm):
+   *
+   *   V = 41.84 (0.1 a1 + 100 a2/(2600 + p) + (a3 + 1e4 a4/(2600 + p))/(T - 228))
+   *       - 1e5 W QBrn + z^2 Av/2 sqrt(I)/(1 + b B sqrt(I))
+   *       + (i1 + i2/(T - 228) + i3 (T - 228)) I^i4,
+   *
+   * p the pressure in bar, T in kelvin, Av and QBrn the water's, the I terms
+   * an ion's alone and i4 1 unless given; or `millero` and PHREEQC's -Millero,
+   * up to six numbers: V = m1 + m2 t + m3 t^2 and, for an ion, z^2 Av/2
+   * sqrt(I) + (m4 + m5 t + m6 t^2) I, t in C. A mineral, a gas or a phase of
+   * <PHASES> takes one number, its molar volume. The water's own is 18.016/rho.
+   * Returns { vol: species index -> its entry, phases: name -> volume, for
+   * <PHASES> (compile) }, or null without the section.
+   */
+  function readVolumes(lines, species, act, settings) {
+    if (!lines.length) return null;
+    const head = lines[0].line;
+    if (!act) {
+      throw new RtmError('<VOLUMES> corrects each log K for the pressure with the molar volumes, which go with the ionic '
+        + 'strength and the water: it is read with ACTIVITY.', head);
+    }
+    if (act.llnl) {
+      throw new RtmError('<VOLUMES> is not read under ACTIVITY = llnl: PHREEQC works out no molar volumes under LLNL\'s '
+        + 'activity model, and its log K go with the temperature alone.', head);
+    }
+    const index = new Map(species.map((sp, s) => [sp.name, s]));
+    const vol = new Map();
+    const phases = new Map();
+    const seen = new Map();
+    for (const { text, line } of lines) {
+      const parts = text.split(/\s+/).filter(Boolean);
+      const name = parts.shift();
+      if (seen.has(name)) throw new RtmError(`${name} is given twice in <VOLUMES>, on lines ${seen.get(name)} and ${line}.`, line);
+      seen.set(name, line);
+      const millero = parts.length && parts[0].toLowerCase() === 'millero';
+      if (millero) parts.shift();
+      const v = parts.map(Number);
+      const bad = parts.find((x, i) => !Number.isFinite(v[i]));
+      if (bad !== undefined || !v.length) {
+        throw new RtmError(`"${text}" in <VOLUMES>: ${bad !== undefined ? `"${bad}" is no number` : 'a species and its '
+          + 'molar volume, or the numbers it is worked out from'}.`, line);
+      }
+      if (name === 'H2O') {
+        throw new RtmError('H2O in <VOLUMES>: the water\'s molar volume is its own, 18.016 g/mol over its density at the '
+          + 'temperature and pressure.', line);
+      }
+      const s = index.has(name) ? index.get(name) : -1;
+      const sp = s >= 0 ? species[s] : null;
+      if (!sp || sp.mineral || sp.gas) {
+        // A mineral, a gas, or a phase of <PHASES>: its molar volume, cm3/mol.
+        if (millero || v.length > 1) {
+          throw new RtmError(`${name} in <VOLUMES> is ${sp ? (sp.mineral ? 'a mineral' : 'a gas') : 'no species'}: `
+            + `${sp ? 'it takes one number, its molar volume in cm3/mol' : 'a phase of <PHASES> takes one number, its '
+              + 'molar volume in cm3/mol, and a solute is in <SPECIES>'}.`, line);
+        }
+        if (sp) vol.set(s, { kind: 2, v: v[0] }); else phases.set(name, { v: v[0], line });
+        continue;
+      }
+      if (sp.electron || sp.exchange || sp.exchanger || sp.surface || sp.potential || !act.solute[s]) {
+        throw new RtmError(`${name} in <VOLUMES> is ${sp.electron ? 'the electron' : 'on an exchanger or a surface, or one'}: `
+          + 'PHREEQC works out a molar volume for a solute, a mineral and a gas, and no other.', line);
+      }
+      if (v.length > (millero ? 6 : 10)) {
+        throw new RtmError(`${name} in <VOLUMES> has ${v.length} numbers: ${millero ? 'millero takes up to six, PHREEQC\'s '
+          + '-Millero' : 'up to ten, PHREEQC\'s -Vm: a1 to a4, W, b and i1 to i4; or millero and up to six'}.`, line);
+      }
+      if (millero) {
+        const m = new Float64Array(6);
+        v.forEach((x, i) => { m[i] = x; });
+        if (!m[0]) {
+          throw new RtmError(`${name} in <VOLUMES>: PHREEQC reads a Millero volume whose first number is not 0, and none `
+            + 'that is.', line);
+        }
+        vol.set(s, { kind: 1, m });
+        continue;
+      }
+      // PHREEQC's units (read_aq_species_vm_parms): a1..a4 and W to cm3/mol; i4 1 unless given.
+      const q = new Float64Array(10);
+      v.forEach((x, i) => { q[i] = x; });
+      if (v.length < 10) q[9] = 1;
+      if (!q[0]) {
+        throw new RtmError(`${name} in <VOLUMES>: PHREEQC works a volume out from a1, the first number, where it is not 0, and `
+          + 'reads none where it is.', line);
+      }
+      q[0] *= 41.84004e-1;
+      q[1] *= 41.84004e2;
+      q[2] *= 41.84004;
+      q[3] *= 41.84004e4;
+      q[4] *= 1e5;
+      vol.set(s, { kind: 0, q });
+    }
+    const ns = species.length;
+    const out = { kind: new Int8Array(ns).fill(-1), q: [], m: [], vm0: new Float64Array(ns), list: [], phases,
+      h2o: index.has('H2O') ? index.get('H2O') : -1, pv: new Float64Array(ns), pvI: new Float64Array(ns),
+      pvA: new Float64Array(ns), V: new Float64Array(ns), VI: new Float64Array(ns), VA: new Float64Array(ns) };
+    for (const [s, e] of vol) {
+      out.kind[s] = e.kind;
+      if (e.kind === 0) out.q[s] = e.q; else if (e.kind === 1) out.m[s] = e.m; else out.vm0[s] = e.v;
+      out.list.push(s);
+    }
+    out.list.sort((x, y) => x - y);
+    // Where nothing takes the water above one atmosphere, the volumes correct nothing: PHREEQC's rule.
+    const P = act.wt ? act.wt.atmGiven : 1;
+    if (!(P > 1) && typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6) {
+      out.idle = true;
+    }
+    return out;
+  }
+
+  /**
+   * The molar volumes of a cell at ionic strength I and water activity aw,
+   * into `water` (an activityAt result): pv[s] = f V_s and pvI[s] its
+   * derivative in I, pvW the water's f V, f = (P - 1 atm)/(R T) in mol/cm3
+   * with P the water's pressure (waterAt: the pressure given, or the vapour
+   * pressure times a(H2O) where that is higher), and pvL, d ln f/d ln a(H2O)
+   * where the vapour pressure is the water's. Each relation's ln K is then
+   * less sum nu f V, PHREEQC's k_calc; at or below one atmosphere nothing.
+   */
+  function volumesAt(act, water, I, low, cell) {
+    const vo = act.vol;
+    const wt = act.wtc ? act.wtc[cell] : act.wt;
+    const aw = Math.exp(water.lnAw);
+    const ws = waterAt(wt, aw);
+    const P = ws.atm;
+    if (!(P > 1)) { water.pv = null; return; }
+    const f = (1e-9 * (P * 101325 - 101325)) / (R_KJ * wt.T);
+    const wv = molarVolumesAt(act, I, low, wt, ws);
+    const { pv, pvI, pvA, V, VI, VA } = vo;
+    // Where the water is at its vapour pressure times a(H2O), f goes with a(H2O): d ln f/d ln a = P/(P - 1).
+    const L = P > wt.atmGiven && aw <= 1 ? P / (P - 1) : 0;
+    for (const s of vo.list) {
+      pv[s] = f * V[s];
+      pvI[s] = f * VI[s];
+      pvA[s] = f * (VA[s] + L * V[s]);
+    }
+    if (vo.h2o >= 0) { pv[vo.h2o] = f * wv.Vw; pvI[vo.h2o] = 0; pvA[vo.h2o] = f * (wv.dVw + L * wv.Vw); }
+    water.pv = pv;
+    water.pvI = pvI;
+    water.pvA = pvA;
+    water.pvW = f * wv.Vw;
+    water.pvWA = f * (wv.dVw + L * wv.Vw);
+    water.pf = f;
+    water.pvL = L;
+  }
+
+  /**
+   * Each species' molar volume, cm3/mol, into act.vol.V, and its derivative
+   * in I into VI, at ionic strength I and the water `ws` (waterAt of the
+   * cell's `wt`), PHREEQC's calc_vm; returns the water's own, 18.016/rho.
+   */
+  function molarVolumesAt(act, I, low, wt, ws) {
+    const vo = act.vol;
+    const wv = waterVolume(wt, ws);
+    const { V, VI, VA } = vo;
+    const sq = Math.sqrt(I);
+    const tc = wt.T - 273.15;
+    for (const s of vo.list) {
+      const kind = vo.kind[s];
+      VA[s] = 0;
+      if (kind === 2) { V[s] = vo.vm0[s]; VI[s] = 0; continue; }
+      const z = act.z[s];
+      let v;
+      let dv = 0;
+      if (kind === 0) {
+        const q = vo.q[s];
+        v = q[0] + q[1] / wv.pbS + (q[2] + q[3] / wv.pbS) / wv.TKs - q[4] * wv.QBrn;
+        if (z) {
+          const h = z * z * 0.5 * wv.Av;
+          if (q[5] < 1e-5) {
+            v += h * sq;
+            dv += (h * 0.5) / sq;
+            VA[s] = z * z * 0.5 * wv.dAv * sq;
+          } else {
+            const den = 1 + q[5] * ws.B * sq;
+            v += (h * sq) / den;
+            dv += (h * 0.5) / (sq * den * den);
+            // Av and B through the density: d ln B = d ln rho/2 there.
+            VA[s] = (z * z * 0.5 * wv.dAv * sq) / den - ((h * sq) / den) * ((q[5] * ws.B * sq) / den) * 0.5 * ws.dlnRho;
+          }
+          if (q[6] !== 0 || q[7] !== 0 || q[8] !== 0) {
+            const bi = q[6] + q[7] / wv.TKs + q[8] * wv.TKs;
+            if (q[9] === 1) { v += bi * I; dv += bi; } else {
+              v += bi * I ** q[9];
+              dv += bi * q[9] * I ** (q[9] - 1);
+            }
+          }
+        }
+      } else {
+        const m = vo.m[s];
+        v = m[0] + tc * (m[1] + tc * m[2]);
+        if (z) {
+          const h = z * z * 0.5 * wv.Av;
+          const bi = m[3] + tc * (m[4] + tc * m[5]);
+          v += h * sq + bi * I;
+          dv += (h * 0.5) / sq + bi;
+          VA[s] = z * z * 0.5 * wv.dAv * sq;
+        }
+      }
+      V[s] = v;
+      // Below I = 1e-10, where I is held there, nothing goes with it.
+      VI[s] = low ? 0 : dv;
+    }
+    return wv;
+  }
+
+  /**
+   * Each species' molar volume in the cell at `off` of C, cm3/mol (0 for one
+   * <VOLUMES> does not give), the water's, its pressure in atm and the
+   * activityAt evaluation they are at: what PHREEQC's VM() gives.
+   */
+  function molarVolumes(act, C, off = 0, cell = 0) {
+    const ns = act.ns;
+    const w = activityAt(act, C, off, new Float64Array(ns), new Float64Array(ns), cell);
+    const wt = act.wtc ? act.wtc[cell] : act.wt;
+    const ws = waterAt(wt, Math.exp(w.lnAw));
+    act.vol.V.fill(0);
+    const wv = molarVolumesAt(act, w.I, !(w.I > 1e-10), wt, ws);
+    return { V: Float64Array.from(act.vol.V), VI: Float64Array.from(act.vol.VI), Vw: wv.Vw, P: ws.atm, water: w };
+  }
+
+  /** d(pressureTerm)/dI of a relation, through its ions' volumes. */
+  function pressureTermI(eq, water) {
+    if (!water || !water.pv) return 0;
+    const pvI = water.pvI;
+    let t = 0;
+    for (const [s, nu] of eq.net) t += nu * pvI[s];
+    return t;
+  }
+
+  /**
+   * ln K at the pressure of a relation or a phase in a cell, from its own
+   * there (lnKIn) and an activityAt evaluation `water` of the cell.
+   */
+  function lnKAtP(eq, cell, water) {
+    const k = eq.lnKc ? eq.lnKc[cell] : eq.lnK;
+    return water && water.pv ? k - pressureTerm(eq, water) : k;
+  }
+
+  /**
+   * A relation's coefficient on ln a(H2O) in its Jacobian row: its water's,
+   * and where the water is at its vapour pressure, its pressure term's.
+   */
+  function waterCoef(eq, water) {
+    let w = eq.water || 0;
+    if (!water) return w;
+    // The volumes' correction for the pressure: through the density, and on the vapour pressure through f.
+    if (water.pv) {
+      const pvA = water.pvA;
+      let t = eq.water ? eq.water * water.pvWA : 0;
+      for (const [s, nu] of eq.net) t += nu * pvA[s];
+      if (eq.vm0) t -= eq.c0 * eq.vm0 * water.pf * water.pvL;
+      w += t;
+    }
+    // The coefficients' own, through A and B (coefficientsAt).
+    const g = water.dGw;
+    if (g) for (const [s, nu] of eq.net) w += nu * g[s];
+    return w;
+  }
+
+  /**
+   * A relation's (or a phase's) correction for the pressure, sum nu f V over
+   * its species and the water, which comes off its ln K; 0 without volumes
+   * or at one atmosphere. A phase of <PHASES> adds its own, c0 f V.
+   */
+  function pressureTerm(eq, water) {
+    if (!water || !water.pv) return 0;
+    const pv = water.pv;
+    let t = eq.water ? eq.water * water.pvW : 0;
+    for (const [s, nu] of eq.net) t += nu * pv[s];
+    if (eq.vm0) t -= eq.c0 * eq.vm0 * water.pf;
+    return t;
   }
 
   /**
@@ -1719,9 +2059,19 @@
    * eps1= where the pair's coefficient goes with I as well (PHREEQC's
    * -epsilon1).
    */
-  function activityModel(settings, species, warnings, sitLines = [], pzLines = []) {
+  function activityModel(settings, species, warnings, sitLines = [], pzLines = [], llnlLines = []) {
     const isSit = settings.ACTIVITY === 'sit';
     const isPz = settings.ACTIVITY === 'pitzer';
+    const isLlnl = settings.ACTIVITY === 'llnl';
+    if (llnlLines.length && !isLlnl) {
+      throw new RtmError(`<LLNL> holds the tables of LLNL's activity model, and is read under ACTIVITY = llnl`
+        + `${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, llnlLines[0].line);
+    }
+    const drummond = species.filter((sp) => sp.drummond);
+    if (drummond.length && !isLlnl) {
+      throw new RtmError(`${drummond[0].name} is given drummond, Drummond's coefficient of CO2 in LLNL's activity model: it is `
+        + 'read under ACTIVITY = llnl.', drummond[0].line);
+    }
     if (sitLines.length && !isSit) {
       throw new RtmError(`<SIT> holds the interaction coefficients of the specific ion interaction theory, and is read `
         + `under ACTIVITY = sit${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`, sitLines[0].line);
@@ -1737,9 +2087,15 @@
       throw new RtmError(`TEMPERATURE = ${tc}: the activity model's A and B are worked out for 0 to 350 C.`);
     }
     const ns = species.length;
-    // The water at TEMPERATURE: A and B at a(H2O) = 1, and what goes with the temperature alone, for waterAt.
-    const wt = waterAtT(tc, waterPressure(settings, species));
-    const { A, B } = waterAt(wt, 1);
+    /*
+      The water at TEMPERATURE: A and B at a(H2O) = 1, and what goes with the
+      temperature alone, for waterAt. Under LLNL's model A, B and B-dot are
+      its tables' at the temperature (llnlAt), and the water's density and
+      dielectric constant are not read at all, as in PHREEQC.
+    */
+    const llnl = isLlnl ? readLlnl(llnlLines, species) : null;
+    const wt = llnl ? null : waterAtT(tc, waterPressure(settings, species));
+    const { A, B } = llnl ? llnlAt(llnl, tc) : waterAt(wt, 1);
     const z = new Float64Array(ns);
     const form = new Uint8Array(ns);
     const a = new Float64Array(ns);
@@ -1763,6 +2119,31 @@
         if (sp.dha !== null || sp.dhb !== null) ignored.push(sp.name);
         return;
       }
+      /*
+        LLNL's: an ion given a= (PHREEQC's -llnl_gamma) its B-dot form, and a
+        neutral species given it gamma = 1; drummond CO2's; a neutral species
+        given neither b I, b 0.1 unless given, as PHREEQC's default. An ion
+        given no a has no coefficient PHREEQC works out (its A is not read
+        under LLNL's model), and is refused.
+      */
+      if (isLlnl) {
+        if (sp.drummond) {
+          if (sp.dha !== null || sp.dhb !== null) {
+            throw new RtmError(`${sp.name} is given drummond and a or b: Drummond's coefficient takes neither.`, sp.line);
+          }
+          form[s] = 8;
+          return;
+        }
+        if (sp.dha !== null) {
+          form[s] = 7;
+          a[s] = sp.dha;
+          if (sp.dhb !== null) ignored.push(sp.name);
+          return;
+        }
+        if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
+        throw new RtmError(`${sp.name} is an ion and ACTIVITY = llnl: it takes a=, its ion-size parameter, the database's `
+          + '-llnl_gamma.', sp.line);
+      }
       if (!z[s]) { form[s] = 1; b[s] = sp.dhb !== null ? sp.dhb : 0.1; return; }
       if (settings.ACTIVITY === 'debye-huckel' && sp.dha !== null) {
         form[s] = 3;
@@ -1778,10 +2159,12 @@
       }
     });
     if (ignored.length) {
-      warnings.push(`ACTIVITY = ${isSit ? 'sit' : 'pitzer'} takes no a or b: ${isSit ? 'SIT\'s coefficients come from '
-        + 'the charge and <SIT>' : 'the coefficients come from the charges and <PITZER>'}, and the a and b `
-        + `given to ${ignored.length === 1 ? ignored[0] : `${ignored.length} species (${ignored.slice(0, 4).join(', ')}`
-          + `${ignored.length > 4 ? ', ...' : ''})`} are not used.`);
+      const who = ignored.length === 1 ? ignored[0] : `${ignored.length} species (${ignored.slice(0, 4).join(', ')}`
+        + `${ignored.length > 4 ? ', ...' : ''})`;
+      warnings.push(isLlnl ? `ACTIVITY = llnl takes a and B-dot from <LLNL>, and the b given to ${who} is not used.`
+        : `ACTIVITY = ${isSit ? 'sit' : 'pitzer'} takes no a or b: ${isSit ? 'SIT\'s coefficients come from '
+          + 'the charge and <SIT>' : 'the coefficients come from the charges and <PITZER>'}, and the a and b `
+          + `given to ${who} are not used.`);
     }
     const pz = isPz ? readPitzer(pzLines, species, solute, z, warnings) : null;
     if (pz) {
@@ -1789,8 +2172,89 @@
       pz.tk = tc + 273.15;
       pz.A0 = pitzerValues(pz, tc, pz.patm, pz.val);
     }
+    /*
+      Where the water can be above 100 C, A and B's derivative in ln a(H2O),
+      species by species, for the Jacobian (coefficientsAt): the water is
+      then on its vapour pressure, or the density goes with it, enough to see.
+    */
+    const hot = !isSit && !isPz && !llnl && !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6);
     return { kind: settings.ACTIVITY, temperature: tc, A, B, wt, wtc: null, ns, z, zg: Float64Array.from(z), form, a, b,
-      solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz };
+      dGw: hot ? new Float64Array(ns) : null,
+      solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz,
+      llnl, bdot: llnl ? llnlAt(llnl, tc).bdot : 0, bdotc: null };
+  }
+
+  /**
+   * The <LLNL> section, PHREEQC's LLNL_AQUEOUS_MODEL_PARAMETERS a line each:
+   *
+   *   TEMPERATURES  0.01  25  60  100
+   *   DH_A          0.4939  0.5114  0.5465  0.5995
+   *   DH_B          0.3253  0.3288  0.3346  0.3421
+   *   BDOT          0.0374  0.041  0.0438  0.046
+   *   CO2           -1.0312  0.0012806  255.9  0.4445  -0.001606
+   *
+   * the Debye-Hueckel A and B and B-dot at each temperature (C), rising, and
+   * the five coefficients of Drummond's (1981) CO2, which a species given
+   * drummond reads.
+   */
+  function readLlnl(lines, species) {
+    const out = { temps: null, adh: null, bdh: null, bdot: null, co2: null };
+    const keys = { TEMPERATURES: 'temps', DH_A: 'adh', DH_B: 'bdh', BDOT: 'bdot', CO2: 'co2' };
+    for (const { text, line } of lines) {
+      const parts = text.split(/\s+/).filter(Boolean);
+      const k = keys[parts[0].toUpperCase()];
+      if (!k) {
+        throw new RtmError(`"${parts[0]}" in <LLNL>: TEMPERATURES, DH_A, DH_B and BDOT, a value at each temperature, and CO2, `
+          + 'Drummond\'s five coefficients.', line);
+      }
+      if (out[k]) throw new RtmError(`${parts[0].toUpperCase()} is given twice in <LLNL>.`, line);
+      out[k] = Float64Array.from(parts.slice(1), (v) => constValue(v, line, `${parts[0]} in <LLNL>`));
+      out[`${k}Line`] = line;
+    }
+    const line0 = lines.length ? lines[0].line : undefined;
+    for (const k of ['temps', 'adh', 'bdh', 'bdot']) {
+      if (!out[k] || !out[k].length) {
+        throw new RtmError('ACTIVITY = llnl takes its tables in <LLNL>: TEMPERATURES, DH_A, DH_B and BDOT, a value at each '
+          + 'temperature, as the database\'s LLNL_AQUEOUS_MODEL_PARAMETERS gives them.', line0);
+      }
+    }
+    const n = out.temps.length;
+    for (const k of ['adh', 'bdh', 'bdot']) {
+      if (out[k].length !== n) {
+        throw new RtmError(`${k === 'adh' ? 'DH_A' : k === 'bdh' ? 'DH_B' : 'BDOT'} has ${out[k].length} values and TEMPERATURES `
+          + `${n}: one at each temperature.`, out[`${k}Line`]);
+      }
+    }
+    for (let i = 1; i < n; i++) {
+      if (!(out.temps[i] > out.temps[i - 1])) throw new RtmError('TEMPERATURES in <LLNL> rise, one after another.', out.tempsLine);
+    }
+    if (species.some((sp) => sp.drummond) && !(out.co2 && out.co2.length === 5)) {
+      throw new RtmError('A species is given drummond, and <LLNL> needs CO2 with Drummond\'s five coefficients.', out.co2Line || line0);
+    }
+    return out;
+  }
+
+  /**
+   * LLNL's A, B and B-dot at tc degrees C, as PHREEQC takes them: straight
+   * between the two temperatures of the tables on either side, a table
+   * temperature's own at it; outside the tables it is refused, as PHREEQC
+   * stops.
+   */
+  function llnlAt(t, tc, where = '') {
+    const T = t.temps;
+    const n = T.length;
+    if (tc < T[0] || tc > T[n - 1]) {
+      throw new RtmError(`The temperature, ${tc} C${where}, is outside LLNL's tables in <LLNL>, ${T[0]} to ${T[n - 1]} C.`);
+    }
+    let first = 0;
+    let lastI = n;
+    for (let i = 0; i < n; i++) {
+      if (tc >= T[i]) first = i;
+      if (tc <= T[i]) { lastI = i; break; }
+    }
+    const f = lastI === first ? 1 : (tc - T[first]) / (T[lastI] - T[first]);
+    return { A: (1 - f) * t.adh[first] + f * t.adh[lastI], B: (1 - f) * t.bdh[first] + f * t.bdh[lastI],
+      bdot: (1 - f) * t.bdot[first] + f * t.bdot[lastI] };
   }
 
   /**
@@ -1879,15 +2343,21 @@
     const low = !(I > 1e-10);
     if (low) I = 1e-10;
     const at = cell === undefined ? Math.round(off / ns) : cell;
-    if (act.sit) return sitAt(act, C, off, I, low, sum, lnG, dG, at);
-    if (act.pz) return pitzerAt(act, C, off, I, low, sum, lnG, dG, at);
-    let aw = 1 - 0.017 * sum;
-    const dry = !(aw > 1e-6);
-    if (dry) aw = 1e-6;
-    // A and B at the water's activity, as PHREEQC has them (coefficientsAt).
-    coefficientsAt(act, I, low, lnG, dG, at, aw);
-    if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
-    return { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw };
+    let res;
+    if (act.sit) res = sitAt(act, C, off, I, low, sum, lnG, dG, at);
+    else if (act.pz) res = pitzerAt(act, C, off, I, low, sum, lnG, dG, at);
+    else {
+      let aw = 1 - 0.017 * sum;
+      const dry = !(aw > 1e-6);
+      if (dry) aw = 1e-6;
+      // A and B at the water's activity, as PHREEQC has them (coefficientsAt).
+      coefficientsAt(act, I, low, lnG, dG, at, aw);
+      if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
+      res = { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw, dGw: act.dGw };
+    }
+    // The molar volumes, for each relation's ln K at the pressure (volumesAt).
+    if (act.vol && !act.vol.idle) volumesAt(act, res, I, low, at);
+    return res;
   }
 
   /**
@@ -2672,16 +3142,22 @@
       of water out at the vapour pressure times a(H2O) (calc_rho_0), afresh
       at each iteration, and A and B go as its square root; above 100 C the
       water's pressure, and with it the dielectric constant, is that vapour
-      pressure. At a(H2O) = 1 they are the ones kept. (Their derivative in
-      a(H2O), a part in 1e5 of a coefficient's at most, is left out of the
-      Jacobian.)
+      pressure. At a(H2O) = 1 they are the ones kept. Their derivative in
+      ln a(H2O) goes into dGw where the water can be above 100 C, on its
+      vapour pressure or near it (act.dGw); below, it is a part in 1e5 of a
+      coefficient's at most, and is left out of the Jacobian.
     */
     let A;
     let B;
+    let dlnA = 0;
+    let dlnB = 0;
+    const dGw = act.dGw;
     if (aw !== 1 && act.wt) {
       const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, aw);
       A = w.A * Math.LN10;
       B = w.B;
+      dlnA = w.dlnA;
+      dlnB = w.dlnB;
     } else {
       A = (act.Ac ? act.Ac[cell] : act.A) * Math.LN10;
       B = act.Bc ? act.Bc[cell] : act.B;
@@ -2698,12 +3174,34 @@
           const one = 1 + sq;
           lnG[s] = -A * z2 * (sq / one - 0.3 * I);
           dG[s] = -A * z2 * (0.5 / (sq * one * one) - 0.3);
+          if (dGw) dGw[s] = lnG[s] * dlnA;
           break;
         }
         case 3: {
           const den = 1 + B * act.a[s] * sq;
-          lnG[s] = -A * z2 * sq / den + Math.LN10 * act.b[s] * I;
+          const dh = -A * z2 * sq / den;
+          lnG[s] = dh + Math.LN10 * act.b[s] * I;
           dG[s] = -A * z2 * 0.5 / (sq * den * den) + Math.LN10 * act.b[s];
+          if (dGw) dGw[s] = dh * (dlnA - ((B * act.a[s] * sq) / den) * dlnB);
+          break;
+        }
+        case 7: {
+          // LLNL's B-dot: -A z^2 sqrt(I)/(1 + a B sqrt(I)) + B-dot I, its tables' A, B and B-dot; 1 for a neutral species.
+          if (!z2) { lnG[s] = 0; dG[s] = 0; break; }
+          const bdot = act.bdotc ? act.bdotc[cell] : act.bdot;
+          const den = 1 + act.a[s] * B * sq;
+          lnG[s] = -A * z2 * sq / den + Math.LN10 * bdot * I;
+          dG[s] = -A * z2 * 0.5 / (sq * den * den) + Math.LN10 * bdot;
+          break;
+        }
+        case 8: {
+          // Drummond's CO2, ln gamma = (c1 + c2 T + c3/T) I - (c4 + c5 T) I/(I + 1), T in kelvin.
+          const c = act.llnl.co2;
+          const tk = act.tk ? act.tk[cell] : act.temperature + 273.15;
+          const k1 = c[0] + c[1] * tk + c[2] / tk;
+          const k2 = c[3] + c[4] * tk;
+          lnG[s] = k1 * I - k2 * (I / (I + 1));
+          dG[s] = k1 - k2 / ((I + 1) * (I + 1));
           break;
         }
         default:
@@ -2711,6 +3209,7 @@
           dG[s] = 0;
       }
       if (low) dG[s] = 0;
+      if (dGw && act.form[s] !== 2 && act.form[s] !== 3) dGw[s] = 0;
     }
     onSites(act, lnG, dG, cell);
   }
@@ -2733,6 +3232,7 @@
       for (const s of ex.list) {
         lnG[s] = ex.pw[s] * lnG[s] + ex.shift[at + s];
         dG[s] *= ex.pw[s];
+        if (act.dGw) act.dGw[s] *= ex.pw[s];
       }
     }
     // On a surface, the fraction of its type's sites in the cell: n/sites, set when they are known.
@@ -2742,6 +3242,7 @@
       for (const s of sf.list) {
         lnG[s] = sf.shift[at + s];
         dG[s] = 0;
+        if (act.dGw) act.dGw[s] = 0;
       }
     }
     // A gas in a fixed volume: its partial pressure n R T/V.
@@ -2751,6 +3252,7 @@
       for (const s of gas.list) {
         lnG[s] = g;
         dG[s] = 0;
+        if (act.dGw) act.dGw[s] = 0;
       }
     }
     // Real gases: Peng and Robinson's a alpha and R T at the cell's temperature, for what follows.
@@ -2903,7 +3405,13 @@
         if (sp.dha !== null) sitAB.push(sp.name);
         continue;
       }
-      if (sp.dha === null) continue;
+      if (sp.dha === null && sp.dhb === null) continue;
+      // a and b together, as PHREEQC's -gamma a b; under LLNL's model a alone, its -llnl_gamma.
+      if (settings.ACTIVITY === 'llnl' ? sp.dha === null || sp.dhb !== null : (sp.dha === null) !== (sp.dhb === null)) {
+        throw new RtmError(settings.ACTIVITY === 'llnl'
+          ? `${sp.name} is on an exchanger and ACTIVITY = llnl: it takes a alone, as PHREEQC's -llnl_gamma a, or nothing.`
+          : `${sp.name} is on an exchanger: it takes a and b together, as PHREEQC's -gamma a b, or neither.`, sp.line);
+      }
       if (!act) { unused = true; continue; }
       if (ion[k] < 0) {
         throw new RtmError(`${sp.name} is given a and b, which give it its ion's activity coefficient, and no relation `
@@ -2911,6 +3419,13 @@
       }
       const isp = species[ion[k]];
       out.zg[k] = isp.z !== null ? isp.z : chargeOf(isp.name);
+      // Under LLNL's model, its ion's B-dot form with its own a (PHREEQC's -llnl_gamma on the exchange species).
+      if (settings.ACTIVITY === 'llnl') {
+        out.form[k] = 7;
+        out.a[k] = sp.dha;
+        if (!out.zg[k]) out.form[k] = 0;
+        continue;
+      }
       if (settings.ACTIVITY === 'debye-huckel' && !(sp.dha === 0 && sp.dhb === 0)) {
         out.form[k] = 3;
         out.a[k] = sp.dha;
@@ -3043,6 +3558,45 @@
       }
       t.sitesFrom = given.length ? given[0] : -1;
     });
+    /*
+      SITES THAT GO WITH A MINERAL, PHREEQC's equilibrium_phase: sites= per
+      mole of the mineral per= names, held at saturation by its relation. The
+      type's sites are then that many times the mineral's amount in the cell
+      at every moment: the mineral's relation carries them for the totals
+      alone (eq.carry, conservationBasis), sites less ratio times the mineral
+      a total of its own, so that as it dissolves its sites go, in its master
+      species' form, and what was on them comes off; its saturation reads none
+      of them. Each relation on such a surface takes as many of its species
+      as it makes, so that the sites, n C over their number, come out of it.
+    */
+    types.forEach((t) => {
+      t.per = null;
+      if (t.sitesFrom < 0 || species[t.sitesFrom].per === null) return;
+      const sp = species[t.sitesFrom];
+      const m = species.findIndex((x) => x.name === sp.per);
+      if (m < 0 || !species[m].mineral) {
+        throw new RtmError(`${sp.name} has its sites per ${sp.per}, which is no mineral in <SPECIES>: per names the mineral `
+          + 'the sites go with, a mole of it at a time.', sp.line);
+      }
+      const rel = equilibria.filter((eq) => eq.net.some(([si]) => si === m));
+      if (rel.length !== 1) {
+        throw new RtmError(`${sp.name} has its sites per ${sp.per}: they go with the amount of a mineral held at saturation, `
+          + `and ${sp.per} has ${rel.length ? 'more than one relation' : 'no relation'} in <EQUILIBRIUM>.`, sp.line);
+      }
+      for (const eq of equilibria) {
+        let count = 0;
+        let touches = false;
+        for (const [si, c] of eq.net) if (typeOf[si] === typeOf[t.sitesFrom]) { count += c; touches = true; }
+        if (touches && Math.abs(count) > 1e-12) {
+          throw new RtmError(`"${eq.text}" takes ${count < 0 ? 'more' : 'fewer'} species of the surface of ${sp.name} than it `
+            + `makes, and its sites go with ${sp.per}: on such a surface each relation takes as many of its species as it `
+            + 'makes.', eq.line);
+        }
+      }
+      const nuM = rel[0].net.find(([si]) => si === m)[1];
+      rel[0].carry = (rel[0].carry || []).concat([[t.sitesFrom, (sp.sites * nuM) / n[t.sitesFrom]]]);
+      t.per = { mineral: m, ratio: sp.sites, eq: rel[0] };
+    });
     const out = act || noActivity(species);
     out.sf = { list: on, n, typeOf, types, shift: null, sites: null, load: [] };
     return out;
@@ -3112,6 +3666,15 @@
           throw new RtmError(`${name(pots[of[j]])} and ${n} are each the potential of ${name(j)}: a surface has one.`,
             species[k].line);
         }
+        // Sites that go with a mineral have their double layer's area go with it too, as PHREEQC has it, and the other way.
+        const t = sf.types[sf.typeOf[j]];
+        const mineral = t && t.per ? name(t.per.mineral) : null;
+        if (mineral !== species[k].per) {
+          throw new RtmError(mineral ? `${n} is the potential of a surface whose sites go with ${mineral}, and its area goes `
+            + `with it too: ${n} potential area=5.34e4 per=${mineral}, m2 to each mole of it.`
+            : `${n} has its area per mole of ${species[k].per}, and the sites of ${name(j)} on its surface are not: give `
+              + `them per mole of it as well, sites= per=${species[k].per}.`, species[k].line);
+        }
         of[j] = q;
         any = true;
       }
@@ -3167,8 +3730,10 @@
       list: pots,
       of,
       zs,
-      // F/(A M), C/m2 for each mol/kgw of charge; and sqrt(8000 R T eps eps0), C/m2 at I = 1.
-      cQ: Float64Array.from(pots, (k) => FARADAY / (species[k].area * species[k].grams)),
+      // F/(A M), C/m2 for each mol/kgw of charge -- with per=, F/A, to be divided by the mineral's amount in the cell
+      // (perM, gouyChapman); and sqrt(8000 R T eps eps0), C/m2 at I = 1.
+      cQ: Float64Array.from(pots, (k) => FARADAY / (species[k].area * (species[k].per === null ? species[k].grams : 1))),
+      perM: Int32Array.from(pots, (k) => (species[k].per === null ? -1 : species.findIndex((x) => x.name === species[k].per))),
       kS: Math.sqrt(8000 * GAS_R * T * eps * EPSILON0),
       // F/RT: psi = -ln(a)/fRT, in volts.
       fRT: FARADAY / (GAS_R * T),
@@ -3183,17 +3748,21 @@
    * the ionic strength I (low: at its floor) and u = ln a = -F psi/RT, in
    * C/m2, with its derivatives in Q, I and u.
    */
-  function gouyChapman(pt, q, Q, I, low, u, cell) {
+  function gouyChapman(pt, q, Q, I, low, u, cell, M) {
     const sq = Math.sqrt(I);
     const sh = Math.sinh(u / 2);
     // sqrt(8000 R T eps eps0) at the cell's temperature where it differs between cells or goes with time.
     const kS = pt.kSc ? pt.kSc[cell] : pt.kS;
     const S = kS * sq;
+    // An area per mole of a mineral: the cell's amount of it, M, takes the grams' place, and dM is its derivative.
+    const per = pt.perM[q] >= 0;
+    const cq = per ? pt.cQ[q] / M : pt.cQ[q];
     return {
-      r: pt.cQ[q] * Q + S * sh,
-      dQ: pt.cQ[q],
+      r: cq * Q + S * sh,
+      dQ: cq,
       dI: low ? 0 : (kS / (2 * sq)) * sh,
       du: S * Math.cosh(u / 2) / 2,
+      dM: per ? (-cq * Q) / M : 0,
     };
   }
 
@@ -4309,10 +4878,13 @@
     const out = (si) => (fixed && fixed[si]) || (site && site[si] === 3);
     const active = new Set(equilibriumSpecies(equilibria).filter((si) => !out(si)));
     const ne = equilibria.length;
-    // A = S transpose: one row per equilibrium, one column per species.
+    // A = S transpose: one row per equilibrium, one column per species. A mineral's relation that carries the sites of a
+    // surface that goes with it (surfaceSetup) has them in its column, for the totals alone.
     const A = Array.from({ length: ne }, () => new Float64Array(ns));
     equilibria.forEach((eq, j) => {
       for (const [si, c] of eq.net) if (!out(si)) A[j][si] = c;
+      // Only where the surface's own relations are in the system too: a water speciated alone has no sites.
+      if (eq.carry) for (const [si, c] of eq.carry) if (!out(si) && active.has(si)) A[j][si] += c;
     });
 
     /*
@@ -4525,7 +5097,7 @@
         lnA[k] = 0;
         slope[k] = 1;
         for (const { eq, j, nu } of order) {
-          let r = lnKIn(eq, c) - (eq.water ? eq.water * water.lnAw : 0);
+          let r = lnKAtP(eq, c, water) - (eq.water ? eq.water * water.lnAw : 0);
           let d = 0;
           for (const [si, v] of eq.net) {
             if (si === j) continue;
@@ -4626,7 +5198,7 @@
         slope[k0] = 1;
         pslope[k0] = 0;
         for (const { eq, j, nu } of pl.order) {
-          let r = lnKIn(eq, c) - (eq.water ? eq.water * water.lnAw : 0);
+          let r = lnKAtP(eq, c, water) - (eq.water ? eq.water * water.lnAw : 0);
           let d = 0;
           let pd = 0;
           for (const [si, v] of eq.net) {
@@ -4680,8 +5252,10 @@
               if (q >= 0 && pt.zs[j]) {
                 const cj = Math.exp(la(pl, j) - sf.shift[b + j]);
                 Q += pt.zs[j] * cj;
-                J[m][a] += pt.cQ[q] * pt.zs[j] * cj * pl.slope[j];
-                J[m][m] += pt.cQ[q] * pt.zs[j] * cj * pl.pslope[j];
+                // F/(A M), or with an area per mole of a mineral F/A over the cell's amount of it, which loading leaves.
+                const cq = pt.perM[q] >= 0 ? pt.cQ[q] / y[b + pt.perM[q]] : pt.cQ[q];
+                J[m][a] += cq * pt.zs[j] * cj * pl.slope[j];
+                J[m][m] += cq * pt.zs[j] * cj * pl.pslope[j];
               }
             }
             // The fractions of the type's sites add up to one.
@@ -4690,7 +5264,7 @@
             if (q >= 0) J[a][m] = dp / sum;
           });
           if (q >= 0) {
-            const gc = gouyChapman(pt, q, Q, water.I, !(water.I > 1e-10), u[m], c);
+            const gc = gouyChapman(pt, q, Q, water.I, !(water.I > 1e-10), u[m], c, pt.perM[q] >= 0 ? y[b + pt.perM[q]] : 1);
             F[m] = gc.r;
             J[m][m] += gc.du;
           }
@@ -4934,7 +5508,7 @@
     // nothing; with `row`, its derivatives in x as well.
     const relation = (j, water, row) => {
       const eq = eqs[j];
-      let r = -lnKIn(eq, cell);
+      let r = -lnKAtP(eq, cell, water);
       let G = 0;
       for (const [si, nu] of eq.net) {
         if (isMin[si]) continue;
@@ -4949,13 +5523,15 @@
         const wv = eq.water || 0;
         if (wv) r += wv * water.lnAw;
         if (row) {
-          // Under SIT a coefficient also reads the species it is paired with.
+          // Under SIT a coefficient also reads the species it is paired with; the volumes go with I and the water.
           const sd = sitPartners(act, eq.net, water);
+          G += pressureTermI(eq, water);
+          const wd = waterCoef(eq, water);
           for (let k = 0; k < na; k++) {
             if (lin[k]) continue;
             const si = part[k];
             let d = G * 0.5 * act.z[si] * act.z[si];
-            if (wv) d += wv * awOf(act, water, si);
+            if (wd) d += wd * awOf(act, water, si);
             if (sd) d += sd[si];
             if (d) row[k] += d * val[k];
           }
@@ -5063,9 +5639,14 @@
           let Q = 0;
           for (const [k, zq] of pot.members) Q += zq * val[k];
           for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
-          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k], cell);
+          // An area per mole of a mineral: its amount, an unknown where it is there, and its column.
+          const pm = sys.pt.perM[pot.q];
+          const km = pm >= 0 ? at[pm] : -1;
+          const M = pm < 0 ? 1 : km >= 0 ? val[km] : C[off + pm];
+          const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), x[pot.k], cell, M);
           F[row] = gc.r;
           J[row][pot.k] += gc.du;
+          if (km >= 0) J[row][km] += gc.dM;
           for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * val[k];
           if (gc.dI) {
             for (let k = 0; k < na; k++) {
@@ -5322,7 +5903,8 @@
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
     // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
     // the full speciation.
-    if (act && ((act.gas && act.gas.dln) || act.pz)) return null;
+    if (act && ((act.gas && act.gas.dln) || act.pz || (act.vol && !act.vol.idle)
+      || (act.pt && act.pt.perM.some((m) => m >= 0)))) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -5389,7 +5971,7 @@
       return { j, k: minOf[j], nu, ...constants(j) };
     });
     // The ionic strength is an unknown wherever a coefficient or a potential reads it.
-    const useI = !!act && ([...act.form].some((f) => f >= 1 && f <= 5) || np > 0);
+    const useI = !!act && ([...act.form].some((f) => (f >= 1 && f <= 5) || f === 7 || f === 8) || np > 0);
     // ...and the water's ln a where a relation has the water in it, or a Debye-Hueckel A and B read it (coefficientsAt).
     const useL = !!act && act.kind !== 'none'
       && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water) || [...act.form].some((f) => f === 2 || f === 3));
@@ -6438,7 +7020,8 @@
         if (k >= 0) J[j][k] += nu;
       }
       if (!act) continue;
-      const wv = eq.water || 0;
+      G += pressureTermI(eq, water);
+      const wv = waterCoef(eq, water);
       const sd = sitPartners(act, eq.net, water);
       const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv ? wv * awOf(act, water, si) : 0) + (sd ? sd[si] : 0);
       for (let k = 0; k < na; k++) {
@@ -6460,7 +7043,7 @@
         const j = G.rel[q];
         const eq = eqs[j];
         const f = -1 / G.nu[q];
-        let r = -lnKIn(eq, cell);
+        let r = -lnKAtP(eq, cell, water);
         for (const [si, nu] of eq.net) {
           if (isMin[si]) continue;
           r += nu * (Math.log(Math.max(C[off + si], 1e-300)) + (act ? sys.lnG[si] : 0));
@@ -6506,8 +7089,14 @@
       let Q = 0;
       for (const [k, zq] of pot.members) Q += zq * C[off + part[k]];
       for (const [si, zq] of pot.fixedQ) Q += zq * C[off + si];
-      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]), cell);
+      const pm = sys.pt.perM[pot.q];
+      const km = pm >= 0 ? sys.at[pm] : -1;
+      const gc = gouyChapman(sys.pt, pot.q, Q, water.I, !(water.I > 1e-10), Math.log(C[off + pot.si]), cell,
+        pm >= 0 ? C[off + pm] : 1);
       J[row][pot.k] += gc.du;
+      // An area per mole of a mineral: in its column, or with what is outside where it is not an unknown.
+      if (km >= 0) J[row][km] += gc.dM;
+      else if (pm >= 0 && O) { const i = outside.indexOf(pm); if (i >= 0) O[row][i] += gc.dM; }
       for (const [k, zq] of pot.members) J[row][k] += gc.dQ * zq * C[off + part[k]];
       if (gc.dI) {
         for (let k = 0; k < na; k++) {
@@ -7109,7 +7698,16 @@
     const warnings = [];
     // Null unless ACTIVITY asks for one (activityModel), or there is an
     // exchanger (exchangeSetup, once the relations are read).
-    let act = activityModel(settings, species, warnings, sections.SIT, sections.PITZER);
+    let act = activityModel(settings, species, warnings, sections.SIT, sections.PITZER, sections.LLNL);
+    // The molar volumes, for each log K at the water's pressure (readVolumes, volumesAt).
+    const vol = readVolumes(sections.VOLUMES, species, act, settings);
+    if (vol) {
+      act.vol = vol;
+      if (vol.idle) {
+        warnings.push(`<VOLUMES>: the water is at ${act.wt.atmGiven} atm at ${settings.TEMPERATURE} C, and PHREEQC corrects a `
+          + 'log K for the pressure above one atmosphere alone: the volumes change nothing here.');
+      }
+    }
     const transport = settings.MODE === 'transport';
     flowFromTravelTime(settings, grid);
     const surface = wettedSurface(settings, grid);
@@ -7502,6 +8100,18 @@
     const ex = act ? act.ex : null;
     act = surfaceSetup(species, equilibria, act);
     const sf = act ? act.sf : null;
+    // A mineral that carries a surface's sites changes by its relation alone: a rate law of its own would leave them behind.
+    if (sf) {
+      for (const t of sf.types) {
+        if (!t.per) continue;
+        const mn = species[t.per.mineral].name;
+        const rx = reactions.find((x) => [...x.reactants, ...x.products].some(([, n]) => n === mn));
+        if (rx) {
+          throw new RtmError(`"${rx.text}" changes ${mn}, which carries the sites of ${species[t.sitesFrom].name}: a mineral `
+            + 'whose amount a surface\'s sites go with is held at saturation by its relation, and changes by it alone.', rx.line);
+        }
+      }
+    }
     act = potentialSetup(species, equilibria, act, settings);
     const pt = act ? act.pt : null;
     act = gasSetup(species, equilibria, act, settings, warnings, sections.GAS_PAIRS);
@@ -7546,6 +8156,15 @@
     /* ---- what the rate laws read besides concentrations ---------------- */
     const phases = readPhases(sections.PHASES, index);
     atFixedTemperature(phases.values());
+    // A phase's molar volume, from <VOLUMES>, for its log K at the pressure.
+    if (act && act.vol) {
+      for (const [name, { v, line }] of act.vol.phases) {
+        if (!phases.has(name)) {
+          throw new RtmError(`"${name}" in <VOLUMES> is not in <SPECIES> or <PHASES>.`, line);
+        }
+        phases.get(name).vm0 = v;
+      }
+    }
     // Where the activities come from: ACTIVITY's model, or without it
     // activity coefficients of 1 and the charges the names give, for I.
     const aqAct = act || (aqList.length ? noActivity(species) : null);
@@ -7577,7 +8196,7 @@
     const sitAQ = !!(act && (act.sit || act.pz));
     for (const e of aqList) {
       const set = new Set();
-      if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
+      if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ || act.dGw ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
       else if (e.kind === 'aw') { if (act) aqSolutes.forEach((k) => set.add(k)); }
       else if (e.kind === 'I') aqIons.forEach((k) => set.add(k));
       else if (e.kind === 'TK' || e.kind === 'TC' || e.kind === 'kb') {
@@ -7585,7 +8204,8 @@
       } else {
         e.phase.net.forEach(([k]) => set.add(k));
         if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k));
-        if (act && e.phase.water) aqSolutes.forEach((k) => set.add(k));
+        // The water's activity: in the phase, or in its log K at the vapour pressure (volumesAt).
+        if (act && (e.phase.water || act.dGw || (act.vol && !act.vol.idle))) aqSolutes.forEach((k) => set.add(k));
       }
       e.cols = [...set].sort((x, y) => x - y);
     }
@@ -7616,6 +8236,8 @@
           if (d) {
             d[e.s] += g;
             if (dGq[e.s]) for (const k of aqIons) d[k] += a * dGq[e.s] * 0.5 * z[k] * z[k];
+            // Through A and B, which go with a(H2O) (coefficientsAt).
+            if (w.dGw && w.dGw[e.s]) for (const k of aqSolutes) d[k] += a * w.dGw[e.s] * awOf(aqAct, w, k);
             const r = sitAQ && aqAct.sit ? aqAct.sit.rows[e.s] : null;
             if (r) for (let u = 0; u < r.k.length; u++) d[r.k[u]] += a * Math.LN10 * (r.e[u] + w.I * r.e1[u]);
             // Under Pitzer every solute's, from the evaluation's rows (pitzerAt).
@@ -7646,14 +8268,17 @@
             lnIAP += nu * (Math.log(Math.max(y[b + k], 1e-300)) + lnGq[k]);
             G += nu * dGq[k];
           }
-          const x = ph.sign * (lnIAP - lnKIn(ph.eq || ph, cell));
+          const x = ph.sign * (lnIAP - lnKAtP(ph.eq || ph, cell, w));
           const val = e.kind === 'SI' ? x / Math.LN10 : Math.exp(x);
           AQ[q] = val;
           if (d) {
             const f = ph.sign * (e.kind === 'SI' ? 1 / Math.LN10 : val);
             for (const [k, nu] of ph.net) if (y[b + k] > 0) d[k] += (f * nu) / y[b + k];
+            // The volumes, for the log K at the pressure, go with I and the water too.
+            G += pressureTermI(ph.eq || ph, w);
             if (G) for (const k of aqIons) d[k] += f * G * 0.5 * z[k] * z[k];
-            if (ph.water) for (const k of aqSolutes) d[k] += f * ph.water * awOf(aqAct, w, k);
+            const wd = waterCoef(ph.eq || ph, w);
+            if (wd) for (const k of aqSolutes) d[k] += f * wd * awOf(aqAct, w, k);
             const sd = sitAQ ? sitPartners(aqAct, ph.net, w) : null;
             if (sd) {
               for (const k of aqSolutes) if (sd[k]) d[k] += f * sd[k];
@@ -8033,7 +8658,7 @@
       // Under SIT a coefficient reads the species it is paired with, which may be neutral: every solute.
       const realGas = act && act.gas && act.gas.dln && eq.net.some(([s]) => act.gas.isGas[s]) ? act.gas.list : [];
       const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && (act.sit || act.pz) ? solutes : ions),
-        ...(eq.water ? solutes : []), ...realGas])].sort((x, y) => x - y);
+        ...(eq.water || act.dGw || (act.vol && !act.vol.idle) ? solutes : []), ...realGas])].sort((x, y) => x - y);
       return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
         kf: eq.kf, kb: eq.kf / Math.exp(eq.lnK), water: eq.water || 0, d: new Float64Array(colsOf.length) };
     });
@@ -8691,6 +9316,7 @@
       for (const r of relT) r.lnKc = new Float64Array(nc);
       for (const r of phT) r.lnKc = new Float64Array(nc);
       if (act && act.kind !== 'none') { act.Ac = new Float64Array(nc); act.Bc = new Float64Array(nc); act.wtc = new Array(nc); }
+      if (act && act.llnl) act.bdotc = new Float64Array(nc);
       if (act) act.tk = thermo.tk;
       // Pitzer's parameters and A_phi at each cell's temperature (pitzerValues).
       if (act && act.pz) { act.pz.valc = new Float64Array(nc * act.pz.np); act.pz.A0c = new Float64Array(nc); act.pz.tkc = thermo.tk; }
@@ -8720,7 +9346,14 @@
         if ((act && act.Ac) || pt) {
           const wt = waterAtT(tc[c], atmT);
           const ab = waterAt(wt, 1);
-          if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; act.wtc[c] = wt; }
+          if (act && act.Ac && act.llnl) {
+            // LLNL's tables, and no water: its A, B and B-dot at the cell's temperature.
+            const ll = llnlAt(act.llnl, tc[c], `${cellName(c)}${thermo.clock ? ` at t = ${t}` : ''}`);
+            act.Ac[c] = ll.A;
+            act.Bc[c] = ll.B;
+            act.bdotc[c] = ll.bdot;
+            act.wtc[c] = null;
+          } else if (act && act.Ac) { act.Ac[c] = ab.A; act.Bc[c] = ab.B; act.wtc[c] = wt; }
           if (act && act.pz) {
             const pz = act.pz;
             pz.A0c[c] = pitzerValues(pz, tc[c], atmT, pz.valc.subarray(c * pz.np, (c + 1) * pz.np));
@@ -8736,6 +9369,7 @@
         for (const r of relT) r.lnKc.fill(r.lnKc[0]);
         for (const r of phT) r.lnKc.fill(r.lnKc[0]);
         if (act && act.Ac) { act.Ac.fill(act.Ac[0]); act.Bc.fill(act.Bc[0]); act.wtc.fill(act.wtc[0]); }
+        if (act && act.bdotc) act.bdotc.fill(act.bdotc[0]);
         if (act && act.pz) {
           const pz = act.pz;
           pz.A0c.fill(pz.A0c[0]);
@@ -8783,7 +9417,8 @@
     const pairRate = (pr, y, b, water, cell) => {
       let fwd = pr.kf;
       for (const [k, e] of pr.reac) fwd *= e === 1 ? y[b + k] : y[b + k] ** e;
-      let lnGamma = pr.water * water.lnAw;
+      // The volumes' correction for the pressure, off ln K, is on the backward constant.
+      let lnGamma = pr.water * water.lnAw + pressureTerm(pr.eq, water);
       for (const [k, c] of pr.net) lnGamma += c * lnG[k];
       pr.kg = (pr.eq.lnKc ? pr.kf / Math.exp(pr.eq.lnKc[cell]) : pr.kb) * Math.exp(lnGamma);
       let back = pr.kg;
@@ -8904,13 +9539,14 @@
             for (const [k] of pr.reac) d[pr.at.get(k)] += pr.kf * sideDerivative(pr.reac, y, b, k);
             for (const [k] of pr.prod) d[pr.at.get(k)] -= pr.kg * sideDerivative(pr.prod, y, b, k);
             // ...and Gamma through the ionic strength and the water, and under SIT the partners.
-            let G = 0;
+            let G = pressureTermI(pr.eq, water);
             for (const [k, c] of pr.net) G += c * dG[k];
             if (pr.back !== 0) {
               const sd = sitPartners(act, pr.net, water);
+              const wd = waterCoef(pr.eq, water);
               pr.cols.forEach((k, q) => {
                 let g = G * 0.5 * act.z[k] * act.z[k];
-                if (pr.water) g += pr.water * awOf(act, water, k);
+                if (wd) g += wd * awOf(act, water, k);
                 if (sd) g += sd[k];
                 if (g) d[q] -= pr.back * g;
               });
@@ -9041,9 +9677,26 @@
       for (let c = 0; c < nc; c++) {
         const b = c * ns;
         sf.types.forEach((t, ti) => {
-          const given = t.sitesFrom >= 0 ? species[t.sitesFrom].sites : 0;
+          // Per mole of a mineral: the mineral's amount in the cell at the start times them.
+          const given = t.sitesFrom < 0 ? 0 : t.per ? t.per.ratio * initial[b + t.per.mineral] : species[t.sitesFrom].sites;
+          if (t.per && !(given > 0)) {
+            throw new RtmError(`The sites of ${nameOf[t.sitesFrom]} go with ${nameOf[t.per.mineral]}, and there is none of it${where(c)} `
+              + 'to start with: give the mineral an amount in every cell the surface\'s relations are to hold in.',
+            species[t.sitesFrom].line);
+          }
           let held = 0;
           for (const k of t.members) held += sf.n[k] * initial[b + k];
+          // Sites per mole of a mineral and amounts on them as well: the amounts, if they make that many.
+          if (t.per && held > 0) {
+            if (Math.abs(held - given) > 1e-6 * given) {
+              throw new RtmError(`The species on the surface of ${nameOf[t.sitesFrom]} take ${fmtSites(held)} sites${where(c)}, and `
+                + `${fmtSites(t.per.ratio)} per ${nameOf[t.per.mineral]} make ${fmtSites(given)}: give amounts that make them, `
+                + 'or none, and the water loads them.', species[t.sitesFrom].line);
+            }
+            sf.sites[c * nt + ti] = held;
+            for (const k of t.members) sf.shift[b + k] = Math.log(sf.n[k] / held);
+            return;
+          }
           if (given > 0 && held > 0) {
             throw new RtmError(`${nameOf[t.sitesFrom]} is given the sites of its surface, and the species on it amounts`
               + `${where(c)} as well: give the sites, which the water there loads at the start, or what is on it, not both.`,
@@ -9164,7 +9817,10 @@
       activity: act && act.kind !== 'none' ? { kind: act.kind, temperature: tcFixed !== null ? tcFixed : settings.TEMPERATURE,
         A: thermo.varies ? null : act.A, B: thermo.varies ? null : act.B,
         ions: ions.length, pairs: pairInfo.length, sit: act.sit ? act.sit.pairs.length : 0,
-        pitzer: act.pz ? { params: act.pz.np, macinnes: act.pz.icon, etheta: act.pz.etheta } : null } : null,
+        pitzer: act.pz ? { params: act.pz.np, macinnes: act.pz.icon, etheta: act.pz.etheta } : null,
+        // <VOLUMES>: how many species and phases have a molar volume, at what pressure, and whether it corrects anything.
+        volumes: act.vol ? { given: act.vol.list.length + act.vol.phases.size, pressure: act.wt ? act.wt.atmGiven : 1,
+          idle: !!act.vol.idle } : null } : null,
       /*
         THE TEMPERATURE: the number, or the expression, TEMPERATURE gives;
         whether it differs from cell to cell and goes with time; how many
@@ -9271,7 +9927,23 @@
         initial.set(speciate(model, initial, { equilibria: waterOnly }).y);
       }
       if (ex && ex.load.length) loadExchangers(model, initial);
-      if (sf && sf.load.length) loadSurfaces(model, initial);
+      // Sites per mole of a mineral: at what the water's own speciation has left of it, which they then go with.
+      if (sf && sf.load.length) {
+        const nt = sf.types.length;
+        for (const q of sf.load) {
+          const t = sf.types[q % nt];
+          if (!t.per) continue;
+          const b = Math.floor(q / nt) * ns;
+          const total = t.per.ratio * initial[b + t.per.mineral];
+          if (!(total > 0)) {
+            throw new RtmError(`The sites of ${nameOf[t.sitesFrom]} go with ${nameOf[t.per.mineral]}, and the water's own `
+              + `speciation leaves none of it${nc === 1 ? '' : ` in cell ${geom[Math.floor(q / nt)].i}`}.`, species[t.sitesFrom].line);
+          }
+          sf.sites[q] = total;
+          for (const k of t.members) sf.shift[b + k] = Math.log(sf.n[k] / total);
+        }
+        loadSurfaces(model, initial);
+      }
     }
     if (settings.EQUILIBRATE && equilibria.length) {
       const done = speciate(model, initial);
@@ -9419,7 +10091,7 @@
     const dG = act ? new Float64Array(ns) : null;
     // Under SIT a coefficient reads the species it is paired with as well, which may be neutral: every solute.
     const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
-      || ((eq.water || act.sit || act.pz) && act.solute[k])
+      || ((eq.water || act.sit || act.pz || act.dGw || (act.vol && !act.vol.idle)) && act.solute[k])
       || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))) : []));
     const n = nBase + nc * nb;
     const tIndex = (c, j) => nBase + c * nb + j;
@@ -9438,6 +10110,16 @@
     const nmin = mins.length;
     const present = new Uint8Array(nc * ne).fill(1);
     const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
+    /*
+      A mineral that carries a surface's sites (per=) is taken as used up at
+      1e-4 of what its cell starts with: its sites go with it, and the
+      species on them, held as ln C, cannot follow them to none -- the run
+      stops there and says so (applyEvent).
+    */
+    const usedUp = new Float64Array(nc * ne);
+    eqs.forEach((eq, r) => {
+      if (eq.carry && eq.mineral >= 0) for (let c = 0; c < nc; c++) usedUp[c * ne + r] = 1e-4 * start[c * ns + eq.mineral];
+    });
     /*
       THE GROUPS -- a bubble at a fixed pressure (gasSetup), a solid solution
       (solidSolutionSetup): each one's relations come and go together, at one
@@ -9660,7 +10342,7 @@
     // evaluation of the cell when there is ACTIVITY.
     const relationAt = (b, r, y, water) => {
       const eq = eqs[r];
-      let g = -lnKIn(eq, (b / ns) | 0);
+      let g = -lnKAtP(eq, (b / ns) | 0, water);
       for (const [sp, nu] of eq.net) {
         if (isMin[sp]) continue;
         g += nu * (held[b + sp] ? y[b + sp] : Math.log(C[b + sp]));
@@ -9873,9 +10555,9 @@
           if (!act) continue;
           // The coefficients through the ionic strength, and the water: in
           // a held species' column times C, as everything in ln C is.
-          let G = 0;
+          let G = pressureTermI(eqs[r], water);
           for (const [s, nu] of eqs[r].net) G += nu * dG[s];
-          const w = eqs[r].water || 0;
+          const w = waterCoef(eqs[r], water);
           const sd = sitPartners(act, eqs[r].net, water);
           actCols[r].forEach((k, q) => {
             let d = G * 0.5 * act.z[k] * act.z[k];
@@ -9899,9 +10581,9 @@
               row[bub.loc.get(s)] += f * (held[b + s] ? nu : nu / C[b + s]);
             }
             if (act) {
-              let Gd = 0;
+              let Gd = pressureTermI(eq, water);
               for (const [s, nu] of eq.net) Gd += nu * dG[s];
-              const w = eq.water || 0;
+              const w = waterCoef(eq, water);
               const sd = sitPartners(act, eq.net, water);
               for (const k of actCols[r]) {
                 let d = Gd * 0.5 * act.z[k] * act.z[k];
@@ -10138,7 +10820,7 @@
     // A relation without its gas, at the concentrations Cc of the cell at b.
     const relationOf = (Cc, b, r, water) => {
       const eq = eqs[r];
-      let g = -lnKIn(eq, (b / ns) | 0);
+      let g = -lnKAtP(eq, (b / ns) | 0, water);
       for (const [sp, nu] of eq.net) {
         if (isMin[sp]) continue;
         g += nu * Math.log(Math.max(Cc[b + sp], 1e-300));
@@ -10201,10 +10883,10 @@
           for (let q = 0; q < nmin; q++) {
             const r = mins[q];
             const m = eqs[r].mineral;
-            if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] ? -y[b + m] : -1; continue; }
-            if (present[c * ne + r]) { out[c * nmin + q] = -Cstar[b + m]; continue; }
+            if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] ? usedUp[c * ne + r] - y[b + m] : -1; continue; }
+            if (present[c * ne + r]) { out[c * nmin + q] = usedUp[c * ne + r] - Cstar[b + m]; continue; }
             const eq = eqs[r];
-            let g = -lnKIn(eq, c);
+            let g = -lnKAtP(eq, c, water);
             for (const [sp, nu] of eq.net) {
               if (isMin[sp]) continue;
               g += nu * Math.log(Math.max(Cstar[b + sp], 1e-300));
@@ -10233,7 +10915,7 @@
         for (let q = 0; q < nmin; q++) {
           const r = mins[q];
           const m = eqs[r].mineral;
-          if (present[c * ne + r]) { out[c * nmin + q] = -y[b + m]; continue; }
+          if (present[c * ne + r]) { out[c * nmin + q] = usedUp[c * ne + r] - y[b + m]; continue; }
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
           out[c * nmin + q] = (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
         }
@@ -10284,6 +10966,15 @@
       present[at] = present[at] ? 0 : 1;
       lastEvent = { c, r: present[at] ? r : -1, which };
       const name = base.speciesNames[eqs[r].mineral];
+      /*
+        A mineral that carries a surface's sites (per=, surfaceSetup) takes
+        them with it as it goes: a surface with none is no surface the page
+        carries.
+      */
+      if (!present[at] && eqs[r].carry) {
+        throw new RtmError(`${name} has dissolved away${where(c)}, and the sites of the surface that goes with it, so many `
+          + 'per mole of it, with it: the page carries no surface with no sites. Give more of it, or end the run before.');
+      }
       events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
       return [name];
     }
@@ -10540,7 +11231,7 @@
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
     chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
-    pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam,
+    pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP,
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
