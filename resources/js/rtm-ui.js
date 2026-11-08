@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108l';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108m';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108l';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108m';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108l',
+    'resources/js/rtm-phreeqc.js?v=20261108m',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2979,9 +2979,13 @@ END
       if (r.exchange) {
         out.push(`<p>On the exchanger ${r.exchange.exchangers.map(esc).join(', ')}: ${r.exchange.species
           .map((e) => `${esc(e.as)} (${pqNum(e.amount)} mol/kgw)`).join(', ')}, held on it by Gaines–Thomas.</p>`);
+        for (const x of r.exchange.per || []) {
+          out.push(`<p>The sites of ${esc(x.exchanger)} go with ${esc(x.mineral)}, ${pqNum(x.ratio)} of ${esc(x.as)} to each `
+            + `mole of it (PHREEQC's ${esc(x.kind)}): ${pqNum(x.sites)} sites a mole, coming and going with it.</p>`);
+        }
         for (const x of r.exchange.linked || []) {
           out.push(`<p class="warn">In PHREEQC the capacity of ${esc(x.exchanger)} goes with ${esc(x.phase)}, `
-            + `${pqNum(x.ratio)} to each mole of it; here it is held at what PHREEQC loaded at the start.</p>`);
+            + `${pqNum(x.ratio)} to each mole of it; here it is held at what PHREEQC loaded at the start: ${esc(x.why)}.</p>`);
         }
       }
       if (r.exchangeSkipped && r.exchangeSkipped.length) {

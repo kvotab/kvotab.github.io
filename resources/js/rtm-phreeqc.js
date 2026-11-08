@@ -2828,6 +2828,47 @@
       }
     }
     /*
+      An exchanger whose sites go with a phase or a kinetic reactant,
+      PHREEQC's `CaX2 Montmorillonite equilibrium_phase 0.165`: its formula
+      a species on it, charge-balanced with its ion as PHREEQC's manual has
+      it, so many of it to each mole -- written on that species, sites= per=
+      the mineral it is carried as, its sites n times as many. Held at what
+      PHREEQC loaded at the start instead, and said: a formula that is the
+      bare exchanger (X), whose sites PHREEQC takes away leaving their charge
+      behind; one that is no species carried on it; a phase or reactant not
+      carried; two such lines on one exchanger.
+    */
+    const exPer = new Map();
+    const exHeld = [];
+    if (onEx.length) {
+      const linked = linkedExchangers(o.water.text);
+      const formOf = (x) => onEx.find((q) => q.species === x.master) || null;
+      const lines = new Map();
+      for (const x of linked) {
+        const e = formOf(x);
+        if (e) lines.set(e.master, (lines.get(e.master) || 0) + 1);
+      }
+      for (const x of linked) {
+        const e = formOf(x);
+        const ph = x.phase.toLowerCase();
+        const carrier = x.kind === 'kinetic_reactant' ? kinetics.find((k) => k.comp.name.toLowerCase() === ph) || null
+          : minerals.find((mn) => mn.phase.toLowerCase() === ph) || null;
+        let why = null;
+        if (!e) {
+          why = db.exMaster.has(x.master) ? `its formula is the bare exchanger, ${x.master}, where PHREEQC's manual has a `
+            + `species on it with its ion, Na${x.master} or Ca${x.master}2` : `its formula, ${x.master}, is no species carried on it`;
+        } else if (!carrier) {
+          why = `${x.kind === 'kinetic_reactant' ? 'the kinetic reactant' : 'the phase'} ${x.phase} is not carried`;
+        } else if (lines.get(e.master) > 1) why = 'more than one line of its exchanger goes with a phase or a reactant';
+        if (why) {
+          exHeld.push({ exchanger: x.master, phase: x.phase, kind: x.kind, ratio: x.ratio, why });
+          continue;
+        }
+        const n = (e.right.concat(e.left).find((t) => t.n === e.master) || { c: 0 }).c;
+        exPer.set(e.species, { ratio: x.ratio, sites: n * x.ratio, carrier, kind: x.kind });
+      }
+    }
+    /*
       THE SURFACES: each species PHREEQC put on one, at its molality, with
       its relation as the database writes it and the database's log K, which
       a run holds exactly; its activity is its fraction of its type's sites.
@@ -3381,6 +3422,17 @@
         out.push(`# PHREEQC takes the coefficient of ${folded.map((e) => e.name).join(', ')} from more than its one ion; `
           + 'here it is folded into the log K at this water.');
       }
+      for (const e of onEx) {
+        const p = exPer.get(e.species);
+        if (!p) continue;
+        out.push(`# The sites of ${exName.get(e.master)} go with ${p.carrier.name}, ${fmtG(p.ratio, 6)} of ${e.name} to each mole `
+          + `of it (PHREEQC's ${p.kind}),`);
+        out.push(`# ${fmtG(p.sites, 6)} sites a mole (sites= per=): each species on them has its fraction of what is on it now.`);
+      }
+      for (const x of exHeld) {
+        out.push(`# In PHREEQC the capacity of ${x.exchanger} goes with ${x.phase}; here it is held at what PHREEQC loaded at `
+          + `the start: ${x.why}.`);
+      }
     }
     if (exSkipped.length) {
       out.push(`# Not carried from the exchanger: ${exSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
@@ -3519,7 +3571,10 @@
       const amount = fmtG(e.m, 15);
       const g = e.gamma && !sitLike ? (e.gamma.llnl ? `  a=${fmtG(e.gamma.a, 15)}`
         : `  a=${fmtG(e.gamma.a, 6)}  b=${fmtG(e.gamma.b, 6)}`) : '';
-      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`);
+      // The form an exchanger's sites go with a mineral in: so many sites to each mole of it (sites= per=).
+      const p = exPer.get(e.species);
+      out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}exchange${g}`
+        + `${p ? `  sites=${fmtG(p.sites, 12)}  per=${p.carrier.name}` : ''}`);
     }
     // What a surface's sites, and its area, go with: a mineral, or a kinetic reactant, as written.
     const carrierOf = (phase, kind) => (!phase ? null : kind === 'kinetic_reactant'
@@ -3817,10 +3872,15 @@
         pressure: { atm, vapour: atVapour, volumes: volumes ? volLines.length : 0 },
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
         phasesSkipped,
-        // An exchanger whose capacity goes with a phase or a kinetic reactant in PHREEQC, held here at PHREEQC's at the start.
+        // An exchanger whose sites go with a phase or a kinetic reactant in PHREEQC: carried so (per, sites= per=), or
+        // held here at what PHREEQC loaded at the start (linked), and why.
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),
-          linked: linkedExchangers(o.water.text).map((x) => ({ exchanger: x.master, phase: x.phase, kind: x.kind,
-            ratio: x.ratio })),
+          per: onEx.filter((e) => exPer.has(e.species)).map((e) => {
+            const p = exPer.get(e.species);
+            return { exchanger: exName.get(e.master), species: e.species, as: e.name, ratio: p.ratio, sites: p.sites,
+              mineral: p.carrier.name, kind: p.kind };
+          }),
+          linked: exHeld,
           species: onEx.map((e) => ({ species: e.species, as: e.name, amount: e.m, folded: e.folded })) } : null,
         exchangeSkipped: exSkipped,
         surface: onSf.length ? { sites: onSf.filter((e) => e.master).map((e) => e.name),

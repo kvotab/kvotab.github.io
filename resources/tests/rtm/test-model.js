@@ -6457,7 +6457,7 @@ console.log('\n--- sites that go with a mineral ---');
   const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
   const cases = [
     ['per= naming no mineral', text({ per: 'Ca+2' }), /which is no mineral in <SPECIES>/],
-    ['per= without sites=', text().replace('sites=0.05 per=Anh', 'per=Anh'), /per names the mineral a surface's sites, or its potential's area, go with/],
+    ['per= without sites=', text().replace('sites=0.05 per=Anh', 'per=Anh'), /per names the mineral a surface's sites, its potential's area, or an exchanger's sites, go with/],
     ['a mineral with two relations', text({ species: 'CaSO4 0', eq: 'Anh <=> CaSO4, logK = -2.3' }),
       /Anh is in two relations/],
     ['a relation taking more of the surface than it makes', text({ species: 'Sx_O2Zn 0 surface',
@@ -6578,6 +6578,167 @@ console.log('\n--- sites that go with a mineral ---');
     + `relations ${kRel.toExponential(1)}, zinc on them ${kOn[0].toExponential(3)} to ${kOn[1].toExponential(3)}; the `
     + `Jacobian ${kBad} of ${kChecked} off${/and the species/.test(kBoth) ? '' : `; both: "${kBoth}"`}${
       /dissolved away/.test(kUsedUp) ? '' : `; used up: "${kUsedUp.slice(0, 160)}"`}`);
+}
+
+/*
+   AN EXCHANGER'S SITES THAT GO WITH A MINERAL (sites= per= on a species on
+   it, PHREEQC's `CaX2 Montmorillonite equilibrium_phase 0.165`): as calcium
+   is taken out, anhydrite held at saturation dissolves, and the sites, 0.1
+   to each mole of it in the form of CaX2, go with it. At every stored point
+   what is on the exchanger is 0.1 times the mineral, and the relations hold
+   with each species' activity its fraction of what is on it now, n C over
+   the sum of n C -- Gaines-Thomas at the capacity the cell has then, which
+   in exchange between ions of different charge is not the capacity it
+   started with; the sodium and the sulphate stay; the Jacobian against
+   differences, without activity coefficients, under Davies and under SIT
+   (each species on it taking its ion's coefficient). Then the mineral made
+   and used at a rate, a column, the electron's projected form, and what is
+   refused. Made-up constants.
+*/
+console.log('\n--- an exchanger\'s sites that go with a mineral ---');
+{
+  const text = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1e4}\nEQUILIBRATE = ${o.equilibrate || 'always'}\n`
+    + `${o.act ? `ACTIVITY = ${o.act}\n` : ''}\n<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCa+2 0.01\nSO4-2 0.01\nNa+ 0.05\nCl- 0.05\n`
+    + `${o.redox ? 'Fe+2 1e-4\nFe+3 1e-6\ne- electron\n' : ''}Anh ${o.anh || 0.05} mineral\nX- exchanger${o.cap ? ` ${o.cap}` : ''}\n`
+    + `CaX2 ${o.amount || 0} exchange sites=${o.sites || 0.1} per=${o.per || 'Anh'}\nNaX ${o.naAmount || 0} exchange\n`
+    + `${o.redox ? 'FeX2 0 exchange\n' : ''}${o.species || ''}\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\n`
+    + `${o.redox ? 'Fe+2 <=> Fe+3 + e-, logK = -13\nFe+2 + 2 X- <=> FeX2, logK = 0.44\n' : ''}`
+    + `${o.kinetic ? '' : 'Anh <=> Ca+2 + SO4-2, logK = -4.36\n'}Na+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\n`
+    + `${o.eq || ''}\n${o.act === 'sit' ? '<SIT>\nH+ Cl- 0.12\nNa+ Cl- 0.03\nNa+ OH- 0.04\nCa+2 Cl- 0.14\nNa+ SO4-2 -0.12\n\n' : ''}`
+    + `<REACTIONS>\n${o.react !== undefined ? o.react : o.kinetic ? 'Anh => Ca+2 + SO4-2, r = 2e-4*[Anh]' : 'Ca+2 =>, r = 3e-4*[Ca+2]'}\n`
+    + `${o.redox ? 'Fe+3 + e- =>, r = 1e-5*[Fe+3]\n' : ''}`;
+  // At every stored point and in every cell: what is on the exchanger against 0.1 times the mineral, the relations
+  // with each species' activity, its coefficient beyond its ion's against ln(n/sum), and the sodium and sulphate.
+  const look = (m, r, o = {}) => {
+    const at = (n) => m.speciesNames.indexOf(n);
+    const ns = m.speciesNames.length;
+    const out = { ratio: 0, rel: 0, frac: 0, kept: 0, M: [0, 0], f: [0, 0] };
+    let na0 = 0;
+    let s0 = 0;
+    r.y.forEach((yy, i) => {
+      const C = m.toConcentrations(yy);
+      for (let c = 0; c < m.cells; c++) {
+        const b = c * ns;
+        const v = (n) => C[b + at(n)];
+        const sum = v('NaX') + 2 * v('CaX2') + (o.redox ? 2 * v('FeX2') : 0);
+        out.ratio = Math.max(out.ratio, Math.abs(sum / (0.1 * v('Anh')) - 1));
+        const lnG = new Float64Array(ns);
+        RtmModel.activityAt(m.act, C, b, lnG, new Float64Array(ns), c);
+        const lnA = (n) => Math.log(v(n)) + lnG[at(n)];
+        out.rel = Math.max(out.rel, Math.abs(lnA('NaX') - lnA('Na+') - lnA('X-')),
+          Math.abs(lnA('CaX2') - lnA('Ca+2') - 2 * lnA('X-') - 0.8 * Math.LN10));
+        if (!o.kinetic) out.rel = Math.max(out.rel, Math.abs(lnA('Ca+2') + lnA('SO4-2') + 4.36 * Math.LN10));
+        const ion = (n) => (o.act === 'sit' ? lnG[at(n)] : 0);
+        out.frac = Math.max(out.frac, Math.abs(lnG[at('NaX')] - ion('Na+') + Math.log(sum)),
+          Math.abs(lnG[at('CaX2')] - ion('Ca+2') - Math.log(2 / sum)));
+        if (m.cells === 1) {
+          const na = v('Na+') + v('NaX');
+          const s = v('SO4-2') + v('Anh');
+          if (i === 0) { na0 = na; s0 = s; }
+          out.kept = Math.max(out.kept, Math.abs(na / na0 - 1), Math.abs(s / s0 - 1));
+        }
+        if (c === 0) {
+          if (i === 0) { out.M[0] = v('Anh'); out.f[0] = (2 * v('CaX2')) / sum; }
+          out.M[1] = v('Anh');
+          out.f[1] = (2 * v('CaX2')) / sum;
+        }
+      }
+    });
+    return out;
+  };
+  const jac = (mk, tends) => {
+    let bad = 0;
+    let checked = 0;
+    for (const tend of tends) {
+      const m2 = mk(tend);
+      const r2 = run(m2, { tend, rtol: 1e-9 });
+      const v = RtmModel.verifyJacobian(m2, tend, last(r2));
+      bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      checked += v.checked;
+    }
+    return { bad, checked };
+  };
+  const held = [{}, { act: 'davies' }, { act: 'sit' }].map((o) => {
+    const m = RtmModel.compile(text(o));
+    const res = look(m, run(m, { tend: 1e4 }), o);
+    return { ...res, act: o.act || 'none', ...jac((tend) => RtmModel.compile(text({ ...o, tend })), [10, 3000, 9000]) };
+  });
+  check('an exchanger\'s sites that go with a mineral held at saturation, 0.1 to each mole of it as CaX2: as calcium is '
+    + 'taken out and the mineral dissolves, what is on the exchanger is 0.1 times it at every stored point, the relations '
+    + 'hold with each species\' fraction of what is on it now, the calcium\'s share falls, the sodium and the sulphate stay; '
+    + 'the Jacobian against differences; without activity coefficients, under Davies and under SIT', held.every((h) =>
+    h.ratio < 1e-12 && h.rel < 1e-10 && h.frac < 1e-12 && h.kept < 1e-12 && h.M[1] < h.M[0] - 0.005 && h.f[1] < h.f[0] - 0.04
+    && h.bad === 0),
+  held.map((h) => `${h.act}: the mineral ${h.M[0].toFixed(5)} to ${h.M[1].toFixed(5)}, calcium's share ${h.f[0].toFixed(3)} to `
+    + `${h.f[1].toFixed(3)}, the sites within ${h.ratio.toExponential(1)}, the relations ${h.rel.toExponential(1)}, the `
+    + `fractions ${h.frac.toExponential(1)}, the totals ${h.kept.toExponential(1)}; the Jacobian ${h.bad} of ${h.checked} off`)
+    .join('; '));
+
+  // Made and used at a rate, no relation of its own: each reaction that changes it takes its sites with it, as CaX2.
+  const km = RtmModel.compile(text({ kinetic: true }));
+  const kr = look(km, run(km, { tend: 1e4 }), { kinetic: true });
+  const kj = jac((tend) => RtmModel.compile(text({ kinetic: true, tend })), [10, 3000, 9000]);
+  // In a column, salt in at the inlet; and with the electron, whose models are held in the projected form.
+  const column = (tend) => RtmModel.compile(text({ tend, act: 'davies', anh: 0.3 }).replace('MODE = batch\n',
+    'MODE = transport\nCELLS = 8\nLENGTH = 0.1\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = 1e-5\nLEFT = robin\nRIGHT = free\n')
+    .replace(/^(H\+|OH-) 1e-7$/gm, '$1 1e-7 D=1e-9 left=1e-7').replace(/^(Ca\+2|SO4-2) 0\.01$/gm, '$1 0.01 D=1e-9 left=0')
+    .replace(/^(Na\+|Cl-) 0\.05$/gm, '$1 0.05 D=1e-9 left=0.2').replace('Ca+2 =>, r = 3e-4*[Ca+2]', ''));
+  const cm = column(1e4);
+  const cr = look(cm, run(cm, { tend: 1e4, rtol: 1e-9 }));
+  const cj = jac(column, [500, 3000, 10000]);
+  const em = RtmModel.compile(text({ redox: true, anh: 0.03 }));
+  const er = look(em, run(em, { tend: 1e4 }), { redox: true });
+  const ej = jac((tend) => RtmModel.compile(text({ redox: true, anh: 0.03, tend })), [10, 3000, 9000]);
+  check('  made and used at a rate, no relation of its own: each reaction that changes the mineral takes its sites with it; '
+    + 'in a column with salt coming in; and with the electron, held in the projected form: what is on the exchanger the '
+    + 'mineral\'s 0.1 times, the relations, the Jacobian against differences', [[kr, kj], [cr, cj], [er, ej]].every(([x, j]) =>
+    x.ratio < 1e-12 && x.rel < 1e-10 && x.frac < 1e-12 && j.bad === 0) && kr.M[1] < 0.2 * kr.M[0] && kr.kept < 1e-12
+    && cr.M[1] < cr.M[0] - 0.05 && er.kept < 1e-12,
+  [['at a rate', kr, kj], ['the column\'s inlet cell', cr, cj], ['with the electron', er, ej]].map(([w, x, j]) => `${w}: the `
+    + `mineral ${x.M[0].toFixed(5)} to ${x.M[1].toFixed(5)}, calcium's share ${x.f[0].toFixed(3)} to ${x.f[1].toFixed(3)}, the `
+    + `sites within ${x.ratio.toExponential(1)}, the relations ${x.rel.toExponential(1)}; the Jacobian ${j.bad} of ${j.checked} `
+    + 'off').join('; '));
+
+  // Amounts given with the sites: the start loading puts them where they are; and what is refused, with its reason.
+  const m0 = RtmModel.compile(text());
+  const C0 = m0.toConcentrations(m0.initialState());
+  let gtext = text();
+  m0.speciesNames.forEach((n, k) => {
+    if (n === 'X-') return;
+    const esc = n.replace(/[+()]/g, (ch) => `\\${ch}`);
+    gtext = gtext.replace(new RegExp(`^${esc} [^ \\n]+`, 'm'), `${n} ${C0[k]}`);
+  });
+  const given = RtmModel.compile(gtext);
+  const Cg = given.toConcentrations(given.initialState());
+  const sameStart = m0.speciesNames.every((n, k) => n === 'X-' || C0[k] === 0 || Math.abs(Cg[k] / C0[k] - 1) < 1e-10);
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const cases = [
+    ['sites= without per=', text().replace('sites=0.1 per=Anh', 'sites=0.1'), /there sites go with per=/],
+    ['per= without sites=', text().replace('sites=0.1 per=Anh', 'per=Anh'), /or an exchanger's sites, go with/],
+    ['per= naming no mineral', text({ per: 'Ca+2' }), /which is no mineral in <SPECIES>/],
+    ['two species the form its sites go in', text().replace('NaX 0 exchange', 'NaX 0 exchange sites=0.05 per=Anh'),
+      /one species on an exchanger is the form its sites go in/],
+    ['its relations not held all through', text({ equilibrate: 1 }), /EQUILIBRATE = always/],
+    ['a relation on it with a rate', text({ eq: 'Ca+2 + 2 NaX <=> CaX2 + 2 Na+, logK = 0.8, kf = 1e3' }), /has a rate, kf/],
+    ['a capacity on the exchanger\'s line', text({ cap: 0.005 }), /the mineral gives the capacity, and the exchanger's line none/],
+    ['amounts that do not make the sites', text({ amount: 0.001 }), /give amounts that make them/],
+    ['a reaction changing the mineral held at saturation', text({ react: 'Anh => Ca+2 + SO4-2, r = 1e-6' }),
+      /it changes by that alone/],
+    ['a reaction that writes what is on it beside the mineral at a rate',
+      text({ kinetic: true, react: 'Anh + 0.05 CaX2 => 1.05 Ca+2 + SO4-2, r = 2e-4*[Anh]' }),
+      /and what is on them as well: the sites go with it by themselves/],
+    ['a mineral in two relations', text({ species: 'CaSO4 0', eq: 'Anh <=> CaSO4, logK = -2.3' }), /Anh is in two relations/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  const usedUp = (o, tend) => { try { run(RtmModel.compile(text({ ...o, tend })), { tend }); return '(ran)'; } catch (e) { return e.message; } };
+  const heldUp = usedUp({ anh: 0.02, react: 'Ca+2 =>, r = 1e-3*[Ca+2]' }, 1e5);
+  const kinUp = usedUp({ kinetic: true, react: 'Anh => Ca+2 + SO4-2, r = 1e-7*(m/0.05)^0.6, m = ramp([Anh])' }, 2e6);
+  const sayUp = /Anh has dissolved away, and the sites of the exchanger that goes with it/;
+  check('  amounts given with the sites start where loading them puts them; refused, each with its reason: '
+    + `${cases.map((c) => c[0]).join('; ')}; and a run in which the mineral is used up, held or at a rate, stops and says why`,
+  sameStart && !wrong.length && sayUp.test(heldUp) && sayUp.test(kinUp),
+  `${sameStart ? '' : 'the start differs; '}${wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | ')}${
+    sayUp.test(heldUp) ? '' : ` held, used up: "${heldUp.slice(0, 160)}"`}${sayUp.test(kinUp) ? '' : ` at a rate: "${kinUp.slice(0, 160)}"`}`);
 }
 
 /*

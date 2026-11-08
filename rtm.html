@@ -544,7 +544,8 @@ UO2                      # no number: starts at zero, does not move</pre>
             does, and <code>mineral</code> makes it a pure
             phase: see <em>Minerals</em> below, and for a mineral that is an end member of a solid
             solution <em>Solid solutions</em>. <code>exchanger</code> makes it the sites of an ion
-            exchanger and <code>exchange</code> a species on them: see <em>Ion exchange</em> below.
+            exchanger and <code>exchange</code> a species on them, with <code>sites=</code> and
+            <code>per=</code> the sites that go with a mineral in its form: see <em>Ion exchange</em> below.
             <code>surface</code> makes it a species on a surface, with <code>sites=</code> its sites,
             and <code>potential</code> the surface's potential, with <code>area=</code> and
             <code>grams=</code>: see <em>Surface complexation</em> below.
@@ -1431,6 +1432,31 @@ Ca+2 + 2 X- &lt;=&gt; CaX2,   logK = 0.8</pre>
             PHREEQC's <code>EXCHANGE</code> with <code>-equilibrate</code>. Under
             <code>EQUILIBRATE</code> the water is first put on its own relations. Give one or the
             other in a cell, not both. Every cell its relations hold in needs some capacity.</p>
+          <pre>Anhydrite  0.02  mineral
+X-         exchanger
+CaX2       exchange  sites=0.1  per=Anhydrite
+NaX        exchange</pre>
+          <p>With <code>sites=</code> and <code>per=</code> on a species on it, the exchanger's sites go
+            with a mineral's amount, so many to each mole of it, in that species' form: PHREEQC's
+            <code>EXCHANGE</code> with <code>equilibrium_phase</code> or <code>kinetic_reactant</code>, whose
+            formula is a species on the exchanger with its ion, here 0.05 of CaX2 to each mole, two sites
+            each. The capacity is 0.1 times the mineral in the cell at every moment. The mineral counts
+            the CaX2 as part of it: as it dissolves its relation gives the water all of it, and the
+            exchanger loses 0.05 of CaX2 a mole, its sites and as much calcium, so that what was on them
+            comes off and the calcium is counted once; as it precipitates there are more. Each species'
+            activity is its fraction of what is on the exchanger then, which in exchange between ions of
+            different charge is not its fraction at the capacity the cell started with. The mineral is
+            held at saturation by its relation, or has none and is made and used at a rate, each reaction
+            in <code>&lt;REACTIONS&gt;</code> that changes it taking or giving the sites with it. One
+            species on an exchanger is the form its sites go in, and the exchanger's line gives no
+            capacity: the exchanger is loaded from the water at the mineral the water's own relations
+            leave, or its species are given amounts that take that many sites. Its relations are held
+            all through the run, <code>EQUILIBRATE = always</code>, and take no <code>kf</code>; a rate
+            law of its own on a mineral held at saturation is refused, and so is a reaction that writes
+            what is on the exchanger beside the mineral it changes. A run in which the mineral is used
+            up in a cell stops there, as with a surface's sites, and says so. On PHREEQC's own water —
+            CaX2 on anhydrite, 0.3&nbsp;mol/kgw of NaCl dissolving 86&nbsp;% of it — the anhydrite, CaX2,
+            NaX and the pH are PHREEQC's to 2×10<sup>−9</sup>.</p>
           <p>The relations with the exchanger in them are held, by <code>EQUILIBRATE</code>: the
             exchanger takes no <code>kf</code>. Exchange at a rate is a relation between species on the
             exchanger with a <code>kf</code>, such as <code>Ca+2 + 2 NaX &lt;=&gt; CaX2 + 2 Na+, logK =
@@ -1992,9 +2018,14 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             database's <code>-gamma</code>. A species whose coefficient PHREEQC takes from more than
             its one ion has it folded into its log K at this water, and the text says so. The
             run then starts from the exchanger PHREEQC loaded. Held as fast pairs instead, the
-            exchanger is not carried, and the report says so. An exchanger whose capacity goes with a
-            phase or a kinetic reactant (<code>X Calcite equilibrium_phase 0.1</code>) is carried at the
-            capacity PHREEQC loaded at the start, which the run holds, and the report says that too.</p>
+            exchanger is not carried, and the report says so. An exchanger whose sites go with a
+            phase or a kinetic reactant, its formula a species on it with its ion as PHREEQC's manual
+            has it (<code>CaX2 Calcite equilibrium_phase 0.05</code>), is written <code>sites=</code> and
+            <code>per=</code> on that species, the sites a mole the formula's times its sites, the
+            phase or the reactant carried as a mineral. One whose formula is the bare exchanger
+            (<code>X</code>), whose sites PHREEQC takes away leaving their charge behind, or whose phase
+            is not carried, is held at the capacity PHREEQC loaded at the start, and the report says
+            so and why.</p>
           <p>A surface in the input, a <code>SURFACE</code> that PHREEQC's last calculation holds, is
             carried in the same way. Each species PHREEQC put on it becomes a <code>surface</code> species
             at PHREEQC's molality, the bare sites among them (see <em>Surface complexation</em> above),
@@ -2302,7 +2333,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             PHREEQC's to 10<sup>−9</sup>, the pH to 7×10<sup>−8</sup> and the zinc on the sites, taken up
             as the pH rises and let go as they go, to 10<sup>−6</sup>, counted in moles, PHREEQC's
             kilogram moving by 3×10<sup>−6</sup>; with a double layer of 53&nbsp;300&nbsp;m² to each mole,
-            to 3×10<sup>−10</sup>, 4×10<sup>−9</sup> and 2×10<sup>−7</sup>.</p>
+            to 3×10<sup>−10</sup>, 4×10<sup>−9</sup> and 2×10<sup>−7</sup>. The same host with an
+            exchanger instead, 0.1 of NaX to each mole of it, in a water with calcium and sodium:
+            the host, the ions in the water, CaX2 on the sites and the pH to 3×10<sup>−9</sup>, NaX, a
+            trace beside the calcium, to 10<sup>−7</sup>.</p>
 
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
@@ -2451,7 +2485,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108l"></script>
+  <script src="./resources/js/rtm-model.js?v=20261108m"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2459,6 +2493,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108l"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261108m"></script>
 </body>
 </html>

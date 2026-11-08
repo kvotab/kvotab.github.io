@@ -2935,6 +2935,120 @@ function againstSurfaceMineral(engine) {
     + `${(psi * 1e3).toFixed(4)} mV for PHREEQC's ${(Number(pqd.x[1]) * 1e3).toFixed(4)}`);
 }
 
+/* ======================================================================
+   AN EXCHANGER'S SITES THAT GO WITH A PHASE OR A KINETIC REACTANT:
+   PHREEQC's `CaX2 Anhydrite equilibrium_phase 0.05` and `NaX NaOHs
+   kinetic_reactant 0.1`, handed off as sites= per= on the species, salt
+   added against REACTION and the host dissolving against KINETICS
+   ====================================================================== */
+function againstExchangeMineral(engine) {
+  const db = { name: 'phreeqc.dat', text: dbText };
+  /*
+    CaX2 on anhydrite, 0.05 of it to each mole -- 0.1 sites -- in a sodium
+    chloride water: 0.3 mol/kgw more of the salt dissolves 86 % of the
+    anhydrite, the sites go with it, and calcium and sodium share what is
+    left as Gaines-Thomas has it at the capacity there. And the same with
+    the capacity held where it started, as a check that the check can tell.
+  */
+  const water = () => `${KNOBS}SOLUTION 1\n pH 7\n units mol/kgw\n Na 0.1\n Cl 0.1 charge\n Ca 0.01\n S(6) 0.01\n`
+    + 'EQUILIBRIUM_PHASES 1\n Anhydrite 0 0.05\nEXCHANGE 1\n CaX2 Anhydrite equilibrium_phase 0.05\n -equilibrate 1\n'
+    + 'SAVE solution 1\nSAVE equilibrium_phases 1\nSAVE exchange 1\nEND\n';
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database: db, water: { name: 'on anhydrite', text: water() }, activity: true,
+    exact: true, redox: false, floor: 1e-30, phases: true });
+  const m = RtmModel.compile(res.text);
+  const y0 = m.toConcentrations(m.initialState());
+  let start = 0;
+  for (const [n, a] of res.amounts) {
+    const k = m.speciesNames.indexOf(n);
+    if (a > 1e-25 && k >= 0) start = Math.max(start, Math.abs(y0[k] / a - 1));
+  }
+  engine.load(dbText);
+  const pq = P.parseRows(engine.run(`${P.punchBlock(['EQUI("Anhydrite")', 'MOL("CaX2")', 'MOL("NaX")', 'TOT("water")'])}`
+    + `${water()}USE solution 1\nUSE equilibrium_phases 1\nUSE exchange 1\nREACTION 1\n NaCl 1\n 0.3 moles\nEND\n`)).pop();
+  const salted = (text) => {
+    const m2 = RtmModel.compile(`${text.replace(/TEND = [^\n]*\n/, 'TEND = 1e5\n')}\n<REACTIONS>\n=> Na+ + Cl-, k = 3e-6\n`);
+    const r = FacsimileODE.runModel(m2, { solver: 'ndf', tend: 1e5, rtol: 1e-10, atol: 1e-20 });
+    const ye = m2.toConcentrations(r.y[r.y.length - 1]);
+    const at = (n) => ye[m2.speciesNames.indexOf(n)];
+    const lnG = new Float64Array(ye.length);
+    RtmModel.activityAt(m2.act, ye, 0, lnG, new Float64Array(ye.length));
+    const kH = m2.speciesNames.indexOf('H+');
+    return { M: Math.abs(at('Anhydrite') / Number(pq.x[0]) - 1), CaX: Math.abs(at('CaX2') / Number(pq.x[1]) - 1),
+      NaX: Math.abs(at('NaX') / Number(pq.x[2]) - 1), pH: Math.abs(-(Math.log(ye[kH]) + lnG[kH]) / Math.LN10 - pq.pH),
+      used: 1 - at('Anhydrite') / y0[m.speciesNames.indexOf('Anhydrite')] };
+  };
+  const a = salted(res.text);
+  const h = salted(res.text.replace(/  sites=\S+  per=Anhydrite/, ''));
+  const per = res.report.exchange && res.report.exchange.per;
+  const f = (v) => v.toExponential(1);
+  check('an exchanger whose sites go with a phase: PHREEQC\'s CaX2 on anhydrite (equilibrium_phase 0.05) is written '
+    + 'sites=0.1 per=Anhydrite on CaX2, the start PHREEQC\'s; 0.3 mol/kgw of NaCl into it against REACTION: the anhydrite '
+    + 'left, CaX2, NaX and the pH as PHREEQC has them -- with the capacity held where it started, CaX2 and NaX are not',
+  start < 1e-12 && /^CaX2\s+\S+\s+exchange.*\ssites=0\.1\s+per=Anhydrite$/m.test(res.text) && !!per && per.length === 1
+    && per[0].mineral === 'Anhydrite' && a.M < 1e-7 && a.CaX < 1e-7 && a.NaX < 1e-7 && a.pH < 1e-8 && a.used > 0.8
+    && h.CaX > 0.1 && h.NaX > 0.1,
+  `the start ${f(start)}; ${(a.used * 100).toFixed(0)} % of the anhydrite dissolved: it within ${f(a.M)}, CaX2 ${f(a.CaX)}, `
+    + `NaX ${f(a.NaX)}, pH ${f(a.pH)} (PHREEQC's water ${Number(pq.x[3]).toFixed(10)} kg); the capacity held: CaX2 `
+    + `${f(h.CaX)}, NaX ${f(h.NaX)}`);
+
+  /*
+    NaX on a host of the tests' own, NaOH, dissolving at a first-order rate
+    into a CO2 water with calcium and sodium, 0.1 of it to each mole: the
+    sites go with it, calcium has most of them, and PHREEQC's KINETICS
+    takes 0.1 NaX from each mole it adds. Amounts compared, PHREEQC's
+    molality times its kilograms.
+  */
+  const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 5\n Na 1\n Ca 0.5\n Cl 2 charge\n C(4) 2\n';
+  const rt = 'PHASES\nNaOHs\n NaOH = Na+ + OH-\n log_k 20\nRATES\nNaOHs\n-start\n10 rate = PARM(1) * M\n20 SAVE rate * TIME\n-end\n';
+  const kn = 'KINETICS 1\nNaOHs\n -m 0.001\n -parms 1e-5\n -tol 1e-12\n -steps 2e5 in 10\n -runge_kutta 6\n';
+  const xb = 'EXCHANGE 1\n NaX NaOHs kinetic_reactant 0.1\n -equilibrate 1\n';
+  const KIN = 'KNOBS\n -convergence_tolerance 1e-12\n';
+  engine.load(dbText);
+  const kres = P.waterToModel({ engine, database: db, water: { name: 'host', text: `${KIN}${rt}${sw}${kn}${xb}END\n` },
+    activity: true, exact: true });
+  engine.load(dbText);
+  const rows = engine.run(`${KIN}${rt}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t M Ca Na CaX NaX pH w\n`
+    + ` -start\n10 PUNCH TOTAL_TIME, KIN("NaOHs"), MOL("Ca+2"), MOL("Na+"), MOL("CaX2"), MOL("NaX"), -LA("H+"), TOT("water")\n`
+    + ` -end\n${sw}${kn}${xb}END\n`);
+  const pk = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+  const hosted = (text) => {
+    const mdl = RtmModel.compile(text);
+    const times = pk.map((r) => r[0]);
+    const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22,
+      breaks: times });
+    const ns = mdl.speciesNames.length;
+    const at = (n) => mdl.speciesNames.indexOf(n);
+    const d = { M: 0, Ca: 0, Na: 0, CaX: 0, NaX: 0, pH: 0 };
+    for (const row of pk) {
+      const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+      const y = mdl.toConcentrations(run.y[k], run.t[k]);
+      const lnG = new Float64Array(ns);
+      RtmModel.activityAt(mdl.act, y, 0, lnG, new Float64Array(ns), 0);
+      const w = row[7];
+      d.M = Math.max(d.M, Math.abs(y[at('NaOHs')] / row[1] - 1));
+      d.Ca = Math.max(d.Ca, Math.abs(y[at('Ca+2')] / (row[2] * w) - 1));
+      d.Na = Math.max(d.Na, Math.abs(y[at('Na+')] / (row[3] * w) - 1));
+      d.CaX = Math.max(d.CaX, Math.abs(y[at('CaX2')] / (row[4] * w) - 1));
+      d.NaX = Math.max(d.NaX, Math.abs(y[at('NaX')] / (row[5] * w) - 1));
+      d.pH = Math.max(d.pH, Math.abs(-(Math.log(y[at('H+')]) + lnG[at('H+')]) / Math.LN10 - row[6]));
+    }
+    return d;
+  };
+  const k = hosted(kres.text);
+  const kh = hosted(kres.text.replace(/  sites=\S+  per=NaOHs/, ''));
+  const kper = kres.report.exchange && kres.report.exchange.per;
+  const used = 1 - pk[pk.length - 1][1] / 1e-3;
+  check('  and with a kinetic reactant: PHREEQC\'s NaX on a host dissolving at a rate (kinetic_reactant 0.1), written '
+    + 'sites=0.1 per=NaOHs on NaX; against KINETICS at its steps: the host, Ca+2 and Na+ in the water, CaX2 and NaX on the '
+    + 'sites as they go, and the pH -- with the capacity held, the species on it are not',
+  /^NaX\s+\S+\s+exchange.*\ssites=0\.1\s+per=NaOHs$/m.test(kres.text) && !!kper && kper.length === 1
+    && kper[0].kind === 'kinetic_reactant' && k.M < 1e-7 && k.Ca < 1e-7 && k.Na < 1e-7 && k.CaX < 1e-7 && k.NaX < 1e-6
+    && k.pH < 1e-7 && used > 0.8 && kh.CaX > 1 && kh.NaX > 1,
+  `${(used * 100).toFixed(0)} % of the host dissolved: it within ${f(k.M)}, Ca+2 ${f(k.Ca)}, Na+ ${f(k.Na)}, CaX2 ${f(k.CaX)}, `
+    + `NaX ${f(k.NaX)} in moles, pH ${f(k.pH)}; the capacity held: CaX2 ${f(kh.CaX)}, NaX ${f(kh.NaX)}`);
+}
+
 /** RT/F at tc, in volts, with PHREEQC's constants: a potential from its activity exp(-F psi/RT). */
 function GAS_R_T(tc) { return (8.31470 * (tc + 273.15)) / 96493.5; }
 
@@ -3322,7 +3436,7 @@ function againstKineticsHandOff(engine) {
     + 'against PHREEQC\'s KINETICS with SURFACE kinetic_reactant; an exchanger whose capacity goes with the reactant '
     + 'carried at its start and said to be', hosts.every((x) => x.per && !x.skipped.length && x.d.M < 1e-8 && x.d.Zn < 1e-6
     && x.d.on < 1e-5 && x.d.pH < 1e-7 && x.used > 0.8) && !!lx && lx.length === 1 && lx[0].phase === 'NaOHs'
-    && lx[0].kind === 'kinetic_reactant',
+    && lx[0].kind === 'kinetic_reactant' && /the bare exchanger, X,/.test(lx[0].why),
   hosts.map((x) => `${x.edl ? 'with a double layer' : 'no electrostatics'}: ${(x.used * 100).toFixed(0)} % used, the host `
     + `within ${x.d.M.toExponential(1)}, Zn+2 ${x.d.Zn.toExponential(1)} and on the sites ${x.d.on.toExponential(1)} in moles, `
     + `pH ${x.d.pH.toExponential(1)}`).join('; ') + `; the exchanger ${lx ? JSON.stringify(lx) : 'not reported'}`);
@@ -3375,6 +3489,8 @@ function againstKineticsHandOff(engine) {
   againstVolumes(wasm);
   console.log('\n--- sites that go with a phase: the hand-off, salt against REACTION ---');
   againstSurfaceMineral(wasm);
+  console.log('\n--- an exchanger\'s sites that go with a phase or a kinetic reactant: salt against REACTION, a host against KINETICS ---');
+  againstExchangeMineral(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
   againstCdMusic(wasm);
   console.log('\n--- KINETICS: RATES as rate laws against PHREEQC\'s BASIC, the hand-off, runs against KINETICS ---');

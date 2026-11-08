@@ -508,8 +508,14 @@
       if (entry.pe !== null && !entry.electron) {
         throw new RtmError(`pe = ${entry.pe} for ${name}: pe is the electron's, e- electron pe=4.`, line);
       }
-      if (entry.sites !== null && !entry.surface) {
-        throw new RtmError(`sites = ${entry.sites} for ${name}: sites are a surface's, Hfo_wOH surface sites=2e-4.`, line);
+      if (entry.sites !== null && entry.exchange && entry.per === null) {
+        throw new RtmError(`sites = ${entry.sites} for ${name}, which is on an exchanger: there sites go with per=, the sites `
+          + 'that go with a mineral in that species\' form, CaX2 exchange sites=0.33 per=Montmorillonite. An exchanger\'s '
+          + 'own capacity is on its line, X- exchanger 0.1.', line);
+      }
+      if (entry.sites !== null && !entry.surface && !entry.exchange) {
+        throw new RtmError(`sites = ${entry.sites} for ${name}: sites are a surface's, Hfo_wOH surface sites=2e-4, or `
+          + 'go with a mineral on an exchanger, CaX2 exchange sites=0.33 per=Montmorillonite.', line);
       }
       if ((entry.tc !== null || entry.pc !== null || entry.omega !== null) && !entry.gas) {
         throw new RtmError(`${name} is given a critical temperature, pressure or acentric factor, which are a real gas's: `
@@ -520,10 +526,11 @@
           + 'its critical temperature in K and pressure in atm.', line);
       }
       if (entry.per !== null) {
-        if (!(entry.surface && entry.sites !== null) && !(entry.potential && entry.area !== null)) {
-          throw new RtmError(`per=${entry.per} for ${name}: per names the mineral a surface's sites, or its potential's `
-            + 'area, go with, a mole of it at a time: Hfo_wOH surface sites=0.2 per=Ferrihydrite, Hfo_psi potential '
-            + 'area=5.34e4 per=Ferrihydrite.', line);
+        if (!((entry.surface || entry.exchange) && entry.sites !== null) && !(entry.potential && entry.area !== null)) {
+          throw new RtmError(`per=${entry.per} for ${name}: per names the mineral a surface's sites, its potential's `
+            + 'area, or an exchanger\'s sites, go with, a mole of it at a time: Hfo_wOH surface sites=0.2 '
+            + 'per=Ferrihydrite, Hfo_psi potential area=5.34e4 per=Ferrihydrite, CaX2 exchange sites=0.33 '
+            + 'per=Montmorillonite.', line);
         }
         if (entry.grams !== null) {
           throw new RtmError(`${name} is given grams and per=${entry.per}: its area is per mole of ${entry.per}, which the `
@@ -2503,6 +2510,8 @@
       if (act.gas && act.gas.dln) prVolumeCoefficients(act, C, off, lnG, at);
       res = { I, lnAw: Math.log(aw), dAw: dry ? 0 : -0.017 / aw, dGw: act.dGw };
     }
+    // An exchanger whose sites go with a mineral: each species' fraction of what is on it now.
+    if (act.ex && act.ex.perAny) res.exSum = exchangeFractions(act, C, off, lnG, at);
     // The molar volumes, for each relation's ln K at the pressure (volumesAt).
     if (act.vol && !act.vol.idle) volumesAt(act, res, I, low, at);
     return res;
@@ -2644,9 +2653,10 @@
     const st = act && act.sit;
     const pz = act && act.pz;
     const gas = act && act.gas && act.gas.dln ? act.gas : null;
-    if (!st && !pz && !gas) return null;
+    const xp = act && act.ex && act.ex.perAny && water.exSum ? act.ex : null;
+    if (!st && !pz && !gas && !xp) return null;
     const I = water.I;
-    const d = st ? st.d : pz ? pz.d : gas.d;
+    const d = st ? st.d : pz ? pz.d : gas ? gas.d : xp.d;
     if (st) {
       for (const [s, nu] of net) {
         const r = st.rows[s];
@@ -2678,13 +2688,27 @@
         for (let j = 0; j < K; j++) d[gas.list[j]] += nu * gas.dln[q * K + j];
       }
     }
+    // On an exchanger whose sites go with a mineral, a species' fraction reads all that is on it (exchangeFractions).
+    if (xp) {
+      for (const [s, nu] of net) {
+        if (xp.site[s] !== 1) continue;
+        const x = xp.of[s];
+        const sum = water.exSum[x];
+        if (!xp.per[x] || !(sum > 0)) continue;
+        for (const j of xp.members[x]) d[j] -= (nu * xp.n[j]) / sum;
+      }
+    }
     return d;
   }
   function sitDone(act, net) {
     const st = act.sit;
     const pz = act.pz;
     const gas = act.gas && act.gas.dln ? act.gas : null;
-    const d = st ? st.d : pz ? pz.d : gas.d;
+    const xp = act.ex && act.ex.perAny ? act.ex : null;
+    const d = st ? st.d : pz ? pz.d : gas ? gas.d : xp.d;
+    if (xp) {
+      for (const [s] of net) if (xp.site[s] === 1 && xp.per[xp.of[s]]) for (const j of xp.members[xp.of[s]]) d[j] = 0;
+    }
     if (st) {
       for (const [s] of net) {
         const r = st.rows[s];
@@ -3661,6 +3685,60 @@
           + 'logK = 0, puts a species on it.', species[k].line);
       }
     }
+    /*
+      SITES THAT GO WITH A MINERAL: a species on an exchanger given sites=
+      per=, CaX2 exchange sites=0.33 per=Montmorillonite -- PHREEQC's
+      `CaX2 Montmorillonite equilibrium_phase 0.165`, the exchange formula
+      charge-balanced with its ion, so many of it to each mole. The
+      exchanger's capacity is then `sites` times the mineral's amount in the
+      cell at every moment, the mineral carrying sites/n of that species to
+      each mole of it: held at saturation, its relation carries it for the
+      totals alone (eq.carry, conservationBasis); made and used at a rate,
+      every reaction that changes it does (compile). As the mineral
+      dissolves the sites go, in that species' form, and what was on them
+      comes off; and a species on the exchanger has for its activity n C over
+      what is on it now (exchangeFractions), its equivalent fraction at the
+      capacity the totals keep.
+    */
+    const per = exchangers.map(() => null);
+    for (const k of onSites) {
+      const sp = species[k];
+      if (sp.per === null) continue;
+      const x = of[k];
+      const xn = species[exchangers[x]].name;
+      const m = species.findIndex((y) => y.name === sp.per);
+      if (m < 0 || !species[m].mineral) {
+        throw new RtmError(`${sp.name} has the sites of ${xn} go with ${sp.per}, which is no mineral in <SPECIES>: per `
+          + 'names the mineral the sites go with, a mole of it at a time.', sp.line);
+      }
+      if (per[x]) {
+        throw new RtmError(`The sites of ${xn} go with ${species[per[x].mineral].name} in the form of `
+          + `${species[per[x].species].name}, and ${sp.name} is given sites= per= as well: one species on an exchanger `
+          + 'is the form its sites go in.', sp.line);
+      }
+      if (settings.EQUILIBRATE !== 2) {
+        throw new RtmError(`The sites of ${xn} go with ${sp.per}, and its relations are to follow them all through the `
+          + 'run: EQUILIBRATE = always.', sp.line);
+      }
+      const rel = equilibria.filter((eq) => eq.net.some(([si]) => si === m));
+      if (rel.length > 1) {
+        throw new RtmError(`${sp.name} has the sites of ${xn} go with ${sp.per}: they go with the amount of a mineral held `
+          + `at saturation by its relation, or made and used at a rate, and ${sp.per} has more than one relation in `
+          + '<EQUILIBRIUM>.', sp.line);
+      }
+      for (const eq of equilibria) {
+        if (eq.kf !== null && eq.net.some(([s]) => carries(s) && of[s] === x)) {
+          throw new RtmError(`"${eq.text}" is on ${xn}, whose sites go with ${sp.per}, and has a rate, kf: the species on `
+            + 'such an exchanger have the fraction of what is on it now for their activity, and are held (EQUILIBRATE).',
+          eq.line);
+        }
+      }
+      if (rel.length === 1) {
+        const nuM = rel[0].net.find(([si]) => si === m)[1];
+        rel[0].carry = (rel[0].carry || []).concat([[k, (sp.sites * nuM) / n[k]]]);
+      }
+      per[x] = { species: k, mineral: m, ratio: sp.sites, eq: rel.length ? rel[0] : null };
+    }
 
     const out = act || noActivity(species);
     out.form = Uint8Array.from(out.form);
@@ -3738,8 +3816,37 @@
         + 'water, so its activity is its equivalent fraction alone, with no ion\'s coefficient.');
     }
     const site = Int8Array.from(species, (sp) => (sp.exchange ? 1 : sp.exchanger ? 2 : 0));
-    out.ex = { list: onSites, exchangers, n, of, pw, ion, site, shift: null, capacity: null };
+    // Each exchanger's species, and where its sites go with a mineral, the derivatives' scratch (sitPartners).
+    const members = exchangers.map((k, x) => onSites.filter((j) => of[j] === x));
+    const perAny = per.some(Boolean);
+    out.ex = { list: onSites, exchangers, n, of, pw, ion, site, shift: null, capacity: null, per, perAny, members,
+      d: perAny ? new Float64Array(ns) : null };
     return out;
+  }
+
+  /**
+   * An exchanger whose sites go with a mineral (exchangeSetup's per): each
+   * species on it has for its activity n C over what is on it now, its
+   * equivalent fraction, where onSites took the capacity the cell started
+   * with -- ln gamma moved by ln(start/now). Returns what is on each such
+   * exchanger, the sum of n C, for the derivatives (sitPartners): d ln gamma
+   * / dC_j = -n_j/sum for every species j on it. Nothing moves where nothing
+   * is on it yet, before it is loaded.
+   */
+  function exchangeFractions(act, C, off, lnG, cell) {
+    const ex = act.ex;
+    const nx = ex.exchangers.length;
+    const sums = new Float64Array(nx);
+    for (let x = 0; x < nx; x++) {
+      if (!ex.per[x]) continue;
+      let sum = 0;
+      for (const j of ex.members[x]) sum += ex.n[j] * C[off + j];
+      sums[x] = sum;
+      if (!(sum > 0)) continue;
+      const move = Math.log(ex.capacity[cell * nx + x] / sum);
+      for (const j of ex.members[x]) lnG[j] += move;
+    }
+    return sums;
   }
 
   /** A number of sites as a reader would write it. */
@@ -6409,8 +6516,9 @@
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
     // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
     // the full speciation.
+    // So does an exchanger whose sites go with a mineral, each species' fraction reading all that is on it.
     if (act && ((act.gas && act.gas.dln) || act.pz || (act.vol && !act.vol.idle)
-      || (act.pt && (act.pt.cd || act.pt.perM.some((m) => m >= 0))))) return null;
+      || (act.pt && (act.pt.cd || act.pt.perM.some((m) => m >= 0))) || (act.ex && act.ex.perAny))) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -8685,6 +8793,32 @@
         }
       }
     }
+    // An exchanger's sites the same way, in the form of the species on it given sites= per= (exchangeSetup).
+    if (ex && ex.perAny) {
+      ex.per.forEach((p, x) => {
+        if (!p) return;
+        const mn = species[p.mineral].name;
+        const xn = species[ex.exchangers[x]].name;
+        if (p.eq) {
+          const rx = reactions.find((r) => [...r.reactants, ...r.products].some(([, nm]) => nm === mn));
+          if (rx) {
+            throw new RtmError(`"${rx.text}" changes ${mn}, which carries the sites of ${xn} and is held at saturation by `
+              + 'its relation: it changes by that alone. A mineral whose sites go with it at a rate has no relation.', rx.line);
+          }
+          return;
+        }
+        const each = p.ratio / ex.n[p.species];
+        for (const ch of channels) {
+          const own = ch.net.find(([q]) => q === p.mineral);
+          if (!own) continue;
+          if (ch.net.some(([q]) => ex.site[q] && ex.of[q] === x)) {
+            throw new RtmError(`A reaction changes ${mn}, which carries the sites of ${xn}, and what is on them as well: `
+              + 'the sites go with it by themselves.', ch.line);
+          }
+          ch.net.push([p.species, own[1] * each]);
+        }
+      });
+    }
     act = potentialSetup(species, equilibria, act, settings);
     const pt = act ? act.pt : null;
     act = gasSetup(species, equilibria, act, settings, warnings, sections.GAS_PAIRS);
@@ -8767,15 +8901,21 @@
     // the water's activity comes in -- or under SIT, where a coefficient reads
     // the species it is paired with, which may be neutral, every solute.
     const sitAQ = !!(act && (act.sit || act.pz));
+    // On an exchanger whose sites go with a mineral, a species' fraction reads all that is on it (exchangeFractions).
+    const exPerQ = act && act.ex && act.ex.perAny ? act.ex : null;
+    const perOn = (s) => (exPerQ && exPerQ.site[s] === 1 && exPerQ.per[exPerQ.of[s]] ? exPerQ.members[exPerQ.of[s]] : []);
     for (const e of aqList) {
       const set = new Set();
-      if (e.kind === 'a') { set.add(e.s); if (act) (sitAQ || act.dGw ? aqSolutes : aqIons).forEach((k) => set.add(k)); }
-      else if (e.kind === 'aw') { if (act) aqSolutes.forEach((k) => set.add(k)); }
+      if (e.kind === 'a') {
+        set.add(e.s);
+        if (act) (sitAQ || act.dGw ? aqSolutes : aqIons).forEach((k) => set.add(k));
+        perOn(e.s).forEach((k) => set.add(k));
+      } else if (e.kind === 'aw') { if (act) aqSolutes.forEach((k) => set.add(k)); }
       else if (e.kind === 'I') aqIons.forEach((k) => set.add(k));
       else if (e.kind === 'TK' || e.kind === 'TC' || e.kind === 'kb') {
         // The cell's temperature, and a backward constant that goes with it: no species.
       } else {
-        e.phase.net.forEach(([k]) => set.add(k));
+        e.phase.net.forEach(([k]) => { set.add(k); perOn(k).forEach((j) => set.add(j)); });
         if (act) (sitAQ ? aqSolutes : aqIons).forEach((k) => set.add(k));
         // The water's activity: in the phase, or in its log K at the vapour pressure (volumesAt).
         if (act && (e.phase.water || act.dGw || (act.vol && !act.vol.idle))) aqSolutes.forEach((k) => set.add(k));
@@ -8819,6 +8959,13 @@
               for (const k of aqSolutes) if (sd[k]) d[k] += a * sd[k];
               sitDone(aqAct, [[e.s, 1]]);
             }
+            // On an exchanger whose sites go with a mineral, its fraction of all that is on it now.
+            const per = perOn(e.s);
+            if (per.length) {
+              const x = aqAct.ex.of[e.s];
+              const sum = w.exSum ? w.exSum[x] : 0;
+              if (sum > 0) for (const j of per) d[j] -= (a * aqAct.ex.n[j]) / sum;
+            }
           }
         } else if (e.kind === 'aw') {
           const aw = Math.exp(w.lnAw);
@@ -8852,9 +8999,11 @@
             if (G) for (const k of aqIons) d[k] += f * G * 0.5 * z[k] * z[k];
             const wd = waterCoef(ph.eq || ph, w);
             if (wd) for (const k of aqSolutes) d[k] += f * wd * awOf(aqAct, w, k);
-            const sd = sitAQ ? sitPartners(aqAct, ph.net, w) : null;
+            const sd = sitAQ || exPerQ ? sitPartners(aqAct, ph.net, w) : null;
             if (sd) {
               for (const k of aqSolutes) if (sd[k]) d[k] += f * sd[k];
+              // ...and on an exchanger whose sites go with a mineral, what is on it (no solute).
+              if (exPerQ) for (const k of e.cols) if (exPerQ.site[k] === 1 && sd[k]) d[k] += f * sd[k];
               sitDone(aqAct, ph.net);
             }
           }
@@ -10226,6 +10375,35 @@
           const cap = initial[b + k];
           let on = 0;
           for (const j of ex.list) if (ex.of[j] === x) on += ex.n[j] * initial[b + j];
+          /*
+            Sites that go with a mineral: so many to each mole of it in the
+            cell at the start, which the species on it are given amounts
+            to make, or which the water loads (after its own speciation,
+            below).
+          */
+          const p = ex.per[x];
+          if (p) {
+            const what = `${fmtSites(p.ratio)} per ${nameOf[p.mineral]} as ${nameOf[p.species]}`;
+            if (cap > 0) {
+              throw new RtmError(`${nameOf[k]} is given a capacity${where(c)}, and its sites go with ${nameOf[p.mineral]}, `
+                + `${what}: the mineral gives the capacity, and the exchanger's line none.`, species[k].line);
+            }
+            const given = p.ratio * initial[b + p.mineral];
+            if (!(given > 0)) {
+              throw new RtmError(`The sites of ${nameOf[k]} go with ${nameOf[p.mineral]}, and there is none of it${where(c)} `
+                + 'to start with: give the mineral an amount in every cell the exchanger\'s relations are to hold in.',
+              species[p.species].line);
+            }
+            if (on > 0 && Math.abs(on - given) > 1e-6 * given) {
+              throw new RtmError(`The species on ${nameOf[k]} take ${fmtSites(on)} sites${where(c)}, and ${what} make `
+                + `${fmtSites(given)}: give amounts that make them, or none, and the water loads them.`, species[p.species].line);
+            }
+            const total = on > 0 ? on : given;
+            ex.capacity[c * nx + x] = total;
+            for (const j of ex.members[x]) ex.shift[b + j] = Math.log(ex.n[j] / total);
+            if (!(on > 0)) ex.load.push(c * nx + x);
+            return;
+          }
           if (cap > 0 && on > 0) {
             throw new RtmError(`${nameOf[k]} is given a capacity${where(c)}, and the species on it amounts there as `
               + 'well: give the capacity, which the water there loads at the start, or what is on it, not both.',
@@ -10507,6 +10685,24 @@
       if (settings.EQUILIBRATE && waterOnly.length && !peStart) {
         initial.set(speciate(model, initial, { equilibria: waterOnly }).y);
       }
+      // Sites per mole of a mineral: at what the water's own speciation has left of it, which they then go with.
+      if (ex && ex.load.length && ex.perAny) {
+        const nx = ex.exchangers.length;
+        for (const q of ex.load) {
+          const x = q % nx;
+          const p = ex.per[x];
+          if (!p) continue;
+          const b = Math.floor(q / nx) * ns;
+          const total = p.ratio * initial[b + p.mineral];
+          if (!(total > 0)) {
+            throw new RtmError(`The sites of ${nameOf[ex.exchangers[x]]} go with ${nameOf[p.mineral]}, and the water's own `
+              + `speciation leaves none of it${nc === 1 ? '' : ` in cell ${geom[Math.floor(q / nx)].i}`}.`,
+            species[p.species].line);
+          }
+          ex.capacity[q] = total;
+          for (const j of ex.members[x]) ex.shift[b + j] = Math.log(ex.n[j] / total);
+        }
+      }
       if (ex && ex.load.length) loadExchangers(model, initial);
       // A CD-MUSIC surface is not loaded from the water: its species are given their amounts.
       if (sf && sf.load.length && act.pt && act.pt.cd) {
@@ -10693,9 +10889,18 @@
     const lnG = act ? new Float64Array(ns) : null;
     const dG = act ? new Float64Array(ns) : null;
     // Under SIT a coefficient reads the species it is paired with as well, which may be neutral: every solute.
-    const actCols = eqs.map((eq) => (act ? [...Array(ns).keys()].filter((k) => act.z[k] !== 0
-      || ((eq.water || act.sit || act.pz || act.dGw || (act.vol && !act.vol.idle)) && act.solute[k])
-      || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))) : []));
+    // On an exchanger whose sites go with a mineral, a species' fraction reads all that is on it (exchangeFractions).
+    const exPer = act && act.ex && act.ex.perAny ? act.ex : null;
+    const onPer = (eq) => new Set(exPer ? eq.net.filter(([s]) => exPer.site[s] === 1 && exPer.per[exPer.of[s]])
+      .flatMap(([s]) => exPer.members[exPer.of[s]]) : []);
+    const actCols = eqs.map((eq) => {
+      if (!act) return [];
+      const per = onPer(eq);
+      return [...Array(ns).keys()].filter((k) => act.z[k] !== 0
+        || ((eq.water || act.sit || act.pz || act.dGw || (act.vol && !act.vol.idle)) && act.solute[k])
+        || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))
+        || per.has(k));
+    });
     const n = nBase + nc * nb;
     const tIndex = (c, j) => nBase + c * nb + j;
     const held = new Uint8Array(n);
@@ -11412,8 +11617,19 @@
       reactions carrying them): used up at 1e-4 of what its cell starts with,
       where the run stops, as for one held at saturation (applyEvent).
     */
-    const kinSites = act && act.sf
-      ? [...new Set(act.sf.types.filter((t) => t.per && !t.per.eq).map((t) => t.per.mineral))] : [];
+    const kinSites = [...new Set([...(act && act.sf ? act.sf.types.filter((t) => t.per && !t.per.eq)
+      .map((t) => t.per.mineral) : []), ...(act && act.ex && act.ex.perAny ? act.ex.per.filter((p) => p && !p.eq)
+      .map((p) => p.mineral) : [])])];
+    // What goes with a mineral that is used up, for the message: a surface's sites, an exchanger's, or both.
+    const goneWith = (m) => {
+      const surface = !!(act && act.sf && act.sf.types.some((t) => t.per && t.per.mineral === m));
+      const exchanger = !!(act && act.ex && act.ex.perAny && act.ex.per.some((p) => p && p.mineral === m));
+      const what = surface && exchanger ? 'surface and of the exchanger that go' : surface ? 'surface that goes'
+        : 'exchanger that goes';
+      const none = surface && exchanger ? 'surface or exchanger' : surface ? 'surface' : 'exchanger';
+      return `, and the sites of the ${what} with it, so many per mole of it, with it: the page carries no ${none} with `
+        + 'no sites. Give more of it, or end the run before.';
+    };
     const nks = kinSites.length;
     const ksStart = gapStart + nc * nbin;
     const ksUsedUp = new Float64Array(nc * nks);
@@ -11561,9 +11777,8 @@
     function applyEvent(which) {
       if (which >= ksStart) {
         const c = Math.floor((which - ksStart) / nks);
-        const name = base.speciesNames[kinSites[(which - ksStart) % nks]];
-        throw new RtmError(`${name} has dissolved away${where(c)}, and the sites of the surface that goes with it, so many per `
-          + 'mole of it, with it: the page carries no surface with no sites. Give more of it, or end the run before.');
+        const m = kinSites[(which - ksStart) % nks];
+        throw new RtmError(`${base.speciesNames[m]} has dissolved away${where(c)}${goneWith(m)}`);
       }
       if (which >= gapStart) {
         const q = which - gapStart;
@@ -11596,14 +11811,11 @@
       lastEvent = { c, r: present[at] ? r : -1, which };
       const name = base.speciesNames[eqs[r].mineral];
       /*
-        A mineral that carries a surface's sites (per=, surfaceSetup) takes
-        them with it as it goes: a surface with none is no surface the page
-        carries.
+        A mineral that carries a surface's sites or an exchanger's (per=,
+        surfaceSetup, exchangeSetup) takes them with it as it goes: a surface
+        or an exchanger with none is none the page carries.
       */
-      if (!present[at] && eqs[r].carry) {
-        throw new RtmError(`${name} has dissolved away${where(c)}, and the sites of the surface that goes with it, so many `
-          + 'per mole of it, with it: the page carries no surface with no sites. Give more of it, or end the run before.');
-      }
+      if (!present[at] && eqs[r].carry) throw new RtmError(`${name} has dissolved away${where(c)}${goneWith(eqs[r].mineral)}`);
       events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
       return [name];
     }
