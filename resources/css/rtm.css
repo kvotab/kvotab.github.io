@@ -677,6 +677,10 @@
 .rtm-pq-report .warn, .rtm-pq-summary .warn { border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
 .rtm-pq-report .error { border-left: 3px solid var(--color-kvot-accent); padding-left: 6px; }
 .rtm-pq-summary { margin: 4px 0 12px; }
+/* Inverse models, below the look through PHREEQC. */
+.rtm-pq-inv { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.rtm-pq-models { font-size: 12px; margin: 4px 0 12px; }
+.rtm-pq-models td { vertical-align: top; }
 .rtm-pq-stale {
   margin: 0 0 8px;
   padding: 4px 8px;

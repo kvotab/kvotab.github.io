@@ -3709,6 +3709,94 @@ function againstBoundaries(engine) {
 }
 
 /* ======================================================================
+   INVERSE MODELS, through PHREEQC: its INVERSE_MODELING between waters of a
+   run (viewRun's `only` and `inverse`), read back from what it prints.
+   ====================================================================== */
+function againstInverse(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const solver = { method: 'ndf', rtol: 1e-10, atol: 1e-20, nonNegative: true, stagnationTol: 0.5 };
+  const runOf = (text) => {
+    let res = null;
+    handleRtmMessage({ type: 'run', id: 1, text, solver }, (m) => { if (m.type === 'result' || m.type === 'error') res = m; });
+    if (res.type === 'error') throw new Error(res.error);
+    return { t: res.t, states: res.states, n: res.n, width: res.width, model: res.model };
+  };
+  // A handed-off water whose calcium and carbonate come in at 1e-8 mol/kgw a second for a day: 8.64e-4 mol of calcite.
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\n Ca 0.5\n C(4) 2\n S(6) 0.2\nEND\n';
+  engine.load(dbText);
+  const handed = P.waterToModel({ engine, database, water: { name: 'w', text: water }, activity: true, exact: true, redox: false });
+  let text = RtmModel.withValue(handed.text, { kind: 'setting', name: 'TEND' }, 86400);
+  text = /^<REACTIONS>\s*$/m.test(text) ? text.replace(/^<REACTIONS>\s*$/m, '<REACTIONS>\n=> Ca+2 + CO3-2, r = 1e-8')
+    : `${text}\n<REACTIONS>\n=> Ca+2 + CO3-2, r = 1e-8\n`;
+  const run = runOf(text);
+  engine.load(dbText);
+  const v = P.viewRun({ engine, database, run, modelText: text,
+    only: [{ cell: 0, k: 0, label: 'as it starts' }, { cell: 0, k: run.n - 1, label: 'as the run ends' }],
+    inverse: { phases: ['Calcite', 'CO2(g)', 'Gypsum'], uncertainty: 0.05, range: true, minimal: true } }).inverse;
+  const m0 = v.models[0];
+  const cal = m0 && m0.phases.find((ph) => ph.name === 'Calcite');
+  check('an inverse model between a run\'s start and its end: the calcite its reaction dissolved, 1e-8 mol/kgw a second '
+    + 'for a day, to the four figures PHREEQC prints (8.640e-4), alone in the one minimal model, with its range at 5 %; '
+    + 'the solutions as the run had them, the elements of the waters balanced',
+  v.models.length === 1 && v.found === 1 && m0.minimal && m0.phases.length === 1 && !!cal && cal.value === 8.64e-4
+    && cal.min < cal.value && cal.max > cal.value && m0.fractions.every((f) => f.value === 1)
+    && m0.solutions.map((s) => s.description).join('|') === 'as it starts|as the run ends'
+    && v.balances.join(' ') === 'C Ca Cl Na S' && Math.abs(v.waters[1].pH - 6.9517) < 1e-3,
+  cal ? `Calcite ${cal.value} (${cal.min} to ${cal.max}), ${v.found} model${v.found === 1 ? '' : 's'}, `
+    + `${v.calls} calls of cl1; balanced ${v.balances.join(', ')}` : JSON.stringify(v.models).slice(0, 200));
+
+  // PHREEQC's own waters: the second the first with calcite and gypsum dissolved by REACTION, read back from what it prints.
+  engine.load(dbText);
+  const printed = engine.printed('SOLUTION 1\n units mmol/kgw\n pH 7.2 charge\n Na 1\n Cl 1\n C(4) 1\n Ca 0.2\n S(6) 0.1\n'
+    + 'REACTION 1\n Calcite 1\n Gypsum 0.5\n 1e-3 moles\nSAVE solution 2\nEND\nINVERSE_MODELING 1\n -solutions 1 2\n'
+    + ' -uncertainty 0.05\n -range true\n -minimal true\n -phases\n  Calcite\n  Gypsum\n  CO2(g)\n  Halite\n'
+    + ' -balances\n  Na\n  Cl\nEND\n');
+  const r2 = P.readInverse(printed, ['Calcite', 'Gypsum', 'CO2(g)', 'Halite']);
+  const two = r2.models[0];
+  const val = (nm) => (two.phases.find((ph) => ph.name === nm) || {}).value;
+  check('  PHREEQC\'s own waters, the second the first with 1 mmol of calcite and 0.5 of gypsum dissolved: read back from '
+    + 'what it prints, those two and no more, their ranges, the summary\'s counts',
+  r2.models.length === 1 && r2.found === 1 && r2.minimalFound === 1 && two.minimal && two.phases.length === 2
+    && val('Calcite') === 1e-3 && val('Gypsum') === 5e-4 && two.phases.every((ph) => ph.min < ph.value && ph.max > ph.value)
+    && two.solutions.length === 2 && two.solutions[1].balances.some((b) => b.name === 'Ca' && b.input === 1.7e-3)
+    && Number.isFinite(two.residuals) && r2.calls > 0,
+  `${two ? two.phases.map((ph) => `${ph.name} ${ph.value} (${ph.min} to ${ph.max})`).join(', ') : 'none'}; `
+    + `${r2.found} found, ${r2.minimalFound} minimal, ${r2.infeasible} infeasible sets, ${r2.calls} calls of cl1`);
+
+  // What flows in, given whole: a column flushed many times over is that water at its far end, and needs no phase.
+  const column = `${handed.text.replace(/^MODE = batch$/m, 'MODE = transport\nCELLS = 2\nLENGTH = 0.1\nVELOCITY = 1e-4\n'
+    + 'ADVECTION = 1\nLEFT = robin\nRIGHT = free').replace(/^TEND = .*$/m, 'TEND = 1e5')}`;
+  const flushed = runOf(column);
+  engine.load(dbText);
+  const vin = P.viewRun({ engine, database, run: flushed, modelText: column,
+    only: [{ state: Array.from(flushed.model.inflow), label: 'the water flowing in' }, { cell: 1, k: flushed.n - 1, label: 'cell 1 at the end' }],
+    inverse: { phases: ['Calcite'], uncertainty: 1e-6, range: false, minimal: true } }).inverse;
+  const mi = vin.models[0];
+  check('  what flows in, given whole: a column flushed a hundred times over is that water at its far end -- a minimal model '
+    + 'of no phase at 1e-6, every total adjusted by less than 1e-12',
+  vin.models.length === 1 && mi.minimal && mi.phases.length === 0 && mi.solutions[0].description === 'the water flowing in'
+    && mi.solutions.every((s) => s.balances.every((b) => Math.abs(b.delta) < 1e-12)),
+  mi ? `${mi.phases.length} phases; deltas up to ${Math.max(...mi.solutions.flatMap((s) => s.balances.map((b) => Math.abs(b.delta))))
+    .toExponential(1)}` : 'no model');
+
+  const refused = [];
+  for (const [what, inverse, re] of [
+    ['a phase the database does not have', { phases: ['Calcitee'] }, /The database has no phase Calcitee\./],
+    ['an uncertainty of 1 or more', { phases: ['Calcite'], uncertainty: 1 }, /The uncertainty is a fraction of each total/],
+    ['a phase going a third way', { phases: ['Calcite sideways'] }, /may be followed by dissolve or precipitate/],
+  ]) {
+    let msg = '';
+    try {
+      engine.load(dbText);
+      P.viewRun({ engine, database, run, modelText: text, only: [{ cell: 0, k: 0 }, { cell: 0, k: run.n - 1 }], inverse });
+    } catch (e) { msg = e.message; }
+    if (!re.test(msg)) refused.push(`${what}: "${msg}"`);
+  }
+  check('  and refused, each with its reason: a phase the database does not have, an uncertainty of 1 or more, a phase '
+    + 'going a third way', !refused.length, refused.join(' | '));
+}
+
+/* ======================================================================
    FITTING, against PHREEQC: zinc on a ferrihydrite's weak sites, titrated
    with acid -- PHREEQC's REACTION, the HCl added at each time measured --
    and the dissolved zinc it gives taken as what was measured; the handed-off
@@ -4540,6 +4628,8 @@ function againstKineticsHandOff(engine) {
   againstDiagrams(wasm);
   console.log('\n--- the boundaries of a map: a Pourbaix map\'s, against PHREEQC\'s SOLUTION at their points ---');
   againstBoundaries(wasm);
+  console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
+  againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');
   againstFit(wasm);
   console.log('\n--- the conductance, the density and the viscosity against PHREEQC ---');

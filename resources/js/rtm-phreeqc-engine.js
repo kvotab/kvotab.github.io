@@ -9,6 +9,7 @@
      const engine = await RtmPhreeqcEngine.create(createPhreeqc);
      engine.load(databaseText);           // throws PHREEQC's own message
      const rows = engine.run(inputText);  // selected output 99, header first
+     const text = engine.printed(input);  // what PHREEQC prints of it
 
    Every value comes back at full precision and without a copy: IPhreeqc's
    GetSelectedOutputValue fills a VAR -- a type at byte 0 and the value at
@@ -126,6 +127,26 @@
         return rows;
       },
 
+      /**
+       * Runs PHREEQC input and returns what PHREEQC prints of it, its output
+       * file's text, for what it prints alone: the inverse models, which no
+       * selected output row holds. The output is on for this run only.
+       */
+      printed(text) {
+        alive();
+        if (loaded === null) throw new Error('Load a database into PHREEQC first');
+        if (typeof M._SetOutputStringOn !== 'function' || typeof M._GetOutputString !== 'function') {
+          throw new Error('This copy of PHREEQC does not give what it prints: reload the page, with a hard reload if that does not do it');
+        }
+        M._SetOutputStringOn(id, 1);
+        try {
+          const n = withString(String(text), (p) => M._RunString(id, p));
+          if (n) throw errors(n, 'the input');
+          return M.UTF8ToString(M._GetOutputString(id));
+        } finally {
+          M._SetOutputStringOn(id, 0);
+        }
+      },
       /** Hands the instance's memory back. */
       close() {
         if (closed) return;
@@ -196,6 +217,8 @@
    *   {id, type: 'view', database, water, run, modelText, options}
    *     -> {type: 'progress', done, total} ..., then
    *        {type: 'done', report, phases, table, csv, version}
+   *   {id, type: 'inverse', database, water, run, modelText, options: {only, inverse, ...}}
+   *     -> {type: 'done', inverse, version, database}
    *   anything failing -> {type: 'error', error}
    *
    * `database` null means the built-in one, handed in as defaults.builtin.
@@ -233,6 +256,13 @@
           });
           answer({ type: 'done', report: view.report, phases: view.phases, table: compact(view),
             csv: view.csv(), version: engine.version, database: database.name });
+          return;
+        }
+        if (msg.type === 'inverse') {
+          const view = P.viewRun({
+            engine, database, run: msg.run, modelText: msg.modelText, water: msg.water, ...(msg.options || {}),
+          });
+          answer({ type: 'done', inverse: view.inverse, version: engine.version, database: database.name });
           return;
         }
         throw new Error(`Nothing here answers a request of type "${msg.type}"`);

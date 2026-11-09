@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109j">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109l">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -757,6 +757,37 @@
           <div class="rtm-pq-summary" id="rtmPqSummary" hidden></div>
           <p class="rtm-empty" id="rtmPqEmpty">Run the model, then look at it through PHREEQC: the pH as an activity, the
             ionic strength and the saturation index of every phase, at each stored time.</p>
+          <div class="rtm-toolbar rtm-pq-inv" id="rtmPqInvBar">
+            <span class="rtm-dg-axis">Inverse models from
+              <select id="rtmPqInvFrom" aria-label="the water to start from" data-on-change="rtm:pqInvSettings"></select>
+              <span id="rtmPqInvFromAtWrap">at <input type="text" id="rtmPqInvFromAt" class="rtm-dg-num" aria-label="at the time"
+                data-on-change="rtm:pqInvSettings"></span>
+            </span>
+            <span class="rtm-dg-axis">to
+              <select id="rtmPqInvTo" aria-label="the water it becomes" data-on-change="rtm:pqInvSettings"></select>
+              <span id="rtmPqInvToAtWrap">at <input type="text" id="rtmPqInvToAt" class="rtm-dg-num" aria-label="at the time"
+                data-on-change="rtm:pqInvSettings"></span>
+            </span>
+            <label>with
+              <input type="text" id="rtmPqInvPhases" class="rtm-times" placeholder="the model's minerals and gases"
+                data-on-change="rtm:pqInvSettings">
+            </label>
+            <label>uncertainty
+              <input type="text" id="rtmPqInvU" style="width:48px" data-on-change="rtm:pqInvSettings">
+            </label>
+            <label><input type="checkbox" id="rtmPqInvRange" data-on-change="rtm:pqInvSettings"> ranges</label>
+            <label><input type="checkbox" id="rtmPqInvMinimal" data-on-change="rtm:pqInvSettings"> minimal models only</label>
+            <button type="button" class="rtm-btn small" id="rtmPqInvGo" data-on-click="rtm:pqInverse">Find the models</button>
+            <span class="kvot-info-slot" data-info-key="pq:inverse"></span>
+          </div>
+          <div class="rtm-toolbar" id="rtmPqInvShow" hidden>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqInvCsv">CSV</button>
+            </span>
+            <span class="rtm-muted" id="rtmPqInvNote"></span>
+          </div>
+          <div class="plot" id="rtmChartPqInv" hidden></div>
+          <div class="rtm-pq-summary" id="rtmPqInvOut" hidden></div>
         </section>
 
         <section class="rtm-pane" data-pane="jacobian" hidden>
@@ -2872,6 +2903,32 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
           </ul>
           <p>A look at a run stays on the tab after the next run, saying that it is of the run before.</p>
 
+          <h4 id="help-phreeqc-inverse">Inverse models through PHREEQC</h4>
+          <p>Below the look through PHREEQC, <em>Inverse models</em> asks PHREEQC's
+            <code>INVERSE_MODELING</code> which phases, dissolving or forming, make one water of the
+            run out of another: <em>from</em> the water flowing in at the left, or a cell of the
+            column, <em>to</em> another, each cell <em>at</em> <code>start</code>,
+            <code>end</code> or a time such as <code>2 d</code> — the stored point nearest it. Each
+            water is given to PHREEQC as a look gives it, its element totals and its pe and
+            temperature, the pH walked until PHREEQC's H<sup>+</sup> is the run's. The phases are
+            the database's, named as <code>Calcite, Gypsum, CO2(g)</code>; one followed by
+            <code>dissolve</code> or <code>precipitate</code> goes that way only, and with none
+            named the model's own minerals and gases are taken. Every element the waters have, but
+            hydrogen and oxygen, is balanced, each total allowed to move by the
+            <em>uncertainty</em>, a fraction of it, as PHREEQC's <code>-uncertainty</code>;
+            <em>ranges</em> asks how far each transfer can go in any model the uncertainty allows,
+            and <em>minimal models only</em> leaves out a model a smaller set of the phases does
+            the work of.</p>
+          <p>Each model's mole transfers are drawn as bars, dissolving above zero and forming below,
+            the ranges as whiskers, and listed with the adjustments PHREEQC made to the totals and
+            its three measures of how far off it is: the sum of the residuals, the sum of each
+            adjustment over its uncertainty, and the largest adjustment as a fraction of its total.
+            The numbers are PHREEQC's, to the four figures it prints them to: it keeps its inverse
+            models out of its selected output. A model found between a run's start and its end
+            gives back what the run's own reactions did, to those figures — calcite dissolved at a
+            rate for a day is that rate times a day. <em>CSV</em> saves every number of every
+            model.</p>
+
           <h4 id="help-phreeqc-transport">Against PHREEQC's own transport</h4>
           <p>The same column run by both: acid, 5&nbsp;mmol/kgw of HCl, entering 0.1&nbsp;m of a water at
             saturation with calcite, 10&nbsp;mmol/kgw of it in every cell, at a Peclet number of 40 for two
@@ -3193,11 +3250,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20261109j"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109k"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109l"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109k"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109l"></script>
 </body>
 </html>

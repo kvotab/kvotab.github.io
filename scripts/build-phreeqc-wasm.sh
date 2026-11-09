@@ -36,6 +36,8 @@ EXPORTS=_CreateIPhreeqc,_DestroyIPhreeqc,_LoadDatabaseString,_RunString,_GetErro
 EXPORTS+=,_GetWarningString,_SetErrorStringOn,_SetCurrentSelectedOutputUserNumber
 EXPORTS+=,_GetSelectedOutputRowCount,_GetSelectedOutputColumnCount,_GetSelectedOutputValue
 EXPORTS+=,_VarInit,_VarClear,_GetVersionString,_malloc,_free
+# PHREEQC's printed output, for what it prints alone: its inverse models.
+EXPORTS+=,_SetOutputStringOn,_GetOutputString
 
 # --- Emscripten ---------------------------------------------------------------
 if [ ! -x "$EMSDK_DIR/emsdk" ]; then

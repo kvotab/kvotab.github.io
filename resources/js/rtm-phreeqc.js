@@ -5057,18 +5057,39 @@
     }
     if (!groups.length) throw new Error('No cells to read.');
     const value = (c, si, k) => run.states[k * run.width + c * ns + si];
+    // A water: its element totals, [H+] and pe, each species' concentration as `get` has it.
+    const waterRow = (get, meta) => {
+      const totals = new Map(background);
+      for (const [n, { contrib }] of mapped) {
+        const c = Math.max(get(model.species.indexOf(n)), 0) * scale;
+        for (const [lb, v] of contrib) totals.set(lb, (totals.get(lb) || 0) + v * c);
+      }
+      const h = hIndex >= 0 ? Math.max(get(hIndex), 0) * scale : null;
+      const ae = eIndex >= 0 ? get(eIndex) : 0;
+      return { ...meta, totals, H: h, pH: h > 0 ? -Math.log10(h) : null, pe: ae > 0 ? -Math.log10(ae) : null };
+    };
     const rows = [];
-    for (const g of groups) {
-      for (const k of idx) {
-        const totals = new Map(background);
-        for (const [n, { contrib }] of mapped) {
-          const c = Math.max(value(g.state, model.species.indexOf(n), k), 0) * scale;
-          for (const [lb, v] of contrib) totals.set(lb, (totals.get(lb) || 0) + v * c);
+    if (o.only) {
+      // These waters alone, in this order: a cell at one of the run's stored points, or a water given whole -- what
+      // flows in -- as concentrations of the model's species.
+      for (const w of o.only) {
+        if (w.state) {
+          rows.push(waterRow((si) => w.state[si], { t: null, cell: null, layer: 0, state: null, k: null, tc: temp, label: w.label }));
+          continue;
         }
-        const h = hIndex >= 0 ? Math.max(value(g.state, hIndex, k), 0) * scale : null;
-        const ae = eIndex >= 0 ? value(g.state, eIndex, k) : 0;
-        rows.push({ t: run.t[k], cell: g.cell, layer: g.layer, totals, H: h, pH: h > 0 ? -Math.log10(h) : null,
-          pe: ae > 0 ? -Math.log10(ae) : null, state: g.state, k, tc: temps ? temps[k * model.cells + g.state] : temp });
+        if (!(Number.isInteger(w.cell) && w.cell >= 0 && w.cell < nfr && Number.isInteger(w.k) && w.k >= 0 && w.k < nT)) {
+          throw new Error(`The run has no water of cell ${w.cell} at its stored point ${w.k}.`);
+        }
+        const c = w.cell * stride;
+        rows.push(waterRow((si) => value(c, si, w.k), { t: run.t[w.k], cell: w.cell, layer: 0, state: c, k: w.k,
+          tc: temps ? temps[w.k * model.cells + c] : temp, label: w.label }));
+      }
+    } else {
+      for (const g of groups) {
+        for (const k of idx) {
+          rows.push(waterRow((si) => value(g.state, si, k), { t: run.t[k], cell: g.cell, layer: g.layer, state: g.state, k,
+            tc: temps ? temps[k * model.cells + g.state] : temp }));
+        }
       }
     }
 
@@ -5139,6 +5160,11 @@
     const good = rows.filter((r) => r.pq);
     if (!good.length) {
       throw new Error(`PHREEQC could not calculate any of the waters: ${rows[0].error || ''}`);
+    }
+    if (o.inverse) {
+      const bad = rows.find((r) => !r.pq);
+      if (bad) throw new Error(`PHREEQC could not calculate ${bad.label || 'one of the waters'}: ${bad.error || ''}`);
+      return { rows, inverse: inverseModels(o, rows, solution, db, [...minerals, ...gasSpecies].map((m) => m.phase)) };
     }
 
     // --- the model's exchangers: the run's fractions against PHREEQC's ------
@@ -5665,6 +5691,113 @@
     return { rows, phases, report, csv };
   }
 
+  /*
+    INVERSE MODELS, PHREEQC's INVERSE_MODELING between waters of a run: the
+    first waters mixed (fractions PHREEQC finds), the last the one they
+    become, with the phases named -- each dissolving or forming unless it is
+    said which -- and every element of the waters balanced, to the
+    uncertainty given. PHREEQC prints its models and keeps none of them in a
+    selected output row, so its output is read: what it prints, to four
+    figures.
+  */
+  /** The phases of an inverse model, as given: "Calcite, Gypsum dissolve, CO2(g)". */
+  function inversePhases(list) {
+    return (list || []).map((line) => {
+      const [name, how] = String(line).trim().split(/\s+/);
+      const only = !how ? null : /^dis/i.test(how) ? 'dissolve' : /^pre/i.test(how) ? 'precipitate' : undefined;
+      if (only === undefined) throw new Error(`"${line}": a phase may be followed by dissolve or precipitate, nothing else.`);
+      return { name, only };
+    }).filter((ph) => ph.name);
+  }
+
+  function inverseModels(o, rows, solution, db, own) {
+    const inv = o.inverse;
+    const given = inversePhases(inv.phases);
+    const phases = given.length ? given : [...new Set(own)].map((name) => ({ name, only: null }));
+    if (!phases.length) {
+      throw new Error('Name the phases that may dissolve or form: the model has no mineral or gas the database has as a phase.');
+    }
+    const known = new Map(db.phases.map((ph) => [ph.toLowerCase(), ph]));
+    const unknown = phases.filter((ph) => !known.has(ph.name.toLowerCase()));
+    if (unknown.length) throw new Error(`The database has no phase ${unknown.map((ph) => ph.name).join(', ')}.`);
+    for (const ph of phases) ph.name = known.get(ph.name.toLowerCase());
+    const u = inv.uncertainty === undefined ? 0.05 : Number(inv.uncertainty);
+    if (!(u >= 0 && u < 1)) throw new Error('The uncertainty is a fraction of each total, from 0 to below 1: 0.05 is 5 %.');
+    // Every element the waters have, but H and O, held to the uncertainty.
+    const balances = [...new Set(rows.flatMap((r) => [...r.totals].filter(([, v]) => v > 0).map(([lb]) => elementOf(lb))))]
+      .filter((el) => el !== 'H' && el !== 'O').sort();
+    const label = (r, k) => (r.label || (r.cell !== null ? `cell ${r.cell}, stored point ${r.k}` : `water ${k + 1}`)).replace(/\s+/g, ' ');
+    const input = `${rows.map((r, k) => solution(k + 1, r).replace(/^SOLUTION \d+/, `SOLUTION ${k + 1} ${label(r, k)}`)).join('')}`
+      + 'END\nINVERSE_MODELING 1\n'
+      + ` -solutions ${rows.map((_, k) => k + 1).join(' ')}\n -uncertainty ${fmtG(u, 12)}\n`
+      + ` -range ${inv.range ? 'true' : 'false'}\n -minimal ${inv.minimal ? 'true' : 'false'}\n -mineral_water true\n`
+      + ` -balances\n${balances.map((el) => `  ${el}\n`).join('')}`
+      + ` -phases\n${phases.map((ph) => `  ${ph.name}${ph.only ? ` ${ph.only}` : ''}\n`).join('')}END\n`;
+    const printed = o.engine.printed(input);
+    const read = readInverse(printed, phases.map((ph) => ph.name));
+    return { ...read, phases: phases.map((ph) => ({ ...ph })), balances, uncertainty: u, range: !!inv.range,
+      minimal: !!inv.minimal, waters: rows.map((r, k) => ({ n: k + 1, label: label(r, k), t: r.t, cell: r.cell, pH: r.pH, pe: r.pe,
+        tc: r.tc })), input };
+  }
+
+  /**
+   * PHREEQC's printed inverse models, read back: each model's solutions --
+   * every balance's input, the delta it was adjusted by and the two summed --
+   * the fractions of the solutions, the phases' mole transfers (a minimum and
+   * a maximum where -range asks for them, zero where not), the redox
+   * transfers, the three sums PHREEQC gives of its misfit, and whether it is
+   * a minimal model; and its summary. A phase's name is printed to 15
+   * characters, and is matched back to the name given.
+   */
+  function readInverse(text, names) {
+    const start = text.indexOf('Beginning of inverse modeling');
+    if (start < 0) throw new Error('PHREEQC printed no inverse modelling');
+    const end = text.indexOf('Summary of inverse modeling:', start);
+    const body = text.slice(start, end < 0 ? text.length : end);
+    const tail = end < 0 ? '' : text.slice(end);
+    const NUM = '([-+]?(?:\\d+\\.?\\d*|\\.\\d+)(?:[eE][-+]?\\d+)?)';
+    const balanceLine = new RegExp(`^\\s*(\\S+)\\s+${NUM}\\s+\\+\\s*${NUM}\\s+=\\s*${NUM}\\s*$`);
+    const fractionLine = new RegExp(`^\\s*Solution\\s+(\\d+)\\s+${NUM}\\s+${NUM}\\s+${NUM}\\s*$`);
+    const phaseLine = new RegExp(`^\\s*(\\S+)\\s+${NUM}\\s+${NUM}\\s+${NUM}\\s+(\\S*)\\s*\\((.*)\\)\\s*$`);
+    const redoxLine = new RegExp(`^\\s*(\\S+)\\s+${NUM}\\s*$`);
+    const full = (nm) => names.find((x) => x === nm) || names.find((x) => x.slice(0, 15) === nm) || nm;
+    const models = [];
+    for (const chunk of body.split(/^={20,}\s*$/m)) {
+      if (!/^Phase mole transfers:/m.test(chunk)) continue;
+      const m = { solutions: [], fractions: [], phases: [], redox: [], residuals: null, deltaOverU: null, maxFraction: null, minimal: false };
+      let mode = null;
+      let sol = null;
+      for (const ln of chunk.split('\n')) {
+        let x = /^Solution (\d+):\s?(.*)$/.exec(ln);
+        if (x) { sol = { n: Number(x[1]), description: x[2].trim(), balances: [] }; m.solutions.push(sol); mode = 'solution'; continue; }
+        if (/^Solution fractions:/.test(ln)) { mode = 'fractions'; continue; }
+        if (/^Phase mole transfers:/.test(ln)) { mode = 'phases'; continue; }
+        if (/^Redox mole transfers:/.test(ln)) { mode = 'redox'; continue; }
+        x = /^Sum of residuals \(epsilons in documentation\):\s*(\S+)/.exec(ln);
+        if (x) { m.residuals = Number(x[1]); mode = null; continue; }
+        x = /^Sum of delta\/uncertainty limit:\s*(\S+)/.exec(ln);
+        if (x) { m.deltaOverU = Number(x[1]); continue; }
+        x = /^Maximum fractional error in element concentration:\s*(\S+)/.exec(ln);
+        if (x) { m.maxFraction = Number(x[1]); continue; }
+        if (/^Model contains minimum number of phases\./.test(ln)) { m.minimal = true; continue; }
+        if (mode === 'solution' && (x = balanceLine.exec(ln))) {
+          sol.balances.push({ name: x[1], input: Number(x[2]), delta: Number(x[3]), adjusted: Number(x[4]) });
+        } else if (mode === 'fractions' && (x = fractionLine.exec(ln))) {
+          m.fractions.push({ n: Number(x[1]), value: Number(x[2]), min: Number(x[3]), max: Number(x[4]) });
+        } else if (mode === 'phases' && (x = phaseLine.exec(ln))) {
+          m.phases.push({ name: full(x[1]), value: Number(x[2]), min: Number(x[3]), max: Number(x[4]), formula: x[5],
+            si: x[6].split(',').map((v) => (v.trim() === '' ? null : Number(v))) });
+        } else if (mode === 'redox' && (x = redoxLine.exec(ln))) {
+          m.redox.push({ name: x[1], value: Number(x[2]) });
+        }
+      }
+      models.push(m);
+    }
+    const count = (re) => { const x = re.exec(tail); return x ? Number(x[1]) : null; };
+    return { models, found: count(/Number of models found:\s*(\d+)/), minimalFound: count(/Number of minimal models found:\s*(\d+)/),
+      infeasible: count(/Number of infeasible sets of phases saved:\s*(\d+)/), calls: count(/Number of calls to cl1:\s*(\d+)/) };
+  }
+
   function csvCell(v) {
     const s = String(v);
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
@@ -5674,6 +5807,6 @@
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
     readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
-    rateLaw, readTransport,
+    rateLaw, readTransport, readInverse, inversePhases,
   };
 }));

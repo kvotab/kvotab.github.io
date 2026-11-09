@@ -173,6 +173,8 @@ function rtmSummary(model) {
     settings: model.settings,
     warnings: model.warnings,
     initial: Array.from(model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState()),
+    // What flows in at the left, each species' left= or else its start: the water an inverse model can start from.
+    inflow: model.transport ? model.speciesList.map((sp) => (sp.left == null ? sp.initial : sp.left)) : null,
     // Equilibria held throughout the run (EQUILIBRATE = always): how many
     // relations, conserved totals and species, and the species' share of the state.
     heldEquilibria: model.heldEquilibria || null,

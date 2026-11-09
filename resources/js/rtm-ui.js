@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109k';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109l';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -4977,6 +4977,28 @@
       more: more('A run through PHREEQC', 'help-phreeqc-run'),
     }),
 
+    'pq:inverse': () => ({
+      kicker: 'PHREEQC', title: 'Inverse models',
+      lead: 'PHREEQC\'s INVERSE_MODELING between two waters of the run: which phases, dissolving or forming, make the one of the other, every element of the waters balanced to the uncertainty given.',
+      facts: [['Found', pq.invResult ? `${pq.invResult.models.length} model${pq.invResult.models.length === 1 ? '' : 's'} the last time` : 'none looked for yet']],
+      sections: [
+        { heading: 'The waters', list: [
+          '**from**, **to**: the water flowing in at the left, or a cell of the column, **at** **start**, **end** or a time such as `2 d` — the stored point nearest it.',
+          'Each is given to PHREEQC as a look through PHREEQC gives it: its element totals, its pe and temperature, the pH walked until PHREEQC’s H+ is the run’s.',
+        ] },
+        { heading: 'The models', list: [
+          '**with**: the database’s phases that may dissolve or form, as `Calcite, Gypsum, CO2(g)`; one followed by `dissolve` or `precipitate` goes that way only. Empty: the model’s own minerals and gases.',
+          '**uncertainty**: how far each total may move, a fraction of it: 0.05 is 5 %. Every element of the waters is balanced, but H and O.',
+          '**ranges**: how far each transfer can go in any model the uncertainty allows. **minimal models only**: none whose work a smaller set of the phases does.',
+        ] },
+        { heading: 'What comes back', list: [
+          'Each model’s mole transfers as bars, dissolving above zero, the ranges as whiskers; and a table of each, with the adjustments PHREEQC made and its three measures of misfit. To four figures, as PHREEQC prints them.',
+          '**CSV**: every number of every model.',
+        ] },
+      ],
+      more: more('Inverse models through PHREEQC', 'help-phreeqc-inverse'),
+    }),
+
     'pane:jacobian': {
       kicker: 'Tab', title: 'Jacobian',
       lead: 'The sparsity pattern of the matrix the solver factorises, and what Check Jacobian found.',
@@ -5485,12 +5507,12 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109j';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109l';
   const PQ_SCRIPTS = [
-    'vendors/phreeqc/phreeqc.js?v=20261107',
+    'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109j',
-    'resources/js/rtm-phreeqc-engine.js?v=20261107b',
+    'resources/js/rtm-phreeqc.js?v=20261109l',
+    'resources/js/rtm-phreeqc-engine.js?v=20261109l',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -5523,6 +5545,9 @@ END
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
     view: null,              // the last look at a run through PHREEQC
+    // Inverse models: between which waters, with which phases, to what uncertainty; and what PHREEQC found.
+    inv: { from: '', fromAt: 'start', to: '', toAt: 'end', phases: '', u: '0.05', range: true, minimal: true },
+    invResult: null,
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -5538,7 +5563,7 @@ END
       localStorage.setItem(PQ_KEY, JSON.stringify({
         water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
-        open: pq.open,
+        open: pq.open, inv: pq.inv,
       }));
     } catch (e) { /* storage unavailable: for this visit only */ }
   }
@@ -5551,6 +5576,10 @@ END
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      if (s.inv && typeof s.inv === 'object') {
+        for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
+        for (const k of ['range', 'minimal']) if (typeof s.inv[k] === 'boolean') pq.inv[k] = s.inv[k];
+      }
       if (PQ_HOLDS.includes(s.eq)) pq.eq = s.eq;
       if (PQ_ACTS.includes(s.act)) pq.act = s.act;
       else if (typeof s.hold === 'boolean') pq.eq = s.hold ? 'exact' : 'start';
@@ -5769,6 +5798,7 @@ END
     pq.busy = on;
     $('rtmPqWrite').disabled = on;
     $('rtmPqLook').disabled = on;
+    $('rtmPqInvGo').disabled = on;
     if (on && text) {
       const first = pq.kind === 'none' || (pq.kind === 'inline' && !pq.inline)
         ? ' PHREEQC is fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.' : '';
@@ -6268,6 +6298,7 @@ END
   }
 
   function pqRenderView() {
+    pqInvRender();
     const v = pq.view;
     const plot = $('rtmChartPq');
     $('rtmPqEmpty').hidden = !!v;
@@ -6353,6 +6384,196 @@ END
   function pqCsv() {
     if (!pq.view) { setStatus('Look at a run through PHREEQC first: there is no table yet.', 'warn'); return; }
     downloadBlob(new Blob([pq.view.csv], { type: 'text/csv' }), `${fileStem()}_phreeqc.csv`);
+  }
+
+  /* ---- inverse models: PHREEQC's INVERSE_MODELING between two waters of the run ---- */
+
+  /** The waters an inverse model can go between: what flows in, and each cell of the column. */
+  function pqInvWaters() {
+    const r = state.result;
+    const m = r && r.model;
+    if (!m) return [];
+    const n = m.fracture || 1;
+    return [...(m.inflow ? [{ value: 'inflow', label: 'the water flowing in' }] : []),
+      ...Array.from({ length: n }, (_, i) => ({ value: String(i), label: n > 1 ? `cell ${i}` : 'the water' }))];
+  }
+
+  function pqInvRender() {
+    const waters = pqInvWaters();
+    // Unless chosen: from what flows in, or the water as it starts; to the last cell as the run ends.
+    const has = (v) => waters.some((w) => w.value === v);
+    if (waters.length && !has(pq.inv.from)) pq.inv.from = waters[0].value;
+    if (waters.length && !has(pq.inv.to)) pq.inv.to = waters[waters.length - 1].value;
+    const options = (v) => (waters.length ? waters.map((w) => `<option value="${w.value}"${w.value === v ? ' selected' : ''}>`
+      + `${esc(w.label)}</option>`).join('') : '<option value="">a water of the run</option>');
+    $('rtmPqInvFrom').innerHTML = options(pq.inv.from);
+    $('rtmPqInvTo').innerHTML = options(pq.inv.to);
+    $('rtmPqInvFromAt').value = pq.inv.fromAt;
+    $('rtmPqInvToAt').value = pq.inv.toAt;
+    $('rtmPqInvFromAtWrap').hidden = pq.inv.from === 'inflow';
+    $('rtmPqInvToAtWrap').hidden = pq.inv.to === 'inflow';
+    $('rtmPqInvPhases').value = pq.inv.phases;
+    $('rtmPqInvU').value = pq.inv.u;
+    $('rtmPqInvRange').checked = pq.inv.range;
+    $('rtmPqInvMinimal').checked = pq.inv.minimal;
+    pqInvDraw();
+  }
+
+  function pqInvRead() {
+    pq.inv.from = $('rtmPqInvFrom').value;
+    pq.inv.to = $('rtmPqInvTo').value;
+    pq.inv.fromAt = $('rtmPqInvFromAt').value.trim() || 'start';
+    pq.inv.toAt = $('rtmPqInvToAt').value.trim() || 'end';
+    pq.inv.phases = $('rtmPqInvPhases').value.trim();
+    pq.inv.u = $('rtmPqInvU').value.trim();
+    pq.inv.range = $('rtmPqInvRange').checked;
+    pq.inv.minimal = $('rtmPqInvMinimal').checked;
+    pqSave();
+  }
+
+  /** A water of the run as the inverse model is given it: what flows in, or a cell at the stored point nearest a time. */
+  function pqInvPick(which, at, r) {
+    if (which === 'inflow') {
+      if (!r.model.inflow) return { error: 'The run has no water flowing in: choose a cell.' };
+      return { pick: { state: Array.from(r.model.inflow), label: 'the water flowing in' } };
+    }
+    const n = r.model.fracture || 1;
+    const cell = Number(which);
+    if (!(which !== '' && Number.isInteger(cell) && cell >= 0 && cell < n)) return { error: 'Choose a water of the run to go from and one to go to.' };
+    const word = String(at).trim().toLowerCase();
+    let k;
+    if (word === 'start' || word === 'the start' || word === '0') k = 0;
+    else if (word === 'end' || word === 'the end') k = r.n - 1;
+    else {
+      const { times, bad } = parseTimes(at);
+      if (bad.length || times.length !== 1) return { error: `"${at}" is no time of the run: start, end, or a time such as 2 d.` };
+      k = nearestIndex(r.t, times[0]);
+    }
+    const where = n > 1 ? `cell ${cell}` : 'the water';
+    const when = k === 0 ? 'as it starts' : k === r.n - 1 ? 'as the run ends' : `at ${fmtTime(r.t[k])}`;
+    return { pick: { cell, k, label: `${where} ${when}` } };
+  }
+
+  async function pqInverse() {
+    if (pq.busy) return;
+    pqInvRead();
+    const r = state.result;
+    if (!r) { setStatus('Run the model first: an inverse model goes between two waters of a run.', 'warn'); return; }
+    const a = pqInvPick(pq.inv.from, pq.inv.fromAt, r);
+    const b = pqInvPick(pq.inv.to, pq.inv.toAt, r);
+    if (a.error || b.error) { setStatus(a.error || b.error, 'error'); return; }
+    if (a.pick.label === b.pick.label) { setStatus('From and to are the same water: choose two.', 'error'); return; }
+    const u = pqNumber($('rtmPqInvU'));
+    if (u === null || !(u < 1)) { setStatus('The uncertainty is a fraction of each total, from 0 to below 1: 0.05 is 5 %.', 'error'); return; }
+    const phases = pq.inv.phases ? pq.inv.phases.split(/[,;]/).map((x) => x.trim()).filter(Boolean) : [];
+    const water = pq.fill && pq.water.trim() ? { name: 'The water', text: pq.water } : null;
+    pqBusy(true, 'PHREEQC is looking for inverse models…');
+    const started = Date.now();
+    try {
+      const reply = await pqRequest({
+        type: 'inverse', database: pqDatabase(), water,
+        run: { t: r.t, states: r.states, temps: r.temps || null, n: r.n, width: r.width, model: r.model },
+        modelText: (state.ran && state.ran.text) || state.text,
+        options: { only: [a.pick, b.pick], inverse: { phases, uncertainty: u, range: pq.inv.range, minimal: pq.inv.minimal } },
+      });
+      pq.invResult = { ...reply.inverse, runNumber };
+      pqInvDraw();
+      const n = reply.inverse.models.length;
+      const secs = ((Date.now() - started) / 1000).toFixed(1);
+      if (n) setStatus(`PHREEQC found ${n} inverse model${n === 1 ? '' : 's'} in ${secs} s.`, 'ok');
+      else setStatus('PHREEQC found no inverse model: no mixture of the phases named makes the one water of the other '
+        + 'within the uncertainty. More phases, or a larger uncertainty, may find one.', 'warn');
+    } catch (e) {
+      setStatus(`PHREEQC could not work out inverse models: ${e.message}`, 'error');
+    } finally {
+      pqBusy(false);
+    }
+  }
+
+  /** What PHREEQC found: the phases' mole transfers of each model as bars, and a table of each model. */
+  function pqInvDraw() {
+    const v = pq.invResult;
+    const plot = $('rtmChartPqInv');
+    $('rtmPqInvShow').hidden = !v;
+    $('rtmPqInvOut').hidden = !v;
+    if (!v) {
+      if (typeof Plotly !== 'undefined') Plotly.purge(plot);
+      plot.hidden = true;
+      return;
+    }
+    const label = (n) => (v.waters.find((w) => w.n === n) || { label: `solution ${n}` }).label;
+    const from = v.waters.slice(0, -1).map((w) => w.label).join(' and ');
+    const to = v.waters[v.waters.length - 1].label;
+    const nMin = v.models.filter((m) => m.minimal).length;
+    $('rtmPqInvNote').textContent = `${v.models.length} model${v.models.length === 1 ? '' : 's'}`
+      + `${v.minimal ? ', minimal ones only' : v.models.length ? `, ${nMin} of them minimal` : ''}: from ${from} to ${to}, `
+      + `${v.balances.join(', ')} balanced to ${Number((v.uncertainty * 100).toPrecision(3))} %`
+      + `${v.runNumber !== runNumber ? '; of the run before the latest one' : ''}`;
+    const f3 = (x) => (x === 0 ? '0' : x.toExponential(3));
+    const range = (x) => (v.range ? ` (${f3(x.min)} to ${f3(x.max)})` : '');
+    const rows = v.models.map((m, i) => {
+      const phases = m.phases.length ? m.phases.map((ph) => `${esc(ph.name)} ${f3(ph.value)}${range(ph)}`).join('<br>')
+        : 'none: the waters are the same to within the uncertainty';
+      const fractions = m.fractions.length > 2 || m.fractions.some((x) => x.value !== 1)
+        ? m.fractions.map((x) => `${esc(label(x.n))} ${f3(x.value)}${range(x)}`).join('<br>') : '1 each';
+      const deltas = m.solutions.flatMap((sl) => sl.balances.filter((bl) => bl.delta !== 0)
+        .map((bl) => `${esc(bl.name)} in ${esc(label(sl.n))} ${bl.delta > 0 ? '+' : ''}${f3(bl.delta)}`));
+      return `<tr><td>${i + 1}${m.minimal ? ', minimal' : ''}</td><td>${phases}</td><td>${fractions}</td>`
+        + `<td>${deltas.length ? deltas.join('<br>') : 'none'}</td>`
+        + `<td>${f3(m.residuals)}; ${f3(m.deltaOverU)}; ${f3(m.maxFraction)}</td></tr>`;
+    });
+    $('rtmPqInvOut').innerHTML = v.models.length
+      ? `<table class="rtm-table rtm-pq-models"><thead><tr><th>Model</th><th>Phases, mol${v.range ? ' (from, to)' : ''}: `
+        + 'dissolving above zero</th><th>Fractions of the waters</th><th>Adjusted within the uncertainty</th>'
+        + '<th>Residuals; delta over uncertainty; largest fraction</th></tr></thead>'
+        + `<tbody>${rows.join('')}</tbody></table>`
+      : '<p class="warn">No model: no mixture of the phases named makes the one water of the other within the uncertainty.</p>';
+    // Bars where a model moves a phase; none where none does.
+    const moved = v.models.some((m) => m.phases.length);
+    if (!moved || typeof Plotly === 'undefined' || state.tab !== 'phreeqc') {
+      if (!moved) { if (typeof Plotly !== 'undefined') Plotly.purge(plot); plot.hidden = true; }
+      return;
+    }
+    plot.hidden = false;
+    const names = v.phases.map((ph) => ph.name);
+    const traces = v.models.map((m, i) => {
+      const at = names.map((nm) => m.phases.find((ph) => ph.name === nm) || null);
+      const tr = { type: 'bar', name: `model ${i + 1}${m.minimal ? '' : ', not minimal'}`, x: names,
+        y: at.map((ph) => (ph ? ph.value : null)), marker: { color: DG_PALETTE[i % DG_PALETTE.length] },
+        hovertemplate: `model ${i + 1}: %{x} %{y:.3e} mol<extra></extra>` };
+      if (v.range) {
+        tr.error_y = { type: 'data', symmetric: false, thickness: 1.2, width: 4,
+          array: at.map((ph) => (ph ? ph.max - ph.value : null)), arrayminus: at.map((ph) => (ph ? ph.value - ph.min : null)) };
+      }
+      return tr;
+    });
+    const layout = baseLayout();
+    layout.barmode = 'group';
+    layout.bargap = 0.5;
+    layout.hovermode = 'closest';
+    layout.xaxis.title = { text: 'phase', font: { size: 11 } };
+    layout.yaxis.title = { text: 'mole transfer (mol), dissolving above zero', font: { size: 11 } };
+    layout.yaxis.exponentformat = 'power';
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  function pqInvCsv() {
+    const v = pq.invResult;
+    if (!v) { setStatus('Find inverse models first: there is no table yet.', 'warn'); return; }
+    const label = (n) => (v.waters.find((w) => w.n === n) || { label: `solution ${n}` }).label;
+    const rows = [];
+    v.models.forEach((m, i) => {
+      const add = (what, name, x, lo, hi) => rows.push([i + 1, m.minimal, what, name, x, v.range ? lo : null, v.range ? hi : null]);
+      for (const x of m.fractions) add('fraction', label(x.n), x.value, x.min, x.max);
+      for (const ph of m.phases) add('phase mole transfer (mol)', ph.name, ph.value, ph.min, ph.max);
+      for (const rx of m.redox) add('redox mole transfer (mol)', rx.name, rx.value, null, null);
+      for (const sl of m.solutions) for (const bl of sl.balances) if (bl.delta !== 0) add(`delta in ${label(sl.n)}`, bl.name, bl.delta, null, null);
+      add('sum of residuals', '', m.residuals, null, null);
+      add('sum of delta over uncertainty', '', m.deltaOverU, null, null);
+      add('largest fractional adjustment', '', m.maxFraction, null, null);
+    });
+    const tab = { head: ['model', 'minimal', 'what', 'name', 'value', 'minimum', 'maximum'], rows };
+    downloadBlob(new Blob([`${csvOf(tab)}\n`], { type: 'text/csv' }), `${fileStem()}_inverse.csv`);
   }
 
   async function pqWaterChosen(ev) {
@@ -6585,6 +6806,9 @@ END
       if (pq.view) pqRenderView(); else pqDraw();
     },
     'rtm:pqCsv': () => pqCsv(),
+    'rtm:pqInvSettings': () => { pqInvRead(); pqInvRender(); infoRefresh(); },
+    'rtm:pqInverse': () => { pqInverse(); },
+    'rtm:pqInvCsv': () => pqInvCsv(),
   });
 
   /* ---------------------------------------------------------------------

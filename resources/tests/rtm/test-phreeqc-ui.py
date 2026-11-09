@@ -903,6 +903,71 @@ async def main():
             kin_done = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('and it runs', kin_done, 'Done')
 
+            # --- inverse models: PHREEQC's INVERSE_MODELING between the water as it starts and as the run ends ---
+            # What the run did to its calcite, off the time chart: PHREEQC's model must give it back.
+            await page.ev(CLICK % json.dumps('[data-tab="time"]'))
+            await page.ev("""(() => {
+              const el = document.querySelector('#rtmSeries input[value="Calcite"]');
+              el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            calcite = await until(page, "(() => { const t = (document.getElementById('rtmChartTime').data || [])"
+                                        ".find((d) => d.name === 'Calcite'); return t ? [t.y[0], t.y[t.y.length - 1]] : ''; })()")
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await asyncio.sleep(0.3)
+            inv_set = await page.ev("[document.getElementById('rtmPqInvFrom').value, document.getElementById('rtmPqInvFromAt').value,"
+                                    " document.getElementById('rtmPqInvTo').value, document.getElementById('rtmPqInvToAt').value,"
+                                    " document.getElementById('rtmPqInvFromAtWrap').hidden]")
+            check('inverse models offer a batch\'s one water, from as it starts to as the run ends', inv_set,
+                  ['0', 'start', '0', 'end', False])
+
+            async def inverse(phases, u):
+                await page.ev("(() => { const p = document.getElementById('rtmPqInvPhases'); p.value = %s;"
+                              " p.dispatchEvent(new Event('change', { bubbles: true }));"
+                              " const u = document.getElementById('rtmPqInvU'); u.value = %s;"
+                              " u.dispatchEvent(new Event('change', { bubbles: true }));"
+                              " document.getElementById('rtmStatus').textContent = '';"
+                              " document.getElementById('rtmPqInvGo').click(); })()" % (json.dumps(phases), json.dumps(u)))
+                return await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC found') "
+                                         f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+
+            # At 5 %, the calcite is within the uncertainty of the water's calcium: the minimal model needs no phase.
+            loose = await inverse('Calcite', '0.05')
+            loose_out = await page.ev("[document.getElementById('rtmPqInvOut').textContent, document.getElementById('rtmChartPqInv').hidden]")
+            check('at 5 %, a day of the calcite is within the calcium\'s uncertainty: one minimal model, of no phase, and no bars',
+                  isinstance(loose, str) and loose.startswith('PHREEQC found 1 inverse model') and isinstance(loose_out, list)
+                  and 'none: the waters are the same to within the uncertainty' in loose_out[0] and loose_out[1], True)
+            tight = await inverse('Calcite', '1e-6')
+            bars = await page.ev("(() => { const d = document.getElementById('rtmChartPqInv').data || [];"
+                                 " return d.map((t) => [t.name, t.x, t.y, t.error_y ? [t.error_y.array, t.error_y.arrayminus] : null]); })()")
+            moved = (calcite[0] - calcite[1]) if isinstance(calcite, list) else None
+            got = bars[0][2][0] if bars and bars[0][2] else None
+            check('at 1e-6, PHREEQC\'s model is the calcite the run formed, to the four figures it prints: '
+                  f'{got} for {moved}', isinstance(tight, str) and tight.startswith('PHREEQC found 1 inverse model')
+                  and moved is not None and got is not None and moved < 0
+                  and abs(got - moved) <= 5e-4 * abs(moved) and bars[0][0] == 'model 1' and bars[0][1] == ['Calcite']
+                  and bars[0][3] is not None and bars[0][3][0][0] > 0 and bars[0][3][1][0] > 0, True)
+            note = await page.ev("document.getElementById('rtmPqInvNote').textContent")
+            check('  and the note says between which waters, what was balanced and to what',
+                  isinstance(note, str) and note.startswith('1 model, minimal ones only: from the water as it starts to the water as '
+                                                            'the run ends, C, Ca, Cl, Fe, K, Mg, Na, S, Si balanced to 0.0001 %'), True)
+            await page.ev("""(() => {
+              window.__csv = null;
+              const make = URL.createObjectURL, click = HTMLAnchorElement.prototype.click;
+              URL.createObjectURL = (b) => { window.__csv = b; return 'blob:caught'; };
+              HTMLAnchorElement.prototype.click = function () {};
+              document.querySelector('[data-on-click="rtm:pqInvCsv"]').click();
+              URL.createObjectURL = make; HTMLAnchorElement.prototype.click = click;
+            })()""")
+            inv_csv = await page.ev("window.__csv ? window.__csv.text() : null")
+            inv_lines = inv_csv.strip().split('\n') if isinstance(inv_csv, str) else []
+            check('  CSV: every number of the model, the calcite\'s transfer and its range among them',
+                  bool(inv_lines) and inv_lines[0] == 'model,minimal,what,name,value,minimum,maximum'
+                  and any(ln.startswith('1,true,phase mole transfer (mol),Calcite,') for ln in inv_lines)
+                  and any(ln.startswith('1,true,sum of residuals,') for ln in inv_lines), True)
+            bad = await inverse('Calcitee', '0.05')
+            check('  a phase the database does not have is said', isinstance(bad, str)
+                  and bad.startswith('PHREEQC could not work out inverse models: The database has no phase Calcitee.'), True)
+
             # --- the temperature: the example water warmed along a table, run, and looked at through PHREEQC ---
             warm_report = await write_from_example(page)
             check('the hand-off says the relations\' log K go with temperature, as the database\'s do',
