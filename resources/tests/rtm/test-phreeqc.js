@@ -3154,9 +3154,11 @@ function againstTransportHandOff(engine) {
     PHREEQC's TRANSPORT of the input against the page's run of the column
     written from it: the last cell's totals of `els` (and pH, and `amount`,
     a mineral or a reactant, in every cell at the last shift), PHREEQC's
-    after shift k against the page's half a time step later.
+    after shift k against the page's half a time step later; with `stag`,
+    the stagnant cell behind the last one too (the input punching it),
+    the page's rock layer behind its last cell.
   */
-  const compare = (text, res, els, amount) => {
+  const compare = (text, res, els, amount, stag) => {
     const t = P.readTransport(text);
     const N = t.cells;
     const S = t.shifts;
@@ -3179,17 +3181,23 @@ function againstTransportHandOff(engine) {
     const db = P.readDatabase(dbText);
     const back = new Map([...res.names].map(([k, n]) => [n, k]));
     const of = Object.fromEntries(els.map((el) => [el, []]));
+    // A valence state as PHREEQC's TOT has it, N(5), is N(+5) where the database's formulas are expanded.
     m.speciesNames.forEach((n, i) => {
       if (!back.has(n)) return;
       const ex = db.expand(back.get(n));
-      for (const el of els) if (ex.has(el)) of[el].push([i, ex.get(el)]);
+      for (const el of els) {
+        const key = el.replace(/\((\d)/, '(+$1');
+        if (ex.has(key)) of[el].push([i, ex.get(key)]);
+      }
     });
     const iH = m.speciesNames.indexOf('H+');
     const lnG = new Float64Array(ns);
+    const stride = m.stride || 1;
     const worst = Object.fromEntries(['pH', ...els].map((k) => [k, 0]));
+    const behind = Object.fromEntries(els.map((k) => [k, 0]));
     for (let k = 1; k <= S; k++) {
       const c = m.toConcentrations(run.grid.y[k - 1]);
-      const b = (N - 1) * ns;
+      const b = (N - 1) * stride * ns;
       const d = pq.get(`${N}/${k}`);
       for (const el of els) {
         let tot = 0;
@@ -3198,8 +3206,17 @@ function againstTransportHandOff(engine) {
       }
       RtmModel.activityAt(m.act, c, b, lnG, new Float64Array(ns));
       worst.pH = Math.max(worst.pH, Math.abs(-(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10 - d[head.indexOf('pH')]));
+      if (stag) {
+        const bs = ((N - 1) * stride + 1) * ns;
+        const ds = pq.get(`${2 * N + 1}/${k}`);
+        for (const el of els) {
+          let tot = 0;
+          for (const [i, kk] of of[el]) tot += kk * c[bs + i];
+          behind[el] = Math.max(behind[el], Math.abs(tot - ds[head.indexOf(el)]));
+        }
+      }
     }
-    const out = { worst, N, S };
+    const out = { worst, N, S, behind };
     if (amount) {
       const name = /"([^"]+)"/.exec(amount)[1];
       const iM = m.speciesNames.indexOf(res.report.minerals.concat(res.report.kinetics ? res.report.kinetics.reactants.map((x) => ({ phase: x.name, as: x.as })) : [])
@@ -3209,15 +3226,27 @@ function againstTransportHandOff(engine) {
       let theirs = 0;
       out.gone = 0;
       out.pqGone = 0;
+      // Every cell the input punches.
       for (let cell = 0; cell < N; cell++) {
-        page += end[cell * ns + iM];
-        const v = pq.get(`${cell + 1}/${S}`)[head.indexOf('am')];
+        const row = pq.get(`${cell + 1}/${S}`);
+        if (!row) continue;
+        page += end[cell * stride * ns + iM];
+        const v = row[head.indexOf('am')];
         theirs += v;
-        if (!(end[cell * ns + iM] > 0)) out.gone++;
+        if (!(end[cell * stride * ns + iM] > 0)) out.gone++;
         if (!(v > 0)) out.pqGone++;
       }
       out.page = page;
       out.theirs = theirs;
+      // With stagnant cells, the amount in the one behind the last cell at every shift.
+      if (stag) {
+        out.behindAmount = 0;
+        for (let k = 1; k <= S; k++) {
+          const c = m.toConcentrations(run.grid.y[k - 1]);
+          const v = pq.get(`${2 * N + 1}/${k}`)[head.indexOf('am')];
+          out.behindAmount = Math.max(out.behindAmount, Math.abs(c[((N - 1) * stride + 1) * ns + iM] - v));
+        }
+      }
     }
     return out;
   };
@@ -3288,6 +3317,123 @@ function againstTransportHandOff(engine) {
     .join(', ')} mM; calcite in half (zones ${zonesOf(rh)}): pH within ${ch.worst.pH.toFixed(4)}, Ca `
     + `${(ch.worst.Ca * 1e3).toFixed(4)} mM, the calcite gone from ${ch.gone} cells, PHREEQC ${ch.pqGone}`);
 
+  /*
+    Nitrate that only the inflow brings, into a water at pe 4 with nothing
+    to oxidise: cell 1's trace of it goes to N2 in PHREEQC's speciation,
+    leaving no NO3- to write. It is written at the trace it came in as, with
+    the database's log K (waterToModel's elsewhere): the valence states apart
+    and the couples tied. A first version wrote no NO3- at all, the K+ of the
+    inflow coming in without it.
+  */
+  const nitrateIn = 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n K 1\n N(5) 1\nSOLUTION 1-20\n units mmol/kgw\n pH 7 charge\n'
+    + ' Na 1\n Cl 1\nEND\nTRANSPORT\n -cells 20\n -shifts 40\n -time_step 720\n -lengths 0.01\n -dispersivities 0.002\n'
+    + ' -diffusion_coefficient 0\n -punch_cells 20\nEND\n';
+  const nIn = [false, true].map((redox) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'nitrate in', text: nitrateIn }, activity: true, exact: true,
+      phases: true, redox });
+    return { redox, res, cmp: compare(nitrateIn, res, ['K', 'N(5)', 'Na']) };
+  });
+  check('  what only another water brings and cell 1\'s trace of it has none of -- nitrate coming into a water at pe 4, N2 '
+    + 'there in PHREEQC\'s speciation -- written at that trace, and the effluent against TRANSPORT, the valence states apart '
+    + 'and the couples tied', nIn.every((x) => /^NO3-\s+9\.99\d*e-16\s.*left=0\.00099999/m.test(x.res.text)
+    && x.res.report.transport.elsewhere.includes('NO3-') && /^# Cell 1's water has none of NO3-/m.test(x.res.text)
+    && x.cmp.worst.K < 8e-5 && x.cmp.worst['N(5)'] < 8e-5 && x.cmp.worst.Na < 8e-5),
+  nIn.map((x) => `${x.redox ? 'tied' : 'apart'}: within K ${(x.cmp.worst.K * 1e3).toFixed(4)}, N(5) ${(x.cmp.worst['N(5)'] * 1e3).toFixed(4)}, `
+    + `Na ${(x.cmp.worst.Na * 1e3).toFixed(4)} mM; written at the trace: ${x.res.report.transport.elsewhere.join(', ')}`).join('; '));
+
+  /*
+    Stagnant cells, -stagnant 1 alpha theta_m theta_im: the page's rock
+    matrix of one layer. First the exchange alone, which comes out exact:
+    closed cells of one water, which diffusion moves nothing in, another
+    water stagnant behind them -- PHREEQC's mixing is the first order
+    exchange solved over each step, the page's the same equations
+    integrated -- every cell and stagnant cell at every shift.
+  */
+  const stagAlone = 'SOLUTION 1-3\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nSOLUTION 5-7\n units mmol/kgw\n pH 7 charge\n'
+    + ' K 1\n Br 1\nEND\nTRANSPORT\n -cells 3\n -shifts 10\n -time_step 3000\n -flow_direction diffusion_only\n'
+    + ' -boundary_conditions closed closed\n -diffusion_coefficient 1e-9\n -lengths 0.1\n -stagnant 1 5e-6 0.25 0.15\n'
+    + ' -punch_cells 1-3 5-7\nEND\n';
+  const ra = handOff('stagnant alone', stagAlone);
+  engine.load(dbText);
+  const aRows = engine.run('SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings c t Na K Cl Br\n -start\n'
+    + '10 PUNCH CELL_NO, TOTAL_TIME, TOT("Na"), TOT("K"), TOT("Cl"), TOT("Br")\n -end\n'
+    + `${stagAlone}`).slice(1).map((r) => r.map(Number)).filter((r) => r[1] > 0);
+  const ma = RtmModel.compile(ra.text);
+  const aTimes = [...new Set(aRows.map((r) => r[1]))].sort((a, b) => a - b);
+  const runA = FacsimileODE.runModel(ma, { solver: 'ndf', tend: aTimes[aTimes.length - 1], rtol: 1e-10, atol: 1e-20,
+    outputTimes: aTimes });
+  const nsA = ma.speciesNames.length;
+  const inA = (n) => ma.speciesNames.indexOf(n);
+  let aWorst = 0;
+  let aWhere = '';
+  aTimes.forEach((tt, i) => {
+    const c = ma.toConcentrations(runA.grid.y[i], tt);
+    for (const row of aRows.filter((q) => q[1] === tt)) {
+      const cell = row[0] <= 3 ? (row[0] - 1) * ma.stride : (row[0] - 5) * ma.stride + 1;
+      const tot = [c[cell * nsA + inA('Na+')], c[cell * nsA + inA('K+')],
+        c[cell * nsA + inA('Cl-')] + (inA('HCl') >= 0 ? c[cell * nsA + inA('HCl')] : 0),
+        c[cell * nsA + inA('Br-')] + (inA('HBr') >= 0 ? c[cell * nsA + inA('HBr')] : 0)];
+      tot.forEach((v, j) => {
+        const d = Math.abs(v - row[2 + j]) / 1e-3;
+        if (d > aWorst) { aWorst = d; aWhere = `${['Na', 'K', 'Cl', 'Br'][j]}, cell ${row[0]}`; }
+      });
+    }
+  });
+  const aSt = ra.report.transport.stagnant;
+  check('  stagnant cells (-stagnant 1 alpha theta_m theta_im) as a rock matrix of one layer: the stagnant porosity, 1 m '
+    + 'deep, the wetted surface 1/theta_m and every species\' Dm alpha/2, the stagnant water in <INITIAL> aimed at the '
+    + 'matrix; the exchange alone exact against TRANSPORT at every shift, in every cell and stagnant cell',
+  !!aSt && aSt.zones.length === 1 && !aSt.zones[0].same && /^MATRIX_CELLS = 1$/m.test(ra.text)
+    && /^MATRIX_POROSITY = 0\.15$/m.test(ra.text) && /^WETTED_SURFACE = 4$/m.test(ra.text)
+    && /^Na\+\s.*\sDm=0\.0000025(\s|$)/m.test(ra.text) && /^K\+\s+0-2\s+0\.001\S*\s+matrix$/m.test(ra.text)
+    && aWorst < 1e-7 && aRows.length === 60,
+  `${aRows.length} values, the worst ${aWorst.toExponential(1)} of 1 mmol/kgw (${aWhere}); zones ${JSON.stringify(aSt && aSt.zones)}`);
+
+  /*
+    A column flowing through cells with an exchanger, stagnant water with
+    an exchanger behind them, flushed with salt and nitrate (our own input,
+    a column written the way PHREEQC's Example 13's first one is): the
+    effluent and the stagnant cell behind the last against TRANSPORT,
+    nearer as the cells are refined -- PHREEQC shifts, mixes and exchanges
+    in turn, the page all at once.
+  */
+  const stagFlow = (N) => 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\n N(5) 1\n'
+    + `SOLUTION 1-${2 * N + 1}\n units mmol/kgw\n pH 7 charge\n K 1\n N(5) 1\nEXCHANGE 1-${2 * N + 1}\n -equilibrate 1\n`
+    + ' X 0.001\nEXCHANGE_SPECIES\n K+ + X- = KX\n log_k 0\n -gamma 3.5 0.015\nEND\n'
+    + `TRANSPORT\n -cells ${N}\n -shifts ${2 * N}\n -time_step ${54000 / N}\n -lengths ${1.5 / N}\n -dispersivities 0.01\n`
+    + ` -diffusion_coefficient 0\n -stagnant 1 5e-6 0.25 0.15\n -punch_cells ${N} ${2 * N + 1}\nEND\n`;
+  const flows = [20, 40].map((N) => {
+    const res = handOff('stagnant flowing', stagFlow(N));
+    return { N, res, cmp: compare(stagFlow(N), res, ['Na', 'K', 'Cl'], null, true) };
+  });
+  const [f20, f40] = flows.map((x) => x.cmp);
+  const fmtW = (o) => Object.entries(o).filter(([k]) => k !== 'pH').map(([k, v]) => `${k} ${(v * 1e3).toFixed(4)}`).join(', ');
+  check('  a column with stagnant cells, an exchanger in both, flushed with salt: the effluent and the stagnant cell behind '
+    + 'the last against TRANSPORT, nearer as the cells are refined',
+  flows.every((x) => x.res.report.transport.stagnant.zones.every((z) => z.same))
+    && f40.worst.Na < 0.06e-3 && f40.worst.Cl < 0.015e-3 && f40.behind.Na < 0.05e-3 && f40.behind.Cl < 0.03e-3
+    && ['Na', 'K', 'Cl'].every((el) => f40.worst[el] < f20.worst[el] && f40.behind[el] < f20.behind[el]),
+  flows.map((x) => `${x.N} cells: the effluent within ${fmtW(x.cmp.worst)} mM, the stagnant cell ${fmtW(x.cmp.behind)} mM`).join('; '));
+
+  // Calcite in the stagnant cells only, cell 1 with none: its amount in <INITIAL> aimed at the matrix, acid flowing in.
+  const stagCalcite = (N) => `${KNOBS_COLUMN}SOLUTION 0\n units mmol/kgw\n pH 3 charge\n Cl 1\n Na 0.1\n`
+    + `SOLUTION 1-${2 * N + 1}\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\n C(4) 1\nEQUILIBRIUM_PHASES ${N + 2}-${2 * N + 1}\n`
+    + ` Calcite 0 0.002\nEND\nTRANSPORT\n -cells ${N}\n -shifts ${3 * N}\n -time_step ${36000 / N}\n -lengths ${1 / N}\n`
+    + ` -dispersivities 0.01\n -diffusion_coefficient 0\n -stagnant 1 2e-5 0.3 0.2\n -punch_cells ${N} ${2 * N + 1}\nEND\n`;
+  const behindCc = [20, 40].map((N) => {
+    const res = handOff('calcite behind', stagCalcite(N));
+    return { N, res, cmp: compare(stagCalcite(N), res, ['Ca'], 'EQUI("Calcite")', true) };
+  });
+  const [b20, b40] = behindCc.map((x) => x.cmp);
+  check('  calcite in the stagnant cells only, cell 1 with none, acid flowing in: written in <INITIAL> aimed at the matrix, '
+    + 'and the effluent and the calcite behind the last cell against TRANSPORT, nearer as the cells are refined',
+  behindCc.every((x) => /^Calcite\s+0\s+mineral$/m.test(x.res.text) && /^Calcite\s+0-\d+\s+0\.00[0-9]+\S*\s+matrix$/m.test(x.res.text))
+    && b40.worst.Ca < 0.04e-3 && b40.behindAmount < 0.06e-3 && b40.worst.pH < 0.25
+    && b40.worst.Ca < b20.worst.Ca && b40.behindAmount < b20.behindAmount,
+  behindCc.map((x) => `${x.N} cells: pH within ${x.cmp.worst.pH.toFixed(3)}, Ca ${(x.cmp.worst.Ca * 1e3).toFixed(4)} mM, the `
+    + `calcite behind the last cell ${(x.cmp.behindAmount * 1e3).toFixed(4)} mmol`).join('; '));
+
   // The options, as the column comes out of them.
   const small = (o) => 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n pH 7 charge\n'
     + ` K 1\n Br 1\nSOLUTION 6\n units mmol/kgw\n pH 7 charge\n Ca 0.5\n Cl 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n ${o}\nEND\n`;
@@ -3317,7 +3463,22 @@ function againstTransportHandOff(engine) {
   const wrongOpts = options.filter(([, o, want]) => settings(o) !== want);
   const back = handOff('back', small('-time_step 3600\n -shifts 4 -1'));
   const refusals = [
-    ['stagnant cells', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1'), /stagnant cells \(-stagnant\), which no column/],
+    ['stagnant cells with no water', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1'),
+      /stagnant cell 7, behind cell 1, has no SOLUTION/],
+    ['stagnant cells in two layers', small('-time_step 3600\n -stagnant 2'), /stagnant cells in 2 layers \(-stagnant 2\)/],
+    ['stagnant cells with no exchange factor', small('-time_step 3600\n -stagnant 1'), /-stagnant 1 with no exchange factor/],
+    ['stagnant cells behind some cells only', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1')
+      .replace('END\nTRANSPORT', 'SOLUTION 7-9\n units mmol/kgw\n K 1\n Br 1\nEND\nTRANSPORT'),
+    /stagnant cell 10, behind cell 4, has no SOLUTION/],
+    ['stagnant cells at a temperature of their own', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1')
+      .replace('END\nTRANSPORT', 'SOLUTION 7-11\n temp 30\n units mmol/kgw\n K 1\n Br 1\nEND\nTRANSPORT'),
+    /stagnant cell 7 starts at 30 C and cell 1 at 25 C/],
+    ['an exchanger in the cells and not the stagnant cells', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1')
+      .replace('END\nTRANSPORT', 'SOLUTION 7-11\n units mmol/kgw\n K 1\n Br 1\nEXCHANGE 1-5\n -equilibrate 1\n X 0.001\n'
+        + 'END\nTRANSPORT'), /an exchanger is in its cells and not in its stagnant cells/],
+    ['a REACTION in a stagnant cell', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1')
+      .replace('END\nTRANSPORT', 'SOLUTION 7-11\n units mmol/kgw\n K 1\n Br 1\nREACTION 8\n NaCl 1\n 1e-5 moles\nEND\n'
+        + 'TRANSPORT'), /a REACTION numbered as a cell \(8\)/],
     ['multicomponent diffusion', small('-time_step 3600\n -multi_d true 1e-9 0.3 0.05 1.0'), /multicomponent diffusion/],
     ['no time step', small('-dispersivities 0.01'), /it gives no -time_step/],
     ['a closed end the water comes in through', small('-time_step 3600\n -boundary_conditions closed flux'), /comes in through an end that is closed/],

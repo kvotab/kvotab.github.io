@@ -1571,11 +1571,13 @@
    * Returns null without either, else {kind, cells, shifts, dt (seconds),
    * dir (1 forward, -1 back, 0 diffusion only), bc [first, last] (1
    * constant, 2 closed, 3 flux), lengths and disp (one a cell), correctDisp,
-   * diffc, heat (thermal diffusion asked for), others (what it says that no
-   * column of the page has: stagnant cells, multicomponent or interlayer
-   * diffusion, a current), before (the input up to the END of the block's
-   * simulation, without the block), after (whether anything is calculated
-   * after that)}.
+   * diffc, heat (thermal diffusion asked for), stag (one layer of stagnant
+   * cells exchanging at a first order, {alpha, thm, thim}, or null), others
+   * (what it says that no column of the page has: stagnant cells in more
+   * layers or mixed by MIX blocks, multicomponent or interlayer diffusion, a
+   * current), reactions (a REACTION numbered as a cell or a stagnant cell),
+   * before (the input up to the END of the block's simulation, without the
+   * block), after (whether anything is calculated after that)}.
    */
   function readTransport(text) {
     const lines = logicalLines(text);
@@ -1594,7 +1596,7 @@
     while (end < lines.length && !(isKey(lines[end]) && first(lines[end]).toUpperCase() === 'END')) end++;
     const quiet = /^(END|PRINT|SELECTED_OUTPUT|USER_PUNCH|USER_GRAPH|USER_PRINT|TITLE|KNOBS)$/i;
     const t = { kind, cells: 1, shifts: 1, dt: 0, dir: 1, bc: [3, 3], lengths: [], disp: [], correctDisp: false,
-      diffc: 0.3e-9, heat: false, others: [],
+      diffc: 0.3e-9, heat: false, others: [], stag: null,
       before: `${[...lines.slice(0, at), ...lines.slice(stop, end)].join('\n')}\nEND\n`,
       after: lines.slice(end + 1).some((ln) => isKey(ln) && !quiet.test(first(ln))) };
     const opts = kind === 'TRANSPORT' ? TRANSPORT_OPTS : ADVECTION_OPTS;
@@ -1645,7 +1647,26 @@
           break;
         }
         case 'correct_disp': t.correctDisp = yes(args[0]); break;
-        case 'stagnant': if (parseInt(args[0], 10) > 0) t.others.push('stagnant cells (-stagnant)'); break;
+        case 'stagnant': {
+          /*
+            Stagnant cells: one layer exchanging with each cell at a first
+            order, -stagnant 1 alpha theta_m theta_im, is carried (columnSetup);
+            more layers, or one without its exchange factor, PHREEQC mixes as
+            the input's MIX blocks say, which the page does not read.
+          */
+          const k = parseInt(args[0], 10);
+          t.stag = null;
+          t.stagOther = null;
+          if (!(k > 0)) break;
+          const [a, m, im] = args.slice(1, 4).map(Number);
+          if (k > 1) t.stagOther = `stagnant cells in ${k} layers (-stagnant ${k}), which PHREEQC mixes as the input's MIX blocks say`;
+          else if (args[1] === undefined) t.stagOther = 'stagnant cells mixed as the input\'s MIX blocks say (-stagnant 1 with no exchange factor)';
+          else if (!(a > 0) || !(m > 0) || !(im > 0)) {
+            t.stagOther = 'stagnant cells whose -stagnant does not give an exchange factor and the mobile and immobile '
+              + 'porosities, each above zero';
+          } else t.stag = { alpha: a, thm: m, thim: im };
+          break;
+        }
         case 'multi_d': if (yes(args[0])) t.others.push('multicomponent diffusion (-multi_D)'); break;
         case 'interlayer_d': if (yes(args[0])) t.others.push('interlayer diffusion (-interlayer_D)'); break;
         case 'fix_current': case 'current': t.others.push('a fixed current (-fix_current)'); break;
@@ -1663,14 +1684,19 @@
     t.lengths = fill(t.lengths, 1);
     t.disp = fill(t.disp, 0);
     if (kind === 'ADVECTION') t.diffc = 0;
-    // A REACTION numbered as a cell, which PHREEQC adds to it at every shift.
+    if (t.stagOther) t.others.push(t.stagOther);
+    delete t.stagOther;
+    // A REACTION numbered as a cell, which PHREEQC adds to it at every shift -- a stagnant cell's too.
     t.reactions = [];
+    const n = t.cells;
     for (const ln of lines.slice(0, at)) {
       const m = /^\s*REACTION\s+([0-9]+)(?:-([0-9]+))?/i.exec(ln);
       if (!m || !isKey(ln)) continue;
       const lo = Number(m[1]);
       const hi = m[2] !== undefined ? Number(m[2]) : lo;
-      if (lo <= t.cells && hi >= 1) t.reactions.push(lo === hi ? `${lo}` : `${lo}-${hi}`);
+      if ((lo <= n && hi >= 1) || (t.stag && lo <= 2 * n + 1 && hi >= n + 2)) {
+        t.reactions.push(lo === hi ? `${lo}` : `${lo}-${hi}`);
+      }
     }
     return t;
   }
@@ -1679,24 +1705,29 @@
    * The column of an input's TRANSPORT (or ADVECTION) for waterToModel:
    * what it starts from, what comes in, and what has to be written.
    *
-   * PHREEQC's TRANSPORT begins by equilibrating each cell, and the water at
-   * each end, with whatever is numbered as it (transport.cpp, "Equilibrating
-   * initial solutions"); RUN_CELLS with no time does the same here, after
-   * everything the input does before. Every cell has to come out of that
-   * alike: the page writes one water for the whole column, cell 1's. The
-   * water at each end that comes in, or that a constant end holds the
-   * column to, is speciated as PHREEQC has it; each takes a trace of the
-   * other, and cell 1 a trace of each, so that what only one of them has is
-   * a total that can be held everywhere -- 1e-12, as 1e-20 left totals of
-   * 1e-24 that the solver could not start from. The species written are those
-   * above the floor in any of them or in the column's water and the
-   * incoming one mixed half and half: NaCl in a column without chloride is
+   * PHREEQC's TRANSPORT begins by equilibrating each cell, its stagnant
+   * cells and the water at each end with whatever is numbered as each
+   * (transport.cpp, "Equilibrating initial solutions"); RUN_CELLS with no
+   * time does the same here, after everything the input does before. Runs of
+   * cells that come out alike are zones, cell 1's water the one the page
+   * writes in <SPECIES> and the others' written in <INITIAL>; the stagnant
+   * cells behind them make zones of their own, which the page's rock matrix
+   * starts from. The water at each end that comes in, or that a constant end
+   * holds the column to, is speciated as PHREEQC has it. Each water takes a
+   * trace of every other, so that what only one of them has is a total that
+   * can be held everywhere -- 1e-12, as 1e-20 left totals of 1e-24 that the
+   * solver could not start from. The species written are those above the
+   * floor in any of them, or in a zone's water and an end's mixed half and
+   * half on what the zone holds: NaCl in a column without chloride is
    * nothing until the chloride comes.
    *
    * Returns null without TRANSPORT or ADVECTION, else {t, cellInput (the
    * input whose last calculation is cell 1, with its traces), left and
-   * right (each end's water: species -> molality, or null), keep (species
-   * to write whatever the floor), corr (-correct_disp's factor), tc}.
+   * right (each end's water: species -> molality, or null), keep and keepOn
+   * (species to write whatever the floor), corr (-correct_disp's factor),
+   * tc, trace, zones (runs of cells alike, {lo, hi, rep, row}), stag (null,
+   * or -stagnant's {alpha, thm, thim} and its zones, {lo, hi, rep, row,
+   * same})}.
    */
   function columnSetup(o, floor) {
     const t = readTransport(o.water.text);
@@ -1727,7 +1758,10 @@
     const leftSol = (t.dir > 0 && t.bc[0] === 3) || t.bc[0] === 1 ? 0 : -1;
     const rightSol = (t.dir < 0 && t.bc[1] === 3) || t.bc[1] === 1 ? n + 1 : -1;
     const ends = [leftSol, rightSol].filter((s) => s >= 0);
-    const cells = [`1-${n}`, ...ends.map(String)].join(' ');
+    // The stagnant cell behind cell i, as PHREEQC numbers it: n + 1 + i.
+    const stag = t.stag;
+    const stagOf = (i) => i + 1 + n;
+    const cells = [`1-${n}`, ...(stag ? [`${n + 2}-${2 * n + 1}`] : []), ...ends.map(String)].join(' ');
     const equil = `${t.before}RUN_CELLS\n -cells ${cells}\n -time_step 0\nEND\n`;
     // Every cell alike: its water, what is on its exchangers and surfaces, its phases, reactants and gases.
     const extras = [...readAssemblage(t.before).map((a) => `EQUI("${a.name}")`),
@@ -1746,14 +1780,24 @@
     for (const s of ends) {
       if (!last.has(s)) no(`PHREEQC has no SOLUTION ${s}, the water ${s ? 'at its last end' : 'coming in'}`);
     }
+    // PHREEQC leaves a cell without a stagnant water out of the exchange; the page's stagnant water is behind every cell.
+    if (stag) {
+      for (let i = 1; i <= n; i++) {
+        if (!last.has(stagOf(i))) {
+          no(`it has stagnant cells (-stagnant), and stagnant cell ${stagOf(i)}, behind cell ${i}, has no SOLUTION, where `
+            + 'the page has stagnant water behind every cell');
+        }
+      }
+    }
     /*
       Two cells alike: what is in them, PHREEQC's totals -- each element's,
       hydrogen and oxygen apart, which are mostly the water, and the protons
       beyond the water's, H - 2 O, which is its pH; each valence state's;
       what is on its exchangers and surfaces, and its phases' and
       reactants' amounts. Not its species: two cells defined alike come out
-      of PHREEQC's convergence apart in those, H+ by a part in 1e5 and O2 by
-      one in 1e4, where the totals, its mass balances, agree to 1e-9.
+      of PHREEQC's convergence apart in those -- twenty of one water with
+      nitrate, H+ by 5.7e-6 and O2 by 7.6e-5 -- where their totals, its mass
+      balances, agree to 2e-14.
     */
     const differs = (a, b) => {
       if (Math.abs(a.tc - b.tc) > 1e-9) return 'its temperature';
@@ -1818,6 +1862,38 @@
     if (zones.length > 1 && (readGasPhases(t.before).size || readSolidSolutions(t.before).size)) {
       no('its cells start apart, and it has a gas phase or a solid solution, which the page does not write cell by cell');
     }
+    /*
+      THE STAGNANT CELLS' ZONES, behind the cells: runs of them alike, each
+      as its first comes out of PHREEQC's equilibration -- the page's rock
+      matrix starts as <SPECIES> says, cell 1's water, and the others are
+      written in <INITIAL> aimed at it (waterToModel). `same`: alike with
+      cell 1, which needs nothing written.
+    */
+    const szones = [];
+    if (stag) {
+      for (let i = 1; i <= n; i++) {
+        const z = szones[szones.length - 1];
+        if (z && !differs(last.get(z.rep), last.get(stagOf(i)))) z.hi = i;
+        else szones.push({ lo: i, hi: i, rep: stagOf(i), row: null, same: !differs(one, last.get(stagOf(i))) });
+      }
+      for (const z of szones) {
+        const r = last.get(z.rep);
+        if (Math.abs(r.tc - one.tc) > 1e-9) {
+          no(`stagnant cell ${z.rep} starts at ${fmtG(r.tc, 6)} C and cell 1 at ${fmtG(one.tc, 6)} C, where the page's column `
+            + 'has one temperature');
+        }
+        for (const [what, name] of [['exchange', 'an exchanger'], ['surface', 'a surface']]) {
+          if (holds(r, what) !== holds(one, what)) {
+            no(`${name} is in ${holds(one, what) ? 'its cells and not in its stagnant cells' : 'its stagnant cells and not in '
+              + 'its cells'} (stagnant cell ${z.rep}), where the page's ${name === 'an exchanger' ? 'exchangers are' : 'surfaces are'} `
+              + 'in every cell, the stagnant ones too');
+          }
+        }
+      }
+      if (readGasPhases(t.before).size || readSolidSolutions(t.before).size) {
+        no('it has stagnant cells, and a gas phase or a solid solution, which the page does not write cell by cell');
+      }
+    }
     for (const s of ends) {
       if (Math.abs(last.get(s).tc - one.tc) > 1e-9) {
         no(`SOLUTION ${s} is at ${fmtG(last.get(s).tc, 6)} C and the column at ${fmtG(one.tc, 6)} C: PHREEQC carries the `
@@ -1825,17 +1901,18 @@
       }
     }
     /*
-      Each water takes a trace of every other -- the ends', and each zone's
-      -- so that what only one of them has is a total that can be held
-      everywhere. PHREEQC keeps a MIX from one run to the next, and
-      RUN_CELLS takes a cell's MIX for its water: these have a number no
-      cell has, and go when done.
+      Each water takes a trace of every other -- the ends', each zone's and
+      each stagnant zone's -- so that what only one of them has is a total
+      that can be held everywhere. PHREEQC keeps a MIX from one run to the
+      next, and RUN_CELLS takes a cell's MIX for its water: these have a
+      number no cell has, and go when done.
     */
     const MIXED = 9999991;
     const TRACE = o.columnTrace || 1e-12;
     const mixed = (parts) => `MIX ${MIXED}\n${parts}`;
     const gone = `DELETE\n -mix ${MIXED}\nEND\n`;
-    const waters = [...zones.map((z) => z.rep), ...ends];
+    const behind = szones.filter((z) => !z.same);
+    const waters = [...zones.map((z) => z.rep), ...behind.map((z) => z.rep), ...ends];
     const traced = (s) => `${mixed(` ${s} 1\n${waters.filter((x) => x !== s).map((x) => ` ${x} ${TRACE}\n`).join('')}`)}`;
     const side = (s) => {
       if (s < 0) return null;
@@ -1849,9 +1926,9 @@
     const others = waters.length > 1;
     const cellInput = `${equil}${others ? inCell(1, traced(1).slice(`MIX ${MIXED}\n`.length)) : 'RUN_CELLS\n -cells 1\n'
       + ' -time_step 0\nEND\n'}`;
-    // Each other zone's first cell as it starts, its phases', reactants' and water's amounts too.
+    // Each other zone's first cell as it starts, and each stagnant zone's, its phases', reactants' and water's amounts too.
     const zx = [...extras, 'TOT("water")'];
-    for (const z of zones.slice(1)) {
+    for (const z of [...zones.slice(1), ...behind]) {
       z.row = runRows(o.engine, `${punchBlock(zx)}${equil}${inCell(z.rep, traced(z.rep).slice(`MIX ${MIXED}\n`.length))}`).pop();
       z.extras = zx;
     }
@@ -1864,22 +1941,30 @@
     */
     const keep = new Set();
     const keepOn = new Set();
+    // The most of each species any of them has: what cell 1 has a trace of (waterToModel's elsewhere).
+    const keepAt = new Map();
     const take = (r) => {
-      for (const [k, [m]] of r.species) if (m >= floor) keep.add(k);
+      for (const [k, [m]] of r.species) {
+        if (!(m >= floor)) continue;
+        keep.add(k);
+        if (!(keepAt.get(k) >= m)) keepAt.set(k, m);
+      }
       for (const [k, e] of r.exchange) if (e.m >= floor) keepOn.add(k);
       for (const [k, e] of r.surface) if (e.m >= floor) keepOn.add(k);
     };
-    for (const z of zones.slice(1)) take(z.row);
+    // A stagnant cell sees what comes in only through its cell, and in the end the same water.
+    for (const z of [...zones.slice(1), ...behind]) take(z.row);
     for (const s of ends) {
       take(last.get(s));
-      for (const z of zones) {
+      for (const z of [...zones, ...behind]) {
         for (const mix of [` ${s} 1\n`, ` ${z.rep} 0.5\n ${s} 0.5\n`]) {
           take(runRows(o.engine, `${punchBlock()}${equil}${inCell(z.rep, mix)}`).pop());
         }
       }
     }
     const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
-    return { t, cellInput, left, right, leftSol, rightSol, keep, keepOn, corr, tc: one.tc, trace: TRACE, zones };
+    return { t, cellInput, left, right, leftSol, rightSol, keep, keepAt, keepOn, corr, tc: one.tc, trace: TRACE, zones,
+      stag: stag ? { ...stag, zones: szones } : null };
   }
 
   /*
@@ -2710,6 +2795,10 @@
     const everything = carryRedox && floor === 0;
     const lkSpecies = carryRedox ? [...db.reaction.keys()].filter((sp) => sp !== 'e-' && sp !== 'H2O'
       && (everything || db.isRedox(sp))) : [];
+    // A column: what another water brings, for one cell 1 has none of (elsewhere, below).
+    if (column) {
+      for (const sp of column.keep) if (db.reaction.has(sp) && sp !== 'e-' && sp !== 'H2O' && !lkSpecies.includes(sp)) lkSpecies.push(sp);
+    }
     const lkAt = extras.length;
     for (const sp of lkSpecies) extras.push(`LK_SPECIES("${sp}")`);
     // Each surface species' log K, the database's at this temperature, where the input has a surface.
@@ -2894,6 +2983,29 @@
     const pulled = new Set();
     // A column: what the water at its ends has, and what that and the column's water make together (columnSetup).
     if (column) for (const n of column.keep) if (molal.has(n) && !kept.has(n)) { kept.add(n); pulled.add(n); }
+    /*
+      What another water of the column has -- an end's, a zone's, a stagnant
+      cell's -- that cell 1's has none of, PHREEQC counting nothing below
+      1e-30: the trace cell 1 takes of that water, gone elsewhere in it --
+      the nitrate an inflow brings, N2 in a water at pe 4 with nothing to
+      oxidise it. Each is written at the trace it came in as, the most any
+      water has of it times the trace, with the database's log K, so that it
+      has a species to arrive as and a total to be held at.
+    */
+    const elsewhere = new Set();
+    if (column) {
+      for (const n of column.keep) {
+        if (molal.has(n) || NOT_A_SPECIES.has(n) || !lg.has(n)) continue;
+        const r = db.reaction.get(n);
+        if (!r) continue;
+        const master = r.left.length === 1 && r.right.length === 1 && r.left[0].n === r.right[0].n;
+        if (!master && !Number.isFinite(lkOf.get(n))) continue;
+        molal.set(n, column.trace * column.keepAt.get(n));
+        kept.add(n);
+        pulled.add(n);
+        elsewhere.add(n);
+      }
+    }
 
     // The phases, each as its reaction: its formula first on the left, then
     // what else it takes, and what it dissolves to.
@@ -3392,9 +3504,10 @@
       const sumLg = (terms) => terms.reduce((s, t) => s + t.c * lgOf(t.n), 0);
       const nw = r.right.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0)
         - r.left.filter((t) => t.n === 'H2O').reduce((s, t) => s + t.c, 0);
-      // A species at none has no molality to read its log K back off.
-      let logk = atNone.has(n) ? lkOf.get(n) : null;
-      let logkC = atNone.has(n) ? logk - sumLg(prod) + sumLg(reac) - nw * logAw : sumLog(prod) - sumLog(reac);
+      // A species at none has no molality to read its log K back off, and one from elsewhere none of PHREEQC's here.
+      const dbK = atNone.has(n) || elsewhere.has(n);
+      let logk = dbK ? lkOf.get(n) : null;
+      let logkC = dbK ? logk - sumLg(prod) + sumLg(reac) - nw * logAw : sumLog(prod) - sumLog(reac);
       if (logk === null) logk = logkC + sumLg(prod) - sumLg(reac) + nw * logAw;
       /*
         A couple tied to the electron takes the database's log K, and says
@@ -3404,7 +3517,7 @@
       let peHere = null;
       const ne = prod.filter((t) => isE(t.n)).reduce((s, t) => s + t.c, 0)
         - reac.filter((t) => isE(t.n)).reduce((s, t) => s + t.c, 0);
-      if (ne && Number.isFinite(lkOf.get(n)) && !atNone.has(n)) {
+      if (ne && Number.isFinite(lkOf.get(n)) && !dbK) {
         const lk = lkOf.get(n);
         peHere = w.pe - (lk - logk) / ne;
         logkC += lk - logk;
@@ -3884,6 +3997,17 @@
       times -correct_disp's factor where it has one, as PHREEQC's mixing
       takes it (transport.cpp); its ends, each water at an end that flows in
       or holds the column on every species that moves.
+
+      STAGNANT CELLS (-stagnant 1 alpha theta_m theta_im): PHREEQC mixes each
+      cell's water with the stagnant water behind it at every step as the
+      first order exchange theta_m dC/dt = -alpha (C - C_im), theta_im
+      dC_im/dt = alpha (C - C_im) comes to over it (transport.cpp, b and f).
+      The page's rock matrix of one layer is that exchange: a layer of depth
+      d and porosity eps behind water touching aw of it changes the water at
+      2 aw De/d times the difference and itself at 2 De/(eps d^2). A layer 1 m
+      deep, of the stagnant porosity, aw = 1/theta_m and every species' Dm =
+      alpha/2 give alpha/theta_m and alpha/theta_im, and the stagnant water
+      per cell's water, aw eps d, is theta_im/theta_m.
     */
     let colSettings = null;
     let colReport = null;
@@ -3909,12 +4033,17 @@
         ...(colD > 0 || alpha > 0 ? ['DIFFUSION = 1'] : []),
         ...(t.dir ? ['ADVECTION = 1', 'ADVECTION_SCHEME = limited', `VELOCITY = ${fmtG(v, 15)}`] : []),
         ...(alpha > 0 ? [`PECLET = ${fmtG(L / alpha, 15)}`] : []),
-        `LEFT = ${leftKind}`, `RIGHT = ${rightKind}`];
+        `LEFT = ${leftKind}`, `RIGHT = ${rightKind}`,
+        ...(column.stag ? ['MATRIX_CELLS = 1', 'MATRIX_DEPTH = 1', 'MATRIX_FIRST = 1',
+          `MATRIX_POROSITY = ${fmtG(column.stag.thim, 15)}`, `WETTED_SURFACE = ${fmtG(1 / column.stag.thm, 15)}`] : [])];
       colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: t.shifts,
         timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
         left: leftKind, right: rightKind, leftSolution: leftAt ? column.leftSol : null,
         rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after,
-        zones: column.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep })) };
+        zones: column.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep })),
+        stagnant: column.stag ? { alpha: column.stag.alpha, thm: column.stag.thm, thim: column.stag.thim,
+          zones: column.stag.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep, same: z.same })) } : null,
+        elsewhere: [...elsewhere] };
       const sol = (s) => `SOLUTION ${s}`;
       const endSay = (kind, s, where) => (kind === 'robin' ? `${sol(s)} flows in at the ${where}`
         : kind === 'dirichlet' ? `${sol(s)} holds the ${where} end (constant)`
@@ -3934,6 +4063,22 @@
         + 'which have as much of each: what only one has is then a total everywhere.'
         : `# with ${fmtG(column.trace, 3)} of ${endSols || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: `
           + 'what only one has is then a total everywhere.');
+      if (elsewhere.size) {
+        out.push(`# Cell 1's water has none of ${[...elsewhere].map((sp) => name.get(sp) || sp).join(', ')}, which another water `
+          + 'brings, its trace of it gone elsewhere in');
+        out.push('# PHREEQC\'s speciation: written here at that trace, with the database\'s log K.');
+      }
+      if (column.stag) {
+        const st = column.stag;
+        const apart = st.zones.filter((z) => !z.same);
+        out.push(`# Stagnant cells behind them (-stagnant 1 ${fmtG(st.alpha, 6)} ${fmtG(st.thm, 6)} ${fmtG(st.thim, 6)}): PHREEQC's `
+          + 'first order exchange at alpha between a cell\'s water (theta_m)');
+        out.push('# and its stagnant water (theta_im), here a rock matrix of one layer of the stagnant porosity, 1 m deep, the');
+        out.push(`# wetted surface 1/theta_m and every species' Dm alpha/2, which change them at alpha/theta_m and alpha/theta_im.`);
+        out.push(apart.length ? `# The stagnant cells start as PHREEQC equilibrates them, ${apart.map((z) => `behind cells ${z.lo}-${z.hi} as `
+          + `cell ${z.rep}`).join(', ')} in <INITIAL>${apart.length < st.zones.length ? ', the rest as cell 1' : ''}.`
+          : '# The stagnant cells start as cell 1, as PHREEQC equilibrates them.');
+      }
       if (t.dir) {
         out.push('# PHREEQC shifts each cell\'s water whole and then reacts it; here the water moves through the cells as');
         out.push('# it reacts: a cell of PHREEQC\'s after shift k is this one half a time step later, and the two meet');
@@ -3982,7 +4127,8 @@
       let d = '';
       if (column) {
         // In a column: TRANSPORT's D, and the water at each end that flows in or holds it.
-        d = [colD > 0 ? `D=${fmtG(colD, 6)}` : '', leftAt ? `left=${fmtG(leftAt.get(s) || 0, 15)}` : '',
+        d = [colD > 0 ? `D=${fmtG(colD, 6)}` : '', column.stag ? `Dm=${fmtG(column.stag.alpha / 2, 15)}` : '',
+          leftAt ? `left=${fmtG(leftAt.get(s) || 0, 15)}` : '',
           rightAt ? `right=${fmtG(rightAt.get(s) || 0, 15)}` : ''].filter(Boolean).join('  ');
       } else if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;
       else if (o.D) d = `D=${fmtG(o.D, 6)}`;
@@ -4083,23 +4229,31 @@
       them, every species as the zone's first cell comes out of PHREEQC's
       equilibration with its traces -- the water's species, what is on its
       exchangers and surfaces, and its phases' and kinetic reactants'
-      amounts, per kilogram of its water.
+      amounts, per kilogram of its water. And each stagnant zone not alike
+      with cell 1 the same way, "matrix" after it: the rock behind those
+      cells, which otherwise starts as <SPECIES> says.
     */
-    if (column && column.zones.length > 1) {
+    const stagApart = column && column.stag ? column.stag.zones.filter((z) => !z.same) : [];
+    if (column && (column.zones.length > 1 || stagApart.length)) {
       out.push('', '<INITIAL>');
-      for (const z of column.zones.slice(1)) {
+      const zoneLines = (z, rock) => {
         const cells = z.lo === z.hi ? `${z.lo - 1}` : `${z.lo - 1}-${z.hi - 1}`;
         const x = (expr) => { const i = z.extras.indexOf(expr); return i >= 0 ? Number(z.row.x[i]) : NaN; };
         const kgw = x('TOT("water")') > 0 ? x('TOT("water")') : 1;
-        out.push(`# PHREEQC's cell${z.lo === z.hi ? ` ${z.lo}` : `s ${z.lo} to ${z.hi}`}, as cell ${z.rep} comes out of its `
+        out.push(rock ? `# PHREEQC's stagnant cell${z.lo === z.hi ? ` behind cell ${z.lo}` : `s behind cells ${z.lo} to ${z.hi}`}, `
+          + `as cell ${z.rep} comes out of its equilibration before the first shift`
+          : `# PHREEQC's cell${z.lo === z.hi ? ` ${z.lo}` : `s ${z.lo} to ${z.hi}`}, as cell ${z.rep} comes out of its `
           + 'equilibration before the first shift');
-        const put = (nm, v) => out.push(`${nm.padEnd(width)}  ${cells.padEnd(9)}${fmtG(Number.isFinite(v) ? v : 0, 15)}`);
+        const put = (nm, v) => out.push(`${nm.padEnd(width)}  ${cells.padEnd(9)}${fmtG(Number.isFinite(v) ? v : 0, 15)}`
+          + `${rock ? '  matrix' : ''}`);
         for (const sp of order) put(name.get(sp), (z.row.species.get(sp) || [0])[0]);
         for (const e of onEx) put(e.name, (z.row.exchange.get(e.species) || { m: 0 }).m);
         for (const e of onSf) put(e.name, (z.row.surface.get(e.species) || { m: 0 }).m);
         for (const mn of minerals) put(mn.name, x(`EQUI("${mn.phase}")`) / kgw);
         for (const k of kinetics) put(k.name, x(`KIN("${k.comp.name}")`) / kgw);
-      }
+      };
+      for (const z of column.zones.slice(1)) zoneLines(z, false);
+      for (const z of stagApart) zoneLines(z, true);
     }
     out.push('', '<EQUILIBRIUM>');
     /*

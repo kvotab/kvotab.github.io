@@ -2162,23 +2162,49 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             each zone's and each end's — takes 10<sup>−12</sup> of every other, so that what only one of
             them has, the calcium of Example 11 that only its inflow brings, is there to be held. The
             species written are those above the floor in any of them, and in each zone's water and an
-            end's mixed half and half on what the zone holds, its exchanger and surfaces included. PHREEQC
+            end's mixed half and half on what the zone holds, its exchanger and surfaces included. One
+            that another water has and cell 1's trace of it has none of — nitrate coming into a water
+            at pe 4, where PHREEQC's speciation turns the trace into N<sub>2</sub> — is written at that
+            trace, with the database's log K, and the text names it. PHREEQC
             shifts each cell's water whole and then reacts it, where here the water moves through the
             cells as it reacts: a cell of PHREEQC's after shift <em>k</em> is the page's half a time step
-            later, and the two meet as the cells are refined. Refused, each with its reason: stagnant cells,
-            multicomponent or interlayer diffusion, a fixed current, cells of their own lengths or
-            dispersivities with the water moving, a closed end the water comes in through, zones at
-            temperatures of their own, an exchanger or a surface in some zones and not others, a gas
-            phase or a solid solution in a column that starts apart, water coming in at another
+            later, and the two meet as the cells are refined.</p>
+          <p>Stagnant cells, <code>-stagnant 1</code> <em>α θ<sub>m</sub> θ<sub>im</sub></em>, are
+            PHREEQC's first-order exchange between each cell's water and the stagnant water behind it:
+            θ<sub>m</sub> d<em>C</em>/d<em>t</em> = −α (<em>C</em> − <em>C</em><sub>im</sub>), and the
+            stagnant water gains what the cell loses, at θ<sub>im</sub>. On the page that is a rock
+            matrix of one layer (see <em>A rock matrix: dual porosity</em>): <code>MATRIX_CELLS = 1</code>,
+            1 m deep, of the stagnant porosity, the wetted surface 1/θ<sub>m</sub> and every species'
+            <code>Dm</code> α/2, which change the cell at α/θ<sub>m</sub> times the difference and the
+            layer at α/θ<sub>im</sub>, the stagnant water being θ<sub>im</sub>/θ<sub>m</sub> of the
+            cell's. The stagnant cells start as PHREEQC equilibrates them, cells <em>n</em>+2 to
+            2<em>n</em>+1 behind cells 1 to <em>n</em>: runs of them alike are zones too, and those not
+            alike with cell 1 are written in <code>&lt;INITIAL&gt;</code> with <code>matrix</code> after
+            them — calcite in the stagnant cells only, cell 1 with none, is written there. PHREEQC mixes
+            each cell with its stagnant water at every step as the exchange comes to over the step, so
+            the exchange alone — closed cells of one water, which diffusion moves nothing in, another
+            water stagnant behind them — is PHREEQC's to 10<sup>−8</sup> at every shift.</p>
+          <p>Refused, each with its reason: stagnant cells in more than one layer, or mixed as the
+            input's <code>MIX</code> blocks say, or behind some cells only; multicomponent or interlayer
+            diffusion, a fixed current, cells of their own lengths or dispersivities with the water
+            moving, a closed end the water comes in through, zones or stagnant cells at temperatures of
+            their own, an exchanger or a surface in some of them and not others, a gas phase or a solid
+            solution in a column that starts apart or has stagnant cells, water coming in at another
             temperature, which PHREEQC carries the heat of, and a <code>REACTION</code> numbered as a
-            cell, which PHREEQC adds at every shift. An input like
+            cell or a stagnant cell, which PHREEQC adds at every shift. An input like
             PHREEQC's Example 11 — <code>ADVECTION</code> first, the cells put back, then
             <code>TRANSPORT</code> — gives a column whose effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's in
             sodium, 0.030 in potassium, 0.016 in calcium and 0.005 in chloride; acid through calcite in
             every cell within 0.009 in pH, and calcite dissolving at a rate as below. A column of two
             waters, each half with its exchanger loaded from its own, flushed with calcium chloride:
             within 0.022 mmol/kgw in sodium, 0.036 in potassium, 0.017 in calcium and 0.005 in
-            chloride; calcite in the first half of a column, acid flowing in: within 0.019 in pH.</p>
+            chloride; calcite in the first half of a column, acid flowing in: within 0.019 in pH.
+            Stagnant water behind 40 cells, an exchanger in both, flushed with salt: the effluent within
+            0.039 mmol/kgw in sodium and 0.009 in chloride, the stagnant water behind the last cell
+            within 0.013 and 0.009, each nearer than on 20 cells. Calcite in the stagnant cells only,
+            acid flowing in: the calcite behind the last cell within 0.041 mmol of PHREEQC's on 40
+            cells, half of what it is on 20. Nitrate that only the inflow brings: within 0.051 mmol/kgw
+            on 20 cells, as close as the potassium beside it.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -2577,6 +2603,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109a"></script>
 </body>
 </html>

@@ -493,6 +493,32 @@ async def main():
             ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('  and the page runs it', ran, 'Done')
 
+            # --- stagnant cells: a rock matrix of one layer, the stagnant water in <INITIAL> aimed at it ---
+            stag_input = column_input.replace(
+                'END\\nTRANSPORT', 'SOLUTION 7-11\\n  units mmol/kgw\\n  pH 7 charge\\n  K 0.5\\n  Br 0.5\\nEND\\nTRANSPORT').replace(
+                '  -dispersivities 0.002\\n', '  -dispersivities 0.002\\n  -stagnant 1 5e-6 0.25 0.15\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{stag_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            stagged = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                        f"t.startsWith('PHREEQC could not') || /TRANSPORT block, and/.test(t) ? t : ''; }})()")
+            stag_text = await page.ev("document.getElementById('rtmText').value")
+            stag_ok = (isinstance(stagged, str) and 'Stagnant water behind every cell' in stagged
+                       and 'behind cells 1-5 in <INITIAL>' in stagged and isinstance(stag_text, str)
+                       and re.search(r'^MATRIX_CELLS = 1$', stag_text, re.M) is not None
+                       and re.search(r'^MATRIX_POROSITY = 0\.15$', stag_text, re.M) is not None
+                       and re.search(r'^WETTED_SURFACE = 4$', stag_text, re.M) is not None
+                       and re.search(r'^K\+ .*Dm=0\.0000025', stag_text, re.M) is not None
+                       and re.search(r'^K\+ +0-4 +0\.0005\S* +matrix$', stag_text, re.M) is not None)
+            check('stagnant cells (-stagnant 1 alpha theta_m theta_im): a rock matrix of one layer, every species\' Dm alpha/2, '
+                  'the stagnant water in <INITIAL> aimed at the matrix, and the report says so', stag_ok or stagged)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran, 'Done')
+
             # --- a surface in the water, with its double layer: carried, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

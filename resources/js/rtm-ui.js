@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109',
+    'resources/js/rtm-phreeqc.js?v=20261109a',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2941,6 +2941,22 @@ END
           + `${c.zones.length} zones — ${c.zones.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} — the first as the `
           + 'water above, the others in <code>&lt;INITIAL&gt;</code>.</p>'
           : 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>'));
+      // Stagnant cells: a rock matrix of one layer, exchanging as PHREEQC's first order does.
+      if (c.stagnant) {
+        const st = c.stagnant;
+        const apart = st.zones.filter((z) => !z.same);
+        out.push(`<p>Stagnant water behind every cell, <code>-stagnant 1 ${pqNum(st.alpha)} ${pqNum(st.thm)} `
+          + `${pqNum(st.thim)}</code>: exchanged with the cell's at α = ${pqNum(st.alpha)} /s, as PHREEQC does, by a rock `
+          + `matrix of one layer of porosity ${pqNum(st.thim)} (<code>MATRIX_CELLS = 1</code>, every species' `
+          + `<code>Dm</code> α/2). ${apart.length ? `It starts as PHREEQC equilibrates it, behind cells `
+            + `${apart.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} in <code>&lt;INITIAL&gt;</code> (<code>matrix</code>)`
+            + `${apart.length < st.zones.length ? ' and elsewhere as the water above' : ''}.` : 'It starts as the water above.'}</p>`);
+      }
+      if (c.elsewhere && c.elsewhere.length) {
+        out.push(`<p>Cell 1's water has none of ${c.elsewhere.map((sp) => `<code>${esc(sp)}</code>`).join(', ')}, which `
+          + 'another water of the column brings: written at the trace cell 1 takes of that water, with the database\'s '
+          + 'log K.</p>');
+      }
       if (c.after) {
         out.push('<p class="warn">The input goes on after this column; what it does then is not carried.</p>');
       }
