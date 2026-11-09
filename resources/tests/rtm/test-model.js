@@ -7643,6 +7643,119 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,
   `${[...twoQ].join(',')}: ${[...twoV].join(', ')} for ${alkWant}`);
+
+  /*
+    THE BOUNDARIES OF A MAP, found between the grid's points by the worker.
+    Without activity coefficients each of iron's species is a line in pH and
+    pe -- log(C/C(Fe+2)) = a + b pH + c pe, from the log Ks -- so every
+    boundary is a straight line and every point where three meet is where two
+    of them cross. Grids with a boundary along a grid line, with the point
+    where three meet on a point of the grid, and one of 3 x 3 whose middle is
+    that point.
+  */
+  const askW = (msg) => {
+    let reply = null;
+    handleRtmMessage(msg, (m) => { if (m.type !== 'progress') reply = m; });
+    if (reply.type === 'error') throw new Error(reply.error);
+    return reply;
+  };
+  const ironText = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\ne-  electron  pe=4\n'
+    + 'Na+  1e-3\nCl-  1e-3\nFe+2  1e-6\nFe+3  0\nFeOH+  0\nFeOH+2  0\nFe(OH)2+  0\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\n'
+    + 'Fe+2 <=> Fe+3 + e-,  logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,  logK = -9.5\nFe+3 + H2O <=> FeOH+2 + H+,  logK = -2.19\n'
+    + 'Fe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,  logK = -5.67\n';
+  const ironLine = { 'Fe+2': [0, 0, 0], 'Fe+3': [-13.02, 0, 1], 'FeOH+': [-9.5, 1, 0], 'FeOH+2': [-15.21, 1, 1], 'Fe(OH)2+': [-18.69, 2, 1] };
+  const ironModel = RtmModel.compile(ironText);
+  const ironTerms = ironModel.composition.elements.find((e) => e.el === 'Fe').terms.filter((tm) => tm[2] === 'water');
+  const ironName = (q) => ironModel.speciesNames[ironTerms[q][0]];
+  // Where two lines cross, the point where three fields meet.
+  const crossOf = (A, B, C) => {
+    const m00 = A[1] - B[1];
+    const m01 = A[2] - B[2];
+    const m10 = B[1] - C[1];
+    const m11 = B[2] - C[2];
+    const v0 = B[0] - A[0];
+    const v1 = C[0] - B[0];
+    const det = m00 * m11 - m01 * m10;
+    return [(v0 * m11 - m01 * v1) / det, (m00 * v1 - v0 * m10) / det];
+  };
+  const mapOf = (text, axes, criterion) => {
+    const g = askW({ type: 'diagram', id: 5, text, at: 'start', cell: 0, axes });
+    return askW({ type: 'diagramBounds', id: 6, text, at: 'start', cell: 0, axes, grid: g.states, criterion });
+  };
+  const ironGrids = [[0, 12, 11, -6, 18, 9], [0, 12, 101, -6, 18, 81], [0.99, 12.99, 101, -4.98, 19.02, 81], [1.19, 3.19, 3, 12.02, 14.02, 3]];
+  const ironOut = ironGrids.map(([x0, x1, n1, y0, y1, n2]) => {
+    const b = mapOf(ironText, [{ kind: 'pH', from: x0, to: x1, n: n1 }, { kind: 'pe', from: y0, to: y1, n: n2 }],
+      { kind: 'predominance', terms: ironTerms.map(([k, n]) => [k, n]) });
+    let line = 0;
+    for (const ln of b.lines) {
+      const A = ironLine[ironName(ln.a)];
+      const B = ironLine[ironName(ln.b)];
+      ln.x.forEach((x, q) => {
+        line = Math.max(line, Math.abs(A[0] - B[0] + (A[1] - B[1]) * x + (A[2] - B[2]) * ln.y[q]) / Math.hypot(A[1] - B[1], A[2] - B[2]));
+      });
+    }
+    let meet = 0;
+    for (const jn of b.junctions) {
+      const [px, py] = crossOf(...jn.labels.map((q) => ironLine[ironName(q)]));
+      meet = Math.max(meet, Math.abs(px - jn.x), Math.abs(py - jn.y));
+    }
+    const area = b.fields.reduce((s, f) => s + f.area, 0) / Math.abs((x1 - x0) * (y1 - y0)) - 1;
+    const pairs = b.lines.map((ln) => [ironName(ln.a), ironName(ln.b)].sort().join('|')).sort();
+    return { n: `${n1} x ${n2}`, line, meet, area, solved: b.junctions.every((jn) => jn.solved), nj: b.junctions.length,
+      pairs: [...new Set(pairs)].join(' '), unsolved: b.unsolved };
+  });
+  const ironPairs = 'Fe(OH)2+|Fe+2 Fe(OH)2+|FeOH+ Fe(OH)2+|FeOH+2 Fe+2|Fe+3 Fe+2|FeOH+ Fe+2|FeOH+2 Fe+3|FeOH+2';
+  check('the boundaries of a Pourbaix map of iron without activity coefficients: every point of every boundary on the straight '
+    + 'line its two species\' log Ks give, to 1e-10 in pH and pe, every point where three meet where two of those lines cross, '
+    + 'to 1e-12, and the fields\' areas the frame\'s -- on a grid of 11 x 9, one with a boundary along a grid line, one with '
+    + 'the point where three meet on a point of it, and one of 3 x 3 whose middle is that point',
+  ironOut.every((o) => o.line < 1e-10 && o.meet < 1e-12 && Math.abs(o.area) < 1e-12 && o.solved && !o.unsolved)
+    && ironOut.slice(0, 3).every((o) => o.pairs === ironPairs && o.nj === 3),
+  ironOut.map((o) => `${o.n}: lines within ${o.line.toExponential(1)}, ${o.nj} meeting points within ${o.meet.toExponential(1)}, `
+    + `area ${o.area.toExponential(1)}`).join('; ') + ` | ${ironOut[0].pairs}`);
+
+  // A phase map: calcium's total held, carbonate's and sulfate's activities varied, no complexes: SI(Calcite) is
+  // log Ca + la(CO3-2) + 8.48, SI(Gypsum) log Ca + la(SO4-2) + 4.58, and the boundaries are where either is zero or they meet.
+  const phaseText = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\nCa+2  1e-2\n'
+    + 'Cl-  2e-2\nCO3-2  1e-6\nSO4-2  1e-4\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\n\n<PHASES>\n'
+    + 'Calcite <=> Ca+2 + CO3-2,  logK = -8.48\nGypsum <=> Ca+2 + SO4-2 + 2 H2O,  logK = -4.58\n';
+  const phaseLine = { 'SI(Calcite)|none': [6.48, 1, 0], 'SI(Gypsum)|none': [2.58, 0, 1], 'SI(Calcite)|SI(Gypsum)': [3.9, 1, -1] };
+  const pb = mapOf(phaseText, [{ kind: 'la', species: 'CO3-2', from: -10, to: -2, n: 41 }, { kind: 'la', species: 'SO4-2', from: -6, to: -1, n: 26 }],
+    { kind: 'phase', keys: ['SI(Calcite)', 'SI(Gypsum)'] });
+  const phaseName = (q) => ['SI(Calcite)', 'SI(Gypsum)', 'none'][q];
+  let phaseWorst = 0;
+  const phasePairs = [];
+  for (const ln of pb.lines) {
+    const key = [phaseName(ln.a), phaseName(ln.b)].join('|');
+    phasePairs.push(key);
+    const L = phaseLine[key];
+    ln.x.forEach((x, q) => { phaseWorst = Math.max(phaseWorst, Math.abs(L[0] + L[1] * x + L[2] * ln.y[q]) / Math.hypot(L[1], L[2])); });
+  }
+  const pj = pb.junctions[0];
+  const phaseArea = pb.fields.reduce((s, f) => s + f.area, 0) / 40 - 1;
+  check('  a mineral stability map without activity coefficients: calcite\'s and gypsum\'s boundaries with each other and with '
+    + 'neither where their saturation indices say, to 1e-10, and the point all three meet, to 1e-12',
+  phaseWorst < 1e-10 && pb.junctions.length === 1 && pj.solved && Math.abs(pj.x + 6.48) < 1e-12
+    && Math.abs(pj.y + 2.58) < 1e-12 && Math.abs(phaseArea) < 1e-12 && phasePairs.length === 3,
+  `${phasePairs.join(', ')} within ${phaseWorst.toExponential(1)}; meeting at (${pj && pj.x}, ${pj && pj.y}); area ${phaseArea.toExponential(1)}`);
+
+  // Of the water as a run leaves it: the run kept, or sent again once the worker has let it go.
+  let ranIron = null;
+  handleRtmMessage({ type: 'run', id: 7, text: ironText, solver: solverSw }, (msg) => { if (msg.type === 'result') ranIron = msg; });
+  const endAxes = [{ kind: 'pH', from: 0, to: 12, n: 11 }, { kind: 'pe', from: -6, to: 18, n: 9 }];
+  const endCrit = { kind: 'predominance', terms: ironTerms.map(([k, n]) => [k, n]) };
+  const endGrid = askW({ type: 'diagram', id: 8, text: ironText, at: 'end', cell: 0, axes: endAxes, runKey: ranIron.runKey });
+  const endKept = askW({ type: 'diagramBounds', id: 9, text: ironText, at: 'end', cell: 0, axes: endAxes, runKey: ranIron.runKey,
+    grid: endGrid.states, criterion: endCrit });
+  const endGone = askW({ type: 'diagramBounds', id: 10, text: ironText, at: 'end', cell: 0, axes: endAxes, runKey: -1,
+    grid: endGrid.states, criterion: endCrit });
+  const endSent = askW({ type: 'diagramBounds', id: 11, text: ironText, at: 'end', cell: 0, axes: endAxes, runKey: -2,
+    grid: endGrid.states, criterion: endCrit, t: ranIron.t, states: ranIron.states, n: ranIron.n, width: ranIron.width });
+  const sameLines = (p, q) => JSON.stringify(p.lines) === JSON.stringify(q.lines) && JSON.stringify(p.junctions) === JSON.stringify(q.junctions);
+  check('  of the water as a run leaves it: the boundaries of the run kept; asked of a run the worker no longer has, it says so, '
+    + 'and with the run sent, the same to the bit', endKept.type === 'diagramBounds' && endKept.junctions.length === 3
+    && endGone.missing === true && sameLines(endKept, endSent),
+  `${endKept.lines.length} lines; ${JSON.stringify(endGone).slice(0, 60)}`);
 }
 
 /* ======================================================================

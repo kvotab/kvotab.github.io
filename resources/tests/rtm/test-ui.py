@@ -999,6 +999,31 @@ async def main():
               return [t.type, t.z.length + 'x' + t.z[0].length, at(6), at(7), at(11)]; })()""")
             check('pH against log total C: a map of the species that holds most of the carbon -- CO2 at pH 6, HCO3- at 7, '
                   'CO3-2 at 11', pred, ['heatmap', '5x11', 'CO2', 'HCO3-', 'CO3-2'])
+            await settle(page, "/its boundaries found/.test(document.getElementById('rtmStatus').textContent)", True, tries=60, pause=0.25)
+            bd = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
+              const fills = d.filter((t) => t.fill === 'toself').map((t) => t.name).sort().join(' ');
+              const b = d.find((t) => t.name === 'boundaries');
+              const xs = b ? b.x.filter((x) => x !== null) : [];
+              const off = Math.max(...xs.map((x) => Math.min(Math.abs(x - 6.352), Math.abs(x - 10.329))));
+              return [fills, xs.length > 0 && off < 1e-9,
+                document.getElementById('rtmDgNote').textContent.includes('the boundaries between them found to 1e-10')]; })()""")
+            check('  its boundaries found between the points: the fields drawn as the shapes they bound, and the boundaries at pH '
+                  '6.352 and 10.329, where the carbon\'s log Ks put them, to 1e-9', bd, ['CO2 CO3-2 HCO3-', True, True])
+            await page.ev("""(() => {
+              window.__xlsx = null;
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.xlsx')) window.__xlsx = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((buf) => JSZip.loadAsync(buf)).then((z) => z.file('xl/workbook.xml').async('string'));
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"diagram\"][data-as=\"xlsx\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            sheets = await page.ev("(async () => { const w = await window.__xlsx;"
+                                   " return w ? [...w.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]) : null; })()")
+            check('  saved to Excel: the points, the boundaries on a sheet of their own, and the model text', sheets,
+                  ['run', 'boundaries', 'model'])
             await dg(show=[['rtmDgShow', 'contour'], ['rtmDgQ', 'tot(C)']])
             tot = await page.ev("""(() => { const t = document.getElementById('rtmChartDg').data[0];
               return [t.type, t.y.every((y, j) => t.z[j].every((v) => Math.abs(v - y) < 1e-9))]; })()""")

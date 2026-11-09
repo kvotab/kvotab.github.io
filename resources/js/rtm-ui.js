@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109j';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109k';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -777,12 +777,15 @@
   }
 
   function stop() {
-    if (!state.running && !dgBusy) return;
+    if (!state.running && !dgBusy && !dgBoundsAsked) return;
     if (worker) { worker.terminate(); worker = null; workerKind = 'none'; pending.clear(); }
     state.running = false;
     // A sweep or a diagram stopped with the worker: what waited on it never hears, so its buttons come back here.
     swBusy = false;
     dgBusy = false;
+    // Boundaries stopped are not asked for again: the map stays as its points.
+    if (dgBoundsAsked) dgBoundsAsked.res.bounds.set(dgBoundsAsked.sig, null);
+    dgBoundsAsked = null;
     fitBusy = false;
     unBusy = false;
     $('rtmSwGo').disabled = false;
@@ -2256,6 +2259,8 @@
   let dgResult = null;
   let dgTableNow = null;
   let dgBusy = false;
+  // The map whose boundaries the worker is finding, { res, sig }: one at a time.
+  let dgBoundsAsked = null;
 
   /** The species an activity can be held of, the solutes; the elements a total can be given of. */
   function dgChoices(kind) {
@@ -2365,11 +2370,13 @@
     try {
       let reply = await ask(false);
       if (reply.missing) reply = await ask(true);
-      dgResult = { reply, axes, composition: state.compiled.composition, at: d.at, cell: d.cell };
+      const said = `Diagram worked out in ${((Date.now() - started) / 1000).toFixed(2)} s: ${(reply.n1 * reply.n2).toLocaleString()} points`
+        + `${reply.failed ? `, ${reply.failed.toLocaleString()} of which did not settle and are left blank` : ''}.`;
+      // What the boundaries of a map are worked out from, and each map's once they are: null where they could not be.
+      dgResult = { reply, axes, composition: state.compiled.composition, at: d.at, cell: d.cell, text, cellIndex: d.cell * stride,
+        runKey: d.at === 'end' ? r.runKey : null, said, saidKind: reply.failed ? 'warn' : 'ok', bounds: new Map() };
       setProgress(null);
-      setStatus(`Diagram worked out in ${((Date.now() - started) / 1000).toFixed(2)} s: ${(reply.n1 * reply.n2).toLocaleString()} points`
-        + `${reply.failed ? `, ${reply.failed.toLocaleString()} of which did not settle and are left blank` : ''}.`,
-      reply.failed ? 'warn' : 'ok');
+      setStatus(said, dgResult.saidKind);
       renderDgShow();
       drawDg();
     } catch (e) {
@@ -2378,7 +2385,8 @@
     } finally {
       dgBusy = false;
       $('rtmDgGo').disabled = false;
-      $('rtmStop').disabled = !state.running;
+      // The boundaries of the map drawn may be on their way already.
+      $('rtmStop').disabled = !state.running && !dgBoundsAsked;
     }
   }
 
@@ -2503,9 +2511,12 @@
     const names2 = [];
     const at = new Array(n1 * n2).fill(-1);
     const share = new Array(n1 * n2).fill(null);
+    let criterion;
+    let nameOf;
     if (d.show === 'predominance') {
       const terms = dgTerms(d.el);
       if (terms.length < 2) { fail(`No two species hold ${d.el || 'an element'} ${d.in === 'all' ? 'in the cell' : 'in the water'}.`); return; }
+      const termName = ([k, , wh]) => (wh === 'water' ? names[k] : `${names[k]} (${WHERE_LABELS[wh]})`);
       for (let p = 0; p < n1 * n2; p++) {
         let best = -1;
         let most = -Infinity;
@@ -2518,13 +2529,14 @@
           if (v > most) { most = v; best = q; }
         }
         if (best < 0) continue;
-        const [k, , wh] = terms[best];
-        const label = wh === 'water' ? names[k] : `${names[k]} (${WHERE_LABELS[wh]})`;
+        const label = termName(terms[best]);
         let c = names2.indexOf(label);
         if (c < 0) { c = names2.length; names2.push(label); }
         at[p] = c;
         share[p] = sum > 0 ? (100 * most) / sum : null;
       }
+      criterion = { kind: 'predominance', terms: terms.map(([k, n]) => [k, n]) };
+      nameOf = (lab) => termName(terms[lab]);
     } else {
       const keys = rp.keys.filter((key) => key.startsWith('SI('));
       if (!keys.length) { fail('The model has no phase to give a saturation index of: <PHASES>, or a mineral in <EQUILIBRIUM>.'); return; }
@@ -2543,7 +2555,15 @@
         at[p] = c;
         share[p] = most;
       }
+      criterion = { kind: 'phase', keys };
+      nameOf = (lab) => (lab === keys.length ? 'none over saturation' : keys[lab].slice(3, -1));
     }
+    // The boundaries between the fields, found by the worker once the map is drawn: until they come, the map is its points.
+    const sig = JSON.stringify(criterion);
+    const bounds = dgResult.bounds.get(sig) || null;
+    if (!dgResult.bounds.has(sig)) dgAskBounds(sig, criterion);
+    // A field found only between the points has a colour of its own too.
+    if (bounds) for (const f of bounds.fields) if (!names2.includes(nameOf(f.label))) names2.push(nameOf(f.label));
     const m = names2.length;
     const colors = names2.map((nm, c) => (nm === 'none over saturation' ? themeColors().grid : DG_PALETTE[c % DG_PALETTE.length]));
     const scale = m === 1 ? [[0, colors[0]], [1, colors[0]]] : colors.flatMap((col, c) => [[c / m, col], [(c + 1) / m, col]]);
@@ -2554,12 +2574,13 @@
       return d.show === 'predominance' ? `${names2[at[p]]}: ${share[p] === null ? '' : `${share[p].toFixed(1)} %`}`
         : `${names2[at[p]]}${names2[at[p]] === 'none over saturation' ? `, the nearest SI ${share[p].toFixed(2)}` : `, SI ${(share[p] + 0).toFixed(2)}`}`;
     }));
-    // Each field's name at the point of it nearest its middle.
-    const annotations = names2.map((nm, c) => {
+    // Each field's name where it is: inside its outline, or else at the point of it nearest its middle.
+    const gridSpot = (c) => {
       let si = 0;
       let sj = 0;
       let cnt = 0;
       for (let p = 0; p < n1 * n2; p++) if (at[p] === c) { si += p % n1; sj += Math.floor(p / n1); cnt++; }
+      if (!cnt) return null;
       const ci = si / cnt;
       const cj = sj / cnt;
       let bestP = -1;
@@ -2569,20 +2590,140 @@
         const g = (p % n1 - ci) ** 2 + (Math.floor(p / n1) - cj) ** 2;
         if (g < gap) { gap = g; bestP = p; }
       }
-      return { x: xs[bestP % n1], y: ys[Math.floor(bestP / n1)], text: esc(nm), showarrow: false,
-        font: { size: 11, color: '#111' }, bgcolor: 'rgba(255,255,255,0.7)', borderpad: 2 };
+      return [xs[bestP % n1], ys[Math.floor(bestP / n1)]];
+    };
+    const spots = names2.map((nm, c) => {
+      const f = bounds && bounds.fields.find((fd) => nameOf(fd.label) === nm);
+      return (f && dgFieldSpot(f)) || gridSpot(c);
     });
-    layout.annotations = annotations;
-    Plotly.react(plot, [{ type: 'heatmap', x: xs, y: ys, z, text, zmin: -0.5, zmax: m - 0.5, colorscale: scale, showscale: false,
-      hovertemplate: `${esc(dgLabel(ax))} %{x:.3g}<br>${esc(dgLabel(ay))} %{y:.3g}<br>%{text}<extra></extra>` },
-    ...dgWaterLines(pePh, xs, ys)], layout, PLOT_CONFIG);
-    const counts = names2.map((nm, c) => [nm, at.filter((v) => v === c).length]);
+    layout.annotations = names2.map((nm, c) => (spots[c] ? { x: spots[c][0], y: spots[c][1], text: esc(nm), showarrow: false,
+      font: { size: 11, color: '#111' }, bgcolor: 'rgba(255,255,255,0.7)', borderpad: 2 } : null)).filter(Boolean);
+    const traces = [{ type: 'heatmap', x: xs, y: ys, z, text, zmin: -0.5, zmax: m - 0.5, colorscale: scale, showscale: false,
+      hovertemplate: `${esc(dgLabel(ax))} %{x:.3g}<br>${esc(dgLabel(ay))} %{y:.3g}<br>%{text}<extra></extra>` }];
+    if (bounds) {
+      // Each field the shape its outlines bound, the largest first so that a field inside another is drawn over it; the
+      // boundaries over them all. The points under them still answer the pointer.
+      for (const f of [...bounds.fields].sort((p, q) => q.gross - p.gross)) {
+        const col = colors[names2.indexOf(nameOf(f.label))];
+        const x = [];
+        const y = [];
+        f.loops.forEach((lp, q) => {
+          if (q) { x.push(null); y.push(null); }
+          x.push(...lp.x, lp.x[0]);
+          y.push(...lp.y, lp.y[0]);
+        });
+        traces.push({ type: 'scatter', mode: 'lines', name: nameOf(f.label), x, y, fill: 'toself', fillcolor: col,
+          line: { color: col, width: 0.5 }, hoverinfo: 'skip', showlegend: false });
+      }
+      const bx = [];
+      const by = [];
+      bounds.lines.forEach((ln, q) => {
+        if (q) { bx.push(null); by.push(null); }
+        bx.push(...ln.x);
+        by.push(...ln.y);
+      });
+      traces.push({ type: 'scatter', mode: 'lines', name: 'boundaries', x: bx, y: by, line: { color: themeColors().text, width: 1.2 },
+        hoverinfo: 'skip', showlegend: false });
+      layout.xaxis.range = [Math.min(...xs), Math.max(...xs)];
+      layout.yaxis.range = [Math.min(...ys), Math.max(...ys)];
+    }
+    Plotly.react(plot, [...traces, ...dgWaterLines(pePh, xs, ys)], layout, PLOT_CONFIG);
+    const counts = names2.map((nm, c) => [nm, at.filter((v) => v === c).length]).filter(([, k]) => k > 0);
     dgTableNow = { head: [dgLabel(ax), dgLabel(ay), d.show === 'predominance' ? `the species holding most of the ${d.el}`
       : 'the phase furthest over saturation, or at it', d.show === 'predominance' ? 'its share (%)' : 'its SI'],
     rows: at.map((c, p) => [xs[p % n1], ys[Math.floor(p / n1)], c >= 0 ? names2[c] : null, share[p]]),
     name: `rtm_diagram_${d.show}` };
+    if (bounds) {
+      // The Excel workbook's second sheet: each boundary's points, and where three fields meet.
+      const rows = [];
+      bounds.lines.forEach((ln, q) => ln.x.forEach((x, i) => rows.push([q + 1, nameOf(ln.a), nameOf(ln.b), x, ln.y[i]])));
+      bounds.junctions.filter((jn) => jn.solved).forEach((jn) => rows.push(['where three meet', ...jn.labels.map(nameOf), jn.x, jn.y]));
+      dgTableNow.extra = [{ name: 'boundaries', head: ['boundary', 'between', 'and', dgLabel(ax), dgLabel(ay)], rows }];
+    }
+    const meet = bounds ? bounds.junctions.filter((jn) => jn.solved).length : 0;
     note.textContent = `${where}; ${n1} × ${n2} points: ${counts.map(([nm, k]) => `${nm} ${k}`).join(', ')}`
-      + `${rp.failed ? `; ${rp.failed} left blank: they did not settle` : ''}`;
+      + `${rp.failed ? `; ${rp.failed} left blank: they did not settle` : ''}`
+      + (bounds ? `; the boundaries between them found to 1e-10${meet ? `, and ${meet} point${meet === 1 ? '' : 's'} where three fields meet` : ''}`
+        : dgBoundsAsked && dgBoundsAsked.res === dgResult && dgBoundsAsked.sig === sig ? '; finding the boundaries between them…' : '');
+  }
+
+  /**
+   * Where a field's name goes: the middle of its largest outline, if that is
+   * inside the field -- inside an odd number of its outlines, a field within
+   * it being a hole -- or null.
+   */
+  function dgFieldSpot(f) {
+    let big = null;
+    let most = 0;
+    for (const lp of f.loops) {
+      let a = 0;
+      let cx = 0;
+      let cy = 0;
+      for (let q = 0; q < lp.x.length; q++) {
+        const r = (q + 1) % lp.x.length;
+        const cr = lp.x[q] * lp.y[r] - lp.x[r] * lp.y[q];
+        a += cr;
+        cx += (lp.x[q] + lp.x[r]) * cr;
+        cy += (lp.y[q] + lp.y[r]) * cr;
+      }
+      if (Math.abs(a) > most) { most = Math.abs(a); big = [cx / (3 * a), cy / (3 * a)]; }
+    }
+    if (!big) return null;
+    const [px, py] = big;
+    let inside = false;
+    for (const lp of f.loops) {
+      const n = lp.x.length;
+      for (let q = 0, r = n - 1; q < n; r = q++) {
+        if ((lp.y[q] > py) !== (lp.y[r] > py) && px < ((lp.x[r] - lp.x[q]) * (py - lp.y[q])) / (lp.y[r] - lp.y[q]) + lp.x[q]) inside = !inside;
+      }
+    }
+    return inside ? big : null;
+  }
+
+  /**
+   * Asks the worker for the boundaries of the map on show (rtmDiagramBounds
+   * in rtm-worker.js), one map at a time: when they come the chart is drawn
+   * again, and asks for whatever it shows then. The water the diagram held is
+   * held again between its points, so a diagram of the water as a run left
+   * it needs that run still.
+   */
+  async function dgAskBounds(sig, criterion) {
+    const res = dgResult;
+    if (!res || dgBoundsAsked) return;
+    if (res.at === 'end' && !(state.result && state.result.runKey === res.runKey)) return;
+    dgBoundsAsked = { res, sig };
+    const r = state.result;
+    const started = Date.now();
+    const ask = (withRun) => request({ type: 'diagramBounds', text: res.text, at: res.at, cell: res.cellIndex, axes: res.axes,
+      grid: res.reply.states, criterion, ...(res.at === 'end' ? { runKey: res.runKey } : {}),
+      ...(withRun ? { t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) },
+    (p) => {
+      setProgress(p.frac);
+      setStatus(`Finding the diagram's boundaries: ${p.done.toLocaleString()} of ${p.npts.toLocaleString()} edges between its points…`);
+    });
+    $('rtmStop').disabled = false;
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      res.bounds.set(sig, reply);
+      if (dgResult === res) {
+        const meet = reply.junctions.filter((jn) => jn.solved).length;
+        const found = `found in ${((Date.now() - started) / 1000).toFixed(2)} s`
+          + `${meet ? `, with ${meet} point${meet === 1 ? '' : 's'} where three fields meet` : ''}`;
+        // The first after the diagram goes with what was said of it.
+        if (!res.boundsSaid) setStatus(`${res.said.replace(/\.$/, '')}; its boundaries ${found}.`, res.saidKind);
+        else setStatus(`The diagram's boundaries ${found}.`, 'ok');
+        res.boundsSaid = true;
+      }
+    } catch (e) {
+      res.bounds.set(sig, null);
+      if (dgResult === res) setStatus(`The diagram's boundaries could not be found: ${e.message}`, 'warn');
+    } finally {
+      setProgress(null);
+      if (dgBoundsAsked && dgBoundsAsked.res === res) dgBoundsAsked = null;
+      $('rtmStop').disabled = !state.running;
+      if (dgResult) drawDg();
+    }
   }
 
   /**
@@ -3759,6 +3900,7 @@
     }
     const xlsx = new XlsxWriter(`${tab.name}.xlsx`);
     xlsx.writeData(tab.rows.map((row) => row.map((v) => (v === null ? '' : v))), 'run', { header: tab.head });
+    for (const more of tab.extra || []) xlsx.writeData(more.rows.map((row) => row.map((v) => (v === null ? '' : v))), more.name, { header: more.head });
     const text = (state.ran && state.ran.text) || state.text;
     xlsx.writeData(text.split('\n').map((ln) => [ln]), 'model', { header: ['the model text the run was made with'] });
     downloadBlob(await xlsx.save(), `${tab.name}.xlsx`);
@@ -4601,12 +4743,13 @@
             '**the species that holds most of an element**, in the water or the whole cell: over pH and pe, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C.',
             '**the phase furthest over saturation, or at it**: a mineral stability diagram.',
             '**a species or a quantity, as contours**: its log where it is an amount.',
+            'A map\'s **boundaries** are found between the grid\'s points, the water speciated again there, to 1e-10; where three fields meet, the point is solved for. A field narrower than the grid can be missed.',
           ] : [
             '**the species of an element** as shares of it, or as log concentrations.',
             '**the saturation indices** of every phase and mineral.',
             '**a species or a quantity**: pH, a total, an <OUTPUT>, …',
           ] },
-          { heading: 'Saving', list: ['**CSV**, **Excel**: a row per point, what is drawn there. **SVG**, **PNG**: the picture.'] },
+          { heading: 'Saving', list: ['**CSV**, **Excel**: a row per point, what is drawn there; a map\'s Excel workbook has its boundaries on a sheet of their own. **SVG**, **PNG**: the picture.'] },
         ],
         more: more('Diagrams of the model\'s own chemistry', 'help-diagrams'),
       };

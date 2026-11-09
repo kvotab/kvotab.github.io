@@ -389,13 +389,19 @@ function rtmDiagramAxis(model, ax) {
   throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, la or tot.`);
 }
 
-function rtmDiagram(msg, post) {
+/**
+ * What a diagram holds and how a point of it settles, shared by the grid and
+ * by the boundaries found between its points: the model, the water it starts
+ * from, the axes and the species held. Null where it is of a run that is not
+ * kept, which the page then sends.
+ */
+function rtmDiagramSetup(msg) {
   let model;
   let base;
   let t = 0;
   if (msg.at === 'end') {
     const run = rtmRunFor(msg);
-    if (!run) return { type: 'diagram', id: msg.id, missing: true };
+    if (!run) return null;
     model = run.model;
     t = run.t[run.n - 1];
     base = Float64Array.from(run.states.subarray((run.n - 1) * run.width, run.n * run.width));
@@ -429,29 +435,22 @@ function rtmDiagram(msg, post) {
   const holds = axes.map((ax, a) => ({ ax, a }));
   let pHHeld = null;
   const iH = model.speciesNames.indexOf('H+');
+  if (model.thermoAt) model.thermoAt(t);
   if (totAxis >= 0 && !axes.some((ax) => ax.kind === 'pH') && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
-    if (model.thermoAt) model.thermoAt(t);
     const g0 = new Float64Array(ns);
     if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
     pHHeld = -(Math.log(base[b + iH]) + g0[iH]) / Math.LN10;
     held[iH] = true;
     holds.push({ ax: { kind: 'pH', k: iH }, a: -1 });
   }
-  const n1 = axes[0].values.length;
-  const n2 = axes[1] ? axes[1].values.length : 1;
-  const npts = n1 * n2;
-  const nq = model.quantities.length;
-  const which = Int32Array.from({ length: nq }, (_, q) => q);
-  const states = new Float64Array(npts * ns).fill(NaN);
-  const quant = new Float64Array(npts * nq).fill(NaN);
-  const qOut = new Float64Array(nq);
   const lnG = new Float64Array(ns);
   const lnD = new Float64Array(ns);
-  // Each held species' ln gamma, carried from point to point.
-  const lnGamma = holds.map(() => 0);
-  let failed = 0;
-  let cur = Float64Array.from(base);
-  const settle = (y, vals) => {
+  /*
+    The water y (every cell; this one is speciated) held at vals, from each
+    held species' ln gamma as lnGamma has it: both are moved to the answer.
+    False where it does not settle.
+  */
+  const settle = (y, vals, lnGamma) => {
     for (let it = 0; it < 40; it++) {
       holds.forEach(({ ax, a }, h) => {
         const v = a >= 0 ? vals[a] : pHHeld;
@@ -475,6 +474,33 @@ function rtmDiagram(msg, post) {
     }
     return false;
   };
+  /** Each held species' ln gamma in the water y: where a point near it starts. */
+  const gammas = (y) => {
+    const out = holds.map(() => 0);
+    if (!model.act) return out;
+    RtmModel.activityAt(model.act, y, b, lnG, lnD, cell);
+    holds.forEach(({ ax }, h) => { if (ax.kind === 'pH' || ax.kind === 'la') out[h] = lnG[ax.k]; });
+    return out;
+  };
+  return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas };
+}
+
+function rtmDiagram(msg, post) {
+  const S = rtmDiagramSetup(msg);
+  if (!S) return { type: 'diagram', id: msg.id, missing: true };
+  const { model, base, t, b, cell, ns, axes, holds, pHHeld, settle } = S;
+  const n1 = axes[0].values.length;
+  const n2 = axes[1] ? axes[1].values.length : 1;
+  const npts = n1 * n2;
+  const nq = model.quantities.length;
+  const which = Int32Array.from({ length: nq }, (_, q) => q);
+  const states = new Float64Array(npts * ns).fill(NaN);
+  const quant = new Float64Array(npts * nq).fill(NaN);
+  const qOut = new Float64Array(nq);
+  // Each held species' ln gamma, carried from point to point.
+  const lnGamma = holds.map(() => 0);
+  let failed = 0;
+  let cur = Float64Array.from(base);
   let done = 0;
   let lastReport = Date.now();
   for (let j = 0; j < n2; j++) {
@@ -485,11 +511,11 @@ function rtmDiagram(msg, post) {
       const vals = [axes[0].values[i], axes[1] ? axes[1].values[j] : 0];
       let y = Float64Array.from(cur);
       let ok = false;
-      try { ok = settle(y, vals); } catch (e) { ok = false; }
+      try { ok = settle(y, vals, lnGamma); } catch (e) { ok = false; }
       if (!ok) {
         y = Float64Array.from(base);
         lnGamma.fill(0);
-        try { ok = settle(y, vals); } catch (e) { ok = false; }
+        try { ok = settle(y, vals, lnGamma); } catch (e) { ok = false; }
       }
       if (ok) {
         cur = y;
@@ -506,6 +532,453 @@ function rtmDiagram(msg, post) {
   }
   return { type: 'diagram', id: msg.id, n1, n2, x: axes[0].values, y: axes[1] ? axes[1].values : null, ns,
     species: model.speciesNames, states, nq, keys: model.quantities.map((q) => q.key), quant, failed, t, cell, pHHeld };
+}
+
+/*
+  THE BOUNDARIES OF A MAP: where two fields of a diagram over two things
+  meet -- the species that holds most of an element, or the phase furthest
+  over saturation -- found between each two neighbouring points of the grid
+  whose fields differ, by holding the water at points between them and
+  speciating it again, as PhreePlot finds PHREEQC's boundaries rather than
+  colouring a grid. Along the edge, false position on what tells the two
+  fields apart -- the log of the one's amount of the element over the
+  other's, or the difference of their saturation indices -- Illinois' way,
+  to 1e-10 in the axis' units; a third field met on the way is two
+  boundaries. Where three fields meet in one square of the grid, the point
+  they share is solved for, Newton's way, the two differences zero at once.
+  Each square is then cut along its boundaries into the pieces of its
+  fields, and the pieces of a field joined by dropping the sides two of them
+  share: what is left, followed round, is the field's outline.
+*/
+const RTM_BOUND_TOL = 1e-10;
+// Two fields within this of each other (a log of amounts, or saturation indices) are a tie, the first of them taken:
+// a point on a boundary that lies along a grid line is then of one field for certain, not of whichever the rounding says.
+const RTM_BOUND_TIE = 1e-10;
+
+/**
+ * What tells the fields of a map apart: each point's field, and between two
+ * fields a difference that is positive in the first, negative in the second
+ * and zero where they meet.
+ *   predominance: { terms: [[k, n], ...] } -- the species of an element and
+ *     the element's count in each; the field is the one holding most of it.
+ *   phase: { keys: ['SI(Calcite)', ...] } -- the field is the phase whose
+ *     saturation index is the largest, if that is zero or more, else the one
+ *     past them all: none. A mineral of the model's own, held at saturation
+ *     where there is any of it, its SI zero to the rounding, counts as at it
+ *     there whatever the rounding says.
+ */
+function rtmMapCriterion(model, crit, base, b, t, cell) {
+  if (crit.kind === 'predominance') {
+    const terms = crit.terms;
+    if (!Array.isArray(terms) || terms.length < 2) throw new Error('A predominance map needs two species of the element or more.');
+    const labelOf = (c) => {
+      let best = -1;
+      let most = -Infinity;
+      for (let q = 0; q < terms.length; q++) {
+        const v = terms[q][1] * c[terms[q][0]];
+        if (!Number.isFinite(v)) return -1;
+        if (v > most && (best < 0 || !(Math.log(v) - Math.log(most) <= RTM_BOUND_TIE))) { most = v; best = q; }
+      }
+      return best;
+    };
+    const disc = (c, a, z) => Math.log(terms[a][1] * c[terms[a][0]]) - Math.log(terms[z][1] * c[terms[z][0]]);
+    return { labelOf, disc, n: terms.length };
+  }
+  if (crit.kind === 'phase') {
+    const which = Int32Array.from(crit.keys.map((key) => model.quantities.findIndex((q) => q.key === key)));
+    if (!which.length || [...which].some((x) => x < 0)) throw new Error('The phases of the map are not the model\'s.');
+    const none = which.length;
+    const mineral = crit.keys.map((key) => {
+      const k = model.speciesNames.indexOf(key.slice(3, -1));
+      return k >= 0 && model.speciesList[k].mineral ? k : -1;
+    });
+    const y = Float64Array.from(base);
+    const out = new Float64Array(which.length);
+    // Each phase's saturation index, a mineral there taken as at saturation.
+    const score = new Float64Array(which.length);
+    const scores = (c) => {
+      y.set(c, b);
+      model.quantitiesAt(y, t, cell, which, out);
+      for (let q = 0; q < out.length; q++) score[q] = mineral[q] >= 0 && c[mineral[q]] > 0 ? Math.max(0, out[q]) : out[q];
+      return score;
+    };
+    const labelOf = (c) => {
+      const s = scores(c);
+      let best = -1;
+      let most = -Infinity;
+      for (let q = 0; q < s.length; q++) if (Number.isFinite(s[q]) && s[q] > most + (best < 0 ? 0 : RTM_BOUND_TIE)) { most = s[q]; best = q; }
+      if (best < 0) return -1;
+      return most >= 0 ? best : none;
+    };
+    const disc = (c, a, z) => {
+      const s = scores(c);
+      return (a === none ? 0 : s[a]) - (z === none ? 0 : s[z]);
+    };
+    return { labelOf, disc, n: none + 1 };
+  }
+  throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance or phase.`);
+}
+
+function rtmDiagramBounds(msg, post) {
+  const S = rtmDiagramSetup(msg);
+  if (!S) return { type: 'diagramBounds', id: msg.id, missing: true };
+  const { model, base, t, b, cell, ns, axes, holds, settle, gammas } = S;
+  if (axes.length !== 2) throw new Error('Boundaries are a map\'s: two things varied.');
+  const xs = axes[0].values;
+  const ys = axes[1].values;
+  const n1 = xs.length;
+  const n2 = ys.length;
+  const grid = msg.grid;
+  if (!grid || grid.length !== n1 * n2 * ns) throw new Error('The points sent are not the diagram\'s.');
+  const crit = rtmMapCriterion(model, msg.criterion, base, b, t, cell);
+  const L = new Int32Array(n1 * n2);
+  for (let p = 0; p < n1 * n2; p++) L[p] = crit.labelOf(grid.subarray(p * ns, (p + 1) * ns));
+  const waterAt = (p) => grid.subarray(p * ns, (p + 1) * ns);
+
+  // The water held at a point, from the water `near` it, or else from the water the diagram starts from.
+  let evals = 0;
+  const y = new Float64Array(base.length);
+  const at = (vals, near) => {
+    for (const start of near ? [near, null] : [null]) {
+      y.set(base);
+      if (start) y.set(start, b);
+      const lnGamma = start ? gammas(y) : holds.map(() => 0);
+      let ok = false;
+      evals++;
+      try { ok = settle(y, vals, lnGamma); } catch (e) { ok = false; }
+      if (ok) {
+        const c = y.slice(b, b + ns);
+        return { c, label: crit.labelOf(c) };
+      }
+    }
+    return null;
+  };
+
+  // The edges whose two ends differ: along x, (i, j) to (i + 1, j); along y, (i, j) to (i, j + 1).
+  const todo = [];
+  for (let j = 0; j < n2; j++) {
+    for (let i = 0; i < n1; i++) {
+      const p = j * n1 + i;
+      if (i + 1 < n1 && L[p] !== L[p + 1]) todo.push([0, i, j]);
+      if (j + 1 < n2 && L[p] !== L[p + n1]) todo.push([1, i, j]);
+    }
+  }
+  let unsolved = 0;
+  let lastReport = Date.now();
+  const report = (done) => {
+    if (!post || Date.now() - lastReport < 250) return;
+    lastReport = Date.now();
+    post({ type: 'progress', id: msg.id, frac: done / Math.max(1, todo.length), done, npts: todo.length });
+  };
+
+  /** The boundaries along one edge, in order along it: [{ s, x, y, from, to, solved }]. */
+  const crossingsOf = (dir, i, j) => {
+    const p0 = j * n1 + i;
+    const p1 = dir === 0 ? p0 + 1 : p0 + n1;
+    const lo0 = dir === 0 ? xs[i] : ys[j];
+    const hi0 = dir === 0 ? xs[i + 1] : ys[j + 1];
+    const width = Math.abs(hi0 - lo0);
+    const pointAt = (s) => (dir === 0 ? [lo0 + s * (hi0 - lo0), ys[j]] : [xs[i], lo0 + s * (hi0 - lo0)]);
+    const found = [];
+    const between = (lo, eLo, hi, eHi, depth) => {
+      const la = eLo.label;
+      const lb = eHi.label;
+      if (la < 0 || lb < 0) { found.push({ s: (lo + hi) / 2, from: la, to: lb, solved: false }); return; }
+      let gLo = crit.disc(eLo.c, la, lb);
+      let gHi = crit.disc(eHi.c, la, lb);
+      let side = 0;
+      for (let it = 0; it < 200 && (hi - lo) * width > RTM_BOUND_TOL; it++) {
+        // False position where both differences are of their side's sign, else halfway.
+        let s = (lo + hi) / 2;
+        if (Number.isFinite(gLo) && Number.isFinite(gHi) && gLo > 0 && gHi < 0) {
+          const f = lo + (hi - lo) * (gLo / (gLo - gHi));
+          if (f > lo && f < hi) s = f;
+        }
+        const e = at(pointAt(s), s - lo <= hi - s ? eLo.c : eHi.c);
+        if (!e) { unsolved++; found.push({ s, from: la, to: lb, solved: false }); return; }
+        if (e.label !== la && e.label !== lb) {
+          // A third field between them: a boundary either side of it.
+          if (depth < 8 && e.label >= 0) {
+            between(lo, eLo, s, e, depth + 1);
+            between(s, e, hi, eHi, depth + 1);
+          } else { unsolved++; found.push({ s, from: la, to: lb, solved: false }); }
+          return;
+        }
+        // Which side of the boundary by the sign of the difference, and where it is zero -- a tie, or a mineral there at
+        // saturation -- by the field.
+        const g = crit.disc(e.c, la, lb);
+        // Illinois: an end kept twice running has its difference halved, so that both ends close in.
+        if (g > 0 || (!(g < 0) && e.label === la)) {
+          lo = s; eLo = e; gLo = g;
+          if (side === 1) gHi /= 2;
+          side = 1;
+        } else {
+          hi = s; eHi = e; gHi = g;
+          if (side === -1) gLo /= 2;
+          side = -1;
+        }
+      }
+      found.push({ s: (lo + hi) / 2, from: la, to: lb, solved: true });
+    };
+    between(0, { c: waterAt(p0), label: L[p0] }, 1, { c: waterAt(p1), label: L[p1] }, 0);
+    return found.map((f) => {
+      const [x, yv] = pointAt(f.s);
+      return { ...f, x, y: yv };
+    });
+  };
+  const cross = [new Map(), new Map()];
+  todo.forEach(([dir, i, j], q) => {
+    cross[dir].set(j * n1 + i, crossingsOf(dir, i, j));
+    report(q + 1);
+  });
+
+  /*
+    The point where three fields meet in square (i, j): both differences
+    zero, Newton's way, from each guess in turn -- the middle of the
+    crossings, then each crossing, where both amounts of a mineral's
+    boundary are there to take the log of. A step that lands where a
+    difference has no value (a mineral gone) is halved. Null if no guess
+    finds it inside the square.
+  */
+  const triple = (i, j, labs, guesses) => {
+    const [a, m, z] = labs;
+    const wx = Math.abs(xs[i + 1] - xs[i]);
+    const wy = Math.abs(ys[j + 1] - ys[j]);
+    const hx = 1e-6 * (xs[i + 1] - xs[i]);
+    const hy = 1e-6 * (ys[j + 1] - ys[j]);
+    const res = (ev) => [crit.disc(ev.c, a, m), crit.disc(ev.c, m, z)];
+    const finite = (r) => Number.isFinite(r[0]) && Number.isFinite(r[1]);
+    // The differences' change along one axis, forward or else backward.
+    const slope = (p, e, r, d, h) => {
+      for (const sg of [1, -1]) {
+        const q = d === 0 ? [p[0] + sg * h, p[1]] : [p[0], p[1] + sg * h];
+        const ev = at(q, e.c);
+        const rq = ev && res(ev);
+        if (rq && finite(rq)) return [(rq[0] - r[0]) / (sg * h), (rq[1] - r[1]) / (sg * h)];
+      }
+      return null;
+    };
+    const newton = (guess) => {
+      let p = [guess.x, guess.y];
+      let e = at(p, waterAt(j * n1 + i));
+      let r = e && res(e);
+      if (!r || !finite(r)) return null;
+      for (let it = 0; it < 30; it++) {
+        if (Math.abs(r[0]) < 1e-13 && Math.abs(r[1]) < 1e-13) break;
+        const cx = slope(p, e, r, 0, hx);
+        const cy = slope(p, e, r, 1, hy);
+        if (!cx || !cy) return null;
+        const det = cx[0] * cy[1] - cy[0] * cx[1];
+        if (!Number.isFinite(det) || det === 0) return null;
+        const dx = (-r[0] * cy[1] + r[1] * cy[0]) / det;
+        const dy = (-r[1] * cx[0] + r[0] * cx[1]) / det;
+        if (!(Math.abs(dx) < 4 * wx && Math.abs(dy) < 4 * wy)) return null;
+        let lam = 1;
+        let moved = null;
+        for (let bt = 0; bt < 30 && !moved; bt++, lam /= 2) {
+          const q = [p[0] + lam * dx, p[1] + lam * dy];
+          const ev = at(q, e.c);
+          const rq = ev && res(ev);
+          if (rq && finite(rq)) moved = { q, ev, rq };
+        }
+        if (!moved) return null;
+        p = moved.q;
+        e = moved.ev;
+        r = moved.rq;
+        if (Math.abs(lam * dx) <= 2e-13 * wx && Math.abs(lam * dy) <= 2e-13 * wy) break;
+      }
+      if (!(Math.abs(r[0]) < 1e-9 && Math.abs(r[1]) < 1e-9) || !labs.includes(e.label)) return null;
+      const inside = (v, u, w) => v >= Math.min(u, w) - 1e-9 * Math.abs(w - u) && v <= Math.max(u, w) + 1e-9 * Math.abs(w - u);
+      if (!inside(p[0], xs[i], xs[i + 1]) || !inside(p[1], ys[j], ys[j + 1])) return null;
+      const clamp = (v, u, w) => Math.min(Math.max(v, Math.min(u, w)), Math.max(u, w));
+      return { x: clamp(p[0], xs[i], xs[i + 1]), y: clamp(p[1], ys[j], ys[j + 1]) };
+    };
+    for (const guess of guesses) {
+      const found = newton(guess);
+      if (found) return found;
+    }
+    return null;
+  };
+
+  // Each square cut into the pieces of its fields; the boundaries between them as segments.
+  const pieces = [];
+  const segs = [];
+  const junctions = [];
+  for (let j = 0; j + 1 < n2; j++) {
+    for (let i = 0; i + 1 < n1; i++) {
+      const corner = (ii, jj) => ({ key: `c${ii}_${jj}`, x: xs[ii], y: ys[jj] });
+      const along = (dir, ii, jj, rev) => {
+        const its = (cross[dir].get(jj * n1 + ii) || []).map((c, q) => ({ key: `${dir ? 'v' : 'h'}${ii}_${jj}_${q}`, x: c.x, y: c.y,
+          cross: true, from: rev ? c.to : c.from, to: rev ? c.from : c.to }));
+        return rev ? its.reverse() : its;
+      };
+      // Round the square: along its bottom, up its right side, back along its top and down its left.
+      const walk = [corner(i, j), ...along(0, i, j, false), corner(i + 1, j), ...along(1, i + 1, j, false),
+        corner(i + 1, j + 1), ...along(0, i, j + 1, true), corner(i, j + 1), ...along(1, i, j, true)];
+      const X = [];
+      walk.forEach((w, q) => { if (w.cross) X.push(q); });
+      const k = X.length;
+      if (!k) { pieces.push({ label: L[j * n1 + i], verts: walk }); continue; }
+      // Arc m runs from crossing m to the next, round the square; its field is what crossing m goes to.
+      const arcs = X.map((q) => walk[q].to);
+      const arc = (m) => {
+        const out = [];
+        const end = X[(m + 1) % k];
+        for (let q = X[m]; ; q = (q + 1) % walk.length) {
+          out.push(walk[q]);
+          if (q === end && out.length > 1) break;
+        }
+        return out;
+      };
+      const centre = () => ({ x: X.reduce((sum, q) => sum + walk[q].x, 0) / k, y: X.reduce((sum, q) => sum + walk[q].y, 0) / k });
+      // Four crossings: the field on two opposite arcs runs through the square, and the other two are cut off its corners.
+      let through = -1;
+      if (k === 4) {
+        const even = arcs[0] === arcs[2];
+        const odd = arcs[1] === arcs[3];
+        if (even && odd) {
+          const e = at([(xs[i] + xs[i + 1]) / 2, (ys[j] + ys[j + 1]) / 2], waterAt(j * n1 + i));
+          through = e && e.label === arcs[0] ? 0 : e && e.label === arcs[1] ? 1 : -1;
+        } else if (even) through = 0;
+        else if (odd) through = 1;
+      }
+      if (k === 2) {
+        pieces.push({ label: arcs[0], verts: arc(0) }, { label: arcs[1], verts: arc(1) });
+        segs.push({ u: walk[X[0]], v: walk[X[1]], a: arcs[1], b: arcs[0] });
+      } else if (through >= 0) {
+        const [m0, m1, m2, m3] = [through, through + 1, through + 2, (through + 3) % 4];
+        pieces.push({ label: arcs[m1], verts: arc(m1) }, { label: arcs[m3], verts: arc(m3) },
+          { label: arcs[m0], verts: [...arc(m0), ...arc(m2)] });
+        segs.push({ u: walk[X[m1]], v: walk[X[m2]], a: arcs[m1], b: arcs[m0] },
+          { u: walk[X[m3]], v: walk[X[m0]], a: arcs[m3], b: arcs[m0] });
+      } else {
+        // Three fields, or more: each one's arc to the point they meet at.
+        const three = k === 3 && new Set(arcs).size === 3 && arcs.every((a) => a >= 0);
+        const solved = three ? triple(i, j, arcs, [centre(), ...X.map((q) => walk[q])]) : null;
+        const J = solved || centre();
+        const jv = { key: `j${i}_${j}`, x: J.x, y: J.y };
+        junctions.push({ x: J.x, y: J.y, labels: [...new Set(arcs)], solved: !!solved });
+        for (let m = 0; m < k; m++) {
+          pieces.push({ label: arcs[m], verts: [...arc(m), jv] });
+          segs.push({ u: walk[X[m]], v: jv, a: arcs[(m + k - 1) % k], b: arcs[m] });
+        }
+      }
+    }
+  }
+
+  // A field's pieces joined: the sides two of its pieces share go, and what is left is followed round.
+  const byField = new Map();
+  for (const pc of pieces) {
+    if (pc.label < 0) continue;
+    let F = byField.get(pc.label);
+    if (!F) byField.set(pc.label, (F = { edges: new Map(), at: new Map() }));
+    const vs = pc.verts;
+    for (let q = 0; q < vs.length; q++) {
+      const u = vs[q];
+      const v = vs[(q + 1) % vs.length];
+      if (u.key === v.key) continue;
+      F.at.set(u.key, u);
+      const back = `${v.key}>${u.key}`;
+      if (F.edges.has(back)) F.edges.delete(back);
+      else F.edges.set(`${u.key}>${v.key}`, [u.key, v.key]);
+    }
+  }
+  const area = (lx, ly) => {
+    let sum = 0;
+    for (let q = 0; q < lx.length; q++) {
+      const r = (q + 1) % lx.length;
+      sum += lx[q] * ly[r] - lx[r] * ly[q];
+    }
+    return sum / 2;
+  };
+  const fields = [];
+  for (const [label, F] of byField) {
+    const next = new Map();
+    for (const [u, v] of F.edges.values()) {
+      if (!next.has(u)) next.set(u, []);
+      next.get(u).push(v);
+    }
+    const loops = [];
+    for (const start of next.keys()) {
+      while (next.get(start).length) {
+        const keys = [start];
+        let u = start;
+        for (;;) {
+          const outs = next.get(u);
+          if (!outs || !outs.length) break;
+          const v = outs.pop();
+          if (v === start) break;
+          keys.push(v);
+          u = v;
+        }
+        // A point where the one before is (a boundary met at a corner) goes, and then, one at a time, each point in a
+        // straight line between its neighbours, along the frame or a grid line: neither changes the area.
+        const flat = (u, v, w) => (v.x - u.x) * (w.y - v.y) - (v.y - u.y) * (w.x - v.x) === 0;
+        let pts = keys.map((key) => F.at.get(key));
+        pts = pts.filter((pt, q) => q === 0 || pt.x !== pts[q - 1].x || pt.y !== pts[q - 1].y);
+        while (pts.length > 1 && pts[0].x === pts[pts.length - 1].x && pts[0].y === pts[pts.length - 1].y) pts.pop();
+        const kept = [];
+        for (const pt of pts) {
+          kept.push(pt);
+          while (kept.length >= 3 && flat(kept[kept.length - 3], kept[kept.length - 2], kept[kept.length - 1])) kept.splice(kept.length - 2, 1);
+        }
+        for (let turn = 0; turn < 2; turn++) {
+          while (kept.length >= 3 && flat(kept[kept.length - 2], kept[kept.length - 1], kept[0])) kept.pop();
+          while (kept.length >= 3 && flat(kept[kept.length - 1], kept[0], kept[1])) kept.shift();
+        }
+        pts = kept;
+        if (pts.length < 3) continue;
+        const lx = pts.map((pt) => pt.x);
+        const ly = pts.map((pt) => pt.y);
+        loops.push({ x: lx, y: ly, area: area(lx, ly) });
+      }
+    }
+    const net = loops.reduce((sum, lp) => sum + lp.area, 0);
+    fields.push({ label, loops: loops.map(({ x, y: ly }) => ({ x, y: ly })), area: Math.abs(net),
+      gross: Math.max(0, ...loops.map((lp) => Math.abs(lp.area))) });
+  }
+
+  // The boundaries as lines, one for each two fields and each stretch of it.
+  const lines = [];
+  const byPair = new Map();
+  for (const sg of segs) {
+    if (sg.a < 0 || sg.b < 0 || sg.a === sg.b) continue;
+    const key = sg.a < sg.b ? `${sg.a}|${sg.b}` : `${sg.b}|${sg.a}`;
+    if (!byPair.has(key)) byPair.set(key, []);
+    byPair.get(key).push(sg);
+  }
+  for (const [key, list] of byPair) {
+    const [a, z] = key.split('|').map(Number);
+    const ends = new Map();
+    list.forEach((sg, q) => {
+      for (const e of [sg.u.key, sg.v.key]) {
+        if (!ends.has(e)) ends.set(e, []);
+        ends.get(e).push(q);
+      }
+    });
+    const used = new Uint8Array(list.length);
+    const follow = (startKey) => {
+      const pts = [];
+      let k = startKey;
+      for (;;) {
+        const q = (ends.get(k) || []).find((s) => !used[s]);
+        if (q === undefined) break;
+        used[q] = 1;
+        const sg = list[q];
+        if (!pts.length) pts.push(sg.u.key === k ? sg.u : sg.v);
+        const other = sg.u.key === k ? sg.v : sg.u;
+        pts.push(other);
+        k = other.key;
+      }
+      if (pts.length > 1) lines.push({ a, b: z, x: pts.map((pt) => pt.x), y: pts.map((pt) => pt.y) });
+    };
+    // From the ends first, then round whatever closes on itself.
+    for (const [e, qs] of ends) if (qs.length === 1 && !used[qs[0]]) follow(e);
+    list.forEach((sg, q) => { if (!used[q]) follow(sg.u.key); });
+  }
+  const crossings = [...cross[0].values(), ...cross[1].values()].reduce((n, list) => n + list.length, 0);
+  return { type: 'diagramBounds', id: msg.id, labels: L, fields, lines, junctions, crossings, unsolved,
+    edges: todo.length, evals };
 }
 
 /*
@@ -959,6 +1432,15 @@ function handleRtmMessage(msg, post) {
     try {
       const reply = rtmDiagram(msg, post);
       post(reply, reply.states ? [reply.states.buffer, reply.quant.buffer] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'diagramBounds') {
+    try {
+      const reply = rtmDiagramBounds(msg, post);
+      post(reply, reply.labels ? [reply.labels.buffer] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
     }

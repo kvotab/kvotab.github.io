@@ -2373,6 +2373,22 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             species or quantity as contours. Against PHREEQC's <code>SOLUTION</code> at the same pH,
             pe or total, a handed-off water's species agree to 8 in 10<sup>9</sup>. The numbers go
             to CSV and Excel, a row per point, and the picture to SVG and PNG.</p>
+          <p>A map's fields are the shapes their boundaries bound, as PhreePlot draws them, not the
+            grid's points coloured. Wherever two neighbouring points of the grid are in different
+            fields, the water is held at points between them and speciated again until the boundary
+            is found to 10<sup>-10</sup> in the axis' units: where the two species hold the same
+            amount of the element, or where the two phases' saturation indices are the same. A phase
+            of <code>&lt;PHASES&gt;</code> is over saturation where its index is zero or more, and
+            a mineral of the model's own is at saturation where there is any of it. Where three
+            fields meet in one square of the grid, the point they share is solved for. Between the
+            points found, a boundary is drawn straight, so a finer grid follows a curved one more
+            closely, and a field narrower than the grid's spacing can be missed. The boundaries are
+            found in the background once the map is drawn, which shows its points meanwhile; the
+            status line says when they are in, and pointing at the map still reads the nearest
+            point. Excel adds a sheet of them: each boundary's points and the two fields it parts,
+            and each point where three meet. Against PHREEQC's <code>SOLUTION</code> at the points
+            of a handed-off iron water's boundaries, the species either side hold the same amount
+            of iron to 1 in 10<sup>9</sup>.</p>
 
           <h4 id="help-sweeps">Sweeps over runs</h4>
           <p><em>Sweeps</em> runs the model again for each value of one thing, or each pair of values
@@ -3177,11 +3193,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20261109j"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109j"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109k"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109j"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109k"></script>
 </body>
 </html>
