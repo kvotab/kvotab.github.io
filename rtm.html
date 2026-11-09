@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109d">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109e">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -216,6 +216,7 @@
             <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
             <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
             <button type="button" data-tab="composition" data-on-click="rtm:tab">Composition</button>
+            <button type="button" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
             <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
@@ -498,6 +499,77 @@
           </div>
           <div class="plot" id="rtmChartComp" hidden></div>
           <p class="rtm-empty" id="rtmCompEmpty">Run the model to see what its water is made of.</p>
+        </section>
+
+        <!-- ---- equilibrium diagrams of the model's own chemistry, as PhreePlot draws PHREEQC's ---- -->
+        <section class="rtm-pane" data-pane="diagram" hidden>
+          <div class="rtm-toolbar">
+            <label>The water of cell
+              <select id="rtmDgCell" data-on-change="rtm:dgSettings"></select>
+            </label>
+            <label>as it
+              <select id="rtmDgAt" data-on-change="rtm:dgSettings">
+                <option value="start">starts</option>
+                <option value="end">ends the run</option>
+              </select>
+            </label>
+            <span class="rtm-dg-axis">Vary
+              <select id="rtmDgXKind" aria-label="what to vary" data-on-change="rtm:dgSettings">
+                <option value="pH">pH</option>
+                <option value="pe">pe</option>
+                <option value="la">log activity of</option>
+                <option value="tot">log total of</option>
+              </select>
+              <select id="rtmDgXSp" aria-label="of which" data-on-change="rtm:dgSettings"></select>
+              from <input type="text" id="rtmDgXFrom" class="rtm-dg-num" aria-label="from" data-on-change="rtm:dgSettings">
+              to <input type="text" id="rtmDgXTo" class="rtm-dg-num" aria-label="to" data-on-change="rtm:dgSettings">
+              in <input type="text" id="rtmDgXN" class="rtm-dg-num" aria-label="points" data-on-change="rtm:dgSettings"> points
+            </span>
+            <span class="rtm-dg-axis">and
+              <select id="rtmDgYKind" aria-label="what else to vary" data-on-change="rtm:dgSettings">
+                <option value="">nothing else</option>
+                <option value="pH">pH</option>
+                <option value="pe">pe</option>
+                <option value="la">log activity of</option>
+                <option value="tot">log total of</option>
+              </select>
+              <span id="rtmDgYMore">
+                <select id="rtmDgYSp" aria-label="of which" data-on-change="rtm:dgSettings"></select>
+                from <input type="text" id="rtmDgYFrom" class="rtm-dg-num" aria-label="from" data-on-change="rtm:dgSettings">
+                to <input type="text" id="rtmDgYTo" class="rtm-dg-num" aria-label="to" data-on-change="rtm:dgSettings">
+                in <input type="text" id="rtmDgYN" class="rtm-dg-num" aria-label="points" data-on-change="rtm:dgSettings"> points
+              </span>
+            </span>
+            <button type="button" class="rtm-btn small" id="rtmDgGo" data-on-click="rtm:dgGo">Work it out</button>
+            <span class="kvot-info-slot" data-info-key="pane:diagram"></span>
+          </div>
+          <div class="rtm-toolbar" id="rtmDgShowBar" hidden>
+            <label>Show
+              <select id="rtmDgShow" data-on-change="rtm:dgRedraw"></select>
+            </label>
+            <label id="rtmDgElWrap">of
+              <select id="rtmDgEl" data-on-change="rtm:dgRedraw"></select>
+            </label>
+            <label id="rtmDgInWrap">in
+              <select id="rtmDgIn" data-on-change="rtm:dgRedraw">
+                <option value="water">the water</option>
+                <option value="all">the whole cell</option>
+              </select>
+            </label>
+            <label id="rtmDgQWrap">
+              <select id="rtmDgQ" aria-label="what to draw" data-on-change="rtm:dgRedraw"></select>
+            </label>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="png">PNG</button>
+            </span>
+            <span class="rtm-muted" id="rtmDgNote"></span>
+          </div>
+          <div class="plot" id="rtmChartDg" hidden></div>
+          <p class="rtm-empty" id="rtmDgEmpty">Choose what to vary and work it out: the water of a cell held at each value
+            and speciated by the model's own relations, as PhreePlot does with PHREEQC's.</p>
         </section>
 
         <!-- ---- the run, seen through PHREEQC ---- -->
@@ -2087,13 +2159,42 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             hydrochemical facies: the cation and the anion that are half or more of theirs, or the
             two largest where none is.</p>
 
+          <h4 id="help-diagrams">Diagrams of the model's own chemistry</h4>
+          <p><em>Diagrams</em> does with the model's relations what PhreePlot does with PHREEQC's. It
+            takes the water of one cell, as the model starts it or as the run leaves it, holds it
+            at each point of a range — a pH, a pe, the activity of a dissolved species, or an
+            element's total in the cell — and speciates it there with the relations of
+            <code>&lt;EQUILIBRIUM&gt;</code>, its minerals dissolving or precipitating to stay at
+            saturation while there is any of them. A pH or an activity is held through the
+            concentration that gives it, the activity coefficient taken again from the speciation
+            until it stops moving; a pe is the electron's own activity; a total moves the one
+            conserved total that carries most of the element and leaves the rest as they were.
+            Nothing else is held: what is not varied keeps its total, as PHREEQC's
+            <code>SOLUTION</code> keeps what it is given, and there is no charge balance. A total
+            varied without the pH holds the pH where the water has it, as a
+            <code>SOLUTION</code> holds the pH it is given; the note says at what. Each
+            point starts from the one beside it, and from the water itself where that does not
+            settle; a point that does not settle either way is left blank, and the status line
+            says how many.</p>
+          <p>Varying one thing draws the species of an element as their shares of it — the classic
+            distribution of carbonate against pH — or as log concentrations, the saturation
+            indices of every phase and mineral, or any species or quantity. Varying two draws a map:
+            at each point the species that holds most of an element, which over pH and pe is a
+            Pourbaix diagram, the water's own limits drawn across it as dashed lines, O<sub>2</sub>
+            above and H<sub>2</sub> below at one atmosphere and 25 °C; the phase furthest over
+            saturation, or at it, which over activities is a mineral stability diagram; or any
+            species or quantity as contours. Against PHREEQC's <code>SOLUTION</code> at the same pH,
+            pe or total, a handed-off water's species agree to 8 in 10<sup>9</sup>. The numbers go
+            to CSV and Excel, a row per point, and the picture to SVG and PNG.</p>
+
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
             model text the run was made with on a second sheet. On <em>Against distance</em> and
             <em>Gradient</em> they write what the chart draws: a row per distance and a column per
             curve, or a row per cell and a column per time; on <em>Composition</em> each band, or each
-            water's ions in equivalents, their shares and its type. <em>SVG</em> and <em>PNG</em> save the
+            water's ions in equivalents, their shares and its type; on <em>Diagrams</em> each point's
+            value or name. <em>SVG</em> and <em>PNG</em> save the
             chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
@@ -2813,14 +2914,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109d"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109e"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109d"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109e"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109e"></script>
 </body>
 </html>

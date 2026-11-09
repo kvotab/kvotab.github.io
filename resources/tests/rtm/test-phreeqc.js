@@ -3573,6 +3573,81 @@ function againstQuantities(engine) {
 }
 
 /* ======================================================================
+   DIAGRAMS, against PHREEQC: a water handed off, held by the Diagrams tab
+   at a pH, a pe or a total -- one point of the grid it works out -- against
+   PHREEQC's SOLUTION of the same totals at that pH, pe or total, which
+   speciates there without a charge balance as the tab does.
+   ====================================================================== */
+function againstDiagrams(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const handOff = (name, text, redox) => {
+    engine.load(dbText);
+    return P.waterToModel({ engine, database, water: { name, text }, activity: true, exact: true, redox: !!redox });
+  };
+  // Each species the model has, its molality as PHREEQC has it for a SOLUTION.
+  const pqMolalities = (solution, names) => {
+    engine.load(dbText);
+    const rows = engine.run(`${solution}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+      + `${names.map((nm, i) => ` ${10 + i * 10} PUNCH MOL("${nm}")`).join('\n')}\nEND\n`);
+    return rows[rows.length - 1].map(Number);
+  };
+  const diagram = (text, axes) => {
+    let reply = null;
+    handleRtmMessage({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes }, (m) => { if (m.type !== 'progress') reply = m; });
+    if (reply.type === 'error') throw new Error(reply.error);
+    return reply;
+  };
+  // The worst of each species against PHREEQC, relative to the larger of it and 1e-12 of the water's total of its kind.
+  const compare = (reply, p, pq, names) => {
+    let worst = 0;
+    let where = '';
+    names.forEach((nm, i) => {
+      const k = reply.species.indexOf(nm);
+      const ours = reply.states[p * reply.ns + k];
+      const d = Math.abs(ours - pq[i]) / Math.max(Math.abs(pq[i]), 1e-15);
+      if (pq[i] > 1e-15 && d > worst) { worst = d; where = nm; }
+    });
+    return [worst, where];
+  };
+  const solutes = (text) => {
+    const m = RtmModel.compile(text);
+    return m.speciesNames.filter((nm, k) => m.act.solute[k] && nm !== 'H2O' && nm !== 'e-');
+  };
+  const results = [];
+  // pH: a carbonate water with no charge balance, at pH 4 to 10.
+  const carb = 'SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 2\n Mg 1\n Cl 7\n C(4) 4\n S(6) 1\nEND\n';
+  const carbModel = handOff('carbonate', carb).text;
+  const carbNames = solutes(carbModel);
+  const phs = [4, 6, 8, 10];
+  const r1 = diagram(carbModel, [{ kind: 'pH', from: 4, to: 10, n: 4 }]);
+  phs.forEach((ph, p) => {
+    const pq = pqMolalities(carb.replace(' pH 7.5', ` pH ${ph}`).replace('END\n', ''), carbNames);
+    results.push(['pH', ph, ...compare(r1, p, pq, carbNames)]);
+  });
+  // pe: iron in both valence states at one pe, from 2 to 11, at pH 6 and 7 -- the pH held as PHREEQC's SOLUTION holds it:
+  // left to itself, an unbuffered water's pH goes where reducing the iron's hydroxides takes it.
+  const fe = 'SOLUTION 1\n units mmol/kgw\n pH 6\n pe 8\n Na 2\n Cl 2\n Fe 0.01\nEND\n';
+  const feModel = handOff('iron', fe, true).text;
+  const feNames = solutes(feModel).filter((nm) => /Fe/.test(nm));
+  const r2 = diagram(feModel, [{ kind: 'pe', from: 2, to: 11, n: 4 }, { kind: 'pH', from: 6, to: 7, n: 2 }]);
+  [6, 7].forEach((ph, j) => [2, 5, 8, 11].forEach((pe, i) => {
+    const pq = pqMolalities(fe.replace(' pe 8', ` pe ${pe}`).replace(' pH 6', ` pH ${ph}`).replace('END\n', ''), feNames);
+    results.push([`pH ${ph}, pe`, pe, ...compare(r2, j * 4 + i, pq, feNames)]);
+  }));
+  // A grid: pH 6 and 8 against total carbon 1e-4 and 1e-2 mol/kgw.
+  const r3 = diagram(carbModel, [{ kind: 'pH', from: 6, to: 8, n: 2 }, { kind: 'tot', species: 'C', from: -4, to: -2, n: 2 }]);
+  [[6, -4], [8, -4], [6, -2], [8, -2]].forEach(([ph, lt], p) => {
+    const sol = carb.replace(' pH 7.5', ` pH ${ph}`).replace(' C(4) 4', ` C(4) ${1000 * 10 ** lt}`).replace('END\n', '');
+    results.push([`pH ${ph}, log total C`, lt, ...compare(r3, p, pqMolalities(sol, carbNames), carbNames)]);
+  });
+  const worst = Math.max(...results.map((x) => x[2]));
+  check('a diagram\'s points against PHREEQC\'s SOLUTION at the same pH, pe or total, every species of the water: '
+    + 'a carbonate water at pH 4 to 10, iron in both valence states at pe 2 to 11 and pH 6 and 7, and pH against total carbon',
+  worst < 1e-7 && r1.failed === 0 && r2.failed === 0 && r3.failed === 0,
+  `the worst ${worst.toExponential(1)}: ${results.map(([what, v, w, nm]) => `${what} ${v} ${w.toExponential(1)}${nm ? ` (${nm})` : ''}`).join(', ')}`);
+}
+
+/* ======================================================================
    MULTICOMPONENT DIFFUSION (-multi_D): each species at its Dw times the
    porosity to the n, the ions coupled so that no current flows, each down
    its activity. Against PHREEQC's TRANSPORT as its explicit steps are made
@@ -4276,6 +4351,8 @@ function againstKineticsHandOff(engine) {
   againstMultiD(wasm);
   console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');
   againstQuantities(wasm);
+  console.log('\n--- diagrams: a water held at a pH, a pe or a total, against PHREEQC\'s SOLUTION there ---');
+  againstDiagrams(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
   againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');

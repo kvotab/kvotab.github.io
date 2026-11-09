@@ -48,9 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, seven tab toolbars, and the PHREEQC panel's heading and
+# of the Solver section, eight tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 36
+STATIC_SLOTS = 37
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -131,6 +131,28 @@ Calcite => Ca+2 + CO3-2, r = 1e-30
 <DATA>
 time  tot(Ca)  Mg+2  Na+   K+    Cl-   tot(S)  alk(CO3)  cell = 0
 50    1e-3     5e-4  3e-3  1e-4  3e-3  5e-4    2.5e-3
+'''
+
+# A carbonate water without activities: its carbon's shares against pH are Bjerrum's fractions, what the diagrams block
+# checks them against.
+DIAGRAM_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = 1
+
+<SPECIES>
+H+      1e-7
+OH-     1e-7
+Na+     3e-3
+CO2     1e-4
+HCO3-   2e-3
+CO3-2   1e-5
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.352
+HCO3- <=> H+ + CO3-2,   logK = -10.329
 '''
 
 def check(label, got, want=True):
@@ -875,6 +897,67 @@ async def main():
             await page.ev("document.getElementById('rtmRun').click()")
             await wait_run(page)
 
+            # --- the model's own chemistry, as PhreePlot draws PHREEQC's: the Diagrams tab ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, DIAGRAM_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 6 species')", True, tries=40)
+            await page.ev("document.querySelector('[data-tab=\"diagram\"]').click()")
+            await asyncio.sleep(0.4)
+
+            async def dg(calc=None, show=None):
+                if calc:
+                    sets = ''.join("(() => { const e = document.getElementById('%s'); e.value = %s;"
+                                   " e.dispatchEvent(new Event('change', { bubbles: true })); })();" % (k, json.dumps(v)) for k, v in calc)
+                    await page.ev(sets)
+                    await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                    await page.ev("document.getElementById('rtmDgGo').click()")
+                    await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Diagram worked out')", True, tries=60, pause=0.25)
+                if show:
+                    sets = ''.join("document.getElementById('%s').value = %s;" % (k, json.dumps(v)) for k, v in show)
+                    await page.ev("(() => { %s document.getElementById('rtmDgShow').dispatchEvent(new Event('change', { bubbles: true })); })()" % sets)
+                    await asyncio.sleep(0.4)
+
+            check('one thing varied: the second axis\'s range is hidden', await page.ev(
+                "document.getElementById('rtmDgYMore').getClientRects().length"), 0)
+            await dg(calc=[['rtmDgXKind', 'pH'], ['rtmDgXFrom', '2'], ['rtmDgXTo', '12'], ['rtmDgXN', '11']],
+                     show=[['rtmDgShow', 'shares'], ['rtmDgEl', 'C']])
+            bj = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
+              const k1 = 10 ** -6.352, k2 = 10 ** -10.329;
+              let worst = 0;
+              d[0].x.forEach((ph, i) => { const h = 10 ** -ph, den = 1 + k1 / h + k1 * k2 / (h * h);
+                const want = { CO2: 1 / den, 'HCO3-': k1 / h / den, 'CO3-2': k1 * k2 / (h * h) / den };
+                for (const t of d) worst = Math.max(worst, Math.abs(t.y[i] / 100 - want[t.name])); });
+              return [d.map((t) => t.name).join(' '), worst < 1e-9]; })()""")
+            check('pH varied from 2 to 12: the carbon\'s shares are Bjerrum\'s fractions, to 1e-9', bj, ['CO2 HCO3- CO3-2', True])
+            await dg(calc=[['rtmDgYKind', 'tot'], ['rtmDgYSp', 'C'], ['rtmDgYFrom', '-5'], ['rtmDgYTo', '-1'], ['rtmDgYN', '5']],
+                     show=[['rtmDgShow', 'predominance'], ['rtmDgEl', 'C']])
+            pred = await page.ev("""(() => { const t = document.getElementById('rtmChartDg').data[0];
+              const at = (ph) => t.text[2][t.x.indexOf(ph)].split(':')[0];
+              return [t.type, t.z.length + 'x' + t.z[0].length, at(6), at(7), at(11)]; })()""")
+            check('pH against log total C: a map of the species that holds most of the carbon -- CO2 at pH 6, HCO3- at 7, '
+                  'CO3-2 at 11', pred, ['heatmap', '5x11', 'CO2', 'HCO3-', 'CO3-2'])
+            await dg(show=[['rtmDgShow', 'contour'], ['rtmDgQ', 'tot(C)']])
+            tot = await page.ev("""(() => { const t = document.getElementById('rtmChartDg').data[0];
+              return [t.type, t.y.every((y, j) => t.z[j].every((v) => Math.abs(v - y) < 1e-9))]; })()""")
+            check('  and as contours, the total of carbon worked out at each point is the one it was held at', tot, ['contour', True])
+            await page.ev("""(() => {
+              window.__saved = [];
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                const rec = { name: this.download };
+                if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text());
+                window.__saved.push(rec);
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"diagram\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).split('\\n').length] : null; })()")
+            check('saved as CSV: a row per log total, a column per pH', csv, ['rtm_diagram_pH_tot.csv', 6])
+            await dg(calc=[['rtmDgYKind', '']])
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
             # --- the Jacobian check ------------------------------------------
             await page.ev("document.getElementById('rtmVerify').click()")
             verdict = await settle(page, "(() => { const s = document.getElementById('rtmStatus')"
@@ -1422,7 +1505,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient composition phreeqc model jacobian help'])
+                [True, ['gradient'], 'time profile gradient composition diagram phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

@@ -17,8 +17,8 @@ importScripts(
   './facsimile-solver.js?v=20261107a',
   './ode-julia.js?v=20260923e',
   './facsimile-ode-julia.js?v=20261005',
-  './rtm-model.js?v=20261109d',
-  './rtm-worker.js?v=20261109d',
+  './rtm-model.js?v=20261109e',
+  './rtm-worker.js?v=20261109e',
 );
 
 self.onmessage = (ev) => self.handleRtmMessage(

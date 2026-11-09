@@ -208,6 +208,8 @@ function rtmSummary(model) {
     data: model.data || [],
     // What each species is made of: where an element is, and the water's major ions (compositionOf).
     composition: model.composition || null,
+    // The species dissolved in the water: those a diagram can hold an activity of.
+    solutes: model.speciesNames.filter((_, k) => rtmSolute(model, k)),
   };
 }
 
@@ -304,14 +306,18 @@ let rtmRunCount = 0;
  * Quantities of a run: for each key and each cell asked for, the value at
  * every stored point, key-major then cell-major then point.
  */
+/** The run a message asks about: the one kept, or the one it brings with it, kept from then on; null if neither. */
+function rtmRunFor(msg) {
+  if (rtmKept && rtmKept.key === msg.runKey) return rtmKept;
+  if (!msg.states) return null;
+  const model = rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text);
+  rtmKept = { key: msg.runKey, text: msg.text, model, t: msg.t, states: msg.states, n: msg.n, width: msg.width };
+  return rtmKept;
+}
+
 function rtmQuantities(msg) {
-  let run = rtmKept && rtmKept.key === msg.runKey ? rtmKept : null;
-  if (!run) {
-    if (!msg.states) return { type: 'quantities', id: msg.id, missing: true };
-    const model = rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text);
-    run = { key: msg.runKey, text: msg.text, model, t: msg.t, states: msg.states, n: msg.n, width: msg.width };
-    rtmKept = run;
-  }
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'quantities', id: msg.id, missing: true };
   const { model, t, states, n, width } = run;
   const keys = msg.keys;
   const which = Int32Array.from(keys.map((k) => model.quantities.findIndex((q) => q.key === k)));
@@ -330,10 +336,191 @@ function rtmQuantities(msg) {
   return { type: 'quantities', id: msg.id, keys, cells, n, values };
 }
 
+/*
+  DIAGRAMS: the water of one cell -- as the model starts it, or as the run
+  left it -- held at each point of a range of pH, pe, a species' activity or
+  an element's total, or of two such ranges, and speciated there by the
+  model's own relations (RtmModel.speciate), as PhreePlot does with
+  PHREEQC's. Each point starts from the one before it, the grid walked to and
+  fro so that the one before is always beside it, and from the water itself
+  where that does not settle. An activity is held through the concentration
+  that gives it, the activity coefficient taken again from the speciation
+  until it stops moving. Returns each point's concentrations in that cell and
+  every quantity of the model there; a point that did not settle is NaN.
+*/
+const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', la: 'log activity', tot: 'log total' };
+
+/** Whether species k is dissolved in the water: the activity model's solute, or without one what is no mineral, gas or site. */
+function rtmSolute(model, k) {
+  const sp = model.speciesList[k];
+  return model.act ? !!model.act.solute[k] : !(sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface
+    || sp.potential || sp.gas || sp.name === 'H2O');
+}
+
+/** One axis of a diagram: what it holds, and its values from `from` to `to` in `n` steps. */
+function rtmDiagramAxis(model, ax) {
+  const ns = model.speciesNames.length;
+  const values = Float64Array.from({ length: ax.n }, (_, i) => (ax.n === 1 ? ax.from : ax.from + ((ax.to - ax.from) * i) / (ax.n - 1)));
+  if (!(ax.n >= 2 && ax.n <= 400) || !Number.isFinite(ax.from) || !Number.isFinite(ax.to) || ax.from === ax.to) {
+    throw new Error(`${RTM_DIAGRAM_KINDS[ax.kind] || ax.kind}: from and to two different numbers, and from 2 to 400 points.`);
+  }
+  const solute = (k) => rtmSolute(model, k);
+  if (ax.kind === 'pH') {
+    const k = model.speciesNames.indexOf('H+');
+    if (k < 0 || !solute(k)) throw new Error('A pH is the activity of H+, and the model has no H+ in its water.');
+    return { kind: 'pH', k, values, sign: -1 };
+  }
+  if (ax.kind === 'pe') {
+    if (!(model.electron >= 0)) throw new Error('A pe is the electron\'s, and the model has none: e- electron.');
+    return { kind: 'pe', k: model.electron, values, sign: -1 };
+  }
+  if (ax.kind === 'la') {
+    const k = model.speciesNames.indexOf(ax.species);
+    if (k < 0 || !solute(k)) throw new Error(`log a(${ax.species}): it is no species dissolved in the water.`);
+    return { kind: 'la', k, values, sign: 1, species: ax.species };
+  }
+  if (ax.kind === 'tot') {
+    const comp = (model.composition && model.composition.elements || []).find((e) => e.el === ax.species);
+    if (!comp) throw new Error(`The total of ${ax.species}: no species of the model has any.`);
+    const weights = new Float64Array(ns);
+    for (const [k, n] of comp.terms) weights[k] = n;
+    return { kind: 'tot', weights, values, name: ax.species };
+  }
+  throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, la or tot.`);
+}
+
+function rtmDiagram(msg, post) {
+  let model;
+  let base;
+  let t = 0;
+  if (msg.at === 'end') {
+    const run = rtmRunFor(msg);
+    if (!run) return { type: 'diagram', id: msg.id, missing: true };
+    model = run.model;
+    t = run.t[run.n - 1];
+    base = Float64Array.from(run.states.subarray((run.n - 1) * run.width, run.n * run.width));
+  } else {
+    model = rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text);
+    const y0 = model.initialState();
+    base = Float64Array.from(model.toConcentrations ? model.toConcentrations(y0) : y0);
+  }
+  if (!model.equilibria || !model.equilibria.length) {
+    throw new Error('The model has no relations in <EQUILIBRIUM>: a diagram is its water speciated by them, and there are none.');
+  }
+  const ns = model.speciesNames.length;
+  const cell = msg.cell;
+  if (!(Number.isInteger(cell) && cell >= 0 && cell < model.cells)) throw new Error(`There is no cell ${cell}.`);
+  const b = cell * ns;
+  const axes = msg.axes.map((ax) => rtmDiagramAxis(model, ax));
+  if (axes.length === 2 && ((axes[0].k !== undefined && axes[0].k === axes[1].k)
+    || (axes[0].kind === 'tot' && axes[1].kind === 'tot'))) {
+    throw new Error('The two axes hold the same thing, or two totals: give them one each.');
+  }
+  // Held: the model's fixed species, and what an axis holds at an activity.
+  const held = Array.from({ length: ns }, (_, k) => !!(model.fixed && model.fixed[k]));
+  for (const ax of axes) if (ax.kind !== 'tot') held[ax.k] = true;
+  const totAxis = axes.findIndex((ax) => ax.kind === 'tot');
+  /*
+    A total varied without the pH: the pH held where the water has it, as
+    PHREEQC's SOLUTION holds the pH it is given. Left to itself, the element
+    would come in as whichever species its conserved total is kept in, and
+    the pH would go with that choice, which is no choice of the reader's.
+  */
+  const holds = axes.map((ax, a) => ({ ax, a }));
+  let pHHeld = null;
+  const iH = model.speciesNames.indexOf('H+');
+  if (totAxis >= 0 && !axes.some((ax) => ax.kind === 'pH') && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
+    if (model.thermoAt) model.thermoAt(t);
+    const g0 = new Float64Array(ns);
+    if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
+    pHHeld = -(Math.log(base[b + iH]) + g0[iH]) / Math.LN10;
+    held[iH] = true;
+    holds.push({ ax: { kind: 'pH', k: iH }, a: -1 });
+  }
+  const n1 = axes[0].values.length;
+  const n2 = axes[1] ? axes[1].values.length : 1;
+  const npts = n1 * n2;
+  const nq = model.quantities.length;
+  const which = Int32Array.from({ length: nq }, (_, q) => q);
+  const states = new Float64Array(npts * ns).fill(NaN);
+  const quant = new Float64Array(npts * nq).fill(NaN);
+  const qOut = new Float64Array(nq);
+  const lnG = new Float64Array(ns);
+  const lnD = new Float64Array(ns);
+  // Each held species' ln gamma, carried from point to point.
+  const lnGamma = holds.map(() => 0);
+  let failed = 0;
+  let cur = Float64Array.from(base);
+  const settle = (y, vals) => {
+    for (let it = 0; it < 40; it++) {
+      holds.forEach(({ ax, a }, h) => {
+        const v = a >= 0 ? vals[a] : pHHeld;
+        if (ax.kind === 'pe') y[b + ax.k] = 10 ** -v;
+        else if (ax.kind === 'pH') y[b + ax.k] = 10 ** -v * Math.exp(-lnGamma[h]);
+        else if (ax.kind === 'la') y[b + ax.k] = 10 ** v * Math.exp(-lnGamma[h]);
+      });
+      const r = RtmModel.speciate(model, y, { fixed: held, cells: [cell], t,
+        total: totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name } : undefined });
+      if (!r.cells.length || !r.cells[0].converged) return false;
+      y.set(r.y.subarray(b, b + ns), b);
+      if (!model.act) return true;
+      RtmModel.activityAt(model.act, y, b, lnG, lnD, cell);
+      let moved = 0;
+      holds.forEach(({ ax }, h) => {
+        if (ax.kind !== 'pH' && ax.kind !== 'la') return;
+        moved = Math.max(moved, Math.abs(lnG[ax.k] - lnGamma[h]));
+        lnGamma[h] = lnG[ax.k];
+      });
+      if (moved < 1e-11) return true;
+    }
+    return false;
+  };
+  let done = 0;
+  let lastReport = Date.now();
+  for (let j = 0; j < n2; j++) {
+    for (let step = 0; step < n1; step++) {
+      // To and fro: the point before is always beside this one.
+      const i = j % 2 ? n1 - 1 - step : step;
+      const p = j * n1 + i;
+      const vals = [axes[0].values[i], axes[1] ? axes[1].values[j] : 0];
+      let y = Float64Array.from(cur);
+      let ok = false;
+      try { ok = settle(y, vals); } catch (e) { ok = false; }
+      if (!ok) {
+        y = Float64Array.from(base);
+        lnGamma.fill(0);
+        try { ok = settle(y, vals); } catch (e) { ok = false; }
+      }
+      if (ok) {
+        cur = y;
+        states.set(y.subarray(b, b + ns), p * ns);
+        model.quantitiesAt(y, t, cell, which, qOut);
+        quant.set(qOut, p * nq);
+      } else failed++;
+      done++;
+      if (post && Date.now() - lastReport > 250) {
+        lastReport = Date.now();
+        post({ type: 'progress', id: msg.id, frac: done / npts, done, npts });
+      }
+    }
+  }
+  return { type: 'diagram', id: msg.id, n1, n2, x: axes[0].values, y: axes[1] ? axes[1].values : null, ns,
+    species: model.speciesNames, states, nq, keys: model.quantities.map((q) => q.key), quant, failed, t, cell, pHHeld };
+}
+
 function handleRtmMessage(msg, post) {
   const id = msg.id;
   if (msg.type === 'capabilities') {
     post({ type: 'capabilities', id, solvers: rtmSolvers() });
+    return;
+  }
+  if (msg.type === 'diagram') {
+    try {
+      const reply = rtmDiagram(msg, post);
+      post(reply, reply.states ? [reply.states.buffer, reply.quant.buffer] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
+    }
     return;
   }
   if (msg.type === 'quantities') {

@@ -7376,6 +7376,41 @@ Ca+2 + 2 X- <=> CaX2,              logK = 0.8
   const twoV = new Float64Array(3);
   if (![...twoQ].some((x) => x < 0)) cm.quantitiesAt(cc0, 0, 0, twoQ, twoV);
   const alkWant = ci('HCO3-') + 2 * ci('CO3-2') + ci('CaHCO3+') + 2 * ci('CaCO3');
+  // speciate for a diagram: one cell of a column, the rest left as they are, and an element's total set.
+  const two = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 2
+LENGTH = 1
+TEND = 1
+
+<SPECIES>
+H+      1e-7   D=1e-9
+OH-     1e-7   D=1e-9
+Na+     3e-3   D=1e-9
+CO2     1e-4   D=1e-9
+HCO3-   2e-3   D=1e-9
+CO3-2   1e-5   D=1e-9
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.352
+HCO3- <=> H+ + CO3-2,   logK = -10.329
+`);
+  const y2 = two.initialState();
+  const nsT = two.speciesNames.length;
+  const weightsC = new Float64Array(nsT);
+  for (const nm of ['CO2', 'HCO3-', 'CO3-2']) weightsC[two.speciesNames.indexOf(nm)] = 1;
+  const sp2 = RtmModel.speciate(two, y2, { cells: [1], total: { weights: weightsC, value: 0.05, name: 'C' } });
+  const totC = (y, cell) => ['CO2', 'HCO3-', 'CO3-2'].reduce((acc, nm) => acc + y[cell * nsT + two.speciesNames.indexOf(nm)], 0);
+  const lnKres = Math.abs(Math.log(sp2.y[nsT + two.speciesNames.indexOf('H+')] * sp2.y[nsT + two.speciesNames.indexOf('HCO3-')]
+    / sp2.y[nsT + two.speciesNames.indexOf('CO2')]) - Math.log(10 ** -6.352));
+  check('  speciate for a diagram: one cell of a column alone, the other as it was, and the carbon\'s total set there '
+    + 'through the conserved total that carries it, the relations held',
+  sp2.cells.length === 1 && sp2.cells[0].converged && [...y2.subarray(0, nsT)].every((v, k) => v === sp2.y[k])
+    && Math.abs(totC(sp2.y, 1) / 0.05 - 1) < 1e-12 && lnKres < 1e-10
+    && Math.abs(sp2.y[nsT + two.speciesNames.indexOf('Na+')] - 3e-3) < 1e-18,
+  `cell 1: total C ${totC(sp2.y, 1).toExponential(6)}, ln K within ${lnKres.toExponential(1)}`);
   check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,

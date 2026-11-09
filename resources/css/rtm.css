@@ -488,6 +488,13 @@
 
 .rtm-times { width: 15rem; min-width: 8rem; }
 
+/* The Diagrams tab: an axis is a phrase -- Vary pH from 2 to 12 in 101 points -- kept on one line where it fits. */
+.rtm-dg-axis { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+.rtm-dg-axis[hidden], .rtm-dg-axis [hidden] { display: none; }
+#rtmDgYMore { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+#rtmDgYMore[hidden] { display: none; }
+.rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
+
 .rtm-example-about {
   margin: 0 0 6px;
   font-size: 11px;

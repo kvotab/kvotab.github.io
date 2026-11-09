@@ -5800,6 +5800,39 @@
   }
 
   /**
+   * The alpha that makes sum(alpha_q U_q) nearest w, U's rows the totals a
+   * speciation holds: from the normal equations, (U U^T) alpha = U w, by
+   * Gaussian elimination with partial pivoting. The rows are independent
+   * (conservationBasis), so the matrix is not singular.
+   */
+  function leastSquaresRows(U, wv) {
+    const nb = U.length;
+    const na = wv.length;
+    const A = Array.from({ length: nb }, (_, p) => {
+      const row = new Float64Array(nb + 1);
+      for (let q = 0; q < nb; q++) { let v = 0; for (let k = 0; k < na; k++) v += U[p][k] * U[q][k]; row[q] = v; }
+      let r = 0;
+      for (let k = 0; k < na; k++) r += U[p][k] * wv[k];
+      row[nb] = r;
+      return row;
+    });
+    for (let col = 0; col < nb; col++) {
+      let best = col;
+      for (let r = col + 1; r < nb; r++) if (Math.abs(A[r][col]) > Math.abs(A[best][col])) best = r;
+      const tmp = A[col]; A[col] = A[best]; A[best] = tmp;
+      const piv = A[col][col];
+      if (!piv) continue;
+      for (let r = 0; r < nb; r++) {
+        if (r === col) continue;
+        const f = A[r][col] / piv;
+        if (!f) continue;
+        for (let c = col; c <= nb; c++) A[r][c] -= f * A[col][c];
+      }
+    }
+    return Float64Array.from(A, (row, q) => (row[q] ? row[nb] / row[q] : 0));
+  }
+
+  /**
    * Equilibrate a state: the concentrations that satisfy every equilibrium
    * while conserving every total the equilibria leave alone.
    *
@@ -5817,7 +5850,7 @@
    *
    * @param {object} model   from compile()
    * @param {Float64Array} [y]  the state to equilibrate; the initial one by default
-   * @param {object} [opts]  { tol, maxIter, floor }
+   * @param {object} [opts]  { tol, maxIter, floor, equilibria, fixed, t, cells, total }
    * @returns {{y: Float64Array, cells: object[]}}
    */
   function speciate(model, y, opts = {}) {
@@ -5857,7 +5890,39 @@
       model.act || null, ns, site);
     // An exchanger, the electron or a potential counts in no total: it is no amount.
     const w = Float64Array.from(part, (si) => (site && site[si] >= 2 ? 0 : 1));
-    for (let cell = 0; cell < model.cells; cell++) {
+    /*
+      opts.total: { weights, value, name }, an element's total in the cell set
+      to value -- sum(weights[k] C_k), the element's count in each species
+      -- as a diagram sweeps it. The relations conserve the element, so its
+      total is a sum of the totals they hold, sum(alpha_q T_q); the one with
+      the largest alpha is moved and the others are left as they are. The
+      species that hold the element start scaled to the new total, a start
+      nearer the answer than the old one.
+    */
+    let alpha = null;
+    let moved = -1;
+    if (opts.total) {
+      const wEl = Float64Array.from(part, (si, k) => (w[k] ? opts.total.weights[si] || 0 : 0));
+      alpha = leastSquaresRows(sys.U, wEl);
+      let worst = 0;
+      let size = 0;
+      for (let k = 0; k < na; k++) {
+        let v = 0;
+        for (let q = 0; q < nb; q++) v += alpha[q] * sys.U[q][k];
+        worst = Math.max(worst, Math.abs(v - wEl[k]));
+        size = Math.max(size, Math.abs(wEl[k]));
+      }
+      if (!(size > 0)) {
+        throw new RtmError(`No species the relations hold has any ${opts.total.name || 'of the element'}: its total is not theirs to set.`);
+      }
+      if (worst > 1e-9 * size) {
+        throw new RtmError(`The relations do not keep the ${opts.total.name || 'element'}: its total is no sum of the totals `
+          + 'they hold, and cannot be set through them.');
+      }
+      for (let q = 0; q < nb; q++) if (moved < 0 || Math.abs(alpha[q]) > Math.abs(alpha[moved])) moved = q;
+    }
+    // opts.cells: these cells only, the rest left as they are -- one water of a column, as a diagram asks.
+    for (const cell of opts.cells || Array.from({ length: model.cells }, (_, c) => c)) {
       const b = cell * ns;
       // The totals to hold, taken from the state as it stands; a mineral
       // there at the start is taken to be present until it proves otherwise.
@@ -5866,6 +5931,15 @@
         for (let k = 0; k < na; k++) t += row[k] * w[k] * out[b + part[k]];
         return t;
       });
+      if (alpha) {
+        let now = 0;
+        for (let q = 0; q < nb; q++) now += alpha[q] * totals[q];
+        totals[moved] += (opts.total.value - now) / alpha[moved];
+        if (now > 0) {
+          const f = opts.total.value / now;
+          for (let k = 0; k < na; k++) if (opts.total.weights[part[k]]) out[b + part[k]] *= f;
+        }
+      }
       // (One held whatever its amount, force_equality, is never at none.)
       const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0
         || (eq.bounds && eq.bounds.lo[cell] === -Infinity) ? 1 : 0));
