@@ -970,6 +970,37 @@ async def main():
                 and ussl[3] == 'log' and ussl[4] == [250, 750, 2250] and 'C2-S1 at the start' in ussl[5] and '1 measured' in ussl[5]
             check('  with <CONDUCTANCE>: the water\'s SC and its SAR by hand, the measured water\'s from Na, Ca and Mg, the '
                   f'classes split at 250, 750 and 2,250 uS/cm on a log axis, C2-S1 in the note ({str(ussl)[:150]})', ok, True)
+            # Wilcox's diagram: the cations in meq/kgw across -- Ca 1.1 mmol with its CaSO4, Mg 0.5, Na 2, K 0.1 is 2.2 + 1 + 2 +
+            # 0.1 = 5.3 -- and Na over them up, 2/5.3; the measured water 2 + 1 + 3 + 0.1 = 6.1 and 3/6.1.
+            await comp('wilcox')
+            wil = await page.ev("""(() => { const p = document.getElementById('rtmChartComp');
+              const m = p.data.find((t) => t.name === 'the model'); const d = p.data.find((t) => t.name === 'measured');
+              return [m.x[0], m.y[0], d ? [d.x[0], d.y[0]] : null, p.layout.xaxis2.range[1] / p.layout.xaxis.range[1],
+                document.getElementById('rtmCompNote').textContent]; })()""")
+            ok = isinstance(wil, list) and abs(wil[0] - 5.3) < 1e-9 and abs(wil[1] - 200 / 5.3) < 1e-9 and wil[2] is not None \
+                and abs(wil[2][0] - 6.1) < 1e-9 and abs(wil[2][1] - 300 / 6.1) < 1e-9 and abs(wil[3] - 100) < 1e-9 \
+                and wil[4].startswith('cell 0: excellent to good at the start') and wil[4].endswith('; 1 measured')
+            check('a Wilcox diagram: the cations\' total and the percent sodium by hand, the model\'s and the measured water\'s, '
+                  f'the conductance along the top a hundred times the e.p.m., excellent to good in the note ({str(wil)[:160]})', ok, True)
+            # Measured waters across every class: Wilcox's own example, the Colorado at Yuma (12.06 e.p.m., 39 %), and one either
+            # side of each curve, the traced curves 56.25 % at 12.06, 85.73 % at 10, 93.63 % at 25 and 71.05 % at 5.
+            wil_data = '\n<DATA>\ntime  tot(Ca)  Na+  cell = 0\n' + '\n'.join(
+                f'{i + 1}  {(e - e * p / 100) / 2000:.8g}  {e * p / 100000:.8g}' for i, (e, p) in enumerate([
+                    (12.06, 39), (3, 30), (10, 70), (10, 90), (25, 50), (32, 20), (5, 99.5), (12.06, 56), (12.06, 56.5),
+                    (10, 85.5), (10, 86), (25, 93.4), (25, 93.9), (5, 70.8), (5, 71.3)])) + '\n'
+            await set_text(page, COMP_MODEL[:COMP_MODEL.index('<DATA>')] + wil_data)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await comp('wilcox')
+            classes = await page.ev("(() => { const d = document.getElementById('rtmChartComp').data.find((t) => t.name === 'measured');"
+                                    " return d ? d.text.map((t) => t.split('<br>')[1].split(':')[0]) : null; })()")
+            check('  the classes: Wilcox\'s Yuma water good to permissible, as he has it, and a water either side of each traced curve',
+                  classes, ['good to permissible', 'excellent to good', 'permissible to doubtful', 'doubtful to unsuitable',
+                            'doubtful to unsuitable', 'unsuitable', 'unsuitable', 'good to permissible', 'permissible to doubtful',
+                            'permissible to doubtful', 'doubtful to unsuitable', 'doubtful to unsuitable', 'unsuitable',
+                            'excellent to good', 'permissible to doubtful'])
             # Along a column: the same water in three cells, each a point of the Piper and a Stiff diagram.
             await set_text(page, COMP_MODEL.replace('MODE = batch', 'MODE = transport\nCELLS = 3'))
             await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)
@@ -1036,6 +1067,11 @@ async def main():
             check('  saved to Excel: the scores, the loadings, the variance each component carries, and the model text', pca_sheets,
                   ['run', 'loadings', 'variance', 'model'])
             await pca(rtmCompPcaLog=True)
+            await comp('wilcox')
+            check('a Wilcox diagram without an ACTIVITY: refused, the concentrations\' unit unknown', await page.ev(
+                "document.getElementById('rtmCompEmpty').textContent"),
+                'A Wilcox diagram needs the concentrations in mol/kgw, which a model with ACTIVITY has: its classes are set by the '
+                'cations\' total in milliequivalents.')
             await comp('where')
             await comp('where', rtmCompAlong='time')
             await set_text(page, before)

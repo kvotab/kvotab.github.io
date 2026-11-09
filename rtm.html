@@ -457,6 +457,7 @@
                 <option value="schoeller">a Schoeller diagram</option>
                 <option value="stiff">Stiff diagrams</option>
                 <option value="ussl">a USSL diagram (irrigation water)</option>
+                <option value="wilcox">a Wilcox diagram (irrigation water)</option>
                 <option value="pca">principal components (PCA)</option>
               </select>
             </label>
@@ -2383,6 +2384,24 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             it is worked out from. The table and the note give each water's class, C2-S1 and the
             like. The classes are for the conductance at 25&nbsp;°C, and the model's is at the water's
             own temperature, about 2&nbsp;% lower for each degree below.</p>
+          <p>A <em>Wilcox diagram</em> classes a water for irrigation as L. V. Wilcox did (1948, <em>The
+            quality of water for irrigation use</em>, USDA Technical Bulletin 962, figure 1): its total
+            concentration across, the cations in milliequivalents — Ca and Mg twice their dissolved
+            totals, Na and K once — which Wilcox took as about a hundredth of the conductance in
+            µS/cm, the scale along the top; and its percent sodium up, Na over the four cations.
+            Lines at 7.5, 20 and 30 meq/kgw and three curves that fall from 100 % split it into
+            excellent to good, good to permissible, permissible to doubtful, doubtful to unsuitable
+            and unsuitable. Wilcox gave the lines as numbers and drew the curves, each through open
+            circles; the page's curves are traced from the bulletin's scanned figure — the circles'
+            centres found on the scan, the axes set by its frame, its class lines and its ticks, and
+            a monotone cubic between the circles, which lies on the drawn lines to 0.4 % in percent
+            sodium (0.6 % at worst). The Colorado River at Yuma, Wilcox's own example at 12.06 e.p.m.
+            and 39 % sodium, is good to permissible, as he says. It needs the concentrations in
+            mol/kgw, which a model with an <code>ACTIVITY</code> has, and sodium. Along the run it is
+            a path through the stored points, coloured by time; along the column, a point a cell.
+            Measured waters come from <code>&lt;DATA&gt;</code> by the names the model gives the
+            cations, <code>tot(Na)</code> or <code>Na+</code>, one without a column counting as none,
+            and the table and the note give each water's class.</p>
           <p><em>Principal components</em> do what Gibbs Studio's principal component analysis
             does with a set of waters. Each water — every stored point along the run at a cell, or
             each cell of the column at a time — is a row of the variables named under <em>Of</em>,
@@ -3281,6 +3300,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109n"></script>
 </body>
 </html>

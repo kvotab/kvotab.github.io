@@ -140,7 +140,7 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
-      if (['where', 'piper', 'schoeller', 'stiff', 'ussl', 'pca'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'piper', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
@@ -1762,7 +1762,7 @@
     $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
     $('rtmCompLayerWrap').hidden = nm === 0;
     // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
-    $('rtmCompTimesWrap').hidden = along === 'time' && (view === 'where' || view === 'ussl' || view === 'pca');
+    $('rtmCompTimesWrap').hidden = along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view);
     $('rtmCompPcaVars').value = state.compPcaVars;
     $('rtmCompPcaLog').checked = state.compPcaLog;
     $('rtmCompTimesLabel').textContent = along === 'time' ? 'Times' : 'At';
@@ -1803,6 +1803,7 @@
     plot.hidden = false;
     if (state.compView === 'where') drawWhere(ctx);
     else if (state.compView === 'ussl') drawUssl(ctx);
+    else if (state.compView === 'wilcox') drawWilcox(ctx);
     else if (state.compView === 'pca') drawPca(ctx);
     else drawWaters(ctx);
   }
@@ -2130,6 +2131,200 @@
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     note.textContent = `${where}: ${usslClass(first.sc, first.sar)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
       + `${pts.length > 1 ? `, ${usslClass(last.sc, last.sar)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
+      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
+  }
+
+  /*
+    WILCOX'S DIAGRAM (1948, USDA Technical Bulletin 962, figure 1): total
+    concentration across, in e.p.m. -- the cations in milliequivalents, here
+    meq/kgw -- and percent sodium up, Na x 100 over Ca + Mg + Na + K. Wilcox
+    gives the class lines at 7.5, 20 and 30 e.p.m. as numbers and draws the
+    three curves that close the classes from above, each from 100 % through
+    open circles. The circles here are traced from the bulletin's scan: each
+    centred on its white hole, x set by the frame (the class lines fall at
+    7.52, 19.95 and 30.00), y by the ticks every 5 % (to 0.14 %). Between them
+    a monotone cubic, which lies on the drawn lines to 0.4 % (95 % of their
+    ink within 3 pixels of it, 0.6 % at worst); Wilcox's Yuma dot is on the
+    scan at 11.95 e.p.m. and 38.92 % for the 12.06 and 39 % he gives it.
+  */
+  const WILCOX_CURVES = [
+    // Below it, excellent to good under 7.5 e.p.m. and good to permissible to 20.
+    [[0, 100], [0.81, 90.88], [2.45, 81.3], [4.9, 71.37], [7.45, 64.7], [9.93, 59.76], [12.35, 55.84], [14.84, 52.87],
+      [17.41, 50.33], [19.94, 48.12]],
+    // Below it, to 20 e.p.m.: permissible to doubtful.
+    [[0, 100], [0.72, 98.24], [2.23, 95.71], [4.79, 91.73], [7.31, 88.61], [9.95, 85.79], [12.29, 82.84], [14.83, 80.66],
+      [17.26, 78.73], [19.71, 76.62]],
+    // Below it, to 30 e.p.m.: doubtful to unsuitable. Above it, or past 30: unsuitable.
+    [[0, 100], [0.71, 99.78], [2.22, 99.48], [4.76, 98.7], [7.31, 97.96], [9.84, 97.36], [12.3, 96.73], [14.78, 96.05],
+      [17.19, 95.41], [19.79, 94.79], [24.88, 93.66], [29.87, 92.39]],
+  ];
+
+  /**
+   * A curve through points as a monotone cubic (Fritsch and Carlson's, the
+   * ends by the three-point rule kept to the side): it neither overshoots
+   * nor turns between the points. Past the last point, its last piece goes on.
+   */
+  function monotoneCubic(pts) {
+    const n = pts.length;
+    const xs = pts.map((pt) => pt[0]);
+    const ys = pts.map((pt) => pt[1]);
+    const h = [];
+    const d = [];
+    for (let i = 0; i < n - 1; i++) {
+      h.push(xs[i + 1] - xs[i]);
+      d.push((ys[i + 1] - ys[i]) / h[i]);
+    }
+    const m = new Array(n).fill(0);
+    for (let i = 1; i < n - 1; i++) {
+      if (d[i - 1] * d[i] > 0) {
+        const w1 = 2 * h[i] + h[i - 1];
+        const w2 = h[i] + 2 * h[i - 1];
+        m[i] = (w1 + w2) / (w1 / d[i - 1] + w2 / d[i]);
+      }
+    }
+    const end = (h0, h1, d0, d1) => {
+      const e = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1);
+      if (Math.sign(e) !== Math.sign(d0)) return 0;
+      if (Math.sign(d0) !== Math.sign(d1) && Math.abs(e) > Math.abs(3 * d0)) return 3 * d0;
+      return e;
+    };
+    m[0] = end(h[0], h[1], d[0], d[1]);
+    m[n - 1] = end(h[n - 2], h[n - 3], d[n - 2], d[n - 3]);
+    return (x) => {
+      let i = 0;
+      while (i < n - 2 && x > xs[i + 1]) i++;
+      const t = (x - xs[i]) / h[i];
+      const t2 = t * t;
+      const t3 = t2 * t;
+      return (2 * t3 - 3 * t2 + 1) * ys[i] + (t3 - 2 * t2 + t) * h[i] * m[i] + (-2 * t3 + 3 * t2) * ys[i + 1] + (t3 - t2) * h[i] * m[i + 1];
+    };
+  }
+  const WILCOX_AT = WILCOX_CURVES.map(monotoneCubic);
+
+  /** A water's class on Wilcox's diagram, from its cations in meq/kgw and its percent sodium. */
+  function wilcoxClass(epm, pctNa) {
+    if (epm >= 30 || pctNa >= WILCOX_AT[2](epm)) return 'unsuitable';
+    if (epm >= 20 || pctNa >= WILCOX_AT[1](epm)) return 'doubtful to unsuitable';
+    if (pctNa >= WILCOX_AT[0](epm)) return 'permissible to doubtful';
+    return epm < 7.5 ? 'excellent to good' : 'good to permissible';
+  }
+
+  function drawWilcox({ r, plot, along, layer, cell, atIndex, fail, note }) {
+    if (poleUnit(r.model).scale !== 1000) {
+      fail('A Wilcox diagram needs the concentrations in mol/kgw, which a model with ACTIVITY has: its classes are set by the '
+        + 'cations\' total in milliequivalents.');
+      return;
+    }
+    const C = compositionOf(r.model);
+    const termsOf = (el) => {
+      const e = C.elements.find((x) => x.el === el);
+      return e ? e.terms.filter((tm) => tm[2] === 'water') : [];
+    };
+    const terms = { Ca: termsOf('Ca'), Mg: termsOf('Mg'), Na: termsOf('Na'), K: termsOf('K') };
+    if (!terms.Na.length) { fail('A Wilcox diagram needs sodium, and the model has none in its water.'); return; }
+    const charge = { Ca: 2, Mg: 2, Na: 1, K: 1 };
+    const ns = r.model.nspecies;
+    // A water's point: its cations in meq/kgw, and the sodium's share of them.
+    const pointOf = (c) => {
+      const total = c.Ca + c.Mg + c.Na + c.K;
+      return total > 0 ? { epm: total, na: (100 * c.Na) / total } : null;
+    };
+    const waterAt = (i, mc) => {
+      const base = i * r.width + mc * ns;
+      const c = {};
+      for (const el of ['Ca', 'Mg', 'Na', 'K']) {
+        let sum = 0;
+        for (const [k, n] of terms[el]) sum += n * Math.max(0, r.states[base + k]);
+        c[el] = 1000 * charge[el] * sum;
+      }
+      return pointOf(c);
+    };
+    const stride = r.model.stride || 1;
+    const pts = [];
+    let colorTitle;
+    if (along === 'time') {
+      const mc = modelCell(cell, layer);
+      const { idx, logT } = compTimeIndices(r);
+      const step = Math.max(1, Math.ceil(idx.length / 300));
+      for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
+        const pt = waterAt(i, mc);
+        if (pt) pts.push({ ...pt, color: logT ? Math.log10(r.t[i]) : r.t[i], label: fmtTime(r.t[i]), t: r.t[i], cell });
+      }
+      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+    } else {
+      for (let k = 0; k < r.model.fracture; k++) {
+        const pt = waterAt(atIndex, k * stride + layer);
+        if (pt) pts.push({ ...pt, color: r.model.centres[k], label: `cell ${k}`, t: r.t[atIndex], cell: k, x: r.model.centres[k] });
+      }
+      colorTitle = 'distance (m)';
+    }
+    if (!pts.length) { fail('No water here has any of the cations to draw.'); return; }
+    // What <DATA> measured: the cations by the model's names for them, in mol/kgw; one without a column counts as none.
+    const data = (state.compiled && state.compiled.data) || [];
+    const measuredPts = [];
+    for (const tab of data) {
+      if (tab.kind !== along || !['tot(Na)', 'Na+'].some((k) => tab.columns.includes(k))) continue;
+      if (along === 'time' && ((tab.cell || 0) !== cell || (tab.layer || 0) !== layer)) continue;
+      const col = (row, names) => {
+        for (const nm of names) { const j = tab.columns.indexOf(nm); if (j >= 0) return row[j + 1] === null ? 0 : row[j + 1]; }
+        return 0;
+      };
+      for (const row of tab.rows) {
+        const pt = pointOf({ Ca: 2000 * col(row, ['tot(Ca)', 'Ca+2']), Mg: 2000 * col(row, ['tot(Mg)', 'Mg+2']),
+          Na: 1000 * col(row, ['tot(Na)', 'Na+']), K: 1000 * col(row, ['tot(K)', 'K+']) });
+        if (pt) measuredPts.push({ ...pt, label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
+      }
+    }
+    const all = [...pts, ...measuredPts];
+    const right = Math.max(35, ...all.map((p) => p.epm * 1.05));
+    const c = themeColors();
+    const traces = [];
+    // The three curves, each to where its class line rises to meet it, and the lines.
+    [20, 20, 30].forEach((to, q) => {
+      const xs = Array.from({ length: 241 }, (_, j) => (to * j) / 240);
+      traces.push({ type: 'scatter', mode: 'lines', x: xs, y: xs.map(WILCOX_AT[q]), line: { color: c.text, width: 1 }, hoverinfo: 'skip',
+        showlegend: false });
+    });
+    [[7.5, 0], [20, 1], [30, 2]].forEach(([x, q]) => traces.push({ type: 'scatter', mode: 'lines', x: [x, x], y: [0, WILCOX_AT[q](x)],
+      line: { color: c.text, width: 1 }, hoverinfo: 'skip', showlegend: false }));
+    const hover = (p) => `${esc(p.label)}<br>${wilcoxClass(p.epm, p.na)}: ${fit4(p.epm)} meq/kgw, ${fit4(p.na)} % sodium`;
+    traces.push({ type: 'scatter', mode: pts.length > 1 ? 'lines+markers' : 'markers', name: 'the model', x: pts.map((p) => p.epm),
+      y: pts.map((p) => p.na), line: { color: c.grid, width: 1 },
+      marker: { size: 7, color: pts.length > 1 ? pts.map((p) => p.color) : '#1f77b4', colorscale: 'Viridis', showscale: pts.length > 1,
+        colorbar: pts.length > 1 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0,
+          tickfont: { size: 10 }, len: 0.7 } : undefined },
+      text: pts.map(hover), hovertemplate: '%{text}<extra></extra>' });
+    if (measuredPts.length) {
+      traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.epm), y: measuredPts.map((p) => p.na),
+        marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } }, text: measuredPts.map(hover),
+        hovertemplate: '%{text}<extra></extra>' });
+    }
+    // Wilcox's own scale along the top: the conductance, about a hundred times the e.p.m.
+    traces.push({ type: 'scatter', mode: 'lines', x: [0, right * 100], y: [null, null], xaxis: 'x2', hoverinfo: 'skip', showlegend: false });
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis.range = [0, right];
+    layout.xaxis.title = { text: 'total concentration: the cations, meq/kgw (Wilcox\'s e.p.m.)', font: { size: 11 } };
+    layout.xaxis2 = { overlaying: 'x', side: 'top', range: [0, right * 100], showgrid: false, zeroline: false,
+      linecolor: c.grid, tickfont: { size: 10, color: c.text },
+      title: { text: 'conductance, about 100 × the e.p.m. (µS/cm, as Wilcox took it)', font: { size: 11 } } };
+    layout.yaxis.range = [0, 100];
+    layout.yaxis.title = { text: 'percent sodium, Na over Ca + Mg + Na + K (%)', font: { size: 11 } };
+    layout.margin = { ...layout.margin, t: 56 };
+    const label = (x, y, text) => ({ x, y, xref: 'x', yref: 'y', showarrow: false, text, font: { size: 10, color: c.text } });
+    layout.annotations = [label(3.75, 8, 'excellent<br>to good'), label(13.75, 8, 'good to<br>permissible'),
+      label(25, 8, 'doubtful to<br>unsuitable'), label((30 + right) / 2, 8, 'unsuitable'), label(11, 70, 'permissible<br>to doubtful'),
+      label(11, 90.5, 'doubtful to unsuitable'), label(25, 97.6, 'unsuitable')];
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    compTableNow = { head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', 'cations (meq/kgw)', 'percent sodium (%)', 'class'],
+      name: 'rtm_wilcox',
+      rows: [...pts.map((p) => [`model, ${p.label}`, p.t, p.cell, p.x === undefined ? null : p.x, p.epm, p.na, wilcoxClass(p.epm, p.na)]),
+        ...measuredPts.map((p) => [p.label, null, null, null, p.epm, p.na, wilcoxClass(p.epm, p.na)])] };
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
+    note.textContent = `${where}: ${wilcoxClass(first.epm, first.na)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
+      + `${pts.length > 1 ? `, ${wilcoxClass(last.epm, last.na)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
       + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
   }
 
@@ -4864,6 +5059,7 @@
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
             ['Stiff diagrams', 'Each water a polygon, cations to the left of zero and anions to the right, on one scale so that their sizes compare.', view === 'stiff'],
             ['a USSL diagram', 'The U.S. Salinity Laboratory\'s classes of irrigation water: the specific conductance across, C1 to C4 split at 250, 750 and 2,250 µS/cm, and the sodium adsorption ratio up, S1 to S4 split by lines that fall as the conductance rises. Needs SC, which a model has with <CONDUCTANCE>, and SAR.', view === 'ussl'],
+            ['a Wilcox diagram', 'Wilcox\'s (1948) classes of irrigation water: the cations\' total in meq/kgw across, about a hundredth of the conductance in µS/cm, and the percent sodium up; lines at 7.5, 20 and 30 and three curves split it from excellent to good to unsuitable. The curves are traced from his figure. Needs mol/kgw, which ACTIVITY gives, and sodium.', view === 'wilcox'],
             ['principal components (PCA)', 'Gibbs Studio\'s principal component analysis: each water a row of the variables **Of** names, or its pH and each element dissolved, each standardised; the components the eigenvectors of their correlation matrix. The waters at their scores on the first two, coloured by time or distance, and each variable an arrow to its correlation with them.', view === 'pca'],
           ] },
           { heading: 'The major ions', list: [
@@ -4871,10 +5067,11 @@
             'In meq/kgw under an ACTIVITY, whose concentrations are mol/kgw; otherwise the concentrations times the charge.',
             'Measured waters come from <DATA>, by the names the model gives them: tot(Ca) or Ca+2, alk(CO3) or HCO3- and CO3-2. One the table has no column for counts as none.',
             'A USSL diagram reads SC and SAR, or the SAR from tot(Na), tot(Ca) and tot(Mg). Its classes are for the conductance at 25 °C; the model\'s, as PHREEQC\'s, is at the water\'s own temperature.',
+            'A Wilcox diagram\'s percent sodium is Na over Ca, Mg, Na and K, all in milliequivalents, Na alone on top as Wilcox has it; its curves are traced from his figure, to 0.4 % in percent sodium.',
           ] },
           { heading: 'The toolbar', list: [
             '**Along**, in a column: the run at one **Cell**, or the column at one time, **At**.',
-            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper or a USSL diagram, and principal components, draw every stored point.',
+            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper, a USSL or a Wilcox diagram, and principal components, draw every stored point.',
             '**Of**: the variables of a principal component analysis, as the time chart names them — `pH, tot(Ca), Na+, SI(Calcite)`. **logs of amounts**: an amount as its log, where every water has some of it. A variable the same in every water is left out.',
             '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type, or its scores; for principal components Excel adds the loadings and the variance each component carries. **SVG**, **PNG**: the picture.',
           ] },
