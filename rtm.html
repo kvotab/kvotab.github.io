@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109h">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109i">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -219,6 +219,7 @@
             <button type="button" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
             <button type="button" data-tab="sweep" data-on-click="rtm:tab">Sweeps</button>
             <button type="button" data-tab="fit" data-on-click="rtm:tab">Fit</button>
+            <button type="button" data-tab="uncertainty" data-on-click="rtm:tab">Uncertainty</button>
             <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
@@ -654,6 +655,64 @@
           <div class="plot" id="rtmChartFit" hidden></div>
           <p class="rtm-empty" id="rtmFitEmpty">Name what to fit and fit it: the numbers moved until the run is as near as it
             can be to what &lt;DATA&gt; measured, as PhreePlot and Gibbs Studio fit PHREEQC.</p>
+        </section>
+
+        <!-- ---- the model run for draws of what is uncertain, as Gibbs Studio's Monte Carlo ---- -->
+        <section class="rtm-pane" data-pane="uncertainty" hidden>
+          <div class="rtm-toolbar">
+            <span class="rtm-fit-params" id="rtmUnRows"></span>
+            <button type="button" class="rtm-btn secondary small" id="rtmUnAdd" data-on-click="rtm:unAdd">and another</button>
+            <button type="button" class="rtm-btn secondary small" id="rtmUnFromFit" data-on-click="rtm:unFromFit">From the fit</button>
+            <span class="kvot-info-slot" data-info-key="pane:uncertainty"></span>
+          </div>
+          <div class="rtm-toolbar">
+            <label>Runs <input type="text" id="rtmUnN" class="rtm-dg-num" data-on-change="rtm:unSettings"></label>
+            <label>drawn by
+              <select id="rtmUnScheme" data-on-change="rtm:unSettings">
+                <option value="lhs">Latin hypercube</option>
+                <option value="sobol">Sobol</option>
+                <option value="random">simple random</option>
+              </select>
+            </label>
+            <label>seed <input type="text" id="rtmUnSeed" class="rtm-dg-num" data-on-change="rtm:unSettings"></label>
+            <label id="rtmUnCellWrap">keeping cell
+              <select id="rtmUnCell" data-on-change="rtm:unSettings"></select>
+            </label>
+            <label id="rtmUnCorrWrap" hidden><input type="checkbox" id="rtmUnCorr" checked data-on-change="rtm:unSettings"> with the fit's correlations</label>
+            <button type="button" class="rtm-btn small" id="rtmUnGo" data-on-click="rtm:unGo">Run them</button>
+          </div>
+          <div class="rtm-toolbar" id="rtmUnShowBar" hidden>
+            <label>Show
+              <select id="rtmUnShow" data-on-change="rtm:unRedraw">
+                <option value="time">bands against time</option>
+                <option value="profile">bands along the column at the end</option>
+                <option value="spread">the spread of one value</option>
+                <option value="matters">what matters</option>
+              </select>
+            </label>
+            <label>
+              <select id="rtmUnKey" aria-label="what to draw" data-on-change="rtm:unRedraw"></select>
+            </label>
+            <label id="rtmUnOfWrap">taking
+              <select id="rtmUnOf" data-on-change="rtm:unRedraw">
+                <option value="end">its value at the end</option>
+                <option value="max">its largest</option>
+                <option value="min">its smallest</option>
+              </select>
+            </label>
+            <label id="rtmUnLogTWrap"><input type="checkbox" id="rtmUnLogT" data-on-change="rtm:unRedraw"> log time</label>
+            <label id="rtmUnLogYWrap"><input type="checkbox" id="rtmUnLogY" checked data-on-change="rtm:unRedraw"> log</label>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="png">PNG</button>
+            </span>
+            <span class="rtm-muted" id="rtmUnNote"></span>
+          </div>
+          <div class="plot" id="rtmChartUn" hidden></div>
+          <p class="rtm-empty" id="rtmUnEmpty">Give what is uncertain a distribution and run them: the model run for each draw,
+            the runs drawn as bands, as Gibbs Studio's Monte Carlo does.</p>
         </section>
 
         <!-- ---- the run, seen through PHREEQC ---- -->
@@ -2312,6 +2371,25 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             million. <em>Put the fitted values in the model</em> writes them into the text where they
             came from, to six figures.</p>
 
+          <h4 id="help-uncertainty">Uncertainty</h4>
+          <p><em>Uncertainty</em> runs the model for draws of what is not known exactly, as Gibbs
+            Studio's Monte Carlo does. Up to eight numbers — anything <em>Sweeps</em> can vary — are each
+            given a distribution: normal, lognormal (a median, and the factor one standard deviation
+            takes it times or over by), uniform, log-uniform or triangular. They are drawn by
+            distributions.html's own sampling, by Latin hypercube, Sobol or simple random, each from a
+            stream of its own so that the same seed gives the same draws. <em>From the fit</em>
+            takes the last fit's numbers, each about its fitted value by its standard error, and
+            draws them together with the fit's correlations through a Gaussian copula — the
+            uncertainty of a calibrated model carried into what it predicts.</p>
+          <p>Every run is read at the same times, evenly over the run and evenly in the logarithm
+            over its last six decades, so that the bands are taken across the runs at each of them:
+            5 to 95 % and 25 to 75 % of the runs, their median, the model as it is written dashed
+            beside them, and what <code>&lt;DATA&gt;</code> measured at the cell. Along the column the
+            bands are of each run's end. One value of each run — at the end, its largest or its
+            smallest — is drawn as a histogram with its 5 %, median and 95 %, and Spearman's rank
+            correlation of each number drawn with it says what matters: near 1 or −1 the value
+            follows that number up or down, near 0 it does not.</p>
+
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
@@ -2320,7 +2398,8 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             curve, or a row per cell and a column per time; on <em>Composition</em> each band, or each
             water's ions in equivalents, their shares and its type; on <em>Diagrams</em> each point's
             value or name; on <em>Sweeps</em> what is drawn, a row per value or per point; on <em>Fit</em> each point measured, the
-            run there and its residual. <em>SVG</em> and <em>PNG</em> save the
+            run there and its residual; on <em>Uncertainty</em> the percentiles at each time or cell, or
+            each run's numbers and value. <em>SVG</em> and <em>PNG</em> save the
             chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
@@ -3047,14 +3126,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109h"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109i"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006e"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109h"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109i"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109h"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109i"></script>
 </body>
 </html>

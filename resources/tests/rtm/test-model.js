@@ -7455,6 +7455,22 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && swReply.runs.slice(3).every((r) => !r.ok && /simulated time must be positive/.test(r.error)),
   `A within ${worstDecay.toExponential(1)} of exp(-kk t); ${swReply.runs.filter((r) => !r.ok).length} refused: ${(swReply.runs[3] || {}).error}`);
 
+  // The draws of the uncertainty bands: runs given one by one, each read at the same times.
+  let unReply = null;
+  const unTimes = [0, 1, 2.5, 5, 10];
+  handleRtmMessage({ type: 'sweep', id: 4, text: decay, solver: { ...solverSw, rtol: 1e-10 }, vary: [{ kind: 'parameter', name: 'kk' }],
+    combos: [[0.1], [0.3]], times: unTimes, cell: 0 }, (msg) => { if (msg.type !== 'progress') unReply = msg; });
+  let unDirect = null;
+  const unModel = RtmModel.compile(RtmModel.withValue(decay, { kind: 'parameter', name: 'kk' }, 0.3));
+  unDirect = FacsimileODE.runModel(unModel, { solver: 'ndf', tend: 10, rtol: 1e-10, atol: 1e-20, nonNegative: true, outputTimes: unTimes,
+    maxPoints: 4, stagnationTol: 0.5 });
+  const unWorst = Math.max(...unReply.runs.flatMap((r) => unTimes.map((t, j) => Math.abs(r.cellStates[j * 2] - Math.exp(-r.values[0] * t)))));
+  check('  runs given one by one, as the uncertainty bands draw them, each read at the same times: A is exp(-kk t) at each, '
+    + 'the same to the bit as the text run by itself at those times',
+  unReply.runs.length === 2 && unReply.runs.every((r) => r.ok && r.m === unTimes.length && unTimes.every((t, j) => r.t[j] === t))
+    && unWorst < 1e-8 && unTimes.every((t, j) => unReply.runs[1].cellStates[j * 2] === unDirect.grid.y[j][0]),
+  `within ${unWorst.toExponential(1)} of exp(-kk t)`);
+
   // FITTING: the numbers moved until the run meets what <DATA> measured, as the worker fits them.
   const fitOf = (text, params, extra = {}) => {
     let reply = null;

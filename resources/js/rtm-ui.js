@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109h';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109i';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -63,6 +63,9 @@
     sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end', logT: true },
     // The Fit tab: the numbers fitted and where each starts, and the <DATA> columns left out.
     fit: { params: [], off: [] },
+    // The Uncertainty tab: each number drawn and its distribution, how many runs, how drawn, the cell kept; the last fit's
+    // correlations where its numbers were taken; then what is drawn of the runs.
+    unc: { rows: [], n: '100', scheme: 'lhs', seed: '1', cell: 0, useCorr: true, corr: null, show: 'time', key: '', of: 'end' },
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     sideWidth: null,
@@ -101,7 +104,7 @@
         gradTMin: state.gradTMin,
         compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
-        compTMin: state.compTMin, dg: state.dg, sw: state.sw, fit: state.fit,
+        compTMin: state.compTMin, dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
         // model that has moved on and no amount of reloading shifts it -- it is
@@ -167,6 +170,20 @@
             .slice(0, 4).map((p) => ({ what: p.what, start: p.start }));
         }
         if (Array.isArray(s.fit.off)) state.fit.off = s.fit.off.filter((x) => typeof x === 'string');
+      }
+      if (s.unc && typeof s.unc === 'object') {
+        const u = state.unc;
+        if (Array.isArray(s.unc.rows)) {
+          u.rows = s.unc.rows.filter((r) => r && typeof r.what === 'string' && UN_FAMILIES[r.family]).slice(0, 8)
+            .map((r) => ({ what: r.what, family: r.family, a: String(r.a ?? ''), b: String(r.b ?? ''), c: String(r.c ?? '') }));
+        }
+        for (const f of ['n', 'seed', 'key']) if (typeof s.unc[f] === 'string') u[f] = s.unc[f];
+        if (['lhs', 'sobol', 'random'].includes(s.unc.scheme)) u.scheme = s.unc.scheme;
+        if (['time', 'profile', 'spread', 'matters'].includes(s.unc.show)) u.show = s.unc.show;
+        if (['end', 'max', 'min'].includes(s.unc.of)) u.of = s.unc.of;
+        if (Number.isInteger(s.unc.cell) && s.unc.cell >= 0) u.cell = s.unc.cell;
+        if (typeof s.unc.useCorr === 'boolean') u.useCorr = s.unc.useCorr;
+        if (s.unc.corr && Array.isArray(s.unc.corr.whats) && Array.isArray(s.unc.corr.m)) u.corr = s.unc.corr;
       }
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
@@ -447,6 +464,7 @@
       renderDg();
       renderSw();
       renderFit();
+      renderUn();
       drawJacobianPattern();
       const m = reply.model;
       const warn = m.warnings.length ? ` ${m.warnings.length} warning${m.warnings.length > 1 ? 's' : ''}: ${m.warnings[0]}` : '';
@@ -701,6 +719,7 @@
     renderDg();
     renderSw();
     renderFit();
+    renderUn();
     drawTime();
     drawProfile();
     drawGradient();
@@ -762,9 +781,11 @@
     swBusy = false;
     dgBusy = false;
     fitBusy = false;
+    unBusy = false;
     $('rtmSwGo').disabled = false;
     $('rtmDgGo').disabled = false;
     $('rtmFitGo').disabled = false;
+    $('rtmUnGo').disabled = false;
     $('rtmRun').disabled = false;
     $('rtmVerify').disabled = false;
     $('rtmStop').disabled = true;
@@ -2482,6 +2503,19 @@
     return groups;
   }
 
+  /**
+   * The first of what can be varied that `taken` has not got, the likeliest first: a parameter, a reaction's constant, a
+   * log K, a species' start or what flows in, and a setting last -- a batch model has CELLS, which changes nothing.
+   */
+  function nextChoice(taken) {
+    const all = tuneChoices().flatMap((g) => g.items.map((it) => it.value)).filter((v) => !taken.has(v));
+    for (const kind of ['parameter:', 'rate:', 'logK:', 'initial:', 'left:', 'setting:']) {
+      const v = all.find((x) => x.startsWith(kind));
+      if (v) return v;
+    }
+    return all[0];
+  }
+
   /** What a sweep varies, from a choice's value: { kind, name }. */
   const swVary = (value) => {
     const i = String(value).indexOf(':');
@@ -2645,9 +2679,11 @@
   const VIRIDIS = ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'];
   const swColour = (i, n) => VIRIDIS[Math.round((n > 1 ? i / (n - 1) : 0) * (VIRIDIS.length - 1))];
 
-  /** A key's values in a run, at the cell along the run or along the column at the end. */
-  function swSeries(run, key, where) {
-    const rp = swResult.reply;
+  /** A key's values in a run of the sweep, at the cell along the run or along the column at the end. */
+  const swSeries = (run, key, where) => runSeries(swResult.reply, run, key, where);
+
+  /** A key's values in a run of a sweep's reply rp, at the cell along the run or along the column at the end. */
+  function runSeries(rp, run, key, where) {
     const k = rp.species.indexOf(key);
     const isQ = !(k >= 0 && !isQuantity(key));
     const q = isQ ? rp.keys.indexOf(key) : -1;
@@ -2809,7 +2845,7 @@
       + `<select data-row="${i}" aria-label="what to fit" data-on-change="rtm:fitSettings">${opts(p.what)}</select> from `
       + `<input type="text" class="rtm-dg-num" data-row="${i}" aria-label="where to start" value="${esc(p.start)}" data-on-change="rtm:fitSettings">`
       + `${f.params.length > 1 ? ` <button type="button" class="rtm-btn secondary small rtm-fit-x" data-row="${i}" `
-        + 'data-on-click="rtm:fitRemove" aria-label="Leave it out" title="Leave it out">×</button>' : ''}</span>`).join('');
+        + 'data-on-click="rtm:fitRemove" aria-label="Leave it out">×</button>' : ''}</span>`).join('');
     $('rtmFitAdd').hidden = f.params.length >= FIT_MAX;
     const cols = fitColumns();
     $('rtmFitCols').innerHTML = cols.map((c) => `<label><input type="checkbox" value="${esc(c)}"${f.off.includes(c) ? '' : ' checked'} `
@@ -2869,6 +2905,7 @@
         + `${reply.ssr0.toPrecision(4)} to ${reply.ssr.toPrecision(4)}.`, 'ok');
       renderFitResult();
       drawFit();
+      renderUn();
     } catch (e) {
       setProgress(null);
       setStatus(`The fit could not be made: ${e.message}`, 'error');
@@ -3042,6 +3079,422 @@
   }
 
   /* ---------------------------------------------------------------------
+     Uncertainty: the model run for draws of what is uncertain, and the runs
+     drawn as bands, as Gibbs Studio's Monte Carlo
+
+     Each number given a distribution is drawn by distributions.html's own
+     engine (resources/js/distributions/, loaded when first needed), each
+     from a stream of its own, by Latin hypercube, Sobol or simple random;
+     numbers from a fit are drawn together with its correlations, through a
+     Gaussian copula. The worker runs the draws as a sweep (rtmSweep, the
+     draws given), each run read at the same times so that the bands are
+     taken across runs at each of them.
+     --------------------------------------------------------------------- */
+  let unResult = null;
+  let unTableNow = null;
+  let unBusy = false;
+  const UN_MAX = 8;
+  // The families offered, and what each row's three fields are for them.
+  const UN_FAMILIES = {
+    normal: { label: 'normal', fields: ['mean', 'SD'] },
+    lognormal: { label: 'lognormal', fields: ['median', '× or ÷'] },
+    uniform: { label: 'uniform', fields: ['from', 'to'] },
+    loguniform: { label: 'log-uniform', fields: ['from', 'to'] },
+    triangular: { label: 'triangular', fields: ['from', 'most likely', 'to'] },
+  };
+
+  /** distributions.html's engine, loaded once: the distributions and the sampling schemes. */
+  let unEngine = null;
+  async function distributionsEngine() {
+    if (!unEngine) {
+      const base = new URL('resources/js/distributions/', document.baseURI).href;
+      unEngine = Promise.all([import(`${base}dist.js`), import(`${base}sampling.js`)])
+        .then(([dist, sampling]) => ({ makeDistribution: dist.makeDistribution, uniforms: sampling.uniforms }))
+        .catch((e) => { unEngine = null; throw e; });
+    }
+    return unEngine;
+  }
+
+  /** A row's distribution as distributions.html specifies one. */
+  function unSpec(row) {
+    const [a, b, c] = [row.a, row.b, row.c].map(Number);
+    if (row.family === 'normal') return { family: 'normal', params: { mu: a, sigma: b } };
+    if (row.family === 'lognormal') {
+      if (!(a > 0)) throw new Error('a lognormal\'s median is above zero');
+      if (!(b > 1)) throw new Error('a lognormal\'s factor, its median times or over at one standard deviation, is above 1');
+      return { family: 'lognormal', params: { mu: Math.log(a), sigma: Math.log(b) } };
+    }
+    if (row.family === 'uniform') return { family: 'uniform', params: { a, b } };
+    if (row.family === 'loguniform') return { family: 'loguniform', params: { a, b } };
+    return { family: 'triangular', params: { a, c: b, b: c } };
+  }
+
+  /** A new row's distribution about the value the text gives: a log K normal by 0.2, a number above zero lognormal ×/÷ 2. */
+  function unDefault(what) {
+    const c = swCurrent(what);
+    if (what.startsWith('logK:')) return { family: 'normal', a: fmtNumber(c === null ? 0 : c), b: '0.2', c: '' };
+    if (c !== null && c > 0) return { family: 'lognormal', a: fmtNumber(c), b: '2', c: '' };
+    return { family: 'normal', a: fmtNumber(c === null ? 0 : c), b: fmtNumber(Math.max(Math.abs(c || 0) * 0.1, 1e-12)), c: '' };
+  }
+
+  function renderUn() {
+    const u = state.unc;
+    const m = state.compiled;
+    const groups = tuneChoices();
+    const all = groups.flatMap((g) => g.items.map((it) => it.value));
+    const first = all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('rate:'))
+      || all.find((v) => v.startsWith('logK:')) || all[0] || '';
+    if (!u.rows.length && first) u.rows.push({ what: first, ...unDefault(first) });
+    for (const row of u.rows) if (all.length && !all.includes(row.what)) Object.assign(row, { what: first, ...unDefault(first) });
+    const opts = (chosen) => groups.map((g) => `<optgroup label="${esc(g.label)}">${g.items.map((it) => `<option value="${esc(it.value)}"`
+      + `${it.value === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
+    $('rtmUnRows').innerHTML = u.rows.map((row, i) => {
+      const fam = UN_FAMILIES[row.family] || UN_FAMILIES.normal;
+      const fields = fam.fields.map((label, j) => `${esc(label)} <input type="text" class="rtm-dg-num" data-row="${i}" `
+        + `data-field="${'abc'[j]}" aria-label="${esc(label)}" value="${esc(row['abc'[j]])}" data-on-change="rtm:unSettings">`).join(' ');
+      return `<span class="rtm-fit-row">${i ? 'and' : 'Draw'} <select data-row="${i}" data-field="what" aria-label="what is uncertain" `
+        + `data-on-change="rtm:unSettings">${opts(row.what)}</select> from a <select data-row="${i}" data-field="family" `
+        + `aria-label="its distribution" data-on-change="rtm:unSettings">${Object.entries(UN_FAMILIES).map(([id, f]) => `<option `
+        + `value="${id}"${id === row.family ? ' selected' : ''}>${f.label}</option>`).join('')}</select> ${fields}`
+        + `${u.rows.length > 1 ? ` <button type="button" class="rtm-btn secondary small rtm-fit-x" data-row="${i}" data-on-click="rtm:unRemove" `
+          + 'aria-label="Leave it out">×</button>' : ''}</span>`;
+    }).join('');
+    $('rtmUnAdd').hidden = u.rows.length >= UN_MAX;
+    $('rtmUnFromFit').disabled = !fitResult;
+    $('rtmUnN').value = u.n;
+    $('rtmUnScheme').value = u.scheme;
+    $('rtmUnSeed').value = u.seed;
+    const cells = m ? m.fracture : 1;
+    if (!(u.cell < cells)) u.cell = cells - 1;
+    $('rtmUnCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === u.cell ? ' selected' : ''}>`
+      + `${i}${m && m.centres && cells > 1 ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
+    $('rtmUnCellWrap').hidden = cells < 2;
+    // The fit's correlations go with its numbers as it gave them, in its order: changed, they no longer apply.
+    $('rtmUnCorrWrap').hidden = !unCorrApplies() || u.rows.length < 2;
+    $('rtmUnCorr').checked = u.useCorr;
+    $('rtmUnGo').disabled = unBusy;
+  }
+
+  /** Whether the rows are the last fit's numbers, in its order, so that its correlations apply. */
+  function unCorrApplies() {
+    const c = state.unc.corr;
+    return !!(c && c.whats.length === state.unc.rows.length && c.whats.every((w, i) => state.unc.rows[i].what === w));
+  }
+
+  function readUn() {
+    const u = state.unc;
+    document.querySelectorAll('#rtmUnRows [data-row]').forEach((el) => {
+      const row = u.rows[Number(el.dataset.row)];
+      const f = el.dataset.field;
+      if (!row || !f) return;
+      if (f === 'what') {
+        if (el.value !== row.what) Object.assign(row, { what: el.value, ...unDefault(el.value) });
+      } else if (f === 'family') {
+        if (el.value !== row.family) {
+          // A new family about the old centre: its middle where it has one, and a spread like the old one.
+          const centre = Number(row.family === 'uniform' || row.family === 'loguniform' ? row.a : row.family === 'triangular' ? row.b : row.a);
+          const c = Number.isFinite(centre) ? centre : (swCurrent(row.what) || 0);
+          row.family = el.value;
+          if (el.value === 'normal') Object.assign(row, { a: fmtNumber(c), b: fmtNumber(Math.max(Math.abs(c) * 0.1, 1e-12)), c: '' });
+          else if (el.value === 'lognormal') Object.assign(row, { a: fmtNumber(c > 0 ? c : 1), b: '2', c: '' });
+          else if (el.value === 'triangular') Object.assign(row, { a: fmtNumber(c > 0 ? c / 2 : c - 1), b: fmtNumber(c), c: fmtNumber(c > 0 ? c * 2 : c + 1) });
+          else Object.assign(row, { a: fmtNumber(c > 0 ? c / 2 : c - 1), b: fmtNumber(c > 0 ? c * 2 : c + 1), c: '' });
+        }
+      } else row[f] = el.value.trim();
+    });
+    u.n = $('rtmUnN').value.trim();
+    u.scheme = $('rtmUnScheme').value;
+    u.seed = $('rtmUnSeed').value.trim();
+    u.cell = Number($('rtmUnCell').value) || 0;
+    u.useCorr = $('rtmUnCorr').checked;
+  }
+
+  /** The last fit's numbers as rows, each about its fitted value by its standard error, and its correlations with them. */
+  function unFromFit() {
+    if (!fitResult) return;
+    const rows = fitResult.params.filter((p) => p.se !== null && Number.isFinite(p.se));
+    if (!rows.length) { setStatus('The last fit gave no standard errors to draw from.', 'error'); return; }
+    state.unc.rows = rows.map((p) => ({ what: `${p.kind}:${p.name}`, family: p.logged ? 'lognormal' : 'normal',
+      a: String(Number(p.value.toPrecision(6))), b: String(Number((p.logged ? 10 ** p.se : p.se).toPrecision(6))), c: '' }));
+    const idx = rows.map((p) => fitResult.params.indexOf(p));
+    state.unc.corr = fitResult.corr ? { whats: state.unc.rows.map((r) => r.what), m: idx.map((a) => idx.map((b) => fitResult.corr[a][b])) } : null;
+    state.unc.useCorr = true;
+    saveState();
+    renderUn();
+  }
+
+  /** The lower triangle L of a symmetric positive definite C = L L^T, or null. */
+  function cholesky(C) {
+    const n = C.length;
+    const L = Array.from({ length: n }, () => new Float64Array(n));
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j <= i; j++) {
+        let v = C[i][j];
+        for (let k = 0; k < j; k++) v -= L[i][k] * L[j][k];
+        if (i === j) { if (!(v > 0)) return null; L[i][i] = Math.sqrt(v); } else L[i][j] = v / L[j][j];
+      }
+    }
+    return L;
+  }
+
+  /** The draws: a value of each row to a run, by the scheme, from the seed, each row a stream of its own. */
+  async function unDraws() {
+    const u = state.unc;
+    const n = Math.round(Number(u.n));
+    if (!(n >= 2 && n <= 2000)) throw new Error('Runs: from 2 to 2000.');
+    const seed = Math.round(Number(u.seed));
+    if (!Number.isFinite(seed)) throw new Error('The seed is a whole number.');
+    const E = await distributionsEngine();
+    const letters = 'ABCDEFGHIJKLMNOP';
+    const D = u.rows.map((row) => {
+      try { return E.makeDistribution(unSpec(row)); } catch (e) { throw new Error(`${swVaryLabel(swVary(row.what))}: ${e.message}`); }
+    });
+    const us = u.rows.map((row, j) => E.uniforms(u.scheme, n, seed, letters[j]));
+    // Drawn together: the uniforms made normal, correlated by the fit's matrix, and made uniform again.
+    if (u.useCorr && unCorrApplies() && u.rows.length > 1) {
+      const L = cholesky(u.corr.m);
+      if (!L) throw new Error('The fit\'s correlations make no correlation matrix: draw the numbers apart.');
+      const N = E.makeDistribution({ family: 'normal', params: { mu: 0, sigma: 1 } });
+      for (let i = 0; i < n; i++) {
+        const z = us.map((w) => N.at(w.u[i], w.uc[i]));
+        us.forEach((w, j) => {
+          let v = 0;
+          for (let k = 0; k <= j; k++) v += L[j][k] * z[k];
+          w.u[i] = N.cdf(v);
+          w.uc[i] = N.sf(v);
+        });
+      }
+    }
+    return Array.from({ length: n }, (_, i) => D.map((d, j) => d.at(us[j].u[i], us[j].uc[i])));
+  }
+
+  async function unGo() {
+    if (unBusy || state.running) return;
+    if (!state.compiled) { setStatus('The model does not compile: there is nothing to run.', 'error'); return; }
+    const u = state.unc;
+    const vary = u.rows.map((row) => swVary(row.what));
+    if (new Set(u.rows.map((r) => r.what)).size < vary.length) { setStatus('The same number is drawn twice: name each once.', 'error'); return; }
+    let draws;
+    try { draws = await unDraws(); } catch (e) { setStatus(`The draws could not be made: ${e.message}`, 'error'); return; }
+    let solver;
+    try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
+    // The model as it is written runs first, for reference, where the text gives each number.
+    const base = vary.map((v) => swCurrent(`${v.kind}:${v.name}`));
+    const withBase = base.every((v) => v !== null);
+    const tend = solver.tend > 0 ? solver.tend : state.compiled.settings.TEND;
+    // Every run read at the same times: evenly over the run, and evenly in the logarithm over its last six decades.
+    const times = [...new Set([...Array.from({ length: 101 }, (_, i) => (tend * i) / 100),
+      ...Array.from({ length: 81 }, (_, i) => tend * 10 ** (-6 + (6 * i) / 80))].map((x) => Number(x.toPrecision(12))))].sort((a, b) => a - b);
+    unBusy = true;
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmStop').disabled = false;
+    $('rtmUnGo').disabled = true;
+    setProgress(0);
+    const combos = withBase ? [base, ...draws] : draws;
+    setStatus(`Running ${combos.length} times…`);
+    try {
+      const reply = await request({ type: 'sweep', text: state.text, solver, vary, combos, times, cell: u.cell }, (p) => {
+        setProgress(p.frac);
+        setStatus(`Running ${p.run + 1} of ${p.runs}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}`);
+      });
+      unResult = { reply, vary, withBase, rows: u.rows.map((r) => ({ ...r })), n: draws.length, scheme: u.scheme, seed: u.seed,
+        corr: u.useCorr && unCorrApplies() && u.rows.length > 1 };
+      const runs = reply.runs.slice(withBase ? 1 : 0);
+      const failed = runs.filter((r) => !r.ok);
+      setProgress(null);
+      setStatus(`${runs.length - failed.length} of ${runs.length} runs done in ${reply.seconds.toFixed(2)} s`
+        + `${failed.length ? `; the first that failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+      renderUnShow();
+      drawUn();
+    } catch (e) {
+      setProgress(null);
+      setStatus(`The runs could not be made: ${e.message}`, 'error');
+    } finally {
+      unBusy = false;
+      state.running = false;
+      $('rtmRun').disabled = false;
+      $('rtmStop').disabled = true;
+      $('rtmUnGo').disabled = false;
+    }
+  }
+
+  function renderUnShow() {
+    $('rtmUnShowBar').hidden = !unResult;
+    if (!unResult) return;
+    const u = state.unc;
+    const column = unResult.reply.runs.some((r) => r.ok && r.nf > 1);
+    if (u.show === 'profile' && !column) u.show = 'time';
+    $('rtmUnShow').querySelector('option[value="profile"]').hidden = !column;
+    $('rtmUnShow').value = u.show;
+    if (!speciesNames().includes(u.key) && !quantityOf(u.key)) u.key = speciesNames()[0] || '';
+    $('rtmUnKey').innerHTML = pickerOptions(u.key);
+    $('rtmUnOf').value = u.of;
+    $('rtmUnOfWrap').hidden = u.show === 'time' || u.show === 'profile';
+    $('rtmUnLogTWrap').hidden = u.show !== 'time';
+    $('rtmUnLogYWrap').hidden = u.show === 'matters' || (isQuantity(u.key) && quantityOf(u.key).axis === 'index');
+  }
+
+  /** The type-7 percentile p (0 to 100) of sorted values. */
+  function percentile(sorted, p) {
+    if (!sorted.length) return null;
+    const h = (sorted.length - 1) * (p / 100);
+    const lo = Math.floor(h);
+    return lo + 1 < sorted.length ? sorted[lo] + (h - lo) * (sorted[lo + 1] - sorted[lo]) : sorted[lo];
+  }
+
+  /** Spearman's rank correlation of two lists: Pearson's of their ranks, ties given the mean of their ranks. */
+  function spearman(x, y) {
+    const rank = (v) => {
+      const idx = v.map((_, i) => i).sort((a, b) => v[a] - v[b]);
+      const r = new Array(v.length);
+      for (let i = 0; i < idx.length;) {
+        let j = i;
+        while (j + 1 < idx.length && v[idx[j + 1]] === v[idx[i]]) j++;
+        for (let k = i; k <= j; k++) r[idx[k]] = (i + j) / 2;
+        i = j + 1;
+      }
+      return r;
+    };
+    const rx = rank(x);
+    const ry = rank(y);
+    const n = x.length;
+    const mx = rx.reduce((a, b) => a + b, 0) / n;
+    const my = ry.reduce((a, b) => a + b, 0) / n;
+    let sxy = 0;
+    let sxx = 0;
+    let syy = 0;
+    for (let i = 0; i < n; i++) { sxy += (rx[i] - mx) * (ry[i] - my); sxx += (rx[i] - mx) ** 2; syy += (ry[i] - my) ** 2; }
+    return sxx > 0 && syy > 0 ? sxy / Math.sqrt(sxx * syy) : 0;
+  }
+
+  const UN_P = [5, 25, 50, 75, 95];
+
+  function drawUn() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartUn');
+    const empty = $('rtmUnEmpty');
+    const note = $('rtmUnNote');
+    unTableNow = null;
+    if (!unResult) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      note.textContent = '';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const u = state.unc;
+    const rp = unResult.reply;
+    const base = unResult.withBase && rp.runs[0].ok ? rp.runs[0] : null;
+    const runs = rp.runs.slice(unResult.withBase ? 1 : 0).filter((r) => r.ok);
+    const key = u.key;
+    const q = isQuantity(key) ? quantityOf(key) : null;
+    const index = !!(q && q.axis === 'index');
+    const logY = $('rtmUnLogY').checked && !index;
+    const yTitle = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${key} concentration`;
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    const c = themeColors();
+    const blue = '#1f77b4';
+    const failedNote = rp.runs.length - (unResult.withBase ? 1 : 0) > runs.length
+      ? `; ${rp.runs.length - (unResult.withBase ? 1 : 0) - runs.length} failed and are left out` : '';
+    const what = `${runs.length} runs, drawn by ${{ lhs: 'Latin hypercube', sobol: 'Sobol', random: 'simple random' }[unResult.scheme]}`
+      + `${unResult.corr ? ' with the fit\'s correlations' : ''}${failedNote}`;
+    if (u.show === 'time' || u.show === 'profile') {
+      const where = u.show === 'time' ? 'cell' : 'end';
+      const series = runs.map((r) => runSeries(rp, r, key, where));
+      const xs = u.show === 'time' ? Array.from(runs[0].t) : Array.from(runs[0].centres);
+      const bands = UN_P.map((p) => xs.map((_, i) => {
+        const vals = series.map((s) => s[i]).filter((v) => Number.isFinite(v) && (!logY || v > 0)).sort((a, b) => a - b);
+        return percentile(vals, p);
+      }));
+      const logT = u.show === 'time' && $('rtmUnLogT').checked;
+      const keep = xs.map((x) => !logT || x > 0);
+      const X = xs.filter((_, i) => keep[i]);
+      const B = bands.map((b) => b.filter((_, i) => keep[i]));
+      const traces = [
+        { type: 'scatter', mode: 'lines', x: X, y: B[0], line: { width: 0 }, hoverinfo: 'skip', showlegend: false },
+        { type: 'scatter', mode: 'lines', name: '5 to 95 %', x: X, y: B[4], line: { width: 0 }, fill: 'tonexty',
+          fillcolor: 'rgba(31,119,180,0.18)', hovertemplate: '95 %: %{y:.4g}<extra></extra>' },
+        { type: 'scatter', mode: 'lines', x: X, y: B[1], line: { width: 0 }, hoverinfo: 'skip', showlegend: false },
+        { type: 'scatter', mode: 'lines', name: '25 to 75 %', x: X, y: B[3], line: { width: 0 }, fill: 'tonexty',
+          fillcolor: 'rgba(31,119,180,0.35)', hovertemplate: '75 %: %{y:.4g}<extra></extra>' },
+        { type: 'scatter', mode: 'lines', name: 'the median', x: X, y: B[2], line: { color: '#ff7f0e', width: 2 },
+          hovertemplate: 'median: %{y:.4g}<extra></extra>' },
+      ];
+      if (base) {
+        const y = runSeries(rp, base, key, where).filter((_, i) => keep[i]);
+        traces.push({ type: 'scatter', mode: 'lines', name: 'the model as written', x: X, y, line: { color: c.text, width: 1.2, dash: 'dash' } });
+      }
+      // What <DATA> measured there: at the cell kept, or along the column at the end of the run.
+      if (u.show === 'time') {
+        for (const d of measured('time', key)) {
+          if ((d.tab.cell || 0) !== u.cell || (d.tab.layer || 0) !== 0) continue;
+          traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: d.x, y: d.y,
+            marker: { size: 8, symbol: 'circle-open', color: c.text, line: { width: 1.6 } } });
+        }
+      }
+      layout.xaxis.type = logT ? 'log' : 'linear';
+      layout.xaxis.title = { text: u.show === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.yaxis.type = logY ? 'log' : 'linear';
+      layout.yaxis.title = { text: yTitle, font: { size: 11 } };
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      unTableNow = { head: [u.show === 'time' ? `t (${timeUnit().symbol})` : 'distance (m)', ...UN_P.map((p) => `${labelOf(key)}, ${p} %`),
+        ...(base ? [`${labelOf(key)}, the model as written`] : [])], name: `rtm_uncertainty_${u.show}`,
+      rows: xs.map((x, i) => [x, ...bands.map((b) => b[i]), ...(base ? [runSeries(rp, base, key, where)[i]] : [])]) };
+      note.textContent = `${what}; ${u.show === 'time' ? `cell ${rp.cell}` : 'the end of each run'}`;
+      return;
+    }
+    // One value of each run: its value at the end at the cell, its largest or its smallest.
+    const summary = (r) => {
+      const y = runSeries(rp, r, key, 'cell').filter(Number.isFinite);
+      if (!y.length) return null;
+      return u.of === 'max' ? Math.max(...y) : u.of === 'min' ? Math.min(...y) : y[y.length - 1];
+    };
+    const vals = runs.map(summary);
+    const ok = runs.map((r, i) => [r, vals[i]]).filter(([, v]) => v !== null && Number.isFinite(v));
+    const ofText = { end: 'at the end', max: 'its largest', min: 'its smallest' }[u.of];
+    const labels = unResult.vary.map(swVaryLabel);
+    unTableNow = { head: ['run', ...labels, `${labelOf(key)}, ${ofText} at cell ${rp.cell}`], name: 'rtm_uncertainty_runs',
+      rows: ok.map(([r, v], i) => [i + 1, ...r.values, v]) };
+    if (u.show === 'spread') {
+      const sorted = ok.map(([, v]) => v).sort((a, b) => a - b);
+      const useLog = logY && sorted[0] > 0;
+      const shown = useLog ? sorted.map(Math.log10) : sorted;
+      const marks = [5, 50, 95].map((p) => percentile(sorted, p));
+      const traces = [{ type: 'histogram', x: shown, marker: { color: 'rgba(31,119,180,0.6)', line: { color: blue, width: 1 } },
+        name: 'the runs', nbinsx: Math.min(40, Math.max(8, Math.round(Math.sqrt(sorted.length) * 2))), hovertemplate: '%{x}: %{y} runs<extra></extra>' }];
+      layout.shapes = marks.map((v, i) => ({ type: 'line', xref: 'x', yref: 'paper', x0: useLog ? Math.log10(v) : v, x1: useLog ? Math.log10(v) : v,
+        y0: 0, y1: 1, line: { color: blue, width: i === 1 ? 2 : 1, dash: i === 1 ? 'solid' : 'dot' } }));
+      if (base) {
+        const bv = summary(base);
+        if (bv !== null && Number.isFinite(bv) && (!useLog || bv > 0)) {
+          layout.shapes.push({ type: 'line', xref: 'x', yref: 'paper', x0: useLog ? Math.log10(bv) : bv, x1: useLog ? Math.log10(bv) : bv,
+            y0: 0, y1: 1, line: { color: c.text, width: 1.2, dash: 'dash' } });
+        }
+      }
+      layout.xaxis.title = { text: `${useLog ? 'log₁₀ ' : ''}${yTitle}, ${ofText} at cell ${rp.cell}`, font: { size: 11 } };
+      layout.yaxis.title = { text: 'runs', font: { size: 11 } };
+      layout.bargap = 0.04;
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      note.textContent = `${what}; 5 % ${fit4(marks[0])}, the median ${fit4(marks[1])}, 95 % ${fit4(marks[2])}`
+        + `${base ? '; the dashed line the model as written' : ''}`;
+      return;
+    }
+    // What matters: Spearman's rank correlation of each number drawn with the value.
+    const rho = unResult.vary.map((_, j) => spearman(ok.map(([r]) => r.values[j]), ok.map(([, v]) => v)));
+    Plotly.react(plot, [{ type: 'bar', orientation: 'h', x: rho, y: labels, marker: { color: rho.map((v) => (v < 0 ? '#d62728' : blue)) },
+      hovertemplate: '%{y}: %{x:.3f}<extra></extra>' }], {
+      ...layout, margin: { ...layout.margin, l: Math.min(320, 40 + 7 * Math.max(...labels.map((s) => s.length))) },
+      xaxis: { ...layout.xaxis, range: [-1, 1], title: { text: `Spearman's rank correlation with ${labelOf(key)}, ${ofText}`, font: { size: 11 } } },
+      yaxis: { ...layout.yaxis, automargin: true } }, PLOT_CONFIG);
+    unTableNow = { ...unTableNow, head: [...unTableNow.head], rows: unTableNow.rows };
+    note.textContent = `${what}; ${labels.map((l, j) => `${l} ${rho[j].toFixed(3)}`).join(', ')}`;
+  }
+
+  /* ---------------------------------------------------------------------
      CSV
      --------------------------------------------------------------------- */
   /**
@@ -3116,6 +3569,7 @@
     if (pane === 'diagram') return dgTableNow;
     if (pane === 'sweep') return swTableNow;
     if (pane === 'fit') return fitTableNow;
+    if (pane === 'uncertainty') return unTableNow;
     const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
     return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
   }
@@ -3126,9 +3580,13 @@
    * one sheet, the model text the run was made with on another.
    */
   async function exportPane(pane, as) {
-    if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
+    // A diagram, a sweep, a fit and the uncertainty runs have their own runs: the rest are of the run.
+    if (!state.result && ['time', 'profile', 'gradient', 'composition'].includes(pane)) {
+      setStatus('Run the model first: there is nothing to save yet.', 'error');
+      return;
+    }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
-      diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit' }[pane]);
+      diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn' }[pane]);
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
@@ -3286,13 +3744,15 @@
     if (name === 'diagram') { renderDg(); renderDgShow(); drawDg(); resize(); }
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
+    if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
     if (name === 'phreeqc') { pqRenderView(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
   function resize() {
     if (typeof Plotly === 'undefined') return;
-    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartPq']
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
+      'rtmChartPq']
       .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
@@ -4036,6 +4496,26 @@
       more: more('Fitting to what was measured', 'help-fit'),
     }),
 
+    'pane:uncertainty': () => ({
+      kicker: 'Tab', title: 'Uncertainty',
+      lead: 'The model run for draws of what is uncertain, as Gibbs Studio\'s Monte Carlo: each number given a distribution, drawn, run, and the runs drawn as bands.',
+      sections: [
+        { heading: 'What is drawn', list: [
+          '**Draw** … **from a**: up to eight numbers — anything Sweeps can vary — each with a distribution: normal (mean, SD), lognormal (median, and the factor one standard deviation takes it × or ÷ by), uniform or log-uniform (from, to), triangular (from, most likely, to). A new one starts about the value the text gives it.',
+          '**From the fit**: the last fit\'s numbers, each about its fitted value by its standard error — lognormal for one fitted in its logarithm — and **with the fit\'s correlations** drawn together, through a Gaussian copula.',
+          '**Runs**, **drawn by** Latin hypercube, Sobol or simple random, and **seed**: distributions.html\'s own sampling, each number from a stream of its own, the same draws from the same seed.',
+          '**keeping cell**: the cell whose every species and quantity each run keeps; along the column, each run\'s end is kept whole. The model as it is written runs too, for reference.',
+        ] },
+        { heading: 'Show', list: [
+          '**bands against time** at the cell, or **along the column at the end**: 5 to 95 % and 25 to 75 % of the runs at each time or cell, their median, the model as written dashed, and what <DATA> measured there.',
+          '**the spread of one value** — at the end, its largest or its smallest — as a histogram, with its 5 %, median and 95 %.',
+          '**what matters**: Spearman\'s rank correlation of each number drawn with that value, from −1 to 1.',
+        ] },
+        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value. **SVG**, **PNG**: the picture.'] },
+      ],
+      more: more('Uncertainty', 'help-uncertainty'),
+    }),
+
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
       lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
@@ -4264,8 +4744,11 @@
     dgResult = null;
     swResult = null;
     fitResult = null;
+    unResult = null;
     state.fit.params = [];
     state.fit.off = [];
+    state.unc.rows = [];
+    state.unc.corr = null;
     pendingView = null;
   }
 
@@ -4700,7 +5183,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109h';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109i';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -5657,7 +6140,7 @@ END
       if (state.fit.params.length < FIT_MAX) state.fit.params.push({ what: '', start: '' });
       // A new row takes the first choice not fitted already.
       const taken = new Set(state.fit.params.map((p) => p.what));
-      const next = tuneChoices().flatMap((g) => g.items.map((it) => it.value)).find((v) => !taken.has(v));
+      const next = nextChoice(taken);
       const row = state.fit.params[state.fit.params.length - 1];
       if (!row.what && next) row.what = next;
       saveState();
@@ -5672,6 +6155,33 @@ END
     'rtm:fitGo': () => { readFit(); saveState(); renderFit(); fitGo(); },
     'rtm:fitRedraw': () => { drawFit(); },
     'rtm:fitApply': () => fitApply(),
+    'rtm:unSettings': () => { readUn(); saveState(); renderUn(); infoRefresh(); },
+    'rtm:unAdd': () => {
+      readUn();
+      const taken = new Set(state.unc.rows.map((r) => r.what));
+      const next = nextChoice(taken);
+      if (next && state.unc.rows.length < UN_MAX) state.unc.rows.push({ what: next, ...unDefault(next) });
+      saveState();
+      renderUn();
+    },
+    'rtm:unRemove': (ev, el) => {
+      readUn();
+      state.unc.rows.splice(Number(el.dataset.row), 1);
+      saveState();
+      renderUn();
+    },
+    'rtm:unFromFit': () => unFromFit(),
+    'rtm:unGo': () => { readUn(); saveState(); renderUn(); unGo(); },
+    'rtm:unRedraw': () => {
+      const u = state.unc;
+      u.show = $('rtmUnShow').value;
+      u.key = $('rtmUnKey').value;
+      u.of = $('rtmUnOf').value;
+      saveState();
+      renderUnShow();
+      drawUn();
+      infoRefresh();
+    },
     'rtm:pick': (ev, el) => {
       const name = el.value;
       if (el.checked) { if (!state.picked.includes(name)) state.picked.push(name); }
@@ -5801,7 +6311,8 @@ END
     pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
       + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');
   }
-  showTab(['profile', 'gradient', 'composition', 'diagram', 'sweep', 'fit', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
+  showTab(['profile', 'gradient', 'composition', 'diagram', 'sweep', 'fit', 'uncertainty', 'phreeqc', 'model', 'jacobian', 'help']
+    .includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);
   compile();

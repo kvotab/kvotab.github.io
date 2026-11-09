@@ -48,9 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, ten tab toolbars, and the PHREEQC panel's heading and
+# of the Solver section, eleven tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 39
+STATIC_SLOTS = 40
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -170,6 +170,26 @@ kk  all  0.1
 
 <REACTIONS>
 A => B, r = kk*[A]
+'''
+
+# A decay at a rate kk and a number zz that nothing reads: drawn for the uncertainty bands, A's percentiles at the end are
+# exp(-10 kk) at kk's order statistics, and zz matters not at all.
+UNCERTAIN_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 10
+
+<SPECIES>
+A  1
+B  0
+
+<PARAMETERS>
+kk  all  0.25
+zz  all  3
+
+<REACTIONS>
+A => B, r = kk*[A]
+B => , r = 0*zz*[B]
 '''
 
 def check(label, got, want=True):
@@ -1072,6 +1092,78 @@ async def main():
             applied = await settle(page, "/^kc\\s+all\\s+0\\.000\\d+/m.test(document.getElementById('rtmText').value)"
                                          " && document.getElementById('rtmStatus').textContent.startsWith('The fitted values are in')", True, tries=40)
             check('  and Put the fitted values in the model writes kc into its line in <PARAMETERS>', applied, True)
+            await page.ev("document.querySelector('[data-tab=\"uncertainty\"]').click()")
+            await asyncio.sleep(0.3)
+            await page.ev("document.getElementById('rtmUnFromFit').click()")
+            await asyncio.sleep(0.3)
+            fromfit = await page.ev("[...document.querySelectorAll('#rtmUnRows [data-row]')].map((e) => e.value)")
+            check('  From the fit, on the Uncertainty tab: kc as a lognormal about its fitted value, times or over its standard '
+                  'error, alone, so no correlations to draw it with', isinstance(fromfit, list) and fromfit[:2] == ['parameter:kc', 'lognormal']
+                  and 4e-4 < float(fromfit[2]) < 6e-4 and 1 < float(fromfit[3]) < 1.2 and len(fromfit) == 4
+                  and await page.ev("document.getElementById('rtmUnCorrWrap').hidden"), True)
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
+            # --- the model run for draws of what is uncertain: the Uncertainty tab ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, UNCERTAIN_MODEL)
+            await page.ev("document.querySelector('[data-on-click=\"rtm:applyModel\"]').click()")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 2 species')", True, tries=40, pause=0.25)
+            await page.ev("document.querySelector('[data-tab=\"uncertainty\"]').click()")
+            await asyncio.sleep(0.4)
+            # Rows the model before left are the user's: this check starts its own.
+            await page.ev("(() => { const s = document.querySelector('#rtmUnRows select[data-field=\"what\"]'); s.value = 'parameter:kk';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('a number drawn starts as a lognormal about the value the text gives it, times or over 2', await page.ev(
+                "[...document.querySelectorAll('#rtmUnRows [data-row=\"0\"]')].map((e) => e.value).join(' / ')"),
+                'parameter:kk / lognormal / 0.25 / 2')
+            await page.ev("""(() => { const set = (sel, v) => { const e = document.querySelector(sel); e.value = v;
+              e.dispatchEvent(new Event('change', { bubbles: true })); };
+              set('#rtmUnRows input[data-row="0"][data-field="b"]', '1.5'); set('#rtmUnN', '101'); set('#rtmUnSeed', '1');
+              set('#rtmUnScheme', 'lhs'); })()""")
+            await page.ev("(() => { while (document.querySelectorAll('#rtmUnRows .rtm-fit-row').length > 1)"
+                          " document.querySelector('#rtmUnRows .rtm-fit-x[data-row=\"1\"]').click(); })()")
+            await page.ev("document.getElementById('rtmUnAdd').click()")
+            await asyncio.sleep(0.3)
+            check('  and another takes the next parameter, not a setting', await page.ev(
+                "document.querySelector('#rtmUnRows select[data-row=\"1\"][data-field=\"what\"]').value"), 'parameter:zz')
+            await page.ev("document.getElementById('rtmUnGo').click()")
+            done = await settle(page, "/^101 of 101 runs done/.test(document.getElementById('rtmStatus').textContent)", True, tries=80, pause=0.5)
+            check('101 runs, the model as written beside them', done, True)
+            await page.ev("""(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };
+                if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()""")
+            for show in ['matters', 'time']:
+                await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(show))
+                await asyncio.sleep(0.5)
+                await page.ev("document.querySelector('[data-pane=\"uncertainty\"][data-as=\"csv\"]').click()")
+                await asyncio.sleep(0.6)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csvs = await page.ev("(async () => Promise.all(window.__saved.map(async (r) => (await r.body).split('\\n'))))()")
+            runs_csv = [[float(x) for x in line.split(',')] for line in csvs[0][1:]]
+            ks = [r[1] for r in runs_csv]
+            # The same draws as distributions.html's engine makes from seed 1, the first stream, by Latin hypercube.
+            engine = await page.ev("""(async () => { const b = new URL('resources/js/distributions/', document.baseURI).href;
+              const [d, s] = await Promise.all([import(b + 'dist.js'), import(b + 'sampling.js')]);
+              const D = d.makeDistribution({ family: 'lognormal', params: { mu: Math.log(0.25), sigma: Math.log(1.5) } });
+              const w = s.uniforms('lhs', 101, 1, 'A');
+              return Array.from(w.u, (u, i) => D.at(u, w.uc[i])); })()""")
+            check('  kk drawn as distributions.html draws it: the same 101 values, by Latin hypercube from seed 1',
+                  isinstance(engine, list) and len(engine) == 101 and all(abs(a - b) <= 1e-12 * abs(b) for a, b in zip(ks, engine)), True)
+            band = [float(x) for x in csvs[1][-1].split(',')]
+            ko = sorted(ks)
+            want = [math.exp(-10 * ko[95]), math.exp(-10 * ko[50]), math.exp(-10 * ko[5])]
+            check('  the bands at the end: 5 %, the median and 95 % of A are exp(-10 kk) at kk\'s 95th, 51st and 6th of 101, '
+                  'to the solver\'s tolerance', [band[0] == 10] + [abs(band[i] / w - 1) < 1e-4 for i, w in zip([1, 3, 5], want)],
+                  [True, True, True, True])
+            rho = await page.ev("document.getElementById('rtmUnNote').textContent")
+            matters = await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'matters';"
+                                    " s.dispatchEvent(new Event('change', { bubbles: true }));"
+                                    " return document.getElementById('rtmChartUn').data[0].x; })()")
+            check('  what matters: A at the end falls with kk, a rank correlation of -1, and zz, which nothing reads, near 0',
+                  isinstance(matters, list) and abs(matters[0] + 1) < 1e-12 and abs(matters[1]) < 0.3, True)
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 
@@ -1622,7 +1714,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient composition diagram sweep fit phreeqc model jacobian help'])
+                [True, ['gradient'], 'time profile gradient composition diagram sweep fit uncertainty phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

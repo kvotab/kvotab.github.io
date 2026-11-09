@@ -521,7 +521,9 @@ function rtmSweep(msg, post) {
   const s = msg.solver || {};
   const vary = msg.vary;
   const lists = msg.values;
-  const combos = lists.length === 2 ? lists[1].flatMap((b) => lists[0].map((a) => [a, b])) : lists[0].map((a) => [a]);
+  // The runs: every value of one, every pair of two, or -- for the uncertainty bands -- the draws given, a value of each
+  // thing varied to a run.
+  const combos = msg.combos || (lists.length === 2 ? lists[1].flatMap((b) => lists[0].map((a) => [a, b])) : lists[0].map((a) => [a]));
   const runs = [];
   let names = null;
   let keys = null;
@@ -534,17 +536,21 @@ function rtmSweep(msg, post) {
       vary.forEach((v, d) => { text = RtmModel.withValue(text, v, combo[d]); });
       const model = RtmModel.compile(text);
       const tend = s.tend > 0 ? s.tend : model.settings.TEND;
-      const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {
+      // msg.times: every run read at the same times, as bands across the runs need, rather than at the steps it stored.
+      const times = msg.times ? msg.times.filter((x) => x <= tend * (1 + 1e-12)) : null;
+      const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, (t, nsteps) => {
         const now = Date.now();
         if (now - lastReport < 250) return true;
         lastReport = now;
         post({ type: 'progress', id: msg.id, run: r, runs: combos.length, t, tend, nsteps,
           frac: Math.min(1, (r + Math.min(1, t / tend)) / combos.length) });
         return true;
-      }));
-      const n = res.t.length;
+      }), ...(times ? { outputTimes: times, maxPoints: 4 } : {}) });
+      const at = times ? res.grid : res;
+      if (times && (!at || at.t.length < times.length)) throw new Error('the run did not reach every time asked for');
+      const n = at.t.length;
       const width = model.stateWidth || model.nspecies;
-      const states = rtmConcentrations(model, res.y, n, width, res.t);
+      const states = rtmConcentrations(model, at.y, n, width, at.t);
       const ns = model.speciesNames.length;
       const nq = model.quantities.length;
       names = names || model.speciesNames;
@@ -563,9 +569,9 @@ function rtmSweep(msg, post) {
       const cellQuant = new Float64Array(m * nq);
       pick.forEach((i, j) => {
         const c = states.subarray(i * width, (i + 1) * width);
-        t[j] = res.t[i];
+        t[j] = at.t[i];
         cellStates.set(c.subarray(cell * ns, (cell + 1) * ns), j * ns);
-        model.quantitiesAt(c, res.t[i], cell, which, qOut);
+        model.quantitiesAt(c, at.t[i], cell, which, qOut);
         cellQuant.set(qOut, j * nq);
       });
       // Along the column at the end, the fracture's cells.
@@ -576,11 +582,11 @@ function rtmSweep(msg, post) {
       const endQuant = new Float64Array(nf * nq);
       for (let k = 0; k < nf; k++) {
         endStates.set(last.subarray(k * stride * ns, (k * stride + 1) * ns), k * ns);
-        model.quantitiesAt(last, res.t[n - 1], k * stride, which, qOut);
+        model.quantitiesAt(last, at.t[n - 1], k * stride, which, qOut);
         endQuant.set(qOut, k * nq);
       }
       runs.push({ values: combo, ok: true, m, t, cellStates, cellQuant, nf, centres: Float64Array.from(model.grid.centres.slice(0, nf)),
-        endStates, endQuant, tend: res.t[n - 1], steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
+        endStates, endQuant, tend: at.t[n - 1], steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
     } catch (e) {
       runs.push({ values: combo, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
     }

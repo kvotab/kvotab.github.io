@@ -429,6 +429,9 @@ standard error to 1e-6 by central differences at the end -- forward ones were
 log K and a reaction's own constant together (B over A is K, the total grows
 by q); a velocity fitted to a front measured along a column at one time; and
 four refusals with their reasons.
+Runs given one by one, as the uncertainty bands draw them (since
+2026-11-09): each read at the same times asked for, A exp(-kk t) at each to
+2.4e-10, the same to the bit as the text run by itself at those times.
 
 **Ion exchange** (`exchanger`, `exchange`). A binary Na/Ca exchange from an
 exchanger all Na, against its closed solution (7e-14), the sites and the totals
@@ -922,7 +925,9 @@ The Diagrams tab (since 2026-11-09), on a carbonate water without activities: wi
 
 The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARAMETERS>`: the parameter is offered, and a new choice starts from half its value, the value and twice it (0.05, 0.1, 0.2); 0.1 to 0.4 in 4 makes four runs; against what was varied, A at the end of each is exp(-10 kk) to the solver's tolerance (1.1e-5 at rtol 1e-6); against time, a curve per run named for its value.
 
-The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it.
+The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it. From the fit, on the Uncertainty tab, then gives kc as a lognormal about its fitted value, times or over its standard error, alone and so without the box of the fit's correlations.
+
+The Uncertainty tab (since 2026-11-09), on a decay at a rate kk and a number zz nothing reads: a number drawn starts as a lognormal about the value the text gives it, times or over 2, and and another takes the next parameter rather than a setting; 101 runs by Latin hypercube from seed 1, kk lognormal times or over 1.5; the 101 values of kk the same as distributions.html's engine draws, imported in the page and run with the same seed and stream; the bands at the end -- 5 %, the median and 95 % of A -- exp(-10 kk) at kk's 95th, 51st and 6th of 101 to the solver's tolerance, as a falling function of kk has them with type-7 percentiles at whole order statistics (101 runs); and what matters, kk's rank correlation with A at the end -1 to 1e-12 and zz's near 0. A hover tooltip on the From the fit button and the rows' leave-it-out buttons broke the page's rule of none; the (i) says what they do.
 
 The examples that show a way of reading results (since 2026-11-09) open on it once they have run: the carbonate example on Diagrams, the carbon against pH worked out; the exchange example on Sweeps, four capacities run and a curve each at the outlet against linear time, the menu naming the exchanger's capacity as the text gives it (0.002); the salinisation example on Composition, the outlet's path through a Piper diagram with the three measured waters there, from Ca–HCO₃ at the start to Na–Cl. The picker offers 23 examples in 10 groups.
 
