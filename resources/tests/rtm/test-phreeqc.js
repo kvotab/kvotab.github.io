@@ -3459,6 +3459,9 @@ function againstTransportHandOff(engine) {
     ['-correct_disp, flux at both ends', '-time_step 3600\n -dispersivities 0.01\n -correct_disp true',
       'CELLS = 5; LENGTH = 5; DIFFUSION = 1; ADVECTION = 1; VELOCITY = 0.000277777777777778; PECLET = 357.142857142857; '
       + 'LEFT = robin; RIGHT = free; TEND = 14400'],
+    ['-multi_D with the water moving', '-time_step 3600\n -dispersivities 0.01\n -multi_d true 1e-9 0.3 0 1',
+      'CELLS = 5; LENGTH = 5; DIFFUSION = nernst-planck; ADVECTION = 1; VELOCITY = 0.000277777777777778; PECLET = 500; '
+      + 'LEFT = robin; RIGHT = free; TEND = 14400'],
   ];
   const wrongOpts = options.filter(([, o, want]) => settings(o) !== want);
   const back = handOff('back', small('-time_step 3600\n -shifts 4 -1'));
@@ -3479,7 +3482,18 @@ function againstTransportHandOff(engine) {
     ['a REACTION in a stagnant cell', small('-time_step 3600\n -stagnant 1 6.8e-6 0.3 0.1')
       .replace('END\nTRANSPORT', 'SOLUTION 7-11\n units mmol/kgw\n K 1\n Br 1\nREACTION 8\n NaCl 1\n 1e-5 moles\nEND\n'
         + 'TRANSPORT'), /a REACTION numbered as a cell \(8\)/],
-    ['multicomponent diffusion', small('-time_step 3600\n -multi_d true 1e-9 0.3 0.05 1.0'), /multicomponent diffusion/],
+    ['stagnant cells with -multi_D', small('-time_step 3600\n -multi_d true\n -stagnant 1 6.8e-6 0.3 0.1')
+      .replace('END\nTRANSPORT', 'SOLUTION 7-11\n units mmol/kgw\n K 1\n Br 1\nEND\nTRANSPORT'),
+    /stagnant cells \(-stagnant\) with -multi_D, which PHREEQC exchanges species by species at a rate that falls as its mixing steps grow/],
+    ['cells of their own lengths under -multi_D', small('-time_step 3600\n -flow_direction diffusion_only\n -lengths 0.1 0.2\n'
+      + ' -multi_d true'), /under -multi_D PHREEQC gives each cell its water whatever its length/],
+    ['porosities of their own', small('-time_step 3600\n -multi_d true\n -porosities 0.3 0.2'), /cells have porosities of their own/],
+    ['a porosity below -multi_D\'s limit', small('-time_step 3600\n -multi_d true 1e-9 0.3 0.4'),
+      /its porosity, 0\.3, is below -multi_D's limit, 0\.4, where PHREEQC lets nothing diffuse/],
+    ['coefficients corrected for the ionic strength', small('-time_step 3600\n -multi_d true 1e-9 0.3 0 1 true'),
+      /corrected for the ionic strength as specific conductance has them/],
+    ['a -multi_D neither true nor false', small('-time_step 3600\n -multi_d 1e-9'), /a -multi_D that says neither true nor false/],
+    ['interlayer diffusion', small('-time_step 3600\n -multi_d true\n -interlayer_d true'), /interlayer diffusion \(-interlayer_D\)/],
     ['no time step', small('-dispersivities 0.01'), /it gives no -time_step/],
     ['a closed end the water comes in through', small('-time_step 3600\n -boundary_conditions closed flux'), /comes in through an end that is closed/],
     ['cells of their own lengths with the water moving', small('-time_step 3600\n -lengths 0.1 0.2'), /the page's column has one velocity/],
@@ -3499,11 +3513,200 @@ function againstTransportHandOff(engine) {
   const refused = (text) => { try { handOff('refused', text); return '(carried)'; } catch (e) { return e.message; } };
   const wrongRef = refusals.filter(([, text, re]) => !re.test(refused(text)));
   check('  the options as the column comes out of them -- a time unit, lengths written n*x, the water flowing back, ends held '
-    + 'constant, diffusion alone between cells of their own lengths, -correct_disp, the old direction after -shifts -- and, '
+    + 'constant, diffusion alone between cells of their own lengths, -correct_disp, -multi_D with the water moving, the old '
+    + 'direction after -shifts -- and, '
     + `refused with their reasons: ${refusals.map((x) => x[0]).join('; ')}`, !wrongOpts.length && !wrongRef.length
     && /^VELOCITY = -0\.000277777777777778$/m.test(back.text) && /^RIGHT = robin$/m.test(back.text),
   `${wrongOpts.map(([what, o]) => `${what}: "${settings(o)}"`).join(' | ')}${wrongRef.map(([what, text]) => ` ${what}: `
     + `"${refused(text).slice(0, 160)}"`).join(' |')}`);
+}
+
+/* ======================================================================
+   MULTICOMPONENT DIFFUSION (-multi_D): each species at its Dw times the
+   porosity to the n, the ions coupled so that no current flows, each down
+   its activity. Against PHREEQC's TRANSPORT as its explicit steps are made
+   smaller -- its runs at 10 and 40 mixing steps to a shift, extrapolated,
+   their error being first order in the step -- with closed ends, the ends
+   held at pure water and at dilute salt, and the exponent 2; its implicit
+   scheme, which takes each species down its concentration; each Dw at 40 C
+   as DIFF_C has it; a flowing column with an exchanger; a tracer level
+   across a salinity gradient, where PHREEQC drops the factor the page holds
+   at its bound; and a hundred days with pure water held at both ends, which
+   PHREEQC's rule as it is written stalls an implicit solver on.
+   ====================================================================== */
+function againstMultiD(engine) {
+  // PHREEQC keeps a TRANSPORT's options for the next one in the same instance: each input here says -implicit and -stagnant.
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const handOff = (name, text) => {
+    engine.load(dbText);
+    return P.waterToModel({ engine, database, water: { name, text }, activity: true, exact: true, redox: false });
+  };
+  const db = P.readDatabase(dbText);
+  // HCl against NaCl in ten cells of 2 mm, five hours of diffusion.
+  const acid = (o = {}) => `SOLUTION 0\n units mmol/kgw\n pH 7 charge${o.end || ''}\nSOLUTION 11\n units mmol/kgw\n`
+    + ` pH 7 charge${o.end || ''}\nSOLUTION 1-5\n units mmol/kgw\n pH 2 charge\n Cl 10\nSOLUTION 6-10\n units mmol/kgw\n`
+    + ` pH 7 charge\n Na 10\n Cl 10\nEND\nTRANSPORT\n -cells 10\n -shifts 5\n -time_step 3600 ${o.sub || 1}\n -lengths 0.002\n`
+    + ` -boundary_conditions ${o.bc || 'closed closed'}\n -flow_direction diffusion_only\n -multi_D true 1e-9 0.3 0 ${o.n || 1}\n`
+    + ` -implicit ${o.implicit ? 'true' : 'false'}\n -stagnant 0\n -punch_cells 1-10\n -punch_frequency 1\nEND\n`;
+  const els = ['Na', 'Cl', 'Br'];
+  // PHREEQC's cells 1 to n at its last shift: [pH, Na, Cl, Br] a cell.
+  const pqLast = (text, n) => {
+    const at = text.search(/^TRANSPORT\b/m);
+    engine.load(dbText);
+    const rows = engine.run(`${text.slice(0, at)}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time pH Na Cl Br\n`
+      + ` -start\n10 PUNCH CELL_NO, TOTAL_TIME, -LA("H+"), TOT("Na"), TOT("Cl"), TOT("Br")\n -end\n${text.slice(at)}`).slice(1);
+    const t = Math.max(...rows.map((r) => Number(r[1])));
+    const out = [];
+    for (const r of rows) if (Number(r[1]) === t && r[0] >= 1 && r[0] <= n) out[r[0] - 1] = r.slice(2, 6).map(Number);
+    return out;
+  };
+  // Each species' count of an element, as PHREEQC's TOT has it.
+  const counts = (m, res, el) => {
+    const back = new Map([...res.names].map(([k, nm]) => [nm, k]));
+    return m.speciesNames.map((nm) => {
+      if (!back.has(nm)) return 0;
+      const ex = db.expand(back.get(nm));
+      return ex.has(el) ? ex.get(el) : 0;
+    });
+  };
+  // The page's at tend, the same; and its solver's counts.
+  const pageAt = (res, tend, n) => {
+    const m = RtmModel.compile(res.text);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend, rtol: 1e-8, atol: 1e-20, nonNegative: true, outputTimes: [tend] });
+    const c = m.toConcentrations(run.grid.y[0]);
+    const ns = m.speciesNames.length;
+    const iH = m.speciesNames.indexOf('H+');
+    const of = els.map((el) => counts(m, res, el));
+    const lnG = new Float64Array(ns);
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const b = i * (m.stride || 1) * ns;
+      RtmModel.activityAt(m.act, c, b, lnG, new Float64Array(ns));
+      out.push([-(Math.log(c[b + iH]) + lnG[iH]) / Math.LN10,
+        ...of.map((x) => x.reduce((acc, k, s) => acc + (k ? k * c[b + s] : 0), 0))]);
+    }
+    return { out, stats: run.stats };
+  };
+  // Worst page against PHREEQC; with two PHREEQC runs, against (4 x40 - x10)/3.
+  const against = (page, pq40, pq10) => {
+    const w = [0, 0, 0, 0];
+    page.forEach((row, i) => row.forEach((v, j) => {
+      const ref = pq10 ? (4 * pq40[i][j] - pq10[i][j]) / 3 : pq40[i][j];
+      w[j] = Math.max(w[j], Math.abs(v - ref));
+    }));
+    return { pH: w[0], Na: w[1], Cl: w[2], Br: w[3] };
+  };
+  const say = (w, keys = ['Na', 'Cl']) => `${keys.map((k) => `${k} ${w[k].toExponential(1)}`).join(', ')} mol/kgw, pH `
+    + `${w.pH.toExponential(1)}`;
+
+  // What is written.
+  const closed = handOff('acid against salt', acid());
+  const lineOf = (text, name) => (new RegExp(`^${name.replace(/[+]/g, '\\+')}\\s.*$`, 'm').exec(text) || [''])[0];
+  const md = closed.report.transport && closed.report.transport.multiD;
+  check('-multi_D: DIFFUSION = nernst-planck and DIFFUSION_GRADIENT = activity, each species its Dw times the porosity '
+    + 'to the n -- H+ 9.31e-9, HCl without -dw -multi_D\'s 1e-9 -- and reported', /^DIFFUSION = nernst-planck$/m.test(closed.text)
+    && /^DIFFUSION_GRADIENT = activity$/m.test(closed.text) && /\bD=2\.793e-9\b/.test(lineOf(closed.text, 'H+'))
+    && /\bD=3e-10\b/.test(lineOf(closed.text, 'HCl')) && !!md && md.porosity === 0.3 && md.n === 1
+    && md.gradient === 'activity' && md.withoutDw.includes('HCl'),
+  `${lineOf(closed.text, 'H+')} | ${lineOf(closed.text, 'HCl')} | ${JSON.stringify(md)}`);
+
+  // At 40 C, as DIFF_C has each Dw there.
+  const warm = handOff('acid against salt at 40 C', acid().replace(/ units mmol\/kgw\n/g, ' units mmol/kgw\n temp 40\n'));
+  engine.load(dbText);
+  const dc = engine.run('SOLUTION 1\n temp 40\n units mmol/kgw\n pH 7 charge\n Na 10\n Cl 10\nSELECTED_OUTPUT 99\n -reset false\n'
+    + 'USER_PUNCH 99\n -headings Na Cl H v0\n 10 PUNCH DIFF_C("Na+"), DIFF_C("Cl-"), DIFF_C("H+"), VISCOS_0\nEND\n')[1].map(Number);
+  const dOf = (text, name) => Number((/\bD=(\S+)/.exec(lineOf(text, name)) || [])[1]);
+  const wantD = { 'Na+': 0.3 * dc[0], 'Cl-': 0.3 * dc[1], 'H+': 0.3 * dc[2], HCl: (0.3 * 1e-9 * 0.8900239182946) / dc[3] };
+  const offD = Object.entries(wantD).map(([n, v]) => Math.abs(dOf(warm.text, n) / v - 1));
+  check('  at 40 C each D is DIFF_C there times the porosity -- the viscosity of water and the species\' own dw_t -- and '
+    + 'for one without -dw -multi_D\'s, the viscosity alone', Math.max(...offD) < 1e-9
+    && dOf(warm.text, 'Na+') / dOf(closed.text, 'Na+') > 1.2,
+  Object.keys(wantD).map((n, i) => `${n} ${dOf(warm.text, n).toExponential(6)} (${offD[i].toExponential(1)})`).join(', '));
+
+  // Against TRANSPORT made ever finer in time.
+  const pqClosed = [pqLast(acid({ sub: 40 }), 10), pqLast(acid({ sub: 10 }), 10)];
+  const cases = [
+    { name: 'closed', o: {}, res: closed, pq: pqClosed, tol: [2e-8, 3e-6] },
+    { name: 'pure water held at both ends', o: { bc: 'constant constant' }, tol: [6e-7, 1.2e-4] },
+    { name: 'dilute salt held there', o: { bc: 'constant constant', end: '\n Na 1\n Cl 1' }, tol: [1.2e-6, 1.5e-4] },
+    { name: 'the exponent 2', o: { n: 2 }, tol: [5e-8, 3e-5] },
+  ].map((cs) => {
+    const res = cs.res || handOff(cs.name, acid(cs.o));
+    const pq = cs.pq || [pqLast(acid({ ...cs.o, sub: 40 }), 10), pqLast(acid({ ...cs.o, sub: 10 }), 10)];
+    const w = against(pageAt(res, 18000, 10).out, ...pq);
+    return { ...cs, res, w, ok: w.Na <= cs.tol[0] && w.Cl <= cs.tol[0] && w.pH <= cs.tol[1] };
+  });
+  check('  HCl against NaCl in ten cells for five hours, against TRANSPORT as its steps are made smaller (10 and 40 to a shift, '
+    + 'extrapolated): closed, pure water held at both ends, dilute salt there (where PHREEQC drops its factor), the exponent 2',
+  cases.every((x) => x.ok), cases.map((x) => `${x.name}: ${say(x.w)}`).join('; '));
+
+  // PHREEQC's implicit scheme: each species down its concentration.
+  const imp = handOff('implicit', acid({ implicit: true }));
+  const pqImp = pqLast(acid({ implicit: true, sub: 160 }), 10);
+  const wImp = against(pageAt(imp, 18000, 10).out, pqImp);
+  const wOwn = against(pqImp, ...pqClosed);
+  check('  -implicit: written without DIFFUSION_GRADIENT, each species down its concentration as PHREEQC\'s implicit scheme '
+    + 'takes it, against its runs at 160 steps to a shift -- which go their own way from its explicit ones',
+  !/DIFFUSION_GRADIENT/.test(imp.text) && imp.report.transport.multiD.implicit === true && wImp.Na < 3e-6 && wImp.Cl < 1.5e-6
+    && wImp.pH < 1e-3 && wOwn.Na > 2 * wImp.Na && wOwn.pH > 2 * wImp.pH,
+  `${say(wImp)}; PHREEQC's implicit from its explicit: ${say(wOwn)}`);
+
+  // A hundred days with pure water held at both ends.
+  const long = RtmModel.compile(cases[1].res.text.replace(/^TEND = .*$/m, 'TEND = 8640000'));
+  const t0 = Date.now();
+  const runLong = FacsimileODE.runModel(long, { solver: 'ndf', tend: 8640000, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  check('  a hundred days with pure water held at both ends goes through: the factor held at its bounds, where PHREEQC\'s, '
+    + 'dropped to 1 beyond them, stalls an implicit solver at 54 hours', runLong.stats.nsteps < 20000,
+  `${runLong.stats.nsteps} steps, ${Date.now() - t0} ms`);
+
+  // A column with an exchanger, flushed: the effluent, PHREEQC's after shift k against the page's half a step later.
+  const flow = (N) => `SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Ca 0.6\n Cl 1.2\nSOLUTION 1-${N}\n units mmol/kgw\n`
+    + ` pH 7 charge\n Na 1.0\n K 0.2\n N(5) 1.2\nEXCHANGE 1-${N}\n -equilibrate 1\n X 0.0011\nEND\nTRANSPORT\n -cells ${N}\n`
+    + ` -lengths ${0.08 / N}\n -shifts ${2.5 * N}\n -time_step ${(720 * 40) / N}\n -flow_direction forward\n`
+    + ` -boundary_conditions flux flux\n -dispersivities 0.002\n -correct_disp true\n -multi_D true 1e-9 0.3 0 1\n`
+    + ` -implicit false\n -stagnant 0\n -punch_cells ${N}\n -punch_frequency 1\nEND\n`;
+  const effluent = (text, res, elsF) => {
+    const t = P.readTransport(text);
+    const at = text.search(/^TRANSPORT\b/m);
+    engine.load(dbText);
+    const rows = engine.run(`${text.slice(0, at)}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time `
+      + `${elsF.join(' ')}\n -start\n10 PUNCH CELL_NO, TOTAL_TIME, ${elsF.map((el) => `TOT("${el}")`).join(', ')}\n -end\n`
+      + `${text.slice(at)}`).slice(1);
+    const pq = new Map();
+    for (const r of rows) if (Number(r[1]) > 0 && Number(r[0]) === t.cells) pq.set(Math.round(Number(r[1]) / t.dt), r.slice(2).map(Number));
+    const m = RtmModel.compile(res.text);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: (t.shifts + 0.5) * t.dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+      outputTimes: Array.from({ length: t.shifts }, (_, k) => (k + 1.5) * t.dt) });
+    const ns = m.speciesNames.length;
+    const of = elsF.map((el) => counts(m, res, el));
+    const worst = elsF.map(() => 0);
+    for (let k = 1; k <= t.shifts; k++) {
+      const c = m.toConcentrations(run.grid.y[k - 1]);
+      const b = (t.cells - 1) * (m.stride || 1) * ns;
+      of.forEach((x, j) => {
+        const tot = x.reduce((acc, n, s) => acc + (n ? n * c[b + s] : 0), 0);
+        worst[j] = Math.max(worst[j], Math.abs(tot - pq.get(k)[j]));
+      });
+    }
+    return Object.fromEntries(elsF.map((el, j) => [el, worst[j]]));
+  };
+  const fl = [20, 40].map((N) => ({ N, w: effluent(flow(N), handOff('flowing', flow(N)), ['Na', 'K', 'Ca', 'Cl']) }));
+  const [f20, f40] = fl.map((x) => x.w);
+  check('  a column with an exchanger flushed with calcium chloride, -multi_D beside the dispersivity: the effluent against '
+    + 'TRANSPORT, nearer on 40 cells than on 20', f40.Na < 0.025e-3 && f40.K < 0.035e-3 && f40.Ca < 0.02e-3 && f40.Cl < 0.006e-3
+    && ['Na', 'K', 'Ca', 'Cl'].every((el) => f40[el] < f20[el]),
+  fl.map((x) => `${x.N} cells: ${Object.entries(x.w).map(([k, v]) => `${k} ${(v * 1e3).toFixed(4)}`).join(', ')} mmol/kgw`)
+    .join('; '));
+
+  // A tracer level across sea-strength salt held at one end and fresh water at the other.
+  const salt = 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 500\n Cl 500\n Br 1\nSOLUTION 1-11\n units mmol/kgw\n pH 7 charge\n'
+    + ' Na 1\n Cl 1\n Br 1\nEND\nTRANSPORT\n -cells 10\n -shifts 48\n -time_step 36000\n -lengths 0.002\n'
+    + ' -boundary_conditions constant constant\n -flow_direction diffusion_only\n -multi_D true 1e-9 0.3 0 1\n'
+    + ' -implicit false\n -stagnant 0\n -punch_cells 1-10\n -punch_frequency 48\nEND\n';
+  const wS = against(pageAt(handOff('a tracer across salt', salt), 48 * 36000, 10).out, pqLast(salt, 10));
+  check('  a tracer level across sea-strength salt held at one end and fresh water at the other: PHREEQC drops its factor on '
+    + 'the tracer toward the fresh end, the page holds it at 0.2 -- the bromide within 8.5 %, the pH within 0.009',
+  wS.Br < 1.4e-4 && wS.pH < 0.009 && wS.Na < 7e-5, say(wS, ['Na', 'Br']));
 }
 
 /* ======================================================================
@@ -4018,6 +4221,8 @@ function againstKineticsHandOff(engine) {
   againstExchangeMineral(wasm);
   console.log('\n--- a column from PHREEQC\'s TRANSPORT: Example 11, calcite, calcite at a rate, the options, the refusals ---');
   againstTransportHandOff(wasm);
+  console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
+  againstMultiD(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
   againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');

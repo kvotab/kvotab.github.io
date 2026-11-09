@@ -88,6 +88,14 @@
       waits for it, and the water stays neutral. See npFaces.
     */
     DIFFUSION: { def: 1, kind: 'flag', words: { 'nernst-planck': 2 } },
+    /*
+      What a species diffuses down: its concentration, or with activity its
+      activity, as PHREEQC's multicomponent diffusion has it -- across each
+      face the difference in concentration times 1 + d ln gamma/d ln C, taken
+      between the two cells and held between 0.2 and 2.25 (find_J; PHREEQC
+      drops it beyond them). Needs ACTIVITY. See npFaces.
+    */
+    DIFFUSION_GRADIENT: { def: 'concentration', kind: 'word', of: ['concentration', 'activity'] },
     ADVECTION: { def: 0, kind: 'flag' },
     /*
       How advection is differenced: upwind, first order, stable at any step and
@@ -8434,6 +8442,16 @@
       ? species.map((sp, k) => ({ s: k, z: sp.z !== null ? sp.z : chargeOf(sp.name), D: sp.D }))
         .filter((x) => mobile[x.s] && x.z !== 0 && x.D > 0)
       : [];
+    // Down its activity: every solute that diffuses at a D of its own (DIFFUSION_GRADIENT, npFaces).
+    const actGrad = transport && !!settings.DIFFUSION && settings.DIFFUSION_GRADIENT === 'activity';
+    if (actGrad && (!act || settings.ACTIVITY === 'none')) {
+      throw new RtmError('DIFFUSION_GRADIENT = activity has each species diffuse down its activity, which needs '
+        + 'activity coefficients: set ACTIVITY.');
+    }
+    const agSpecies = actGrad ? species.map((sp, k) => k).filter((k) => mobile[k] && species[k].D > 0 && act.solute[k]) : [];
+    // An ion's place in npIons, or -1: the coupling reads its factor there.
+    const npAt = new Int32Array(species.length).fill(-1);
+    npIons.forEach(({ s: k }, a) => { npAt[k] = a; });
 
     /*
       THE OUTLET. A semi-infinite right-hand end is the column going on past
@@ -9534,17 +9552,38 @@
         }
       }
     }
+    /*
+      The faces Nernst-Planck and an activity gradient act across (npFaces):
+      between column cells, and at a Dirichlet end between the water held
+      there and the cell beside it. A is the side to the left, B the one to
+      the right; at an end its side is -1, its concentrations held in bA or
+      bB, and `cell` is the cell beside it, whose temperature the water held
+      there has.
+    */
+    const diffFaces = [];
+    if (npIons.length || agSpecies.length) {
+      const heldAt = (side) => Float64Array.from(species, (sp) => (sp[side] == null ? sp.initial : sp[side]));
+      if (settings.LEFT === 'dirichlet') {
+        diffFaces.push({ A: -1, B: cellOf(0, 0) * ns, iA: -1, iB: 0, cell: cellOf(0, 0), d: col.centres[0], wA: 0,
+          wB: col.width[0], closedB: false, bA: heldAt('left'), bB: null });
+      }
+      for (let i = 0; i < last; i++) {
+        diffFaces.push({ A: cellOf(i, 0) * ns, B: cellOf(i + 1, 0) * ns, iA: i, iB: i + 1, cell: -1,
+          d: col.centres[i + 1] - col.centres[i], wA: col.width[i], wB: col.width[i + 1], closedB: semi && i + 1 === last,
+          bA: null, bB: null });
+      }
+      if (settings.RIGHT === 'dirichlet') {
+        diffFaces.push({ A: cellOf(last, 0) * ns, B: -1, iA: last, iB: -1, cell: cellOf(last, 0), d: grid.L - col.centres[nf - 1],
+          wA: col.width[last], wB: 0, closedB: false, bA: null, bB: heldAt('right') });
+      }
+    }
     // Nernst-Planck: every coupled ion on either side of a face reads every
-    // other on either side.
-    for (let i = 0; npIons.length && i < last; i++) {
-      const A = cellOf(i, 0) * ns;
-      const B = cellOf(i + 1, 0) * ns;
-      const closedB = semi && i + 1 === last;
+    // other on either side; at a Dirichlet end, those in the cell beside it.
+    for (const f of diffFaces) {
       for (const { s: k } of npIons) {
         for (const { s: mm } of npIons) {
-          touch(A + k, A + mm);
-          touch(A + k, B + mm);
-          if (!closedB) { touch(B + k, A + mm); touch(B + k, B + mm); }
+          if (f.A >= 0) { touch(f.A + k, f.A + mm); if (f.B >= 0) touch(f.A + k, f.B + mm); }
+          if (f.B >= 0 && !f.closedB) { touch(f.B + k, f.B + mm); if (f.A >= 0) touch(f.B + k, f.A + mm); }
         }
       }
     }
@@ -10005,61 +10044,188 @@
       g the gradient across the face and C its mean: the first term is the
       diffusion every species already has, the second the pull of the
       diffusion potential, which makes the charges' fluxes cancel. Where every
-      D is the same it is nothing in a neutral water. Between column cells; a
-      Dirichlet end and the rock matrix stay each species on its own, and the
-      gradients are of concentrations, the activity coefficients' left out.
+      D is the same it is nothing in a neutral water. Between column cells,
+      and at a Dirichlet end between the water held there and the cell beside
+      it, half a cell away; the rock matrix stays each species on its own.
+
+      DIFFUSION_GRADIENT = activity: each g is the difference in
+      concentration times f = 1 + (ln gamma_B - ln gamma_A)/(ln C_B - ln C_A),
+      the cells' own activity coefficients, as PHREEQC's multicomponent
+      diffusion has it (find_J): C_B - C_A + L (ln gamma_B - ln gamma_A), L
+      the logarithmic mean of the two concentrations, and nothing more where
+      either side has none. PHREEQC uses f only between 0.2 and 2.25 and
+      drops it to 1 beyond, where a species is nearly level and its gamma is
+      not; there the flux jumps -- up, below 0.2, as the difference falls --
+      which PHREEQC's explicit steps step over and an implicit solver cannot
+      (HCl against NaCl, the ends held at pure water, stalled at 54 hours two
+      million steps in). Here f is held at 0.2 or 2.25 beyond them: the flux
+      goes on without a jump, never up a species' own gradient, and a level
+      species stays level, as in PHREEQC; it gets there at 0.2 or 2.25 of
+      its D where PHREEQC takes 1. What f adds to a species' own diffusion,
+      -D_k (f - 1) dC/d, is added here; the coupling takes the gradients with
+      it. The Jacobian has f's derivatives in the two concentrations and
+      holds the ln gamma where they are: what they do in the Newton iteration
+      is small, and they move with every species through the ionic strength.
     */
-    const npFaces = [];
-    for (let i = 0; npIons.length && i < last; i++) {
-      const A = cellOf(i, 0) * ns;
-      const B = cellOf(i + 1, 0) * ns;
-      const closedB = semi && i + 1 === last;
-      const f = { A, B, d: col.centres[i + 1] - col.centres[i], wA: col.width[i], wB: col.width[i + 1], closedB,
-        slots: new Int32Array(4 * npIons.length * npIons.length).fill(-1) };
+    const npFaces = diffFaces.map((f) => {
+      const ni = npIons.length;
+      const slots = new Int32Array(4 * ni * ni).fill(-1);
+      const aslots = new Int32Array(4 * agSpecies.length).fill(-1);
+      const onA = (k) => f.A >= 0 && !fixedAt[f.A + k];
+      const onB = (k) => f.B >= 0 && !f.closedB && !fixedAt[f.B + k];
       npIons.forEach(({ s: k }, a) => {
         npIons.forEach(({ s: mm }, c) => {
-          const o = 4 * (a * npIons.length + c);
-          if (!fixedAt[A + k]) { f.slots[o] = slot(A + k, A + mm); f.slots[o + 1] = slot(A + k, B + mm); }
-          if (!closedB && !fixedAt[B + k]) { f.slots[o + 2] = slot(B + k, A + mm); f.slots[o + 3] = slot(B + k, B + mm); }
+          const o = 4 * (a * ni + c);
+          if (onA(k)) { slots[o] = slot(f.A + k, f.A + mm); if (f.B >= 0) slots[o + 1] = slot(f.A + k, f.B + mm); }
+          if (onB(k)) { if (f.A >= 0) slots[o + 2] = slot(f.B + k, f.A + mm); slots[o + 3] = slot(f.B + k, f.B + mm); }
         });
       });
-      npFaces.push(f);
-    }
-    const npJ = new Float64Array(npIons.length);
-    /** The coupling's fluxes into out, or their derivatives into V. */
+      agSpecies.forEach((k, a) => {
+        const o = 4 * a;
+        if (onA(k)) { aslots[o] = slot(f.A + k, f.A + k); if (f.B >= 0) aslots[o + 1] = slot(f.A + k, f.B + k); }
+        if (onB(k)) { if (f.A >= 0) aslots[o + 2] = slot(f.B + k, f.A + k); aslots[o + 3] = slot(f.B + k, f.B + k); }
+      });
+      return { ...f, slots, aslots };
+    });
+    // Each column cell's ln gamma, and each end's water's, read afresh with every call.
+    const lnGcol = actGrad ? new Float64Array(ncol * ns) : null;
+    const lnGend = actGrad ? npFaces.map((f) => (f.bA || f.bB ? new Float64Array(ns) : null)) : null;
+    const gScratch = actGrad ? new Float64Array(ns) : null;
+    const dScratch = actGrad ? new Float64Array(ns) : null;
+    /*
+      A species one side has none of has no activity gradient across the face
+      in PHREEQC; the waters the page is given carry a trace of what they
+      lack (From PHREEQC writes 1e-12 of it), so what f adds fades out as one
+      side falls from a millionth of the other to 1e-10 of it, and is gone
+      below: ln of the ratio from 13.8 to 23.0.
+    */
+    const TRACE_FADE = Math.log(1e6);
+    const TRACE_GONE = Math.log(1e10);
+    // Across the face in hand, what the activity adds to each species' difference, and its derivatives in C_A and C_B.
+    const actD = new Float64Array(ns);
+    const actDA = new Float64Array(ns);
+    const actDB = new Float64Array(ns);
+    /**
+     * (f - 1)(cb - ca) into actD[k], f = 1 + (gb - ga)/ln(cb/ca) held between
+     * 0.2 and 2.25 -- L (gb - ga) between them, L the logarithmic mean -- and
+     * nothing where either side has none; its derivatives in ca and cb, the
+     * ln gamma held, into actDA[k] and actDB[k].
+     */
+    const activityPart = (k, ca, cb, ga, gb) => {
+      const dg = gb - ga;
+      actD[k] = 0;
+      actDA[k] = 0;
+      actDB[k] = 0;
+      if (!(ca > 0) || !(cb > 0) || dg === 0) return;
+      const x = cb / ca - 1;
+      const u = Math.log1p(x);
+      const au = Math.abs(u);
+      if (au >= TRACE_GONE) return;
+      const fr = u === 0 ? (dg > 0 ? Infinity : -Infinity) : 1 + dg / u;
+      if (!(fr > 0.2 && fr < 2.25)) {
+        const e = (fr >= 2.25 ? 2.25 : 0.2) - 1;
+        actD[k] = e * (cb - ca);
+        actDA[k] = -e;
+        actDB[k] = e;
+      } else if (Math.abs(x) < 1e-4) {
+        // cb = ca (1 + x): L = ca (1 + x/2 - x^2/12 + ...), dL/dca = 1/2 + x/6 + ..., dL/dcb = 1/2 - x/6 + ...
+        actD[k] = ca * (1 + x / 2 - (x * x) / 12) * dg;
+        actDA[k] = (0.5 + x / 6) * dg;
+        actDB[k] = (0.5 - x / 6) * dg;
+      } else {
+        const L = (cb - ca) / u;
+        actD[k] = L * dg;
+        actDA[k] = ((L / ca - 1) / u) * dg;
+        actDB[k] = ((1 - L / cb) / u) * dg;
+      }
+      if (au > TRACE_FADE) {
+        // Fading out as one side falls from a millionth of the other to 1e-10, smoothly: w = t^2 (3 - 2t).
+        const t = (TRACE_GONE - au) / (TRACE_GONE - TRACE_FADE);
+        const w = t * t * (3 - 2 * t);
+        const dw = ((-6 * t * (1 - t)) / (TRACE_GONE - TRACE_FADE)) * Math.sign(u);
+        actDA[k] = w * actDA[k] - (actD[k] * dw) / ca;
+        actDB[k] = w * actDB[k] + (actD[k] * dw) / cb;
+        actD[k] *= w;
+      }
+    };
+    /** The coupling's fluxes and the activity gradient's into out, or their derivatives into V. */
     const npFlux = (y, out, V) => {
       const ni = npIons.length;
-      for (const f of npFaces) {
+      if (actGrad) {
+        for (let i = 0; i < ncol; i++) {
+          const c = cellOf(i, 0);
+          activityAt(act, y, c * ns, gScratch, dScratch, c);
+          lnGcol.set(gScratch, i * ns);
+        }
+        npFaces.forEach((f, q) => { if (lnGend[q]) activityAt(act, f.bA || f.bB, 0, lnGend[q], dScratch, f.cell); });
+      }
+      for (let q = 0; q < npFaces.length; q++) {
+        const f = npFaces[q];
+        // Each side's concentrations, and its ln gamma, as an array and where in it the face's cell starts.
+        const cA = f.bA || y;
+        const oA = f.bA ? 0 : f.A;
+        const cB = f.bB || y;
+        const oB = f.bB ? 0 : f.B;
+        if (actGrad) {
+          const gA = f.bA ? lnGend[q] : lnGcol;
+          const ogA = f.bA ? 0 : f.iA * ns;
+          const gB = f.bB ? lnGend[q] : lnGcol;
+          const ogB = f.bB ? 0 : f.iB * ns;
+          for (const k of agSpecies) activityPart(k, cA[oA + k], cB[oB + k], gA[ogA + k], gB[ogB + k]);
+        }
         let N = 0;
         let Den = 0;
         for (const { s: k, z, D } of npIons) {
-          N += (z * D * (y[f.B + k] - y[f.A + k])) / f.d;
-          Den += z * z * D * 0.5 * (y[f.A + k] + y[f.B + k]);
+          N += (z * D * (cB[oB + k] - cA[oA + k] + actD[k])) / f.d;
+          Den += z * z * D * 0.5 * (cA[oA + k] + cB[oB + k]);
         }
-        if (!(Den > 0)) continue;
-        const pull = N / Den;
+        const coupled = ni > 0 && Den > 0;
+        const pull = coupled ? N / Den : 0;
         if (out) {
-          npIons.forEach(({ s: k, z, D }) => {
-            const J = D * z * 0.5 * (y[f.A + k] + y[f.B + k]) * pull;
-            if (!fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
-            if (!f.closedB && !fixedAt[f.B + k]) out[f.B + k] += J / f.wB;
-          });
+          if (coupled) {
+            for (const { s: k, z, D } of npIons) {
+              const J = D * z * 0.5 * (cA[oA + k] + cB[oB + k]) * pull;
+              if (f.A >= 0 && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
+              if (f.B >= 0 && !f.closedB && !fixedAt[f.B + k]) out[f.B + k] += J / f.wB;
+            }
+          }
+          for (const k of agSpecies) {
+            if (actD[k] === 0) continue;
+            const J = (-species[k].D * actD[k]) / f.d;
+            if (f.A >= 0 && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
+            if (f.B >= 0 && !f.closedB && !fixedAt[f.B + k]) out[f.B + k] += J / f.wB;
+          }
           continue;
         }
         // dJ_k/dC_m on each side: D_k z_k (delta_km pull/2 + Cbar_k (dN Den - N dDen)/Den^2).
-        npIons.forEach(({ s: k, z, D }, a) => {
-          const Ck = 0.5 * (y[f.A + k] + y[f.B + k]);
-          npIons.forEach(({ z: zm, D: Dm }, c) => {
-            const dDen = zm * zm * Dm * 0.5;
-            const dNA = -(zm * Dm) / f.d;
-            const dNB = (zm * Dm) / f.d;
-            const self = a === c ? 0.5 * pull : 0;
-            const dA = D * z * (self + Ck * (dNA * Den - N * dDen) / (Den * Den));
-            const dB = D * z * (self + Ck * (dNB * Den - N * dDen) / (Den * Den));
-            const o = 4 * (a * ni + c);
-            if (f.slots[o] >= 0) { V[f.slots[o]] -= dA / f.wA; V[f.slots[o + 1]] -= dB / f.wA; }
-            if (f.slots[o + 2] >= 0) { V[f.slots[o + 2]] += dA / f.wB; V[f.slots[o + 3]] += dB / f.wB; }
+        if (coupled) {
+          npIons.forEach(({ s: k, z, D }, a) => {
+            const Ck = 0.5 * (cA[oA + k] + cB[oB + k]);
+            npIons.forEach(({ s: mm, z: zm, D: Dm }, c) => {
+              const dDen = zm * zm * Dm * 0.5;
+              const dNA = (zm * Dm * (actDA[mm] - 1)) / f.d;
+              const dNB = (zm * Dm * (1 + actDB[mm])) / f.d;
+              const self = a === c ? 0.5 * pull : 0;
+              const dA = D * z * (self + Ck * (dNA * Den - N * dDen) / (Den * Den));
+              const dB = D * z * (self + Ck * (dNB * Den - N * dDen) / (Den * Den));
+              const o = 4 * (a * ni + c);
+              if (f.slots[o] >= 0) V[f.slots[o]] -= dA / f.wA;
+              if (f.slots[o + 1] >= 0) V[f.slots[o + 1]] -= dB / f.wA;
+              if (f.slots[o + 2] >= 0) V[f.slots[o + 2]] += dA / f.wB;
+              if (f.slots[o + 3] >= 0) V[f.slots[o + 3]] += dB / f.wB;
+            });
           });
+        }
+        // The activity's part, the ln gamma held: dJ/dC_A = -D dL/dC_A dlnG/d, dJ/dC_B = -D dL/dC_B dlnG/d.
+        agSpecies.forEach((k, a) => {
+          if (actD[k] === 0) return;
+          const dA = (-species[k].D * actDA[k]) / f.d;
+          const dB = (-species[k].D * actDB[k]) / f.d;
+          const o = 4 * a;
+          if (f.aslots[o] >= 0) V[f.aslots[o]] -= dA / f.wA;
+          if (f.aslots[o + 1] >= 0) V[f.aslots[o + 1]] -= dB / f.wA;
+          if (f.aslots[o + 2] >= 0) V[f.aslots[o + 2]] += dA / f.wB;
+          if (f.aslots[o + 3] >= 0) V[f.aslots[o + 3]] += dB / f.wB;
         });
       }
     };

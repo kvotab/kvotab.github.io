@@ -385,6 +385,9 @@
     return k.slice(2).some((v) => v !== 0) ? [0, 0, ...k.slice(2)] : [k[0], k[1], 0, 0, 0, 0, 0, 0];
   }
 
+  /** Pure water's viscosity at 25 C, mPa s, that PHREEQC scales each species' Dw by (viscosity(), Huber et al. 2009). */
+  const VISCOS_0_25 = 0.8900239182946;
+
   /** PHREEQC's R, kJ/(mol K) (R_KJ_DEG_MOL), and its k_calc: log K at tk kelvin of terms [logK, dH, A1 ... A6]. */
   const R_KJ = 0.00831470;
   function kCalc(k, tk) {
@@ -403,6 +406,8 @@
       this.master = new Map();      // label -> master species: 'Fe(+3)' -> 'Fe+3'
       this.reaction = new Map();    // species -> {left, right}, right[0] the species
       this.dw = new Map();          // species -> tracer diffusion coefficient, m2/s
+      this.dwT = new Map();         // species -> -dw's second value, its temperature dependence (dw_t)
+      this.dwVisc = new Map();      // species -> -dw's seventh, the exponent on the viscosity (dw_a_v_dif)
       this.gamma = new Map();       // species -> {a, b}: its -gamma, the WATEQ Debye-Hueckel
       this.otherGamma = new Map();  // species -> an activity option this page does not have
       this.model = null;            // 'Pitzer', 'SIT' or 'LLNL' when the database is one of those
@@ -591,6 +596,8 @@
               // A reaction read again starts from PHREEQC's defaults: Davies
               // for an ion, 0.1 I for a neutral species.
               this.dw.delete(last);
+              this.dwT.delete(last);
+              this.dwVisc.delete(last);
               this.gamma.delete(last);
               this.otherGamma.delete(last);
               this.llnlGamma.delete(last);
@@ -606,8 +613,15 @@
             const v = leadingNumbers(words, opt === 'vm' ? 10 : 6);
             if (v.length) this[opt === 'vm' ? 'vm' : 'millero'].set(last, v);
           } else if (last && /^-?dw$/i.test(tokens[0]) && tokens.length > 1) {
-            const v = Number(tokens[1]);
-            if (Number.isFinite(v)) this.dw.set(last, v);
+            // Dw, dw_t, dw_a, dw_a2, dw_a_visc, dw_a3, dw_a_v_dif, as far as they are numbers (read.cpp).
+            const all = tokens.slice(1).map(Number);
+            const bad = all.findIndex((x) => !Number.isFinite(x));
+            const v = bad < 0 ? all : all.slice(0, bad);
+            if (v.length) {
+              this.dw.set(last, v[0]);
+              this.dwT.set(last, v[1] || 0);
+              this.dwVisc.set(last, v[6] || 0);
+            }
           } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
             const a = Number(tokens[1]);
             const b = Number(tokens[2]);
@@ -1572,10 +1586,13 @@
    * dir (1 forward, -1 back, 0 diffusion only), bc [first, last] (1
    * constant, 2 closed, 3 flux), lengths and disp (one a cell), correctDisp,
    * diffc, heat (thermal diffusion asked for), stag (one layer of stagnant
-   * cells exchanging at a first order, {alpha, thm, thim}, or null), others
-   * (what it says that no column of the page has: stagnant cells in more
-   * layers or mixed by MIX blocks, multicomponent or interlayer diffusion, a
-   * current), reactions (a REACTION numbered as a cell or a stagnant cell),
+   * cells exchanging at a first order, {alpha, thm, thim}, or null), mcd
+   * (multicomponent diffusion, -multi_D's {dw, por, lim, n}, or null), por
+   * (-porosities, one a cell, or null), implicit (-implicit true, PHREEQC's
+   * implicit scheme for -multi_D), others (what it says that no column
+   * of the page has: stagnant cells in more layers or mixed by MIX blocks,
+   * interlayer diffusion, a current, diffusion coefficients corrected for
+   * the ionic strength), reactions (a REACTION numbered as a cell or a stagnant cell),
    * before (the input up to the END of the block's simulation, without the
    * block), after (whether anything is calculated after that)}.
    */
@@ -1596,7 +1613,7 @@
     while (end < lines.length && !(isKey(lines[end]) && first(lines[end]).toUpperCase() === 'END')) end++;
     const quiet = /^(END|PRINT|SELECTED_OUTPUT|USER_PUNCH|USER_GRAPH|USER_PRINT|TITLE|KNOBS)$/i;
     const t = { kind, cells: 1, shifts: 1, dt: 0, dir: 1, bc: [3, 3], lengths: [], disp: [], correctDisp: false,
-      diffc: 0.3e-9, heat: false, others: [], stag: null,
+      diffc: 0.3e-9, heat: false, others: [], stag: null, mcd: null, por: [], implicit: false,
       before: `${[...lines.slice(0, at), ...lines.slice(stop, end)].join('\n')}\nEND\n`,
       after: lines.slice(end + 1).some((ln) => isKey(ln) && !quiet.test(first(ln))) };
     const opts = kind === 'TRANSPORT' ? TRANSPORT_OPTS : ADVECTION_OPTS;
@@ -1624,6 +1641,7 @@
       if (!opt) {
         if (list === 'lengths') t.lengths.push(...values(args));
         else if (list === 'disp') t.disp.push(...values(args));
+        else if (list === 'por') t.por.push(...values(args));
         continue;
       }
       list = null;
@@ -1667,14 +1685,39 @@
           } else t.stag = { alpha: a, thm: m, thim: im };
           break;
         }
-        case 'multi_d': if (yes(args[0])) t.others.push('multicomponent diffusion (-multi_D)'); break;
+        case 'multi_d': {
+          /*
+            Multicomponent diffusion, -multi_D true [Dw porosity limit n
+            correct], each value back at PHREEQC's default unless given (1e-9
+            m2/s for a species without -dw, 0.3, 0, 1, false): each species at
+            its own Dw times the porosity to the n, the ions coupled so that no
+            current flows, down their activities (transport.cpp, find_J). Dw's
+            corrected as specific conductance has them are not carried.
+          */
+          const w0 = (args[0] || '').toLowerCase();
+          t.mcd = null;
+          t.mcdOther = null;
+          if (w0.startsWith('f')) break;
+          if (!w0.startsWith('t')) { t.mcdOther = 'a -multi_D that says neither true nor false'; break; }
+          const num = (i, def) => (args[i] === undefined ? def : Number(args[i]));
+          const m = { dw: num(1, 1e-9), por: num(2, 0.3), lim: num(3, 0), n: num(4, 1) };
+          if (![m.dw, m.por, m.lim, m.n].every(Number.isFinite)) t.mcdOther = 'a -multi_D whose values are not numbers';
+          else if (/^t/i.test(args[5] || '')) {
+            t.mcdOther = 'diffusion coefficients corrected for the ionic strength as specific conductance has them '
+              + '(-multi_D\'s sixth value, true)';
+          } else t.mcd = m;
+          break;
+        }
+        case 'porosities': case 'porosity': t.por.push(...values(args)); list = 'por'; break;
+        // PHREEQC's implicit scheme for -multi_D, which takes each species down its concentration (diffuse_implicit).
+        case 'implicit': t.implicit = /^t/i.test(args[0] || ''); break;
         case 'interlayer_d': if (yes(args[0])) t.others.push('interlayer diffusion (-interlayer_D)'); break;
         case 'fix_current': case 'current': t.others.push('a fixed current (-fix_current)'); break;
         case 'tempr': case 'temp_retardation_factor': case 'temperature_retardation_factor': case 'thermal_diffusion':
           t.heat = true;
           break;
         default:
-          // Printing, punching, dumping, warnings, the time it starts at, the implicit scheme, porosities (for -multi_D).
+          // Printing, punching, dumping, warnings, the time it starts at.
           if (opt.startsWith('?')) t.others.push(`an option PHREEQC does not have, ${opt.slice(1)}`);
           else if (['print', 'print_cells', 'punch', 'punch_cells', 'selected_cells'].includes(opt)) list = 'cells';
       }
@@ -1686,6 +1729,10 @@
     if (kind === 'ADVECTION') t.diffc = 0;
     if (t.stagOther) t.others.push(t.stagOther);
     delete t.stagOther;
+    if (t.mcdOther) t.others.push(t.mcdOther);
+    delete t.mcdOther;
+    // -porosities, one a cell, the last going on (readtr.cpp); none read, null.
+    t.por = t.por.length ? fill(t.por, 0) : null;
     // A REACTION numbered as a cell, which PHREEQC adds to it at every shift -- a stagnant cell's too.
     t.reactions = [];
     const n = t.cells;
@@ -1727,7 +1774,8 @@
    * (species to write whatever the floor), corr (-correct_disp's factor),
    * tc, trace, zones (runs of cells alike, {lo, hi, rep, row}), stag (null,
    * or -stagnant's {alpha, thm, thim} and its zones, {lo, hi, rep, row,
-   * same})}.
+   * same}), mcd (null, or -multi_D's {dw, por, lim, n} with the porosity the
+   * cells diffuse at and porosity^n, {porosity, factor})}.
    */
   function columnSetup(o, floor) {
     const t = readTransport(o.water.text);
@@ -1754,6 +1802,41 @@
         + 'own there: the page\'s column has one velocity');
     }
     if (t.dir && !alike(t.disp)) no('its cells have dispersivities of their own, where the page\'s column has one');
+    /*
+      Multicomponent diffusion: each species diffuses at its Dw times the
+      porosity to the n -- the cells' porosity, -stagnant's mobile one where
+      both are given, as PHREEQC has it, or -multi_D's where none is (at
+      least 1e-10). PHREEQC gives each cell its water whatever its length,
+      and lets nothing diffuse across a face where a porosity is below
+      -multi_D's limit.
+    */
+    let mcd = null;
+    if (t.mcd) {
+      /*
+        With stagnant cells PHREEQC moves each species into its stagnant cell
+        at its own Dw, by -stagnant's mixing fraction for a mixing step taken
+        as one for a whole shift and divided by the steps again (multi_D,
+        find_J): what crosses in a shift falls as the steps grow -- a quarter,
+        over a shift of 3600 s, at four times the steps (-time_step 3600 4).
+      */
+      if (t.stag) {
+        no('it has stagnant cells (-stagnant) with -multi_D, which PHREEQC exchanges species by species at a rate that '
+          + 'falls as its mixing steps grow (a quarter at four times as many): no model of the page follows that');
+      }
+      if (!alike(t.lengths)) {
+        no('its cells are of different lengths: under -multi_D PHREEQC gives each cell its water whatever its length, '
+          + 'where the page\'s cells hold water as they are long');
+      }
+      const por = t.stag && t.por ? t.stag.thm : t.por ? t.por[0] : Math.max(t.mcd.por, 1e-10);
+      if (t.por && !(t.stag) && !alike(t.por)) {
+        no('its cells have porosities of their own, which under -multi_D make each diffuse at its own rate, '
+          + 'where the page\'s column has one');
+      }
+      if (por < t.mcd.lim) {
+        no(`its porosity, ${fmtG(por, 6)}, is below -multi_D's limit, ${fmtG(t.mcd.lim, 6)}, where PHREEQC lets nothing diffuse`);
+      }
+      mcd = { ...t.mcd, porosity: por, factor: por ** t.mcd.n };
+    }
     // The water at each end that the column needs: coming in, or held at a constant end.
     const leftSol = (t.dir > 0 && t.bc[0] === 3) || t.bc[0] === 1 ? 0 : -1;
     const rightSol = (t.dir < 0 && t.bc[1] === 3) || t.bc[1] === 1 ? n + 1 : -1;
@@ -1964,7 +2047,7 @@
     }
     const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
     return { t, cellInput, left, right, leftSol, rightSol, keep, keepAt, keepOn, corr, tc: one.tc, trace: TRACE, zones,
-      stag: stag ? { ...stag, zones: szones } : null };
+      stag: stag ? { ...stag, zones: szones } : null, mcd };
   }
 
   /*
@@ -2846,6 +2929,9 @@
     const withVm = follow && !llnl && (db.vm.size > 0 || db.millero.size > 0 || db.phaseVm.size > 0);
     const presAt = extras.length;
     extras.push('PRESSURE');
+    // Under -multi_D, pure water's viscosity at the water's temperature, and the water's: each species' Dw there (fill_spec).
+    const viscAt = column && column.mcd ? extras.length : -1;
+    if (viscAt >= 0) extras.push('VISCOS_0', 'VISCOS');
     const punch = punchBlock(extras);
     const takeWater = (text) => {
       let rows = runRows(o.engine, `${punch}${text}\nEND\n`);
@@ -4012,15 +4098,43 @@
     let colSettings = null;
     let colReport = null;
     let colD = 0;
+    let mcdOf = null;
     let leftAt = null;
     let rightAt = null;
     if (column) {
-      const { t, corr } = column;
+      const { t, corr, mcd } = column;
       const L = t.lengths.reduce((a, b) => a + b, 0);
       const even = t.lengths.every((x) => Math.abs(x - t.lengths[0]) <= 1e-12 * t.lengths[0]);
       const v = t.dir ? (t.dir * t.lengths[0]) / t.dt : 0;
       const alpha = t.dir ? t.disp[0] * corr : 0;
-      colD = t.diffc * corr;
+      colD = mcd ? 0 : t.diffc * corr;
+      /*
+        MULTICOMPONENT DIFFUSION (-multi_D): each species at PHREEQC's Dw at
+        the water's temperature, Dw times viscos_0(25 C)/viscos_0, times
+        exp(dw_t/T - dw_t/298.15) and (viscos_0/viscos)^dw_a_v_dif where -dw
+        gives them -- -multi_D's own Dw, without those, for a species without
+        -dw -- and times the porosity to the n (fill_spec, find_J): its D
+        along the column. PHREEQC couples the ions so that no current flows,
+        DIFFUSION = nernst-planck, and moves each down its activity,
+        DIFFUSION_GRADIENT = activity, where the activity coefficients
+        follow the water. -diffusion_coefficient is then for heat alone.
+      */
+      if (mcd) {
+        const visc0 = Number(w.x[viscAt]);
+        const visc = Number(w.x[viscAt + 1]);
+        const tk = w.tc + 273.15;
+        mcdOf = (sp) => {
+          const dw = db.dw.get(sp) || 0;
+          let d = (dw || mcd.dw) * (VISCOS_0_25 / visc0);
+          if (dw) {
+            const dwt = db.dwT.get(sp) || 0;
+            if (dwt) d *= Math.exp(dwt / tk - dwt / 298.15);
+            const avd = db.dwVisc.get(sp) || 0;
+            if (avd) d *= (visc0 / visc) ** avd;
+          }
+          return d * mcd.factor;
+        };
+      }
       const face = (b, isIn) => (b === 1 ? 'dirichlet' : b === 2 ? 'neumann' : isIn ? 'robin' : t.dir ? 'free' : 'neumann');
       const leftKind = face(t.bc[0], t.dir > 0);
       const rightKind = face(t.bc[1], t.dir < 0);
@@ -4030,7 +4144,8 @@
       const faces = [0, ...t.lengths.map((l) => { x += l; return x; })];
       colSettings = ['MODE = transport', `CELLS = ${t.cells}`,
         ...(even ? [`LENGTH = ${fmtG(L, 15)}`] : ['GRID = faces', `FACES = ${faces.map((f) => fmtG(f, 15)).join(', ')}`]),
-        ...(colD > 0 || alpha > 0 ? ['DIFFUSION = 1'] : []),
+        ...(mcd ? ['DIFFUSION = nernst-planck', ...(follow && !t.implicit ? ['DIFFUSION_GRADIENT = activity'] : [])]
+          : colD > 0 || alpha > 0 ? ['DIFFUSION = 1'] : []),
         ...(t.dir ? ['ADVECTION = 1', 'ADVECTION_SCHEME = limited', `VELOCITY = ${fmtG(v, 15)}`] : []),
         ...(alpha > 0 ? [`PECLET = ${fmtG(L / alpha, 15)}`] : []),
         `LEFT = ${leftKind}`, `RIGHT = ${rightKind}`,
@@ -4038,6 +4153,9 @@
           `MATRIX_POROSITY = ${fmtG(column.stag.thim, 15)}`, `WETTED_SURFACE = ${fmtG(1 / column.stag.thm, 15)}`] : [])];
       colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: t.shifts,
         timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
+        multiD: mcd ? { porosity: mcd.porosity, n: mcd.n, factor: mcd.factor, defaultDw: mcd.dw,
+          gradient: follow && !t.implicit ? 'activity' : 'concentration', implicit: t.implicit,
+          withoutDw: order.filter((sp) => !db.dw.get(sp)) } : null,
         left: leftKind, right: rightKind, leftSolution: leftAt ? column.leftSol : null,
         rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after,
         zones: column.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep })),
@@ -4053,8 +4171,18 @@
         + `${fmtG(Math.abs(v), 6)} m/s ${t.dir > 0 ? 'to the right' : 'to the left'}, for ${t.shifts} shifts`
         : `diffusing for ${t.shifts} periods of ${fmtG(t.dt, 6)} s`}, ${fmtG(t.shifts * t.dt, 6)} s;`);
       out.push(`# dispersivity ${fmtG(t.dir ? t.disp[0] : 0, 6)} m${corr !== 1 ? ` (times ${fmtG(corr, 6)}, -correct_disp)` : ''}, `
-        + `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `
+        + (mcd ? 'multicomponent diffusion (below). '
+          : `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `)
         + `${endSay(leftKind, column.leftSol, 'left')}; ${endSay(rightKind, column.rightSol, 'right')}.`);
+      if (mcd) {
+        const none = order.filter((sp) => !db.dw.get(sp));
+        out.push(`# Multicomponent diffusion (-multi_D): each species at its Dw in the database at ${fmtG(w.tc, 6)} C${none.length
+          ? `, ${fmtG(mcd.dw, 6)} m2/s for ${none.length === 1 ? 'the one' : `the ${none.length}`} without -dw` : ''},`);
+        out.push(`# times the porosity ${fmtG(mcd.porosity, 6)} to the ${fmtG(mcd.n, 6)}, ${fmtG(mcd.factor, 6)}: its D. The ions are coupled so that no current flows,`);
+        out.push(t.implicit ? '# as PHREEQC has them; each diffuses down its concentration, as PHREEQC\'s -implicit scheme takes it.'
+          : follow ? '# and each diffuses down its activity, as PHREEQC has them.'
+            : '# as PHREEQC has them; each diffuses down its concentration, the activity coefficients folded into the log K.');
+      }
       out.push(column.zones.length > 1 ? `# The cells start as PHREEQC equilibrates them before the first shift, in ${column.zones.length} zones: `
         + `${column.zones.map((z) => `${z.lo}-${z.hi}`).join(', ')}, the first as written here and the rest in <INITIAL>,`
         : '# Every cell starts from the water of cell 1 as PHREEQC equilibrates it before the first shift,');
@@ -4127,7 +4255,8 @@
       let d = '';
       if (column) {
         // In a column: TRANSPORT's D, and the water at each end that flows in or holds it.
-        d = [colD > 0 ? `D=${fmtG(colD, 6)}` : '', column.stag ? `Dm=${fmtG(column.stag.alpha / 2, 15)}` : '',
+        d = [mcdOf ? `D=${fmtG(mcdOf(s), 10)}` : colD > 0 ? `D=${fmtG(colD, 6)}` : '',
+          column.stag ? `Dm=${fmtG(column.stag.alpha / 2, 15)}` : '',
           leftAt ? `left=${fmtG(leftAt.get(s) || 0, 15)}` : '',
           rightAt ? `right=${fmtG(rightAt.get(s) || 0, 15)}` : ''].filter(Boolean).join('  ');
       } else if (o.dw && db.dw.has(s)) d = `D=${fmtG(db.dw.get(s), 6)}`;

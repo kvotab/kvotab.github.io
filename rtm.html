@@ -513,6 +513,7 @@
               <tr><td><code>FACES</code></td><td>The face positions outright, in metres from the left end: a list, <code>FACES = 0, 1e-7, 8e-7, 2.7e-6, …</code>, or an expression in <code>i</code> worked out for <em>i</em> = 0 to <code>CELLS</code>, <code>FACES = 1e-4*(i/10)^3</code>. The first must be 0 and each must be larger than the last. A list decides <code>CELLS</code> and <code>LENGTH</code>; if they are given too they have to agree.</td></tr>
               <tr><td><code>SURFACE_LAYER</code></td><td>Makes the first cell exactly this thick, in metres, and lays the other <code>CELLS</code>&nbsp;−&nbsp;1 out over the rest by <code>GRID</code>. See <em>A surface</em> below.</td></tr>
               <tr><td><code>DIFFUSION</code>, <code>ADVECTION</code></td><td>1 or 0. Either, both or neither. <code>DIFFUSION</code> may also be <em>nernst-planck</em>, which couples the ions so that no current flows — see <em>Diffusion that keeps the charge</em> below.</td></tr>
+              <tr><td><code>DIFFUSION_GRADIENT</code></td><td><em>concentration</em> (the default) or <em>activity</em>: what each species diffuses down, its concentration or its activity as PHREEQC's multicomponent diffusion takes it. <em>activity</em> needs <code>ACTIVITY</code> — see <em>Diffusion that keeps the charge</em> below.</td></tr>
               <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind unless <code>ADVECTION_SCHEME</code> says otherwise, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
               <tr><td><code>ADVECTION_SCHEME</code></td><td><em>upwind</em> (the default) or <em>limited</em>: second order where a profile is smooth and upwind where it turns, so a front stays sharp — see <em>What it actually solves</em> below.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
@@ -1869,9 +1870,24 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             where without it the chloride lags the acid by a sixth of the step. Where every
             coefficient is the same the term is nothing in a neutral water. The charge comes from the
             name, <code>z=</code> where it should not; a <code>PECLET</code> dispersion moves every
-            species alike and is left as it is. It acts between the cells of the column: a Dirichlet
-            end and the rock matrix keep each species on its own, and the gradients are of
-            concentrations, the activity coefficients' own gradients left out.</p>
+            species alike and is left as it is. It acts between the cells of the column and at a
+            Dirichlet end, between the water held there and the cell beside it, half a cell away; the
+            rock matrix keeps each species on its own.</p>
+          <p>The gradients are of concentrations unless <code>DIFFUSION_GRADIENT = activity</code>,
+            which needs <code>ACTIVITY</code>: then each is the difference in concentration times
+            1 + Δln γ/Δln <em>C</em> between the two cells, the factor PHREEQC's multicomponent diffusion
+            takes, which comes to the difference in activity where the profile is smooth. PHREEQC uses
+            the factor only between 0.2 and 2.25 — outside them where a species is nearly level and its
+            activity coefficient is not — and drops it to 1 beyond. The flux then jumps, upwards as the
+            difference falls below 0.2; PHREEQC's explicit steps step over that and an implicit solver
+            cannot (acid against salt, pure water held at both ends: two million steps take that rule to
+            54 hours). Here the factor is held at 0.2 or 2.25 beyond them: a level species stays level,
+            as in PHREEQC, but gets there at 0.2 or 2.25 of its <code>D</code> where PHREEQC takes 1. A
+            tracer level across a column with sea-strength salt held at one end and fresh water at the
+            other comes out up to 8&nbsp;% above PHREEQC's in the middle, and the pH 0.008 apart. A species
+            one side has none of has no factor in PHREEQC; since a water from PHREEQC carries a trace of
+            what it lacks, the factor fades out here as one side falls from a millionth of the other to
+            10<sup>−10</sup> of it.</p>
 
           <h3 id="help-charts">Reading the charts</h3>
           <p>The time chart draws the species ticked in the list above it, at one cell, or what
@@ -2152,8 +2168,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             a cell, which gives <code>VELOCITY</code>, to the left with <code>-flow_direction back</code>,
             and <code>-shifts</code> of them give <code>TEND</code>. The dispersivity gives a
             <code>PECLET</code> over the column, and <code>-diffusion_coefficient</code>, 0.3×10<sup>−9</sup>
-            m²/s unless given, every species' <code>D</code>; with <code>-correct_disp</code> both are
-            multiplied as PHREEQC multiplies them, by 1 + 1/<em>cells</em> for each end with flux. An end
+            m²/s unless given, every species' <code>D</code> (each its own under <code>-multi_D</code>,
+            below); with <code>-correct_disp</code> both are multiplied as PHREEQC multiplies them, by
+            1 + 1/<em>cells</em> for each end with flux. An end
             with flux where the water comes in is <code>robin</code>, with <code>SOLUTION 0</code>'s species
             as PHREEQC speciates it as <code>left=</code> (<code>SOLUTION</code> <em>cells</em>+1 and
             <code>right=</code> flowing back), and where it leaves <code>free</code>. A constant end is
@@ -2184,10 +2201,35 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             each cell with its stagnant water at every step as the exchange comes to over the step, so
             the exchange alone — closed cells of one water, which diffusion moves nothing in, another
             water stagnant behind them — is PHREEQC's to 10<sup>−8</sup> at every shift.</p>
+          <p>Multicomponent diffusion, <code>-multi_D true</code> <em>Dw θ limit n</em>: each species
+            diffuses at its own <code>D</code>, the database's <code>-dw</code> at the water's temperature as
+            PHREEQC takes it — scaled by the viscosity of water at 25&nbsp;°C over its viscosity there, and
+            by the species' own temperature term — or <em>Dw</em>, 10<sup>−9</sup> m²/s unless given, for a
+            species without one, times the porosity to the <em>n</em>: the porosity of
+            <code>-porosities</code>, or <em>θ</em>, 0.3 unless given. The text says <code>DIFFUSION =
+            nernst-planck</code>, as PHREEQC couples the ions so that no current flows, and
+            <code>DIFFUSION_GRADIENT = activity</code>, as it moves each species down its activity; the
+            <code>-diffusion_coefficient</code> is then for heat alone. PHREEQC's <code>-implicit</code>
+            scheme leaves the activity's part out and takes each species down its concentration, and the
+            text then does too. HCl against NaCl in ten closed cells comes out where PHREEQC's explicit
+            steps go as they are made smaller — its runs at 10 and 40 steps to a shift, extrapolated —
+            within 5×10<sup>−9</sup> mol/kgw in sodium and chloride and 7×10<sup>−7</sup> in pH; with pure
+            water held at both ends, within 2.5×10<sup>−7</sup> and 5×10<sup>−5</sup>, and with dilute salt
+            there, 6×10<sup>−7</sup> and 7×10<sup>−5</sup>, where PHREEQC's factor falls outside its bounds
+            (see <em>Diffusion that keeps the charge</em>). Under <code>-implicit</code>, within
+            2×10<sup>−6</sup> mol/kgw and 6×10<sup>−4</sup> in pH of PHREEQC's implicit steps, which go
+            their own way: 10<sup>−5</sup> and 2×10<sup>−3</sup> from its explicit ones. Through a column with an
+            exchanger, flushed with calcium chloride, the effluent on 40 cells within 0.021&nbsp;mmol/kgw in
+            sodium, 0.028 in potassium, 0.015 in calcium and 0.004 in chloride, each nearer than on 20
+            cells.</p>
           <p>Refused, each with its reason: stagnant cells in more than one layer, or mixed as the
-            input's <code>MIX</code> blocks say, or behind some cells only; multicomponent or interlayer
-            diffusion, a fixed current, cells of their own lengths or dispersivities with the water
-            moving, a closed end the water comes in through, zones or stagnant cells at temperatures of
+            input's <code>MIX</code> blocks say, or behind some cells only; stagnant cells with
+            <code>-multi_D</code>, which PHREEQC then exchanges species by species at a rate that falls as
+            its mixing steps grow, a quarter as much at four times as many; under <code>-multi_D</code>
+            cells of their own lengths or porosities, a porosity below its limit, where PHREEQC lets
+            nothing diffuse, and coefficients corrected for the ionic strength (its sixth value true);
+            interlayer diffusion, a fixed current, cells of their own lengths or dispersivities with the
+            water moving, a closed end the water comes in through, zones or stagnant cells at temperatures of
             their own, an exchanger or a surface in some of them and not others, a gas phase or a solid
             solution in a column that starts apart or has stagnant cells, water coming in at another
             temperature, which PHREEQC carries the heat of, and a <code>REACTION</code> numbered as a
@@ -2595,7 +2637,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109b"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2603,6 +2645,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109b"></script>
 </body>
 </html>

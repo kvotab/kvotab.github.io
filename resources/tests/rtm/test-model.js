@@ -3650,6 +3650,144 @@ HCO3- <=> H+ + CO3-2,   logK = -10.33
   for (let k = 0; k < yh.length; k++) yh[k] += 1e-4 * Math.sin(k);
   const vh = RtmModel.verifyJacobian(held, 0, yh);
   check('  and beside equilibria held, the Jacobian through the totals', vh.discrepancies.length === 0, `${vh.checked} entries`);
+
+  /*
+    At a Dirichlet end the coupling acts too, between the water held there
+    and the cell beside it, half a cell away: acid held against a salt water
+    puts no charge into the first cell, where each species on its own puts
+    in H+ faster than Na+ leaves.
+  */
+  const endHeld = (how) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.02
+DIFFUSION = ${how}
+LEFT = dirichlet
+RIGHT = neumann
+TEND = 3600
+
+<SPECIES>
+H+    1e-7   D=9.31e-9   left=1e-2
+Na+   1e-2   D=1.33e-9   left=1e-12
+Cl-   1e-2   D=2.03e-9   left=1e-2
+`);
+  const chargeIn = (how) => {
+    const m = endHeld(how);
+    const y = m.initialState();
+    const out = new Float64Array(y.length);
+    m.rhs(0, y, out);
+    const q = out[0] + out[1] - out[2];
+    return { m, y, q, flux: Math.max(...[0, 1, 2].map((k) => Math.abs(out[k]))) };
+  };
+  const fickEnd = chargeIn(1);
+  const npEnd = chargeIn('nernst-planck');
+  check('  at a Dirichlet end as between cells: acid held against salt puts no charge into the cell beside it',
+    Math.abs(npEnd.q) < 1e-13 * npEnd.flux && Math.abs(fickEnd.q) > 0.3 * fickEnd.flux,
+    `charge ${(Math.abs(npEnd.q) / npEnd.flux).toExponential(1)} of the largest flux; each on its own `
+      + `${(Math.abs(fickEnd.q) / fickEnd.flux).toFixed(2)}`);
+  const ye = npEnd.y.slice();
+  for (let k = 0; k < ye.length; k++) ye[k] *= 1 + 0.3 * Math.sin(k);
+  const ve = RtmModel.verifyJacobian(npEnd.m, 0, ye);
+  check('  and its Jacobian there', ve.discrepancies.length === 0, `${ve.checked} entries`);
+
+  /*
+    DIFFUSION_GRADIENT = activity, each species on its own: across a face
+    the difference in concentration times f = 1 + dln gamma/dln C between
+    the two cells, held between 0.2 and 2.25, and 1 where one side has under
+    1e-10 of the other -- by hand, from the cells' own gammas. K+ nearly
+    level where the ionic strength is not: f held at 2.25; a trace of Br-
+    on one side: 1.
+  */
+  const actCol = (more, how = 1) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 2
+LENGTH = 0.004
+DIFFUSION = ${how}
+DIFFUSION_GRADIENT = activity
+LEFT = neumann
+RIGHT = neumann
+TEND = 3600
+${more}
+
+<SPECIES>
+Na+   0.1      D=1.33e-9
+Cl-   0.101    D=2.03e-9
+K+    1e-3     D=1.96e-9
+Br-   1e-15    D=2.01e-9
+
+<INITIAL>
+Na+  1  0.01
+Cl-  1  0.010001
+K+   1  1.001e-3
+Br-  1  1e-3
+`);
+  {
+    const m = actCol('ACTIVITY = davies');
+    const y = m.initialState();
+    const ns = m.speciesNames.length;
+    const out = new Float64Array(y.length);
+    m.rhs(0, y, out);
+    const lnG = [0, 1].map((c) => {
+      const g = new Float64Array(ns);
+      RtmModel.activityAt(m.act, y, c * ns, g, new Float64Array(ns));
+      return g;
+    });
+    const Dk = { 'Na+': 1.33e-9, 'Cl-': 2.03e-9, 'K+': 1.96e-9, 'Br-': 2.01e-9 };
+    const f = {};
+    let worst = 0;
+    m.speciesNames.forEach((n, k) => {
+      const ca = y[k];
+      const cb = y[ns + k];
+      f[n] = Math.max(ca, cb) / Math.min(ca, cb) >= 1e10 ? 1
+        : Math.min(2.25, Math.max(0.2, 1 + (lnG[1][k] - lnG[0][k]) / Math.log(cb / ca)));
+      const want = (Dk[n] * f[n] * (cb - ca)) / (0.002 * 0.002);
+      worst = Math.max(worst, Math.abs(out[k] - want) / Math.abs(want));
+    });
+    check('DIFFUSION_GRADIENT = activity: the difference times 1 + dln gamma/dln C, held between 0.2 and 2.25, '
+      + 'none for a trace', worst < 1e-12 && f['K+'] === 2.25 && f['Br-'] === 1 && f['Na+'] > 0.5 && f['Na+'] < 1,
+    `f: Na+ ${f['Na+'].toFixed(4)}, Cl- ${f['Cl-'].toFixed(4)}, K+ ${f['K+']} (held), Br- ${f['Br-']} (a trace); `
+      + `the rates within ${worst.toExponential(1)} of them`);
+    let msg = '';
+    try { actCol(''); } catch (e) { msg = e.message; }
+    check('  without ACTIVITY it is refused, and says why', /DIFFUSION_GRADIENT = activity .* needs activity coefficients: set ACTIVITY/.test(msg), msg);
+  }
+  // Coupled and down the activities: acid against salt in a closed column stays neutral.
+  {
+    const m = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.02
+DIFFUSION = nernst-planck
+DIFFUSION_GRADIENT = activity
+ACTIVITY = davies
+LEFT = neumann
+RIGHT = neumann
+TEND = 18000
+
+<SPECIES>
+H+    1e-7       D=9.31e-9
+Na+   0.05       D=1.33e-9
+Cl-   0.0500001  D=2.03e-9
+
+<INITIAL>
+H+   0-9  0.05
+Na+  0-9  1e-7
+`);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 18000, rtol: 1e-8, atol: 1e-16 });
+    const y = r.y[r.y.length - 1];
+    let charge = 0;
+    let mass = 0;
+    for (let i = 0; i < 20; i++) {
+      charge = Math.max(charge, Math.abs(y[3 * i] + y[3 * i + 1] - y[3 * i + 2]) / 0.05);
+      mass += y[3 * i + 2];
+    }
+    check('  coupled and down the activities, acid against salt stays neutral and keeps its chloride',
+      charge < 1e-12 && Math.abs(mass / (20 * 0.0500001) - 1) < 1e-12, `charge ${charge.toExponential(1)} of the salt, `
+        + `chloride ${Math.abs(mass / (20 * 0.0500001) - 1).toExponential(1)} off`);
+  }
 }
 
 /* ======================================================================

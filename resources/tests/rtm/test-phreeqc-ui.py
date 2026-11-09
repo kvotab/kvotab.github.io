@@ -519,6 +519,28 @@ async def main():
             ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('  and the page runs it', ran, 'Done')
 
+            # --- multicomponent diffusion: each species its own D, the ions coupled, each down its activity ---
+            md_input = column_input.replace('  -dispersivities 0.002\\n', '  -dispersivities 0.002\\n  -multi_D true 1e-9 0.3 0 1\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{md_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            mdr = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') || /TRANSPORT block, and/.test(t) ? t : ''; }})()")
+            md_text = await page.ev("document.getElementById('rtmText').value")
+            md_ok = (isinstance(mdr, str) and 'Multicomponent diffusion, -multi_D: each species at its Dw in the database' in mdr
+                     and 'each down its activity, DIFFUSION_GRADIENT = activity' in mdr and isinstance(md_text, str)
+                     and re.search(r'^DIFFUSION = nernst-planck$', md_text, re.M) is not None
+                     and re.search(r'^DIFFUSION_GRADIENT = activity$', md_text, re.M) is not None
+                     and re.search(r'^K\+ .*\bD=5\.88\d*e-10\b', md_text, re.M) is not None)
+            check('multicomponent diffusion (-multi_D): each species its Dw times the porosity, the ions coupled and each down '
+                  'its activity, and the report says so', md_ok or mdr)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran, 'Done')
+
             # --- a surface in the water, with its double layer: carried, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"

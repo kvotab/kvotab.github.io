@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -434,7 +434,10 @@
           + (x.enters.length ? ` · ${x.enters.join(', ')} enter${x.enters.length === 1 ? 's' : ''} the rock` : ' · nothing enters the rock'));
       }
       const moves = [];
-      if (s.DIFFUSION) moves.push('diffusion');
+      if (s.DIFFUSION) {
+        moves.push(`${s.DIFFUSION === 2 ? 'Nernst-Planck diffusion' : 'diffusion'}`
+          + `${s.DIFFUSION_GRADIENT === 'activity' ? ' down the activities' : ''}`);
+      }
       if (s.ADVECTION && s.VELOCITY) {
         moves.push(`${s.ADVECTION_SCHEME === 'limited' ? 'limited ' : ''}advection at ${fmtNumber(s.VELOCITY)} m/${timeUnit().symbol}`
           + (m.travelTime ? `, a travel time of ${fmtTime(m.travelTime)}` : ''));
@@ -1632,7 +1635,7 @@
             '`batch` or `transport`, and how many species and reactions: `MODE`, `<SPECIES>` and `<REACTIONS>`.',
             'For a column, the cells: how many, over what length and how laid out, from `CELLS`, `LENGTH` and `GRID` with its `GRID_RATIO` or `GRID_POWER`, and a first cell pinned by `SURFACE_LAYER`.',
             'With a rock matrix, `dual porosity`: how many layers behind each cell, `matched` or `reference`, to `MATRIX_DEPTH`; the first layer, why it is that thick and how fast the rest grow; the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `De=` and so enter the rock.',
-            'What moves: `diffusion`, `advection` at the `VELOCITY` with the travel time it makes (`limited advection` under `ADVECTION_SCHEME = limited`), the Peclet number, or `nothing moves`.',
+            'What moves: `diffusion` (`Nernst-Planck diffusion` under `DIFFUSION = nernst-planck`, `down the activities` under `DIFFUSION_GRADIENT = activity`), `advection` at the `VELOCITY` with the travel time it makes (`limited advection` under `ADVECTION_SCHEME = limited`), the Peclet number, or `nothing moves`.',
             'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean, and how many cells stand for the column past a `semi-infinite` end.',
             'Equilibria and the totals they conserve, and whether `EQUILIBRATE` put the starting state on them.',
             'Parameters and tables by name, and a species held in some cells only.',
@@ -2143,7 +2146,7 @@
         ['none', 'No `D`: the model is a batch, or you add the coefficients in the text.', pq.diff === 'none'],
         ['one coefficient for every species', 'The value given, in m²/s, on every line.', pq.diff === 'one'],
         ['each species its own', 'The tracer diffusion coefficient the database gives each species (`-dw`); a species without one gets none.', pq.diff === 'dw'],
-      ] }, { heading: 'Keep in mind', text: 'With each species its own coefficient the text also says `DIFFUSION = nernst-planck`: the ions are coupled so that no current flows, and the water stays neutral as they spread. With one coefficient for every species there is nothing to couple.' }],
+      ] }, { heading: 'Keep in mind', text: 'With each species its own coefficient the text also says `DIFFUSION = nernst-planck`: the ions are coupled so that no current flows, and the water stays neutral as they spread. With one coefficient for every species there is nothing to couple. A column from an input\'s `TRANSPORT` takes its coefficients from there: its `-diffusion_coefficient`, or under `-multi_D` each species\' `-dw` times the porosity to the n, coupled, and down the activities.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -2620,11 +2623,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109a',
+    'resources/js/rtm-phreeqc.js?v=20261109b',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2935,12 +2938,25 @@ END
         + (c.velocity ? `the water crossing a cell in ${pqNum(c.timeStep)} s (${pqNum(Math.abs(c.velocity))} m/s) for `
           + `${c.shifts} shifts` : `diffusing for ${c.shifts} periods of ${pqNum(c.timeStep)} s`)
         + `${c.dispersivity ? `, dispersivity ${pqNum(c.dispersivity)} m` : ''}`
-        + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, diffusion coefficient `
-        + `${pqNum(c.diffusion)} m²/s; ${end(c.left, c.leftSolution, 'left')}, ${end(c.right, c.rightSolution, 'right')}. `
+        + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, `
+        + `${c.multiD ? 'each species diffusing at its own coefficient' : `diffusion coefficient ${pqNum(c.diffusion)} m²/s`}; `
+        + `${end(c.left, c.leftSolution, 'left')}, ${end(c.right, c.rightSolution, 'right')}. `
         + (c.zones && c.zones.length > 1 ? `Its cells start as PHREEQC equilibrates them before the first shift, in `
           + `${c.zones.length} zones — ${c.zones.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} — the first as the `
           + 'water above, the others in <code>&lt;INITIAL&gt;</code>.</p>'
           : 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>'));
+      // Multicomponent diffusion: each species' Dw times the porosity to the n, the ions coupled, down their activities.
+      if (c.multiD) {
+        const md = c.multiD;
+        const none = md.withoutDw.length;
+        out.push(`<p>Multicomponent diffusion, <code>-multi_D</code>: each species at its <code>Dw</code> in the database at `
+          + `${pqNum(r.temperature)} °C${none ? ` (${pqNum(md.defaultDw)} m²/s for the ${none} without one)` : ''} times the `
+          + `porosity ${pqNum(md.porosity)} to the ${pqNum(md.n)}, its <code>D</code>; the ions coupled so that no current `
+          + 'flows, <code>DIFFUSION = nernst-planck</code>, and each '
+          + (md.gradient === 'activity' ? 'down its activity, <code>DIFFUSION_GRADIENT = activity</code>, as PHREEQC has them.'
+            : md.implicit ? 'down its concentration, as PHREEQC\'s <code>-implicit</code> scheme takes it.'
+              : 'down its concentration, the activity coefficients folded into the log K.') + '</p>');
+      }
       // Stagnant cells: a rock matrix of one layer, exchanging as PHREEQC's first order does.
       if (c.stagnant) {
         const st = c.stagnant;
