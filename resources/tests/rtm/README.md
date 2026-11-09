@@ -397,6 +397,14 @@ cell's centre, a parameter the cell's and `t` the time asked at. Seven
 Without ACTIVITY the noActivity model marks no species a solute (its water's
 activity being 1), so the quantities say for themselves what is dissolved,
 and list no log activity: it would be the log of the species itself.
+What each species is made of (since 2026-11-09, the Composition tab): in a
+carbonate and sulfate water with calcite and gypsum held at saturation, a
+dolomite dissolving at a rate and an exchanger, each element's species --
+a solute's and an exchanged one's from the name, a mineral's from its
+relation or its reaction (gypsum's water left out, dolomite two C), no H, O
+or X; the sulfate's sulfur (SO4-2 and CaSO4, not HS-) and the carbonate's
+equivalents (CO3-2 and CaCO3 two, HCO3- and CaHCO3+ one, CO2 none); and the
+two quantities they make, `alk(CO3)` and `tot(SO4)`, by hand to 1e-14.
 
 **Ion exchange** (`exchanger`, `exchange`). A binary Na/Ca exchange from an
 exchanger all Na, against its closed solution (7e-14), the sites and the totals
@@ -883,6 +891,8 @@ speciated state rather than what was typed, and draws a profile whose mean is
 closed boundaries all in one number.
 
 What a run can be read as (since 2026-11-09): the list puts the species first and the quantities after them in groups, the log activities shut until their heading is clicked; ticking pH, SI(Halite) and an `<OUTPUT>` draws the first two on the right-hand axis and the third, in mol/kgw, on the left, with the pH `<DATA>` measured at 500 s as open circles in the pH line's colour; the pH at 500 s is -log a(H+) of the acid the reaction added, 3.31. CSV, Excel, SVG and PNG are each caught as the page hands them over: the CSV's header names the quantities, the workbook starts with a zip's PK, the figures are an SVG and a PNG. The gradient draws as contours with their values and as a surface, and a quantity on it -- the radiolysis model's pH in every cell, from the worker -- with the picker's groups. The block puts back the model and the picks it found, which the checks after it read; and a CSV leaves out a pick the model on show does not have, where it used to write it an empty column.
+
+The Composition tab (since 2026-11-09), on a water whose major ions are round numbers (Ca 2.2, Mg 1, Na + K 2.1, Cl 2, SO4 1, HCO3 + CO3 3 meq/kgw, CaSO4 and CO3-2 counted) and a water measured at 50 s: where calcium is, in the whole cell -- the calcite, made of what its reaction says, Ca+2 and CaSO4, stacked to 100 % at every point -- and in the water alone; the Piper diagram's three points where the shares put them, to 1e-9 against the geometry worked out in the test, the measured water in all three and the type, Ca–Na–HCO₃, in the note; the Schoeller diagram's lines in meq/kgw on a log axis, the measured one dotted; a Stiff diagram per water; the CSV's header and type; and along a three-cell column, a Piper point per cell coloured by distance. A share of exactly a half came out 0.49999999999999994 and missed the half-or-more rule of the type: the rule allows for the rounding.
 
 That last check was first written expecting the profile to be the shape of the
 source. It is not: √(D·t/R) is 2×10⁻⁴ m against a column of 10⁻⁴ m, so by 100 s

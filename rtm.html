@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109c">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109d">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -215,6 +215,7 @@
             <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
             <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
             <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
+            <button type="button" data-tab="composition" data-on-click="rtm:tab">Composition</button>
             <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
@@ -440,6 +441,63 @@
           </div>
           <div class="plot" id="rtmChartGradient" hidden></div>
           <p class="rtm-empty" id="rtmGradEmpty">A gradient needs a run in transport mode.</p>
+        </section>
+
+        <!-- ---- what the water is made of: where an element is, and its major ions ---- -->
+        <section class="rtm-pane" data-pane="composition" hidden>
+          <div class="rtm-toolbar">
+            <label>Show
+              <select id="rtmCompView" data-on-change="rtm:redrawComp">
+                <option value="where">where an element is</option>
+                <option value="piper">a Piper diagram</option>
+                <option value="schoeller">a Schoeller diagram</option>
+                <option value="stiff">Stiff diagrams</option>
+              </select>
+            </label>
+            <label data-comp-for="where">Element
+              <select id="rtmCompElement" data-on-change="rtm:redrawComp"></select>
+            </label>
+            <label data-comp-for="where">In
+              <select id="rtmCompIn" data-on-change="rtm:redrawComp">
+                <option value="water">the water</option>
+                <option value="all">the whole cell</option>
+              </select>
+            </label>
+            <label data-comp-for="where">As
+              <select id="rtmCompAs" data-on-change="rtm:redrawComp">
+                <option value="percent">shares, %</option>
+                <option value="amount">amounts</option>
+              </select>
+            </label>
+            <label id="rtmCompAlongWrap">Along
+              <select id="rtmCompAlong" data-on-change="rtm:redrawComp">
+                <option value="time">the run, at a cell</option>
+                <option value="distance">the column, at a time</option>
+              </select>
+            </label>
+            <label id="rtmCompCellWrap">Cell
+              <select id="rtmCompCell" data-on-change="rtm:redrawComp"></select>
+            </label>
+            <label id="rtmCompLayerWrap" hidden>Layer
+              <select id="rtmCompLayer" data-on-change="rtm:redrawComp"></select>
+            </label>
+            <label id="rtmCompTimesWrap"><span id="rtmCompTimesLabel">Times</span>
+              <input type="text" id="rtmCompTimes" class="rtm-times" placeholder="spread over the run"
+                data-on-change="rtm:redrawComp">
+            </label>
+            <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
+            <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="png">PNG</button>
+            </span>
+            <span class="kvot-info-slot" data-info-key="pane:composition"></span>
+            <span class="rtm-muted" id="rtmCompNote"></span>
+          </div>
+          <div class="plot" id="rtmChartComp" hidden></div>
+          <p class="rtm-empty" id="rtmCompEmpty">Run the model to see what its water is made of.</p>
         </section>
 
         <!-- ---- the run, seen through PHREEQC ---- -->
@@ -1994,12 +2052,48 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             of thousands of seconds on the built-in model — so ask for 10 hours there and you may
             well get 10.8.</p>
 
+          <h4 id="help-composition">What the water is made of</h4>
+          <p><em>Composition</em> reads the stored concentrations through what each species is
+            made of. A name says it — <code>CaHCO3+</code> is a Ca, a C, an H and three O,
+            <code>CaX2</code> a Ca on two of the exchanger's sites — and a mineral's is what its
+            relation makes of the rest: <code>Calcite &lt;=&gt; Ca+2 + CO3-2</code> is one Ca and one
+            C. <em>Where an element is</em> stacks each species with any of it as its share of all
+            of it, at one cell along the run or along the column at one time: in the water, or in
+            the whole cell, the exchanger, a surface, the minerals and a gas with it. Hydrogen and
+            oxygen are the water's own and are left out, and a species that never comes to 1 % is
+            drawn with the others like it, as one band.</p>
+          <p>The water's major ions are drawn as the hydrochemists draw them, in equivalents: Ca
+            and Mg twice their dissolved totals, Na and K together, Cl, the sulfate twice the sulfur
+            in a species with four O to each S — <code>SO4-2</code>, <code>CaSO4</code>, not
+            <code>HS-</code> — and the carbonate's alkalinity, <code>HCO3-</code> one and
+            <code>CO3-2</code> two, their complexes as many. Under an <code>ACTIVITY</code> the
+            concentrations are mol/kgw and these are meq/kgw; otherwise they are the concentrations
+            times the charge. The two that are not totals of an element are on the time chart too,
+            as <code>alk(CO3)</code> and, where some of the sulfur is something else,
+            <code>tot(SO4)</code>, and a table in <code>&lt;DATA&gt;</code> can name them.</p>
+          <p>A <em>Piper diagram</em> puts the cations' shares in the triangle on the left, the
+            anions' on the right, and the two together in the diamond above, with a grid every 20 %:
+            a water near the diamond's left corner is a Ca–HCO<sub>3</sub> water, near its right
+            corner a Na–Cl one. Along the run it is a path through every stored point, coloured by
+            time; along the column, one point per cell, coloured by distance. A <em>Schoeller
+            diagram</em> draws each water as a line through its six ions on a log axis, so that a
+            water diluted keeps its shape and moves down; <em>Stiff diagrams</em> draw each as a
+            polygon, cations to the left of zero, anions to the right, all on one scale. Both take
+            the waters from <em>Times</em> — six spread over the run unless given — or along the
+            column six cells from end to end. Measured waters are read from
+            <code>&lt;DATA&gt;</code> by the names the model gives them, <code>tot(Ca)</code> or
+            <code>Ca+2</code>, <code>alk(CO3)</code> or <code>HCO3-</code>, and drawn beside the
+            model's in black or orange. The note under the toolbar names each water's type, its
+            hydrochemical facies: the cation and the anion that are half or more of theirs, or the
+            two largest where none is.</p>
+
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
             model text the run was made with on a second sheet. On <em>Against distance</em> and
             <em>Gradient</em> they write what the chart draws: a row per distance and a column per
-            curve, or a row per cell and a column per time. <em>SVG</em> and <em>PNG</em> save the
+            curve, or a row per cell and a column per time; on <em>Composition</em> each band, or each
+            water's ions in equivalents, their shares and its type. <em>SVG</em> and <em>PNG</em> save the
             chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
@@ -2719,14 +2813,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109c"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109d"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109c"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109d"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109d"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109d';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -42,6 +42,16 @@
     gradScale: 'YlOrRd',
     gradView: 'map',       // the gradient as a map, as contours of it, or as a surface
     gradTMin: '1e-6',
+    // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
+    compView: 'where',
+    compElement: '',
+    compIn: 'water',
+    compAs: 'percent',
+    compAlong: 'time',
+    compCell: 0,
+    compLayer: 0,
+    compTimes: '',
+    compTMin: '1e-6',
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     sideWidth: null,
@@ -78,6 +88,9 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin,
+        compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
+        compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
+        compTMin: state.compTMin,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
         // model that has moved on and no amount of reloading shifts it -- it is
@@ -109,6 +122,15 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
+      if (['where', 'piper', 'schoeller', 'stiff'].includes(s.compView)) state.compView = s.compView;
+      if (typeof s.compElement === 'string') state.compElement = s.compElement;
+      if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
+      if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
+      if (s.compAlong === 'time' || s.compAlong === 'distance') state.compAlong = s.compAlong;
+      if (Number.isInteger(s.compCell) && s.compCell >= 0) state.compCell = s.compCell;
+      if (Number.isInteger(s.compLayer) && s.compLayer >= 0) state.compLayer = s.compLayer;
+      if (typeof s.compTimes === 'string') state.compTimes = s.compTimes;
+      if (typeof s.compTMin === 'string') state.compTMin = s.compTMin;
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
       state.storedStamp = typeof s.modelStamp === 'string' ? s.modelStamp : null;
@@ -384,6 +406,7 @@
       renderFacts();
       renderSeriesList();
       renderCells();
+      renderComp();
       drawJacobianPattern();
       const m = reply.model;
       const warn = m.warnings.length ? ` ${m.warnings.length} warning${m.warnings.length > 1 ? 's' : ''}: ${m.warnings[0]}` : '';
@@ -634,9 +657,11 @@
     renderCells();
     renderProfileSpecies();
     renderGradSpecies();
+    renderComp();
     drawTime();
     drawProfile();
     drawGradient();
+    drawComp();
     pqRenderView();
     if (partial) return;
     const st = reply.stats || {};
@@ -1432,6 +1457,560 @@
   }
 
   /* ---------------------------------------------------------------------
+     Composition: where an element is, and the water's major ions as the
+     Piper, Schoeller and Stiff diagrams draw them
+
+     All of it from the stored concentrations and what each species is made
+     of (compositionOf in rtm-model.js): sums, no chemistry, so nothing is
+     asked of the worker.
+     --------------------------------------------------------------------- */
+  /** What each species is made of, as the model compiled says, or null. */
+  const compositionOf = (m) => (m && m.composition) || null;
+  const WHERE_LABELS = { water: 'dissolved', exchange: 'on the exchanger', surface: 'on the surface', mineral: 'mineral',
+    gas: 'gas' };
+
+  /** The elements a chart of where an element is can show: those two species or more hold, in the water or anywhere. */
+  function compElements(m, scope) {
+    const C = compositionOf(m);
+    if (!C) return [];
+    return C.elements.map((e) => ({ el: e.el, terms: scope === 'all' ? e.terms : e.terms.filter((tm) => tm[2] === 'water') }))
+      .filter((e) => e.terms.length > 1);
+  }
+
+  /*
+    The six poles of the water's major ions, in equivalents: Ca and Mg twice
+    their totals, Na and K together, Cl, the sulfate twice its sulfur, and the
+    carbonate's alkalinity, HCO3- one and CO3-2 two (compositionOf). A total
+    is everything dissolved: CaHCO3+ counts in Ca and in the carbonate.
+  */
+  const POLES = [
+    { key: 'Ca', label: 'Ca', cation: true }, { key: 'Mg', label: 'Mg', cation: true },
+    { key: 'NaK', label: 'Na + K', cation: true }, { key: 'Cl', label: 'Cl' }, { key: 'SO4', label: 'SO₄' },
+    { key: 'HCO3', label: 'HCO₃ + CO₃' },
+  ];
+  const CATIONS = POLES.filter((p) => p.cation);
+  const ANIONS = POLES.filter((p) => !p.cation);
+
+  /** Each pole of the model's water as [[species, equivalents to one of it]]. */
+  function poleTerms(C) {
+    const dissolved = (el, z) => ((C.elements.find((e) => e.el === el) || { terms: [] }).terms)
+      .filter((tm) => tm[2] === 'water').map(([k, n]) => [k, n * z]);
+    return { Ca: dissolved('Ca', 2), Mg: dissolved('Mg', 2), NaK: [...dissolved('Na', 1), ...dissolved('K', 1)],
+      Cl: dissolved('Cl', 1), SO4: C.sulfate.map(([k, s]) => [k, 2 * s]), HCO3: C.carbonate.map(([k, q]) => [k, q]) };
+  }
+
+  /**
+   * What the poles are counted in: meq/kgw where an activity model says the
+   * concentrations are mol/kgw, else the concentrations' own unit times the
+   * charge.
+   */
+  const poleUnit = (m) => (m && m.activity ? { scale: 1000, text: 'meq/kgw' }
+    : { scale: 1, text: 'equivalents: concentration × charge' });
+
+  /** A water's six poles at stored point i in model cell mc. */
+  function waterAt(r, terms, scale, i, mc) {
+    const ns = r.model.nspecies;
+    const base = i * r.width + mc * ns;
+    const w = {};
+    for (const p of POLES) {
+      let s = 0;
+      for (const [k, q] of terms[p.key]) s += q * Math.max(0, r.states[base + k]);
+      w[p.key] = s * scale;
+    }
+    return w;
+  }
+
+  /**
+   * The waters <DATA> measured where the chart is looking -- a table in time
+   * at its cell and layer, every table in distance -- each row with any of
+   * the major ions a water: a column read by the name the model gives it,
+   * tot(Ca) or Ca+2, alk(CO3) or HCO3- and CO3-2; one the table has not got
+   * counts as none.
+   */
+  function measuredWaters(along, cell, layer, scale) {
+    const data = (state.compiled && state.compiled.data) || [];
+    const r = state.result;
+    const out = [];
+    for (const tab of data) {
+      if (tab.kind !== along) continue;
+      if (along === 'time' && ((tab.cell || 0) !== cell || (tab.layer || 0) !== layer)) continue;
+      const col = (row, keys, z) => {
+        for (const key of keys) {
+          const j = tab.columns.indexOf(key);
+          if (j >= 0) return row[j + 1] === null ? 0 : row[j + 1] * z;
+        }
+        return 0;
+      };
+      if (!['tot(Ca)', 'Ca+2', 'tot(Mg)', 'Mg+2', 'tot(Na)', 'Na+', 'tot(K)', 'K+', 'tot(Cl)', 'Cl-', 'tot(SO4)', 'tot(S)',
+        'SO4-2', 'alk(CO3)', 'HCO3-', 'CO3-2'].some((key) => tab.columns.includes(key))) continue;
+      const at = tab.kind === 'distance' ? (tab.at !== null ? tab.at : r.t[r.n - 1]) : null;
+      for (const row of tab.rows) {
+        const w = {
+          Ca: col(row, ['tot(Ca)', 'Ca+2'], 2), Mg: col(row, ['tot(Mg)', 'Mg+2'], 2),
+          NaK: col(row, ['tot(Na)', 'Na+'], 1) + col(row, ['tot(K)', 'K+'], 1), Cl: col(row, ['tot(Cl)', 'Cl-'], 1),
+          SO4: col(row, ['tot(SO4)', 'tot(S)', 'SO4-2'], 2),
+          HCO3: tab.columns.includes('alk(CO3)') ? col(row, ['alk(CO3)'], 1) : col(row, ['HCO3-'], 1) + col(row, ['CO3-2'], 2),
+        };
+        for (const p of POLES) w[p.key] *= scale;
+        if (!(CATIONS.some((p) => w[p.key] > 0) && ANIONS.some((p) => w[p.key] > 0))) continue;
+        out.push({ w, measured: true, t: along === 'time' ? row[0] : at, x: along === 'distance' ? row[0] : null,
+          cell: along === 'time' ? (tab.cell || 0) : null,
+          label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
+      }
+    }
+    return out;
+  }
+
+  /** The shares of a water's cations and of its anions, each summing to one; null where either has none. */
+  function poleShares(w) {
+    const cs = CATIONS.reduce((s, p) => s + w[p.key], 0);
+    const as = ANIONS.reduce((s, p) => s + w[p.key], 0);
+    if (!(cs > 0 && as > 0)) return null;
+    const f = {};
+    for (const p of CATIONS) f[p.key] = w[p.key] / cs;
+    for (const p of ANIONS) f[p.key] = w[p.key] / as;
+    return f;
+  }
+
+  /**
+   * A water's type, its hydrochemical facies, the usual way: the cation and
+   * the anion that are half or more of theirs, or the two largest where none
+   * is -- Ca–HCO₃, Na–Cl, Ca–Na–HCO₃–Cl.
+   */
+  function faciesOf(f) {
+    const side = (poles) => {
+      const sorted = poles.map((p) => [p.key === 'NaK' ? 'Na' : p.label.replace(' + CO₃', ''), f[p.key]]).sort((a, b) => b[1] - a[1]);
+      // Half, give or take the rounding: three of six is 0.49999999999999994.
+      return sorted[0][1] >= 0.5 - 1e-12 ? [sorted[0][0]] : sorted.slice(0, 2).filter(([, v]) => v > 0).map(([nm]) => nm);
+    };
+    return [...side(CATIONS), ...side(ANIONS)].join('–');
+  }
+
+  // The Piper diagram's geometry: triangles of side 1, the gap between them, and the diamond above.
+  const PIPER_H = Math.sqrt(3) / 2;
+  const PIPER_GAP = 0.2;
+  /** A water's three points: in the cations' triangle, in the anions' and in the diamond. */
+  function piperXY(f) {
+    const H = PIPER_H;
+    const g = PIPER_GAP;
+    // The diamond from its lowest corner: Ca + Mg up to the left, SO4 + Cl up to the right.
+    const p = f.Ca + f.Mg;
+    const q = f.Cl + f.SO4;
+    return {
+      cat: [f.NaK + 0.5 * f.Mg, H * f.Mg],
+      an: [1 + g + f.Cl + 0.5 * f.SO4, H * f.SO4],
+      dia: [1 + g / 2 - 0.5 * p + 0.5 * q, g * H + H * (p + q)],
+    };
+  }
+
+  /** The Piper diagram's frame and its grid every 20 %, as traces and labels. */
+  function piperFrame(c) {
+    const H = PIPER_H;
+    const g = PIPER_GAP;
+    const xs = [];
+    const ys = [];
+    const seg = (a, b) => { xs.push(a[0], b[0], null); ys.push(a[1], b[1], null); };
+    const tri = (x0) => {
+      for (const f of [0.2, 0.4, 0.6, 0.8]) {
+        seg([x0 + 0.5 * f, H * f], [x0 + 1 - 0.5 * f, H * f]);
+        seg([x0 + 1 - f, 0], [x0 + 0.5 * (1 - f), H * (1 - f)]);
+        seg([x0 + f, 0], [x0 + f + 0.5 * (1 - f), H * (1 - f)]);
+      }
+    };
+    tri(0);
+    tri(1 + g);
+    const B = [1 + g / 2, g * H];
+    const at = (p, q) => [B[0] - 0.5 * p + 0.5 * q, B[1] + H * (p + q)];
+    for (const f of [0.2, 0.4, 0.6, 0.8]) { seg(at(f, 0), at(f, 1)); seg(at(0, f), at(1, f)); }
+    const outline = (pts) => ({ type: 'scatter', mode: 'lines', x: [...pts.map((pt) => pt[0]), pts[0][0]],
+      y: [...pts.map((pt) => pt[1]), pts[0][1]], line: { color: c.text, width: 1 }, hoverinfo: 'skip', showlegend: false });
+    const traces = [
+      { type: 'scatter', mode: 'lines', x: xs, y: ys, line: { color: c.grid, width: 0.7 }, hoverinfo: 'skip', showlegend: false },
+      outline([[0, 0], [1, 0], [0.5, H]]),
+      outline([[1 + g, 0], [2 + g, 0], [1.5 + g, H]]),
+      outline([at(0, 0), at(1, 0), at(1, 1), at(0, 1)]),
+    ];
+    const label = (x, y, text, extra = {}) => ({ x, y, xref: 'x', yref: 'y', text, showarrow: false, font: { size: 11, color: c.text },
+      ...extra });
+    const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const ul = mid(at(1, 0), at(1, 1));
+    const ur = mid(at(0, 1), at(1, 1));
+    const annotations = [
+      // The corners at the gap read away from it, so that Na + K and HCO3 + CO3 do not run into each other.
+      label(0, -0.035, 'Ca', { yanchor: 'top' }), label(1, -0.035, 'Na + K', { yanchor: 'top', xanchor: 'right' }),
+      label(0.5 - 0.03, H, 'Mg', { xanchor: 'right' }),
+      label(1 + g, -0.035, 'HCO₃ + CO₃', { yanchor: 'top', xanchor: 'left' }), label(2 + g, -0.035, 'Cl', { yanchor: 'top' }),
+      label(1.5 + g + 0.03, H, 'SO₄', { xanchor: 'left' }),
+      // Along the diamond's upper edges, each pole the way it grows.
+      label(ul[0] - 0.05 * H, ul[1] + 0.025, 'SO₄ + Cl', { textangle: -60 }),
+      label(ur[0] + 0.05 * H, ur[1] + 0.025, 'Ca + Mg', { textangle: 60 }),
+    ];
+    return { traces, annotations };
+  }
+
+  /** What the composition chart drew, as a table for CSV and Excel: kept as it is drawn. */
+  let compTableNow = null;
+
+  /** The composition tab's controls, for the run or the model compiled: the pickers filled, what does not apply hidden. */
+  function renderComp() {
+    const m = (state.result && state.result.model) || state.compiled;
+    const view = state.compView;
+    const column = !!(m && m.transport && m.fracture > 1);
+    const along = column ? state.compAlong : 'time';
+    const list = compElements(m, state.compIn);
+    if (list.length && !list.some((e) => e.el === state.compElement)) state.compElement = list[0].el;
+    $('rtmCompElement').innerHTML = list.length ? list.map((e) => `<option value="${esc(e.el)}"`
+      + `${e.el === state.compElement ? ' selected' : ''}>${esc(e.el)}</option>`).join('') : '<option value="">none</option>';
+    $('rtmCompView').value = view;
+    $('rtmCompIn').value = state.compIn;
+    $('rtmCompAs').value = state.compAs;
+    $('rtmCompAlong').value = along;
+    document.querySelectorAll('[data-comp-for]').forEach((el) => { el.hidden = el.dataset.compFor !== view; });
+    $('rtmCompAlongWrap').hidden = !column;
+    const cells = m ? m.fracture : 1;
+    if (!(state.compCell < cells)) state.compCell = 0;
+    $('rtmCompCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === state.compCell ? ' selected' : ''}>`
+      + `${i}${m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
+    $('rtmCompCellWrap').hidden = along !== 'time' || cells < 2;
+    const nm = m && m.matrix ? m.matrix.n : 0;
+    if (state.compLayer > nm) state.compLayer = 0;
+    $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
+    $('rtmCompLayerWrap').hidden = nm === 0;
+    // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
+    $('rtmCompTimesWrap').hidden = along === 'time' && view === 'where';
+    $('rtmCompTimesLabel').textContent = along === 'time' ? 'Times' : 'At';
+    $('rtmCompTimes').placeholder = along === 'time' ? 'spread over the run' : 'the end of the run';
+    $('rtmCompTimes').value = state.compTimes;
+    $('rtmCompLogTWrap').hidden = along !== 'time' || view === 'schoeller' || view === 'stiff';
+    $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
+    $('rtmCompTMin').value = state.compTMin;
+    $('rtmCompTMinUnit').textContent = timeUnit().symbol;
+  }
+
+  function drawComp() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartComp');
+    const empty = $('rtmCompEmpty');
+    const note = $('rtmCompNote');
+    const r = state.result;
+    compTableNow = null;
+    const fail = (text) => {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = text;
+      note.textContent = '';
+    };
+    if (!r) { fail('Run the model to see what its water is made of.'); return; }
+    if (!compositionOf(r.model)) { fail('Run the model again: this run was made before the page could read what its species are made of.'); return; }
+    const column = r.model.transport && r.model.fracture > 1;
+    const along = column ? state.compAlong : 'time';
+    const stride = r.model.stride || 1;
+    const layer = Math.min(state.compLayer, stride - 1);
+    const cell = Math.min(state.compCell, r.model.fracture - 1);
+    // Across the column, one time: the first asked for, or the end of the run.
+    const asked = parseTimes(state.compTimes);
+    const atIndex = asked.times.length ? nearestIndex(r.t, asked.times[0]) : r.n - 1;
+    const ctx = { r, plot, along, layer, cell, asked, atIndex, column, fail, note };
+    empty.hidden = true;
+    plot.hidden = false;
+    if (state.compView === 'where') drawWhere(ctx);
+    else drawWaters(ctx);
+  }
+
+  /** The stored points along the run a chart in time draws: after "from" on a log axis. */
+  function compTimeIndices(r) {
+    const logT = $('rtmCompLogT').checked;
+    const tmin = Number(state.compTMin) || 0;
+    const out = [];
+    for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) out.push(i);
+    return { idx: out, logT };
+  }
+
+  /**
+   * Where an element is: each species with any of it, as its share of all
+   * there is in the water or the whole cell, stacked, or as its amount --
+   * along the run at one cell, or along the column at one time. A species
+   * that never comes to 1 % is drawn with the others like it, as one band.
+   */
+  function drawWhere({ r, plot, along, layer, cell, atIndex, fail, note }) {
+    const list = compElements(r.model, state.compIn);
+    if (!list.length) {
+      fail(state.compIn === 'water' ? 'No element is dissolved in two species or more here: try the whole cell.'
+        : 'No element is in two species or more here.');
+      return;
+    }
+    const E = list.find((e) => e.el === state.compElement) || list[0];
+    const ns = r.model.nspecies;
+    const stride = r.model.stride || 1;
+    const names = r.model.species;
+    let xs;
+    let valueAt;
+    let idx = null;
+    if (along === 'time') {
+      const pick = compTimeIndices(r);
+      idx = pick.idx;
+      if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+      const mc = modelCell(cell, layer);
+      xs = idx.map((i) => r.t[i]);
+      valueAt = (j, k) => r.states[idx[j] * r.width + mc * ns + k];
+    } else {
+      xs = Array.from(r.model.centres);
+      valueAt = (j, k) => r.states[atIndex * r.width + (j * stride + layer) * ns + k];
+    }
+    const npts = xs.length;
+    const bands = E.terms.map(([k, n, where]) => ({ name: where === 'water' ? names[k] : `${names[k]}, ${WHERE_LABELS[where]}`,
+      y: Float64Array.from({ length: npts }, (_, j) => n * Math.max(0, valueAt(j, k))) }));
+    const total = new Float64Array(npts);
+    for (const b of bands) for (let j = 0; j < npts; j++) total[j] += b.y[j];
+    for (const b of bands) {
+      let most = 0;
+      let sum = 0;
+      for (let j = 0; j < npts; j++) {
+        const f = total[j] > 0 ? b.y[j] / total[j] : 0;
+        most = Math.max(most, f);
+        sum += f;
+      }
+      b.most = most;
+      b.mean = sum / npts;
+    }
+    // The largest at the bottom; a species never 1 % of the total, with the rest like it.
+    bands.sort((a, b) => b.mean - a.mean);
+    const kept = bands.filter((b) => b.most >= 0.01);
+    const small = bands.filter((b) => b.most < 0.01);
+    if (small.length) {
+      const y = new Float64Array(npts);
+      for (const b of small) for (let j = 0; j < npts; j++) y[j] += b.y[j];
+      kept.push({ name: small.length === 1 ? small[0].name : `${small.length} more, each under 1 %`, y, rest: small });
+    }
+    const percent = state.compAs === 'percent';
+    const shown = kept.map((b) => Array.from(b.y, (v, j) => (percent ? (total[j] > 0 ? (100 * v) / total[j] : null) : v)));
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const traces = kept.map((b, q) => ({
+      type: 'scatter', mode: 'lines', name: b.name, x: xs, y: shown[q], stackgroup: 'one',
+      line: { width: 0.6, color: palette[q % palette.length] },
+      hovertemplate: percent ? `${esc(b.name)}: %{y:.3g} %<extra></extra>` : `${esc(b.name)}: %{y:.4e}<extra></extra>`,
+    }));
+    const layout = baseLayout();
+    const where = state.compIn === 'water' ? 'dissolved' : 'in the cell';
+    layout.xaxis.type = along === 'time' && $('rtmCompLogT').checked ? 'log' : 'linear';
+    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)',
+      font: { size: 11 } };
+    layout.yaxis.title = { text: percent ? `share of the ${E.el} ${where} (%)` : `${E.el} ${where} (concentration × count)`,
+      font: { size: 11 } };
+    if (percent) layout.yaxis.range = [0, 100];
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    const xHead = along === 'time' ? `t (${timeUnit().symbol})` : 'distance (m)';
+    compTableNow = { head: [xHead, ...kept.map((b) => `${b.name}${percent ? ' (%)' : ''}`), `${E.el} ${where}, all of it`],
+      rows: xs.map((x, j) => [x, ...shown.map((col) => col[j]), total[j]]),
+      name: `rtm_${E.el}_${along === 'time' ? `cell${cell}` : 'column'}` };
+    const bits = [along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}, ${npts} stored points`
+      : `${npts} cells at ${fmtTime(r.t[atIndex])}${layer ? `, rock layer ${layer}` : ''}`,
+    `${E.terms.length} species hold ${E.el} ${where}`];
+    if (small.length > 1) bits.push(`${small.length} never come to 1 %, drawn as one band`);
+    if (along === 'distance' && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes).times[0])
+      > 0.01 * Math.abs(r.t[atIndex] || 1)) bits.push('the nearest stored time');
+    note.textContent = bits.join('; ');
+  }
+
+  /**
+   * The water's major ions, from the model and from <DATA>: as a Piper
+   * diagram, a path through the run or along the column; as a Schoeller
+   * diagram, a line per water; or as Stiff diagrams, one per water.
+   */
+  function drawWaters({ r, plot, along, layer, cell, asked, atIndex, fail, note }) {
+    const C = compositionOf(r.model);
+    const terms = poleTerms(C);
+    const unit = poleUnit(r.model);
+    const missing = POLES.filter((p) => !terms[p.key].length).map((p) => p.label);
+    if (missing.length === POLES.length) { fail('The model has none of the major ions: Ca, Mg, Na, K, Cl, sulfate or carbonate.'); return; }
+    const stride = r.model.stride || 1;
+    const view = state.compView;
+    const c = themeColors();
+    const waters = [];
+    let colorTitle = '';
+    if (along === 'time') {
+      const mc = modelCell(cell, layer);
+      if (view === 'piper') {
+        // The path through the run: every stored point after "from", a few hundred at most.
+        const { idx, logT } = compTimeIndices(r);
+        const step = Math.max(1, Math.ceil(idx.length / 300));
+        const take = idx.filter((_, j) => j % step === 0 || j === idx.length - 1);
+        for (const i of take) {
+          waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]),
+            color: logT ? Math.log10(r.t[i]) : r.t[i] });
+        }
+        colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+      } else {
+        // The times asked for, or six spread over the run.
+        const picks = asked.times.length ? [...new Set(asked.times.map((tt) => nearestIndex(r.t, tt)))]
+          : [...new Set(Array.from({ length: 6 }, (_, k) => Math.round(((k + 1) / 6) * (r.n - 1))))];
+        if (!asked.times.length && r.t[0] === 0) picks.unshift(0);
+        for (const i of [...new Set(picks)]) waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]) });
+      }
+    } else {
+      const nf = r.model.fracture;
+      const cells = view === 'piper' ? Array.from({ length: nf }, (_, k) => k)
+        : [...new Set(Array.from({ length: Math.min(6, nf) }, (_, k) => Math.round((k * (nf - 1)) / Math.max(1, Math.min(6, nf) - 1))))];
+      for (const k of cells) {
+        waters.push({ w: waterAt(r, terms, unit.scale, atIndex, k * stride + layer), t: r.t[atIndex], cell: k,
+          x: r.model.centres[k], label: `cell ${k}, ${fmtNumber(Number(r.model.centres[k].toPrecision(3)))} m`, color: r.model.centres[k] });
+      }
+      colorTitle = 'distance (m)';
+    }
+    const measuredHere = measuredWaters(along, cell, layer, unit.scale);
+    const all = [...waters, ...measuredHere];
+    for (const wt of all) { wt.f = poleShares(wt.w); }
+    const drawable = waters.filter((wt) => wt.f);
+    if (!drawable.length) { fail('No water here has both cations and anions among the major ions to draw.'); return; }
+    const xHead = [`t (${timeUnit().symbol})`, 'cell', 'distance (m)'];
+    compTableNow = {
+      head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type'],
+      rows: all.map((wt) => [wt.measured ? wt.label : `model, ${wt.label}`, wt.t, wt.cell, wt.x !== undefined ? wt.x : null,
+        ...POLES.map((p) => wt.w[p.key]), ...POLES.map((p) => (wt.f ? 100 * wt.f[p.key] : null)), wt.f ? faciesOf(wt.f) : null]),
+      name: `rtm_${view}_${along === 'time' ? `cell${cell}` : 'column'}`,
+    };
+    const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
+    const bits = [];
+    if (view === 'piper') {
+      drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c);
+      const first = drawable[0];
+      const last = drawable[drawable.length - 1];
+      bits.push(along === 'time'
+        ? `${where}: ${faciesOf(first.f)} at ${fmtTime(first.t)}${drawable.length > 1 ? `, ${faciesOf(last.f)} at ${fmtTime(last.t)}` : ''}`
+        : `${where}: ${faciesOf(first.f)} in cell ${first.cell}${drawable.length > 1 ? `, ${faciesOf(last.f)} in cell ${last.cell}` : ''}`);
+    } else if (view === 'schoeller') {
+      drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c);
+      bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
+    } else {
+      drawStiff(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c);
+      bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
+    }
+    if (measuredHere.length) bits.push(`${measuredHere.length} measured`);
+    if (missing.length) bits.push(`the model has no ${missing.join(', ')}`);
+    if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
+    note.textContent = bits.join('; ');
+  }
+
+  function drawPiper(plot, waters, measured, colorTitle, c) {
+    const frame = piperFrame(c);
+    const traces = [...frame.traces];
+    const hover = (wt) => `${esc(wt.label)}<br>${faciesOf(wt.f)}<br>`
+      + `${CATIONS.map((p) => `${p.label} ${(100 * wt.f[p.key]).toFixed(1)} %`).join(', ')}<br>`
+      + `${ANIONS.map((p) => `${p.label} ${(100 * wt.f[p.key]).toFixed(1)} %`).join(', ')}`;
+    const panels = ['cat', 'an', 'dia'];
+    const pts = waters.map((wt) => piperXY(wt.f));
+    const colored = waters.length > 1;
+    panels.forEach((panel, q) => {
+      traces.push({
+        type: 'scatter', mode: waters.length > 1 ? 'lines+markers' : 'markers', name: 'the model',
+        legendgroup: 'model', showlegend: q === 0,
+        x: pts.map((pt) => pt[panel][0]), y: pts.map((pt) => pt[panel][1]),
+        line: { color: c.grid, width: 1 },
+        marker: { size: 7, color: colored ? waters.map((wt) => wt.color) : '#1f77b4', colorscale: 'Viridis',
+          showscale: colored && q === 0,
+          colorbar: colored && q === 0 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12,
+            outlinewidth: 0, tickfont: { size: 10 }, len: 0.7 } : undefined },
+        text: waters.map(hover), hovertemplate: '%{text}<extra></extra>',
+      });
+    });
+    if (measured.length) {
+      const mp = measured.map((wt) => piperXY(wt.f));
+      panels.forEach((panel, q) => {
+        traces.push({ type: 'scatter', mode: 'markers', name: 'measured', legendgroup: 'measured', showlegend: q === 0,
+          x: mp.map((pt) => pt[panel][0]), y: mp.map((pt) => pt[panel][1]),
+          marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } },
+          text: measured.map(hover), hovertemplate: '%{text}<extra></extra>' });
+      });
+    }
+    const H = PIPER_H;
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.margin = { l: 20, r: 20, t: 14, b: 20 };
+    layout.legend = { x: 0, y: 1, xanchor: 'left', yanchor: 'top', font: { size: 10 } };
+    layout.xaxis = { visible: false, range: [-0.12, 2 + PIPER_GAP + 0.12] };
+    layout.yaxis = { visible: false, range: [-0.12, 2 * H + PIPER_GAP * H + 0.06], scaleanchor: 'x', scaleratio: 1 };
+    layout.annotations = frame.annotations;
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  function drawSchoeller(plot, waters, measured, unit, c) {
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const labels = POLES.map((p) => p.label);
+    // On a log axis a pole the water has none of is a gap.
+    const ys = (wt) => POLES.map((p) => (wt.w[p.key] > 0 ? wt.w[p.key] : null));
+    const traces = waters.map((wt, q) => ({ type: 'scatter', mode: 'lines+markers', name: wt.label, x: labels, y: ys(wt),
+      line: { color: palette[q % palette.length], width: 1.6 }, marker: { size: 6 },
+      hovertemplate: `${esc(wt.label)}: %{x} %{y:.4g} ${esc(unit.text)}<extra></extra>` }));
+    for (const wt of measured) {
+      traces.push({ type: 'scatter', mode: 'lines+markers', name: wt.label, x: labels, y: ys(wt),
+        line: { color: c.text, width: 1.2, dash: 'dot' }, marker: { size: 8, symbol: 'circle-open', color: c.text },
+        hovertemplate: `${esc(wt.label)}: %{x} %{y:.4g} ${esc(unit.text)}<extra></extra>` });
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis.type = 'category';
+    layout.xaxis.title = { text: 'cations, then anions', font: { size: 11 } };
+    layout.yaxis.type = 'log';
+    layout.yaxis.title = { text: unit.text, font: { size: 11 } };
+    // A line between the cations and the anions.
+    layout.shapes = [{ type: 'line', xref: 'x', yref: 'paper', x0: 2.5, x1: 2.5, y0: 0, y1: 1, line: { color: c.grid, width: 1, dash: 'dot' } }];
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  /**
+   * Stiff diagrams, one per water, on one scale so that their sizes compare:
+   * the cations to the left of zero -- Na + K, Ca, Mg from the top -- and
+   * the anions to the right -- Cl, HCO3 + CO3, SO4 -- the points joined.
+   */
+  function drawStiff(plot, waters, measured, unit, c) {
+    const all = [...waters, ...measured].slice(0, 12);
+    const n = all.length;
+    const cols = n <= 3 ? n : n <= 4 ? 2 : n <= 6 ? 3 : 4;
+    const rows = Math.ceil(n / cols);
+    let most = 0;
+    for (const wt of all) for (const p of POLES) most = Math.max(most, wt.w[p.key]);
+    const span = (most || 1) * 1.45;
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.showlegend = false;
+    layout.margin = { l: 20, r: 20, t: 24, b: 36 };
+    layout.annotations = [];
+    const traces = [];
+    const gapX = 0.06;
+    const gapY = 0.14;
+    all.forEach((wt, q) => {
+      const col = q % cols;
+      const row = Math.floor(q / cols);
+      const ax = q === 0 ? '' : String(q + 1);
+      const x0 = col / cols + (col ? gapX / 2 : 0);
+      const x1 = (col + 1) / cols - (col < cols - 1 ? gapX / 2 : 0);
+      const y1 = 1 - row / rows - (row ? gapY / 2 : 0);
+      const y0 = 1 - (row + 1) / rows + (row < rows - 1 ? gapY / 2 : 0);
+      layout[`xaxis${ax}`] = { domain: [x0, x1], range: [-span, span], anchor: `y${ax}`, zeroline: true, zerolinecolor: c.text,
+        gridcolor: c.grid, tickfont: { size: 9 }, exponentformat: 'power', nticks: 5 };
+      layout[`yaxis${ax}`] = { domain: [y0, y1], range: [0.4, 3.6], anchor: `x${ax}`, visible: false };
+      const w = wt.w;
+      const color = wt.measured ? '#ff7f0e' : '#1f77b4';
+      traces.push({ type: 'scatter', mode: 'lines+markers', xaxis: `x${ax}`, yaxis: `y${ax}`, fill: 'toself',
+        x: [-w.NaK, w.Cl, w.HCO3, w.SO4, -w.Mg, -w.Ca, -w.NaK], y: [3, 3, 2, 1, 1, 2, 3],
+        line: { color, width: 1.4 }, marker: { size: 4, color }, fillcolor: wt.measured ? 'rgba(255,127,14,0.25)' : 'rgba(31,119,180,0.25)',
+        text: ['Na + K', 'Cl', 'HCO₃ + CO₃', 'SO₄', 'Mg', 'Ca', 'Na + K'].map((nm, j) => `${esc(wt.label)}<br>${nm} `
+          + `${[w.NaK, w.Cl, w.HCO3, w.SO4, w.Mg, w.Ca, w.NaK][j].toPrecision(4)} ${esc(unit.text)}`),
+        hovertemplate: '%{text}<extra></extra>' });
+      const ref = (side) => ({ xref: `x${ax} domain`, yref: `y${ax}`, showarrow: false, font: { size: 9, color: c.text },
+        x: side ? 1 : 0, xanchor: side ? 'right' : 'left' });
+      [['Na + K', 3], ['Ca', 2], ['Mg', 1]].forEach(([t, y]) => layout.annotations.push({ ...ref(0), y, text: t }));
+      [['Cl', 3], ['HCO₃ + CO₃', 2], ['SO₄', 1]].forEach(([t, y]) => layout.annotations.push({ ...ref(1), y, text: t }));
+      layout.annotations.push({ xref: `x${ax} domain`, yref: `y${ax} domain`, x: 0.5, y: 1, yanchor: 'bottom', showarrow: false,
+        text: esc(wt.label), font: { size: 10, color: c.text } });
+    });
+    layout.annotations.push({ xref: 'paper', yref: 'paper', x: 0.5, y: 0, yshift: -30, showarrow: false,
+      text: `${unit.text}: cations to the left, anions to the right`, font: { size: 11, color: c.text } });
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  /* ---------------------------------------------------------------------
      CSV
      --------------------------------------------------------------------- */
   /**
@@ -1502,6 +2081,7 @@
   /** The tables of the run on show for the chart in `pane`: the time chart's every point, the others what they draw. */
   async function paneTable(pane) {
     if (pane === 'time') return timeTable();
+    if (pane === 'composition') return compTableNow;
     const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
     return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
   }
@@ -1513,7 +2093,7 @@
    */
   async function exportPane(pane, as) {
     if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
-    const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient' }[pane]);
+    const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp' }[pane]);
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
@@ -1667,13 +2247,14 @@
     if (name === 'time') { drawTime(); resize(); }
     if (name === 'profile') { drawProfile(); resize(); }
     if (name === 'gradient') { drawGradient(); resize(); }
+    if (name === 'composition') { renderComp(); drawComp(); resize(); }
     if (name === 'phreeqc') { pqRenderView(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
   function resize() {
     if (typeof Plotly === 'undefined') return;
-    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartPq'].forEach((id) => {
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartPq'].forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
     });
@@ -2320,6 +2901,33 @@
       };
     },
 
+    'pane:composition': () => {
+      const view = $('rtmCompView').value;
+      return {
+        kicker: 'Tab', title: 'Composition',
+        lead: 'What the water is made of, from the stored concentrations and what each species is made of: where an element is, and the water\'s major ions as the Piper, Schoeller and Stiff diagrams draw them.',
+        sections: [
+          { heading: 'Show', choices: [
+            ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
+            ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
+            ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
+            ['Stiff diagrams', 'Each water a polygon, cations to the left of zero and anions to the right, on one scale so that their sizes compare.', view === 'stiff'],
+          ] },
+          { heading: 'The major ions', list: [
+            'Ca and Mg are twice their dissolved totals, **Na + K** the two together, Cl its total, **SO₄** twice the sulfur in sulfate — a species with four O to each S, so not HS⁻ — and **HCO₃ + CO₃** the carbonate\'s alkalinity, HCO₃⁻ one and CO₃⁻² two. A total is everything dissolved: CaHCO₃⁺ counts in Ca and in the carbonate.',
+            'In meq/kgw under an ACTIVITY, whose concentrations are mol/kgw; otherwise the concentrations times the charge.',
+            'Measured waters come from <DATA>, by the names the model gives them: tot(Ca) or Ca+2, alk(CO3) or HCO3- and CO3-2. One the table has no column for counts as none.',
+          ] },
+          { heading: 'The toolbar', list: [
+            '**Along**, in a column: the run at one **Cell**, or the column at one time, **At**.',
+            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper draws every stored point.',
+            '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type. **SVG**, **PNG**: the picture.',
+          ] },
+        ],
+        more: more('Reading the charts', 'help-composition'),
+      };
+    },
+
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
       lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
@@ -2924,7 +3532,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -3833,6 +4441,21 @@ END
       saveState();
       drawProfile();
     },
+    'rtm:redrawComp': () => {
+      state.compView = $('rtmCompView').value;
+      state.compElement = $('rtmCompElement').value;
+      state.compIn = $('rtmCompIn').value;
+      state.compAs = $('rtmCompAs').value;
+      state.compAlong = $('rtmCompAlong').value;
+      state.compCell = Number($('rtmCompCell').value) || 0;
+      state.compLayer = Number($('rtmCompLayer').value) || 0;
+      state.compTimes = $('rtmCompTimes').value;
+      state.compTMin = $('rtmCompTMin').value;
+      saveState();
+      renderComp();
+      drawComp();
+      infoRefresh();
+    },
     'rtm:pick': (ev, el) => {
       const name = el.value;
       if (el.checked) { if (!state.picked.includes(name)) state.picked.push(name); }
@@ -3962,7 +4585,7 @@ END
     pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
       + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');
   }
-  showTab(['profile', 'gradient', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
+  showTab(['profile', 'gradient', 'composition', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);
   compile();

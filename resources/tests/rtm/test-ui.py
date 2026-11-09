@@ -48,9 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, six tab toolbars, and the PHREEQC panel's heading and
+# of the Solver section, seven tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 35
+STATIC_SLOTS = 36
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -104,6 +104,34 @@ time  pH   cell = 0
 500   3.3
 '''
 
+
+# A water whose major ions are round numbers -- Ca 2.2, Mg 1, Na + K 2.1, Cl 2, SO4 1 and HCO3 + CO3 3 meq/kgw -- and a
+# calcite that dissolves too slowly to change them, and a water measured at 50 s: what the composition block runs.
+COMP_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 100
+ACTIVITY = davies
+
+<SPECIES>
+Ca+2     1e-3
+Mg+2     5e-4
+Na+      2e-3
+K+       1e-4
+Cl-      2e-3
+SO4-2    4e-4
+CaSO4    1e-4
+HCO3-    2.9e-3
+CO3-2    5e-5
+Calcite  2e-3  mineral
+
+<REACTIONS>
+Calcite => Ca+2 + CO3-2, r = 1e-30
+
+<DATA>
+time  tot(Ca)  Mg+2  Na+   K+    Cl-   tot(S)  alk(CO3)  cell = 0
+50    1e-3     5e-4  3e-3  1e-4  3e-3  5e-4    2.5e-3
+'''
 
 def check(label, got, want=True):
     global checks
@@ -233,7 +261,7 @@ async def main():
             check('the species picker is filled, the species first and then the quantities', await page.ev(
                 "[document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"species\"]').length,"
                 " [...document.querySelectorAll('#rtmSeries .rtm-item:not([data-group=\"species\"]) input')]"
-                ".map((i) => i.value).join(' ')]"), [36, 'pH I charge tot(C)'])
+                ".map((i) => i.value).join(' ')]"), [36, 'pH I charge tot(C) alk(CO3)'])
             check('and there is a cell to choose, or an end of the column', await page.ev(
                 "[...document.getElementById('rtmCell').options].map((o) => o.value).slice(18).join(',')"),
                 '18,19,left,right')
@@ -764,6 +792,88 @@ async def main():
             for key in before[1]:
                 await page.ev("(() => { const el = [...document.querySelectorAll('#rtmSeries input')]"
                               ".find((i) => i.value === %s); if (el && !el.checked) el.click(); })()" % json.dumps(key))
+
+            # --- what the water is made of: the Composition tab ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, COMP_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check(f'a water of known major ions runs ({str(run)[:40]})', isinstance(run, str) and run.startswith('Done'), True)
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await asyncio.sleep(0.6)
+
+            async def comp(view, **extra):
+                sets = ''.join("document.getElementById('%s').value = %s;" % (k, json.dumps(v)) for k, v in extra.items())
+                await page.ev("(() => { document.getElementById('rtmCompView').value = %s; %s"
+                              " document.getElementById('rtmCompView').dispatchEvent(new Event('change', { bubbles: true })); })()"
+                              % (json.dumps(view), sets))
+                await asyncio.sleep(0.6)
+
+            await comp('where', rtmCompIn='all', rtmCompElement='Ca')
+            where = await page.ev("""(() => { const d = document.getElementById('rtmChartComp').data;
+              const sums = d[0].y.map((_, j) => d.reduce((s, t) => s + (t.y[j] || 0), 0));
+              return [d.map((t) => t.name).join(' / '), sums.every((v) => Math.abs(v - 100) < 1e-9), d[0].stackgroup]; })()""")
+            check('where calcium is, in the whole cell: the calcite (made of what its reaction says), Ca+2 and CaSO4 as shares '
+                  'stacked to 100 % at every point', where, ['Calcite, mineral / Ca+2 / CaSO4', True, 'one'])
+            await comp('where', rtmCompIn='water')
+            check('  in the water alone, the mineral left out', await page.ev(
+                "document.getElementById('rtmChartComp').data.map((t) => t.name).join(' / ')"), 'Ca+2 / CaSO4')
+            await comp('piper')
+            piper = await page.ev("""(() => { const d = document.getElementById('rtmChartComp').data.filter((t) => t.name === 'the model');
+              return d.map((t) => [t.x[0], t.y[0]]); })()""")
+            # By hand: the cations 2.2, 1, 2.1 of 5.3 and the anions 2, 1, 3 of 6, on triangles of side 1 with 0.2 between.
+            h = math.sqrt(3) / 2
+            ca, mg, nak, cl, so4 = 2.2 / 5.3, 1 / 5.3, 2.1 / 5.3, 2 / 6, 1 / 6
+            want = [[nak + 0.5 * mg, h * mg], [1.2 + cl + 0.5 * so4, h * so4],
+                    [1.1 - 0.5 * (ca + mg) + 0.5 * (cl + so4), 0.2 * h + h * (ca + mg + cl + so4)]]
+            check('a Piper diagram: the water in the cations\' triangle, the anions\' and the diamond where the shares of its '
+                  'major ions put it, CaSO4 and CO3-2 counted', isinstance(piper, list) and len(piper) == 3 and all(
+                      abs(a - b) < 1e-9 for pt, wpt in zip(piper, want) for a, b in zip(pt, wpt)), True)
+            check('  the measured water beside it, in each of the three', await page.ev(
+                "document.getElementById('rtmChartComp').data.filter((t) => t.name === 'measured').length"), 3)
+            check('  and its type in the note', await page.ev(
+                "document.getElementById('rtmCompNote').textContent.includes('Ca–Na–HCO₃')"), True)
+            await comp('schoeller', rtmCompTimes='0, 100')
+            sch = await page.ev("""(() => { const d = document.getElementById('rtmChartComp');
+              return [d.data.length, d.data[0].y, d.data[2].line.dash, d.layout.yaxis.type, d.layout.yaxis.title.text]; })()""")
+            check('a Schoeller diagram: a line per water asked for, in meq/kgw on a log axis, the measured one dotted',
+                  isinstance(sch, list) and sch[0] == 3 and all(abs(a - b) < 1e-9 for a, b in zip(sch[1], [2.2, 1, 2.1, 2, 1, 3]))
+                  and sch[2:] == ['dot', 'log', 'meq/kgw'], True)
+            await comp('stiff')
+            check('Stiff diagrams: one per water, the measured one too', await page.ev(
+                "document.getElementById('rtmChartComp').data.filter((t) => t.fill === 'toself').length"), 3)
+            await page.ev("""(() => {
+              window.__saved = [];
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                const rec = { name: this.download };
+                if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text());
+                window.__saved.push(rec);
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).split('\\n')] : null; })()")
+            check('saved as CSV: each water\'s ions in meq/kgw, their shares and its type',
+                  [csv[1][0][:42], csv[1][1][:10], csv[1][1][-10:], len(csv[1])] if isinstance(csv, list) else csv,
+                  ['water,t (s),cell,distance (m),Ca (meq/kgw)', '"model, 0.', 'Ca–Na–HCO₃', 4])
+            # Along a column: the same water in three cells, each a point of the Piper and a Stiff diagram.
+            await set_text(page, COMP_MODEL.replace('MODE = batch', 'MODE = transport\nCELLS = 3'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await comp('piper', rtmCompAlong='distance', rtmCompTimes='')
+            check('along the column: a point per cell, coloured by distance', await page.ev(
+                "(() => { const d = document.getElementById('rtmChartComp').data.find((t) => t.name === 'the model');"
+                " return [d.x.length, d.marker.colorbar.title.text]; })()"), [3, 'distance (m)'])
+            await comp('where', rtmCompAlong='time')
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
 
             # --- the Jacobian check ------------------------------------------
             await page.ev("document.getElementById('rtmVerify').click()")
@@ -1312,7 +1422,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient phreeqc model jacobian help'])
+                [True, ['gradient'], 'time profile gradient composition phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

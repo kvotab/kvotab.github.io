@@ -7156,7 +7156,7 @@ console.log('\n--- CD-MUSIC ---');
 }
 
 /* ======================================================================
-   2z. What a run can be read as: QUANTITIES, <OUTPUT> and <DATA>
+   2z. What a run can be read as: QUANTITIES, <OUTPUT>, <DATA> and what each species is made of
 
    A species' name read as its formula; each quantity of a water against
    the same worked out by hand from the model's own activity coefficients;
@@ -7310,6 +7310,76 @@ kx    = k * [A] + t
   const wrongData = badData.filter(([, d, re]) => !re.test(refuseData(d)));
   check(`  and refused, each with its reason: ${badData.map((x) => x[0]).join(', ')}`, !wrongData.length,
     wrongData.map(([w, d]) => `${w}: "${refuseData(d)}"`).join(' | '));
+
+  // COMPOSITION: what each species is made of, a mineral's from its relation, held or kinetic; the sulfate's sulfur and
+  // the carbonate's equivalents, and the two quantities they make.
+  const cm = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+ACTIVITY = davies
+
+<SPECIES>
+Ca+2      1e-3
+Mg+2      2e-4
+CO3-2     1e-5
+HCO3-     2e-3
+CO2       1e-4
+CaHCO3+   1e-5
+CaCO3     2e-6
+H+        1e-8
+SO4-2     1e-3
+CaSO4     1e-4
+HS-       1e-6
+Calcite   0.01  mineral
+Gypsum    0     mineral
+Dolomite  0.02  mineral
+X-        exchanger 2e-3
+CaX2      exchange
+
+<REACTIONS>
+Dolomite => Ca+2 + Mg+2 + 2 CO3-2, r = 1e-12
+
+<EQUILIBRIUM>
+HCO3- <=> H+ + CO3-2,              logK = -10.329
+CO2 + H2O <=> H+ + HCO3-,          logK = -6.352
+Ca+2 + HCO3- <=> CaHCO3+,          logK = 1.106
+Ca+2 + CO3-2 <=> CaCO3,            logK = 3.224
+Ca+2 + SO4-2 <=> CaSO4,            logK = 2.25
+Calcite <=> Ca+2 + CO3-2,          logK = -8.48
+Gypsum <=> Ca+2 + SO4-2 + 2 H2O,   logK = -4.58
+Ca+2 + 2 X- <=> CaX2,              logK = 0.8
+`);
+  const cn = cm.speciesNames;
+  const termsOf = (el) => ((cm.composition.elements.find((e) => e.el === el) || { terms: [] }).terms)
+    .map(([k, n, where]) => `${cn[k]}*${n}${where === 'water' ? '' : `@${where}`}`).sort().join(' ');
+  const made = {
+    C: 'CO2*1 CO3-2*1 CaCO3*1 CaHCO3+*1 Calcite*1@mineral Dolomite*2@mineral HCO3-*1',
+    Ca: 'Ca+2*1 CaCO3*1 CaHCO3+*1 CaSO4*1 CaX2*1@exchange Calcite*1@mineral Dolomite*1@mineral Gypsum*1@mineral',
+    Mg: 'Dolomite*1@mineral Mg+2*1',
+    S: 'CaSO4*1 Gypsum*1@mineral HS-*1 SO4-2*1',
+  };
+  const madeOff = Object.entries(made).filter(([el, want]) => termsOf(el) !== want);
+  check('what each species is made of: a solute\'s from its name, one on the exchanger the same, a mineral held at '
+    + 'saturation from its relation (Gypsum\'s water left out) and a kinetic one from its reaction, Dolomite two C; '
+    + 'no H or O, and no X', !madeOff.length && cm.composition.elements.every((e) => !['H', 'O', 'X'].includes(e.el)),
+  madeOff.map(([el]) => `${el}: ${termsOf(el)}`).join(' | '));
+  const listOf = (pairs) => pairs.map(([k, n]) => `${cn[k]}*${n}`).sort().join(' ');
+  check('  the sulfate\'s sulfur in a species with four O to each S, not HS-; the carbonate\'s equivalents, CO3-2 and '
+    + 'CaCO3 two, HCO3- and CaHCO3+ one, CO2 none',
+  listOf(cm.composition.sulfate) === 'CaSO4*1 SO4-2*1'
+    && listOf(cm.composition.carbonate) === 'CO3-2*2 CaCO3*2 CaHCO3+*1 HCO3-*1',
+  `${listOf(cm.composition.sulfate)} | ${listOf(cm.composition.carbonate)}`);
+  const cc0 = cm.initialState();
+  const ci = (n) => cc0[cn.indexOf(n)];
+  const twoQ = Int32Array.from(['alk(CO3)', 'tot(SO4)', 'tot(S)'].map((k) => cm.quantities.findIndex((q) => q.key === k)));
+  const twoV = new Float64Array(3);
+  if (![...twoQ].some((x) => x < 0)) cm.quantitiesAt(cc0, 0, 0, twoQ, twoV);
+  const alkWant = ci('HCO3-') + 2 * ci('CO3-2') + ci('CaHCO3+') + 2 * ci('CaCO3');
+  check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
+    ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
+    && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,
+  `${[...twoQ].join(',')}: ${[...twoV].join(', ')} for ${alkWant}`);
 }
 
 /* ======================================================================

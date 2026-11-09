@@ -1911,6 +1911,83 @@
   }
 
   /**
+   * What each species is made of, for the views of where an element is and
+   * of the water's major ions. For each element but H and O, each species
+   * with any of it, [k, how many, where], where being 'water', 'exchange',
+   * 'surface', 'mineral' or 'gas'. A name says what a species is made of
+   * (elementsOf); a mineral's is what its relation, in <EQUILIBRIUM> or
+   * <REACTIONS>, makes of the rest: Calcite <=> Ca+2 + CO3-2, one Ca and
+   * one C. Then, of what is dissolved, the sulfate's sulfur -- in a species
+   * with four O to each S or more: SO4-2, HSO4-, CaSO4, not HS- -- and the
+   * carbonate's equivalents, in a species with three O to each C or more,
+   * two to each C less one to each H: CO3-2 and CaCO3 two, HCO3- and
+   * CaHCO3+ one, H2CO3 none, and CO2, with two O, none.
+   * Returns { elements: [{ el, terms }], sulfate: [[k, S]], carbonate: [[k, eq]] }.
+   */
+  function compositionOf(species, nameOf, index, equilibria, reactions, isSolute) {
+    const ns = species.length;
+    const where = species.map((sp, k) => (sp.mineral ? 'mineral' : sp.exchange ? 'exchange' : sp.surface ? 'surface'
+      : sp.gas ? 'gas' : isSolute(k) && !sp.electron && sp.name !== 'H2O' ? 'water' : null));
+    const made = species.map((sp, k) => (where[k] && where[k] !== 'mineral' ? elementsOf(nameOf[k]) : null));
+    // A mineral's, from a relation it is in: -sum(nu E)/nu over the rest; none where one of the rest has no formula.
+    const fromRelation = (m, terms) => {
+      let nuM = 0;
+      const sum = new Map();
+      for (const [k, nu] of terms) {
+        if (k === m) { nuM += nu; continue; }
+        if (species[k].electron || nameOf[k] === 'H2O') continue;
+        if (!made[k]) return null;
+        for (const [el, n] of made[k]) sum.set(el, (sum.get(el) || 0) + nu * n);
+      }
+      if (!nuM) return null;
+      const out = new Map();
+      for (const [el, n] of sum) if (Math.abs(n / nuM) > 1e-12) out.set(el, -n / nuM);
+      return out.size ? out : null;
+    };
+    const relations = [
+      ...equilibria.map((eq) => eq.net),
+      ...reactions.map((rx) => [...rx.reactants.map(([c, nm]) => [index.get(nm), -c]),
+        ...rx.products.map(([c, nm]) => [index.get(nm), c])].filter(([k]) => k !== undefined)),
+    ];
+    // Twice over: a mineral made from another mineral is read once that one is.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let m = 0; m < ns; m++) {
+        if (where[m] !== 'mineral' || made[m]) continue;
+        for (const terms of relations) {
+          if (!terms.some(([k]) => k === m)) continue;
+          made[m] = fromRelation(m, terms);
+          if (made[m]) break;
+        }
+      }
+    }
+    const byElement = new Map();
+    for (let k = 0; k < ns; k++) {
+      if (!made[k]) continue;
+      for (const [el, n] of made[k]) {
+        if (el === 'H' || el === 'O' || !ELEMENT_SYMBOLS.has(el) || !(n > 0)) continue;
+        if (!byElement.has(el)) byElement.set(el, []);
+        byElement.get(el).push([k, n, where[k]]);
+      }
+    }
+    const sulfate = [];
+    const carbonate = [];
+    for (let k = 0; k < ns; k++) {
+      if (where[k] !== 'water' || !made[k]) continue;
+      const S = made[k].get('S') || 0;
+      const C = made[k].get('C') || 0;
+      const O = made[k].get('O') || 0;
+      const H = made[k].get('H') || 0;
+      if (S > 0 && O >= 4 * S) sulfate.push([k, S]);
+      if (C > 0 && O >= 3 * C) {
+        const eq = C * Math.min(2, Math.max(0, 2 - H / C));
+        if (eq > 0) carbonate.push([k, eq]);
+      }
+    }
+    return { elements: [...byElement].sort(([a], [b]) => a.localeCompare(b)).map(([el, terms]) => ({ el, terms })),
+      sulfate, carbonate };
+  }
+
+  /**
    * TEMPERATURE for what is set up before the cells are: the number given,
    * or 25 C where it is an expression, each cell's own then put in place of
    * what depends on it (the temperature in compile).
@@ -10941,6 +11018,8 @@
       || species[k].electron || species[k].surface || species[k].potential || species[k].gas || species[k].name === 'H2O'));
     const qSolutes = [];
     for (let k = 0; k < ns; k++) if (isSolute(k) && !species[k].electron) qSolutes.push(k);
+    // What each species is made of: the composition views', and the carbonate and sulfate below.
+    const composition = compositionOf(species, nameOf, index, equilibria, reactions, isSolute);
     const qIons = qSolutes.filter((k) => qAct.z[k]);
     const tkOf = (cell) => (thermo.tk ? thermo.tk[cell] : (typeof settings.TEMPERATURE === 'number' ? settings.TEMPERATURE : 25)
       + 273.15);
@@ -10981,6 +11060,19 @@
         for (const [k, n] of terms) s += n * c[b + k];
         return s;
       });
+    }
+    // The carbonate's alkalinity, HCO3- one and CO3-2 two and their complexes as many (compositionOf); and the sulfate,
+    // where some of the sulfur dissolved is something else, HS-.
+    const sumOf = (terms) => (c, b) => {
+      let s = 0;
+      for (const [k, n] of terms) s += n * c[b + k];
+      return s;
+    };
+    if (composition.carbonate.length) {
+      addQ('alk(CO3)', 'carbonate alkalinity', 'totals', 'eq/kgw', 'conc', sumOf(composition.carbonate));
+    }
+    if (composition.sulfate.length && composition.sulfate.length < (qElements.get('S') || []).length) {
+      addQ('tot(SO4)', 'sulfate, dissolved', 'totals', 'mol/kgw', 'conc', sumOf(composition.sulfate));
     }
     // A phase of <PHASES>, or a mineral and its relation, as SI() in a rate law has it.
     const phaseFor = (name) => {
@@ -11271,6 +11363,8 @@
       quantities: qList,
       quantitiesAt,
       data,
+      // What each species is made of, for the views of where an element is and of the water's major ions.
+      composition,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),

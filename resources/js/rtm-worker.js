@@ -206,6 +206,8 @@ function rtmSummary(model) {
     // What the run can be read as besides its species, and what <DATA> measured: the charts' pickers and points.
     quantities: model.quantities || [],
     data: model.data || [],
+    // What each species is made of: where an element is, and the water's major ions (compositionOf).
+    composition: model.composition || null,
   };
 }
 
