@@ -1978,6 +1978,40 @@
   }
 
   /**
+   * The number a sweep would change (withValue), as the text gives it: a
+   * setting's, a parameter's on its first line, a species' start on its line
+   * (0 where the line has none), or its left=. Null where the text gives no
+   * number there -- an expression, or nothing.
+   */
+  function valueIn(text, vary) {
+    let current = null;
+    let found = null;
+    for (const raw of String(text).split(/\r?\n/)) {
+      const cm = /(^|\s)#.*$/.exec(raw);
+      const body = (cm ? raw.slice(0, cm.index + cm[1].length) : raw).trim();
+      if (!body) continue;
+      const header = /^<\s*([A-Za-z_]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(body);
+      if (header) { current = header[1].toUpperCase(); continue; }
+      if (vary.kind === 'setting' && current === 'SETTINGS') {
+        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)$/.exec(body);
+        if (m && m[1].toUpperCase() === vary.name) found = m[2];
+      } else if (vary.kind === 'parameter' && current === 'PARAMETERS') {
+        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)\s+(.+?)(\s+(?:fracture|matrix))?$/i.exec(body);
+        if (m && m[1] === vary.name && found === null) found = m[3];
+      } else if ((vary.kind === 'initial' || vary.kind === 'left') && current === 'SPECIES') {
+        const toks = body.split(/[\s,;]+/).filter(Boolean);
+        if (toks[0] !== vary.name) continue;
+        if (vary.kind === 'left') {
+          const tok = toks.find((x) => /^left\s*=/i.test(x));
+          found = tok ? tok.replace(/^left\s*=\s*/i, '') : null;
+        } else found = toks.slice(1).find((x) => !x.includes('=') && !SPECIES_WORDS.has(x.toLowerCase())) || '0';
+      }
+    }
+    const v = found === null ? NaN : Number(found);
+    return Number.isFinite(v) ? v : null;
+  }
+
+  /**
    * What each species is made of, for the views of where an element is and
    * of the water's major ions. For each element but H and O, each species
    * with any of it, [k, how many, where], where being 'water', 'exchange',
@@ -13033,5 +13067,5 @@
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, readData, withValue };
+    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn };
 }));

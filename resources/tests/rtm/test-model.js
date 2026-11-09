@@ -7425,6 +7425,11 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     ['what flows in where nothing did', wv('left', 'Na+', 1e-5)[7], 'Na+   D=1e-9  left=0.00001'],
     ['every line of a parameter, its cells and scope kept', wv('parameter', 'k', 2.5).slice(10, 12).join('|'), 'k  all  2.5  fracture|k  0  2.5'],
   ];
+  // And the number each has as the text gives it, which the page starts a sweep's values from.
+  const vi = (kind, name) => RtmModel.valueIn(swText, { kind, name });
+  edits.push(['the numbers the text gives each, null where it gives none', JSON.stringify([vi('setting', 'VELOCITY'),
+    vi('setting', 'TEND'), vi('initial', 'Ca+2'), vi('initial', 'X-'), vi('initial', 'Na+'), vi('left', 'Ca+2'), vi('left', 'Na+'),
+    vi('parameter', 'k')]), JSON.stringify([1e-5, null, 1e-3, 5e-3, 0, 2e-3, null, null])]);
   const editsOff = edits.filter(([, got, want]) => got !== want);
   let noParam = '';
   try { RtmModel.withValue(swText, { kind: 'parameter', name: 'q' }, 1); } catch (e) { noParam = e.message; }

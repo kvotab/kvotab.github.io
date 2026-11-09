@@ -514,7 +514,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '13:5')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '23:10')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1004,6 +1004,38 @@ async def main():
             check('  and against time, a curve per run, named for its value', await page.ev(
                 "document.getElementById('rtmChartSw').data.map((t) => t.name).join(' / ')"),
                 'kk = 0.1 / kk = 0.2 / kk = 0.3 / kk = 0.4')
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
+            # --- the examples that show a way of reading results open on it, once they have run ---
+            before = await page.ev("document.getElementById('rtmText').value")
+
+            async def example(ex, done):
+                await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+                await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(ex))
+                await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+                await page.ev("document.getElementById('rtmRun').click()")
+                return await settle(page, done, True, tries=120, pause=0.5)
+
+            ok = await example('bjerrum', "document.getElementById('rtmStatus').textContent.startsWith('Diagram worked out')")
+            check('the carbonate example, once run, opens on Diagrams and works out the carbon against pH', [ok, await page.ev(
+                "[document.querySelector('.rtm-tabs button.active').dataset.tab,"
+                " document.getElementById('rtmChartDg').data.slice(0, 3).map((t) => t.name).join(' ')]")],
+                [True, ['diagram', 'CO2 HCO3- CO3-2']])
+            ok = await example('exchangesweep', "/^4 of 4 runs done/.test(document.getElementById('rtmStatus').textContent)")
+            check('the exchange example opens on Sweeps and runs four capacities, a curve each at the outlet against linear time',
+                  [ok, await page.ev("(() => { const p = document.getElementById('rtmChartSw');"
+                                     " return [document.querySelector('.rtm-tabs button.active').dataset.tab, p.data.length,"
+                                     " p.layout.xaxis.type, document.getElementById('rtmSwWhat').selectedOptions[0].textContent]; })()")],
+                  [True, ['sweep', 4, 'linear', 'X- at the start (0.002)']])
+            ok = await example('salinisation', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'composition'"
+                                               " && !document.getElementById('rtmChartComp').hidden")
+            check('the salinisation example opens on Composition: the outlet\'s path through a Piper diagram, the measured waters '
+                  'beside it, from Ca-HCO3 at the start to Na-Cl', [ok, await page.ev(
+                      "[document.getElementById('rtmChartComp').data.filter((t) => t.name === 'measured').length,"
+                      " /^cell 19: Ca–HCO₃ at the start, Na–Cl at/.test(document.getElementById('rtmCompNote').textContent)]")],
+                  [True, [3, True]])
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

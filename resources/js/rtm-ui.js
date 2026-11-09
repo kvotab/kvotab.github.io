@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109f';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109g';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -60,7 +60,7 @@
       show: 'shares', el: '', in: 'water', q: '',
     },
     // The Sweeps tab: what is varied over what values, the cell kept; then what is drawn of the runs.
-    sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end' },
+    sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end', logT: true },
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     sideWidth: null,
@@ -157,6 +157,7 @@
         for (const f of ['what', 'values', 'what2', 'values2', 'show', 'key']) if (typeof s.sw[f] === 'string') state.sw[f] = s.sw[f];
         if (Number.isInteger(s.sw.cell) && s.sw.cell >= 0) state.sw.cell = s.sw.cell;
         if (['end', 'max', 'min'].includes(s.sw.of)) state.sw.of = s.sw.of;
+        if (typeof s.sw.logT === 'boolean') state.sw.logT = s.sw.logT;
       }
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
@@ -695,6 +696,7 @@
     drawComp();
     pqRenderView();
     if (partial) return;
+    openExampleView();
     const st = reply.stats || {};
     /*
       A fixed species is held at the value it was given, because its row in
@@ -1913,7 +1915,8 @@
       const first = drawable[0];
       const last = drawable[drawable.length - 1];
       bits.push(along === 'time'
-        ? `${where}: ${faciesOf(first.f)} at ${fmtTime(first.t)}${drawable.length > 1 ? `, ${faciesOf(last.f)} at ${fmtTime(last.t)}` : ''}`
+        ? `${where}: ${faciesOf(first.f)} at ${first.t <= r.t[Math.min(2, r.n - 1)] ? 'the start' : fmtTime(first.t)}`
+          + `${drawable.length > 1 ? `, ${faciesOf(last.f)} at ${fmtTime(last.t)}` : ''}`
         : `${where}: ${faciesOf(first.f)} in cell ${first.cell}${drawable.length > 1 ? `, ${faciesOf(last.f)} in cell ${last.cell}` : ''}`);
     } else if (view === 'schoeller') {
       drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c);
@@ -2434,14 +2437,19 @@
     const settings = Object.entries(kinds).filter(([, spec]) => spec.kind === 'number' || spec.kind === 'int')
       .map(([name]) => ({ value: `setting:${name}`, label: `${name}${typeof m.settings[name] === 'number' ? ` (${fmtNumber(m.settings[name])})` : ''}` }));
     groups.push({ label: 'Settings', items: settings });
+    // Each label says what it is, as the closed menu shows the label alone, and the number the text gives it.
+    const given = (kind, name) => {
+      const v = typeof RtmModel !== 'undefined' && RtmModel.valueIn ? RtmModel.valueIn(state.text, { kind, name }) : null;
+      return v === null ? '' : ` (${fmtNumber(v)})`;
+    };
     if (m.parameters && m.parameters.length) {
-      groups.push({ label: 'Parameters', items: m.parameters.map((p) => ({ value: `parameter:${p}`, label: p })) });
+      groups.push({ label: 'Parameters', items: m.parameters.map((p) => ({ value: `parameter:${p}`, label: `${p}${given('parameter', p)}` })) });
     }
-    // Each label says what it is, as the closed menu shows the label alone.
-    groups.push({ label: 'A species at the start', items: m.species.map((sp, k) => ({ value: `initial:${sp}`,
-      label: `${sp} at the start (${fmtNumber(m.initial[k])})` })) });
+    groups.push({ label: 'A species at the start', items: m.species.map((sp) => ({ value: `initial:${sp}`,
+      label: `${sp} at the start${given('initial', sp)}` })) });
     if (m.transport) {
-      groups.push({ label: 'A species flowing in', items: m.species.map((sp) => ({ value: `left:${sp}`, label: `${sp} flowing in` })) });
+      groups.push({ label: 'A species flowing in', items: m.species.map((sp) => ({ value: `left:${sp}`,
+        label: `${sp} flowing in${given('left', sp)}` })) });
     }
     return groups;
   }
@@ -2504,16 +2512,9 @@
     const v = swVary(value);
     if (!m || !v) return null;
     if (v.kind === 'setting') return typeof m.settings[v.name] === 'number' ? m.settings[v.name] : null;
-    if (v.kind === 'initial') { const k = m.species.indexOf(v.name); return k >= 0 ? m.initial[k] : null; }
-    // A parameter given as a number on its first line in <PARAMETERS>; one given as an expression has no single value.
-    if (v.kind === 'parameter' && typeof RtmModel !== 'undefined') {
-      try {
-        const line = RtmModel.readSections(state.text).PARAMETERS.find((l) => l.text.split(/\s+/)[0] === v.name);
-        const value = line ? Number(line.text.split(/\s+/)[2]) : NaN;
-        return Number.isFinite(value) && value !== 0 ? value : null;
-      } catch (e) { return null; }
-    }
-    return null;
+    // The rest as the text gives it, which is what a sweep changes: an exchanger's capacity, not what it holds at the start.
+    const given = typeof RtmModel !== 'undefined' && RtmModel.valueIn ? RtmModel.valueIn(state.text, v) : null;
+    return given ? given : null;
   }
 
   function readSw() {
@@ -2597,6 +2598,7 @@
     if (!speciesNames().includes(w.key) && !quantityOf(w.key)) w.key = speciesNames()[0] || '';
     $('rtmSwKey').innerHTML = pickerOptions(w.key);
     $('rtmSwOf').value = w.of;
+    $('rtmSwLogT').checked = w.logT;
     $('rtmSwOfWrap').hidden = w.show === 'time' || w.show === 'profile';
     $('rtmSwLogTWrap').hidden = w.show !== 'time';
     // pH, SI and the like are drawn as they are: log is for an amount.
@@ -2665,11 +2667,11 @@
       const traces = ok.map((run) => {
         const y = swSeries(run, key, w.show === 'time' ? 'cell' : 'end');
         const x = w.show === 'time' ? Array.from(run.t) : Array.from(run.centres);
-        const keep = x.map((xx, i) => (w.show !== 'time' || !$('rtmSwLogT').checked || xx > 0) && Number.isFinite(y[i]) && (!logY || y[i] > 0));
+        const keep = x.map((xx, i) => (w.show !== 'time' || !w.logT || xx > 0) && Number.isFinite(y[i]) && (!logY || y[i] > 0));
         return { type: 'scatter', mode: 'lines', name: swRunName(run), x: x.filter((_, i) => keep[i]), y: y.filter((_, i) => keep[i]),
           line: { color: swColour(runs.indexOf(run), runs.length), width: 1.6 } };
       });
-      layout.xaxis.type = w.show === 'time' && $('rtmSwLogT').checked ? 'log' : 'linear';
+      layout.xaxis.type = w.show === 'time' && w.logT ? 'log' : 'linear';
       layout.xaxis.title = { text: w.show === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
       layout.yaxis.type = logY ? 'log' : 'linear';
       layout.yaxis.title = { text: yTitle, font: { size: 11 } };
@@ -3915,8 +3917,54 @@
     about.hidden = false;
     state.result = null;
     state.verify = null;
+    // A diagram or a sweep of the model before is no longer this model's.
+    dgResult = null;
+    swResult = null;
+    applyExampleView(e.view || null);
     saveState();
     compile();
+  }
+
+  /*
+    An example's view: the tab it opens on once it has run, and what is
+    drawn there -- the time chart's picks, the gradient's, the composition
+    tab's, a diagram or a sweep, which are then worked out. Set when the
+    example is chosen; the tab follows the first run, so that the text the
+    reader has just loaded stays in front of them until they run it.
+  */
+  let pendingView = null;
+  function applyExampleView(v) {
+    pendingView = v;
+    if (!v) return;
+    if (v.picked) state.picked = v.picked.slice();
+    if (Number.isInteger(v.cell)) state.cell = v.cell;
+    if (typeof v.logT === 'boolean') $('rtmLogT').checked = v.logT;
+    if (typeof v.logY === 'boolean') $('rtmLogY').checked = v.logY;
+    if (v.grad) {
+      if (v.grad.species) state.gradSpecies = v.grad.species;
+      if (v.grad.view) { state.gradView = v.grad.view; $('rtmGradView').value = v.grad.view; }
+    }
+    if (v.comp) for (const [k, val] of Object.entries(v.comp)) state[`comp${k[0].toUpperCase()}${k.slice(1)}`] = val;
+    if (v.dg) {
+      for (const [k, val] of Object.entries(v.dg)) {
+        if (k === 'x' || k === 'y') Object.assign(state.dg[k], val);
+        else state.dg[k] = val;
+      }
+    }
+    if (v.sw) Object.assign(state.sw, v.sw);
+  }
+
+  /** After a run, the view an example asked for: its tab, and a diagram or a sweep worked out there. */
+  function openExampleView() {
+    const v = pendingView;
+    pendingView = null;
+    if (!v || !v.tab) return;
+    showTab(v.tab);
+    // After the run has let go of the worker: a sweep waits for no run.
+    setTimeout(() => {
+      if (v.tab === 'diagram' && v.go) dgGo();
+      if (v.tab === 'sweep' && v.go) swGo();
+    }, 0);
   }
 
   /* ---------------------------------------------------------------------
@@ -4307,7 +4355,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109g';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -5251,6 +5299,7 @@ END
       w.show = $('rtmSwShow').value;
       w.key = $('rtmSwKey').value;
       w.of = $('rtmSwOf').value;
+      w.logT = $('rtmSwLogT').checked;
       saveState();
       renderSwShow();
       drawSw();

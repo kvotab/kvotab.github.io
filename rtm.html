@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109f">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109g">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -2910,7 +2910,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
           <h3>The examples</h3>
           <p>The <em>Example</em> picker on the <em>Model</em> tab loads any of them; the text is
             replaced, and a line under the picker says what the model is and where it comes from.
-            They are grouped by what they are for:</p>
+            Those that show a way of reading the results open, once they have run, on the tab that
+            shows it, drawn as it should be: a diagram or a sweep is worked out there too. They are
+            grouped by what they are for:</p>
           <table class="rtm-table">
             <tbody>
               <tr><td>Getting started</td><td>A&nbsp;→&nbsp;B&nbsp;→&nbsp;C, and Michaelis–Menten for a rate law of your own.</td></tr>
@@ -2918,6 +2920,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               <tr><td>Chemistry</td><td>Carbonate speciation: three coupled equilibria and the conserved totals found from the stoichiometry alone.</td></tr>
               <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
               <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution; <strong>a far-field path</strong> as Kompartment starts one, its release read at the right-hand end; and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium, every member at its parent's activity, to 0.2 %; in the fracture the flow keeps it from doing so.</td></tr>
+              <tr><td>Reading a run</td><td>Calcite dissolving at a rate: the pH and its saturation index on the right-hand axis, the calcium in mg/kgw from an <code>&lt;OUTPUT&gt;</code>, measurements from <code>&lt;DATA&gt;</code> beside them. Acid through a column of calcite: the pH as contours over time and distance.</td></tr>
+              <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it.</td></tr>
+              <tr><td>Equilibrium diagrams</td><td>Carbonate against pH; iron's pe–pH (Pourbaix) diagram with ferrihydrite's field; calcite or gypsum over the activities of carbonate and sulfate; zinc's sorption edge on ferrihydrite.</td></tr>
+              <tr><td>Sweeps</td><td>An exchange front, the exchanger's capacity swept, the calcium at the outlet a curve for each; calcite at a rate over nine rates and five amounts of CO<sub>2</sub>, the calcium after three days as contours.</td></tr>
+              <tr><td>All together</td><td>Oxygen into a column of iron(II) water: redox at one pe, ferrihydrite held at saturation, iron on an exchanger and carbonate together; where the iron is along the column, and every other view of it.</td></tr>
             </tbody>
           </table>
           <p>Every example is compiled and run by <code>resources/tests/rtm/test-model.js</code>,
@@ -2980,14 +2987,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109f"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109g"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109f"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006e"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109g"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109g"></script>
 </body>
 </html>

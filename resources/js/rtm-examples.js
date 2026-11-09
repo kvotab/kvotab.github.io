@@ -105,6 +105,247 @@ const RTM_EXAMPLES = [
     "about": "Six radionuclides decaying into one another while diffusing into the rock and sorbing there, along a real flow path. Decay is written on = inventory, because it removes sorbed atoms as readily as dissolved ones.",
     "reference": "SKB TR-19-06, Appendix B: Table B-2 (nuclide data) and the representative trajectory of Figure B-6 — travel time 235.2 a, F = 80 090 a/m, length 2 237 m, matrix porosity 0.0019, bulk density 2 700 kg/m³, penetration depth 4.5 m, Peclet number 10.",
     "text": "# The U-238 chain along a fracture in rock, with matrix diffusion.\n#\n# Everything here is per YEAR: half-lives, diffusivities in m2/a, the travel\n# time. TIME_UNIT = year tells the page so; it converts nothing.\n#\n# The flow path is the representative trajectory of SKB TR-19-06 Appendix B:\n# 2237 m travelled in TRAVEL_TIME = 235.2 a, and a flow-related transport\n# resistance F = 80 090 a/m, which is the wall area per unit volume of water\n# times the travel time: aw = F/tw = 340.5 m2/m3.\n#\n# Each nuclide's Kd becomes the rock's capacity for it, eps_m + rho*Kd with\n# MATRIX_POROSITY = 0.0019 and MATRIX_DENSITY = 2700 kg/m3. That is what holds\n# the sorbing members of the chain back by thousands of years.\n#\n# The rock goes on past the release point, RIGHT = semi-infinite, and the\n# layers are matched to diffusion into the rock, as in Kompartment's far-field\n# path. Twenty rather than its twelve: Po-210, half-life 0.38 a, sizes the\n# first layer by its own decay, at 5 micrometres, and twelve layers would\n# have to grow by 3.4 each to reach 4.5 m -- too coarse at depth for U-238,\n# whose releases came out 4 % off. Twenty grow by 2.0, and are 0.2 % off.\n#\n# DECAY IS on = inventory. A rate law is per unit pore water, and a cubic metre\n# of rock holds only eps_m of water -- right for chemistry, wrong for decay,\n# which takes the sorbed atoms too. Written as on = water instead, the sorbing\n# nuclides would decay at eps_m/Rm of their real rate.\n\n<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 2237          # m\nTRAVEL_TIME = 235.2    # a: the flow is LENGTH over it\nDIFFUSION = 1\nPECLET = 10\nLEFT = robin\nRIGHT = semi-infinite\nMATRIX_CELLS = 20\nMATRIX_DEPTH = 4.5     # m\nMATRIX_POROSITY = 0.0019\nMATRIX_DENSITY = 2700  # kg/m3\nTRANSPORT_RESISTANCE = 80090   # a/m: F = aw*tw\nTEND = 1.0E6           # a\nTIME_UNIT = year\n\n<SPECIES>\n#          start  De (m2/a)   Kd (m3/kg)\nU238   0  De=2.7E-7  Kd=2.0E-4\nU234   0  De=2.7E-7  Kd=2.0E-4\nTh230  0  De=2.7E-7  Kd=5.3E-2\nRa226  0  De=8.5E-7  Kd=4.5E-4\nPb210  0  De=8.5E-7  Kd=2.5E-2\nPo210  0  De=2.7E-7  Kd=2.5E-2\n\n<PARAMETERS>\n# A unit release of U-238 into the first cell: 1 Bq/a over its water volume.\nSRC  all  0\nSRC  0    0.0089405  fracture      # = 1 / (LENGTH/CELLS) / 1 m2\n\n<REACTIONS>\n=> U238, k = SRC\n\n# The chain. Half-lives in years; every one acts on the whole inventory.\nU238  => U234,  k = 1.5513E-10, on = inventory   # 4.468e9 a\nU234  => Th230, k = 2.8234E-6,  on = inventory   # 245 500 a\nTh230 => Ra226, k = 9.1946E-6,  on = inventory   # 75 386 a\nRa226 => Pb210, k = 4.3322E-4,  on = inventory   # 1 600 a\nPb210 => Po210, k = 3.1083E-2,  on = inventory   # 22.3 a\nPo210 => ,      k = 1.8289E+0,  on = inventory   # 0.379 a\n"
+  },
+  {
+    "id": "calciterate",
+    "group": "Reading a run",
+    "label": "Calcite at a rate: pH, SI and measurements",
+    "about": "Calcite dissolving at a rate into water that holds CO2. Run it: the time chart shows the pH and the calcite's saturation index on the right-hand axis, the calcium in mg/kgw — an <OUTPUT> of the text's own — on the left, and made-up measurements from <DATA> as open circles beside them.",
+    "text": "# Calcite dissolving at a rate into water that holds CO2, read as more than\n# its species: the pH, the calcite's saturation index, the calcium in mg/kgw\n# from <OUTPUT>, and measurements beside them from <DATA>. The constants are\n# phreeqc.dat's; the rate and the measurements are made up.\n\n<SETTINGS>\nMODE = batch\nTEND = 3\nTIME_UNIT = day\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+        3e-5\nOH-       3e-10\nCO2       1e-3\nHCO3-     3e-5\nCO3-2     1e-12\nCa+2      1e-9\nCaHCO3+   1e-12\nCaCO3     1e-14\nCalcite   0.01  mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                 logK = -14\nCO2 + H2O <=> H+ + HCO3-,      logK = -6.352\nHCO3- <=> H+ + CO3-2,          logK = -10.329\nCa+2 + HCO3- <=> CaHCO3+,      logK = 1.106\nCa+2 + CO3-2 <=> CaCO3,        logK = 3.224\n\n<PHASES>\nCalcite <=> Ca+2 + CO3-2,      logK = -8.48\n\n<PARAMETERS>\nkc  all  5e-4                  # mol/kgw a day, far from saturation\n\n<REACTIONS>\nCalcite => Ca+2 + CO3-2, r = kc*(1 - SR(Calcite))\n\n<OUTPUT>\nCa_mg  = 40078 * ([Ca+2] + [CaHCO3+] + [CaCO3]),  unit = mg/kgw\nalk    = [HCO3-] + 2*[CO3-2] + [CaHCO3+] + 2*[CaCO3] + [OH-] - [H+],  unit = eq/kgw\n\n<DATA>\ntime   pH     Ca_mg    cell = 0\n0.5    6.05   11.2\n1      6.70   19.0\n1.5    6.95   31.0\n2      7.55   35.0\n3      7.70   39.5\n",
+    "view": {
+      "tab": "time",
+      "picked": [
+        "pH",
+        "SI(Calcite)",
+        "Ca_mg"
+      ],
+      "cell": 0,
+      "logT": false,
+      "logY": false
+    }
+  },
+  {
+    "id": "acidcolumn",
+    "group": "Reading a run",
+    "label": "Acid through calcite: contours of pH",
+    "about": "Acid water through a column of calcite held at saturation, the calcite dissolving away cell by cell. Run it: the Gradient tab draws the pH as contours over time and distance, the front a line moving down the column. As a surface turns it into a landscape; SI(Calcite) and tot(Ca) are in the same picker.",
+    "text": "# Acid water through a column of calcite held at saturation: where the\n# calcite dissolves away, the acid goes on, and the pH front moves down the\n# column a cell at a time. The Gradient tab draws the pH as contours over\n# time and distance. phreeqc.dat's constants; D stands for the dispersion.\n\n<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 0.1\nVELOCITY = 1e-5\nADVECTION = 1\nDIFFUSION = 1\nLEFT = robin          # the flow carries the acid in, and nothing else crosses\nRIGHT = free\nTEND = 2e5\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+        1e-8     D=5e-8  left=1e-3\nOH-       1e-6     D=5e-8  left=1e-11\nCl-       2e-3     D=5e-8  left=3e-3\nCa+2      1e-3     D=5e-8  left=1e-3\nCO2       1e-4     D=5e-8  left=1e-4\nHCO3-     2e-3     D=5e-8  left=0\nCO3-2     1e-5     D=5e-8  left=0\nCaHCO3+   1e-5     D=5e-8  left=0\nCaCO3     1e-6     D=5e-8  left=0\nNa+       2e-3     D=5e-8  left=0\nCalcite   0.02     mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                 logK = -14\nCO2 + H2O <=> H+ + HCO3-,      logK = -6.352\nHCO3- <=> H+ + CO3-2,          logK = -10.329\nCa+2 + HCO3- <=> CaHCO3+,      logK = 1.106\nCa+2 + CO3-2 <=> CaCO3,        logK = 3.224\nCalcite <=> Ca+2 + CO3-2,      logK = -8.48\n",
+    "view": {
+      "tab": "gradient",
+      "grad": {
+        "species": "pH",
+        "view": "contour"
+      }
+    }
+  },
+  {
+    "id": "salinisation",
+    "group": "What the water is made of",
+    "label": "Salty water into a fresh aquifer: a Piper path",
+    "about": "Salty water into an aquifer with calcite and an exchanger: sodium and magnesium take the exchanger, calcium comes off it. Run it: the Composition tab draws the outlet's water as a path through a Piper diagram, from Ca–HCO3 to Na–Cl by way of a calcium peak, with waters measured there; Schoeller and Stiff diagrams of the same waters are on the Show menu, and where calcium is along the column too.",
+    "text": "# Salty water into a fresh aquifer with calcite and an exchanger: sodium and\n# magnesium take the exchanger, calcium comes off it, and the water at the\n# outlet goes from Ca-HCO3 to Na-Cl by way of a calcium peak. The Composition\n# tab draws its path on a Piper diagram, beside waters measured at the outlet.\n# The constants are phreeqc.dat's; the waters and the measurements are made up,\n# and D stands for the dispersion.\n<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 0.2\nVELOCITY = 1e-5\nDIFFUSION = 1\nADVECTION = 1\nLEFT = robin\nRIGHT = free\nACTIVITY = davies\nEQUILIBRATE = always\nTEND = 6e4\n\n<SPECIES>\nCa+2      1.2e-3   D=1e-7  left=1e-3\nMg+2      2e-4     D=1e-7  left=2e-3\nNa+       3e-4     D=1e-7  left=2e-2\nK+        5e-5     D=1e-7  left=4e-4\nCl-       3e-4     D=1e-7  left=2.2e-2\nSO4-2     1e-4     D=1e-7  left=1.5e-3\nHCO3-     2.6e-3   D=1e-7  left=1.5e-3\nCO3-2     1e-6     D=1e-7  left=0\nCO2       1e-4     D=1e-7  left=1e-4\nCaHCO3+   0        D=1e-7\nCaCO3     0        D=1e-7\nMgHCO3+   0        D=1e-7\nCaSO4     0        D=1e-7\nMgSO4     0        D=1e-7\nNaSO4-    0        D=1e-7\nH+        3e-8     D=1e-7  left=3e-8\nOH-       3e-7     D=1e-7  left=3e-7\nCalcite   0.01     mineral\nX-        exchanger 5e-3\nNaX       exchange\nCaX2      exchange\nMgX2      exchange\nKX        exchange\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\nCO3-2 + H+ <=> HCO3-, logK = 10.329\nCO3-2 + 2 H+ <=> CO2 + H2O, logK = 16.681\nCa+2 + HCO3- <=> CaHCO3+, logK = 1.106\nCa+2 + CO3-2 <=> CaCO3, logK = 3.224\nMg+2 + HCO3- <=> MgHCO3+, logK = 1.07\nCa+2 + SO4-2 <=> CaSO4, logK = 2.25\nMg+2 + SO4-2 <=> MgSO4, logK = 2.37\nNa+ + SO4-2 <=> NaSO4-, logK = 0.7\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\nNa+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\nMg+2 + 2 X- <=> MgX2, logK = 0.6\nK+ + X- <=> KX, logK = 0.7\n\n<DATA>\ntime   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  cell = 19\n1e4    1.4e-3   2.4e-4   1.0e-3   5.0e-5   1.2e-3   1.6e-4   2.55e-3\n2e4    2.05e-3  6.6e-4   1.1e-2   1.9e-4   1.3e-2   9.3e-4   1.95e-3\n3e4    1.75e-3  1.25e-3  1.7e-2   3.1e-4   1.95e-2  1.3e-3   1.75e-3\n6e4    1.2e-3   2.0e-3   2.05e-2  3.9e-4   2.25e-2  1.55e-3  1.62e-3\n",
+    "view": {
+      "tab": "composition",
+      "comp": {
+        "view": "piper",
+        "along": "time",
+        "cell": 19
+      }
+    }
+  },
+  {
+    "id": "bjerrum",
+    "group": "Equilibrium diagrams",
+    "label": "Carbonate against pH",
+    "about": "A carbonate water held at each pH from 2 to 12 and speciated there by its own relations. Run it: the Diagrams tab works out the carbonate's distribution — CO2, HCO3-, CO3-2 and the complexes — as shares of the carbon; the saturation indices and log concentrations are on the Show menu.",
+    "text": "# The carbonate in a water, held at each pH from 2 to 12 and speciated there:\n# CO2 below pH 6.3, HCO3- to 10.3, CO3-2 above, the classic distribution. The\n# Diagrams tab draws it from this water, with its activity coefficients, and\n# calcite's saturation index beside it. phreeqc.dat's constants.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = 1\n\n<SPECIES>\nH+        1e-8\nOH-       1e-6\nNa+       2e-3\nCa+2      5e-4\nCl-       1e-3\nCO2       5e-5\nHCO3-     2e-3\nCO3-2     1e-5\nCaHCO3+   1e-5\nCaCO3     1e-6\nNaHCO3    1e-6\nNaCO3-    1e-7\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                 logK = -14\nCO2 + H2O <=> H+ + HCO3-,      logK = -6.352\nHCO3- <=> H+ + CO3-2,          logK = -10.329\nCa+2 + HCO3- <=> CaHCO3+,      logK = 1.106\nCa+2 + CO3-2 <=> CaCO3,        logK = 3.224\nNa+ + HCO3- <=> NaHCO3,        logK = -0.25\nNa+ + CO3-2 <=> NaCO3-,        logK = 1.27\n\n<PHASES>\nCalcite <=> Ca+2 + CO3-2,      logK = -8.48\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "pH",
+          "sp": "",
+          "from": "2",
+          "to": "12",
+          "n": "101"
+        },
+        "y": {
+          "kind": "",
+          "sp": "",
+          "from": "-12",
+          "to": "16",
+          "n": "41"
+        },
+        "show": "shares",
+        "el": "C",
+        "in": "water",
+        "q": "pH"
+      }
+    }
+  },
+  {
+    "id": "pourbaix",
+    "group": "Equilibrium diagrams",
+    "label": "Iron: a pe–pH (Pourbaix) diagram",
+    "about": "Iron in a dilute water, Fe+2 and Fe+3, their hydrolysis and ferrihydrite. Run it: the Diagrams tab holds the water at each pH and pe and draws the species that holds most of the iron, in the whole cell, ferrihydrite's field among them, with where water itself gives way drawn across it.",
+    "text": "# Iron in a dilute water: Fe+2 and Fe+3, their hydrolysis and ferrihydrite.\n# The Diagrams tab holds the water at each pH and pe and draws the species\n# that holds most of the iron -- a Pourbaix diagram -- with where water itself\n# gives way, oxygen above and hydrogen below. phreeqc.dat's constants.\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           1e-7\nOH-          1e-7\ne-           electron  pe=4\nNa+          1e-3\nCl-          1e-3\nFe+2         1e-5\nFe+3         0\nFeOH+        0\nFe(OH)2      0\nFe(OH)3-     0\nFeOH+2       0\nFe(OH)2+     0\nFe(OH)3      0\nFe(OH)4-     0\nFerrihydrite 0  mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                         logK = -14\nFe+2 <=> Fe+3 + e-,                    logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,             logK = -9.5\nFe+2 + 2 H2O <=> Fe(OH)2 + 2 H+,       logK = -20.57\nFe+2 + 3 H2O <=> Fe(OH)3- + 3 H+,      logK = -31\nFe+3 + H2O <=> FeOH+2 + H+,            logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,      logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6\nFerrihydrite + 3 H+ <=> Fe+3 + 3 H2O,  logK = 4.891\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "pH",
+          "sp": "",
+          "from": "2",
+          "to": "12",
+          "n": "101"
+        },
+        "y": {
+          "kind": "pe",
+          "sp": "",
+          "from": "-12",
+          "to": "16",
+          "n": "57"
+        },
+        "show": "predominance",
+        "el": "Fe",
+        "in": "all",
+        "q": "pH"
+      }
+    }
+  },
+  {
+    "id": "stability",
+    "group": "Equilibrium diagrams",
+    "label": "Calcite or gypsum: a mineral stability diagram",
+    "about": "A calcium water held at each activity of carbonate and of sulfate. Run it: the Diagrams tab draws where calcite is furthest over saturation, where gypsum is and where neither is; contours of either saturation index are on the Show menu.",
+    "text": "# A calcium water held at each activity of carbonate and of sulfate: where\n# calcite is furthest over saturation, where gypsum is, and where neither is,\n# a mineral stability diagram on the Diagrams tab. phreeqc.dat's constants.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = 1\n\n<SPECIES>\nCa+2      1e-2\nCl-       2e-2\nCO3-2     1e-8\nSO4-2     1e-4\nCaCO3     1e-8\nCaSO4     1e-5\n\n<EQUILIBRIUM>\nCa+2 + CO3-2 <=> CaCO3,        logK = 3.224\nCa+2 + SO4-2 <=> CaSO4,        logK = 2.25\n\n<PHASES>\nCalcite <=> Ca+2 + CO3-2,      logK = -8.48\nGypsum <=> Ca+2 + SO4-2 + 2 H2O, logK = -4.58\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "la",
+          "sp": "CO3-2",
+          "from": "-10",
+          "to": "-2",
+          "n": "81"
+        },
+        "y": {
+          "kind": "la",
+          "sp": "SO4-2",
+          "from": "-6",
+          "to": "-1",
+          "n": "51"
+        },
+        "show": "phase",
+        "el": "Ca",
+        "in": "water",
+        "q": "SI(Calcite)"
+      }
+    }
+  },
+  {
+    "id": "sorptionedge",
+    "group": "Equilibrium diagrams",
+    "label": "Zinc on ferrihydrite: a sorption edge",
+    "about": "Zinc and a ferrihydrite surface, its strong and weak sites as Dzombak and Morel give them. Run it: the Diagrams tab holds the water at each pH from 4 to 9 and draws where the zinc is — dissolved at low pH, on the surface at high — as shares of all of it.",
+    "text": "# Zinc on ferrihydrite, its strong and weak sites as Dzombak and Morel give\n# them: held at each pH from 4 to 9, the water gives its zinc to the surface,\n# and the Diagrams tab draws where the zinc is -- dissolved below pH 6, on the\n# surface above it -- the sorption edge. phreeqc.dat's constants; no double\n# layer.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = 1\n\n<SPECIES>\nH+          1e-7\nOH-         1e-7\nNa+         1e-2\nCl-         1e-2\nZn+2        1e-6\nZnOH+       0\nZn(OH)2     0\nZnCl+       0\nHfo_sOH     surface  sites=5e-6\nHfo_sOH2+   surface\nHfo_sO-     surface\nHfo_sOZn+   surface\nHfo_wOH     surface  sites=2e-4\nHfo_wOH2+   surface\nHfo_wO-     surface\nHfo_wOZn+   surface\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                          logK = -14\nZn+2 + H2O <=> ZnOH+ + H+,              logK = -8.96\nZn+2 + 2 H2O <=> Zn(OH)2 + 2 H+,        logK = -16.9\nZn+2 + Cl- <=> ZnCl+,                   logK = 0.43\nHfo_sOH + H+ <=> Hfo_sOH2+,             logK = 7.29\nHfo_sOH <=> Hfo_sO- + H+,               logK = -8.93\nHfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+,      logK = 0.99\nHfo_wOH + H+ <=> Hfo_wOH2+,             logK = 7.29\nHfo_wOH <=> Hfo_wO- + H+,               logK = -8.93\nHfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+,      logK = -1.99\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "pH",
+          "sp": "",
+          "from": "4",
+          "to": "9",
+          "n": "101"
+        },
+        "y": {
+          "kind": "",
+          "sp": "",
+          "from": "-12",
+          "to": "16",
+          "n": "41"
+        },
+        "show": "shares",
+        "el": "Zn",
+        "in": "all",
+        "q": "pH"
+      }
+    }
+  },
+  {
+    "id": "exchangesweep",
+    "group": "Sweeps",
+    "label": "An exchange front, its capacity swept",
+    "about": "Calcium chloride water into a column whose exchanger holds sodium. Run it: the Sweeps tab runs it again for four capacities of the exchanger and draws the calcium at the outlet, a curve for each: the larger the capacity, the later the calcium comes.",
+    "text": "# Calcium chloride water into a column whose exchanger holds sodium: the\n# chloride arrives with the water, the calcium only once the exchanger has\n# taken its fill, the later the larger its capacity. The Sweeps tab runs it\n# again for each capacity and draws the calcium at the outlet. Gaines-Thomas\n# exchange with phreeqc.dat's constants; D stands for the dispersion.\n\n<SETTINGS>\nMODE = transport\nCELLS = 30\nLENGTH = 0.1\nVELOCITY = 1e-5\nADVECTION = 1\nDIFFUSION = 1\nLEFT = robin\nRIGHT = free\nEQUILIBRATE = always\nTEND = 1e5\n\n<SPECIES>\nNa+     1e-3    D=1e-7  left=0\nCa+2    1e-12   D=1e-7  left=6e-4\nCl-     1e-3    D=1e-7  left=1.2e-3\nX-      exchanger 2e-3\nNaX     exchange\nCaX2    exchange\n\n<EQUILIBRIUM>\nNa+ + X- <=> NaX,              logK = 0\nCa+2 + 2 X- <=> CaX2,          logK = 0.8\n",
+    "view": {
+      "tab": "sweep",
+      "go": true,
+      "sw": {
+        "what": "initial:X-",
+        "values": "1e-3, 2e-3, 4e-3, 8e-3",
+        "what2": "",
+        "values2": "",
+        "cell": 29,
+        "show": "time",
+        "key": "Ca+2",
+        "of": "end",
+        "logT": false
+      }
+    }
+  },
+  {
+    "id": "ratesweep",
+    "group": "Sweeps",
+    "label": "Calcite at a rate, over the rate and the CO2",
+    "about": "Calcite dissolving at a rate, run again for nine rates and five amounts of CO2 at the start. Run it: the Sweeps tab draws the calcium after three days over the two, as contours — limited by the rate on one side, by the saturation the CO2 allows on the other.",
+    "text": "# Calcite dissolving at a rate into water that holds CO2, run again for each\n# rate and each amount of CO2 at the start: the Sweeps tab draws the calcium\n# after three days over the two, as contours. The constants are phreeqc.dat's;\n# the rate is made up.\n\n<SETTINGS>\nMODE = batch\nTEND = 3\nTIME_UNIT = day\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+        3e-5\nOH-       3e-10\nCO2       1e-3\nHCO3-     3e-5\nCO3-2     1e-12\nCa+2      1e-9\nCaHCO3+   1e-12\nCaCO3     1e-14\nCalcite   0.01  mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                 logK = -14\nCO2 + H2O <=> H+ + HCO3-,      logK = -6.352\nHCO3- <=> H+ + CO3-2,          logK = -10.329\nCa+2 + HCO3- <=> CaHCO3+,      logK = 1.106\nCa+2 + CO3-2 <=> CaCO3,        logK = 3.224\n\n<PHASES>\nCalcite <=> Ca+2 + CO3-2,      logK = -8.48\n\n<PARAMETERS>\nkc  all  5e-4                  # mol/kgw a day, far from saturation\n\n<REACTIONS>\nCalcite => Ca+2 + CO3-2, r = kc*(1 - SR(Calcite))\n\n<OUTPUT>\nCa_mg  = 40078 * ([Ca+2] + [CaHCO3+] + [CaCO3]),  unit = mg/kgw\nalk    = [HCO3-] + 2*[CO3-2] + [CaHCO3+] + 2*[CaCO3] + [OH-] - [H+],  unit = eq/kgw\n",
+    "view": {
+      "tab": "sweep",
+      "go": true,
+      "sw": {
+        "what": "parameter:kc",
+        "values": "1e-4 to 1e-2 in 9 log",
+        "what2": "initial:CO2",
+        "values2": "2e-4 to 2e-3 in 5 log",
+        "cell": 0,
+        "show": "contour",
+        "key": "Ca_mg",
+        "of": "end",
+        "logT": true
+      }
+    }
+  },
+  {
+    "id": "ironoxygen",
+    "group": "All together",
+    "label": "Oxygen into iron(II) water: redox, a mineral, exchange",
+    "about": "Water with oxygen in it into a column of anoxic water that holds iron(II), dissolved and on an exchanger: the iron is oxidised and comes out as ferrihydrite, and the acid that leaves takes the pH down at the front. Run it: the Composition tab shows where the iron is along the column — in the water, on the exchanger, in the ferrihydrite. Then the Gradient tab's pe or pH as contours, the Diagrams tab's Pourbaix diagram of the water as the run leaves it, and a sweep of the oxygen flowing in.",
+    "text": "# Water with oxygen in it into a column of anoxic water that holds iron(II),\n# in the water and on an exchanger: where the oxygen arrives, the iron is\n# oxidised, ferrihydrite comes out of the water and the acid it leaves takes\n# the pH down; the exchanger gives up its iron as the water's goes, and holds\n# the front back. Redox at one pe, a mineral held at saturation, exchange,\n# carbonate and activities together. The Composition tab draws where the iron\n# is along the column; the Gradient tab the pH or the pe; the Diagrams tab the\n# Pourbaix diagram of the water as the run leaves it. phreeqc.dat's constants;\n# D stands for the dispersion.\n\n<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 0.1\nVELOCITY = 1e-5\nADVECTION = 1\nDIFFUSION = 1\nLEFT = robin\nRIGHT = free\nTEND = 6e4\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           1e-7     D=1e-7  left=1e-7\nOH-          1e-7     D=1e-7  left=1e-7\ne-           electron pe=-1\nO2           1e-30    D=1e-7  left=2.5e-4\nNa+          2e-3     D=1e-7  left=2e-3\nCl-          1e-3     D=1e-7  left=1.4e-3\nCO2          2e-4     D=1e-7  left=2e-4\nHCO3-        1.4e-3   D=1e-7  left=1e-3\nCO3-2        1e-6     D=1e-7  left=1e-6\nFe+2         2e-4     D=1e-7  left=0\nFe+3         1e-20    D=1e-7  left=0\nFeOH+        1e-8     D=1e-7  left=0\nFeHCO3+      1e-6     D=1e-7  left=0\nFeOH+2       1e-20    D=1e-7  left=0\nFe(OH)2+     1e-18    D=1e-7  left=0\nFe(OH)3      1e-18    D=1e-7  left=0\nFe(OH)4-     1e-20    D=1e-7  left=0\nFerrihydrite 0        mineral\nX-           exchanger 5e-3\nNaX          exchange\nFeX2         exchange\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                          logK = -14\n2 H2O <=> O2 + 4 H+ + 4 e-,             logK = -86.08\nCO2 + H2O <=> H+ + HCO3-,               logK = -6.352\nHCO3- <=> H+ + CO3-2,                   logK = -10.329\nFe+2 <=> Fe+3 + e-,                     logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,              logK = -9.5\nFe+2 + HCO3- <=> FeHCO3+,               logK = 2.0\nFe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6\nFerrihydrite + 3 H+ <=> Fe+3 + 3 H2O,   logK = 4.891\nNa+ + X- <=> NaX,                       logK = 0\nFe+2 + 2 X- <=> FeX2,                   logK = 0.44\n",
+    "view": {
+      "tab": "composition",
+      "comp": {
+        "view": "where",
+        "element": "Fe",
+        "in": "all",
+        "as": "percent",
+        "along": "distance",
+        "times": "15000"
+      }
+    }
   }
 ];
 
