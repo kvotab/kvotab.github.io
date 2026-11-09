@@ -409,6 +409,14 @@ two quantities they make, `alk(CO3)` and `tot(SO4)`, by hand to 1e-14.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
+A sweep's text (`RtmModel.withValue`, since 2026-11-09): a setting the
+text gives and one it does not, added to `<SETTINGS>`; a species' start, its
+comment kept; an exchanger's capacity after its word; a start where the line
+has none; what flows in, and where nothing did; every line of a parameter,
+its cells and scope kept; a parameter that is not there refused. A sweep of a
+parameter and a setting, every pair run by the worker's handler: A decays as
+exp(-kk t) in each, the run the same to the bit as the text with those
+numbers run by itself, and a TEND below zero refused for its runs alone.
 
 **Ion exchange** (`exchanger`, `exchange`). A binary Na/Ca exchange from an
 exchanger all Na, against its closed solution (7e-14), the sites and the totals
@@ -899,6 +907,8 @@ What a run can be read as (since 2026-11-09): the list puts the species first an
 The Composition tab (since 2026-11-09), on a water whose major ions are round numbers (Ca 2.2, Mg 1, Na + K 2.1, Cl 2, SO4 1, HCO3 + CO3 3 meq/kgw, CaSO4 and CO3-2 counted) and a water measured at 50 s: where calcium is, in the whole cell -- the calcite, made of what its reaction says, Ca+2 and CaSO4, stacked to 100 % at every point -- and in the water alone; the Piper diagram's three points where the shares put them, to 1e-9 against the geometry worked out in the test, the measured water in all three and the type, Ca–Na–HCO₃, in the note; the Schoeller diagram's lines in meq/kgw on a log axis, the measured one dotted; a Stiff diagram per water; the CSV's header and type; and along a three-cell column, a Piper point per cell coloured by distance. A share of exactly a half came out 0.49999999999999994 and missed the half-or-more rule of the type: the rule allows for the rounding.
 
 The Diagrams tab (since 2026-11-09), on a carbonate water without activities: with one thing varied the second axis's range is hidden; pH from 2 to 12 draws the carbon's shares as Bjerrum's fractions, to 1e-9; pH against log total carbon draws the species that holds most of the carbon, CO2 at pH 6, HCO3- at 7 and CO3-2 at 11, and as contours the total worked out at each point is the one it was held at; the CSV has a row per total. A saturation index held at zero by a mineral present is zero to the rounding either side: the phase map counts it at saturation and the contours round it, where they drew it speckled and as a maze.
+
+The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARAMETERS>`: the parameter is offered, and a new choice starts from half its value, the value and twice it (0.05, 0.1, 0.2); 0.1 to 0.4 in 4 makes four runs; against what was varied, A at the end of each is exp(-10 kk) to the solver's tolerance (1.1e-5 at rtol 1e-6); against time, a curve per run named for its value.
 
 That last check was first written expecting the profile to be the shape of the
 source. It is not: √(D·t/R) is 2×10⁻⁴ m against a column of 10⁻⁴ m, so by 100 s

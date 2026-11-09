@@ -48,9 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, eight tab toolbars, and the PHREEQC panel's heading and
+# of the Solver section, nine tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 37
+STATIC_SLOTS = 38
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -153,6 +153,23 @@ CO3-2   1e-5
  <=> H+ + OH-,          logK = -14
 CO2 <=> H+ + HCO3-,     logK = -6.352
 HCO3- <=> H+ + CO3-2,   logK = -10.329
+'''
+
+# A first-order decay at a rate kk of <PARAMETERS>: a sweep of kk leaves exp(-kk t) of A, what the sweeps block checks.
+SWEEP_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 10
+
+<SPECIES>
+A  1
+B  0
+
+<PARAMETERS>
+kk  all  0.1
+
+<REACTIONS>
+A => B, r = kk*[A]
 '''
 
 def check(label, got, want=True):
@@ -958,6 +975,38 @@ async def main():
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 
+            # --- the model run again for each value of what is varied: the Sweeps tab ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, SWEEP_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 2 species')", True, tries=40)
+            await page.ev("document.querySelector('[data-tab=\"sweep\"]').click()")
+            await asyncio.sleep(0.4)
+            check('a parameter offered to vary, and a new choice starting from half, the value and twice it', await page.ev(
+                "(() => { const w = document.getElementById('rtmSwWhat'); w.value = 'parameter:kk';"
+                " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                " return document.getElementById('rtmSwValues').value; })()"), '0.05, 0.1, 0.2')
+            await page.ev("(() => { const v = document.getElementById('rtmSwValues'); v.value = '0.1 to 0.4 in 4';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmSwGo').click()")
+            done = await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 22)", '4 of 4 runs done in 0.', tries=60, pause=0.5)
+            check(f'four runs, one for each value of kk ({done})', isinstance(done, str) and done.startswith('4 of 4 runs done'), True)
+            await page.ev("(() => { const k = document.getElementById('rtmSwKey'); k.value = 'A';"
+                          " k.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            summ = await page.ev("""(() => { const t = document.getElementById('rtmChartSw').data[0];
+              return [t.x.join(' '), Math.max(...t.x.map((k, i) => Math.abs(t.y[i] / Math.exp(-10 * k) - 1))) < 5e-5]; })()""")
+            # To the solver's tolerance, rtol 1e-6 on the way: 1.1e-5 at kk = 0.4. test-model.js has a sweep's run the same to
+            # the bit as the text run by itself.
+            check('against what was varied: A at the end of each run, exp(-10 kk)', summ, ['0.1 0.2 0.3 0.4', True])
+            await page.ev("(() => { const s = document.getElementById('rtmSwShow'); s.value = 'time';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            check('  and against time, a curve per run, named for its value', await page.ev(
+                "document.getElementById('rtmChartSw').data.map((t) => t.name).join(' / ')"),
+                'kk = 0.1 / kk = 0.2 / kk = 0.3 / kk = 0.4')
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
             # --- the Jacobian check ------------------------------------------
             await page.ev("document.getElementById('rtmVerify').click()")
             verdict = await settle(page, "(() => { const s = document.getElementById('rtmStatus')"
@@ -1505,7 +1554,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient composition diagram phreeqc model jacobian help'])
+                [True, ['gradient'], 'time profile gradient composition diagram sweep phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

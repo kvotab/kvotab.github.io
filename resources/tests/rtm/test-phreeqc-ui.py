@@ -158,7 +158,7 @@ async def main():
             check('the page compiles its built-in model', status, 'Compiled:')
             check('a PHREEQC tab beside the others', await page.ev(
                 "[...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')"),
-                'time profile gradient composition diagram phreeqc model jacobian help')
+                'time profile gradient composition diagram sweep phreeqc model jacobian help')
             check('PHREEQC is not fetched until it is used', await page.ev(
                 "performance.getEntriesByType('resource').some((r) => /phreeqc/.test(r.name))"), False)
 

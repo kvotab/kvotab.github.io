@@ -493,6 +493,8 @@
 .rtm-dg-axis[hidden], .rtm-dg-axis [hidden] { display: none; }
 #rtmDgYMore { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }
 #rtmDgYMore[hidden] { display: none; }
+#rtmSwMore2 { display: inline-flex; gap: 5px; align-items: center; }
+#rtmSwMore2[hidden] { display: none; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
 
 .rtm-example-about {

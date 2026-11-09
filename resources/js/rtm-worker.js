@@ -508,10 +508,151 @@ function rtmDiagram(msg, post) {
     species: model.speciesNames, states, nq, keys: model.quantities.map((q) => q.key), quant, failed, t, cell, pHHeld };
 }
 
+/*
+  SWEEPS: the model run again for each value of what is varied -- a
+  setting, a parameter, a species' start or what flows in -- or for each
+  pair of values of two, as Gibbs Studio's parametric runs: the text with
+  that number put in (RtmModel.withValue), compiled and run with the page's
+  solver settings. Kept of each run: every species and quantity at one cell
+  at each stored point, thinned to 400 points, and along the column at its
+  end. A run that fails says why and the rest go on.
+*/
+function rtmSweep(msg, post) {
+  const s = msg.solver || {};
+  const vary = msg.vary;
+  const lists = msg.values;
+  const combos = lists.length === 2 ? lists[1].flatMap((b) => lists[0].map((a) => [a, b])) : lists[0].map((a) => [a]);
+  const runs = [];
+  let names = null;
+  let keys = null;
+  const started = Date.now();
+  let lastReport = 0;
+  combos.forEach((combo, r) => {
+    const t0 = Date.now();
+    try {
+      let text = msg.text;
+      vary.forEach((v, d) => { text = RtmModel.withValue(text, v, combo[d]); });
+      const model = RtmModel.compile(text);
+      const tend = s.tend > 0 ? s.tend : model.settings.TEND;
+      const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {
+        const now = Date.now();
+        if (now - lastReport < 250) return true;
+        lastReport = now;
+        post({ type: 'progress', id: msg.id, run: r, runs: combos.length, t, tend, nsteps,
+          frac: Math.min(1, (r + Math.min(1, t / tend)) / combos.length) });
+        return true;
+      }));
+      const n = res.t.length;
+      const width = model.stateWidth || model.nspecies;
+      const states = rtmConcentrations(model, res.y, n, width, res.t);
+      const ns = model.speciesNames.length;
+      const nq = model.quantities.length;
+      names = names || model.speciesNames;
+      keys = keys || model.quantities.map((q) => q.key);
+      const which = Int32Array.from({ length: nq }, (_, q) => q);
+      const qOut = new Float64Array(nq);
+      // At the cell, thinned to 400 points, the first and the last kept.
+      const cell = Math.min(msg.cell, model.fracture - 1) * (model.stride || 1);
+      const step = Math.max(1, Math.ceil(n / 400));
+      const pick = [];
+      for (let i = 0; i < n; i += step) pick.push(i);
+      if (pick[pick.length - 1] !== n - 1) pick.push(n - 1);
+      const m = pick.length;
+      const t = new Float64Array(m);
+      const cellStates = new Float64Array(m * ns);
+      const cellQuant = new Float64Array(m * nq);
+      pick.forEach((i, j) => {
+        const c = states.subarray(i * width, (i + 1) * width);
+        t[j] = res.t[i];
+        cellStates.set(c.subarray(cell * ns, (cell + 1) * ns), j * ns);
+        model.quantitiesAt(c, res.t[i], cell, which, qOut);
+        cellQuant.set(qOut, j * nq);
+      });
+      // Along the column at the end, the fracture's cells.
+      const nf = model.fracture;
+      const stride = model.stride || 1;
+      const last = states.subarray((n - 1) * width, n * width);
+      const endStates = new Float64Array(nf * ns);
+      const endQuant = new Float64Array(nf * nq);
+      for (let k = 0; k < nf; k++) {
+        endStates.set(last.subarray(k * stride * ns, (k * stride + 1) * ns), k * ns);
+        model.quantitiesAt(last, res.t[n - 1], k * stride, which, qOut);
+        endQuant.set(qOut, k * nq);
+      }
+      runs.push({ values: combo, ok: true, m, t, cellStates, cellQuant, nf, centres: Float64Array.from(model.grid.centres.slice(0, nf)),
+        endStates, endQuant, tend: res.t[n - 1], steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
+    } catch (e) {
+      runs.push({ values: combo, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
+    }
+  });
+  const transfer = [];
+  for (const run of runs) {
+    if (!run.ok) continue;
+    for (const key of ['t', 'cellStates', 'cellQuant', 'centres', 'endStates', 'endQuant']) transfer.push(run[key].buffer);
+  }
+  return { reply: { type: 'sweep', id: msg.id, runs, species: names || [], keys: keys || [], cell: msg.cell,
+    seconds: (Date.now() - started) / 1000 }, transfer };
+}
+
+/** The solver's options for a run, from the page's settings (solverPayload in rtm-ui.js): a run's and a sweep's alike. */
+function rtmSolveOptions(s, tend, onProgress) {
+  const method = s.method || 'ndf';
+  const viaJulia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
+  return {
+    solver: viaJulia ? FacsimileOdeJulia.solver(method) : method,
+    tend,
+    rtol: s.rtol,
+    atol: s.atol,
+    nonNegative: !!s.nonNegative,
+    matrix: s.matrix || 'auto',
+    // Every κ zero: the NDF as the plain BDFs, QNDF as QBDF.
+    bdf: !!s.bdf,
+    maxSteps: s.maxSteps,
+    maxPoints: s.maxPoints || 4000,
+    norm: s.norm,
+    normControl: !!s.normControl,
+    // The rest of facsimile.html's settings, which this page now offers too.
+    maxOrder: s.maxOrder || 5,
+    minOrder: s.minOrder || 1,
+    hmax: s.hmax > 0 ? s.hmax : undefined,
+    h0: s.h0 > 0 ? s.h0 : undefined,
+    jacobianMode: s.jacobianMode || 'analytic',
+    kappa: s.kappa,
+    maxJacAge: s.maxJacAge,
+    smoothEst: s.smoothEst !== false,
+    /*
+      Let the corrector stop when it has stopped improving, as long as the
+      correction is within half the tolerance and the Jacobian is the one for
+      this point. Reaction networks of the kind this page is for -- rate
+      constants to 1e16 against concentrations of 1e-9 -- cancel so heavily
+      that the residual cannot be evaluated to better than a part in 1e7, and
+      the corrections stop shrinking there. Without this the step is thrown
+      out as diverging and h is cut, which does nothing at all, because
+      arithmetic noise does not scale with h: a run can then take millions of
+      steps to cover a few seconds. facsimile.html leaves it off; see the note in
+      facsimile-solver.js for what it costs a model that does not need it. The
+      page's Stall tolerance, 0.5 unless it says otherwise.
+    */
+    stagnationTol: s.stagnationTol ?? 0.5,
+    belowTolRun: s.belowTolRun,
+    autoAtol: s.autoAtol,
+    onProgress,
+  };
+}
+
 function handleRtmMessage(msg, post) {
   const id = msg.id;
   if (msg.type === 'capabilities') {
     post({ type: 'capabilities', id, solvers: rtmSolvers() });
+    return;
+  }
+  if (msg.type === 'sweep') {
+    try {
+      const { reply, transfer } = rtmSweep(msg, post);
+      post(reply, transfer);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'sweep', error: rtmErrorMessage(e) });
+    }
     return;
   }
   if (msg.type === 'diagram') {
@@ -585,59 +726,18 @@ function handleRtmMessage(msg, post) {
   if (msg.type !== 'run') return;
 
   const s = msg.solver || {};
-  const method = s.method || 'ndf';
-  const viaJulia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
   const tend = s.tend > 0 ? s.tend : model.settings.TEND;
   let lastReport = 0;
   const started = Date.now();
 
   try {
-    const res = FacsimileODE.runModel(model, {
-      solver: viaJulia ? FacsimileOdeJulia.solver(method) : method,
-      tend,
-      rtol: s.rtol,
-      atol: s.atol,
-      nonNegative: !!s.nonNegative,
-      matrix: s.matrix || 'auto',
-      // Every κ zero: the NDF as the plain BDFs, QNDF as QBDF.
-      bdf: !!s.bdf,
-      maxSteps: s.maxSteps,
-      maxPoints: s.maxPoints || 4000,
-      norm: s.norm,
-      normControl: !!s.normControl,
-      // The rest of facsimile.html's settings, which this page now offers too.
-      maxOrder: s.maxOrder || 5,
-      minOrder: s.minOrder || 1,
-      hmax: s.hmax > 0 ? s.hmax : undefined,
-      h0: s.h0 > 0 ? s.h0 : undefined,
-      jacobianMode: s.jacobianMode || 'analytic',
-      kappa: s.kappa,
-      maxJacAge: s.maxJacAge,
-      smoothEst: s.smoothEst !== false,
-      /*
-        Let the corrector stop when it has stopped improving, as long as the
-        correction is within half the tolerance and the Jacobian is the one for
-        this point. Reaction networks of the kind this page is for -- rate
-        constants to 1e16 against concentrations of 1e-9 -- cancel so heavily
-        that the residual cannot be evaluated to better than a part in 1e7, and
-        the corrections stop shrinking there. Without this the step is thrown
-        out as diverging and h is cut, which does nothing at all, because
-        arithmetic noise does not scale with h: a run can then take millions of
-        steps to cover a few seconds. facsimile.html leaves it off; see the note in
-        facsimile-solver.js for what it costs a model that does not need it. The
-        page's Stall tolerance, 0.5 unless it says otherwise.
-      */
-      stagnationTol: s.stagnationTol ?? 0.5,
-      belowTolRun: s.belowTolRun,
-      autoAtol: s.autoAtol,
-      onProgress: (t, nsteps) => {
-        const now = Date.now();
-        if (now - lastReport < 250) return true;
-        lastReport = now;
-        post({ type: 'progress', id, t, tend, nsteps, frac: Math.min(1, t / tend) });
-        return true;
-      },
-    });
+    const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {
+      const now = Date.now();
+      if (now - lastReport < 250) return true;
+      lastReport = now;
+      post({ type: 'progress', id, t, tend, nsteps, frac: Math.min(1, t / tend) });
+      return true;
+    }));
 
     // The state at every stored time, flattened: point-major, then cell-major
     // within a point, which is the order the model itself uses. A model that

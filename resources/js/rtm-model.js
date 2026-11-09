@@ -1910,6 +1910,73 @@
     return tables;
   }
 
+  // The words a species line may carry besides its numbers and key=value pairs (readSpecies).
+  const SPECIES_WORDS = new Set(['fixed', 'immobile', 'mineral', 'exchanger', 'exchange', 'electron', 'surface', 'potential',
+    'gas', 'drummond', 'dissolve_only', 'precipitate_only', 'force_equality']);
+
+  /**
+   * The model text with one number changed, as a sweep varies it: a
+   * setting's value, its line added to <SETTINGS> where the text has none;
+   * every value a parameter of <PARAMETERS> is given, its cells and scope
+   * kept; a species' starting concentration on its line; or what flows in
+   * at the left, its left=. The rest of the text is as it was, comments and
+   * spacing too. vary is { kind: 'setting' | 'parameter' | 'initial' |
+   * 'left', name }.
+   */
+  function withValue(text, vary, value) {
+    const v = String(Number(value));
+    const lines = String(text).split(/\r?\n/);
+    let current = null;
+    let settingsAt = -1;
+    let hit = 0;
+    const out = lines.map((raw, i) => {
+      const cm = /(^|\s)#.*$/.exec(raw);
+      const code = cm ? raw.slice(0, cm.index + cm[1].length) : raw;
+      const comment = cm ? raw.slice(cm.index + cm[1].length) : '';
+      const body = code.trim();
+      if (!body) return raw;
+      const header = /^<\s*([A-Za-z_]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(body);
+      if (header) {
+        current = header[1].toUpperCase();
+        if (current === 'SETTINGS' && settingsAt < 0) settingsAt = i;
+        return raw;
+      }
+      if (vary.kind === 'setting' && current === 'SETTINGS') {
+        const m = /^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s*=\s*)(.*?)(\s*)$/.exec(code);
+        if (m && m[2].toUpperCase() === vary.name) { hit++; return `${m[1]}${m[2]}${m[3]}${v}${m[5]}${comment}`; }
+      }
+      if (vary.kind === 'parameter' && current === 'PARAMETERS') {
+        const m = /^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s+)(\S+)(\s+)(.+?)(\s+(?:fracture|matrix))?(\s*)$/i.exec(code);
+        if (m && m[2] === vary.name) { hit++; return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${v}${m[7] || ''}${m[8]}${comment}`; }
+      }
+      if ((vary.kind === 'initial' || vary.kind === 'left') && current === 'SPECIES') {
+        const toks = [...code.matchAll(/[^\s,;]+/g)];
+        if (!toks.length || toks[0][0] !== vary.name) return raw;
+        hit++;
+        const put = (tok, word) => `${code.slice(0, tok.index)}${word}${code.slice(tok.index + tok[0].length)}${comment}`;
+        if (vary.kind === 'left') {
+          const tok = toks.find((x) => /^left\s*=/i.test(x[0]));
+          return tok ? put(tok, `left=${v}`) : `${code.replace(/\s*$/, '')}  left=${v}${comment ? ` ${comment}` : ''}`;
+        }
+        const tok = toks.slice(1).find((x) => !x[0].includes('=') && !SPECIES_WORDS.has(x[0].toLowerCase()));
+        if (tok) return put(tok, v);
+        const after = toks[0].index + toks[0][0].length;
+        return `${code.slice(0, after)}  ${v}${code.slice(after)}${comment}`;
+      }
+      return raw;
+    });
+    if (!hit) {
+      if (vary.kind === 'setting') {
+        if (settingsAt >= 0) out.splice(settingsAt + 1, 0, `${vary.name} = ${v}`);
+        else out.unshift('<SETTINGS>', `${vary.name} = ${v}`, '');
+      } else {
+        throw new RtmError(vary.kind === 'parameter' ? `There is no parameter ${vary.name} in <PARAMETERS> to vary.`
+          : `There is no species ${vary.name} in <SPECIES> to vary.`);
+      }
+    }
+    return out.join('\n');
+  }
+
   /**
    * What each species is made of, for the views of where an element is and
    * of the water's major ions. For each element but H and O, each species
@@ -12966,5 +13033,5 @@
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, readData };
+    SECTIONS, SETTINGS, elementsOf, readData, withValue };
 }));

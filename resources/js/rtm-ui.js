@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109e';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109f';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -59,6 +59,8 @@
       y: { kind: '', sp: '', from: '-12', to: '16', n: '41' },
       show: 'shares', el: '', in: 'water', q: '',
     },
+    // The Sweeps tab: what is varied over what values, the cell kept; then what is drawn of the runs.
+    sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end' },
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     sideWidth: null,
@@ -97,7 +99,7 @@
         gradTMin: state.gradTMin,
         compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
-        compTMin: state.compTMin, dg: state.dg,
+        compTMin: state.compTMin, dg: state.dg, sw: state.sw,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
         // model that has moved on and no amount of reloading shifts it -- it is
@@ -150,6 +152,11 @@
         }
         for (const f of ['show', 'el', 'q']) if (typeof s.dg[f] === 'string') d[f] = s.dg[f];
         if (s.dg.in === 'water' || s.dg.in === 'all') d.in = s.dg.in;
+      }
+      if (s.sw && typeof s.sw === 'object') {
+        for (const f of ['what', 'values', 'what2', 'values2', 'show', 'key']) if (typeof s.sw[f] === 'string') state.sw[f] = s.sw[f];
+        if (Number.isInteger(s.sw.cell) && s.sw.cell >= 0) state.sw.cell = s.sw.cell;
+        if (['end', 'max', 'min'].includes(s.sw.of)) state.sw.of = s.sw.of;
       }
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
@@ -428,6 +435,7 @@
       renderCells();
       renderComp();
       renderDg();
+      renderSw();
       drawJacobianPattern();
       const m = reply.model;
       const warn = m.warnings.length ? ` ${m.warnings.length} warning${m.warnings.length > 1 ? 's' : ''}: ${m.warnings[0]}` : '';
@@ -680,6 +688,7 @@
     renderGradSpecies();
     renderComp();
     renderDg();
+    renderSw();
     drawTime();
     drawProfile();
     drawGradient();
@@ -733,9 +742,14 @@
   }
 
   function stop() {
-    if (!state.running) return;
+    if (!state.running && !dgBusy) return;
     if (worker) { worker.terminate(); worker = null; workerKind = 'none'; pending.clear(); }
     state.running = false;
+    // A sweep or a diagram stopped with the worker: what waited on it never hears, so its buttons come back here.
+    swBusy = false;
+    dgBusy = false;
+    $('rtmSwGo').disabled = false;
+    $('rtmDgGo').disabled = false;
     $('rtmRun').disabled = false;
     $('rtmVerify').disabled = false;
     $('rtmStop').disabled = true;
@@ -2152,6 +2166,7 @@
     (p) => { setProgress(p.frac); setStatus(`Working out the diagram: ${p.done.toLocaleString()} of ${p.npts.toLocaleString()} points…`); });
     dgBusy = true;
     $('rtmDgGo').disabled = true;
+    $('rtmStop').disabled = false;
     const started = Date.now();
     setStatus(`Working out the diagram: ${axes.reduce((n, ax) => n * ax.n, 1).toLocaleString()} points…`);
     try {
@@ -2170,6 +2185,7 @@
     } finally {
       dgBusy = false;
       $('rtmDgGo').disabled = false;
+      $('rtmStop').disabled = !state.running;
     }
   }
 
@@ -2397,6 +2413,328 @@
   }
 
   /* ---------------------------------------------------------------------
+     Sweeps: the model run again for each value of what is varied, as Gibbs
+     Studio's parametric runs
+
+     The worker (rtmSweep in rtm-worker.js) puts each value into the text,
+     runs it with the panel's solver settings and keeps every species and
+     quantity at one cell along the run and along the column at its end;
+     each way of drawing them is drawn here without running again.
+     --------------------------------------------------------------------- */
+  let swResult = null;
+  let swTableNow = null;
+  let swBusy = false;
+
+  /** What a sweep can vary, as <optgroup>s: the numeric settings, the parameters, each species' start, what flows in. */
+  function swChoices() {
+    const m = state.compiled;
+    if (!m) return [];
+    const kinds = (typeof RtmModel !== 'undefined' && RtmModel.SETTINGS) || {};
+    const groups = [];
+    const settings = Object.entries(kinds).filter(([, spec]) => spec.kind === 'number' || spec.kind === 'int')
+      .map(([name]) => ({ value: `setting:${name}`, label: `${name}${typeof m.settings[name] === 'number' ? ` (${fmtNumber(m.settings[name])})` : ''}` }));
+    groups.push({ label: 'Settings', items: settings });
+    if (m.parameters && m.parameters.length) {
+      groups.push({ label: 'Parameters', items: m.parameters.map((p) => ({ value: `parameter:${p}`, label: p })) });
+    }
+    // Each label says what it is, as the closed menu shows the label alone.
+    groups.push({ label: 'A species at the start', items: m.species.map((sp, k) => ({ value: `initial:${sp}`,
+      label: `${sp} at the start (${fmtNumber(m.initial[k])})` })) });
+    if (m.transport) {
+      groups.push({ label: 'A species flowing in', items: m.species.map((sp) => ({ value: `left:${sp}`, label: `${sp} flowing in` })) });
+    }
+    return groups;
+  }
+
+  /** What a sweep varies, from a choice's value: { kind, name }. */
+  const swVary = (value) => {
+    const i = String(value).indexOf(':');
+    return i < 0 ? null : { kind: value.slice(0, i), name: value.slice(i + 1) };
+  };
+  const swVaryLabel = (v) => (v.kind === 'initial' ? `${v.name} at the start` : v.kind === 'left' ? `${v.name} flowing in` : v.name);
+
+  /**
+   * The values to run: a list, "0.5, 1, 2", or a range, "1e-6 to 1e-4 in 5",
+   * spaced evenly or with "log" after it in the logarithm.
+   */
+  function swValues(text) {
+    const t = String(text).trim();
+    const range = /^(\S+)\s+to\s+(\S+)\s+in\s+(\d+)(\s+log)?$/i.exec(t);
+    if (range) {
+      const a = Number(range[1]);
+      const b = Number(range[2]);
+      const n = Number(range[3]);
+      if (!Number.isFinite(a) || !Number.isFinite(b) || !(n >= 2)) return null;
+      if (range[4]) {
+        if (!(a > 0 && b > 0)) return null;
+        return Array.from({ length: n }, (_, i) => Number((a * (b / a) ** (i / (n - 1))).toPrecision(12)));
+      }
+      return Array.from({ length: n }, (_, i) => Number((a + ((b - a) * i) / (n - 1)).toPrecision(12)));
+    }
+    const list = t.split(/[\s,;]+/).filter(Boolean).map(Number);
+    return list.length && list.every(Number.isFinite) ? list : null;
+  }
+
+  function renderSw() {
+    const m = state.compiled;
+    const w = state.sw;
+    const groups = swChoices();
+    const all = groups.flatMap((g) => g.items.map((it) => it.value));
+    if (all.length && !all.includes(w.what)) w.what = (all.find((v) => v === 'setting:VELOCITY' && m && m.transport)
+      || all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('initial:')) || all[0]);
+    if (w.what2 && !all.includes(w.what2)) w.what2 = '';
+    const opts = (chosen) => groups.map((g) => `<optgroup label="${esc(g.label)}">${g.items.map((it) => `<option value="${esc(it.value)}"`
+      + `${it.value === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
+    $('rtmSwWhat').innerHTML = opts(w.what);
+    $('rtmSwWhat2').innerHTML = `<option value=""${w.what2 ? '' : ' selected'}>nothing else</option>${opts(w.what2)}`;
+    $('rtmSwValues').value = w.values;
+    $('rtmSwValues2').value = w.values2;
+    $('rtmSwMore2').hidden = !w.what2;
+    const cells = m ? m.fracture : 1;
+    if (!(w.cell < cells)) w.cell = cells - 1;
+    $('rtmSwCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === w.cell ? ' selected' : ''}>`
+      + `${i}${m && m.centres && cells > 1 ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
+    $('rtmSwCellWrap').hidden = cells < 2;
+    $('rtmSwGo').disabled = swBusy;
+  }
+
+  /** The value of a choice as the model has it, to start a list from. */
+  function swCurrent(value) {
+    const m = state.compiled;
+    const v = swVary(value);
+    if (!m || !v) return null;
+    if (v.kind === 'setting') return typeof m.settings[v.name] === 'number' ? m.settings[v.name] : null;
+    if (v.kind === 'initial') { const k = m.species.indexOf(v.name); return k >= 0 ? m.initial[k] : null; }
+    // A parameter given as a number on its first line in <PARAMETERS>; one given as an expression has no single value.
+    if (v.kind === 'parameter' && typeof RtmModel !== 'undefined') {
+      try {
+        const line = RtmModel.readSections(state.text).PARAMETERS.find((l) => l.text.split(/\s+/)[0] === v.name);
+        const value = line ? Number(line.text.split(/\s+/)[2]) : NaN;
+        return Number.isFinite(value) && value !== 0 ? value : null;
+      } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  function readSw() {
+    const w = state.sw;
+    const what = $('rtmSwWhat').value;
+    const what2 = $('rtmSwWhat2').value;
+    // A new choice starts from half, the value and twice it, where the model has one.
+    const start = (value) => { const c = swCurrent(value); return c ? `${fmtNumber(c / 2)}, ${fmtNumber(c)}, ${fmtNumber(c * 2)}` : ''; };
+    w.values = what !== w.what ? start(what) : $('rtmSwValues').value;
+    w.values2 = what2 !== w.what2 ? start(what2) : $('rtmSwValues2').value;
+    w.what = what;
+    w.what2 = what2;
+    w.cell = Number($('rtmSwCell').value) || 0;
+  }
+
+  async function swGo() {
+    if (swBusy || state.running) return;
+    if (!state.compiled) { setStatus('The model does not compile: there is nothing to run.', 'error'); return; }
+    const w = state.sw;
+    const vary = [swVary(w.what), ...(w.what2 ? [swVary(w.what2)] : [])];
+    const lists = [swValues(w.values), ...(w.what2 ? [swValues(w.values2)] : [])];
+    if (lists.some((l) => !l)) { setStatus('Give the values: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm.', 'error'); return; }
+    if (vary.length === 2 && vary[0].kind === vary[1].kind && vary[0].name === vary[1].name) {
+      setStatus('The two things varied are the same thing: give the second another, or nothing.', 'error');
+      return;
+    }
+    const nruns = lists.reduce((n, l) => n * l.length, 1);
+    if (nruns > 400) { setStatus(`${nruns} runs: 400 at most.`, 'error'); return; }
+    let solver;
+    try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
+    swBusy = true;
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmStop').disabled = false;
+    $('rtmSwGo').disabled = true;
+    setProgress(0);
+    setStatus(`Running ${nruns} times…`);
+    const text = state.text;
+    try {
+      const reply = await request({ type: 'sweep', text, solver, vary, values: lists, cell: w.cell }, (p) => {
+        setProgress(p.frac);
+        setStatus(`Running ${p.run + 1} of ${p.runs}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}, ${p.nsteps.toLocaleString()} steps`);
+      });
+      swResult = { reply, vary, lists, text };
+      const failed = reply.runs.filter((r) => !r.ok);
+      setProgress(null);
+      setStatus(`${reply.runs.length - failed.length} of ${reply.runs.length} runs done in ${reply.seconds.toFixed(2)} s`
+        + `${failed.length ? `; ${swRunName(failed[0])} failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+      renderSwShow();
+      drawSw();
+    } catch (e) {
+      setProgress(null);
+      setStatus(`The runs could not be made: ${e.message}`, 'error');
+    } finally {
+      swBusy = false;
+      state.running = false;
+      $('rtmRun').disabled = false;
+      $('rtmStop').disabled = true;
+      $('rtmSwGo').disabled = false;
+    }
+  }
+
+  /** A run's name: what was varied, and its value. */
+  function swRunName(run) {
+    return swResult.vary.map((v, d) => `${swVaryLabel(v)} = ${fmtNumber(run.values[d])}`).join(', ');
+  }
+
+  function renderSwShow() {
+    $('rtmSwShowBar').hidden = !swResult;
+    if (!swResult) return;
+    const w = state.sw;
+    const two = swResult.vary.length === 2;
+    const column = swResult.reply.runs.some((r) => r.ok && r.nf > 1);
+    const opts = [
+      ...(two ? [['lines', 'against the first varied, a curve for each of the second'], ['contour', 'over the two, as contours'],
+        ['surface', 'over the two, as a surface']] : [['summary', 'against what was varied']]),
+      ['time', 'against time, a curve per run'], ...(column ? [['profile', 'along the column at the end, a curve per run']] : []),
+    ];
+    if (!opts.some(([v]) => v === w.show)) w.show = opts[0][0];
+    $('rtmSwShow').innerHTML = opts.map(([v, t]) => `<option value="${v}"${v === w.show ? ' selected' : ''}>${esc(t)}</option>`).join('');
+    if (!speciesNames().includes(w.key) && !quantityOf(w.key)) w.key = speciesNames()[0] || '';
+    $('rtmSwKey').innerHTML = pickerOptions(w.key);
+    $('rtmSwOf').value = w.of;
+    $('rtmSwOfWrap').hidden = w.show === 'time' || w.show === 'profile';
+    $('rtmSwLogTWrap').hidden = w.show !== 'time';
+    // pH, SI and the like are drawn as they are: log is for an amount.
+    $('rtmSwLogWrap').hidden = isQuantity(w.key) && quantityOf(w.key).axis === 'index';
+  }
+
+  // A run's colour, along viridis by its place in the sweep.
+  const VIRIDIS = ['#440154', '#482878', '#3e4989', '#31688e', '#26828e', '#1f9e89', '#35b779', '#6ece58', '#b5de2b', '#fde725'];
+  const swColour = (i, n) => VIRIDIS[Math.round((n > 1 ? i / (n - 1) : 0) * (VIRIDIS.length - 1))];
+
+  /** A key's values in a run, at the cell along the run or along the column at the end. */
+  function swSeries(run, key, where) {
+    const rp = swResult.reply;
+    const k = rp.species.indexOf(key);
+    const isQ = !(k >= 0 && !isQuantity(key));
+    const q = isQ ? rp.keys.indexOf(key) : -1;
+    if (!isQ && k < 0) return null;
+    if (isQ && q < 0) return null;
+    const ns = rp.species.length;
+    const nq = rp.keys.length;
+    const n = where === 'end' ? run.nf : run.m;
+    const src = where === 'end' ? (isQ ? run.endQuant : run.endStates) : (isQ ? run.cellQuant : run.cellStates);
+    return Array.from({ length: n }, (_, i) => src[i * (isQ ? nq : ns) + (isQ ? q : k)]);
+  }
+
+  /** What a run comes to for the summary: the key's value at the end, its largest or its smallest, at the cell. */
+  function swSummary(run, key) {
+    const y = swSeries(run, key, 'cell');
+    if (!y) return null;
+    const fin = y.filter(Number.isFinite);
+    if (!fin.length) return null;
+    return state.sw.of === 'max' ? Math.max(...fin) : state.sw.of === 'min' ? Math.min(...fin) : y[y.length - 1];
+  }
+
+  function drawSw() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartSw');
+    const empty = $('rtmSwEmpty');
+    const note = $('rtmSwNote');
+    swTableNow = null;
+    if (!swResult) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      note.textContent = '';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const w = state.sw;
+    const rp = swResult.reply;
+    const runs = rp.runs;
+    const ok = runs.filter((r) => r.ok);
+    const key = w.key;
+    const q = isQuantity(key) ? quantityOf(key) : null;
+    const logY = $('rtmSwLog').checked && (!q || q.axis === 'conc');
+    const yTitle = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${key} concentration`;
+    const ofText = { end: 'at the end', max: 'its largest', min: 'its smallest' }[w.of];
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    const [v1, v2] = swResult.vary;
+    const logX = (vals) => vals.every((v) => v > 0) && Math.max(...vals) / Math.min(...vals) >= 100;
+    const where = `cell ${rp.cell}`;
+    const bits = [`${ok.length} run${ok.length === 1 ? '' : 's'}${ok.length < runs.length ? ` of ${runs.length}, ${runs.length - ok.length} failed` : ''}`];
+    if (w.show === 'time' || w.show === 'profile') {
+      const traces = ok.map((run) => {
+        const y = swSeries(run, key, w.show === 'time' ? 'cell' : 'end');
+        const x = w.show === 'time' ? Array.from(run.t) : Array.from(run.centres);
+        const keep = x.map((xx, i) => (w.show !== 'time' || !$('rtmSwLogT').checked || xx > 0) && Number.isFinite(y[i]) && (!logY || y[i] > 0));
+        return { type: 'scatter', mode: 'lines', name: swRunName(run), x: x.filter((_, i) => keep[i]), y: y.filter((_, i) => keep[i]),
+          line: { color: swColour(runs.indexOf(run), runs.length), width: 1.6 } };
+      });
+      layout.xaxis.type = w.show === 'time' && $('rtmSwLogT').checked ? 'log' : 'linear';
+      layout.xaxis.title = { text: w.show === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.yaxis.type = logY ? 'log' : 'linear';
+      layout.yaxis.title = { text: yTitle, font: { size: 11 } };
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      swTableNow = chartTable(plot, `rtm_sweep_${w.show}`);
+      bits.push(w.show === 'time' ? where : 'the end of each run');
+      note.textContent = bits.join('; ');
+      return;
+    }
+    if (swResult.vary.length === 1 || w.show === 'lines') {
+      const firsts = swResult.lists[0];
+      const seconds = swResult.vary.length === 2 ? swResult.lists[1] : [null];
+      const traces = seconds.map((b, j) => {
+        const pts = firsts.map((a) => {
+          const run = runs.find((r) => r.values[0] === a && (b === null || r.values[1] === b));
+          return [a, run && run.ok ? swSummary(run, key) : null];
+        });
+        return { type: 'scatter', mode: 'lines+markers', name: b === null ? `${yTitle}, ${ofText}` : `${swVaryLabel(v2)} = ${fmtNumber(b)}`,
+          x: pts.map(([a]) => a), y: pts.map(([, y]) => (y !== null && (!logY || y > 0) ? y : null)),
+          line: { color: b === null ? '#1f77b4' : swColour(j, seconds.length), width: 1.6 }, marker: { size: 7 } };
+      });
+      layout.xaxis.type = logX(firsts) ? 'log' : 'linear';
+      layout.xaxis.title = { text: swVaryLabel(v1), font: { size: 11 } };
+      layout.yaxis.type = logY ? 'log' : 'linear';
+      layout.yaxis.title = { text: `${yTitle}, ${ofText} at ${where}`, font: { size: 11 } };
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      swTableNow = { head: [swVaryLabel(v1), ...traces.map((tr) => tr.name)], name: `rtm_sweep_${w.of}`,
+        rows: firsts.map((a, i) => [a, ...traces.map((tr) => tr.y[i])]) };
+      note.textContent = bits.join('; ');
+      return;
+    }
+    // Over the two: a grid, the second up and the first across.
+    const [xs, ys] = swResult.lists;
+    const z = ys.map((b) => xs.map((a) => {
+      const run = runs.find((r) => r.values[0] === a && r.values[1] === b);
+      const v = run && run.ok ? swSummary(run, key) : null;
+      if (v === null || !Number.isFinite(v)) return null;
+      return logY ? (v > 0 ? Math.log10(v) : null) : v;
+    }));
+    const title = `${logY ? 'log₁₀ ' : ''}${yTitle}, ${ofText}`;
+    const lx = logX(xs);
+    const ly = logX(ys);
+    const trace = { type: w.show === 'surface' ? 'surface' : 'contour', x: lx ? xs.map(Math.log10) : xs, y: ly ? ys.map(Math.log10) : ys, z,
+      colorscale: 'Viridis', connectgaps: false,
+      colorbar: { title: { text: title, side: 'right', font: { size: 11 } }, thickness: 14, outlinewidth: 0, tickfont: { size: 10 } },
+      ...(w.show === 'contour' ? { contours: { coloring: 'heatmap', showlabels: true, labelfont: { size: 10 } }, line: { width: 0.6 } } : {}) };
+    const xt = `${lx ? 'log₁₀ ' : ''}${swVaryLabel(v1)}`;
+    const yt = `${ly ? 'log₁₀ ' : ''}${swVaryLabel(v2)}`;
+    if (w.show === 'surface') {
+      const c = themeColors();
+      const ax = (text) => ({ title: { text, font: { size: 11 } }, gridcolor: c.grid, color: c.text });
+      layout.scene = { xaxis: ax(xt), yaxis: ax(yt), zaxis: ax(title), camera: { eye: { x: -1.6, y: -1.6, z: 1.0 } } };
+      layout.margin = { l: 0, r: 0, t: 10, b: 0 };
+    } else {
+      layout.xaxis.title = { text: xt, font: { size: 11 } };
+      layout.yaxis.title = { text: yt, font: { size: 11 } };
+    }
+    Plotly.react(plot, [trace], layout, PLOT_CONFIG);
+    swTableNow = { head: [`${swVaryLabel(v2)} \\ ${swVaryLabel(v1)}: ${title}`, ...xs], name: `rtm_sweep_${w.of}`,
+      rows: ys.map((b, j) => [b, ...z[j]]) };
+    bits.push(`${title} at ${where}`);
+    note.textContent = bits.join('; ');
+  }
+
+  /* ---------------------------------------------------------------------
      CSV
      --------------------------------------------------------------------- */
   /**
@@ -2469,6 +2807,7 @@
     if (pane === 'time') return timeTable();
     if (pane === 'composition') return compTableNow;
     if (pane === 'diagram') return dgTableNow;
+    if (pane === 'sweep') return swTableNow;
     const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
     return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
   }
@@ -2481,7 +2820,7 @@
   async function exportPane(pane, as) {
     if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
-      diagram: 'rtmChartDg' }[pane]);
+      diagram: 'rtmChartDg', sweep: 'rtmChartSw' }[pane]);
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
@@ -2637,13 +2976,14 @@
     if (name === 'gradient') { drawGradient(); resize(); }
     if (name === 'composition') { renderComp(); drawComp(); resize(); }
     if (name === 'diagram') { renderDg(); renderDgShow(); drawDg(); resize(); }
+    if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'phreeqc') { pqRenderView(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
   function resize() {
     if (typeof Plotly === 'undefined') return;
-    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartPq'].forEach((id) => {
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartPq'].forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
     });
@@ -3344,6 +3684,25 @@
       };
     },
 
+    'pane:sweep': () => ({
+      kicker: 'Tab', title: 'Sweeps',
+      lead: 'The model run again for each value of what is varied, as Gibbs Studio\'s parametric runs: the text with that number put in, run with the panel\'s solver settings, and the runs drawn together.',
+      sections: [
+        { heading: 'What is run', list: [
+          '**Vary**: a setting with a number — VELOCITY, TEMPERATURE, TEND, … — a parameter of <PARAMETERS>, a species\' concentration at the start on its line, or what flows in at the left, its left=. **and** a second one runs every pair.',
+          '**over**: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm. A new choice starts from half, the value and twice it. 400 runs at most.',
+          '**keeping cell**: the cell whose every species and quantity is kept along each run; along the column, each run\'s end is kept whole.',
+          'A run that fails says why on the status line, and the rest go on. Stop stops them all.',
+        ] },
+        { heading: 'Show', list: [
+          '**against what was varied**: a species or a quantity at the cell, its value at the end, its largest or its smallest, a point per run; over two, a curve for each value of the second, contours or a surface.',
+          '**against time, a curve per run**, at the cell; **along the column at the end, a curve per run**. The curves go from dark to light as the value grows.',
+        ] },
+        { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.'] },
+      ],
+      more: more('Sweeps over runs', 'help-sweeps'),
+    }),
+
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
       lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
@@ -3948,7 +4307,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109e';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109f';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -4885,6 +5244,18 @@ END
       drawDg();
       infoRefresh();
     },
+    'rtm:swSettings': () => { readSw(); saveState(); renderSw(); infoRefresh(); },
+    'rtm:swGo': () => { readSw(); saveState(); renderSw(); swGo(); },
+    'rtm:swRedraw': () => {
+      const w = state.sw;
+      w.show = $('rtmSwShow').value;
+      w.key = $('rtmSwKey').value;
+      w.of = $('rtmSwOf').value;
+      saveState();
+      renderSwShow();
+      drawSw();
+      infoRefresh();
+    },
     'rtm:pick': (ev, el) => {
       const name = el.value;
       if (el.checked) { if (!state.picked.includes(name)) state.picked.push(name); }
@@ -5014,7 +5385,7 @@ END
     pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
       + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');
   }
-  showTab(['profile', 'gradient', 'composition', 'diagram', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
+  showTab(['profile', 'gradient', 'composition', 'diagram', 'sweep', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);
   compile();

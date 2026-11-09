@@ -7411,6 +7411,44 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && Math.abs(totC(sp2.y, 1) / 0.05 - 1) < 1e-12 && lnKres < 1e-10
     && Math.abs(sp2.y[nsT + two.speciesNames.indexOf('Na+')] - 3e-3) < 1e-18,
   `cell 1: total C ${totC(sp2.y, 1).toExponential(6)}, ln K within ${lnKres.toExponential(1)}`);
+  // A sweep: the text with one number put in, and runs of it as the worker makes them.
+  const swText = '<SETTINGS>\nMODE = transport   # a column\nVELOCITY = 1e-5\n\n<SPECIES>\nCa+2  1e-3  D=1e-9  left=2e-3  # calcium\n'
+    + 'X-    exchanger 5e-3\nNa+   D=1e-9\n\n<PARAMETERS>\nk  all  3*x  fracture\nk  0  7\n';
+  const wv = (kind, name, v) => RtmModel.withValue(swText, { kind, name }, v).split('\n');
+  const edits = [
+    ['a setting the text gives', wv('setting', 'VELOCITY', 2e-6)[2], 'VELOCITY = 0.000002'],
+    ['a setting it does not, added to <SETTINGS>', wv('setting', 'TEND', 100)[1], 'TEND = 100'],
+    ['a species\' start, its comment kept', wv('initial', 'Ca+2', 5e-4)[5], 'Ca+2  0.0005  D=1e-9  left=2e-3  # calcium'],
+    ['an exchanger\'s capacity, after its word', wv('initial', 'X-', 0.01)[6], 'X-    exchanger 0.01'],
+    ['a start where the line has none', wv('initial', 'Na+', 1e-3)[7], 'Na+  0.001   D=1e-9'],
+    ['what flows in', wv('left', 'Ca+2', 1e-5)[5], 'Ca+2  1e-3  D=1e-9  left=0.00001  # calcium'],
+    ['what flows in where nothing did', wv('left', 'Na+', 1e-5)[7], 'Na+   D=1e-9  left=0.00001'],
+    ['every line of a parameter, its cells and scope kept', wv('parameter', 'k', 2.5).slice(10, 12).join('|'), 'k  all  2.5  fracture|k  0  2.5'],
+  ];
+  const editsOff = edits.filter(([, got, want]) => got !== want);
+  let noParam = '';
+  try { RtmModel.withValue(swText, { kind: 'parameter', name: 'q' }, 1); } catch (e) { noParam = e.message; }
+  check(`a sweep's text: ${edits.map(([w]) => w).join(', ')}; and a parameter that is not there refused`,
+    !editsOff.length && /no parameter q/.test(noParam), editsOff.map(([w, got]) => `${w}: "${got}"`).join(' | ') || noParam);
+  global.RtmModel = RtmModel;
+  global.FacsimileODE = FacsimileODE;
+  const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
+  const decay = '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA 1\nB 0\n\n<PARAMETERS>\nkk all 0.1\n\n<REACTIONS>\nA => B, r = kk*[A]\n';
+  const solverSw = { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 };
+  let swReply = null;
+  handleRtmMessage({ type: 'sweep', id: 1, text: decay, solver: solverSw, vary: [{ kind: 'parameter', name: 'kk' }, { kind: 'setting', name: 'TEND' }],
+    values: [[0.1, 0.2, 0.4], [10, -5]], cell: 0 }, (msg) => { if (msg.type !== 'progress') swReply = msg; });
+  let direct = null;
+  handleRtmMessage({ type: 'run', id: 2, text: RtmModel.withValue(RtmModel.withValue(decay, { kind: 'parameter', name: 'kk' }, 0.2),
+    { kind: 'setting', name: 'TEND' }, 10), solver: solverSw }, (msg) => { if (msg.type === 'result') direct = msg; });
+  const okRuns = swReply.runs.filter((r) => r.ok);
+  const worstDecay = Math.max(...okRuns.map((r) => Math.abs(r.cellStates[(r.m - 1) * 2] / Math.exp(-r.values[0] * r.values[1]) - 1)));
+  const second = swReply.runs[1];
+  check('  a sweep of a parameter and a setting, every pair run: A decays as exp(-kk t) in each, the same to the bit as the text '
+    + 'with those numbers run by itself, and a TEND below zero refused for its runs alone',
+  okRuns.length === 3 && worstDecay < 1e-6 && second.cellStates[(second.m - 1) * 2] === direct.states[(direct.n - 1) * 2]
+    && swReply.runs.slice(3).every((r) => !r.ok && /simulated time must be positive/.test(r.error)),
+  `A within ${worstDecay.toExponential(1)} of exp(-kk t); ${swReply.runs.filter((r) => !r.ok).length} refused: ${(swReply.runs[3] || {}).error}`);
   check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,
