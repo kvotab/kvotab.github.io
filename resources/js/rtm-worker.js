@@ -594,6 +594,292 @@ function rtmSweep(msg, post) {
     seconds: (Date.now() - started) / 1000 }, transfer };
 }
 
+/*
+  FITTING: the numbers named -- a setting, a parameter, a species' start or
+  what flows in, a relation's log K, a reaction's constant -- moved until the
+  run is as near as it can be to what <DATA> measured, as PhreePlot's fit and
+  Gibbs Studio's do: least squares by Levenberg and Marquardt, each
+  derivative from a run with one number moved a little. An amount's residual
+  is the log10 of the run's value over the one measured, pH, SI and the like
+  the difference. A number above zero is fitted in its logarithm, so that it
+  stays above zero and its steps are relative; a log K and the temperature as
+  they are. The standard errors and correlations are those of the Jacobian at
+  the end, the misfit's variance taken from the residuals.
+*/
+/** Each value <DATA> measured of the columns asked for, where it is in the model and what kind of residual it has. */
+function rtmFitPoints(model, columns, tend) {
+  const stride = model.stride || 1;
+  const points = [];
+  let skipped = 0;
+  model.data.forEach((tab, ti) => {
+    tab.columns.forEach((key, j) => {
+      if (columns && !columns.includes(key)) return;
+      const k = model.speciesNames.indexOf(key);
+      const q = k >= 0 ? -1 : model.quantities.findIndex((qq) => qq.key === key);
+      const index = q >= 0 && model.quantities[q].axis === 'index';
+      for (const row of tab.rows) {
+        const value = row[j + 1];
+        if (value === null) continue;
+        // An amount is compared in its logarithm, which none and less have not got.
+        if (!index && !(value > 0)) { skipped++; continue; }
+        if (tab.kind === 'time') {
+          points.push({ table: ti, kind: 'time', t: row[0], cell: (tab.cell || 0) * stride + Math.min(tab.layer || 0, stride - 1),
+            x: null, key, k, q, index, value });
+        } else {
+          points.push({ table: ti, kind: 'distance', t: tab.at !== null ? tab.at : tend, cell: null, layer: Math.min(tab.layer || 0, stride - 1),
+            x: row[0], key, k, q, index, value });
+        }
+      }
+    });
+  });
+  return { points, skipped };
+}
+
+/** A key's value in model cell `cell` of concentrations c at time t: a species', or a quantity's. */
+function rtmValueAt(model, c, t, cell, k, q, out) {
+  if (k >= 0) return c[cell * model.speciesNames.length + k];
+  model.quantitiesAt(c, t, cell, [q], out);
+  return out[0];
+}
+
+/** Along the fracture at distance x: between the two cells either side, as a straight line; past the ends, the end cell. */
+function rtmValueAlong(model, c, t, layer, x, k, q, out) {
+  const nf = model.fracture;
+  const stride = model.stride || 1;
+  const xs = model.grid.centres;
+  const at = (i) => rtmValueAt(model, c, t, i * stride + layer, k, q, out);
+  if (nf === 1 || x <= xs[0]) return at(0);
+  if (x >= xs[nf - 1]) return at(nf - 1);
+  let i = 0;
+  while (i < nf - 2 && xs[i + 1] < x) i++;
+  const f = (x - xs[i]) / (xs[i + 1] - xs[i]);
+  return at(i) * (1 - f) + at(i + 1) * f;
+}
+
+/** x of A x = b, A small and dense, by Gaussian elimination with partial pivoting; null where A is singular. */
+function rtmSolveSmall(A, b) {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]]);
+  for (let col = 0; col < n; col++) {
+    let best = col;
+    for (let r = col + 1; r < n; r++) if (Math.abs(M[r][col]) > Math.abs(M[best][col])) best = r;
+    if (!(Math.abs(M[best][col]) > 0)) return null;
+    [M[col], M[best]] = [M[best], M[col]];
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r][col] / M[col][col];
+      if (f) for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map((row, i) => row[n] / row[i]);
+}
+
+function rtmFit(msg, post) {
+  const s = msg.solver || {};
+  const params = msg.params;
+  const np = params.length;
+  if (!np) throw new Error('Name at least one number to fit.');
+  const logged = params.map((p) => p.kind !== 'logK' && !(p.kind === 'setting' && p.name === 'TEMPERATURE'));
+  params.forEach((p, i) => {
+    if (!Number.isFinite(p.start)) throw new Error(`${p.name}: give it a number to start from.`);
+    if (logged[i] && !(p.start > 0)) {
+      throw new Error(`${p.name} is fitted in its logarithm, so that it stays above zero: give it a start above zero.`);
+    }
+  });
+  const fromTheta = (th, i) => (logged[i] ? 10 ** th : th);
+  const textAt = (theta) => {
+    let text = msg.text;
+    params.forEach((p, i) => { text = RtmModel.withValue(text, p, fromTheta(theta[i], i)); });
+    return text;
+  };
+  let theta = params.map((p, i) => (logged[i] ? Math.log10(p.start) : p.start));
+  const model0 = RtmModel.compile(textAt(theta));
+  const tend0 = s.tend > 0 ? s.tend : model0.settings.TEND;
+  const { points, skipped } = rtmFitPoints(model0, msg.columns || null, tend0);
+  const n = points.length;
+  if (!n) throw new Error('<DATA> has no values of the columns asked for to fit to.');
+  const times = [...new Set(points.map((p) => p.t))].sort((a, b) => a - b);
+  if (times[times.length - 1] > tend0 * (1 + 1e-12)) {
+    throw new Error(`<DATA> has a value at ${times[times.length - 1]}, after the run ends at ${tend0}: run it longer (TEND).`);
+  }
+  const out1 = new Float64Array(1);
+  let runs = 0;
+  const maxRuns = msg.maxRuns || 60 * (np + 2);
+  let lastReport = 0;
+  const history = [];
+  // The residuals at theta, from a run of the text with those numbers; keep the run when asked.
+  const evaluate = (th, keep = false) => {
+    if (runs >= maxRuns) throw Object.assign(new Error('the runs allowed are used up'), { budget: true });
+    runs++;
+    const model = RtmModel.compile(textAt(th));
+    const tend = s.tend > 0 ? s.tend : model.settings.TEND;
+    const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, () => true), outputTimes: times,
+      maxPoints: keep ? 400 : 4 });
+    if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
+    const conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
+    const r = new Float64Array(n);
+    points.forEach((p, i) => {
+      const c = conc[times.indexOf(p.t)];
+      const v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
+        : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
+      r[i] = p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value);
+    });
+    let ssr = 0;
+    for (const x of r) ssr += x * x;
+    if (!Number.isFinite(ssr)) throw new Error('the run gave no number at a point measured');
+    const now = Date.now();
+    if (post && now - lastReport > 250) {
+      lastReport = now;
+      post({ type: 'progress', id: msg.id, runs, maxRuns, ssr: history.length ? history[history.length - 1].ssr : ssr,
+        iteration: history.length, frac: Math.min(1, runs / maxRuns) });
+    }
+    return keep ? { r, ssr, model, res, conc } : { r, ssr };
+  };
+  const step = (i) => (logged[i] ? 1e-3 : 1e-4 * Math.max(1, Math.abs(theta[i])));
+  // How much the solver's tolerance alone moves the misfit: 2 |r| |dr|, each residual off by rtol / ln 10.
+  const rtolRun = Number(s.rtol) > 0 ? Number(s.rtol) : 1e-6;
+  const noise = (ssr) => 2 * Math.sqrt(ssr * n) * (rtolRun / Math.LN10);
+  // Forward differences to steer by; central ones at the end, for the standard errors, whose forward bias is half a step.
+  const jacobian = (th, r0, central = false) => {
+    const J = Array.from({ length: n }, () => new Float64Array(np));
+    for (let j = 0; j < np; j++) {
+      const h = step(j);
+      const up = th.slice();
+      up[j] += h;
+      const r2 = evaluate(up).r;
+      let r1 = r0;
+      if (central) {
+        const down = th.slice();
+        down[j] -= h;
+        r1 = evaluate(down).r;
+      }
+      for (let i = 0; i < n; i++) J[i][j] = (r2[i] - r1[i]) / (central ? 2 * h : h);
+    }
+    return J;
+  };
+  const started = Date.now();
+  let cur = evaluate(theta);
+  const ssr0 = cur.ssr;
+  history.push({ iteration: 0, ssr: cur.ssr, runs });
+  let lambda = 1e-3;
+  let why = '';
+  let J = null;
+  try {
+    for (let it = 1; it <= (msg.maxIter || 50); it++) {
+      J = jacobian(theta, cur.r);
+      const A = Array.from({ length: np }, (_, a) => Array.from({ length: np }, (_, b) => {
+        let v = 0;
+        for (let i = 0; i < n; i++) v += J[i][a] * J[i][b];
+        return v;
+      }));
+      const g = Array.from({ length: np }, (_, a) => {
+        let v = 0;
+        for (let i = 0; i < n; i++) v += J[i][a] * cur.r[i];
+        return v;
+      });
+      let accepted = false;
+      let refused = 0;
+      while (refused < 6) {
+        const Ad = A.map((row, a) => row.map((v, b) => (a === b ? v + lambda * Math.max(v, 1e-12) : v)));
+        let d = rtmSolveSmall(Ad, g.map((v) => -v));
+        if (!d) { lambda *= 10; refused++; continue; }
+        // A decade, or a unit of log K, at most a step: the misfit's quadratic is not to be trusted further.
+        const big = Math.max(...d.map(Math.abs));
+        if (big > 1) d = d.map((v) => v / big);
+        /*
+          What the step should take off the misfit, by the quadratic. Where
+          that is below what the runs' own tolerance moves the misfit by --
+          every residual off by rtol of its value, log10 of 1 + rtol at the
+          most -- no run can tell a better number from this one: this is the
+          least, as near as the solver can say.
+        */
+        let pred = 0;
+        for (let a = 0; a < np; a++) {
+          pred -= g[a] * d[a];
+          for (let b = 0; b < np; b++) pred -= 0.5 * d[a] * A[a][b] * d[b];
+        }
+        if (pred <= Math.max(1e-10 * cur.ssr, noise(cur.ssr)) + 1e-300) {
+          why = 'the misfit is at its least, as near as the solver\'s tolerance can tell';
+          break;
+        }
+        const trial = theta.map((v, a) => v + d[a]);
+        let next = null;
+        try { next = evaluate(trial); } catch (e) { if (e.budget) throw e; next = null; }
+        if (next && next.ssr < cur.ssr) {
+          const drop = cur.ssr - next.ssr;
+          theta = trial;
+          cur = next;
+          lambda = Math.max(lambda / 10, 1e-9);
+          accepted = true;
+          history.push({ iteration: it, ssr: cur.ssr, runs });
+          if (drop <= 1e-10 * cur.ssr + 1e-300 || Math.max(...d.map(Math.abs)) < 1e-8) why = 'the misfit stopped falling';
+          break;
+        }
+        lambda *= 10;
+        refused++;
+      }
+      if (why) break;
+      if (!accepted) { why = 'no step made the misfit smaller: it is at its least, as near as the solver\'s tolerance can tell'; break; }
+      if (cur.ssr === 0) { why = 'the misfit is zero'; break; }
+    }
+    if (!why) why = 'the iterations allowed are used up';
+  } catch (e) {
+    if (!e.budget) throw e;
+    why = 'the runs allowed are used up';
+  }
+  // At the end: the Jacobian there for the standard errors, and the run itself, kept to draw.
+  let cov = null;
+  let sd = null;
+  const best = evaluate(theta, true);
+  if (n > np) {
+    try {
+      J = jacobian(theta, best.r, true);
+      const A = Array.from({ length: np }, (_, a) => Array.from({ length: np }, (_, b) => {
+        let v = 0;
+        for (let i = 0; i < n; i++) v += J[i][a] * J[i][b];
+        return v;
+      }));
+      sd = Math.sqrt(best.ssr / (n - np));
+      const inv = Array.from({ length: np }, (_, a) => rtmSolveSmall(A, Array.from({ length: np }, (_, b) => (a === b ? 1 : 0))));
+      if (inv.every((col) => col && col.every(Number.isFinite))) {
+        cov = inv.map((col, a) => col.map((v, b) => sd * sd * inv[b][a]));
+      }
+    } catch (e) { if (!e.budget) throw e; }
+  }
+  const se = cov ? cov.map((row, a) => Math.sqrt(Math.max(0, row[a]))) : null;
+  // The best run where it was measured: each table's columns at its cell along the run, or along the column at its time.
+  const { model, res } = best;
+  const conc = res.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.t[i]) : y));
+  const curves = [];
+  const seen = new Set();
+  for (const p of points) {
+    const id = p.kind === 'time' ? `t|${p.cell}|${p.key}` : `x|${p.t}|${p.layer}|${p.key}`;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    if (p.kind === 'time') {
+      curves.push({ kind: 'time', cell: p.cell, key: p.key, index: p.index, x: Array.from(res.t),
+        y: conc.map((c, i) => rtmValueAt(model, c, res.t[i], p.cell, p.k, p.q, out1)) });
+    } else {
+      const c = best.conc[times.indexOf(p.t)];
+      const stride = model.stride || 1;
+      const xs = Array.from(model.grid.centres.slice(0, model.fracture));
+      curves.push({ kind: 'distance', t: p.t, layer: p.layer, key: p.key, index: p.index, x: xs,
+        y: xs.map((_, i) => rtmValueAt(model, c, p.t, i * stride + p.layer, p.k, p.q, out1)) });
+    }
+  }
+  return {
+    type: 'fit', id: msg.id, why, runs, seconds: (Date.now() - started) / 1000, n, np, skipped, ssr0, ssr: best.ssr, sd,
+    params: params.map((p, i) => ({ kind: p.kind, name: p.name, start: p.start, logged: logged[i], value: fromTheta(theta[i], i),
+      theta: theta[i], se: se ? se[i] : null })),
+    corr: cov ? cov.map((row, a) => row.map((v, b) => v / Math.sqrt(cov[a][a] * cov[b][b]))) : null,
+    history,
+    points: points.map((p, i) => ({ kind: p.kind, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key, index: p.index,
+      value: p.value, residual: best.r[i] })),
+    curves,
+    text: textAt(theta),
+  };
+}
+
 /** The solver's options for a run, from the page's settings (solverPayload in rtm-ui.js): a run's and a sweep's alike. */
 function rtmSolveOptions(s, tend, onProgress) {
   const method = s.method || 'ndf';
@@ -644,6 +930,14 @@ function handleRtmMessage(msg, post) {
   const id = msg.id;
   if (msg.type === 'capabilities') {
     post({ type: 'capabilities', id, solvers: rtmSolvers() });
+    return;
+  }
+  if (msg.type === 'fit') {
+    try {
+      post(rtmFit(msg, post));
+    } catch (e) {
+      post({ type: 'error', id, stage: 'fit', error: rtmErrorMessage(e) });
+    }
     return;
   }
   if (msg.type === 'sweep') {

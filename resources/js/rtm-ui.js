@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109g';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109h';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -61,6 +61,8 @@
     },
     // The Sweeps tab: what is varied over what values, the cell kept; then what is drawn of the runs.
     sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end', logT: true },
+    // The Fit tab: the numbers fitted and where each starts, and the <DATA> columns left out.
+    fit: { params: [], off: [] },
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     sideWidth: null,
@@ -99,7 +101,7 @@
         gradTMin: state.gradTMin,
         compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
-        compTMin: state.compTMin, dg: state.dg, sw: state.sw,
+        compTMin: state.compTMin, dg: state.dg, sw: state.sw, fit: state.fit,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
         // model that has moved on and no amount of reloading shifts it -- it is
@@ -158,6 +160,13 @@
         if (Number.isInteger(s.sw.cell) && s.sw.cell >= 0) state.sw.cell = s.sw.cell;
         if (['end', 'max', 'min'].includes(s.sw.of)) state.sw.of = s.sw.of;
         if (typeof s.sw.logT === 'boolean') state.sw.logT = s.sw.logT;
+      }
+      if (s.fit && typeof s.fit === 'object') {
+        if (Array.isArray(s.fit.params)) {
+          state.fit.params = s.fit.params.filter((p) => p && typeof p.what === 'string' && typeof p.start === 'string')
+            .slice(0, 4).map((p) => ({ what: p.what, start: p.start }));
+        }
+        if (Array.isArray(s.fit.off)) state.fit.off = s.fit.off.filter((x) => typeof x === 'string');
       }
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
@@ -437,6 +446,7 @@
       renderComp();
       renderDg();
       renderSw();
+      renderFit();
       drawJacobianPattern();
       const m = reply.model;
       const warn = m.warnings.length ? ` ${m.warnings.length} warning${m.warnings.length > 1 ? 's' : ''}: ${m.warnings[0]}` : '';
@@ -690,6 +700,7 @@
     renderComp();
     renderDg();
     renderSw();
+    renderFit();
     drawTime();
     drawProfile();
     drawGradient();
@@ -750,8 +761,10 @@
     // A sweep or a diagram stopped with the worker: what waited on it never hears, so its buttons come back here.
     swBusy = false;
     dgBusy = false;
+    fitBusy = false;
     $('rtmSwGo').disabled = false;
     $('rtmDgGo').disabled = false;
+    $('rtmFitGo').disabled = false;
     $('rtmRun').disabled = false;
     $('rtmVerify').disabled = false;
     $('rtmStop').disabled = true;
@@ -2428,8 +2441,12 @@
   let swTableNow = null;
   let swBusy = false;
 
-  /** What a sweep can vary, as <optgroup>s: the numeric settings, the parameters, each species' start, what flows in. */
-  function swChoices() {
+  /**
+   * What a sweep can vary and a fit can fit, as <optgroup>s: the numeric
+   * settings, the parameters, each species' start, what flows in, each
+   * relation's and phase's log K, and each number a reaction's line names.
+   */
+  function tuneChoices() {
     const m = state.compiled;
     if (!m) return [];
     const kinds = (typeof RtmModel !== 'undefined' && RtmModel.SETTINGS) || {};
@@ -2451,6 +2468,17 @@
       groups.push({ label: 'A species flowing in', items: m.species.map((sp) => ({ value: `left:${sp}`,
         label: `${sp} flowing in${given('left', sp)}` })) });
     }
+    const tunable = typeof RtmModel !== 'undefined' && RtmModel.tunables ? RtmModel.tunables(state.text) : [];
+    const logKs = tunable.filter((x) => x.kind === 'logK');
+    if (logKs.length) {
+      groups.push({ label: 'A relation\'s log K', items: logKs.map((x) => ({ value: `logK:${x.name}`,
+        label: `${swVaryLabel(x)} (${fmtNumber(x.value)})` })) });
+    }
+    const consts = tunable.filter((x) => x.kind === 'rate');
+    if (consts.length) {
+      groups.push({ label: 'A reaction\'s constant', items: consts.map((x) => ({ value: `rate:${x.name}`,
+        label: `${swVaryLabel(x)} (${fmtNumber(x.value)})` })) });
+    }
     return groups;
   }
 
@@ -2459,7 +2487,9 @@
     const i = String(value).indexOf(':');
     return i < 0 ? null : { kind: value.slice(0, i), name: value.slice(i + 1) };
   };
-  const swVaryLabel = (v) => (v.kind === 'initial' ? `${v.name} at the start` : v.kind === 'left' ? `${v.name} flowing in` : v.name);
+  const swVaryLabel = (v) => (v.kind === 'initial' ? `${v.name} at the start` : v.kind === 'left' ? `${v.name} flowing in`
+    : v.kind === 'logK' ? `log K of ${v.name}` : v.kind === 'rate'
+      ? `${v.name.slice(v.name.lastIndexOf(' | ') + 3)} of ${v.name.slice(0, v.name.lastIndexOf(' | '))}` : v.name);
 
   /**
    * The values to run: a list, "0.5, 1, 2", or a range, "1e-6 to 1e-4 in 5",
@@ -2486,7 +2516,7 @@
   function renderSw() {
     const m = state.compiled;
     const w = state.sw;
-    const groups = swChoices();
+    const groups = tuneChoices();
     const all = groups.flatMap((g) => g.items.map((it) => it.value));
     if (all.length && !all.includes(w.what)) w.what = (all.find((v) => v === 'setting:VELOCITY' && m && m.transport)
       || all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('initial:')) || all[0]);
@@ -2522,7 +2552,13 @@
     const what = $('rtmSwWhat').value;
     const what2 = $('rtmSwWhat2').value;
     // A new choice starts from half, the value and twice it, where the model has one.
-    const start = (value) => { const c = swCurrent(value); return c ? `${fmtNumber(c / 2)}, ${fmtNumber(c)}, ${fmtNumber(c * 2)}` : ''; };
+    // A log K a unit either side.
+    const start = (value) => {
+      const c = swCurrent(value);
+      if (!c) return '';
+      return value.startsWith('logK:') ? `${fmtNumber(c - 1)}, ${fmtNumber(c)}, ${fmtNumber(c + 1)}`
+        : `${fmtNumber(c / 2)}, ${fmtNumber(c)}, ${fmtNumber(c * 2)}`;
+    };
     w.values = what !== w.what ? start(what) : $('rtmSwValues').value;
     w.values2 = what2 !== w.what2 ? start(what2) : $('rtmSwValues2').value;
     w.what = what;
@@ -2737,6 +2773,275 @@
   }
 
   /* ---------------------------------------------------------------------
+     Fit: the numbers moved until the run is as near as it can be to what
+     <DATA> measured, as PhreePlot's and Gibbs Studio's fits do
+
+     The worker (rtmFit in rtm-worker.js) runs the text with the numbers put
+     in (RtmModel.withValue) and moves them by Levenberg and Marquardt; back
+     come the best numbers, their standard errors and correlations, each
+     point's residual and the best run where it was measured.
+     --------------------------------------------------------------------- */
+  let fitResult = null;
+  let fitTableNow = null;
+  let fitBusy = false;
+  const FIT_MAX = 4;
+
+  /** The columns <DATA> measures, in the order its tables give them. */
+  function fitColumns() {
+    const data = (state.compiled && state.compiled.data) || [];
+    return [...new Set(data.flatMap((tab) => tab.columns))];
+  }
+
+  function renderFit() {
+    const f = state.fit;
+    const groups = tuneChoices();
+    const all = groups.flatMap((g) => g.items.map((it) => it.value));
+    const first = all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('rate:'))
+      || all.find((v) => v.startsWith('logK:')) || all[0] || '';
+    if (!f.params.length) f.params.push({ what: first, start: '' });
+    for (const p of f.params) {
+      if (all.length && !all.includes(p.what)) { p.what = first; p.start = ''; }
+      if (p.start === '' && p.what) { const c = swCurrent(p.what); if (c !== null) p.start = fmtNumber(c); }
+    }
+    const opts = (chosen) => groups.map((g) => `<optgroup label="${esc(g.label)}">${g.items.map((it) => `<option value="${esc(it.value)}"`
+      + `${it.value === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
+    $('rtmFitParams').innerHTML = f.params.map((p, i) => `<span class="rtm-fit-row">${i ? 'and' : 'Fit'} `
+      + `<select data-row="${i}" aria-label="what to fit" data-on-change="rtm:fitSettings">${opts(p.what)}</select> from `
+      + `<input type="text" class="rtm-dg-num" data-row="${i}" aria-label="where to start" value="${esc(p.start)}" data-on-change="rtm:fitSettings">`
+      + `${f.params.length > 1 ? ` <button type="button" class="rtm-btn secondary small rtm-fit-x" data-row="${i}" `
+        + 'data-on-click="rtm:fitRemove" aria-label="Leave it out" title="Leave it out">×</button>' : ''}</span>`).join('');
+    $('rtmFitAdd').hidden = f.params.length >= FIT_MAX;
+    const cols = fitColumns();
+    $('rtmFitCols').innerHTML = cols.map((c) => `<label><input type="checkbox" value="${esc(c)}"${f.off.includes(c) ? '' : ' checked'} `
+      + `data-on-change="rtm:fitSettings">${esc(labelOf(c))}</label>`).join('');
+    $('rtmFitColsWrap').hidden = !cols.length;
+    $('rtmFitGo').disabled = fitBusy || !cols.length;
+  }
+
+  /** The rows and ticks into state.fit; a choice changed starts from the value the text gives it. */
+  function readFit() {
+    const f = state.fit;
+    document.querySelectorAll('#rtmFitParams select').forEach((sel) => {
+      const p = f.params[Number(sel.dataset.row)];
+      if (!p) return;
+      const input = document.querySelector(`#rtmFitParams input[data-row="${sel.dataset.row}"]`);
+      if (sel.value !== p.what) {
+        p.what = sel.value;
+        const c = swCurrent(p.what);
+        p.start = c !== null ? fmtNumber(c) : '';
+      } else p.start = input.value.trim();
+    });
+    f.off = [...document.querySelectorAll('#rtmFitCols input')].filter((el) => !el.checked).map((el) => el.value);
+  }
+
+  async function fitGo() {
+    if (fitBusy || state.running) return;
+    if (!state.compiled) { setStatus('The model does not compile: there is nothing to fit.', 'error'); return; }
+    const f = state.fit;
+    const params = f.params.map((p) => ({ ...swVary(p.what), start: Number(p.start) }));
+    if (params.some((p) => !p.kind)) { setStatus('Choose what to fit.', 'error'); return; }
+    if (new Set(f.params.map((p) => p.what)).size < params.length) { setStatus('The same number is named twice: name each once.', 'error'); return; }
+    const bad = params.find((p) => !Number.isFinite(p.start) || p.start === null);
+    if (bad || f.params.some((p) => p.start === '')) {
+      setStatus(`${swVaryLabel(bad || params[0])}: give it a number to start from.`, 'error');
+      return;
+    }
+    const columns = fitColumns().filter((c) => !f.off.includes(c));
+    if (!columns.length) { setStatus('Tick a column of <DATA> to fit to.', 'error'); return; }
+    let solver;
+    try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
+    fitBusy = true;
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmStop').disabled = false;
+    $('rtmFitGo').disabled = true;
+    setProgress(0);
+    setStatus('Fitting…');
+    try {
+      const reply = await request({ type: 'fit', text: state.text, solver, params, columns }, (p) => {
+        setProgress(p.frac);
+        setStatus(`Fitting: ${p.runs.toLocaleString()} runs, the misfit ${p.ssr.toPrecision(4)} after ${p.iteration} `
+          + `step${p.iteration === 1 ? '' : 's'}…`);
+      });
+      fitResult = reply;
+      setProgress(null);
+      setStatus(`Fitted in ${reply.seconds.toFixed(2)} s, ${reply.runs} runs: ${reply.why}. The misfit went from `
+        + `${reply.ssr0.toPrecision(4)} to ${reply.ssr.toPrecision(4)}.`, 'ok');
+      renderFitResult();
+      drawFit();
+    } catch (e) {
+      setProgress(null);
+      setStatus(`The fit could not be made: ${e.message}`, 'error');
+    } finally {
+      fitBusy = false;
+      state.running = false;
+      $('rtmRun').disabled = false;
+      $('rtmStop').disabled = true;
+      $('rtmFitGo').disabled = false;
+    }
+  }
+
+  /** A number as the result table writes it: four figures. */
+  const fit4 = (v) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e5 ? String(Number(v.toPrecision(4))) : v.toExponential(3));
+
+  /**
+   * What the fit came to, as a table: each number from where it started to
+   * where it ended, its standard error and a range of about 95 % -- times and
+   * over 10 to the 1.96 standard errors for one fitted in its logarithm, plus
+   * and minus 1.96 of them for a log K -- then the misfit and, for two or
+   * more, their correlations.
+   */
+  function renderFitResult() {
+    const box = $('rtmFitResult');
+    const r = fitResult;
+    box.hidden = !r;
+    $('rtmFitShowBar').hidden = !r;
+    if (!r) return;
+    const rows = r.params.map((p) => {
+      const se = p.se;
+      let err = 'not determined';
+      let range = '';
+      if (se !== null && Number.isFinite(se)) {
+        if (p.logged) {
+          const fac = 10 ** se;
+          err = `× or ÷ ${fac.toPrecision(4)}`;
+          range = `${fit4(p.value / 10 ** (1.96 * se))} to ${fit4(p.value * 10 ** (1.96 * se))}`;
+        } else {
+          err = `± ${fit4(se)}`;
+          range = `${fit4(p.value - 1.96 * se)} to ${fit4(p.value + 1.96 * se)}`;
+        }
+      }
+      return `<tr><td>${esc(swVaryLabel(p))}</td><td>${esc(fit4(p.start))}</td><td><strong>${esc(fit4(p.value))}</strong></td>`
+        + `<td>${esc(err)}</td><td>${esc(range)}</td></tr>`;
+    }).join('');
+    const corr = r.corr && r.params.length > 1
+      ? `<p>Correlations: ${r.params.flatMap((p, a) => r.params.slice(a + 1).map((q, b) => `${esc(swVaryLabel(p))} with `
+        + `${esc(swVaryLabel(q))} ${r.corr[a][a + 1 + b].toFixed(3)}`)).join('; ')}.</p>` : '';
+    box.innerHTML = '<table><thead><tr><th>Fitted</th><th>from</th><th>to</th><th>standard error</th><th>about 95 %</th></tr></thead>'
+      + `<tbody>${rows}</tbody></table>`
+      + `<p>The misfit: the residuals' standard deviation ${r.sd !== null ? r.sd.toPrecision(3) : 'not known (as many numbers as points)'}`
+      + ` over ${r.n} point${r.n === 1 ? '' : 's'} and ${r.np} number${r.np === 1 ? '' : 's'}; the sum of their squares from `
+      + `${r.ssr0.toPrecision(4)} to ${r.ssr.toPrecision(4)} in ${r.runs} runs, ${esc(r.why)}`
+      + `${r.skipped ? `; ${r.skipped} amount${r.skipped === 1 ? '' : 's'} at or below zero left out` : ''}.</p>${corr}`;
+  }
+
+  /** A fitted point's place, for a legend or a hover: the column, and its cell and time or its distance and time. */
+  const fitWhere = (p) => {
+    const stride = (state.compiled && state.compiled.stride) || 1;
+    return p.kind === 'time' ? `cell ${Math.floor(p.cell / stride)}${p.cell % stride ? `, rock layer ${p.cell % stride}` : ''}`
+      : `at ${fmtTime(p.t)}`;
+  };
+
+  function drawFit() {
+    if (typeof Plotly === 'undefined') return;
+    const plot = $('rtmChartFit');
+    const empty = $('rtmFitEmpty');
+    const note = $('rtmFitNote');
+    fitTableNow = null;
+    if (!fitResult) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      note.textContent = '';
+      return;
+    }
+    empty.hidden = true;
+    plot.hidden = false;
+    const r = fitResult;
+    const show = $('rtmFitShow').value;
+    $('rtmFitLogTWrap').hidden = show !== 'data' || !r.curves.some((c) => c.kind === 'time');
+    $('rtmFitLogYWrap').hidden = show !== 'data';
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)', 'measured', 'the run', 'residual'], name: 'rtm_fit',
+      rows: r.points.map((p) => {
+        const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
+        return [labelOf(p.key), fitWhere(p), p.t, p.x, p.value, run, p.residual];
+      }) });
+    if (show === 'history') {
+      Plotly.react(plot, [{ type: 'scatter', mode: 'lines+markers', name: 'the misfit', x: r.history.map((h) => h.iteration),
+        y: r.history.map((h) => h.ssr), line: { color: palette[0] }, marker: { size: 6 },
+        hovertemplate: 'step %{x}: %{y:.4g}<extra></extra>' }], {
+        ...layout, xaxis: { ...layout.xaxis, title: { text: 'step of the fit', font: { size: 11 } }, dtick: 1 },
+        yaxis: { ...layout.yaxis, type: 'log', title: { text: 'the sum of the squared residuals', font: { size: 11 } } } }, PLOT_CONFIG);
+      fitTableNow = { head: ['step', 'misfit', 'runs'], rows: r.history.map((h) => [h.iteration, h.ssr, h.runs]), name: 'rtm_fit_misfit' };
+      note.textContent = `${r.history.length - 1} step${r.history.length === 2 ? '' : 's'} taken, ${r.runs} runs`;
+      return;
+    }
+    if (show === 'residuals') {
+      const keys = [...new Set(r.points.map((p) => p.key))];
+      const traces = keys.map((key, q) => {
+        const pts = r.points.map((p, i) => [p, i]).filter(([p]) => p.key === key);
+        return { type: 'scatter', mode: 'markers', name: labelOf(key), x: pts.map(([, i]) => i + 1), y: pts.map(([p]) => p.residual),
+          marker: { size: 8, color: palette[q % palette.length] },
+          text: pts.map(([p]) => `${esc(labelOf(p.key))}, ${esc(fitWhere(p))}, ${p.kind === 'time' ? fmtTime(p.t) : `${fmtNumber(p.x)} m`}`),
+          hovertemplate: '%{text}: %{y:.4g}<extra></extra>' };
+      });
+      layout.xaxis.title = { text: 'the point measured, in the order of <DATA>', font: { size: 11 } };
+      layout.yaxis.title = { text: 'residual: log₁₀(run / measured), or run − measured for pH, SI and the like', font: { size: 11 } };
+      layout.shapes = [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: themeColors().text, width: 1, dash: 'dot' } }];
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      fitTableNow = pointsTable();
+      note.textContent = `${r.n} points`;
+      return;
+    }
+    // The run at the fitted numbers where it was measured, and the measurements: along the run at a cell where the tables
+    // are in time, along the column at a time where they are in distance.
+    const logT = $('rtmFitLogT').checked;
+    const logY = $('rtmFitLogY').checked;
+    const timeCurves = r.curves.filter((c) => c.kind === 'time');
+    const curves = timeCurves.length ? timeCurves : r.curves;
+    const along = timeCurves.length ? 'time' : 'distance';
+    const several = new Set(curves.map((c) => (along === 'time' ? c.cell : c.t))).size > 1;
+    const traces = [];
+    let right = false;
+    curves.forEach((c, q) => {
+      const color = palette[q % palette.length];
+      const where = several ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell } : { kind: 'distance', t: c.t })}` : '';
+      const name = `${labelOf(c.key)}${where}`;
+      const onRight = c.index;
+      right = right || onRight;
+      const keep = c.x.map((x, i) => (along !== 'time' || !logT || x > 0) && Number.isFinite(c.y[i]) && (onRight || !logY || c.y[i] > 0));
+      traces.push({ type: 'scatter', mode: 'lines', name, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]),
+        line: { color, width: 1.8 }, ...(onRight ? { yaxis: 'y2' } : {}) });
+      const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell : p.t === c.t));
+      traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? p.t : p.x)),
+        y: pts.map((p) => p.value), marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
+        ...(onRight ? { yaxis: 'y2' } : {}) });
+    });
+    layout.xaxis.type = along === 'time' && logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+    layout.yaxis.type = logY ? 'log' : 'linear';
+    layout.yaxis.title = { text: 'concentration, or an amount of <OUTPUT>', font: { size: 11 } };
+    if (right) {
+      const c = themeColors();
+      layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
+        title: { text: [...new Set(curves.filter((cv) => cv.index).map((cv) => labelOf(cv.key)))].join(', '), font: { size: 11 } } };
+      layout.margin.r = 64;
+    }
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    fitTableNow = pointsTable();
+    note.textContent = `the run at the fitted numbers${r.curves.length > curves.length ? '; the tables in distance are in the CSV' : ''}`;
+  }
+
+  /** The fitted numbers into the model text, to six figures, each where withValue puts it. */
+  function fitApply() {
+    if (!fitResult) return;
+    let text = state.text;
+    try {
+      for (const p of fitResult.params) text = RtmModel.withValue(text, p, Number(p.value.toPrecision(6)));
+    } catch (e) { setStatus(`The fitted values could not be put in: ${e.message}`, 'error'); return; }
+    state.text = text;
+    $('rtmText').value = text;
+    renderHighlight();
+    state.fit.params.forEach((row, i) => { if (fitResult.params[i]) row.start = fmtNumber(Number(fitResult.params[i].value.toPrecision(6))); });
+    saveState();
+    compile().then(() => setStatus(`The fitted values are in the model text: ${fitResult.params.map((p) => `${swVaryLabel(p)} = `
+      + `${Number(p.value.toPrecision(6))}`).join(', ')}.`, 'ok'));
+  }
+
+  /* ---------------------------------------------------------------------
      CSV
      --------------------------------------------------------------------- */
   /**
@@ -2810,6 +3115,7 @@
     if (pane === 'composition') return compTableNow;
     if (pane === 'diagram') return dgTableNow;
     if (pane === 'sweep') return swTableNow;
+    if (pane === 'fit') return fitTableNow;
     const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
     return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
   }
@@ -2822,7 +3128,7 @@
   async function exportPane(pane, as) {
     if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
-      diagram: 'rtmChartDg', sweep: 'rtmChartSw' }[pane]);
+      diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit' }[pane]);
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
@@ -2979,13 +3285,15 @@
     if (name === 'composition') { renderComp(); drawComp(); resize(); }
     if (name === 'diagram') { renderDg(); renderDgShow(); drawDg(); resize(); }
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
+    if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'phreeqc') { pqRenderView(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
   function resize() {
     if (typeof Plotly === 'undefined') return;
-    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartPq'].forEach((id) => {
+    ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartPq']
+      .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
     });
@@ -3691,8 +3999,8 @@
       lead: 'The model run again for each value of what is varied, as Gibbs Studio\'s parametric runs: the text with that number put in, run with the panel\'s solver settings, and the runs drawn together.',
       sections: [
         { heading: 'What is run', list: [
-          '**Vary**: a setting with a number — VELOCITY, TEMPERATURE, TEND, … — a parameter of <PARAMETERS>, a species\' concentration at the start on its line, or what flows in at the left, its left=. **and** a second one runs every pair.',
-          '**over**: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm. A new choice starts from half, the value and twice it. 400 runs at most.',
+          '**Vary**: a setting with a number — VELOCITY, TEMPERATURE, TEND, … — a parameter of <PARAMETERS>, a species\' concentration at the start on its line, what flows in at the left, its left=, a relation\'s or a phase\'s logK, or a number a reaction\'s line names. **and** a second one runs every pair.',
+          '**over**: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm. A new choice starts from half, the value and twice it, a log K from a unit either side. 400 runs at most.',
           '**keeping cell**: the cell whose every species and quantity is kept along each run; along the column, each run\'s end is kept whole.',
           'A run that fails says why on the status line, and the rest go on. Stop stops them all.',
         ] },
@@ -3703,6 +4011,29 @@
         { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.'] },
       ],
       more: more('Sweeps over runs', 'help-sweeps'),
+    }),
+
+    'pane:fit': () => ({
+      kicker: 'Tab', title: 'Fit',
+      lead: 'The model fitted to what <DATA> measured, as PhreePlot and Gibbs Studio fit PHREEQC: the numbers named moved until the run is as near to the measurements as it can be, by least squares.',
+      sections: [
+        { heading: 'What is fitted', list: [
+          '**Fit** … **from**: up to four numbers and where each starts — a setting, a parameter, a species\' start or what flows in, a relation\'s or a phase\'s log K, a number a reaction\'s line names (k, kf, or a constant of a rate law). A new choice starts from the value the text gives it.',
+          '**to**: the columns of <DATA> fitted to, every one unless unticked.',
+          'A number above zero is fitted in its logarithm, so it stays above zero; a log K and the temperature as they are. Give each a start above zero where it is fitted in its logarithm.',
+        ] },
+        { heading: 'How', list: [
+          'Levenberg and Marquardt\'s least squares, each derivative from a run with one number moved a little, with the panel\'s solver settings. The run is read at exactly the times measured.',
+          'An amount\'s residual is log₁₀ of the run over what was measured, so a factor of two counts the same at any size; pH, SI and the like count as their difference.',
+          'The standard errors and correlations are the Jacobian\'s at the end, the residuals giving the scatter; about 95 % is 1.96 standard errors either way, as a factor for a number fitted in its logarithm.',
+        ] },
+        { heading: 'Then', list: [
+          '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',
+          '**Put the fitted values in the model**: each written into the text where it came from, to six figures.',
+          '**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.',
+        ] },
+      ],
+      more: more('Fitting to what was measured', 'help-fit'),
     }),
 
     'pane:model': () => ({
@@ -3917,12 +4248,25 @@
     about.hidden = false;
     state.result = null;
     state.verify = null;
-    // A diagram or a sweep of the model before is no longer this model's.
-    dgResult = null;
-    swResult = null;
+    anotherModel();
     applyExampleView(e.view || null);
     saveState();
     compile();
+  }
+
+  /**
+   * A model loaded whole -- an example, a file, a water from PHREEQC: a
+   * diagram, a sweep or a fit of the one before is no longer this one's, and
+   * the numbers fitted start afresh from this one's, where they were the
+   * other's.
+   */
+  function anotherModel() {
+    dgResult = null;
+    swResult = null;
+    fitResult = null;
+    state.fit.params = [];
+    state.fit.off = [];
+    pendingView = null;
   }
 
   /*
@@ -4314,6 +4658,7 @@
     $('rtmExample').value = '';
     $('rtmText').value = state.text;
     renderHighlight();
+    anotherModel();
     showTab('model');
     scheduleCompile(0);
   }
@@ -4355,7 +4700,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109g';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109h';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -4905,6 +5250,7 @@ END
       $('rtmExampleAbout').hidden = true;
       state.result = null;
       state.verify = null;
+      anotherModel();
       pqReport(pqWaterReport(reply));
       saveState();
       compile();
@@ -5305,6 +5651,27 @@ END
       drawSw();
       infoRefresh();
     },
+    'rtm:fitSettings': () => { readFit(); saveState(); renderFit(); infoRefresh(); },
+    'rtm:fitAdd': () => {
+      readFit();
+      if (state.fit.params.length < FIT_MAX) state.fit.params.push({ what: '', start: '' });
+      // A new row takes the first choice not fitted already.
+      const taken = new Set(state.fit.params.map((p) => p.what));
+      const next = tuneChoices().flatMap((g) => g.items.map((it) => it.value)).find((v) => !taken.has(v));
+      const row = state.fit.params[state.fit.params.length - 1];
+      if (!row.what && next) row.what = next;
+      saveState();
+      renderFit();
+    },
+    'rtm:fitRemove': (ev, el) => {
+      readFit();
+      state.fit.params.splice(Number(el.dataset.row), 1);
+      saveState();
+      renderFit();
+    },
+    'rtm:fitGo': () => { readFit(); saveState(); renderFit(); fitGo(); },
+    'rtm:fitRedraw': () => { drawFit(); },
+    'rtm:fitApply': () => fitApply(),
     'rtm:pick': (ev, el) => {
       const name = el.value;
       if (el.checked) { if (!state.picked.includes(name)) state.picked.push(name); }
@@ -5434,7 +5801,7 @@ END
     pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
       + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');
   }
-  showTab(['profile', 'gradient', 'composition', 'diagram', 'sweep', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
+  showTab(['profile', 'gradient', 'composition', 'diagram', 'sweep', 'fit', 'phreeqc', 'model', 'jacobian', 'help'].includes(state.tab)
     ? state.tab : 'time');
   window.addEventListener('resize', resize);
   compile();

@@ -7454,6 +7454,69 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   okRuns.length === 3 && worstDecay < 1e-6 && second.cellStates[(second.m - 1) * 2] === direct.states[(direct.n - 1) * 2]
     && swReply.runs.slice(3).every((r) => !r.ok && /simulated time must be positive/.test(r.error)),
   `A within ${worstDecay.toExponential(1)} of exp(-kk t); ${swReply.runs.filter((r) => !r.ok).length} refused: ${(swReply.runs[3] || {}).error}`);
+
+  // FITTING: the numbers moved until the run meets what <DATA> measured, as the worker fits them.
+  const fitOf = (text, params, extra = {}) => {
+    let reply = null;
+    handleRtmMessage({ type: 'fit', id: 3, text, solver: { ...solverSw, rtol: 1e-9 }, params, ...extra },
+      (msg) => { if (msg.type !== 'progress') reply = msg; });
+    return reply;
+  };
+  const fts = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const decayData = (rows) => `${decay}\n<DATA>\ntime  A  cell = 0\n${rows.join('\n')}\n`;
+  const fExact = fitOf(decayData(fts.map((t) => `${t} ${Math.exp(-0.25 * t)}`)), [{ kind: 'parameter', name: 'kk', start: 0.1 }]);
+  // The same with a pattern of noise, whose answer is worked out by hand: the residual, log10(exp(-kk t)/d), is straight
+  // in kk, so kk = -sum(t ln d)/sum(t^2), and in log10 kk the standard error is s/(kk sqrt(sum t^2)).
+  const fNoise = [0.02, -0.015, 0.01, -0.02, 0.005, 0.018, -0.012, 0, -0.008, 0.016];
+  const fd = fts.map((t, i) => Math.exp(-0.25 * t) * 10 ** fNoise[i]);
+  const fNoisy = fitOf(decayData(fts.map((t, i) => `${t} ${fd[i]}`)), [{ kind: 'parameter', name: 'kk', start: 0.1 }]);
+  const St2 = fts.reduce((acc, t) => acc + t * t, 0);
+  const kHat = -fts.reduce((acc, t, i) => acc + t * Math.log(fd[i]), 0) / St2;
+  const sHat = Math.sqrt(fts.reduce((acc, t, i) => acc + ((-kHat * t - Math.log(fd[i])) / Math.LN10) ** 2, 0) / (fts.length - 1));
+  const seHat = sHat / (kHat * Math.sqrt(St2));
+  const fTwo = fitOf(`${decay}\n<DATA>\ntime  A  cell = 0\n${fts.map((t) => `${t} ${2 * Math.exp(-0.3 * t)}`).join('\n')}\n`,
+    [{ kind: 'parameter', name: 'kk', start: 0.1 }, { kind: 'initial', name: 'A', start: 1 }]);
+  check('a fit: kk from a decay measured exactly, to the solver\'s tolerance; from one measured with noise, kk and its '
+    + 'standard error as worked out by hand; kk and the start of A together',
+  fExact.type === 'fit' && Math.abs(fExact.params[0].value / 0.25 - 1) < 1e-7 && Math.abs(fNoisy.params[0].value / kHat - 1) < 1e-6
+    && Math.abs(fNoisy.params[0].se / seHat - 1) < 1e-4 && Math.abs(fNoisy.sd / sHat - 1) < 1e-6
+    && Math.abs(fTwo.params[0].value / 0.3 - 1) < 1e-7 && Math.abs(fTwo.params[1].value / 2 - 1) < 1e-7,
+  `kk ${fExact.params[0].value} in ${fExact.runs} runs; noisy ${fNoisy.params[0].value} for ${kHat}, se ${fNoisy.params[0].se} for `
+    + `${seHat}; two ${fTwo.params.map((p) => p.value.toPrecision(9)).join(', ')}`);
+  // A relation's log K and a reaction's own constant: B over A is K, the total grows by q a second.
+  const pair = (logK, q) => '<SETTINGS>\nMODE = batch\nTEND = 10\nEQUILIBRATE = always\n\n<SPECIES>\nA  1e-3\nB  1e-3\n\n'
+    + `<EQUILIBRIUM>\nA <=> B, logK = ${logK}\n\n<REACTIONS>\n=> A, r = q, q = ${q}\n`;
+  const K = 10 ** 0.7;
+  const fPair = fitOf(`${pair(0, 1e-3)}\n<DATA>\ntime  A  B  cell = 0\n${fts.map((t) => {
+    const T = 2e-3 + 2e-3 * t;
+    return `${t} ${T / (1 + K)} ${(T * K) / (1 + K)}`;
+  }).join('\n')}\n`, [{ kind: 'logK', name: 'A <=> B', start: 0 }, { kind: 'rate', name: '=> A | q', start: 1e-3 }]);
+  // Along a column: a tracer's front at one time, the velocity fitted, the data the page's own at the cells' centres.
+  const front = (v) => `<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 1\nVELOCITY = ${v}\nADVECTION = 1\nDIFFUSION = 1\n`
+    + 'LEFT = robin\nRIGHT = free\nTEND = 2e5\n\n<SPECIES>\nX  0  D=1e-7  left=1\n';
+  const fm = RtmModel.compile(front(2e-6));
+  const fr = FacsimileODE.runModel(fm, { solver: 'ndf', rtol: 1e-10, atol: 1e-20, tend: 2e5, nonNegative: true, outputTimes: [2e5] });
+  const fy = fr.grid.y[0];
+  const fFront = fitOf(`${front(1e-6)}\n<DATA>\ndistance  X  at = 2e5\n${Array.from(fm.grid.centres).map((x, i) => `${x} ${fy[i]}`)
+    .filter((_, i) => i % 2 === 0 && fy[i] > 1e-6).join('\n')}\n`, [{ kind: 'setting', name: 'VELOCITY', start: 1e-6 }]);
+  check('  a relation\'s log K and a reaction\'s constant fitted together; a velocity fitted to a front measured along the '
+    + 'column at one time', fPair.type === 'fit' && Math.abs(fPair.params[0].value - 0.7) < 1e-7
+    && Math.abs(fPair.params[1].value / 2e-3 - 1) < 1e-7 && fFront.type === 'fit' && Math.abs(fFront.params[0].value / 2e-6 - 1) < 1e-6,
+  `log K ${fPair.params[0].value}, q ${fPair.params[1].value}; velocity ${fFront.params[0].value} in ${fFront.runs} runs`);
+  const refuseFit = (text, params, extra) => { const r = fitOf(text, params, extra); return r.type === 'error' ? r.error : ''; };
+  const exactText = decayData(fts.map((t) => `${t} ${Math.exp(-0.25 * t)}`));
+  const badFit = [
+    ['a start not above zero for a number fitted in its logarithm', refuseFit(exactText, [{ kind: 'parameter', name: 'kk', start: 0 }]),
+      /fitted in its logarithm, so that it stays above zero/],
+    ['no column to fit to', refuseFit(exactText, [{ kind: 'parameter', name: 'kk', start: 0.1 }], { columns: ['B'] }),
+      /no values of the columns asked for/],
+    ['a value after the run ends', refuseFit(decayData(['20 0.1']), [{ kind: 'parameter', name: 'kk', start: 0.1 }]),
+      /after the run ends at 10/],
+    ['a number that is not there', refuseFit(exactText, [{ kind: 'parameter', name: 'q', start: 0.1 }]), /no parameter q/],
+  ];
+  const badFitOff = badFit.filter(([, got, re]) => !re.test(got));
+  check(`  and refused, each with its reason: ${badFit.map(([w]) => w).join(', ')}`, !badFitOff.length,
+    badFitOff.map(([w, got]) => `${w}: "${got}"`).join(' | '));
   check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,

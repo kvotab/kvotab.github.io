@@ -1910,6 +1910,42 @@
     return tables;
   }
 
+  /** A relation's or a reaction's equation as a sweep or a fit names it: what comes before its first comma, spaces collapsed. */
+  const equationOf = (code) => splitTop(code)[0].trim().replace(/\s+/g, ' ');
+
+  /**
+   * What a sweep or a fit can change besides a setting, a parameter and a
+   * species' numbers: each relation's and each phase's logK, and each number
+   * a reaction's line names -- k, kf, kb, or a constant of its own rate law,
+   * vmax = 2e-5 -- that is a number rather than an expression. Each is
+   * { kind: 'logK' | 'rate', name, value }: name the equation as written,
+   * spaces collapsed, and for a reaction's number its name after a bar,
+   * 'S => P | vmax'. In the order of the text.
+   */
+  function tunables(text) {
+    const out = [];
+    let current = null;
+    for (const raw of String(text).split(/\r?\n/)) {
+      const cm = /(^|\s)#.*$/.exec(raw);
+      const body = (cm ? raw.slice(0, cm.index + cm[1].length) : raw).trim();
+      if (!body) continue;
+      const header = /^<\s*([A-Za-z_]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(body);
+      if (header) { current = header[1].toUpperCase(); continue; }
+      if (current !== 'EQUILIBRIUM' && current !== 'PHASES' && current !== 'REACTIONS') continue;
+      const parts = splitTop(body).map((p) => p.trim());
+      const eq = parts[0].replace(/\s+/g, ' ');
+      for (const part of parts.slice(1)) {
+        const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
+        if (!m || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(m[2].trim())) continue;
+        const value = Number(m[2]);
+        if (current !== 'REACTIONS') {
+          if (m[1] === 'logK') out.push({ kind: 'logK', name: eq, value });
+        } else if (!['r', 'rb', 'on'].includes(m[1])) out.push({ kind: 'rate', name: `${eq} | ${m[1]}`, value });
+      }
+    }
+    return out;
+  }
+
   // The words a species line may carry besides its numbers and key=value pairs (readSpecies).
   const SPECIES_WORDS = new Set(['fixed', 'immobile', 'mineral', 'exchanger', 'exchange', 'electron', 'surface', 'potential',
     'gas', 'drummond', 'dissolve_only', 'precipitate_only', 'force_equality']);
@@ -1949,6 +1985,21 @@
         const m = /^(\s*)([A-Za-z_][A-Za-z0-9_]*)(\s+)(\S+)(\s+)(.+?)(\s+(?:fracture|matrix))?(\s*)$/i.exec(code);
         if (m && m[2] === vary.name) { hit++; return `${m[1]}${m[2]}${m[3]}${m[4]}${m[5]}${v}${m[7] || ''}${m[8]}${comment}`; }
       }
+      // A relation's or a phase's logK, the line found by its equation; a number a reaction's line names, by its
+      // equation and the name: 'S => P | vmax'.
+      if (vary.kind === 'logK' && (current === 'EQUILIBRIUM' || current === 'PHASES')
+        && equationOf(code) === vary.name && /(^|,)\s*logK\s*=/.test(code)) {
+        hit++;
+        return `${code.replace(/((?:^|,)\s*logK\s*=\s*)([^,]*?)(\s*(?=,|$))/, `$1${v}$3`)}${comment}`;
+      }
+      if (vary.kind === 'rate' && current === 'REACTIONS') {
+        const bar = vary.name.lastIndexOf(' | ');
+        const key = vary.name.slice(bar + 3);
+        if (bar > 0 && equationOf(code) === vary.name.slice(0, bar) && new RegExp(`,\\s*${key}\\s*=`).test(code)) {
+          hit++;
+          return `${code.replace(new RegExp(`(,\\s*${key}\\s*=\\s*)([^,]*?)(\\s*(?=,|$))`), `$1${v}$3`)}${comment}`;
+        }
+      }
       if ((vary.kind === 'initial' || vary.kind === 'left') && current === 'SPECIES') {
         const toks = [...code.matchAll(/[^\s,;]+/g)];
         if (!toks.length || toks[0][0] !== vary.name) return raw;
@@ -1971,7 +2022,9 @@
         else out.unshift('<SETTINGS>', `${vary.name} = ${v}`, '');
       } else {
         throw new RtmError(vary.kind === 'parameter' ? `There is no parameter ${vary.name} in <PARAMETERS> to vary.`
-          : `There is no species ${vary.name} in <SPECIES> to vary.`);
+          : vary.kind === 'logK' ? `There is no relation or phase ${vary.name} with a logK = to vary.`
+            : vary.kind === 'rate' ? `There is no reaction ${vary.name.replace(' | ', ' with ')} = to vary.`
+              : `There is no species ${vary.name} in <SPECIES> to vary.`);
       }
     }
     return out.join('\n');
@@ -1998,6 +2051,14 @@
       } else if (vary.kind === 'parameter' && current === 'PARAMETERS') {
         const m = /^([A-Za-z_][A-Za-z0-9_]*)\s+(\S+)\s+(.+?)(\s+(?:fracture|matrix))?$/i.exec(body);
         if (m && m[1] === vary.name && found === null) found = m[3];
+      } else if (vary.kind === 'logK' && (current === 'EQUILIBRIUM' || current === 'PHASES')) {
+        const m = /(?:^|,)\s*logK\s*=\s*([^,]*?)\s*(?=,|$)/.exec(body);
+        if (m && found === null && equationOf(body) === vary.name) found = m[1];
+      } else if (vary.kind === 'rate' && current === 'REACTIONS') {
+        const bar = vary.name.lastIndexOf(' | ');
+        if (bar < 0 || equationOf(body) !== vary.name.slice(0, bar)) continue;
+        const m = new RegExp(`,\\s*${vary.name.slice(bar + 3)}\\s*=\\s*([^,]*?)\\s*(?=,|$)`).exec(body);
+        if (m && found === null) found = m[1];
       } else if ((vary.kind === 'initial' || vary.kind === 'left') && current === 'SPECIES') {
         const toks = body.split(/[\s,;]+/).filter(Boolean);
         if (toks[0] !== vary.name) continue;
@@ -13067,5 +13128,5 @@
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn };
+    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn, tunables };
 }));

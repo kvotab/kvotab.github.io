@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109g">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109h">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -218,6 +218,7 @@
             <button type="button" data-tab="composition" data-on-click="rtm:tab">Composition</button>
             <button type="button" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
             <button type="button" data-tab="sweep" data-on-click="rtm:tab">Sweeps</button>
+            <button type="button" data-tab="fit" data-on-click="rtm:tab">Fit</button>
             <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
@@ -619,6 +620,40 @@
           <div class="plot" id="rtmChartSw" hidden></div>
           <p class="rtm-empty" id="rtmSwEmpty">Choose what to vary and over what values, and run them: the model run again for
             each, as Gibbs Studio's parametric runs do.</p>
+        </section>
+
+        <!-- ---- the model fitted to what <DATA> measured, as PhreePlot's and Gibbs Studio's fits ---- -->
+        <section class="rtm-pane" data-pane="fit" hidden>
+          <div class="rtm-toolbar">
+            <span class="rtm-fit-params" id="rtmFitParams"></span>
+            <button type="button" class="rtm-btn secondary small" id="rtmFitAdd" data-on-click="rtm:fitAdd">and another</button>
+            <span class="rtm-dg-axis" id="rtmFitColsWrap">to <span class="rtm-fit-cols" id="rtmFitCols"></span></span>
+            <button type="button" class="rtm-btn small" id="rtmFitGo" data-on-click="rtm:fitGo">Fit</button>
+            <span class="kvot-info-slot" data-info-key="pane:fit"></span>
+          </div>
+          <div class="rtm-fit-result" id="rtmFitResult" hidden></div>
+          <div class="rtm-toolbar" id="rtmFitShowBar" hidden>
+            <label>Show
+              <select id="rtmFitShow" data-on-change="rtm:fitRedraw">
+                <option value="data">the run and what was measured</option>
+                <option value="residuals">the residuals</option>
+                <option value="history">the misfit as it fell</option>
+              </select>
+            </label>
+            <label id="rtmFitLogTWrap"><input type="checkbox" id="rtmFitLogT" data-on-change="rtm:fitRedraw"> log time</label>
+            <label id="rtmFitLogYWrap"><input type="checkbox" id="rtmFitLogY" checked data-on-change="rtm:fitRedraw"> log amounts</label>
+            <button type="button" class="rtm-btn secondary small" id="rtmFitApply" data-on-click="rtm:fitApply">Put the fitted values in the model</button>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="png">PNG</button>
+            </span>
+            <span class="rtm-muted" id="rtmFitNote"></span>
+          </div>
+          <div class="plot" id="rtmChartFit" hidden></div>
+          <p class="rtm-empty" id="rtmFitEmpty">Name what to fit and fit it: the numbers moved until the run is as near as it
+            can be to what &lt;DATA&gt; measured, as PhreePlot and Gibbs Studio fit PHREEQC.</p>
         </section>
 
         <!-- ---- the run, seen through PHREEQC ---- -->
@@ -2240,18 +2275,42 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
           <p><em>Sweeps</em> runs the model again for each value of one thing, or each pair of values
             of two, as Gibbs Studio's parametric runs do: a setting with a number — the velocity,
             the temperature, how long the run is — a parameter of <code>&lt;PARAMETERS&gt;</code>,
-            a species' concentration at the start on its line, or what flows in at the left, its
-            <code>left=</code>. Each run is the text with that number put in, everything else as
+            a species' concentration at the start on its line, what flows in at the left, its
+            <code>left=</code>, a relation's or a phase's <code>logK</code>, or a number a reaction's
+            line names. Each run is the text with that number put in, everything else as
             it was, run with the panel's solver settings. The values are a list, or a range —
             <code>1e-6 to 1e-4 in 5 log</code> spaces five evenly in the logarithm — and a choice
             starts from half its value, the value and twice it. A run that fails says why, and the
-            rest go on.</p>
+            rest go on. A log K starts from a unit either side of its own.</p>
           <p>Of each run the page keeps every species and quantity at one cell, at up to 400 of
             its stored points, and along the column at its end. It draws a species or quantity
             against what was varied — its value at the end, its largest or its smallest, a point
             per run — or, with two varied, a curve for each value of the second, contours or a
             surface over the two; or every run against time at the cell, or along the column at
             its end, the curves going from dark to light as the value grows.</p>
+
+          <h4 id="help-fit">Fitting to what was measured</h4>
+          <p><em>Fit</em> moves up to four numbers of the model until the run is as near as it can be
+            to what <code>&lt;DATA&gt;</code> measured, as PhreePlot and Gibbs Studio fit PHREEQC. A
+            number may be anything <em>Sweeps</em> can vary — a setting, a parameter, a species'
+            start or what flows in — or a relation's or a phase's <code>logK</code>, or a number a
+            reaction's line names: <code>k</code>, <code>kf</code>, or a constant of a rate law of
+            your own, <code>vmax = 2e-5</code>. Each run is the text with the numbers put in, run with
+            the panel's solver settings and read at exactly the times measured; a table in distance
+            is read along the column, between the cells either side of each point.</p>
+          <p>The misfit is the sum of the squared residuals: for an amount the log<sub>10</sub> of
+            the run's value over the one measured, so that a factor of two counts the same at any
+            size and a value at or below zero is left out; for pH, a saturation index and the like
+            the difference. It is made smaller by Levenberg and Marquardt's method, each derivative
+            from a run with one number moved a little; a number above zero is moved in its
+            logarithm, which keeps it above zero, and a log K and the temperature as they are. The
+            standard errors and correlations come from the derivatives at the end, the scatter from
+            the residuals; the range of about 95 % is 1.96 standard errors either way, a factor
+            for a number fitted in its logarithm. Fitted to data made by the model itself from
+            known numbers, it finds them to the solver's tolerance; to noisy data where the answer
+            can be worked out by hand, its value and standard error are the hand's to a part in a
+            million. <em>Put the fitted values in the model</em> writes them into the text where they
+            came from, to six figures.</p>
 
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
@@ -2260,7 +2319,8 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             <em>Gradient</em> they write what the chart draws: a row per distance and a column per
             curve, or a row per cell and a column per time; on <em>Composition</em> each band, or each
             water's ions in equivalents, their shares and its type; on <em>Diagrams</em> each point's
-            value or name; on <em>Sweeps</em> what is drawn, a row per value or per point. <em>SVG</em> and <em>PNG</em> save the
+            value or name; on <em>Sweeps</em> what is drawn, a row per value or per point; on <em>Fit</em> each point measured, the
+            run there and its residual. <em>SVG</em> and <em>PNG</em> save the
             chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
@@ -2987,14 +3047,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109g"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109h"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006e"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109g"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109h"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109h"></script>
 </body>
 </html>

@@ -3648,6 +3648,48 @@ function againstDiagrams(engine) {
 }
 
 /* ======================================================================
+   FITTING, against PHREEQC: zinc on a ferrihydrite's weak sites, titrated
+   with acid -- PHREEQC's REACTION, the HCl added at each time measured --
+   and the dissolved zinc it gives taken as what was measured; the handed-off
+   model, its weak sites' log K for zinc moved off by a unit, fitted back to
+   it by the Fit tab's computation. It finds the database's log K.
+   ====================================================================== */
+function againstFit(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 8\n Na 10\n Cl 10 charge\n Zn 0.01\nSURFACE 1\n -equilibrate 1\n -no_edl\n'
+    + ' Hfo_wOH 2e-4 600 0.09\nEND\n';
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'zinc on ferrihydrite', text: water }, activity: true, exact: true,
+    redox: false });
+  // The acid at 1e-8 mol/kgw a second for a day, 0.864 mmol in all, as the page adds it and as PHREEQC's REACTION does.
+  const rate = 1e-8;
+  const tend = 86400;
+  let text = RtmModel.withValue(res.text, { kind: 'setting', name: 'TEND' }, tend);
+  text = /^<REACTIONS>\s*$/m.test(text) ? text.replace(/^<REACTIONS>\s*$/m, `<REACTIONS>\n=> H+ + Cl-, r = ${rate}`)
+    : `${text}\n<REACTIONS>\n=> H+ + Cl-, r = ${rate}\n`;
+  const times = [8640, 17280, 25920, 34560, 43200, 51840, 60480, 69120, 77760, 86400];
+  const measured = times.map((t) => {
+    engine.load(dbText);
+    const rows = engine.run(`${water.replace('END\n', '')}REACTION 1\n HCl 1\n ${(rate * t).toPrecision(12)} moles\n`
+      + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH TOT("Zn"), -LA("H+")\nEND\n');
+    return rows[rows.length - 1].map(Number);
+  });
+  const lk = RtmModel.tunables(text).find((x) => x.kind === 'logK' && x.name.includes('Hfo_wOZn+'));
+  const withData = `${text}\n<DATA>\ntime  tot(Zn)  cell = 0\n${times.map((t, i) => `${t} ${measured[i][0]}`).join('\n')}\n`;
+  let reply = null;
+  handleRtmMessage({ type: 'fit', id: 1, text: withData, solver: { method: 'ndf', rtol: 1e-10, atol: 1e-20, nonNegative: true,
+    stagnationTol: 0.5 }, params: [{ kind: 'logK', name: lk.name, start: lk.value + 1 }] },
+  (m) => { if (m.type !== 'progress') reply = m; });
+  const got = reply.type === 'fit' ? reply.params[0] : null;
+  check('a fit against PHREEQC: zinc on ferrihydrite\'s weak sites titrated with acid, PHREEQC\'s dissolved zinc as what was '
+    + 'measured, the weak sites\' log K for zinc moved off by a unit and fitted back -- the database\'s, within its standard '
+    + 'error and to 1e-6', !!got && Math.abs(got.value - lk.value) < 1e-6 && got.se !== null && Math.abs(got.value - lk.value) < 3 * got.se + 1e-9,
+  got ? `${lk.name}: log K ${got.value.toFixed(9)} for ${lk.value} in ${reply.runs} runs, standard error ${got.se.toExponential(1)}, `
+    + `pH ${measured[0][1].toFixed(2)} to ${measured[measured.length - 1][1].toFixed(2)}, the misfit's sd ${reply.sd.toExponential(1)}`
+    : reply.error);
+}
+
+/* ======================================================================
    MULTICOMPONENT DIFFUSION (-multi_D): each species at its Dw times the
    porosity to the n, the ions coupled so that no current flows, each down
    its activity. Against PHREEQC's TRANSPORT as its explicit steps are made
@@ -4353,6 +4395,8 @@ function againstKineticsHandOff(engine) {
   againstQuantities(wasm);
   console.log('\n--- diagrams: a water held at a pH, a pe or a total, against PHREEQC\'s SOLUTION there ---');
   againstDiagrams(wasm);
+  console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');
+  againstFit(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
   againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');

@@ -48,9 +48,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, nine tab toolbars, and the PHREEQC panel's heading and
+# of the Solver section, ten tab toolbars, and the PHREEQC panel's heading and
 # four settings.
-STATIC_SLOTS = 38
+STATIC_SLOTS = 39
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -1039,6 +1039,42 @@ async def main():
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 
+            # --- the model fitted to what <DATA> measured: the Fit tab, on the calcite-at-a-rate example ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            # The example's text, not the example: choosing it would set its view, the time chart's log boxes with it.
+            await set_text(page, await page.ev("RTM_EXAMPLES.find((e) => e.id === 'calciterate').text"))
+            await page.ev("document.querySelector('[data-on-click=\"rtm:applyModel\"]').click()")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 9 species')", True, tries=40, pause=0.25)
+            # The rows of the model before are the user's; a text typed in keeps them, so they are put to this model's first.
+            await page.ev("document.querySelector('[data-tab=\"fit\"]').click()")
+            await asyncio.sleep(0.4)
+            await page.ev("(() => { const s = document.querySelector('#rtmFitParams select'); s.value = 'parameter:kc';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            check('the Fit tab offers the parameter, from the value the text gives it, and every column of <DATA> ticked', await page.ev(
+                "[[...document.querySelectorAll('#rtmFitParams select')].map((s) => s.value + ' from '"
+                " + s.parentElement.querySelector('input').value).join(' / '),"
+                " [...document.querySelectorAll('#rtmFitCols input')].map((i) => i.value + (i.checked ? '+' : '-')).join(' ')]"),
+                ['parameter:kc from 0.0005', 'pH+ Ca_mg+'])
+            check('  and among what can be fitted, a relation\'s log K and a reaction\'s constant are offered', await page.ev(
+                "[...document.querySelectorAll('#rtmFitParams select optgroup')].map((g) => g.label)"
+                ".filter((l) => /log K|constant/.test(l)).join(' | ')"), "A relation's log K")
+            await page.ev("document.getElementById('rtmFitGo').click()")
+            fitted = await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Fitted in', tries=60, pause=0.5)
+            check(f'kc fitted to the pH and the calcium measured ({fitted})', fitted, 'Fitted in')
+            res = await page.ev("""(() => { const t = document.querySelector('#rtmFitResult table tbody tr');
+              const v = Number(t.children[2].textContent);
+              return [t.children[0].textContent, v > 4e-4 && v < 6e-4, /× or ÷/.test(t.children[3].textContent),
+                document.getElementById('rtmChartFit').data.map((d) => d.name).join(' / ')]; })()""")
+            check('  the table gives the fitted kc and its error as a factor; the chart the run at it beside what was measured', res,
+                  ['kc', True, True, 'pH / pH, measured / Ca_mg (mg/kgw) / Ca_mg (mg/kgw), measured'])
+            await page.ev("document.getElementById('rtmFitApply').click()")
+            applied = await settle(page, "/^kc\\s+all\\s+0\\.000\\d+/m.test(document.getElementById('rtmText').value)"
+                                         " && document.getElementById('rtmStatus').textContent.startsWith('The fitted values are in')", True, tries=40)
+            check('  and Put the fitted values in the model writes kc into its line in <PARAMETERS>', applied, True)
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
             # --- the Jacobian check ------------------------------------------
             await page.ev("document.getElementById('rtmVerify').click()")
             verdict = await settle(page, "(() => { const s = document.getElementById('rtmStatus')"
@@ -1586,7 +1622,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient composition diagram sweep phreeqc model jacobian help'])
+                [True, ['gradient'], 'time profile gradient composition diagram sweep fit phreeqc model jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"
