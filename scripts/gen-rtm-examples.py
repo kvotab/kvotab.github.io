@@ -667,14 +667,15 @@ Calcite <=> Ca+2 + CO3-2,      logK = -8.48
         id='salinisation',
         group='What the water is made of',
         label='Salty water into a fresh aquifer: a Piper path',
-        about="Salty water into an aquifer with calcite and an exchanger: sodium and magnesium take the exchanger, calcium comes off it. Run it: the Composition tab draws the outlet's water as a path through a Piper diagram, from Ca–HCO3 to Na–Cl by way of a calcium peak, with waters measured there; Schoeller and Stiff diagrams of the same waters are on the Show menu, and where calcium is along the column too.",
+        about="Salty water into an aquifer with calcite and an exchanger: sodium and magnesium take the exchanger, calcium comes off it. Run it: the Composition tab draws the outlet's water as a path through a Piper diagram, from Ca–HCO3 to Na–Cl by way of a calcium peak, with waters measured there; Schoeller and Stiff diagrams of the same waters are on the Show menu, where calcium is along the column, and a USSL diagram, the outlet's water going from C2-S1 to C4-S3 as the salt comes through.",
         text='''\
 # Salty water into a fresh aquifer with calcite and an exchanger: sodium and
 # magnesium take the exchanger, calcium comes off it, and the water at the
 # outlet goes from Ca-HCO3 to Na-Cl by way of a calcium peak. The Composition
-# tab draws its path on a Piper diagram, beside waters measured at the outlet.
-# The constants are phreeqc.dat's; the waters and the measurements are made up,
-# and D stands for the dispersion.
+# tab draws its path on a Piper diagram, beside waters measured at the outlet,
+# and, from the conductance <CONDUCTANCE> gives, a USSL diagram of its class
+# for irrigation. The constants are phreeqc.dat's; the waters and the
+# measurements are made up, and D stands for the dispersion.
 <SETTINGS>
 MODE = transport
 CELLS = 20
@@ -729,12 +730,32 @@ Ca+2 + 2 X- <=> CaX2, logK = 0.8
 Mg+2 + 2 X- <=> MgX2, logK = 0.6
 K+ + X- <=> KX, logK = 0.7
 
+<CONDUCTANCE>
+Ca+2      gfw 40.08  dw 7.92e-10 34 5.411 0 1.046  viscosity 0.359 -0.158 0.042 0.0015 0.00804 2.3
+Mg+2      gfw 24.312  dw 7.05e-10 -4 5.569 0 1.047  viscosity 0.426 0 0 0.00166 0.00432 2.461
+Na+       gfw 22.9898  dw 1.33e-9 75 3.627 0 0.7037  viscosity 0.1387 -0.0866 0.0125 0.0145 0.0075 1.062
+K+        gfw 39.102  dw 1.96e-9 254 3.484 0 0.1964  viscosity 0.116 -0.191 0.0152 0.014 0.0259 0.9028
+Cl-       gfw 35.453  dw 2.033e-9 216 3.16 0.2071 0.7432  viscosity 0 0 0 0 0 0 1
+SO4-2     gfw 96.064  dw 1.07e-9 -114 17 0.0602 0.0494  viscosity -0.3 0.501 0.00257 0.195 0.0314 2.015 0.605
+HCO3-     gfw 61.0191  dw 1.18e-9 -190 11.386  viscosity -0.6 1.366 -0.01216 0 0.03139 -1.135 1.253
+CO3-2     gfw 60.0111  dw 9.55e-10 -103 2.246 0.0713 0.3686  viscosity -0.5 0.6521 0.00544 0.00106 -0.0218 1.208 -2.147
+CO2       gfw 44.0111  dw 1.92e-9 -120  viscosity 0.0068 0.0903 0.0327 0 0 0 0.18
+CaHCO3+   gfw 101.0991  dw 5.06e-10
+CaCO3     gfw 100.0911  dw 4.46e-10
+MgHCO3+   gfw 85.3311  dw 4.78e-10
+CaSO4     gfw 136.144  dw 4.71e-10
+MgSO4     gfw 120.376  dw 4.45e-10  viscosity 0.318 -0.00054 -0.0342 0.708 0.0037 0.696
+NaSO4-    gfw 119.0538  dw 1.13e-9 -23 8.5 0.392 0.521  viscosity 0.2 -0.0593 -0.0004 0.00846 0.00178 2.308 -0.208
+H+        gfw 1.008  dw 9.31e-9 838 6.96 -2.285 0.206 24.01 0  viscosity 0.0935 -0.0831 0.02487 0.000449 0.0201 1.57
+OH-       gfw 17.008  dw 5.27e-9 478 0.8695  viscosity -0.0226 0.106 0.02184 -0.0032 0 0.4082 -1.634
+H2O       gfw 18.016
+
 <DATA>
-time   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  cell = 19
-1e4    1.4e-3   2.4e-4   1.0e-3   5.0e-5   1.2e-3   1.6e-4   2.55e-3
-2e4    2.05e-3  6.6e-4   1.1e-2   1.9e-4   1.3e-2   9.3e-4   1.95e-3
-3e4    1.75e-3  1.25e-3  1.7e-2   3.1e-4   1.95e-2  1.3e-3   1.75e-3
-6e4    1.2e-3   2.0e-3   2.05e-2  3.9e-4   2.25e-2  1.55e-3  1.62e-3
+time   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  SC     cell = 19
+1e4    1.4e-3   2.4e-4   1.0e-3   5.0e-5   1.2e-3   1.6e-4   2.55e-3   445
+2e4    2.05e-3  6.6e-4   1.1e-2   1.9e-4   1.3e-2   9.3e-4   1.95e-3   1880
+3e4    1.75e-3  1.25e-3  1.7e-2   3.1e-4   1.95e-2  1.3e-3   1.75e-3   2640
+6e4    1.2e-3   2.0e-3   2.05e-2  3.9e-4   2.25e-2  1.55e-3  1.62e-3   3010
 ''',
         view={'tab': 'composition', 'comp': {'view': 'piper', 'along': 'time', 'cell': 19}},
     ),

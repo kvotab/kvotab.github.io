@@ -6520,6 +6520,112 @@ console.log('\n--- molar volumes and log K at the pressure ---');
 }
 
 /*
+   THE CONDUCTANCE, THE DENSITY AND THE VISCOSITY (<CONDUCTANCE>), and the
+   sodium adsorption ratio. PHREEQC's calc_SC, calc_dens and viscosity()
+   are held to PHREEQC itself in test-phreeqc.js; here, what needs no
+   PHREEQC. Pure water's viscosity, Huber et al. (2009), against IAPWS
+   R12-08's own check values, and at 25 C PHREEQC's 0.8900239182946. At
+   infinite dilution: PHREEQC's older equation falls below Nernst and
+   Einstein's conductance as the square root of the salt, Kohlrausch's law;
+   Falkenhagen's, by the Debye-Hueckel-Onsager limiting law, its relaxation
+   and electrophoretic terms worked out here from SI's constants and the
+   water's dielectric constant. The SAR by hand, from the dissolved Na, Ca
+   and Mg; what is refused. The numbers are the tests' own.
+*/
+console.log('\n--- the conductance, the density and the viscosity ---');
+{
+  // A salt at m mol/kgw; H+ there at nothing, its dw choosing the equation: Falkenhagen's where its sixth number is above 24.
+  const text = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = debye-huckel\n\n<SPECIES>\nH+ 0 a=9\n`
+    + `Na+ ${o.m || 1e-3} a=4\nCl- ${o.m || 1e-3} a=3.5\n${o.species || ''}\n<REACTIONS>\n=> Na+ + Cl-, k = 0\n\n${o.out || ''}`
+    + `<CONDUCTANCE>\nH+   gfw 1  dw 9e-9 0 0 0 0 ${o.falk ? 25 : 0}\nNa+  gfw 23  dw 1.3e-9\nCl-  gfw 35.5  dw 2e-9\n${o.cond || ''}`;
+  const props = (tx, keys) => {
+    const m = RtmModel.compile(tx);
+    const which = Int32Array.from(keys.map((k) => m.quantities.findIndex((q) => q.key === k)));
+    const out = new Float64Array(keys.length).fill(NaN);
+    if (![...which].some((x) => x < 0)) m.quantitiesAt(m.initialState(), 0, 0, which, out);
+    return out;
+  };
+  // Pure water's viscosity: IAPWS R12-08's check values (uPa s, at T K and rho kg/m3), and 25 C at the water's own density.
+  const iapws = [[298.15, 998, 889.7351], [373.15, 1000, 307.883622], [873.15, 600, 77.430195]];
+  const iapwsOff = Math.max(...iapws.map(([T, rho, mu]) => Math.abs(RtmModel.waterViscosity(T, rho / 1e3) * 1e3 - mu)));
+  const [visc25] = props(text({ m: 1e-10 }), ['viscos']);
+  check('pure water\'s viscosity (Huber et al. 2009, as PHREEQC has it): IAPWS R12-08\'s check values to their six decimals, '
+    + 'and at 25 C and the water\'s density PHREEQC\'s 0.8900239182946 mPa s', iapwsOff < 6e-7
+    && Math.abs(visc25 / 0.8900239182946 - 1) < 1e-12,
+  `IAPWS within ${iapwsOff.toExponential(1)} uPa s; ${visc25.toPrecision(13)} at 25 C`);
+
+  // The older equation: below Nernst and Einstein's sum of z^2 Dw m (F^2/RT, PHREEQC's F and R) as the square root of m.
+  const F = 96493.5;
+  const R = 8.31470;
+  const ne = (m) => ((1e7 * F * F) / (R * 298.15)) * 3.3e-9 * m;
+  const short = [1e-8, 1e-6].map((m) => 1 - props(text({ m }), ['SC'])[0] / ne(m));
+  // Falkenhagen's: the molar conductivity, SC V^2/(1e3 m) as calc_SC scales it, V the litres of a kilogram of water's
+  // solution, falling from the ions' sum of Dw F^2/RT as (B1 Lambda0 + 2 B2) sqrt(m).
+  const lambda = (m) => {
+    const [sc, rho] = props(text({ m, falk: true }), ['SC', 'rho']);
+    const V = (1 + 1e-3 * m * 58.5) / rho;
+    return { L: (sc * V * V) / (1e3 * m), rho };
+  };
+  const [l1, l2] = [2e-10, 2e-9].map(lambda);
+  const slope = (l2.L - l1.L) / (Math.sqrt(2e-9) - Math.sqrt(2e-10));
+  const T = 298.15;
+  const eps = 342.79 * Math.exp(T * (-5.0866e-3 + T * 9.469e-7)) + (-2.0525 + 3115.9 / (T - 182.89))
+    * Math.log((-8032.5 + 4.2142e6 / T + 2.1417 * T + 1.01325) / (-8032.5 + 4.2142e6 / T + 2.1417 * T + 1000));
+  const e = 1.602176634e-19;
+  const kB = 1.380649e-23;
+  const eps0 = 8.8541878128e-12;
+  const NA = 6.02214076e23;
+  const kappa = Math.sqrt((2000 * NA * e * e * l1.rho) / (eps0 * eps * kB * T));  // 1/m to a sqrt(mol/kgw)
+  const q = 0.5;
+  const B1 = ((e * e * kappa) / (12 * Math.PI * eps0 * eps * kB * T)) * (q / (1 + Math.sqrt(q)));
+  const B2 = ((e * e * NA * kappa) / (6 * Math.PI * 0.8900239182946e-3)) * 1e4;  // S cm2/mol, an ion
+  const L0 = ((1e4 * F * F) / (R * 1e-3 * 298.15e3)) * 3.3e-9;
+  const onsager = -(B1 * L0 + 2 * B2);
+  check('  at infinite dilution: PHREEQC\'s older equation below Nernst and Einstein as the square root of the salt '
+    + '(Kohlrausch), and Falkenhagen\'s by the Debye-Hueckel-Onsager limiting law, its terms from SI\'s constants',
+  short[0] > 0 && short[0] < 1e-4 && Math.abs(short[1] / short[0] / 10 - 1) < 0.01 && Math.abs(slope / onsager - 1) < 1e-4
+    && Math.abs((l1.L - onsager * Math.sqrt(2e-10)) / L0 - 1) < 1e-7,
+  `${short.map((x) => x.toExponential(2)).join(' and ')} short at 1e-8 and 1e-6 mol/kgw; the slope ${slope.toFixed(3)} for `
+    + `Onsager's ${onsager.toFixed(3)} S cm2/mol to a sqrt(mol/kgw) (B1 ${B1.toFixed(4)}, 2 B2 ${(2 * B2).toFixed(2)}, eps ${eps.toFixed(3)})`);
+
+  // The SAR, of what is dissolved; none without Na or without Ca and Mg; SC an <OUTPUT> took first stays its.
+  const sarText = '<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\n\n<SPECIES>\nNa+ 0.01\nNaSO4- 0.001\nCa+2 0.002\n'
+    + 'CaSO4 0.0005\nMg+2 0.001\nSO4-2 0.003\nCl- 0.0105\n\n<REACTIONS>\n=> Na+ + Cl-, k = 0\n';
+  const [sar] = props(sarText, ['SAR']);
+  const noCa = RtmModel.compile(sarText.replace(/^(Ca\+2|CaSO4|Mg\+2) .*\n/gm, ''));
+  const plain = RtmModel.compile(sarText);
+  const taken = RtmModel.compile(text({ out: '<OUTPUT>\nSC = 2 * [Na+]\n\n' }));
+  const scs = taken.quantities.filter((x) => x.key === 'SC');
+  check('  the sodium adsorption ratio of the dissolved Na, Ca and Mg, by hand; none without Ca and Mg; no SC without '
+    + '<CONDUCTANCE>; an <OUTPUT> named SC keeps the name', Math.abs(sar - 11 / Math.sqrt(3.5)) < 1e-12
+    && !noCa.quantities.some((x) => x.key === 'SAR') && !plain.quantities.some((x) => ['SC', 'rho', 'viscos'].includes(x.key))
+    && scs.length === 1 && scs[0].group === 'outputs',
+  `SAR ${sar} for ${11 / Math.sqrt(3.5)}; ${scs.length} SC (${scs.map((x) => x.group).join(', ')})`);
+
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (err) { return err.message; } };
+  const base = text();
+  const cases = [
+    ['without ACTIVITY', base.replace('ACTIVITY = debye-huckel', 'ACTIVITY = none').replace(/ a=[0-9.]+/g, ''), /it is read with ACTIVITY/],
+    ['under ACTIVITY = llnl', `${base.replace('ACTIVITY = debye-huckel', 'ACTIVITY = llnl')}\n<LLNL>\n`
+      + 'TEMPERATURES 0 25 60 100\nDH_A 0.49 0.51 0.55 0.6\nDH_B 0.325 0.329 0.335 0.342\nBDOT 0.037 0.041 0.044 0.046\n',
+    /not read under ACTIVITY = llnl/],
+    ['a solute without its gfw', base.replace('Na+  gfw 23  dw', 'Na+  dw'), /gives no gfw for Na\+/],
+    ['no species', `${base}Nope  gfw 3\n`, /Nope in <CONDUCTANCE> is no species/],
+    ['a species given twice', `${base}Na+  gfw 23\n`, /Na\+ is given twice in <CONDUCTANCE>/],
+    ['dw with eight numbers', base.replace('dw 1.3e-9', 'dw 1.3e-9 1 2 3 4 5 6 7'), /dw takes 1 to 7 numbers, not 8/],
+    ['a word that is no number', base.replace('gfw 35.5', 'gfw abc'), /"abc" is no number/],
+    ['a number before a word', base.replace('Cl-  gfw 35.5', 'Cl-  35.5 gfw'), /"35.5" is not one of them/],
+    ['H2O given a dw', `${base}H2O  gfw 18 dw 1e-9\n`, /H2O in <CONDUCTANCE> takes its gfw alone/],
+    ['a solute given vm', base.replace('Cl-  gfw 35.5', 'Cl-  gfw 35.5 vm 4 5'), /a solute's molar volume is in <VOLUMES>/],
+    ['gfw 0', base.replace('gfw 35.5', 'gfw 0'), /gfw is above zero/],
+    ['a mineral', text({ species: 'Rock 1 mineral\n', cond: 'Rock  gfw 100\n' }), /Rock in <CONDUCTANCE> is not dissolved/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((x) => x[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/*
    SITES THAT GO WITH A MINERAL (sites= per=, PHREEQC's equilibrium_phase):
    a surface's sites so many per mole of a mineral held at saturation, as it
    dissolves. The sites are 0.05 times the mineral at every stored point,

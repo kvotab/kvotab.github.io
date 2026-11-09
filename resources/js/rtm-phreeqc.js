@@ -397,6 +397,42 @@
   }
 
   /**
+   * A species' gram formula weight from its name and the database's
+   * elements, as PHREEQC's compute_gfw: each element its weight times its
+   * count, groups in brackets times theirs, the charge left off. Null where
+   * an element has no weight.
+   */
+  function gfwOf(name, elementGfw) {
+    const s = String(name).replace(/(?:[+-]+[0-9.]*)$/, '');
+    let i = 0;
+    const num = () => {
+      const m = /^(\d+(?:\.\d*)?|\.\d+)/.exec(s.slice(i));
+      if (!m) return 1;
+      i += m[0].length;
+      return Number(m[1]);
+    };
+    const stack = [0];
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === '(') { stack.push(0); i++; continue; }
+      if (ch === ')') {
+        if (stack.length < 2) return null;
+        i++;
+        const g = stack.pop() * num();
+        stack[stack.length - 1] += g;
+        continue;
+      }
+      const m = /^[A-Z][a-z]*/.exec(s.slice(i));
+      if (!m) return null;
+      i += m[0].length;
+      const w = elementGfw.get(m[0]);
+      if (!Number.isFinite(w)) return null;
+      stack[stack.length - 1] += w * num();
+    }
+    return stack.length === 1 ? stack[0] : null;
+  }
+
+  /**
    * What the hand-off needs from a database, and from any
    * SOLUTION_MASTER_SPECIES or SOLUTION_SPECIES in an input read after it,
    * which redefine as PHREEQC would.
@@ -408,6 +444,9 @@
       this.dw = new Map();          // species -> tracer diffusion coefficient, m2/s
       this.dwT = new Map();         // species -> -dw's second value, its temperature dependence (dw_t)
       this.dwVisc = new Map();      // species -> -dw's seventh, the exponent on the viscosity (dw_a_v_dif)
+      this.dwAll = new Map();       // species -> -dw's numbers as given: Dw, dw_t, dw_a, dw_a2, dw_a_visc, dw_a3, dw_a_v_dif
+      this.viscosity = new Map();   // species -> its -viscosity, the Jones-Dole numbers (viscosity())
+      this.elementGfw = new Map();  // element -> its gram formula weight, SOLUTION_MASTER_SPECIES' fifth field
       this.gamma = new Map();       // species -> {a, b}: its -gamma, the WATEQ Debye-Hueckel
       this.otherGamma = new Map();  // species -> an activity option this page does not have
       this.model = null;            // 'Pitzer', 'SIT' or 'LLNL' when the database is one of those
@@ -582,6 +621,10 @@
         }
         if (block === 'SOLUTION_MASTER_SPECIES' && tokens.length >= 2) {
           this.master.set(tokens[0], tokens[1]);
+          // An element's own line, without a valence: its weight is the fifth field.
+          if (!tokens[0].includes('(') && tokens.length >= 5 && Number.isFinite(Number(tokens[4]))) {
+            this.elementGfw.set(tokens[0], Number(tokens[4]));
+          }
         } else if (block === 'SOLUTION_SPECIES') {
           if (line.includes('=')) {
             const at = line.indexOf('=');
@@ -598,6 +641,8 @@
               this.dw.delete(last);
               this.dwT.delete(last);
               this.dwVisc.delete(last);
+              this.dwAll.delete(last);
+              this.viscosity.delete(last);
               this.gamma.delete(last);
               this.otherGamma.delete(last);
               this.llnlGamma.delete(last);
@@ -607,6 +652,10 @@
             }
           } else if (last && this.readLogKOption(block, line, this.lk.get(`s ${last}`))) {
             // log_k, delta_h, the analytic expression or a named one: read.
+          } else if (last && lkOption(block, line) && lkOption(block, line).opt === 'viscosity') {
+            // The Jones-Dole numbers for the viscosity, up to ten (read_viscosity_parms).
+            const v = leadingNumbers(lkOption(block, line).words, 10);
+            if (v.length) this.viscosity.set(last, v);
           } else if (last && lkOption(block, line) && ['vm', 'millero'].includes(lkOption(block, line).opt)) {
             // A species' molar volume: -Vm's ten numbers, a1 to a4, W, b and i1 to i4, or -Millero's.
             const { opt, words } = lkOption(block, line);
@@ -621,6 +670,7 @@
               this.dw.set(last, v[0]);
               this.dwT.set(last, v[1] || 0);
               this.dwVisc.set(last, v[6] || 0);
+              this.dwAll.set(last, v.slice(0, 7));
             }
           } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
             const a = Number(tokens[1]);
@@ -3696,8 +3746,35 @@
       each phase its -Vm, as PHREEQC's calc_vm reads them; where there is one
       and the water is above one atmosphere, the log K are written at one.
     */
+    /*
+      <CONDUCTANCE>: what PHREEQC works the water's specific conductance, its
+      density and its viscosity out from -- each solute's gram formula weight
+      (compute_gfw), its -dw and its -viscosity, the water's weight, and
+      Cl-'s -Vm where Cl- is not written (calc_vm_Cl) -- where the activity
+      coefficients follow the water and the database gives -dw, and every
+      solute's weight is known. The molar volumes are then written too, at
+      one atmosphere as above it: the density is made of them.
+    */
+    const condLines = [];
+    if (follow && !llnl && db.dwAll.size > 0) {
+      const g = order.map((sp) => gfwOf(sp, db.elementGfw));
+      if (g.every((x) => x !== null && x > 0)) {
+        // A sum of the elements' weights, written to twelve figures: HCl's 36.461, not 36.461000000000006.
+        const gfwText = (x) => String(Number(x.toPrecision(12)));
+        order.forEach((sp, i) => {
+          const bits = [`gfw ${gfwText(g[i])}`];
+          if (db.dwAll.get(sp)) bits.push(`dw ${db.dwAll.get(sp).map(String).join(' ')}`);
+          if (db.viscosity.get(sp)) bits.push(`viscosity ${db.viscosity.get(sp).map(String).join(' ')}`);
+          condLines.push([name.get(sp), bits.join('  ')]);
+        });
+        const gw = gfwOf('H2O', db.elementGfw);
+        if (gw) condLines.push(['H2O', `gfw ${gfwText(gw)}`]);
+        const clv = db.vm.get('Cl-');
+        if (!order.includes('Cl-') && clv && clv[0] !== 0) condLines.push(['Cl-', `vm ${clv.map(String).join(' ')}`]);
+      }
+    }
     const volLines = [];
-    if (withVm && fP > 0) {
+    if (withVm && (fP > 0 || condLines.length)) {
       for (const sp of order) {
         const v = db.vm.get(sp);
         const m = db.millero.get(sp);
@@ -3708,7 +3785,8 @@
       for (const mn of minerals) ph(mn.name, mn.phase);
       for (const g of gases) ph(g.name, g.phase);
       for (const ss of solids) for (const c of ss.comps) ph(c.name, c.phase);
-      volumes = volLines.length > 0;
+      // The log K corrected for the pressure only above one atmosphere; the volumes written for the density whatever it is.
+      volumes = fP > 0 && volLines.length > 0;
     }
     /*
       Each species' molar volume in PHREEQC's water, VM(), PHREEQC's at its
@@ -4545,9 +4623,13 @@
       out.push(`BDOT          ${db.llnl.bdot.map((v) => String(v)).join('  ')}`);
       if (order.some((sp) => db.co2Gamma.has(sp))) out.push(`CO2           ${db.llnl.co2.map((v) => String(v)).join('  ')}`);
     }
-    if (volumes) {
+    if (volLines.length) {
       const wv = Math.max(...volLines.map(([n]) => n.length)) + 2;
       out.push('', '<VOLUMES>', ...volLines.map(([n, v]) => `${n.padEnd(wv)}${v}`));
+    }
+    if (condLines.length) {
+      const wc = Math.max(...condLines.map(([n]) => n.length)) + 2;
+      out.push('', '<CONDUCTANCE>', ...condLines.map(([n, v]) => `${n.padEnd(wc)}${v}`));
     }
     // Real gases: each pair's binary parameter, where PHREEQC's is not 0.
     const gasPairs = [];
@@ -4652,6 +4734,8 @@
           sitPairs: sit ? sitPairs.length : 0 } : null,
         // The water's pressure, and the molar volumes written for each log K at it.
         pressure: { atm, vapour: atVapour, volumes: volumes ? volLines.length : 0 },
+        // <CONDUCTANCE>: how many solutes it gives a -dw, and whether <VOLUMES> was written for the density.
+        conductance: condLines.length ? { dw: order.filter((sp) => db.dwAll.get(sp)).length, volumes: volLines.length } : null,
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target,
           alt: mn.alt ? mn.alt.formula : null, only: mn.only, forced: mn.forced })),
         phasesSkipped,

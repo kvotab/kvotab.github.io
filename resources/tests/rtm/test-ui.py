@@ -918,6 +918,32 @@ async def main():
             check('saved as CSV: each water\'s ions in meq/kgw, their shares and its type',
                   [csv[1][0][:42], csv[1][1][:10], csv[1][1][-10:], len(csv[1])] if isinstance(csv, list) else csv,
                   ['water,t (s),cell,distance (m),Ca (meq/kgw)', '"model, 0.', 'Ca–Na–HCO₃', 4])
+            # A USSL diagram: none without the conductance; with <CONDUCTANCE>, the water's SC and its SAR by hand,
+            # 1000 Na/sqrt(1000 (Ca + Mg)) of the dissolved totals, and the measured water's from its Na, Ca and Mg.
+            await comp('ussl')
+            check('a USSL diagram needs the conductance, and says where it comes from', await page.ev(
+                "document.getElementById('rtmCompEmpty').textContent.includes('<CONDUCTANCE>')"), True)
+            await set_text(page, COMP_MODEL.replace('cell = 0\n50    1e-3     5e-4  3e-3  1e-4  3e-3  5e-4    2.5e-3',
+                                                    'SC  cell = 0\n50    1e-3     5e-4  3e-3  1e-4  3e-3  5e-4    2.5e-3  450')
+                           + '\n<CONDUCTANCE>\nCa+2   gfw 40.08  dw 0.79e-9\nMg+2   gfw 24.31  dw 0.71e-9\nNa+    gfw 22.99  dw 1.33e-9\n'
+                           'K+     gfw 39.10  dw 1.96e-9\nCl-    gfw 35.45  dw 2.03e-9\nSO4-2  gfw 96.06  dw 1.07e-9\n'
+                           'CaSO4  gfw 136.14\nHCO3-  gfw 61.02  dw 1.18e-9\nCO3-2  gfw 60.01  dw 0.96e-9\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await comp('ussl')
+            await settle(page, "(() => { const d = document.getElementById('rtmChartComp').data;"
+                         " return !!(d && d.some((t) => t.name === 'the model')); })()", True, tries=60, pause=0.25)
+            ussl = await page.ev("""(() => { const p = document.getElementById('rtmChartComp');
+              const m = p.data.find((t) => t.name === 'the model'); const d = p.data.find((t) => t.name === 'measured');
+              return [m.x[0], m.y[0], d ? [d.x[0], d.y[0]] : null, p.layout.xaxis.type, p.layout.shapes.map((s) => s.x0),
+                document.getElementById('rtmCompNote').textContent]; })()""")
+            ok = isinstance(ussl, list) and 250 < ussl[0] < 750 and abs(ussl[1] - 2 / math.sqrt(1.6)) < 1e-9 \
+                and ussl[2] is not None and abs(ussl[2][0] - 450) < 1e-9 and abs(ussl[2][1] - 3 / math.sqrt(1.5)) < 1e-9 \
+                and ussl[3] == 'log' and ussl[4] == [250, 750, 2250] and 'C2-S1 at the start' in ussl[5] and '1 measured' in ussl[5]
+            check('  with <CONDUCTANCE>: the water\'s SC and its SAR by hand, the measured water\'s from Na, Ca and Mg, the '
+                  f'classes split at 250, 750 and 2,250 uS/cm on a log axis, C2-S1 in the note ({str(ussl)[:150]})', ok, True)
             # Along a column: the same water in three cells, each a point of the Piper and a Stiff diagram.
             await set_text(page, COMP_MODEL.replace('MODE = batch', 'MODE = transport\nCELLS = 3'))
             await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 10 species')", True, tries=40)

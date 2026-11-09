@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109i">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109j">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -456,6 +456,7 @@
                 <option value="piper">a Piper diagram</option>
                 <option value="schoeller">a Schoeller diagram</option>
                 <option value="stiff">Stiff diagrams</option>
+                <option value="ussl">a USSL diagram (irrigation water)</option>
               </select>
             </label>
             <label data-comp-for="where">Element
@@ -783,7 +784,7 @@
             remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
-          <p>Fifteen sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+          <p>Sixteen sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
             <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
@@ -992,6 +993,32 @@ Calcite  36.9</pre>
             numbers, or <code>millero</code> and <code>-Millero</code>'s six; a mineral's, a gas's or a phase
             of <code>&lt;PHASES&gt;</code>'s one number, its volume in cm³/mol. See <em>Pressure</em>
             below.</p>
+
+          <h4 id="help-conductance-section">&lt;CONDUCTANCE&gt;</h4>
+          <pre>Na+   gfw 22.99  dw 1.33e-9 120 1.5 3.7  viscosity 0.15 -0.2 0.025 0.016 0.008 1.1
+Cl-   gfw 35.45  dw 2.03e-9 190 1.6 6.9  viscosity -0.04 -0.1 0.03 0.03 0.006 1.6
+H2O   gfw 18.016</pre>
+          <p>What the water's specific conductance, its density and its viscosity are worked out
+            from, as PHREEQC works them out: the quantities <code>SC</code>, <code>rho</code> and
+            <code>viscos</code> (see <em>Reading the charts</em>). A solute to a line, read with
+            <code>ACTIVITY</code>, though not <em>llnl</em>: <code>gfw</code>, its gram formula weight,
+            which every solute needs, for the density; <code>dw</code>, a database's <code>-dw</code>, up
+            to seven numbers — its diffusion coefficient in pure water at 25&nbsp;°C, m²/s, then how it
+            goes with the temperature, the ionic strength and the viscosity; and <code>viscosity</code>,
+            a database's <code>-viscosity</code>, up to ten numbers, its Jones–Dole terms.
+            <code>H2O</code> takes its <code>gfw</code> alone, 18.016 unless given, and <code>Cl-</code>,
+            where it is no species, its <code>vm</code> as <code>&lt;VOLUMES&gt;</code> takes a
+            <code>-Vm</code>, as the viscosity weighs the other anions' volumes against chloride's.</p>
+          <p>The viscosity is pure water's, Huber and others' of 2009, with each solute's Jones–Dole
+            <em>B</em> and <em>D</em> and Falkenhagen and Dole's <em>A</em>. The density is the water's
+            with each solute's mass in it, less the water its molar volume in
+            <code>&lt;VOLUMES&gt;</code> takes the place of; a solute <code>&lt;VOLUMES&gt;</code> does not
+            give counts by its mass alone. The conductance is each ion's limiting one from its Dw, less
+            Debye, Hückel and Onsager's electrophoretic and relaxation effects as Falkenhagen carried
+            them to stronger waters, where H<sup>+</sup>'s <code>dw</code> has a sixth number above 24,
+            as <code>phreeqc.dat</code>'s does, and PHREEQC's older equation where not. It is in µS/cm at
+            the water's own temperature, as PHREEQC's <code>SC</code> is, not taken back to 25&nbsp;°C. A
+            water from PHREEQC whose database gives <code>-dw</code> comes with it.</p>
 
           <h4 id="help-gas-pairs-section">&lt;GAS_PAIRS&gt;</h4>
           <pre>H2O(g)  CO2(g)  0.19</pre>
@@ -2229,7 +2256,11 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             eight over the run.</p>
           <p>The list holds the species first, then what the run comes to besides them, in groups:
             <em>the water</em> — pH as −log a(H<sup>+</sup>), pe, the ionic strength, a(H<sub>2</sub>O),
-            the charge balance as PHREEQC's percent error, and the temperature where it varies; the
+            the charge balance as PHREEQC's percent error, and the temperature where it varies; with
+            <code>&lt;CONDUCTANCE&gt;</code> the specific conductance <code>SC</code> in µS/cm, the density
+            <code>rho</code> in kg/L and the viscosity <code>viscos</code> in mPa&nbsp;s; and where there are Na
+            and Ca or Mg, the sodium adsorption ratio <code>SAR</code>, the dissolved Na over the square
+            root of half the dissolved Ca and Mg, all in meq/kgw; the
             <em>totals in the water</em> of each element two species or more hold, from their
             formulas — <code>CaHCO3+</code> is one Ca and one C, <code>UO2_2(OH)2+2</code> two U;
             <em>saturation indices</em> of each phase of <code>&lt;PHASES&gt;</code> and each
@@ -2238,7 +2269,7 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             <code>ACTIVITY</code> the <em>log activities</em>, a group shut until it is opened. They are worked out from the
             stored concentrations with the model's own activity model, in the background the first
             time a chart asks for them, and kept for the run. A handed-off water's pH, ionic
-            strength, a(H<sub>2</sub>O), totals, saturation indices and the shares of an exchanger
+            strength, a(H<sub>2</sub>O), conductance, density, viscosity, totals, saturation indices and the shares of an exchanger
             and a surface are PHREEQC's to a part in 10<sup>8</sup>, a gas's partial pressure to
             3 in 10<sup>8</sup>. An amount goes on the left-hand axis with the species,
             log or not; pH, pe, a saturation index, a log activity or a share goes on the right, as
@@ -2301,6 +2332,19 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             model's in black or orange. The note under the toolbar names each water's type, its
             hydrochemical facies: the cation and the anion that are half or more of theirs, or the
             two largest where none is.</p>
+          <p>A <em>USSL diagram</em> classes a water for irrigation as the U.S. Salinity Laboratory
+            did (Richards 1954, USDA Handbook 60; Wilcox 1955, USDA Circular 969): its specific
+            conductance across, on a log scale, its salinity hazard low, medium, high or very high,
+            C1 to C4, split at 250, 750 and 2,250 µS/cm; and its sodium adsorption ratio up, its
+            sodium hazard S1 to S4, split by lines that fall as the conductance rises, a water's
+            sodium doing more harm the saltier it is. It needs <code>SC</code>, which a model has with
+            <code>&lt;CONDUCTANCE&gt;</code> — a water from PHREEQC whose database gives
+            <code>-dw</code> has it — and <code>SAR</code>. Along the run it is a path through the stored
+            points, coloured by time; along the column, a point a cell. Measured waters come from
+            <code>&lt;DATA&gt;</code>: a column <code>SC</code>, and <code>SAR</code> or the Na, Ca and Mg
+            it is worked out from. The table and the note give each water's class, C2-S1 and the
+            like. The classes are for the conductance at 25&nbsp;°C, and the model's is at the water's
+            own temperature, about 2&nbsp;% lower for each degree below.</p>
 
           <h4 id="help-diagrams">Diagrams of the model's own chemistry</h4>
           <p><em>Diagrams</em> does with the model's relations what PhreePlot does with PHREEQC's. It
@@ -2500,8 +2544,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             database that gives molar volumes — <code>phreeqc.dat</code>, <code>pitzer.dat</code> — each
             species' <code>-Vm</code> or <code>-Millero</code> and each phase's <code>-Vm</code> are written in
             <code>&lt;VOLUMES&gt;</code> (see <em>Pressure</em> above), and each log K at one atmosphere,
-            PHREEQC's own Δ<em>V</em> at the water put back. A database is read as PHREEQC reads one, to its
-            first <code>END</code>.</p>
+            PHREEQC's own Δ<em>V</em> at the water put back. With a database that gives <code>-dw</code>, as
+            <code>phreeqc.dat</code> does, each solute's <code>-dw</code>, <code>-viscosity</code> and gram
+            formula weight are written in <code>&lt;CONDUCTANCE&gt;</code>, and its molar volume in
+            <code>&lt;VOLUMES&gt;</code> at any pressure, so that the run's conductance, density and
+            viscosity are PHREEQC's (see <em>&lt;CONDUCTANCE&gt;</em> above); not under <em>llnl</em>. A
+            database is read as PHREEQC reads one, to its first <code>END</code>.</p>
           <p><em>Fixed at this water</em> writes those conditional constants instead, with the water
             left out of the relations, and the relations hold between concentrations exactly where
             PHREEQC's hold between activities. The comment then gives the database's own log K. Such
@@ -3060,7 +3108,7 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
               <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution; <strong>a far-field path</strong> as Kompartment starts one, its release read at the right-hand end; and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium, every member at its parent's activity, to 0.2 %; in the fracture the flow keeps it from doing so.</td></tr>
               <tr><td>Reading a run</td><td>Calcite dissolving at a rate: the pH and its saturation index on the right-hand axis, the calcium in mg/kgw from an <code>&lt;OUTPUT&gt;</code>, measurements from <code>&lt;DATA&gt;</code> beside them. Acid through a column of calcite: the pH as contours over time and distance.</td></tr>
-              <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it.</td></tr>
+              <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it; on a USSL diagram, from C2-S1 to C4-S3.</td></tr>
               <tr><td>Equilibrium diagrams</td><td>Carbonate against pH; iron's pe–pH (Pourbaix) diagram with ferrihydrite's field; calcite or gypsum over the activities of carbonate and sulfate; zinc's sorption edge on ferrihydrite.</td></tr>
               <tr><td>Sweeps</td><td>An exchange front, the exchanger's capacity swept, the calcium at the outlet a curve for each; calcite at a rate over nine rates and five amounts of CO<sub>2</sub>, the calcium after three days as contours.</td></tr>
               <tr><td>All together</td><td>Oxygen into a column of iron(II) water: redox at one pe, ferrihydrite held at saturation, iron on an exchanger and carbonate together; where the iron is along the column, and every other view of it.</td></tr>
@@ -3126,14 +3174,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109i"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109j"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006e"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109i"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006f"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109j"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109i"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109j"></script>
 </body>
 </html>

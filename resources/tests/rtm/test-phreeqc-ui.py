@@ -189,6 +189,11 @@ async def main():
             text = await page.ev("document.getElementById('rtmText').value")
             check('the text has its equilibria, held exactly through the run', isinstance(text, str)
                   and '<EQUILIBRIUM>' in text and 'EQUILIBRATE = always' in text and 'kf = ' not in text, True)
+            check('and what PHREEQC works its conductance, density and viscosity out from: <CONDUCTANCE>, a solute\'s gfw, '
+                  '-dw and -viscosity to a line, and <VOLUMES> for the density', isinstance(text, str)
+                  and re.search(r'^<CONDUCTANCE>$', text, re.M) is not None and re.search(r'^<VOLUMES>$', text, re.M) is not None
+                  and re.search(r'^Na\+\s+gfw 22\.9898  dw 1\.33e-9 .*  viscosity ', text, re.M) is not None
+                  and isinstance(report, str) and 'in <CONDUCTANCE> and their molar volumes in <VOLUMES>' in report, True)
             check('in activities that follow the ionic strength, the water in the relations', isinstance(text, str)
                   and 'ACTIVITY = debye-huckel' in text and 'TEMPERATURE = 15' in text
                   and 'H2O <=> OH- + H+,' in text, True)

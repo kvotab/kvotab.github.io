@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109i';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109j';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -136,7 +136,7 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
-      if (['where', 'piper', 'schoeller', 'stiff'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'piper', 'schoeller', 'stiff', 'ussl'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
@@ -546,8 +546,11 @@
           + `${a.kind === 'sit' ? `, ${a.sit} pair${a.sit === 1 ? '' : 's'} in <SIT>` : ''}`
           + `${a.kind === 'pitzer' && a.pitzer ? `, ${a.pitzer.params} parameter${a.pitzer.params === 1 ? '' : 's'} in <PITZER>`
             + `${a.pitzer.macinnes ? ', MacInnes scaled' : ''}` : ''}`
-          + `${a.volumes ? `, log K at ${a.volumes.idle ? '1 atm: the' : `the pressure from ${a.volumes.given}`} molar `
-            + `volume${a.volumes.given === 1 ? '' : 's'} in <VOLUMES>${a.volumes.idle ? ' correct nothing' : ''}` : ''})` : '')
+          // Volumes that correct no log K say so, unless <CONDUCTANCE> makes the density of them.
+          + `${a.volumes && !(a.volumes.idle && a.conductance) ? `, log K at ${a.volumes.idle ? '1 atm: the'
+            : `the pressure from ${a.volumes.given}`} molar volume${a.volumes.given === 1 ? '' : 's'} in <VOLUMES>`
+            + `${a.volumes.idle ? ' correct nothing' : ''}` : ''})`
+          + `${a.conductance ? ' · the conductance, the density and the viscosity from <CONDUCTANCE>' : ''}` : '')
         + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
           : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
         + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
@@ -1050,6 +1053,7 @@
       drawTime();
       drawProfile();
       drawGradient();
+      drawComp();
     } catch (e) {
       want.forEach(([k, c]) => qFailed.add(`${k}|${c}`));
       setStatus(`Could not work out ${wk.map(labelOf).join(', ')}: ${e.message}`, 'error');
@@ -1749,7 +1753,7 @@
     $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
     $('rtmCompLayerWrap').hidden = nm === 0;
     // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
-    $('rtmCompTimesWrap').hidden = along === 'time' && view === 'where';
+    $('rtmCompTimesWrap').hidden = along === 'time' && (view === 'where' || view === 'ussl');
     $('rtmCompTimesLabel').textContent = along === 'time' ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
@@ -1787,6 +1791,7 @@
     empty.hidden = true;
     plot.hidden = false;
     if (state.compView === 'where') drawWhere(ctx);
+    else if (state.compView === 'ussl') drawUssl(ctx);
     else drawWaters(ctx);
   }
 
@@ -1963,6 +1968,157 @@
     if (missing.length) bits.push(`the model has no ${missing.join(', ')}`);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
     note.textContent = bits.join('; ');
+  }
+
+  /*
+    THE USSL DIAGRAM of irrigation water (Richards 1954, USDA Handbook 60;
+    Wilcox 1955, USDA Circular 969, fig. 2): the specific conductance across,
+    on a log scale, its salinity classes split at 250, 750 and 2,250 uS/cm,
+    and the sodium adsorption ratio up, its sodium classes split by lines that
+    fall with the conductance -- SAR = a - b log10 EC, through 10, 18 and 26 at
+    100 uS/cm; S1/S2 and S2/S3 through SAR 9 at 168 and 2,250 uS/cm, as the
+    Circular's own example has them.
+  */
+  const USSL_C = [250, 750, 2250];
+  const USSL_S = [[18.87, 4.44], [31.31, 6.66], [43.75, 8.87]];
+  /** A water's class, C1-S1 to C4-S4, from its conductance, uS/cm, and its SAR. */
+  function usslClass(sc, sar) {
+    const c = 1 + USSL_C.filter((x) => sc >= x).length;
+    const lg = Math.log10(sc);
+    const s = 1 + USSL_S.filter(([a, b]) => sar >= a - b * lg).length;
+    return `C${c}-S${s}`;
+  }
+
+  /**
+   * The waters on a USSL diagram: the run's at the cell, every stored point
+   * after "from", or along the column at one time, each its conductance and
+   * its SAR as the model works them out (the quantities SC and SAR), and
+   * what <DATA> measured there -- an SC column and a SAR one, or the SAR from
+   * Na, Ca and Mg as the model names them.
+   */
+  function drawUssl({ r, plot, along, layer, cell, atIndex, fail, note }) {
+    const keys = ['SC', 'SAR'];
+    const lack = keys.filter((k) => !quantityOf(k));
+    if (lack.length) {
+      fail(lack.includes('SC') ? 'A USSL diagram needs the water\'s specific conductance, which a model has with <CONDUCTANCE>: a water '
+        + 'from PHREEQC whose database gives -dw has it.' : 'A USSL diagram needs the sodium adsorption ratio, and the model has no '
+        + 'Na, or no Ca and Mg.');
+      return;
+    }
+    const stride = r.model.stride || 1;
+    const cells = along === 'time' ? [modelCell(cell, layer)] : Array.from({ length: r.model.fracture }, (_, k) => k * stride + layer);
+    const pending = cells.filter((mc) => keys.some((k) => quantityPending(k, mc)));
+    if (pending.length) {
+      fetchQuantities(keys, cells);
+      fail('Working out the conductance and the SAR…');
+      return;
+    }
+    const pts = [];
+    let colorTitle;
+    if (along === 'time') {
+      const mc = cells[0];
+      const sc = quantitySeries('SC', mc);
+      const sar = quantitySeries('SAR', mc);
+      const { idx, logT } = compTimeIndices(r);
+      const step = Math.max(1, Math.ceil(idx.length / 300));
+      for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
+        if (sc && sar && sc[i] > 0 && Number.isFinite(sar[i])) {
+          pts.push({ sc: sc[i], sar: sar[i], color: logT ? Math.log10(r.t[i]) : r.t[i], label: fmtTime(r.t[i]), t: r.t[i], cell });
+        }
+      }
+      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+    } else {
+      cells.forEach((mc, k) => {
+        const sc = quantitySeries('SC', mc);
+        const sar = quantitySeries('SAR', mc);
+        if (sc && sar && sc[atIndex] > 0 && Number.isFinite(sar[atIndex])) {
+          pts.push({ sc: sc[atIndex], sar: sar[atIndex], color: r.model.centres[k], label: `cell ${k}`, t: r.t[atIndex], cell: k,
+            x: r.model.centres[k] });
+        }
+      });
+      colorTitle = 'distance (m)';
+    }
+    if (!pts.length) { fail('No water here has a conductance and a SAR to draw.'); return; }
+    // What <DATA> measured: SC, and SAR or Na, Ca and Mg by the model's names for them, in mol/kgw.
+    const data = (state.compiled && state.compiled.data) || [];
+    const measuredPts = [];
+    for (const tab of data) {
+      if (tab.kind !== along || !tab.columns.includes('SC')) continue;
+      if (along === 'time' && ((tab.cell || 0) !== cell || (tab.layer || 0) !== layer)) continue;
+      const col = (row, names) => {
+        for (const nm of names) { const j = tab.columns.indexOf(nm); if (j >= 0 && row[j + 1] !== null) return row[j + 1]; }
+        return null;
+      };
+      for (const row of tab.rows) {
+        const sc = col(row, ['SC']);
+        let sar = col(row, ['SAR']);
+        if (sar === null) {
+          const na = col(row, ['tot(Na)', 'Na+']);
+          const camg = (col(row, ['tot(Ca)', 'Ca+2']) || 0) + (col(row, ['tot(Mg)', 'Mg+2']) || 0);
+          sar = na !== null && camg > 0 ? (1000 * na) / Math.sqrt(1000 * camg) : null;
+        }
+        if (sc > 0 && sar !== null) {
+          measuredPts.push({ sc, sar, label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
+        }
+      }
+    }
+    const all = [...pts, ...measuredPts];
+    const lo = Math.min(100, ...all.map((p) => p.sc * 0.8));
+    const hi = Math.max(5000, ...all.map((p) => p.sc * 1.25));
+    const top = Math.max(32, ...all.map((p) => p.sar * 1.1));
+    const c = themeColors();
+    const traces = [];
+    // The sodium lines, falling with the conductance, cut at SAR 0.
+    for (const [a, bb] of USSL_S) {
+      const x1 = Math.min(hi, 10 ** (a / bb));
+      traces.push({ type: 'scatter', mode: 'lines', x: [lo, x1], y: [a - bb * Math.log10(lo), Math.max(0, a - bb * Math.log10(x1))],
+        line: { color: c.text, width: 1 }, hoverinfo: 'skip', showlegend: false });
+    }
+    const hover = (p) => `${esc(p.label)}<br>${usslClass(p.sc, p.sar)}: SC ${fit4(p.sc)} µS/cm, SAR ${fit4(p.sar)}`;
+    traces.push({ type: 'scatter', mode: pts.length > 1 ? 'lines+markers' : 'markers', name: 'the model', x: pts.map((p) => p.sc),
+      y: pts.map((p) => p.sar), line: { color: c.grid, width: 1 },
+      marker: { size: 7, color: pts.length > 1 ? pts.map((p) => p.color) : '#1f77b4', colorscale: 'Viridis', showscale: pts.length > 1,
+        colorbar: pts.length > 1 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0,
+          tickfont: { size: 10 }, len: 0.7 } : undefined },
+      text: pts.map(hover), hovertemplate: '%{text}<extra></extra>' });
+    if (measuredPts.length) {
+      traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.sc), y: measuredPts.map((p) => p.sar),
+        marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } }, text: measuredPts.map(hover),
+        hovertemplate: '%{text}<extra></extra>' });
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis.type = 'log';
+    layout.xaxis.range = [Math.log10(lo), Math.log10(hi)];
+    layout.xaxis.title = { text: 'specific conductance, SC (µS/cm at the water\'s temperature)', font: { size: 11 } };
+    layout.yaxis.range = [0, top];
+    layout.yaxis.title = { text: 'sodium adsorption ratio, SAR (from meq/kgw)', font: { size: 11 } };
+    layout.shapes = USSL_C.map((x) => ({ type: 'line', xref: 'x', yref: 'paper', x0: x, x1: x, y0: 0, y1: 1,
+      line: { color: c.text, width: 1, dash: 'dot' } }));
+    // The classes' names: C1 to C4 along the top, S1 to S4 at the left between the lines.
+    const edges = [lo, ...USSL_C, hi].map(Math.log10);
+    layout.annotations = [
+      ...[1, 2, 3, 4].map((k) => ({ x: (edges[k - 1] + edges[k]) / 2, xref: 'x', y: 1, yref: 'paper', yanchor: 'bottom', showarrow: false,
+        text: `C${k}`, font: { size: 11, color: c.text } })),
+      ...[0, 1, 2, 3].map((k) => {
+        const lg = Math.log10(lo);
+        const below = k ? USSL_S[k - 1][0] - USSL_S[k - 1][1] * lg : 0;
+        const above = k < 3 ? USSL_S[k][0] - USSL_S[k][1] * lg : top;
+        return { x: Math.log10(lo * 1.08), xref: 'x', y: (below + Math.min(above, top)) / 2, yref: 'y', xanchor: 'left', showarrow: false,
+          text: `S${k + 1}`, font: { size: 11, color: c.text } };
+      }),
+    ];
+    // Log axes take their annotations' x in log10.
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    compTableNow = { head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', 'SC (µS/cm)', 'SAR', 'class'], name: 'rtm_ussl',
+      rows: [...pts.map((p) => [`model, ${p.label}`, p.t, p.cell, p.x === undefined ? null : p.x, p.sc, p.sar, usslClass(p.sc, p.sar)]),
+        ...measuredPts.map((p) => [p.label, null, null, null, p.sc, p.sar, usslClass(p.sc, p.sar)])] };
+    const first = pts[0];
+    const last = pts[pts.length - 1];
+    const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
+    note.textContent = `${where}: ${usslClass(first.sc, first.sar)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
+      + `${pts.length > 1 ? `, ${usslClass(last.sc, last.sar)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
+      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
   }
 
   function drawPiper(plot, waters, measured, colorTitle, c) {
@@ -4404,22 +4560,24 @@
       const view = $('rtmCompView').value;
       return {
         kicker: 'Tab', title: 'Composition',
-        lead: 'What the water is made of, from the stored concentrations and what each species is made of: where an element is, and the water\'s major ions as the Piper, Schoeller and Stiff diagrams draw them.',
+        lead: 'What the water is made of, from the stored concentrations and what each species is made of: where an element is, the water\'s major ions as the Piper, Schoeller and Stiff diagrams draw them, and its class for irrigation.',
         sections: [
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
             ['Stiff diagrams', 'Each water a polygon, cations to the left of zero and anions to the right, on one scale so that their sizes compare.', view === 'stiff'],
+            ['a USSL diagram', 'The U.S. Salinity Laboratory\'s classes of irrigation water: the specific conductance across, C1 to C4 split at 250, 750 and 2,250 µS/cm, and the sodium adsorption ratio up, S1 to S4 split by lines that fall as the conductance rises. Needs SC, which a model has with <CONDUCTANCE>, and SAR.', view === 'ussl'],
           ] },
           { heading: 'The major ions', list: [
             'Ca and Mg are twice their dissolved totals, **Na + K** the two together, Cl its total, **SO₄** twice the sulfur in sulfate — a species with four O to each S, so not HS⁻ — and **HCO₃ + CO₃** the carbonate\'s alkalinity, HCO₃⁻ one and CO₃⁻² two. A total is everything dissolved: CaHCO₃⁺ counts in Ca and in the carbonate.',
             'In meq/kgw under an ACTIVITY, whose concentrations are mol/kgw; otherwise the concentrations times the charge.',
             'Measured waters come from <DATA>, by the names the model gives them: tot(Ca) or Ca+2, alk(CO3) or HCO3- and CO3-2. One the table has no column for counts as none.',
+            'A USSL diagram reads SC and SAR, or the SAR from tot(Na), tot(Ca) and tot(Mg). Its classes are for the conductance at 25 °C; the model\'s, as PHREEQC\'s, is at the water\'s own temperature.',
           ] },
           { heading: 'The toolbar', list: [
             '**Along**, in a column: the run at one **Cell**, or the column at one time, **At**.',
-            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper draws every stored point.',
+            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper or a USSL diagram draws every stored point.',
             '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type. **SVG**, **PNG**: the picture.',
           ] },
         ],
@@ -4816,6 +4974,7 @@
       'macinnes', 'etheta', 'yes', 'no', 'true', 'false']),
     LLNL: new Set(['temperatures', 'dh_a', 'dh_b', 'bdot', 'co2']),
     VOLUMES: new Set(['millero']),
+    CONDUCTANCE: new Set(['gfw', 'dw', 'viscosity', 'vm']),
     SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas',
       'drummond']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
@@ -5183,11 +5342,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109i';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109j';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109b',
+    'resources/js/rtm-phreeqc.js?v=20261109j',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -5574,6 +5733,13 @@ END
           + (pr.volumes ? `: PHREEQC corrects each log K for the pressure with the reaction's molar volumes, and so does the `
             + `model with the database's <code>-Vm</code> in <code>&lt;VOLUMES&gt;</code> (${pr.volumes}), each going with `
             + 'the ionic strength; the log K are written at one atmosphere.</p>' : '.</p>'));
+      }
+      if (r.conductance) {
+        out.push(`<p>The water's specific conductance, density and viscosity are worked out as PHREEQC works them out, `
+          + `from the solutes' <code>-dw</code> (${r.conductance.dw} of them), <code>-viscosity</code> and gram formula `
+          + `weights in <code>&lt;CONDUCTANCE&gt;</code>${r.conductance.volumes ? ' and their molar volumes in '
+            + '<code>&lt;VOLUMES&gt;</code>' : ''}: the quantities SC, rho and viscos, and a USSL diagram on the `
+          + 'Composition tab.</p>');
       }
       if (r.activity && r.activity.kind === 'pitzer') {
         const np = r.activity.pitzer;

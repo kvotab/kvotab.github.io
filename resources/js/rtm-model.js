@@ -60,7 +60,7 @@
      ====================================================================== */
 
   const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
-    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES', 'OUTPUT', 'DATA'];
+    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES', 'CONDUCTANCE', 'OUTPUT', 'DATA'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -2290,6 +2290,371 @@
       dVw = -Vw * ws.dlnRho;
     }
     return { Av, QBrn, Vw, pbS: 2600 + ws.atm * 1.01325, TKs: w.T - 273.15 + 45.15, dAv, dVw };
+  }
+
+  /**
+   * <CONDUCTANCE>: what PHREEQC works a water's specific conductance, its
+   * density and its viscosity out from, a solute to a line:
+   *
+   *   Na+   gfw 22.9898  dw 1.33e-9 75 3.627 0 0.7037  viscosity 0.1387 -8.66e-2 1.25e-2 1.45e-2 7.5e-3 1.062
+   *   H2O   gfw 18.016
+   *   Cl-   vm 4.465 4.801 4.325 -2.847 1.748 0 -0.331 20.16 0 1
+   *
+   * gfw, the gram formula weight, every solute's (and H2O's, 18.016 unless
+   * given); dw, PHREEQC's -dw -- Dw, dw_t, dw_a, dw_a2, dw_a_visc, dw_a3,
+   * dw_a_v_dif; viscosity, its -viscosity -- the Jones-Dole b0 to b2, d1 to
+   * d3, the anion's factor and the B and D at 25 C. Cl-'s vm, its -Vm, only
+   * where Cl- is no species: the viscosity takes the other anions' volumes
+   * against Cl-'s (calc_vm_Cl). Read with ACTIVITY, the ionic strength's.
+   */
+  function readConductance(lines, species, act) {
+    if (!lines.length) return null;
+    const head = lines[0].line;
+    if (!act || act.kind === 'none') {
+      throw new RtmError('<CONDUCTANCE> works the conductance, the density and the viscosity out at the water\'s ionic strength '
+        + 'and its activity coefficients: it is read with ACTIVITY.', head);
+    }
+    if (act.llnl) {
+      throw new RtmError('<CONDUCTANCE> is not read under ACTIVITY = llnl: PHREEQC works out no molar volumes under LLNL\'s '
+        + 'activity model, which the density needs.', head);
+    }
+    const ns = species.length;
+    const index = new Map(species.map((sp, k) => [sp.name, k]));
+    const out = { gfw: new Float64Array(ns), dw: new Array(ns).fill(null), jd: new Array(ns).fill(null), gfwW: 18.016,
+      clVm: null, falk: false, anyVisc: false };
+    const seen = new Map();
+    const LEN = { gfw: [1, 1], dw: [1, 7], viscosity: [1, 10], vm: [1, 10] };
+    for (const { text, line } of lines) {
+      const tokens = text.split(/\s+/).filter(Boolean);
+      const name = tokens.shift();
+      if (seen.has(name)) throw new RtmError(`${name} is given twice in <CONDUCTANCE>, on lines ${seen.get(name)} and ${line}.`, line);
+      seen.set(name, line);
+      const groups = {};
+      let cur = null;
+      for (const tok of tokens) {
+        const key = tok.toLowerCase();
+        if (LEN[key]) {
+          if (groups[key]) throw new RtmError(`${name} in <CONDUCTANCE> gives ${key} twice.`, line);
+          groups[key] = [];
+          cur = key;
+          continue;
+        }
+        const v = Number(tok);
+        if (!cur || !Number.isFinite(v)) {
+          throw new RtmError(`"${text}" in <CONDUCTANCE>: a solute, then gfw, dw and viscosity, each with its numbers -- `
+            + `"${tok}" is ${cur ? 'no number' : 'not one of them'}.`, line);
+        }
+        groups[cur].push(v);
+      }
+      for (const [key, v] of Object.entries(groups)) {
+        const [lo, hi] = LEN[key];
+        if (v.length < lo || v.length > hi) {
+          throw new RtmError(`${name} in <CONDUCTANCE>: ${key} takes ${lo === hi ? lo : `${lo} to ${hi}`} number`
+            + `${hi === 1 ? '' : 's'}, not ${v.length}.`, line);
+        }
+      }
+      if (name === 'H2O') {
+        if (Object.keys(groups).some((g) => g !== 'gfw')) throw new RtmError('H2O in <CONDUCTANCE> takes its gfw alone.', line);
+        if (groups.gfw) out.gfwW = groups.gfw[0];
+        continue;
+      }
+      const k = index.has(name) ? index.get(name) : -1;
+      if (k < 0) {
+        if (name === 'Cl-' && groups.vm && Object.keys(groups).length === 1) {
+          // In PHREEQC's units, as <VOLUMES> reads a -Vm: a1..a4 and W to cm3/mol, i4 1 unless given.
+          const q = Float64Array.from({ length: 10 }, (_, i) => groups.vm[i] || 0);
+          if (groups.vm.length < 10) q[9] = 1;
+          q[0] *= 41.84004e-1;
+          q[1] *= 41.84004e2;
+          q[2] *= 41.84004;
+          q[3] *= 41.84004e4;
+          q[4] *= 1e5;
+          out.clVm = q;
+          continue;
+        }
+        throw new RtmError(`${name} in <CONDUCTANCE> is no species; only Cl- may be given without being one, with its vm.`, line);
+      }
+      if (!act.solute[k]) {
+        throw new RtmError(`${name} in <CONDUCTANCE> is not dissolved in the water: the conductance is the solutes'.`, line);
+      }
+      if (groups.vm) throw new RtmError(`${name} in <CONDUCTANCE>: a solute's molar volume is in <VOLUMES>.`, line);
+      if (groups.gfw) {
+        if (!(groups.gfw[0] > 0)) throw new RtmError(`${name} in <CONDUCTANCE>: gfw is above zero.`, line);
+        out.gfw[k] = groups.gfw[0];
+      }
+      if (groups.dw) out.dw[k] = Float64Array.from({ length: 7 }, (_, i) => groups.dw[i] || 0);
+      if (groups.viscosity) {
+        out.jd[k] = Float64Array.from({ length: 10 }, (_, i) => groups.viscosity[i] || 0);
+        out.anyVisc = true;
+      }
+    }
+    const missing = species.map((sp, k) => (act.solute[k] && sp.name !== 'H2O' && !sp.electron && !(out.gfw[k] > 0) ? sp.name : null))
+      .filter(Boolean);
+    if (missing.length) {
+      throw new RtmError(`<CONDUCTANCE> gives no gfw for ${missing.slice(0, 5).join(', ')}${missing.length > 5 ? ` and ${missing.length - 5} `
+        + 'more' : ''}: the density is every solute's mass.`, head);
+    }
+    // PHREEQC's choice of how: Falkenhagen and Debye-Onsager where H+'s dw_a3 is above 24, its older equation else.
+    const h = index.has('H+') ? out.dw[index.get('H+')] : null;
+    out.falk = !!(h && h[5] > 24);
+    return out;
+  }
+
+  // Pure water's viscosity at 25 C, mPa s (viscosity(), Huber et al. 2009), and constants PHREEQC uses (global_structures.h).
+  const VISC0_25 = 0.8900239182946;
+  const F_C_MOL = 96493.5;
+  const AVOGADRO = 6.02252e23;
+
+  /** Pure water's viscosity, mPa s, at T kelvin and density rho g/cm3: Huber et al. (2009), as PHREEQC's viscosity() has it. */
+  function waterViscosity(T, rho) {
+    const H = [1.67752, 2.20462, 0.6366564, -0.241605];
+    const Tb = T / 647.096;
+    let denom = H[0];
+    for (let i = 1; i < 4; i++) denom += H[i] / Tb ** i;
+    const mu0 = (100 * Math.sqrt(Tb)) / denom;
+    const H2 = [5.20094e-1, 2.22531e-1, -2.81378e-1, 1.61913e-1, -3.25372e-2, 0, 0,
+      8.50895e-2, 9.99115e-1, -9.06851e-1, 2.57399e-1, 0, 0, 0,
+      -1.08374, 1.88797, -7.72479e-1, 0, 0, 0, 0,
+      -2.89555e-1, 1.26613, -4.89837e-1, 0, 6.98452e-2, 0, -4.35673e-3,
+      0, 0, -2.57040e-1, 0, 0, 8.72102e-3, 0,
+      0, 1.20573e-1, 0, 0, 0, 0, -5.93264e-4];
+    const Rb = rho / 0.322;
+    const Tb1 = 1 / Tb - 1;
+    const Rb1 = Rb - 1;
+    let S1 = 0;
+    for (let i = 0; i < 6; i++) {
+      let S2 = 0;
+      for (let j = 0; j < 7; j++) {
+        const h = H2[7 * i + j];
+        if (!h) continue;
+        S2 += j ? h * Rb1 ** j : h;
+      }
+      S1 += i ? S2 * Tb1 ** i : S2;
+    }
+    return (mu0 * Math.exp(Rb * S1)) / 1e3;
+  }
+
+  /**
+   * A water's density, viscosity and specific conductance, as PHREEQC works
+   * them out (calc_dens, viscosity, calc_SC): c the molalities from `b`,
+   * `cond` <CONDUCTANCE>, I the ionic strength, `ws` the water (waterAt),
+   * `wv` its volumes' constants (waterVolume), vm each solute's molar
+   * volume at I (molarVolumesAt; 0 for one <VOLUMES> does not give), `q`
+   * <VOLUMES>' numbers for calc_vm0, solutes and their charges, `names`.
+   * Returns { rho (kg/L), visc and visc0 (mPa s), SC (uS/cm), vol (L to a kg of water) }.
+   */
+  function waterProperties({ c, b, cond, I, T, ws, wv, vm, vol, solutes, z, names, iCl }) {
+    const sqrtMu = Math.sqrt(I);
+    const visc0 = waterViscosity(T, ws.rho);
+    const tc = T - 273.15;
+    const lmOf = (k) => (c[b + k] > 0 ? Math.log10(c[b + k]) : -Infinity);
+    // The volume at no ionic strength and one atmosphere, but the water's Born and Av: PHREEQC's calc_vm0.
+    const vm0 = (k) => {
+      if (!vol || vol.kind[k] !== 0 || !wv) return 0;
+      const q = vol.q[k];
+      if (!q[0]) return 0;
+      const pb = 2600 + 1.01325;
+      let g = q[0] + q[1] / pb + (q[2] + q[3] / pb) / wv.TKs - q[4] * wv.QBrn;
+      if (z[k] && (q[6] !== 0 || q[7] !== 0 || q[8] !== 0)) {
+        const bi = q[6] + q[7] / wv.TKs + q[8] * wv.TKs;
+        g += q[9] === 1 ? 0 : bi * 0 ** q[9];
+      }
+      return g;
+    };
+    // Cl-'s molar volume where it is not among the solutes the viscosity counts: PHREEQC's calc_vm_Cl.
+    const vmCl = () => {
+      if (iCl >= 0) return vm[iCl];
+      const q = cond.clVm;
+      if (!q || !wv || !q[0]) return 0;
+      let v = q[0] + q[1] / wv.pbS + (q[2] + q[3] / wv.pbS) / wv.TKs - q[4] * wv.QBrn;
+      v += q[5] < 1e-5 ? 0.5 * wv.Av * sqrtMu : (0.5 * wv.Av * sqrtMu) / (1 + q[5] * ws.B * sqrtMu);
+      if (q[6] !== 0 || q[7] !== 0 || q[8] !== 0) {
+        const bi = q[6] + q[7] / wv.TKs + q[8] * wv.TKs;
+        v += q[9] === 1 ? bi * I : bi * I ** q[9];
+      }
+      return v;
+    };
+    // THE VISCOSITY: Jones and Dole, A from Falkenhagen and Dole, the anions against Cl- (viscosity(), no surface).
+    let visc = visc0;
+    if (cond.anyVisc) {
+      const tcv = tc > 200 ? 200 : tc;
+      let Bc = 0;
+      let Dc = 0;
+      let mPlus = 0;
+      let mMin = 0;
+      let eqPlus = 0;
+      let eqMin = 0;
+      let eqDwPlus = 0;
+      let eqDwMin = 0;
+      let Van = 0;
+      let mAn = 0;
+      let VCl = 0;
+      for (const k of solutes) {
+        if (lmOf(k) < -9) continue;
+        const m = c[b + k];
+        const jd = cond.jd[k];
+        // As PHREEQC asks it, of b0, b1 and d1 as given; below 1e-9 mol/kgw a species counts in nothing here.
+        if (jd && (jd[0] || jd[1] || jd[3])) {
+          if (m < 1e-9) continue;
+          const lz = Math.abs(z[k]);
+          const fz = lz ? (lz * lz + lz) / 2 : I / m;
+          // The 25 C B and D put in, as PHREEQC puts them into b0 and d1.
+          const b0 = jd[7] || jd[8] ? jd[7] - jd[1] * Math.exp(-jd[2] * 25) : jd[0];
+          const d1 = jd[7] || jd[8] ? jd[8] / Math.exp(-jd[4] * 25) : jd[3];
+          Bc += (b0 + jd[1] * Math.exp(-jd[2] * tcv)) * m;
+          const t2 = jd[5] >= 1 ? I / 3 / jd[5] : jd[5] > 0.4 ? -0.8 / jd[5] : -1;
+          let t3 = d1 * Math.exp(-jd[4] * tcv) * m * ((I ** jd[5]) * (1 + t2) + (m * fz) ** jd[5]) / (2 + t2);
+          if (t3 < -1e-5) t3 = 0;
+          Dc += t3;
+        }
+        if (!z[k]) {
+          if (jd && jd[6]) { Van += vm[k] * jd[6] * m; mAn += m; }
+          continue;
+        }
+        const dw = cond.dw[k];
+        let Dw = dw ? dw[0] : 0;
+        if (!Dw) continue;
+        Dw *= VISC0_25 / visc0;
+        if (dw[1]) Dw *= Math.exp(dw[1] / T - dw[1] / 298.15);
+        if (z[k] < 0) {
+          if (names[k] === 'Cl-') { VCl = vm[k]; Van += VCl * m; mAn += m; } else if (jd && jd[6]) { Van += vm[k] * jd[6] * m; mAn += m; }
+          mMin += m;
+          eqMin -= m * z[k];
+          eqDwMin -= (m * z[k]) / Dw;
+        } else {
+          mPlus += m;
+          eqPlus += m * z[k];
+          eqDwPlus += (m * z[k]) / Dw;
+        }
+      }
+      let A = 0;
+      if (mPlus && mMin && eqDwPlus && eqDwMin) {
+        const z1 = eqPlus / mPlus;
+        const z2 = eqMin / mMin;
+        const D1 = eqPlus / eqDwPlus;
+        const D2 = eqMin / eqDwMin;
+        const t1 = (D1 - D2) / (Math.sqrt(D1 * z1 + D2 * z2) + Math.sqrt((D1 + D2) * (z1 + z2)));
+        const psi = (D1 * z2 + D2 * z1) / 4 - z1 * z2 * t1 * t1;
+        A = ((4.3787e-14 * T ** 1.5) / (Math.sqrt((ws.eps * (z1 + z2)) / Math.max(z1, z2)) * (D1 * D2))) * psi;
+      }
+      visc = visc0 + A * Math.sqrt((eqPlus + eqMin) / 2);
+      if (mAn) Van /= mAn;
+      if (!VCl) VCl = vmCl();
+      const fan = Van && VCl ? 2 - Van / VCl : 1;
+      visc += visc0 * fan * (Bc + (Dc < 0 ? 0 : Dc));
+      if (visc < 0) visc = visc0;
+    }
+    // THE DENSITY, and the volume of a kilogram of water's solution, L (calc_dens).
+    let MT = 0;
+    let Vs = 0;
+    for (const k of solutes) { MT += c[b + k] * cond.gfw[k]; Vs += c[b + k] * vm[k]; }
+    const rho0 = ws.rho;
+    const rho = MT > 0 ? (rho0 * (1e3 + MT)) / (rho0 * Vs + 1e3) : rho0;
+    const volume = (1 + 1e-3 * MT) / rho;
+    // THE SPECIFIC CONDUCTANCE, uS/cm (calc_SC).
+    let SC = 0;
+    const dwOf = (k) => {
+      const dw = cond.dw[k];
+      let Dw = dw ? dw[0] : 0;
+      if (!Dw) return 0;
+      if (T !== 298.15 && dw[1]) Dw *= Math.exp(dw[1] / T - dw[1] / 298.15);
+      return (Dw * VISC0_25) / visc0;
+    };
+    if (!cond.falk) {
+      for (const k of solutes) {
+        if (lmOf(k) < -30) continue;
+        let Dw = dwOf(k);
+        const lz = Math.abs(z[k]);
+        if (!Dw || !lz) continue;
+        const dw = cond.dw[k];
+        const a = dw[2] || 1.6;
+        const a2 = dw[3] || 4.73;
+        const av = cond.anyVisc ? (dw[4] ? (visc0 / visc) ** dw[4] : 1) : 1;
+        const a3 = cond.anyVisc ? (dw[5] ? I ** dw[5] : dw[4] ? 1 : I ** 0.75) : (dw[5] ? I ** dw[5] : I ** 0.75);
+        const ka = (ws.B * a2 * sqrtMu) / (1 + a3);
+        Dw *= av * Math.exp((-a * ws.A * lz * sqrtMu) / (1 + ka));
+        SC += c[b + k] * lz * lz * Dw;
+      }
+      SC *= (1e7 * F_C_MOL * F_C_MOL) / (R_KJ * 298150.0);
+      return { rho, visc, visc0, SC, vol: volume };
+    }
+    let mPlus = 0;
+    let mMin = 0;
+    let eqPlus = 0;
+    let eqMin = 0;
+    let eqDwPlus = 0;
+    let eqDwMin = 0;
+    const dwc = new Float64Array(z.length);
+    for (const k of solutes) {
+      if (lmOf(k) < -30) continue;
+      const Dw = dwOf(k);
+      if (!Dw) continue;
+      dwc[k] = Dw;
+      if (!z[k]) continue;
+      const m = c[b + k];
+      if (z[k] > 0) { mPlus += m; eqPlus += m * z[k]; eqDwPlus += m * z[k] * Dw; } else {
+        mMin += m;
+        eqMin -= m * z[k];
+        eqDwMin -= m * z[k] * Dw;
+      }
+    }
+    if (!(mPlus > 0 && mMin > 0)) return { rho, visc, visc0, SC: 0, vol: volume };
+    const zPlus = eqPlus / mPlus;
+    const zMin = eqMin / mMin;
+    const tr = (eqDwPlus / mPlus) / (eqDwPlus / mPlus + eqDwMin / mMin);
+    const q = 1 / ((tr / zPlus + (1 - tr) / zMin) * (zMin + zPlus));
+    const sqrtQ = Math.sqrt(q);
+    const e2 = (1.60218e-19 * 1.60218e-19) / (6 * Math.PI);
+    const B1 = ((e2 / (2 * 8.8542e-12 * ws.eps * 1.38066e-23 * T)) * q) / (1 + sqrtQ) * ws.B * 1e10 * zPlus * zMin;
+    const B2 = ((e2 * AVOGADRO) / visc0) * ws.B * 1e17;
+    const muMin = 3 * mMin * (zMin - 1) + mMin;
+    const muPlus = 3 * mPlus * (zPlus - 1) + mPlus;
+    const DwSC = (1e4 * F_C_MOL * F_C_MOL) / (R_KJ * 298.15e3);
+    const llSC = ((0.5e3 * (eqPlus + eqMin)) / volume) / volume;
+    for (const k of solutes) {
+      const zk = z[k];
+      if (!zk || lmOf(k) < -30) continue;
+      let Dw = dwc[k];
+      if (!Dw) continue;
+      const lz = Math.abs(zk);
+      const dw = cond.dw[k];
+      let a3 = dw[5];
+      const m = c[b + k];
+      if (a3 !== 0 && a3 > -5.01 && a3 < 4.99) {
+        const a = dw[2] || 1.6;
+        const a2 = dw[3] || 4.73;
+        const av = cond.anyVisc ? (dw[4] ? (visc0 / visc) ** dw[4] : 1) : 1;
+        const ka = (ws.B * a2 * sqrtMu) / (1 + I ** a3);
+        Dw *= av * Math.exp((-a * ws.A * lz * sqrtMu) / (1 + ka));
+        SC += m * lz * lz * Dw * 1e3 * DwSC;
+        continue;
+      }
+      if (!a3) a3 = 10;
+      let a = dw[2] || 3.5;
+      let a2 = dw[3];
+      const av = dw[4];
+      if (zk < -0.5) {
+        const t = zPlus - 1;
+        a -= 0.126 * lz * t;
+        a2 += 0.126 * lz * t;
+      }
+      Dw *= DwSC * lz;
+      let t1;
+      if (!a2) t1 = 1;
+      else if (names[k] === 'H+') t1 = (1 + I) ** a2;
+      else {
+        t1 = 1 + (vm[k] - vm0(k));
+        if (t1 > 0) t1 **= a2;
+        if (t1 < 1) t1 = 1;
+      }
+      const ka = a3 >= 5 ? ws.B * a * t1 * sqrtMu : ws.B * a * I ** a2;
+      let ll = (Dw - (B2 * lz * sqrtMu) / (1 + ka)) * (1 - (B1 * sqrtMu) / ((1 + ka) * (1 + ka)));
+      if (av) ll *= (visc0 / visc) ** av;
+      const half = 2 / (eqPlus + eqMin);
+      const share = zk > 0 ? muPlus / (eqPlus * half) : muMin / (eqMin * half);
+      SC += ((ll * m * lz * lz) / share) * llSC;
+    }
+    return { rho, visc, visc0, SC, vol: volume };
   }
 
   /**
@@ -8852,9 +9217,12 @@
     let act = activityModel(settings, species, warnings, sections.SIT, sections.PITZER, sections.LLNL);
     // The molar volumes, for each log K at the water's pressure (readVolumes, volumesAt).
     const vol = readVolumes(sections.VOLUMES, species, act, settings);
+    // <CONDUCTANCE>: what the water's conductance, density and viscosity are worked out from (QUANTITIES).
+    const cond = readConductance(sections.CONDUCTANCE, species, act);
     if (vol) {
       act.vol = vol;
-      if (vol.idle) {
+      // Idle for the log K, but not where the density is made of them (<CONDUCTANCE>).
+      if (vol.idle && !cond) {
         warnings.push(`<VOLUMES>: the water is at ${act.wt.atmGiven} atm at ${settings.TEMPERATURE} C, and PHREEQC corrects a `
           + 'log K for the pressure above one atmosphere alone: the volumes change nothing here.');
       }
@@ -11447,6 +11815,54 @@
       addQ(name, unit ? `${name} (${unit})` : name, 'outputs', unit,
         /mol|eq\b|g\/|ppm|ppb|atm/i.test(unit) ? 'conc' : 'index', (c, b, cell, t) => o.at(c, b, cell, t));
     }
+    /*
+      The water's specific conductance, density and viscosity, as PHREEQC
+      works them out from <CONDUCTANCE> (waterProperties), once a point
+      whichever of them is asked for; and the sodium adsorption ratio of the
+      dissolved Na, Ca and Mg, in meq/kgw. A name an <OUTPUT> took first is
+      left to it.
+    */
+    let qEval = 0;
+    let qPropsAt = -1;
+    let qProps = null;
+    const qVm = new Float64Array(ns);
+    const qWaterSolutes = qSolutes.filter((k) => nameOf[k] !== 'H2O');
+    const iClQ = index.has('Cl-') && isSolute(index.get('Cl-')) ? index.get('Cl-') : -1;
+    const propsOf = (c, b, cell) => {
+      if (qPropsAt === qEval) return qProps;
+      const wt = act.wtc ? act.wtc[cell] : act.wt;
+      const ws = waterAt(wt, Math.exp(qW.lnAw));
+      const wv = waterVolume(wt, ws);
+      qVm.fill(0);
+      if (act.vol) {
+        act.vol.V.fill(0);
+        molarVolumesAt(act, qW.I, !(qW.I > 1e-10), wt, ws);
+        for (const k of act.vol.list) qVm[k] = act.vol.V[k];
+      }
+      qProps = waterProperties({ c, b, cond, I: qW.I, T: tkOf(cell), ws, wv, vm: qVm, vol: act.vol || null,
+        solutes: qWaterSolutes, z: qAct.z, names: nameOf, iCl: iClQ });
+      qPropsAt = qEval;
+      return qProps;
+    };
+    const outputNames = new Set(outputs.map((o) => o.name));
+    if (cond) {
+      if (!outputNames.has('SC')) addQ('SC', 'specific conductance', 'water', 'µS/cm', 'index', (c, b, cell) => propsOf(c, b, cell).SC);
+      if (!outputNames.has('rho')) addQ('rho', 'density', 'water', 'kg/L', 'index', (c, b, cell) => propsOf(c, b, cell).rho);
+      if (!outputNames.has('viscos')) addQ('viscos', 'viscosity', 'water', 'mPa s', 'index', (c, b, cell) => propsOf(c, b, cell).visc);
+    }
+    const waterTerms = (el) => ((composition.elements.find((e) => e.el === el) || { terms: [] }).terms)
+      .filter((tm) => tm[2] === 'water');
+    const sarNa = waterTerms('Na');
+    const sarCaMg = [...waterTerms('Ca'), ...waterTerms('Mg')];
+    if (sarNa.length && sarCaMg.length && !outputNames.has('SAR')) {
+      addQ('SAR', 'sodium adsorption ratio', 'water', '', 'index', (c, b) => {
+        let na = 0;
+        let camg = 0;
+        for (const [k, n] of sarNa) na += n * c[b + k];
+        for (const [k, n] of sarCaMg) camg += n * c[b + k];
+        return camg > 0 ? (1000 * na) / Math.sqrt(1000 * camg) : NaN;
+      });
+    }
     /**
      * The quantities at indices `which` (into the list) in cell `cell` of the
      * concentrations c at time t, into out.
@@ -11455,6 +11871,7 @@
       thermoAt(t);
       const b = cell * ns;
       qW = activityAt(qAct, c, b, qG, qD, cell);
+      qEval++;
       for (let q = 0; q < which.length; q++) out[q] = qFn[which[q]](c, b, cell, t);
       return out;
     }
@@ -11580,7 +11997,9 @@
         pitzer: act.pz ? { params: act.pz.np, macinnes: act.pz.icon, etheta: act.pz.etheta } : null,
         // <VOLUMES>: how many species and phases have a molar volume, at what pressure, and whether it corrects anything.
         volumes: act.vol ? { given: act.vol.list.length + act.vol.phases.size, pressure: act.wt ? act.wt.atmGiven : 1,
-          idle: !!act.vol.idle } : null } : null,
+          idle: !!act.vol.idle } : null,
+        // <CONDUCTANCE>: the conductance, the density and the viscosity, and by which of PHREEQC's equations.
+        conductance: cond ? { falk: cond.falk } : null } : null,
       /*
         THE TEMPERATURE: the number, or the expression, TEMPERATURE gives;
         whether it differs from cell to cell and goes with time; how many
@@ -13128,5 +13547,5 @@
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn, tunables };
+    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn, tunables, waterViscosity };
 }));

@@ -50,6 +50,12 @@ const P = require(path.join(jsDir, 'rtm-phreeqc.js'));
 const E = require(path.join(jsDir, 'rtm-phreeqc-engine.js'));
 global.RtmPhreeqc = P;
 
+/*
+  A species line of a model text, as the checks edit them -- a name, the gap, its first number and the rest -- in
+  <SPECIES> alone: <VOLUMES>, which the hand-off writes wherever it writes <CONDUCTANCE>, has lines of the same shape.
+*/
+const SPECIES_LINE = /(?<=^<SPECIES>[^\S\n]*\n(?:(?!<)[^\n]*\n)*)^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm;
+
 let checks = 0;
 const failures = [];
 function check(label, ok, detail) {
@@ -314,7 +320,7 @@ function againstRedox(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral/.test(rest) || !cb.has(name)) return line;
       const sp = inRow.species.get(cb.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -808,7 +814,7 @@ function againstTransport(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral/.test(rest) || !back.has(name)) return line;
       const sp = inflow.species.get(back.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -1000,7 +1006,7 @@ function againstExchange(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral|exchange/.test(rest) || !back.has(name)) return line;
       const sp = inRow.species.get(back.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -1115,7 +1121,7 @@ function againstSurface(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral|exchange|surface/.test(rest) || !back.has(name)) return line;
       const sp = inRow.species.get(back.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -1209,7 +1215,7 @@ function againstDoubleLayer(engine) {
   const res = P.waterToModel({ engine, database, water: { name: 'Example 8', text: water }, activity: true, exact: true });
   const init = P.parseRows(engine.run(`${P.punchBlock()}${sol}END\n`)).pop();
   const back = new Map([...res.names].map(([k, n]) => [n, k]));
-  const text = res.text.replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+  const text = res.text.replace(SPECIES_LINE, (line, name, gap, value, rest) => {
     if (/potential/.test(rest)) return `${name}${gap}${rest.trim()}`;
     if (/surface/.test(rest)) {
       return `${name}${gap}surface${{ Hfo_sOH: ' sites=5e-6', Hfo_wOH: ' sites=2e-4' }[name] || ''}`;
@@ -1264,7 +1270,7 @@ function againstDoubleLayer(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral|exchange|surface|potential/.test(rest) || !cback.has(name)) return line;
       const sp = inRow.species.get(cback.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -1396,7 +1402,7 @@ function sitColumn(engine, db, N, pv) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral/.test(rest) || !back.has(name)) return line;
       const sp = inflow.species.get(back.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -1550,7 +1556,7 @@ function againstSit(engine) {
   const y = m.toConcentrations(m.initialState());
   let worst = 0;
   for (const [p, n] of res.names) worst = Math.max(worst, Math.abs(y[m.speciesNames.indexOf(n)] / res.molal.get(p) - 1));
-  const sitLines = res.text.split('\n<SIT>\n')[1].split('\n<REACTIONS>')[0].trim().split('\n');
+  const sitLines = res.text.split('\n<SIT>\n')[1].split(/\n<[A-Z_]+>/)[0].trim().split('\n');
   check('  the hand-off: ACTIVITY = sit and the database\'s coefficients between the species written, no a or b, and '
     + 'the page starts on PHREEQC\'s water', /^ACTIVITY = sit$/m.test(res.text) && sitLines.length === res.report.activity.sitPairs
     && res.report.activity.kind === 'sit' && !/^\S+\s+\S+\s+.*\ba=/m.test(res.text.split('<SPECIES>')[1].split('<EQUILIBRIUM>')[0])
@@ -1630,7 +1636,7 @@ function againstSit(engine) {
     .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
       + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral/.test(rest) || !cb.has(name)) return line;
       const sp = inRow.species.get(cb.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -2006,7 +2012,7 @@ function againstTemperature(engine) {
     .replace(/^TEMPERATURE = .*$/m, 'TEMPERATURE = Tc')
     .replace('<SPECIES>', `<PARAMETERS>\nTc all 10 + 60*i/${N - 1}\n\n<SPECIES>`)
     .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
-    .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+    .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
       if (/mineral/.test(rest) || !back.has(name)) return line;
       const sp = inflow.species.get(back.get(name));
       return `${line}  left=${sp ? sp[0] : 0}`;
@@ -3690,6 +3696,88 @@ function againstFit(engine) {
 }
 
 /* ======================================================================
+   CONDUCTANCE, against PHREEQC: the specific conductance, the density and
+   the viscosity of a handed-off water, worked out by the model from
+   <CONDUCTANCE> and <VOLUMES> as PHREEQC works them out (calc_SC,
+   calc_dens, viscosity), against PHREEQC's SC, RHO and VISCOS: dilute
+   salt, a carbonate water, a brackish water at 50 C, and sulfate without
+   chloride, whose viscosity takes the sulfate's volume against Cl-'s
+   (calc_vm_Cl); and a water titrated with acid, the run's end against
+   PHREEQC's REACTION.
+   ====================================================================== */
+function againstConductance(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const keys = ['SC', 'rho', 'viscos'];
+  const at = (text, c) => {
+    const m = RtmModel.compile(text);
+    const which = Int32Array.from(keys.map((k) => m.quantities.findIndex((q) => q.key === k)));
+    if ([...which].some((x) => x < 0)) return null;
+    const out = new Float64Array(keys.length);
+    m.quantitiesAt(c || (m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState()), 0, 0, which, out);
+    return { m, out };
+  };
+  const pqOf = (text, db = dbText) => {
+    engine.load(db);
+    const rows = engine.run(`${text.replace(/END\n$/, '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+      + ' 10 PUNCH SC, RHO, VISCOS, TOT("water")\nEND\n');
+    return rows[rows.length - 1].map(Number);
+  };
+  const waters = [
+    ['NaCl 10 mM', 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na 10\n Cl 10 charge\nEND\n'],
+    ['a carbonate water', 'SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 2\n Mg 1\n Cl 6 charge\n C(4) 4\n S(6) 1\nEND\n'],
+    ['brackish at 50 C', 'SOLUTION 1\n temp 50\n units mmol/kgw\n pH 7.8\n Na 200\n K 5\n Ca 10\n Mg 25\n Cl 250 charge\n S(6) 15\n'
+      + ' C(4) 2\nEND\n'],
+    ['sulfate without chloride', 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na 20 charge\n Mg 3\n S(6) 12\nEND\n'],
+  ];
+  const results = waters.map(([label, text]) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: label, text }, activity: true, exact: true, redox: false });
+    const got = at(res.text);
+    if (!got) return { label, worst: Infinity, why: 'no SC' };
+    const pq = pqOf(text);
+    const rel = keys.map((k, i) => Math.abs(got.out[i] / pq[i] - 1));
+    return { label, worst: Math.max(...rel), sc: got.out[0], cond: /^<CONDUCTANCE>$/m.test(res.text),
+      clVm: /^Cl-\s+vm /m.test(res.text) };
+  });
+  // The same under SIT and under Pitzer, the coefficients this file gives them, PHREEQC's convergence tightened.
+  const mixed = `${KNOBS}SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 50\n K 5\n Ca 10\n Mg 5\n Cl 80 charge\n S(6) 5\n C(4) 2\nEND\n`;
+  const others = [['sit', `${SIT_OWN}${dbText}`], ['pitzer', `${PITZER_OWN()}${dbText}`]].map(([label, db]) => {
+    engine.load(db);
+    const res = P.waterToModel({ engine, database: { name: label, text: db }, water: { name: label, text: mixed }, activity: true,
+      exact: true, redox: false });
+    const got = at(res.text);
+    if (!got) return { label, worst: Infinity };
+    const pq = pqOf(mixed, db);
+    return { label, worst: Math.max(...keys.map((k, i) => Math.abs(got.out[i] / pq[i] - 1))),
+      kind: new RegExp(`^ACTIVITY = ${label}$`, 'm').test(res.text) };
+  });
+  // Acid into the dilute salt at 1e-8 mol/kgw a second for a day, its pH from 7 to 3.1: the run's end against PHREEQC's
+  // REACTION of the same. (Acid into a carbonate water makes water, CO2 from HCO3-, which PHREEQC's kilogram of water takes
+  // and the page's does not, 1.5e-5 kg of it in a day; into salt, 2e-9 kg, from OH-.)
+  const salt = waters[0][1];
+  engine.load(dbText);
+  const r2 = P.waterToModel({ engine, database, water: { name: 'titrated', text: salt }, activity: true, exact: true, redox: false });
+  const titr = `${RtmModel.withValue(r2.text, { kind: 'setting', name: 'TEND' }, 86400).replace(/^<REACTIONS>\s*$/m,
+    '<REACTIONS>\n=> H+ + Cl-, r = 1e-8')}`;
+  const mt = RtmModel.compile(titr);
+  const run = FacsimileODE.runModel(mt, { solver: 'ndf', tend: 86400, rtol: 1e-10, atol: 1e-20, nonNegative: true, maxPoints: 4,
+    stagnationTol: 0.5 });
+  const cEnd = mt.toConcentrations(run.y[run.y.length - 1], 86400);
+  const endOut = at(titr, cEnd);
+  const pqEnd = pqOf(`${KNOBS}${salt.replace('END\n', '')}REACTION 1\n HCl 1\n ${(1e-8 * 86400).toPrecision(12)} moles\nEND\n`);
+  const runWorst = Math.max(...keys.map((k, i) => Math.abs(endOut.out[i] / pqEnd[i] - 1)));
+  check('the specific conductance, the density and the viscosity of a handed-off water, worked out by the model as PHREEQC '
+    + 'works them out, against its SC, RHO and VISCOS: dilute salt, a carbonate water, brackish water at 50 C, sulfate '
+    + 'without chloride (Cl-\'s volume from its -Vm); a mixed water under SIT and under Pitzer; and acid into the salt at '
+    + 'the run\'s end against REACTION',
+  results.every((x) => x.worst < 1e-12 && x.cond) && results[3].clVm && others.every((x) => x.worst < 1e-9 && x.kind)
+    && runWorst < 1e-8 && endOut.out[0] > 1.25 * results[0].sc,
+  `${results.map((x) => `${x.label} ${x.worst.toExponential(1)} (SC ${x.sc ? x.sc.toPrecision(6) : '-'} uS/cm)`).join(', ')}; `
+    + `${others.map((x) => `${x.label} ${x.worst.toExponential(1)}`).join(', ')}; acid ${runWorst.toExponential(1)} `
+    + `(SC ${endOut.out[0].toPrecision(6)} for ${pqEnd[0].toPrecision(6)}, PHREEQC's water ${(pqEnd[3] - 1).toExponential(1)} kg more)`);
+}
+
+/* ======================================================================
    MULTICOMPONENT DIFFUSION (-multi_D): each species at its Dw times the
    porosity to the n, the ions coupled so that no current flows, each down
    its activity. Against PHREEQC's TRANSPORT as its explicit steps are made
@@ -4229,7 +4317,7 @@ function againstKineticsHandOff(engine) {
       .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
         + `ADVECTION_SCHEME = limited\nVELOCITY = ${dx / dt}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
       .replace(/^TEND = .*$/m, `TEND = ${(S + 0.5) * dt}`)
-      .replace(/^(\S+)(\s+)([0-9][0-9.eE+-]*)(.*)$/gm, (line, name, gap, value, rest) => {
+      .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
         if (/mineral/.test(rest) || !back.has(name)) return line;
         const sp = inflow.species.get(back.get(name));
         return `${line}  left=${sp ? sp[0] : 0}`;
@@ -4397,6 +4485,8 @@ function againstKineticsHandOff(engine) {
   againstDiagrams(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');
   againstFit(wasm);
+  console.log('\n--- the conductance, the density and the viscosity against PHREEQC ---');
+  againstConductance(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
   againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
