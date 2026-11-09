@@ -496,6 +496,19 @@
         if (/^gas$/i.test(part)) { entry.gas = true; entry.immobile = true; continue; }
         // Under ACTIVITY = llnl, Drummond's coefficient of CO2: PHREEQC's -co2_llnl_gamma.
         if (/^drummond$/i.test(part)) { entry.drummond = true; continue; }
+        /*
+          A mineral held at saturation that only dissolves -- it never grows
+          past what its cell starts with -- or only precipitates -- it never
+          goes below that -- or whose saturation is held whatever its amount
+          comes to, below none too: PHREEQC's dissolve_only, precipitate_only
+          and -force_equality.
+        */
+        if (/^(dissolve_only|precipitate_only)$/i.test(part)) {
+          if (entry.only !== undefined) throw new RtmError(`${name} is given dissolve_only and precipitate_only: one of them.`, line);
+          entry.only = part.toLowerCase().startsWith('d') ? 'dissolve' : 'precipitate';
+          continue;
+        }
+        if (/^force_equality$/i.test(part)) { entry.forced = true; continue; }
         if (first) {
           entry.initial = constValue(part, line, `the concentration of ${name}`);
           first = false;
@@ -505,6 +518,10 @@
       }
       const kinds = ['mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas'].filter((k) => entry[k]);
       if (kinds.length > 1) throw new RtmError(`${name} is given as ${kinds.join(' and ')}: it is one of them.`, line);
+      if ((entry.only !== undefined || entry.forced) && !entry.mineral) {
+        throw new RtmError(`${name} is given ${entry.forced ? 'force_equality' : `${entry.only}_only`}, which is a mineral's held `
+          + 'at saturation: Calcite 0.01 mineral dissolve_only.', line);
+      }
       if (entry.pe !== null && !entry.electron) {
         throw new RtmError(`pe = ${entry.pe} for ${name}: pe is the electron's, e- electron pe=4.`, line);
       }
@@ -5383,7 +5400,24 @@
       const [lhs, rhs] = equation.split(arrow).map((x) => x.trim());
       const reactants = parseSide(lhs, line);
       const products = parseSide(rhs, line);
-      const { lnK, kf, th } = readLogK(parts, line, 'an equilibrium', true);
+      /*
+        SI(Fix_H+) = -7: a mineral dissolving, or precipitating, as much as
+        holds another phase's saturation index at a target -- PHREEQC's
+        alternative reaction (compile). Its log K is that phase's.
+      */
+      let siOf = null;
+      for (let i = parts.length - 1; i >= 0; i--) {
+        const m = /^SI\s*\(\s*([^()]+?)\s*\)\s*=\s*(.+)$/i.exec(parts[i]);
+        if (!m) continue;
+        if (siOf) throw new RtmError(`"${text}" is given SI( ) twice: a mineral holds one phase at its target.`, line);
+        siOf = { phase: m[1], target: constValue(m[2], line, `SI(${m[1]})`) };
+        parts.splice(i, 1);
+      }
+      if (siOf && parts.length) {
+        throw new RtmError(`"${text}" holds SI(${siOf.phase}) at ${siOf.target}, and takes its log K from that phase: it `
+          + 'is given no logK, K, dH, analytic or kf.', line);
+      }
+      const { lnK, kf, th } = siOf ? { lnK: 0, kf: null, th: null } : readLogK(parts, line, 'an equilibrium', true);
 
       const stoich = new Map();
       /*
@@ -5408,7 +5442,8 @@
       if (!net.length) throw new RtmError('The equilibrium changes nothing.', line);
       const species = (side) => (solvent ? side.filter(([, name]) => name !== 'H2O') : side);
       // lnKc: ln K cell by cell, where the temperature differs between cells or goes with time (compile).
-      return { net, lnK, kf, th, lnKc: null, line, text, reactants: species(reactants), products: species(products), water };
+      return { net, lnK, kf, th, lnKc: null, line, text, reactants: species(reactants), products: species(products), water,
+        siOf };
     });
   }
 
@@ -5444,6 +5479,8 @@
       for (const [si] of eq.net) seen.add(si);
       // A CD-MUSIC surface's three potentials, each with its equation, whatever charge the relation puts on its plane.
       if (eq.cdPots) for (const si of eq.cdPots) seen.add(si);
+      // What a mineral held at another phase's saturation dissolves into, read by its relation or not (eq.moves).
+      if (eq.moves) for (const [si] of eq.moves) seen.add(si);
     }
     return [...seen].sort((a, b) => a - b);
   }
@@ -5479,6 +5516,8 @@
       for (const [si, c] of eq.net) if (!out(si)) A[j][si] = c;
       // Only where the surface's own relations are in the system too: a water speciated alone has no sites.
       if (eq.carry) for (const [si, c] of eq.carry) if (!out(si) && active.has(si)) A[j][si] += c;
+      // What a mineral held at another phase's saturation dissolves into, beyond that phase's own (eq.moves).
+      if (eq.moves) for (const [si, c] of eq.moves) if (!out(si)) A[j][si] += c;
     });
 
     /*
@@ -5620,7 +5659,9 @@
         for (let k = 0; k < na; k++) t += row[k] * w[k] * out[b + part[k]];
         return t;
       });
-      const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0 ? 1 : 0));
+      // (One held whatever its amount, force_equality, is never at none.)
+      const present = Uint8Array.from(eqs, (eq, j) => (sys.minOf[j] < 0 || out[b + part[sys.minOf[j]]] > 0
+        || (eq.bounds && eq.bounds.lo[cell] === -Infinity) ? 1 : 0));
       // A group is there where its members have any amount between them; a binary solid solution where
       // its composition has it, inside its miscibility gap or either side.
       for (const G of sys.groups) {
@@ -6086,6 +6127,15 @@
       x[k] = lin[k] ? c : Math.log(Math.max(c, floor));
     }
     const cell = opts.cell !== undefined ? opts.cell : Math.round(off / sys.ns);
+    /*
+      A mineral's bounds in this cell (eq.bounds): none below 0 and none
+      above, unless it is given its own. present[j] is 1 while it is held at
+      saturation between them, 0 while it is at the lower and 4 at the upper,
+      the water past saturation the way it cannot follow.
+    */
+    const loOf = (j) => (eqs[j].bounds ? eqs[j].bounds.lo[cell] : 0);
+    const hiOf = (j) => (eqs[j].bounds ? eqs[j].bounds.hi[cell] : Infinity);
+    const boundOf = (j) => { if (present[j] === 4) return hiOf(j); const lo = loOf(j); return Number.isFinite(lo) ? lo : 0; };
     let big = 0;
     for (let q = 0; q < nb; q++) big = Math.max(big, Math.abs(totals[q]));
     // The system's own scratch, refilled at every iteration: a held run
@@ -6176,7 +6226,7 @@
     // towards -- a damped step would only halve it, and leave 1e-30 of a
     // mineral the water is far from saturated in.
     const pin = () => {
-      for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && !present[j]) x[minOf[j]] = 0;
+      for (let j = 0; j < ne; j++) if (minOf[j] >= 0 && (!present[j] || present[j] === 4)) x[minOf[j]] = boundOf(j);
     };
     /*
       A STEP THAT MAKES IT WORSE IS HALVED, where a binary solid solution is
@@ -6200,11 +6250,11 @@
         for (let j = 0; j < ne; j++) {
           J[j].fill(0);
           const km = minOf[j];
-          if (km >= 0 && !present[j]) {
-            // None of the mineral: its amount is zero, and the relation waits.
-            F[j] = x[km];
+          if (km >= 0 && (!present[j] || present[j] === 4)) {
+            // None of the mineral, or as much as its bounds let it have: its amount is that, and the relation waits.
+            F[j] = x[km] - boundOf(j);
             J[j][km] = 1;
-            norm = Math.max(norm, Math.abs(x[km]) / Math.max(big, 1e-300));
+            norm = Math.max(norm, Math.abs(F[j]) / Math.max(big, 1e-300));
             continue;
           }
           // A group's relations, while it is there, are its rows together (below).
@@ -6380,7 +6430,7 @@
     const attempt = (drop, add) => {
       x.set(x0);
       present[drop] = 0;
-      x[minOf[drop]] = 0;
+      x[minOf[drop]] = boundOf(drop);
       if (add >= 0) present[add] = 1;
       why = '';
       if (solve() && saturation(drop, evaluate()) <= 1e-9) return true;
@@ -6404,9 +6454,14 @@
         let pick = -1;
         let pickG = null;
         let by = 0;
+        let cap = false;
         for (const j of mins) {
+          if (present[j] !== 1) continue;
           const m = x[minOf[j]];
-          if (present[j] && m < -1e-12 * big && -m > by) { by = -m; pick = j; }
+          const below = loOf(j) - m;
+          const above = m - hiOf(j);
+          if (below > 1e-12 * big && below > by) { by = below; pick = j; cap = false; }
+          if (above > 1e-12 * big && above > by) { by = above; pick = j; cap = true; }
         }
         for (const G of groups) {
           if (!present[G.rel[0]]) continue;
@@ -6420,8 +6475,9 @@
           continue;
         }
         if (pick >= 0) {
-          present[pick] = 0;
-          x[minOf[pick]] = 0;
+          // Less than its lower bound, none under the usual one: it dissolves away to it; more than its upper: it is there.
+          present[pick] = cap ? 4 : 0;
+          x[minOf[pick]] = boundOf(pick);
           ok = solve();
           continue;
         }
@@ -6430,8 +6486,9 @@
         // supersaturated in.
         const water = evaluate();
         for (const j of mins) {
-          if (present[j]) continue;
-          const si = saturation(j, water);
+          if (present[j] === 1) continue;
+          // At the lower bound and the water supersaturated: it precipitates; at the upper and undersaturated: it dissolves.
+          const si = (present[j] === 4 ? -1 : 1) * saturation(j, water);
           if (si > 1e-9 && si > by) { by = si; pick = j; }
         }
         for (const G of groups) {
@@ -6516,9 +6573,11 @@
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
     // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
     // the full speciation.
-    // So does an exchanger whose sites go with a mineral, each species' fraction reading all that is on it.
+    // So does an exchanger whose sites go with a mineral, each species' fraction reading all that is on it; and a
+    // mineral with bounds of its own (eq.bounds).
     if (act && ((act.gas && act.gas.dln) || act.pz || (act.vol && !act.vol.idle)
       || (act.pt && (act.pt.cd || act.pt.perM.some((m) => m >= 0))) || (act.ex && act.ex.perAny))) return null;
+    if (eqs.some((eq) => eq.bounds)) return null;
     // A surface's potential is no component and worked out from none: an
     // unknown of its own, as the ionic strength is, with Gouy and Chapman.
     const potOf = new Int32Array(na).fill(-1);
@@ -7642,7 +7701,7 @@
     if (act) water = activityAt(act, C, off, sys.lnG, sys.dG, cell);
     for (let j = 0; j < ne; j++) {
       const km = minOf[j];
-      if (km >= 0 && !present[j]) { J[j][km] = 1; continue; }
+      if (km >= 0 && (!present[j] || present[j] === 4)) { J[j][km] = 1; continue; }
       const eq = eqs[j];
       let G = 0;
       for (const [si, nu] of eq.net) {
@@ -8756,6 +8815,40 @@
           + 'mineral has one saturation.', eq.line);
       }
       inRelation.set(eq.mineral, eq.line);
+    }
+    /*
+      A MINERAL HELD AT ANOTHER PHASE'S SATURATION, PHREEQC's alternative
+      reaction (EQUILIBRIUM_PHASES Fix_H+ -7 NaOH): the relation's equation
+      is what dissolves -- NaOH_r <=> Na+ + OH- -- and SI(Fix_H+) = -7 the
+      phase of <PHASES> whose saturation index it holds there, dissolving or
+      precipitating as much as that takes. Held, the relation is the
+      phase's, its log K the phase's with the target, oriented as the
+      mineral is written; what it moves is what it dissolves into, the
+      phase's species taken back out (eq.moves, conservationBasis).
+    */
+    const siPhases = equilibria.some((eq) => eq.siOf) ? readPhases(sections.PHASES, index) : null;
+    for (const eq of equilibria) {
+      if (!eq.siOf) continue;
+      const { phase, target } = eq.siOf;
+      if (eq.mineral < 0) {
+        throw new RtmError(`"${eq.text}" holds SI(${phase}) at ${target}, and has no mineral in it: what dissolves to hold `
+          + 'it is a mineral, NaOH_r 10 mineral.', eq.line);
+      }
+      const ph = siPhases.get(phase);
+      if (!ph) {
+        throw new RtmError(`SI(${phase}): there is no phase ${phase} in <PHASES> -- give its dissolution there, `
+          + `${phase} <=> H+, logK = 0.`, eq.line);
+      }
+      const f = -eq.mineralNu;
+      const written = new Map(eq.net);
+      eq.net = [[eq.mineral, eq.mineralNu], ...ph.net.map(([k, c]) => [k, f * c])];
+      eq.water = f * ph.water;
+      eq.lnK = f * (ph.lnK + target * Math.LN10);
+      eq.th = ph.th ? { logK: f * (ph.th.logK + target), dH: f * ph.th.dH, a: Float64Array.from(ph.th.a, (x) => f * x) } : null;
+      atFixedTemperature([eq]);
+      const moves = new Map(written);
+      for (const [k, c] of eq.net) moves.set(k, (moves.get(k) || 0) - c);
+      eq.moves = [...moves].filter(([, c]) => Math.abs(c) > 1e-12);
     }
     act = exchangeSetup(species, equilibria, act, settings, warnings);
     const ex = act ? act.ex : null;
@@ -10473,6 +10566,67 @@
         });
       }
     }
+    /*
+      A MINERAL'S BOUNDS, cell by cell (eq.bounds): under dissolve_only never
+      above what its cell starts with, and under force_equality held at
+      saturation whatever its amount comes to, below none too. speciateCell
+      and holdEquilibria keep them: a mineral held is at saturation between
+      them, and at one of them while the water would take it past (PHREEQC's
+      dissolve_only caps a phase at what it starts a calculation with).
+      Under precipitate_only what the cell starts with is set aside, inert,
+      as PHREEQC sets it aside: the mineral held is what precipitates beside
+      it, from none, and what the page shows of it is the two together
+      (model.inert, toConcentrations) -- held in the totals, the amount at
+      the start left the water's own part a difference of two large numbers.
+    */
+    const inert = [];
+    species.forEach((sp, k) => {
+      if (sp.only === undefined && !sp.forced) return;
+      const what = [sp.only ? `${sp.only}_only` : '', sp.forced ? 'force_equality' : ''].filter(Boolean).join(' and ');
+      const eq = equilibria.find((e) => e.mineral === k);
+      if (!eq) {
+        throw new RtmError(`${sp.name} is given ${what}, which is a mineral's held at saturation by its relation in `
+          + '<EQUILIBRIUM>, and has none.', sp.line);
+      }
+      if (settings.EQUILIBRATE !== 2) {
+        throw new RtmError(`${sp.name} is given ${what}, which holds while its relation is held all through the run: `
+          + 'EQUILIBRATE = always.', sp.line);
+      }
+      if (eq.grp) {
+        throw new RtmError(`${sp.name} is given ${what}, and is a member of ${eq.grp.kind === 'gas' ? 'a gas phase' : 'a solid '
+          + 'solution'}, which comes and goes whole.`, sp.line);
+      }
+      if (sp.only === 'precipitate' && sp.forced) {
+        throw new RtmError(`${sp.name} is given precipitate_only and force_equality: what it starts with is set aside and `
+          + 'never dissolves, and below none it would.', sp.line);
+      }
+      if (sp.only === 'precipitate') {
+        if (eq.carry || (ex && ex.perAny && ex.per.some((p) => p && p.mineral === k))
+          || (sf && sf.types.some((t) => t.per && t.per.mineral === k))) {
+          throw new RtmError(`${sp.name} is given precipitate_only and carries sites (per=): they go with the whole of it, `
+            + 'and what it starts with is set aside.', sp.line);
+        }
+        const amounts = new Float64Array(nc);
+        for (let c = 0; c < nc; c++) { amounts[c] = initial[c * ns + k]; initial[c * ns + k] = 0; }
+        inert.push({ k, amounts });
+        return;
+      }
+      const lo = new Float64Array(nc);
+      const hi = new Float64Array(nc);
+      for (let c = 0; c < nc; c++) {
+        lo[c] = sp.forced ? -Infinity : 0;
+        hi[c] = sp.only === 'dissolve' ? initial[c * ns + k] : Infinity;
+      }
+      eq.bounds = { lo, hi };
+    });
+    // A rate law reads what is held of a mineral; one set aside in part is refused there.
+    for (const { k } of inert) {
+      const ch = channels.find((x) => x.deps && x.deps.some((d) => d.si === k));
+      if (ch) {
+        throw new RtmError(`A rate law reads ${species[k].name}, which is given precipitate_only: what it starts with is set `
+          + 'aside, and the law would read the rest.', ch.line);
+      }
+    }
 
     const stateNames = [];
     for (let c = 0; c < nc; c++) {
@@ -10489,6 +10643,8 @@
       pattern: { n, nnz, colPtr, rowIdx },
       species: stateNames,
       initialState: () => Float64Array.from(initial),
+      // What a mineral under precipitate_only starts with, set aside: shown with what is held of it (toConcentrations).
+      inert,
       rhs,
       jac,
       // The Jacobian is the same at every state and time: see jacobianMoves.
@@ -10925,6 +11081,30 @@
       stops there and says so (applyEvent).
     */
     const usedUp = new Float64Array(nc * ne);
+    /*
+      A mineral's bounds in a cell (eq.bounds, compile), and its mode: 1
+      held at saturation between them, 0 at the lower -- none, usually -- and
+      4 at the upper, the water past saturation the way it cannot follow.
+    */
+    const loAt = (c, r) => (eqs[r].bounds ? eqs[r].bounds.lo[c] : 0);
+    const hiAt = (c, r) => (eqs[r].bounds ? eqs[r].bounds.hi[c] : Infinity);
+    const boundAt = (c, r) => {
+      if (present[c * ne + r] === 4) return hiAt(c, r);
+      const lo = loAt(c, r);
+      return Number.isFinite(lo) ? lo : 0;
+    };
+    const atBound = (c, r) => { const p = present[c * ne + r]; return p === 0 || p === 4; };
+    const modeOf = (c, r, M) => (M >= hiAt(c, r) ? 4 : M > loAt(c, r) ? 1 : 0);
+    // Held, an event watches its amount against its bounds, the lower where it is used up, and which it nears.
+    const nearHi = new Uint8Array(nc * ne);
+    const heldEvent = (c, r, M) => {
+      const lo = loAt(c, r);
+      const a = (lo === -Infinity ? -Infinity : Math.max(lo, usedUp[c * ne + r])) - M;
+      const d = M - hiAt(c, r);
+      nearHi[c * ne + r] = d > a ? 1 : 0;
+      const v = Math.max(a, d);
+      return Number.isFinite(v) ? v : -1;
+    };
     eqs.forEach((eq, r) => {
       if (eq.carry && eq.mineral >= 0) for (let c = 0; c < nc; c++) usedUp[c * ne + r] = 1e-4 * start[c * ns + eq.mineral];
     });
@@ -11237,9 +11417,9 @@
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
-          // None of the mineral: its amount is zero, and the relation waits.
+          // None of the mineral, or as much as its bounds let it have (eq.bounds): its amount is that, and the relation waits.
           const m = eqs[r].mineral;
-          out[b + relRow[r]] = m >= 0 && !present[c * ne + r] ? y[b + m] : relationAt(b, r, y, water);
+          out[b + relRow[r]] = m >= 0 && atBound(c, r) ? y[b + m] - boundAt(c, r) : relationAt(b, r, y, water);
         }
         // Each group, while it is there: its relations' rows together.
         for (const G of grps) {
@@ -11350,7 +11530,7 @@
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
-          if (eqs[r].mineral >= 0 && !present[c * ne + r]) {
+          if (eqs[r].mineral >= 0 && atBound(c, r)) {
             V[relC[c][r][minAt[r]]] += 1;
             continue;
           }
@@ -11504,7 +11684,7 @@
         for (let k = 0; k < na; k++) wCell[k] = massOf[b + active[k]];
         const pres = opts.fromState
           ? Uint8Array.from(eqs, (eq, r) => (grpOf[r] ? groupMode(grpOf[r], (q) => y[b + grpOf[r].mem[q]], c)
-            : (eq.mineral < 0 || y[b + eq.mineral] > 0 ? 1 : 0)))
+            : (eq.mineral < 0 ? 1 : modeOf(c, r, y[b + eq.mineral]))))
           : present.subarray(c * ne, (c + 1) * ne);
         /*
           Projected, the held species in the state carry no weight and may
@@ -11562,14 +11742,18 @@
     // totals themselves are integrated, and what is conserved is conserved to
     // rounding there. So every point shown is the speciation of its totals.
     // t, the time of the state: where the temperature goes with time, the relations are those of that time.
+    // A mineral under precipitate_only: what it started with, set aside, is shown with what is held of it.
+    const inertOf = base.inert || [];
     const toConcentrations = (y, t = 0) => {
       const z = Float64Array.from(y);
       consistentInitial(t, z, { rtol: 1e-12, fromState: true });
       const out = new Float64Array(nBase);
       for (let k = 0; k < nBase; k++) out[k] = held[k] && !lin[k] ? Math.exp(z[k]) : z[k];
+      for (const { k, amounts } of inertOf) for (let c = 0; c < nc; c++) out[c * ns + k] += amounts[c];
       return out;
     };
-    const fromConcentrations = (cIn) => {
+    // A state from concentrations as the state holds them (a mineral's inert part apart), and from what the page shows.
+    const stateOf = (cIn) => {
       const y = new Float64Array(n);
       for (let k = 0; k < nBase; k++) y[k] = held[k] && !lin[k] ? Math.log(Math.max(cIn[k], 1e-300)) : cIn[k];
       for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) y[tIndex(c, j)] = totalOf(cIn, c, j);
@@ -11587,7 +11771,13 @@
       const c = Math.floor(q / nb);
       return `total ${q - c * nb + 1}${nc === 1 ? '' : `@${c}`}`;
     }));
-    const initial = fromConcentrations(start);
+    const fromConcentrations = (cShown) => {
+      if (!inertOf.length) return stateOf(cShown);
+      const cIn = Float64Array.from(cShown);
+      for (const { k, amounts } of inertOf) for (let c = 0; c < nc; c++) cIn[c * ns + k] -= amounts[c];
+      return stateOf(cIn);
+    };
+    const initial = stateOf(start);
 
     /*
       THE MINERALS' EVENTS, one for each mineral in each cell. While there is
@@ -11722,8 +11912,8 @@
           for (let q = 0; q < nmin; q++) {
             const r = mins[q];
             const m = eqs[r].mineral;
-            if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] ? usedUp[c * ne + r] - y[b + m] : -1; continue; }
-            if (present[c * ne + r]) { out[c * nmin + q] = usedUp[c * ne + r] - Cstar[b + m]; continue; }
+            if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] === 1 ? heldEvent(c, r, y[b + m]) : -1; continue; }
+            if (present[c * ne + r] === 1) { out[c * nmin + q] = heldEvent(c, r, Cstar[b + m]); continue; }
             const eq = eqs[r];
             let g = -lnKAtP(eq, c, water);
             for (const [sp, nu] of eq.net) {
@@ -11732,7 +11922,8 @@
               if (act) g += nu * lnG[sp];
             }
             if (act && eq.water) g += eq.water * water.lnAw;
-            out[c * nmin + q] = (eq.mineralNu < 0 ? 1 : -1) * g;
+            // At its lower bound the water's saturation, crossing as it is supersaturated; at its upper the other way.
+            out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eq.mineralNu < 0 ? 1 : -1) * g;
           }
           grps.forEach((bub, g) => {
             const at = nc * nmin + c * ngrp + g;
@@ -11754,9 +11945,9 @@
         for (let q = 0; q < nmin; q++) {
           const r = mins[q];
           const m = eqs[r].mineral;
-          if (present[c * ne + r]) { out[c * nmin + q] = usedUp[c * ne + r] - y[b + m]; continue; }
+          if (present[c * ne + r] === 1) { out[c * nmin + q] = heldEvent(c, r, y[b + m]); continue; }
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
-          out[c * nmin + q] = (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
+          out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
         }
         grps.forEach((bub, g) => {
           const at = nc * nmin + c * ngrp + g;
@@ -11807,16 +11998,26 @@
       const c = Math.floor(which / nmin);
       const r = mins[which % nmin];
       const at = c * ne + r;
-      present[at] = present[at] ? 0 : 1;
-      lastEvent = { c, r: present[at] ? r : -1, which };
+      const was = present[at];
+      // Held, it goes to the bound it came to; at one, it is held again.
+      present[at] = was === 1 ? (nearHi[at] ? 4 : 0) : 1;
+      lastEvent = { c, r: present[at] === 1 ? r : -1, which };
       const name = base.speciesNames[eqs[r].mineral];
       /*
         A mineral that carries a surface's sites or an exchanger's (per=,
         surfaceSetup, exchangeSetup) takes them with it as it goes: a surface
         or an exchanger with none is none the page carries.
       */
-      if (!present[at] && eqs[r].carry) throw new RtmError(`${name} has dissolved away${where(c)}${goneWith(eqs[r].mineral)}`);
-      events[which].shown = present[at] ? `${name} precipitates${where(c)}` : `${name} has dissolved away${where(c)}`;
+      if (present[at] === 0 && eqs[r].carry) {
+        throw new RtmError(`${name} has dissolved away${where(c)}${goneWith(eqs[r].mineral)}`);
+      }
+      // Under precipitate_only, what precipitated beside what the cell started with gone, that is left (model.inert).
+      const setAside = inertOf.some((x) => x.k === eqs[r].mineral && x.amounts[c] > 0);
+      events[which].shown = present[at] === 4 ? `${name} is back at what it started with${where(c)}, and precipitates no more`
+        + ' (dissolve_only)'
+        : present[at] === 0 ? (setAside ? `${name} is back at what it started with${where(c)}, and dissolves no more `
+          + '(precipitate_only)' : `${name} has dissolved away${where(c)}`)
+          : was === 4 ? `${name} dissolves${where(c)}` : `${name} precipitates${where(c)}`;
       return [name];
     }
     /*
@@ -11828,7 +12029,7 @@
     const resetModes = (y) => {
       thermoAt(0);
       for (let c = 0; c < nc; c++) {
-        for (const r of mins) present[c * ne + r] = y[c * ns + eqs[r].mineral] > 0 ? 1 : 0;
+        for (const r of mins) present[c * ne + r] = modeOf(c, r, y[c * ns + eqs[r].mineral]);
         for (const bub of grps) {
           const v = groupMode(bub, (q) => y[c * ns + bub.mem[q]], c);
           for (const r of bub.rel) present[c * ne + r] = v;

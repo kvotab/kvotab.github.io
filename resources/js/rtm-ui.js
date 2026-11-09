@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261108m';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2620,11 +2620,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261108n';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261108n',
+    'resources/js/rtm-phreeqc.js?v=20261109',
     'resources/js/rtm-phreeqc-engine.js?v=20261107b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -2937,7 +2937,10 @@ END
         + `${c.dispersivity ? `, dispersivity ${pqNum(c.dispersivity)} m` : ''}`
         + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, diffusion coefficient `
         + `${pqNum(c.diffusion)} m²/s; ${end(c.left, c.leftSolution, 'left')}, ${end(c.right, c.rightSolution, 'right')}. `
-        + 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>');
+        + (c.zones && c.zones.length > 1 ? `Its cells start as PHREEQC equilibrates them before the first shift, in `
+          + `${c.zones.length} zones — ${c.zones.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} — the first as the `
+          + 'water above, the others in <code>&lt;INITIAL&gt;</code>.</p>'
+          : 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>'));
       if (c.after) {
         out.push('<p class="warn">The input goes on after this column; what it does then is not carried.</p>');
       }
@@ -2987,8 +2990,11 @@ END
           + 'written, each with its terms in the temperature.</p>');
       }
       if (r.minerals && r.minerals.length) {
+        // An alternative reaction holds its phase's SI; dissolve_only, precipitate_only and force_equality bound it.
         out.push(`<p>Kept at saturation: ${r.minerals.map((mn) => `${esc(mn.as)} (${pqNum(mn.amount)} mol/kgw`
-          + `${mn.si ? `, SI ${pqNum(mn.si)}` : ''})`).join(', ')}.</p>`);
+          + `${mn.alt ? `, ${esc(mn.alt)} added or taken away to hold ${esc(mn.phase)} at SI ${pqNum(mn.si)}`
+            : mn.si ? `, SI ${pqNum(mn.si)}` : ''}`
+          + `${mn.only ? `, ${mn.only}_only` : ''}${mn.forced ? ', force_equality' : ''})`).join(', ')}.</p>`);
       }
       if (r.phasesSkipped && r.phasesSkipped.length) {
         out.push(`<p class="warn">Not carried: ${r.phasesSkipped.map((ps) => `${esc(ps.name)}, ${esc(ps.why)}`).join('; ')}.</p>`);

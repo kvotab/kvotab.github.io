@@ -1396,6 +1396,35 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             <code>EQUILIBRIUM_PHASES</code> has it. The status names both: <em>Anhydrite precipitates,
             and Gypsum has dissolved away</em>. A start given both keeps the one the water is not
             undersaturated in with the other there.</p>
+          <pre>Calcite   0.002   mineral  dissolve_only
+Gypsum    0.01    mineral  precipitate_only</pre>
+          <p>A mineral held at saturation may be bounded, as PHREEQC's <code>EQUILIBRIUM_PHASES</code>
+            line bounds a phase. <code>dissolve_only</code>: it is never more than its cell starts with —
+            where the water would have it precipitate past that, the amount stays there and the water
+            stays supersaturated, and the relation holds again once the water is no longer. The run
+            stops at each of these instants and says so, as at the others above.
+            <code>precipitate_only</code>: what its cell starts with is set aside and never dissolves;
+            the amount shown is that and what precipitates beside it, which comes and goes. Held
+            in the totals, the amount it starts with would leave the water's own part a small
+            difference of two large numbers. <code>force_equality</code>: the relation holds whatever
+            the amount comes to, below none too. The three need <code>EQUILIBRATE = always</code> and a
+            relation, and refuse a gas phase or solid solution's member. A rate law cannot read a
+            mineral set aside in part, and its sites cannot go with it (<code>per=</code>).</p>
+          <pre>NaOH_r    0.01   mineral
+
+&lt;EQUILIBRIUM&gt;
+NaOH_r &lt;=&gt; Na+ + OH-,   SI(Fix_H+) = -8
+
+&lt;PHASES&gt;
+Fix_H+ &lt;=&gt; H+,   logK = 0</pre>
+          <p>A mineral may also be held where another phase's saturation index is a target, PHREEQC's
+            alternative reaction: <code>SI(Fix_H+) = -8</code> in place of its log K. Its relation's
+            equation is what dissolves, here the NaOH a pH-stat adds, and as much of it dissolves, or
+            precipitates, as holds the phase of <code>&lt;PHASES&gt;</code> at that SI — a pH of 8 while
+            acid comes in. Held, the relation is the phase's, its log K the phase's with the target, so
+            it goes with temperature as the phase's does; what it moves is what it dissolves into,
+            which counts in the totals whether a relation reads it or not. The mineral may be bounded
+            as any other, and runs out as any other: the pH then goes where the acid takes it.</p>
 
           <h4 id="help-exchange">Ion exchange</h4>
           <pre>X-     exchanger  1.1e-3
@@ -2006,9 +2035,20 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             temperature plus the saturation index it is held at, so a gas such as
             <code>CO2(g) -3.5</code> keeps its partial pressure while any of it is left. Left off, the
             phases only prepare the water. A phase that dissolves with electrons, such as pyrite, is
-            carried when the valence states are held at one pe, and not otherwise; nor is one whose
-            line says more than a saturation index and an amount. The report under the panel names
-            both kinds.</p>
+            carried when the valence states are held at one pe, and not otherwise. A line is read as
+            PHREEQC reads it. <code>dissolve_only</code>, <code>precipitate_only</code> and
+            <code>-force_equality</code> are written on the mineral (see <em>Minerals</em>), and one at
+            its bound is held at its target, not at the saturation index its bound left the water at.
+            An alternative reaction — <code>Fix_H+ -8 NaOH</code>, a formula, or <code>Calcite 0
+            Anhydrite</code>, a phase — becomes a mineral of its own, named for both,
+            <code>NaOH_Fix_H</code>, at the moles PHREEQC left of it. Its relation is the formula's
+            dissolution into the master species, or the phase's reaction, held at <code>SI(Fix_H+)</code>,
+            with the phase written in <code>&lt;PHASES&gt;</code>. Against PHREEQC's
+            <code>REACTION</code> in five steps, a pH-stat holding pH 8 with NaOH while acid comes in is
+            PHREEQC's to 2×10<sup>−7</sup> in the NaOH left, calcite <code>dissolve_only</code> in a water
+            supersaturated with it to 6×10<sup>−6</sup>, and gypsum <code>precipitate_only</code> to
+            5×10<sup>−5</sup>, which is PHREEQC's kilogram of water taking the gypsum's two waters
+            with it. The report under the panel names what is not carried, and why.</p>
           <p>An exchanger in the input, an <code>EXCHANGE</code> that PHREEQC's last calculation holds,
             is carried when the relations are held exactly. Its sites become an
             <code>exchanger</code> and each species PHREEQC put on it an <code>exchange</code> species
@@ -2098,8 +2138,16 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
           <p>An input with a <code>TRANSPORT</code> becomes a column, its first one, or where there is
             none its first <code>ADVECTION</code>. Everything the input does before it is done as
             written. Then each cell, and the water at each end, is put on what is numbered as it, as
-            PHREEQC's <code>TRANSPORT</code> does before its first shift, and the column starts every cell
-            as cell 1 comes out of that. <code>-cells</code> and <code>-lengths</code> give
+            PHREEQC's <code>TRANSPORT</code> does before its first shift, and the column starts each cell as
+            it comes out of that. Cells that come out alike — each element's total, its acid included,
+            within a part in a million, each valence state's within a part in 10<sup>4</sup> (PHREEQC's
+            redox settles no closer), and the same on their exchangers and surfaces and of their phases
+            and reactants — make a zone, started from its first cell: cell 1's in
+            <code>&lt;SPECIES&gt;</code>, every other in <code>&lt;INITIAL&gt;</code>, its cells counted
+            from 0 as the page counts them. Not by their species: two cells defined alike can come out of
+            PHREEQC's convergence apart in those — twenty alike in a water with nitrate, H<sup>+</sup> by
+            6 parts in a million and O<sub>2</sub> by 8 in 10<sup>5</sup>, where their totals agree to
+            2×10<sup>−14</sup>. <code>-cells</code> and <code>-lengths</code> give
             <code>CELLS</code> and <code>LENGTH</code>. The time step is the time the water takes to cross
             a cell, which gives <code>VELOCITY</code>, to the left with <code>-flow_direction back</code>,
             and <code>-shifts</code> of them give <code>TEND</code>. The dispersivity gives a
@@ -2110,22 +2158,27 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             as PHREEQC speciates it as <code>left=</code> (<code>SOLUTION</code> <em>cells</em>+1 and
             <code>right=</code> flowing back), and where it leaves <code>free</code>. A constant end is
             <code>dirichlet</code>, with its solution's species; a closed one <code>neumann</code>. With
-            diffusion only the cells may differ in length, and are written <code>FACES</code>. The column
-            takes 10<sup>−12</sup> of the water at each end, and that water as much of the column's, so
-            that what only one of them has, the calcium of Example 11 that only its inflow brings, is
-            there to be held. The species written are those above the floor in either water, and in the
-            two mixed half and half on what cell 1 holds, its exchanger and surfaces included. PHREEQC
+            diffusion only the cells may differ in length, and are written <code>FACES</code>. Each water —
+            each zone's and each end's — takes 10<sup>−12</sup> of every other, so that what only one of
+            them has, the calcium of Example 11 that only its inflow brings, is there to be held. The
+            species written are those above the floor in any of them, and in each zone's water and an
+            end's mixed half and half on what the zone holds, its exchanger and surfaces included. PHREEQC
             shifts each cell's water whole and then reacts it, where here the water moves through the
             cells as it reacts: a cell of PHREEQC's after shift <em>k</em> is the page's half a time step
             later, and the two meet as the cells are refined. Refused, each with its reason: stagnant cells,
-            multicomponent or interlayer diffusion, a fixed current, cells that start apart, cells of
-            their own lengths or dispersivities with the water moving, a closed end the water comes in
-            through, water coming in at another temperature, which PHREEQC carries the heat of, and a
-            <code>REACTION</code> numbered as a cell, which PHREEQC adds at every shift. An input like
+            multicomponent or interlayer diffusion, a fixed current, cells of their own lengths or
+            dispersivities with the water moving, a closed end the water comes in through, zones at
+            temperatures of their own, an exchanger or a surface in some zones and not others, a gas
+            phase or a solid solution in a column that starts apart, water coming in at another
+            temperature, which PHREEQC carries the heat of, and a <code>REACTION</code> numbered as a
+            cell, which PHREEQC adds at every shift. An input like
             PHREEQC's Example 11 — <code>ADVECTION</code> first, the cells put back, then
             <code>TRANSPORT</code> — gives a column whose effluent is within 0.022&nbsp;mmol/kgw of PHREEQC's in
             sodium, 0.030 in potassium, 0.016 in calcium and 0.005 in chloride; acid through calcite in
-            every cell within 0.009 in pH, and calcite dissolving at a rate as below.</p>
+            every cell within 0.009 in pH, and calcite dissolving at a rate as below. A column of two
+            waters, each half with its exchanger loaded from its own, flushed with calcium chloride:
+            within 0.022 mmol/kgw in sodium, 0.036 in potassium, 0.017 in calcium and 0.005 in
+            chloride; calcite in the first half of a column, acid flowing in: within 0.019 in pH.</p>
           <p>A name this page cannot write is renamed, and the top of the text lists every one:
             <code>(UO2)2(OH)2+2</code> becomes <code>UO2_2(OH)2+2</code>. Concentrations are
             molalities, so rate constants you add must use the same unit. <em>Diffusion</em> can give
@@ -2516,7 +2569,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261108m"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
   <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
@@ -2524,6 +2577,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261108n"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109"></script>
 </body>
 </html>

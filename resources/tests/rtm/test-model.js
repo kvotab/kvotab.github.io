@@ -6742,6 +6742,153 @@ console.log('\n--- an exchanger\'s sites that go with a mineral ---');
 }
 
 /*
+   A MINERAL'S BOUNDS, AND ONE HELD AT ANOTHER PHASE'S SATURATION
+   (PHREEQC's dissolve_only, precipitate_only, -force_equality and
+   alternative reactions). Calcium taken out of a water over anhydrite, then
+   put back: under dissolve_only it is never above what it starts with, the
+   water left supersaturated there, dissolving once it is not and stopping
+   at what it started with on the way back; under precipitate_only what it
+   starts with is set aside and what precipitates beside it comes and goes;
+   under force_equality it is held at saturation from none, below none. And
+   a pH-stat: NaOH dissolving as much as holds SI(Fix_H+) = -8 while acid
+   comes in, the pH held, the sodium the reagent gives the water what it
+   loses. The Jacobians against differences; what is refused. Made-up
+   constants.
+*/
+console.log('\n--- a mineral\'s bounds, and one held at another phase\'s saturation ---');
+{
+  const text = (flag, ca, anh, k, tend = 2e4) => `<SETTINGS>\nMODE = batch\nTEND = ${tend}\nEQUILIBRATE = always\n\n<SPECIES>\n`
+    + `H+ 1e-7\nOH- 1e-7\nCa+2 ${ca}\nSO4-2 0.02\nNa+ 0.04\nCl- 0.04\nAnh ${anh} mineral ${flag}\n\n<EQUILIBRIUM>\n`
+    + 'H2O <=> H+ + OH-, logK = -14\nAnh <=> Ca+2 + SO4-2, logK = -4.36\n\n<REACTIONS>\n'
+    + `Ca+2 + 2 Cl- =>, r = ${k}*(1 - step(t - 1e4))\n=> Ca+2 + 2 Cl-, r = ${k}*step(t - 1e4)\n`;
+  const times = [0, 2.5e3, 5e3, 7.5e3, 1e4, 1.25e4, 1.5e4, 1.75e4, 2e4];
+  const look = (flag, ca, anh, k) => {
+    const m = RtmModel.compile(text(flag, ca, anh, k));
+    const r = run(m, { tend: 2e4, outputTimes: times });
+    const at = (n) => m.speciesNames.indexOf(n);
+    const M = [];
+    const SI = [];
+    r.grid.y.forEach((yy, i) => {
+      const C = m.toConcentrations(yy, r.grid.t[i]);
+      M.push(C[at('Anh')]);
+      SI.push(Math.log10(C[at('Ca+2')] * C[at('SO4-2')]) + 4.36);
+    });
+    let bad = 0;
+    let checked = 0;
+    for (const tend of [10, 6000, 16000]) {
+      const m2 = RtmModel.compile(text(flag, ca, anh, k, tend));
+      const v = RtmModel.verifyJacobian(m2, tend, last(run(m2, { tend, rtol: 1e-9 })));
+      bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      checked += v.checked;
+    }
+    return { M, SI, events: r.events.map((e) => e.expr || ''), bad, checked };
+  };
+  const dis = look('dissolve_only', 0.02, 0.05, 3e-6);
+  const pre = look('precipitate_only', 0.02, 0.05, 1e-6);
+  const preOut = look('precipitate_only', 0.002, 0.05, 1e-7);
+  const frc = look('force_equality', 0.002, 0, 1e-7);
+  const f = (x) => x.toFixed(5);
+  check('a mineral\'s bounds: under dissolve_only never above what it starts with, the water supersaturated while it is '
+    + 'there, dissolving once the water is not and back at what it started with on the way up; under precipitate_only what '
+    + 'it starts with set aside, what precipitates beside it coming and going, and with the water undersaturated none of it '
+    + 'dissolving; under force_equality held at saturation from none, below none; the Jacobians against differences',
+  dis.M[0] === 0.05 && dis.SI[0] > 0.9 && Math.abs(dis.SI[4]) < 1e-9 && dis.M[4] < 0.04 && dis.M[8] === 0.05 && dis.SI[8] > 0.9
+    && dis.events.length === 2 && /dissolves/.test(dis.events[0]) && /precipitates no more \(dissolve_only\)/.test(dis.events[1])
+    && pre.M[0] > 0.06 && pre.M.every((v) => v > 0.05) && pre.SI.every((v) => Math.abs(v) < 1e-9)
+    && preOut.M.every((v) => v === 0.05) && preOut.SI[8] < preOut.SI[0]
+    && frc.M[0] < 0 && frc.M[4] < frc.M[0] && frc.SI.every((v) => Math.abs(v) < 1e-9)
+    && [dis, pre, preOut, frc].every((x) => x.bad === 0),
+  `dissolve_only: ${dis.M.map(f).join(' ')} (SI ${dis.SI[0].toFixed(3)} to ${dis.SI[4].toExponential(0)} and back), `
+    + `"${dis.events.join('", "')}"; precipitate_only: ${f(pre.M[0])} to ${f(Math.min(...pre.M))}, and undersaturated `
+    + `${f(preOut.M[0])} throughout; force_equality: ${frc.M[0].toExponential(3)} to ${frc.M[4].toExponential(3)}; the `
+    + `Jacobians ${[dis, pre, preOut, frc].reduce((a, x) => a + x.bad, 0)} of `
+    + `${[dis, pre, preOut, frc].reduce((a, x) => a + x.checked, 0)} off`);
+
+  // Under precipitate_only, what precipitated beside what it started with dissolving again: that is left, and said so.
+  {
+    const m = RtmModel.compile(text('precipitate_only', 0.02, 0.05, 1e-6, 1.9e4)
+      .replace(/r = [^*\n]+\*\(1 - step\(t - 1e4\)\)/, 'r = 1e-6').replace(/\n=> Ca\+2 \+ 2 Cl-[^\n]*\n/, '\n'));
+    const tt = Array.from({ length: 20 }, (_, i) => i * 1e3);
+    const r = run(m, { tend: 1.9e4, outputTimes: tt });
+    const M = r.grid.y.map((yy, i) => m.toConcentrations(yy, tt[i])[m.speciesNames.indexOf('Anh')]);
+    const said = r.events.map((e) => e.expr || '');
+    check('  under precipitate_only, what precipitated beside what it started with dissolving again: what it started '
+      + 'with left, none of it dissolving, and the event says so, not that it has dissolved away',
+    said.length === 1 && /^Anh is back at what it started with, and dissolves no more \(precipitate_only\)$/.test(said[0])
+      && M[0] > 0.06 && M[18] === 0.05 && M[19] === 0.05,
+    `"${said.join('", "')}" at ${r.events.map((e) => e.t.toFixed(0)).join(', ')} s; ${M[0].toFixed(5)} to ${M[19]}`);
+  }
+
+  // A pH-stat: NaOH dissolving as much as holds SI(Fix_H+) = -8, acid coming in.
+  const stat = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1e4}\nEQUILIBRATE = always\n`
+    + `${o.act ? 'ACTIVITY = davies\n' : ''}\n<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCO2 1e-3\nHCO3- 1e-3\nCO3-2 1e-6\nNa+ 1e-3\n`
+    + `Cl- 1e-6\n${o.species || 'NaOH_r 0.01 mineral'}\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\n`
+    + 'CO2 + H2O <=> H+ + HCO3-, logK = -6.35\nHCO3- <=> H+ + CO3-2, logK = -10.33\n'
+    + `${o.rel || 'NaOH_r <=> Na+ + OH-, SI(Fix_H+) = -8'}\n\n<PHASES>\n${o.phases || 'Fix_H+ <=> H+, logK = 0'}\n\n`
+    + `<REACTIONS>\n=> H+ + Cl-, r = 2e-7\n`;
+  const statRuns = [{}, { act: true }].map((o) => {
+    const m = RtmModel.compile(stat(o));
+    const r = run(m, { tend: 1e4, outputTimes: [0, 2500, 5000, 7500, 1e4] });
+    const at = (n) => m.speciesNames.indexOf(n);
+    const ns = m.speciesNames.length;
+    let pH = 0;
+    let na = 0;
+    let na0 = 0;
+    let used = 0;
+    r.grid.y.forEach((yy, i) => {
+      const C = m.toConcentrations(yy);
+      const lnG = new Float64Array(ns);
+      if (m.act) RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+      pH = Math.max(pH, Math.abs(-(Math.log(C[at('H+')]) + lnG[at('H+')]) / Math.LN10 - 8));
+      const total = C[at('Na+')] + C[at('NaOH_r')];
+      if (i === 0) { na0 = total; used = C[at('NaOH_r')]; }
+      na = Math.max(na, Math.abs(total / na0 - 1));
+      if (i === 4) used -= C[at('NaOH_r')];
+    });
+    let bad = 0;
+    let checked = 0;
+    for (const tend of [10, 3000, 9000]) {
+      const m2 = RtmModel.compile(stat({ ...o, tend }));
+      const v = RtmModel.verifyJacobian(m2, tend, last(run(m2, { tend, rtol: 1e-9 })));
+      bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      checked += v.checked;
+    }
+    return { pH, na, used, bad, checked };
+  });
+  check('  a pH-stat, NaOH dissolving as much as holds SI(Fix_H+) = -8 while acid comes in: the pH held, the NaOH used the '
+    + 'acid that came in, the sodium the water gains what the reagent loses; without activity coefficients and under '
+    + 'Davies; the Jacobians against differences', statRuns.every((x) => x.pH < 1e-12 && Math.abs(x.used / 2e-3 - 1) < 1e-3
+    && x.na < 1e-14 && x.bad === 0),
+  statRuns.map((x, i) => `${i ? 'Davies' : 'none'}: pH within ${x.pH.toExponential(1)} of 8, NaOH used `
+    + `${x.used.toExponential(6)} for 2e-3 of acid, sodium kept ${x.na.toExponential(1)}; the Jacobian ${x.bad} of `
+    + `${x.checked} off`).join('; '));
+
+  // What is refused, each with its reason.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const cases = [
+    ['a bound on what is no mineral', text('', 0.02, 0.05, 3e-6).replace('Na+ 0.04', 'Na+ 0.04 dissolve_only'),
+      /which is a mineral's held at saturation/],
+    ['dissolve_only and precipitate_only both', text('dissolve_only precipitate_only', 0.02, 0.05, 3e-6),
+      /one of them/],
+    ['a bound on a mineral with no relation', text('dissolve_only', 0.02, 0.05, 3e-6)
+      .replace('Anh <=> Ca+2 + SO4-2, logK = -4.36\n', '').replace('Ca+2 + 2 Cl- =>', 'Anh => Ca+2 + SO4-2, r = 1e-9\nCa+2 + 2 Cl- =>'),
+    /has none/],
+    ['its relations not held all through', text('dissolve_only', 0.02, 0.05, 3e-6).replace('EQUILIBRATE = always', 'EQUILIBRATE = 1'),
+      /EQUILIBRATE = always/],
+    ['precipitate_only and force_equality', text('precipitate_only force_equality', 0.02, 0.05, 3e-6), /below none it would/],
+    ['a rate law reading a mineral set aside in part', text('precipitate_only', 0.02, 0.05, 3e-6)
+      .replace(/r = [^*\n]+\*\(1 - step\(t - 1e4\)\)/, 'r = 3e-6*[Anh]'), /reads Anh, which is given precipitate_only/],
+    ['SI() on a relation with no mineral', stat({ rel: 'H2O <=> OH- + H+, SI(Fix_H+) = -8\nNaOH_r <=> Na+ + OH-, SI(Fix_H+) = -8' }),
+      /has no mineral in it/],
+    ['SI() of no phase in <PHASES>', stat({ rel: 'NaOH_r <=> Na+ + OH-, SI(Fix_OH-) = -6' }), /there is no phase Fix_OH- in <PHASES>/],
+    ['SI() with a log K of its own', stat({ rel: 'NaOH_r <=> Na+ + OH-, SI(Fix_H+) = -8, logK = 2' }), /takes its log K from that phase/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx).slice(0, 160)}"`).join(' | '));
+}
+
+/*
    CD-MUSIC (PHREEQC's SURFACE with -cd_music): a surface with three
    potentials, planes 0, 1 and 2, the species' charges split over them by
    dz0, dz1 and dz2. Against PHREEQC's equations written out here: at every

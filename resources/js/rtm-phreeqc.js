@@ -845,22 +845,38 @@
   }
 
   /**
-   * The phases of the EQUILIBRIUM_PHASES blocks of an input, each with the
-   * saturation index it is held at (0 unless given) and anything else its
-   * line says, which this page does not carry (an alternative reaction,
-   * dissolve_only, precipitate_only). A phase named again takes the later line.
+   * The phases of the EQUILIBRIUM_PHASES blocks of an input as PHREEQC's
+   * read_pp_assemblage reads a line -- the phase, its saturation index (0
+   * unless given), a word there the alternative formula or phase that
+   * dissolves to hold it (`alt`), the amount, then d[issolve_only] or
+   * p[recipitate_only] (`only`) -- with -force_equality on the line after
+   * (`forced`), and anything else it says (`extra`). A phase named again
+   * takes the later line.
    */
   function readAssemblage(text) {
     const out = new Map();
     let inBlock = false;
+    let last = null;
+    const num = (x) => x !== undefined && Number.isFinite(Number(x));
     for (const line of logicalLines(text)) {
       const tokens = line.trim().split(/\s+/).filter(Boolean);
       if (!tokens.length) continue;
       const word = tokens[0].toUpperCase();
-      if (KEYWORDS.has(word)) { inBlock = word === 'EQUILIBRIUM_PHASES'; continue; }
-      if (!inBlock || tokens[0].startsWith('-')) continue;
-      const si = tokens.length > 1 ? Number(tokens[1]) : 0;
-      out.set(tokens[0], { name: tokens[0], si: Number.isFinite(si) ? si : 0, extra: tokens.slice(3).join(' ') });
+      if (KEYWORDS.has(word)) { inBlock = word === 'EQUILIBRIUM_PHASES'; last = null; continue; }
+      if (!inBlock) continue;
+      if (tokens[0].startsWith('-')) {
+        if (/^-f/i.test(tokens[0]) && last) last.forced = !/^f/i.test(tokens[1] || '');
+        continue;
+      }
+      const a = { name: tokens[0], si: 0, alt: null, only: null, forced: false, extra: '' };
+      let i = 1;
+      if (num(tokens[i])) a.si = Number(tokens[i++]);
+      if (tokens[i] !== undefined && /^[A-Za-z]/.test(tokens[i])) a.alt = tokens[i++];
+      if (num(tokens[i])) i++;
+      if (tokens[i] !== undefined && /^[dp]/i.test(tokens[i])) a.only = /^d/i.test(tokens[i++]) ? 'dissolve' : 'precipitate';
+      a.extra = tokens.slice(i).join(' ');
+      out.set(tokens[0], a);
+      last = a;
     }
     return [...out.values()];
   }
@@ -1730,22 +1746,77 @@
     for (const s of ends) {
       if (!last.has(s)) no(`PHREEQC has no SOLUTION ${s}, the water ${s ? 'at its last end' : 'coming in'}`);
     }
-    const same = (a, b) => Math.abs(a - b) <= 1e-9 * Math.max(Math.abs(a), Math.abs(b)) + 1e-25;
+    /*
+      Two cells alike: what is in them, PHREEQC's totals -- each element's,
+      hydrogen and oxygen apart, which are mostly the water, and the protons
+      beyond the water's, H - 2 O, which is its pH; each valence state's;
+      what is on its exchangers and surfaces, and its phases' and
+      reactants' amounts. Not its species: two cells defined alike come out
+      of PHREEQC's convergence apart in those, H+ by a part in 1e5 and O2 by
+      one in 1e4, where the totals, its mass balances, agree to 1e-9.
+    */
     const differs = (a, b) => {
-      if (!same(a.tc, b.tc)) return 'its temperature';
-      for (const [k, [m]] of a.species) if (!b.species.has(k) || !same(m, b.species.get(k)[0])) return k;
-      for (const [k, e] of a.exchange) if (!b.exchange.has(k) || !same(e.m, b.exchange.get(k).m)) return k;
-      for (const [k, e] of a.surface) if (!b.surface.has(k) || !same(e.m, b.surface.get(k).m)) return k;
-      const i = a.x.findIndex((v, j) => !same(Number(v), Number(b.x[j])));
+      if (Math.abs(a.tc - b.tc) > 1e-9) return 'its temperature';
+      const totals = (r, states) => {
+        const m = new Map();
+        for (const [k, v] of r.elements) if (k.includes('(') === states) m.set(k, v);
+        return m;
+      };
+      const ea = totals(a, false);
+      const eb = totals(b, false);
+      let scale = 0;
+      for (const mm of [ea, eb]) for (const [k, v] of mm) if (k !== 'H' && k !== 'O') scale = Math.max(scale, Math.abs(v));
+      if (!(scale > 0)) scale = 1e-3;
+      const near = (x, y, rel = 1e-6) => Math.abs(x - y) <= rel * Math.max(Math.abs(x), Math.abs(y)) + 1e-12 * scale;
+      const apart = (ma, mb, rel) => [...new Set([...ma.keys(), ...mb.keys()])]
+        .find((k) => !near(ma.has(k) ? ma.get(k) : 0, mb.has(k) ? mb.get(k) : 0, rel));
+      const el = apart(new Map([...ea].filter(([k]) => k !== 'H' && k !== 'O')),
+        new Map([...eb].filter(([k]) => k !== 'H' && k !== 'O')));
+      if (el) return el;
+      const excess = (mm) => (mm.get('H') || 0) - 2 * (mm.get('O') || 0);
+      if (Math.abs(excess(ea) - excess(eb)) > 1e-6 * scale) return 'its pH';
+      // Valence states as PHREEQC's redox converges: a part in 1e4, and a part in 1e6 of the largest total.
+      const sa = totals(a, true);
+      const sb = totals(b, true);
+      const vs = [...new Set([...sa.keys(), ...sb.keys()])].filter((k) => !/^(H|O)\(/.test(k))
+        .find((k) => Math.abs((sa.get(k) || 0) - (sb.get(k) || 0)) > 1e-4 * Math.max(Math.abs(sa.get(k) || 0),
+          Math.abs(sb.get(k) || 0)) + 1e-6 * scale);
+      if (vs) return vs;
+      const on = (r, what) => new Map([...r[what]].map(([k, e]) => [k, e.m]));
+      const ex = apart(on(a, 'exchange'), on(b, 'exchange')) || apart(on(a, 'surface'), on(b, 'surface'));
+      if (ex) return ex;
+      const i = a.x.findIndex((v, j) => !near(Number(v), Number(b.x[j])));
       return i >= 0 ? extras[i] : null;
     };
     const one = last.get(1);
+    /*
+      THE CELLS' ZONES: runs of cells that come out alike, each started
+      from its first cell's water -- cell 1's in <SPECIES>, the others' in
+      <INITIAL> (waterToModel). At one temperature, the page's column has
+      one; and what is on an exchanger or a surface in every zone or none,
+      as the page's exchangers and surfaces are in every cell.
+    */
+    const zones = [{ lo: 1, hi: 1, rep: 1, row: null }];
     for (let c = 2; c <= n; c++) {
-      const d = differs(one, last.get(c));
-      if (d) {
-        no(`its cells start apart -- cell ${c} is not cell 1 in ${d} -- where the page writes one water for the whole `
-          + 'column');
+      const z = zones[zones.length - 1];
+      if (differs(last.get(z.rep), last.get(c))) zones.push({ lo: c, hi: c, rep: c, row: null }); else z.hi = c;
+    }
+    const holds = (row, what) => [...row[what].values()].some((e) => e.m > 0);
+    for (const z of zones.slice(1)) {
+      const r = last.get(z.rep);
+      if (Math.abs(r.tc - one.tc) > 1e-9) {
+        no(`cell ${z.rep} starts at ${fmtG(r.tc, 6)} C and cell 1 at ${fmtG(one.tc, 6)} C, where the page's column has one `
+          + 'temperature');
       }
+      for (const [what, name] of [['exchange', 'an exchanger'], ['surface', 'a surface']]) {
+        if (holds(r, what) !== holds(one, what)) {
+          no(`${name} is in some of its cells and not in others (cell ${holds(one, what) ? z.rep : 1} has none), where the `
+            + `page's ${name === 'an exchanger' ? 'exchangers are' : 'surfaces are'} in every cell`);
+        }
+      }
+    }
+    if (zones.length > 1 && (readGasPhases(t.before).size || readSolidSolutions(t.before).size)) {
+      no('its cells start apart, and it has a gas phase or a solid solution, which the page does not write cell by cell');
     }
     for (const s of ends) {
       if (Math.abs(last.get(s).tc - one.tc) > 1e-9) {
@@ -1754,45 +1825,61 @@
       }
     }
     /*
-      Each end's water with 1e-20 of the column's, and cell 1 with 1e-20 of
-      each end's. PHREEQC keeps a MIX from one run to the next, and RUN_CELLS
-      takes a cell's MIX for its water: these have a number no cell has, and
-      go when done.
+      Each water takes a trace of every other -- the ends', and each zone's
+      -- so that what only one of them has is a total that can be held
+      everywhere. PHREEQC keeps a MIX from one run to the next, and
+      RUN_CELLS takes a cell's MIX for its water: these have a number no
+      cell has, and go when done.
     */
     const MIXED = 9999991;
     const TRACE = o.columnTrace || 1e-12;
     const mixed = (parts) => `MIX ${MIXED}\n${parts}`;
     const gone = `DELETE\n -mix ${MIXED}\nEND\n`;
+    const waters = [...zones.map((z) => z.rep), ...ends];
+    const traced = (s) => `${mixed(` ${s} 1\n${waters.filter((x) => x !== s).map((x) => ` ${x} ${TRACE}\n`).join('')}`)}`;
     const side = (s) => {
       if (s < 0) return null;
-      const r = runRows(o.engine, `${punchBlock()}${equil}${mixed(` ${s} 1\n 1 ${TRACE}\n`)}END\n${gone}`).pop();
+      const r = runRows(o.engine, `${punchBlock()}${equil}${traced(s)}END\n${gone}`).pop();
       return new Map([...r.species].map(([k, [m]]) => [k, m]));
     };
     const left = side(leftSol);
     const right = side(rightSol);
-    const trace = ends.length ? `${mixed(` 1 1\n${ends.map((s) => ` ${s} ${TRACE}\n`).join('')}`)}SAVE solution 1\nEND\n${gone}`
-      : '';
-    const cellInput = `${equil}${trace}RUN_CELLS\n -cells 1\n -time_step 0\nEND\n`;
+    // A cell's water with its traces, put on what the cell holds.
+    const inCell = (c, parts) => `${mixed(parts)}SAVE solution ${c}\nEND\n${gone}RUN_CELLS\n -cells ${c}\n -time_step 0\nEND\n`;
+    const others = waters.length > 1;
+    const cellInput = `${equil}${others ? inCell(1, traced(1).slice(`MIX ${MIXED}\n`.length)) : 'RUN_CELLS\n -cells 1\n'
+      + ' -time_step 0\nEND\n'}`;
+    // Each other zone's first cell as it starts, its phases', reactants' and water's amounts too.
+    const zx = [...extras, 'TOT("water")'];
+    for (const z of zones.slice(1)) {
+      z.row = runRows(o.engine, `${punchBlock(zx)}${equil}${inCell(z.rep, traced(z.rep).slice(`MIX ${MIXED}\n`.length))}`).pop();
+      z.extras = zx;
+    }
     /*
-      The species that matter anywhere the column goes: in the water at
-      each end, and in the column's cell 1 with that water, alone and half
-      and half with its own, put on what the cell holds -- calcium coming
-      into a column with none goes onto its exchanger as CaX2.
+      The species that matter anywhere the column goes: in each zone's water,
+      in the water at each end, and in each zone's first cell with that
+      water, alone and half and half with its own, put on what the cell
+      holds -- calcium coming into a column with none goes onto its
+      exchanger as CaX2.
     */
     const keep = new Set();
     const keepOn = new Set();
+    const take = (r) => {
+      for (const [k, [m]] of r.species) if (m >= floor) keep.add(k);
+      for (const [k, e] of r.exchange) if (e.m >= floor) keepOn.add(k);
+      for (const [k, e] of r.surface) if (e.m >= floor) keepOn.add(k);
+    };
+    for (const z of zones.slice(1)) take(z.row);
     for (const s of ends) {
-      for (const [k, [m]] of last.get(s).species) if (m >= floor) keep.add(k);
-      for (const mix of [` ${s} 1\n`, ` 1 0.5\n ${s} 0.5\n`]) {
-        const r = runRows(o.engine, `${punchBlock()}${equil}${mixed(mix)}SAVE solution 1\nEND\n${gone}RUN_CELLS\n`
-          + ' -cells 1\n -time_step 0\nEND\n').pop();
-        for (const [k, [m]] of r.species) if (m >= floor) keep.add(k);
-        for (const [k, e] of r.exchange) if (e.m >= floor) keepOn.add(k);
-        for (const [k, e] of r.surface) if (e.m >= floor) keepOn.add(k);
+      take(last.get(s));
+      for (const z of zones) {
+        for (const mix of [` ${s} 1\n`, ` ${z.rep} 0.5\n ${s} 0.5\n`]) {
+          take(runRows(o.engine, `${punchBlock()}${equil}${inCell(z.rep, mix)}`).pop());
+        }
       }
     }
     const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
-    return { t, cellInput, left, right, leftSol, rightSol, keep, keepOn, corr, tc: one.tc, trace: TRACE };
+    return { t, cellInput, left, right, leftSol, rightSol, keep, keepOn, corr, tc: one.tc, trace: TRACE, zones };
   }
 
   /*
@@ -2823,7 +2910,27 @@
       const skip = (why) => phasesSkipped.push({ name: a.name, why });
       if (!r || !r.left.length) { skip('the database has no reaction for it'); return; }
       if (a.extra) { skip(`its line says more than this page carries (${a.extra})`); return; }
-      const others = [...r.left.slice(1), ...r.right];
+      /*
+        An alternative reaction -- Fix_H+ -8 NaOH, PHREEQC adding or taking
+        away NaOH to hold the phase's SI -- the formula's dissolution, or the
+        alternative phase's: a mineral of its own at the moles PHREEQC left
+        of it, held where the phase's SI is (SI() on its relation), the
+        phase in <PHASES>.
+      */
+      let alt = null;
+      if (a.alt) {
+        const pk = phaseKey.get(a.alt.toLowerCase());
+        let terms;
+        if (pk) {
+          const ar = db.phaseReaction.get(pk);
+          terms = [...ar.left.slice(1).map((t) => [t.n, -t.c / ar.left[0].c]), ...ar.right.map((t) => [t.n, t.c / ar.left[0].c])];
+        } else {
+          try { terms = [...formulaReaction(a.alt, db)]; } catch (e) { skip(`its alternative formula ${a.alt}: ${e.message}`); return; }
+        }
+        alt = { formula: a.alt, reac: terms.filter(([, c]) => c < 0).map(([n, c]) => ({ c: -c, n })),
+          prod: terms.filter(([, c]) => c > 0).map(([n, c]) => ({ c, n })) };
+      }
+      const others = [...r.left.slice(1), ...r.right, ...(alt ? [...alt.reac, ...alt.prod] : [])];
       if (others.some((t) => t.n === 'e-') && !carryRedox) {
         skip('it dissolves with electrons, and the valence states are not held at one pe');
         return;
@@ -2831,8 +2938,11 @@
       const missing = others.filter((t) => t.n !== 'H2O' && !isE(t.n) && !molal.has(t.n)).map((t) => t.n);
       if (missing.length) { skip(`the water has no ${missing.join(', ')}`); return; }
       if (!Number.isFinite(moles) || !Number.isFinite(lk) || !(waterKg > 0)) { skip('PHREEQC gave no amount or log K for it'); return; }
-      minerals.push({ phase: a.name, si: moles > 0 && Number.isFinite(siLeft) ? siLeft : a.si, target: a.si,
-        amount: Math.max(moles, 0) / waterKg, lk, c0: r.left[0].c, reac: r.left.slice(1), prod: r.right });
+      // One at a bound of its own (dissolve_only, precipitate_only) is held at its target, not where its bound left it.
+      const atTarget = Number.isFinite(siLeft) && (!a.only || Math.abs(siLeft - a.si) < 1e-3);
+      minerals.push({ phase: a.name, si: (moles > 0 || a.forced) && atTarget ? siLeft : a.si, target: a.si,
+        amount: (a.forced ? moles : Math.max(moles, 0)) / waterKg, lk, c0: r.left[0].c, reac: r.left.slice(1),
+        prod: r.right, alt, only: a.only, forced: a.forced });
       for (const t of others) {
         if (t.n !== 'H2O' && !isE(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
       }
@@ -2965,6 +3075,8 @@
     const kinetics = [];
     const kinSkipped = [];
     const kinPhaseUse = new Map();
+    // The phases whose saturation index a mineral's alternative reaction holds (readAssemblage): in <PHASES> as well.
+    for (const mn of minerals) if (mn.alt) kinPhaseUse.set(mn.phase, mn.lk);
     const holes = [];
     const hole = (kind, key) => { holes.push({ kind, key }); return `\u0001${holes.length - 1}\u0001`; };
     if (carryKin) {
@@ -3329,7 +3441,8 @@
     const peSpread = pes.length ? [Math.min(...pes), Math.max(...pes)] : null;
     const outOfEq = !!peSpread && peSpread[1] - peSpread[0] > 1e-6;
     const name = new Map(order.map((s) => [s, rtmName(s, taken)]));
-    for (const mn of minerals) mn.name = rtmName(mn.phase, taken);
+    // A mineral that is an alternative reaction is named for what dissolves and the phase it holds, no charge in it.
+    for (const mn of minerals) mn.name = rtmName(mn.alt ? `${mn.alt.formula}_${mn.phase.replace(/[+-][0-9.]*$/, '')}` : mn.phase, taken);
     for (const g of gases) g.name = rtmName(g.phase, taken);
     for (const ss of solids) for (const c of ss.comps) c.name = rtmName(c.phase, taken);
     /*
@@ -3800,7 +3913,8 @@
       colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: t.shifts,
         timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
         left: leftKind, right: rightKind, leftSolution: leftAt ? column.leftSol : null,
-        rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after };
+        rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after,
+        zones: column.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep })) };
       const sol = (s) => `SOLUTION ${s}`;
       const endSay = (kind, s, where) => (kind === 'robin' ? `${sol(s)} flows in at the ${where}`
         : kind === 'dirichlet' ? `${sol(s)} holds the ${where} end (constant)`
@@ -3812,9 +3926,14 @@
       out.push(`# dispersivity ${fmtG(t.dir ? t.disp[0] : 0, 6)} m${corr !== 1 ? ` (times ${fmtG(corr, 6)}, -correct_disp)` : ''}, `
         + `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `
         + `${endSay(leftKind, column.leftSol, 'left')}; ${endSay(rightKind, column.rightSol, 'right')}.`);
-      out.push('# Every cell starts from the water of cell 1 as PHREEQC equilibrates it before the first shift,');
-      out.push(`# with ${fmtG(column.trace, 3)} of ${[column.leftSol, column.rightSol].filter((s) => s >= 0).map(sol).join(' and ')
-        || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: what only one has is then a total everywhere.`);
+      out.push(column.zones.length > 1 ? `# The cells start as PHREEQC equilibrates them before the first shift, in ${column.zones.length} zones: `
+        + `${column.zones.map((z) => `${z.lo}-${z.hi}`).join(', ')}, the first as written here and the rest in <INITIAL>,`
+        : '# Every cell starts from the water of cell 1 as PHREEQC equilibrates it before the first shift,');
+      const endSols = [column.leftSol, column.rightSol].filter((s) => s >= 0).map(sol).join(' and ');
+      out.push(column.zones.length > 1 ? `# each with ${fmtG(column.trace, 3)} of every other zone's water${endSols ? ` and of ${endSols}` : ''}, `
+        + 'which have as much of each: what only one has is then a total everywhere.'
+        : `# with ${fmtG(column.trace, 3)} of ${endSols || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: `
+          + 'what only one has is then a total everywhere.');
       if (t.dir) {
         out.push('# PHREEQC shifts each cell\'s water whole and then reacts it; here the water moves through the cells as');
         out.push('# it reacts: a cell of PHREEQC\'s after shift k is this one half a time step later, and the two meet');
@@ -3892,7 +4011,9 @@
     }
     for (const mn of minerals) {
       const amount = fmtG(mn.amount, 15);
-      out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}`);
+      // PHREEQC's dissolve_only, precipitate_only, -force_equality.
+      const flags = `${mn.only ? `  ${mn.only}_only` : ''}${mn.forced ? '  force_equality' : ''}`;
+      out.push(`${mn.name.padEnd(width)}${follow ? `${amount.padEnd(width2)}mineral` : `${amount}  mineral`}${flags}`);
     }
     for (const ss of solids) {
       for (const c of ss.comps) {
@@ -3956,6 +4077,30 @@
         + `${zq !== chargeOf(e.name) ? `  z=${fmtG(zq, 12)}` : ''}`
         + `${dz ? dz.map((v, i) => (v ? `  dz${i}=${fmtG(v, 12)}` : '')).join('') : ''}`);
     }
+    /*
+      A column whose cells start apart (columnSetup's zones): each zone but
+      cell 1's in <INITIAL>, its cells counted from 0 as the page counts
+      them, every species as the zone's first cell comes out of PHREEQC's
+      equilibration with its traces -- the water's species, what is on its
+      exchangers and surfaces, and its phases' and kinetic reactants'
+      amounts, per kilogram of its water.
+    */
+    if (column && column.zones.length > 1) {
+      out.push('', '<INITIAL>');
+      for (const z of column.zones.slice(1)) {
+        const cells = z.lo === z.hi ? `${z.lo - 1}` : `${z.lo - 1}-${z.hi - 1}`;
+        const x = (expr) => { const i = z.extras.indexOf(expr); return i >= 0 ? Number(z.row.x[i]) : NaN; };
+        const kgw = x('TOT("water")') > 0 ? x('TOT("water")') : 1;
+        out.push(`# PHREEQC's cell${z.lo === z.hi ? ` ${z.lo}` : `s ${z.lo} to ${z.hi}`}, as cell ${z.rep} comes out of its `
+          + 'equilibration before the first shift');
+        const put = (nm, v) => out.push(`${nm.padEnd(width)}  ${cells.padEnd(9)}${fmtG(Number.isFinite(v) ? v : 0, 15)}`);
+        for (const sp of order) put(name.get(sp), (z.row.species.get(sp) || [0])[0]);
+        for (const e of onEx) put(e.name, (z.row.exchange.get(e.species) || { m: 0 }).m);
+        for (const e of onSf) put(e.name, (z.row.surface.get(e.species) || { m: 0 }).m);
+        for (const mn of minerals) put(mn.name, x(`EQUI("${mn.phase}")`) / kgw);
+        for (const k of kinetics) put(k.name, x(`KIN("${k.comp.name}")`) / kgw);
+      }
+    }
     out.push('', '<EQUILIBRIUM>');
     /*
       EACH RELATION'S LOG K AS IT GOES WITH TEMPERATURE: the database's terms
@@ -3994,6 +4139,16 @@
     // this temperature plus the saturation index it is held at.
     for (const mn of minerals) {
       const aq = (terms) => terms.filter((t) => t.n !== 'H2O');
+      // An alternative reaction: what dissolves, held where its phase's saturation index is (SI(), <PHASES>).
+      if (mn.alt) {
+        lines.push({
+          rel: `${side([{ c: 1, n: mn.name }, ...(follow ? mn.alt.reac : aq(mn.alt.reac))])} <=> `
+            + `${side(follow ? mn.alt.prod : aq(mn.alt.prod))}`,
+          k: `SI(${phaseName.get(mn.phase) || mn.phase}) = ${fmtG(mn.si, 15)}`,
+          note: `# ${mn.alt.formula} as it holds ${mn.phase} there`,
+        });
+        continue;
+      }
       const sumLg = (terms) => aq(terms).reduce((acc, t) => acc + t.c * lgOf(t.n), 0);
       const nw = mn.prod.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0)
         - mn.reac.filter((t) => t.n === 'H2O').reduce((acc, t) => acc + t.c, 0);
@@ -4214,7 +4369,8 @@
           sitPairs: sit ? sitPairs.length : 0 } : null,
         // The water's pressure, and the molar volumes written for each log K at it.
         pressure: { atm, vapour: atVapour, volumes: volumes ? volLines.length : 0 },
-        minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target })),
+        minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target,
+          alt: mn.alt ? mn.alt.formula : null, only: mn.only, forced: mn.forced })),
         phasesSkipped,
         // An exchanger whose sites go with a phase or a kinetic reactant in PHREEQC: carried so (per, sites= per=), or
         // held here at what PHREEQC loaded at the start (linked), and why.

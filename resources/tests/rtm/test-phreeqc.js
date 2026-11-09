@@ -491,11 +491,19 @@ function withPhreeqc(engine) {
     `${acid.report.temperature} C, from ${acid.report.temperatureFrom}`);
 
   // --- phases carried as minerals, held at saturation ----------------------------
-  check('a phase\'s reaction is read: Calcite is CaCO3 = CO3-2 + Ca+2; the input\'s EQUILIBRIUM_PHASES with their SI',
-    JSON.stringify(P.readDatabase(dbText).phaseReaction.get('Calcite')) === JSON.stringify({ left: [{ c: 1, n: 'CaCO3' }],
-      right: [{ c: 1, n: 'CO3-2' }, { c: 1, n: 'Ca+2' }] })
-      && JSON.stringify(P.readAssemblage('EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\nEND\n'))
-        === JSON.stringify([{ name: 'Calcite', si: 0, extra: '' }, { name: 'CO2(g)', si: -2, extra: '' }]));
+  // A line as PHREEQC's read_equilibrium_phases takes it: the SI, a word beginning with a letter an alternative
+  // formula or phase, the amount, d... or p..., and -force_equality on the line after, true unless it begins with f.
+  const plain = (name, si) => ({ name, si, alt: null, only: null, forced: false, extra: '' });
+  const assemblage = P.readAssemblage('EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\n Fix_H+ -8 NaOH 0.01\n'
+    + ' Gypsum 0 0.01 dissolve_only\n Anhydrite 0 Calcite 0.1 p\n -force_equality true\n Quartz\n -force_equality false\nEND\n');
+  check('a phase\'s reaction is read: Calcite is CaCO3 = CO3-2 + Ca+2; the input\'s EQUILIBRIUM_PHASES with their SI, '
+    + 'an alternative formula or phase, d... and p..., and -force_equality',
+  JSON.stringify(P.readDatabase(dbText).phaseReaction.get('Calcite')) === JSON.stringify({ left: [{ c: 1, n: 'CaCO3' }],
+    right: [{ c: 1, n: 'CO3-2' }, { c: 1, n: 'Ca+2' }] })
+    && JSON.stringify(assemblage) === JSON.stringify([plain('Calcite', 0), plain('CO2(g)', -2),
+      { ...plain('Fix_H+', -8), alt: 'NaOH' }, { ...plain('Gypsum', 0), only: 'dissolve' },
+      { ...plain('Anhydrite', 0), alt: 'Calcite', only: 'precipitate', forced: true }, plain('Quartz', 0)]),
+  JSON.stringify(assemblage));
   const phasesIn = 'EQUILIBRIUM_PHASES 1\n Calcite 0 0.002\n CO2(g) -2.0 10\n Pyrite 0 0\n';
   const phaseWater = { name: 'groundwater', text: groundwater.replace('END', phasesIn) };
   let notHeld = '';
@@ -3251,6 +3259,35 @@ function againstTransportHandOff(engine) {
     + `${ca.gone} cells, PHREEQC ${ca.pqGone}; at a rate on ${K} cells: pH within ${ck.worst.pH.toFixed(3)}, Ca `
     + `${(ck.worst.Ca * 1e3).toFixed(4)} mM, the calcite dissolved ${(dis(ck, 1e-3) * 100).toFixed(2)} % apart`);
 
+  /*
+    Cells that start apart: two waters, each with its exchanger loaded from
+    it, flushed with calcium chloride; and calcite in the first half of the
+    column only, acid flowing in. Each zone as PHREEQC equilibrates its first
+    cell, cell 1's in <SPECIES>, the other's in <INITIAL>.
+  */
+  const twoWaters = 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Ca 0.6\n Cl 1.2\nSOLUTION 1-20\n units mmol/kgw\n pH 7 charge\n'
+    + ' Na 1.0\n K 0.2\n N(5) 1.2\nSOLUTION 21-40\n units mmol/kgw\n pH 7 charge\n Na 0.3\n K 0.6\n N(5) 0.9\nEND\n'
+    + 'EXCHANGE 1-20\n -equilibrate 1\n X 0.0011\nEXCHANGE 21-40\n -equilibrate 21\n X 0.0008\nEND\n'
+    + 'TRANSPORT\n -cells 40\n -lengths 0.002\n -shifts 120\n -time_step 720\n -dispersivities 0.002\n'
+    + ' -diffusion_coefficient 0\n -punch_cells 40\nEND\n';
+  const rz = handOff('two waters', twoWaters);
+  const cz = compare(twoWaters, rz, ['Na', 'K', 'Ca', 'Cl']);
+  const halfCalcite = `${water(`1-${N}`)}${acid}END\nEQUILIBRIUM_PHASES 1-20\n Calcite 0 0.01\nEND\nTRANSPORT\n -cells ${N}\n`
+    + ` -shifts ${2 * N}\n -time_step 1000\n -lengths ${N}*0.0025\n -dispersivities 0.0025\n -diffusion_coefficient 0\n`
+    + ` -punch_cells 1-${N}\nEND\n`;
+  const rh = handOff('calcite in half', halfCalcite);
+  const ch = compare(halfCalcite, rh, ['Ca'], 'EQUI("Calcite")');
+  const zonesOf = (res) => res.report.transport.zones.map((z) => z.cells.join('-')).join(', ');
+  check('  cells that start apart, each zone as PHREEQC equilibrates its first cell, the first in <SPECIES> and the rest '
+    + 'in <INITIAL>: two waters with their exchangers flushed with calcium chloride, and calcite in half the column with '
+    + 'acid flowing in; the effluent, and the calcite left, against PHREEQC\'s TRANSPORT', zonesOf(rz) === '1-20, 21-40'
+    && /^KX\s+20-39\s+0\.00072742/m.test(rz.text) && cz.worst.Na < 3e-5 && cz.worst.K < 5e-5 && cz.worst.Ca < 3e-5
+    && cz.worst.Cl < 1e-5 && zonesOf(rh) === '1-20, 21-40' && /^Calcite\s+20-39\s+0$/m.test(rh.text) && ch.worst.pH < 0.03
+    && ch.worst.Ca < 1e-4 && Math.abs(ch.gone - ch.pqGone) <= 1,
+  `two waters (zones ${zonesOf(rz)}): within ${['Na', 'K', 'Ca', 'Cl'].map((el) => `${el} ${(cz.worst[el] * 1e3).toFixed(4)}`)
+    .join(', ')} mM; calcite in half (zones ${zonesOf(rh)}): pH within ${ch.worst.pH.toFixed(4)}, Ca `
+    + `${(ch.worst.Ca * 1e3).toFixed(4)} mM, the calcite gone from ${ch.gone} cells, PHREEQC ${ch.pqGone}`);
+
   // The options, as the column comes out of them.
   const small = (o) => 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n pH 7 charge\n'
     + ` K 1\n Br 1\nSOLUTION 6\n units mmol/kgw\n pH 7 charge\n Ca 0.5\n Cl 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n ${o}\nEND\n`;
@@ -3286,9 +3323,12 @@ function againstTransportHandOff(engine) {
     ['a closed end the water comes in through', small('-time_step 3600\n -boundary_conditions closed flux'), /comes in through an end that is closed/],
     ['cells of their own lengths with the water moving', small('-time_step 3600\n -lengths 0.1 0.2'), /the page's column has one velocity/],
     ['dispersivities of their own', small('-time_step 3600\n -dispersivities 0.1 0.2'), /dispersivities of their own/],
-    ['cells that start apart', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-2\n units mmol/kgw\n K 1\n Br 1\n'
-      + 'SOLUTION 3-5\n units mmol/kgw\n K 2\n Br 2\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n',
-    /cell 3 is not cell 1 in/],
+    ['cells at temperatures of their own', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-2\n units mmol/kgw\n K 1\n'
+      + ' Br 1\nSOLUTION 3-5\n temp 30\n units mmol/kgw\n K 1\n Br 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n',
+    /cell 3 starts at 30 C and cell 1 at 25 C/],
+    ['an exchanger in some cells only', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n K 1\n'
+      + ' Br 1\nEND\nEXCHANGE 1-2\n -equilibrate 1\n X 0.001\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n',
+    /an exchanger is in some of its cells and not in others/],
     ['water coming in warmer', 'SOLUTION 0\n temp 40\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n K 1\n'
       + ' Br 1\nEND\nTRANSPORT\n -cells 5\n -shifts 4\n -time_step 3600\nEND\n', /carries the heat as well/],
     ['a REACTION in the cells', 'SOLUTION 0\n units mmol/kgw\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n K 1\n Br 1\n'
@@ -3303,6 +3343,74 @@ function againstTransportHandOff(engine) {
     && /^VELOCITY = -0\.000277777777777778$/m.test(back.text) && /^RIGHT = robin$/m.test(back.text),
   `${wrongOpts.map(([what, o]) => `${what}: "${settings(o)}"`).join(' | ')}${wrongRef.map(([what, text]) => ` ${what}: `
     + `"${refused(text).slice(0, 160)}"`).join(' |')}`);
+}
+
+/* ======================================================================
+   EQUILIBRIUM_PHASES AS PHREEQC READS A LINE: an alternative reaction --
+   a formula, Fix_H+ -8 NaOH, or a phase, Calcite 0 Anhydrite -- carried as
+   a mineral held where the phase's SI is (SI() on its relation), and
+   dissolve_only, precipitate_only and -force_equality as the mineral's
+   bounds; each against REACTION's steps
+   ====================================================================== */
+function againstPhaseExtras(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const KN = 'KNOBS\n -convergence_tolerance 1e-12\n';
+  const FIX = 'PHASES\nFix_H+\n H+ = H+\n log_k 0\n';
+  const saved = 'SAVE solution 1\nSAVE equilibrium_phases 1\nEND\n';
+  const cases = [
+    { name: 'a pH-stat, NaOH held where SI(Fix_H+) is -8, acid coming in',
+      water: `${KN}${FIX}SOLUTION 1\n units mmol/kgw\n pH 6\n Na 1\n Cl 1 charge\n C(4) 2\nEQUILIBRIUM_PHASES 1\n Fix_H+ -8 NaOH 0.01\n${saved}`,
+      react: ['HCl', '=> H+ + Cl-'], moles: 1e-3, phase: 'Fix_H+', line: /^NaOH_Fix_H\s+\S+\s+mineral$/m, amount: 1e-6, pH: 1e-6 },
+    { name: 'calcite dissolve_only in a water supersaturated with it, acid coming in',
+      water: `${KN}SOLUTION 1\n units mmol/kgw\n pH 8.5\n Na 1\n Ca 4\n Cl 9 charge\n C(4) 3\nEQUILIBRIUM_PHASES 1\n Calcite 0 0.002 dissolve_only\n${saved}`,
+      react: ['HCl', '=> H+ + Cl-'], moles: 6e-3, phase: 'Calcite', line: /^Calcite\s+\S+\s+mineral\s+dissolve_only$/m, amount: 5e-5, pH: 2e-5 },
+    { name: 'gypsum precipitate_only in a water undersaturated in it, calcium coming in',
+      water: `${KN}SOLUTION 1\n units mmol/kgw\n pH 7\n Na 20\n Ca 1\n Cl 2 charge\n S(6) 10\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.01 precipitate_only\n${saved}`,
+      react: ['CaCl2', '=> Ca+2 + 2 Cl-'], moles: 0.1, phase: 'Gypsum', line: /^Gypsum\s+\S+\s+mineral\s+precipitate_only$/m, amount: 1e-4, pH: 1e-5 },
+    { name: 'a pH-stat with -force_equality, HCl held where SI(Fix_H+) is -9, salt coming in',
+      water: `${KN}${FIX}SOLUTION 1\n units mmol/kgw\n pH 8\n Na 3\n Cl 1 charge\n C(4) 2\nEQUILIBRIUM_PHASES 1\n Fix_H+ -9 HCl 0\n -force_equality true\n${saved}`,
+      react: ['NaCl', '=> Na+ + Cl-'], moles: 1e-3, phase: 'Fix_H+', line: /^HCl_Fix_H\s+\S+\s+mineral\s+force_equality$/m, amount: 1e-6, pH: 1e-6 },
+    { name: 'anhydrite held where calcite is saturated (an alternative phase), acid coming in',
+      water: `${KN}SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 3\n Cl 4 charge\n C(4) 3\n S(6) 3\nEQUILIBRIUM_PHASES 1\n Calcite 0 Anhydrite 0.01\n${saved}`,
+      react: ['HCl', '=> H+ + Cl-'], moles: 2e-3, phase: 'Calcite', line: /^Anhydrite_Calcite\s+\S+\s+mineral$/m, amount: 1e-4, pH: 1e-5 },
+  ];
+  const out = cases.map((c) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: c.name, text: c.water }, activity: true, exact: true,
+      phases: true, redox: false, floor: 1e-12 });
+    engine.load(dbText);
+    const pq = P.parseRows(engine.run(`${P.punchBlock([`EQUI("${c.phase}")`])}${c.water}USE solution 1\nUSE equilibrium_phases 1\n`
+      + `REACTION 1\n ${c.react[0]} 1\n ${c.moles} moles in 5 steps\nEND\n`)).slice(-5);
+    const T = 1e4;
+    const m = RtmModel.compile(`${res.text.replace(/TEND = [^\n]*\n/, `TEND = ${T}\n`)}\n<REACTIONS>\n${c.react[1]}, `
+      + `r = ${c.moles / T}\n`);
+    const times = [1, 2, 3, 4, 5].map((k) => (k * T) / 5);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: T, rtol: 1e-10, atol: 1e-20, outputTimes: times });
+    const mn = res.report.minerals[0].as;
+    const at = (n) => m.speciesNames.indexOf(n);
+    const ns = m.speciesNames.length;
+    let amount = 0;
+    let pH = 0;
+    // Against the most there was of it, at the start or at a step.
+    let total = Math.abs(res.report.minerals[0].amount);
+    for (let k = 0; k < 5; k++) {
+      const C = m.toConcentrations(r.grid.y[k], times[k]);
+      const lnG = new Float64Array(ns);
+      RtmModel.activityAt(m.act, C, 0, lnG, new Float64Array(ns));
+      const theirs = Number(pq[k].x[0]);
+      total = Math.max(total, Math.abs(theirs));
+      amount = Math.max(amount, Math.abs(C[at(mn)] - theirs));
+      pH = Math.max(pH, Math.abs(-(Math.log(C[at('H+')]) + lnG[at('H+')]) / Math.LN10 - pq[k].pH));
+    }
+    return { c, amount: amount / Math.max(total, 1e-30), pH, line: c.line.test(res.text), skipped: res.report.phasesSkipped.length,
+      events: r.events.length };
+  });
+  check('EQUILIBRIUM_PHASES as PHREEQC reads a line, against REACTION\'s steps: a pH-stat (an alternative formula), '
+    + 'dissolve_only, precipitate_only, -force_equality and an alternative phase, each written as the page has them and '
+    + 'its mineral and pH as PHREEQC has them', out.every((x) => x.line && !x.skipped && x.amount < x.c.amount
+    && x.pH < x.c.pH),
+  out.map((x) => `${x.c.name}: ${x.line ? '' : 'not written so, '}the mineral within ${x.amount.toExponential(1)} of the `
+    + `most there was of it, pH ${x.pH.toExponential(1)}${x.events ? `, ${x.events} event${x.events > 1 ? 's' : ''}` : ''}`).join('; '));
 }
 
 /** RT/F at tc, in volts, with PHREEQC's constants: a potential from its activity exp(-F psi/RT). */
@@ -3749,6 +3857,8 @@ function againstKineticsHandOff(engine) {
   againstExchangeMineral(wasm);
   console.log('\n--- a column from PHREEQC\'s TRANSPORT: Example 11, calcite, calcite at a rate, the options, the refusals ---');
   againstTransportHandOff(wasm);
+  console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
+  againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');
   againstCdMusic(wasm);
   console.log('\n--- KINETICS: RATES as rate laws against PHREEQC\'s BASIC, the hand-off, runs against KINETICS ---');

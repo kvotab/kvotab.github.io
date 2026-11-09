@@ -445,6 +445,54 @@ async def main():
             ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('  and the page runs it', ran, 'Done')
 
+            # --- a column whose cells start apart: zones, the second in <INITIAL> ---
+            zoned_input = column_input.replace(
+                'SOLUTION 1-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\n',
+                'SOLUTION 1-2\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\n'
+                'SOLUTION 3-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 0.5\\n  Br 0.5\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{zoned_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            zoned = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                      f"t.startsWith('PHREEQC could not') || /TRANSPORT block, and/.test(t) ? t : ''; }})()")
+            zoned_text = await page.ev("document.getElementById('rtmText').value")
+            zones_ok = (isinstance(zoned, str) and 'in 2 zones — 1-2, 3-5 — the first as the water above' in zoned
+                        and isinstance(zoned_text, str) and re.search(r'^<INITIAL>$', zoned_text, re.M) is not None
+                        and re.search(r'^K\+ +2-4 +[0-9.e-]+$', zoned_text, re.M) is not None)
+            check('a column whose cells start apart: two zones, the first as the water above and the second in <INITIAL>, '
+                  'its cells counted from 0, and the report says so', zones_ok or zoned)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran, 'Done')
+
+            # --- a pH-stat and a bounded phase: EQUILIBRIUM_PHASES as PHREEQC reads a line ---
+            stat_input = ('PHASES\\nFix_H+\\n  H+ = H+\\n  log_k 0\\nSOLUTION 1\\n  units mmol/kgw\\n  pH 7.5\\n  Na 1\\n'
+                          '  Ca 2\\n  Cl 1 charge\\n  C(4) 3\\nEQUILIBRIUM_PHASES 1\\n  Fix_H+ -7.5 NaOH 0.01\\n'
+                          '  Calcite 0 0.001 dissolve_only\\nEND\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{stat_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            stat = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            stat_text = await page.ev("document.getElementById('rtmText').value")
+            stat_ok = (isinstance(stat, str) and 'NaOH added or taken away to hold Fix_H+ at SI -7.5' in stat
+                       and ', dissolve_only)' in stat and isinstance(stat_text, str)
+                       and re.search(r'^NaOH_Fix_H +[0-9.e-]+ +mineral$', stat_text, re.M) is not None
+                       and re.search(r'^Calcite +[0-9.e-]+ +mineral +dissolve_only$', stat_text, re.M) is not None
+                       and re.search(r'SI\(Fix_H\+\) = -7\.5', stat_text) is not None
+                       and re.search(r'^<PHASES>$', stat_text, re.M) is not None)
+            check('a pH-stat (Fix_H+ -7.5 NaOH) and calcite dissolve_only: the reagent a mineral held at SI(Fix_H+), the '
+                  'phase written, the bound on the calcite, and the report says so', stat_ok or stat)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran, 'Done')
+
             # --- a surface in the water, with its double layer: carried, run, and looked at through PHREEQC ---
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqExample"]'))
             await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
