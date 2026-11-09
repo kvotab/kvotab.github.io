@@ -60,7 +60,7 @@
      ====================================================================== */
 
   const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
-    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES'];
+    'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES', 'OUTPUT', 'DATA'];
 
   /** Settings, their defaults and how each is read. */
   const SETTINGS = {
@@ -1786,6 +1786,128 @@
     const m = /([+-])([0-9]*)$/.exec(name);
     if (!m) return 0;
     return (m[1] === '+' ? 1 : -1) * (m[2] ? Number(m[2]) : 1);
+  }
+
+  // The chemical elements, by symbol: what a species' name is counted in for a total.
+  const ELEMENT_SYMBOLS = new Set(('H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn '
+    + 'Ga Ge As Se Br Kr Rb Sr Y Zr Nb Mo Tc Ru Rh Pd Ag Cd In Sn Sb Te I Xe Cs Ba La Ce Pr Nd Pm Sm Eu Gd Tb Dy Ho Er '
+    + 'Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg '
+    + 'Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og').split(' '));
+
+  /**
+   * What a species' name is made of, PHREEQC's way of writing a formula, its
+   * charge left off: Ca+2 one Ca; CaHCO3+ one each of Ca, H and C and three
+   * O; (UO2)2(OH)2+2 -- UO2_2(OH)2+2 as From PHREEQC renames it -- two U and
+   * six O; Ca0.5X half a Ca and an X; CaSO4:2H2O the water too; Hfo_wOH one
+   * Hfo_w, a surface's sites, as PHREEQC counts it. A Map of symbol to
+   * count, or null where the name cannot be read as one -- e-, (Ca. A
+   * symbol that is no element (X, Hfo_w, Tracer) is kept: what it counts in
+   * is for the caller to say.
+   */
+  function elementsOf(name) {
+    let s = String(name).replace(/\(g\)$/, '').replace(/(?:[+-]+[0-9]*)$/, '');
+    if (!s || !/^[A-Z(]/.test(s)) return null;
+    const total = new Map();
+    const addTo = (m, el, n) => m.set(el, (m.get(el) || 0) + n);
+    for (const piece of s.split(':')) {
+      let i = 0;
+      const num = () => {
+        const m = /^(\d+(?:\.\d*)?|\.\d+)/.exec(piece.slice(i));
+        if (!m) return 1;
+        i += m[0].length;
+        return Number(m[1]);
+      };
+      // A hydrate's water, :2H2O, has its count in front.
+      const lead = /^\d/.test(piece) ? num() : 1;
+      const stack = [new Map()];
+      while (i < piece.length) {
+        const ch = piece[i];
+        if (ch === '(') { stack.push(new Map()); i++; continue; }
+        if (ch === ')') {
+          if (stack.length < 2) return null;
+          i++;
+          const g = stack.pop();
+          const k = num();
+          for (const [el, n] of g) addTo(stack[stack.length - 1], el, n * k);
+          continue;
+        }
+        // UO2_2: what came before it, twice -- From PHREEQC's (UO2)2.
+        if (ch === '_' && /\d/.test(piece[i + 1] || '')) {
+          i++;
+          const k = num();
+          const top = stack[stack.length - 1];
+          for (const [el, n] of [...top]) top.set(el, n * k);
+          continue;
+        }
+        const m = /^[A-Z][a-z]*(?:_[a-z][a-z]*)?/.exec(piece.slice(i));
+        if (!m) return null;
+        i += m[0].length;
+        addTo(stack[stack.length - 1], m[0], num());
+      }
+      if (stack.length !== 1) return null;
+      for (const [el, n] of stack[0]) addTo(total, el, n * lead);
+    }
+    return total.size ? total : null;
+  }
+
+  /**
+   * <DATA>: what was measured, drawn as points beside what the run gives.
+   * Tables one after another, each begun by a line naming its columns: the
+   * first time or distance, the rest species or the names the page gives its
+   * quantities -- pH, SI(Calcite), tot(Ca), an <OUTPUT> -- with where the
+   * table belongs on the same line: cell = 19 for one in time (the column's
+   * cell, from 0; the first unless said), layer = 2 for the rock behind it,
+   * at = 3600 for one in distance (in the model's time unit; the end of the
+   * run unless said). Then a row of numbers per point, a dash for one not
+   * measured. Returns [{ kind, columns, cell, layer, at, rows, line }].
+   */
+  function readData(lines) {
+    const tables = [];
+    let cur = null;
+    for (const { text, line } of lines) {
+      const tokens = text.split(/\s+/).filter(Boolean);
+      const first = tokens[0].toLowerCase();
+      if (['time', 't', 'distance', 'x'].includes(first)) {
+        const quals = {};
+        const rest = text.slice(text.indexOf(tokens[0]) + tokens[0].length)
+          .replace(/(^|\s)(cell|layer|at)\s*=\s*(\S+)/gi, (_, sp, k, v) => { quals[k.toLowerCase()] = v; return ' '; });
+        const columns = rest.split(/\s+/).filter(Boolean);
+        const kind = first === 'time' || first === 't' ? 'time' : 'distance';
+        if (!columns.length) {
+          throw new RtmError(`"${text}": a table in <DATA> names its columns after ${tokens[0]}: time  Ca+2  pH  cell = 19.`, line);
+        }
+        const whole = (key) => {
+          const v = Number(quals[key]);
+          if (!Number.isInteger(v) || v < 0) throw new RtmError(`"${text}": ${key} = is a whole number, from 0.`, line);
+          return v;
+        };
+        if (kind === 'time' && quals.at !== undefined) {
+          throw new RtmError(`"${text}": a table in time is at a cell, cell = 19; at = is for one in distance.`, line);
+        }
+        if (kind === 'distance' && quals.cell !== undefined) {
+          throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time.`, line);
+        }
+        cur = { kind, columns, cell: quals.cell !== undefined ? whole('cell') : null,
+          layer: quals.layer !== undefined ? whole('layer') : 0,
+          at: quals.at !== undefined ? constValue(quals.at, line, 'at') : null, rows: [], line };
+        tables.push(cur);
+        continue;
+      }
+      if (!cur) {
+        throw new RtmError('<DATA> begins with a line naming the columns of a table: time  Ca+2  pH  cell = 19, '
+          + 'or distance  Ca+2  at = 3600.', line);
+      }
+      if (tokens.length !== cur.columns.length + 1) {
+        throw new RtmError(`"${text}": the table on line ${cur.line} has ${cur.columns.length + 1} columns, `
+          + `${cur.kind} and ${cur.columns.join(', ')}; a dash for a value not measured.`, line);
+      }
+      const row = tokens.map((v) => (v === '-' ? null : Number(v)));
+      if (row[0] === null || row.some((v) => v !== null && !Number.isFinite(v))) {
+        throw new RtmError(`"${text}": every value is a number, or a dash where nothing was measured; the ${cur.kind} always.`, line);
+      }
+      cur.rows.push(row);
+    }
+    return tables;
   }
 
   /**
@@ -10794,6 +10916,235 @@
       }
     }
 
+    /*
+      QUANTITIES: what the run can be read as besides its species, each
+      worked out at a stored point -- the concentrations, a cell, a time --
+      with the model's own activity model: the water's pH, pe, ionic
+      strength, a(H2O), charge balance and temperature; each element's
+      dissolved total; the saturation index of each phase of <PHASES> and of
+      each mineral; each solute's log activity; a gas's partial pressure;
+      what share of an exchanger, or of its sites on a surface, each species
+      on it takes; and what <OUTPUT> defines. Each is { key, label, group,
+      unit, axis }: key the name <DATA> and the page know it by, axis 'conc'
+      for an amount (the left-hand axis, log or not), 'index' for the rest.
+    */
+    const qAct = act || noActivity(species);
+    const qG = new Float64Array(ns);
+    const qD = new Float64Array(ns);
+    let qW = null;          // the cell's water, as activityAt gives it, while a point is worked out
+    const qList = [];
+    const qFn = [];
+    const addQ = (key, label, group, unit, axis, fn) => { qList.push({ key, label, group, unit, axis }); qFn.push(fn); };
+    // A solute: what is dissolved in the water -- the activity model's, or without ACTIVITY (whose activity model marks
+    // none, the water's activity being 1) every species that is no mineral, gas, electron or what is on a surface.
+    const isSolute = (k) => (act ? !!act.solute[k] : !(species[k].mineral || species[k].exchange || species[k].exchanger
+      || species[k].electron || species[k].surface || species[k].potential || species[k].gas || species[k].name === 'H2O'));
+    const qSolutes = [];
+    for (let k = 0; k < ns; k++) if (isSolute(k) && !species[k].electron) qSolutes.push(k);
+    const qIons = qSolutes.filter((k) => qAct.z[k]);
+    const tkOf = (cell) => (thermo.tk ? thermo.tk[cell] : (typeof settings.TEMPERATURE === 'number' ? settings.TEMPERATURE : 25)
+      + 273.15);
+    const iH = index.has('H+') && isSolute(index.get('H+')) ? index.get('H+') : -1;
+    if (iH >= 0) {
+      addQ('pH', 'pH', 'water', '', 'index', (c, b) => (c[b + iH] > 0 ? -(Math.log(c[b + iH]) + qG[iH]) / Math.LN10 : NaN));
+    }
+    if (electron >= 0) {
+      addQ('pe', 'pe', 'water', '', 'index', (c, b) => (c[b + electron] > 0 ? -Math.log10(c[b + electron]) : NaN));
+    }
+    if (qIons.length) addQ('I', 'ionic strength', 'water', 'mol/kgw', 'conc', () => qW.I);
+    if (act && act.kind !== 'none') addQ('a(H2O)', 'a(H2O)', 'water', '', 'index', () => Math.exp(qW.lnAw));
+    if (qIons.length) {
+      // PHREEQC's percent error: what the ions' charges come to over all of them.
+      addQ('charge', 'charge balance', 'water', '%', 'index', (c, b) => {
+        let s = 0;
+        let a = 0;
+        for (const k of qIons) { s += qAct.z[k] * c[b + k]; a += Math.abs(qAct.z[k]) * c[b + k]; }
+        return a > 0 ? (100 * s) / a : 0;
+      });
+    }
+    if (thermo.varies) addQ('T', 'temperature', 'water', '°C', 'index', (c, b, cell) => tkOf(cell) - 273.15);
+    // Each element's total in the water, from the solutes' names; H and O are the water's own.
+    const qElements = new Map();
+    for (const k of qSolutes) {
+      const made = elementsOf(nameOf[k]);
+      if (!made) continue;
+      for (const [el, n] of made) {
+        if (el === 'H' || el === 'O' || !ELEMENT_SYMBOLS.has(el)) continue;
+        if (!qElements.has(el)) qElements.set(el, []);
+        qElements.get(el).push([k, n]);
+      }
+    }
+    // Only an element in two species or more: in one, its total is that species, already in the list.
+    for (const [el, terms] of [...qElements].filter(([, t]) => t.length > 1).sort(([a], [b2]) => a.localeCompare(b2))) {
+      addQ(`tot(${el})`, `${el}, dissolved`, 'totals', 'mol/kgw', 'conc', (c, b) => {
+        let s = 0;
+        for (const [k, n] of terms) s += n * c[b + k];
+        return s;
+      });
+    }
+    // A phase of <PHASES>, or a mineral and its relation, as SI() in a rate law has it.
+    const phaseFor = (name) => {
+      const ph = phases.get(name);
+      if (ph) return ph;
+      const eq = equilibria.find((x) => x.mineral >= 0 && species[x.mineral].name === name);
+      return eq ? { name, net: eq.net.filter(([k]) => k !== eq.mineral), water: eq.water || 0, lnK: eq.lnK, eq,
+        sign: eq.mineralNu < 0 ? 1 : -1 } : null;
+    };
+    const siOf = (ph, c, b, cell) => {
+      let lnIAP = ph.water ? ph.water * qW.lnAw : 0;
+      for (const [k, nu] of ph.net) lnIAP += nu * (Math.log(Math.max(c[b + k], 1e-300)) + qG[k]);
+      return (ph.sign * (lnIAP - lnKAtP(ph.eq || ph, cell, qW))) / Math.LN10;
+    };
+    // A mineral held where another phase's SI is (SI() on its relation) has no SI of its own to show.
+    const siNames = [...phases.keys(), ...equilibria.filter((x) => x.mineral >= 0 && !x.siOf).map((x) => species[x.mineral].name)];
+    for (const name of [...new Set(siNames)]) {
+      const ph = phaseFor(name);
+      addQ(`SI(${name})`, `SI(${name})`, 'saturation', '', 'index', (c, b, cell) => siOf(ph, c, b, cell));
+    }
+    // Each solute's log activity -- under ACTIVITY: without it, the log of its concentration, which the species is.
+    for (const k of act && act.kind !== 'none' ? qSolutes : []) {
+      if (species[k].name === 'H2O') continue;
+      addQ(`la(${nameOf[k]})`, `log a(${nameOf[k]})`, 'activities', '', 'index',
+        (c, b) => (c[b + k] > 0 ? (Math.log(c[b + k]) + qG[k]) / Math.LN10 : NaN));
+    }
+    // A gas: its partial pressure, atm -- n R T/V in a fixed volume, its share of the total in a bubble.
+    const qGas = act && act.gas ? act.gas : null;
+    if (qGas) {
+      for (const k of qGas.list) {
+        addQ(`p(${nameOf[k]})`, `p(${nameOf[k]})`, 'gases', 'atm', 'conc', (c, b) => {
+          if (qGas.fixed === 'volume') return c[b + k] * Math.exp(qG[k]);
+          let sum = 0;
+          for (const j of qGas.list) sum += c[b + j];
+          return sum > 0 ? (qGas.pressure * c[b + k]) / sum : 0;
+        });
+      }
+    }
+    // On an exchanger, each species' equivalent fraction; on a surface, its share of its type's sites.
+    const qEx = qAct.ex;
+    if (qEx) {
+      for (const j of qEx.list) {
+        const members = qEx.members[qEx.of[j]];
+        addQ(`share(${nameOf[j]})`, `${nameOf[j]}, share of ${nameOf[qEx.exchangers[qEx.of[j]]]}`, 'exchange', '', 'index',
+          (c, b) => {
+            let s = 0;
+            for (const m of members) s += qEx.n[m] * c[b + m];
+            return s > 0 ? (qEx.n[j] * c[b + j]) / s : 0;
+          });
+      }
+    }
+    const qSf = qAct.sf;
+    if (qSf) {
+      for (const j of qSf.list) {
+        const members = qSf.types[qSf.typeOf[j]].members;
+        addQ(`share(${nameOf[j]})`, `${nameOf[j]}, share of its sites`, 'surface', '', 'index', (c, b) => {
+          let s = 0;
+          for (const m of members) s += qSf.n[m] * c[b + m];
+          return s > 0 ? (qSf.n[j] * c[b + j]) / s : 0;
+        });
+      }
+    }
+    /*
+      <OUTPUT>: quantities of the text's own, as PHREEQC's USER_PUNCH has
+      them -- a name and what it is, pH = -log10({H+}), with a unit after a
+      comma if it has one: Ca_mg = [Ca+2] * 40078, unit = mg/kgw. What a
+      rate law reads it may read -- [X], {X}, {H2O}, SI(phase), SR(phase), I,
+      TK, TC, t, the parameters -- and x, the cell's distance along the
+      column, and an <OUTPUT> above it by name.
+    */
+    const outputs = [];
+    for (const { text: otext, line } of sections.OUTPUT) {
+      const parts = splitTop(otext).map((x) => x.trim()).filter(Boolean);
+      const def = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(parts[0] || '');
+      if (!def) {
+        throw new RtmError(`"${otext}": a line of <OUTPUT> is a name and what it is, alk = [HCO3-] + 2*[CO3-2], with a unit `
+          + 'after a comma if it has one: Ca_mg = [Ca+2] * 40078, unit = mg/kgw.', line);
+      }
+      const name = def[1];
+      let unit = '';
+      for (const p of parts.slice(1)) {
+        const u = /^unit\s*=\s*(.+)$/i.exec(p);
+        if (!u) throw new RtmError(`"${p}": after an <OUTPUT>'s expression comes its unit, unit = mg/kgw, and nothing else.`, line);
+        unit = u[1].trim();
+      }
+      if (index.has(name) || outputs.some((o) => o.name === name) || ['t', 'x', 'I', 'TK', 'TC'].includes(name)
+        || params.index.has(name) || qList.some((q) => q.key === name)) {
+        throw new RtmError(`<OUTPUT> ${name}: the name is taken -- a species, a parameter, t, x, I, TK, TC, a quantity of the `
+          + 'page or another output. Give it one of its own.', line);
+      }
+      const { masked, names, acts, sats } = maskRate(def[2], line);
+      let ast;
+      try {
+        ast = fold(FacsimileModel.parseExpression(masked, line), null);
+      } catch (e) {
+        throw new RtmError(`In <OUTPUT> ${name} = ${def[2]}: ${e.message.replace(/^Line \d+: /, '')}`, line);
+      }
+      const look = new Map();
+      for (const id of mentioned(ast)) {
+        if (names.has(id) || acts.has(id)) {
+          const nm = names.has(id) ? names.get(id) : acts.get(id);
+          if (acts.has(id) && nm === 'H2O' && !index.has('H2O')) { look.set(id, () => Math.exp(qW.lnAw)); continue; }
+          if (!index.has(nm)) throw new RtmError(`<OUTPUT> ${name}: ${names.has(id) ? `[${nm}]` : `{${nm}}`} is no species.`, line);
+          const k = index.get(nm);
+          look.set(id, names.has(id) ? (c, b) => c[b + k] : (c, b) => c[b + k] * Math.exp(qG[k]));
+        } else if (sats.has(id)) {
+          const { kind, name: pn } = sats.get(id);
+          const ph = phaseFor(pn);
+          if (!ph) {
+            throw new RtmError(`<OUTPUT> ${name}: ${kind}(${pn}) -- "${pn}" is no phase. Give its dissolution in <PHASES>, or `
+              + 'make it a mineral with its relation in <EQUILIBRIUM>.', line);
+          }
+          look.set(id, kind === 'SI' ? (c, b, cell) => siOf(ph, c, b, cell) : (c, b, cell) => 10 ** siOf(ph, c, b, cell));
+        } else if (id === 'I') look.set(id, () => qW.I);
+        else if (id === 'TK') look.set(id, (c, b, cell) => tkOf(cell));
+        else if (id === 'TC') look.set(id, (c, b, cell) => tkOf(cell) - 273.15);
+        else if (id === 't') look.set(id, (c, b, cell, t) => t);
+        else if (id === 'x') look.set(id, (c, b, cell) => geom[cell].x);
+        else if (params.index.has(id)) {
+          const pk = params.index.get(id);
+          look.set(id, (c, b, cell) => params.values[pk][cell]);
+        } else if (outputs.some((o) => o.name === id)) {
+          const o = outputs.find((x) => x.name === id);
+          look.set(id, (c, b, cell, t) => o.at(c, b, cell, t));
+        } else {
+          throw new RtmError(`<OUTPUT> ${name}: "${id}" is no species in brackets or braces, SI() or SR(), I, TK, TC, t, x, `
+            + 'parameter or <OUTPUT> above this one.', line);
+        }
+      }
+      const o = { name, unit, line, text: def[2] };
+      o.at = (c, b, cell, t) => FacsimileModel.evalAst(ast, (id) => {
+        const f = look.get(id);
+        return f ? f(c, b, cell, t) : undefined;
+      }, {}, line);
+      outputs.push(o);
+      addQ(name, unit ? `${name} (${unit})` : name, 'outputs', unit,
+        /mol|eq\b|g\/|ppm|ppb|atm/i.test(unit) ? 'conc' : 'index', (c, b, cell, t) => o.at(c, b, cell, t));
+    }
+    /**
+     * The quantities at indices `which` (into the list) in cell `cell` of the
+     * concentrations c at time t, into out.
+     */
+    function quantitiesAt(c, t, cell, which, out) {
+      thermoAt(t);
+      const b = cell * ns;
+      qW = activityAt(qAct, c, b, qG, qD, cell);
+      for (let q = 0; q < which.length; q++) out[q] = qFn[which[q]](c, b, cell, t);
+      return out;
+    }
+    // <DATA>: measured tables, each column a species or one of the quantities above.
+    const data = readData(sections.DATA);
+    for (const tab of data) {
+      for (const colName of tab.columns) {
+        if (index.has(colName) || qList.some((q) => q.key === colName)) continue;
+        throw new RtmError(`<DATA>, the table on line ${tab.line}: "${colName}" is no species and none of the page's `
+          + `quantities${qList.length ? ` (${qList.slice(0, 6).map((q) => q.key).join(', ')}${qList.length > 6 ? ' and more' : ''})` : ''}.`,
+        tab.line);
+      }
+      if (tab.kind === 'time' && tab.cell !== null && tab.cell >= nf) {
+        throw new RtmError(`<DATA>, the table on line ${tab.line}: cell = ${tab.cell}, where the column has ${nf} (0 to ${nf - 1}).`,
+          tab.line);
+      }
+    }
+
     const stateNames = [];
     for (let c = 0; c < nc; c++) {
       const g = geom[c];
@@ -10916,6 +11267,10 @@
         clock: tempClock, relations: relT.length, phases: phT.length, reads: readsT },
       thermoAt,
       temperatures(t) { thermoAt(t); return Float64Array.from(thermo.tc); },
+      // What the run can be read as besides its species (QUANTITIES), and what <DATA> measured.
+      quantities: qList,
+      quantitiesAt,
+      data,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -12443,5 +12798,5 @@
     readSections, derivative,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS };
+    SECTIONS, SETTINGS, elementsOf, readData };
 }));

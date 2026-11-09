@@ -366,6 +366,29 @@
 .rtm-item input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .rtm-item.on { background: var(--accent-fill); color: #fff; }
 .rtm-item:focus-within { outline: 2px solid var(--color-kvot-accent); outline-offset: -2px; }
+/* A group of the picker -- the species, the water, the totals, the saturation
+   indices -- headed across the grid; the heading opens and shuts it. */
+.rtm-series-head {
+  grid-column: 1 / -1;
+  justify-self: start;
+  margin: 4px 0 1px;
+  padding: 1px 4px;
+  border: none;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-family: var(--font-sans, inherit);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+}
+.rtm-series-head:first-child { margin-top: 0; }
+.rtm-series-head::before { content: "▾ "; }
+.rtm-series-head[aria-expanded="false"]::before { content: "▸ "; }
+.rtm-series-head:hover { color: var(--text-primary); }
+/* What a chart can be saved as, kept together. */
+.rtm-saves { display: inline-flex; gap: 3px; align-items: center; }
 
 
 /* ---- charts and the empty state ----------------------------------------- */

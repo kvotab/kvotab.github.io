@@ -3522,6 +3522,57 @@ function againstTransportHandOff(engine) {
 }
 
 /* ======================================================================
+   WHAT A RUN CAN BE READ AS, against PHREEQC: the quantities of a water
+   handed off -- pH, I, a(H2O), the totals, SI(Calcite), what is on an
+   exchanger and on a surface, a gas's partial pressure -- worked out by the
+   model's own activity model, against PHREEQC's numbers for the same water
+   ====================================================================== */
+function againstQuantities(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const cases = [
+    { name: 'a water with calcite and an exchanger',
+      water: 'SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 2\n Mg 1\n Cl 6 charge\n C(4) 4\n S(6) 1\nEQUILIBRIUM_PHASES 1\n'
+        + ' Calcite 0 0.01\nEXCHANGE 1\n -equilibrate 1\n X 0.02\nEND\n',
+      keys: ['pH', 'I', 'a(H2O)', 'tot(Ca)', 'tot(C)', 'tot(Na)', 'tot(S)', 'tot(Mg)', 'tot(Cl)', 'SI(Calcite)', 'share(CaX2)',
+        'share(NaX)', 'share(MgX2)'],
+      punch: '-LA("H+"), MU, ACT("H2O"), TOT("Ca"), TOT("C(4)"), TOT("Na"), TOT("S(6)"), TOT("Mg"), TOT("Cl"), SI("Calcite"), '
+        + '2*MOL("CaX2")/TOT("X"), MOL("NaX")/TOT("X"), 2*MOL("MgX2")/TOT("X")', tol: 1e-8 },
+    { name: 'a water with a surface', water: 'SOLUTION 1\n units mmol/kgw\n pH 6.5\n Na 2\n Cl 2 charge\n Zn 0.01\nSURFACE 1\n'
+      + ' -equilibrate 1\n Hfo_wOH 2e-4 600 0.09\nEND\n',
+    keys: ['pH', 'share(Hfo_wOH)', 'share(Hfo_wOH2+)', 'share(Hfo_wO-)', 'share(Hfo_wOZn+)'],
+    punch: '-LA("H+"), MOL("Hfo_wOH")/2e-4, MOL("Hfo_wOH2+")/2e-4, MOL("Hfo_wO-")/2e-4, MOL("Hfo_wOZn+")/2e-4', tol: 1e-9 },
+    { name: 'a gas phase of a fixed volume', water: 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na 5\n Cl 2 charge\n C(4) 3\nGAS_PHASE 1\n'
+      + ' -fixed_volume\n -volume 1\n CO2(g) 0.01\nEND\n', keys: ['pH', 'p(CO2(g))'], punch: '-LA("H+"), 10^SI("CO2(g)")', tol: 1e-7 },
+  ];
+  const results = cases.map((cs) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: cs.name, text: cs.water }, activity: true, exact: true,
+      phases: true, redox: false });
+    const m = RtmModel.compile(res.text);
+    const c = m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState();
+    const which = Int32Array.from(cs.keys.map((k) => m.quantities.findIndex((q) => q.key === k)));
+    if ([...which].some((x) => x < 0)) return { cs, worst: Infinity, missing: cs.keys.filter((k, i) => which[i] < 0) };
+    const out = new Float64Array(which.length);
+    m.quantitiesAt(c, 0, 0, which, out);
+    engine.load(dbText);
+    const rows = engine.run(`${cs.water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH ${cs.punch}\nEND\n`);
+    const pq = rows[rows.length - 1].map(Number);
+    let worst = 0;
+    let where = '';
+    cs.keys.forEach((k, i) => {
+      const d = Math.abs(out[i] - pq[i]) / Math.max(Math.abs(pq[i]), k === 'pH' || /^SI/.test(k) ? 1 : 1e-300);
+      if (d > worst) { worst = d; where = k; }
+    });
+    return { cs, worst, where };
+  });
+  check('quantities of a water handed off, worked out by the model, against PHREEQC\'s for it: pH, I, a(H2O), the totals, '
+    + 'SI(Calcite), an exchanger\'s and a surface\'s shares, a gas\'s partial pressure',
+  results.every((x) => x.worst <= x.cs.tol),
+  results.map((x) => (x.missing ? `${x.cs.name}: no ${x.missing.join(', ')}` : `${x.cs.name}: within ${x.worst.toExponential(1)} (${x.where})`))
+    .join('; '));
+}
+
+/* ======================================================================
    MULTICOMPONENT DIFFUSION (-multi_D): each species at its Dw times the
    porosity to the n, the ions coupled so that no current flows, each down
    its activity. Against PHREEQC's TRANSPORT as its explicit steps are made
@@ -4223,6 +4274,8 @@ function againstKineticsHandOff(engine) {
   againstTransportHandOff(wasm);
   console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
   againstMultiD(wasm);
+  console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');
+  againstQuantities(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');
   againstPhaseExtras(wasm);
   console.log('\n--- CD-MUSIC: the reading, the hand-off, acid against REACTION, the PHREEQC tab ---');

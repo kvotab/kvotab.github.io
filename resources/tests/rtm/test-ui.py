@@ -72,6 +72,39 @@ failures = []
 checks = 0
 
 
+# A water with an activity model, acid added at a rate, a phase it is far from and an output of its own, and a pH
+# measured at 500 s: what the quantities block of the checks runs.
+QUANTITY_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 1000
+ACTIVITY = davies
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7
+OH-     1e-7
+Na+     1e-3
+Cl-     1e-3
+
+<REACTIONS>
+=> H+ + Cl-, r = 1e-6
+
+<EQUILIBRIUM>
+ <=> H+ + OH-, logK = -14
+
+<PHASES>
+Halite <=> Na+ + Cl-, logK = 1.57
+
+<OUTPUT>
+acid = [H+] - [OH-], unit = mol/kgw
+
+<DATA>
+time  pH   cell = 0
+500   3.3
+'''
+
+
 def check(label, got, want=True):
     global checks
     checks += 1
@@ -197,8 +230,10 @@ async def main():
             check('the built-in model compiles on load', status, 'Compiled:')
             check('and the panel says what is being solved', await page.ev(
                 "document.getElementById('rtmFacts').textContent.startsWith('transport')"), True)
-            check('the species picker is filled', await page.ev(
-                "document.querySelectorAll('#rtmSeries .rtm-item').length"), 36)
+            check('the species picker is filled, the species first and then the quantities', await page.ev(
+                "[document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"species\"]').length,"
+                " [...document.querySelectorAll('#rtmSeries .rtm-item:not([data-group=\"species\"]) input')]"
+                ".map((i) => i.value).join(' ')]"), [36, 'pH I charge tot(C)'])
             check('and there is a cell to choose, or an end of the column', await page.ev(
                 "[...document.getElementById('rtmCell').options].map((o) => o.value).slice(18).join(',')"),
                 '18,19,left,right')
@@ -633,6 +668,102 @@ async def main():
             await grad("""for (const id of ['rtmGradLogC', 'rtmGradSmooth']) {
               const el = document.getElementById(id); el.checked = false;
               el.dispatchEvent(new Event('change', { bubbles: true })); }""")
+            # As contours, with their values on them, and as a surface in three dimensions.
+            await grad("""const v = document.getElementById('rtmGradView');
+              v.value = 'contour'; v.dispatchEvent(new Event('change', { bubbles: true }));""")
+            check('the gradient as contours, their values written on them', await page.ev(
+                "(() => { const d = document.getElementById('rtmChartGradient').data[0];"
+                " return d.type + '|' + d.contours.showlabels; })()"), 'contour|true')
+            await grad("""const v = document.getElementById('rtmGradView');
+              v.value = 'surface'; v.dispatchEvent(new Event('change', { bubbles: true }));""")
+            check('and as a surface, the value up', await page.ev(
+                "(() => { const p = document.getElementById('rtmChartGradient');"
+                " return p.data[0].type + '|' + !!p.layout.scene; })()"), 'surface|true')
+            # A quantity of the water: the pH the radiolysis leaves, cell by cell, worked out in the worker.
+            await grad("""const v = document.getElementById('rtmGradView'); v.value = 'map';
+              const s = document.getElementById('rtmGradSpecies');
+              s.value = 'pH'; s.dispatchEvent(new Event('change', { bubbles: true }));""")
+            ph = await settle(page, "(() => { const p = document.getElementById('rtmChartGradient');"
+                                    " if (p.hidden || !p.data || p.data[0].colorbar.title.text !== 'pH') return null;"
+                                    " const z = p.data[0].z.flat().filter((v) => v !== null);"
+                                    " return [Math.min(...z) > 2, Math.max(...z) < 12]; })()", [True, True], tries=40)
+            check('a quantity on the gradient: the pH in every cell, from the run\'s concentrations', ph, [True, True])
+            check('the picker offers the species and then the quantities, grouped', await page.ev(
+                "[...document.querySelectorAll('#rtmGradSpecies optgroup')].map((g) => g.label).join('|')"),
+                'Species|The water|Totals in the water')
+            await grad("""const s = document.getElementById('rtmGradSpecies');
+              s.value = 'H2O2'; s.dispatchEvent(new Event('change', { bubbles: true }));""")
+
+            # --- what a run can be read as: quantities, <OUTPUT>, <DATA>, saving ---
+            # The model and the picks of the checks before are put back after it: the ones after read them.
+            before = await page.ev("[document.getElementById('rtmText').value, "
+                                   "[...document.querySelectorAll('#rtmSeries input:checked')].map((i) => i.value)]")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
+            await set_text(page, QUANTITY_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 4 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check(f'a water with an activity model, a phase and <OUTPUT> runs ({str(run)[:40]})',
+                  isinstance(run, str) and run.startswith('Done'), True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            check('the list groups the species and what the run comes to besides them, the log activities shut', await page.ev(
+                "[...document.querySelectorAll('#rtmSeries .rtm-series-head')]"
+                ".map((b) => b.dataset.group + ':' + b.getAttribute('aria-expanded')).join(' ')"),
+                'species:true water:true saturation:true outputs:true activities:false')
+            check('  a shut group\'s entries are hidden until it is opened', await page.ev(
+                "[...document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"activities\"]')].every((e) => e.hidden)"), True)
+            await page.ev("document.querySelector('#rtmSeries .rtm-series-head[data-group=\"activities\"]').click()")
+            await asyncio.sleep(0.4)
+            check('  and shown when it is', await page.ev(
+                "[...document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"activities\"]')].every((e) => !e.hidden)"), True)
+            for key in ['pH', 'SI(Halite)', 'acid']:
+                await page.ev("(() => { const el = [...document.querySelectorAll('#rtmSeries input')]"
+                              ".find((i) => i.value === %s); el.click(); })()" % json.dumps(key))
+            traces = await settle(page, "document.getElementById('rtmChartTime').data.map((t) => t.name + '|' + (t.yaxis || 'y')"
+                                        " + '|' + t.mode).join(' / ')",
+                                  'pH|y2|lines / pH, measured|y2|markers / SI(Halite)|y2|lines / acid (mol/kgw)|y|lines', tries=40)
+            check('pH and SI(Halite) on the right-hand axis, the <OUTPUT> in mol/kgw on the left, the pH <DATA> measured as '
+                  'points in the colour of its line', traces,
+                  'pH|y2|lines / pH, measured|y2|markers / SI(Halite)|y2|lines / acid (mol/kgw)|y|lines')
+            at500 = await page.ev("(() => { const t = document.getElementById('rtmChartTime').data[0]; let k = 0;"
+                                  " t.x.forEach((x, i) => { if (Math.abs(x - 500) < Math.abs(t.x[k] - 500)) k = i; });"
+                                  " return [t.x[k], t.y[k], document.getElementById('rtmChartTime').data[1].marker.color"
+                                  " === t.line.color]; })()")
+            check(f'  the pH at 500 s is -log a(H+) of the acid the reaction has added ({at500})',
+                  isinstance(at500, list) and abs(at500[0] - 500) < 30 and abs(at500[1] - 3.32) < 0.02 and at500[2], True)
+            # Saving: CSV and Excel of the series, the figure as SVG and PNG -- each caught as the page hands it over.
+            await page.ev("""(() => {
+              window.__saved = [];
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                const rec = { name: this.download, href: this.href.slice(0, 40) };
+                if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((b) => Array.from(new Uint8Array(b.slice(0, 300))));
+                window.__saved.push(rec);
+              };
+            })()""")
+            for sel in ['[data-on-click="rtm:downloadCsv"]', '[data-pane="time"][data-as="xlsx"]', '[data-pane="time"][data-as="svg"]',
+                        '[data-pane="time"][data-as="png"]']:
+                await page.ev("document.querySelector(%s).click()" % json.dumps(sel))
+                await asyncio.sleep(1.2)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            saved = await page.ev("""(async () => Promise.all(window.__saved.map(async (r) => {
+              const b = r.body ? await r.body : null;
+              return [r.name, b ? (r.name.endsWith('.csv') ? String.fromCharCode(...b).split('\\n')[0] : String.fromCharCode(...b.slice(0, 2)))
+                : r.href.slice(0, 18)];
+            })))()""")
+            want_csv = 't (s),pH @ cell 0,SI(Halite) @ cell 0,acid (mol/kgw) @ cell 0'
+            shapes = [[r[0].split('_')[-1], r[1]] for r in saved] if isinstance(saved, list) else saved
+            check('saved as CSV, with the quantities ticked, as an Excel workbook, and the chart as SVG and PNG', shapes,
+                  [['cell0.csv', want_csv], ['cell0.xlsx', 'PK'], ['time.svg', '<s'], ['time.png', '\x89P']])
+            await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
+            await set_text(page, before[0])
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            for key in before[1]:
+                await page.ev("(() => { const el = [...document.querySelectorAll('#rtmSeries input')]"
+                              ".find((i) => i.value === %s); if (el && !el.checked) el.click(); })()" % json.dumps(key))
 
             # --- the Jacobian check ------------------------------------------
             await page.ev("document.getElementById('rtmVerify').click()")
@@ -779,7 +910,7 @@ async def main():
             })()""")
             await asyncio.sleep(1.2)
             check('the profile species picker offers every species', await page.ev(
-                "document.getElementById('rtmProfileSpecies').options.length"), 3)
+                "document.querySelector('#rtmProfileSpecies optgroup').children.length"), 3)
             prof = await page.ev(
                 "(() => { const d = document.getElementById('rtmChartProfile');"
                 " return d.data[d.data.length - 1].y; })()")

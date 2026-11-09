@@ -203,6 +203,9 @@ function rtmSummary(model) {
     // The temperature: what TEMPERATURE gives, whether it goes with the cell or the time, how many relations' and
     // phases' log K go with it, and the cells' lowest and highest at the start.
     temperature: model.temperature ? { ...model.temperature, start: rtmTemperatureRange(model, 0) } : null,
+    // What the run can be read as besides its species, and what <DATA> measured: the charts' pickers and points.
+    quantities: model.quantities || [],
+    data: model.data || [],
   };
 }
 
@@ -285,10 +288,59 @@ function rtmErrorMessage(e) {
   return (e && e.message) ? e.message : String(e);
 }
 
+/*
+  The last run, kept so that the page can ask what it comes to besides its
+  species -- pH, saturation indices, totals, the text's <OUTPUT> -- without
+  sending it back: its model and its stored concentrations, under the key
+  the result carried. A worker started again has none, and says so; the
+  page then sends the run with the question.
+*/
+let rtmKept = null;
+let rtmRunCount = 0;
+
+/**
+ * Quantities of a run: for each key and each cell asked for, the value at
+ * every stored point, key-major then cell-major then point.
+ */
+function rtmQuantities(msg) {
+  let run = rtmKept && rtmKept.key === msg.runKey ? rtmKept : null;
+  if (!run) {
+    if (!msg.states) return { type: 'quantities', id: msg.id, missing: true };
+    const model = rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text);
+    run = { key: msg.runKey, text: msg.text, model, t: msg.t, states: msg.states, n: msg.n, width: msg.width };
+    rtmKept = run;
+  }
+  const { model, t, states, n, width } = run;
+  const keys = msg.keys;
+  const which = Int32Array.from(keys.map((k) => model.quantities.findIndex((q) => q.key === k)));
+  const unknown = keys.filter((k, q) => which[q] < 0);
+  if (unknown.length) throw new Error(`The model has no quantity ${unknown.join(', ')}.`);
+  const cells = msg.cells;
+  const values = new Float64Array(keys.length * cells.length * n);
+  const out = new Float64Array(keys.length);
+  for (let i = 0; i < n; i++) {
+    const c = states.subarray(i * width, (i + 1) * width);
+    for (let j = 0; j < cells.length; j++) {
+      model.quantitiesAt(c, t[i], cells[j], which, out);
+      for (let q = 0; q < keys.length; q++) values[(q * cells.length + j) * n + i] = out[q];
+    }
+  }
+  return { type: 'quantities', id: msg.id, keys, cells, n, values };
+}
+
 function handleRtmMessage(msg, post) {
   const id = msg.id;
   if (msg.type === 'capabilities') {
     post({ type: 'capabilities', id, solvers: rtmSolvers() });
+    return;
+  }
+  if (msg.type === 'quantities') {
+    try {
+      const reply = rtmQuantities(msg);
+      post(reply, reply.values ? [reply.values.buffer] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'quantities', error: rtmErrorMessage(e) });
+    }
     return;
   }
 
@@ -408,9 +460,13 @@ function handleRtmMessage(msg, post) {
     const heldDrift = rtmHoldFixed(model, states, n, width);
     // Each stored point's cells' temperatures, where they go with the cell or the time: the PHREEQC tab reads them.
     const temps = rtmTemperatures(model, res.t, n);
+    // Kept for the quantities the page asks for (rtmQuantities): copies, as what is posted is handed over.
+    const runKey = ++rtmRunCount;
+    rtmKept = { key: runKey, text: msg.text, model, t: Float64Array.from(res.t), states: Float64Array.from(states), n, width };
     const payload = {
       type: 'result',
       id,
+      runKey,
       t: res.t,
       states,
       temps,
@@ -433,8 +489,10 @@ function handleRtmMessage(msg, post) {
       const width = model.stateWidth || model.nspecies;
       const states = rtmConcentrations(model, e.partial.y, n, width, e.partial.t);
       const heldDrift = rtmHoldFixed(model, states, n, width);
+      const runKey = ++rtmRunCount;
+      rtmKept = { key: runKey, text: msg.text, model, t: Float64Array.from(e.partial.t), states: Float64Array.from(states), n, width };
       out.partial = {
-        t: e.partial.t, states, n, width, model: rtmSummary(model), stats: e.partial.stats || {},
+        runKey, t: e.partial.t, states, n, width, model: rtmSummary(model), stats: e.partial.stats || {},
         heldDrift, temps: rtmTemperatures(model, e.partial.t, n),
       };
     }

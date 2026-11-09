@@ -15,6 +15,8 @@
   <meta property="og:image" content="https://kvotab.se/resources/images/kvot-logotype.png">
   <meta name="twitter:card" content="summary">
   <script src="https://cdn.plot.ly/plotly-2.27.0.min.js" integrity="sha384-Hl48Kq2HifOWdXEjMsKo6qxqvRLTYqIGbvlENBmkHAxZKIGCXv43H6W1jA671RzC" crossorigin="anonymous"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js" integrity="sha384-+mbV2IY1Zk/X1p/nWllGySJSUN8uMs+gUAN10Or95UBH0fpj6GfKgPmgC5EXieXG" crossorigin="anonymous"></script>
+  <script src="./resources/js/xlsxwrite.js?v=20261004"></script>
   <script>
     // Set the theme before first paint so dark-mode visitors get no white flash.
     (function () {
@@ -29,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261107">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109c">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -240,10 +242,16 @@
             <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="png">PNG</button>
+            </span>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5">View in Data Browser</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadHdf5">HDF5</button>
             <span class="kvot-info-slot" data-info-key="pane:time"></span>
+            <span class="rtm-muted" id="rtmTimeNote"></span>
           </div>
           <div class="rtm-series" id="rtmSeries"></div>
           <div class="plot" id="rtmChartTime" hidden></div>
@@ -253,7 +261,7 @@
         <!-- ---- concentration against distance ---- -->
         <section class="rtm-pane" data-pane="profile" hidden>
           <div class="rtm-toolbar">
-            <label>Species
+            <label>Show
               <select id="rtmProfileSpecies" data-on-change="rtm:redrawProfile"></select>
             </label>
             <label id="rtmProfileAxisWrap" hidden>Across
@@ -270,6 +278,12 @@
                 data-on-change="rtm:redrawProfile">
             </label>
             <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="png">PNG</button>
+            </span>
             <span class="kvot-info-slot" data-info-key="pane:profile"></span>
             <span class="rtm-muted" id="rtmProfileNote"></span>
           </div>
@@ -390,11 +404,18 @@
         <!-- ---- the Jacobian ---- -->
         <section class="rtm-pane" data-pane="gradient" hidden>
           <div class="rtm-toolbar">
-            <label>Species
+            <label>Show
               <select id="rtmGradSpecies" data-on-change="rtm:redrawGradient"></select>
             </label>
             <label id="rtmGradLayerWrap" hidden>Layer
               <select id="rtmGradLayer" data-on-change="rtm:redrawGradient"></select>
+            </label>
+            <label>As
+              <select id="rtmGradView" data-on-change="rtm:redrawGradient">
+                <option value="map">a map</option>
+                <option value="contour">contours</option>
+                <option value="surface">a surface</option>
+              </select>
             </label>
             <label>Colours
               <select id="rtmGradScale" data-on-change="rtm:redrawGradient">
@@ -408,6 +429,12 @@
             <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
             <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
             <label><input type="checkbox" id="rtmGradSmooth" data-on-change="rtm:redrawGradient"> smooth</label>
+            <span class="rtm-saves" aria-label="Save">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="csv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="xlsx">Excel</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="svg">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="png">PNG</button>
+            </span>
             <span class="kvot-info-slot" data-info-key="pane:gradient"></span>
             <span class="rtm-muted" id="rtmGradNote"></span>
           </div>
@@ -483,7 +510,7 @@
             remembers the choice.</p>
 
           <h3 id="help-model-text">The model text</h3>
-          <p>Nine sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
+          <p>Fifteen sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
             <code>&lt;TABLE name&gt;</code>. Everything after a <code>#</code> is a comment. A rock
             matrix beside the column is a few more settings; see <em>A rock matrix</em>. Wherever
@@ -707,6 +734,37 @@ BaRaSO4   Barite  RaSO4</pre>
             <code>a1=</code>, dimensionless, or <code>g0=</code> and <code>g1=</code> in kJ/mol, with
             <code>tc=</code> the temperature in °C they are given at. See <em>Solid solutions</em>
             below.</p>
+
+          <h4 id="help-output-section">&lt;OUTPUT&gt;</h4>
+          <pre>alk     = [HCO3-] + 2*[CO3-2] + [OH-] - [H+],  unit = eq/kgw
+Ca_mg   = [Ca+2] * 40078,                      unit = mg/kgw
+ratio   = SR(Calcite) / SR(Dolomite)</pre>
+          <p>Quantities of your own, as PHREEQC's <code>USER_PUNCH</code> has them: a name and what it
+            is, with its unit after a comma if it has one. It may read what a rate law reads —
+            <code>[X]</code>, <code>{X}</code>, <code>{H2O}</code>, <code>SI(phase)</code>,
+            <code>SR(phase)</code>, <code>I</code>, <code>TK</code>, <code>TC</code>, <code>t</code>
+            and the parameters — and <code>x</code>, the cell's distance along the column, and an
+            <code>&lt;OUTPUT&gt;</code> above it by name. Each is worked out at every stored point when
+            a chart asks for it, and is listed with the other quantities; see <em>Reading the
+            charts</em>. One with a unit of an amount (mol, eq, g/, ppm, atm) goes on the left-hand
+            axis with the species, the rest on the right.</p>
+
+          <h4 id="help-data-section">&lt;DATA&gt;</h4>
+          <pre>time      pH     Ca+2      cell = 9
+36000     6.5    0.0012
+72000     4.0    -
+distance  pH     at = 36000
+0.05      6.9</pre>
+          <p>What was measured, drawn as points beside what the run gives. Each table begins with a
+            line naming its columns: the first <code>time</code> (in the model's unit) or
+            <code>distance</code> (m), the rest species or quantities by the names the page gives
+            them — <code>pH</code>, <code>pe</code>, <code>I</code>, <code>tot(Ca)</code>,
+            <code>SI(Calcite)</code>, <code>la(Ca+2)</code>, <code>share(CaX2)</code>, an
+            <code>&lt;OUTPUT&gt;</code> — then where the table belongs: <code>cell =</code> for one in
+            time (from 0, the first unless said; <code>layer =</code> for the rock behind it),
+            <code>at =</code> for one in distance (the end of the run unless said). A row of numbers
+            per point follows, a dash for a value not measured. A column the model has no name for is
+            an error, so that a misspelt one is not silently left off.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -1890,18 +1948,38 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             10<sup>−10</sup> of it.</p>
 
           <h3 id="help-charts">Reading the charts</h3>
-          <p>The time chart draws the species ticked in the list above it, at one cell, or what
+          <p>The time chart draws what is ticked in the list above it, at one cell, or what
             crosses one end of the column (see <em>The two ends of the column</em>).
-            <em>Against distance</em> draws one species across all the cells, at several times.
-            Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h, 30 d,
-            500 y</code>, or bare numbers in the model's own unit — and leaving it empty spreads eight over the
-            run.</p>
+            <em>Against distance</em> draws one species or quantity across all the cells, at several
+            times. Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h,
+            30 d, 500 y</code>, or bare numbers in the model's own unit — and leaving it empty spreads
+            eight over the run.</p>
+          <p>The list holds the species first, then what the run comes to besides them, in groups:
+            <em>the water</em> — pH as −log a(H<sup>+</sup>), pe, the ionic strength, a(H<sub>2</sub>O),
+            the charge balance as PHREEQC's percent error, and the temperature where it varies; the
+            <em>totals in the water</em> of each element two species or more hold, from their
+            formulas — <code>CaHCO3+</code> is one Ca and one C, <code>UO2_2(OH)2+2</code> two U;
+            <em>saturation indices</em> of each phase of <code>&lt;PHASES&gt;</code> and each
+            mineral; a gas's partial pressure; each species' share of its exchanger, as an equivalent
+            fraction, or of its sites on a surface; the text's <code>&lt;OUTPUT&gt;</code>; and under an
+            <code>ACTIVITY</code> the <em>log activities</em>, a group shut until it is opened. They are worked out from the
+            stored concentrations with the model's own activity model, in the background the first
+            time a chart asks for them, and kept for the run. A handed-off water's pH, ionic
+            strength, a(H<sub>2</sub>O), totals, saturation indices and the shares of an exchanger
+            and a surface are PHREEQC's to a part in 10<sup>8</sup>, a gas's partial pressure to
+            3 in 10<sup>8</sup>. An amount goes on the left-hand axis with the species,
+            log or not; pH, pe, a saturation index, a log activity or a share goes on the right, as
+            it is. What <code>&lt;DATA&gt;</code> measured of what is drawn appears as open circles in
+            its colour: a table in time at the cell and layer it names, one in distance with the time
+            it was taken at.</p>
           <p><em>Gradient</em> puts the whole run in one picture: time across, distance up,
             concentration as colour. Where <em>Against distance</em> shows a handful of moments,
             this shows every stored one, so a front's arrival and how far it gets are a shape
             rather than a set of curves to compare. Distance runs up the axis from zero at the
             origin, so the left-hand face — the surface the chemistry happens at — is along the
-            bottom.</p>
+            bottom. <em>As</em> draws it as a map, as contours with their values written on them —
+            the pH of an acid front through calcite, a saturation index going from below zero to
+            zero — or as a surface in three dimensions, the value up, which the mouse turns.</p>
           <p>The bands across it are the cells: with twenty of them the picture has twenty rows and
             says so. <em>Smooth</em> interpolates between them, which looks better and claims a
             resolution the run does not have. <em>log concentration</em> plots log<sub>10</sub>,
@@ -1917,8 +1995,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             well get 10.8.</p>
 
           <h3 id="help-export">Taking the run away with you</h3>
-          <p><em>CSV</em> writes the species ticked in the list, at the cell the chart is showing,
-            a row per stored step. <em>View in Data Browser</em> writes the whole run as an HDF5
+          <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
+            per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
+            model text the run was made with on a second sheet. On <em>Against distance</em> and
+            <em>Gradient</em> they write what the chart draws: a row per distance and a column per
+            curve, or a row per cell and a column per time. <em>SVG</em> and <em>PNG</em> save the
+            chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
             need a run behind them, and neither sends anything anywhere: the file is built in this
@@ -2637,14 +2719,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109b"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109c"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006b"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261108h"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109c"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -40,6 +40,7 @@
     profileTimes: '',      // empty for a spread over the run; else a list
     gradSpecies: '',
     gradScale: 'YlOrRd',
+    gradView: 'map',       // the gradient as a map, as contours of it, or as a surface
     gradTMin: '1e-6',
     tab: 'time',
     syntax: true,          // colour the model text in the editor
@@ -75,7 +76,7 @@
         layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
         gradLayer: state.gradLayer,
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
-        gradSpecies: state.gradSpecies, gradScale: state.gradScale,
+        gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
@@ -106,6 +107,7 @@
       if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
       if (typeof s.gradSpecies === 'string') state.gradSpecies = s.gradSpecies;
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
+      if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
@@ -835,18 +837,143 @@
     return (state.compiled && state.compiled.species) || [];
   }
 
+  /*
+    QUANTITIES: what the run can be read as besides its species -- the
+    water's pH, pe and ionic strength, element totals, saturation indices,
+    log activities, gases, what is on an exchanger or a surface, and the
+    text's <OUTPUT> -- as the model lists them (compile's QUANTITIES). Each
+    has a key, which the charts pick by and <DATA> names a column by, a
+    label, a group and an axis: 'conc' for an amount, on the left with the
+    species, 'index' for the rest, on the right.
+  */
+  const quantityList = () => (state.compiled && state.compiled.quantities) || [];
+  const quantityOf = (key) => quantityList().find((q) => q.key === key) || null;
+  /** Whether a key is one of the model's quantities rather than a species. */
+  const isQuantity = (key) => !speciesNames().includes(key) && !!quantityOf(key);
+  const GROUP_ORDER = ['water', 'totals', 'saturation', 'gases', 'exchange', 'surface', 'outputs', 'activities'];
+  const GROUP_LABELS = { species: 'Species', water: 'The water', totals: 'Totals in the water', saturation: 'Saturation indices',
+    gases: 'Gases', exchange: 'On the exchanger', surface: 'On the surface', outputs: 'From <OUTPUT>', activities: 'Log activities' };
+  // Shut until opened: the log activities, one a solute.
+  const GROUP_SHUT = new Set(['activities']);
+  /** A key as the charts and their legends name it: a species its name, a quantity its label. */
+  const labelOf = (key) => (isQuantity(key) ? quantityOf(key).label : key);
+  /** Which axis a key goes on: the left for a species and an amount, the right for the rest. */
+  const axisOf = (key) => (isQuantity(key) && quantityOf(key).axis === 'index' ? 'index' : 'conc');
+
+  /** The groups a picker offers, in order: the species, then each group of quantities that has any. */
+  function pickerGroups() {
+    const groups = [{ id: 'species', items: speciesNames().map((nm) => ({ key: nm, label: nm })) }];
+    for (const g of GROUP_ORDER) {
+      const items = quantityList().filter((q) => q.group === g).map((q) => ({ key: q.key, label: q.label }));
+      if (items.length) groups.push({ id: g, items });
+    }
+    return groups;
+  }
+
+  /** <optgroup>s of every key a one-quantity chart can show, `chosen` selected. */
+  function pickerOptions(chosen) {
+    return pickerGroups().map((g) => `<optgroup label="${esc(GROUP_LABELS[g.id])}">${g.items.map((it) => `<option value="`
+      + `${esc(it.key)}"${it.key === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
+  }
+
   function renderSeriesList() {
     const box = $('rtmSeries');
-    const names = speciesNames();
     const picked = new Set(state.picked);
+    const groups = pickerGroups();
     // The title is the name alone, for one too long for its cell. Which
-    // species do not move is in the (i) of this tab, pane:time.
-    box.innerHTML = names.map((nm) => {
-      const on = picked.has(nm);
-      return `<label class="rtm-item${on ? ' on' : ''}" title="${esc(nm)}">`
-        + `<input type="checkbox" value="${esc(nm)}"${on ? ' checked' : ''} data-on-change="rtm:pick">`
-        + `<span>${esc(nm)}</span></label>`;
+    // species do not move is in the (i) of this tab, pane:time. With
+    // quantities beside the species, each group has a heading across the grid,
+    // and one long group (the log activities) is shut until it is opened.
+    box.innerHTML = groups.map((g) => {
+      const shut = groups.length > 1 && (state.sections[`series:${g.id}`] === undefined
+        ? GROUP_SHUT.has(g.id) : !state.sections[`series:${g.id}`]);
+      const head = groups.length > 1
+        ? `<button type="button" class="rtm-series-head" data-group="${g.id}" aria-expanded="${!shut}" `
+          + `data-on-click="rtm:toggleGroup">${esc(GROUP_LABELS[g.id])} <span class="rtm-muted">${g.items.length}</span></button>`
+        : '';
+      return head + g.items.map((it) => {
+        const on = picked.has(it.key);
+        return `<label class="rtm-item${on ? ' on' : ''}" title="${esc(it.label)}"${shut && !on ? ' hidden' : ''} data-group="${g.id}">`
+          + `<input type="checkbox" value="${esc(it.key)}"${on ? ' checked' : ''} data-on-change="rtm:pick">`
+          + `<span>${esc(it.label)}</span></label>`;
+      }).join('');
     }).join('');
+  }
+
+  /*
+    The quantities of the run on show, worked out in the worker from the
+    model and the stored concentrations it kept, and kept here: key|cell ->
+    the value at every stored point, cell counted as the model counts its
+    cells, rock layers included.
+  */
+  let qCache = new Map();
+  let qCacheRun = null;
+  const qAsked = new Set();
+  const qFailed = new Set();
+  function quantityCache() {
+    if (qCacheRun !== state.result) { qCache = new Map(); qCacheRun = state.result; qAsked.clear(); qFailed.clear(); }
+    return qCache;
+  }
+  /** Whether a quantity in a model cell is still to come: neither kept nor given up on. */
+  const quantityPending = (key, cell) => !quantityCache().has(`${key}|${cell}`) && !qFailed.has(`${key}|${cell}`);
+
+  /** A quantity's values in model cell `cell`, or null until worked out (fetchQuantities). */
+  function quantitySeries(key, cell) {
+    return quantityCache().get(`${key}|${cell}`) || null;
+  }
+
+  /**
+   * Has the worker work out the quantities `keys` in model cells `cells` at
+   * every stored point of the run, unless they are kept or asked for
+   * already, and draws the charts again once they come. A worker started
+   * again since the run has lost it, and the run is sent with the question.
+   * One that fails is not asked again for this run: the status says why.
+   */
+  async function fetchQuantities(keys, cells) {
+    const r = state.result;
+    if (!r || !keys.length || !cells.length) return;
+    const cache = quantityCache();
+    const want = [];
+    for (const k of keys) for (const c of cells) if (!cache.has(`${k}|${c}`) && !qAsked.has(`${k}|${c}`)) want.push([k, c]);
+    if (!want.length) return;
+    want.forEach(([k, c]) => qAsked.add(`${k}|${c}`));
+    const wk = [...new Set(want.map(([k]) => k))];
+    const wc = [...new Set(want.map(([, c]) => c))];
+    const ask = (withRun) => request({ type: 'quantities', runKey: r.runKey, keys: wk, cells: wc,
+      ...(withRun ? { text: (state.ran && state.ran.text) || state.text, t: Float64Array.from(r.t),
+        states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      if (qCacheRun !== r) return;
+      const nc = reply.cells.length;
+      reply.keys.forEach((k, q) => reply.cells.forEach((c, j) => {
+        cache.set(`${k}|${c}`, reply.values.subarray((q * nc + j) * reply.n, (q * nc + j + 1) * reply.n));
+      }));
+      drawTime();
+      drawProfile();
+      drawGradient();
+    } catch (e) {
+      want.forEach(([k, c]) => qFailed.add(`${k}|${c}`));
+      setStatus(`Could not work out ${wk.map(labelOf).join(', ')}: ${e.message}`, 'error');
+    }
+  }
+
+  /** The model cell a chart's cell and layer are: the fracture cell, then its rock layers. */
+  const modelCell = (cell, layer) => {
+    const r = state.result;
+    const stride = (r && r.model.stride) || 1;
+    return cell * stride + Math.min(layer, stride - 1);
+  };
+
+  /** What <DATA> measured of `key` in tables of `kind` ('time' or 'distance'). */
+  function measured(kind, key) {
+    const data = (state.compiled && state.compiled.data) || [];
+    return data.filter((tab) => tab.kind === kind && tab.columns.includes(key)).map((tab) => {
+      const j = tab.columns.indexOf(key) + 1;
+      const rows = tab.rows.filter((row) => row[j] !== null);
+      return { tab, x: rows.map((row) => row[0]), y: rows.map((row) => row[j]) };
+    }).filter((d) => d.x.length);
   }
 
   /** Whether the time chart's place is an end of the column rather than a cell. */
@@ -909,20 +1036,17 @@
     }
   }
 
+  // The distance and gradient charts' pickers: every species, then every quantity, grouped.
   function renderProfileSpecies() {
-    const sel = $('rtmProfileSpecies');
     const names = speciesNames();
-    if (!names.includes(state.profileSpecies)) state.profileSpecies = names[0] || '';
-    sel.innerHTML = names.map((nm) => `<option value="${esc(nm)}"`
-      + `${nm === state.profileSpecies ? ' selected' : ''}>${esc(nm)}</option>`).join('');
+    if (!names.includes(state.profileSpecies) && !quantityOf(state.profileSpecies)) state.profileSpecies = names[0] || '';
+    $('rtmProfileSpecies').innerHTML = pickerOptions(state.profileSpecies);
   }
 
   function renderGradSpecies() {
-    const sel = $('rtmGradSpecies');
     const names = speciesNames();
-    if (!names.includes(state.gradSpecies)) state.gradSpecies = names[0] || '';
-    sel.innerHTML = names.map((nm) => `<option value="${esc(nm)}"`
-      + `${nm === state.gradSpecies ? ' selected' : ''}>${esc(nm)}</option>`).join('');
+    if (!names.includes(state.gradSpecies) && !quantityOf(state.gradSpecies)) state.gradSpecies = names[0] || '';
+    $('rtmGradSpecies').innerHTML = pickerOptions(state.gradSpecies);
   }
 
   /* ---------------------------------------------------------------------
@@ -964,6 +1088,8 @@
    */
   function series(name, cell, layer = state.layer) {
     const r = state.result;
+    // A quantity: as the worker worked it out, or null until it has (fetchQuantities). An end has none.
+    if (isQuantity(name)) return isFace(cell) ? null : quantitySeries(name, modelCell(cell, layer));
     const ns = r.model.nspecies;
     const si = r.model.species.indexOf(name);
     if (si < 0) return null;
@@ -999,33 +1125,64 @@
     }
     empty.hidden = true;
     plot.hidden = false;
+    // The quantities picked that the worker has still to work out: asked for, and drawn when they come.
+    const face = isFace(state.cell);
+    const missing = face ? [] : state.picked.filter((k) => isQuantity(k) && quantityPending(k, modelCell(state.cell, state.layer)));
+    if (missing.length) fetchQuantities(missing, [modelCell(state.cell, state.layer)]);
     const logT = $('rtmLogT').checked;
     const logY = $('rtmLogY').checked;
     const tmin = Number($('rtmTMin').value) || 0;
     const traces = [];
-    for (const nm of state.picked) {
+    const right = [];
+    const skipped = [];
+    // Each key its colour, its measured points the same: Plotly's own ten, in the order picked.
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    for (const [pickIndex, nm] of state.picked.entries()) {
+      const color = palette[pickIndex % palette.length];
       const y = series(nm, state.cell);
-      if (!y) continue;
+      if (!y) { if (face && isQuantity(nm)) skipped.push(labelOf(nm)); continue; }
+      // An amount goes on the left with the species, log or not; pH, SI and the like on the right, linear.
+      const onRight = axisOf(nm) === 'index';
       const xs = [];
       const ys = [];
       for (let i = 0; i < r.n; i++) {
         const t = r.t[i];
         if (logT && !(t >= tmin && t > 0)) continue;
         const v = y[i];
-        if (logY && !(v > 0)) continue;
+        if (!Number.isFinite(v) || (logY && !onRight && !(v > 0))) continue;
         xs.push(t);
         ys.push(v);
       }
-      if (xs.length) traces.push({ name: nm, x: xs, y: ys, mode: 'lines', type: 'scatter' });
+      if (onRight) right.push(labelOf(nm));
+      if (xs.length) {
+        traces.push({ name: labelOf(nm), x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
+          ...(onRight ? { yaxis: 'y2' } : {}) });
+      }
+      // What <DATA> measured of it, at this cell and layer: points.
+      if (!face) {
+        for (const d of measured('time', nm)) {
+          if ((d.tab.cell || 0) !== state.cell || (d.tab.layer || 0) !== state.layer) continue;
+          traces.push({ name: `${labelOf(nm)}, measured`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
+            marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}) });
+        }
+      }
     }
     const layout = baseLayout();
     layout.xaxis.type = logT ? 'log' : 'linear';
     layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
     layout.yaxis.type = logY ? 'log' : 'linear';
     // An end's flux is per m2 of the water's cross-section, positive to the right.
-    layout.yaxis.title = { text: isFace(state.cell)
+    layout.yaxis.title = { text: face
       ? `flux through the ${state.cell} end (concentration · m/${timeUnit().symbol})` : 'concentration', font: { size: 11 } };
+    if (right.length) {
+      const c = themeColors();
+      layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
+        title: { text: right.join(', '), font: { size: 11 } } };
+      layout.margin.r = 64;
+    }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    $('rtmTimeNote').textContent = [missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
+      skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : ''].filter(Boolean).join('; ');
   }
 
   function drawProfile() {
@@ -1057,7 +1214,21 @@
     const atCell = across ? Math.min(state.profileLayer, r.model.fracture - 1) : 0;
     const x = across ? [0, ...r.model.matrix.depth] : r.model.centres;
     const npts = across ? nm + 1 : r.model.fracture;
-    const stateIndex = (k) => (across ? (atCell * stride + k) : (k * stride + layer)) * ns + si;
+    const cellAt = (k) => (across ? (atCell * stride + k) : (k * stride + layer));
+    const stateIndex = (k) => cellAt(k) * ns + si;
+    // A quantity: every point's, from the worker; asked for, and drawn when it comes.
+    const quantity = isQuantity(name);
+    const cellsHere = Array.from({ length: npts }, (_, k) => cellAt(k));
+    if (quantity && cellsHere.some((c) => quantityPending(name, c))) {
+      fetchQuantities([name], cellsHere);
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = `Working out ${labelOf(name)} in every cell…`;
+      $('rtmProfileNote').textContent = '';
+      return;
+    }
+    const valueAt = (i, k) => (quantity ? (quantitySeries(name, cellAt(k)) || [])[i] : r.states[i * r.width + stateIndex(k)]);
     // Either the times the reader asked for, or eight spread over the run: a
     // profile is only readable with a handful of curves on it.
     const asked = parseTimes(state.profileTimes);
@@ -1080,14 +1251,26 @@
     }
     const traces = picks.map((i) => {
       const y = [];
-      for (let k = 0; k < npts; k++) y.push(r.states[i * r.width + stateIndex(k)]);
+      for (let k = 0; k < npts; k++) y.push(valueAt(i, k));
       return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter' };
     });
+    // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says.
+    if (!across) {
+      for (const d of measured('distance', name)) {
+        const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
+        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
+          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 } } });
+      }
+    }
     const layout = baseLayout();
     layout.xaxis.title = { text: across ? `depth into the rock behind cell ${atCell} (m)`
       : 'distance from the left-hand face (m)', font: { size: 11 } };
-    layout.yaxis.type = $('rtmProfileLog').checked ? 'log' : 'linear';
-    layout.yaxis.title = { text: `${name} concentration`, font: { size: 11 } };
+    // pH, SI and the like are drawn as they are; an amount log or not, as the box says.
+    const index = quantity && axisOf(name) === 'index';
+    layout.yaxis.type = $('rtmProfileLog').checked && !index ? 'log' : 'linear';
+    const q = quantity ? quantityOf(name) : null;
+    layout.yaxis.title = { text: q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${name} concentration`,
+      font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     /*
       The run is stored thinned, so a wanted time lands on the nearest point
@@ -1139,7 +1322,22 @@
     const stride = r.model.stride || 1;
     const gl = Math.min(state.gradLayer, stride - 1);
     const logT = $('rtmGradLogT').checked;
-    const logC = $('rtmGradLogC').checked;
+    // A quantity: every cell's, from the worker; pH, SI and the like are on a scale of their own, never logged again.
+    const quantity = isQuantity(name);
+    const q = quantity ? quantityOf(name) : null;
+    const logC = $('rtmGradLogC').checked && !(q && q.axis === 'index');
+    const cellsHere = Array.from({ length: cells }, (_, c) => c * stride + gl);
+    if (quantity && cellsHere.some((c) => quantityPending(name, c))) {
+      fetchQuantities([name], cellsHere);
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = `Working out ${labelOf(name)} in every cell…`;
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+    const valueAt = (i, c) => (quantity ? (quantitySeries(name, c * stride + gl) || [])[i]
+      : r.states[i * r.width + (c * stride + gl) * ns + si]);
 
     /*
       A log time axis cannot show t = 0, and a stiff run's first steps are
@@ -1166,10 +1364,10 @@
     for (let c = 0; c < cells; c++) {
       const row = new Array(cols.length);
       for (let k = 0; k < cols.length; k++) {
-        const v = r.states[cols[k] * r.width + (c * stride + gl) * ns + si];
+        const v = valueAt(cols[k], c);
         if (logC) {
           if (v > 0) { row[k] = Math.log10(v); } else { row[k] = null; nonPositive++; }
-        } else row[k] = v;
+        } else row[k] = Number.isFinite(v) ? v : null;
         if (row[k] !== null) { lo = Math.min(lo, row[k]); hi = Math.max(hi, row[k]); }
       }
       z.push(row);
@@ -1183,13 +1381,17 @@
     layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
     layout.yaxis.title = { text: 'distance from the left-hand face (m)', font: { size: 11 } };
     // Distance up the page from zero at the origin, the ordinary way round.
+    // As a map, as contours of it, or as a surface over time and distance.
+    const view = state.gradView || 'map';
+    const title = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : name;
     const trace = {
-      type: 'heatmap',
+      type: view === 'contour' ? 'contour' : view === 'surface' ? 'surface' : 'heatmap',
       x: cols.map((i) => r.t[i]),
       y: Array.from(r.model.centres),
       z,
       colorscale: state.gradScale,
       reversescale: state.gradScale === 'YlOrRd',
+      ...(view === 'contour' ? { contours: { coloring: 'heatmap', showlabels: true, labelfont: { size: 10 } }, line: { width: 0.6 } } : {}),
       connectgaps: false,
       /*
         Off by default: with twenty cells the bands ARE the cells, and a
@@ -1201,11 +1403,21 @@
         ? 't = %{x:.3e} s<br>x = %{y:.3e} m<br>log₁₀ c = %{z:.3f}<extra></extra>'
         : 't = %{x:.3e} s<br>x = %{y:.3e} m<br>c = %{z:.4e}<extra></extra>',
       colorbar: {
-        title: { text: logC ? `log₁₀ ${name}` : name, side: 'right', font: { size: 11 } },
+        title: { text: logC ? `log₁₀ ${title}` : title, side: 'right', font: { size: 11 } },
         thickness: 14, outlinewidth: 0, tickfont: { size: 10 },
         exponentformat: 'power',
       },
     };
+    if (view === 'surface') {
+      // A surface in three dimensions: the same axes, with the value up.
+      delete trace.zsmooth;
+      delete trace.connectgaps;
+      const c = themeColors();
+      const ax = (text, type) => ({ title: { text, font: { size: 11 } }, type, gridcolor: c.grid, color: c.text });
+      layout.scene = { xaxis: ax(`time (${timeUnit().symbol})`, logT ? 'log' : 'linear'), yaxis: ax('distance (m)', 'linear'),
+        zaxis: ax(logC ? `log₁₀ ${title}` : title, 'linear'), camera: { eye: { x: -1.6, y: -1.6, z: 1.0 } } };
+      layout.margin = { l: 0, r: 0, t: 10, b: 0 };
+    }
     Plotly.react(plot, [trace], layout, PLOT_CONFIG);
     const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`];
     if (Number.isFinite(lo)) {
@@ -1222,22 +1434,105 @@
   /* ---------------------------------------------------------------------
      CSV
      --------------------------------------------------------------------- */
-  function downloadCsv() {
+  /**
+   * The time chart's series as a table, every stored point: the time, then
+   * each key picked (every species when none is) at the cell and layer shown,
+   * or what crosses the end shown. Quantities are worked out first.
+   */
+  async function timeTable() {
     const r = state.result;
-    if (!r) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
-    const names = state.picked.length ? state.picked : r.model.species;
+    // What is ticked that this model has: a pick outlives the model it was made in.
+    const here = state.picked.filter((k) => r.model.species.includes(k) || isQuantity(k));
+    const names = here.length ? here : r.model.species;
     const face = isFace(state.cell);
+    const keys = face ? [] : names.filter((k) => isQuantity(k));
+    if (keys.length) await fetchQuantities(keys, [modelCell(state.cell, state.layer)]);
     // At a cell the layer shown, at an end what crosses it.
     const where = face ? `through the ${state.cell} end`
       : `@ cell ${state.cell}${state.layer > 0 && r.model.matrix ? ` rock ${state.layer}` : ''}`;
-    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${n} ${where}`)];
-    const lines = [head.join(',')];
+    const unitOf = (k) => { const q = isQuantity(k) ? quantityOf(k) : null; return q && q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''; };
+    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${labelOf(n)}${unitOf(n)} ${where}`)];
     const cols = names.map((n) => series(n, state.cell));
-    for (let i = 0; i < r.n; i++) {
-      lines.push([r.t[i], ...cols.map((c) => (c ? c[i] : ''))].join(','));
+    const rows = [];
+    for (let i = 0; i < r.n; i++) rows.push([r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
+    return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${state.cell}` };
+  }
+
+  async function downloadCsv() {
+    if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
+    const tab = await timeTable();
+    downloadBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`);
+  }
+
+  /** A table as CSV: a header, then a row per point, a blank where there is no value. */
+  function csvOf(tab) {
+    const cell = (v) => {
+      if (v === null || v === undefined) return '';
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    return [tab.head, ...tab.rows].map((row) => row.map(cell).join(',')).join('\n');
+  }
+
+  /**
+   * What a chart draws, as a table. Lines and points: the x of all of them
+   * in order, then each trace's value there. A map, contours or a surface:
+   * a row per distance, a column per time.
+   */
+  function chartTable(plot, name) {
+    const data = plot && plot.data ? plot.data : [];
+    if (!data.length) return null;
+    const grid = data.find((tr) => ['heatmap', 'contour', 'surface'].includes(tr.type));
+    if (grid) {
+      const title = (grid.colorbar && grid.colorbar.title && grid.colorbar.title.text) || 'value';
+      return { head: [`distance (m) \\ time (${timeUnit().symbol}): ${title}`, ...grid.x], name,
+        rows: grid.y.map((y, j) => [y, ...grid.z[j].map((v) => (v === null || v === undefined ? null : v))]) };
     }
-    downloadBlob(new Blob([lines.join('\n')], { type: 'text/csv' }),
-      face ? `rtm_${state.cell}_end.csv` : `rtm_cell${state.cell}.csv`);
+    const xs = [...new Set(data.flatMap((tr) => Array.from(tr.x || [])))].sort((a, b) => a - b);
+    const xTitle = (plot.layout && plot.layout.xaxis && plot.layout.xaxis.title && plot.layout.xaxis.title.text) || 'x';
+    const cols = data.map((tr) => {
+      const m = new Map();
+      Array.from(tr.x || []).forEach((x, i) => m.set(x, tr.y[i]));
+      return m;
+    });
+    return { head: [xTitle, ...data.map((tr) => tr.name)], name,
+      rows: xs.map((x) => [x, ...cols.map((m) => (m.has(x) ? m.get(x) : null))]) };
+  }
+
+  /** The tables of the run on show for the chart in `pane`: the time chart's every point, the others what they draw. */
+  async function paneTable(pane) {
+    if (pane === 'time') return timeTable();
+    const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
+    return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
+  }
+
+  /**
+   * Saves what a chart shows: its figure as SVG or PNG, at the size it is
+   * drawn, or its numbers as CSV or as an Excel workbook -- the numbers on
+   * one sheet, the model text the run was made with on another.
+   */
+  async function exportPane(pane, as) {
+    if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
+    const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient' }[pane]);
+    if (as === 'svg' || as === 'png') {
+      if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
+      const box = plot.getBoundingClientRect();
+      await Plotly.downloadImage(plot, { format: as, filename: `${fileStem()}_${pane}`,
+        width: Math.max(400, Math.round(box.width)), height: Math.max(300, Math.round(box.height)) });
+      return;
+    }
+    const tab = await paneTable(pane);
+    if (!tab) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
+    if (as === 'csv') { downloadBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`); return; }
+    if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') {
+      setStatus('The Excel writer did not load; save as CSV instead.', 'error');
+      return;
+    }
+    const xlsx = new XlsxWriter(`${tab.name}.xlsx`);
+    xlsx.writeData(tab.rows.map((row) => row.map((v) => (v === null ? '' : v))), 'run', { header: tab.head });
+    const text = (state.ran && state.ran.text) || state.text;
+    xlsx.writeData(text.split('\n').map((ln) => [ln]), 'model', { header: ['the model text the run was made with'] });
+    downloadBlob(await xlsx.save(), `${tab.name}.xlsx`);
   }
 
   function downloadBlob(blob, name) {
@@ -1959,20 +2254,23 @@
       const still = m && m.transport ? m.species.filter((_, i) => !m.mobile[i]) : [];
       return {
         kicker: 'Tab', title: 'Against time',
-        lead: 'The species ticked in the list, at one cell, at every stored point of the run.',
+        lead: 'What is ticked in the list, at one cell, at every stored point of the run: species, and what the run comes to besides them — pH, totals, saturation indices and the rest.',
         sections: [
           { heading: 'The toolbar', list: [
             '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
-            '**clear**: unticks every species.',
-            '**CSV**: the species ticked, or all of them when none is, at the cell and layer shown or through the end shown, a row per stored point.',
+            '**clear**: unticks everything.',
+            '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown or through the end shown, a row per stored point.',
+            '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
             '**View in Data Browser**: the whole run as an HDF5 file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
             '**HDF5**: the same file, as a download.',
           ] },
           { heading: 'The list', text: [
-            'A ticked species is filled in the accent colour. In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
+            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, ionic strength, a(H2O), charge balance), the totals of each element in the water, saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
+            'An amount goes on the left-hand axis with the species, log or not; pH, pe, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
+            'In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
             still.length ? `In this model these do not move: ${someOf(still)}.` : '',
           ].filter(Boolean) },
         ],
@@ -1982,14 +2280,15 @@
 
     'pane:profile': () => ({
       kicker: 'Tab', title: 'Against distance',
-      lead: 'One species across the column at several times, a curve for each. It needs a run in transport mode: a batch has no distance.',
+      lead: 'One species, or one quantity, across the column at several times, a curve for each. It needs a run in transport mode: a batch has no distance.',
       sections: [
         { heading: 'The toolbar', list: [
-          '**Species**: its own choice, apart from the ticks on Against time.',
+          '**Show**: its own choice, apart from the ticks on Against time: a species, or a quantity of the water — pH, a total, a saturation index, a share of an exchanger, an `<OUTPUT>`. What `<DATA>` measured of it along the column is drawn as points.',
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
           '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run.',
-          '**log concentration**: a logarithmic axis.',
+          '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
+          '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
         ] },
         { heading: 'Which times are drawn', text: 'Each time asked for is drawn at the nearest stored point; nothing is interpolated. The legend names the time drawn, and the note says which moved by more than 1 %, which could not be read and which lie past the end of the run.' },
       ],
@@ -2000,13 +2299,15 @@
       const cur = $('rtmGradScale').value;
       return {
         kicker: 'Tab', title: 'Gradient',
-        lead: 'The whole run in one picture: time along x, distance from the left-hand face up y, and the concentration of one species as colour, a band per cell and a column per stored point. It needs a run in transport mode.',
+        lead: 'The whole run in one picture: time along x, distance from the left-hand face up y, and one species or quantity as colour, a band per cell and a column per stored point. It needs a run in transport mode.',
         sections: [
           { heading: 'The toolbar', list: [
-            '**Species**, and **Layer** with a rock matrix: what is drawn, along the fracture or along one layer of rock.',
+            '**Show**, and **Layer** with a rock matrix: what is drawn — a species, or a quantity such as pH or a saturation index — along the fracture or along one layer of rock.',
+            '**As**: a map, contours of it with their values on them, or a surface in three dimensions, the value up, which the mouse turns.',
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
             '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
+            '**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.',
           ] },
           { heading: 'Colours', choices: [
             ['yellow to red', 'Light for low, dark red for high.', cur === 'YlOrRd'],
@@ -2623,7 +2924,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261107',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -3516,6 +3817,7 @@ END
       state.gradSpecies = $('rtmGradSpecies').value;
       state.gradLayer = Number($('rtmGradLayer').value) || 0;
       state.gradScale = $('rtmGradScale').value;
+      state.gradView = $('rtmGradView').value;
       state.gradTMin = $('rtmGradTMin').value;
       saveState();
       drawGradient();
@@ -3539,6 +3841,13 @@ END
       saveState();
       drawTime();
     },
+    'rtm:toggleGroup': (ev, el) => {
+      const g = el.dataset.group;
+      const open = el.getAttribute('aria-expanded') !== 'true';
+      state.sections[`series:${g}`] = open;
+      saveState();
+      renderSeriesList();
+    },
     'rtm:clearSeries': () => {
       state.picked = [];
       renderSeriesList();
@@ -3546,6 +3855,7 @@ END
       drawTime();
     },
     'rtm:downloadCsv': () => downloadCsv(),
+    'rtm:export': (ev, el) => { exportPane(el.dataset.pane, el.dataset.as); },
     'rtm:toHdf5': () => { viewInHdf5Browser(); },
     'rtm:downloadHdf5': () => downloadHdf5(),
     'rtm:solverChanged': () => { readSolverControls(); updateSolverOptions(); saveState(); infoRefresh(); },
@@ -3641,6 +3951,7 @@ END
   fullState();
   showAdvanced(!!state.sections[ADVANCED_KEY]);
   $('rtmGradScale').value = state.gradScale;
+  $('rtmGradView').value = state.gradView;
   $('rtmGradTMin').value = state.gradTMin;
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.

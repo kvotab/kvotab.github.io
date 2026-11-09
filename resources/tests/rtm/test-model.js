@@ -7156,6 +7156,163 @@ console.log('\n--- CD-MUSIC ---');
 }
 
 /* ======================================================================
+   2z. What a run can be read as: QUANTITIES, <OUTPUT> and <DATA>
+
+   A species' name read as its formula; each quantity of a water against
+   the same worked out by hand from the model's own activity coefficients;
+   <OUTPUT> in the language of the rate laws, with an output above it, a
+   parameter and x; and <DATA>, read, and its mistakes refused. A water
+   from PHREEQC against PHREEQC's own numbers is in test-phreeqc.js.
+   ====================================================================== */
+console.log('\n--- what a run can be read as ---');
+{
+  const sorted = (o) => (o ? Object.fromEntries(Object.entries(o).sort(([a], [b]) => a.localeCompare(b))) : null);
+  const formulas = [
+    ['Ca+2', { Ca: 1 }], ['CaHCO3+', { Ca: 1, H: 1, C: 1, O: 3 }], ['UO2_2(OH)2+2', { U: 2, O: 6, H: 2 }],
+    ['(UO2)2(OH)2+2', { U: 2, O: 6, H: 2 }], ['Ca0.5X', { Ca: 0.5, X: 1 }], ['Hfo_wOCa+', { Hfo_w: 1, O: 1, Ca: 1 }],
+    ['CaSO4:2H2O', { Ca: 1, S: 1, O: 6, H: 4 }], ['CO2(g)', { C: 1, O: 2 }], ['Fe+++', { Fe: 1 }], ['e-', null], ['(Ca', null],
+  ];
+  const misread = formulas.filter(([n, want]) => {
+    const got = RtmModel.elementsOf(n);
+    return JSON.stringify(sorted(got ? Object.fromEntries(got) : null)) !== JSON.stringify(sorted(want));
+  });
+  check('a species\' name read as its formula: the charge left off, parentheses, From PHREEQC\'s UO2_2, Gapon\'s Ca0.5X, '
+    + 'a surface\'s Hfo_w, a hydrate', !misread.length,
+  misread.map(([n]) => `${n}: ${JSON.stringify(RtmModel.elementsOf(n) && Object.fromEntries(RtmModel.elementsOf(n)))}`).join(' | '));
+
+  const water = `
+<SETTINGS>
+MODE = batch
+TEND = 1
+ACTIVITY = davies
+EQUILIBRATE = 1
+
+<SPECIES>
+H+       1e-7
+OH-      1e-7
+Na+      2e-3
+Cl-      1e-3
+Ca+2     1e-3
+CO2      1e-4
+HCO3-    2e-3
+CO3-2    1e-5
+NaHCO3   1e-5
+CaHCO3+  1e-5
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,                logK = -14
+CO2 <=> H+ + HCO3-,           logK = -6.35
+HCO3- <=> H+ + CO3-2,         logK = -10.33
+Na+ + HCO3- <=> NaHCO3,       logK = -0.25
+Ca+2 + HCO3- <=> CaHCO3+,     logK = 1.106
+
+<PHASES>
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+
+<OUTPUT>
+alk    = [HCO3-] + 2*[CO3-2] + [OH-] - [H+] + [NaHCO3] + [CaHCO3+], unit = eq/kgw
+twice  = 2 * alk
+pH2    = -log10({H+})
+si     = SI(Calcite)
+aw     = {H2O}
+`;
+  const m = RtmModel.compile(water);
+  const c = m.initialState();
+  const ns = m.speciesNames.length;
+  const at = (n) => m.speciesNames.indexOf(n);
+  const lnG = new Float64Array(ns);
+  RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns));
+  const la = (n) => (Math.log(c[at(n)]) + lnG[at(n)]) / Math.LN10;
+  const z = { 'H+': 1, 'OH-': -1, 'Na+': 1, 'Cl-': -1, 'Ca+2': 2, 'HCO3-': -1, 'CO3-2': -2, 'CaHCO3+': 1 };
+  let cb = 0;
+  let ab = 0;
+  let I = 0;
+  for (const [n, zz] of Object.entries(z)) { cb += zz * c[at(n)]; ab += Math.abs(zz) * c[at(n)]; I += 0.5 * zz * zz * c[at(n)]; }
+  const C = (...ns2) => ns2.reduce((acc, n) => acc + c[at(n)], 0);
+  const want = {
+    pH: -la('H+'), I, charge: (100 * cb) / ab, 'tot(C)': C('CO2', 'HCO3-', 'CO3-2', 'NaHCO3', 'CaHCO3+'),
+    'tot(Ca)': C('Ca+2', 'CaHCO3+'), 'tot(Na)': C('Na+', 'NaHCO3'), 'SI(Calcite)': la('Ca+2') + la('CO3-2') + 8.48,
+    'la(Ca+2)': la('Ca+2'), alk: C('HCO3-', 'OH-', 'NaHCO3', 'CaHCO3+') + 2 * c[at('CO3-2')] - c[at('H+')],
+  };
+  want.twice = 2 * want.alk;
+  want.pH2 = want.pH;
+  want.si = want['SI(Calcite)'];
+  const keys = Object.keys(want);
+  const which = Int32Array.from(keys.map((k) => m.quantities.findIndex((q) => q.key === k)));
+  const got = new Float64Array(keys.length);
+  if (![...which].some((x) => x < 0)) m.quantitiesAt(c, 0, 0, which, got);
+  const off = keys.filter((k, q) => which[q] < 0 || Math.abs(got[q] - want[k]) > 1e-12 * Math.max(1, Math.abs(want[k])));
+  const qOf = (k) => m.quantities.find((q) => q.key === k);
+  check('each quantity of a water as worked out by hand from its own activity coefficients: pH, I, the charge balance, the '
+    + 'totals of C, Ca and Na, SI(Calcite) of <PHASES>, a log activity, and <OUTPUT> -- an alkalinity, an output of an '
+    + 'output, {H+}, SI() and {H2O}', !off.length && !qOf('tot(Cl)') && qOf('alk').axis === 'conc' && qOf('pH').axis === 'index'
+    && qOf('tot(C)').group === 'totals' && Math.abs(got[keys.indexOf('pH')] - got[keys.indexOf('pH2')]) < 1e-14,
+  off.length ? off.map((k) => `${k}: ${got[keys.indexOf(k)]} for ${want[k]}`).join(' | ')
+    : `pH ${got[0].toFixed(4)}, SI(Calcite) ${got[keys.indexOf('SI(Calcite)')].toFixed(4)}, ${m.quantities.length} quantities`);
+  const aw = new Float64Array(2);
+  m.quantitiesAt(c, 0, 0, Int32Array.from(['aw', 'a(H2O)'].map((k) => m.quantities.findIndex((q) => q.key === k))), aw);
+  check('  {H2O} in <OUTPUT> is the water\'s activity, a(H2O) among the quantities',
+    Math.abs(aw[0] - aw[1]) < 1e-15 && aw[0] < 1 && aw[0] > 0.99, aw[0]);
+
+  // In a column: x, a parameter, an output in cells of their own.
+  const column = RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 4
+LENGTH = 1
+TEND = 10
+
+<SPECIES>
+A  1  D=1e-9
+
+<PARAMETERS>
+k  all  3*x
+
+<OUTPUT>
+where = x
+kx    = k * [A] + t
+`);
+  const cc = column.initialState();
+  const wx = Int32Array.from(['where', 'kx'].map((k) => column.quantities.findIndex((q) => q.key === k)));
+  const vals = [0, 1, 2, 3].map((cell) => { const o = new Float64Array(2); column.quantitiesAt(cc, 7, cell, wx, o); return [...o]; });
+  check('  in a column: x the cell\'s centre, a parameter of the cell, and t the time asked at',
+    vals.every(([w, kx], i) => Math.abs(w - (i + 0.5) * 0.25) < 1e-15 && Math.abs(kx - (3 * w + 7)) < 1e-12),
+  JSON.stringify(vals));
+  const refuseOut = (o) => { try { RtmModel.compile(water.replace(/<OUTPUT>[\s\S]*$/, `<OUTPUT>\n${o}\n`)); return ''; } catch (e) { return e.message; } };
+  const badOut = [
+    ['no name', 'Ca+2 * 2', /a line of <OUTPUT> is a name and what it is/],
+    ['a name taken by a species', 'CO2 = [CO2] * 2', /the name is taken/],
+    ['a name taken by a quantity', 'pH = 7', /the name is taken/],
+    ['a species that is not', 'y = [Mg+2]', /\[Mg\+2\] is no species/],
+    ['a phase that is not', 'y = SI(Gypsum)', /SI\(Gypsum\) -- "Gypsum" is no phase/],
+    ['a name that is nothing', 'y = q * 2', /"q" is no species in brackets or braces/],
+    ['something after the unit', 'y = [CO2], unit = mol/kgw, axis = left', /comes its unit, unit = mg\/kgw, and nothing else/],
+  ];
+  const wrongOut = badOut.filter(([, o, re]) => !re.test(refuseOut(o)));
+  check(`  and refused, each with its reason: ${badOut.map((x) => x[0]).join(', ')}`, !wrongOut.length,
+    wrongOut.map(([w, o]) => `${w}: "${refuseOut(o)}"`).join(' | '));
+
+  // <DATA>: tables in time and in distance, and the mistakes it refuses.
+  const dataModel = (d) => `<SETTINGS>\nMODE = transport\nCELLS = 4\nLENGTH = 1\nTEND = 10\n\n<SPECIES>\nA  1  D=1e-9\nB  0  D=1e-9\n\n<DATA>\n${d}\n`;
+  const dm = RtmModel.compile(dataModel('time  A  B  cell = 2\n0  1  0\n5  0.5  -\ndistance  A  at = 2*2.5\n0.125  0.9\n0.375  0.7'));
+  check('<DATA>: a table in time at a cell and one in distance at a time, a dash for a value not measured',
+    dm.data.length === 2 && dm.data[0].kind === 'time' && dm.data[0].cell === 2 && JSON.stringify(dm.data[0].rows) === '[[0,1,0],[5,0.5,null]]'
+    && dm.data[1].kind === 'distance' && dm.data[1].at === 5 && dm.data[1].rows.length === 2, JSON.stringify(dm.data));
+  const refuseData = (d) => { try { RtmModel.compile(dataModel(d)); return ''; } catch (e) { return e.message; } };
+  const badData = [
+    ['a column that is nothing', 'time  A  C\n0  1  2', /"C" is no species and none of the page's quantities/],
+    ['a row too short', 'time  A  B\n0  1', /has 3 columns, time and A, B/],
+    ['a cell past the column', 'time  A  cell = 9\n0  1', /cell = 9, where the column has 4/],
+    ['no time', 'time  A\n-  1', /the time always/],
+    ['a time table at a time', 'time  A  at = 3\n0  1', /at = is for one in distance/],
+    ['rows before a heading', '0  1', /<DATA> begins with a line naming the columns/],
+  ];
+  const wrongData = badData.filter(([, d, re]) => !re.test(refuseData(d)));
+  check(`  and refused, each with its reason: ${badData.map((x) => x[0]).join(', ')}`, !wrongData.length,
+    wrongData.map(([w, d]) => `${w}: "${refuseData(d)}"`).join(' | '));
+}
+
+/* ======================================================================
    3. The Jacobian
    ====================================================================== */
 console.log('\n--- the Jacobian ---');
