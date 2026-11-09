@@ -458,6 +458,16 @@ saturation at an index of -1e-6, as the page's points do, the boundaries
 were 1e-6 off; a mineral of the model's own counts by its amount instead).
 Of the water as a run leaves it: the run kept, a run the worker no longer
 has answered `missing`, and the run sent the same to the bit.
+Principal components (since 2026-11-09, `RtmModel.pca`, Jacobi's rotations
+on the correlation matrix): two variables correlated by r give 1 + r and
+1 - r and components (1, 1) and (1, -1) over root 2, to 1e-15; six waters of
+four variables of the test's own give numpy.linalg.eigh's eigenvalues (2.5.4,
+on the same standardised table) to 1e-13 of the largest, each component an
+eigenvector of the correlation matrix to 1e-14 and orthonormal, the
+eigenvalues summing to four, the scores giving the standardised table back,
+and a water put on the components where its own scores are; eleven waters
+mixing two end members are one component, and a fifth variable the same in
+all of them is left out; two waters, or one variable that varies, refused.
 
 **Ion exchange** (`exchanger`, `exchange`). A binary Na/Ca exchange from an
 exchanger all Na, against its closed solution (7e-14), the sites and the totals
@@ -961,6 +971,8 @@ closed boundaries all in one number.
 What a run can be read as (since 2026-11-09): the list puts the species first and the quantities after them in groups, the log activities shut until their heading is clicked; ticking pH, SI(Halite) and an `<OUTPUT>` draws the first two on the right-hand axis and the third, in mol/kgw, on the left, with the pH `<DATA>` measured at 500 s as open circles in the pH line's colour; the pH at 500 s is -log a(H+) of the acid the reaction added, 3.31. CSV, Excel, SVG and PNG are each caught as the page hands them over: the CSV's header names the quantities, the workbook starts with a zip's PK, the figures are an SVG and a PNG. The gradient draws as contours with their values and as a surface, and a quantity on it -- the radiolysis model's pH in every cell, from the worker -- with the picker's groups. The block puts back the model and the picks it found, which the checks after it read; and a CSV leaves out a pick the model on show does not have, where it used to write it an empty column.
 
 The Composition tab (since 2026-11-09), on a water whose major ions are round numbers (Ca 2.2, Mg 1, Na + K 2.1, Cl 2, SO4 1, HCO3 + CO3 3 meq/kgw, CaSO4 and CO3-2 counted) and a water measured at 50 s: where calcium is, in the whole cell -- the calcite, made of what its reaction says, Ca+2 and CaSO4, stacked to 100 % at every point -- and in the water alone; the Piper diagram's three points where the shares put them, to 1e-9 against the geometry worked out in the test, the measured water in all three and the type, Ca–Na–HCO₃, in the note; the Schoeller diagram's lines in meq/kgw on a log axis, the measured one dotted; a Stiff diagram per water; the CSV's header and type; and along a three-cell column, a Piper point per cell coloured by distance. A share of exactly a half came out 0.49999999999999994 and missed the half-or-more rule of the type: the rule allows for the rounding.
+
+Principal components on the Composition tab (since 2026-11-09), on a column whose four ions only mix (one D, no reactions, another water flowing in), at its last cell: by default each element dissolved, here its one species each; taken as they are, the first component carries 100.0 % of the variance, every water's second score within 1e-9 of the scores' reach, a water `<DATA>` measured half and half put on the same line, an arrow for each ion; as logs, which mixing does not keep on a line, the first carries between 90 and 100 %; a variable the model lacks is said; along the column at the start every cell is one water and nothing varies, which is said; the Excel workbook has the sheets run, loadings, variance and model.
 
 The USSL diagram (since 2026-11-09), on the same water: without `<CONDUCTANCE>` it says the conductance is needed and where it comes from; with it (the solutes' gfw and dw, the tests' own) and an SC of 450 measured, the model's point at its SC, between 250 and 750 uS/cm, and its SAR, 2/sqrt(1.6) by hand from the dissolved Na, Ca and Mg, to 1e-9; the measured water's at 450 and 3/sqrt(1.5) from its Na, Ca and Mg; a log axis with the classes split at 250, 750 and 2,250; and C2-S1 in the note.
 

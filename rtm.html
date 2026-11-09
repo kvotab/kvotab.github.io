@@ -457,8 +457,15 @@
                 <option value="schoeller">a Schoeller diagram</option>
                 <option value="stiff">Stiff diagrams</option>
                 <option value="ussl">a USSL diagram (irrigation water)</option>
+                <option value="pca">principal components (PCA)</option>
               </select>
             </label>
+            <label data-comp-for="pca">Of
+              <input type="text" id="rtmCompPcaVars" class="rtm-times" placeholder="pH and each element dissolved"
+                data-on-change="rtm:redrawComp">
+            </label>
+            <label data-comp-for="pca"><input type="checkbox" id="rtmCompPcaLog" checked data-on-change="rtm:redrawComp"> logs of
+              amounts</label>
             <label data-comp-for="where">Element
               <select id="rtmCompElement" data-on-change="rtm:redrawComp"></select>
             </label>
@@ -2376,6 +2383,25 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             it is worked out from. The table and the note give each water's class, C2-S1 and the
             like. The classes are for the conductance at 25&nbsp;°C, and the model's is at the water's
             own temperature, about 2&nbsp;% lower for each degree below.</p>
+          <p><em>Principal components</em> do what Gibbs Studio's principal component analysis
+            does with a set of waters. Each water — every stored point along the run at a cell, or
+            each cell of the column at a time — is a row of the variables named under <em>Of</em>,
+            as the time chart names them (<code>pH, tot(Ca), Na+, SI(Calcite)</code>), or else of
+            its pH and each element dissolved, an element's total where it has more than one
+            species. With <em>logs of amounts</em> an amount is taken as its logarithm wherever
+            every water has some of it. Each variable is then standardised, its mean taken off and
+            the rest divided by its standard deviation, so that a pH and a total weigh alike, and
+            the components are the eigenvectors of the variables' correlation matrix, the first
+            the direction the waters differ most along. A variable that is the same in every water
+            is left out, and the note says so. The chart puts each water at its scores on the
+            first two components, coloured by time or by distance, and each variable as an arrow
+            to its correlation with the two, drawn to the waters' scale: an arrow along a
+            component is a variable that goes with it. The axes say how much of the variance each
+            component carries. Waters <code>&lt;DATA&gt;</code> measured of every variable are put
+            on the same components, with the model's means and deviations. Waters that mix two
+            end members and nothing else lie on a line: taken as they are, the first component
+            carries all of their variance. The CSV has each water's scores, and Excel adds the
+            loadings and each component's eigenvalue and share.</p>
 
           <h4 id="help-diagrams">Diagrams of the model's own chemistry</h4>
           <p><em>Diagrams</em> does with the model's relations what PhreePlot does with PHREEQC's. It
@@ -3247,7 +3273,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109j"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109m"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006f"></script>
   <script src="./resources/js/rtm-worker.js?v=20261109l"></script>
@@ -3255,6 +3281,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109l"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109m"></script>
 </body>
 </html>

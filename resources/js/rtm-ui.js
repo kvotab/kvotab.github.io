@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109l';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109m';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -52,6 +52,9 @@
     compLayer: 0,
     compTimes: '',
     compTMin: '1e-6',
+    // Principal components: of what, and whether an amount is taken as its log.
+    compPcaVars: '',
+    compPcaLog: true,
     // The Diagrams tab: whose water, and what is varied over what range; then what is drawn of it.
     dg: {
       cell: 0, at: 'start',
@@ -104,7 +107,8 @@
         gradTMin: state.gradTMin,
         compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
-        compTMin: state.compTMin, dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
+        compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
+        dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
         // model that has moved on and no amount of reloading shifts it -- it is
@@ -136,7 +140,7 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
-      if (['where', 'piper', 'schoeller', 'stiff', 'ussl'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'piper', 'schoeller', 'stiff', 'ussl', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
@@ -145,6 +149,8 @@
       if (Number.isInteger(s.compLayer) && s.compLayer >= 0) state.compLayer = s.compLayer;
       if (typeof s.compTimes === 'string') state.compTimes = s.compTimes;
       if (typeof s.compTMin === 'string') state.compTMin = s.compTMin;
+      if (typeof s.compPcaVars === 'string') state.compPcaVars = s.compPcaVars;
+      if (typeof s.compPcaLog === 'boolean') state.compPcaLog = s.compPcaLog;
       if (s.dg && typeof s.dg === 'object') {
         const d = state.dg;
         if (Number.isInteger(s.dg.cell) && s.dg.cell >= 0) d.cell = s.dg.cell;
@@ -1756,7 +1762,9 @@
     $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
     $('rtmCompLayerWrap').hidden = nm === 0;
     // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
-    $('rtmCompTimesWrap').hidden = along === 'time' && (view === 'where' || view === 'ussl');
+    $('rtmCompTimesWrap').hidden = along === 'time' && (view === 'where' || view === 'ussl' || view === 'pca');
+    $('rtmCompPcaVars').value = state.compPcaVars;
+    $('rtmCompPcaLog').checked = state.compPcaLog;
     $('rtmCompTimesLabel').textContent = along === 'time' ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
@@ -1795,6 +1803,7 @@
     plot.hidden = false;
     if (state.compView === 'where') drawWhere(ctx);
     else if (state.compView === 'ussl') drawUssl(ctx);
+    else if (state.compView === 'pca') drawPca(ctx);
     else drawWaters(ctx);
   }
 
@@ -2122,6 +2131,151 @@
     note.textContent = `${where}: ${usslClass(first.sc, first.sar)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
       + `${pts.length > 1 ? `, ${usslClass(last.sc, last.sar)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
       + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
+  }
+
+  /** The variables of a principal component analysis: as named, or the pH and each element dissolved. */
+  function pcaKeys(r) {
+    const given = state.compPcaVars.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+    if (given.length) return given;
+    const keys = quantityOf('pH') ? ['pH'] : [];
+    for (const e of compositionOf(r.model).elements) {
+      if (e.el === 'H' || e.el === 'O') continue;
+      const water = e.terms.filter((tm) => tm[2] === 'water');
+      if (quantityOf(`tot(${e.el})`)) keys.push(`tot(${e.el})`);
+      else if (water.length === 1) keys.push(r.model.species[water[0][0]]);
+    }
+    return keys;
+  }
+
+  /**
+   * Principal components of the waters (RtmModel.pca), as Gibbs Studio gives
+   * them: every stored point along the run at a cell, or each cell along the
+   * column at a time, a row of the variables named, an amount as its log
+   * unless asked not to. The waters at their scores on the first two
+   * components, each variable an arrow to its correlation with them, drawn to
+   * the waters' scale, and the waters <DATA> measured of every variable put
+   * on the same components.
+   */
+  function drawPca({ r, plot, along, layer, cell, atIndex, fail, note }) {
+    const keys = pcaKeys(r);
+    const names = r.model.species;
+    const unknown = keys.filter((k) => !names.includes(k) && !quantityOf(k));
+    if (unknown.length) {
+      fail(`${unknown.map((k) => `"${k}"`).join(', ')}: no species or quantity of the model. Name them as the time chart does: `
+        + 'pH, tot(Ca), Na+, SI(Calcite).');
+      return;
+    }
+    if (keys.length < 2) { fail('Principal components need two variables or more: name them under Of, as pH, tot(Ca), Na+.'); return; }
+    const stride = r.model.stride || 1;
+    const cells = along === 'time' ? [modelCell(cell, layer)] : Array.from({ length: r.model.fracture }, (_, k) => k * stride + layer);
+    const qkeys = keys.filter((k) => !names.includes(k));
+    if (cells.some((mc) => qkeys.some((k) => quantityPending(k, mc)))) {
+      fetchQuantities(qkeys, cells);
+      fail(`Working out ${qkeys.join(', ')}…`);
+      return;
+    }
+    const ns = r.model.nspecies;
+    const valueOf = (k, i, mc) => {
+      const si = names.indexOf(k);
+      if (si >= 0) return r.states[i * r.width + mc * ns + si];
+      const series = quantitySeries(k, mc);
+      return series ? series[i] : NaN;
+    };
+    const waters = [];
+    let colorTitle;
+    if (along === 'time') {
+      const mc = cells[0];
+      const { idx, logT } = compTimeIndices(r);
+      const step = Math.max(1, Math.ceil(idx.length / 400));
+      for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
+        waters.push({ row: keys.map((k) => valueOf(k, i, mc)), t: r.t[i], cell, label: fmtTime(r.t[i]),
+          color: logT ? Math.log10(r.t[i]) : r.t[i] });
+      }
+      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+    } else {
+      cells.forEach((mc, k) => waters.push({ row: keys.map((key) => valueOf(key, atIndex, mc)), t: r.t[atIndex], cell: k,
+        x: r.model.centres[k], label: `cell ${k}`, color: r.model.centres[k] }));
+      colorTitle = 'distance (m)';
+    }
+    const usable = waters.filter((w) => w.row.every(Number.isFinite));
+    // An amount as its log, where every water has some of it.
+    const amount = (k) => names.includes(k) || quantityOf(k).axis === 'conc';
+    const logged = keys.map((k, j) => state.compPcaLog && amount(k) && usable.length > 0 && usable.every((w) => w.row[j] > 0));
+    const shape = (row) => row.map((v, j) => (logged[j] ? Math.log10(v) : v));
+    let res;
+    try {
+      res = RtmModel.pca(usable.map((w) => shape(w.row)), { names: keys });
+    } catch (e) {
+      fail(e.message);
+      return;
+    }
+    const q = res.kept.length;
+    const dropped = keys.filter((_, j) => !res.kept.includes(j));
+    // What <DATA> measured of every variable, here: put on the model's components.
+    const data = (state.compiled && state.compiled.data) || [];
+    const measuredPts = [];
+    for (const tab of data) {
+      if (tab.kind !== along || !keys.every((k) => tab.columns.includes(k))) continue;
+      if (along === 'time' && ((tab.cell || 0) !== cell || (tab.layer || 0) !== layer)) continue;
+      for (const row of tab.rows) {
+        const vals = keys.map((k) => row[tab.columns.indexOf(k) + 1]);
+        if (vals.some((v, j) => v === null || !Number.isFinite(v) || (logged[j] && !(v > 0)))) continue;
+        measuredPts.push({ s: res.project(shape(vals)), x0: row[0],
+          label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
+      }
+    }
+    const c = themeColors();
+    const X = res.scores.map((sc) => sc[0]);
+    const Y = res.scores.map((sc) => sc[1]);
+    const hover = (label, sc) => `${esc(label)}<br>PC1 ${sc[0].toFixed(3)}, PC2 ${sc[1].toFixed(3)}`;
+    const traces = [{ type: 'scatter', mode: usable.length > 1 ? 'lines+markers' : 'markers', name: 'the model', x: X, y: Y,
+      line: { color: c.grid, width: 1 },
+      marker: { size: 7, color: usable.map((w) => w.color), colorscale: 'Viridis', showscale: true,
+        colorbar: { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0, tickfont: { size: 10 },
+          len: 0.7 } },
+      text: usable.map((w, i) => hover(w.label, res.scores[i])), hovertemplate: '%{text}<extra></extra>' }];
+    if (measuredPts.length) {
+      traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.s[0]), y: measuredPts.map((p) => p.s[1]),
+        marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } },
+        text: measuredPts.map((p) => hover(p.label, p.s)), hovertemplate: '%{text}<extra></extra>' });
+    }
+    // Each variable an arrow to its correlations with the two components, drawn to the scores' reach.
+    const corr = res.kept.map((j, k) => [res.vectors[k][0] * Math.sqrt(res.values[0]), res.vectors[k][1] * Math.sqrt(res.values[1])]);
+    const reach = Math.max(...X.map(Math.abs), ...Y.map(Math.abs), ...measuredPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]));
+    const longest = Math.max(...corr.map(([a, b]) => Math.hypot(a, b)));
+    const f = longest > 0 && reach > 0 ? (0.85 * reach) / longest : 1;
+    const pct = (j) => (100 * res.explained[j]).toFixed(1);
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis.title = { text: `PC1, ${pct(0)} % of the variance`, font: { size: 11 } };
+    layout.yaxis.title = { text: `PC2, ${pct(1)} %`, font: { size: 11 } };
+    layout.xaxis.zeroline = true;
+    layout.yaxis.zeroline = true;
+    layout.annotations = corr.flatMap(([a, b], k) => [
+      { x: a * f, y: b * f, xref: 'x', yref: 'y', ax: 0, ay: 0, axref: 'x', ayref: 'y', text: '', showarrow: true, arrowhead: 2,
+        arrowsize: 1, arrowwidth: 1.2, arrowcolor: c.text },
+      { x: a * f * 1.08, y: b * f * 1.08, xref: 'x', yref: 'y', showarrow: false, xanchor: a >= 0 ? 'left' : 'right',
+        text: esc(`${logged[res.kept[k]] ? 'log ' : ''}${keys[res.kept[k]]}`), font: { size: 11, color: c.text } },
+    ]);
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    const pcs = Array.from({ length: q }, (_, j) => `PC${j + 1}`);
+    let sum = 0;
+    compTableNow = {
+      head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', ...pcs], name: `rtm_pca_${along === 'time' ? `cell${cell}` : 'column'}`,
+      rows: [...usable.map((w, i) => [`model, ${w.label}`, w.t, w.cell, w.x === undefined ? null : w.x, ...res.scores[i]]),
+        ...measuredPts.map((p) => [p.label, null, null, null, ...p.s])],
+      extra: [
+        { name: 'loadings', head: ['variable', 'as', 'mean', 'standard deviation', ...pcs],
+          rows: res.kept.map((j, k) => [keys[j], logged[j] ? 'log10' : 'as it is', res.mean[k], res.sd[k], ...res.vectors[k]]) },
+        { name: 'variance', head: ['component', 'eigenvalue', 'of the variance (%)', 'cumulative (%)'],
+          rows: res.values.map((v, j) => { sum += res.explained[j]; return [`PC${j + 1}`, v, 100 * res.explained[j], 100 * sum]; }) },
+      ],
+    };
+    const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
+    note.textContent = `${where}: ${usable.length} waters, ${q} variables${dropped.length ? ` (${dropped.join(', ')} the same in every `
+      + 'water, left out)' : ''}; PC1 ${pct(0)} % of the variance, PC2 ${pct(1)} %${q > 2 ? `, PC3 ${pct(2)} %` : ''}`
+      + `${usable.length < waters.length ? `; ${waters.length - usable.length} waters without every variable left out` : ''}`
+      + `${measuredPts.length ? `; ${measuredPts.length} measured, put on them` : ''}`;
   }
 
   function drawPiper(plot, waters, measured, colorTitle, c) {
@@ -4710,6 +4864,7 @@
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
             ['Stiff diagrams', 'Each water a polygon, cations to the left of zero and anions to the right, on one scale so that their sizes compare.', view === 'stiff'],
             ['a USSL diagram', 'The U.S. Salinity Laboratory\'s classes of irrigation water: the specific conductance across, C1 to C4 split at 250, 750 and 2,250 µS/cm, and the sodium adsorption ratio up, S1 to S4 split by lines that fall as the conductance rises. Needs SC, which a model has with <CONDUCTANCE>, and SAR.', view === 'ussl'],
+            ['principal components (PCA)', 'Gibbs Studio\'s principal component analysis: each water a row of the variables **Of** names, or its pH and each element dissolved, each standardised; the components the eigenvectors of their correlation matrix. The waters at their scores on the first two, coloured by time or distance, and each variable an arrow to its correlation with them.', view === 'pca'],
           ] },
           { heading: 'The major ions', list: [
             'Ca and Mg are twice their dissolved totals, **Na + K** the two together, Cl its total, **SO₄** twice the sulfur in sulfate — a species with four O to each S, so not HS⁻ — and **HCO₃ + CO₃** the carbonate\'s alkalinity, HCO₃⁻ one and CO₃⁻² two. A total is everything dissolved: CaHCO₃⁺ counts in Ca and in the carbonate.',
@@ -4719,8 +4874,9 @@
           ] },
           { heading: 'The toolbar', list: [
             '**Along**, in a column: the run at one **Cell**, or the column at one time, **At**.',
-            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper or a USSL diagram draws every stored point.',
-            '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type. **SVG**, **PNG**: the picture.',
+            '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper or a USSL diagram, and principal components, draw every stored point.',
+            '**Of**: the variables of a principal component analysis, as the time chart names them — `pH, tot(Ca), Na+, SI(Calcite)`. **logs of amounts**: an amount as its log, where every water has some of it. A variable the same in every water is left out.',
+            '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type, or its scores; for principal components Excel adds the loadings and the variance each component carries. **SVG**, **PNG**: the picture.',
           ] },
         ],
         more: more('Reading the charts', 'help-composition'),
@@ -5507,7 +5663,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109l';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109m';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -6633,6 +6789,8 @@ END
       state.compLayer = Number($('rtmCompLayer').value) || 0;
       state.compTimes = $('rtmCompTimes').value;
       state.compTMin = $('rtmCompTMin').value;
+      state.compPcaVars = $('rtmCompPcaVars').value.trim();
+      state.compPcaLog = $('rtmCompPcaLog').checked;
       saveState();
       renderComp();
       drawComp();

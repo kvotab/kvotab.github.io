@@ -13541,10 +13541,129 @@
     return { checked, unresolvable, discrepancies, outsidePattern: outside };
   }
 
+  /**
+   * The eigenvalues and eigenvectors of a symmetric matrix, by Jacobi's
+   * rotations, each turning the matrix so that one pair off the diagonal is
+   * zero, swept over every pair until what is left off the diagonal is
+   * rounding. Returns { values, vectors }, vectors[k][j] the k-th entry of
+   * the j-th vector, in no particular order.
+   */
+  function symmetricEigen(A) {
+    const q = A.length;
+    const a = A.map((row) => Float64Array.from(row));
+    const v = Array.from({ length: q }, (_, i) => Float64Array.from({ length: q }, (_, j) => (i === j ? 1 : 0)));
+    let scale = 0;
+    for (let i = 0; i < q; i++) for (let j = 0; j < q; j++) scale = Math.max(scale, Math.abs(a[i][j]));
+    for (let sweep = 0; sweep < 100; sweep++) {
+      let off = 0;
+      for (let i = 0; i < q; i++) for (let j = i + 1; j < q; j++) off = Math.max(off, Math.abs(a[i][j]));
+      if (!(off > 1e-17 * scale)) break;
+      for (let p = 0; p < q; p++) {
+        for (let r = p + 1; r < q; r++) {
+          if (!(Math.abs(a[p][r]) > 1e-300)) continue;
+          const theta = (a[r][r] - a[p][p]) / (2 * a[p][r]);
+          const t = (theta >= 0 ? 1 : -1) / (Math.abs(theta) + Math.sqrt(theta * theta + 1));
+          const c = 1 / Math.sqrt(t * t + 1);
+          const sn = t * c;
+          for (let k = 0; k < q; k++) {
+            const kp = a[k][p];
+            const kr = a[k][r];
+            a[k][p] = c * kp - sn * kr;
+            a[k][r] = sn * kp + c * kr;
+          }
+          for (let k = 0; k < q; k++) {
+            const pk = a[p][k];
+            const rk = a[r][k];
+            a[p][k] = c * pk - sn * rk;
+            a[r][k] = sn * pk + c * rk;
+          }
+          for (let k = 0; k < q; k++) {
+            const kp = v[k][p];
+            const kr = v[k][r];
+            v[k][p] = c * kp - sn * kr;
+            v[k][r] = sn * kp + c * kr;
+          }
+        }
+      }
+    }
+    return { values: a.map((row, i) => row[i]), vectors: v.map((row) => Array.from(row)) };
+  }
+
+  /**
+   * PRINCIPAL COMPONENTS of a table of waters, as Gibbs Studio gives them:
+   * X has a row for each water and a column for each thing measured of it.
+   * Each column is standardised -- its mean taken off and the rest divided by
+   * its standard deviation (n - 1) -- so that a pH and a total weigh alike,
+   * and the components are the eigenvectors of the columns' correlation
+   * matrix, largest eigenvalue first, each turned so that its largest entry
+   * is positive. A column that does not vary is left out: one whose standard
+   * deviation is no more than 1e-12 of its size.
+   *
+   * Returns { kept: the columns used, mean, sd, values: the eigenvalues,
+   * which sum to the number of columns kept; explained: each one's share of
+   * that; vectors: q x q, vectors[k][j] column k's loading on component j;
+   * scores: n x q, each water's coordinates on the components; project(row):
+   * another water's scores, standardised by these columns' means and
+   * deviations }.
+   */
+  function pca(X, opts = {}) {
+    const n = X.length;
+    const p = n ? X[0].length : 0;
+    if (n < 3) throw new RtmError('Principal components need three waters or more.');
+    const mean = new Float64Array(p);
+    const sd = new Float64Array(p);
+    for (let j = 0; j < p; j++) {
+      let s = 0;
+      for (let i = 0; i < n; i++) s += X[i][j];
+      mean[j] = s / n;
+      let v = 0;
+      for (let i = 0; i < n; i++) v += (X[i][j] - mean[j]) ** 2;
+      sd[j] = Math.sqrt(v / (n - 1));
+    }
+    const kept = [];
+    for (let j = 0; j < p; j++) {
+      if (!Number.isFinite(mean[j])) throw new RtmError(`${(opts.names && opts.names[j]) || `Column ${j + 1}`} has a value that is no number.`);
+      if (sd[j] > 1e-12 * Math.max(Math.abs(mean[j]), 1e-300)) kept.push(j);
+    }
+    const q = kept.length;
+    if (q < 2) throw new RtmError('Principal components need two things that vary from one water to another, and these waters have '
+      + `${q === 1 ? 'one' : 'none'}.`);
+    const Z = X.map((row) => kept.map((j) => (row[j] - mean[j]) / sd[j]));
+    const R = Array.from({ length: q }, () => new Float64Array(q));
+    for (let a = 0; a < q; a++) {
+      for (let b = a; b < q; b++) {
+        let s = 0;
+        for (let i = 0; i < n; i++) s += Z[i][a] * Z[i][b];
+        R[a][b] = s / (n - 1);
+        R[b][a] = R[a][b];
+      }
+    }
+    const eig = symmetricEigen(R);
+    const order = eig.values.map((_, j) => j).sort((a, b) => eig.values[b] - eig.values[a]);
+    const values = order.map((j) => Math.max(0, eig.values[j]));
+    const vectors = Array.from({ length: q }, () => new Array(q));
+    order.forEach((j, col) => {
+      let big = 0;
+      for (let k = 0; k < q; k++) if (Math.abs(eig.vectors[k][j]) > Math.abs(eig.vectors[big][j])) big = k;
+      const sign = eig.vectors[big][j] < 0 ? -1 : 1;
+      for (let k = 0; k < q; k++) vectors[k][col] = sign * eig.vectors[k][j];
+    });
+    const scoresOf = (z) => Array.from({ length: q }, (_, col) => {
+      let s = 0;
+      for (let k = 0; k < q; k++) s += z[k] * vectors[k][col];
+      return s;
+    });
+    return {
+      kept, mean: kept.map((j) => mean[j]), sd: kept.map((j) => sd[j]), values, explained: values.map((v) => v / q), vectors,
+      scores: Z.map(scoresOf),
+      project: (row) => scoresOf(kept.map((j) => (row[j] - mean[j]) / sd[j])),
+    };
+  }
+
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
     chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
     pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP, potentialRow,
-    readSections, derivative,
+    readSections, derivative, symmetricEigen, pca,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
     SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn, tunables, waterViscosity };

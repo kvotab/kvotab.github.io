@@ -7756,6 +7756,62 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     + 'and with the run sent, the same to the bit', endKept.type === 'diagramBounds' && endKept.junctions.length === 3
     && endGone.missing === true && sameLines(endKept, endSent),
   `${endKept.lines.length} lines; ${JSON.stringify(endGone).slice(0, 60)}`);
+
+  /*
+    PRINCIPAL COMPONENTS (RtmModel.pca), as the Composition tab gives them.
+    Two variables correlated by r have eigenvalues 1 + r and 1 - r and
+    components (1, 1) and (1, -1) over root 2. A table of six waters and four
+    variables of the test's own against numpy.linalg.eigh (2.5.4) on the same
+    standardised table. Waters on a line between two end members -- mixing
+    and nothing else -- are one component, and a variable that does not vary
+    is left out.
+  */
+  const X2 = [[1, 2], [2, 2.5], [3, 5], [4, 4], [5, 6.5]];
+  const mx = X2.reduce((s, w) => s + w[0], 0) / 5;
+  const my = X2.reduce((s, w) => s + w[1], 0) / 5;
+  const rr = X2.reduce((s, w) => s + (w[0] - mx) * (w[1] - my), 0)
+    / Math.sqrt(X2.reduce((s, w) => s + (w[0] - mx) ** 2, 0) * X2.reduce((s, w) => s + (w[1] - my) ** 2, 0));
+  const p2 = RtmModel.pca(X2);
+  const half = Math.SQRT1_2;
+  check('principal components of two variables correlated by r: eigenvalues 1 + r and 1 - r, components (1, 1) and (1, -1) '
+    + 'over root 2, to 1e-15', Math.abs(p2.values[0] - (1 + rr)) < 1e-15 && Math.abs(p2.values[1] - (1 - rr)) < 1e-15
+    && Math.abs(p2.vectors[0][0] - half) < 1e-15 && Math.abs(p2.vectors[1][0] - half) < 1e-15
+    && Math.abs(p2.vectors[0][1] - half) < 1e-15 && Math.abs(p2.vectors[1][1] + half) < 1e-15,
+  `r ${rr}: ${p2.values.join(', ')}`);
+  const X6 = [[7.1, 0.3, 120, 4], [6.8, 0.5, 140, 3.2], [7.6, 0.2, 95, 5.1], [7.3, 0.25, 110, 4.4], [6.5, 0.7, 160, 2.9], [7.0, 0.4, 130, 3.8]];
+  const numpyEig = [3.9249416652653926, 0.0679779771454686, 0.006319761116472023, 0.000760596472667597];
+  const p6 = RtmModel.pca(X6);
+  const Z6 = X6.map((w) => w.map((v, k) => (v - p6.mean[k]) / p6.sd[k]));
+  const C6 = [0, 1, 2, 3].map((a) => [0, 1, 2, 3].map((b) => Z6.reduce((s, z) => s + z[a] * z[b], 0) / 5));
+  let eqWorst = 0;
+  let orthWorst = 0;
+  let backWorst = 0;
+  for (let j = 0; j < 4; j++) {
+    for (let a = 0; a < 4; a++) {
+      eqWorst = Math.max(eqWorst, Math.abs(C6[a].reduce((s, c, b) => s + c * p6.vectors[b][j], 0) - p6.values[j] * p6.vectors[a][j]));
+      orthWorst = Math.max(orthWorst, Math.abs(p6.vectors.reduce((s, v) => s + v[a] * v[j], 0) - (a === j ? 1 : 0)));
+    }
+  }
+  Z6.forEach((z, i) => z.forEach((v, a) => { backWorst = Math.max(backWorst, Math.abs(p6.scores[i].reduce((s, sc, j) => s + sc * p6.vectors[a][j], 0) - v)); }));
+  const projWorst = Math.max(...X6.flatMap((w, i) => RtmModel.pca(X6).project(w).map((v, j) => Math.abs(v - p6.scores[i][j]))));
+  const npWorst = Math.max(...p6.values.map((v, j) => Math.abs(v - numpyEig[j]))) / numpyEig[0];
+  check('  six waters of four variables: the eigenvalues numpy\'s to 1e-13 of the largest, each component an eigenvector of the '
+    + 'correlation matrix to 1e-14 and of length one, at right angles to the rest, the eigenvalues summing to the four variables, '
+    + 'the scores giving back the standardised table, and a water put on the components where its own scores are',
+  npWorst < 1e-13 && eqWorst < 1e-14 && orthWorst < 1e-14 && Math.abs(p6.values.reduce((s, v) => s + v, 0) - 4) < 1e-13
+    && backWorst < 1e-13 && projWorst < 1e-14 && p6.explained.every((e) => e >= 0),
+  `numpy ${npWorst.toExponential(1)}, R v = l v ${eqWorst.toExponential(1)}, orthonormal ${orthWorst.toExponential(1)}, `
+    + `back ${backWorst.toExponential(1)}, put on ${projWorst.toExponential(1)}`);
+  const endA = [1e-3, 1.2e-3, 2e-3, 5e-4, 7];
+  const endB = [1e-2, 1.1e-2, 1e-3, 3e-3, 7];
+  const mixed = Array.from({ length: 11 }, (_, i) => endA.map((a, k) => a + (i / 10) * (endB[k] - a)));
+  const pm = RtmModel.pca(mixed);
+  const refusedPca = [[[[1, 2], [2, 3]], /three waters or more/], [[[1, 5], [2, 5], [3, 5]], /two things that vary.*have one/]]
+    .filter(([X, re]) => { try { RtmModel.pca(X); return true; } catch (e) { return !re.test(e.message); } });
+  check('  waters that only mix two end members lie on one component, all of their variance; a variable the same in every '
+    + 'water is left out; fewer than three waters, or than two variables that vary, refused',
+  pm.explained[0] > 1 - 1e-12 && pm.kept.join(',') === '0,1,2,3' && !refusedPca.length,
+  `the first ${pm.explained[0]}, kept ${pm.kept.join(', ')}`);
 }
 
 /* ======================================================================

@@ -155,6 +155,32 @@ CO2 <=> H+ + HCO3-,     logK = -6.352
 HCO3- <=> H+ + CO3-2,   logK = -10.329
 '''
 
+# Four ions that only mix: the same D, no reactions, a different water flowing in. Every water of the column is the two end
+# members mixed, so principal components of them, taken as they are, are one component; a water measured half and half lies
+# on it.
+MIX_MODEL = '''
+<SETTINGS>
+MODE = transport
+CELLS = 5
+LENGTH = 0.05
+VELOCITY = 1e-5
+DIFFUSION = 1
+ADVECTION = 1
+LEFT = robin
+RIGHT = free
+TEND = 2e4
+
+<SPECIES>
+Na+     1e-3    D=1e-9  left=1e-2
+Cl-     1.2e-3  D=1e-9  left=1.1e-2
+Ca+2    2e-3    D=1e-9  left=1e-3
+SO4-2   5e-4    D=1e-9  left=3e-3
+
+<DATA>
+time  Na+  Cl-  Ca+2  SO4-2  cell = 4
+5000  5.5e-3  6.1e-3  1.5e-3  1.75e-3
+'''
+
 # A first-order decay at a rate kk of <PARAMETERS>: a sweep of kk leaves exp(-kk t) of A, what the sweeps block checks.
 SWEEP_MODEL = '''
 <SETTINGS>
@@ -954,6 +980,63 @@ async def main():
             check('along the column: a point per cell, coloured by distance', await page.ev(
                 "(() => { const d = document.getElementById('rtmChartComp').data.find((t) => t.name === 'the model');"
                 " return [d.x.length, d.marker.colorbar.title.text]; })()"), [3, 'distance (m)'])
+
+            # Principal components, of a column whose four ions only mix.
+            await set_text(page, MIX_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 4 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+
+            async def pca(**opts):
+                sets = ''.join(("document.getElementById('%s').checked = %s;" % (k, 'true' if v else 'false')) if isinstance(v, bool)
+                               else ("document.getElementById('%s').value = %s;" % (k, json.dumps(v))) for k, v in opts.items())
+                await page.ev("(() => { document.getElementById('rtmCompView').value = 'pca'; %s"
+                              " document.getElementById('rtmCompView').dispatchEvent(new Event('change', { bubbles: true })); })()" % sets)
+                await asyncio.sleep(0.6)
+                return await page.ev("(() => { const e = document.getElementById('rtmCompEmpty');"
+                                     " return e.hidden ? document.getElementById('rtmCompNote').textContent : 'EMPTY ' + e.textContent; })()")
+
+            flat = await pca(rtmCompAlong='time', rtmCompCell='4', rtmCompPcaVars='', rtmCompPcaLog=False, rtmCompLogT=True)
+            lie = await page.ev("""(() => { const d = document.getElementById('rtmChartComp').data;
+              const m = d.find((t) => t.name === 'the model'), me = d.find((t) => t.name === 'measured');
+              const reach = Math.max(...m.x.map(Math.abs));
+              return [Math.max(...m.y.map(Math.abs)) < 1e-9 * reach, me ? me.x.length : 0, me ? Math.abs(me.y[0]) < 1e-9 * reach : false,
+                (document.getElementById('rtmChartComp').layout.annotations || []).filter((a) => a.text).map((a) => a.text).join(' ')]; })()""")
+            check('principal components of a column whose four ions only mix, taken as they are, at its last cell: each element '
+                  f'dissolved by default, all of the variance on the first component ({flat})',
+                  isinstance(flat, str) and re.match(r'cell 4: \d+ waters, 4 variables; PC1 100\.0 % of the variance, PC2 0\.0 %, PC3 0\.0 %; '
+                                                     r'1 measured, put on them$', flat) is not None, True)
+            check('  every water on that one line, the water measured half and half on it too, and an arrow for each ion', lie,
+                  [True, 1, True, 'Ca+2 Cl- Na+ SO4-2'])
+            logged = await pca(rtmCompPcaLog=True)
+            m_log = re.search(r'PC1 ([0-9.]+) % of the variance', logged or '')
+            check(f'  as logs, which mixing does not keep on a line, the first component carries less ({logged})',
+                  m_log is not None and 90 < float(m_log.group(1)) < 100, True)
+            bad_of = await pca(rtmCompPcaVars='Na+, Kryptonite')
+            check('  a variable the model does not have is said', bad_of,
+                  'EMPTY "Kryptonite": no species or quantity of the model. Name them as the time chart does: pH, tot(Ca), Na+, SI(Calcite).')
+            start = await pca(rtmCompPcaVars='', rtmCompAlong='distance', rtmCompTimes='0')
+            check('  along the column at the start, where every cell is one water: nothing varies, and that is said', start,
+                  'EMPTY Principal components need two things that vary from one water to another, and these waters have none.')
+            await pca(rtmCompAlong='time', rtmCompTimes='')
+            await page.ev("""(() => {
+              window.__xlsx = null;
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.xlsx')) window.__xlsx = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((buf) => JSZip.loadAsync(buf)).then((z) => z.file('xl/workbook.xml').async('string'));
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"xlsx\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            pca_sheets = await page.ev("(async () => { const w = await window.__xlsx;"
+                                       " return w ? [...w.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]) : null; })()")
+            check('  saved to Excel: the scores, the loadings, the variance each component carries, and the model text', pca_sheets,
+                  ['run', 'loadings', 'variance', 'model'])
+            await pca(rtmCompPcaLog=True)
+            await comp('where')
             await comp('where', rtmCompAlong='time')
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
