@@ -341,7 +341,8 @@ function rtmQuantities(msg) {
 /*
   DIAGRAMS: the water of one cell -- as the model starts it, or as the run
   left it -- held at each point of a range of pH, pe or Eh, a species'
-  activity or an element's total, or of two such ranges, and speciated there by the
+  activity, a cation's activity over the hydrogen ion's, or an element's
+  total, or of two such ranges, and speciated there by the
   model's own relations (RtmModel.speciate), as PhreePlot does with
   PHREEQC's. Each point starts from the one before it, the grid walked to and
   fro so that the one before is always beside it, and from the water itself
@@ -350,7 +351,7 @@ function rtmQuantities(msg) {
   until it stops moving. Returns each point's concentrations in that cell and
   every quantity of the model there; a point that did not settle is NaN.
 */
-const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', Eh: 'Eh', la: 'log activity', tot: 'log total' };
+const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', Eh: 'Eh', la: 'log activity', ratio: 'log activity ratio', tot: 'log total' };
 
 /** Whether species k is dissolved in the water: the activity model's solute, or without one what is no mineral, gas or site. */
 function rtmSolute(model, k) {
@@ -382,6 +383,21 @@ function rtmDiagramAxis(model, ax) {
     if (k < 0 || !solute(k)) throw new Error(`log a(${ax.species}): it is no species dissolved in the water.`);
     return { kind: 'la', k, values, sign: 1, species: ax.species };
   }
+  /*
+    log a(X)/a(H+)^z, X a cation of charge z, as the axes of Garrels and
+    Christ's silicate diagrams are: X held at the activity that gives the
+    ratio over the H+ there -- the pH of the other axis, or the water's,
+    held where it has it.
+  */
+  if (ax.kind === 'ratio') {
+    const k = model.speciesNames.indexOf(ax.species);
+    const h = model.speciesNames.indexOf('H+');
+    if (k < 0 || !solute(k)) throw new Error(`log a(${ax.species})/a(H+): it is no species dissolved in the water.`);
+    if (h < 0 || !solute(h)) throw new Error('An activity ratio is over the activity of H+, and the model has no H+ in its water.');
+    const z = RtmModel.chargeOf(ax.species);
+    if (!(z > 0) || k === h) throw new Error(`log a(${ax.species})/a(H+): a ratio is a cation's, over H+ to the power of its charge.`);
+    return { kind: 'ratio', k, z, values, sign: 1, species: ax.species };
+  }
   if (ax.kind === 'tot') {
     const comp = (model.composition && model.composition.elements || []).find((e) => e.el === ax.species);
     if (!comp) throw new Error(`The total of ${ax.species}: no species of the model has any.`);
@@ -389,7 +405,7 @@ function rtmDiagramAxis(model, ax) {
     for (const [k, n] of comp.terms) weights[k] = n;
     return { kind: 'tot', weights, values, name: ax.species };
   }
-  throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, Eh, la or tot.`);
+  throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, Eh, la, ratio or tot.`);
 }
 
 /**
@@ -433,7 +449,8 @@ function rtmDiagramSetup(msg) {
     A total varied without the pH: the pH held where the water has it, as
     PHREEQC's SOLUTION holds the pH it is given. Left to itself, the element
     would come in as whichever species its conserved total is kept in, and
-    the pH would go with that choice, which is no choice of the reader's.
+    the pH would go with that choice, which is no choice of the reader's. An
+    activity ratio without the pH holds it there too: the ratio is over it.
   */
   const holds = axes.map((ax, a) => ({ ax, a }));
   let pHHeld = null;
@@ -441,7 +458,8 @@ function rtmDiagramSetup(msg) {
   if (model.thermoAt) model.thermoAt(t);
   // Volts to a pe, at the cell's temperature as the water is taken.
   const ehPe = RtmModel.ehPerPe((model.temperatures ? model.temperatures(t)[cell] : 25) + 273.15);
-  if (totAxis >= 0 && !axes.some((ax) => ax.kind === 'pH') && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
+  const pHAxis = axes.findIndex((ax) => ax.kind === 'pH');
+  if ((totAxis >= 0 || axes.some((ax) => ax.kind === 'ratio')) && pHAxis < 0 && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
     const g0 = new Float64Array(ns);
     if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
     pHHeld = -(Math.log(base[b + iH]) + g0[iH]) / Math.LN10;
@@ -463,6 +481,7 @@ function rtmDiagramSetup(msg) {
         else if (ax.kind === 'Eh') y[b + ax.k] = 10 ** -(v / ehPe);
         else if (ax.kind === 'pH') y[b + ax.k] = 10 ** -v * Math.exp(-lnGamma[h]);
         else if (ax.kind === 'la') y[b + ax.k] = 10 ** v * Math.exp(-lnGamma[h]);
+        else if (ax.kind === 'ratio') y[b + ax.k] = 10 ** (v - ax.z * (pHAxis >= 0 ? vals[pHAxis] : pHHeld)) * Math.exp(-lnGamma[h]);
       });
       const r = RtmModel.speciate(model, y, { fixed: held, cells: [cell], t,
         total: totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name } : undefined });
@@ -472,7 +491,7 @@ function rtmDiagramSetup(msg) {
       RtmModel.activityAt(model.act, y, b, lnG, lnD, cell);
       let moved = 0;
       holds.forEach(({ ax }, h) => {
-        if (ax.kind !== 'pH' && ax.kind !== 'la') return;
+        if (ax.kind !== 'pH' && ax.kind !== 'la' && ax.kind !== 'ratio') return;
         moved = Math.max(moved, Math.abs(lnG[ax.k] - lnGamma[h]));
         lnGamma[h] = lnG[ax.k];
       });
@@ -485,7 +504,7 @@ function rtmDiagramSetup(msg) {
     const out = holds.map(() => 0);
     if (!model.act) return out;
     RtmModel.activityAt(model.act, y, b, lnG, lnD, cell);
-    holds.forEach(({ ax }, h) => { if (ax.kind === 'pH' || ax.kind === 'la') out[h] = lnG[ax.k]; });
+    holds.forEach(({ ax }, h) => { if (ax.kind === 'pH' || ax.kind === 'la' || ax.kind === 'ratio') out[h] = lnG[ax.k]; });
     return out;
   };
   return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas };
@@ -572,6 +591,11 @@ const RTM_BOUND_TIE = 1e-10;
  *     past them all: none. A mineral of the model's own, held at saturation
  *     where there is any of it, its SI zero to the rounding, counts as at it
  *     there whatever the rounding says.
+ *     With per: [n, ...], each phase's count of an element, each index is
+ *     over its count -- the phases weighed per mole of aluminium, say -- and
+ *     the field is the largest, saturated or not: the phase the others would
+ *     turn into, the element kept in the solids, whatever is dissolved of
+ *     it, as Garrels and Christ's silicate diagrams are drawn. No none.
  */
 function rtmMapCriterion(model, crit, base, b, t, cell) {
   if (crit.kind === 'predominance') {
@@ -594,6 +618,10 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     const which = Int32Array.from(crit.keys.map((key) => model.quantities.findIndex((q) => q.key === key)));
     if (!which.length || [...which].some((x) => x < 0)) throw new Error('The phases of the map are not the model\'s.');
     const none = which.length;
+    const per = Array.isArray(crit.per) ? crit.per.map(Number) : null;
+    if (per && (per.length !== which.length || per.some((n) => !(n > 0 && Number.isFinite(n))))) {
+      throw new Error('Each phase weighed by its count of the element: a positive number for each.');
+    }
     const mineral = crit.keys.map((key) => {
       const k = model.speciesNames.indexOf(key.slice(3, -1));
       return k >= 0 && model.speciesList[k].mineral ? k : -1;
@@ -605,7 +633,9 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     const scores = (c) => {
       y.set(c, b);
       model.quantitiesAt(y, t, cell, which, out);
-      for (let q = 0; q < out.length; q++) score[q] = mineral[q] >= 0 && c[mineral[q]] > 0 ? Math.max(0, out[q]) : out[q];
+      for (let q = 0; q < out.length; q++) {
+        score[q] = (mineral[q] >= 0 && c[mineral[q]] > 0 ? Math.max(0, out[q]) : out[q]) / (per ? per[q] : 1);
+      }
       return score;
     };
     const labelOf = (c) => {
@@ -614,13 +644,13 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
       let most = -Infinity;
       for (let q = 0; q < s.length; q++) if (Number.isFinite(s[q]) && s[q] > most + (best < 0 ? 0 : RTM_BOUND_TIE)) { most = s[q]; best = q; }
       if (best < 0) return -1;
-      return most >= 0 ? best : none;
+      return per || most >= 0 ? best : none;
     };
     const disc = (c, a, z) => {
       const s = scores(c);
       return (a === none ? 0 : s[a]) - (z === none ? 0 : s[z]);
     };
-    return { labelOf, disc, n: none + 1 };
+    return { labelOf, disc, n: per ? none : none + 1 };
   }
   throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance or phase.`);
 }

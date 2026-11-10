@@ -11707,9 +11707,37 @@
     };
     // A mineral held where another phase's SI is (SI() on its relation) has no SI of its own to show.
     const siNames = [...phases.keys(), ...equilibria.filter((x) => x.mineral >= 0 && !x.siOf).map((x) => species[x.mineral].name)];
+    /*
+      What a phase is made of, per one of it, element by element: a mineral's
+      as compositionOf has it, a phase of <PHASES> from the formulas of what
+      it dissolves into -- K-feldspar's K, Al and three Si from K+, Al(OH)4-
+      and 3 H4SiO4 -- H and O left out, as the water's own. The Diagrams tab
+      weighs a phase by it: per mole of aluminium, say.
+    */
+    const makeupOf = (name, ph) => {
+      const out = {};
+      const km = index.has(name) ? index.get(name) : -1;
+      if (km >= 0 && species[km].mineral) {
+        for (const e of composition.elements) for (const [k, n] of e.terms) if (k === km && n > 0) out[e.el] = n;
+        return out;
+      }
+      for (const [k, nu] of ph.net) {
+        const made = elementsOf(nameOf[k]);
+        if (!made) continue;
+        for (const [el, n] of made) {
+          if (el !== 'H' && el !== 'O' && ELEMENT_SYMBOLS.has(el)) out[el] = (out[el] || 0) + (ph.sign * nu * n) / (ph.c0 || 1);
+        }
+      }
+      for (const el of Object.keys(out)) {
+        const v = Math.round(out[el] * 1e9) / 1e9;
+        if (v > 0) out[el] = v; else delete out[el];
+      }
+      return out;
+    };
     for (const name of [...new Set(siNames)]) {
       const ph = phaseFor(name);
       addQ(`SI(${name})`, `SI(${name})`, 'saturation', '', 'index', (c, b, cell) => siOf(ph, c, b, cell));
+      qList[qList.length - 1].makeup = makeupOf(name, ph);
     }
     // Each solute's log activity -- under ACTIVITY: without it, the log of its concentration, which the species is.
     for (const k of act && act.kind !== 'none' ? qSolutes : []) {

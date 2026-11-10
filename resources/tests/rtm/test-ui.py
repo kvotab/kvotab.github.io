@@ -561,7 +561,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '28:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '29:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1321,6 +1321,23 @@ async def main():
               document.getElementById('chart').data.length > 0])()""" % json.dumps(hostile.rstrip('\n'))) if body else None
             check('  a model text that would close the script and add an image comes through as text: nothing of it runs, no '
                   'image, the two scripts the page has, the comment shown as it is written', inert, [True, 0, 2, True, True])
+            # A silicate stability diagram: each phase per mole of aluminium over an activity ratio, quartz and silica dotted.
+            ok = await example('silicates', "document.getElementById('rtmChartDg').data"
+                                            ".filter((t) => / at saturation$/.test(t.name || '')).length === 2")
+            sil = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              const fills = d.filter((t) => t.fill === 'toself').map((t) => t.name).sort().join(' ');
+              const sat = (nm, at) => { const t = d.find((u) => u.name === nm + ' at saturation');
+                return t ? Math.max(...t.x.filter((v) => v !== null).map((v) => Math.abs(v - at))) < 1e-9 : false; };
+              const b = d.find((t) => t.name === 'boundaries');
+              const gk = b ? Math.min(...b.x.filter((v) => v !== null).map((v) => Math.abs(v + 4.3925))) < 1e-9 : false;
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, p.layout.yaxis.title.text, fills,
+                sat('Quartz', -3.9804), sat('SiO2(a)', -2.7118), gk,
+                /dotted, where Quartz and SiO2\\(a\\) are at saturation/.test(document.getElementById('rtmDgNote').textContent),
+                document.getElementById('rtmDgShow').value, document.getElementById('rtmDgEl').value]; })()""")
+            check('the silicate example opens on its stability diagram: K-feldspar, muscovite, kaolinite and gibbsite per mole of '
+                  'aluminium over log a(H4SiO4) and log a(K+)/a(H+), gibbsite and kaolinite parted at -4.3925, quartz and amorphous '
+                  'silica dotted at -3.9804 and -2.7118', [ok, sil],
+                  [True, ['diagram', 'log a(K+)/a(H+)', 'Gibbsite K_feldspar K_mica Kaolinite', True, True, True, True, 'stable', 'Al']])
             ok = await example('exchangesweep', "/^4 of 4 runs done/.test(document.getElementById('rtmStatus').textContent)")
             check('the exchange example opens on Sweeps and runs four capacities, a curve each at the outlet against linear time',
                   [ok, await page.ev("(() => { const p = document.getElementById('rtmChartSw');"

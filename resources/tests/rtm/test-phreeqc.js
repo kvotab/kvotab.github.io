@@ -3792,6 +3792,75 @@ function againstEh(engine) {
 }
 
 /* ======================================================================
+   A SILICATE STABILITY MAP, against PHREEQC: a handed-off water, with
+   phreeqc.dat's K-feldspar, kaolinite, gibbsite and K-mica added as
+   <PHASES> at PHREEQC's log Ks at 25 C, mapped over log a(H4SiO4) and
+   log a(K+)/a(H+), each phase per mole of aluminium. At each point of each
+   boundary, and where three fields meet, the page's water there -- its
+   totals and its pH -- given to PHREEQC's SOLUTION has the phases either
+   side the same saturation index over their aluminium, and no phase a
+   larger one.
+   ====================================================================== */
+function againstStability(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na 1\n Cl 1.1\n K 0.1\n Al 1e-6\n Si 0.1\nEND\n';
+  const phases = [['K-feldspar', 'K_feldspar', '+ 8 H2O <=> K+ + Al(OH)4- + 3 H4SiO4', 1],
+    ['Kaolinite', 'Kaolinite', '+ 6 H+ <=> H2O + 2 H4SiO4 + 2 Al+3', 2], ['Gibbsite', 'Gibbsite', '+ 3 H+ <=> Al+3 + 3 H2O', 1],
+    ['K-mica', 'K_mica', '+ 10 H+ <=> K+ + 3 Al+3 + 3 H4SiO4', 3]];
+  engine.load(dbText);
+  const lk = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + `${phases.map(([pq], i) => ` ${10 + 10 * i} PUNCH LK_PHASE("${pq}")`).join('\n')}\nEND\n`);
+  const logKs = lk[lk.length - 1].map(Number);
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'silicate', text: water }, activity: true, exact: true });
+  const text = `${res.text}\n<PHASES>\n${phases.map(([, nm, rx], i) => `${nm} ${rx},  logK = ${logKs[i]}`).join('\n')}\n`;
+  const m = RtmModel.compile(text);
+  const keys = phases.map(([, nm]) => `SI(${nm})`);
+  const axes = [{ kind: 'la', species: 'H4SiO4', from: -5, to: -2, n: 13 }, { kind: 'ratio', species: 'K+', from: 0, to: 6, n: 13 }];
+  const reply = (msg) => { let r = null; handleRtmMessage(msg, (x) => { if (x.type !== 'progress') r = x; }); if (r.type === 'error') throw new Error(r.error); return r; };
+  const grid = reply({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes });
+  const b = reply({ type: 'diagramBounds', id: 2, text, at: 'start', cell: 0, axes, grid: grid.states,
+    criterion: { kind: 'phase', keys, per: phases.map((p) => p[3]) } });
+  const ns = m.speciesNames.length;
+  const totalsOf = (y) => Object.fromEntries(['K', 'Al', 'Si', 'Na', 'Cl'].map((el) => [el, m.composition.elements.find((e) => e.el === el)
+    .terms.filter((tm) => tm[2] === 'water').reduce((acc, [k, n]) => acc + n * y[k], 0)]));
+  // PHREEQC's saturation index of each phase over its aluminium, in the page's water at (x, y).
+  const perAl = (x, y) => {
+    const w = reply({ type: 'diagram', id: 3, text, at: 'start', cell: 0,
+      axes: [{ kind: 'la', species: 'H4SiO4', from: x, to: x + 0.01, n: 2 }, { kind: 'ratio', species: 'K+', from: y, to: y + 0.01, n: 2 }] });
+    const t = totalsOf(w.states.subarray(0, ns));
+    const pH = w.quant[w.keys.indexOf('pH')];
+    engine.load(dbText);
+    const rows = engine.run(`SOLUTION 1\n units mol/kgw\n pH ${pH.toPrecision(17)}\n${Object.entries(t).map(([el, v]) => ` ${el} ${v.toPrecision(17)}`).join('\n')}\n`
+      + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n${phases.map(([pq, , , n], i) => ` ${10 + 10 * i} PUNCH SI("${pq}")/${n}`).join('\n')}\nEND\n`);
+    return rows[rows.length - 1].map(Number);
+  };
+  let worst = 0;
+  let over = -Infinity;
+  let where = '';
+  let points = 0;
+  const at = (x, y, labels) => {
+    const v = perAl(x, y);
+    const mine = labels.map((q) => v[q]);
+    const d = Math.max(...mine) - Math.min(...mine);
+    if (d > worst) { worst = d; where = `${labels.map((q) => phases[q][0]).join('/')} at ${x.toFixed(4)}, ${y.toFixed(4)}`; }
+    over = Math.max(over, Math.max(...v.filter((_, q) => !labels.includes(q))) - Math.max(...mine));
+    points++;
+  };
+  for (const ln of b.lines) ln.x.forEach((x, q) => at(x, ln.y[q], [ln.a, ln.b]));
+  for (const jn of b.junctions) at(jn.x, jn.y, jn.labels);
+  const pairs = [...new Set(b.lines.map((ln) => [phases[ln.a][0], phases[ln.b][0]].sort().join('|')))].sort().join(' ');
+  check('a silicate stability map of a handed-off water, phreeqc.dat\'s K-feldspar, kaolinite, gibbsite and K-mica per mole of '
+    + 'aluminium over log a(H4SiO4) and log a(K+)/a(H+): at each point of each boundary, and where three fields meet, PHREEQC\'s '
+    + 'SOLUTION of the page\'s water there gives the phases either side the same saturation index over their aluminium, to 1e-9, '
+    + 'and no phase a larger one',
+  !grid.failed && b.unsolved === 0 && b.junctions.length === 1 && b.junctions.every((jn) => jn.solved) && worst < 1e-9 && over < 1e-9
+    && pairs === 'Gibbsite|K-mica Gibbsite|Kaolinite K-feldspar|K-mica K-mica|Kaolinite',
+  `${b.lines.length} boundaries (${pairs}), ${b.junctions.length} point where three meet, ${points} points against PHREEQC: `
+    + `the worst ${worst.toExponential(1)} (${where}), any other phase at most ${over.toExponential(1)} above them`);
+}
+
+/* ======================================================================
    INVERSE MODELS, through PHREEQC: its INVERSE_MODELING between waters of a
    run (viewRun's `only` and `inverse`), read back from what it prints.
    ====================================================================== */
@@ -4737,6 +4806,8 @@ function againstKineticsHandOff(engine) {
   againstBoundaries(wasm);
   console.log('\n--- Eh: from pe as PHREEQC prints its redox couples\' Eh, and a handed-off water\'s ---');
   againstEh(wasm);
+  console.log('\n--- a silicate stability map: each phase per mole of aluminium, against PHREEQC\'s SOLUTION at its boundaries ---');
+  againstStability(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');

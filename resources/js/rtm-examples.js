@@ -285,6 +285,39 @@ const RTM_EXAMPLES = [
     }
   },
   {
+    "id": "silicates",
+    "group": "Equilibrium diagrams",
+    "label": "K-feldspar, muscovite, kaolinite, gibbsite: a silicate stability diagram",
+    "about": "Which of K-feldspar, muscovite, kaolinite and gibbsite is stable, the aluminium kept in the solids, over the activity of silica and that of potassium over the hydrogen ion's. Run it: the Diagrams tab draws Garrels and Christ's diagram, each phase weighed per mole of aluminium, quartz and amorphous silica dotted where they come to saturation.",
+    "text": "# K-feldspar, muscovite (K_mica), kaolinite and gibbsite: which of them is\n# stable, the aluminium kept in the solids, over the activity of silica and\n# that of potassium over the hydrogen ion's -- the diagram of Garrels and\n# Christ. The Diagrams tab weighs each phase per mole of aluminium, so that\n# what is dissolved of it does not matter, and dots quartz and amorphous\n# silica where they come to saturation. No ACTIVITY: the axes are activities,\n# and the water's own is 1, as the diagram takes it. phreeqc.dat's constants\n# at 25 C, quartz's and amorphous silica's from its analytic expressions.\n<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nH+        1e-7\nOH-       1e-7\nK+        1e-4\nNa+       1e-3\nCl-       1.1e-3\nAl+3      1e-9\nAlOH+2    0\nAl(OH)2+  0\nAl(OH)3   0\nAl(OH)4-  0\nH4SiO4    1e-4\nH3SiO4-   0\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                       logK = -14\nAl+3 + H2O <=> AlOH+2 + H+,          logK = -5\nAl+3 + 2 H2O <=> Al(OH)2+ + 2 H+,    logK = -10.1\nAl+3 + 3 H2O <=> Al(OH)3 + 3 H+,     logK = -16.9\nAl+3 + 4 H2O <=> Al(OH)4- + 4 H+,    logK = -22.7\nH4SiO4 <=> H3SiO4- + H+,             logK = -9.83\n\n<PHASES>\nK_feldspar + 8 H2O <=> K+ + Al(OH)4- + 3 H4SiO4,   logK = -20.573\nKaolinite + 6 H+ <=> H2O + 2 H4SiO4 + 2 Al+3,      logK = 7.435\nGibbsite + 3 H+ <=> Al+3 + 3 H2O,                  logK = 8.11\nK_mica + 10 H+ <=> K+ + 3 Al+3 + 3 H4SiO4,         logK = 12.703\nQuartz + 2 H2O <=> H4SiO4,                         logK = -3.9804\nSiO2(a) + 2 H2O <=> H4SiO4,                        logK = -2.7118\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "la",
+          "sp": "H4SiO4",
+          "from": "-6",
+          "to": "-2",
+          "n": "81"
+        },
+        "y": {
+          "kind": "ratio",
+          "sp": "K+",
+          "from": "0",
+          "to": "10",
+          "n": "101"
+        },
+        "show": "stable",
+        "el": "Al",
+        "in": "water",
+        "q": "pH"
+      }
+    }
+  },
+  {
     "id": "sorptionedge",
     "group": "Equilibrium diagrams",
     "label": "Zinc on ferrihydrite: a sorption edge",

@@ -887,6 +887,57 @@ Gypsum <=> Ca+2 + SO4-2 + 2 H2O, logK = -4.58
         view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'la', 'sp': 'CO3-2', 'from': '-10', 'to': '-2', 'n': '81'}, 'y': {'kind': 'la', 'sp': 'SO4-2', 'from': '-6', 'to': '-1', 'n': '51'}, 'show': 'phase', 'el': 'Ca', 'in': 'water', 'q': 'SI(Calcite)'}},
     ),
     dict(
+        id='silicates',
+        group='Equilibrium diagrams',
+        label='K-feldspar, muscovite, kaolinite, gibbsite: a silicate stability diagram',
+        about="Which of K-feldspar, muscovite, kaolinite and gibbsite is stable, the aluminium kept in the solids, over the activity of silica and that of potassium over the hydrogen ion's. Run it: the Diagrams tab draws Garrels and Christ's diagram, each phase weighed per mole of aluminium, quartz and amorphous silica dotted where they come to saturation.",
+        text='''\
+# K-feldspar, muscovite (K_mica), kaolinite and gibbsite: which of them is
+# stable, the aluminium kept in the solids, over the activity of silica and
+# that of potassium over the hydrogen ion's -- the diagram of Garrels and
+# Christ. The Diagrams tab weighs each phase per mole of aluminium, so that
+# what is dissolved of it does not matter, and dots quartz and amorphous
+# silica where they come to saturation. No ACTIVITY: the axes are activities,
+# and the water's own is 1, as the diagram takes it. phreeqc.dat's constants
+# at 25 C, quartz's and amorphous silica's from its analytic expressions.
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = always
+
+<SPECIES>
+H+        1e-7
+OH-       1e-7
+K+        1e-4
+Na+       1e-3
+Cl-       1.1e-3
+Al+3      1e-9
+AlOH+2    0
+Al(OH)2+  0
+Al(OH)3   0
+Al(OH)4-  0
+H4SiO4    1e-4
+H3SiO4-   0
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,                       logK = -14
+Al+3 + H2O <=> AlOH+2 + H+,          logK = -5
+Al+3 + 2 H2O <=> Al(OH)2+ + 2 H+,    logK = -10.1
+Al+3 + 3 H2O <=> Al(OH)3 + 3 H+,     logK = -16.9
+Al+3 + 4 H2O <=> Al(OH)4- + 4 H+,    logK = -22.7
+H4SiO4 <=> H3SiO4- + H+,             logK = -9.83
+
+<PHASES>
+K_feldspar + 8 H2O <=> K+ + Al(OH)4- + 3 H4SiO4,   logK = -20.573
+Kaolinite + 6 H+ <=> H2O + 2 H4SiO4 + 2 Al+3,      logK = 7.435
+Gibbsite + 3 H+ <=> Al+3 + 3 H2O,                  logK = 8.11
+K_mica + 10 H+ <=> K+ + 3 Al+3 + 3 H4SiO4,         logK = 12.703
+Quartz + 2 H2O <=> H4SiO4,                         logK = -3.9804
+SiO2(a) + 2 H2O <=> H4SiO4,                        logK = -2.7118
+''',
+        view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'la', 'sp': 'H4SiO4', 'from': '-6', 'to': '-2', 'n': '81'}, 'y': {'kind': 'ratio', 'sp': 'K+', 'from': '0', 'to': '10', 'n': '101'}, 'show': 'stable', 'el': 'Al', 'in': 'water', 'q': 'pH'}},
+    ),
+    dict(
         id='sorptionedge',
         group='Equilibrium diagrams',
         label='Zinc on ferrihydrite: a sorption edge',

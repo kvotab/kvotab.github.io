@@ -535,6 +535,7 @@
                 <option value="pe">pe</option>
                 <option value="Eh">Eh (V)</option>
                 <option value="la">log activity of</option>
+                <option value="ratio">log activity over H+ of</option>
                 <option value="tot">log total of</option>
               </select>
               <select id="rtmDgXSp" aria-label="of which" data-on-change="rtm:dgSettings"></select>
@@ -549,6 +550,7 @@
                 <option value="pe">pe</option>
                 <option value="Eh">Eh (V)</option>
                 <option value="la">log activity of</option>
+                <option value="ratio">log activity over H+ of</option>
                 <option value="tot">log total of</option>
               </select>
               <span id="rtmDgYMore">
@@ -2439,8 +2441,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
           <h4 id="help-diagrams">Diagrams of the model's own chemistry</h4>
           <p><em>Diagrams</em> does with the model's relations what PhreePlot does with PHREEQC's. It
             takes the water of one cell, as the model starts it or as the run leaves it, holds it
-            at each point of a range — a pH, a pe or an Eh, the activity of a dissolved species, or an
-            element's total in the cell — and speciates it there with the relations of
+            at each point of a range — a pH, a pe or an Eh, the activity of a dissolved species, a
+            cation's activity over the hydrogen ion's, or an element's total in the cell — and
+            speciates it there with the relations of
             <code>&lt;EQUILIBRIUM&gt;</code>, its minerals dissolving or precipitating to stay at
             saturation while there is any of them. A pH or an activity is held through the
             concentration that gives it, the activity coefficient taken again from the speciation
@@ -2450,7 +2453,10 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             Nothing else is held: what is not varied keeps its total, as PHREEQC's
             <code>SOLUTION</code> keeps what it is given, and there is no charge balance. A total
             varied without the pH holds the pH where the water has it, as a
-            <code>SOLUTION</code> holds the pH it is given; the note says at what. Each
+            <code>SOLUTION</code> holds the pH it is given; the note says at what. So does a ratio,
+            log a(K<sup>+</sup>)/a(H<sup>+</sup>) or log a(Ca<sup>+2</sup>)/a(H<sup>+</sup>)², the
+            cation held at the activity that gives it over the H<sup>+</sup> of the point: the
+            other axis' pH where that is one. Each
             point starts from the one beside it, and from the water itself where that does not
             settle; a point that does not settle either way is left blank, and the status line
             says how many.</p>
@@ -2461,7 +2467,13 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             Pourbaix diagram, the water's own limits drawn across it as dashed lines, O<sub>2</sub>
             above and H<sub>2</sub> below at one atmosphere and 25 °C — in volts Eh = 1.229 − 0.0592&nbsp;pH
             and −0.0592&nbsp;pH; the phase furthest over
-            saturation, or at it, which over activities is a mineral stability diagram; or any
+            saturation, or at it, which over activities is a mineral stability diagram; the phases
+            of an element, the most stable per mole of it — each phase's saturation index over its
+            count of the element, aluminium in a silicate, the largest the phase the rest would turn
+            into with the element kept in the solids, whatever of it is dissolved — which over
+            log a(H<sub>4</sub>SiO<sub>4</sub>) and log a(K<sup>+</sup>)/a(H<sup>+</sup>) is Garrels and
+            Christ's diagram of K-feldspar, muscovite, kaolinite and gibbsite, a phase without the
+            element that comes to saturation on it, quartz say, dotted across it where it does; or any
             species or quantity as contours. Against PHREEQC's <code>SOLUTION</code> at the same pH,
             pe or total, a handed-off water's species agree to 8 in 10<sup>9</sup>. The numbers go
             to CSV and Excel, a row per point, and the picture to SVG and PNG, or as a live page to HTML.</p>
@@ -3253,7 +3265,7 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution; <strong>a far-field path</strong> as Kompartment starts one, its release read at the right-hand end; and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium, every member at its parent's activity, to 0.2 %; in the fracture the flow keeps it from doing so.</td></tr>
               <tr><td>Reading a run</td><td>Calcite dissolving at a rate: the pH and its saturation index on the right-hand axis, the calcium in mg/kgw from an <code>&lt;OUTPUT&gt;</code>, measurements from <code>&lt;DATA&gt;</code> beside them. Acid through a column of calcite: the pH as contours over time and distance.</td></tr>
               <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it; on a USSL diagram, from C2-S1 to C4-S3; and as principal components, the salt coming through the first and the calcium peak the second. A sodic well water onto a soil with calcite and an exchanger: the water leaving it on Wilcox's diagram, excellent to good while the exchanger takes the sodium, then doubtful to unsuitable.</td></tr>
-              <tr><td>Equilibrium diagrams</td><td>Carbonate against pH; iron's Eh–pH (Pourbaix) diagram with ferrihydrite's field; calcite or gypsum over the activities of carbonate and sulfate; zinc's sorption edge on ferrihydrite.</td></tr>
+              <tr><td>Equilibrium diagrams</td><td>Carbonate against pH; iron's Eh–pH (Pourbaix) diagram with ferrihydrite's field; calcite or gypsum over the activities of carbonate and sulfate; K-feldspar, muscovite, kaolinite and gibbsite over the activity of silica and that of potassium over the hydrogen ion's, per mole of aluminium; zinc's sorption edge on ferrihydrite.</td></tr>
               <tr><td>Sweeps</td><td>An exchange front, the exchanger's capacity swept, the calcium at the outlet a curve for each; calcite at a rate over nine rates and five amounts of CO<sub>2</sub>, the calcium after three days as contours.</td></tr>
               <tr><td>Fitting and uncertainty</td><td>Calcite at a rate, its rate constant and its CO<sub>2</sub> at the start fitted to the measurements, with their standard errors and correlation. A sorbing radionuclide through a column, its retardation and the flow drawn from distributions a hundred times: its breakthrough at the outlet as bands.</td></tr>
               <tr><td>Through PHREEQC</td><td>Water with CO<sub>2</sub> through calcite and gypsum, written from PHREEQC: PHREEQC's inverse model between the water flowing in and the outlet gives back what the column dissolved.</td></tr>
@@ -3320,14 +3332,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261109p"></script>
+  <script src="./resources/js/rtm-model.js?v=20261109q"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006j"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261109p"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006l"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261109q"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109q"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109r"></script>
 </body>
 </html>

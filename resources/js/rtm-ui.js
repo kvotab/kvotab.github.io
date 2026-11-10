@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109p';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109q';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -158,7 +158,7 @@
         for (const key of ['x', 'y']) {
           const ax = s.dg[key];
           if (!ax || typeof ax !== 'object') continue;
-          if (['pH', 'pe', 'Eh', 'la', 'tot', ...(key === 'y' ? [''] : [])].includes(ax.kind)) d[key].kind = ax.kind;
+          if (['pH', 'pe', 'Eh', 'la', 'ratio', 'tot', ...(key === 'y' ? [''] : [])].includes(ax.kind)) d[key].kind = ax.kind;
           for (const f of ['sp', 'from', 'to', 'n']) if (typeof ax[f] === 'string') d[key][f] = ax[f];
         }
         for (const f of ['show', 'el', 'q']) if (typeof s.dg[f] === 'string') d[f] = s.dg[f];
@@ -2602,9 +2602,13 @@
      again.
      --------------------------------------------------------------------- */
   // Where each kind of axis starts and ends unless it is given, and what it is called.
-  const DG_RANGES = { pH: ['2', '12'], pe: ['-12', '16'], Eh: ['-0.8', '1.2'], la: ['-10', '-2'], tot: ['-8', '-2'] };
+  const DG_RANGES = { pH: ['2', '12'], pe: ['-12', '16'], Eh: ['-0.8', '1.2'], la: ['-10', '-2'], ratio: ['0', '10'],
+    tot: ['-8', '-2'] };
+  // H+ to the power of the cation's charge: none written for one.
+  const powerOf = (z) => (z === 1 ? '' : ({ 2: '²', 3: '³', 4: '⁴' })[z] || `^${z}`);
   const dgLabel = (ax) => (ax.kind === 'pH' ? 'pH' : ax.kind === 'pe' ? 'pe' : ax.kind === 'Eh' ? 'Eh (V)'
     : ax.kind === 'la' ? `log a(${ax.species})`
+    : ax.kind === 'ratio' ? `log a(${ax.species})/a(H+)${powerOf(RtmModel.chargeOf(ax.species))}`
     : `log total ${ax.species} in the cell (mol/kgw)`);
   let dgResult = null;
   let dgTableNow = null;
@@ -2617,6 +2621,8 @@
     const m = state.compiled;
     if (!m) return [];
     if (kind === 'la') return (m.solutes || []).filter((nm) => nm !== 'H2O');
+    // A ratio is a cation's activity over that of H+ to the power of its charge.
+    if (kind === 'ratio') return (m.solutes || []).filter((nm) => nm !== 'H+' && RtmModel.chargeOf(nm) > 0);
     if (kind === 'tot') return ((m.composition && m.composition.elements) || []).map((e) => e.el);
     return [];
   }
@@ -2654,25 +2660,38 @@
     const two = !!dgResult.reply.y;
     const opts = two
       ? [['predominance', 'the species that holds most of an element'], ['phase', 'the phase furthest over saturation, or at it'],
-        ['contour', 'a species or a quantity, as contours']]
+        ['stable', 'the phases of an element, the most stable per mole of it'], ['contour', 'a species or a quantity, as contours']]
       : [['shares', 'the species of an element, as shares'], ['logc', 'the species of an element, as log concentrations'],
         ['si', 'the saturation indices'], ['quantity', 'a species or a quantity']];
     const d = state.dg;
     if (!opts.some(([v]) => v === d.show)) d.show = opts[0][0];
     $('rtmDgShow').innerHTML = opts.map(([v, t]) => `<option value="${v}"${v === d.show ? ' selected' : ''}>${esc(t)}</option>`).join('');
     const C = dgResult.composition;
-    const els = C ? C.elements.filter((e) => (d.in === 'all' ? e.terms : e.terms.filter((tm) => tm[2] === 'water')).length > 1)
-      .map((e) => e.el) : [];
+    // For the most stable phase, the elements two phases or more are made of; else those two species or more hold.
+    const els = d.show === 'stable' ? dgStableElements()
+      : C ? C.elements.filter((e) => (d.in === 'all' ? e.terms : e.terms.filter((tm) => tm[2] === 'water')).length > 1)
+        .map((e) => e.el) : [];
     if (els.length && !els.includes(d.el)) d.el = els[0];
     $('rtmDgEl').innerHTML = els.length ? els.map((e) => `<option value="${esc(e)}"${e === d.el ? ' selected' : ''}>${esc(e)}</option>`).join('')
       : '<option value="">none</option>';
     $('rtmDgIn').value = d.in;
-    const byEl = ['shares', 'logc', 'predominance'].includes(d.show);
+    const byEl = ['shares', 'logc', 'predominance', 'stable'].includes(d.show);
     $('rtmDgElWrap').hidden = !byEl;
-    $('rtmDgInWrap').hidden = !byEl;
+    $('rtmDgInWrap').hidden = !byEl || d.show === 'stable';
     $('rtmDgQWrap').hidden = !(d.show === 'quantity' || d.show === 'contour');
     if (!speciesNames().includes(d.q) && !quantityOf(d.q)) d.q = quantityOf('pH') ? 'pH' : (speciesNames()[0] || '');
     $('rtmDgQ').innerHTML = pickerOptions(d.q);
+  }
+
+  /** The elements two phases or more are made of, aluminium first where it is one: what a stability diagram weighs by. */
+  function dgStableElements() {
+    const count = new Map();
+    for (const q of quantityList()) {
+      if (!q.key.startsWith('SI(') || !q.makeup) continue;
+      for (const el of Object.keys(q.makeup)) count.set(el, (count.get(el) || 0) + 1);
+    }
+    const els = [...count].filter(([, n]) => n > 1).map(([el]) => el).sort();
+    return els.includes('Al') ? ['Al', ...els.filter((el) => el !== 'Al')] : els;
   }
 
   /** Reads the calculation's controls into state.dg; a kind changed starts its range afresh. */
@@ -2861,6 +2880,7 @@
     const share = new Array(n1 * n2).fill(null);
     let criterion;
     let nameOf;
+    let satKeys = [];
     if (d.show === 'predominance') {
       const terms = dgTerms(d.el);
       if (terms.length < 2) { fail(`No two species hold ${d.el || 'an element'} ${d.in === 'all' ? 'in the cell' : 'in the water'}.`); return; }
@@ -2885,6 +2905,40 @@
       }
       criterion = { kind: 'predominance', terms: terms.map(([k, n]) => [k, n]) };
       nameOf = (lab) => termName(terms[lab]);
+    } else if (d.show === 'stable') {
+      /*
+        Each phase of the element weighed per mole of it: its saturation index
+        over its count of the element, the largest the phase the rest would
+        turn into with the element kept in the solids -- whatever is dissolved
+        of it, which the weighing cancels -- as Garrels and Christ draw them.
+      */
+      const made = rp.keys.filter((key) => key.startsWith('SI(')).map((key) => {
+        const q = quantityOf(key);
+        return { key, n: (q && q.makeup && q.makeup[d.el]) || 0 };
+      });
+      const mine = made.filter((x) => x.n > 0);
+      if (mine.length < 2) { fail(`No two phases are made of ${d.el || 'an element'}: <PHASES>, or minerals in <EQUILIBRIUM>.`); return; }
+      for (let p = 0; p < n1 * n2; p++) {
+        let best = null;
+        let most = -Infinity;
+        for (const { key, n } of mine) {
+          const v = rp.quant[p * rp.nq + rp.keys.indexOf(key)] / n;
+          if (Number.isFinite(v) && v > most) { most = v; best = key; }
+        }
+        if (best === null) continue;
+        const label = best.slice(3, -1);
+        let c = names2.indexOf(label);
+        if (c < 0) { c = names2.length; names2.push(label); }
+        at[p] = c;
+        share[p] = most;
+      }
+      criterion = { kind: 'phase', keys: mine.map((x) => x.key), per: mine.map((x) => x.n) };
+      nameOf = (lab) => mine[lab].key.slice(3, -1);
+      // A phase without it that comes to saturation on the map -- quartz, say -- is a line across it where it does.
+      satKeys = made.filter((x) => x.n === 0).map((x) => x.key).filter((key) => {
+        const v = Array.from({ length: n1 * n2 }, (_, p) => rp.quant[p * rp.nq + rp.keys.indexOf(key)]).filter(Number.isFinite);
+        return v.some((u) => u > 0) && v.some((u) => u < 0);
+      });
     } else {
       const keys = rp.keys.filter((key) => key.startsWith('SI('));
       if (!keys.length) { fail('The model has no phase to give a saturation index of: <PHASES>, or a mineral in <EQUILIBRIUM>.'); return; }
@@ -2910,6 +2964,12 @@
     const sig = JSON.stringify(criterion);
     const bounds = dgResult.bounds.get(sig) || null;
     if (!dgResult.bounds.has(sig)) dgAskBounds(sig, criterion);
+    // A saturation line is where the phase's index is zero: the boundary of its own map with none, asked for after the fields.
+    const satAsk = satKeys.map((key) => { const cr = { kind: 'phase', keys: [key] }; return { key, sig: JSON.stringify(cr), cr }; });
+    if (bounds) {
+      const next = satAsk.find((x) => !dgResult.bounds.has(x.sig));
+      if (next) dgAskBounds(next.sig, next.cr);
+    }
     // A field found only between the points has a colour of its own too.
     if (bounds) for (const f of bounds.fields) if (!names2.includes(nameOf(f.label))) names2.push(nameOf(f.label));
     const m = names2.length;
@@ -2919,6 +2979,7 @@
     const text = ys.map((_, j) => xs.map((_, i) => {
       const p = j * n1 + i;
       if (at[p] < 0) return 'did not settle';
+      if (d.show === 'stable') return `${names2[at[p]]}, SI over its ${d.el} ${(share[p] + 0).toFixed(2)}`;
       return d.show === 'predominance' ? `${names2[at[p]]}: ${share[p] === null ? '' : `${share[p].toFixed(1)} %`}`
         : `${names2[at[p]]}${names2[at[p]] === 'none over saturation' ? `, the nearest SI ${share[p].toFixed(2)}` : `, SI ${(share[p] + 0).toFixed(2)}`}`;
     }));
@@ -2975,10 +3036,32 @@
       layout.xaxis.range = [Math.min(...xs), Math.max(...xs)];
       layout.yaxis.range = [Math.min(...ys), Math.max(...ys)];
     }
+    // The saturation lines, dotted, each named where it leaves the map at the top.
+    const lined = [];
+    for (const { key, sig: lsig } of satAsk) {
+      const lb = dgResult.bounds.get(lsig);
+      if (!lb || !lb.lines.length) continue;
+      const lx = [];
+      const lyy = [];
+      lb.lines.forEach((ln, q) => {
+        if (q) { lx.push(null); lyy.push(null); }
+        lx.push(...ln.x);
+        lyy.push(...ln.y);
+      });
+      const nm = key.slice(3, -1);
+      traces.push({ type: 'scatter', mode: 'lines', name: `${nm} at saturation`, x: lx, y: lyy, showlegend: false,
+        line: { color: themeColors().text, width: 1.2, dash: 'dot' }, hovertemplate: `${esc(nm)} at saturation<extra></extra>` });
+      let top = 0;
+      lyy.forEach((v, q) => { if (v !== null && v > lyy[top]) top = q; });
+      layout.annotations.push({ x: lx[top], y: lyy[top], text: esc(nm), showarrow: false, yanchor: 'top', xanchor: 'left',
+        xshift: 3, font: { size: 10, color: themeColors().text } });
+      lined.push(nm);
+    }
     Plotly.react(plot, [...traces, ...dgWaterLines(ax, ay, xs, ys)], layout, PLOT_CONFIG);
     const counts = names2.map((nm, c) => [nm, at.filter((v) => v === c).length]).filter(([, k]) => k > 0);
     dgTableNow = { head: [dgLabel(ax), dgLabel(ay), d.show === 'predominance' ? `the species holding most of the ${d.el}`
-      : 'the phase furthest over saturation, or at it', d.show === 'predominance' ? 'its share (%)' : 'its SI'],
+      : d.show === 'stable' ? `the phase most stable per mole of ${d.el}` : 'the phase furthest over saturation, or at it',
+    d.show === 'predominance' ? 'its share (%)' : d.show === 'stable' ? `its SI over its ${d.el}` : 'its SI'],
     rows: at.map((c, p) => [xs[p % n1], ys[Math.floor(p / n1)], c >= 0 ? names2[c] : null, share[p]]),
     name: `rtm_diagram_${d.show}` };
     if (bounds) {
@@ -2992,7 +3075,8 @@
     note.textContent = `${where}; ${n1} × ${n2} points: ${counts.map(([nm, k]) => `${nm} ${k}`).join(', ')}`
       + `${rp.failed ? `; ${rp.failed} left blank: they did not settle` : ''}`
       + (bounds ? `; the boundaries between them found to 1e-10${meet ? `, and ${meet} point${meet === 1 ? '' : 's'} where three fields meet` : ''}`
-        : dgBoundsAsked && dgBoundsAsked.res === dgResult && dgBoundsAsked.sig === sig ? '; finding the boundaries between them…' : '');
+        : dgBoundsAsked && dgBoundsAsked.res === dgResult && dgBoundsAsked.sig === sig ? '; finding the boundaries between them…' : '')
+      + (lined.length ? `; dotted, where ${lined.join(' and ')} ${lined.length === 1 ? 'is' : 'are'} at saturation` : '');
   }
 
   /**
@@ -5216,17 +5300,18 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const two = !!(dgResult && dgResult.reply.y);
       return {
         kicker: 'Tab', title: 'Diagrams',
-        lead: 'The model\'s own chemistry, as PhreePlot draws PHREEQC\'s: the water of one cell held at each point of a range — a pH, a pe or an Eh, a species\' activity or an element\'s total, or two of them — and speciated there by the relations of <EQUILIBRIUM>.',
+        lead: 'The model\'s own chemistry, as PhreePlot draws PHREEQC\'s: the water of one cell held at each point of a range — a pH, a pe or an Eh, a species\' activity, a cation\'s over the hydrogen ion\'s or an element\'s total, or two of them — and speciated there by the relations of <EQUILIBRIUM>.',
         sections: [
           { heading: 'What is worked out', list: [
             '**The water of cell**, **as it starts** or **ends the run**: the water held. Its totals stay as they are, but for what is varied; there is no charge balance, as in PHREEQC\'s SOLUTION.',
-            '**Vary**: **pH**, the activity of H+; **pe**, the electron\'s; **Eh (V)**, that pe in volts at the water\'s temperature; **log activity of** a species dissolved; **log total of** an element in the cell, mol/kgw. **and** a second one makes a grid.',
+            '**Vary**: **pH**, the activity of H+; **pe**, the electron\'s; **Eh (V)**, that pe in volts at the water\'s temperature; **log activity of** a species dissolved; **log activity over H+ of** a cation, log a(K+)/a(H+) or log a(Ca+2)/a(H+)², the cation held at the activity that gives it over the H+ there, the pH of the other axis or the water\'s; **log total of** an element in the cell, mol/kgw. **and** a second one makes a grid.',
             'A mineral there stays at saturation while there is any of it. A point that does not settle is left blank, and the status line counts them.',
             '**Work it out**: in the background; a grid of 101 × 41 takes a second or less.',
           ] },
           { heading: 'Show', list: two ? [
             '**the species that holds most of an element**, in the water or the whole cell: over pH and pe or Eh, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C: in volts 1.229 − 0.0592 pH and −0.0592 pH.',
             '**the phase furthest over saturation, or at it**: a mineral stability diagram.',
+            '**the phases of an element, the most stable per mole of it**: each phase\'s saturation index over its count of the element — aluminium in a silicate — the largest the phase the rest would turn into, the element kept in the solids, whatever of it is dissolved: over log a(H4SiO4) and log a(K+)/a(H+), Garrels and Christ\'s diagram of K-feldspar, muscovite, kaolinite and gibbsite. A phase without the element that comes to saturation on the map, quartz say, is dotted across it where it does.',
             '**a species or a quantity, as contours**: its log where it is an amount.',
             'A map\'s **boundaries** are found between the grid\'s points, the water speciated again there, to 1e-10; where three fields meet, the point is solved for. A field narrower than the grid can be missed.',
           ] : [
@@ -6015,7 +6100,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109p';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109q';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

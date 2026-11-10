@@ -7850,6 +7850,100 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     + `${o.meet.toExponential(1)}, the couple at ${o.couple.toFixed(6)} V`).join('; ')} | "${ehBoth}" | "${ehNone}"`);
 
   /*
+    ACTIVITY RATIOS, AND THE MOST STABLE PHASE PER MOLE OF AN ELEMENT, as
+    Garrels and Christ draw silicate stability diagrams. Without activity
+    coefficients, the water's activity 1, each phase's saturation index over
+    its aluminium is, but for log a(Al+3)/a(H+)^3 which all of them share, a
+    line in s = log a(H4SiO4) and r = log a(K+)/a(H+) from the log Ks:
+    gibbsite -8.11, kaolinite s - 7.435/2, K-mica s + r/3 - 12.703/3,
+    K-feldspar r + 3s - (22.7 - 20.573). Every boundary is then straight,
+    the point where three meet is where two cross, and the map is the same
+    whatever aluminium is dissolved. A phase's makeup comes from what it
+    dissolves into, a mineral's from its relation; the ratio is held at each
+    point over the pH the water has, under an activity model too.
+  */
+  const silSpecies = '<SPECIES>\nH+  1e-7\nOH-  1e-7\nK+  1e-4\nNa+  1e-3\nCl-  1.1e-3\nAl+3  1e-9\nAlOH+2  0\nAl(OH)2+  0\n'
+    + 'Al(OH)3  0\nAl(OH)4-  0\nH4SiO4  1e-4\nH3SiO4-  0\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\nAl+3 + H2O <=> AlOH+2 + H+,  logK = -5\n'
+    + 'Al+3 + 2 H2O <=> Al(OH)2+ + 2 H+,  logK = -10.1\nAl+3 + 3 H2O <=> Al(OH)3 + 3 H+,  logK = -16.9\n'
+    + 'Al+3 + 4 H2O <=> Al(OH)4- + 4 H+,  logK = -22.7\nH4SiO4 <=> H3SiO4- + H+,  logK = -9.83\n\n<PHASES>\n'
+    + 'K_feldspar + 8 H2O <=> K+ + Al(OH)4- + 3 H4SiO4,  logK = -20.573\nKaolinite + 6 H+ <=> H2O + 2 H4SiO4 + 2 Al+3,  logK = 7.435\n'
+    + 'Gibbsite + 3 H+ <=> Al+3 + 3 H2O,  logK = 8.11\nK_mica + 10 H+ <=> K+ + 3 Al+3 + 3 H4SiO4,  logK = 12.703\n'
+    + 'Quartz + 2 H2O <=> H4SiO4,  logK = -3.98\n';
+  const silText = `<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n${silSpecies}`;
+  const silModel = RtmModel.compile(silText);
+  const makeups = Object.fromEntries(silModel.quantities.filter((q) => q.makeup).map((q) => [q.key, JSON.stringify(q.makeup)]));
+  const calciteMade = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nCa+2  1e-3\nCO3-2  1e-3\n'
+    + 'Calcite  1e-3  mineral\n\n<EQUILIBRIUM>\nCalcite <=> Ca+2 + CO3-2,  logK = -8.48\n').quantities.find((q) => q.key === 'SI(Calcite)');
+  const silLine = { K_feldspar: [-2.127, 3, 1], Kaolinite: [-7.435 / 2, 1, 0], Gibbsite: [-8.11, 0, 0], K_mica: [-12.703 / 3, 1, 1 / 3] };
+  const silKeys = ['SI(K_feldspar)', 'SI(Kaolinite)', 'SI(Gibbsite)', 'SI(K_mica)'];
+  const silName = (q) => silKeys[q].slice(3, -1);
+  const silMaps = [['1e-9', 1e-9], ['1e-12', 1e-12]].map(([al, alv]) => {
+    const b = mapOf(silText.replace('Al+3  1e-9', `Al+3  ${al}`), [{ kind: 'la', species: 'H4SiO4', from: -6, to: -2, n: 41 },
+      { kind: 'ratio', species: 'K+', from: 0, to: 10, n: 51 }], { kind: 'phase', keys: silKeys, per: [1, 2, 1, 3] });
+    let line = 0;
+    for (const ln of b.lines) {
+      const A = silLine[silName(ln.a)];
+      const B = silLine[silName(ln.b)];
+      ln.x.forEach((x, q) => {
+        line = Math.max(line, Math.abs(A[0] - B[0] + (A[1] - B[1]) * x + (A[2] - B[2]) * ln.y[q]) / Math.hypot(A[1] - B[1], A[2] - B[2]));
+      });
+    }
+    let meet = 0;
+    for (const jn of b.junctions) {
+      const [px, py] = crossOf(...jn.labels.map((q) => silLine[silName(q)]));
+      meet = Math.max(meet, Math.abs(px - jn.x), Math.abs(py - jn.y));
+    }
+    const pairs = [...new Set(b.lines.map((ln) => [silName(ln.a), silName(ln.b)].sort().join('|')))].sort().join(' ');
+    const area = b.fields.reduce((sum, f) => sum + f.area, 0) / 40 - 1;
+    return { al: alv, line, meet, pairs, area, junctions: b.junctions.map((jn) => [jn.x, jn.y]),
+      none: b.fields.some((f) => f.label >= silKeys.length), solved: b.junctions.every((jn) => jn.solved) && !b.unsolved };
+  });
+  const quartz = mapOf(silText, [{ kind: 'la', species: 'H4SiO4', from: -6, to: -2, n: 41 }, { kind: 'ratio', species: 'K+', from: 0, to: 10, n: 51 }],
+    { kind: 'phase', keys: ['SI(Quartz)'] });
+  const quartzOff = Math.max(...quartz.lines.flatMap((ln) => ln.x.map((x) => Math.abs(x + 3.98))));
+  check('a silicate stability map over log a(H4SiO4) and log a(K+)/a(H+), each phase per mole of aluminium: every boundary on '
+    + 'the line the log Ks give, to 1e-10, gibbsite, kaolinite and K-mica meeting where two of them cross, to 1e-12, K-feldspar '
+    + 'beside K-mica, no field of none; the same map with a thousand times less aluminium dissolved; quartz at saturation along '
+    + 'log a(H4SiO4) = -3.98; each phase made of what it dissolves into, a mineral of its relation',
+  silMaps.every((o) => o.line < 1e-10 && o.meet < 1e-12 && o.solved && !o.none && Math.abs(o.area) < 1e-12
+    && o.pairs === 'Gibbsite|K_mica Gibbsite|Kaolinite K_feldspar|K_mica K_mica|Kaolinite' && o.junctions.length === 1)
+    && Math.abs(silMaps[0].junctions[0][0] + 4.3925) < 1e-12 && Math.abs(silMaps[0].junctions[0][1] - 1.5505) < 1e-12
+    && Math.abs(silMaps[1].junctions[0][0] - silMaps[0].junctions[0][0]) < 1e-12 && quartzOff < 1e-10 && quartz.lines.length > 0
+    && makeups['SI(K_feldspar)'] === '{"K":1,"Al":1,"Si":3}' && makeups['SI(Kaolinite)'] === '{"Si":2,"Al":2}'
+    && makeups['SI(Gibbsite)'] === '{"Al":1}' && makeups['SI(K_mica)'] === '{"K":1,"Al":3,"Si":3}' && makeups['SI(Quartz)'] === '{"Si":1}'
+    && calciteMade && JSON.stringify(calciteMade.makeup) === '{"C":1,"Ca":1}',
+  `${silMaps.map((o) => `Al ${o.al}: lines within ${o.line.toExponential(1)}, meeting at ${o.junctions.map((j) => j.map((v) => v.toFixed(6)).join(', '))} `
+    + `within ${o.meet.toExponential(1)}; ${o.pairs}`).join(' | ')}; quartz within ${quartzOff.toExponential(1)}`);
+  // The ratio held under an activity model: log a(K+) - log a(H+) the axis's at each point, the pH the water's.
+  const silAct = silText.replace('EQUILIBRATE = always', 'EQUILIBRATE = always\nACTIVITY = davies');
+  const rg = askW({ type: 'diagram', id: 13, text: silAct, at: 'start', cell: 0,
+    axes: [{ kind: 'la', species: 'H4SiO4', from: -5, to: -3, n: 5 }, { kind: 'ratio', species: 'K+', from: 0, to: 4, n: 9 }] });
+  let held = 0;
+  for (let p = 0; p < rg.n1 * rg.n2; p++) {
+    const la = (k) => rg.quant[p * rg.nq + rg.keys.indexOf(`la(${k})`)];
+    held = Math.max(held, Math.abs(la('K+') - la('H+') - rg.y[Math.floor(p / rg.n1)]), Math.abs(-la('H+') - rg.pHHeld),
+      Math.abs(la('H4SiO4') - rg.x[p % rg.n1]));
+  }
+  const smallAxes = [{ kind: 'la', species: 'H4SiO4', from: -5, to: -3, n: 3 }, { kind: 'ratio', species: 'K+', from: 0, to: 1, n: 3 }];
+  const small = askW({ type: 'diagram', id: 14, text: silText, at: 'start', cell: 0, axes: smallAxes });
+  const refusedRatio = [refusedAxes([{ kind: 'pH', from: 2, to: 12, n: 3 }, { kind: 'ratio', species: 'Cl-', from: 0, to: 1, n: 3 }], silText),
+    refusedAxes([{ kind: 'pH', from: 2, to: 12, n: 3 }, { kind: 'ratio', species: 'K+', from: 0, to: 1, n: 3 }], ironText),
+    (() => {
+      try {
+        askW({ type: 'diagramBounds', id: 15, text: silText, at: 'start', cell: 0, axes: smallAxes, grid: small.states,
+          criterion: { kind: 'phase', keys: silKeys, per: [1, 2, 0, 3] } });
+        return '';
+      } catch (e) { return e.message; }
+    })()];
+  check('  the ratio held under Davies activities: log a(K+) - log a(H+) the axis\'s, log a(H4SiO4) the other\'s and the pH the '
+    + 'water\'s at each point, to 1e-11, where the activity coefficients stop moving; a ratio of an anion, of a species the model '
+    + 'has not, and a phase weighed by nothing, refused',
+  held < 1e-11 && Number.isFinite(rg.pHHeld) && !rg.failed && /a ratio is a cation's/.test(refusedRatio[0])
+    && /log a\(K\+\)\/a\(H\+\): it is no species dissolved in the water/.test(refusedRatio[1])
+    && /positive number for each/.test(refusedRatio[2]),
+  `within ${held.toExponential(1)}, the pH held at ${rg.pHHeld}; ${refusedRatio.map((x) => `"${x}"`).join(' | ')}`);
+
+  /*
     PRINCIPAL COMPONENTS (RtmModel.pca), as the Composition tab gives them.
     Two variables correlated by r have eigenvalues 1 + r and 1 - r and
     components (1, 1) and (1, -1) over root 2. A table of six waters and four
