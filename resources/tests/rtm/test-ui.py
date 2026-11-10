@@ -607,7 +607,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '34:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '35:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1338,13 +1338,13 @@ async def main():
             # --- the examples that show a way of reading results open on it, once they have run ---
             before = await page.ev("document.getElementById('rtmText').value")
 
-            async def example(ex, done):
+            async def example(ex, done, tries=120):
                 await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
                 await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = %s;"
                               " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(ex))
                 await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
                 await page.ev("document.getElementById('rtmRun').click()")
-                return await settle(page, done, True, tries=120, pause=0.5)
+                return await settle(page, done, True, tries=tries, pause=0.5)
 
             ok = await example('bjerrum', "document.getElementById('rtmStatus').textContent.startsWith('Diagram worked out')")
             check('the carbonate example, once run, opens on Diagrams and works out the carbon against pH', [ok, await page.ev(
@@ -1743,6 +1743,75 @@ async def main():
                   'day -- and methane half the carbon after the sulfate\'s, to 1 %', [ok, zones],
                   [True, ['O2 | N(5), dissolved | Mn+2 | Fe(2), dissolved | S(6), dissolved | S(-2), dissolved | C(-4), dissolved',
                           'time (d)', True, True, True, True, True, True]])
+            # Redox zones along a plume: a leachate rich in organic carbon into an oxic aquifer, 30 cells over 40 days, every
+            # stored point read back in a millisecond or two. It opens on Gradient, the pe as contours against time, not its
+            # logarithm; at the end, from the inlet by the pe, methane below -2.5, iron below 3, manganese below 10, nitrate
+            # below 12.5 and the oxygen ahead of them.
+            ok = await example('redoxplume', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'gradient'"
+                                             " && ((document.getElementById('rtmChartGradient').data || [])[0] || {}).type === 'contour'"
+                                             " && document.getElementById('rtmStatus').textContent.startsWith('Done')", tries=400)
+            plume = await page.ev("""(() => { const d = document.getElementById('rtmChartGradient').data[0];
+              const zone = (pe) => (pe < -2.5 ? 'methane' : pe < 3 ? 'iron' : pe < 10 ? 'manganese' : pe < 12.5 ? 'nitrate' : 'oxygen');
+              const last = d.z.map((row) => zone(row[row.length - 1]));
+              return [document.getElementById('rtmGradSpecies').value, document.getElementById('rtmGradLogT').checked,
+                d.x[0] === 0 && d.x[d.x.length - 1] === 40, d.y.length,
+                last.filter((v, c) => c === 0 || v !== last[c - 1]).join(' ')]; })()""")
+            check('the plume example opens on Gradient: the pe as contours over the 40 days, time not on a log axis, the 30 cells '
+                  'up; at the end, from the inlet by the pe, methane, iron, manganese, nitrate and the oxygen ahead of them',
+                  [ok, plume], [True, ['pe', False, True, 30, 'methane iron manganese nitrate oxygen']])
+            # Against distance, what is ticked against time together at the end: the pe on its own axis on the right, its steps
+            # the zones; methane and siderite from the inlet, the ferrihydrite partly gone in the iron zone, manganese(2) beyond
+            # it, the oxygen at the far end.
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            n_prof = await settle(page, "(document.getElementById('rtmChartProfile').data || []).length", 9, tries=60, pause=0.5)
+            dist = await page.ev("""(() => { const p = document.getElementById('rtmChartProfile'), d = p.data;
+              const of = (name) => d.find((t) => t.name === name).y;
+              return [document.getElementById('rtmProfileSpecies').value, d.map((t) => t.name).join(' | '),
+                document.getElementById('rtmProfileNote').textContent, p.layout.yaxis.type,
+                d.find((t) => t.name === 'pe').yaxis === 'y2' && p.layout.yaxis2.title.text === 'pe',
+                of('pe')[0] < -2.5 && of('pe')[29] > 12.5,
+                of('C(-4), dissolved')[5] > 1e-4 && of('Siderite')[5] > 4e-3 && of('Ferrihydrite')[5] === 0,
+                of('Ferrihydrite')[12] > 0 && of('Ferrihydrite')[12] < 4.9e-3 && of('Siderite')[20] === 0,
+                of('Mn+2')[18] > 1e-3 && of('O2')[29] > 1e-4 && of('O2')[20] < 1e-12]; })()""")
+            check('  Against distance draws what is ticked against time together at the end, the pe on its own axis on the right: '
+                  'methane and siderite from the inlet, the ferrihydrite partly gone in the iron zone, manganese(2) beyond it, the '
+                  'oxygen at the far end', [n_prof, dist],
+                  [9, ['*ticked', 'pe | O2 | N(5), dissolved | Mn+2 | Ferrihydrite | Siderite | S(6), dissolved | C(-4), dissolved | '
+                       'C(0), dissolved', '30 cells over 30 m; at 40.0 d, the end of the run', 'linear', True, True, True, True, True]])
+            check('  its legend under the axis\' title, not over it, though the chart was drawn while its tab was hidden', await page.ev(
+                """(() => { const p = document.getElementById('rtmChartProfile');
+                  return p.querySelector('.legend').getBoundingClientRect().top >= p.querySelector('.g-xtitle').getBoundingClientRect().bottom; })()"""),
+                True)
+            # At a time asked for, the first of Times alone: on day 20 methane at the inlet, and the iron zone still at 5.5 m.
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '20, 30';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            at20 = await page.ev("""(() => { const d = document.getElementById('rtmChartProfile').data;
+              const pe = d.find((t) => t.name === 'pe').y;
+              const note = document.getElementById('rtmProfileNote').textContent;
+              return [note.startsWith('30 cells over 30 m; at 20.0 d'), note.includes('the first of Times alone'),
+                pe[0] < -2.5 && pe[5] > -2.5 && pe[5] < 3]; })()""")
+            check('  with Times, at the first of them alone: on day 20 methane at the inlet, the iron zone still at 5.5 m', at20,
+                  [True, True, True])
+            # Saved as CSV: the distance, and a column for each drawn.
+            await page.ev("""(() => {
+              window.__saved = [];
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                const rec = { name: this.download };
+                if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text());
+                window.__saved.push(rec);
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"profile\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).trim().split('\\n')] : null; })()")
+            check('  saved as CSV: the distance and a column for each drawn, a row for each cell',
+                  [csv[0], csv[1][0][:60], len(csv[1])] if isinstance(csv, list) else csv,
+                  ['rtm_profile_ticked.csv', 'distance from the left-hand face (m),pe,O2,"N(5), dissolved"', 31])
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
             # The ticks put back as they were, one click: what follows reads the chart's first trace.
             await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
             await asyncio.sleep(0.3)

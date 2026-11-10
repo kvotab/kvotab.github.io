@@ -7588,9 +7588,10 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
     `${zk.filter((key) => /^tot\(.+\(.+\)\)$/.test(key)).join(' ')}${offBy.length ? `; off: ${offBy.join(', ')}` : ''}`);
     /*
       The example run at the panel's tolerances, its steps a tenth of the run long -- runModel given no maximum step, as
-      the page gives it none but the model's MAX_STEP: every point shown keeps its iron and its manganese -- the one a
-      step after pyrolusite has dissolved away among them, where the speciation of the totals does not settle and the
-      point is shown as the solver left it -- and the zones in their order: the oxygen gone, then the nitrate;
+      the page gives it none but the model's MAX_STEP: every point shown keeps its iron and its manganese, and is the
+      speciation of its totals, re-speciated from what it shows staying where it is -- the one a step after pyrolusite
+      has dissolved away among them, its FeS none in the run and 3e-45 in the state, which read as some did not settle
+      -- and the zones in their order: the oxygen gone, then the nitrate;
       manganese(2) and iron(2) as the pyrolusite and the ferrihydrite go; FeS taking the iron(2) as the sulfate is
       reduced; methane last.
     */
@@ -7605,9 +7606,19 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
       const i = zd.t.findIndex((t) => Math.abs(t - d) < 1e-9);
       return Float64Array.from(zm.toConcentrations(zd.y[i], zd.t[i]));
     };
+    let zMoved = 0;
+    let zUnsettled = 0;
     for (let i = 0; i < zr.t.length; i++) {
-      const y = zm.toConcentrations(zr.y[i], zr.t[i]);
+      const y = Float64Array.from(zm.toConcentrations(zr.y[i], zr.t[i]));
       keep = Math.max(keep, Math.abs(el(y, 'Fe') - 2e-4) / 2e-4, Math.abs(el(y, 'Mn') - 1e-4) / 1e-4);
+      let sp = null;
+      try { sp = RtmModel.speciate(zm, y, { t: zr.t[i] }); } catch (e) { sp = null; }
+      if (!sp || sp.cells.some((c) => !c.converged)) { zUnsettled++; continue; }
+      for (let k = 0; k < y.length; k++) {
+        const isMin = !!zm.mineral[k % zm.speciesNames.length];
+        if (!isMin && !(y[k] > 1e-30)) continue;
+        zMoved = Math.max(zMoved, Math.abs(sp.y[k] - y[k]) / (isMin ? Math.max(Math.abs(y[k]), 1e-9) : y[k]));
+      }
     }
     const qOf = (y, key) => { zm.quantitiesAt(y, 0, 0, Int32Array.of(zk.indexOf(key)), zq); return zq[0]; };
     const d30 = atDay(30);
@@ -7619,11 +7630,13 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
       && d55[zm.speciesNames.indexOf('Ferrihydrite')] === 0 && qOf(d55, 'tot(Fe(2))') > 1.9e-4
       && d160[zm.speciesNames.indexOf('FeS_ppt')] > 1.9e-4 && qOf(d160, 'tot(S(6))') < 1e-6 && qOf(d160, 'tot(S(-2))') > 9e-5
       && qOf(d160, 'tot(C(-4))') > 1e-4;
-    check('  the example run with steps a tenth of the run long: every point shown keeps its iron and its manganese, the one a '
-      + 'step after the pyrolusite has gone among them; the zones in order -- oxygen gone by day 30, nitrate by 52, manganese(2) and '
-      + 'iron(2) then, the ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by 160, methane',
-    keep < 1e-12 && order && zr.events && zr.events.length === 3, `kept to ${keep.toExponential(1)}; ${zr.t.length} points, `
-      + `${zr.events ? zr.events.length : 0} events`);
+    check('  the example run with steps a tenth of the run long: every point shown keeps its iron and its manganese and, '
+      + 're-speciated from what it shows, stays where it is, the one a step after the pyrolusite has gone among them, its FeS none '
+      + 'and not the state\'s 3e-45; the zones in order -- oxygen gone by day 30, nitrate by 52, manganese(2) and iron(2) then, the '
+      + 'ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by 160, methane',
+    keep < 1e-12 && zMoved < 1e-10 && zUnsettled === 0 && order && zr.events && zr.events.length === 3,
+    `kept to ${keep.toExponential(1)}; re-speciated, moved by ${zMoved.toExponential(1)}, ${zUnsettled} unsettled; `
+      + `${zr.t.length} points, ${zr.events ? zr.events.length : 0} events`);
   }
   const cc0 = cm.initialState();
   const ci = (n) => cc0[cn.indexOf(n)];
@@ -7731,6 +7744,66 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + 'the panel\'s Maximum step, 5 days, in its place where it is given',
     /^MAX_STEP = 1\b/m.test(zText) && hModel <= 1 + 1e-9 && nModel >= 161 && hPanel > 1 + 1e-9 && hPanel <= 5 + 1e-9,
     `${nModel} points, the longest step ${hModel.toFixed(4)} d; with the panel's 5 d ${nPanel} points, ${hPanel.toFixed(4)} d`);
+  }
+  /*
+    Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
+    speciation of its totals: re-speciated from what it shows, each stays where it is, and none fails to settle. A mineral
+    the run holds at none is read back as none: FeS(ppt) in the oxic water ahead of the plume is 1e-33 or so in the state,
+    the arithmetic's, and read as some it was held at saturation where it cannot be -- the speciation did not settle, and
+    the point was shown as the solver left it. And the zones from the inlet, by the pe: methane below -2.5, iron below 3,
+    manganese below 10, nitrate below 12.5, the oxygen ahead of them; each moving downstream from day 20 to 30 to 40.
+  */
+  {
+    const pText = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxplume').text;
+    const pm = RtmModel.compile(pText);
+    const pns = pm.speciesNames.length;
+    let got = null;
+    handleRtmMessage({ type: 'run', id: 13, text: pText, solver: { ...solverSw, rtol: 1e-6 } }, (msg) => {
+      if (msg.type === 'result' || msg.type === 'error') got = msg;
+    });
+    const ran = !!got && got.type === 'result' && got.width === 30 * pns;
+    const shown = (i) => Float64Array.from(got.states.subarray(i * got.width, (i + 1) * got.width));
+    let moved = 0;
+    let unsettled = 0;
+    let read = 0;
+    const zones = [];
+    if (ran) {
+      const every = [];
+      for (let i = 0; i < got.n; i += 10) every.push(i);
+      if (every[every.length - 1] !== got.n - 1) every.push(got.n - 1);
+      for (const i of every) {
+        const y = shown(i);
+        read++;
+        let sp = null;
+        try { sp = RtmModel.speciate(pm, y, { t: got.t[i] }); } catch (e) { sp = null; }
+        if (!sp || sp.cells.some((c) => !c.converged)) { unsettled++; continue; }
+        for (let k = 0; k < y.length; k++) {
+          const isMin = !!pm.mineral[k % pns];
+          if (!isMin && !(y[k] > 1e-30)) continue;
+          moved = Math.max(moved, Math.abs(sp.y[k] - y[k]) / (isMin ? Math.max(Math.abs(y[k]), 1e-9) : y[k]));
+        }
+      }
+      const peQ = Int32Array.of(pm.quantities.findIndex((q) => q.key === 'pe'));
+      const peOut = new Float64Array(1);
+      const zoneOf = (pe) => (pe < -2.5 ? 'methane' : pe < 3 ? 'iron' : pe < 10 ? 'manganese' : pe < 12.5 ? 'nitrate' : 'oxygen');
+      for (const day of [20, 30, 40]) {
+        const i = got.t.findIndex((t) => t >= day - 1e-9);
+        const y = shown(i);
+        const z = Array.from({ length: 30 }, (_, c) => zoneOf(pm.quantitiesAt(y, got.t[i], c, peQ, peOut)[0]));
+        const order = z.filter((v, c) => c === 0 || v !== z[c - 1]);
+        zones.push({ day, order: order.join(' '), ends: order.map((v) => z.lastIndexOf(v) + 1) });
+      }
+    }
+    const inOrder = zones.length === 3 && zones.every((zz) => zz.order === 'methane iron manganese nitrate oxygen');
+    const downstream = inOrder && [0, 1, 2, 3].every((q) => zones[0].ends[q] < zones[1].ends[q] && zones[1].ends[q] < zones[2].ends[q]);
+    check('redox zones along a plume, the example run as the page runs it: every tenth point shown, re-speciated from what it '
+      + 'shows, stays where it is and settles -- a mineral the run holds at none, FeS in the oxic water, read back as none and '
+      + 'not as the arithmetic\'s 1e-33 of it -- and the zones from the inlet by the pe, methane, iron, manganese, nitrate, '
+      + 'the oxygen, each moving downstream from day 20 to 30 to 40',
+    ran && moved < 1e-9 && unsettled === 0 && read > 300 && inOrder && downstream,
+    ran ? `${got.n} points, ${read} read: moved by ${moved.toExponential(1)}, ${unsettled} unsettled; `
+      + zones.map((zz) => `day ${zz.day}: ${zz.order} to ${zz.ends.join(', ')} m`).join('; ')
+      : (got ? got.error : 'no reply'));
   }
   let swReply = null;
   handleRtmMessage({ type: 'sweep', id: 1, text: decay, solver: solverSw, vary: [{ kind: 'parameter', name: 'kk' }, { kind: 'setting', name: 'TEND' }],

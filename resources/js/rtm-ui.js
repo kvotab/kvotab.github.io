@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110d';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110e';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1232,11 +1232,16 @@
     }
   }
 
-  // The distance and gradient charts' pickers: every species, then every quantity, grouped.
+  // The distance and gradient charts' pickers: every species, then every quantity, grouped; the distance
+  // chart's first, those ticked against time, together at one time (drawProfileTicked).
+  const PROFILE_TICKED = '*ticked';
   function renderProfileSpecies() {
     const names = speciesNames();
-    if (!names.includes(state.profileSpecies) && !quantityOf(state.profileSpecies)) state.profileSpecies = names[0] || '';
-    $('rtmProfileSpecies').innerHTML = pickerOptions(state.profileSpecies);
+    if (state.profileSpecies !== PROFILE_TICKED && !names.includes(state.profileSpecies) && !quantityOf(state.profileSpecies)) {
+      state.profileSpecies = names[0] || '';
+    }
+    $('rtmProfileSpecies').innerHTML = `<option value="${PROFILE_TICKED}"${state.profileSpecies === PROFILE_TICKED ? ' selected' : ''}>`
+      + 'Those ticked against time, at one time</option>' + pickerOptions(state.profileSpecies);
   }
 
   function renderGradSpecies() {
@@ -1445,6 +1450,12 @@
     const x = across ? [0, ...r.model.matrix.depth] : r.model.centres;
     const npts = across ? nm + 1 : r.model.fracture;
     const cellAt = (k) => (across ? (atCell * stride + k) : (k * stride + layer));
+    if (name === PROFILE_TICKED) {
+      drawProfileTicked({ r, plot, empty, across, layer, atCell, x, npts, cellAt, where: across
+        ? `${nm} layers to ${r.model.matrix.total} m, the fracture at depth 0`
+        : `${r.model.fracture} cells over ${r.model.length} m${nm && layer ? `, rock layer ${layer}` : ''}` });
+      return;
+    }
     const stateIndex = (k) => cellAt(k) * ns + si;
     // A quantity: every point's, from the worker; asked for, and drawn when it comes.
     const quantity = isQuantity(name);
@@ -1565,6 +1576,120 @@
     }
     if (besideSaid) bits.push(besideSaid);
     $('rtmProfileNote').textContent = bits.join('; ');
+  }
+
+  /*
+    THOSE TICKED AGAINST TIME, AT ONE TIME: each along the column -- or into
+    the rock -- at the first of Times, or at the end of the run, a curve each
+    in its colour on the time chart: a plume's zones side by side, as
+    PHREEQC's transport graphs draw them. pH, pe, a saturation index and the
+    like go on the right as they are, the rest on the left, log or not as the
+    box says. The kept run beside it at its stored time nearest, dashed in
+    the same colours; what <DATA> measured along the column as points.
+  */
+  function drawProfileTicked(g) {
+    const { r, plot, empty, across, layer, x, npts, cellAt } = g;
+    const keys = state.picked.filter((k) => runHas(r, k));
+    const cells = Array.from({ length: npts }, (_, k) => cellAt(k));
+    const pending = keys.filter((k) => runQuantity(r, k) && cells.some((c) => quantityPending(k, c)));
+    if (!keys.length || pending.length) {
+      if (pending.length) fetchQuantities(pending, cells);
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = pending.length ? `Working out ${pending.map(labelOf).join(', ')} in every cell…`
+        : 'Tick species or quantities against time to draw them here.';
+      $('rtmProfileNote').textContent = '';
+      return;
+    }
+    const asked = parseTimes(state.profileTimes);
+    const end = r.t[r.n - 1];
+    const want = asked.times.length ? asked.times[0] : end;
+    const past = want > end * 1.000001;
+    const i = past ? r.n - 1 : nearestIndex(r.t, want);
+    const log = $('rtmProfileLog').checked;
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const traces = [];
+    const right = [];
+    const bk = besideRun();
+    const kt = bk ? besideTimes(bk) : null;
+    const kI = bk && !(r.t[i] > kt[bk.r.n - 1] * 1.000001) ? nearestIndex(kt, r.t[i]) : -1;
+    const besideTraces = [];
+    const besideLeft = [];
+    const besideComing = [];
+    for (const key of keys) {
+      const color = palette[state.picked.indexOf(key) % palette.length];
+      const onRight = axisOf(key) === 'index';
+      const keep = (v) => (Number.isFinite(v) && (onRight || !log || v > 0) ? v : null);
+      const quantity = runQuantity(r, key);
+      const si = r.model.species.indexOf(key);
+      const y = Array.from({ length: npts }, (_, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[i]
+        : r.states[i * r.width + cellAt(k) * r.model.nspecies + si]));
+      if (onRight && !right.includes(labelOf(key))) right.push(labelOf(key));
+      traces.push({ name: labelOf(key), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color },
+        ...(onRight ? { yaxis: 'y2' } : {}) });
+      if (bk) {
+        const kr = bk.r;
+        const km = kr.model;
+        const kStride = km.stride || 1;
+        const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, key) ? `it has no ${labelOf(key)}`
+          : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
+            : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}`
+              : kI < 0 ? `${fmtTime(r.t[i])} is past its end` : '';
+        if (why) besideLeft.push(why);
+        else {
+          const kAtCell = across ? Math.min(state.profileLayer, km.fracture - 1) : 0;
+          const kx = across ? [0, ...km.matrix.depth] : km.centres;
+          const kn = across ? km.matrix.n + 1 : km.fracture;
+          const kCellAt = (k) => (across ? kAtCell * kStride + k : k * kStride + layer);
+          const kCells = Array.from({ length: kn }, (_, k) => kCellAt(k));
+          const kQuantity = runQuantity(kr, key);
+          if (kQuantity && kCells.some((c) => quantityPending(key, c, kr))) {
+            fetchQuantities([key], kCells, kr);
+            besideComing.push(labelOf(key));
+          } else {
+            const ksi = km.species.indexOf(key);
+            const ky = Array.from({ length: kn }, (_, k) => keep(kQuantity ? (quantitySeries(key, kCellAt(k), kr) || [])[kI]
+              : kr.states[kI * kr.width + kCellAt(k) * km.nspecies + ksi]));
+            besideTraces.push({ name: `${labelOf(key)}, ${bk.label}`, x: kx, y: ky, mode: across ? 'lines+markers' : 'lines',
+              type: 'scatter', line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}) });
+          }
+        }
+      }
+      // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says.
+      if (!across) {
+        for (const d of measured('distance', key)) {
+          const at = d.tab.at !== null ? d.tab.at : end;
+          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
+            marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}) });
+        }
+      }
+    }
+    traces.push(...besideTraces);
+    const layout = baseLayout();
+    layout.xaxis.title = { text: across ? `depth into the rock behind cell ${g.atCell} (m)`
+      : 'distance from the left-hand face (m)', font: { size: 11 } };
+    layout.yaxis.type = log ? 'log' : 'linear';
+    layout.yaxis.title = { text: 'concentration', font: { size: 11 } };
+    if (right.length) {
+      const c = themeColors();
+      layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
+        title: { text: right.join(', '), font: { size: 11 } } };
+      layout.margin.r = 64;
+    }
+    const bits = [g.where, `at ${fmtTime(r.t[i])}${asked.times.length && !past ? '' : ', the end of the run'}`];
+    if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
+    if (past) bits.push(`${fmtTime(want)} is past it`);
+    else if (asked.times.length && Math.abs(r.t[i] - want) > 0.01 * Math.max(want, 1e-300)) {
+      bits.push(`the nearest stored time to ${fmtTime(want)}`);
+    }
+    if (asked.times.length > 1) bits.push('the first of Times alone');
+    if (bk && besideTraces.length) bits.push(besideNote(bk));
+    if (bk && besideComing.length) bits.push(`working out ${besideComing.join(', ')} for ${bk.label}…`);
+    if (bk && besideLeft.length) bits.push(besideNote(bk, [...new Set(besideLeft)].join('; ')));
+    // The note first: a longer one moves the chart down, and Plotly places its legend for where the chart is when drawn.
+    $('rtmProfileNote').textContent = bits.join('; ');
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
   /**
@@ -5395,7 +5520,8 @@
     if (pane === 'fit') return fitTableNow;
     if (pane === 'uncertainty') return unTableNow;
     const plot = $(pane === 'profile' ? 'rtmChartProfile' : 'rtmChartGradient');
-    return chartTable(plot, `rtm_${pane}_${String(pane === 'profile' ? state.profileSpecies : state.gradSpecies).replace(/[^\w.-]+/g, '_')}`);
+    const what = pane === 'profile' ? (state.profileSpecies === PROFILE_TICKED ? 'ticked' : state.profileSpecies) : state.gradSpecies;
+    return chartTable(plot, `rtm_${pane}_${String(what).replace(/[^\w.-]+/g, '_')}`);
   }
 
   /**
@@ -5680,7 +5806,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     saveState();
     // Plotly needs telling once its div stops being display:none.
     if (name === 'time') { drawTime(); resize(); }
-    if (name === 'profile') { drawProfile(); resize(); }
+    // Drawn while hidden, at Plotly's own width, a legend that wrapped there keeps its place when the chart is resized: drawn afresh.
+    if (name === 'profile') { if (typeof Plotly !== 'undefined') Plotly.purge($('rtmChartProfile')); drawProfile(); resize(); }
     if (name === 'gradient') { drawGradient(); resize(); }
     if (name === 'composition') { renderComp(); drawComp(); resize(); }
     if (name === 'diagram') { renderDg(); renderDgShow(); drawDg(); resize(); }
@@ -6326,13 +6453,14 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
     'pane:profile': () => ({
       kicker: 'Tab', title: 'Against distance',
-      lead: 'One species, or one quantity, across the column at several times, a curve for each. It needs a run in transport mode: a batch has no distance.',
+      lead: 'One species, or one quantity, across the column at several times, a curve for each; or those ticked on Against time, together at one time. It needs a run in transport mode: a batch has no distance.',
       sections: [
         { heading: 'The toolbar', list: [
           '**Show**: its own choice, apart from the ticks on Against time: a species, or a quantity of the water — pH, a total, a saturation index, a share of an exchanger, an `<OUTPUT>`. What `<DATA>` measured of it along the column is drawn as points.',
+          '**Those ticked against time, at one time**, first in Show: each species and quantity ticked on Against time, a curve each in its colour there, at one time — a plume’s zones side by side. pH, pe, a saturation index and the like go on an axis of their own on the right, as they are.',
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
-          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run.',
+          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
           SAVE_HTML,
@@ -6774,9 +6902,15 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (Number.isInteger(v.cell)) state.cell = v.cell;
     if (typeof v.logT === 'boolean') $('rtmLogT').checked = v.logT;
     if (typeof v.logY === 'boolean') $('rtmLogY').checked = v.logY;
+    if (v.profile) {
+      if (v.profile.species) state.profileSpecies = v.profile.species;
+      if (typeof v.profile.times === 'string') { state.profileTimes = v.profile.times; $('rtmProfileTimes').value = v.profile.times; }
+      if (typeof v.profile.log === 'boolean') $('rtmProfileLog').checked = v.profile.log;
+    }
     if (v.grad) {
       if (v.grad.species) state.gradSpecies = v.grad.species;
       if (v.grad.view) { state.gradView = v.grad.view; $('rtmGradView').value = v.grad.view; }
+      if (typeof v.grad.logT === 'boolean') $('rtmGradLogT').checked = v.grad.logT;
     }
     if (v.comp) {
       // The Composition tab's own log-time box, where a path through the run is coloured by its times.
@@ -7216,7 +7350,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

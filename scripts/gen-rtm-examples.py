@@ -1737,6 +1737,116 @@ _after('redoxladder', dict(
 ))
 
 
+_after('redoxzones', dict(
+    id='redoxplume',
+    group='Chemistry',
+    label="Redox zones along a plume: leachate into an oxic aquifer",
+    about="Leachate rich in organic carbon flowing into an oxic aquifer whose sediment holds pyrolusite, ferrihydrite and calcite, the organic carbon oxidised at a rate as it travels and its electrons taken by the couples. Run it: the Gradient tab draws the pe over time and distance as contours, the zones in space and moving downstream as each oxidant is used up -- from the inlet the leachate's sulfate reduced and then methane, the iron zone where ferrihydrite dissolves and siderite takes the iron(2), the manganese zone, the nitrate, and the oxic water ahead of the plume. Against distance draws what is ticked against time together at the end: the pe on the right, its steps the zones, and the oxygen, the nitrate, manganese(2), ferrihydrite and siderite, the sulfate, the methane and the organic carbon left.",
+    text='''# Leachate rich in organic carbon flowing into an oxic aquifer whose sediment
+# holds pyrolusite, ferrihydrite and calcite: the organic carbon, CH2O, is
+# oxidised at a rate as it travels, its electrons taken by the couples, and
+# the zones form in space. From the inlet: the leachate's sulfate reduced,
+# FeS taking the sulfide, then methane where the oxidants are used up; the
+# iron zone, ferrihydrite dissolving and siderite taking the iron(2); the
+# manganese zone; the nitrate; and the oxic water ahead of the plume. Each
+# moves downstream as its oxidant is used up. Times are in days and the
+# velocity in metres a day. The constants are phreeqc.dat's; the waters and
+# the sediment are made up.
+
+<SETTINGS>
+MODE = transport
+CELLS = 30
+LENGTH = 30
+VELOCITY = 0.5
+TIME_UNIT = day
+ADVECTION = 1
+ADVECTION_SCHEME = limited
+DIFFUSION = 1
+PECLET = 100
+LEFT = robin
+RIGHT = free
+TEND = 40
+ACTIVITY = davies
+EQUILIBRATE = always
+
+<SPECIES>
+H+           2.2e-7   left=2e-7
+OH-          4.5e-8   left=5e-8
+e-           electron
+Na+          1.5e-3   left=9.5e-3
+K+           5e-5     left=5e-5
+Ca+2         6e-4     left=1e-3
+Mg+2         2e-4     left=2e-4
+Cl-          6e-4     left=3e-3
+O2           2.5e-4   left=0
+NO3-         1.5e-4   left=0
+NO2-         0
+N2           0
+SO4-2        3e-4     left=2e-4
+HSO4-        0
+HS-          0
+H2S          0
+CO3-2        0
+HCO3-        1.8e-3   left=1e-2
+CO2          1e-3     left=5e-3
+CH4          0
+CaHCO3+      0
+CaCO3        0
+CH2O         0        left=3e-3     # the leachate's organic carbon
+Fe+2         0
+FeOH+        0
+Fe+3         0
+FeOH+2       0
+Fe(OH)2+     0
+Fe(OH)3      0
+Fe(OH)4-     0
+Mn+2         0
+Pyrolusite   5e-4     mineral
+Ferrihydrite 5e-3     mineral
+Calcite      5e-3     mineral
+FeS_ppt      0        mineral
+Siderite     0        mineral
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,                       logK = -14
+2 H2O <=> O2 + 4 H+ + 4 e-,             logK = -86.08
+NO3- + 2 H+ + 2 e- <=> NO2- + H2O,      logK = 28.57
+2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O,  logK = 207.08
+SO4-2 + H+ <=> HSO4-,                   logK = 1.988
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O,    logK = 33.65
+HS- + H+ <=> H2S,                       logK = 6.994
+CO3-2 + H+ <=> HCO3-,                   logK = 10.329
+CO3-2 + 2 H+ <=> CO2 + H2O,             logK = 16.681
+CO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O,   logK = 41.071
+Ca+2 + CO3-2 + H+ <=> CaHCO3+,          logK = 10.91
+Ca+2 + CO3-2 <=> CaCO3,                 logK = 3.224
+Fe+2 + H2O <=> FeOH+ + H+,              logK = -9.5
+Fe+2 <=> Fe+3 + e-,                     logK = -13.02
+Fe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19
+Fe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56
+Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6
+Pyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O,     logK = 41.38
+Ferrihydrite + 3 H+ <=> Fe+3 + 3 H2O,          logK = 4.891
+Calcite <=> Ca+2 + CO3-2,                      logK = -8.48
+FeS_ppt + H+ <=> Fe+2 + HS-,                   logK = -3.915
+Siderite <=> Fe+2 + CO3-2,                     logK = -10.89
+
+<PARAMETERS>
+kdoc  all  0.05      # a day: a twentieth of the organic carbon oxidised each day
+
+<REACTIONS>
+# CH2O, as it is oxidised: CO3-2 + 6 H+ + 4 e-, less 2 H2O. Its electrons go
+# to whatever in the water takes them, as the couples have it.
+CH2O => CO3-2 + 6 H+ + 4 e-, r = kdoc*[CH2O]
+''',
+    view={'tab': 'gradient', 'grad': {'species': 'pe', 'view': 'contour', 'logT': False},
+          'profile': {'species': '*ticked', 'times': '', 'log': False},
+          'picked': ['pe', 'O2', 'tot(N(5))', 'Mn+2', 'Ferrihydrite', 'Siderite', 'tot(S(6))', 'tot(C(-4))', 'tot(C(0))'],
+          'logT': False, 'logY': False},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

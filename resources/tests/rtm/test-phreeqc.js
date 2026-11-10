@@ -4017,6 +4017,84 @@ function againstCouples(engine) {
 }
 
 /* ======================================================================
+   A REDOX PLUME, against PHREEQC's TRANSPORT: leachate with dissolved
+   organic carbon -- a species of the input's own, Doc, oxidised first-order
+   by a KINETICS reactant whose formula takes it out and puts CH2O in --
+   into an oxic aquifer with pyrolusite, ferrihydrite and calcite, FeS and
+   siderite free to form; handed off with everything, the column run, and
+   PHREEQC's cells at the end against the page's after a pore volume. The
+   two transport schemes differ -- PHREEQC shifts a cell's water whole and
+   then reacts it for the step, the page mixes as the water goes -- and the
+   fronts between the zones sit where each puts them: compared as the
+   cells are refined, the column's inventory of each zone's mineral and
+   valence state, and the pH and the organic carbon cell by cell, nearer
+   PHREEQC's at 20 cells than at 10.
+   ====================================================================== */
+function againstRedoxPlume(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const input = (n) => `SOLUTION_MASTER_SPECIES\n Doc   Doc   0   Doc   12.011\nSOLUTION_SPECIES\n Doc = Doc\n  log_k 0\n`
+    + 'RATES\n Doc_ox\n -start\n 10 rate = PARM(1) * TOT("Doc")\n 20 SAVE rate * TIME\n -end\n'
+    + 'SOLUTION 0  a leachate\n units mmol/kgw\n pH 6.65\n Na 9.5\n Cl 3\n Ca 1\n Mg 0.2\n K 0.05\n C(4) 15\n S(6) 0.2\n Doc 3\n'
+    + `SOLUTION 1-${n}  the aquifer's water\n units mmol/kgw\n pH 6.6\n Na 1.5\n Cl 0.6\n Ca 0.6\n Mg 0.2\n K 0.05\n O(0) 0.5\n`
+    + ' N(5) 0.15\n S(6) 0.3\n C(4) 2.8\n'
+    + `EQUILIBRIUM_PHASES 1-${n}\n Pyrolusite 0 5e-4\n Fe(OH)3(a) 0 5e-3\n FeS(ppt) 0 0\n Siderite 0 0\n Calcite 0 5e-3\n`
+    + `KINETICS 1-${n}\n Doc_ox\n  -formula Doc -1 CH2O 1\n  -m 1\n  -parms 5.787037e-7\n  -tol 1e-12\n`
+    + `TRANSPORT\n -cells ${n}\n -lengths ${20 / n}\n -shifts ${n}\n -time_step ${(20 / n) / (0.5 / 86400)}\n -dispersivities 0.3\n`
+    + ` -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${n}\n -punch_frequency ${n}\nEND\n`;
+  const phases = ['Pyrolusite', 'Fe(OH)3(a)', 'FeS(ppt)', 'Siderite', 'Calcite'];
+  const column = (n) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'plume', text: input(n) }, activity: true, exact: true, redox: true,
+      phases: true, floor: 0 });
+    const m = RtmModel.compile(res.text);
+    const keys = m.quantities.filter((q) => /^tot\(.+\(.+\)\)$/.test(q.key)).map((q) => q.key);
+    const states = keys.map((k) => k.slice(4, -1));
+    engine.load(dbText);
+    const rows = engine.run(`SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH CELL_NO, ${states.map((s) => `TOT("${s}")`).join(', ')}\n`
+      + ` 20 PUNCH ${phases.map((p) => `EQUI("${p}")`).join(', ')}, -LA("H+"), TOT("Doc")\n${input(n)}`).map((r) => r.map(Number));
+    const pq = new Map();
+    for (const r of rows) if (r[0] >= 1 && r[0] <= n) pq.set(r[0], r);
+    const tend = m.settings.TEND;
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend, rtol: 1e-8, atol: 1e-20 });
+    const y = Float64Array.from(m.toConcentrations(run.y[run.y.length - 1], tend));
+    const ns = m.speciesNames.length;
+    const qi = Int32Array.from([...keys, 'pH'].map((k) => m.quantities.findIndex((q) => q.key === k)));
+    const out = new Float64Array(qi.length);
+    const iDoc = m.speciesNames.indexOf('Doc');
+    const inv = { page: new Map(), pq: new Map() };
+    const add = (side, k, v) => inv[side].set(k, (inv[side].get(k) || 0) + v);
+    let pH = 0;
+    let doc = 0;
+    for (let c = 0; c < n; c++) {
+      const r = pq.get(c + 1);
+      m.quantitiesAt(y, tend, c, qi, out);
+      states.forEach((s, j) => { add('page', s, out[j]); add('pq', s, r[1 + j]); });
+      phases.forEach((p, j) => { add('page', p, y[c * ns + m.speciesNames.indexOf(p)]); add('pq', p, r[1 + states.length + j]); });
+      add('page', 'Doc', y[c * ns + iDoc]);
+      add('pq', 'Doc', r[1 + states.length + phases.length + 1]);
+      pH = Math.max(pH, Math.abs(out[keys.length] - r[1 + states.length + phases.length]));
+      doc = Math.max(doc, Math.abs(y[c * ns + iDoc] - r[1 + states.length + phases.length + 1]));
+    }
+    const off = (k) => Math.abs(inv.page.get(k) - inv.pq.get(k)) / Math.max(Math.abs(inv.pq.get(k)), Math.abs(inv.page.get(k)));
+    return { off, pH, doc, events: run.events ? run.events.length : 0, zones: [...pq.values()] };
+  };
+  const c10 = column(10);
+  const c20 = column(20);
+  // Each zone's mineral and valence state, and what the organic carbon becomes.
+  const zoneKeys = ['Fe(OH)3(a)', 'Siderite', 'FeS(ppt)', 'Calcite', 'S(6)', 'S(-2)', 'C(4)', 'C(-4)', 'Mn(2)', 'Doc'];
+  const nearer = zoneKeys.filter((k) => !(c20.off(k) < c10.off(k)));
+  const worst20 = Math.max(...zoneKeys.map((k) => c20.off(k)));
+  check('a redox plume -- leachate with dissolved organic carbon, oxidised first-order by a KINETICS reactant that takes it out, into '
+    + 'an oxic aquifer with pyrolusite, ferrihydrite and calcite, FeS and siderite free to form -- handed off and run against '
+    + 'PHREEQC\'s TRANSPORT after a pore volume: the column\'s inventory of each zone\'s mineral and valence state nearer PHREEQC\'s '
+    + 'at 20 cells than at 10, and within 20 % at 20; the pH and the organic carbon cell by cell nearer too',
+  !nearer.length && worst20 < 0.2 && c20.pH < c10.pH && c20.doc < c10.doc && c20.events > 0,
+  `${zoneKeys.map((k) => `${k} ${(100 * c10.off(k)).toFixed(1)} -> ${(100 * c20.off(k)).toFixed(1)} %`).join(', ')}; pH ${c10.pH.toFixed(3)} -> `
+    + `${c20.pH.toFixed(3)}, Doc ${(1000 * c10.doc).toFixed(3)} -> ${(1000 * c20.doc).toFixed(3)} mM; ${c20.events} mineral events at 20 cells`
+    + `${nearer.length ? `; not nearer: ${nearer.join(', ')}` : ''}`);
+}
+
+/* ======================================================================
    REDOX ZONES, against PHREEQC: a water with oxygen, nitrate, sulfate and
    carbonate, with pyrolusite, ferrihydrite and FeS(ppt) as its
    EQUILIBRIUM_PHASES, handed off with every species phreeqc.dat has of its
@@ -5035,6 +5113,8 @@ function againstKineticsHandOff(engine) {
   againstCouples(wasm);
   console.log('\n--- redox zones: organic carbon at a steady rate against PHREEQC\'s REACTION, each valence state\'s total ---');
   againstRedoxZones(wasm);
+  console.log('\n--- a redox plume: leachate into an oxic aquifer against PHREEQC\'s TRANSPORT, nearer as the cells are refined ---');
+  againstRedoxPlume(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');

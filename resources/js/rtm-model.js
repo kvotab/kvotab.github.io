@@ -6100,12 +6100,12 @@
    * Where a group that is there stands, from its members' amounts (amount(q)):
    * 1, or for a binary solid solution with a miscibility gap at the cell's
    * temperature, 2 with its composition inside the gap and 3 above it; 0
-   * where there is none of it.
+   * where there is none of it, or no more than `tiny`.
    */
-  function groupMode(G, amount, cell) {
+  function groupMode(G, amount, cell, tiny = 0) {
     let N = 0;
     for (let q = 0; q < G.rel.length; q++) N += amount(q);
-    if (!(N > 0)) return 0;
+    if (!(N > tiny)) return 0;
     if (G.def.coef !== 'binary') return 1;
     const { gap } = binaryAt(G.def, G.def.tk ? G.def.tk[cell] : G.def.tk0);
     if (!gap) return 1;
@@ -12576,7 +12576,8 @@
       return Number.isFinite(lo) ? lo : 0;
     };
     const atBound = (c, r) => { const p = present[c * ne + r]; return p === 0 || p === 4; };
-    const modeOf = (c, r, M) => (M >= hiAt(c, r) ? 4 : M > loAt(c, r) ? 1 : 0);
+    // Within `tiny` of a bound, at it.
+    const modeOf = (c, r, M, tiny = 0) => (M >= hiAt(c, r) - tiny ? 4 : M > loAt(c, r) + tiny ? 1 : 0);
     // Held, an event watches its amount against its bounds, the lower where it is used up, and which it nears.
     const nearHi = new Uint8Array(nc * ne);
     const heldEvent = (c, r, M) => {
@@ -13164,9 +13165,26 @@
         const b = c * ns;
         for (let j = 0; j < nb; j++) totalsCell[j] = y[tIndex(c, j)];
         for (let k = 0; k < na; k++) wCell[k] = massOf[b + active[k]];
+        /*
+          READ BACK FROM A STATE, a mineral within a rounding error of a
+          bound is at it -- a rounding error of the cell's largest total --
+          and a group with no more than that of it is not there. Projected,
+          what the run held at none is none and an error of the arithmetic,
+          1e-33 of FeS(ppt) in an oxic cell, and read as some it is held at
+          saturation where it cannot be: a hundred iterations that do not
+          settle, three hundred more before the one that is not there is
+          found, and where a cell never settles the whole state is shown as
+          the solver left it -- on a column of a plume's redox zones, 223
+          stored points of 303, at 110 ms each. Those errors come to 1e-24 of
+          the largest total and less. No more than a rounding error: a solid
+          solution a step after it forms holds 7e-13 of it, and read as none
+          its composition would be none either.
+        */
+        let tiny = 0;
+        if (opts.fromState) for (let j = 0; j < nb; j++) tiny = Math.max(tiny, Number.EPSILON * Math.abs(totalsCell[j]));
         const pres = opts.fromState
-          ? Uint8Array.from(eqs, (eq, r) => (grpOf[r] ? groupMode(grpOf[r], (q) => y[b + grpOf[r].mem[q]], c)
-            : (eq.mineral < 0 ? 1 : modeOf(c, r, y[b + eq.mineral]))))
+          ? Uint8Array.from(eqs, (eq, r) => (grpOf[r] ? groupMode(grpOf[r], (q) => y[b + grpOf[r].mem[q]], c, tiny)
+            : (eq.mineral < 0 ? 1 : modeOf(c, r, y[b + eq.mineral], tiny))))
           : present.subarray(c * ne, (c + 1) * ne);
         /*
           Projected, the held species in the state carry no weight and may
@@ -13231,11 +13249,9 @@
       /*
         Where the speciation of its totals does not settle, the state as the
         solver left it, its held species on the relations to the solver's
-        tolerance: what does not settle is no speciation. Organic carbon into
-        a water with ferrihydrite, a step after pyrolusite had dissolved away:
-        113 iterations to a residual of 4e-4, the ferrihydrite shown dissolved
-        into the water as iron(3) and the pe at 8 between points at 5.7 and
-        4.6.
+        tolerance: what does not settle is no speciation. One stopped at a
+        residual of 4e-4 showed a water's ferrihydrite dissolved into it as
+        iron(3), and the pe at 8 between points at 5.7 and 4.6.
       */
       if (!consistentInitial(t, z, { rtol: 1e-12, fromState: true }).solved) z = Float64Array.from(y);
       const out = new Float64Array(nBase);
