@@ -1803,6 +1803,28 @@
     + 'Tm Yb Lu Hf Ta W Re Os Ir Pt Au Hg Tl Pb Bi Po At Rn Fr Ra Ac Th Pa U Np Pu Am Cm Bk Cf Es Fm Md No Lr Rf Db Sg '
     + 'Bh Hs Mt Ds Rg Cn Nh Fl Mc Lv Ts Og').split(' '));
 
+  /*
+    THE STANDARD ATOMIC WEIGHTS, IUPAC's abridged to five figures (2021),
+    and for an element that has none the mass number of its longest-lived
+    isotope: a species' formula mass from its name (the Durov diagram's
+    total dissolved solids), and what tells a nuclide's mass number from a
+    formula's count (elementsOf).
+  */
+  const ATOMIC_WEIGHTS = {
+    H: 1.0080, He: 4.0026, Li: 6.94, Be: 9.0122, B: 10.81, C: 12.011, N: 14.007, O: 15.999, F: 18.998, Ne: 20.180,
+    Na: 22.990, Mg: 24.305, Al: 26.982, Si: 28.085, P: 30.974, S: 32.06, Cl: 35.45, Ar: 39.95, K: 39.098, Ca: 40.078,
+    Sc: 44.956, Ti: 47.867, V: 50.942, Cr: 51.996, Mn: 54.938, Fe: 55.845, Co: 58.933, Ni: 58.693, Cu: 63.546, Zn: 65.38,
+    Ga: 69.723, Ge: 72.630, As: 74.922, Se: 78.971, Br: 79.904, Kr: 83.798, Rb: 85.468, Sr: 87.62, Y: 88.906, Zr: 91.224,
+    Nb: 92.906, Mo: 95.95, Tc: 98, Ru: 101.07, Rh: 102.91, Pd: 106.42, Ag: 107.87, Cd: 112.41, In: 114.82, Sn: 118.71,
+    Sb: 121.76, Te: 127.60, I: 126.90, Xe: 131.29, Cs: 132.91, Ba: 137.33, La: 138.91, Ce: 140.12, Pr: 140.91, Nd: 144.24,
+    Pm: 145, Sm: 150.36, Eu: 151.96, Gd: 157.25, Tb: 158.93, Dy: 162.50, Ho: 164.93, Er: 167.26, Tm: 168.93, Yb: 173.05,
+    Lu: 174.97, Hf: 178.49, Ta: 180.95, W: 183.84, Re: 186.21, Os: 190.23, Ir: 192.22, Pt: 195.08, Au: 196.97, Hg: 200.59,
+    Tl: 204.38, Pb: 207.2, Bi: 208.98, Po: 209, At: 210, Rn: 222, Fr: 223, Ra: 226, Ac: 227, Th: 232.04,
+    Pa: 231.04, U: 238.03, Np: 237, Pu: 244, Am: 243, Cm: 247, Bk: 247, Cf: 251, Es: 252, Fm: 257, Md: 258, No: 259,
+    Lr: 266, Rf: 267, Db: 268, Sg: 269, Bh: 270, Hs: 269, Mt: 278, Ds: 281, Rg: 282, Cn: 285, Nh: 286, Fl: 289, Mc: 290,
+    Lv: 293, Ts: 294, Og: 294,
+  };
+
   /**
    * What a species' name is made of, PHREEQC's way of writing a formula, its
    * charge left off: Ca+2 one Ca; CaHCO3+ one each of Ca, H and C and three
@@ -1812,10 +1834,21 @@
    * count, or null where the name cannot be read as one -- e-, (Ca. A
    * symbol that is no element (X, Hfo_w, Tracer) is kept: what it counts in
    * is for the caller to say.
+   *
+   * A nuclide's name, an element and its mass number -- U238, Ra226+2, C14
+   * -- is one atom of it, not that many: a number between 0.75 and 1.35
+   * times the element's atomic weight is a mass number, where a formula's
+   * count is far from it (O2, H2, S8, C60). Tritium, H3, is one of its own.
    */
   function elementsOf(name) {
     let s = String(name).replace(/\(g\)$/, '').replace(/(?:[+-]+[0-9]*)$/, '');
     if (!s || !/^[A-Z(]/.test(s)) return null;
+    const nuclide = /^([A-Z][a-z]?)(\d+)$/.exec(s);
+    if (nuclide && ELEMENT_SYMBOLS.has(nuclide[1])) {
+      const w = ATOMIC_WEIGHTS[nuclide[1]];
+      const A = Number(nuclide[2]);
+      if ((w && A >= 0.75 * w && A <= 1.35 * w) || s === 'H3') return new Map([[nuclide[1], 1]]);
+    }
     const total = new Map();
     const addTo = (m, el, n) => m.set(el, (m.get(el) || 0) + n);
     for (const piece of s.split(':')) {
@@ -13954,5 +13987,5 @@
     readSections, derivative, symmetricEigen, pca,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, readData, withValue, valueIn, tunables, waterViscosity };
+    SECTIONS, SETTINGS, elementsOf, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };
 }));

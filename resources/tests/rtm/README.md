@@ -505,6 +505,15 @@ days, to 1e-9. And at a decaying nuclide's steady state (on its
 inventory, R = 10 from a parameter) what comes in less what goes out is
 k times what the column holds to 2.0e-10 -- the weights against the
 fluxes through the ends, with no summing over stored points in it.
+A nuclide's name is one atom of its element (since 2026-11-10): an
+element and a number between 0.75 and 1.35 times its atomic weight is a
+mass number -- U238, Ra226+2, C14, Cl36, He4, I129, Cs135, and tritium's
+H3 -- where a formula's count is far from it and stays a count: O2, H2,
+S8, C60, CaCl2. The U-238 chain's tot(U) is then its two uranium
+nuclides' sum, by hand, and its uranium's budget the budgets of U238 and
+U234 added, to 1.8e-15; the far field's Ra226 and the release history's
+I129 and Cs135 each one atom. Until then each counted as its mass number
+of atoms: tot(U) was 238 [U238] + 234 [U234].
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.

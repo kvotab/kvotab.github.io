@@ -7909,6 +7909,51 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `the nuclide's steady balance off by ${steady.toExponential(1)}`);
   }
   /*
+    A nuclide's name is one atom of its element: an element and a number between 0.75 and 1.35 times its atomic weight
+    is a mass number (U238, Ra226+2, C14, Cl36, He4; and tritium's H3), where a formula's count is far from it (O2, N2, H2,
+    S8, C60, CaCl2). The U-238 chain's uranium then the sum of its two nuclides' amounts -- tot(U) by hand, and the budget
+    of the element the budgets of U238 and U234 added -- and the far field's and the release history's nuclides each one.
+  */
+  {
+    const read = (nm) => { const m = RtmModel.elementsOf(nm); return m ? [...m].map(([e, c]) => `${e}${c === 1 ? '' : c}`).join(' ') : 'null'; };
+    const names = { U238: 'U', 'Ra226+2': 'Ra', C14: 'C', Cl36: 'Cl', He4: 'He', H3: 'H', I129: 'I', Cs135: 'Cs', O2: 'O2', N2: 'N2',
+      H2: 'H2', S8: 'S8', C60: 'C60', CaCl2: 'Ca Cl2', 'UO2+2': 'U O2', U3: 'U3', H2O: 'H2 O' };
+    const misread = Object.entries(names).filter(([nm, want]) => read(nm) !== want).map(([nm, want]) => `${nm} as ${read(nm)}, not ${want}`);
+    const exs = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES;
+    const chain = exs.find((e) => e.id === 'u238chain').text;
+    const cm = RtmModel.compile(chain);
+    const cy = cm.toConcentrations ? cm.toConcentrations(cm.initialState()) : cm.initialState();
+    // A state of its own, every nuclide some: tot(U) the two uranium nuclides', each once.
+    const cs = Float64Array.from(cy, (v, i) => (i < cm.speciesNames.length ? 0.1 * (i + 1) : v));
+    const totU = new Float64Array(1);
+    cm.quantitiesAt(cs, 0, 0, Int32Array.of(cm.quantities.findIndex((q) => q.key === 'tot(U)')), totU);
+    const byHand = cs[cm.speciesNames.indexOf('U238')] + cs[cm.speciesNames.indexOf('U234')];
+    let run = null;
+    handleRtmMessage({ type: 'run', id: 31, text: chain, solver: { ...solverSw, rtol: 1e-6 } }, (msg) => { if (msg.type === 'result') run = msg; });
+    const budget = (of) => { let b = null; handleRtmMessage({ type: 'budget', id: 32, runKey: run.runKey, of }, (msg) => { b = msg; }); return b; };
+    const bU = budget({ kind: 'element', name: 'U' });
+    const b8 = budget({ kind: 'species', name: 'U238' });
+    const b4 = budget({ kind: 'species', name: 'U234' });
+    let apart = 0;
+    for (let i = 0; i < run.n; i++) {
+      apart = Math.max(apart, Math.abs(bU.total[i] - b8.total[i] - b4.total[i]) / Math.max(bU.total[i], 1e-300),
+        Math.abs(bU.cumOut[i] - b8.cumOut[i] - b4.cumOut[i]) / Math.max(bU.cumOut[i], 1e-300));
+    }
+    const once = (id, el) => {
+      const m = RtmModel.compile(exs.find((e) => e.id === id).text);
+      const e = m.composition.elements.find((x) => x.el === el);
+      return e ? e.terms.map(([k, c]) => `${m.speciesNames[k]}x${c}`).join(' ') : 'none';
+    };
+    const fr = [once('farfield', 'Ra'), once('releasehistory', 'I'), once('releasehistory', 'Cs')];
+    check('a nuclide\'s name is one atom of its element -- U238, Ra226+2, C14, Cl36, He4, I129, Cs135, tritium\'s H3 -- and a '
+      + 'formula\'s count stays its count, O2, H2, S8, C60, CaCl2; the U-238 chain\'s tot(U) its two uranium nuclides\' sum, '
+      + 'its uranium\'s budget theirs added, and the far field\'s and the release history\'s nuclides each one atom',
+    !misread.length && Math.abs(totU[0] / byHand - 1) < 1e-15 && apart < 1e-12
+      && fr.join(' | ') === 'Ra226x1 | I129x1 | Cs135x1',
+    `${misread.join(', ') || 'every name as it should be'}; tot(U) ${totU[0]} for ${byHand}; the budgets apart by `
+      + `${apart.toExponential(1)}; ${fr.join(' | ')}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a
