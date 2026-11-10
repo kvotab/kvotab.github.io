@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110d';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -793,7 +793,7 @@
     // Boundaries stopped are not asked for again: the map stays as its points.
     if (dgBoundsAsked) dgBoundsAsked.res.bounds.set(dgBoundsAsked.sig, null);
     dgBoundsAsked = null;
-    if (dgLadderAsked) dgLadderAsked.res.ladders.set(dgLadderAsked.sig, null);
+    if (dgLadderAsked) (dgLadderAsked.couples ? dgLadderAsked.res.couples : dgLadderAsked.res.ladders).set(dgLadderAsked.sig, null);
     dgLadderAsked = null;
     fitBusy = false;
     unBusy = false;
@@ -3330,9 +3330,14 @@
     // A ladder of the couples: along pe or Eh, the pH held, where the model has a couple.
     const ladder = !two && (dgResult.axes[0].kind === 'pe' || dgResult.axes[0].kind === 'Eh') && dgResult.pHAt !== null
       && !!(dgResult.composition && dgResult.composition.couples && dgResult.composition.couples.length);
+    // The couples' lines: over pH and pe or Eh, where the model has a couple.
+    const kinds = dgResult.axes.map((ax) => ax.kind);
+    const lines = two && kinds.includes('pH') && (kinds.includes('pe') || kinds.includes('Eh'))
+      && !!(dgResult.composition && dgResult.composition.couples && dgResult.composition.couples.length);
     const opts = two
       ? [['predominance', 'the species that holds most of an element'], ['phase', 'the phase furthest over saturation, or at it'],
-        ['stable', 'the phases of an element, the most stable per mole of it'], ['contour', 'a species or a quantity, as contours']]
+        ['stable', 'the phases of an element, the most stable per mole of it'],
+        ...(lines ? [['couples', 'the redox couples, as lines']] : []), ['contour', 'a species or a quantity, as contours']]
       : [...(ladder ? [['ladder', 'the redox couples, as a ladder']] : []),
         ['shares', 'the species of an element, as shares'], ['logc', 'the species of an element, as log concentrations'],
         ['si', 'the saturation indices'], ['quantity', 'a species or a quantity']];
@@ -3350,7 +3355,7 @@
     $('rtmDgIn').value = d.in;
     const byEl = ['shares', 'logc', 'predominance', 'stable'].includes(d.show);
     $('rtmDgElWrap').hidden = !byEl;
-    $('rtmDgInWrap').hidden = !(byEl || d.show === 'ladder') || d.show === 'stable';
+    $('rtmDgInWrap').hidden = !(byEl || d.show === 'ladder' || d.show === 'couples') || d.show === 'stable';
     $('rtmDgQWrap').hidden = !(d.show === 'quantity' || d.show === 'contour');
     if (!speciesNames().includes(d.q) && !quantityOf(d.q)) d.q = quantityOf('pH') ? 'pH' : (speciesNames()[0] || '');
     $('rtmDgQ').innerHTML = pickerOptions(d.q);
@@ -3422,7 +3427,7 @@
       // What the boundaries of a map are worked out from, and each map's once they are: null where they could not be.
       dgResult = { reply, axes, composition: state.compiled.composition, at: d.at, cell: d.cell, text, cellIndex: d.cell * stride,
         runKey: d.at === 'end' ? r.runKey : null, said, saidKind: reply.failed ? 'warn' : 'ok', bounds: new Map(), pHAt,
-        ladders: new Map() };
+        ladders: new Map(), couples: new Map() };
       setProgress(null);
       setStatus(said, dgResult.saidKind);
       renderDgShow();
@@ -3526,6 +3531,7 @@
       return;
     }
     // Two axes: a grid, y outer and x inner.
+    if (d.show === 'couples') { drawDgCouples(plot, note, fail, where); return; }
     const ys = Array.from(rp.y);
     const n1 = rp.n1;
     const n2 = rp.n2;
@@ -3857,14 +3863,7 @@
     const inCell = d.in === 'all';
     const sig = `ladder|${d.in}`;
     const names = rp.species;
-    // Each couple's two states, in the water or the whole cell, and any species of its element whose state is untold.
-    const items = C.couples.map((cp) => {
-      const e = C.elements.find((x) => x.el === cp.el);
-      const terms = e ? e.terms.filter((tm) => inCell || tm[2] === 'water') : [];
-      return { cp, hi: terms.filter((tm) => tm[3] === cp.hi).map(([k, n]) => [k, n]),
-        lo: terms.filter((tm) => tm[3] === cp.lo).map(([k, n]) => [k, n]),
-        untold: terms.filter((tm) => tm[3] === null).map(([k]) => names[k]) };
-    });
+    const items = dgCoupleItems(C, inCell, names);
     const asked = items.filter((it) => !it.untold.length && it.hi.length && it.lo.length);
     if (!res.ladders.has(sig)) {
       Plotly.purge(plot);
@@ -3977,6 +3976,146 @@
       + 'is in is not told by a name or a relation');
     if (L.unsolved) parts.push(`${L.unsolved} not found exactly: the water did not settle between two points`);
     note.textContent = parts.join('; ');
+  }
+
+  /** Each couple's two states, in the water or the whole cell, and any species of its element whose state is untold. */
+  function dgCoupleItems(C, inCell, names) {
+    return C.couples.map((cp) => {
+      const e = C.elements.find((x) => x.el === cp.el);
+      const terms = e ? e.terms.filter((tm) => inCell || tm[2] === 'water') : [];
+      return { cp, hi: terms.filter((tm) => tm[3] === cp.hi).map(([k, n]) => [k, n]),
+        lo: terms.filter((tm) => tm[3] === cp.lo).map(([k, n]) => [k, n]),
+        untold: terms.filter((tm) => tm[3] === null).map(([k]) => names[k]) };
+    });
+  }
+
+  /**
+   * The redox couples across a map of pH and pe or Eh, as the textbooks draw a
+   * water's couples: each couple's line, where the water holds as much of its
+   * element in the oxidised state as in the reduced one -- the redox ladder's
+   * rung at every pH -- found by the worker as a map's boundaries are
+   * (rtmDiagramCouples); a colour to each element, a dash to each of its
+   * couples; where water gives way, dashed; and the water itself, marked.
+   */
+  function drawDgCouples(plot, note, fail, where) {
+    const res = dgResult;
+    const rp = res.reply;
+    const d = state.dg;
+    const [ax, ay] = res.axes;
+    const C = res.composition;
+    const inCell = d.in === 'all';
+    const sig = `couples|${d.in}`;
+    const items = dgCoupleItems(C, inCell, rp.species);
+    const asked = items.filter((it) => !it.untold.length && it.hi.length && it.lo.length);
+    if (!res.couples.has(sig)) {
+      Plotly.purge(plot);
+      note.textContent = `${where}; finding where each couple turns over across the map…`;
+      dgAskCouples(sig, asked);
+      return;
+    }
+    const got = res.couples.get(sig);
+    if (!got) { fail('Where the couples turn over could not be found: work the diagram out again.'); return; }
+    const R = got.reply;
+    const xs = Array.from(rp.x);
+    const ys = Array.from(rp.y);
+    const nameOf = (cp) => `${cp.ox.join(' + ')}/${cp.red.join(' + ')}`;
+    const els = [...new Set(C.couples.map((cp) => cp.el))];
+    const colourOf = (el) => DG_PALETTE[els.indexOf(el) % DG_PALETTE.length];
+    const DASHES = ['solid', 'dash', 'dot', 'dashdot', 'longdash'];
+    const seen = new Map();
+    const traces = [];
+    const rows = [];
+    const across = [];
+    const whole = [];
+    got.asked.forEach((it, q) => {
+      const c = R.couples[q];
+      const el = it.cp.el;
+      const nth = seen.get(el) || 0;
+      seen.set(el, nth + 1);
+      const name = nameOf(it.cp);
+      const states = `${el}(${Number(it.cp.hi.toFixed(3))})/${el}(${Number(it.cp.lo.toFixed(3))})`;
+      if (!c.lines.length) {
+        whole.push(`${name}, ${c.states.length ? (c.states[0] === 0 ? 'oxidised' : 'reduced') : 'none of it'} all over`);
+        return;
+      }
+      across.push(name);
+      c.lines.forEach((ln, j) => {
+        traces.push({ type: 'scatter', mode: 'lines', x: ln.x, y: ln.y, name, legendgroup: name, showlegend: j === 0,
+          line: { color: colourOf(el), width: 2, dash: DASHES[nth % DASHES.length] },
+          hovertemplate: `${esc(name)}, ${states}: as much in each<br>${esc(dgLabel(ax))} %{x:.4g}, ${esc(dgLabel(ay))} %{y:.4g}<extra></extra>` });
+        ln.x.forEach((x, i) => rows.push([name, x, ln.y[i]]));
+      });
+    });
+    traces.push(...dgWaterLines(ax, ay, xs, ys));
+    // The water itself, at its own pH and pe, its Eh at its own temperature.
+    if (R.waterPH !== null && R.waterPe !== null) {
+      const at = (kind) => (kind === 'pH' ? R.waterPH : kind === 'pe' ? R.waterPe : R.waterPe * R.ehPe);
+      const wx = at(ax.kind);
+      const wy = at(ay.kind);
+      const inside = (v, list) => v >= Math.min(...list) && v <= Math.max(...list);
+      if (inside(wx, xs) && inside(wy, ys)) {
+        traces.push({ type: 'scatter', mode: 'markers', x: [wx], y: [wy], name: 'this water',
+          marker: { size: 10, symbol: 'circle-open', color: themeColors().text, line: { width: 2 } },
+          hovertemplate: `this water: pH ${R.waterPH.toFixed(2)}, pe ${R.waterPe.toFixed(2)}<extra></extra>` });
+      }
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis = { ...layout.xaxis, title: { text: dgLabel(ax), font: { size: 11 } }, range: [Math.min(...xs), Math.max(...xs)] };
+    layout.yaxis = { ...layout.yaxis, title: { text: dgLabel(ay), font: { size: 11 } }, range: [Math.min(...ys), Math.max(...ys)] };
+    layout.legend = { font: { size: 10 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    dgTableNow = { head: ['couple', dgLabel(ax), dgLabel(ay)], rows, name: `rtm_couples_${ax.kind}_${ay.kind}` };
+    const parts = [`${where}; ${across.length} couple${across.length === 1 ? '' : 's'} turn${across.length === 1 ? 's' : ''} over on `
+      + `this map, each where the water holds as much of its element in either state`];
+    if (whole.length) parts.push(`not on it: ${whole.join('; ')}`);
+    const missing = items.filter((it) => !it.untold.length && !(it.hi.length && it.lo.length));
+    if (missing.length) {
+      parts.push(missing.map((it) => `${nameOf(it.cp)}, ${it.cp.el}(${Number((it.hi.length ? it.cp.lo : it.cp.hi).toFixed(3))}) not `
+        + `${inCell ? 'in the cell' : 'in the water'}`).join('; '));
+    }
+    const untold = items.filter((it) => it.untold.length);
+    if (untold.length) parts.push(`what state the ${untold.map((it) => it.cp.el).join(', ')} of ${[...new Set(untold.flatMap((it) => it.untold))].join(', ')} `
+      + 'is in is not told by a name or a relation');
+    const unsolved = R.couples.reduce((n, c) => n + c.unsolved, 0);
+    if (unsolved) parts.push(`${unsolved} point${unsolved === 1 ? '' : 's'} of a line not found exactly: the water did not settle there`);
+    note.textContent = parts.join('; ');
+  }
+
+  /** Each couple's line across the map, found by the worker from the diagram's points; one map at a time. */
+  async function dgAskCouples(sig, asked) {
+    const res = dgResult;
+    if (!res || dgLadderAsked) return;
+    if (res.at === 'end' && !(state.result && state.result.runKey === res.runKey)) return;
+    dgLadderAsked = { res, sig, couples: true };
+    const r = state.result;
+    const started = Date.now();
+    const ask = (withRun) => request({ type: 'diagramCouples', text: res.text, at: res.at, cell: res.cellIndex, axes: res.axes,
+      grid: res.reply.states, couples: asked.map((it) => ({ hi: it.hi, lo: it.lo })),
+      ...(res.at === 'end' ? { runKey: res.runKey } : {}),
+      ...(withRun ? { t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) },
+    (p) => {
+      setProgress(p.frac);
+      setStatus(`Finding where the couples turn over across the map: ${p.done.toLocaleString()} of ${p.npts.toLocaleString()}…`);
+    });
+    $('rtmStop').disabled = false;
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      res.couples.set(sig, { reply, asked });
+      if (dgResult === res) {
+        setStatus(`${res.said.replace(/\.$/, '')}; its couples' lines found in ${((Date.now() - started) / 1000).toFixed(2)} s.`,
+          res.saidKind);
+      }
+    } catch (e) {
+      res.couples.set(sig, null);
+      if (dgResult === res) setStatus(`Where the couples turn over could not be found: ${e.message}`, 'warn');
+    } finally {
+      setProgress(null);
+      if (dgLadderAsked && dgLadderAsked.res === res) dgLadderAsked = null;
+      $('rtmStop').disabled = !state.running && !dgBoundsAsked;
+      if (dgResult) drawDg();
+    }
   }
 
   /** Where each couple turns over, found by the worker from the diagram's points; one ladder at a time. */
@@ -6280,6 +6419,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**the species that holds most of an element**, in the water or the whole cell: over pH and pe or Eh, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C: in volts 1.229 − 0.0592 pH and −0.0592 pH.',
             '**the phase furthest over saturation, or at it**: a mineral stability diagram.',
             '**the phases of an element, the most stable per mole of it**: each phase\'s saturation index over its count of the element — aluminium in a silicate — the largest the phase the rest would turn into, the element kept in the solids, whatever of it is dissolved: over log a(H4SiO4) and log a(K+)/a(H+), Garrels and Christ\'s diagram of K-feldspar, muscovite, kaolinite and gibbsite. A phase without the element that comes to saturation on the map, quartz say, is dotted across it where it does.',
+            '**the redox couples, as lines**, over pH and pe or Eh: each couple of the redox ladder traced across the map, where the water holds as much of its element in either state — the textbooks\' diagram of a water\'s couples — a colour to each element and a dash to each couple, between where water gives way, the water itself marked. A couple that does not turn over on the map is said in the note.',
             '**a species or a quantity, as contours**: its log where it is an amount.',
             'A map\'s **boundaries** are found between the grid\'s points, the water speciated again there, to 1e-10; where three fields meet, the point is solved for. A field narrower than the grid can be missed.',
           ] : [

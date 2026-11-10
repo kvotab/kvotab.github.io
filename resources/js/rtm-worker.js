@@ -694,7 +694,63 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     };
     return { labelOf, disc, n: per ? none : none + 1 };
   }
-  throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance or phase.`);
+  /*
+    states: { hi: [[k, n], ...], lo: [[k, n], ...] } -- an element's amounts in
+    a couple's two valence states; the field is the state holding more of it,
+    the oxidised where they are as much, and between them the log of the one
+    amount over the other: the boundary is where the couple turns over, the
+    redox ladder's rung traced across the map.
+  */
+  if (crit.kind === 'states') {
+    if (!Array.isArray(crit.hi) || !Array.isArray(crit.lo) || !crit.hi.length || !crit.lo.length) {
+      throw new Error('A couple needs a species in each of its two valence states.');
+    }
+    const amount = (c, terms) => {
+      let s = 0;
+      for (const [k, n] of terms) s += n * Math.max(0, c[k]);
+      return s;
+    };
+    const lnRatio = (c) => Math.log(amount(c, crit.hi)) - Math.log(amount(c, crit.lo));
+    const labelOf = (c) => {
+      const d = lnRatio(c);
+      return Number.isNaN(d) ? -1 : d >= -RTM_BOUND_TIE ? 0 : 1;
+    };
+    const disc = (c, a) => (a === 0 ? 1 : -1) * lnRatio(c);
+    return { labelOf, disc, n: 2 };
+  }
+  throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance, phase or states.`);
+}
+
+/*
+  THE COUPLES ACROSS A MAP of pH and pe, or Eh: each couple's line, where the
+  water holds as much of its element in the oxidised state as in the reduced
+  one -- the boundary between the two, found as a map's boundaries are, the
+  redox ladder's rungs traced over the pH. With the water's own pe and pH.
+*/
+function rtmDiagramCouples(msg, post) {
+  const S = rtmDiagramSetup(msg);
+  if (!S) return { type: 'diagramCouples', id: msg.id, missing: true };
+  const { model, base, b, ns, axes, ehPe, cell } = S;
+  const kinds = axes.map((ax) => ax.kind);
+  if (axes.length !== 2 || !kinds.includes('pH') || !(kinds.includes('pe') || kinds.includes('Eh'))) {
+    throw new Error('The couples\' lines are a map\'s of pH and pe, or of pH and Eh.');
+  }
+  const couples = msg.couples || [];
+  const out = couples.map((cp, q) => {
+    const r = rtmDiagramBounds({ ...msg, criterion: { kind: 'states', hi: cp.hi, lo: cp.lo } }, post ? (p) => {
+      post({ ...p, frac: (q + (p.frac || 0)) / couples.length, done: q + 1, npts: couples.length });
+    } : null);
+    // Which state holds more at the map's corners, for a couple whose line does not cross it.
+    const L = r.labels;
+    return { lines: r.lines.map(({ x, y }) => ({ x, y })), unsolved: r.unsolved,
+      states: [...new Set(Array.from(L).filter((l) => l >= 0))] };
+  });
+  const iH = model.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  if (model.act) RtmModel.activityAt(model.act, base, b, lnG, new Float64Array(ns), cell);
+  const waterPe = model.electron >= 0 && base[b + model.electron] > 0 ? -Math.log10(base[b + model.electron]) : null;
+  const waterPH = iH >= 0 && base[b + iH] > 0 ? -(Math.log(base[b + iH]) + lnG[iH]) / Math.LN10 : null;
+  return { type: 'diagramCouples', id: msg.id, couples: out, ehPe, waterPe, waterPH };
 }
 
 /*
@@ -1631,6 +1687,14 @@ function handleRtmMessage(msg, post) {
   if (msg.type === 'diagramLadder') {
     try {
       post(rtmDiagramLadder(msg, post));
+    } catch (e) {
+      post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'diagramCouples') {
+    try {
+      post(rtmDiagramCouples(msg, post));
     } catch (e) {
       post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
     }

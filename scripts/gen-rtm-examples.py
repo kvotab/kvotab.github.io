@@ -1720,6 +1720,23 @@ FeS_ppt + H+ <=> Fe+2 + HS-,                   logK = -3.915
 ))
 
 
+_after('redoxladder', dict(
+    id='redoxcouples',
+    group='Equilibrium diagrams',
+    label="The same groundwater's couples across pH: a pe–pH diagram",
+    about="The groundwater of the redox ladder, its couples traced across pH 4 to 10: each a line where the water holds as much of the element in the couple's oxidised state as in its reduced one, the ladder's rung at every pH. Run it: the Diagrams tab draws nitrate's three lines, ferric to ferrous, sulfate to sulfide and carbonate to methane on a pe–pH diagram, between where water itself gives way, O₂ above and H₂ below, the water itself marked at its pH and pe.",
+    text=_retitled(_text('redoxladder'), '''# The groundwater of the redox ladder, its couples traced across pH 4 to 10:
+# each a line where the water holds as much of the element in the couple's
+# oxidised state as in its reduced one, the ladder's rung at every pH. The
+# Diagrams tab draws them on a pe-pH diagram between where water itself gives
+# way, O2 above and H2 below, the water itself marked at its pH and pe. The
+# constants are phreeqc.dat's; the water is made up.'''),
+    view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pH', 'sp': '', 'from': '4', 'to': '10', 'n': '61'},
+                                               'y': {'kind': 'pe', 'sp': '', 'from': '-10', 'to': '17', 'n': '55'}, 'show': 'couples',
+                                               'el': '', 'in': 'water', 'q': 'pH'}},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

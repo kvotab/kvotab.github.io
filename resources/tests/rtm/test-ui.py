@@ -204,6 +204,31 @@ Cl-   5e-5
 Fe+2 <=> Fe+3 + e-, logK = -13.02
 '''
 
+# Two couples, no complexes and no activities: iron(3) over iron(2) turns over at pe 13.02 whatever the pH; sulfate over
+# sulfide where log K = 9 pH + 8 pe, pe = (33.65 - 9 pH)/8.
+COUPLES_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = always
+
+<SPECIES>
+H+     1e-3
+OH-    1e-11
+e-     electron  pe=12
+Fe+2   1e-5
+Fe+3   1e-5
+SO4-2  1e-4
+HS-    0
+Na+    2.3e-4
+Cl-    5e-5
+
+<EQUILIBRIUM>
+ <=> H+ + OH-, logK = -14
+Fe+2 <=> Fe+3 + e-, logK = -13.02
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O, logK = 33.65
+'''
+
 SWEEP_MODEL = '''
 <SETTINGS>
 MODE = batch
@@ -582,7 +607,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '33:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '34:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1255,6 +1280,25 @@ async def main():
             eh_rung = await page.ev(rung)
             check('  along Eh: the same couple at 13.02 times the volts of a pe at 25 C, to 1e-9', isinstance(eh_rung, list)
                   and len(eh_rung) == 1 and abs(eh_rung[0] - 13.02 * per25) < 1e-9, True)
+            # The couples across a map of pH and pe: each a line where the water holds as much of its element in either state.
+            await set_text(page, COUPLES_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled:')", True, tries=40)
+            await dg(calc=[['rtmDgXKind', 'pH'], ['rtmDgXFrom', '2'], ['rtmDgXTo', '8'], ['rtmDgXN', '13'],
+                           ['rtmDgYKind', 'pe'], ['rtmDgYFrom', '-4'], ['rtmDgYTo', '14'], ['rtmDgYN', '19']],
+                     show=[['rtmDgShow', 'couples']])
+            await settle(page, "/turn over on this map/.test(document.getElementById('rtmDgNote').textContent)", True, tries=60, pause=0.25)
+            lines = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
+              const of = (name) => d.filter((t) => t.name === name && t.mode === 'lines');
+              const off = (ts, f) => Math.max(...ts.flatMap((t) => t.x.map((x, i) => Math.abs(t.y[i] - f(x)))));
+              const fe = of('Fe+3/Fe+2'), so = of('SO4-2/HS-');
+              return [d.filter((t) => t.mode === 'lines' && t.showlegend !== false && !(t.line && t.line.dash === 'dash' && !t.name))
+                .map((t) => t.name).join(' | '), fe.length, off(fe, () => 13.02) < 1e-9, so.length, off(so, (x) => (33.65 - 9 * x) / 8) < 1e-9,
+                Math.min(...so.flatMap((t) => t.x)) === 2, document.getElementById('rtmDgNote').textContent]; })()""")
+            check('the redox couples, as lines, over pH 2 to 8 and pe -4 to 14: iron(3) over iron(2) flat at pe 13.02, the relation\'s '
+                  'log K, and sulfate over sulfide along pe = (33.65 - 9 pH)/8, each to 1e-9; the note saying how many turn over',
+                  lines, ['Fe+3/Fe+2 | SO4-2/HS-', 1, True, 1, True, True,
+                          'cell 0 as it starts; 2 couples turn over on this map, each where the water holds as much of its element in '
+                          'either state'])
             await dg(calc=[['rtmDgYKind', ''], ['rtmDgXKind', 'pH']])
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
@@ -1431,6 +1475,25 @@ async def main():
                   '1 atm dashed, the water itself dotted at pe 4', [ok, lad],
                   [True, ['diagram', 'ladder', 'pHheld', 'NO3-/N2 > NO3-/NO2- > NO3-/NH4+ > Fe+3/Fe+2 > SO4-2/HS- > CO3-2/CH4', True,
                           '13.78 -7.00', '4.00', 'pe']])
+            # The same groundwater's couples across pH 4 to 10: nitrate to nitrite falling a pe for each pH, its two species of one
+            # charge, on (28.57 - 2 pH)/2 but for the water's activity in its relation, which the ionic strength moves (9e-7 in the
+            # slope, 3e-5 off the line); ferric to ferrous through the ladder's rung at pH 7.
+            ok = await example('redoxcouples', "/turn over on this map/.test(document.getElementById('rtmDgNote').textContent)")
+            pp = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
+              const of = (name) => d.find((t) => t.name === name && t.mode === 'lines');
+              const n2 = of('NO3-/NO2-'), fe = of('Fe+3/Fe+2');
+              const slope = Math.max(...n2.x.slice(1).map((x, i) => Math.abs((n2.y[i + 1] - n2.y[i]) / (x - n2.x[i]) + 1)));
+              const onK = Math.max(...n2.x.map((x, i) => Math.abs(n2.y[i] - (28.57 - 2 * x) / 2)));
+              const i7 = fe.x.findIndex((x) => Math.abs(x - 7) < 1e-9);
+              return [document.getElementById('rtmDgShow').value,
+                d.filter((t) => t.mode === 'lines' && t.name && t.showlegend !== false).map((t) => t.name).sort().join(' | '),
+                slope < 1e-5 && onK < 1e-4, i7 >= 0 && Math.abs(fe.y[i7] - 4.468) < 1e-3, d.filter((t) => t.line && t.line.dash === 'dash' && !t.name).length,
+                d.some((t) => t.name === 'this water')]; })()""")
+            check('the couples example opens on its pe-pH diagram over pH 4 to 10: the six couples as lines, nitrate to nitrite falling '
+                  'a pe for each pH to 1e-5 and on its log K\'s (28.57 - 2 pH)/2 to 1e-4, the water\'s activity in its relation '
+                  'between; ferric to ferrous through the ladder\'s 4.468 at pH 7; the water\'s limits dashed, the water itself marked',
+                  [ok, pp],
+                  [True, ['couples', 'CO3-2/CH4 | Fe+3/Fe+2 | NO3-/N2 | NO3-/NH4+ | NO3-/NO2- | SO4-2/HS-', True, True, 2, True]])
             # A silicate stability diagram: each phase per mole of aluminium over an activity ratio, quartz and silica dotted.
             ok = await example('silicates', "document.getElementById('rtmChartDg').data"
                                             ".filter((t) => / at saturation$/.test(t.name || '')).length === 2")

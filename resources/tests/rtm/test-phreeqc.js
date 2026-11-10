@@ -3953,6 +3953,70 @@ function againstLadder(engine) {
 }
 
 /* ======================================================================
+   THE COUPLES ACROSS A MAP, against PHREEQC: the ladder's handed-off water
+   over pH 4 to 10 and pe -4 to 10.7, where water itself holds, and over Eh
+   across and pH up, the other way round. Each couple's line found as a
+   map's boundaries are; at each of its points PHREEQC's SOLUTION of the
+   model's totals at that pH and pe gives the two valence states the same
+   amount of the element.
+   ====================================================================== */
+function againstCouples(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n pe 10\n Na 2\n Cl 2\n N 0.2\n S 1\n C 2\n Fe 0.01\nEND\n';
+  engine.load(dbText);
+  const text = P.waterToModel({ engine, database, water: { name: 'redox', text: water }, activity: true, exact: true, redox: true,
+    floor: 0 }).text;
+  const m = RtmModel.compile(text);
+  const C = m.composition;
+  const y0 = m.toConcentrations(m.initialState());
+  const totals = ['Na', 'Cl', 'N', 'S', 'C', 'Fe'].map((el) => ` ${el} ${C.elements.find((e) => e.el === el).terms
+    .filter((tm) => tm[2] === 'water').reduce((acc, [k, n]) => acc + n * y0[k], 0).toPrecision(17)}`).join('\n');
+  const reply = (msg) => { let r = null; handleRtmMessage(msg, (x) => { if (x.type !== 'progress') r = x; }); if (r.type === 'error') throw new Error(r.error); return r; };
+  const items = C.couples.map((cp) => {
+    const terms = C.elements.find((e) => e.el === cp.el).terms.filter((tm) => tm[2] === 'water');
+    return { cp, hi: terms.filter((tm) => tm[3] === cp.hi).map(([k, n]) => [k, n]), lo: terms.filter((tm) => tm[3] === cp.lo).map(([k, n]) => [k, n]) };
+  });
+  const per = RtmModel.ehPerPe(298.15);
+  const map = (axes, at) => {
+    const grid = reply({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes });
+    const R = reply({ type: 'diagramCouples', id: 2, text, at: 'start', cell: 0, axes, grid: grid.states,
+      couples: items.map((it) => ({ hi: it.hi, lo: it.lo })) });
+    let worst = 0;
+    let where = '';
+    let points = 0;
+    items.forEach((it, q) => {
+      const name = (s) => `${it.cp.el}(${s})`;
+      for (const ln of R.couples[q].lines) {
+        ln.x.forEach((x, i) => {
+          const [ph, pe] = at(x, ln.y[i]);
+          engine.load(dbText);
+          const rows = engine.run(`SOLUTION 1\n temp 25\n units mol/kgw\n pH ${ph.toPrecision(17)}\n pe ${pe.toPrecision(17)}\n${totals}\n`
+            + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH TOT("${name(it.cp.hi)}"), TOT("${name(it.cp.lo)}")\nEND\n`);
+          const [a, b] = rows[rows.length - 1].map(Number);
+          const d = Math.abs(Math.log(a / b));
+          points++;
+          if (!(d <= worst)) { worst = d; where = `${it.cp.ox.join('+')}/${it.cp.red.join('+')} at pH ${ph.toFixed(4)}, pe ${pe.toFixed(4)}`; }
+        });
+      }
+    });
+    const crossing = R.couples.filter((c) => c.lines.length).length;
+    return { grid, R, worst, where, points, crossing, unsolved: R.couples.reduce((n, c) => n + c.unsolved, 0) };
+  };
+  const pePH = map([{ kind: 'pH', from: 4, to: 10, n: 13 }, { kind: 'pe', from: -4, to: 10.7, n: 11 }], (x, y) => [x, y]);
+  const ehPH = map([{ kind: 'Eh', from: -4 * per, to: 10.7 * per, n: 11 }, { kind: 'pH', from: 4, to: 10, n: 13 }],
+    (x, y) => [y, x / per]);
+  // Over Eh the lines are found to 1e-10 V, 1.7e-9 in pe: a couple of ten electrons, NO3-/N2, is then within 4e-8.
+  check('the couples across a map of pH and pe, where water itself holds: the ladder\'s handed-off water, each of its six couples '
+    + 'a line across it, and at each of its points PHREEQC\'s SOLUTION of the model\'s totals at that pH and pe gives the two '
+    + 'states the same amount of the element, to 1e-8; over Eh across and pH up, the other way round, the same to 1e-7, the '
+    + 'lines found to 1e-10 V',
+  !pePH.grid.failed && pePH.unsolved === 0 && pePH.crossing === 6 && pePH.worst < 1e-8 && pePH.points >= 60
+    && !ehPH.grid.failed && ehPH.unsolved === 0 && ehPH.crossing === 6 && ehPH.worst < 1e-7 && ehPH.points >= 60,
+  `pH-pe: ${pePH.points} points of ${pePH.crossing} lines, the worst ${pePH.worst.toExponential(1)} (${pePH.where}); Eh-pH: `
+    + `${ehPH.points} points, the worst ${ehPH.worst.toExponential(1)} (${ehPH.where})`);
+}
+
+/* ======================================================================
    REDOX ZONES, against PHREEQC: a water with oxygen, nitrate, sulfate and
    carbonate, with pyrolusite, ferrihydrite and FeS(ppt) as its
    EQUILIBRIUM_PHASES, handed off with every species phreeqc.dat has of its
@@ -4967,6 +5031,8 @@ function againstKineticsHandOff(engine) {
   againstStability(wasm);
   console.log('\n--- a redox ladder: valence states, the couples, and where each turns over against PHREEQC\'s SOLUTION there ---');
   againstLadder(wasm);
+  console.log('\n--- the couples across a map of pH and pe or Eh, against PHREEQC\'s SOLUTION along each line ---');
+  againstCouples(wasm);
   console.log('\n--- redox zones: organic carbon at a steady rate against PHREEQC\'s REACTION, each valence state\'s total ---');
   againstRedoxZones(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
