@@ -59,7 +59,7 @@ const EXTRA = [
 ];
 
 /* The welcome panel's first step names the URL button; here it names the Explorer. */
-const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive.</span></li>';
+const WELCOME_LOAD = '<li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive (see <a href="privacy.html#google-drive">Privacy</a>).</span></li>';
 const WELCOME_LOAD_VSCODE = '<li><strong>Load files</strong> — open an <code>.h5</code> / <code>.hdf5</code> file from the Explorer, or click <em>Add Files</em>. To compare files, select them in the Explorer and choose <em>Open Together in Data Browser</em>.</li>';
 
 /* The tree's menu sends the selection to the User Interface for statsmodels on the

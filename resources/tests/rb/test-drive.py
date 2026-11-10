@@ -470,6 +470,10 @@ async def main():
                   await page.ev("(() => { const a = document.querySelector('#driveDialog a');"
                                 " return [a.href, a.target, a.rel]; })()"),
                   ['https://myaccount.google.com/connections', '_blank', 'noopener noreferrer'])
+            check('and to the site\'s privacy page, in a tab of its own, so no file open here is lost',
+                  await page.ev("(() => { const a = document.querySelector('#driveDialog a[href^=\"privacy.html\"]');"
+                                " return a && [new URL(a.href).pathname, a.target]; })()"),
+                  ['/privacy.html', '_blank'])
             check('Choose files is offered once Google\'s scripts are loaded',
                   await settle(page, f"!{CHOOSE}.disabled && {CHOOSE}.textContent"), 'Choose files…')
             check('the two scripts were each fetched once', sorted(page.scripts), sorted([SIGN_IN, PICKER]))

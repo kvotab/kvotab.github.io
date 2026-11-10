@@ -105,7 +105,7 @@ ID are refused before any request; Drive's 403, 404 and 401 are said in
 words, and after a 401 the next click asks Google again. Google's refusals,
 its window blocked or closed, and a script of Google's that does not load
 are each said in the dialog; a window blocked before an account was chosen
-leaves that choice for the next try. 69 checks. RB_TEST_HTTP and RB_TEST_CDP
+leaves that choice for the next try. 70 checks. RB_TEST_HTTP and RB_TEST_CDP
 choose other ports than 8765 and 9222.
 
     python3 test-drive.py

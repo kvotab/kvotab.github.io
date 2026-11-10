@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Privacy — kvot ab</title>
+  <meta name="description" content="What kvotab.se and its tools do with your data, and what the Data Browser does with files from your Google Drive.">
+  <link rel="canonical" href="https://kvotab.se/privacy.html">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+  <style>
+    .privacy { max-width: 70ch; line-height: 1.6; }
+    .privacy li { margin: 0 0 10px; }
+    .privacy .updated { margin-top: 40px; color: var(--text-secondary); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <header></header>
+
+  <div class="content landing">
+    <div class="landing-inner privacy">
+      <h1>Privacy</h1>
+      <p class="tagline">
+        kvotab.se is published by Kvot AB. Its tools run in your browser, on
+        your own computer. The site has no user accounts, sets no cookies of
+        its own and uses no analytics or advertising.
+      </p>
+
+      <h2 id="google-drive">Google Drive in the Data Browser</h2>
+      <p>
+        The <a href="rb.html">Data Browser</a> can open files from your Google
+        Drive. This is what it does with them, and with the access you give it.
+      </p>
+      <ul>
+        <li><strong>What it can reach.</strong> When you click
+          <em>Google Drive</em> and then <em>Choose files</em>, Google asks
+          whether kvotab.se may open the files you pick. If you agree, the page
+          can open the files you pick in Google's file picker, and only those
+          (the permission Google calls <code>drive.file</code>). It cannot list,
+          read, change or delete anything else in your Drive, and it is not
+          given your name, email address or other account details.</li>
+        <li><strong>What it does with them.</strong> Each file you pick is
+          downloaded straight from Google into your browser and opened there,
+          so that you can look at it, draw it and export from it, as with a file
+          from your own disk. That is the only use made of it.</li>
+        <li><strong>Where it is kept.</strong> In the page's memory while the
+          page is open, and nowhere else: nothing is written to your disk unless
+          you save an export yourself, and nothing is kept by Kvot AB. The access
+          Google gives the page lasts an hour, is held in the page's memory only,
+          and is gone when you close the tab.</li>
+        <li><strong>Who else gets it.</strong> No one. The files and the access
+          are not sent to Kvot AB or to anyone else: the site has no server
+          that could receive them. Nothing is used for advertising, sold, or
+          used to train AI models.</li>
+        <li><strong>Google's part.</strong> Google's sign-in and file picker
+          are loaded from Google the first time you click <em>Google Drive</em>
+          in a tab, and <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's privacy policy</a>
+          applies to them.</li>
+        <li><strong>Taking the access back.</strong> You can withdraw it at any
+          time in <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">your Google Account</a>,
+          under third-party connections.</li>
+      </ul>
+      <p>
+        Kvot AB's use and transfer of information received from Google APIs
+        adheres to the
+        <a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank" rel="noopener noreferrer">Google API Services User Data Policy</a>,
+        including the Limited Use requirements.
+      </p>
+
+      <h2 id="data-browser">Other files in the Data Browser</h2>
+      <p>
+        Files you drop on the Data Browser or open with <em>Add Files</em> are
+        read in your browser and are not uploaded. A file you open with
+        <em>URL</em> is fetched by your browser from that address. A GitHub
+        token you give it, for a file in a private repository, is kept for that
+        tab only and is sent only to GitHub.
+      </p>
+
+      <h2 id="browser-storage">What your browser keeps</h2>
+      <p>
+        Settings such as the light or dark theme, saved chart presets and a
+        tool's last inputs are kept in your browser's storage on your own
+        device. Kvot AB never receives them, and clearing this site's data in
+        your browser removes them.
+      </p>
+
+      <h2 id="other-services">Other services your browser contacts</h2>
+      <p>
+        The site is hosted on GitHub Pages: like any web host, GitHub receives
+        your IP address and the addresses of the pages you load
+        (<a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement" target="_blank" rel="noopener noreferrer">GitHub's privacy statement</a>).
+        Pages load program libraries from public content delivery networks
+        (jsDelivr, cdnjs, unpkg, jQuery's and Plotly's), one page loads its fonts from
+        Google Fonts, and some tools fetch from other services when you use
+        them: the departure boards from SL, nuclear data from NNDC, the
+        reference checker from your Zotero library when you connect it, the
+        translator's open model from Hugging Face, and the office map from
+        Jawg. Each of these receives your IP address and the request, as with
+        any web request, under its own privacy policy.
+      </p>
+
+      <h2 id="contact">Contact</h2>
+      <p>
+        Kvot AB, Valhallagatan 16, 753 34 Uppsala, Sweden.
+        <a href="mailto:pa@kvotab.se">pa@kvotab.se</a>
+      </p>
+
+      <p class="updated">Last updated 10 November 2026.</p>
+    </div>
+  </div>
+
+  <div id="kvotmap"></div>
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20261102c"></script>
+  <script>
+    KVOT.renderHeader('Privacy');
+    KVOT.renderNav('privacy.html');
+    KVOT.renderFooter();
+    KVOT.initMap('kvotmap');
+  </script>
+</body>
+</html>
