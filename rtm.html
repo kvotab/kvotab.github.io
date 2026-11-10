@@ -252,6 +252,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="html">HTML</button>
             </span>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5">View in Data Browser</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadHdf5">HDF5</button>
@@ -288,6 +289,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="html">HTML</button>
             </span>
             <span class="kvot-info-slot" data-info-key="pane:profile"></span>
             <span class="rtm-muted" id="rtmProfileNote"></span>
@@ -439,6 +441,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="html">HTML</button>
             </span>
             <span class="kvot-info-slot" data-info-key="pane:gradient"></span>
             <span class="rtm-muted" id="rtmGradNote"></span>
@@ -505,6 +508,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="html">HTML</button>
             </span>
             <span class="kvot-info-slot" data-info-key="pane:composition"></span>
             <span class="rtm-muted" id="rtmCompNote"></span>
@@ -578,6 +582,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="html">HTML</button>
             </span>
             <span class="rtm-muted" id="rtmDgNote"></span>
           </div>
@@ -626,6 +631,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="html">HTML</button>
             </span>
             <span class="rtm-muted" id="rtmSwNote"></span>
           </div>
@@ -660,6 +666,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="html">HTML</button>
             </span>
             <span class="rtm-muted" id="rtmFitNote"></span>
           </div>
@@ -718,6 +725,7 @@
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="xlsx">Excel</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="svg">SVG</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="png">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="html">HTML</button>
             </span>
             <span class="rtm-muted" id="rtmUnNote"></span>
           </div>
@@ -761,6 +769,7 @@
             </label>
             <label id="rtmPqLogTWrap"><input type="checkbox" id="rtmPqLogT" checked data-on-change="rtm:pqRedraw"> log time</label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqCsv">CSV</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="phreeqc" data-as="html">HTML</button>
           </div>
           <p class="rtm-pq-stale" id="rtmPqStale" hidden></p>
           <div class="plot" id="rtmChartPq" hidden></div>
@@ -793,6 +802,7 @@
           <div class="rtm-toolbar" id="rtmPqInvShow" hidden>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqInvCsv">CSV</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="inverse" data-as="html">HTML</button>
             </span>
             <span class="rtm-muted" id="rtmPqInvNote"></span>
           </div>
@@ -2454,7 +2464,7 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             saturation, or at it, which over activities is a mineral stability diagram; or any
             species or quantity as contours. Against PHREEQC's <code>SOLUTION</code> at the same pH,
             pe or total, a handed-off water's species agree to 8 in 10<sup>9</sup>. The numbers go
-            to CSV and Excel, a row per point, and the picture to SVG and PNG.</p>
+            to CSV and Excel, a row per point, and the picture to SVG and PNG, or as a live page to HTML.</p>
           <p>A map's fields are the shapes their boundaries bound, as PhreePlot draws them, not the
             grid's points coloured. Wherever two neighbouring points of the grid are in different
             fields, the water is held at points between them and speciated again until the boundary
@@ -2542,7 +2552,14 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             value or name; on <em>Sweeps</em> what is drawn, a row per value or per point; on <em>Fit</em> each point measured, the
             run there and its residual; on <em>Uncertainty</em> the percentiles at each time or cell, or
             each run's numbers and value. <em>SVG</em> and <em>PNG</em> save the
-            chart itself, at the size it is drawn, for a report. <em>View in Data Browser</em> writes the whole run as an HDF5
+            chart itself, at the size it is drawn, for a report. <em>HTML</em> saves it as a page of its
+            own, as live as it is here — zoom, pan, hover, a PNG of it — with the chart's note above it
+            and the model text the run was made with under it; the PHREEQC tab's two charts save the
+            same way. plotly.js, which draws it, goes into the file: the very build this page runs, read
+            again under the hash the page loads it with, so the page opens in any browser without the
+            internet. Where the library cannot be read, this page being offline, the page saved links to
+            it as this one does, needs the internet to open, and the status line says so.
+            <em>View in Data Browser</em> writes the whole run as an HDF5
             file and opens it in the <a href="./rb.html">Data Browser</a> in another tab, without
             the file ever reaching the disk; <em>HDF5</em> is the same file as a download. Both
             need a run behind them, and neither sends anything anywhere: the file is built in this
@@ -3311,6 +3328,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109p"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109q"></script>
 </body>
 </html>

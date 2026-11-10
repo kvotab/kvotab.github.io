@@ -4240,7 +4240,9 @@
       return;
     }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
-      diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn' }[pane]);
+      diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn', phreeqc: 'rtmChartPq',
+      inverse: 'rtmChartPqInv' }[pane]);
+    if (as === 'html') { await saveChartPage(plot, pane); return; }
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
@@ -4261,6 +4263,121 @@
     const text = (state.ran && state.ran.text) || state.text;
     xlsx.writeData(text.split('\n').map((ln) => [ln]), 'model', { header: ['the model text the run was made with'] });
     downloadBlob(await xlsx.save(), `${tab.name}.xlsx`);
+  }
+
+  /*
+    A chart as a page of its own (HTML): the figure as it is drawn, and as
+    live -- zoom, pan, hover, a PNG of it -- with the pane's note above it
+    and the model text the run was made with under it. plotly.js goes in the
+    file: the very build this page runs, read again under the hash it is
+    loaded with (fetch's integrity), so that it is that build or nothing,
+    and the page opens anywhere without the internet. Where it cannot be
+    read -- this page offline, say -- the page links to it as this one does
+    and needs the internet to open, and the status line says so. What is the
+    model's is escaped: the text as HTML, the figure as JSON with <, > and &
+    written as \u escapes, so that no name or comment can end the script it
+    is in.
+  */
+  const CHART_NOTES = { time: 'rtmTimeNote', profile: 'rtmProfileNote', gradient: 'rtmGradNote', composition: 'rtmCompNote',
+    diagram: 'rtmDgNote', sweep: 'rtmSwNote', fit: 'rtmFitNote', uncertainty: 'rtmUnNote', phreeqc: 'rtmPqSummary',
+    inverse: 'rtmPqInvNote' };
+  const CHART_NAMES = { time: 'against time', profile: 'against distance', gradient: 'gradient', composition: 'composition',
+    diagram: 'diagram', sweep: 'sweeps', fit: 'fit', uncertainty: 'uncertainty', phreeqc: 'through PHREEQC',
+    inverse: 'inverse models through PHREEQC' };
+  // plotly.js as this page loads it, once read: { src, integrity, text }.
+  let plotlyRead = null;
+
+  /** plotly.js to put in a page: its text, or where this page loads it from when that cannot be read. */
+  async function plotlyForPage() {
+    if (plotlyRead) return plotlyRead;
+    const el = document.querySelector('script[src*="plotly"]');
+    if (!el) return null;
+    const linked = { src: el.src, integrity: el.integrity || '', text: null };
+    try {
+      const res = await fetch(el.src, { integrity: el.integrity || undefined, credentials: 'omit' });
+      const text = res.ok ? await res.text() : '';
+      // Nothing in it may end the script it goes into.
+      if (text && !/<\/script|<!--/i.test(text)) {
+        plotlyRead = { ...linked, text };
+        return plotlyRead;
+      }
+    } catch (e) { /* offline, or not the build the hash names: linked instead */ }
+    return linked;
+  }
+
+  /** JSON to write into a script: typed arrays as arrays, and nothing that HTML reads as markup. */
+  const scriptJson = (v) => JSON.stringify(v, (k, x) => (ArrayBuffer.isView(x) ? Array.from(x) : x))
+    .replace(/</g, '\\u003c').replace(/>/g, '\\u003e').replace(/&/g, '\\u0026')
+    .replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
+
+  async function saveChartPage(plot, pane) {
+    if (!plot || plot.hidden || !plot.data || !plot.data.length) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
+    const lib = await plotlyForPage();
+    if (!lib) { setStatus('plotly.js is not on this page: there is nothing to draw a chart with.', 'error'); return; }
+    let data;
+    let layout;
+    try {
+      data = scriptJson(plot.data);
+      // As wide as the window it is opened in, as high as it is drawn here.
+      const { width, height, ...rest } = plot.layout || {};
+      layout = scriptJson({ ...rest, autosize: true });
+    } catch (e) {
+      setStatus(`The chart could not be written as a page: ${e.message}`, 'error');
+      return;
+    }
+    const c = themeColors();
+    const tall = Math.max(320, Math.round(plot.getBoundingClientRect().height));
+    const noteEl = $(CHART_NOTES[pane]);
+    const note = noteEl ? noteEl.textContent.trim() : '';
+    const name = `${fileStem()}_${pane}`;
+    const title = `${fileStem()}: ${CHART_NAMES[pane] || pane}`;
+    const text = (state.ran && state.ran.text) || state.text;
+    const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
+    const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
+    const day = new Date().toISOString().slice(0, 10);
+    const library = lib.text ? `<script>\n${lib.text}\n</script>`
+      : `<script src="${esc(lib.src)}"${lib.integrity ? ` integrity="${esc(lib.integrity)}" crossorigin="anonymous"` : ''}></script>`;
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  html, body { margin: 0; background: ${esc(c.surface)}; color: ${esc(c.text)}; }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
+  p { margin: 0 0 10px; }
+  .note { opacity: 0.8; }
+  #chart { width: 100%; height: ${tall}px; }
+  details { margin-top: 14px; }
+  summary { cursor: pointer; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  .made { margin-top: 12px; font-size: 12px; opacity: 0.7; }
+</style>
+</head>
+<body>
+<main>
+<h1>${esc(title)}</h1>
+${note ? `<p class="note">${esc(note)}</p>\n` : ''}<div id="chart"></div>
+<details><summary>The model text the run was made with</summary><pre>${esc(text)}</pre></details>
+<p class="made">Saved from rtm.html, kvotab.github.io/rtm.html, on ${day}. Drawn by plotly.js ${esc(version)} (MIT licence)${
+  lib.text ? ', which is in this file' : `, which this page loads from ${esc(new URL(lib.src).host)}`}.</p>
+</main>
+${library}
+<script>
+Plotly.newPlot('chart', ${data}, ${layout}, ${config});
+</script>
+</body>
+</html>
+`;
+    downloadBlob(new Blob([html], { type: 'text/html' }), `${name}.html`);
+    if (lib.text) setStatus(`Saved ${name}.html: the chart as a page of its own, plotly.js in it, to open in any browser.`, 'ok');
+    else {
+      setStatus(`Saved ${name}.html, linking plotly.js from ${new URL(lib.src).host}: it could not be read to go into the file, `
+        + 'so the page needs the internet to open.', 'warn');
+    }
   }
 
   function downloadBlob(blob, name) {
@@ -4647,6 +4764,9 @@
     return state.compiled ? state.compiled.settings.TEND : null;
   }
 
+  // A chart saved as a page, the same on every chart's (i).
+  const SAVE_HTML = '**HTML**: the chart as a page of its own, as live as it is here — zoom, pan, hover — with the note above it and the model text under it, plotly.js in the file, so that it opens in any browser without the internet.';
+
   const TOPICS = {
     'sec:model': () => {
       const m = state.compiled;
@@ -4999,6 +5119,7 @@
             '**clear**: unticks everything.',
             '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown or through the end shown, a row per stored point.',
             '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
+            SAVE_HTML,
             '**View in Data Browser**: the whole run as an HDF5 file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
             '**HDF5**: the same file, as a download.',
           ] },
@@ -5024,6 +5145,7 @@
           '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
+          SAVE_HTML,
         ] },
         { heading: 'Which times are drawn', text: 'Each time asked for is drawn at the nearest stored point; nothing is interpolated. The legend names the time drawn, and the note says which moved by more than 1 %, which could not be read and which lie past the end of the run.' },
       ],
@@ -5043,6 +5165,7 @@
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
             '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
             '**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.',
+            SAVE_HTML,
           ] },
           { heading: 'Colours', choices: [
             ['yellow to red', 'Light for low, dark red for high.', cur === 'YlOrRd'],
@@ -5082,6 +5205,7 @@
             '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper, a USSL or a Wilcox diagram, and principal components, draw every stored point.',
             '**Of**: the variables of a principal component analysis, as the time chart names them — `pH, tot(Ca), Na+, SI(Calcite)`. **logs of amounts**: an amount as its log, where every water has some of it. A variable the same in every water is left out.',
             '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type, or its scores; for principal components Excel adds the loadings and the variance each component carries. **SVG**, **PNG**: the picture.',
+            SAVE_HTML,
           ] },
         ],
         more: more('Reading the charts', 'help-composition'),
@@ -5110,7 +5234,7 @@
             '**the saturation indices** of every phase and mineral.',
             '**a species or a quantity**: pH, a total, an <OUTPUT>, …',
           ] },
-          { heading: 'Saving', list: ['**CSV**, **Excel**: a row per point, what is drawn there; a map\'s Excel workbook has its boundaries on a sheet of their own. **SVG**, **PNG**: the picture.'] },
+          { heading: 'Saving', list: ['**CSV**, **Excel**: a row per point, what is drawn there; a map\'s Excel workbook has its boundaries on a sheet of their own. **SVG**, **PNG**: the picture.', SAVE_HTML] },
         ],
         more: more('Diagrams of the model\'s own chemistry', 'help-diagrams'),
       };
@@ -5130,7 +5254,7 @@
           '**against what was varied**: a species or a quantity at the cell, its value at the end, its largest or its smallest, a point per run; over two, a curve for each value of the second, contours or a surface.',
           '**against time, a curve per run**, at the cell; **along the column at the end, a curve per run**. The curves go from dark to light as the value grows.',
         ] },
-        { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.'] },
+        { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.', SAVE_HTML] },
       ],
       more: more('Sweeps over runs', 'help-sweeps'),
     }),
@@ -5153,6 +5277,7 @@
           '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',
           '**Put the fitted values in the model**: each written into the text where it came from, to six figures.',
           '**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.',
+          SAVE_HTML,
         ] },
       ],
       more: more('Fitting to what was measured', 'help-fit'),
@@ -5173,7 +5298,7 @@
           '**the spread of one value** — at the end, its largest or its smallest — as a histogram, with its 5 %, median and 95 %.',
           '**what matters**: Spearman\'s rank correlation of each number drawn with that value, from −1 to 1.',
         ] },
-        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value. **SVG**, **PNG**: the picture.'] },
+        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value. **SVG**, **PNG**: the picture.', SAVE_HTML] },
       ],
       more: more('Uncertainty', 'help-uncertainty'),
     }),
@@ -5327,6 +5452,7 @@
         ] },
         { heading: 'What comes back', list: [
           'The pH as an activity, and the saturation index of every phase that comes within 3 of saturation, or of the **Phases** named, drawn against time for one cell or, under **Show**, against distance at one of the times looked at. The CSV holds every cell and the ionic strength, the charge balance and the activity of water as well.',
+          SAVE_HTML,
           'Which phases are supersaturated anywhere, and where and when.',
           'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong; a model with `ACTIVITY` follows them, and then it says how close its own stay to PHREEQC’s.',
           'Each mineral of the model: the saturation index PHREEQC finds where the model has some of it, and where it has none.',
@@ -5355,6 +5481,7 @@
         { heading: 'What comes back', list: [
           'Each model’s mole transfers as bars, dissolving above zero, the ranges as whiskers; and a table of each, with the adjustments PHREEQC made and its three measures of misfit. To four figures, as PHREEQC prints them.',
           '**CSV**: every number of every model.',
+          SAVE_HTML,
         ] },
       ],
       more: more('Inverse models through PHREEQC', 'help-phreeqc-inverse'),

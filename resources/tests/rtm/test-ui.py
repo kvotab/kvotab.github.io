@@ -19,6 +19,7 @@ import math
 import os
 import re
 import sys
+import tempfile
 import urllib.request
 
 import websockets
@@ -1239,6 +1240,87 @@ async def main():
                 return all((u is None) == (v is None) and (u is None or abs(u - v) < 1e-9) for u, v in pairs)
             check('  worked out again over pe, the same range in pe: the same boundaries, the Eh of each point its pe in volts, '
                   'to 1e-9', [same_bounds(eh_bounds, pe_bounds), bool(eh_bounds and len(eh_bounds[0]) > 10)], [True, True])
+
+            # --- a chart saved as a page of its own: opened from the disk with the network off, the same chart ---
+            async def saved_page(pane):
+                return await page.ev("""(async () => {
+                  const keep = HTMLAnchorElement.prototype.click;
+                  let got = null;
+                  HTMLAnchorElement.prototype.click = function () {
+                    if (this.download.endsWith('.html')) got = { name: this.download, body: fetch(this.href).then((r) => r.text()) };
+                  };
+                  try {
+                    document.querySelector('[data-pane="%s"][data-as="html"]').click();
+                    for (let i = 0; i < 300 && !got; i++) await new Promise((r) => setTimeout(r, 100));
+                  } finally { HTMLAnchorElement.prototype.click = keep; }
+                  return got ? [got.name, await got.body] : null; })()""" % pane)
+
+            async def ev_in(sid, expr):
+                r = await page.call('Runtime.evaluate', {'expression': expr, 'returnByValue': True, 'awaitPromise': True},
+                                    session=sid)
+                res = r.get('result', {})
+                if 'exceptionDetails' in res:
+                    return 'EXCEPTION: ' + str(res['exceptionDetails'].get('exception', {}).get('description', ''))[:200]
+                return res.get('result', {}).get('value')
+
+            async def open_offline(body, ask):
+                """The page written to a file and opened in a tab of its own with the network off; ask's answer there."""
+                folder = tempfile.mkdtemp(prefix='rtm-html-')
+                path = os.path.join(folder, 'chart.html')
+                with open(path, 'w', encoding='utf-8') as f:
+                    f.write(body)
+                t2 = (await page.call('Target.createTarget', {'url': 'about:blank'}))['result']['targetId']
+                sid2 = (await page.call('Target.attachToTarget', {'targetId': t2, 'flatten': True}))['result']['sessionId']
+                try:
+                    await page.call('Runtime.enable', session=sid2)
+                    await page.call('Network.enable', session=sid2)
+                    await page.call('Network.emulateNetworkConditions', {'offline': True, 'latency': 0, 'downloadThroughput': -1,
+                                                                         'uploadThroughput': -1}, session=sid2)
+                    await page.call('Page.navigate', {'url': 'file://' + path}, session=sid2)
+                    for _ in range(100):
+                        if await ev_in(sid2, "!!(document.getElementById('chart') && document.getElementById('chart').data)"):
+                            break
+                        await asyncio.sleep(0.2)
+                    return await ev_in(sid2, ask)
+                finally:
+                    await page.call('Target.closeTarget', {'targetId': t2})
+                    os.remove(path)
+                    os.rmdir(folder)
+
+            shown = await page.ev("""(() => { const p = document.getElementById('rtmChartDg');
+              const b = p.data.find((t) => t.name === 'boundaries');
+              return [p.data.length, p.data.map((t) => t.name || '').join('|'), JSON.stringify([b.x, b.y]),
+                document.getElementById('rtmDgNote').textContent.trim(), p.layout.yaxis.title.text]; })()""")
+            got = await saved_page('diagram')
+            name, body = got if got else (None, '')
+            there = await open_offline(body, """(() => { const p = document.getElementById('chart');
+              const b = p.data.find((t) => t.name === 'boundaries');
+              return [p.data.length, p.data.map((t) => t.name || '').join('|'), JSON.stringify([b.x, b.y]),
+                document.querySelector('.note').textContent, typeof Plotly === 'object' && Plotly.version,
+                p.layout.yaxis.title.text, !!p.querySelector('.main-svg'),
+                document.querySelector('pre').textContent.includes('Ferrihydrite + 3 H+')]; })()""") if body else None
+            check('a chart saved as HTML: a page of its own with plotly.js 2.27.0 in it, nothing loaded from elsewhere; opened from '
+                  'the disk with the network off it draws the same traces, the same boundaries and the same axes, under the '
+                  'chart\'s note, the model text below', [name, body.startswith('<!doctype html>'), 'plotly.js v2.27.0' in body,
+                                                          '<script src' not in body, there],
+                  ['rtm_pourbaix_diagram.html', True, True, True, shown[:4] + ['2.27.0', shown[4], True, True]])
+            # What is the model's goes into the page as text, whatever it says.
+            hostile = '# </script><img src=x onerror="window.__pwned=1"><!-- <script>window.__pwned=2</script> & "q"\n'
+            await set_text(page, hostile + await page.ev("document.getElementById('rtmText').value"))
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev("document.getElementById('rtmDgGo').click()")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Diagram worked out')", True,
+                         tries=60, pause=0.25)
+            got = await saved_page('diagram')
+            body = got[1] if got else ''
+            inert = await open_offline(body, """(() => [window.__pwned === undefined, document.images.length,
+              document.querySelectorAll('script').length, document.querySelector('pre').textContent.startsWith(%s),
+              document.getElementById('chart').data.length > 0])()""" % json.dumps(hostile.rstrip('\n'))) if body else None
+            check('  a model text that would close the script and add an image comes through as text: nothing of it runs, no '
+                  'image, the two scripts the page has, the comment shown as it is written', inert, [True, 0, 2, True, True])
             ok = await example('exchangesweep', "/^4 of 4 runs done/.test(document.getElementById('rtmStatus').textContent)")
             check('the exchange example opens on Sweeps and runs four capacities, a curve each at the outlet against linear time',
                   [ok, await page.ev("(() => { const p = document.getElementById('rtmChartSw');"
