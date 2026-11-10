@@ -464,6 +464,7 @@
               <select id="rtmCompView" data-on-change="rtm:redrawComp">
                 <option value="where">where an element is</option>
                 <option value="piper">a Piper diagram</option>
+                <option value="durov">a Durov diagram</option>
                 <option value="schoeller">a Schoeller diagram</option>
                 <option value="stiff">Stiff diagrams</option>
                 <option value="ussl">a USSL diagram (irrigation water)</option>
@@ -2384,7 +2385,19 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             anions' on the right, and the two together in the diamond above, with a grid every 20 %:
             a water near the diamond's left corner is a Ca–HCO<sub>3</sub> water, near its right
             corner a Na–Cl one. Along the run it is a path through every stored point, coloured by
-            time; along the column, one point per cell, coloured by distance. A <em>Schoeller
+            time; along the column, one point per cell, coloured by distance. A <em>Durov
+            diagram</em> (Durov 1948) puts the same shares in a triangle on the left of a square —
+            Na + K at its foot, Ca at its head, Mg at the apex — and in one on top of it — Cl to the
+            left, HCO<sub>3</sub> + CO<sub>3</sub> to the right, SO<sub>4</sub> at the apex — and the
+            water in the square where the two meet, each triangle's point carried straight into it
+            along its third ion's axis: HCO<sub>3</sub> + SO<sub>4</sub>/2 across, Ca + Mg/2 up, so
+            that a Na–Cl water is at the square's foot on the left and a Ca–HCO<sub>3</sub> one at
+            its head on the right. Extended, as the programs that draw it extend it, it has the
+            water's pH in a panel under the square, at its place across, and its total dissolved
+            solids in a panel to the right, at its place up: the mass of every species dissolved but
+            the water, from its formula and IUPAC's standard atomic weights, in mg/kgw — which needs
+            the concentrations in mol/kgw, as an <code>ACTIVITY</code> makes them; a species whose
+            name is no formula is left out of it, and the note says which. A <em>Schoeller
             diagram</em> draws each water as a line through its six ions on a log axis, so that a
             water diluted keeps its shape and moves down; <em>Stiff diagrams</em> draw each as a
             polygon, cations to the left of zero, anions to the right, all on one scale. Both take
@@ -2593,7 +2606,7 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             stored time nearest, dashed in the same colour along its own cells, a time past its end left
             out. On <em>Gradient</em> the kept run's own map goes under the new one's, or beside it as a
             surface, on one colour scale. On <em>Composition</em> its waters go beside the new run's on
-            the Piper, Schoeller and Stiff diagrams, on the Wilcox and USSL diagrams, and on the principal
+            the Piper, Durov, Schoeller and Stiff diagrams, on the Wilcox and USSL diagrams, and on the principal
             components, put on the new run's components; not where an element is, whose bands stack. Only
             what the kept run has is drawn, and each chart's note says where it has not the species or
             quantity, the cell or the rock, or where its ions are in another unit. Its quantities are
@@ -3385,6 +3398,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110c"></script>
 </body>
 </html>

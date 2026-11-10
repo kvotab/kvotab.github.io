@@ -140,7 +140,7 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
-      if (['where', 'piper', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
@@ -2148,7 +2148,7 @@
     const C = compositionOf(km);
     const unit = poleUnit(km);
     const why = !C ? 'it was made before the page could read what its species are made of'
-      : view !== 'piper' && unit.text !== poleUnit(r.model).text ? `its ions are in ${unit.text}, these in ${poleUnit(r.model).text}`
+      : !['piper', 'durov'].includes(view) && unit.text !== poleUnit(r.model).text ? `its ions are in ${unit.text}, these in ${poleUnit(r.model).text}`
         : along === 'time' && !(cell < (km.fracture || 1)) ? `it has ${km.fracture || 1} cells`
           : along !== 'time' && !(km.transport && km.fracture > 1) ? 'it was a batch'
             : layer > 0 && !(layer < (km.stride || 1)) ? 'it has no rock matrix' : '';
@@ -2156,11 +2156,11 @@
     const terms = poleTerms(C);
     const kStride = km.stride || 1;
     const kt = besideTimes(k);
-    const at = (i, mc, label, extra) => ({ w: waterAt(kr, terms, unit.scale, i, mc), label, ...extra });
+    const at = (i, mc, label, extra) => ({ w: waterAt(kr, terms, unit.scale, i, mc), label, i, mc, ...extra });
     let waters;
     if (along === 'time') {
       const mc = modelCell(cell, layer, kr);
-      if (view === 'piper') {
+      if (view === 'piper' || view === 'durov') {
         const logT = $('rtmCompLogT').checked;
         const tmin = Number(state.compTMin) || 0;
         const idx = [];
@@ -2172,7 +2172,7 @@
       }
     } else {
       const j = nearestIndex(kt, r.t[atIndex]);
-      const cells = view === 'piper' ? Array.from({ length: km.fracture }, (_, c) => c) : drawable.map((wt) => wt.cell);
+      const cells = view === 'piper' || view === 'durov' ? Array.from({ length: km.fracture }, (_, c) => c) : drawable.map((wt) => wt.cell);
       waters = cells.map((c) => (c < km.fracture ? at(j, c * kStride + layer, `cell ${c}`) : null));
     }
     const drawn = waters.filter(Boolean).length;
@@ -2197,14 +2197,14 @@
     let colorTitle = '';
     if (along === 'time') {
       const mc = modelCell(cell, layer);
-      if (view === 'piper') {
+      if (view === 'piper' || view === 'durov') {
         // The path through the run: every stored point after "from", a few hundred at most.
         const { idx, logT } = compTimeIndices(r);
         const step = Math.max(1, Math.ceil(idx.length / 300));
         const take = idx.filter((_, j) => j % step === 0 || j === idx.length - 1);
         for (const i of take) {
           waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]),
-            color: logT ? Math.log10(r.t[i]) : r.t[i] });
+            color: logT ? Math.log10(r.t[i]) : r.t[i], i, mc });
         }
         colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
       } else {
@@ -2212,15 +2212,16 @@
         const picks = asked.times.length ? [...new Set(asked.times.map((tt) => nearestIndex(r.t, tt)))]
           : [...new Set(Array.from({ length: 6 }, (_, k) => Math.round(((k + 1) / 6) * (r.n - 1))))];
         if (!asked.times.length && r.t[0] === 0) picks.unshift(0);
-        for (const i of [...new Set(picks)]) waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]) });
+        for (const i of [...new Set(picks)]) waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]), i, mc });
       }
     } else {
       const nf = r.model.fracture;
-      const cells = view === 'piper' ? Array.from({ length: nf }, (_, k) => k)
+      const cells = view === 'piper' || view === 'durov' ? Array.from({ length: nf }, (_, k) => k)
         : [...new Set(Array.from({ length: Math.min(6, nf) }, (_, k) => Math.round((k * (nf - 1)) / Math.max(1, Math.min(6, nf) - 1))))];
       for (const k of cells) {
         waters.push({ w: waterAt(r, terms, unit.scale, atIndex, k * stride + layer), t: r.t[atIndex], cell: k,
-          x: r.model.centres[k], label: `cell ${k}, ${fmtNumber(Number(r.model.centres[k].toPrecision(3)))} m`, color: r.model.centres[k] });
+          x: r.model.centres[k], label: `cell ${k}, ${fmtNumber(Number(r.model.centres[k].toPrecision(3)))} m`, color: r.model.centres[k],
+          i: atIndex, mc: k * stride + layer });
       }
       colorTitle = 'distance (m)';
     }
@@ -2231,17 +2232,44 @@
     if (!drawable.length) { fail('No water here has both cations and anions among the major ions to draw.'); return; }
     const kept = besideWaters({ r, view, along, layer, cell, atIndex, drawable });
     if (kept.waters) for (const wt of kept.waters) if (wt) wt.f = poleShares(wt.w);
+    let durovSaid = '';
+    if (view === 'durov') {
+      // The pH of each water, as the worker works it out, and the solids dissolved in it; the kept run's from its own.
+      const runs = [[r, drawable], ...(kept.waters ? [[besideRun().r, kept.waters.filter(Boolean)]] : [])];
+      for (const [run, ws] of runs) {
+        if (!runHas(run, 'pH')) continue;
+        const cells = [...new Set(ws.map((wt) => wt.mc))];
+        if (cells.some((mc) => quantityPending('pH', mc, run))) {
+          fetchQuantities(['pH'], cells, run);
+          if (run === r) { fail('Working out the pH…'); return; }
+        }
+      }
+      for (const [run, ws] of runs) {
+        for (const wt of ws) {
+          const ph = runHas(run, 'pH') ? quantitySeries('pH', wt.mc, run) : null;
+          wt.ph = ph ? ph[wt.i] : null;
+          wt.tds = tdsAt(run, wt.i, wt.mc);
+        }
+      }
+      const T = tdsTerms(r);
+      if (!runHas(r, 'pH')) durovSaid = 'no pH: the model has no H+';
+      if (!T) durovSaid = [durovSaid, 'no TDS: the concentrations are not mol/kgw, which an ACTIVITY makes them'].filter(Boolean).join('; ');
+      else if (T.without.length) durovSaid = [durovSaid, `the TDS leaves out ${T.without.join(', ')}, which have no formula`].filter(Boolean).join('; ');
+    }
     const xHead = [`t (${timeUnit().symbol})`, 'cell', 'distance (m)'];
     compTableNow = {
-      head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type'],
+      head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type',
+        ...(view === 'durov' ? ['pH', 'TDS (mg/kgw)'] : [])],
       rows: all.map((wt) => [wt.measured ? wt.label : `model, ${wt.label}`, wt.t, wt.cell, wt.x !== undefined ? wt.x : null,
-        ...POLES.map((p) => wt.w[p.key]), ...POLES.map((p) => (wt.f ? 100 * wt.f[p.key] : null)), wt.f ? faciesOf(wt.f) : null]),
+        ...POLES.map((p) => wt.w[p.key]), ...POLES.map((p) => (wt.f ? 100 * wt.f[p.key] : null)), wt.f ? faciesOf(wt.f) : null,
+        ...(view === 'durov' ? [Number.isFinite(wt.ph) ? wt.ph : null, Number.isFinite(wt.tds) ? wt.tds : null] : [])]),
       name: `rtm_${view}_${along === 'time' ? `cell${cell}` : 'column'}`,
     };
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     const bits = [];
-    if (view === 'piper') {
-      drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
+    if (view === 'piper' || view === 'durov') {
+      if (view === 'durov') drawDurov(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
+      else drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
       const first = drawable[0];
       const last = drawable[drawable.length - 1];
       bits.push(along === 'time'
@@ -2257,6 +2285,7 @@
     }
     if (measuredHere.length) bits.push(`${measuredHere.length} measured`);
     if (kept.said) bits.push(kept.said);
+    if (durovSaid) bits.push(durovSaid);
     if (missing.length) bits.push(`the model has no ${missing.join(', ')}`);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
     note.textContent = bits.join('; ');
@@ -2849,6 +2878,230 @@
       + `${usable.length < waters.length ? `; ${waters.length - usable.length} waters without every variable left out` : ''}`
       + `${measuredPts.length ? `; ${measuredPts.length} measured, put on them` : ''}`
       + `${kept.said ? `; ${kept.said}${keptPts.length ? ', put on these components' : ''}` : ''}`;
+  }
+
+  /*
+    THE STANDARD ATOMIC WEIGHTS, IUPAC's abridged to five figures (2021),
+    and for an element that has none the mass number of its longest-lived
+    isotope: a species' formula mass from its name, for the total dissolved
+    solids of the Durov diagram.
+  */
+  const ATOMIC_WEIGHTS = {
+    H: 1.0080, He: 4.0026, Li: 6.94, Be: 9.0122, B: 10.81, C: 12.011, N: 14.007, O: 15.999, F: 18.998, Ne: 20.180,
+    Na: 22.990, Mg: 24.305, Al: 26.982, Si: 28.085, P: 30.974, S: 32.06, Cl: 35.45, Ar: 39.95, K: 39.098, Ca: 40.078,
+    Sc: 44.956, Ti: 47.867, V: 50.942, Cr: 51.996, Mn: 54.938, Fe: 55.845, Co: 58.933, Ni: 58.693, Cu: 63.546, Zn: 65.38,
+    Ga: 69.723, Ge: 72.630, As: 74.922, Se: 78.971, Br: 79.904, Kr: 83.798, Rb: 85.468, Sr: 87.62, Y: 88.906, Zr: 91.224,
+    Nb: 92.906, Mo: 95.95, Tc: 98, Ru: 101.07, Rh: 102.91, Pd: 106.42, Ag: 107.87, Cd: 112.41, In: 114.82, Sn: 118.71,
+    Sb: 121.76, Te: 127.60, I: 126.90, Xe: 131.29, Cs: 132.91, Ba: 137.33, La: 138.91, Ce: 140.12, Pr: 140.91, Nd: 144.24,
+    Pm: 145, Sm: 150.36, Eu: 151.96, Gd: 157.25, Tb: 158.93, Dy: 162.50, Ho: 164.93, Er: 167.26, Tm: 168.93, Yb: 173.05,
+    Lu: 174.97, Hf: 178.49, Ta: 180.95, W: 183.84, Re: 186.21, Os: 190.23, Ir: 192.22, Pt: 195.08, Au: 196.97, Hg: 200.59,
+    Tl: 204.38, Pb: 207.2, Bi: 208.98, Po: 209, At: 210, Rn: 222, Fr: 223, Ra: 226, Ac: 227, Th: 232.04,
+    Pa: 231.04, U: 238.03, Np: 237, Pu: 244, Am: 243, Cm: 247,
+  };
+
+  /** A species' formula mass, g/mol, from its name; null where it has no formula, or an element without a weight. */
+  function formulaMass(name) {
+    const made = RtmModel.elementsOf(name);
+    const pairs = made ? [...made] : [];
+    if (!pairs.length) return null;
+    let m = 0;
+    for (const [el, n] of pairs) {
+      const w = ATOMIC_WEIGHTS[el];
+      if (!w) return null;
+      m += n * w;
+    }
+    return m;
+  }
+
+  /**
+   * What the total dissolved solids of run r are made of: every species
+   * dissolved but the water, [[index, g/mol]], and those that have no
+   * formula, which it leaves out. A run whose concentrations are not mol/kgw
+   * -- no ACTIVITY -- has none.
+   */
+  function tdsTerms(r) {
+    if (poleUnit(r.model).scale !== 1000) return null;
+    if (r.tdsTerms) return r.tdsTerms;
+    const terms = [];
+    const without = [];
+    for (const nm of r.model.solutes || []) {
+      if (nm === 'H2O') continue;
+      const k = r.model.species.indexOf(nm);
+      const M = formulaMass(nm);
+      if (k < 0) continue;
+      if (M === null) without.push(nm); else terms.push([k, M]);
+    }
+    r.tdsTerms = { terms, without };
+    return r.tdsTerms;
+  }
+
+  /** The total dissolved solids, mg/kgw, of run r at stored point i in model cell mc. */
+  function tdsAt(r, i, mc) {
+    const T = tdsTerms(r);
+    if (!T) return null;
+    const base = i * r.width + mc * r.model.nspecies;
+    let s = 0;
+    for (const [k, M] of T.terms) s += Math.max(0, r.states[base + k]) * M;
+    return 1000 * s;
+  }
+
+  /*
+    THE DUROV DIAGRAM (S. A. Durov 1948, Doklady Akademii Nauk SSSR 59,
+    87-90), as it is drawn: the cations' shares in a triangle on the left
+    side of a square -- Na + K at its foot, Ca at its head, Mg at the apex
+    -- and the anions' in a triangle on its top side -- Cl to the left,
+    HCO3 + CO3 to the right, SO4 at the apex -- and the water in the square
+    where the two meet, each triangle's point carried straight into it along
+    the axis of its third ion: HCO3 + SO4/2 across and Ca + Mg/2 up, Na-Cl
+    waters at the square's foot on the left and Ca-HCO3 at its head on the
+    right. Extended, as the programs that draw it extend it (Grapher,
+    RockWorks; WQChartPy, Yang et al. 2022, Groundwater 60, 555): the pH in
+    a panel under the square at the water's place across, its lowest at the
+    top, and the total dissolved solids in a panel to its right at the
+    water's place up.
+  */
+  const DUROV_H = Math.sqrt(3) / 2;
+  const DUROV_PANEL = 0.62;
+  function durovXY(f) {
+    const across = f.HCO3 + f.SO4 / 2;
+    const up = f.Ca + f.Mg / 2;
+    return { cat: [-DUROV_H * f.Mg, up], an: [across, 1 + DUROV_H * f.SO4], sq: [across, up] };
+  }
+
+  /** A round number at or above v, 1, 2 or 5 times a power of ten. */
+  function niceAbove(v) {
+    if (!(v > 0)) return 1;
+    const p = 10 ** Math.floor(Math.log10(v));
+    return [1, 2, 5, 10].map((m) => m * p).find((x) => x >= v * (1 - 1e-12));
+  }
+
+  /**
+   * The Durov diagram of waters (each with its shares f, and its ph and tds
+   * where there are), the measured ones and the kept run's.
+   */
+  function drawDurov(plot, waters, measured, colorTitle, c, kept = {}) {
+    const H = DUROV_H;
+    const P = DUROV_PANEL;
+    const kw = (kept.waters || []).filter((wt) => wt && wt.f);
+    const all = [...waters, ...kw];
+    const withPh = all.filter((wt) => Number.isFinite(wt.ph));
+    const withTds = all.filter((wt) => Number.isFinite(wt.tds));
+    const hasPh = waters.some((wt) => Number.isFinite(wt.ph));
+    const hasTds = waters.some((wt) => Number.isFinite(wt.tds));
+    // The pH from a half unit below the lowest to a half above the highest, a unit at least; the TDS from nothing.
+    let phLo = 0;
+    let phHi = 1;
+    if (hasPh) {
+      const v = withPh.map((wt) => wt.ph);
+      phLo = Math.floor(2 * (Math.min(...v) - 0.25)) / 2;
+      phHi = Math.ceil(2 * (Math.max(...v) + 0.25)) / 2;
+      if (phHi - phLo < 1) phHi = phLo + 1;
+    }
+    const tdsTop = hasTds ? niceAbove(1.05 * Math.max(...withTds.map((wt) => wt.tds))) : 1;
+    const phY = (ph) => (-P * (ph - phLo)) / (phHi - phLo);
+    const tdsX = (tds) => 1 + (P * tds) / tdsTop;
+    const traces = [];
+    const line = (x, y, color = c.text, width = 1, dash) => traces.push({ type: 'scatter', mode: 'lines', x, y,
+      line: { color, width, ...(dash ? { dash } : {}) }, hoverinfo: 'skip', showlegend: false });
+    // Every 20 % in both triangles and across the square; the halves of the square dotted.
+    for (let k = 1; k < 5; k++) {
+      const v = k / 5;
+      line([-H * v, -H * v], [v / 2, 1 - v / 2], c.grid, 0.6);
+      line([0, -H * (1 - v)], [v, v + (1 - v) / 2], c.grid, 0.6);
+      line([0, -H * (1 - v)], [1 - v, (1 - v) / 2], c.grid, 0.6);
+      line([v / 2, 1 - v / 2], [1 + H * v, 1 + H * v], c.grid, 0.6);
+      line([v, v + (1 - v) / 2], [1, 1 + H * (1 - v)], c.grid, 0.6);
+      line([1 - v, (1 - v) / 2], [1, 1 + H * (1 - v)], c.grid, 0.6);
+      line([v, v], [0, 1], c.grid, 0.6);
+      line([0, 1], [v, v], c.grid, 0.6);
+    }
+    line([0.5, 0.5], [0, 1], c.text, 0.8, 'dot');
+    line([0, 1], [0.5, 0.5], c.text, 0.8, 'dot');
+    line([0, 1, 1, 0, 0], [0, 0, 1, 1, 0]);
+    line([0, -H, 0], [0, 0.5, 1]);
+    line([0, 0.5, 1], [1, 1 + H, 1]);
+    if (hasPh) line([0, 1, 1, 0, 0], [0, 0, -P, -P, 0]);
+    if (hasTds) line([1, 1 + P, 1 + P, 1, 1], [0, 0, 1, 1, 0]);
+    const annotations = [];
+    const note = (x, y, text, extra = {}) => annotations.push({ x, y, xref: 'x', yref: 'y', text, showarrow: false,
+      font: { size: 11, color: c.text }, ...extra });
+    // Na + K just above the corner it shares with the pH's panel, whose first value hangs just below it.
+    note(-0.03, 0.01, 'Na + K', { xanchor: 'right', yanchor: 'bottom' });
+    note(-0.03, 1, 'Ca', { xanchor: 'right' });
+    note(-H - 0.03, 0.5, 'Mg', { xanchor: 'right' });
+    note(0, 1.03, 'Cl', { xanchor: 'right', yanchor: 'bottom' });
+    note(1.02, 1.03, 'HCO₃ + CO₃', { xanchor: 'left', yanchor: 'bottom' });
+    note(0.5, 1 + H + 0.03, 'SO₄', { yanchor: 'bottom' });
+    const corner = (x, y, text, xanchor, yanchor) => note(x, y, text, { xanchor, yanchor, font: { size: 10, color: c.text }, opacity: 0.7 });
+    corner(0.02, 0.02, 'Na–Cl', 'left', 'bottom');
+    corner(0.98, 0.02, 'Na–HCO₃', 'right', 'bottom');
+    corner(0.02, 0.98, 'Ca–Cl', 'left', 'top');
+    corner(0.98, 0.98, 'Ca–HCO₃', 'right', 'top');
+    // The pH's scale on the panel's left; the TDS's under its own panel, at its ends and middle.
+    if (hasPh) {
+      for (let ph = phLo; ph <= phHi + 1e-9; ph += phHi - phLo > 4 ? 1 : 0.5) {
+        line([0, 0.025], [phY(ph), phY(ph)]);
+        note(-0.02, phY(ph), String(ph), { xanchor: 'right', yanchor: ph === phLo ? 'top' : 'middle', font: { size: 10, color: c.text } });
+      }
+      note(-0.16, -P / 2, 'pH', { textangle: -90 });
+    }
+    if (hasTds) {
+      for (let q = 0; q <= 2; q++) {
+        const v = (q * tdsTop) / 2;
+        line([tdsX(v), tdsX(v)], [0, 0.025]);
+        note(tdsX(v), -0.02, fmtNumber(Number(v.toPrecision(6))), { yanchor: 'top', font: { size: 10, color: c.text } });
+      }
+      note(1 + P / 2, -0.1, 'TDS (mg/kgw)', { yanchor: 'top' });
+    }
+    // Where a water is in each panel: the triangles and the square always, pH and TDS where it has them.
+    const placeOf = (wt) => {
+      const xy = durovXY(wt.f);
+      return { ...xy, ph: Number.isFinite(wt.ph) ? [xy.sq[0], phY(wt.ph)] : [null, null],
+        tds: Number.isFinite(wt.tds) ? [tdsX(wt.tds), xy.sq[1]] : [null, null] };
+    };
+    const panels = ['cat', 'an', 'sq', ...(hasPh ? ['ph'] : []), ...(hasTds ? ['tds'] : [])];
+    const hover = (wt) => `${esc(wt.label)}<br>${faciesOf(wt.f)}<br>`
+      + `${CATIONS.map((p) => `${p.label} ${(100 * wt.f[p.key]).toFixed(1)} %`).join(', ')}<br>`
+      + `${ANIONS.map((p) => `${p.label} ${(100 * wt.f[p.key]).toFixed(1)} %`).join(', ')}`
+      + `${Number.isFinite(wt.ph) ? `<br>pH ${wt.ph.toFixed(2)}` : ''}${Number.isFinite(wt.tds) ? `, TDS ${fit4(wt.tds)} mg/kgw` : ''}`;
+    const pts = waters.map(placeOf);
+    const colored = waters.length > 1;
+    panels.forEach((panel, q) => {
+      traces.push({
+        type: 'scatter', mode: waters.length > 1 ? 'lines+markers' : 'markers', name: 'the model', legendgroup: 'model',
+        showlegend: q === 0, x: pts.map((pt) => pt[panel][0]), y: pts.map((pt) => pt[panel][1]), line: { color: c.grid, width: 1 },
+        marker: { size: 7, color: colored ? waters.map((wt) => wt.color) : '#1f77b4', colorscale: 'Viridis', showscale: colored && q === 0,
+          colorbar: colored && q === 0 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12,
+            outlinewidth: 0, tickfont: { size: 10 }, len: 0.7 } : undefined },
+        text: waters.map(hover), hovertemplate: '%{text}<extra></extra>',
+      });
+    });
+    if (kw.length) {
+      const kp = kw.map(placeOf);
+      panels.forEach((panel, q) => {
+        traces.push({ type: 'scatter', mode: kw.length > 1 ? 'lines+markers' : 'markers', name: kept.label, legendgroup: 'beside',
+          showlegend: q === 0, x: kp.map((pt) => pt[panel][0]), y: kp.map((pt) => pt[panel][1]),
+          line: { color: c.text, width: 1, dash: 'dash' }, marker: { size: 7, symbol: 'diamond-open', color: c.text, line: { width: 1.4 } },
+          text: kw.map(hover), hovertemplate: '%{text}<extra></extra>' });
+      });
+    }
+    if (measured.length) {
+      const mp = measured.map(placeOf);
+      ['cat', 'an', 'sq'].forEach((panel, q) => {
+        traces.push({ type: 'scatter', mode: 'markers', name: 'measured', legendgroup: 'measured', showlegend: q === 0,
+          x: mp.map((pt) => pt[panel][0]), y: mp.map((pt) => pt[panel][1]),
+          marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } },
+          text: measured.map(hover), hovertemplate: '%{text}<extra></extra>' });
+      });
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.margin = { l: 20, r: 20, t: 14, b: 20 };
+    layout.legend = { x: 1, y: 1, xanchor: 'right', yanchor: 'top', font: { size: 10 } };
+    layout.xaxis = { visible: false, range: [-H - 0.24, (hasTds ? 1 + P : 1) + 0.14] };
+    layout.yaxis = { visible: false, range: [(hasPh ? -P : 0) - (hasTds ? 0.2 : 0.1), 1 + H + 0.12], scaleanchor: 'x', scaleratio: 1 };
+    layout.annotations = annotations;
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
   function drawPiper(plot, waters, measured, colorTitle, c, kept = {}) {
@@ -5697,7 +5950,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Against time**: each line ticked, of the kept run at the same cell and layer, dashed in the same colour, its times in this run\'s unit.',
           '**Against distance**: each profile, of the kept run at its stored time nearest, dashed in the same colour along its own cells.',
           '**Gradient**: the kept run\'s map under this run\'s, on one colour scale.',
-          '**Composition**: its waters beside these on the Piper, Schoeller, Stiff, Wilcox and USSL diagrams and the principal components; not where an element is, whose bands stack.',
+          '**Composition**: its waters beside these on the Piper, Durov, Schoeller, Stiff, Wilcox and USSL diagrams and the principal components; not where an element is, whose bands stack.',
           'Only what the kept run has: the chart\'s note says where it has not the species or quantity, the cell or the rock.',
         ] },
       ],
@@ -5782,11 +6035,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const view = $('rtmCompView').value;
       return {
         kicker: 'Tab', title: 'Composition',
-        lead: 'What the water is made of, from the stored concentrations and what each species is made of: where an element is, the water\'s major ions as the Piper, Schoeller and Stiff diagrams draw them, and its class for irrigation.',
+        lead: 'What the water is made of, from the stored concentrations and what each species is made of: where an element is, the water\'s major ions as the Piper, Durov, Schoeller and Stiff diagrams draw them, and its class for irrigation.',
         sections: [
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
+            ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
             ['Stiff diagrams', 'Each water a polygon, cations to the left of zero and anions to the right, on one scale so that their sizes compare.', view === 'stiff'],
             ['a USSL diagram', 'The U.S. Salinity Laboratory\'s classes of irrigation water: the specific conductance across, C1 to C4 split at 250, 750 and 2,250 µS/cm, and the sodium adsorption ratio up, S1 to S4 split by lines that fall as the conductance rises. Needs SC, which a model has with <CONDUCTANCE>, and SAR.', view === 'ussl'],

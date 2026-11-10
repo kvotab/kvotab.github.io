@@ -920,6 +920,28 @@ async def main():
                 "document.getElementById('rtmChartComp').data.filter((t) => t.name === 'measured').length"), 3)
             check('  and its type in the note', await page.ev(
                 "document.getElementById('rtmCompNote').textContent.includes('Ca–Na–HCO₃')"), True)
+            # A Durov diagram: the cations' triangle on the square's left, the anions' on its top, the water in the square at
+            # HCO3 + SO4/2 across and Ca + Mg/2 up; its total dissolved solids, every species dissolved by its formula and
+            # IUPAC's weights, 405.00 mg/kgw by hand -- and no pH, the model having no H+.
+            await comp('durov')
+            durov = await page.ev("""(() => { const d = document.getElementById('rtmChartComp').data.filter((t) => t.name === 'the model');
+              return d.map((t) => [t.x[0], t.y[0], t.text[0]]); })()""")
+            hco3 = 3 / 6
+            across, up = hco3 + so4 / 2, ca + mg / 2
+            w = {'H': 1.008, 'C': 12.011, 'O': 15.999, 'Na': 22.990, 'Mg': 24.305, 'S': 32.06, 'Cl': 35.45, 'K': 39.098, 'Ca': 40.078}
+            tds = 1000 * (1e-3 * w['Ca'] + 5e-4 * w['Mg'] + 2e-3 * w['Na'] + 1e-4 * w['K'] + 2e-3 * w['Cl']
+                          + 4e-4 * (w['S'] + 4 * w['O']) + 1e-4 * (w['Ca'] + w['S'] + 4 * w['O'])
+                          + 2.9e-3 * (w['H'] + w['C'] + 3 * w['O']) + 5e-5 * (w['C'] + 3 * w['O']))
+            want = [[-h * mg, up], [across, 1 + h * so4], [across, up], [1 + 0.62 * tds / 500, up]]
+            check('a Durov diagram: the water in the cations\' triangle, the anions\' and the square where the two meet, HCO3 + SO4/2 '
+                  'across and Ca + Mg/2 up, to 1e-9; its total dissolved solids, %.2f mg/kgw by hand, on the panel at the right; no '
+                  'pH panel, the model having no H+, and the note saying so' % tds,
+                  [isinstance(durov, list) and len(durov) == 4 and all(abs(a - b) < 1e-9 for pt, wpt in zip(durov, want)
+                                                                        for a, b in zip(pt[:2], wpt)),
+                   isinstance(durov, list) and len(durov) == 4 and 'TDS %s mg/kgw' % ('%.4g' % tds) in durov[0][2],
+                   await page.ev("document.getElementById('rtmCompNote').textContent.includes('no pH: the model has no H+')"),
+                   await page.ev("document.getElementById('rtmChartComp').data.filter((t) => t.name === 'measured').length")],
+                  [True, True, True, 3])
             await comp('schoeller', rtmCompTimes='0, 100')
             sch = await page.ev("""(() => { const d = document.getElementById('rtmChartComp');
               return [d.data.length, d.data[0].y, d.data[2].line.dash, d.layout.yaxis.type, d.layout.yaxis.title.text]; })()""")
@@ -1382,6 +1404,18 @@ async def main():
                 % json.dumps(label))
             check('  against distance each profile again for it, dashed; on Gradient its own map under this one, on one colour scale; '
                   'on the Piper diagram its path through all three panels', others, [True, 2, 'x2', True, 3, True])
+            await page.ev("(() => { const s = document.getElementById('rtmCompView'); s.value = 'durov';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "(document.getElementById('rtmChartComp').data || []).filter((t) => t.name === %s).length" % json.dumps(label),
+                         5, tries=60, pause=0.25)
+            durov_beside = await page.ev("""((label) => { const d = document.getElementById('rtmChartComp').data;
+              return [d.filter((t) => t.name === 'the model').length, d.filter((t) => t.name === label).length,
+                d.filter((t) => t.name === label).every((t) => t.line.dash === 'dash')]; })(%s)""" % json.dumps(label))
+            check('  on a Durov diagram its path through both triangles, the square, the pH and the dissolved solids, as this '
+                  "run's", durov_beside, [5, 5, True])
+            await page.ev("(() => { const s = document.getElementById('rtmCompView'); s.value = 'piper';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
             await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             check('  beside it nothing: the run alone again', await page.ev(
