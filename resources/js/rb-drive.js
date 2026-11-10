@@ -23,7 +23,10 @@
      4. Google's picker: My Drive, what is shared with the reader, shared
         drives, several files at once.
      5. Each file picked is fetched from the Drive API and opened by
-        ingestFileBuffer, as a file from disk is.
+        ingestFileBuffer, as a file from disk is. A large HDF5 file -- at the
+        size from which one from disk is read as it is looked at -- is read
+        the same way, a piece at a time, by the worker that reads those
+        (rb-lazy-worker.js), each piece a request for that range of its bytes.
 
    A later click goes straight to the picker while the access lasts (Google
    gives it for an hour), and after that asks Google again from the click
@@ -33,7 +36,9 @@
    storage, and is gone when the tab closes. It is attached ONLY in
    driveFileRequest, to a URL that function builds itself for
    www.googleapis.com from a file ID the picker gave. Nothing else on the page
-   sends it anywhere.
+   sends it anywhere. The worker reading a large file is handed that URL with
+   those headers, and sends them to that URL alone; when Google gives a new
+   token, the files it reads are handed the new headers.
    ========================================================================== */
 
 'use strict';   // see the script manifest in rb.html for why
@@ -50,6 +55,8 @@ let driveAskedThisTab = false;  // whether Google has answered once in this tab
 let driveLoading = null;        // the promise of Google's scripts, once asked for
 let drivePicker = null;         // the picker on show, to be disposed of
 let driveQueue = Promise.resolve();  // one pick's files opened after another's
+/** Files read a piece at a time, by their number in the worker: given new headers with a new token. */
+const driveLazyFiles = new Map();
 
 /**
  * The Google Cloud project from rb-drive-config.js, or null while it is not
@@ -281,6 +288,11 @@ function onDriveToken(response) {
   const seconds = Number(response.expires_in);
   const life = Number.isFinite(seconds) && seconds > 0 ? seconds : 3600;
   driveToken = { value: response.access_token, expires: Date.now() + Math.max(life - 60, life / 2) * 1000 };
+  // The files open and read a piece at a time go on with the new access.
+  for (const [fid, file] of driveLazyFiles) {
+    const request = driveFileRequest(file);
+    rbLazyCall('headers', { fid, headers: request.headers }).catch(() => driveLazyFiles.delete(fid));
+  }
   closeDriveDialog();
   showDrivePicker();
 }
@@ -426,7 +438,9 @@ function driveFileName(name, id) {
  * What to ask the Drive API for a file's bytes, with the access attached.
  * THE ONLY PLACE THE TOKEN IS ATTACHED, and only to a URL built here, for
  * www.googleapis.com, from a file ID the picker gave and driveDocument
- * checked. null when the access has run out.
+ * checked. null when the access has run out. A part of the file is asked
+ * for with these and a Range header, here for its first megabyte and by
+ * rb-lazy-worker.js for each piece of a file read a piece at a time.
  *
  * @param {{id: string, resourceKey: string}} file
  * @returns {{url: string, headers: object}|null}
@@ -457,6 +471,135 @@ async function fetchDriveFile(file, onProgress) {
   const response = await fetch(request.url, { headers: request.headers });
   if (!response.ok) throw new Error(await explainDriveFailure(response, file));
   return readResponseWithProgress(response, onProgress);
+}
+
+/* ── a large file, a piece at a time ─────────────────────────────────── */
+
+/**
+ * Whether a Drive file is read a piece at a time, as a file from disk is:
+ * an HDF5 file (an assessment, a MAT-file, a JSON or XML file is written as
+ * HDF5 in memory, so it is read whole) of the size from which one from disk
+ * is, or as `localStorage['kvot-rb-lazy']` says (wantsLazyFile). Its size
+ * must be known: the reader is told it.
+ *
+ * @param {{name: string, size: number}} file
+ * @returns {boolean}
+ */
+function driveWantsLazy(file) {
+  if (!(Number.isFinite(file.size) && file.size > 0)) return false;
+  if (isEcolegoAssessment(file.name, null) || isMatFile(file.name, null)
+      || isJsonFile(file.name, null) || isXmlFile(file.name, null)) return false;
+  return wantsLazyFile({ size: file.size });
+}
+
+/**
+ * Bytes [start, end) of a Drive file, asked for as a range. Drive answers a
+ * range with that range (206); one that sent the whole file instead is
+ * stopped, unless the range was the whole file.
+ *
+ * @param {object} file - From driveDocument
+ * @param {number} start
+ * @param {number} end
+ * @returns {Promise<ArrayBuffer>}
+ */
+async function fetchDriveRange(file, start, end) {
+  const request = driveFileRequest(file);
+  if (!request) {
+    throw new Error('Google’s access has run out (it lasts an hour). Click Google Drive and pick the file again.');
+  }
+  const response = await fetch(request.url, { headers: { ...request.headers, Range: `bytes=${start}-${end - 1}` } });
+  if (!response.ok) throw new Error(await explainDriveFailure(response, file));
+  if (response.status !== 206 && !(start === 0 && end >= file.size)) {
+    try { await response.body.cancel(); } catch (_) { ignoreFailure('fetchDriveRange', _); }
+    throw new Error(`Google Drive sent the whole of ${file.name} where a part of it was asked for, so it cannot be read a piece at a time.`);
+  }
+  return response.arrayBuffer();
+}
+
+/** How rb-lazy-worker.js says a request under a read failed. */
+const DRIVE_READ_FAILURE = /could not be read over the network: (.*)$/;
+
+/**
+ * What a reader is told when a piece of a Drive file could not be fetched,
+ * or null when the failure was not a request's (HDF5's own errors are said
+ * as for any file). A 401 means the hour's access has run out: it is
+ * forgotten, so that the next click on Google Drive asks Google again, and
+ * the new access then reaches the files already open (onDriveToken).
+ *
+ * @param {{name: string}} file
+ * @param {Error|string} err
+ * @returns {string|null}
+ */
+function driveReadFailureText(file, err) {
+  const m = DRIVE_READ_FAILURE.exec(String(err && err.message || err));
+  if (!m) return null;
+  const why = m[1];
+  if (/^HTTP 401\b/.test(why)) {
+    driveToken = null;
+    return `Google’s access to ${file.name} has run out (it lasts an hour). Click Google Drive to renew it, then select again: the file stays open.`;
+  }
+  if (why === 'the connection failed') {
+    return `${file.name} could not be read from Google Drive: the connection failed. Select again once it is back.`;
+  }
+  return `${file.name} could not be read from Google Drive (${why}).`;
+}
+
+/**
+ * The worker, asked for one Drive file as rbLazyCall asks it, with what goes
+ * wrong over the network said to the reader: the page reads a lazy file's
+ * groups and values quietly, and a file from disk does not fail that way.
+ *
+ * @param {object} file - From driveDocument
+ * @returns {function(string, Object): Promise}
+ */
+function driveLazyCall(file) {
+  const tell = (err) => {
+    const text = driveReadFailureText(file, err);
+    if (text) reportFailure('googleDrive:read', err instanceof Error ? err : new Error(String(err)), { userMessage: text });
+  };
+  return async (cmd, args) => {
+    if (cmd === 'close') driveLazyFiles.delete(args.fid);
+    let answer;
+    try {
+      answer = await rbLazyCall(cmd, args);
+    } catch (err) {
+      if (cmd !== 'open') tell(err);   // a failed open is said by openDriveFiles
+      throw err;
+    }
+    if (cmd === 'values' && answer && answer.errors) {
+      const failed = Object.values(answer.errors).find(m => DRIVE_READ_FAILURE.test(m));
+      if (failed) tell(failed);
+    }
+    return answer;
+  };
+}
+
+/**
+ * Open a large HDF5 file from Drive a piece at a time and register it as a
+ * file from disk read that way is (registerLazyFile). Its first megabyte is
+ * fetched here, for the HDF5 signature; then the worker reads what is looked
+ * at, each piece a request for that range.
+ *
+ * @param {object} file - From driveDocument
+ * @returns {Promise<string>} The name the file was registered under
+ */
+async function openDriveFileLazily(file) {
+  const head = await fetchDriveRange(file, 0, Math.min(file.size, 1024 * 1024 + 8));
+  const check = validateHdf5Buffer(head);
+  if (!check.ok) throw new Error(`${file.name}: ${check.reason}`);
+  const request = driveFileRequest(file);
+  if (!request) {
+    throw new Error('Google’s access has run out (it lasts an hour). Click Google Drive and pick the file again.');
+  }
+  const call = driveLazyCall(file);
+  let opened;
+  try {
+    opened = await call('open', { remote: { url: request.url, headers: request.headers, size: file.size } });
+  } catch (err) {
+    throw new Error(driveReadFailureText(file, err) || err.message);
+  }
+  driveLazyFiles.set(opened.fid, file);
+  return registerLazyFile(file.name, opened, call, 'googleDrive:lazy');
 }
 
 /**
@@ -534,10 +677,17 @@ async function openDriveFiles(files) {
       try {
         const refusal = driveFileRefusal(file);
         if (refusal) throw new Error(refusal);
+        const count = total > 1 ? `${i + 1}/${total} — ` : '';
+        if (driveWantsLazy(file)) {
+          // A piece at a time, whatever its size: only what is looked at is fetched.
+          setFileLoadProgress(null, `${count}${file.name} — opening, to be read as it is looked at`);
+          await openDriveFileLazily(file);
+          kvotTrace('[googleDrive] Opened a piece at a time', file.name);
+          continue;
+        }
         // Read whole, so held to the limit a file read whole from disk has.
         const size = kvotFileTooLarge(file, KVOT_FILE_SIZE_LIMITS.dataset);
         if (size.tooLarge) throw new Error(size.reason);
-        const count = total > 1 ? `${i + 1}/${total} — ` : '';
         const buffer = await fetchDriveFile(file, (read, length) => {
           setFileLoadProgress(length ? read / length : null,
             `${count}${file.name} — ${kvotFormatBytes(read)}${length ? ` of ${kvotFormatBytes(length)}` : ''}`);

@@ -16,7 +16,9 @@
      * a dataset's values when a selection is about to read them
        (rbPrepareSelection, called by the selection handler before it draws).
    Something read before it was fetched is a warning on the console, never a
-   silent gap, so a path this misses shows up in the tests.
+   silent gap, so a path this misses shows up in the tests. A large file from
+   the reader's Google Drive is read the same way, over the network
+   (rb-drive.js).
 
    Compression. HDF5 decodes lzf, blosc, zstd, lz4, bitshuffle and the rest
    with plugins, which h5wasm does not have built in. Without one, a read of
@@ -89,7 +91,7 @@ const _rbLazyPending = new Map();
 
 function rbLazyWorker() {
   if (_rbLazyWorker) return _rbLazyWorker;
-  _rbLazyWorker = new Worker('./resources/js/rb-lazy-worker.js?v=20260926');
+  _rbLazyWorker = new Worker('./resources/js/rb-lazy-worker.js?v=20261110');
   _rbLazyWorker.onmessage = (event) => {
     const { id, ok, err } = event.data || {};
     const pending = _rbLazyPending.get(id);

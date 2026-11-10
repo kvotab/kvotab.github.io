@@ -105,8 +105,16 @@ ID are refused before any request; Drive's 403, 404 and 401 are said in
 words, and after a 401 the next click asks Google again. Google's refusals,
 its window blocked or closed, and a script of Google's that does not load
 are each said in the dialog; a window blocked before an account was chosen
-leaves that choice for the next try. 70 checks. RB_TEST_HTTP and RB_TEST_CDP
-choose other ports than 8765 and 9222.
+leaves that choice for the next try. Last, a file read a piece at a time
+(`kvot-rb-lazy` set to `always` stands in for one of 256 MB, and is cleared
+after): every request for it is for a range, the page's first one and the
+worker's, each with the token; a dataset of 5 MB, larger than the worker
+reads through its block cache, is one request of its own; its values are the
+same as the same file's read whole; a MAT-file is still read whole; when
+Google stops taking the token the next read says so and the file stays open,
+and once Google gives a new one the worker reads on with it. The file with
+the 5 MB datasets is made in the test with h5py and numpy. 86 checks.
+RB_TEST_HTTP and RB_TEST_CDP choose other ports than 8765 and 9222.
 
     python3 test-drive.py
 

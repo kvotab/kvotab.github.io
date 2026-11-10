@@ -47,7 +47,7 @@ const CACHE = path.join(HERE, '.cache');
   change with them: compare, then put the new hash here.
 */
 const READER_MIRRORS = {
-  'resources/js/rb-lazy-worker.js': 'sha256-jniRVet13Qjg1c112f1Yezzosj0rtfmKPbTZt9/JFBQ='
+  'resources/js/rb-lazy-worker.js': 'sha256-erTgt6o4fr0u4R3N6p63bvGPclPAt8icf8vBfrP27Dk='
 };
 
 /* Files the site does not load but the extension ships, pinned here. */

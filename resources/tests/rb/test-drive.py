@@ -41,7 +41,13 @@ Checked:
   - a script of Google's that does not load is said, and Try again loads
     that one again and not the other;
   - Google's window blocked before the reader chose an account leaves the
-    choice of account for the next try.
+    choice of account for the next try;
+  - an HDF5 file read a piece at a time (kvot-rb-lazy = always stands in for
+    one of 256 MB): every request for it a range, the page's first one and
+    the worker's, each with the token; its values the same as the same file's
+    read whole; a MAT-file still read whole; and when Google stops taking the
+    token, the next read says so, and once Google gives a new one the worker
+    reads on with it, the file open all the while.
 
 Start the server and the browser as in README.md (RB_TEST_HTTP and
 RB_TEST_CDP choose other ports), then
@@ -54,6 +60,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -66,6 +73,7 @@ ORIGIN = f'http://127.0.0.1:{HTTP}'
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 TOKEN = 'ya29.TEST-ACCESS-TOKEN-not-a-real-one'
+TOKEN2 = 'ya29.TEST-ACCESS-TOKEN-renewed'
 CLIENT = '000000000000-test.apps.googleusercontent.com'
 KEY = 'AIzaTEST-KEY-not-a-real-one'
 APP = '123456789012'
@@ -180,12 +188,30 @@ def fixture(name):
 
 
 JSON_BYTES = json.dumps({'run': {'time': [0, 1, 2], 'value': [1.5, 2.5, 3.5]}}).encode()
+
+
+def big_file():
+    """An HDF5 file of four datasets of 5 MB each, d<i> holding k*(i+1) at k:
+    each larger than the 4 MB from which the worker reads straight from the
+    file rather than through its block cache, so that every read of one is
+    a request, whatever was read before. Made here, so no data is committed."""
+    import io
+    import h5py
+    import numpy as np
+    out = io.BytesIO()
+    with h5py.File(out, 'w') as f:
+        runs = f.create_group('runs')
+        for i in range(4):
+            runs.create_dataset(f'd{i}', data=np.arange(655360, dtype='<f8') * (i + 1))
+    return out.getvalue()
 # id: (content type, bytes, resource key the file needs or None)
 DRIVE_FILES = {
     'fileA': ('application/x-hdf5', fixture('sample-a.h5'), None),
     'fileM': ('application/octet-stream', fixture('matlab-v7.mat'), 'rk-1'),
     'fileJ': ('application/json', JSON_BYTES, None),
     'fileS': ('application/x-hdf5', fixture('sample-b.h5'), None),
+    'fileL': ('application/x-hdf5', fixture('sample-a.h5'), None),
+    'fileB': ('application/x-hdf5', big_file(), None),
 }
 # id: (status, reason, message)
 DRIVE_ERRORS = {
@@ -240,6 +266,7 @@ class Page:
         self.errors = []         # console.error lines and exceptions
         self.config = None       # rb-drive-config.js to serve, NO_FILE, or None for the real one
         self.fail_scripts = set()
+        self.valid_tokens = {TOKEN}   # the tokens the Drive API takes
 
     async def call(self, method, params=None, timeout=60):
         self.n += 1
@@ -310,15 +337,16 @@ class Page:
                 fid = urllib.parse.unquote(parts.path[len('/drive/v3/files/'):])
                 auth = header(req['headers'], 'Authorization')
                 keys = header(req['headers'], 'X-Goog-Drive-Resource-Keys')
+                rng = header(req['headers'], 'Range')
                 self.drive.append({'id': fid, 'query': urllib.parse.parse_qs(parts.query),
-                                   'auth': auth, 'keys': keys})
+                                   'auth': auth, 'keys': keys, 'range': rng})
 
                 async def error(status, reason, message):
                     body = json.dumps({'error': {'code': status, 'message': message,
                                                  'errors': [{'reason': reason, 'message': message}]}}).encode()
                     await self.fulfill(rid, status, {**cors, 'Content-Type': 'application/json'}, body)
 
-                if auth != f'Bearer {TOKEN}':
+                if auth not in {f'Bearer {t}' for t in self.valid_tokens}:
                     await error(401, 'authError', 'Invalid Credentials')
                 elif fid in DRIVE_ERRORS:
                     await error(*DRIVE_ERRORS[fid])
@@ -327,8 +355,17 @@ class Page:
                     await error(404, 'notFound', f'File not found: {fid}.')
                 else:
                     kind, body, _ = DRIVE_FILES[fid]
-                    await self.fulfill(rid, 200, {**cors, 'Content-Type': kind,
-                                                  'Content-Length': str(len(body))}, body)
+                    m = re.fullmatch(r'bytes=(\d+)-(\d*)', rng or '')
+                    if rng and m:   # a part, as Drive answers a range
+                        a = int(m.group(1))
+                        b = min(int(m.group(2)) if m.group(2) else len(body) - 1, len(body) - 1)
+                        part = body[a:b + 1]
+                        await self.fulfill(rid, 206, {**cors, 'Content-Type': kind,
+                                                      'Content-Length': str(len(part)),
+                                                      'Content-Range': f'bytes {a}-{b}/{len(body)}'}, part)
+                    else:
+                        await self.fulfill(rid, 200, {**cors, 'Content-Type': kind,
+                                                      'Content-Length': str(len(body))}, body)
                 return
             self.unexpected.append(url)
             await self.call('Fetch.failRequest', {'requestId': rid, 'errorReason': 'BlockedByClient'})
@@ -456,8 +493,9 @@ async def main():
             check('beside URL, before Sample Data',
                   await page.ev("[...document.querySelectorAll('header .add-file-btn')].map(b => b.dataset.onClick).join(' ')"),
                   'openFilePicker openUrlDialog openGoogleDrive openSampleDataDialog openVscodeDialog')
-            check('and the welcome panel names it',
-                  await page.ev("getComputedStyle(document.querySelector('#info .rb-drive-only')).display"), 'inline')
+            check('and the welcome panel names it, among the ways to load files and for large ones',
+                  await page.ev("[...document.querySelectorAll('#info .rb-drive-only')]"
+                                ".map(e => getComputedStyle(e).display).join(' ')"), 'inline inline')
             check('but nothing is fetched from Google before a click',
                   [r['url'] for r in page.requests if urllib.parse.urlsplit(r['url']).hostname in GOOGLE_HOSTS], [])
 
@@ -557,7 +595,7 @@ async def main():
             before = await pick(page, picked(
                 doc('doc1', 'Notes', 'application/vnd.google-apps.document'),
                 doc('fold1', 'Results', 'application/vnd.google-apps.folder'),
-                doc('big1', 'big.h5', 'application/x-hdf5', 2 * 1024 ** 3),
+                doc('big1', 'big.mat', 'application/octet-stream', 2 * 1024 ** 3),
                 doc('../up', 'up.h5')))
             errors_before = len(page.errors)
             await page.click(BUTTON)
@@ -566,9 +604,16 @@ async def main():
             check('a Google Docs file is refused: it has no file of its own',
                   'Notes lives only in Google Drive' in said)
             check('a folder is refused, with where to look instead', 'Results is a folder' in said)
-            check('a file over the limit is refused before it is fetched', 'big.h5 is 2.0 GB' in said)
+            check('a file read whole that is over the limit is refused before it is fetched', 'big.mat is 2.0 GB' in said)
             check('an ID that is no Drive ID is refused', 'the picker gave the file ID "../up"' in said)
             check('and none of them was asked of Drive', len(page.drive), asked)
+
+            check('an HDF5 file of 256 MB or more is read a piece at a time instead, whatever its size,'
+                  ' and a smaller one, or one of another kind, whole', await page.ev(
+                      "[['huge.h5', 2 * 1024 ** 3], ['big.h5', 256 * 1024 ** 2], ['small.h5', 10 * 1024 ** 2],"
+                      " ['huge.mat', 2 * 1024 ** 3], ['huge.json', 2 * 1024 ** 3], ['nosize.h5', NaN]]"
+                      ".map(([name, size]) => driveWantsLazy({ name, size }))"),
+                  [True, True, False, False, False, False])
 
             # Drive's refusals, in words.
             before = await pick(page, picked(doc('denied', 'locked.h5'), doc('gone', 'moved.h5')))
@@ -654,8 +699,94 @@ async def main():
             check('Google\'s window blocked leaves the choice of account for the next try',
                   [r['overrides'] for r in await page.ev(f'{T}.tokenRequests')], [{}, {}])
 
+            # --- a large file, a piece at a time ------------------------------
+            await page.load(5, CONFIG_JS)
+            await page.ev("localStorage.setItem('kvot-rb-lazy', 'always'); true")
+            page.drive.clear()
+            size_a = len(DRIVE_FILES['fileL'][1])
+            size_b = len(DRIVE_FILES['fileB'][1])
+            before = await pick(page, picked(
+                doc('fileL', 'big-a.h5', 'application/x-hdf5', size_a),
+                doc('fileB', 'big.h5', 'application/x-hdf5', size_b),
+                doc('fileM', 'matlab-v7.mat', 'application/octet-stream', len(DRIVE_FILES['fileM'][1]), 'rk-1')))
+            errors_before = len(page.errors)
+            await page.click(BUTTON)
+            await settle(page, f"!{CHOOSE}.disabled")
+            await page.click('#driveChooseBtn')
+            await opened(page, before)
+            check('a large HDF5 file opens to be read a piece at a time',
+                  await page.ev("!!lazyStateOf(loadedFiles['big-a.h5']) && !!lazyStateOf(loadedFiles['big.h5'])"))
+            check('a MAT-file is still read whole, as one from disk is',
+                  [await page.ev("'matlab-v7.mat' in loadedFiles"),
+                   await page.ev("!lazyStateOf(loadedFiles['matlab-v7.mat'])")], [True, True])
+            check('and its tree is there', await page.ev(
+                "lazyStateOf(loadedFiles['big-a.h5']).paths.includes('/biosphere/vault_A/mire/total/Ac-227')"))
+            check('nothing went wrong on the way', new_errors(page, errors_before), '')
+            await page.ev("""(async () => {
+              const r = await fetch('./resources/tests/rb/fixtures/sample-a.h5');
+              await ingestFileBuffer('mem-a.h5', await r.arrayBuffer(), 'test'); return true; })()""")
+            SAME = """(async (path) => {
+              const s = lazyStateOf(loadedFiles['big-a.h5']);
+              await s.ensureGroup(path.slice(0, path.lastIndexOf('/')));
+              await s.ensureValues([path]);
+              const lazy = s.value(path);
+              if (!lazy) return 'nothing read';
+              const mem = loadedFiles['mem-a.h5'].get(path).value;
+              return JSON.stringify(Array.from(lazy)) === JSON.stringify(Array.from(mem)) ? lazy.length : 'differs';
+            })(%s)"""
+            check('a dataset read from it is the same as read whole, value for value',
+                  await page.ev(SAME % json.dumps('/biosphere/vault_A/mire/total/Ac-227')), 720)
+            BIG = """(async (i) => {
+              const s = lazyStateOf(loadedFiles['big.h5']);
+              await s.ensureGroup('/runs');
+              await s.ensureValues(['/runs/d' + i]);
+              const v = s.value('/runs/d' + i);
+              if (!v) return 'nothing read';
+              for (let k = 0; k < v.length; k++) if (v[k] !== k * (i + 1)) return 'differs at ' + k;
+              return v.length;
+            })(%d)"""
+            await page.ev("lazyStateOf(loadedFiles['big.h5']).ensureGroup('/runs').then(() => true)")
+            seen = len(page.drive)
+            check('a dataset of 5 MB is read right', await page.ev(BIG % 0), 655360)
+            direct = [d for d in page.drive[seen:] if d['id'] == 'fileB']
+            check('in one request for its own range, past the block cache',
+                  [len(direct), direct and int(direct[0]['range'].split('-')[1]) - int(direct[0]['range'][6:].split('-')[0]) + 1 >= 5242880],
+                  [1, True])
+            asked = [d for d in page.drive if d['id'] in ('fileL', 'fileB')]
+            check('every request for them was for a range, never the whole file',
+                  all(d['range'] and d['range'].startswith('bytes=') for d in asked))
+            check('and carried the token', all(d['auth'] == f'Bearer {TOKEN}' for d in asked))
+            print(f'      ({len([d for d in asked if d["id"] == "fileL"])} range requests for a file of {size_a} bytes,'
+                  f' {len([d for d in asked if d["id"] == "fileB"])} for one of {size_b})')
+
+            # Google stops taking the token: the next read says so.
+            page.valid_tokens = {TOKEN2}
+            await page.ev("hideFailureBanner(); true")
+            check('a read once Google has stopped taking the access reads nothing',
+                  await page.ev(BIG % 1), 'nothing read')
+            check('and says so, and how to go on', await settle(page,
+                  "((document.querySelector('#failureBanner.show .failure-banner-text') || {}).textContent || '')"
+                  ".startsWith('Google’s access to big.h5 has run out')", True, tries=50))
+            check('the access is forgotten', await page.ev('driveToken'), None)
+            check('and the file stays open', await page.ev("!!lazyStateOf(loadedFiles['big.h5'])"))
+
+            # A new token: the worker reads on with it.
+            await page.ev(f'{T}.nextToken = {{ kind: "token", token: {json.dumps(TOKEN2)} }}; true')
+            before = await pick(page, {'action': 'cancel'})
+            await page.click(BUTTON)
+            await opened(page, before)
+            seen = len(page.drive)
+            check('once Google gives a new token, the same read works', await page.ev(BIG % 1), 655360)
+            check('with the new token', [d['auth'] for d in page.drive[seen:] if d['id'] == 'fileB'],
+                  [f'Bearer {TOKEN2}'])
+            await page.ev("localStorage.removeItem('kvot-rb-lazy'); true")
+
             check('nothing outside the stand-ins was fetched from Google', page.unexpected, [])
         finally:
+            try:
+                await page.ev("localStorage.removeItem('kvot-rb-lazy'); true")
+            except Exception:
+                pass
             try:
                 await page.call('Fetch.disable')
             except Exception:

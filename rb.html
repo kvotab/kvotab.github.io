@@ -367,7 +367,7 @@
                     <li>A <strong>MATLAB figure</strong> (<code>.fig</code>) opens too, as the tree of its objects — axes, lines, texts, controls — each a group of the objects it holds and of its properties. Select the file, the figure or an object in it to see the figure drawn as MATLAB shows it, that object set apart; click an object in the drawing to select it in the tree.</li>
                     <li>A <strong>JSON</strong> or <strong>XML</strong> file (<code>.json</code>, <code>.xml</code>) opens too, as the tree of its values: an object or an element is a group, a value a dataset, and numbers are numbers, so a list of them is drawn as any vector is. An array of objects, or elements of one tag, that hold only values is a table: a dataset for each member, its values over all of them.</li>
                     <li>A <strong>vector</strong> of numbers — one dimension longer than one, a 1000×1 double, say — is drawn by its values: as a histogram, or with <strong>Scatter</strong> each value against its place. A <strong>matrix</strong> is drawn as a <strong>Heatmap</strong>, its first row at the top, as a histogram of all its values, or with each column against its row; an array of more dimensions a <strong>Slice</strong> at a time, the matrix of its first two. <kbd>Ctrl</kbd>-click (<kbd>⌘</kbd> on Mac) several to draw them together; in a scatter, a vector as long as another can be the <strong>X axis</strong> they are drawn against.</li>
-                    <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk as you look at it, not loaded whole.</li>
+                    <li><strong>Large files</strong> open at once: from 256 MB a file is read from disk<span class="rb-drive-only"> or Google Drive</span> as you look at it, not loaded whole.</li>
                     <li>Toggle <strong>Dynamic Legend</strong> to auto-hide traces outside the current view.</li>
                     <li>Right-click the chart to <strong>copy</strong> or <strong>download</strong> data as CSV / Excel.</li>
                     <li>Right-click in the tree to send the selection to the <strong>User Interface for statsmodels</strong> for statistics, or to save it as an HDF5 file; values are drawn from its distributions, 1,000 or as many as you choose.</li>
@@ -496,11 +496,11 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20261110b"></script>
+  <script src="./resources/js/rb-state.js?v=20261110c"></script>
   <script src="./resources/js/rb-utils.js?v=20261031e"></script>
   <script src="./resources/js/rb-actions.js?v=20261110"></script>
   <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
-  <script src="./resources/js/rb-lazy.js?v=20260927"></script>
+  <script src="./resources/js/rb-lazy.js?v=20261110"></script>
   <script src="./resources/js/rb-file.js?v=20261102b"></script>
   <script src="./resources/js/rb-eas.js?v=20261102"></script>
   <script src="./resources/js/rb-mat.js?v=20261102"></script>
@@ -526,6 +526,6 @@
   <script src="./resources/js/rb-handoff.js?v=20261102"></script>
   <script src="./resources/js/rb-smui.js?v=20261102"></script>
   <script src="./resources/js/rb-drive-config.js?v=20261110"></script>
-  <script src="./resources/js/rb-drive.js?v=20261110"></script>
+  <script src="./resources/js/rb-drive.js?v=20261110b"></script>
 </body>
 </html>
