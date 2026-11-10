@@ -338,6 +338,21 @@ function rtmQuantities(msg) {
   return { type: 'quantities', id: msg.id, keys, cells, n, values };
 }
 
+/**
+ * One water of a run as PHREEQC lists it: the stored point `index` in cell
+ * `cell` -- each species' ln of its activity coefficient, every quantity of
+ * the model there, and each phase's log IAP and log K (model.listingAt).
+ */
+function rtmListing(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'listing', id: msg.id, missing: true };
+  const { model, t, states, width } = run;
+  const c = states.subarray(msg.index * width, (msg.index + 1) * width);
+  const got = model.listingAt(c, t[msg.index], msg.cell);
+  return { type: 'listing', id: msg.id, index: msg.index, cell: msg.cell, lnG: got.lnG, values: got.values, phases: got.phases,
+    tc: got.tc };
+}
+
 /*
   DIAGRAMS: the water of one cell -- as the model starts it, or as the run
   left it -- held at each point of a range of pH, pe or Eh, a species'
@@ -1706,6 +1721,15 @@ function handleRtmMessage(msg, post) {
       post(reply, reply.values ? [reply.values.buffer] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'quantities', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'listing') {
+    try {
+      const reply = rtmListing(msg);
+      post(reply, reply.values ? [reply.values.buffer, reply.lnG.buffer] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'listing', error: rtmErrorMessage(e) });
     }
     return;
   }

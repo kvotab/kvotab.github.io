@@ -1651,6 +1651,67 @@ async def main():
                   'the measured waters one of each type', [ok, fresh],
                   [True, ['cell 19: Na–Cl at the start, Ca–HCO₃ at 6.94 d; 4 measured', False, 5, 3, True, 'Na–HCO₃', True, True, True,
                           'Na–Cl / Na–HCO₃ / Mg–HCO₃ / Ca–HCO₃']])
+            # The same water as PHREEQC lists it, on the Composition tab: one cell at one stored point, from the model's own
+            # speciation, in PHREEQC's blocks; a complex under each of its elements, each element's total as its species make
+            # it, the calcite at saturation, the exchanger's equivalent fractions adding up to 1; a time asked for; the Text
+            # and the CSV saved.
+            await page.ev("(() => { const v = document.getElementById('rtmCompView'); v.value = 'listing';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            shown = await settle(page, "!document.getElementById('rtmCompListing').hidden", True, tries=60, pause=0.25)
+            listed = await page.ev(r"""(() => { const box = document.getElementById('rtmCompListing');
+              const heads = [...box.querySelectorAll('h4')].map((h) => h.textContent);
+              const tables = [...box.querySelectorAll('table')];
+              const byHead = (h) => tables[heads.slice(1).indexOf(h)];
+              const dist = byHead('Distribution of species');
+              const rows = [...dist.querySelectorAll('tbody tr')];
+              const groupOf = new Map();
+              let g = '';
+              const under = [];
+              for (const tr of rows) {
+                if (tr.classList.contains('rtm-listing-group')) { g = tr.children[0].textContent; groupOf.set(g, tr.children[1].textContent); continue; }
+                under.push([g, tr.children[0].textContent]);
+              }
+              const comp = Object.fromEntries([...byHead('Solution composition').querySelectorAll('tbody tr')].map((tr) => [tr.children[0].textContent, tr.children[1].textContent]));
+              const si = Object.fromEntries([...byHead('Saturation indices').querySelectorAll('tbody tr')].map((tr) => [tr.children[0].textContent, tr.children[1].textContent]));
+              const ex = [...byHead('Exchange composition').querySelectorAll('tbody tr')].map((tr) => Number(tr.children[2].textContent));
+              const shown = (id) => !document.getElementById(id).hidden;
+              return [heads, under.slice(0, 2).map((u) => u[1]).join(' '),
+                under.filter((u) => u[1] === 'CaHCO3+').map((u) => u[0]).join(' '), groupOf.get('Ca') === comp.Ca && groupOf.get('Mg') === comp.Mg,
+                si.Calcite, Math.abs(ex.reduce((a, b) => a + b, 0) - 1) < 1e-3,
+                ['rtmCompCellWrap', 'rtmCompTimesWrap', 'rtmCompAlongWrap', 'rtmCompLogTWrap'].map(shown).join(' '),
+                [...document.querySelectorAll('button[data-pane="composition"]')].filter((b) => !b.hidden).map((b) => b.textContent).join(' ')]; })()""")
+            check('  the same water as PHREEQC lists it: its blocks in PHREEQC\'s order, H+ and OH- first, CaHCO3+ under C and Ca, each '
+                  'element\'s total as its species make it, the calcite at saturation, the exchanger\'s fractions adding up to 1; '
+                  'Cell and At in the toolbar, Along and log time not; Text among the saves, the picture\'s not',
+                  [shown, listed],
+                  [True, [['The water of cell 19 (1.95e-1 m) at 6.94 d', 'Solution composition', 'Description of solution',
+                           'Distribution of species', 'Saturation indices', 'Minerals', 'Exchange composition'],
+                          'OH- H+', 'C Ca', True, '0.00', True, 'true true false false', 'CSV Excel Text']])
+            await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = '1 d';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            # The stored point nearest a day, which reads as 1.00 d, or as 24.0 h a little short of one.
+            at1 = await settle(page, "/^The water of cell 19 \\(1\\.95e-1 m\\) at (1\\.0\\d d|2[34]\\.\\d h)$/.test("
+                                     "document.querySelector('#rtmCompListing h4').textContent)", True, tries=60, pause=0.25)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"txt\"]').click()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            saved = await page.ev("(async () => Promise.all(window.__saved.map(async (r) => [r.name, (await r.body).split('\\n')])))()")
+            txt = saved[0] if isinstance(saved, list) and saved else ['', ['']]
+            csv = saved[1] if isinstance(saved, list) and len(saved) > 1 else ['', ['']]
+            check('  at a time asked for, 1 d, its water; saved as Text in PHREEQC\'s columns and blocks, and as CSV the distribution '
+                  'of species', [at1, txt[0], bool(re.match(r'The water of cell 19 \(1\.95e-1 m\) at (1\.0\d d|2[34]\.\d h)$', txt[1][0])), txt[1][2], any(l.strip().startswith('pH  =') for l in txt[1]),
+                                 sum(1 for l in txt[1] if l.startswith('Ca ')), csv[0], csv[1][0]],
+                  [True, 'rtm_freshening_water_cell19.txt', True,
+                   '-----------------------------Solution composition------------------------------', True, 1,
+                   'rtm_freshening_water_cell19.csv', 'species,in,molality,activity,log molality,log activity,log gamma'])
+            await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " const v = document.getElementById('rtmCompView'); v.value = 'durov'; v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             # The box as the other examples find it.
             await page.ev("(() => { const b = document.getElementById('rtmCompLogT'); b.checked = true;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")

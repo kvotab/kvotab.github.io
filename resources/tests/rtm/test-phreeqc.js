@@ -3579,6 +3579,69 @@ function againstQuantities(engine) {
 }
 
 /* ======================================================================
+   THE WATER AS PHREEQC LISTS IT, against PHREEQC: a water handed off --
+   ion pairs, activity coefficients, calcite and an exchanger -- listed by
+   the model (listingAt, as the Composition tab's listing reads it): each
+   species' molality, log activity and log gamma, each exchange species'
+   amount, each phase's SI and log K, the pH, ionic strength, activity of
+   water and percent error, against PHREEQC's MOL, LA, LG, SI, LK_PHASE,
+   MU, ACT("H2O") and PERCENT_ERROR for the same water. A species the
+   hand-off renamed -- (CO2)2 as CO2_2 -- is asked for by PHREEQC's name.
+   ====================================================================== */
+function againstListing(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 2\n Mg 1\n Cl 6 charge\n C(4) 4\n S(6) 1\nEQUILIBRIUM_PHASES 1\n'
+    + ' Calcite 0 0.01\nEXCHANGE 1\n -equilibrate 1\n X 0.02\nEND\n';
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'listed', text: water }, activity: true, exact: true, phases: true,
+    redox: false });
+  const m = RtmModel.compile(res.text);
+  const c = Float64Array.from(m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState());
+  const L = m.listingAt(c, 0, 0);
+  const names = m.speciesNames;
+  const back = new Map((res.report.renamed || []).map(([pq, page]) => [page, pq]));
+  const pqName = (k) => back.get(names[k]) || names[k];
+  const inWater = (k) => m.composition.elements.some((e) => e.terms.some((tm) => tm[0] === k && tm[2] === 'water'))
+    || names[k] === 'H+' || names[k] === 'OH-';
+  const solutes = names.map((_, k) => k).filter(inWater);
+  const onX = names.map((_, k) => k).filter((k) => m.composition.elements.some((e) => e.terms.some((tm) => tm[0] === k && tm[2] === 'exchange')));
+  const punch = [...solutes.flatMap((k) => [`MOL("${pqName(k)}")`, `LA("${pqName(k)}")`, `LG("${pqName(k)}")`]),
+    ...onX.map((k) => `MOL("${pqName(k)}")`), ...L.phases.flatMap((p) => [`SI("${p.name}")`, `LK_PHASE("${p.name}")`]),
+    '-LA("H+")', 'MU', 'ACT("H2O")', 'PERCENT_ERROR'];
+  engine.load(dbText);
+  const rows = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + `${punch.map((x, i) => ` ${10 + i} PUNCH ${x}`).join('\n')}\nEND\n`);
+  const pq = rows[rows.length - 1].map(Number);
+  const worst = { mol: [0, ''], la: [0, ''], lg: [0, ''], ex: [0, ''], si: [0, ''], lk: [0, ''], water: [0, ''] };
+  const note = (key, d, what) => { if (!(d <= worst[key][0])) worst[key] = [d, what]; };
+  let j = 0;
+  for (const k of solutes) {
+    const lg = L.lnG[k] / Math.LN10;
+    note('mol', Math.abs(c[k] / pq[j] - 1), names[k]);
+    note('la', Math.abs(Math.log10(c[k]) + lg - pq[j + 1]), names[k]);
+    note('lg', Math.abs(lg - pq[j + 2]), names[k]);
+    j += 3;
+  }
+  for (const k of onX) { note('ex', Math.abs(c[k] / pq[j] - 1), names[k]); j++; }
+  for (const p of L.phases) {
+    note('si', Math.abs(p.logIAP - p.logK - pq[j]), p.name);
+    note('lk', Math.abs(p.logK - pq[j + 1]), p.name);
+    j += 2;
+  }
+  const q = (key) => L.values[m.quantities.findIndex((x) => x.key === key)];
+  [['pH', q('pH'), pq[j], 1], ['I', q('I'), pq[j + 1], pq[j + 1]], ['a(H2O)', q('a(H2O)'), pq[j + 2], 1], ['percent error', q('charge'), pq[j + 3], 1]]
+    .forEach(([what, a, b, scale]) => note('water', Math.abs(a - b) / scale, what));
+  const renamed = solutes.filter((k) => back.has(names[k])).map((k) => `${names[k]} for ${back.get(names[k])}`);
+  check(`the water as PHREEQC lists it: a water handed off with ion pairs, activities, calcite and an exchanger, listed by the `
+    + `model -- ${solutes.length} species' molality, log activity and log gamma, ${onX.length} on the exchanger, ${L.phases.length} `
+    + 'phase\'s SI and log K, the pH, ionic strength, activity of water and percent error -- against PHREEQC\'s for the same water',
+  worst.mol[0] < 1e-8 && worst.la[0] < 1e-8 && worst.lg[0] < 1e-8 && worst.ex[0] < 1e-8 && worst.si[0] < 1e-9 && worst.lk[0] < 1e-9
+    && worst.water[0] < 1e-8 && renamed.length > 0,
+  `${Object.entries(worst).map(([key, [d, what]]) => `${key} ${d.toExponential(1)} (${what})`).join(', ')}; asked by PHREEQC's name: `
+    + `${renamed.join(', ')}`);
+}
+
+/* ======================================================================
    DIAGRAMS, against PHREEQC: a water handed off, held by the Diagrams tab
    at a pH, a pe or a total -- one point of the grid it works out -- against
    PHREEQC's SOLUTION of the same totals at that pH, pe or total, which
@@ -5115,6 +5178,8 @@ function againstKineticsHandOff(engine) {
   againstRedoxZones(wasm);
   console.log('\n--- a redox plume: leachate into an oxic aquifer against PHREEQC\'s TRANSPORT, nearer as the cells are refined ---');
   againstRedoxPlume(wasm);
+  console.log('\n--- the water as PHREEQC lists it: each species, each phase and the water, against PHREEQC for the same water ---');
+  againstListing(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');

@@ -12116,6 +12116,27 @@
       for (let q = 0; q < which.length; q++) out[q] = qFn[which[q]](c, b, cell, t);
       return out;
     }
+    /**
+     * A water as PHREEQC lists it, cell `cell` of the concentrations c at
+     * time t: each species' ln of its activity coefficient (none without
+     * ACTIVITY), and each phase's log IAP and log K of its dissolution at the
+     * cell's temperature and pressure, its SI their difference; with every
+     * quantity, the description of the water (quantitiesAt).
+     * @returns {{lnG: Float64Array, values: Float64Array, phases: {name, logIAP, logK}[], tc: number}}
+     */
+    function listingAt(c, t, cell) {
+      const values = quantitiesAt(c, t, cell, Int32Array.from(qList, (_, q) => q), new Float64Array(qList.length));
+      const b = cell * ns;
+      qW = activityAt(qAct, c, b, qG, qD, cell);
+      qEval++;
+      const phasesOut = [...new Set(siNames)].map((name) => {
+        const ph = phaseFor(name);
+        let lnIAP = ph.water ? ph.water * qW.lnAw : 0;
+        for (const [k, nu] of ph.net) lnIAP += nu * (Math.log(Math.max(c[b + k], 1e-300)) + qG[k]);
+        return { name, logIAP: (ph.sign * lnIAP) / Math.LN10, logK: (ph.sign * lnKAtP(ph.eq || ph, cell, qW)) / Math.LN10 };
+      });
+      return { lnG: Float64Array.from(qG), values, phases: phasesOut, tc: tkOf(cell) - 273.15 };
+    }
     // <DATA>: measured tables, each column a species or one of the quantities above.
     const data = readData(sections.DATA);
     for (const tab of data) {
@@ -12258,6 +12279,7 @@
       // What the run can be read as besides its species (QUANTITIES), and what <DATA> measured.
       quantities: qList,
       quantitiesAt,
+      listingAt,
       data,
       // What each species is made of, for the views of where an element is and of the water's major ions.
       composition,

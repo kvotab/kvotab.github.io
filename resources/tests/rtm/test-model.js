@@ -7818,6 +7818,47 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       : (got ? got.error : 'no reply'));
   }
   /*
+    The water as PHREEQC lists it, as the worker answers the Composition tab (listing): the redox zones example's water at
+    its last stored point -- each species' ln gamma, every quantity, each phase's log IAP and log K -- each phase's SI
+    the quantity's, and under Davies every ion of one charge with one gamma; a model without ACTIVITY, the carbonate
+    example, every gamma 1; and a run the worker does not have, said so, for the page to send it.
+  */
+  {
+    const exs = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES;
+    const listed = (id) => {
+      const text = exs.find((e) => e.id === id).text;
+      let run = null;
+      handleRtmMessage({ type: 'run', id: 14, text, solver: { ...solverSw, rtol: 1e-6 } }, (msg) => { if (msg.type === 'result') run = msg; });
+      let li = null;
+      handleRtmMessage({ type: 'listing', id: 15, runKey: run.runKey, index: run.n - 1, cell: 0 }, (msg) => { li = msg; });
+      return { m: RtmModel.compile(text), li };
+    };
+    const z = listed('redoxzones');
+    const siOff = Math.max(...z.li.phases.map((p) => Math.abs(p.logIAP - p.logK
+      - z.li.values[z.m.quantities.findIndex((q) => q.key === `SI(${p.name})`)])));
+    const byCharge = new Map();
+    for (const nm of z.m.composition ? z.m.speciesNames : []) {
+      const k = z.m.speciesNames.indexOf(nm);
+      const charge = /([+-])(\d*)$/.exec(nm);
+      if (!charge || nm === 'e-') continue;
+      const zc = (charge[1] === '+' ? 1 : -1) * (Number(charge[2]) || 1);
+      if (!byCharge.has(zc)) byCharge.set(zc, []);
+      byCharge.get(zc).push(z.li.lnG[k]);
+    }
+    const spread = Math.max(...[...byCharge.values()].map((g) => Math.max(...g) - Math.min(...g)));
+    const c = listed('carbonate');
+    let missing = null;
+    handleRtmMessage({ type: 'listing', id: 16, runKey: 99999, index: 0, cell: 0 }, (msg) => { missing = msg; });
+    check('the water as PHREEQC lists it, as the worker answers the Composition tab: a ln gamma for each species and every '
+      + 'quantity; each phase\'s log IAP less its log K its SI, the redox zones example\'s pyrolusite, ferrihydrite and FeS; '
+      + 'under Davies every ion of one charge one gamma; without ACTIVITY every gamma 1; a run the worker has not, said so',
+    z.li.type === 'listing' && z.li.lnG.length === z.m.speciesNames.length && z.li.values.length === z.m.quantities.length
+      && z.li.phases.length >= 3 && siOff < 1e-12 && spread < 1e-12 && byCharge.size >= 4 && Math.abs(z.li.tc - 25) < 1e-12
+      && [...c.li.lnG].every((v) => v === 0) && missing && missing.missing === true,
+    `${z.li.phases.map((p) => `${p.name} SI ${(p.logIAP - p.logK).toFixed(3)}`).join(', ')}; SI off by ${siOff.toExponential(1)}; `
+      + `${byCharge.size} charges, gamma apart within one by ${spread.toExponential(1)}; ${missing ? JSON.stringify(missing) : 'no reply'}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

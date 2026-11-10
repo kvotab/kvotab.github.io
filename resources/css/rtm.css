@@ -516,6 +516,16 @@
 .rtm-fit-result th, .rtm-fit-result td { padding: 2px 10px 2px 0; text-align: left; font-variant-numeric: tabular-nums; }
 .rtm-fit-result th { font-weight: 600; border-bottom: 1px solid var(--border-color); }
 .rtm-fit-result p { margin: 4px 0; }
+/* The water as PHREEQC lists it (Composition): its blocks one under another, the numbers in columns. */
+.rtm-listing { margin: 0 0 12px; font-size: 12px; overflow-x: auto; }
+.rtm-listing h4 { margin: 14px 0 4px; font-size: 13px; }
+.rtm-listing h4.rtm-listing-title { margin-top: 6px; }
+.rtm-listing table { border-collapse: collapse; }
+.rtm-listing th, .rtm-listing td { padding: 1px 14px 1px 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rtm-listing th:first-child, .rtm-listing td:first-child { text-align: left; }
+.rtm-listing th { font-weight: 600; border-bottom: 1px solid var(--border-color); }
+.rtm-listing tr.rtm-listing-group td { font-weight: 600; padding-top: 6px; }
+.rtm-listing td.rtm-listing-sp { padding-left: 14px; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
 
 .rtm-example-about {

@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110d">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110e">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -466,6 +466,7 @@
             <label>Show
               <select id="rtmCompView" data-on-change="rtm:redrawComp">
                 <option value="where">where an element is</option>
+                <option value="listing">the water, as PHREEQC lists it</option>
                 <option value="piper">a Piper diagram</option>
                 <option value="durov">a Durov diagram</option>
                 <option value="schoeller">a Schoeller diagram</option>
@@ -517,14 +518,16 @@
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="csv">CSV</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="html">HTML</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="txt" data-comp-for="listing">Text</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="svg" data-comp-hide="listing">SVG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="png" data-comp-hide="listing">PNG</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="html" data-comp-hide="listing">HTML</button>
             </span>
             <span class="kvot-info-slot" data-info-key="pane:composition"></span>
             <span class="rtm-muted" id="rtmCompNote"></span>
           </div>
           <div class="plot" id="rtmChartComp" hidden></div>
+          <div class="rtm-listing" id="rtmCompListing" hidden></div>
           <p class="rtm-empty" id="rtmCompEmpty">Run the model to see what its water is made of.</p>
         </section>
 
@@ -2389,6 +2392,21 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             the whole cell, the exchanger, a surface, the minerals and a gas with it. Hydrogen and
             oxygen are the water's own and are left out, and a species that never comes to 1 % is
             drawn with the others like it, as one band.</p>
+          <p><em>The water, as PHREEQC lists it</em> sets one water out as PHREEQC prints a
+            solution: one cell at one stored point, the end of the run unless <em>At</em> says
+            another, from the model's own speciation. Its composition, each element dissolved; its
+            description — pH, pe, Eh, temperature, ionic strength, the water's activity, the
+            carbonate's alkalinity, the conductance, density and viscosity where the model has
+            <code>&lt;CONDUCTANCE&gt;</code>, and the charge balance as PHREEQC's percent error; the
+            distribution of species, <code>H+</code> and <code>OH-</code> first, then each element,
+            in each of its valence states where the model tells two or more, each species with its
+            molality, activity, their logs and the log of its activity coefficient, a species of
+            two elements under both, as PHREEQC has it; the saturation index of each phase and
+            mineral, with its log IAP and the log K of its dissolution at the water's temperature;
+            the minerals' amounts; what is on an exchanger or a surface, with its share; and a
+            gas's partial pressure. Without an <code>ACTIVITY</code> each activity coefficient is
+            1. <em>Text</em> saves it in PHREEQC's columns, to set beside PHREEQC's own output;
+            CSV the distribution of species, and Excel every block on a sheet of its own.</p>
           <p>The water's major ions are drawn as the hydrochemists draw them, in equivalents: Ca
             and Mg twice their dissolved totals, Na and K together, Cl, the sulfate twice the sulfur
             in a species with four O to each S — <code>SO4-2</code>, <code>CaSO4</code>, not
@@ -3445,14 +3463,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261110e"></script>
+  <script src="./resources/js/rtm-model.js?v=20261110f"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006z"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261110d"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261110e"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110k"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110l"></script>
 </body>
 </html>
