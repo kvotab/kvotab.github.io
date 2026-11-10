@@ -42,6 +42,10 @@
     gradScale: 'YlOrRd',
     gradView: 'map',       // the gradient as a map, as contours of it, or as a surface
     gradTMin: '1e-6',
+    // Where each log concentration axis starts (logFloor): empty for the least drawn.
+    yFrom: '',
+    profileYFrom: '',
+    gradCFrom: '',
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compElement: '',
@@ -104,7 +108,7 @@
         gradLayer: state.gradLayer,
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
-        gradTMin: state.gradTMin,
+        gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
         compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
@@ -140,6 +144,7 @@
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
+      for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
       if (['where', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
@@ -1311,6 +1316,34 @@
     return out;
   }
 
+  /*
+    THE FLOOR OF A LOG CONCENTRATION AXIS: the least concentration it shows,
+    typed after its box; empty, the axis reaches the least drawn, as Plotly
+    ranges it. A redox run's species span 150 decades -- methane at 1e-144
+    where the water is oxic -- and that range squeezed every curve that
+    matters into the top few millimetres. What lies below drops out of view;
+    the data drawn, and so what is saved, are every value still.
+  */
+  function logFloor(text) {
+    const t = String(text || '').trim();
+    if (!t) return { lo: null, at: null, bad: '' };
+    const v = Number(t);
+    return Number.isFinite(v) && v > 0 ? { lo: Math.log10(v), at: v, bad: '' } : { lo: null, at: null, bad: t };
+  }
+  // The log axis from the floor to a little above the largest value drawn on it.
+  function floorRange(lo, arrays) {
+    let top = -Infinity;
+    for (const ys of arrays) for (const v of ys) if (v > 0 && Number.isFinite(v)) top = Math.max(top, Math.log10(v));
+    return top > lo ? [lo, top + Math.max(0.05, 0.04 * (top - lo))] : [lo, lo + 1];
+  }
+  // What a chart's note says of its floor: where the axis starts and which curves lie wholly below it, or what was not read.
+  function floorNote(f, curves) {
+    if (f.bad) return `could not read "${f.bad}" as where the log axis starts`;
+    if (f.lo === null) return '';
+    const under = curves.filter((cv) => !Array.from(cv.y || []).some((v) => v >= f.at)).map((cv) => cv.name);
+    return `the log axis from ${f.at.toExponential()}${under.length ? `, below it all through: ${under.join(', ')}` : ''}`;
+  }
+
   function drawTime() {
     if (typeof Plotly === 'undefined') return;
     const plot = $('rtmChartTime');
@@ -1404,6 +1437,11 @@
     layout.xaxis.type = logT ? 'log' : 'linear';
     layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
     layout.yaxis.type = logY ? 'log' : 'linear';
+    // Where the log axis starts: the curves on the left, and the kept run's and what was measured with them.
+    $('rtmYFrom').disabled = !logY;
+    const floor = logY ? logFloor(state.yFrom) : logFloor('');
+    const onLeft = traces.filter((t) => !t.yaxis);
+    if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, onLeft.map((t) => t.y));
     // An end's flux is per m2 of the water's cross-section, positive to the right.
     layout.yaxis.title = { text: face
       ? `flux through the ${state.cell} end (concentration · m/${timeUnit().symbol})` : 'concentration', font: { size: 11 } };
@@ -1417,7 +1455,8 @@
     $('rtmTimeNote').textContent = [missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
       skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : '',
       bk && besideDrawn ? besideNote(bk) : '', bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
-      bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : ''].filter(Boolean).join('; ');
+      bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft)]
+      .filter(Boolean).join('; ');
   }
 
   function drawProfile() {
@@ -1553,7 +1592,11 @@
       : 'distance from the left-hand face (m)', font: { size: 11 } };
     // pH, SI and the like are drawn as they are; an amount log or not, as the box says.
     const index = quantity && axisOf(name) === 'index';
-    layout.yaxis.type = $('rtmProfileLog').checked && !index ? 'log' : 'linear';
+    const logAxis = $('rtmProfileLog').checked && !index;
+    layout.yaxis.type = logAxis ? 'log' : 'linear';
+    $('rtmProfileYFrom').disabled = !$('rtmProfileLog').checked;
+    const floor = logAxis ? logFloor(state.profileYFrom) : logFloor('');
+    if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, traces.map((t) => t.y));
     const q = quantity ? quantityOf(name) : null;
     layout.yaxis.title = { text: q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${name} concentration`,
       font: { size: 11 } };
@@ -1575,6 +1618,7 @@
       if (off.length) bits.push(`nearest stored time used for ${off.map(fmtTime).join(', ')}`);
     }
     if (besideSaid) bits.push(besideSaid);
+    if (floorNote(floor, traces)) bits.push(floorNote(floor, traces));
     $('rtmProfileNote').textContent = bits.join('; ');
   }
 
@@ -1620,7 +1664,8 @@
     for (const key of keys) {
       const color = palette[state.picked.indexOf(key) % palette.length];
       const onRight = axisOf(key) === 'index';
-      const keep = (v) => (Number.isFinite(v) && (onRight || !log || v > 0) ? v : null);
+      // Every value as it is, none at all on a log axis too: Plotly leaves it out there, and what is saved keeps it.
+      const keep = (v) => (Number.isFinite(v) ? v : null);
       const quantity = runQuantity(r, key);
       const si = r.model.species.indexOf(key);
       const y = Array.from({ length: npts }, (_, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[i]
@@ -1671,6 +1716,10 @@
       : 'distance from the left-hand face (m)', font: { size: 11 } };
     layout.yaxis.type = log ? 'log' : 'linear';
     layout.yaxis.title = { text: 'concentration', font: { size: 11 } };
+    $('rtmProfileYFrom').disabled = !log;
+    const floor = log ? logFloor(state.profileYFrom) : logFloor('');
+    const onLeft = traces.filter((t) => !t.yaxis);
+    if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, onLeft.map((t) => t.y));
     if (right.length) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
@@ -1687,6 +1736,7 @@
     if (bk && besideTraces.length) bits.push(besideNote(bk));
     if (bk && besideComing.length) bits.push(`working out ${besideComing.join(', ')} for ${bk.label}…`);
     if (bk && besideLeft.length) bits.push(besideNote(bk, [...new Set(besideLeft)].join('; ')));
+    if (floorNote(floor, onLeft)) bits.push(floorNote(floor, onLeft));
     // The note first: a longer one moves the chart down, and Plotly places its legend for where the chart is when drawn.
     $('rtmProfileNote').textContent = bits.join('; ');
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -1881,6 +1931,23 @@
         besideSaid = `${bk.label} beside it, its own map${view === 'surface' ? ' to the right' : ' below'}, on one colour scale`;
       }
     }
+    /*
+      The floor of a log concentration: the colour scale from it, what lies
+      below in its colour; a surface's value axis from it, what lies below
+      out of the box. The values themselves, and so what is saved, are all
+      there still.
+    */
+    $('rtmGradCFrom').disabled = !$('rtmGradLogC').checked;
+    const floor = logC ? logFloor(state.gradCFrom) : logFloor('');
+    if (floor.lo !== null && Number.isFinite(hi)) {
+      const top = Math.max(hi, floor.lo + 1e-9);
+      for (const tr of traces) Object.assign(tr, view === 'surface' ? { cmin: floor.lo, cmax: top } : { zmin: floor.lo, zmax: top, zauto: false });
+      if (view === 'surface') {
+        const zr = [floor.lo, top + Math.max(0.05, 0.04 * (top - floor.lo))];
+        layout.scene.zaxis.range = zr;
+        if (layout.scene2) layout.scene2 = { ...layout.scene2, zaxis: { ...layout.scene2.zaxis, range: zr } };
+      }
+    }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`];
     if (Number.isFinite(lo)) {
@@ -1891,6 +1958,11 @@
       bits.push(`${r.n - cols.length} earlier points left off (t = 0 cannot go on a log axis)`);
     }
     if (nonPositive) bits.push(`${nonPositive} values at or below zero left blank`);
+    if (floor.bad) bits.push(floorNote(floor, []));
+    else if (floor.lo !== null && Number.isFinite(lo)) {
+      bits.push(`the colour scale from ${floor.at.toExponential()}${lo < floor.lo
+        ? `, below it ${view === 'surface' ? 'out of the box' : 'in its colour'}` : ''}`);
+    }
     if (besideSaid) bits.push(besideSaid);
     $('rtmGradNote').textContent = bits.join('; ');
   }
@@ -6432,7 +6504,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
-            '**from**: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
+            '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
+            '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
             '**clear**: unticks everything.',
             '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown or through the end shown, a row per stored point.',
             '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
@@ -6462,6 +6535,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
           '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
+          '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
           '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
           SAVE_HTML,
         ] },
@@ -6481,6 +6555,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**As**: a map, contours of it with their values on them, or a surface in three dimensions, the value up, which the mouse turns.',
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
+            '**from**, after log concentration: where the colour scale starts, a plain number such as `1e-10`; empty, the least value there is. What lies below it takes its colour, or on a surface lies below the box; the CSV and Excel files have every value still.',
             '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
             '**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.',
             SAVE_HTML,
@@ -6897,6 +6972,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   let pendingView = null;
   function applyExampleView(v) {
     pendingView = v;
+    // Where each log concentration axis starts: what the example gives, and from the least drawn where it gives nothing.
+    const floors = { yFrom: v && v.yFrom, profileYFrom: v && v.profile && v.profile.from, gradCFrom: v && v.grad && v.grad.from };
+    for (const [k, id] of [['yFrom', 'rtmYFrom'], ['profileYFrom', 'rtmProfileYFrom'], ['gradCFrom', 'rtmGradCFrom']]) {
+      state[k] = typeof floors[k] === 'string' ? floors[k] : '';
+      $(id).value = state[k];
+    }
     if (!v) return;
     if (v.picked) state.picked = v.picked.slice();
     if (Number.isInteger(v.cell)) state.cell = v.cell;
@@ -8452,6 +8533,7 @@ END
       state.layer = Number($('rtmLayer').value) || 0;
       // An end has no layer to pick.
       $('rtmLayerWrap').hidden = !(state.compiled && state.compiled.matrix) || isFace(state.cell);
+      state.yFrom = $('rtmYFrom').value;
       saveState();
       drawTime();
     },
@@ -8461,6 +8543,7 @@ END
       state.gradScale = $('rtmGradScale').value;
       state.gradView = $('rtmGradView').value;
       state.gradTMin = $('rtmGradTMin').value;
+      state.gradCFrom = $('rtmGradCFrom').value;
       saveState();
       drawGradient();
       infoRefresh();
@@ -8472,6 +8555,7 @@ END
       if (axis !== state.profileAxis) { state.profileAxis = axis; state.profileLayer = 0; renderLayerPickers(); }
       else state.profileLayer = Number($('rtmProfileLayer').value) || 0;
       state.profileTimes = $('rtmProfileTimes').value;
+      state.profileYFrom = $('rtmProfileYFrom').value;
       saveState();
       drawProfile();
     },
@@ -8689,6 +8773,9 @@ END
   $('rtmGradScale').value = state.gradScale;
   $('rtmGradView').value = state.gradView;
   $('rtmGradTMin').value = state.gradTMin;
+  $('rtmYFrom').value = state.yFrom;
+  $('rtmProfileYFrom').value = state.profileYFrom;
+  $('rtmGradCFrom').value = state.gradCFrom;
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.
   if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });

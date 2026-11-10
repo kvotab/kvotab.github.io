@@ -1759,25 +1759,27 @@ async def main():
             check('the plume example opens on Gradient: the pe as contours over the 40 days, time not on a log axis, the 30 cells '
                   'up; at the end, from the inlet by the pe, methane, iron, manganese, nitrate and the oxygen ahead of them',
                   [ok, plume], [True, ['pe', False, True, 30, 'methane iron manganese nitrate oxygen']])
-            # Against distance, what is ticked against time together at the end: the pe on its own axis on the right, its steps
-            # the zones; methane and siderite from the inlet, the ferrihydrite partly gone in the iron zone, manganese(2) beyond
-            # it, the oxygen at the far end.
+            # Against distance, what is ticked against time together at the end, on a log axis from 1e-10: the pe on its own
+            # axis on the right, its steps the zones; methane and siderite from the inlet, the ferrihydrite partly gone in the
+            # iron zone, manganese(2) beyond it, the oxygen at the far end.
             await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
             n_prof = await settle(page, "(document.getElementById('rtmChartProfile').data || []).length", 9, tries=60, pause=0.5)
             dist = await page.ev("""(() => { const p = document.getElementById('rtmChartProfile'), d = p.data;
               const of = (name) => d.find((t) => t.name === name).y;
               return [document.getElementById('rtmProfileSpecies').value, d.map((t) => t.name).join(' | '),
-                document.getElementById('rtmProfileNote').textContent, p.layout.yaxis.type,
+                document.getElementById('rtmProfileNote').textContent, p.layout.yaxis.type, p.layout.yaxis.range[0],
+                document.getElementById('rtmProfileYFrom').value,
                 d.find((t) => t.name === 'pe').yaxis === 'y2' && p.layout.yaxis2.title.text === 'pe',
                 of('pe')[0] < -2.5 && of('pe')[29] > 12.5,
                 of('C(-4), dissolved')[5] > 1e-4 && of('Siderite')[5] > 4e-3 && of('Ferrihydrite')[5] === 0,
                 of('Ferrihydrite')[12] > 0 && of('Ferrihydrite')[12] < 4.9e-3 && of('Siderite')[20] === 0,
                 of('Mn+2')[18] > 1e-3 && of('O2')[29] > 1e-4 && of('O2')[20] < 1e-12]; })()""")
-            check('  Against distance draws what is ticked against time together at the end, the pe on its own axis on the right: '
-                  'methane and siderite from the inlet, the ferrihydrite partly gone in the iron zone, manganese(2) beyond it, the '
-                  'oxygen at the far end', [n_prof, dist],
+            check('  Against distance draws what is ticked against time together at the end, on a log axis from 1e-10, the pe on '
+                  'its own axis on the right: methane and siderite from the inlet, the ferrihydrite partly gone in the iron zone, '
+                  'manganese(2) beyond it, the oxygen at the far end', [n_prof, dist],
                   [9, ['*ticked', 'pe | O2 | N(5), dissolved | Mn+2 | Ferrihydrite | Siderite | S(6), dissolved | C(-4), dissolved | '
-                       'C(0), dissolved', '30 cells over 30 m; at 40.0 d, the end of the run', 'linear', True, True, True, True, True]])
+                       'C(0), dissolved', '30 cells over 30 m; at 40.0 d, the end of the run; the log axis from 1e-10', 'log', -10,
+                       '1e-10', True, True, True, True, True]])
             check('  its legend under the axis\' title, not over it, though the chart was drawn while its tab was hidden', await page.ev(
                 """(() => { const p = document.getElementById('rtmChartProfile');
                   return p.querySelector('.legend').getBoundingClientRect().top >= p.querySelector('.g-xtitle').getBoundingClientRect().bottom; })()"""),
@@ -1807,11 +1809,82 @@ async def main():
             await asyncio.sleep(1)
             await page.ev("HTMLAnchorElement.prototype.click = window.__click")
             csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).trim().split('\\n')] : null; })()")
-            check('  saved as CSV: the distance and a column for each drawn, a row for each cell',
-                  [csv[0], csv[1][0][:60], len(csv[1])] if isinstance(csv, list) else csv,
-                  ['rtm_profile_ticked.csv', 'distance from the left-hand face (m),pe,O2,"N(5), dissolved"', 31])
+            check('  saved as CSV: the distance and a column for each drawn, a row for each cell, what a log axis cannot show there '
+                  'too -- the oxygen at the inlet on day 20 under 1e-60, below the floor, and the ferrihydrite there none',
+                  [csv[0], csv[1][0][:60], len(csv[1]), float(csv[1][1].split(',')[2]) < 1e-60, csv[1][1].split(',')[5]]
+                  if isinstance(csv, list) else csv,
+                  ['rtm_profile_ticked.csv', 'distance from the left-hand face (m),pe,O2,"N(5), dissolved"', 31, True, '0'])
             await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
                           " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            # Against time, the example's log axis from 1e-10 too; a floor above some curves names them, one not read says so,
+            # and empty the axis reaches the least drawn, the oxygen at the inlet at 1e-73.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.6)
+
+            async def time_floor(text):
+                await page.ev("(() => { const t = document.getElementById('rtmYFrom'); t.value = %s;"
+                              " t.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(text))
+                await asyncio.sleep(0.5)
+                return await page.ev("(() => { const p = document.getElementById('rtmChartTime');"
+                                     " return [p.layout.yaxis.range[0], document.getElementById('rtmTimeNote').textContent]; })()")
+            opened = await page.ev("[document.getElementById('rtmYFrom').value, document.getElementById('rtmChartTime').layout.yaxis.range[0],"
+                                   " document.getElementById('rtmTimeNote').textContent]")
+            above = await time_floor('1e-3')
+            unread = await time_floor('abc')
+            cleared = await time_floor('')
+            check('  Against time, the example\'s log axis from 1e-10 as well; from 1e-3 the note names the curves wholly below it; '
+                  'one not read says so, the axis reaching the least drawn, as it does with none',
+                  [opened, above[0], above[1], unread[1], unread[0] < -60, cleared[0] < -60, cleared[1]],
+                  [['1e-10', -10, 'the log axis from 1e-10'], -3,
+                   'the log axis from 1e-3, below it all through: O2, N(5), dissolved, Mn+2, S(6), dissolved, C(-4), dissolved',
+                   'could not read "abc" as where the log axis starts', True, True, ''])
+            check('  the floor waits while the axis is linear', await page.ev(
+                "(() => { const b = document.getElementById('rtmLogY'); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true }));"
+                " const off = [document.getElementById('rtmYFrom').disabled, document.getElementById('rtmChartTime').layout.yaxis.type];"
+                " b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true }));"
+                " return [...off, document.getElementById('rtmYFrom').disabled]; })()"), [True, 'linear', False])
+            # Gradient, methane by log concentration from 1e-10: the colour scale from it, below it in its colour; a surface's
+            # value axis from it, below it out of the box; the CSV with every value, methane at 1e-144 where the water is oxic.
+            await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")
+            await asyncio.sleep(0.6)
+
+            async def grad_floor(view):
+                await page.ev("(() => { document.getElementById('rtmGradSpecies').value = 'CH4';"
+                              " document.getElementById('rtmGradLogC').checked = true; document.getElementById('rtmGradCFrom').value = '1e-10';"
+                              " const v = document.getElementById('rtmGradView'); v.value = %s;"
+                              " v.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(view))
+                await asyncio.sleep(1.0)
+                return await page.ev("(() => { const p = document.getElementById('rtmChartGradient'), d = p.data[0];"
+                                     " return [d.type, d.zmin === undefined ? d.cmin : d.zmin, (d.zmax === undefined ? d.cmax : d.zmax) > -3.5,"
+                                     " p.layout.scene ? p.layout.scene.zaxis.range[0] : null,"
+                                     " document.getElementById('rtmGradNote').textContent.split('; ').pop()]; })()")
+            g_map = await grad_floor('map')
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"gradient\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            g_least = await page.ev("(async () => { const r = window.__saved[0]; if (!r) return null;"
+                                    " const rows = (await r.body).trim().split('\\n').slice(1);"
+                                    " return Math.min(...rows.flatMap((l) => l.split(',').slice(1).map(Number).filter(Number.isFinite))); })()")
+            g_surface = await grad_floor('surface')
+            check('  Gradient, methane by log concentration from 1e-10: the colour scale from it, what lies below in its colour; a '
+                  'surface\'s value axis from it, below it out of the box; the CSV with every value, 1e-144 where the water is oxic',
+                  [g_map, isinstance(g_least, (int, float)) and g_least < -140, g_surface],
+                  [['heatmap', -10, True, None, 'the colour scale from 1e-10, below it in its colour'], True,
+                   ['surface', -10, True, -10, 'the colour scale from 1e-10, below it out of the box']])
+            await page.ev("(() => { document.getElementById('rtmGradSpecies').value = 'pe'; document.getElementById('rtmGradLogC').checked = false;"
+                          " document.getElementById('rtmGradCFrom').value = ''; const v = document.getElementById('rtmGradView'); v.value = 'contour';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.5)
+            # An example that gives no floor: each axis from the least drawn again.
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = 'tracer';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.5)
+            check('  an example that gives no floor leaves none: each log axis reaching the least drawn', await page.ev(
+                "['rtmYFrom', 'rtmProfileYFrom', 'rtmGradCFrom'].map((id) => document.getElementById(id).value).join('|')"), '||')
             # The ticks put back as they were, one click: what follows reads the chart's first trace.
             await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
             await asyncio.sleep(0.3)

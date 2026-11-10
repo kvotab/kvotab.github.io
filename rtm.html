@@ -251,8 +251,9 @@
               <select id="rtmLayer" data-on-change="rtm:redraw"></select>
             </label>
             <label><input type="checkbox" id="rtmLogT" checked data-on-change="rtm:redraw"> log time</label>
-            <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
+            <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
+            <label>from <input type="text" id="rtmYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redraw"></label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
@@ -291,6 +292,7 @@
                 data-on-change="rtm:redrawProfile">
             </label>
             <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
+            <label>from <input type="text" id="rtmProfileYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawProfile"></label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="csv">CSV</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="xlsx">Excel</button>
@@ -440,8 +442,9 @@
               </select>
             </label>
             <label><input type="checkbox" id="rtmGradLogT" checked data-on-change="rtm:redrawGradient"> log time</label>
-            <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
             <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
+            <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
+            <label>from <input type="text" id="rtmGradCFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawGradient"></label>
             <label><input type="checkbox" id="rtmGradSmooth" data-on-change="rtm:redrawGradient"> smooth</label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="csv">CSV</button>
@@ -2317,7 +2320,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             <em>Against distance</em> draws one species or quantity across all the cells, at several
             times. Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h,
             30 d, 500 y</code>, or bare numbers in the model's own unit — and leaving it empty spreads
-            eight over the run. First in its <em>Show</em> are those ticked against time, together at
+            eight over the run. Each log concentration axis, on <em>Gradient</em> its colour scale, can
+            start where you say: <em>from</em> after its box takes a concentration such as
+            <code>1e-10</code>, below which a curve drops out of view, and left empty reaches the least
+            drawn. A run with the electron can span 150 decades, methane at 10<sup>−144</sup> where
+            the water is oxic, and the floor keeps the curves that matter readable; what is saved
+            keeps every value. First in its <em>Show</em> are those ticked against time, together at
             one time — the first of the <em>Times</em>, or the end of the run — each in its colour on
             the time chart, pH, pe and the like on an axis of their own on the right: a plume's redox
             zones side by side.</p>
@@ -3439,12 +3447,12 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
   <script src="./resources/js/rtm-model.js?v=20261110e"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006y"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006z"></script>
   <script src="./resources/js/rtm-worker.js?v=20261110d"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110j"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110k"></script>
 </body>
 </html>

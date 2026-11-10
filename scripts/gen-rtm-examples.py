@@ -1741,7 +1741,7 @@ _after('redoxzones', dict(
     id='redoxplume',
     group='Chemistry',
     label="Redox zones along a plume: leachate into an oxic aquifer",
-    about="Leachate rich in organic carbon flowing into an oxic aquifer whose sediment holds pyrolusite, ferrihydrite and calcite, the organic carbon oxidised at a rate as it travels and its electrons taken by the couples. Run it: the Gradient tab draws the pe over time and distance as contours, the zones in space and moving downstream as each oxidant is used up -- from the inlet the leachate's sulfate reduced and then methane, the iron zone where ferrihydrite dissolves and siderite takes the iron(2), the manganese zone, the nitrate, and the oxic water ahead of the plume. Against distance draws what is ticked against time together at the end: the pe on the right, its steps the zones, and the oxygen, the nitrate, manganese(2), ferrihydrite and siderite, the sulfate, the methane and the organic carbon left.",
+    about="Leachate rich in organic carbon flowing into an oxic aquifer whose sediment holds pyrolusite, ferrihydrite and calcite, the organic carbon oxidised at a rate as it travels and its electrons taken by the couples. Run it: the Gradient tab draws the pe over time and distance as contours, the zones in space and moving downstream as each oxidant is used up -- from the inlet the leachate's sulfate reduced and then methane, the iron zone where ferrihydrite dissolves and siderite takes the iron(2), the manganese zone, the nitrate, and the oxic water ahead of the plume. Against distance draws what is ticked against time together at the end, on a log axis from 1e-10: the pe on the right, its steps the zones, and the oxygen, the nitrate, manganese(2), ferrihydrite and siderite, the sulfate, the methane and the organic carbon left, each rising or falling through its zone.",
     text='''# Leachate rich in organic carbon flowing into an oxic aquifer whose sediment
 # holds pyrolusite, ferrihydrite and calcite: the organic carbon, CH2O, is
 # oxidised at a rate as it travels, its electrons taken by the couples, and
@@ -1841,9 +1841,9 @@ kdoc  all  0.05      # a day: a twentieth of the organic carbon oxidised each da
 CH2O => CO3-2 + 6 H+ + 4 e-, r = kdoc*[CH2O]
 ''',
     view={'tab': 'gradient', 'grad': {'species': 'pe', 'view': 'contour', 'logT': False},
-          'profile': {'species': '*ticked', 'times': '', 'log': False},
+          'profile': {'species': '*ticked', 'times': '', 'log': True, 'from': '1e-10'},
           'picked': ['pe', 'O2', 'tot(N(5))', 'Mn+2', 'Ferrihydrite', 'Siderite', 'tot(S(6))', 'tot(C(-4))', 'tot(C(0))'],
-          'logT': False, 'logY': False},
+          'logT': False, 'logY': True, 'yFrom': '1e-10'},
 ))
 
 
