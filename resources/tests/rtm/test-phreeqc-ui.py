@@ -968,6 +968,27 @@ async def main():
             check('  a phase the database does not have is said', isinstance(bad, str)
                   and bad.startswith('PHREEQC could not work out inverse models: The database has no phase Calcitee.'), True)
 
+            # The example of it: water with CO2 through calcite and gypsum, opening once run on PHREEQC's inverse model.
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = 'inversecolumn';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            inv_ex = await until(page, f"(() => {{ const t = {STATUS}; return t.startsWith('PHREEQC found') "
+                                       f"|| t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            inv_ex_out = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
+                                       " document.getElementById('rtmPqInvNote').textContent, document.getElementById('rtmPqInvOut').textContent]")
+            check('the example of it opens once run on the PHREEQC tab: from the water flowing in to the outlet as the run ends, '
+                  f'calcite and gypsum, 1.268e-3 and 1.470e-2 mol, what the column dissolved ({inv_ex} | {str(inv_ex_out)[:300]})',
+                  isinstance(inv_ex, str)
+                  and inv_ex.startswith('PHREEQC found 1 inverse model') and isinstance(inv_ex_out, list) and inv_ex_out[0] == 'phreeqc'
+                  and inv_ex_out[1].startswith('1 model, minimal ones only: from the water flowing in to cell 9 as the run ends')
+                  and 'Calcite 1.268e-3' in inv_ex_out[2] and 'Gypsum 1.470e-2' in inv_ex_out[2], True)
+            check('  on the database it was written from, the built-in phreeqc.dat, nothing filled in from the panel\'s water',
+                  await page.ev("[document.getElementById('rtmPqViewDb').value, document.getElementById('rtmPqFill').checked]"),
+                  ['builtin', False])
+
             # --- the temperature: the example water warmed along a table, run, and looked at through PHREEQC ---
             warm_report = await write_from_example(page)
             check('the hand-off says the relations\' log K go with temperature, as the database\'s do',

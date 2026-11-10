@@ -560,7 +560,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '23:10')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '28:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1226,6 +1226,33 @@ async def main():
                       "[document.getElementById('rtmChartComp').data.filter((t) => t.name === 'measured').length,"
                       " /^cell 19: Ca–HCO₃ at the start, Na–Cl at/.test(document.getElementById('rtmCompNote').textContent)]")],
                   [True, [3, True]])
+            # The examples of what came after: each opens, once run, on its view, worked out there.
+            ok = await example('sodicwater', "document.getElementById('rtmCompView').value === 'wilcox'"
+                                             " && /excellent|permissible|unsuitable/.test(document.getElementById('rtmCompNote').textContent)")
+            check('the sodic water opens on a Wilcox diagram: excellent to good at the start, doubtful to unsuitable once the well '
+                  'water comes through', [ok, await page.ev("[document.getElementById('rtmCompView').value,"
+                                                            " document.getElementById('rtmCompNote').textContent]")],
+                  [True, ['wilcox', 'cell 19: excellent to good at the start, doubtful to unsuitable at 1.39 d']])
+            ok = await example('salinitypca', "/PC1/.test(document.getElementById('rtmCompNote').textContent)")
+            pc_note = await page.ev("document.getElementById('rtmCompNote').textContent") or ''
+            pc1 = re.search(r'PC1 ([0-9.]+) % of the variance', pc_note)
+            check(f'the salinity example read as principal components: the first near nine tenths of the variance ({pc_note})',
+                  bool(ok) and pc1 is not None and 80 < float(pc1.group(1)) < 95 and pc_note.startswith('cell 19: '), True)
+            ok = await example('calcitefit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
+            fitted = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
+                                   " [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2)"
+                                   ".map((tr) => [tr.children[0].textContent, Number(tr.children[2].textContent)])]")
+            check(f'the calcite example fitted on the Fit tab: kc and its CO2 at the start from 1e-4 and 5e-4 to 5.1e-4 and '
+                  f'1.0e-3 ({fitted})', isinstance(fitted, list) and fitted[0] == 'fit' and len(fitted[1]) == 2
+                  and abs(fitted[1][0][1] / 5.1e-4 - 1) < 0.02 and abs(fitted[1][1][1] / 1.01e-3 - 1) < 0.02, True)
+            ok = await example('frontuncertainty', "/runs done in|could not/.test(document.getElementById('rtmStatus').textContent)")
+            bands = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
+                                  " document.getElementById('rtmStatus').textContent.slice(0, 20),"
+                                  " [...new Set(document.getElementById('rtmChartUn').data.map((t) => t.name).filter(Boolean))].sort().join(' / '),"
+                                  " document.getElementById('rtmChartUn').layout.yaxis.type]")
+            check('the sorbing front\'s uncertainty: a hundred runs, the outlet\'s breakthrough as bands on a linear axis',
+                  [ok, bands], [True, ['uncertainty', '100 of 100 runs done', '25 to 75 % / 5 to 95 % / the median / the model as written',
+                                      'linear']])
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

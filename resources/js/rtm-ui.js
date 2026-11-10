@@ -5341,7 +5341,7 @@
         ] },
         { heading: 'The models', list: [
           '**with**: the database’s phases that may dissolve or form, as `Calcite, Gypsum, CO2(g)`; one followed by `dissolve` or `precipitate` goes that way only. Empty: the model’s own minerals and gases.',
-          '**uncertainty**: how far each total may move, a fraction of it: 0.05 is 5 %. Every element of the waters is balanced, but H and O.',
+          '**uncertainty**: how far each total may move, a fraction of it: 0.05 is 5 %. Every element of the waters is balanced, but H and O. The water a mineral brings, gypsum\'s, is not counted: each water of a run is a kilogram of water.',
           '**ranges**: how far each transfer can go in any model the uncertainty allows. **minimal models only**: none whose work a smaller set of the phases does.',
         ] },
         { heading: 'What comes back', list: [
@@ -5455,9 +5455,26 @@
       }
     }
     if (v.sw) Object.assign(state.sw, v.sw);
+    // What a fit fits and from where, what the uncertainty draws and how, and PHREEQC's inverse model's waters and phases.
+    if (v.fit) state.fit = { params: v.fit.params.map((p) => ({ ...p })), off: (v.fit.off || []).slice() };
+    if (v.unc) {
+      const { logT, logY, ...unc } = v.unc;
+      Object.assign(state.unc, { ...unc, rows: (unc.rows || []).map((row) => ({ ...row })), corr: null });
+      if (typeof logT === 'boolean') $('rtmUnLogT').checked = logT;
+      if (typeof logY === 'boolean') $('rtmUnLogY').checked = logY;
+    }
+    if (v.pqInv) {
+      // The database the example was written from, the built-in phreeqc.dat, and the run's waters as they are, nothing filled in.
+      const { db, fill, ...inv } = v.pqInv;
+      Object.assign(pq.inv, inv);
+      if (db === 'builtin') { pq.db = 'builtin'; pq.missingDb = null; }
+      if (typeof fill === 'boolean') pq.fill = fill;
+      pqWriteControls();
+      pqSave();
+    }
   }
 
-  /** After a run, the view an example asked for: its tab, and a diagram or a sweep worked out there. */
+  /** After a run, the view an example asked for: its tab, and a diagram, a sweep, a fit, the uncertainty or an inverse model worked out there. */
   function openExampleView() {
     const v = pendingView;
     pendingView = null;
@@ -5467,6 +5484,9 @@
     setTimeout(() => {
       if (v.tab === 'diagram' && v.go) dgGo();
       if (v.tab === 'sweep' && v.go) swGo();
+      if (v.tab === 'fit' && v.go) fitGo();
+      if (v.tab === 'uncertainty' && v.go) unGo();
+      if (v.tab === 'phreeqc' && v.go) pqInverse();
     }, 0);
   }
 
@@ -5860,11 +5880,11 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109m';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109o';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109l',
+    'resources/js/rtm-phreeqc.js?v=20261109o',
     'resources/js/rtm-phreeqc-engine.js?v=20261109l',
   ];
   /** "An example water": round numbers, nobody's sample. */

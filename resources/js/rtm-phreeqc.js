@@ -5730,7 +5730,9 @@
     const input = `${rows.map((r, k) => solution(k + 1, r).replace(/^SOLUTION \d+/, `SOLUTION ${k + 1} ${label(r, k)}`)).join('')}`
       + 'END\nINVERSE_MODELING 1\n'
       + ` -solutions ${rows.map((_, k) => k + 1).join(' ')}\n -uncertainty ${fmtG(u, 12)}\n`
-      + ` -range ${inv.range ? 'true' : 'false'}\n -minimal ${inv.minimal ? 'true' : 'false'}\n -mineral_water true\n`
+      // The water a mineral brings or takes is not counted: the page's waters are each a kilogram of water throughout, as its
+      // runs keep them, and gypsum's two waters would have PHREEQC take less than all of the first water.
+      + ` -range ${inv.range ? 'true' : 'false'}\n -minimal ${inv.minimal ? 'true' : 'false'}\n -mineral_water false\n`
       + ` -balances\n${balances.map((el) => `  ${el}\n`).join('')}`
       + ` -phases\n${phases.map((ph) => `  ${ph.name}${ph.only ? ` ${ph.only}` : ''}\n`).join('')}END\n`;
     const printed = o.engine.printed(input);

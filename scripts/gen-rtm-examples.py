@@ -1097,6 +1097,269 @@ Fe+2 + 2 X- <=> FeX2,                   logK = 0.44
 ]
 
 
+
+# ---------------------------------------------------------------------------
+# Fitting, uncertainty, the irrigation classes, principal components and an
+# inverse model through PHREEQC: each opens, once run, on the view that shows
+# it, and two are the text of another example read another way.
+# ---------------------------------------------------------------------------
+def _text(eid):
+    return next(e['text'] for e in EXAMPLES if e['id'] == eid)
+
+
+def _retitled(text, head):
+    """The text with its opening comment, every line up to the first that is not one, put in place of head."""
+    lines = text.split('\n')
+    k = next(i for i, ln in enumerate(lines) if not ln.startswith('#'))
+    return head.rstrip('\n') + '\n' + '\n'.join(lines[k:])
+
+
+def _after(eid, *new):
+    i = next(k for k, e in enumerate(EXAMPLES) if e['id'] == eid)
+    EXAMPLES[i + 1:i + 1] = list(new)
+
+
+_after('salinisation', dict(
+    id='sodicwater',
+    group='What the water is made of',
+    label='Sodic water on a soil: a Wilcox diagram',
+    about="A sodic well water — sodium and bicarbonate, little calcium — onto a soil with calcite and an exchanger. Run it: the Composition tab draws the water leaving the soil on Wilcox's diagram, excellent to good while the exchanger takes the sodium and lets calcium go, then doubtful to unsuitable as the well water comes through; the USSL diagram of the same waters, from the conductance <CONDUCTANCE> gives, is on the Show menu.",
+    text='''# A sodic well water -- sodium and bicarbonate, little calcium -- onto a soil
+# whose water is calcium and bicarbonate, with calcite and an exchanger. The
+# exchanger takes the sodium and lets calcium go for as long as it can, and
+# then the well water comes through as it is. The Composition tab draws the
+# water leaving the soil on Wilcox's diagram, from excellent to good to where
+# the well water's sodium puts it; the USSL diagram of the same waters, from
+# the conductance <CONDUCTANCE> gives, is on the Show menu. The constants are
+# phreeqc.dat's; the waters are made up, and D stands for the dispersion.
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.2
+VELOCITY = 1e-5
+DIFFUSION = 1
+ADVECTION = 1
+LEFT = robin
+RIGHT = free
+ACTIVITY = davies
+EQUILIBRATE = always
+TEND = 1.2e5
+
+<SPECIES>
+Ca+2      1.5e-3   D=1e-7  left=2e-4
+Mg+2      5e-4     D=1e-7  left=1e-4
+Na+       5e-4     D=1e-7  left=1.2e-2
+K+        5e-5     D=1e-7  left=1e-4
+Cl-       5e-4     D=1e-7  left=2.5e-3
+SO4-2     2e-4     D=1e-7  left=1e-3
+HCO3-     3.4e-3   D=1e-7  left=8e-3
+CO3-2     1e-6     D=1e-7  left=2e-5
+CO2       2e-4     D=1e-7  left=3e-4
+CaHCO3+   0        D=1e-7
+CaCO3     0        D=1e-7
+MgHCO3+   0        D=1e-7
+CaSO4     0        D=1e-7
+MgSO4     0        D=1e-7
+NaSO4-    0        D=1e-7
+NaHCO3    0        D=1e-7
+H+        3e-8     D=1e-7  left=5e-9
+OH-       3e-7     D=1e-7  left=2e-6
+Calcite   0.01     mineral
+X-        exchanger 1e-2
+NaX       exchange
+CaX2      exchange
+MgX2      exchange
+KX        exchange
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-, logK = -14
+CO3-2 + H+ <=> HCO3-, logK = 10.329
+CO3-2 + 2 H+ <=> CO2 + H2O, logK = 16.681
+Ca+2 + HCO3- <=> CaHCO3+, logK = 1.106
+Ca+2 + CO3-2 <=> CaCO3, logK = 3.224
+Mg+2 + HCO3- <=> MgHCO3+, logK = 1.07
+Ca+2 + SO4-2 <=> CaSO4, logK = 2.25
+Mg+2 + SO4-2 <=> MgSO4, logK = 2.37
+Na+ + SO4-2 <=> NaSO4-, logK = 0.7
+Na+ + HCO3- <=> NaHCO3, logK = -0.25
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+Na+ + X- <=> NaX, logK = 0
+Ca+2 + 2 X- <=> CaX2, logK = 0.8
+Mg+2 + 2 X- <=> MgX2, logK = 0.6
+K+ + X- <=> KX, logK = 0.7
+
+<CONDUCTANCE>
+Ca+2      gfw 40.08  dw 7.92e-10 34 5.411 0 1.046  viscosity 0.359 -0.158 0.042 0.0015 0.00804 2.3
+Mg+2      gfw 24.312  dw 7.05e-10 -4 5.569 0 1.047  viscosity 0.426 0 0 0.00166 0.00432 2.461
+Na+       gfw 22.9898  dw 1.33e-9 75 3.627 0 0.7037  viscosity 0.1387 -0.0866 0.0125 0.0145 0.0075 1.062
+K+        gfw 39.102  dw 1.96e-9 254 3.484 0 0.1964  viscosity 0.116 -0.191 0.0152 0.014 0.0259 0.9028
+Cl-       gfw 35.453  dw 2.033e-9 216 3.16 0.2071 0.7432  viscosity 0 0 0 0 0 0 1
+SO4-2     gfw 96.064  dw 1.07e-9 -114 17 0.0602 0.0494  viscosity -0.3 0.501 0.00257 0.195 0.0314 2.015 0.605
+HCO3-     gfw 61.0191  dw 1.18e-9 -190 11.386  viscosity -0.6 1.366 -0.01216 0 0.03139 -1.135 1.253
+CO3-2     gfw 60.0111  dw 9.55e-10 -103 2.246 0.0713 0.3686  viscosity -0.5 0.6521 0.00544 0.00106 -0.0218 1.208 -2.147
+CO2       gfw 44.0111  dw 1.92e-9 -120  viscosity 0.0068 0.0903 0.0327 0 0 0 0.18
+CaHCO3+   gfw 101.0991  dw 5.06e-10
+CaCO3     gfw 100.0911  dw 4.46e-10
+MgHCO3+   gfw 85.3311  dw 4.78e-10
+CaSO4     gfw 136.144  dw 4.71e-10
+MgSO4     gfw 120.376  dw 4.45e-10  viscosity 0.318 -0.00054 -0.0342 0.708 0.0037 0.696
+NaSO4-    gfw 119.0538  dw 1.13e-9 -23 8.5 0.392 0.521  viscosity 0.2 -0.0593 -0.0004 0.00846 0.00178 2.308 -0.208
+NaHCO3    gfw 84.0071  dw 6.73e-10
+H+        gfw 1.008  dw 9.31e-9 838 6.96 -2.285 0.206 24.01 0  viscosity 0.0935 -0.0831 0.02487 0.000449 0.0201 1.57
+OH-       gfw 17.008  dw 5.27e-9 478 0.8695  viscosity -0.0226 0.106 0.02184 -0.0032 0 0.4082 -1.634
+H2O       gfw 18.016
+''',
+    view={'tab': 'composition', 'comp': {'view': 'wilcox', 'along': 'time', 'cell': 19}},
+), dict(
+    id='salinitypca',
+    group='What the water is made of',
+    label='Salty water into a fresh aquifer: principal components',
+    about="The salty water and the aquifer of the Piper path. Run it: the Composition tab's principal components of the outlet's water, from its pH and each element dissolved, as their logs: the first, near nine tenths of the variance, is the salt coming through; the water bows out along the second where the calcium peaks as the exchanger lets it go, the calcium's arrow pointing there.",
+    text=_retitled(_text('salinisation'), '''# Salty water into a fresh aquifer with calcite and an exchanger, as in the
+# Piper path: sodium and magnesium take the exchanger, calcium comes off it.
+# The Composition tab's principal components of the water at the outlet: the
+# first the salt coming through, the second the calcium peak. The constants
+# are phreeqc.dat's; the waters and the measurements are made up, and D stands
+# for the dispersion.'''),
+    view={'tab': 'composition', 'comp': {'view': 'pca', 'along': 'time', 'cell': 19, 'pcaVars': '', 'pcaLog': True}},
+))
+
+_after('ratesweep', dict(
+    id='calcitefit',
+    group='Fitting and uncertainty',
+    label='Calcite at a rate: kc and the CO2 fitted',
+    about="Calcite dissolving at a rate into water that holds CO2, as in Reading a run, its rate constant kc and its CO2 at the start fitted to the made-up measurements of pH and calcium in <DATA>, as PhreePlot fits PHREEQC. Run it: the Fit tab moves them from 1e-4 and 5e-4 until the run meets the measurements as nearly as it can — about 5.1e-4 and 1.0e-3 — and gives their standard errors and their correlation, with the run at the fitted numbers beside the measurements.",
+    text=_retitled(_text('calciterate'), '''# Calcite dissolving at a rate into water that holds CO2, its rate constant kc
+# and its CO2 at the start fitted to the measurements of pH and calcium below:
+# the Fit tab moves them from 1e-4 and 5e-4 until the run is as near as it can
+# be to what <DATA> measured. The constants are phreeqc.dat's; the rate and the
+# measurements are made up.'''),
+    view={'tab': 'fit', 'fit': {'params': [{'what': 'parameter:kc', 'start': '1e-4'}, {'what': 'initial:CO2', 'start': '5e-4'}],
+                                'off': []}, 'go': True},
+), dict(
+    id='frontuncertainty',
+    group='Fitting and uncertainty',
+    label='A sorbing front: its uncertainty',
+    about="A sorbing radionuclide and a tracer through a column, the sorbing one's retardation factor and the flow uncertain. Run it: the Uncertainty tab draws Rf from a lognormal distribution about 4, a factor of 1.5 either way, and the velocity from a normal one about 1e-6 m/s, ten per cent either way, runs the column a hundred times by Latin hypercube, and draws the sorbing one at the outlet as bands, with the model as written through them; the spread of one value and what matters most, by rank correlation, are on its Show menu.",
+    text='''# A sorbing radionuclide and a tracer through a column: the sorbing one is
+# held back by its retardation factor Rf, the tracer is not. How uncertain is
+# the sorbing one's breakthrough when Rf and the flow are? The Uncertainty
+# tab draws Rf from a lognormal distribution about 4 and the velocity from a
+# normal one about 1e-6 m/s, runs the column for each draw -- a hundred, by
+# Latin hypercube -- and draws Y at the outlet as bands: half the runs within
+# the inner one, nine tenths within the outer, and their median. The numbers
+# are made up, and D stands for the dispersion.
+
+<SETTINGS>
+MODE = transport
+CELLS = 50
+LENGTH = 1.0
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1.0E-6
+LEFT = robin
+RIGHT = free
+TEND = 1.0E7
+
+<SPECIES>
+X  0.0  D=2.0E-8  left=1.0          # a tracer
+Y  0.0  D=2.0E-8  left=1.0  R=Rf    # sorbing, held back by Rf
+
+<PARAMETERS>
+Rf  all  4
+
+<REACTIONS>
+''',
+    view={'tab': 'uncertainty', 'unc': {'rows': [{'what': 'parameter:Rf', 'family': 'lognormal', 'a': '4', 'b': '1.5', 'c': ''},
+                                                {'what': 'setting:VELOCITY', 'family': 'normal', 'a': '1e-6', 'b': '1e-7', 'c': ''}],
+                                       'n': '100', 'scheme': 'lhs', 'seed': '1', 'cell': 49, 'show': 'time', 'key': 'Y', 'of': 'end',
+                                       'logT': False, 'logY': False},
+          'go': True},
+), dict(
+    id='inversecolumn',
+    group='Through PHREEQC',
+    label="Calcite and gypsum: PHREEQC's inverse model",
+    about="Water with CO2 in it through a column of calcite and gypsum, written from PHREEQC: each dissolves to saturation and the water leaves with what they gave it. Run it: the PHREEQC tab's inverse model between the water flowing in and the outlet's at the end gives back what the column dissolved — 1.268e-3 mol/kgw of calcite and 1.470e-2 of gypsum, the run's own to the four figures PHREEQC prints — with how far each could go at 5 %. PHREEQC is fetched the first time it is used.",
+    text='''# Water with CO2 in it through a column of calcite and gypsum: each dissolves
+# to saturation in every cell, and the water leaves with the calcium, the
+# carbonate and the sulfate they gave it. Run it: the PHREEQC tab's inverse
+# model between the water flowing in and the water at the outlet gives back
+# how much of each the column dissolved, to the four figures PHREEQC prints.
+# Written from PHREEQC by From PHREEQC... on the Model tab (the relations held
+# exactly, the phases kept), from this input to phreeqc.dat:
+#   SOLUTION 0  water with CO2 in it        SOLUTION 1-10  the column's water
+#    units mmol/kgw; pH 4.5 charge           units mmol/kgw; pH 7 charge
+#    Na 1; Cl 1; C(4) 2                      Na 1; Cl 1
+#   EQUILIBRIUM_PHASES 1-10: Calcite 0 0.5; Gypsum 0 0.5
+#   TRANSPORT: -cells 10, -lengths 0.01, -shifts 100, -time_step 1000,
+#    -dispersivities 0.01, -diffusion_coefficient 0
+# A hundred shifts are ten pore volumes, which leave none of the column's
+# first water at the outlet to be taken for something the minerals did.
+
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.1
+DIFFUSION = 1
+ADVECTION = 1
+ADVECTION_SCHEME = limited
+VELOCITY = 0.00001
+PECLET = 10
+LEFT = robin
+RIGHT = free
+TEND = 100000
+TIME_UNIT = second
+EQUILIBRATE = always
+ACTIVITY = debye-huckel
+TEMPERATURE = 25
+
+<SPECIES>
+H+       1.0418985597979e-9      a=9  b=0  left=0.0000306593623849765
+OH-      0.0000137509137905349   a=3.5  b=0  left=3.54324005786337e-10
+Ca+2     0.0105696963338049      a=5  b=0.165  left=1.51935710034064e-14
+SO4-2    0.0104795001243387      a=5  b=-0.04  left=1.49243808631723e-14
+CaSO4    0.00461017623357934     left=3.02798833888261e-26
+Cl-      0.000999453835837602    a=3.63  b=0.017  left=0.000999990169325606
+Na+      0.000923986146512614    a=4.08  b=0.082  left=0.000999975169643162
+NaSO4-   0.00007545968144215     a=5.5  b=0  left=2.10430055551905e-16
+HCO3-    0.0000145611636568978   a=5.4  b=0  left=0.0000306438981520566
+CaCO3    0.00000550816911404106  left=1.0355851167145e-21
+CO3-2    0.00000130113928160075  a=5.4  b=0  left=5.39951746409692e-11
+CaOH+    0.0000011587286746389   left=7.65039749016765e-23
+CaHCO3+  2.90084162828088e-7     a=6  b=0  left=1.55649803173546e-18
+CO2      2.43909485825177e-8     b=0.066  left=0.0019691888523922
+NaHCO3   8.00812779576895e-9     b=0.2  left=2.48325930946573e-8
+HSO4-    5.2943386670754e-10     left=3.86128601949146e-17
+CaHSO4+  3.3045059735033e-11     left=6.11431785102803e-30
+HCl      2.43576592777162e-13    b=0.4256  left=9.83067439395726e-9
+H2       3.74802355074833e-17    left=1.01893883343386e-39
+CO2_2    1.09545887917615e-17    left=7.11814327794138e-8
+O2       5.40132007425576e-27    left=4.01176110779945e-15
+Calcite  0.499705225091214       mineral
+Gypsum   0.484561781430842       mineral
+
+<EQUILIBRIUM>
+Ca+2 + SO4-2 <=> CaSO4,          logK = 2.2500000000, dH = 5.5438                                        # here 1.6193
+Na+ + SO4-2 <=> NaSO4-,          analytic = 255.903 0.10057 0 -111.138 -859830                           # here 0.8917
+CO3-2 + H+ <=> HCO3-,            analytic = 107.8871 0.03252849 -5151.79 -38.92561 563713.9              # here 10.0310
+H2O <=> OH- + H+,                analytic = 293.29227 0.1360833 -10576.913 -123.73158 0 -0.00006996455   # here -13.8438
+Ca+2 + CO3-2 <=> CaCO3,          analytic = -1228.732 -0.29944 35512.75 485.818                          # here 2.6026
+Ca+2 + H2O <=> CaOH+ + H+,       logK = -12.7800000000                                                   # here -12.9423
+Ca+2 + CO3-2 + H+ <=> CaHCO3+,   analytic = -6.008999999999999 0.03377 2044                              # here 10.3063
+CO3-2 + 2 H+ <=> CO2 + H2O,      analytic = 464.1965 0.09344813 -26986.16 -165.75951 2248628.9           # here 16.2373
+Na+ + HCO3- <=> NaHCO3,          logK = -0.0600000000, dH = 21                                           # here -0.2253
+SO4-2 + H+ <=> HSO4-,            analytic = -56.889 0.006473 2307.9 19.8858                              # here 1.6856
+Ca+2 + HSO4- <=> CaHSO4+,        logK = 1.0800000000                                                     # here 0.7712
+H+ + Cl- <=> HCl,                analytic = 0.33399999999999946 -0.002684 1.015                          # here -0.6310
+2 CO2 <=> CO2_2,                 analytic = 8.679999999999891 -0.0103 -2190                              # here -1.7349
+Calcite <=> CO3-2 + Ca+2,        analytic = 17.118 -0.046528 -3496                                       # here -7.8616
+Gypsum <=> Ca+2 + SO4-2 + 2 H2O, analytic = 93.7 0.00599 -4000 -35.019                                   # here -3.9556
+''',
+    view={'tab': 'phreeqc', 'pqInv': {'from': 'inflow', 'fromAt': 'start', 'to': '9', 'toAt': 'end', 'phases': 'Calcite, Gypsum',
+                                      'u': '0.05', 'range': True, 'minimal': True, 'db': 'builtin', 'fill': False}, 'go': True},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

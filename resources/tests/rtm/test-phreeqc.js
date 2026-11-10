@@ -3779,6 +3779,30 @@ function againstInverse(engine) {
   mi ? `${mi.phases.length} phases; deltas up to ${Math.max(...mi.solutions.flatMap((s) => s.balances.map((b) => Math.abs(b.delta))))
     .toExponential(1)}` : 'no model');
 
+  // The example of it: water with CO2 through calcite and gypsum, written from PHREEQC and flushed for ten pore volumes.
+  const { RTM_EXAMPLES } = require(path.join(jsDir, 'rtm-examples.js'));
+  const exText = RTM_EXAMPLES.find((x) => x.id === 'inversecolumn').text;
+  const exRun = runOf(exText);
+  const exModel = RtmModel.compile(exText);
+  const ns = exModel.speciesNames.length;
+  const last = exModel.cells - 1;
+  const outlet = exRun.states.slice((exRun.n - 1) * exRun.width + last * ns, (exRun.n - 1) * exRun.width + (last + 1) * ns);
+  const totalOf = (state, el) => exModel.composition.elements.find((e) => e.el === el).terms.filter((tm) => tm[2] === 'water')
+    .reduce((sum, [k, n]) => sum + n * state[k], 0);
+  const dC = totalOf(outlet, 'C') - totalOf(exRun.model.inflow, 'C');
+  const dS = totalOf(outlet, 'S') - totalOf(exRun.model.inflow, 'S');
+  engine.load(dbText);
+  const exInv = P.viewRun({ engine, database, run: exRun, modelText: exText,
+    only: [{ state: Array.from(exRun.model.inflow), label: 'the water flowing in' }, { cell: last, k: exRun.n - 1, label: 'the outlet' }],
+    inverse: { phases: ['Calcite', 'Gypsum'], uncertainty: 0.05, range: true, minimal: true } }).inverse;
+  const exM = exInv.models[0];
+  const exVal = (nm) => (exM && exM.phases.find((ph) => ph.name === nm) || {}).value;
+  check('  the example of it, water with CO2 through calcite and gypsum: PHREEQC\'s model the calcite and the gypsum the '
+    + 'column dissolved, the outlet\'s carbon and sulfur over the inflow\'s, to the four figures it prints; no water taken '
+    + 'from the minerals, the fractions one', exInv.models.length === 1 && Math.abs(exVal('Calcite') / dC - 1) < 5e-4
+    && Math.abs(exVal('Gypsum') / dS - 1) < 5e-4 && exM.fractions.every((f) => f.value === 1) && exM.residuals < 1e-5,
+  `Calcite ${exVal('Calcite')} for ${dC.toPrecision(6)}, Gypsum ${exVal('Gypsum')} for ${dS.toPrecision(6)}, residuals ${exM && exM.residuals}`);
+
   const refused = [];
   for (const [what, inverse, re] of [
     ['a phase the database does not have', { phases: ['Calcitee'] }, /The database has no phase Calcitee\./],

@@ -2960,7 +2960,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             <code>dissolve</code> or <code>precipitate</code> goes that way only, and with none
             named the model's own minerals and gases are taken. Every element the waters have, but
             hydrogen and oxygen, is balanced, each total allowed to move by the
-            <em>uncertainty</em>, a fraction of it, as PHREEQC's <code>-uncertainty</code>;
+            <em>uncertainty</em>, a fraction of it, as PHREEQC's <code>-uncertainty</code>; the
+            water a mineral brings or takes, gypsum's two waters, is not counted
+            (<code>-mineral_water false</code>), each water of a run being a kilogram of water as
+            the run keeps it;
             <em>ranges</em> asks how far each transfer can go in any model the uncertainty allows,
             and <em>minimal models only</em> leaves out a model a smaller set of the phases does
             the work of.</p>
@@ -3226,9 +3229,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
               <tr><td>Transport</td><td>A tracer against Ogata–Banks; the Danckwerts inlet; a retarded front; and a source that varies down the column.</td></tr>
               <tr><td>Dual porosity</td><td>Matrix diffusion against the <code>erfc</code> solution; <strong>a far-field path</strong> as Kompartment starts one, its release read at the right-hand end; and the <strong>U-238 chain</strong> along a real flow path — six nuclides decaying into one another while diffusing into the rock and sorbing there, from SKB TR-19-06 Appendix B. Deep in the rock the chain reaches secular equilibrium, every member at its parent's activity, to 0.2 %; in the fracture the flow keeps it from doing so.</td></tr>
               <tr><td>Reading a run</td><td>Calcite dissolving at a rate: the pH and its saturation index on the right-hand axis, the calcium in mg/kgw from an <code>&lt;OUTPUT&gt;</code>, measurements from <code>&lt;DATA&gt;</code> beside them. Acid through a column of calcite: the pH as contours over time and distance.</td></tr>
-              <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it; on a USSL diagram, from C2-S1 to C4-S3.</td></tr>
+              <tr><td>What the water is made of</td><td>Salty water into a fresh aquifer with calcite and an exchanger: the outlet's water as a path through a Piper diagram, from Ca–HCO<sub>3</sub> to Na–Cl by way of a calcium peak, waters measured there beside it; on a USSL diagram, from C2-S1 to C4-S3; and as principal components, the salt coming through the first and the calcium peak the second. A sodic well water onto a soil with calcite and an exchanger: the water leaving it on Wilcox's diagram, excellent to good while the exchanger takes the sodium, then doubtful to unsuitable.</td></tr>
               <tr><td>Equilibrium diagrams</td><td>Carbonate against pH; iron's pe–pH (Pourbaix) diagram with ferrihydrite's field; calcite or gypsum over the activities of carbonate and sulfate; zinc's sorption edge on ferrihydrite.</td></tr>
               <tr><td>Sweeps</td><td>An exchange front, the exchanger's capacity swept, the calcium at the outlet a curve for each; calcite at a rate over nine rates and five amounts of CO<sub>2</sub>, the calcium after three days as contours.</td></tr>
+              <tr><td>Fitting and uncertainty</td><td>Calcite at a rate, its rate constant and its CO<sub>2</sub> at the start fitted to the measurements, with their standard errors and correlation. A sorbing radionuclide through a column, its retardation and the flow drawn from distributions a hundred times: its breakthrough at the outlet as bands.</td></tr>
+              <tr><td>Through PHREEQC</td><td>Water with CO<sub>2</sub> through calcite and gypsum, written from PHREEQC: PHREEQC's inverse model between the water flowing in and the outlet gives back what the column dissolved.</td></tr>
               <tr><td>All together</td><td>Oxygen into a column of iron(II) water: redox at one pe, ferrihydrite held at saturation, iron on an exchanger and carbonate together; where the iron is along the column, and every other view of it.</td></tr>
             </tbody>
           </table>
@@ -3294,12 +3299,12 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
   <script src="./resources/js/rtm-model.js?v=20261109m"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006f"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006i"></script>
   <script src="./resources/js/rtm-worker.js?v=20261109l"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261109n"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261109o"></script>
 </body>
 </html>
