@@ -1412,6 +1412,145 @@ Gypsum <=> Ca+2 + SO4-2 + 2 H2O, analytic = 93.7 0.00599 -4000 -35.019          
 ))
 
 
+# ---------------------------------------------------------------------------
+# What matters, by sensitivity indices, and a Durov diagram: each opens, once
+# run, on the view that shows it.
+# ---------------------------------------------------------------------------
+_after('salinitypca', dict(
+    id='freshening',
+    group='What the water is made of',
+    label='Fresh water through a salty aquifer: a Durov diagram',
+    about="Fresh water, calcium and bicarbonate, through an aquifer that still holds brackish water, with calcite and an exchanger loaded from it — the Piper path the other way round. Run it: the Composition tab draws the outlet's water on a Durov diagram, from Na–Cl through Na–HCO₃, the exchanger giving up its sodium for the fresh water's calcium and the pH rising near 9, and Mg–HCO₃ to Ca–HCO₃, a freshening aquifer's sequence, beside waters measured there; the pH is under the square, and the total dissolved solids, falling from near 3700 mg/kgw to 500, to its right.",
+    text='''# Fresh water, calcium and bicarbonate, through an aquifer that still holds
+# brackish water, with calcite and an exchanger loaded from it: the exchanger
+# gives up its sodium, then its magnesium, for the fresh water's calcium, and
+# calcite dissolves where the calcium is taken. The water at the outlet goes
+# from Na-Cl through Na-HCO3, its pH near 9, and Mg-HCO3 to Ca-HCO3, the
+# sequence of an aquifer freshening. The Composition tab draws its path on a
+# Durov diagram, the pH under the square and the total dissolved solids to its
+# right, beside waters measured at the outlet. The constants are
+# phreeqc.dat's; the waters and the measurements are made up, and D stands
+# for the dispersion.
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.2
+VELOCITY = 1e-5
+DIFFUSION = 1
+ADVECTION = 1
+LEFT = robin
+RIGHT = free
+ACTIVITY = davies
+EQUILIBRATE = always
+TEND = 6e5
+
+<SPECIES>
+Ca+2      1e-3     D=1e-7  left=2.5e-3
+Mg+2      5.3e-3   D=1e-7  left=5e-4
+Na+       4.9e-2   D=1e-7  left=6e-4
+K+        1e-3     D=1e-7  left=1e-4
+Cl-       5.5e-2   D=1e-7  left=7e-4
+SO4-2     2.8e-3   D=1e-7  left=3e-4
+HCO3-     2e-3     D=1e-7  left=5.4e-3
+CO3-2     1e-5     D=1e-7  left=1e-5
+CO2       1e-4     D=1e-7  left=5e-4
+CaHCO3+   0        D=1e-7
+CaCO3     0        D=1e-7
+MgHCO3+   0        D=1e-7
+CaSO4     0        D=1e-7
+MgSO4     0        D=1e-7
+NaSO4-    0        D=1e-7
+NaHCO3    0        D=1e-7
+H+        3e-8     D=1e-7  left=1e-7
+OH-       3e-7     D=1e-7  left=1e-7
+Calcite   0.05     mineral
+X-        exchanger 6e-2
+NaX       exchange
+CaX2      exchange
+MgX2      exchange
+KX        exchange
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-, logK = -14
+CO3-2 + H+ <=> HCO3-, logK = 10.329
+CO3-2 + 2 H+ <=> CO2 + H2O, logK = 16.681
+Ca+2 + HCO3- <=> CaHCO3+, logK = 1.106
+Ca+2 + CO3-2 <=> CaCO3, logK = 3.224
+Mg+2 + HCO3- <=> MgHCO3+, logK = 1.07
+Ca+2 + SO4-2 <=> CaSO4, logK = 2.25
+Mg+2 + SO4-2 <=> MgSO4, logK = 2.37
+Na+ + SO4-2 <=> NaSO4-, logK = 0.7
+Na+ + HCO3- <=> NaHCO3, logK = -0.25
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+Na+ + X- <=> NaX, logK = 0
+Ca+2 + 2 X- <=> CaX2, logK = 0.8
+Mg+2 + 2 X- <=> MgX2, logK = 0.6
+K+ + X- <=> KX, logK = 0.7
+
+<DATA>
+time   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  cell = 19
+1e4    1.0e-3   5.5e-3   5.0e-2   1.0e-3   5.6e-2   2.7e-3   2.1e-3
+4.5e4  7e-5     1.6e-4   8.4e-3   2.0e-4   1.0e-3   3.1e-4   7.0e-3
+1e5    5.6e-4   2.5e-3   1.0e-3   2.4e-4   7.5e-4   3.0e-4   5.9e-3
+4e5    2.3e-3   5.2e-4   6.5e-4   1.0e-4   7.0e-4   3.0e-4   5.4e-3
+''',
+    view={'tab': 'composition', 'comp': {'view': 'durov', 'along': 'time', 'cell': 19, 'logT': False}},
+))
+
+_after('frontuncertainty', dict(
+    id='nuclideindices',
+    group='Fitting and uncertainty',
+    label='A decaying nuclide: what matters, by sensitivity indices',
+    about="A nuclide with a half-life of 30 years through ten metres of a rock it sorbs on, four of its numbers uncertain: its retardation factor, the water's velocity, the dispersivity and the concentration flowing in. Run it: the Uncertainty tab runs the column three hundred times by Latin hypercube and works out how much each explains of what reaches the outlet by the end, beside a dummy drawn and never used: the retardation factor most and the velocity next, their first-order indices and deltas clear of the dummy's; the dispersivity and the concentration flowing in sit with it. The outlet's breakthrough as bands is on its Show menu.",
+    text='''# A nuclide with a half-life of 30 years through ten metres of a rock it
+# sorbs on: how much of it reaches the far end once the column is steady, and
+# which of four uncertain numbers decides that? Its retardation factor Rf,
+# the water's velocity, the dispersivity -- LENGTH/PECLET, a metre here -- and
+# the concentration flowing in are each drawn from a distribution, three
+# hundred times by Latin hypercube, and the Uncertainty tab's sensitivity
+# indices say how much each explains of the outlet's concentration at the
+# end, beside a dummy drawn and never used: the retardation factor most, the
+# velocity next, both clear of the dummy, the other two with it. By the end
+# the column is steady, and what reaches its outlet is what Wehner and
+# Wilhelm's formula for these boundaries gives (1956), whose own first-order
+# indices -- 0.71, 0.23, 0.01 and 0.004 -- are each inside the page's
+# interval. Times are in years, so the velocity is in metres a year. The
+# numbers are made up.
+
+<SETTINGS>
+MODE = transport
+CELLS = 50
+LENGTH = 10
+TIME_UNIT = year
+VELOCITY = 1
+ADVECTION = 1
+ADVECTION_SCHEME = limited
+DIFFUSION = 1
+PECLET = 10
+LEFT = robin
+RIGHT = free
+TEND = 1000
+
+<SPECIES>
+Nuclide  0  left=1  R=Rf      # held back by its retardation factor
+
+<PARAMETERS>
+Rf  all  10
+
+<REACTIONS>
+# ln 2 / 30 a, in the water and on the rock alike.
+Nuclide => , k = 0.023104906, on = inventory
+''',
+    view={'tab': 'uncertainty', 'unc': {'rows': [{'what': 'parameter:Rf', 'family': 'lognormal', 'a': '10', 'b': '2', 'c': ''},
+                                                {'what': 'setting:VELOCITY', 'family': 'lognormal', 'a': '1', 'b': '1.5', 'c': ''},
+                                                {'what': 'setting:PECLET', 'family': 'lognormal', 'a': '10', 'b': '2', 'c': ''},
+                                                {'what': 'left:Nuclide', 'family': 'uniform', 'a': '0.9', 'b': '1.1', 'c': ''}],
+                                       'n': '300', 'scheme': 'lhs', 'seed': '1', 'cell': 49, 'show': 'indices', 'key': 'Nuclide',
+                                       'of': 'end', 'logT': True, 'logY': False},
+          'go': True},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

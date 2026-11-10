@@ -561,7 +561,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '29:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '31:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1477,6 +1477,33 @@ async def main():
             pc1 = re.search(r'PC1 ([0-9.]+) % of the variance', pc_note)
             check(f'the salinity example read as principal components: the first near nine tenths of the variance ({pc_note})',
                   bool(ok) and pc1 is not None and 80 < float(pc1.group(1)) < 95 and pc_note.startswith('cell 19: '), True)
+            # Fresh water through a salty aquifer, on a Durov diagram in linear time: the outlet's water through the four types of
+            # an aquifer freshening, its pH highest where it is Na-HCO3, its dissolved solids falling, the measured waters one a type.
+            # Its pH and TDS come from the worker after the first drawing: the five panels are there once they have.
+            ok = await example('freshening', "document.getElementById('rtmCompView').value === 'durov'"
+                                             " && /^cell 19: /.test(document.getElementById('rtmCompNote').textContent)"
+                                             " && document.getElementById('rtmChartComp').data.filter((d) => d.name === 'the model').length === 5")
+            fresh = await page.ev(r"""(() => { const p = document.getElementById('rtmChartComp');
+              const m = p.data.find((d) => d.name === 'the model');
+              const ph = m.text.map((s) => Number((/pH ([0-9.]+)/.exec(s) || [])[1]));
+              const tds = m.text.map((s) => Number((/TDS ([0-9.e+]+)/.exec(s) || [])[1]));
+              const kinds = new Set(m.text.map((s) => s.split('<br>')[1]));
+              const top = ph.indexOf(Math.max(...ph));
+              return [document.getElementById('rtmCompNote').textContent, document.getElementById('rtmCompLogT').checked,
+                p.data.filter((d) => d.name === 'the model').length, p.data.filter((d) => d.name === 'measured').length,
+                ['Na–Cl', 'Na–HCO₃', 'Mg–HCO₃', 'Ca–HCO₃'].every((k) => kinds.has(k)), m.text[top].split('<br>')[1],
+                Math.max(...ph) > 8.7 && Math.max(...ph) < 9, tds[0] > 3600 && tds[0] < 3800,
+                tds[tds.length - 1] > 450 && tds[tds.length - 1] < 550,
+                p.data.find((d) => d.name === 'measured').text.map((s) => s.split('<br>')[1]).join(' / ')]; })()""")
+            check('the freshening example opens on a Durov diagram in linear time: the outlet\'s water from Na-Cl through Na-HCO3, '
+                  'its pH highest there, near 9, and Mg-HCO3 to Ca-HCO3, its TDS from near 3700 mg/kgw to 500, in all five panels; '
+                  'the measured waters one of each type', [ok, fresh],
+                  [True, ['cell 19: Na–Cl at the start, Ca–HCO₃ at 6.94 d; 4 measured', False, 5, 3, True, 'Na–HCO₃', True, True, True,
+                          'Na–Cl / Na–HCO₃ / Mg–HCO₃ / Ca–HCO₃']])
+            # The box as the other examples find it.
+            await page.ev("(() => { const b = document.getElementById('rtmCompLogT'); b.checked = true;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             ok = await example('calcitefit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
             fitted = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                    " [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2)"
@@ -1510,6 +1537,35 @@ async def main():
                   'velocity\'s, its delta and PAWN above the velocity\'s intervals and its delta clear of the dummy\'s; the velocity\'s '
                   'first-order index under 0.2; every delta between 0 and 1, read off the normal scores', idx,
                   [3, 'Rf | VELOCITY | a dummy: drawn, never used', True, True, True, True, True, True, True])
+            await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'time';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            # Four uncertain numbers of a decaying nuclide's column, three hundred runs, opened on the indices: the retardation
+            # factor and the velocity clear of the dummy, the dispersivity and the concentration flowing in reaching it. The column
+            # is steady by the end, so the exact indices are those of Wehner and Wilhelm's formula for its outlet -- C0 4a e^(Pe/2)
+            # / ((1+a)^2 e^(a Pe/2) - (1-a)^2 e^(-a Pe/2)), a = sqrt(1 + 4 Da/Pe), Da = ln 2/30 Rf L/v -- 0.709, 0.230, 0.0085 and
+            # 0.0040 by four million draws, and each first-order index's interval holds its own.
+            ok = await example('nuclideindices', "/the dummy/.test(document.getElementById('rtmUnNote').textContent)")
+            idx = await page.ev("""(() => { const d = document.getElementById('rtmChartUn').data;
+              const of = (name) => d.find((t) => t.name === name);
+              const s1 = of("first-order Sobol' index (EASI)"), dl = of("Borgonovo's δ");
+              const at = (t, k) => t.y.indexOf(k);
+              const lo = (t, k) => t.x[at(t, k)] - t.error_x.arrayminus[at(t, k)];
+              const hi = (t, k) => t.x[at(t, k)] + t.error_x.array[at(t, k)];
+              const keys = ['Rf', 'VELOCITY', 'PECLET', 'Nuclide flowing in'], dm = 'a dummy: drawn, never used';
+              const exact = [0.709, 0.230, 0.0085, 0.0040];
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, s1.y.join(' | '),
+                /^Sensitivity indices worked out from 300 runs/.test(document.getElementById('rtmStatus').textContent),
+                keys.slice(0, 2).map((k) => lo(s1, k) > hi(s1, dm) && lo(dl, k) > hi(dl, dm)),
+                keys.slice(2).map((k) => lo(s1, k) < hi(s1, dm) && lo(dl, k) < hi(dl, dm)),
+                lo(s1, 'Rf') > hi(s1, 'VELOCITY') && lo(dl, 'Rf') > hi(dl, 'VELOCITY'),
+                keys.map((k, i) => lo(s1, k) <= exact[i] && exact[i] <= hi(s1, k))]; })()""")
+            check('the decaying nuclide opens on its sensitivity indices from 300 runs: the retardation factor\'s and the velocity\'s '
+                  'first-order indices and deltas clear of the dummy\'s, the retardation factor\'s clear of the velocity\'s; the '
+                  'dispersivity\'s and the concentration flowing in\'s reaching the dummy\'s; each first-order index\'s interval '
+                  'holding the steady column\'s exact one', [ok, idx],
+                  [True, ['uncertainty', 'Rf | VELOCITY | PECLET | Nuclide flowing in | a dummy: drawn, never used', True, [True, True],
+                          [True, True], True, [True, True, True, True]]])
             await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'time';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await set_text(page, before)

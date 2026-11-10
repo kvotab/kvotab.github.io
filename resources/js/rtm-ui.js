@@ -6439,7 +6439,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       if (v.grad.species) state.gradSpecies = v.grad.species;
       if (v.grad.view) { state.gradView = v.grad.view; $('rtmGradView').value = v.grad.view; }
     }
-    if (v.comp) for (const [k, val] of Object.entries(v.comp)) state[`comp${k[0].toUpperCase()}${k.slice(1)}`] = val;
+    if (v.comp) {
+      // The Composition tab's own log-time box, where a path through the run is coloured by its times.
+      const { logT, ...comp } = v.comp;
+      for (const [k, val] of Object.entries(comp)) state[`comp${k[0].toUpperCase()}${k.slice(1)}`] = val;
+      if (typeof logT === 'boolean') $('rtmCompLogT').checked = logT;
+    }
     if (v.dg) {
       for (const [k, val] of Object.entries(v.dg)) {
         if (k === 'x' || k === 'y') Object.assign(state.dg[k], val);
