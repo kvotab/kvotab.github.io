@@ -404,7 +404,13 @@ cell's centre, a parameter the cell's and `t` the time asked at. Seven
 `<OUTPUT>` lines and six `<DATA>` tables refused, each with its reason.
 Without ACTIVITY the noActivity model marks no species a solute (its water's
 activity being 1), so the quantities say for themselves what is dissolved,
-and list no log activity: it would be the log of the species itself.
+and list no log activity: it would be the log of the species itself. So
+does the worker, for what a diagram can hold. An exchanger without ACTIVITY
+makes that model for itself, and the water is still the water (since
+2026-11-10, where it had no pH, no totals and nothing dissolved in the
+composition): its pH 7, its ionic strength and its dissolved calcium among
+the quantities, the calcium in the water and on the exchanger, every
+species dissolved among the solutes a diagram can hold.
 What each species is made of (since 2026-11-09, the Composition tab): in a
 carbonate and sulfate water with calcite and gypsum held at saturation, a
 dolomite dissolving at a rate and an exchanger, each element's species --

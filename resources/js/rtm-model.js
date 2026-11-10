@@ -11768,8 +11768,9 @@
     const qFn = [];
     const addQ = (key, label, group, unit, axis, fn) => { qList.push({ key, label, group, unit, axis }); qFn.push(fn); };
     // A solute: what is dissolved in the water -- the activity model's, or without ACTIVITY (whose activity model marks
-    // none, the water's activity being 1) every species that is no mineral, gas, electron or what is on a surface.
-    const isSolute = (k) => (act ? !!act.solute[k] : !(species[k].mineral || species[k].exchange || species[k].exchanger
+    // none, the water's activity being 1) every species that is no mineral, gas, electron or what is on a surface. The
+    // model an exchanger or a surface makes for itself without ACTIVITY, kind none, is no ACTIVITY.
+    const isSolute = (k) => (act && act.kind !== 'none' ? !!act.solute[k] : !(species[k].mineral || species[k].exchange || species[k].exchanger
       || species[k].electron || species[k].surface || species[k].potential || species[k].gas || species[k].name === 'H2O'));
     const qSolutes = [];
     for (let k = 0; k < ns; k++) if (isSolute(k) && !species[k].electron) qSolutes.push(k);

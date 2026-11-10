@@ -353,10 +353,13 @@ function rtmQuantities(msg) {
 */
 const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', Eh: 'Eh', la: 'log activity', ratio: 'log activity ratio', tot: 'log total' };
 
-/** Whether species k is dissolved in the water: the activity model's solute, or without one what is no mineral, gas or site. */
+/**
+ * Whether species k is dissolved in the water: the activity model's solute, or without one what is no mineral, gas or
+ * site -- the model an exchanger or a surface makes for itself without ACTIVITY, kind none, being none.
+ */
 function rtmSolute(model, k) {
   const sp = model.speciesList[k];
-  return model.act ? !!model.act.solute[k] : !(sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface
+  return model.act && model.act.kind !== 'none' ? !!model.act.solute[k] : !(sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface
     || sp.potential || sp.gas || sp.name === 'H2O');
 }
 

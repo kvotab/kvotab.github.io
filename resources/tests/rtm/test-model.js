@@ -7630,6 +7630,26 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
   const decay = '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA 1\nB 0\n\n<PARAMETERS>\nkk all 0.1\n\n<REACTIONS>\nA => B, r = kk*[A]\n';
   const solverSw = { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 };
+  // An exchanger without ACTIVITY makes an activity model of its own, kind none, which marks nothing dissolved, its water's
+  // activity being 1: the water is still the water -- its pH, its ionic strength, its totals, its species in the
+  // composition, the solutes a diagram can hold.
+  const exNone = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nH+ 1e-7\nOH- 1e-7\nNa+ 1e-3\nCa+2 1e-3\n'
+    + 'CaCl+ 0\nCl- 3e-3\nX- exchanger 1e-3\nNaX exchange\nCaX2 exchange\n\n<EQUILIBRIUM>\n <=> H+ + OH-, logK = -14\n'
+    + 'Ca+2 + Cl- <=> CaCl+, logK = 0.4\nNa+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\n';
+  const exm = RtmModel.compile(exNone);
+  let exSummary = null;
+  handleRtmMessage({ type: 'compile', id: 9, text: exNone }, (m) => { exSummary = m; });
+  const exKeys = exm.quantities.map((q) => q.key);
+  const exQ = new Float64Array(exKeys.length);
+  exm.quantitiesAt(exm.toConcentrations(exm.initialState()), 0, 0, Int32Array.from(exKeys.map((_, i) => i)), exQ);
+  const exCa = (exm.composition.elements.find((e) => e.el === 'Ca') || { terms: [] }).terms
+    .map(([k, , w]) => `${exm.speciesNames[k]}@${w}`).join(' ');
+  check('an exchanger without ACTIVITY: the water is still the water -- the pH, the ionic strength and the calcium dissolved '
+    + 'among the quantities, the pH 7 of its H+; the calcium in the water and on the exchanger in the composition; every '
+    + 'species dissolved among the solutes a diagram can hold',
+  ['pH', 'I', 'tot(Ca)'].every((k) => exKeys.includes(k)) && Math.abs(exQ[exKeys.indexOf('pH')] - 7) < 1e-9
+    && exCa === 'Ca+2@water CaCl+@water CaX2@exchange' && !!exSummary && exSummary.model.solutes.join(' ') === 'H+ OH- Na+ Ca+2 CaCl+ Cl-',
+  `${exKeys.join(' ')} | ${exCa} | ${exSummary && exSummary.model ? exSummary.model.solutes.join(' ') : JSON.stringify(exSummary).slice(0, 200)}`);
   let swReply = null;
   handleRtmMessage({ type: 'sweep', id: 1, text: decay, solver: solverSw, vary: [{ kind: 'parameter', name: 'kk' }, { kind: 'setting', name: 'TEND' }],
     values: [[0.1, 0.2, 0.4], [10, -5]], cell: 0 }, (msg) => { if (msg.type !== 'progress') swReply = msg; });
