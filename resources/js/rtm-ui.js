@@ -185,7 +185,7 @@
         }
         for (const f of ['n', 'seed', 'key']) if (typeof s.unc[f] === 'string') u[f] = s.unc[f];
         if (['lhs', 'sobol', 'random'].includes(s.unc.scheme)) u.scheme = s.unc.scheme;
-        if (['time', 'profile', 'spread', 'matters'].includes(s.unc.show)) u.show = s.unc.show;
+        if (['time', 'profile', 'spread', 'matters', 'indices'].includes(s.unc.show)) u.show = s.unc.show;
         if (['end', 'max', 'min'].includes(s.unc.of)) u.of = s.unc.of;
         if (Number.isInteger(s.unc.cell) && s.unc.cell >= 0) u.cell = s.unc.cell;
         if (typeof s.unc.useCorr === 'boolean') u.useCorr = s.unc.useCorr;
@@ -4070,7 +4070,7 @@
     $('rtmUnOf').value = u.of;
     $('rtmUnOfWrap').hidden = u.show === 'time' || u.show === 'profile';
     $('rtmUnLogTWrap').hidden = u.show !== 'time';
-    $('rtmUnLogYWrap').hidden = u.show === 'matters' || (isQuantity(u.key) && quantityOf(u.key).axis === 'index');
+    $('rtmUnLogYWrap').hidden = u.show === 'matters' || u.show === 'indices' || (isQuantity(u.key) && quantityOf(u.key).axis === 'index');
   }
 
   /** The type-7 percentile p (0 to 100) of sorted values. */
@@ -4107,6 +4107,53 @@
   }
 
   const UN_P = [5, 25, 50, 75, 95];
+
+  /*
+    Sensitivity indices of one value of the runs, worked out in the page from
+    the runs as they are (resources/js/rtm-gsa/indices.js, loaded when first
+    needed): each number drawn, and a dummy drawn beside them that no run
+    used -- the size chance alone gives an index with this many runs. The
+    bootstrap's resamples and the dummy's draws come from the tab's seed.
+  */
+  const GSA_URL = 'resources/js/rtm-gsa/indices.js?v=20261110b';
+  let unIndicesBusy = null;
+  async function unIndicesAsk(sig, ok) {
+    const res = unResult;
+    if (!res || unIndicesBusy) return;
+    if (!res.indices) res.indices = new Map();
+    const y = ok.map(([, v]) => v);
+    if (ok.length < 20) {
+      res.indices.set(sig, { error: `${ok.length} runs: sensitivity indices need 20 at the least, and are rough below a few hundred.` });
+      drawUn();
+      return;
+    }
+    if (Math.max(...y) === Math.min(...y)) {
+      res.indices.set(sig, { error: 'the value is the same in every run: nothing drawn moves it.' });
+      drawUn();
+      return;
+    }
+    unIndicesBusy = sig;
+    res.indices.set(sig, { busy: true });
+    const seed = Number(state.unc.seed) || 1;
+    try {
+      const I = await import(new URL(GSA_URL, document.baseURI).href);
+      // The dummy's draws, a stream of their own apart from the bootstrap's.
+      const next = I.seeded(seed + 7919);
+      const xs = [...res.vary.map((_, j) => ok.map(([r]) => r.values[j])), ok.map(() => next())];
+      const out = await I.indicesOf(xs, y, { boots: 100, seed, pause: async (j, of) => {
+        setStatus(`Working out the sensitivity indices: ${j + 1} of ${of} numbers…`);
+        await new Promise((r) => setTimeout(r, 0));
+      } });
+      res.indices.set(sig, out);
+      setStatus(`Sensitivity indices worked out from ${ok.length} runs, each with a 95 % interval from ${out.boots} bootstrap resamples.`,
+        'ok');
+    } catch (e) {
+      res.indices.set(sig, { error: `the sensitivity indices could not be worked out: ${e.message}` });
+    } finally {
+      unIndicesBusy = null;
+      if (unResult === res && state.tab === 'uncertainty') drawUn();
+    }
+  }
 
   function drawUn() {
     if (typeof Plotly === 'undefined') return;
@@ -4219,6 +4266,49 @@
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
       note.textContent = `${what}; 5 % ${fit4(marks[0])}, the median ${fit4(marks[1])}, 95 % ${fit4(marks[2])}`
         + `${base ? '; the dashed line the model as written' : ''}`;
+      return;
+    }
+    if (u.show === 'indices') {
+      // The sensitivity indices of the value, worked out once for each value asked of these runs.
+      const sig = `${key}|${u.of}|${rp.cell}`;
+      const got = unResult.indices && unResult.indices.get(sig);
+      if (!got || got.busy) {
+        if (!got) unIndicesAsk(sig, ok);
+        Plotly.purge(plot);
+        note.textContent = `${what}; working out the sensitivity indices of ${labelOf(key)}, ${ofText} at cell ${rp.cell}…`;
+        return;
+      }
+      if (got.error) {
+        Plotly.purge(plot);
+        note.textContent = `${what}; ${got.error}`;
+        return;
+      }
+      const names = [...labels, 'a dummy: drawn, never used'];
+      const kinds = [['s1', 'first-order Sobol\' index (EASI)', blue], ['delta', 'Borgonovo\'s δ', '#ff7f0e'],
+        ['pawn', 'PAWN, the median KS distance', '#2ca02c']];
+      const traces = kinds.map(([k, name, col]) => ({
+        type: 'bar', orientation: 'h', name, y: names, x: got.inputs.map((r) => r[k]), marker: { color: col },
+        error_x: { type: 'data', symmetric: false, array: got.inputs.map((r) => r[`${k}High`] - r[k]),
+          arrayminus: got.inputs.map((r) => r[k] - r[`${k}Low`]), color: c.text, thickness: 1, width: 3 },
+        hovertemplate: `%{y}: %{x:.3f}<extra>${esc(name)}</extra>` }));
+      const ends = got.inputs.flatMap((r) => [r.s1Low, r.s1High, r.deltaLow, r.deltaHigh, r.pawnLow, r.pawnHigh]).filter(Number.isFinite);
+      Plotly.react(plot, traces, {
+        ...layout, barmode: 'group', bargap: 0.25, hovermode: 'closest',
+        margin: { ...layout.margin, l: Math.min(320, 40 + 7 * Math.max(...names.map((nm) => nm.length))) },
+        xaxis: { ...layout.xaxis, range: [Math.min(0, ...ends) - 0.02, Math.max(1, ...ends) + 0.02],
+          title: { text: `sensitivity of ${labelOf(key)}, ${ofText}, with 95 % intervals`, font: { size: 11 } } },
+        yaxis: { ...layout.yaxis, automargin: true, autorange: 'reversed' } }, PLOT_CONFIG);
+      unTableNow = { head: ['the number drawn', 'first-order Sobol\' index (EASI)', 'its 95 % interval from', 'to', 'Borgonovo\'s δ',
+        'from', 'to', 'PAWN, the median KS distance', 'from', 'to'], name: 'rtm_uncertainty_indices',
+      rows: names.map((nm, j) => {
+        const r = got.inputs[j];
+        return [nm, r.s1, r.s1Low, r.s1High, r.delta, r.deltaLow, r.deltaHigh, r.pawn, r.pawnLow, r.pawnHigh];
+      }),
+      extra: [{ name: 'runs', head: unTableNow.head, rows: unTableNow.rows }] };
+      const dummy = got.inputs[got.inputs.length - 1];
+      note.textContent = `${what}; with ${labelOf(key)}, ${ofText} at cell ${rp.cell}, from ${got.boots} bootstrap resamples: `
+        + `${labels.map((l, j) => `${l} S1 ${got.inputs[j].s1.toFixed(3)}, δ ${got.inputs[j].delta.toFixed(3)}`).join('; ')}; `
+        + `the dummy, how large chance alone makes them, S1 ${dummy.s1.toFixed(3)}, δ ${dummy.delta.toFixed(3)}, PAWN ${dummy.pawn.toFixed(3)}`;
       return;
     }
     // What matters: Spearman's rank correlation of each number drawn with the value.
@@ -5381,9 +5471,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'Show', list: [
           '**bands against time** at the cell, or **along the column at the end**: 5 to 95 % and 25 to 75 % of the runs at each time or cell, their median, the model as written dashed, and what <DATA> measured there.',
           '**the spread of one value** — at the end, its largest or its smallest — as a histogram, with its 5 %, median and 95 %.',
-          '**what matters**: Spearman\'s rank correlation of each number drawn with that value, from −1 to 1.',
+          '**what matters, by rank correlation**: Spearman\'s rank correlation of each number drawn with that value, from −1 to 1.',
+          '**what matters, by sensitivity indices**: from the same runs, nothing run again, each number\'s first-order Sobol\' index (EASI), the share of the value\'s variance it explains alone; Borgonovo\'s δ, how far knowing it moves the value\'s whole distribution, read off the value\'s normal scores so that runs that end alike do not throw it; and PAWN\'s median Kolmogorov–Smirnov distance — each with a 95 % interval from 100 bootstrap resamples. A dummy drawn and never used shows how large chance alone makes them: a number whose bars are no longer than the dummy\'s makes no difference the runs can tell. Twenty runs at the least; a few hundred narrow the intervals.',
         ] },
-        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value. **SVG**, **PNG**: the picture.', SAVE_HTML] },
+        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value; the indices with their intervals, Excel adding the runs. **SVG**, **PNG**: the picture.', SAVE_HTML] },
       ],
       more: more('Uncertainty', 'help-uncertainty'),
     }),

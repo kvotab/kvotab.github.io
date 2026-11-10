@@ -1378,6 +1378,26 @@ async def main():
             check('the sorbing front\'s uncertainty: a hundred runs, the outlet\'s breakthrough as bands on a linear axis',
                   [ok, bands], [True, ['uncertainty', '100 of 100 runs done', '25 to 75 % / 5 to 95 % / the median / the model as written',
                                       'linear']])
+            # What matters, by sensitivity indices of the same runs: the retardation the value's, the velocity's spread little.
+            await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'indices';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "/the dummy/.test(document.getElementById('rtmUnNote').textContent)", True, tries=120, pause=0.25)
+            idx = await page.ev("""(() => { const p = document.getElementById('rtmChartUn'), d = p.data;
+              const of = (name) => d.find((t) => t.name === name);
+              const s1 = of("first-order Sobol' index (EASI)"), dl = of("Borgonovo's δ"), pw = of('PAWN, the median KS distance');
+              const row = (t, k) => t.x[t.y.indexOf(k)];
+              const lo = (t, k) => row(t, k) - t.error_x.arrayminus[t.y.indexOf(k)];
+              const hi = (t, k) => row(t, k) + t.error_x.array[t.y.indexOf(k)];
+              const rf = 'Rf', v = 'VELOCITY', dm = 'a dummy: drawn, never used';
+              return [d.length, s1.y.join(' | '), lo(s1, rf) > hi(s1, v), row(dl, rf) > hi(dl, v), row(pw, rf) > hi(pw, v),
+                lo(dl, rf) > hi(dl, dm), row(s1, v) < 0.2, dl.x.every((x) => x > -0.2 && x <= 1),
+                /^Sensitivity indices worked out from 100 runs/.test(document.getElementById('rtmStatus').textContent)]; })()""")
+            check('  what matters, by sensitivity indices of the same runs: the retardation factor\'s first-order index clear of the '
+                  'velocity\'s, its delta and PAWN above the velocity\'s intervals and its delta clear of the dummy\'s; the velocity\'s '
+                  'first-order index under 0.2; every delta between 0 and 1, read off the normal scores', idx,
+                  [3, 'Rf | VELOCITY | a dummy: drawn, never used', True, True, True, True, True, True, True])
+            await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'time';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

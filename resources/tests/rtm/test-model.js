@@ -8313,8 +8313,91 @@ ${p.nucs.map((n, k) => (n.lam ? `N${k} => ${k + 1 < p.nucs.length ? `N${k + 1}` 
   check('  and the count of them over 20 pairs of cells and Peclet numbers', sameCount);
 }
 
+/*
+  SENSITIVITY INDICES (resources/js/rtm-gsa/indices.js), as the Uncertainty
+  tab gives them, through the page's own path: Kompartment's EASI, delta and
+  PAWN against GlobalSensitivity.jl's and SALib's numbers for the same
+  samples (Kompartment's fixtures) -- delta with the reference's bootstrap
+  replayed and its interval SALib's, root B times GlobalSensitivity.jl's --
+  and on the Ishigami function, whose first-order indices are known exactly
+  (a = 7, b = 0.1: 0.3139, 0.4424 and 0), with a fourth input it never
+  reads. x3 matters only through x1: no first-order index, but a delta.
+  The page reads delta off the value's normal scores, which do not change
+  it: off the scores it is the value's to within the estimate's own
+  wobble, and where most runs share one value -- which makes a kernel
+  density of the value a spike -- the scores' delta is still a delta.
+*/
+async function sensitivityIndices() {
+  const { pathToFileURL } = require('url');
+  const fs = require('fs');
+  const I = await import(pathToFileURL(path.join(__dirname, '..', '..', 'js', 'rtm-gsa', 'indices.js')).href);
+  const fixture = (name) => JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', '..', 'kompartment', 'test', 'fixtures', name), 'utf8'));
+  const dec = (s) => { const b = Buffer.from(s, 'base64'); return new Float64Array(b.buffer, b.byteOffset, b.length / 8).slice(); };
+  const g = fixture('gsa-reference.json');
+  const sl = fixture('salib-reference.json');
+  const XE = g.easi.x.map(dec);
+  const s1c = dec(g.easi.S1c);
+  const easiOff = Math.max(...(await I.indicesOf(XE, dec(g.easi.y), { boots: 4 })).inputs.map((r, k) => Math.abs(r.s1 - s1c[k])));
+  const XD = g.delta.x.map(dec);
+  const YD = dec(g.delta.y);
+  const adj = dec(g.delta.adjusted);
+  const low = dec(g.delta.low);
+  let deltaOff = 0;
+  let bandOff = 0;
+  for (let k = 0; k < XD.length; k++) {
+    const R = g.delta.resamples[k].map((r) => Int32Array.from(r));
+    const got = (await I.indicesOf([XD[k]], YD, { resamples: R, scores: false })).inputs[0];
+    deltaOff = Math.max(deltaOff, Math.abs(got.delta - adj[k]));
+    bandOff = Math.max(bandOff, Math.abs(got.deltaLow - (adj[k] - (adj[k] - low[k]) * Math.sqrt(R.length))));
+  }
+  const ten = sl.pawn.find((c) => c.S === 10);
+  const median = dec(ten.median);
+  const pawnOff = Math.max(...(await I.indicesOf(sl.sample.X.map(dec), dec(sl.sample.Y), { boots: 4 })).inputs
+    .map((r, k) => Math.abs(r.pawn - median[k])));
+  check('sensitivity indices through the Uncertainty tab\'s path: EASI\'s corrected first-order index GlobalSensitivity.jl\'s, '
+    + 'Borgonovo\'s delta reduced for its bias GlobalSensitivity.jl\'s with its bootstrap replayed, its interval SALib\'s, root B '
+    + 'times as wide as GlobalSensitivity.jl\'s, and PAWN\'s median over ten slices SALib\'s, each to 1e-12',
+  easiOff < 1e-12 && deltaOff < 1e-12 && bandOff < 1e-12 && pawnOff < 1e-12,
+  `EASI ${easiOff.toExponential(1)}, delta ${deltaOff.toExponential(1)}, its interval ${bandOff.toExponential(1)}, PAWN ${pawnOff.toExponential(1)}`);
+  const next = I.seeded(7);
+  const n = 2048;
+  const xs = [0, 1, 2, 3].map(() => Float64Array.from({ length: n }, () => -Math.PI + 2 * Math.PI * next()));
+  const y = Float64Array.from({ length: n }, (_, i) => Math.sin(xs[0][i]) + 7 * Math.sin(xs[1][i]) ** 2
+    + 0.1 * xs[2][i] ** 4 * Math.sin(xs[0][i]));
+  const V = 49 / 8 + (0.1 * Math.PI ** 4) / 5 + (0.01 * Math.PI ** 8) / 18 + 0.5;
+  const exact = [0.5 * (1 + (0.1 * Math.PI ** 4) / 5) ** 2 / V, 49 / 8 / V, 0, 0];
+  const ish = await I.indicesOf(xs, y, { boots: 100, seed: 3 });
+  const again = await I.indicesOf(xs, y, { boots: 100, seed: 3 });
+  const plain = await I.indicesOf(xs, y, { boots: 100, seed: 3, scores: false });
+  const [a1, a2, a3, a4] = ish.inputs;
+  const offPlain = Math.max(...ish.inputs.map((r, k) => Math.abs(r.delta - plain.inputs[k].delta)));
+  check('  on the Ishigami function, 2048 runs and a fourth input it never reads: each first-order index within its 95 % interval '
+    + 'of the exact one, 0.3139, 0.4424, 0 and 0, and within 0.03 of it; delta largest for x2, then x1, then x3 -- which matters '
+    + 'only through x1, its first-order index nothing -- clear of the unused input\'s, and off the normal scores within 0.015 of '
+    + 'delta off the value; the same seed the same intervals',
+  ish.inputs.every((r, k) => r.s1Low <= exact[k] && exact[k] <= r.s1High && Math.abs(r.s1 - exact[k]) < 0.03)
+    && a2.delta > a1.delta && a1.delta > a3.delta && a3.deltaLow > a4.deltaHigh && offPlain < 0.015
+    && JSON.stringify(again.inputs) === JSON.stringify(ish.inputs),
+  `${ish.inputs.map((r, k) => `x${k + 1} S1 ${r.s1.toFixed(4)} [${r.s1Low.toFixed(4)}, ${r.s1High.toFixed(4)}] for ${exact[k].toFixed(4)}, `
+    + `delta ${r.delta.toFixed(4)} (off the value ${plain.inputs[k].delta.toFixed(4)}), PAWN ${r.pawn.toFixed(4)}`).join('; ')}`);
+  // A value most runs share exactly: x1 below 0.4, else 0.4, and a second input it never reads.
+  const shared = Float64Array.from({ length: 400 }, (_, i) => Math.min(xs[0][i], 0.4));
+  const two = [xs[0].slice(0, 400), xs[1].slice(0, 400)];
+  const sc = await I.indicesOf(two, shared, { boots: 100, seed: 3 });
+  const pl = await I.indicesOf(two, shared, { boots: 100, seed: 3, scores: false });
+  const many = shared.filter((v) => v === 0.4).length;
+  check('  a value most runs share exactly, x1 cut off at 0.4: off the value itself delta is no density\'s, far beyond 1; off its '
+    + 'normal scores x1\'s a delta, between 0.4 and 0.8, and the unused input\'s what chance gives 400 runs, under 0.1 and its '
+    + 'interval below x1\'s; x1\'s first-order index all but 1',
+  many > 150 && pl.inputs[0].delta > 1e6 && sc.inputs[0].delta > 0.4 && sc.inputs[0].delta < 0.8
+    && sc.inputs[1].delta < 0.1 && sc.inputs[1].deltaHigh < sc.inputs[0].deltaLow && sc.inputs[0].s1 > 0.98,
+  `${many} of 400 at 0.4: off the value ${pl.inputs[0].delta.toExponential(2)}; off the scores x1 ${sc.inputs[0].delta.toFixed(4)}, `
+    + `x2 ${sc.inputs[1].delta.toFixed(4)} [${sc.inputs[1].deltaLow.toFixed(3)}, ${sc.inputs[1].deltaHigh.toFixed(3)}]; S1 ${sc.inputs[0].s1.toFixed(3)}`);
+}
+
 /* ====================================================================== */
-kompartmentPath().catch((e) => check('Kompartment’s far-field module could be read', false, e.message)).then(() => {
+kompartmentPath().catch((e) => check('Kompartment’s far-field module could be read', false, e.message))
+  .then(() => sensitivityIndices()).catch((e) => check('the sensitivity indices could be worked out', false, e.message)).then(() => {
   console.log(`\n${checks - failures.length} of ${checks} checks passed`);
   if (failures.length) console.log(`failed: ${failures.join(', ')}`);
   process.exit(failures.length ? 1 : 0);

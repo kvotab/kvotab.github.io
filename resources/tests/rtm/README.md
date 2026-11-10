@@ -482,6 +482,23 @@ its relation. Under Davies activities the ratio, the other axis' activity
 and the pH the water's, held at each point to 1e-11, where the activity
 coefficients stop moving; a ratio of an anion, of a species the model has
 not, and a phase weighed by nothing, refused.
+Sensitivity indices (since 2026-11-10, `resources/js/rtm-gsa/indices.js`)
+through the Uncertainty tab's path, on Kompartment's fixtures: EASI's
+corrected first-order index GlobalSensitivity.jl's (4.4e-16); Borgonovo's
+delta reduced for its bias GlobalSensitivity.jl's with its bootstrap
+replayed (8.4e-15), and its interval SALib's, root B times as wide as
+GlobalSensitivity.jl's (9.6e-15); PAWN's median over ten slices SALib's
+exactly. On the Ishigami function, 2048 runs and a fourth input it never
+reads: each first-order index inside its 95 % interval of the exact one
+(0.3139 for 0.3139, 0.4282 for 0.4424, 0 and 0); delta largest for x2, then
+x1, then x3 -- which matters only through x1, its first-order index
+nothing -- clear of the unused input's; delta off the value's normal
+scores, as the page reads it, within 0.015 of delta off the value; the same
+seed the same intervals. A value 182 of 400 runs share exactly (x1 cut off
+at 0.4): off the value itself delta is 1.5e13, its kernel densities
+spikes; off the normal scores x1's 0.59, the unused input's 0.04, what
+chance gives 400 runs; x1's first-order index 0.995. (On the sorbing front's
+runs, 57 of 100 within 1e-4 of the plateau, delta off the value was 42.)
 Principal components (since 2026-11-09, `RtmModel.pca`, Jacobi's rotations
 on the correlation matrix): two variables correlated by r give 1 + r and
 1 - r and components (1, 1) and (1, -1) over root 2, to 1e-15; six waters of
@@ -1011,6 +1028,8 @@ The iron example (since 2026-11-10) opens, once run, on an Eh-pH Pourbaix diagra
 A chart saved as HTML (since 2026-11-10), the iron map: a page of its own with plotly.js 2.27.0 in it and nothing loaded from elsewhere; written to the disk and opened in a tab of its own with the network off, it draws the same traces, the same boundaries and the same axes, under the chart's note, the model text below. A model text whose first line is a comment that would close the script, add an image with an onerror and a script of its own comes through as text: nothing of it runs, no image, the page's own two scripts, the comment shown as written.
 
 The silicate example (since 2026-11-10) opens on its stability diagram: K-feldspar, muscovite (K_mica), kaolinite and gibbsite per mole of aluminium over log a(H4SiO4) and log a(K+)/a(H+), the Show and element its own; gibbsite and kaolinite parted at -4.3925 to 1e-9; quartz and amorphous silica dotted where they come to saturation, at -3.9804 and -2.7118 to 1e-9, and the note saying so.
+
+What matters, by sensitivity indices (since 2026-11-10), on the sorbing front's hundred runs: three kinds of bars, Rf, VELOCITY and the dummy drawn and never used; the retardation factor's first-order index (0.45) clear of the velocity's, its delta (0.51) and PAWN (0.57) above the velocity's intervals and its delta clear of the dummy's; the velocity's first-order index under 0.2; every delta between 0 and 1; the status saying from how many runs.
 
 The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARAMETERS>`: the parameter is offered, and a new choice starts from half its value, the value and twice it (0.05, 0.1, 0.2); 0.1 to 0.4 in 4 makes four runs; against what was varied, A at the end of each is exp(-10 kk) to the solver's tolerance (1.1e-5 at rtol 1e-6); against time, a curve per run named for its value.
 
