@@ -4908,6 +4908,8 @@
    *               TEMPERATURE goes with the cell or the time)
    *   phases      [names] to report, else any within siFloor (-3) of saturation
    *   unit        the model's time unit, for the CSV
+   *   listing     true: the waters of `only` as PHREEQC has them, each
+   *               species and phase, with how the model's were counted
    *   onProgress  (done, total) as PHREEQC works through the waters
    */
   function viewRun(o) {
@@ -5122,8 +5124,10 @@
     };
     // With <VOLUMES>, each mapped species' molar volume, VM(), a column each, and the water's.
     const vmNames = withVol ? [...new Set([...mapped.values()].map((v) => v.p))].concat('H2O') : [];
+    // A water listed beside the model's (o.listing): PHREEQC's percent error as well, after any molar volumes.
+    const extraPunch = [...vmNames.map((n) => `VM("${n}")`), ...(o.listing ? ['PERCENT_ERROR'] : [])];
     const runSome = (sub) => runRows(o.engine,
-      `${punchBlock(vmNames.map((n) => `VM("${n}")`))}${sub.map((r, k) => solution(k + 1, r)).join('')}END\n`);
+      `${punchBlock(extraPunch)}${sub.map((r, k) => solution(k + 1, r)).join('')}END\n`);
     const CHUNK = 400;
     let done = 0;
     for (let start = 0; start < rows.length; start += CHUNK) {
@@ -5160,6 +5164,16 @@
     const good = rows.filter((r) => r.pq);
     if (!good.length) {
       throw new Error(`PHREEQC could not calculate any of the waters: ${rows[0].error || ''}`);
+    }
+    /*
+      A water listed beside the model's own (the Composition tab's listing):
+      PHREEQC's numbers for it as they are, and which species of the model
+      PHREEQC counted as which of its own -- none of the looks below.
+    */
+    if (o.listing) {
+      for (const r of rows) if (r.pq) r.pq.percent = Number(r.pq.x[vmNames.length]);
+      return { rows, counted: [...mapped].map(([n, v]) => ({ name: n, as: v.p })),
+        skipped: [...skipped].map(([n, why]) => ({ name: n, why })), unmapped: [...unmapped] };
     }
     if (o.inverse) {
       const bad = rows.find((r) => !r.pq);

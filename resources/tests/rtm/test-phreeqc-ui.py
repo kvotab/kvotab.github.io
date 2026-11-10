@@ -328,6 +328,30 @@ async def main():
                   isinstance(summary, str) and 'From the water' not in summary and 'the water’s' in summary
                   and 'would not take' not in summary, True)
 
+            # The same run's last water listed on the Composition tab beside PHREEQC: given to PHREEQC as the PHREEQC tab gives
+            # a run's waters; every species within 1e-5 in log molality (the hand-off's log K at 15 C) and 1e-9 in log gamma.
+            await page.ev(CLICK % json.dumps('[data-tab="composition"]'))
+            await page.ev("(() => { const v = document.getElementById('rtmCompView'); v.value = 'listing';"
+                          " document.getElementById('rtmCompBeside').checked = true;"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            beside = await until(page, "(() => { const t = document.getElementById('rtmCompNote').textContent;"
+                                       " return /beside PHREEQC \\(|could not take/.test(t) ? t : ''; })()")
+            # The species named in brackets can have brackets of its own: Fe(OH)4-.
+            m_b = re.search(r'beside PHREEQC \(phreeqc\.dat, [^)]+\): the species within ([0-9.e+-]+) in log molality \(.+?\) '
+                            r'and ([0-9.e+-]+) in log gamma', beside or '')
+            cols = await page.ev("(() => { const t = [...document.querySelectorAll('#rtmCompListing table')][2];"
+                                 " return t ? t.querySelector('thead').textContent : ''; })()")
+            check('the run\'s last water listed beside PHREEQC on the Composition tab: PHREEQC\'s molality and log gamma beside '
+                  'each species, every one within 1e-5 in log molality, the hand-off\'s log K at 15 °C, and 1e-9 in log gamma',
+                  [m_b is not None and float(m_b.group(1)) < 1e-5 and float(m_b.group(2)) < 1e-9,
+                   'PHREEQC molality' in (cols or '') and 'Δ log molality' in (cols or '')], [True, True])
+            if m_b is None:
+                print('    the note:', beside)
+            await page.ev("(() => { const v = document.getElementById('rtmCompView'); v.value = 'where';"
+                          " document.getElementById('rtmCompBeside').checked = false;"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+
             # The CSV, caught on its way to the disk.
             await page.ev("""(() => {
               window.__csv = null;

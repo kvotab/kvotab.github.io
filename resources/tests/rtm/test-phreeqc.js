@@ -690,6 +690,57 @@ function withPhreeqc(engine) {
 /* ======================================================================
    3. The jobs as the page sends them, and the database as the page loads it
    ====================================================================== */
+/* ======================================================================
+   THE LISTING BESIDE PHREEQC, as the page asks it (the PHREEQC worker's
+   listing job): the quantities' water handed off and run, and its last
+   water given to PHREEQC as the PHREEQC tab gives a run's -- every species
+   PHREEQC counted as the model's within 1e-9 in log molality, the calcite
+   at saturation in both. Then the model's calcite given a log K 0.1 higher:
+   its water takes more calcite, PHREEQC speciates it as the model does,
+   and puts calcite's SI at 0.1 where the model holds it at 0 -- a constant
+   of the model's own, as the listing shows it.
+   ====================================================================== */
+async function besideListing(ask) {
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7.5\n Na 5\n Ca 2\n Mg 1\n Cl 6 charge\n C(4) 4\n S(6) 1\nEQUILIBRIUM_PHASES 1\n'
+    + ' Calcite 0 0.01\nEXCHANGE 1\n -equilibrate 1\n X 0.02\nEND\n';
+  const written = await ask({ id: 1, type: 'toModel', database: null, water: { name: 'listed', text: water },
+    options: { activity: true, exact: true, phases: true, redox: false } });
+  const higher = written.text.replace(/^(Calcite <=> .*?analytic = )(-?[0-9.]+)/m, (all, a, k) => `${a}${(Number(k) + 0.1).toFixed(6)}`);
+  const out = [];
+  for (const [what, text] of [['as handed off', written.text], ['calcite log K 0.1 higher', higher]]) {
+    let run = null;
+    handleRtmMessage({ type: 'run', id: 2, text: text.replace(/^TEND\s*=.*$/m, 'TEND = 1'),
+      solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 } }, (m) => {
+      if (m.type === 'result' || m.type === 'error') run = m;
+    });
+    const L = await ask({ id: 3, type: 'listing', database: null, water: null,
+      run: { t: run.t, states: run.states, n: run.n, width: run.width, model: run.model, temps: null }, modelText: text,
+      options: { only: [{ cell: 0, k: run.n - 1, label: 'the water' }] } });
+    if (L.type !== 'done') { out.push({ what, error: L.error }); continue; }
+    const base = (run.n - 1) * run.width;
+    const pqOf = new Map(L.species.map(([n, , m, lg]) => [n, [m, lg]]));
+    let worst = 0;
+    let at = '';
+    for (const { name, as } of L.counted) {
+      const k = run.model.species.indexOf(name);
+      const v = pqOf.get(as);
+      if (!v || !(run.states[base + k] > 0)) continue;
+      const d = Math.abs(Math.log10(run.states[base + k] / v[0]));
+      if (d > worst) { worst = d; at = name; }
+    }
+    const calcite = L.phases.find(([n]) => n === 'Calcite');
+    out.push({ what, worst, at, counted: L.counted.length, si: calcite ? calcite[2] : NaN, percent: L.percent, pH: L.pH });
+  }
+  const [a, b] = out;
+  check('the listing beside PHREEQC, as the page asks it: a water handed off and run, its last water given to PHREEQC -- '
+    + 'every species it counted within 1e-9 in log molality of the model\'s, calcite at saturation; the model\'s calcite '
+    + 'given a log K 0.1 higher, every species still within 1e-8 and PHREEQC\'s calcite SI 0.1, where the model holds it at 0',
+  !a.error && !b.error && higher !== written.text && a.counted > 20 && a.worst < 1e-9 && Math.abs(a.si) < 1e-9
+    && b.worst < 1e-8 && Math.abs(b.si - 0.1) < 1e-6 && Number.isFinite(a.percent) && b.pH > a.pH,
+  out.map((x) => (x.error ? `${x.what}: ${x.error}` : `${x.what}: ${x.counted} counted, within ${x.worst.toExponential(1)} (${x.at}), `
+    + `calcite SI ${x.si.toFixed(6)}, pH ${x.pH.toFixed(4)}`)).join('; '));
+}
+
 async function asThePage(createPhreeqc, acidText) {
   const handle = E.handler(createPhreeqc, { builtin: dbText });
   const ask = (msg) => new Promise((resolve) => {
@@ -730,6 +781,8 @@ async function asThePage(createPhreeqc, acidText) {
   check('the database as a script is the file, character for character', sandbox.PHREEQC_DAT === dbText,
     `${sandbox.PHREEQC_DAT.length} characters`);
   check('... and is plain ASCII', !/[^\x00-\x7f]/.test(fs.readFileSync(path.join(vendors, 'phreeqc-dat.js'), 'latin1')));
+  // The same handler again, for the listing beside PHREEQC: another engine in this process is one too many for its memory.
+  return ask;
 }
 
 /* ======================================================================
@@ -3605,31 +3658,34 @@ function againstListing(engine) {
     || names[k] === 'H+' || names[k] === 'OH-';
   const solutes = names.map((_, k) => k).filter(inWater);
   const onX = names.map((_, k) => k).filter((k) => m.composition.elements.some((e) => e.terms.some((tm) => tm[0] === k && tm[2] === 'exchange')));
-  const punch = [...solutes.flatMap((k) => [`MOL("${pqName(k)}")`, `LA("${pqName(k)}")`, `LG("${pqName(k)}")`]),
-    ...onX.map((k) => `MOL("${pqName(k)}")`), ...L.phases.flatMap((p) => [`SI("${p.name}")`, `LK_PHASE("${p.name}")`]),
-    '-LA("H+")', 'MU', 'ACT("H2O")', 'PERCENT_ERROR'];
+  /*
+    PHREEQC's numbers through the punch the page's own looks use (punchBlock):
+    every species' molality and log gamma, every phase's SI, what is on the
+    exchanger, the water's -- and each phase's log K and the percent error
+    after them. Not a USER_PUNCH of a line a number: ninety lines of it in
+    PHREEQC's BASIC left its memory spoiled, and a database loaded checks
+    later fell over it (WebAssembly: memory access out of bounds).
+  */
   engine.load(dbText);
-  const rows = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
-    + `${punch.map((x, i) => ` ${10 + i} PUNCH ${x}`).join('\n')}\nEND\n`);
-  const pq = rows[rows.length - 1].map(Number);
+  const extra = ['PERCENT_ERROR', ...L.phases.map((p) => `LK_PHASE("${p.name}")`)];
+  const rows = P.parseRows(engine.run(`${P.punchBlock(extra)}${water.replace('END\n', '')}END\n`));
+  const pq = rows[rows.length - 1];
   const worst = { mol: [0, ''], la: [0, ''], lg: [0, ''], ex: [0, ''], si: [0, ''], lk: [0, ''], water: [0, ''] };
   const note = (key, d, what) => { if (!(d <= worst[key][0])) worst[key] = [d, what]; };
-  let j = 0;
   for (const k of solutes) {
     const lg = L.lnG[k] / Math.LN10;
-    note('mol', Math.abs(c[k] / pq[j] - 1), names[k]);
-    note('la', Math.abs(Math.log10(c[k]) + lg - pq[j + 1]), names[k]);
-    note('lg', Math.abs(lg - pq[j + 2]), names[k]);
-    j += 3;
+    const [mol, pqLg] = pq.species.get(pqName(k)) || [NaN, NaN];
+    note('mol', Math.abs(c[k] / mol - 1), names[k]);
+    note('la', Math.abs(Math.log10(c[k]) + lg - (Math.log10(mol) + pqLg)), names[k]);
+    note('lg', Math.abs(lg - pqLg), names[k]);
   }
-  for (const k of onX) { note('ex', Math.abs(c[k] / pq[j] - 1), names[k]); j++; }
-  for (const p of L.phases) {
-    note('si', Math.abs(p.logIAP - p.logK - pq[j]), p.name);
-    note('lk', Math.abs(p.logK - pq[j + 1]), p.name);
-    j += 2;
-  }
+  for (const k of onX) { note('ex', Math.abs(c[k] / (pq.exchange.get(pqName(k)) || { m: NaN }).m - 1), names[k]); }
+  L.phases.forEach((p, i) => {
+    note('si', Math.abs(p.logIAP - p.logK - pq.phases.get(p.name)), p.name);
+    note('lk', Math.abs(p.logK - Number(pq.x[1 + i])), p.name);
+  });
   const q = (key) => L.values[m.quantities.findIndex((x) => x.key === key)];
-  [['pH', q('pH'), pq[j], 1], ['I', q('I'), pq[j + 1], pq[j + 1]], ['a(H2O)', q('a(H2O)'), pq[j + 2], 1], ['percent error', q('charge'), pq[j + 3], 1]]
+  [['pH', q('pH'), pq.pH, 1], ['I', q('I'), pq.mu, pq.mu], ['a(H2O)', q('a(H2O)'), pq.aw, 1], ['percent error', q('charge'), Number(pq.x[0]), 1]]
     .forEach(([what, a, b, scale]) => note('water', Math.abs(a - b) / scale, what));
   const renamed = solutes.filter((k) => back.has(names[k])).map((k) => `${names[k]} for ${back.get(names[k])}`);
   check(`the water as PHREEQC lists it: a water handed off with ion pairs, activities, calcite and an exchanger, listed by the `
@@ -5123,7 +5179,9 @@ function againstKineticsHandOff(engine) {
   console.log(`\n--- with PHREEQC: ${wasm.version}, compiled to WebAssembly ---`);
   const first = withPhreeqc(wasm);
   console.log('\n--- as the page asks ---');
-  await asThePage(createPhreeqc, first.acidText);
+  const pageAsk = await asThePage(createPhreeqc, first.acidText);
+  console.log('\n--- the listing beside PHREEQC, as the page asks it ---');
+  await besideListing(pageAsk);
   console.log('\n--- a reactive column against PHREEQC\'s TRANSPORT ---');
   againstTransport(wasm);
   console.log('\n--- a mineral dissolving at a rate against PHREEQC\'s KINETICS ---');

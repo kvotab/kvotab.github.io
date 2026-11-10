@@ -48,6 +48,7 @@
     gradCFrom: '',
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
+    compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
     compElement: '',
     compIn: 'water',
     compAs: 'percent',
@@ -109,7 +110,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        compView: state.compView, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
+        compView: state.compView, compBeside: state.compBeside, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
         dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
@@ -147,6 +148,7 @@
       for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
       if (['where', 'listing', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
+      if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
       if (s.compAlong === 'time' || s.compAlong === 'distance') state.compAlong = s.compAlong;
@@ -2194,6 +2196,7 @@
     $('rtmCompTimesWrap').hidden = along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view) && !listing;
     $('rtmCompPcaVars').value = state.compPcaVars;
     $('rtmCompPcaLog').checked = state.compPcaLog;
+    $('rtmCompBeside').checked = state.compBeside;
     $('rtmCompTimesLabel').textContent = along === 'time' && !listing ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' && !listing ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
@@ -2272,6 +2275,65 @@
       listingCache.delete(key);
       setStatus(`Could not list the water: ${e.message}`, 'error');
     }
+  }
+
+  /*
+    BESIDE PHREEQC: the same water given to PHREEQC as the PHREEQC tab gives
+    a run's -- its element totals, the pH walked onto its [H+], its pe --
+    through the database chosen there, and PHREEQC's numbers set beside the
+    model's: each species' molality and log gamma, each phase's SI, the
+    water's. One stored point goes to the PHREEQC worker, not the run.
+  */
+  const pqListingCache = new Map();
+  async function fetchPqListing(r, atIndex, cell, layer, mc, key) {
+    if (pqListingCache.has(key)) return;
+    pqListingCache.set(key, null);
+    const ns = r.model.nspecies;
+    const at = atIndex * r.width;
+    const run = { t: Float64Array.of(r.t[atIndex]), states: r.states.slice(at, at + r.width), n: 1, width: r.width, model: r.model,
+      temps: r.temps ? r.temps.slice(atIndex * r.model.cells, (atIndex + 1) * r.model.cells) : null };
+    const one = layer ? { state: Array.from(r.states.subarray(at + mc * ns, at + (mc + 1) * ns)), label: 'the water' }
+      : { cell, k: 0, label: 'the water' };
+    try {
+      const reply = await pqRequest({ type: 'listing', database: pqDatabase(), run, options: { only: [one] },
+        water: pq.fill && pq.water.trim() ? { name: 'The water', text: pq.water } : null,
+        modelText: (state.ran && state.ran.text) || state.text });
+      pqListingCache.set(key, reply);
+    } catch (e) {
+      pqListingCache.set(key, { error: e.message });
+    }
+    if (state.result === r && state.compView === 'listing' && state.compBeside) drawComp();
+  }
+
+  /** PHREEQC's numbers for the listing's own, by the model's names, and how far apart the two are. */
+  function besidePhreeqc(p, L) {
+    const asOf = new Map(L.counted.map((x) => [x.name, x.as]));
+    const pqSp = new Map(L.species.map(([n, , m, lg]) => [n, [m, lg]]));
+    const sp = new Map();
+    const worst = { lm: [0, ''], lg: [0, ''], si: [0, ''] };
+    const note = (key, d, what) => { if (Number.isFinite(d) && Math.abs(d) > Math.abs(worst[key][0])) worst[key] = [d, what]; };
+    for (const [name, , mol, , lm, , lg] of p.species) {
+      const v = asOf.has(name) ? pqSp.get(asOf.get(name)) : null;
+      if (!v) continue;
+      sp.set(name, v);
+      if (mol > 0 && v[0] > 0) note('lm', lm - Math.log10(v[0]), name);
+      note('lg', lg - v[1], name);
+    }
+    const counted = new Set(L.counted.map((x) => x.as));
+    const only = L.species.filter(([n, , m]) => !counted.has(n) && n !== 'H2O' && n !== 'e-' && m > 0)
+      .sort((a, b) => b[2] - a[2]).map(([n, , m, lg]) => [n, m, lg]);
+    const si = new Map();
+    for (const [name, s] of p.si) {
+      const hit = L.phases.find(([n, page]) => n === name || page === name);
+      if (!hit) continue;
+      si.set(name, hit[2]);
+      note('si', s - hit[2], name);
+    }
+    const desc = new Map([['pH', L.pH], ['pe', L.pe], ['Temperature', L.tc], ['Ionic strength', L.mu], ['Activity of water', L.aw],
+      ['Percent error, 100*(Cat-|An|)/(Cat+|An|)', L.percent]].filter(([, v]) => Number.isFinite(v)));
+    // What is dissolved and the database has no species for; a mineral, an exchanger or a surface is never the water's.
+    const left = [...L.unmapped];
+    return { db: L.database, version: L.version, sp, only, si, desc, worst, left };
   }
 
   /** The listing's parts, from the run and what the worker worked out: each a head and its rows, numbers as they are. */
@@ -2371,10 +2433,15 @@
     out.push(listingBar('Solution composition'), '', `\t${'Elements'.padEnd(15)}${'Molality'.padStart(12)}`, '');
     for (const [el, v] of p.composition) out.push(`\t${el.padEnd(15)}${lsE(v).padStart(12)}`);
     out.push('', listingBar('Description of solution'), '');
-    for (const [label, v, unit] of p.description) out.push(`${`${label}${unit ? ` (${unit})` : ''}`.padStart(45)}  =  ${lsDesc(label, v)}`);
+    const B = p.pq;
+    for (const [label, v, unit] of p.description) {
+      const theirs = B && B.desc.has(label) ? `${''.padStart(4)}PHREEQC ${lsDesc(label, B.desc.get(label))}` : '';
+      out.push(`${`${label}${unit ? ` (${unit})` : ''}`.padStart(45)}  =  ${lsDesc(label, v).padEnd(10)}${theirs}`.trimEnd());
+    }
     out.push('', listingBar('Distribution of species'), '',
       `${''.padEnd(43)}${'Log'.padStart(10)}${'Log'.padStart(10)}${'Log'.padStart(10)}`,
-      `   ${'Species'.padEnd(15)}${'Molality'.padStart(12)}${'Activity'.padStart(12)}${'Molality'.padStart(10)}${'Activity'.padStart(10)}${'Gamma'.padStart(10)}`, '');
+      `   ${'Species'.padEnd(15)}${'Molality'.padStart(12)}${'Activity'.padStart(12)}${'Molality'.padStart(10)}${'Activity'.padStart(10)}${'Gamma'.padStart(10)}`
+        + (B ? `${'PHREEQC m'.padStart(12)}${'PHREEQC lg'.padStart(11)}${'d log m'.padStart(10)}` : ''), '');
     let group = null;
     for (const [sp, g, mol, a, lm, la, lg] of p.species) {
       if (g !== group) {
@@ -2384,11 +2451,19 @@
           out.push(`${g.padEnd(14)}${tot === undefined ? '' : lsE(tot)}`);
         }
       }
-      out.push(`   ${sp.padEnd(15)}${lsE(mol).padStart(12)}${lsE(a).padStart(12)}${lsF(lm).padStart(10)}${lsF(la).padStart(10)}${lsF(lg).padStart(10)}`);
+      const v = B ? B.sp.get(sp) : null;
+      out.push(`   ${sp.padEnd(15)}${lsE(mol).padStart(12)}${lsE(a).padStart(12)}${lsF(lm).padStart(10)}${lsF(la).padStart(10)}${lsF(lg).padStart(10)}`
+        + (B ? (v ? `${lsE(v[0]).padStart(12)}${lsF(v[1]).padStart(11)}${lsE(mol > 0 && v[0] > 0 ? lm - Math.log10(v[0]) : null).padStart(10)}`
+          : `${'not given'.padStart(12)}`) : ''));
     }
     if (p.si.length) {
-      out.push('', listingBar('Saturation indices'), '', `  ${'Phase'.padEnd(18)}${'SI'.padStart(7)}${'log IAP'.padStart(10)}${'log K'.padStart(9)}`, '');
-      for (const [ph, s, iap, k] of p.si) out.push(`  ${ph.padEnd(18)}${lsF(s, 2).padStart(7)}${lsF(iap, 2).padStart(10)}${lsF(k, 2).padStart(9)}`);
+      out.push('', listingBar('Saturation indices'), '', `  ${'Phase'.padEnd(18)}${'SI'.padStart(7)}${'log IAP'.padStart(10)}${'log K'.padStart(9)}`
+        + (B ? `${'PHREEQC SI'.padStart(12)}${'d SI'.padStart(10)}` : ''), '');
+      for (const [ph, s, iap, k] of p.si) {
+        const v = B && B.si.has(ph) ? B.si.get(ph) : null;
+        out.push(`  ${ph.padEnd(18)}${lsF(s, 2).padStart(7)}${lsF(iap, 2).padStart(10)}${lsF(k, 2).padStart(9)}`
+          + (B ? (v === null ? `${'none'.padStart(12)}` : `${lsF(v, 2).padStart(12)}${lsE(s - v).padStart(10)}`) : ''));
+      }
     }
     if (p.minerals.length) {
       out.push('', listingBar('Minerals'), '', `  ${'Mineral'.padEnd(18)}${'Amount'.padStart(12)}${'SI'.padStart(8)}`, '');
@@ -2402,6 +2477,10 @@
     if (p.gases.length) {
       out.push('', listingBar('Gases'), '', `  ${'Gas'.padEnd(18)}${'Pressure (atm)'.padStart(16)}`, '');
       for (const [g, v] of p.gases) out.push(`  ${g.padEnd(18)}${lsE(v).padStart(16)}`);
+    }
+    if (B && B.only.length) {
+      out.push('', listingBar("Only in PHREEQC's speciation"), '', `   ${'Species'.padEnd(15)}${'Molality'.padStart(12)}${'Log Gamma'.padStart(11)}`, '');
+      for (const [sp, m2, lg2] of B.only) out.push(`   ${sp.padEnd(15)}${lsE(m2).padStart(12)}${lsF(lg2).padStart(11)}`);
     }
     return `${out.join('\n')}\n`;
   }
@@ -2420,6 +2499,26 @@
     }
     const m = r.model;
     const p = listingParts(r, got, atIndex, mc);
+    // Beside PHREEQC: its numbers once it has them, through the database the PHREEQC tab has chosen.
+    let pqSaid = '';
+    if (state.compBeside) {
+      const db = pqDatabase();
+      const key2 = `${key}|${db ? db.name : 'phreeqc.dat'}|${pq.fill && pq.water.trim() ? 'fill' : ''}`;
+      const L = pqListingCache.get(key2);
+      if (L && L.error) pqSaid = `PHREEQC could not take this water: ${L.error}`;
+      else if (L) {
+        p.pq = besidePhreeqc(p, L);
+        const w = p.pq.worst;
+        pqSaid = `beside PHREEQC (${L.database}, ${L.version}): the species within ${Math.abs(w.lm[0]).toExponential(1)} in log molality`
+          + `${w.lm[1] ? ` (${w.lm[1]})` : ''} and ${Math.abs(w.lg[0]).toExponential(1)} in log gamma${w.lg[1] ? ` (${w.lg[1]})` : ''}`
+          + `${p.si.length ? `, the SI within ${Math.abs(w.si[0]).toExponential(1)}${w.si[1] ? ` (${w.si[1]})` : ''}` : ''}`
+          + `${p.pq.left.length ? `; not given to PHREEQC, which has no such species: ${p.pq.left.join(', ')}` : ''}`;
+      } else {
+        fetchPqListing(r, atIndex, cell, layer, mc, key2);
+        pqSaid = 'PHREEQC is working out the same water…';
+      }
+    }
+    const B = p.pq || null;
     const where = `cell ${cell}${m.centres ? ` (${m.centres[cell].toExponential(2)} m)` : ''}${layer ? `, rock layer ${layer}` : ''}`;
     const title = `The water of ${where} at ${fmtTime(r.t[atIndex])}`;
     const td = (v, kind) => `<td>${esc(kind === 'e' ? lsE(v) : kind === '2' ? lsF(v, 2) : kind === 't' ? String(v) : lsF(v))}</td>`;
@@ -2427,42 +2526,62 @@
       + rows.map((rw) => `<tr>${rw.map((v, i) => td(v, kinds[i])).join('')}</tr>`).join('') + '</tbody></table>';
     let html = `<h4 class="rtm-listing-title">${esc(title)}</h4>`;
     html += '<h4>Solution composition</h4>' + table(['Element', 'Molality'], p.composition, ['t', 'e']);
-    html += '<h4>Description of solution</h4>' + table(['', 'Value', 'Unit'],
-      p.description.map(([label, v, unit]) => [label, lsDesc(label, v), unit]), ['t', 't', 't']);
+    html += '<h4>Description of solution</h4>' + table(['', 'Value', 'Unit', ...(B ? ['PHREEQC'] : [])],
+      p.description.map(([label, v, unit]) => [label, lsDesc(label, v), unit,
+        ...(B ? [B.desc.has(label) ? lsDesc(label, B.desc.get(label)) : ''] : [])]), ['t', 't', 't', 't']);
     let body = '';
     let group = null;
     for (const [sp, g, mol, a, lm, la, lg] of p.species) {
       if (g !== group) {
         group = g;
         if (g) body += `<tr class="rtm-listing-group"><td>${esc(g)}</td><td>${esc(g === 'other' ? '' : lsE(p.groupTotals.get(g)))}</td>`
-          + '<td></td><td></td><td></td><td></td></tr>';
+          + `${'<td></td>'.repeat(B ? 7 : 4)}</tr>`;
       }
-      body += `<tr><td class="rtm-listing-sp">${esc(sp)}</td>${td(mol, 'e')}${td(a, 'e')}${td(lm)}${td(la)}${td(lg)}</tr>`;
+      const v = B ? B.sp.get(sp) : null;
+      body += `<tr><td class="rtm-listing-sp">${esc(sp)}</td>${td(mol, 'e')}${td(a, 'e')}${td(lm)}${td(la)}${td(lg)}`
+        + (B ? (v ? `${td(v[0], 'e')}${td(v[1])}${td(mol > 0 && v[0] > 0 ? lm - Math.log10(v[0]) : null, 'e')}`
+          : '<td>not given</td><td></td><td></td>') : '') + '</tr>';
     }
     html += '<h4>Distribution of species</h4><table><thead><tr><th>Species</th><th>Molality</th><th>Activity</th><th>Log molality</th>'
-      + `<th>Log activity</th><th>Log gamma</th></tr></thead><tbody>${body}</tbody></table>`;
-    if (p.si.length) html += '<h4>Saturation indices</h4>' + table(['Phase', 'SI', 'log IAP', 'log K'], p.si, ['t', '2', '2', '2']);
+      + `<th>Log activity</th><th>Log gamma</th>${B ? '<th>PHREEQC molality</th><th>PHREEQC log gamma</th><th>Δ log molality</th>' : ''}`
+      + `</tr></thead><tbody>${body}</tbody></table>`;
+    const siRows = p.si.map(([ph, s, iap, k]) => [ph, s, iap, k, ...(B ? (B.si.has(ph) ? [B.si.get(ph), s - B.si.get(ph)] : [null, null]) : [])]);
+    if (p.si.length) {
+      html += '<h4>Saturation indices</h4>' + table(['Phase', 'SI', 'log IAP', 'log K', ...(B ? ['PHREEQC SI', 'Δ SI'] : [])], siRows,
+        ['t', '2', '2', '2', '2', 'e']);
+    }
     if (p.minerals.length) html += '<h4>Minerals</h4>' + table(['Mineral', 'Amount', 'SI'], p.minerals, ['t', 'e', '2']);
     if (p.exchange.length) html += '<h4>Exchange composition</h4>' + table(['Species', 'Amount', 'Equivalent fraction'], p.exchange, ['t', 'e', 'e']);
     if (p.surface.length) html += '<h4>Surface composition</h4>' + table(['Species', 'Amount', 'Share of its sites'], p.surface, ['t', 'e', 'e']);
     if (p.gases.length) html += '<h4>Gases</h4>' + table(['Gas', 'Partial pressure (atm)'], p.gases, ['t', 'e']);
+    if (B && B.only.length) {
+      html += '<h4>Only in PHREEQC\'s speciation</h4>' + table(['Species', 'Molality', 'Log gamma'], B.only, ['t', 'e', 'f']);
+    }
     box.innerHTML = html;
     box.hidden = false;
     $('rtmCompEmpty').hidden = true;
     const name = `${fileStem()}_water_cell${cell}${layer ? `_layer${layer}` : ''}`;
-    compTableNow = { head: ['species', 'in', 'molality', 'activity', 'log molality', 'log activity', 'log gamma'], name,
-      rows: p.species.map((rw) => rw.map((v) => (v === undefined ? null : v))),
+    const withPq = (rw) => {
+      const v = B ? B.sp.get(rw[0]) : null;
+      return [...rw, ...(B ? (v ? [v[0], v[1], rw[2] > 0 && v[0] > 0 ? rw[4] - Math.log10(v[0]) : null] : [null, null, null]) : [])];
+    };
+    compTableNow = { head: ['species', 'in', 'molality', 'activity', 'log molality', 'log activity', 'log gamma',
+      ...(B ? ['PHREEQC molality', 'PHREEQC log gamma', 'log molality, the model less PHREEQC'] : [])], name,
+      rows: p.species.map((rw) => withPq(rw.map((v) => (v === undefined ? null : v)))),
       extra: [
         { name: 'composition', head: ['element', 'molality'], rows: p.composition },
-        { name: 'description', head: ['', 'value', 'unit'], rows: p.description },
-        ...(p.si.length ? [{ name: 'saturation indices', head: ['phase', 'SI', 'log IAP', 'log K'], rows: p.si }] : []),
+        { name: 'description', head: ['', 'value', 'unit', ...(B ? ['PHREEQC'] : [])],
+          rows: p.description.map(([label, v, unit]) => [label, v, unit, ...(B ? [B.desc.has(label) ? B.desc.get(label) : null] : [])]) },
+        ...(p.si.length ? [{ name: 'saturation indices', head: ['phase', 'SI', 'log IAP', 'log K',
+          ...(B ? ['PHREEQC SI', 'SI, the model less PHREEQC'] : [])], rows: siRows }] : []),
+        ...(B && B.only.length ? [{ name: 'only in PHREEQC', head: ['species', 'molality', 'log gamma'], rows: B.only }] : []),
         ...(p.minerals.length ? [{ name: 'minerals', head: ['mineral', 'amount', 'SI'], rows: p.minerals }] : []),
         ...(p.exchange.length ? [{ name: 'exchange', head: ['species', 'amount', 'equivalent fraction'], rows: p.exchange }] : []),
         ...(p.surface.length ? [{ name: 'surface', head: ['species', 'amount', 'share of its sites'], rows: p.surface }] : []),
         ...(p.gases.length ? [{ name: 'gases', head: ['gas', 'partial pressure (atm)'], rows: p.gases }] : []),
       ] };
     compTextNow = listingText(title, p);
-    note.textContent = `${title}; ${p.species.length} lines of species, ${p.si.length} phases`;
+    note.textContent = `${title}; ${p.species.length} lines of species, ${p.si.length} phases${pqSaid ? `; ${pqSaid}` : ''}`;
   }
 
   /** The stored points along the run a chart in time draws: after "from" on a log axis. */
@@ -6815,7 +6934,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         sections: [
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
-            ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure.', view === 'listing'],
+            ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given.', view === 'listing'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
@@ -7669,12 +7788,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110g';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
-    'resources/js/rtm-phreeqc.js?v=20261109o',
-    'resources/js/rtm-phreeqc-engine.js?v=20261109l',
+    'resources/js/rtm-phreeqc.js?v=20261110a',
+    'resources/js/rtm-phreeqc-engine.js?v=20261110a',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -8809,6 +8928,7 @@ END
       state.compTMin = $('rtmCompTMin').value;
       state.compPcaVars = $('rtmCompPcaVars').value.trim();
       state.compPcaLog = $('rtmCompPcaLog').checked;
+      state.compBeside = $('rtmCompBeside').checked;
       saveState();
       renderComp();
       drawComp();

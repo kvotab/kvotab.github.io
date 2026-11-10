@@ -515,6 +515,7 @@
             </label>
             <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
             <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
+            <label data-comp-for="listing"><input type="checkbox" id="rtmCompBeside" data-on-change="rtm:redrawComp"> beside PHREEQC</label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="csv">CSV</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
@@ -2406,7 +2407,16 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             the minerals' amounts; what is on an exchanger or a surface, with its share; and a
             gas's partial pressure. Without an <code>ACTIVITY</code> each activity coefficient is
             1. <em>Text</em> saves it in PHREEQC's columns, to set beside PHREEQC's own output;
-            CSV the distribution of species, and Excel every block on a sheet of its own.</p>
+            CSV the distribution of species, and Excel every block on a sheet of its own.
+            <em>Beside PHREEQC</em> gives the same water to PHREEQC, through the database chosen on
+            the PHREEQC tab and as that tab gives it a run's waters — its element totals, the pH
+            walked onto its [H<sup>+</sup>], its pe — and sets PHREEQC's numbers beside the model's:
+            each species' molality and log gamma, the difference in log molality, each phase's
+            saturation index, and the water's pH, ionic strength, activity and percent error. The
+            species PHREEQC finds that the model has not are listed apart, and the note says how far
+            apart the two are at most and what PHREEQC was not given. A water handed off from
+            PHREEQC agrees to rounding; a constant of the model's own shows as the saturation index
+            it moves.</p>
           <p>The water's major ions are drawn as the hydrochemists draw them, in equivalents: Ca
             and Mg twice their dissolved totals, Na and K together, Cl, the sulfate twice the sulfur
             in a species with four O to each S — <code>SO4-2</code>, <code>CaSO4</code>, not
@@ -3471,6 +3481,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110l"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110m"></script>
 </body>
 </html>

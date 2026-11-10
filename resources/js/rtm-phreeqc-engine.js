@@ -219,6 +219,8 @@
    *        {type: 'done', report, phases, table, csv, version}
    *   {id, type: 'inverse', database, water, run, modelText, options: {only, inverse, ...}}
    *     -> {type: 'done', inverse, version, database}
+   *   {id, type: 'listing', database, water, run, modelText, options: {only: [one water]}}
+   *     -> {type: 'done', species, phases, mu, pH, aw, tc, pe, percent, counted, skipped, unmapped, version, database}
    *   anything failing -> {type: 'error', error}
    *
    * `database` null means the built-in one, handed in as defaults.builtin.
@@ -256,6 +258,22 @@
           });
           answer({ type: 'done', report: view.report, phases: view.phases, table: compact(view),
             csv: view.csv(), version: engine.version, database: database.name });
+          return;
+        }
+        if (msg.type === 'listing') {
+          // One water of a run as PHREEQC speciates it, set beside the model's own listing: each species with its
+          // molality and log gamma, each phase's SI, the water's; each under PHREEQC's name and the page's for it.
+          const view = P.viewRun({
+            engine, database, run: msg.run, modelText: msg.modelText, water: msg.water, ...(msg.options || {}), listing: true,
+          });
+          const r = view.rows[0];
+          if (!r || !r.pq) throw new Error(`PHREEQC could not calculate the water: ${(r && r.error) || 'no reason given'}`);
+          const q = r.pq;
+          answer({ type: 'done', version: engine.version, database: database.name,
+            species: [...q.species].map(([n, v]) => [n, P.rtmName(n), v[0], v[1]]),
+            phases: [...q.phases].map(([n, si]) => [n, P.rtmName(n), si]),
+            mu: q.mu, pH: q.pH, aw: q.aw, tc: q.tc, pe: q.pe, percent: q.percent,
+            counted: view.counted, skipped: view.skipped, unmapped: view.unmapped });
           return;
         }
         if (msg.type === 'inverse') {
