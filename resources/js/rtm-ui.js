@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109m';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261109p';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -158,7 +158,7 @@
         for (const key of ['x', 'y']) {
           const ax = s.dg[key];
           if (!ax || typeof ax !== 'object') continue;
-          if (['pH', 'pe', 'la', 'tot', ...(key === 'y' ? [''] : [])].includes(ax.kind)) d[key].kind = ax.kind;
+          if (['pH', 'pe', 'Eh', 'la', 'tot', ...(key === 'y' ? [''] : [])].includes(ax.kind)) d[key].kind = ax.kind;
           for (const f of ['sp', 'from', 'to', 'n']) if (typeof ax[f] === 'string') d[key][f] = ax[f];
         }
         for (const f of ['show', 'el', 'q']) if (typeof s.dg[f] === 'string') d[f] = s.dg[f];
@@ -948,7 +948,7 @@
 
   /*
     QUANTITIES: what the run can be read as besides its species -- the
-    water's pH, pe and ionic strength, element totals, saturation indices,
+    water's pH, pe, Eh and ionic strength, element totals, saturation indices,
     log activities, gases, what is on an exchanger or a surface, and the
     text's <OUTPUT> -- as the model lists them (compile's QUANTITIES). Each
     has a key, which the charts pick by and <DATA> names a column by, a
@@ -2594,7 +2594,7 @@
   /* ---------------------------------------------------------------------
      Diagrams: the model's own chemistry, as PhreePlot draws PHREEQC's
 
-     The water of one cell held at each point of a range of pH, pe, a
+     The water of one cell held at each point of a range of pH, pe or Eh, a
      species' activity or an element's total -- or of two ranges -- and
      speciated there by the model's relations, in the worker (rtmDiagram in
      rtm-worker.js). What comes back is every point's concentrations and
@@ -2602,8 +2602,9 @@
      again.
      --------------------------------------------------------------------- */
   // Where each kind of axis starts and ends unless it is given, and what it is called.
-  const DG_RANGES = { pH: ['2', '12'], pe: ['-12', '16'], la: ['-10', '-2'], tot: ['-8', '-2'] };
-  const dgLabel = (ax) => (ax.kind === 'pH' ? 'pH' : ax.kind === 'pe' ? 'pe' : ax.kind === 'la' ? `log a(${ax.species})`
+  const DG_RANGES = { pH: ['2', '12'], pe: ['-12', '16'], Eh: ['-0.8', '1.2'], la: ['-10', '-2'], tot: ['-8', '-2'] };
+  const dgLabel = (ax) => (ax.kind === 'pH' ? 'pH' : ax.kind === 'pe' ? 'pe' : ax.kind === 'Eh' ? 'Eh (V)'
+    : ax.kind === 'la' ? `log a(${ax.species})`
     : `log total ${ax.species} in the cell (mol/kgw)`);
   let dgResult = null;
   let dgTableNow = null;
@@ -2832,8 +2833,6 @@
     layout.yaxis.title = { text: dgLabel(ay), font: { size: 11 } };
     layout.margin.r = 30;
     const shapes = [];
-    // Water's own limits on a pe-pH diagram, at 25 C and one atmosphere: O2 above, H2 below.
-    const pePh = (ax.kind === 'pH' && ay.kind === 'pe') || (ax.kind === 'pe' && ay.kind === 'pH');
     if (d.show === 'contour') {
       const key = d.q;
       const q = isQuantity(key) ? quantityOf(key) : null;
@@ -2850,7 +2849,7 @@
         contours: { coloring: 'heatmap', showlabels: true, labelfont: { size: 10 } }, line: { width: 0.6 },
         colorbar: { title: { text: title, side: 'right', font: { size: 11 } }, thickness: 14, outlinewidth: 0, tickfont: { size: 10 } },
         hovertemplate: `${esc(dgLabel(ax))} %{x:.3g}<br>${esc(dgLabel(ay))} %{y:.3g}<br>${esc(title)} %{z:.4g}<extra></extra>` },
-      ...dgWaterLines(pePh, xs, ys)], { ...layout, shapes }, PLOT_CONFIG);
+      ...dgWaterLines(ax, ay, xs, ys)], { ...layout, shapes }, PLOT_CONFIG);
       dgTableNow = { head: [`${dgLabel(ay)} \\ ${dgLabel(ax)}: ${title}`, ...xs], rows: ys.map((y, j) => [y, ...z[j]]),
         name: `rtm_diagram_${ax.kind}_${ay.kind}` };
       note.textContent = `${where}; ${n1} × ${n2} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`;
@@ -2976,7 +2975,7 @@
       layout.xaxis.range = [Math.min(...xs), Math.max(...xs)];
       layout.yaxis.range = [Math.min(...ys), Math.max(...ys)];
     }
-    Plotly.react(plot, [...traces, ...dgWaterLines(pePh, xs, ys)], layout, PLOT_CONFIG);
+    Plotly.react(plot, [...traces, ...dgWaterLines(ax, ay, xs, ys)], layout, PLOT_CONFIG);
     const counts = names2.map((nm, c) => [nm, at.filter((v) => v === c).length]).filter(([, k]) => k > 0);
     dgTableNow = { head: [dgLabel(ax), dgLabel(ay), d.show === 'predominance' ? `the species holding most of the ${d.el}`
       : 'the phase furthest over saturation, or at it', d.show === 'predominance' ? 'its share (%)' : 'its SI'],
@@ -3076,21 +3075,30 @@
   }
 
   /**
-   * On a pe-pH diagram, where water itself gives way, at 25 C and one
-   * atmosphere: above pe + pH = 20.78 it gives off oxygen (O2 + 4H+ + 4e- =
-   * 2H2O, log K 83.12), below pe + pH = 0 hydrogen -- the same two lines
-   * whichever way round the axes are.
+   * On a pe-pH or an Eh-pH diagram, either way round, where water itself
+   * gives way, at 25 C and one atmosphere: above pe + pH = 20.78 it gives off
+   * oxygen (O2 + 4H+ + 4e- = 2H2O, log K 83.12), below pe + pH = 0 hydrogen;
+   * in volts, Eh = 0.059156 (20.78 - pH) and -0.059156 pH, the volts of a
+   * pe at 25 C (RtmModel.ehPerPe).
    */
-  function dgWaterLines(pePh, xs, ys) {
-    if (!pePh) return [];
+  function dgWaterLines(ax, ay, xs, ys) {
+    const redox = (kind) => kind === 'pe' || kind === 'Eh';
+    if (!((ax.kind === 'pH' && redox(ay.kind)) || (ay.kind === 'pH' && redox(ax.kind)))) return [];
+    // pH across or up, and the redox axis the other way, in volts or pe.
+    const across = ax.kind === 'pH';
+    const per = (across ? ay : ax).kind === 'Eh' ? RtmModel.ehPerPe(298.15) : 1;
+    const range = (v) => [Math.min(...v), Math.max(...v)];
+    const [pLo, pHi] = range(across ? xs : ys);
+    const [rLo, rHi] = range(across ? ys : xs);
     const c = themeColors();
-    const [x0, x1] = [Math.min(...xs), Math.max(...xs)];
-    const [lo, hi] = [Math.min(...ys), Math.max(...ys)];
     return [[20.78, 'water and O₂ at 1 atm, 25 °C'], [0, 'water and H₂ at 1 atm']].flatMap(([sum, name]) => {
-      const xa = Math.max(x0, sum - hi);
-      const xb = Math.min(x1, sum - lo);
-      if (!(xa < xb)) return [];
-      return [{ type: 'scatter', mode: 'lines', x: [xa, xb], y: [sum - xa, sum - xb], showlegend: false,
+      // The line, per (sum - pH), over the pH where it is inside the redox axis.
+      const pa = Math.max(pLo, sum - rHi / per);
+      const pb = Math.min(pHi, sum - rLo / per);
+      if (!(pa < pb)) return [];
+      const ps = [pa, pb];
+      const rs = ps.map((p) => per * (sum - p));
+      return [{ type: 'scatter', mode: 'lines', x: across ? ps : rs, y: across ? rs : ps, showlegend: false,
         line: { color: c.text, width: 1.2, dash: 'dash' }, hovertemplate: `${name}<extra></extra>` }];
     });
   }
@@ -4995,8 +5003,8 @@
             '**HDF5**: the same file, as a download.',
           ] },
           { heading: 'The list', text: [
-            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, ionic strength, a(H2O), charge balance), the totals of each element in the water, saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
-            'An amount goes on the left-hand axis with the species, log or not; pH, pe, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
+            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water, saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
+            'An amount goes on the left-hand axis with the species, log or not; pH, pe, Eh, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
             'In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
             still.length ? `In this model these do not move: ${someOf(still)}.` : '',
           ].filter(Boolean) },
@@ -5084,16 +5092,16 @@
       const two = !!(dgResult && dgResult.reply.y);
       return {
         kicker: 'Tab', title: 'Diagrams',
-        lead: 'The model\'s own chemistry, as PhreePlot draws PHREEQC\'s: the water of one cell held at each point of a range — a pH, a pe, a species\' activity or an element\'s total, or two of them — and speciated there by the relations of <EQUILIBRIUM>.',
+        lead: 'The model\'s own chemistry, as PhreePlot draws PHREEQC\'s: the water of one cell held at each point of a range — a pH, a pe or an Eh, a species\' activity or an element\'s total, or two of them — and speciated there by the relations of <EQUILIBRIUM>.',
         sections: [
           { heading: 'What is worked out', list: [
             '**The water of cell**, **as it starts** or **ends the run**: the water held. Its totals stay as they are, but for what is varied; there is no charge balance, as in PHREEQC\'s SOLUTION.',
-            '**Vary**: **pH**, the activity of H+; **pe**, the electron\'s; **log activity of** a species dissolved; **log total of** an element in the cell, mol/kgw. **and** a second one makes a grid.',
+            '**Vary**: **pH**, the activity of H+; **pe**, the electron\'s; **Eh (V)**, that pe in volts at the water\'s temperature; **log activity of** a species dissolved; **log total of** an element in the cell, mol/kgw. **and** a second one makes a grid.',
             'A mineral there stays at saturation while there is any of it. A point that does not settle is left blank, and the status line counts them.',
             '**Work it out**: in the background; a grid of 101 × 41 takes a second or less.',
           ] },
           { heading: 'Show', list: two ? [
-            '**the species that holds most of an element**, in the water or the whole cell: over pH and pe, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C.',
+            '**the species that holds most of an element**, in the water or the whole cell: over pH and pe or Eh, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C: in volts 1.229 − 0.0592 pH and −0.0592 pH.',
             '**the phase furthest over saturation, or at it**: a mineral stability diagram.',
             '**a species or a quantity, as contours**: its log where it is an amount.',
             'A map\'s **boundaries** are found between the grid\'s points, the water speciated again there, to 1e-10; where three fields meet, the point is solved for. A field narrower than the grid can be missed.',
@@ -5880,7 +5888,7 @@
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109o';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261109p';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

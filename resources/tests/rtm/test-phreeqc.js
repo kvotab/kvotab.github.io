@@ -3665,47 +3665,130 @@ function againstDiagrams(engine) {
 function againstBoundaries(engine) {
   const database = { name: 'phreeqc.dat', text: dbText };
   const fe = 'SOLUTION 1\n units mmol/kgw\n pH 6\n pe 8\n Na 2\n Cl 2\n Fe 0.01\nEND\n';
-  engine.load(dbText);
-  const text = P.waterToModel({ engine, database, water: { name: 'iron', text: fe }, activity: true, exact: true, redox: true }).text;
-  const m = RtmModel.compile(text);
-  const terms = m.composition.elements.find((e) => e.el === 'Fe').terms.filter((tm) => tm[2] === 'water');
-  const names = terms.map(([k]) => m.speciesNames[k]);
-  const axes = [{ kind: 'pH', from: 2, to: 8, n: 13 }, { kind: 'pe', from: -2, to: 12.5, n: 11 }];
-  let grid = null;
-  handleRtmMessage({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes }, (r) => { if (r.type !== 'progress') grid = r; });
-  let b = null;
-  handleRtmMessage({ type: 'diagramBounds', id: 2, text, at: 'start', cell: 0, axes, grid: grid.states,
-    criterion: { kind: 'predominance', terms: terms.map(([k, n]) => [k, n]) } }, (r) => { if (r.type !== 'progress') b = r; });
-  if (b.type === 'error') throw new Error(b.error);
-  // PHREEQC's amount of iron in each species at a pH and a pe.
-  const amounts = (ph, pe) => {
+  /*
+    The map of the water fe over the axes, its boundaries against PHREEQC's
+    SOLUTION at their points: a point's pe on the second axis, pe(y).
+  */
+  const against = (fe, axes, pe) => {
     engine.load(dbText);
-    const rows = engine.run(`${fe.replace(' pH 6', ` pH ${ph.toPrecision(17)}`).replace(' pe 8', ` pe ${pe.toPrecision(17)}`).replace('END\n', '')}`
-      + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n${names.map((nm, i) => ` ${10 + 10 * i} PUNCH MOL("${nm}")`).join('\n')}\nEND\n`);
-    return rows[rows.length - 1].map((v, i) => Number(v) * terms[i][1]);
+    const text = P.waterToModel({ engine, database, water: { name: 'iron', text: fe }, activity: true, exact: true, redox: true }).text;
+    const m = RtmModel.compile(text);
+    const terms = m.composition.elements.find((e) => e.el === 'Fe').terms.filter((tm) => tm[2] === 'water');
+    const names = terms.map(([k]) => m.speciesNames[k]);
+    let grid = null;
+    handleRtmMessage({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes }, (r) => { if (r.type !== 'progress') grid = r; });
+    let b = null;
+    handleRtmMessage({ type: 'diagramBounds', id: 2, text, at: 'start', cell: 0, axes, grid: grid.states,
+      criterion: { kind: 'predominance', terms: terms.map(([k, n]) => [k, n]) } }, (r) => { if (r.type !== 'progress') b = r; });
+    if (b.type === 'error') throw new Error(b.error);
+    // PHREEQC's amount of iron in each species at a pH and a pe.
+    const amounts = (ph, peHere) => {
+      engine.load(dbText);
+      const rows = engine.run(`${fe.replace(' pH 6', ` pH ${ph.toPrecision(17)}`).replace(' pe 8', ` pe ${peHere.toPrecision(17)}`).replace('END\n', '')}`
+        + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n${names.map((nm, i) => ` ${10 + 10 * i} PUNCH MOL("${nm}")`).join('\n')}\nEND\n`);
+      return rows[rows.length - 1].map((v, i) => Number(v) * terms[i][1]);
+    };
+    // How far from equal the fields' own species are, and how far any other species is above them.
+    const o = { b, text, worst: 0, over: -Infinity, where: '', points: 0 };
+    const at = (x, y, labels) => {
+      const a = amounts(x, pe(y));
+      const mine = labels.map((q) => a[q]);
+      const d = Math.log(Math.max(...mine) / Math.min(...mine));
+      if (d > o.worst) { o.worst = d; o.where = `${labels.map((q) => names[q]).join('/')} at pH ${x.toFixed(4)}, ${axes[1].kind} ${y.toFixed(4)}`; }
+      const others = a.filter((_, q) => !labels.includes(q));
+      o.over = Math.max(o.over, Math.log(Math.max(...others) / Math.min(...mine)));
+      o.points++;
+    };
+    for (const ln of b.lines) ln.x.forEach((x, q) => at(x, ln.y[q], [ln.a, ln.b]));
+    for (const jn of b.junctions) at(jn.x, jn.y, jn.labels);
+    o.ok = (tol) => b.unsolved === 0 && b.junctions.length >= 2 && b.junctions.every((jn) => jn.solved) && o.worst < tol && o.over < tol;
+    o.said = `${b.lines.length} boundaries, ${b.junctions.length} meeting points, ${o.points} points against PHREEQC: the worst `
+      + `${o.worst.toExponential(1)} (${o.where}), any other species at most 1 ${o.over < 0 ? '-' : '+'} ${Math.abs(o.over).toExponential(1)} times them`;
+    return o;
   };
-  // How far from equal the fields' own species are, and how far any other species is above them.
-  let worst = 0;
-  let over = -Infinity;
-  let where = '';
-  let points = 0;
-  const at = (x, y, labels) => {
-    const a = amounts(x, y);
-    const mine = labels.map((q) => a[q]);
-    const d = Math.log(Math.max(...mine) / Math.min(...mine));
-    if (d > worst) { worst = d; where = `${labels.map((q) => names[q]).join('/')} at pH ${x.toFixed(4)}, pe ${y.toFixed(4)}`; }
-    const others = a.filter((_, q) => !labels.includes(q));
-    over = Math.max(over, Math.log(Math.max(...others) / Math.min(...mine)));
-    points++;
-  };
-  for (const ln of b.lines) ln.x.forEach((x, q) => at(x, ln.y[q], [ln.a, ln.b]));
-  for (const jn of b.junctions) at(jn.x, jn.y, jn.labels);
+  const pe25 = against(fe, [{ kind: 'pH', from: 2, to: 8, n: 13 }, { kind: 'pe', from: -2, to: 12.5, n: 11 }], (y) => y);
   check('the boundaries of a Pourbaix map of a handed-off iron water, found between the points of a 13 x 11 grid: at each of '
     + 'their points PHREEQC\'s SOLUTION at that pH and pe gives the species either side the same amount of iron, to 1e-9, and '
     + 'no other species more (at a line\'s end where three meet, the third as much); where three fields meet, the three of them',
-  b.unsolved === 0 && b.junctions.length >= 2 && b.junctions.every((jn) => jn.solved) && worst < 1e-9 && over < 1e-9,
-  `${b.lines.length} boundaries, ${b.junctions.length} meeting points, ${points} points against PHREEQC: the worst `
-    + `${worst.toExponential(1)} (${where}), any other species at most 1 ${over < 0 ? '-' : '+'} ${Math.abs(over).toExponential(1)} times them`);
+  pe25.ok(1e-9), pe25.said);
+  /*
+    The same water at 60 C over pH and Eh, in volts: each point's pe its Eh
+    over the volts of a pe at 60 C, 0.066100 V, PHREEQC's SOLUTION given that
+    pe and the temperature. The map stays below the oxygen line at 60 C,
+    pe + pH 18.9.
+  */
+  const per60 = RtmModel.ehPerPe(333.15);
+  const eh60 = against(fe.replace(' units', ' temp 60\n units'),
+    [{ kind: 'pH', from: 2, to: 8, n: 13 }, { kind: 'Eh', from: -0.12, to: 0.72, n: 11 }], (y) => y / per60);
+  check('  the same water at 60 C over pH and Eh: at each point of each boundary, its pe the Eh over the volts of a pe at 60 C, '
+    + 'PHREEQC\'s SOLUTION at that pH, pe and temperature gives the species either side the same amount of iron, to 1e-9, and no '
+    + 'other species more; where three fields meet, the three of them',
+  /TEMPERATURE = 60\b/.test(eh60.text) && eh60.ok(1e-9), eh60.said);
+}
+
+/* ======================================================================
+   Eh, against what PHREEQC prints. PHREEQC gives an Eh only where it prints
+   a water's redox couples, each couple's pe and Eh to four decimals; the
+   page's volts of a pe (RtmModel.ehPerPe) give each printed Eh back from
+   the pe printed beside it, at 5, 25, 60 and 90 C. And a handed-off water's
+   Eh, the page's quantity: its iron given to PHREEQC again as Fe(2) and
+   Fe(3) apart, as much of each as the water has at its pe, makes a couple
+   at that pe, and PHREEQC prints the couple's Eh.
+   ====================================================================== */
+function againstEh(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const couples = (printed) => {
+    const out = [];
+    const block = (printed.split('Redox couples')[1] || '').split('Distribution of species')[0];
+    for (const line of block.split('\n')) {
+      const m = /^\s+(\S+\/\S+)\s+(-?\d+\.\d{4})\s+(-?\d+\.\d{4})\s*$/.exec(line);
+      if (m) out.push({ name: m[1], pe: Number(m[2]), eh: Number(m[3]) });
+    }
+    return out;
+  };
+  const waters = [' pH 6.5\n pe 4\n Na 2\n Cl 2 charge\n Fe(2) 0.1\n Fe(3) 1e-3\n N(5) 0.5\n N(-3) 0.01\n',
+    ' pH 2.5\n pe 4\n Na 2\n Cl 2 charge\n Fe(2) 0.1\n Fe(3) 0.3\n N(5) 1e-3\n N(-3) 1\n'];
+  const temps = [5, 25, 60, 90];
+  const seen = [];
+  for (const tc of temps) {
+    for (const w of waters) {
+      engine.load(dbText);
+      for (const c of couples(engine.printed(`SOLUTION 1\n temp ${tc}\n units mmol/kgw\n${w}END\n`))) seen.push({ tc, ...c });
+    }
+  }
+  // Each printed Eh from the pe printed beside it: each to four decimals, half a unit in the last either way.
+  const off = (perPe) => Math.max(...seen.map((c) => Math.abs(perPe(c.tc + 273.15) * c.pe - c.eh)));
+  const page = off(RtmModel.ehPerPe);
+  const codata = off((tk) => (Math.LN10 * 0.008314462618 * tk) / 96.48533212);
+  check(`Eh from pe as PHREEQC prints its redox couples: ${seen.length} couples at 5, 25, 60 and 90 C, pe from `
+    + `${Math.min(...seen.map((c) => c.pe)).toFixed(1)} to ${Math.max(...seen.map((c) => c.pe)).toFixed(1)}, each printed Eh `
+    + 'given back from the pe printed beside it to the four decimals both are printed to',
+  seen.length >= 12 && temps.every((tc) => seen.some((c) => c.tc === tc)) && page <= 5.4e-5,
+  `within ${page.toExponential(2)} V; with CODATA's R and F, ${codata.toExponential(2)}`);
+  // A handed-off water's Eh.
+  const quantity = temps.map((tc) => {
+    const water = `SOLUTION 1\n temp ${tc}\n units mmol/kgw\n pH 6.5\n pe 3.5\n Na 2\n Cl 2\n Fe 0.1\nEND\n`;
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'iron', text: water }, activity: true, exact: true, redox: true });
+    const m = RtmModel.compile(res.text);
+    const c = m.toConcentrations(m.initialState());
+    const out = new Float64Array(2);
+    m.quantitiesAt(c, 0, 0, Int32Array.from(['pe', 'Eh'].map((k) => m.quantities.findIndex((q) => q.key === k))), out);
+    engine.load(dbText);
+    const rows = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+      + ' 10 PUNCH TOT("Fe(2)")*1000, TOT("Fe(3)")*1000\nEND\n');
+    const [fe2, fe3] = rows[rows.length - 1].map(Number);
+    engine.load(dbText);
+    const fec = couples(engine.printed(water.replace(' Fe 0.1\n', ` Fe(2) ${fe2.toPrecision(17)}\n Fe(3) ${fe3.toPrecision(17)}\n`)))
+      .find((x) => x.name === 'Fe(2)/Fe(3)');
+    return { tc, pe: out[0], eh: out[1], couple: fec, warm: new RegExp(`TEMPERATURE = ${tc}\\b`).test(res.text) || tc === 25 };
+  });
+  check('  a handed-off iron water at pe 3.5, at 5, 25, 60 and 90 C: the page\'s Eh is the one PHREEQC prints for the iron '
+    + 'couple given as much Fe(2) and Fe(3) as the water has at its pe, to the four decimals it prints',
+  quantity.every((q) => q.couple && Math.abs(q.pe - 3.5) < 1e-9 && Math.abs(q.couple.pe - 3.5) <= 5e-5
+    && Math.abs(q.eh - q.couple.eh) <= 5.1e-5 && q.warm),
+  quantity.map((q) => `${q.tc} C: ${q.eh.toFixed(6)} V for ${q.couple ? `${q.couple.eh.toFixed(4)} (its pe ${q.couple.pe.toFixed(4)})` : 'no couple'}`)
+    .join('; '));
 }
 
 /* ======================================================================
@@ -4650,8 +4733,10 @@ function againstKineticsHandOff(engine) {
   againstQuantities(wasm);
   console.log('\n--- diagrams: a water held at a pH, a pe or a total, against PHREEQC\'s SOLUTION there ---');
   againstDiagrams(wasm);
-  console.log('\n--- the boundaries of a map: a Pourbaix map\'s, against PHREEQC\'s SOLUTION at their points ---');
+  console.log('\n--- the boundaries of a map: a Pourbaix map\'s, over pe and over Eh, against PHREEQC\'s SOLUTION at their points ---');
   againstBoundaries(wasm);
+  console.log('\n--- Eh: from pe as PHREEQC prints its redox couples\' Eh, and a handed-off water\'s ---');
+  againstEh(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');

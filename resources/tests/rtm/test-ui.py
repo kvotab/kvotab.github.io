@@ -1213,6 +1213,32 @@ async def main():
                 "[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                 " document.getElementById('rtmChartDg').data.slice(0, 3).map((t) => t.name).join(' ')]")],
                 [True, ['diagram', 'CO2 HCO3- CO3-2']])
+            # Eh in volts up, as Pourbaix diagrams are drawn; the water's own limits in volts at 25 C.
+            ok = await example('pourbaix', "/its boundaries found/.test(document.getElementById('rtmStatus').textContent)")
+            eh_map = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              const per = RtmModel.ehPerPe(298.15);
+              const water = d.filter((t) => t.line && t.line.dash === 'dash');
+              const off = Math.max(...water.flatMap((t, q) => t.x.map((x, i) => Math.abs(t.y[i] - per * ((q ? 0 : 20.78) - x)))));
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, p.layout.yaxis.title.text,
+                water.map((t) => t.x.join(' to ')).join(' | '), off < 1e-12,
+                [...document.getElementById('rtmDgQ').options].some((o) => o.value === 'Eh')]; })()""")
+            check('the iron example, once run, opens on an Eh-pH Pourbaix diagram: Eh in volts up, the water\'s own limits at '
+                  '1.229 - 0.0592 pH and -0.0592 pH volts at 25 C, and Eh among the quantities to draw', [ok, eh_map],
+                  [True, ['diagram', 'Eh (V)', '2 to 12 | 2 to 12', True, True]])
+            bounds_now = "(() => { const b = document.getElementById('rtmChartDg').data.find((t) => t.name === 'boundaries'); return b ? [b.x, b.y] : null; })()"
+            eh_bounds = await page.ev(bounds_now)
+            per = math.log(10) * 0.0083147 * 298.15 / 96.4935
+            await dg(calc=[['rtmDgYKind', 'pe'], ['rtmDgYFrom', repr(-0.8 / per)], ['rtmDgYTo', repr(1.2 / per)], ['rtmDgYN', '81']])
+            await settle(page, "/its boundaries found/.test(document.getElementById('rtmStatus').textContent)", True, tries=60, pause=0.25)
+            pe_bounds = await page.ev(bounds_now)
+
+            def same_bounds(a, b):
+                if not a or not b or len(a[0]) != len(b[0]) or not a[0]:
+                    return False
+                pairs = list(zip(a[0], b[0])) + [(u, None if v is None else per * v) for u, v in zip(a[1], b[1])]
+                return all((u is None) == (v is None) and (u is None or abs(u - v) < 1e-9) for u, v in pairs)
+            check('  worked out again over pe, the same range in pe: the same boundaries, the Eh of each point its pe in volts, '
+                  'to 1e-9', [same_bounds(eh_bounds, pe_bounds), bool(eh_bounds and len(eh_bounds[0]) > 10)], [True, True])
             ok = await example('exchangesweep', "/^4 of 4 runs done/.test(document.getElementById('rtmStatus').textContent)")
             check('the exchange example opens on Sweeps and runs four capacities, a curve each at the outlet against linear time',
                   [ok, await page.ev("(() => { const p = document.getElementById('rtmChartSw');"

@@ -340,8 +340,8 @@ function rtmQuantities(msg) {
 
 /*
   DIAGRAMS: the water of one cell -- as the model starts it, or as the run
-  left it -- held at each point of a range of pH, pe, a species' activity or
-  an element's total, or of two such ranges, and speciated there by the
+  left it -- held at each point of a range of pH, pe or Eh, a species'
+  activity or an element's total, or of two such ranges, and speciated there by the
   model's own relations (RtmModel.speciate), as PhreePlot does with
   PHREEQC's. Each point starts from the one before it, the grid walked to and
   fro so that the one before is always beside it, and from the water itself
@@ -350,7 +350,7 @@ function rtmQuantities(msg) {
   until it stops moving. Returns each point's concentrations in that cell and
   every quantity of the model there; a point that did not settle is NaN.
 */
-const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', la: 'log activity', tot: 'log total' };
+const RTM_DIAGRAM_KINDS = { pH: 'pH', pe: 'pe', Eh: 'Eh', la: 'log activity', tot: 'log total' };
 
 /** Whether species k is dissolved in the water: the activity model's solute, or without one what is no mineral, gas or site. */
 function rtmSolute(model, k) {
@@ -372,9 +372,10 @@ function rtmDiagramAxis(model, ax) {
     if (k < 0 || !solute(k)) throw new Error('A pH is the activity of H+, and the model has no H+ in its water.');
     return { kind: 'pH', k, values, sign: -1 };
   }
-  if (ax.kind === 'pe') {
-    if (!(model.electron >= 0)) throw new Error('A pe is the electron\'s, and the model has none: e- electron.');
-    return { kind: 'pe', k: model.electron, values, sign: -1 };
+  // An Eh is the electron's pe in volts: held at the pe it is at the water's temperature (RtmModel.ehPerPe).
+  if (ax.kind === 'pe' || ax.kind === 'Eh') {
+    if (!(model.electron >= 0)) throw new Error(`A${ax.kind === 'Eh' ? 'n Eh' : ' pe'} is the electron's, and the model has none: e- electron.`);
+    return { kind: ax.kind, k: model.electron, values, sign: -1 };
   }
   if (ax.kind === 'la') {
     const k = model.speciesNames.indexOf(ax.species);
@@ -388,7 +389,7 @@ function rtmDiagramAxis(model, ax) {
     for (const [k, n] of comp.terms) weights[k] = n;
     return { kind: 'tot', weights, values, name: ax.species };
   }
-  throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, la or tot.`);
+  throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, Eh, la or tot.`);
 }
 
 /**
@@ -438,6 +439,8 @@ function rtmDiagramSetup(msg) {
   let pHHeld = null;
   const iH = model.speciesNames.indexOf('H+');
   if (model.thermoAt) model.thermoAt(t);
+  // Volts to a pe, at the cell's temperature as the water is taken.
+  const ehPe = RtmModel.ehPerPe((model.temperatures ? model.temperatures(t)[cell] : 25) + 273.15);
   if (totAxis >= 0 && !axes.some((ax) => ax.kind === 'pH') && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
     const g0 = new Float64Array(ns);
     if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
@@ -457,6 +460,7 @@ function rtmDiagramSetup(msg) {
       holds.forEach(({ ax, a }, h) => {
         const v = a >= 0 ? vals[a] : pHHeld;
         if (ax.kind === 'pe') y[b + ax.k] = 10 ** -v;
+        else if (ax.kind === 'Eh') y[b + ax.k] = 10 ** -(v / ehPe);
         else if (ax.kind === 'pH') y[b + ax.k] = 10 ** -v * Math.exp(-lnGamma[h]);
         else if (ax.kind === 'la') y[b + ax.k] = 10 ** v * Math.exp(-lnGamma[h]);
       });

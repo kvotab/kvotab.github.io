@@ -2175,6 +2175,17 @@
     return waterAt(waterAtT(tc, atmGiven), aw);
   }
 
+  /**
+   * Volts of Eh to one pe at tk kelvin: ln 10 RT/F, with the gas constant
+   * and the Faraday constant PHREEQC 3 turns a pe into an Eh with where it
+   * prints one, its redox couples' (print.cpp: R_KJ_DEG_MOL 0.00831470,
+   * F_KJ_V_EQ 96.4935 in global_structures.h), at the water's own
+   * temperature. 0.059156 V at 25 C.
+   */
+  function ehPerPe(tk) {
+    return (Math.LN10 * 0.00831470 * tk) / 96.4935;
+  }
+
   /** What of debyeHuckelAB goes with the temperature and the pressure given alone, kept for waterAt. */
   function waterAtT(tc, atmGiven) {
     const T = tc + 273.15;
@@ -11600,7 +11611,7 @@
     /*
       QUANTITIES: what the run can be read as besides its species, each
       worked out at a stored point -- the concentrations, a cell, a time --
-      with the model's own activity model: the water's pH, pe, ionic
+      with the model's own activity model: the water's pH, pe and Eh, ionic
       strength, a(H2O), charge balance and temperature; each element's
       dissolved total; the saturation index of each phase of <PHASES> and of
       each mineral; each solute's log activity; a gas's partial pressure;
@@ -11633,6 +11644,9 @@
     }
     if (electron >= 0) {
       addQ('pe', 'pe', 'water', '', 'index', (c, b) => (c[b + electron] > 0 ? -Math.log10(c[b + electron]) : NaN));
+      // The same in volts, at the cell's temperature then.
+      addQ('Eh', 'Eh', 'water', 'V', 'index', (c, b, cell) => (c[b + electron] > 0
+        ? ehPerPe(tkOf(cell)) * -Math.log10(c[b + electron]) : NaN));
     }
     if (qIons.length) addQ('I', 'ionic strength', 'water', 'mol/kgw', 'conc', () => qW.I);
     if (act && act.kind !== 'none') addQ('a(H2O)', 'a(H2O)', 'water', '', 'index', () => Math.exp(qW.lnAw));
@@ -13661,7 +13675,7 @@
   }
 
   return { compile, verifyJacobian, speciate, conservationBasis, RtmError, parseReaction,
-    chargeOf, debyeHuckelAB, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
+    chargeOf, debyeHuckelAB, ehPerPe, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
     pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP, potentialRow,
     readSections, derivative, symmetricEigen, pca,
     // The vocabulary, for the editor's syntax colouring: what is coloured as

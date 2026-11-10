@@ -221,9 +221,9 @@ const RTM_EXAMPLES = [
   {
     "id": "pourbaix",
     "group": "Equilibrium diagrams",
-    "label": "Iron: a pe–pH (Pourbaix) diagram",
-    "about": "Iron in a dilute water, Fe+2 and Fe+3, their hydrolysis and ferrihydrite. Run it: the Diagrams tab holds the water at each pH and pe and draws the species that holds most of the iron, in the whole cell, ferrihydrite's field among them, with where water itself gives way drawn across it.",
-    "text": "# Iron in a dilute water: Fe+2 and Fe+3, their hydrolysis and ferrihydrite.\n# The Diagrams tab holds the water at each pH and pe and draws the species\n# that holds most of the iron -- a Pourbaix diagram -- with where water itself\n# gives way, oxygen above and hydrogen below. phreeqc.dat's constants.\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           1e-7\nOH-          1e-7\ne-           electron  pe=4\nNa+          1e-3\nCl-          1e-3\nFe+2         1e-5\nFe+3         0\nFeOH+        0\nFe(OH)2      0\nFe(OH)3-     0\nFeOH+2       0\nFe(OH)2+     0\nFe(OH)3      0\nFe(OH)4-     0\nFerrihydrite 0  mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                         logK = -14\nFe+2 <=> Fe+3 + e-,                    logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,             logK = -9.5\nFe+2 + 2 H2O <=> Fe(OH)2 + 2 H+,       logK = -20.57\nFe+2 + 3 H2O <=> Fe(OH)3- + 3 H+,      logK = -31\nFe+3 + H2O <=> FeOH+2 + H+,            logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,      logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6\nFerrihydrite + 3 H+ <=> Fe+3 + 3 H2O,  logK = 4.891\n",
+    "label": "Iron: an Eh–pH (Pourbaix) diagram",
+    "about": "Iron in a dilute water, Fe+2 and Fe+3, their hydrolysis and ferrihydrite. Run it: the Diagrams tab holds the water at each pH and Eh and draws the species that holds most of the iron, in the whole cell, ferrihydrite's field among them, with where water itself gives way drawn across it.",
+    "text": "# Iron in a dilute water: Fe+2 and Fe+3, their hydrolysis and ferrihydrite.\n# The Diagrams tab holds the water at each pH and Eh and draws the species\n# that holds most of the iron -- a Pourbaix diagram -- with where water itself\n# gives way, oxygen above and hydrogen below. pe on its menu draws the same in\n# pe. phreeqc.dat's constants.\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           1e-7\nOH-          1e-7\ne-           electron  pe=4\nNa+          1e-3\nCl-          1e-3\nFe+2         1e-5\nFe+3         0\nFeOH+        0\nFe(OH)2      0\nFe(OH)3-     0\nFeOH+2       0\nFe(OH)2+     0\nFe(OH)3      0\nFe(OH)4-     0\nFerrihydrite 0  mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                         logK = -14\nFe+2 <=> Fe+3 + e-,                    logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,             logK = -9.5\nFe+2 + 2 H2O <=> Fe(OH)2 + 2 H+,       logK = -20.57\nFe+2 + 3 H2O <=> Fe(OH)3- + 3 H+,      logK = -31\nFe+3 + H2O <=> FeOH+2 + H+,            logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,      logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6\nFerrihydrite + 3 H+ <=> Fe+3 + 3 H2O,  logK = 4.891\n",
     "view": {
       "tab": "diagram",
       "go": true,
@@ -238,11 +238,11 @@ const RTM_EXAMPLES = [
           "n": "101"
         },
         "y": {
-          "kind": "pe",
+          "kind": "Eh",
           "sp": "",
-          "from": "-12",
-          "to": "16",
-          "n": "57"
+          "from": "-0.8",
+          "to": "1.2",
+          "n": "81"
         },
         "show": "predominance",
         "el": "Fe",

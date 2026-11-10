@@ -807,13 +807,14 @@ Calcite <=> Ca+2 + CO3-2,      logK = -8.48
     dict(
         id='pourbaix',
         group='Equilibrium diagrams',
-        label='Iron: a pe–pH (Pourbaix) diagram',
-        about="Iron in a dilute water, Fe+2 and Fe+3, their hydrolysis and ferrihydrite. Run it: the Diagrams tab holds the water at each pH and pe and draws the species that holds most of the iron, in the whole cell, ferrihydrite's field among them, with where water itself gives way drawn across it.",
+        label='Iron: an Eh–pH (Pourbaix) diagram',
+        about="Iron in a dilute water, Fe+2 and Fe+3, their hydrolysis and ferrihydrite. Run it: the Diagrams tab holds the water at each pH and Eh and draws the species that holds most of the iron, in the whole cell, ferrihydrite's field among them, with where water itself gives way drawn across it.",
         text='''\
 # Iron in a dilute water: Fe+2 and Fe+3, their hydrolysis and ferrihydrite.
-# The Diagrams tab holds the water at each pH and pe and draws the species
+# The Diagrams tab holds the water at each pH and Eh and draws the species
 # that holds most of the iron -- a Pourbaix diagram -- with where water itself
-# gives way, oxygen above and hydrogen below. phreeqc.dat's constants.
+# gives way, oxygen above and hydrogen below. pe on its menu draws the same in
+# pe. phreeqc.dat's constants.
 <SETTINGS>
 MODE = batch
 TEND = 1
@@ -849,7 +850,7 @@ Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56
 Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6
 Ferrihydrite + 3 H+ <=> Fe+3 + 3 H2O,  logK = 4.891
 ''',
-        view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pH', 'sp': '', 'from': '2', 'to': '12', 'n': '101'}, 'y': {'kind': 'pe', 'sp': '', 'from': '-12', 'to': '16', 'n': '57'}, 'show': 'predominance', 'el': 'Fe', 'in': 'all', 'q': 'pH'}},
+        view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pH', 'sp': '', 'from': '2', 'to': '12', 'n': '101'}, 'y': {'kind': 'Eh', 'sp': '', 'from': '-0.8', 'to': '1.2', 'n': '81'}, 'show': 'predominance', 'el': 'Fe', 'in': 'all', 'q': 'pH'}},
     ),
     dict(
         id='stability',

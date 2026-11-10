@@ -7758,6 +7758,98 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   `${endKept.lines.length} lines; ${JSON.stringify(endGone).slice(0, 60)}`);
 
   /*
+    Eh: the electron's pe in volts, ln 10 RT/F times it at the water's
+    temperature, with the R and F PHREEQC prints its redox couples' Eh with
+    (RtmModel.ehPerPe; against what PHREEQC prints in test-phreeqc.js). As a
+    quantity, in a column whose cells are at 10, 45 and 80 C and in a water
+    warmed along the clock; measured, a column of <DATA>; on a map, the pe-pH
+    map of iron with its pe in volts: every boundary on the line the log Ks
+    give, a point's pe its Eh over the volts of a pe at the water's
+    temperature -- at 25 C, and in the same water at 60 C, where the iron
+    couple's boundary is at 13.02 pe as at 25 C and so higher in volts.
+  */
+  const perOf = (tk) => (Math.LN10 * 0.0083147 * tk) / 96.4935;
+  const ehRedox = '<SPECIES>\nH+  1e-7\nOH-  1e-7\ne-  electron  pe=4\nFe+2  1e-6\nFe+3  0\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\n'
+    + 'Fe+2 <=> Fe+3 + e-,  logK = -13.02\n';
+  const ehCol = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 3\nLENGTH = 1\nDIFFUSION = 0\nLEFT = neumann\nRIGHT = neumann\n'
+    + `TEND = 1\nEQUILIBRATE = always\nTEMPERATURE = Tc\n\n<PARAMETERS>\nTc all 10 + 35*i\n\n${ehRedox}`);
+  const ehRamp = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\nTEMPERATURE = ramp(t)\n\n'
+    + `<TABLE ramp>\n0 10\n1 90\n\n${ehRedox}\n<DATA>\ntime  Eh  pe  cell = 0\n0  0.21  3.9\n1  0.25  -\n`);
+  // The pe and the Eh at each cell and time asked, the electron put at a pe of the test's own there.
+  const ehAt = (m, cells, times, tkAt) => {
+    const which = Int32Array.from(['pe', 'Eh'].map((k) => m.quantities.findIndex((q) => q.key === k)));
+    const ie = m.speciesNames.indexOf('e-');
+    const ns = m.speciesNames.length;
+    let worst = 0;
+    for (const cell of cells) {
+      for (const t of times) {
+        const c = Float64Array.from(m.toConcentrations ? m.toConcentrations(m.initialState()) : m.initialState());
+        const pe = 13.3 - 4.1 * cell - 9.7 * t;
+        c[cell * ns + ie] = 10 ** -pe;
+        const out = new Float64Array(2);
+        m.quantitiesAt(c, t, cell, which, out);
+        const want = perOf(tkAt(cell, t)) * pe;
+        worst = Math.max(worst, Math.abs(out[0] - pe), Math.abs(out[1] - want) / Math.abs(want));
+      }
+    }
+    return worst;
+  };
+  const ehWorst = [ehAt(ehCol, [0, 1, 2], [0, 0.5], (cell) => 283.15 + 35 * cell),
+    ehAt(ehRamp, [0], [0, 0.25, 0.5, 1], (cell, t) => 283.15 + 80 * t)];
+  const ehQ = ehCol.quantities.find((q) => q.key === 'Eh');
+  const ehKeys = ehCol.quantities.map((q) => q.key);
+  const ehData = ehRamp.data[0];
+  check('Eh, the electron\'s pe in volts at the water\'s temperature with PHREEQC\'s R and F: a quantity of the water beside '
+    + 'the pe, in V, in a column whose cells are at 10, 45 and 80 C and in a water warmed along the clock from 10 to 90 C, '
+    + 'to 1e-15; 0.059156 V a pe at 25 C; none without the electron; and a column of <DATA>',
+  ehWorst.every((w) => w < 1e-15) && ehQ && ehQ.unit === 'V' && ehQ.axis === 'index' && ehQ.group === 'water'
+    && ehKeys.indexOf('Eh') === ehKeys.indexOf('pe') + 1 && Math.abs(RtmModel.ehPerPe(298.15) - 0.059156031) < 1e-9
+    && !RtmModel.compile(phaseText).quantities.some((q) => q.key === 'Eh')
+    && ehData && ehData.columns.join(' ') === 'Eh pe' && ehData.rows.length === 2 && ehData.rows[1][2] === null,
+  `worst ${ehWorst.map((w) => w.toExponential(1)).join(', ')}; ${ehQ && `${ehQ.key} ${ehQ.unit} ${ehQ.axis}`}; `
+    + `${RtmModel.ehPerPe(298.15)} V a pe`);
+  const ehMaps = [25, 60].map((tc) => {
+    const per = perOf(tc + 273.15);
+    const text = ironText.replace('EQUILIBRATE = always\n', `EQUILIBRATE = always\nTEMPERATURE = ${tc}\n`);
+    const b = mapOf(text, [{ kind: 'pH', from: 0, to: 12, n: 101 }, { kind: 'Eh', from: -6 * per, to: 18 * per, n: 81 }],
+      { kind: 'predominance', terms: ironTerms.map(([k, n]) => [k, n]) });
+    let line = 0;
+    let couple = NaN;
+    for (const ln of b.lines) {
+      const A = ironLine[ironName(ln.a)];
+      const B = ironLine[ironName(ln.b)];
+      // In pH and Eh, the pe the Eh over the volts of a pe.
+      const norm = Math.hypot(A[1] - B[1], (A[2] - B[2]) / per);
+      ln.x.forEach((x, q) => {
+        line = Math.max(line, Math.abs(A[0] - B[0] + (A[1] - B[1]) * x + ((A[2] - B[2]) * ln.y[q]) / per) / norm);
+      });
+      if ([ironName(ln.a), ironName(ln.b)].sort().join('|') === 'Fe+2|Fe+3') couple = Math.max(...ln.y);
+    }
+    let meet = 0;
+    for (const jn of b.junctions) {
+      const [px, py] = crossOf(...jn.labels.map((q) => ironLine[ironName(q)]));
+      meet = Math.max(meet, Math.abs(px - jn.x), Math.abs(py * per - jn.y));
+    }
+    const pairs = [...new Set(b.lines.map((ln) => [ironName(ln.a), ironName(ln.b)].sort().join('|')))].sort().join(' ');
+    return { tc, per, line, meet, couple, pairs, nj: b.junctions.length,
+      solved: b.junctions.every((jn) => jn.solved) && !b.unsolved };
+  });
+  const refusedAxes = (axes, text) => {
+    try { askW({ type: 'diagram', id: 12, text, at: 'start', cell: 0, axes }); return ''; } catch (e) { return e.message; }
+  };
+  const ehBoth = refusedAxes([{ kind: 'pe', from: 0, to: 10, n: 3 }, { kind: 'Eh', from: 0, to: 0.5, n: 3 }], ironText);
+  const ehNone = refusedAxes([{ kind: 'pH', from: 2, to: 12, n: 3 }, { kind: 'Eh', from: 0, to: 0.5, n: 3 }], phaseText);
+  check('  a Pourbaix map over pH and Eh: every boundary on the line its two species\' log Ks give, a point\'s pe its Eh over '
+    + 'the volts of a pe there, to 1e-10, every point where three meet to 1e-12 -- at 25 C, and in the same water at 60 C '
+    + 'with the iron couple\'s boundary at 13.02 pe, 0.7702 V and 0.8606 V; an Eh beside a pe, or of a model without the '
+    + 'electron, refused', ehMaps.every((o) => o.line < 1e-10 && o.meet < 1e-12 && o.solved && o.nj === 3 && o.pairs === ironPairs
+    && Math.abs(o.couple - 13.02 * o.per) < 1e-10)
+    && Math.abs(ehMaps[0].couple - 0.770211) < 1e-6 && Math.abs(ehMaps[1].couple - 0.860627) < 1e-6
+    && /hold the same thing/.test(ehBoth) && /An Eh is the electron's, and the model has none/.test(ehNone),
+  `${ehMaps.map((o) => `${o.tc} C: lines within ${o.line.toExponential(1)}, ${o.nj} meeting points within `
+    + `${o.meet.toExponential(1)}, the couple at ${o.couple.toFixed(6)} V`).join('; ')} | "${ehBoth}" | "${ehNone}"`);
+
+  /*
     PRINCIPAL COMPONENTS (RtmModel.pca), as the Composition tab gives them.
     Two variables correlated by r have eigenvalues 1 + r and 1 - r and
     components (1, 1) and (1, -1) over root 2. A table of six waters and four
