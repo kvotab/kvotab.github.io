@@ -15,8 +15,9 @@ script:
     reading .caller must throw
 
 rb-actions.js and rb-resize.js declare no top-level functions - they are
-top-level wiring only - so there is nothing to probe in them and they are
-listed here rather than checked.
+top-level wiring only - and rb-drive-config.js holds one frozen object, so
+there is nothing to probe in them and they are listed here rather than
+checked.
 
 Why strict matters here: it is what stops a missing const from quietly
 creating a global, which is the failure mode a 300-declaration page of classic
@@ -68,8 +69,9 @@ PROBES = {
     'rb-init':           'showSearchTicker',
     'rb-handoff':        'beginHandoffWait',
     'rb-smui':           'rbSelectionPayload',
+    'rb-drive':          'driveConfig',
 }
-NO_TOP_LEVEL_FUNCTIONS = ['rb-actions', 'rb-resize']
+NO_TOP_LEVEL_FUNCTIONS = ['rb-actions', 'rb-resize', 'rb-drive-config']
 
 failures = []
 checks = 0

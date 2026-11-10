@@ -81,6 +81,35 @@ throwing handler is caught, and that the failure banner appears.
 to, and -- the check that matters -- that the token is attached only to a URL
 the loader built itself for api.github.com, never to one the reader pasted.
 
+`test-drive.py` covers the Google Drive button (`rb-drive.js`). A real
+sign-in needs the Google Cloud project named in `rb-drive-config.js` and a
+person at Google's window, so the page's own code runs against stand-ins
+served at Google's real addresses through Chrome's request interception (CDP
+`Fetch`): a project for the config file, Google's sign-in and picker
+scripts, and the Drive API's file requests, CORS preflights included, so
+nothing goes to Google. The stand-ins take Google's documented names; what
+Google's real scripts do with them is left to a run with the project. With
+the config empty, or its file missing, the button and the welcome sentence
+naming it are not shown and nothing is fetched from Google; with a project,
+nothing is fetched from Google until the button is clicked. The first click
+opens the dialog and loads the two scripts once; Choose files asks for
+`drive.file` alone, with the project's client, from within the click
+(`navigator.userActivation`), so a browser would let Google's window open.
+The picker gets the token, the key and the project number. The files picked
+open as files from disk do: an HDF5 file, a MAT-file shared by link (its
+resource key sent with it), a JSON file, and a name with a slash in it stays
+one level. The token goes with the Drive API's file requests and no other,
+and is in no storage. A second click goes straight to the picker; a Google
+Docs file, a folder, a file over the size limit and an ID that is no Drive
+ID are refused before any request; Drive's 403, 404 and 401 are said in
+words, and after a 401 the next click asks Google again. Google's refusals,
+its window blocked or closed, and a script of Google's that does not load
+are each said in the dialog; a window blocked before an account was chosen
+leaves that choice for the next try. 69 checks. RB_TEST_HTTP and RB_TEST_CDP
+choose other ports than 8765 and 9222.
+
+    python3 test-drive.py
+
 `test-sample.py` covers the Sample Data dialog in every state, because the
 sample files are deliberately not committed — they were taken out so as not to
 publish them — and may come back later. A missing manifest means the same

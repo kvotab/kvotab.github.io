@@ -45,7 +45,10 @@ from `@tesseract.js-data`) are fetched too, pinned and checked against their
 hashes. When the open model is chosen in `svensk_text.html`, Transformers.js
 3.8.1 (Apache-2.0) with ONNX Runtime Web (MIT) and the Helsinki-NLP group's
 OPUS-MT English–Swedish model (Apache-2.0, in the browser build
-`Xenova/opus-mt-en-sv` on Hugging Face) are fetched too. They are fetched by
+`Xenova/opus-mt-en-sv` on Hugging Face) are fetched too. When a visitor
+opens files from Google Drive in `rb.html`, Google's sign-in (Google Identity
+Services) and the Google Picker are loaded from Google, under Google's terms;
+they have no fixed version, so they cannot be pinned. They are fetched by
 the visitor's browser from their publishers and are not redistributed here.
 
 ## Work followed, not copied

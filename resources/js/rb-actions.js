@@ -17,6 +17,11 @@ registerActions({
   openUrlDialog:          () => openUrlDialog(),
   closeUrlDialog:         () => closeUrlDialog(),
   loadFromUrl:            () => loadFromUrl(),
+  // These three must call straight through, within the click: Google's
+  // sign-in window may open from it (rb-drive.js).
+  openGoogleDrive:        () => openGoogleDrive(),
+  closeDriveDialog:       () => closeDriveDialog(),
+  chooseDriveFiles:       () => chooseDriveFiles(),
   openSampleDataDialog:   () => openSampleDataDialog(),
   closeSampleDataDialog:  () => closeSampleDataDialog(),
   loadSelectedSampleData: () => loadSelectedSampleData(),

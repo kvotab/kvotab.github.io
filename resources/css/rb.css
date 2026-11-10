@@ -346,6 +346,19 @@
       margin-left: 0;
     }
 
+    /*
+      Google Drive (rb-drive.js): its button, and the welcome text that names
+      it, stay out of sight until a Google Cloud project is configured, which
+      puts rb-drive-ready on the root element. A `hidden` attribute loses to
+      any display the button is given, so it is said here as well.
+    */
+    .add-file-btn[hidden] {
+      display: none;
+    }
+    html:not(.rb-drive-ready) .rb-drive-only {
+      display: none;
+    }
+
     /* URL dialog overlay & modal */
     .url-dialog-overlay {
       position: fixed;
@@ -2200,7 +2213,12 @@
       -webkit-mask-image: var(--ico-code);
       mask-image: var(--ico-code);
     }
+    .rb-ico-cloud {
+      -webkit-mask-image: var(--ico-cloud);
+      mask-image: var(--ico-cloud);
+    }
     :root {
+      --ico-cloud: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='7.5' cy='14.5' r='4.5'/%3E%3Ccircle cx='12.5' cy='11' r='6'/%3E%3Ccircle cx='17.5' cy='14.5' r='4.5'/%3E%3Crect x='7.5' y='14' width='10' height='5'/%3E%3C/svg%3E");
       --ico-code: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 7l-5 5 5 5'/%3E%3Cpath d='M16 7l5 5-5 5'/%3E%3Cpath d='M13.5 5l-3 14'/%3E%3C/svg%3E");
       --ico-folder: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z'/%3E%3C/svg%3E");
       --ico-download: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 4v11'/%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3Cpath d='M5 20h14'/%3E%3C/svg%3E");

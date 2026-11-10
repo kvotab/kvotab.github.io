@@ -58,7 +58,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/rb.css?v=20261102">
+  <link rel="stylesheet" href="./resources/css/rb.css?v=20261110">
 </head>
 <body>
   <div id="dropOverlay">
@@ -94,6 +94,25 @@
       <div class="url-dialog-buttons">
         <button class="url-btn url-btn-cancel" data-on-click="closeUrlDialog">Cancel</button>
         <button class="url-btn url-btn-load" id="urlLoadBtn" data-on-click="loadFromUrl">Load</button>
+      </div>
+    </div>
+  </div>
+
+  <!--
+    Google Drive (rb-drive.js). The first click on its button in a tab opens
+    this while Google's scripts load: it says what will happen, and its
+    Choose files is the click that lets Google's sign-in window open. The
+    button stays hidden until rb-drive-config.js names a Google Cloud project.
+  -->
+  <div id="driveDialog" class="url-dialog-overlay" style="display:none;">
+    <div class="url-dialog" role="dialog" aria-modal="true" aria-labelledby="driveDialogTitle">
+      <h3 id="driveDialogTitle"><span class="rb-ico rb-ico-cloud" aria-hidden="true"></span> Open from Google Drive</h3>
+      <p>Pick files in Google’s own file picker: from My Drive, from what is shared with you, or from shared drives. They open here as files from your own disk do: read in this browser, and sent nowhere else.</p>
+      <p>Google first asks you to let this page open the files you pick. That reaches those files only, never the rest of your Drive, and you can withdraw it at any time in <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">your Google Account</a>.</p>
+      <div id="driveError" class="url-error" style="display:none;"></div>
+      <div class="url-dialog-buttons">
+        <button class="url-btn url-btn-cancel" data-on-click="closeDriveDialog">Cancel</button>
+        <button class="url-btn url-btn-load" id="driveChooseBtn" data-on-click="chooseDriveFiles" disabled>Connecting…</button>
       </div>
     </div>
   </div>
@@ -331,7 +350,7 @@
                 <div class="welcome-section">
                   <h4>Getting Started</h4>
                   <ol>
-                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.</li>
+                    <li><strong>Load files</strong> — drag &amp; drop <code>.h5</code> / <code>.hdf5</code> / <code>.mat</code> files onto the page, click <em>Add Files</em>, or use <em>URL</em> to fetch from a remote server.<span class="rb-drive-only"> <em>Google Drive</em> opens files from your Drive.</span></li>
                     <li><strong>Browse</strong> — expand groups in the tree on the left to explore the file structure.</li>
                     <li><strong>Select</strong> — click a dataset to view its attributes and chart.</li>
                   </ol>
@@ -398,6 +417,7 @@
         </div>
         <button class="add-file-btn" data-on-click="openFilePicker">Add Files</button>
         <button class="add-file-btn url-file-btn" data-on-click="openUrlDialog" title="Load HDF5 file from URL"><span class="rb-ico rb-ico-link" aria-hidden="true"></span> URL</button>
+        <button class="add-file-btn" data-on-click="openGoogleDrive" title="Open files from your Google Drive" hidden><span class="rb-ico rb-ico-cloud" aria-hidden="true"></span> Google Drive</button>
         <button class="add-file-btn" data-on-click="openSampleDataDialog" title="Load sample HDF5 files"><span class="rb-ico rb-ico-folder" aria-hidden="true"></span> Sample Data</button>
         <button class="add-file-btn" data-on-click="openVscodeDialog" title="The Data Browser as an extension for VS Code"><span class="rb-ico rb-ico-download" aria-hidden="true"></span> VS Code</button>
       </div>`;
@@ -450,6 +470,11 @@
       rb-init     event wiring and page bootstrap
       rb-resize   panel and chart resize handles
       rb-handoff  receiving files from another page, in memory
+      rb-smui     the tree's menu: the selection to the User Interface for
+                  statsmodels, or saved as HDF5
+      rb-drive    files picked from the reader's Google Drive; the Google
+                  Cloud project it signs in through is in rb-drive-config.js,
+                  and the button is hidden while that is empty
 
     These are classic scripts sharing globals, not ES modules, and every one of
     them is strict ('use strict' at the top; asserted at runtime by
@@ -471,9 +496,9 @@
     since they were one file and nothing runs at load time.
   -->
   <script src="./resources/js/pdf-sampler.js?v=20261004"></script>
-  <script src="./resources/js/rb-state.js?v=20261102c"></script>
+  <script src="./resources/js/rb-state.js?v=20261110"></script>
   <script src="./resources/js/rb-utils.js?v=20261031e"></script>
-  <script src="./resources/js/rb-actions.js?v=20261031"></script>
+  <script src="./resources/js/rb-actions.js?v=20261110"></script>
   <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
   <script src="./resources/js/rb-lazy.js?v=20260927"></script>
   <script src="./resources/js/rb-file.js?v=20261102b"></script>
@@ -500,5 +525,7 @@
   <script src="./resources/js/rb-resize.js?v=20260921"></script>
   <script src="./resources/js/rb-handoff.js?v=20261102"></script>
   <script src="./resources/js/rb-smui.js?v=20261102"></script>
+  <script src="./resources/js/rb-drive-config.js?v=20261110"></script>
+  <script src="./resources/js/rb-drive.js?v=20261110"></script>
 </body>
 </html>
