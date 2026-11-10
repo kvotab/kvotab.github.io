@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5965,6 +5965,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         lead: `The longest step the solver may take, in ${u.name}s. Set it where the model changes faster than its solution shows, and the solver steps over the change.`,
         facts: [
           ['Default', SOLVER_DEFAULTS.hmax],
+          ['0, where the model gives MAX_STEP', 'that, in its time unit'],
           ['0, for NDF and the two one-step methods', tend ? `a tenth of the run, ${fmtTime(tend / 10)}` : 'a tenth of the run'],
           ['0, for the Julia ports', 'no limit but the run itself'],
           ['0, for Auto', 'no limit while it is explicit, a tenth of what is left on the NDF'],
@@ -6174,7 +6175,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**HDF5**: the same file, as a download.',
           ] },
           { heading: 'The list', text: [
-            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water, saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
+            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water and, in a model with the electron where it is in two valence states or more, in each, tot(Fe(2)) as PHREEQC’s TOT("Fe(2)"), saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
             'An amount goes on the left-hand axis with the species, log or not; pH, pe, Eh, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
             'In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
             still.length ? `In this model these do not move: ${someOf(still)}.` : '',
@@ -7075,7 +7076,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

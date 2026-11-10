@@ -1631,6 +1631,95 @@ Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6
 ))
 
 
+_after('carbonate', dict(
+    id='redoxzones',
+    group='Chemistry',
+    label="Redox zones: organic carbon through a groundwater's oxidants",
+    about="Organic carbon oxidised in a groundwater at a steady rate, its electrons taken by the water's oxidants one after another, as PhreePlot draws a water titrated with organic carbon. Run it: the time chart draws the oxygen used up first, then the nitrate; manganese(2) and iron(2) appearing as pyrolusite and ferrihydrite dissolve; the sulfate reduced, its sulfide taking the iron(2) as FeS until the iron is gone; and methane last — each element's total in a valence state, as PHREEQC's TOT(\"Fe(2)\") gives it, in the order the redox ladder places their couples.",
+    text='''# Organic carbon oxidised in a groundwater at a steady rate, a hundredth of a
+# millimole a day, its electrons taken by the water's oxidants one after
+# another: the oxygen, the nitrate to nitrogen, the manganese(4) of
+# pyrolusite, the iron(3) of ferrihydrite, the sulfate to sulfide -- the
+# ferrous iron and the sulfide meeting as FeS -- and last carbon to methane:
+# the redox zones of a groundwater, in the order a redox ladder places their
+# couples, as PhreePlot draws a water titrated with organic carbon. Each is
+# drawn as its element's total in a valence state, tot(N(5)) as PHREEQC's
+# TOT("N(5)"). Nitrogen gas is left inert, as it is in a groundwater: there is
+# no ammonium here. FeS is the one mineral that can form. The constants are
+# phreeqc.dat's; the water is made up.
+
+<SETTINGS>
+MODE = batch
+TIME_UNIT = day
+TEND = 160
+MAX_STEP = 1          # a day at most, so that the chart draws each zone's turn
+ACTIVITY = davies
+EQUILIBRATE = always
+
+<SPECIES>
+H+           2.2e-7
+OH-          4.5e-8
+e-           electron
+Na+          1.5e-3
+K+           5e-5
+Ca+2         6e-4
+Mg+2         2e-4
+Cl-          6e-4
+O2           2.5e-4
+NO3-         1.5e-4
+NO2-         0
+N2           0
+SO4-2        3e-4
+HSO4-        0
+HS-          0
+H2S          0
+CO3-2        0
+HCO3-        1.8e-3
+CO2          1e-3
+CH4          0
+Fe+2         0
+FeOH+        0
+Fe+3         0
+FeOH+2       0
+Fe(OH)2+     0
+Fe(OH)3      0
+Fe(OH)4-     0
+Mn+2         0
+Pyrolusite   1e-4   mineral
+Ferrihydrite 2e-4   mineral
+FeS_ppt      0      mineral
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,                       logK = -14
+2 H2O <=> O2 + 4 H+ + 4 e-,             logK = -86.08
+NO3- + 2 H+ + 2 e- <=> NO2- + H2O,      logK = 28.57
+2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O,  logK = 207.08
+SO4-2 + H+ <=> HSO4-,                   logK = 1.988
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O,    logK = 33.65
+HS- + H+ <=> H2S,                       logK = 6.994
+CO3-2 + H+ <=> HCO3-,                   logK = 10.329
+CO3-2 + 2 H+ <=> CO2 + H2O,             logK = 16.681
+CO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O,   logK = 41.071
+Fe+2 + H2O <=> FeOH+ + H+,              logK = -9.5
+Fe+2 <=> Fe+3 + e-,                     logK = -13.02
+Fe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19
+Fe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56
+Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6
+Pyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O,     logK = 41.38
+Ferrihydrite + 3 H+ <=> Fe+3 + 3 H2O,          logK = 4.891
+FeS_ppt + H+ <=> Fe+2 + HS-,                   logK = -3.915
+
+<REACTIONS>
+# CH2O, as it is oxidised: CO3-2 + 6 H+ + 4 e-, less 2 H2O. Its electrons go
+# to whatever in the water takes them, as the couples have it.
+=> CO3-2 + 6 H+ + 4 e-, k = 1e-5
+''',
+    view={'tab': 'time', 'picked': ['O2', 'tot(N(5))', 'Mn+2', 'tot(Fe(2))', 'tot(S(6))', 'tot(S(-2))', 'tot(C(-4))'], 'cell': 0,
+          'logT': False, 'logY': False},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

@@ -123,6 +123,15 @@
     EXTRA_CELLS: { def: 0, kind: 'int' },
     TEND: { def: 1, kind: 'number' },
     /*
+      The longest step the solver takes, in the model's time unit, where the
+      panel's Maximum step is 0: a chart draws the steps a run takes, and a
+      run whose answer goes straight between the turns of its chemistry -- a
+      reactant added at a steady rate, each oxidant used up in its turn -- is
+      otherwise drawn from steps a tenth of the run long, across its turns.
+      0, the default, leaves it to the solver.
+    */
+    MAX_STEP: { def: 0, kind: 'number' },
+    /*
       The unit every time in the model is written in. It converts NOTHING: the
       solver integrates whatever numbers it is given, so a model in years has
       its rate constants per year, its diffusivities in m2/a and its TEND in
@@ -11833,6 +11842,26 @@
     if (composition.sulfate.length && composition.sulfate.length < (qElements.get('S') || []).length) {
       addQ('tot(SO4)', 'sulfate, dissolved', 'totals', 'mol/kgw', 'conc', sumOf(composition.sulfate));
     }
+    /*
+      An element's total in each of its valence states, PHREEQC's TOT("Fe(2)"),
+      in a model with the electron, whose couples tie the states together as
+      PHREEQC's do, where what is dissolved of it is in two states or more and
+      the state of every species of it is told (compositionOf): tot(Fe(3)),
+      tot(Fe(2)), the oxidised first. A mean state as itself, tot(S(2)) for
+      S2O3-2. Not without the electron: a radiolysis model's radicals and
+      peroxides, CO3- and C2O6-2, are no state a formula tells, carbon(5).
+    */
+    if (electron >= 0) for (const e of composition.elements) {
+      const water = e.terms.filter((tm) => tm[2] === 'water');
+      if (water.some((tm) => tm[3] === null)) continue;
+      const states = [...new Set(water.map((tm) => tm[3]))].sort((a, b2) => b2 - a);
+      if (states.length < 2) continue;
+      for (const v of states) {
+        const name = `${e.el}(${Number(v.toFixed(3))})`;
+        addQ(`tot(${name})`, `${name}, dissolved`, 'totals', 'mol/kgw', 'conc',
+          sumOf(water.filter((tm) => tm[3] === v).map(([k, n]) => [k, n])));
+      }
+    }
     // A phase of <PHASES>, or a mineral and its relation, as SI() in a rate law has it.
     const phaseFor = (name) => {
       const ph = phases.get(name);
@@ -13198,8 +13227,17 @@
     // A mineral under precipitate_only: what it started with, set aside, is shown with what is held of it.
     const inertOf = base.inert || [];
     const toConcentrations = (y, t = 0) => {
-      const z = Float64Array.from(y);
-      consistentInitial(t, z, { rtol: 1e-12, fromState: true });
+      let z = Float64Array.from(y);
+      /*
+        Where the speciation of its totals does not settle, the state as the
+        solver left it, its held species on the relations to the solver's
+        tolerance: what does not settle is no speciation. Organic carbon into
+        a water with ferrihydrite, a step after pyrolusite had dissolved away:
+        113 iterations to a residual of 4e-4, the ferrihydrite shown dissolved
+        into the water as iron(3) and the pe at 8 between points at 5.7 and
+        4.6.
+      */
+      if (!consistentInitial(t, z, { rtol: 1e-12, fromState: true }).solved) z = Float64Array.from(y);
       const out = new Float64Array(nBase);
       for (let k = 0; k < nBase; k++) out[k] = held[k] && !lin[k] ? Math.exp(z[k]) : z[k];
       for (const { k, amounts } of inertOf) for (let c = 0; c < nc; c++) out[c * ns + k] += amounts[c];

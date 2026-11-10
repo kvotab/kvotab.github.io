@@ -885,6 +885,7 @@
               <tr><td><code>EXTRA_CELLS</code></td><td>With <code>RIGHT = semi-infinite</code>: how many cells stand for the column past its end. Worked out unless given.</td></tr>
               <tr><td><code>TRAVEL_TIME</code></td><td>The time the water takes to cross the column, in the model's time unit, which is how a far-field path is described. It sets <code>VELOCITY</code> to <code>POROSITY</code>·<code>LENGTH</code>/<code>TRAVEL_TIME</code> and turns <code>ADVECTION</code> on.</td></tr>
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
+              <tr><td><code>MAX_STEP</code></td><td>The longest step the solver takes, in the model's time unit, where the panel's <em>Maximum step</em> is 0. A chart draws the steps a run takes, and a run whose answer goes straight between the turns of its chemistry — a reactant added at a steady rate, each oxidant used up in its turn — is otherwise drawn from steps a tenth of the run long, across its turns. 0, the default, leaves it to the solver.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em>, <em>debye-huckel</em>, <em>sit</em>, <em>pitzer</em> or <em>llnl</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength, under <em>sit</em> the species paired in <code>&lt;SIT&gt;</code> as well, under <em>pitzer</em> the species of <code>&lt;PITZER&gt;</code>, and under <em>llnl</em> the tables of <code>&lt;LLNL&gt;</code>. See <em>Activity</em>, <em>SIT</em>, <em>Pitzer</em> and <em>LLNL</em> below.</td></tr>
@@ -2327,7 +2328,11 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             and Ca or Mg, the sodium adsorption ratio <code>SAR</code>, the dissolved Na over the square
             root of half the dissolved Ca and Mg, all in meq/kgw; the
             <em>totals in the water</em> of each element two species or more hold, from their
-            formulas — <code>CaHCO3+</code> is one Ca and one C, <code>UO2_2(OH)2+2</code> two U;
+            formulas — <code>CaHCO3+</code> is one Ca and one C, <code>UO2_2(OH)2+2</code> two U — and,
+            in a model with the electron, of an element whose dissolved species are in two valence states or more, its total in each,
+            as PHREEQC's <code>TOT("Fe(2)")</code>: <code>tot(Fe(3))</code>, <code>tot(Fe(2))</code>,
+            each species' state told as the redox ladder tells it (see <em>Diagrams of the model's own
+            chemistry</em>);
             <em>saturation indices</em> of each phase of <code>&lt;PHASES&gt;</code> and each
             mineral; a gas's partial pressure; each species' share of its exchanger, as an equivalent
             fraction, or of its sites on a surface; the text's <code>&lt;OUTPUT&gt;</code>; and under an
@@ -3420,14 +3425,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261110b"></script>
+  <script src="./resources/js/rtm-model.js?v=20261110c"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006r"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261110b"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261006t"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261110c"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110g"></script>
 </body>
 </html>

@@ -49,6 +49,28 @@ const RTM_EXAMPLES = [
     "text": "# Equilibria rather than rates.\n#\n# EQUILIBRATE = 1 puts the starting concentrations on these relations before\n# anything is integrated: a damped Newton iteration in ln C. What it may not\n# change is worked out from the relations themselves -- total carbon and\n# charge here -- so no table of elements is needed.\n#\n# Compile this and the panel reports the conserved totals. The starting\n# numbers below are deliberately nowhere near equilibrium.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nTIME_UNIT = second\nEQUILIBRATE = 1\n\n<SPECIES>\nH+      1.0E-7\nOH-     1.0E-7\nCO2     1.0E-3\nHCO3-   1.0E-5\nCO3-2   1.0E-9\n\n<EQUILIBRIUM>\n <=> H+ + OH-,          logK = -14      # water; nothing on the left\nCO2 <=> H+ + HCO3-,     logK = -6.35\nHCO3- <=> H+ + CO3-2,   logK = -10.33\n"
   },
   {
+    "id": "redoxzones",
+    "group": "Chemistry",
+    "label": "Redox zones: organic carbon through a groundwater's oxidants",
+    "about": "Organic carbon oxidised in a groundwater at a steady rate, its electrons taken by the water's oxidants one after another, as PhreePlot draws a water titrated with organic carbon. Run it: the time chart draws the oxygen used up first, then the nitrate; manganese(2) and iron(2) appearing as pyrolusite and ferrihydrite dissolve; the sulfate reduced, its sulfide taking the iron(2) as FeS until the iron is gone; and methane last — each element's total in a valence state, as PHREEQC's TOT(\"Fe(2)\") gives it, in the order the redox ladder places their couples.",
+    "text": "# Organic carbon oxidised in a groundwater at a steady rate, a hundredth of a\n# millimole a day, its electrons taken by the water's oxidants one after\n# another: the oxygen, the nitrate to nitrogen, the manganese(4) of\n# pyrolusite, the iron(3) of ferrihydrite, the sulfate to sulfide -- the\n# ferrous iron and the sulfide meeting as FeS -- and last carbon to methane:\n# the redox zones of a groundwater, in the order a redox ladder places their\n# couples, as PhreePlot draws a water titrated with organic carbon. Each is\n# drawn as its element's total in a valence state, tot(N(5)) as PHREEQC's\n# TOT(\"N(5)\"). Nitrogen gas is left inert, as it is in a groundwater: there is\n# no ammonium here. FeS is the one mineral that can form. The constants are\n# phreeqc.dat's; the water is made up.\n\n<SETTINGS>\nMODE = batch\nTIME_UNIT = day\nTEND = 160\nMAX_STEP = 1          # a day at most, so that the chart draws each zone's turn\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           2.2e-7\nOH-          4.5e-8\ne-           electron\nNa+          1.5e-3\nK+           5e-5\nCa+2         6e-4\nMg+2         2e-4\nCl-          6e-4\nO2           2.5e-4\nNO3-         1.5e-4\nNO2-         0\nN2           0\nSO4-2        3e-4\nHSO4-        0\nHS-          0\nH2S          0\nCO3-2        0\nHCO3-        1.8e-3\nCO2          1e-3\nCH4          0\nFe+2         0\nFeOH+        0\nFe+3         0\nFeOH+2       0\nFe(OH)2+     0\nFe(OH)3      0\nFe(OH)4-     0\nMn+2         0\nPyrolusite   1e-4   mineral\nFerrihydrite 2e-4   mineral\nFeS_ppt      0      mineral\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-,                       logK = -14\n2 H2O <=> O2 + 4 H+ + 4 e-,             logK = -86.08\nNO3- + 2 H+ + 2 e- <=> NO2- + H2O,      logK = 28.57\n2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O,  logK = 207.08\nSO4-2 + H+ <=> HSO4-,                   logK = 1.988\nSO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O,    logK = 33.65\nHS- + H+ <=> H2S,                       logK = 6.994\nCO3-2 + H+ <=> HCO3-,                   logK = 10.329\nCO3-2 + 2 H+ <=> CO2 + H2O,             logK = 16.681\nCO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O,   logK = 41.071\nFe+2 + H2O <=> FeOH+ + H+,              logK = -9.5\nFe+2 <=> Fe+3 + e-,                     logK = -13.02\nFe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6\nPyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O,     logK = 41.38\nFerrihydrite + 3 H+ <=> Fe+3 + 3 H2O,          logK = 4.891\nFeS_ppt + H+ <=> Fe+2 + HS-,                   logK = -3.915\n\n<REACTIONS>\n# CH2O, as it is oxidised: CO3-2 + 6 H+ + 4 e-, less 2 H2O. Its electrons go\n# to whatever in the water takes them, as the couples have it.\n=> CO3-2 + 6 H+ + 4 e-, k = 1e-5\n",
+    "view": {
+      "tab": "time",
+      "picked": [
+        "O2",
+        "tot(N(5))",
+        "Mn+2",
+        "tot(Fe(2))",
+        "tot(S(6))",
+        "tot(S(-2))",
+        "tot(C(-4))"
+      ],
+      "cell": 0,
+      "logT": false,
+      "logY": false
+    }
+  },
+  {
     "id": "tracer",
     "group": "Transport",
     "label": "Tracer in a column",

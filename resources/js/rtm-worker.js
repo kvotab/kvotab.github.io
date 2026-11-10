@@ -1198,7 +1198,7 @@ function rtmSweep(msg, post) {
         post({ type: 'progress', id: msg.id, run: r, runs: combos.length, t, tend, nsteps,
           frac: Math.min(1, (r + Math.min(1, t / tend)) / combos.length) });
         return true;
-      }), ...(times ? { outputTimes: times, maxPoints: 4 } : {}) });
+      }, model), ...(times ? { outputTimes: times, maxPoints: 4 } : {}) });
       const at = times ? res.grid : res;
       if (times && (!at || at.t.length < times.length)) throw new Error('the run did not reach every time asked for');
       const n = at.t.length;
@@ -1372,7 +1372,7 @@ function rtmFit(msg, post) {
     runs++;
     const model = RtmModel.compile(textAt(th));
     const tend = s.tend > 0 ? s.tend : model.settings.TEND;
-    const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, () => true), outputTimes: times,
+    const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, () => true, model), outputTimes: times,
       maxPoints: keep ? 400 : 4 });
     if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
     const conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
@@ -1540,7 +1540,9 @@ function rtmFit(msg, post) {
 }
 
 /** The solver's options for a run, from the page's settings (solverPayload in rtm-ui.js): a run's and a sweep's alike. */
-function rtmSolveOptions(s, tend, onProgress) {
+function rtmSolveOptions(s, tend, onProgress, model) {
+  // The panel's maximum step, or where it is 0 the model's own MAX_STEP.
+  const hmaxModel = model && model.settings && model.settings.MAX_STEP > 0 ? model.settings.MAX_STEP : 0;
   const method = s.method || 'ndf';
   const viaJulia = typeof FacsimileOdeJulia !== 'undefined' && FacsimileOdeJulia.is(method);
   return {
@@ -1559,7 +1561,7 @@ function rtmSolveOptions(s, tend, onProgress) {
     // The rest of facsimile.html's settings, which this page now offers too.
     maxOrder: s.maxOrder || 5,
     minOrder: s.minOrder || 1,
-    hmax: s.hmax > 0 ? s.hmax : undefined,
+    hmax: s.hmax > 0 ? s.hmax : hmaxModel > 0 ? hmaxModel : undefined,
     h0: s.h0 > 0 ? s.h0 : undefined,
     jacobianMode: s.jacobianMode || 'analytic',
     kappa: s.kappa,
@@ -1707,7 +1709,7 @@ function handleRtmMessage(msg, post) {
       lastReport = now;
       post({ type: 'progress', id, t, tend, nsteps, frac: Math.min(1, t / tend) });
       return true;
-    }));
+    }, model));
 
     // The state at every stored time, flattened: point-major, then cell-major
     // within a point, which is the order the model itself uses. A model that

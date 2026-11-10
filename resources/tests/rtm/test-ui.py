@@ -582,7 +582,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '32:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '33:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1656,6 +1656,33 @@ async def main():
                           [True, True], True, [True, True, True, True]]])
             await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'time';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            # Redox zones: organic carbon at a hundredth of a millimole a day through a groundwater's oxidants, each drawn as its
+            # element's total in a valence state, a day at most between points (MAX_STEP). Each oxidant lasts as long as its
+            # electrons: the oxygen's 0.25 mM to day 25, the nitrate's 0.15 to N2 another 18.75 days, the pyrolusite's 0.1 mmol
+            # 5 and the ferrihydrite's 0.2 another 5, the sulfate's 0.3 mM 60; then half the carbon goes to methane.
+            ok = await example('redoxzones', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'time'"
+                                             " && (document.getElementById('rtmChartTime').data || []).length === 7")
+            zones = await page.ev("""(() => { const d = document.getElementById('rtmChartTime').data;
+              const of = (name) => d.find((t) => t.name === name);
+              const when = (t, test) => { const i = t.y.findIndex(test); return i < 0 ? null : t.x[i]; };
+              // At or after the day, within a step of it; a hundredth of a day early where a mineral's last goes at an event.
+              const near = (x, at) => x !== null && x >= at - 0.01 && x <= at + 1.000001;
+              const ch4 = of('C(-4), dissolved');
+              return [d.map((t) => t.name).join(' | '), document.getElementById('rtmChartTime').layout.xaxis.title.text,
+                of('O2').x.length > 160 && Math.max(...of('O2').x.slice(1).map((x, i) => x - of('O2').x[i])) <= 1.000001,
+                near(when(of('O2'), (v) => v < 1e-9), 25), near(when(of('N(5), dissolved'), (v) => v < 1e-9), 43.75),
+                near(when(of('Mn+2'), (v) => v > 0.9999e-4), 48.75), near(when(of('Fe(2), dissolved'), (v) => v > 1.9999e-4), 53.75),
+                Math.abs(ch4.y[ch4.y.length - 1] / ((160 - 113.75) * 1e-5 / 2) - 1) < 0.01]; })()""")
+            check('the redox zones example opens on the time chart: oxygen, nitrate, manganese(2), iron(2), sulfate, sulfide and '
+                  'methane, a day at most between points; each oxidant gone when its electrons are -- the oxygen at day 25, the '
+                  'nitrate at 43.75, the pyrolusite\'s manganese all dissolved at 48.75, the ferrihydrite\'s iron at 53.75, to the '
+                  'day -- and methane half the carbon after the sulfate\'s, to 1 %', [ok, zones],
+                  [True, ['O2 | N(5), dissolved | Mn+2 | Fe(2), dissolved | S(6), dissolved | S(-2), dissolved | C(-4), dissolved',
+                          'time (d)', True, True, True, True, True, True]])
+            # The ticks put back as they were, one click: what follows reads the chart's first trace.
+            await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
+            await asyncio.sleep(0.3)
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

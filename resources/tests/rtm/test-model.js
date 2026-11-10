@@ -7560,6 +7560,71 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
     + 'own (O, H) not among them', coupleList === 'NO3-/NO2- N(5)/N(3), NO3-/N2 N(5)/N(0), NO3-/NH4+ N(5)/N(-3), '
     + 'SO4-2/HS- S(6)/S(-2), SO4-2/S2O3-2 S(6)/S(2), CO3-2/CH4 C(4)/C(-4), Fe+3/Fe+2 Fe(3)/Fe(2), Pyrolusite/Mn+2 Mn(4)/Mn(2)',
   coupleList);
+  // Each element's total in each of its valence states, PHREEQC's TOT("Fe(2)"), on the redox zones example's water: by hand.
+  {
+    const zt = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxzones').text;
+    const zm = RtmModel.compile(zt);
+    const zy = zm.toConcentrations(zm.initialState());
+    const zc = (nm) => zy[zm.speciesNames.indexOf(nm)];
+    const zk = zm.quantities.map((q) => q.key);
+    const zq = new Float64Array(zk.length);
+    zm.quantitiesAt(zy, 0, 0, Int32Array.from(zk.map((_, i) => i)), zq);
+    const zv = (key) => zq[zk.indexOf(key)];
+    const byHand = {
+      'tot(N(5))': zc('NO3-'), 'tot(N(3))': zc('NO2-'), 'tot(N(0))': 2 * zc('N2'),
+      'tot(Fe(3))': zc('Fe+3') + zc('FeOH+2') + zc('Fe(OH)2+') + zc('Fe(OH)3') + zc('Fe(OH)4-'), 'tot(Fe(2))': zc('Fe+2') + zc('FeOH+'),
+      'tot(S(6))': zc('SO4-2') + zc('HSO4-'), 'tot(S(-2))': zc('HS-') + zc('H2S'),
+      'tot(C(4))': zc('CO3-2') + zc('HCO3-') + zc('CO2'), 'tot(C(-4))': zc('CH4'),
+    };
+    const wantKeys = Object.keys(byHand);
+    const offBy = wantKeys.filter((key) => !(Math.abs(zv(key) - byHand[key]) <= 1e-15 * Math.max(byHand[key], 1e-300)));
+    // Not without the electron: the radiolysis default's radicals and peroxides, CO3- and C2O6-2, are carbon(5) by formula.
+    const noElectron = RtmModel.compile(RTM_DEFAULT_MODEL).quantities.filter((q) => /^tot\(.+\(.+\)\)$/.test(q.key)).length;
+    check('each element\'s total in each of its valence states, PHREEQC\'s TOT("Fe(2)"), the oxidised first: on the redox zones '
+      + 'example\'s water, nitrogen in three, iron, sulfur and carbon in two, each the sum of its species by hand; manganese '
+      + 'dissolved in one alone, so none; and none in a model without the electron, the radiolysis default, whose radicals no '
+      + 'formula gives a state', !offBy.length && noElectron === 0 && zk.filter((key) => /^tot\(.+\(.+\)\)$/.test(key)).join(' ')
+      === 'tot(C(4)) tot(C(-4)) tot(Fe(3)) tot(Fe(2)) tot(N(5)) tot(N(3)) tot(N(0)) tot(S(6)) tot(S(-2))',
+    `${zk.filter((key) => /^tot\(.+\(.+\)\)$/.test(key)).join(' ')}${offBy.length ? `; off: ${offBy.join(', ')}` : ''}`);
+    /*
+      The example run at the panel's tolerances, its steps a tenth of the run long -- runModel given no maximum step, as
+      the page gives it none but the model's MAX_STEP: every point shown keeps its iron and its manganese -- the one a
+      step after pyrolusite has dissolved away among them, where the speciation of the totals does not settle and the
+      point is shown as the solver left it -- and the zones in their order: the oxygen gone, then the nitrate;
+      manganese(2) and iron(2) as the pyrolusite and the ferrihydrite go; FeS taking the iron(2) as the sulfate is
+      reduced; methane last.
+    */
+    const zr = FacsimileODE.runModel(zm, { solver: 'ndf', tend: 160, rtol: 1e-6, atol: 1e-20, matrix: 'auto', maxPoints: 4000,
+      stagnationTol: 0.5 });
+    // And stopping at the days the order is read at, which moves the steps.
+    const zd = FacsimileODE.runModel(zm, { solver: 'ndf', tend: 160, rtol: 1e-6, atol: 1e-20, matrix: 'auto', maxPoints: 4000,
+      stagnationTol: 0.5, breaks: [30, 52, 55] });
+    const el = (y, e) => zm.composition.elements.find((x) => x.el === e).terms.reduce((a, [k, n]) => a + n * y[k], 0);
+    let keep = 0;
+    const atDay = (d) => {
+      const i = zd.t.findIndex((t) => Math.abs(t - d) < 1e-9);
+      return Float64Array.from(zm.toConcentrations(zd.y[i], zd.t[i]));
+    };
+    for (let i = 0; i < zr.t.length; i++) {
+      const y = zm.toConcentrations(zr.y[i], zr.t[i]);
+      keep = Math.max(keep, Math.abs(el(y, 'Fe') - 2e-4) / 2e-4, Math.abs(el(y, 'Mn') - 1e-4) / 1e-4);
+    }
+    const qOf = (y, key) => { zm.quantitiesAt(y, 0, 0, Int32Array.of(zk.indexOf(key)), zq); return zq[0]; };
+    const d30 = atDay(30);
+    const d52 = atDay(52);
+    const d55 = atDay(55);
+    const d160 = atDay(160);
+    const order = qOf(d30, 'tot(N(5))') > 5e-5 && d30[zm.speciesNames.indexOf('O2')] < 1e-6
+      && qOf(d52, 'tot(N(5))') < 1e-12 && d52[zm.speciesNames.indexOf('Mn+2')] > 0.99e-4 && qOf(d52, 'tot(Fe(2))') > 1e-4
+      && d55[zm.speciesNames.indexOf('Ferrihydrite')] === 0 && qOf(d55, 'tot(Fe(2))') > 1.9e-4
+      && d160[zm.speciesNames.indexOf('FeS_ppt')] > 1.9e-4 && qOf(d160, 'tot(S(6))') < 1e-6 && qOf(d160, 'tot(S(-2))') > 9e-5
+      && qOf(d160, 'tot(C(-4))') > 1e-4;
+    check('  the example run with steps a tenth of the run long: every point shown keeps its iron and its manganese, the one a '
+      + 'step after the pyrolusite has gone among them; the zones in order -- oxygen gone by day 30, nitrate by 52, manganese(2) and '
+      + 'iron(2) then, the ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by 160, methane',
+    keep < 1e-12 && order && zr.events && zr.events.length === 3, `kept to ${keep.toExponential(1)}; ${zr.t.length} points, `
+      + `${zr.events ? zr.events.length : 0} events`);
+  }
   const cc0 = cm.initialState();
   const ci = (n) => cc0[cn.indexOf(n)];
   const twoQ = Int32Array.from(['alk(CO3)', 'tot(SO4)', 'tot(S)'].map((k) => cm.quantities.findIndex((q) => q.key === k)));
@@ -7650,6 +7715,23 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   ['pH', 'I', 'tot(Ca)'].every((k) => exKeys.includes(k)) && Math.abs(exQ[exKeys.indexOf('pH')] - 7) < 1e-9
     && exCa === 'Ca+2@water CaCl+@water CaX2@exchange' && !!exSummary && exSummary.model.solutes.join(' ') === 'H+ OH- Na+ Ca+2 CaCl+ Cl-',
   `${exKeys.join(' ')} | ${exCa} | ${exSummary && exSummary.model ? exSummary.model.solutes.join(' ') : JSON.stringify(exSummary).slice(0, 200)}`);
+  // MAX_STEP: the longest step the worker's run takes, where the panel's Maximum step is 0; the panel's where it is not.
+  {
+    const zText = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxzones').text;
+    const longest = (solver) => {
+      let got = null;
+      handleRtmMessage({ type: 'run', id: 11, text: zText, solver }, (msg) => { if (msg.type === 'result') got = msg; });
+      let most = 0;
+      for (let i = 1; i < got.n; i++) most = Math.max(most, got.t[i] - got.t[i - 1]);
+      return [got.n, most];
+    };
+    const [nModel, hModel] = longest({ ...solverSw, rtol: 1e-6 });
+    const [nPanel, hPanel] = longest({ ...solverSw, rtol: 1e-6, hmax: 5 });
+    check('MAX_STEP: the redox zones example, MAX_STEP = 1, run by the worker: no step longer than a day, 160 points and more; '
+      + 'the panel\'s Maximum step, 5 days, in its place where it is given',
+    /^MAX_STEP = 1\b/m.test(zText) && hModel <= 1 + 1e-9 && nModel >= 161 && hPanel > 1 + 1e-9 && hPanel <= 5 + 1e-9,
+    `${nModel} points, the longest step ${hModel.toFixed(4)} d; with the panel's 5 d ${nPanel} points, ${hPanel.toFixed(4)} d`);
+  }
   let swReply = null;
   handleRtmMessage({ type: 'sweep', id: 1, text: decay, solver: solverSw, vary: [{ kind: 'parameter', name: 'kk' }, { kind: 'setting', name: 'TEND' }],
     values: [[0.1, 0.2, 0.4], [10, -5]], cell: 0 }, (msg) => { if (msg.type !== 'progress') swReply = msg; });

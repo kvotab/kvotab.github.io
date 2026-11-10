@@ -3953,6 +3953,71 @@ function againstLadder(engine) {
 }
 
 /* ======================================================================
+   REDOX ZONES, against PHREEQC: a water with oxygen, nitrate, sulfate and
+   carbonate, with pyrolusite, ferrihydrite and FeS(ppt) as its
+   EQUILIBRIUM_PHASES, handed off with every species phreeqc.dat has of its
+   elements; organic carbon added at a steady rate as CO3-2 + 6 H+ + 4 e-,
+   against PHREEQC's REACTION adding CH2O in steps. At each step every
+   valence state's total -- the model's tot(N(5)), tot(Fe(2)) and the rest
+   -- is PHREEQC's TOT("N(5)"), each mineral its EQUI, and the pH and the
+   pe PHREEQC's: the oxygen and the nitrate used up, the pyrolusite and the
+   ferrihydrite, the sulfate reduced with FeS forming, and methane, the
+   mineral events between. PHREEQC's REACTION makes water as the carbon is
+   oxidised, which the page's kilogram does not count: a few parts in 1e5.
+   ====================================================================== */
+function againstRedoxZones(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 6.6\n Na 1.5\n K 0.05\n Ca 0.6\n Mg 0.2\n Cl 0.6\n O(0) 0.5\n N(5) 0.15\n'
+    + ' S(6) 0.3\n C(4) 2.8\nEQUILIBRIUM_PHASES 1\n Pyrolusite 0 1e-4\n Fe(OH)3(a) 0 2e-4\n FeS(ppt) 0 0\n';
+  const N = 32;
+  const total = 1.6e-3;
+  const rate = 1e-9;
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'zones', text: `${water}END\n` }, activity: true, exact: true, redox: true,
+    phases: true, floor: 0 });
+  const text = `${RtmModel.withValue(res.text, { kind: 'setting', name: 'TEND' }, total / rate)}\n<REACTIONS>\n=> CO3-2 + 6 H+ + 4 e-, k = ${rate}\n`;
+  const m = RtmModel.compile(text);
+  const keys = m.quantities.filter((q) => /^tot\(.+\(.+\)\)$/.test(q.key)).map((q) => q.key);
+  const states = keys.map((k) => k.slice(4, -1));
+  const phases = ['Pyrolusite', 'Fe(OH)3(a)', 'FeS(ppt)'];
+  engine.load(dbText);
+  const pq = engine.run(`${water}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH ${states.map((s) => `TOT("${s}")`).join(', ')}\n`
+    + ` 20 PUNCH ${phases.map((p) => `EQUI("${p}")`).join(', ')}, -LA("H+"), -LA("e-")\n`
+    + `REACTION 1\n CH2O 1\n ${total} moles in ${N} steps\nINCREMENTAL_REACTIONS true\nEND\n`).map((r) => r.map(Number)).slice(-N);
+  const times = Array.from({ length: N }, (_, i) => ((i + 1) * total) / N / rate);
+  const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: times[N - 1], rtol: 1e-10, atol: 1e-22, breaks: times });
+  const qi = Int32Array.from([...keys, 'pH', 'pe'].map((k) => m.quantities.findIndex((q) => q.key === k)));
+  const out = new Float64Array(qi.length);
+  const elTot = (y, el) => m.composition.elements.find((e) => e.el === el).terms.reduce((a, [k, n]) => a + n * y[k], 0);
+  const d = { tot: 0, where: '', mineral: 0, pH: 0, pe: 0 };
+  for (let i = 0; i < N; i++) {
+    const k = run.t.findIndex((t) => Math.abs(t - times[i]) <= 1e-9 * times[i]);
+    const y = Float64Array.from(m.toConcentrations(run.y[k], run.t[k]));
+    m.quantitiesAt(y, run.t[k], 0, qi, out);
+    states.forEach((s, j) => {
+      const off = Math.abs(out[j] - pq[i][j]) / elTot(y, s.split('(')[0]);
+      if (off > d.tot) { d.tot = off; d.where = `${s} at step ${i + 1}`; }
+    });
+    phases.forEach((p, j) => { d.mineral = Math.max(d.mineral, Math.abs(y[m.speciesNames.indexOf(p)] - pq[i][states.length + j])); });
+    d.pH = Math.max(d.pH, Math.abs(out[keys.length] - pq[i][states.length + 3]));
+    d.pe = Math.max(d.pe, Math.abs(out[keys.length + 1] - pq[i][states.length + 4]));
+  }
+  const at = (step, s) => pq[step - 1][states.indexOf(s)];
+  const minAt = (step, p) => pq[step - 1][states.length + phases.indexOf(p)];
+  // The zones as PHREEQC has them: the nitrate gone by the tenth step, the pyrolusite and the ferrihydrite then, FeS
+  // forming as the sulfate is reduced, and methane at the end.
+  const zones = at(10, 'N(5)') < 1e-12 && at(10, 'Mn(2)') > 0.99e-4 && minAt(11, 'Fe(OH)3(a)') === 0 && at(11, 'Fe(2)') > 1.99e-4
+    && minAt(24, 'FeS(ppt)') > 1.9e-4 && at(32, 'S(-2)') > 9e-5 && at(32, 'C(-4)') > 1e-4;
+  check('redox zones: a handed-off water with pyrolusite, ferrihydrite and FeS(ppt), organic carbon added at a steady rate as '
+    + 'CO3-2 + 6 H+ + 4 e-, against PHREEQC\'s REACTION adding CH2O in 32 steps: at each, every valence state\'s total within '
+    + '3e-5 of its element\'s, the minerals within 1e-8 mol/kgw, the pH within 2e-6 and the pe within 1e-3 -- the oxygen and the '
+    + 'nitrate used up, the pyrolusite and the ferrihydrite, the sulfate reduced with FeS forming, then methane',
+  keys.length === 12 && run.events && run.events.length === 3 && zones && d.tot < 3e-5 && d.mineral < 1e-8 && d.pH < 2e-6 && d.pe < 1e-3,
+  `${keys.length} valence totals, ${run.events ? run.events.length : 0} events; the worst ${d.tot.toExponential(1)} of the element `
+    + `(${d.where}), minerals ${d.mineral.toExponential(1)}, pH ${d.pH.toExponential(1)}, pe ${d.pe.toExponential(1)}`);
+}
+
+/* ======================================================================
    INVERSE MODELS, through PHREEQC: its INVERSE_MODELING between waters of a
    run (viewRun's `only` and `inverse`), read back from what it prints.
    ====================================================================== */
@@ -4902,6 +4967,8 @@ function againstKineticsHandOff(engine) {
   againstStability(wasm);
   console.log('\n--- a redox ladder: valence states, the couples, and where each turns over against PHREEQC\'s SOLUTION there ---');
   againstLadder(wasm);
+  console.log('\n--- redox zones: organic carbon at a steady rate against PHREEQC\'s REACTION, each valence state\'s total ---');
+  againstRedoxZones(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');
