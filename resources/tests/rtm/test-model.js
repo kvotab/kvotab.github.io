@@ -7589,7 +7589,7 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
     /*
       The example run at the panel's tolerances, its steps a tenth of the run long -- runModel given no maximum step, as
       the page gives it none but the model's MAX_STEP: every point shown keeps its iron and its manganese, and is the
-      speciation of its totals, re-speciated from what it shows staying where it is -- the one a step after pyrolusite
+      speciation of its totals, re-speciated from what it shows settling at its first evaluation -- the one a step after pyrolusite
       has dissolved away among them, its FeS none in the run and 3e-45 in the state, which read as some did not settle
       -- and the zones in their order: the oxygen gone, then the nitrate;
       manganese(2) and iron(2) as the pyrolusite and the ferrihydrite go; FeS taking the iron(2) as the sulfate is
@@ -7608,12 +7608,15 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
     };
     let zMoved = 0;
     let zUnsettled = 0;
+    let zLate = 0;
+    let zRes = 0;
     for (let i = 0; i < zr.t.length; i++) {
       const y = Float64Array.from(zm.toConcentrations(zr.y[i], zr.t[i]));
       keep = Math.max(keep, Math.abs(el(y, 'Fe') - 2e-4) / 2e-4, Math.abs(el(y, 'Mn') - 1e-4) / 1e-4);
       let sp = null;
       try { sp = RtmModel.speciate(zm, y, { t: zr.t[i] }); } catch (e) { sp = null; }
       if (!sp || sp.cells.some((c) => !c.converged)) { zUnsettled++; continue; }
+      for (const c of sp.cells) { if (c.iterations > 1) zLate++; zRes = Math.max(zRes, c.residual); }
       for (let k = 0; k < y.length; k++) {
         const isMin = !!zm.mineral[k % zm.speciesNames.length];
         if (!isMin && !(y[k] > 1e-30)) continue;
@@ -7630,13 +7633,16 @@ Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
       && d55[zm.speciesNames.indexOf('Ferrihydrite')] === 0 && qOf(d55, 'tot(Fe(2))') > 1.9e-4
       && d160[zm.speciesNames.indexOf('FeS_ppt')] > 1.9e-4 && qOf(d160, 'tot(S(6))') < 1e-6 && qOf(d160, 'tot(S(-2))') > 9e-5
       && qOf(d160, 'tot(C(-4))') > 1e-4;
-    check('  the example run with steps a tenth of the run long: every point shown keeps its iron and its manganese and, '
-      + 're-speciated from what it shows, stays where it is, the one a step after the pyrolusite has gone among them, its FeS none '
-      + 'and not the state\'s 3e-45; the zones in order -- oxygen gone by day 30, nitrate by 52, manganese(2) and iron(2) then, the '
-      + 'ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by 160, methane',
-    keep < 1e-12 && zMoved < 1e-10 && zUnsettled === 0 && order && zr.events && zr.events.length === 3,
-    `kept to ${keep.toExponential(1)}; re-speciated, moved by ${zMoved.toExponential(1)}, ${zUnsettled} unsettled; `
-      + `${zr.t.length} points, ${zr.events ? zr.events.length : 0} events`);
+    check('  the example run with steps a tenth of the run long: every point shown keeps its iron and its manganese and is its '
+      + 'own speciation, re-speciated from what it shows settling at its first evaluation, the one a step after the pyrolusite '
+      + 'has gone among them, its FeS none and not the state\'s 3e-45; the zones in order -- oxygen gone by day 30, nitrate by '
+      + '52, manganese(2) and iron(2) then, the ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by 160, '
+      + 'methane',
+    keep < 1e-12 && zUnsettled === 0 && zLate === 0 && zRes < 1e-12 && zMoved < 1e-4 && order && zr.events
+      && zr.events.length === 3,
+    `kept to ${keep.toExponential(1)}; re-speciated, ${zUnsettled} unsettled, ${zLate} cells past their first evaluation, `
+      + `the relations and totals holding at the points shown to ${zRes.toExponential(1)}, the polishing step moving them by `
+      + `${zMoved.toExponential(1)}; ${zr.t.length} points, ${zr.events ? zr.events.length : 0} events`);
   }
   const cc0 = cm.initialState();
   const ci = (n) => cc0[cn.indexOf(n)];
@@ -7747,7 +7753,9 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   }
   /*
     Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
-    speciation of its totals: re-speciated from what it shows, each stays where it is, and none fails to settle. A mineral
+    speciation of its totals: re-speciated from what it shows, each settles at its first evaluation, its relations and
+    totals holding there to rounding; the one polishing step moves a trace species by what the point's conditioning
+    lets it, 7e-7 of nitrate at 1e-25 where a front is passing, far from what a point not settled moved. A mineral
     the run holds at none is read back as none: FeS(ppt) in the oxic water ahead of the plume is 1e-33 or so in the state,
     the arithmetic's, and read as some it was held at saturation where it cannot be -- the speciation did not settle, and
     the point was shown as the solver left it. And the zones from the inlet, by the pe: methane below -2.5, iron below 3,
@@ -7765,6 +7773,8 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     const shown = (i) => Float64Array.from(got.states.subarray(i * got.width, (i + 1) * got.width));
     let moved = 0;
     let unsettled = 0;
+    let late = 0;
+    let atShown = 0;
     let read = 0;
     const zones = [];
     if (ran) {
@@ -7777,6 +7787,7 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
         let sp = null;
         try { sp = RtmModel.speciate(pm, y, { t: got.t[i] }); } catch (e) { sp = null; }
         if (!sp || sp.cells.some((c) => !c.converged)) { unsettled++; continue; }
+        for (const c of sp.cells) { if (c.iterations > 1) late++; atShown = Math.max(atShown, c.residual); }
         for (let k = 0; k < y.length; k++) {
           const isMin = !!pm.mineral[k % pns];
           if (!isMin && !(y[k] > 1e-30)) continue;
@@ -7796,14 +7807,49 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     }
     const inOrder = zones.length === 3 && zones.every((zz) => zz.order === 'methane iron manganese nitrate oxygen');
     const downstream = inOrder && [0, 1, 2, 3].every((q) => zones[0].ends[q] < zones[1].ends[q] && zones[1].ends[q] < zones[2].ends[q]);
-    check('redox zones along a plume, the example run as the page runs it: every tenth point shown, re-speciated from what it '
-      + 'shows, stays where it is and settles -- a mineral the run holds at none, FeS in the oxic water, read back as none and '
-      + 'not as the arithmetic\'s 1e-33 of it -- and the zones from the inlet by the pe, methane, iron, manganese, nitrate, '
-      + 'the oxygen, each moving downstream from day 20 to 30 to 40',
-    ran && moved < 1e-9 && unsettled === 0 && read > 300 && inOrder && downstream,
-    ran ? `${got.n} points, ${read} read: moved by ${moved.toExponential(1)}, ${unsettled} unsettled; `
+    check('redox zones along a plume, the example run as the page runs it: every tenth point shown is its own speciation, '
+      + 're-speciated from what it shows settling at its first evaluation -- a mineral the run holds at none, FeS in the oxic '
+      + 'water, read back as none and not as the arithmetic\'s 1e-33 of it -- and the zones from the inlet by the pe, methane, '
+      + 'iron, manganese, nitrate, the oxygen, each moving downstream from day 20 to 30 to 40',
+    ran && unsettled === 0 && late === 0 && atShown < 1e-12 && moved < 1e-4 && read > 300 && inOrder && downstream,
+    ran ? `${got.n} points, ${read} read: ${unsettled} unsettled, ${late} cells past their first evaluation, the relations and `
+      + `totals holding at the points shown to ${atShown.toExponential(1)}, the polishing step moving them by ${moved.toExponential(1)}; `
       + zones.map((zz) => `day ${zz.day}: ${zz.order} to ${zz.ends.join(', ')} m`).join('; ')
       : (got ? got.error : 'no reply'));
+  }
+  /*
+    The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
+    in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
+    steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a
+    singular matrix, which it never was. From 5e-3 to 1 mol/kgw each starts in a few iterations a cell, and each cell's
+    water takes the same calcite whatever there is of it. Where a start does not settle (three iterations allowed), it
+    says so, not that the matrix is singular.
+  */
+  {
+    const pText = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxplume').text;
+    const withCalcite = (cal) => pText.replace(/^Calcite +5e-3 +mineral/m, `Calcite      ${cal}     mineral`);
+    const starts = ['5e-3', '1e-2', '1e-1', '1'].map((cal) => {
+      try {
+        const m = RtmModel.compile(withCalcite(cal));
+        const y = m.initialState();
+        const k = m.speciesNames.indexOf('Calcite');
+        return { cal, its: Math.max(...m.speciated.map((c) => c.iterations)), took: Number(cal) - y[k] };
+      } catch (e) { return { cal, error: e.message }; }
+    });
+    const ran = starts.every((r) => !r.error);
+    const same = ran && starts.every((r) => Math.abs(r.took / starts[0].took - 1) < 1e-9);
+    // Without its reaction and EQUILIBRATE, the electron at a pe: the start speciated by itself, three iterations allowed.
+    const bare = withCalcite('1e-2').replace(/^EQUILIBRATE = always$/m, '').replace(/<PARAMETERS>[\s\S]*$/, '')
+      .replace(/^e- +electron$/m, 'e-           electron pe=13');
+    let said = '';
+    try { RtmModel.speciate(RtmModel.compile(bare), undefined, { maxIter: 3 }); } catch (e) { said = e.message; }
+    check('the plume\'s start with more calcite, 5e-3 to 1 mol/kgw: each compiles and starts in a few iterations a cell, a '
+      + 'mineral at none placing no species, and each cell\'s water takes the same calcite whatever there is of it; a start '
+      + 'that does not settle says so, not that the matrix is singular',
+    ran && starts.every((r) => r.its <= 10) && same && Math.abs(starts[0].took - 7.43e-4) < 1e-6
+      && /^The speciation does not settle in cell 0, neither with the minerals it starts with nor with any one of them gone/.test(said),
+    starts.map((r) => (r.error ? `${r.cal}: ${r.error}` : `${r.cal}: ${r.its} iterations, ${r.took.toExponential(5)} mol taken`)).join('; ')
+      + ` | ${said}`);
   }
   let swReply = null;
   handleRtmMessage({ type: 'sweep', id: 1, text: decay, solver: solverSw, vary: [{ kind: 'parameter', name: 'kk' }, { kind: 'setting', name: 'TEND' }],

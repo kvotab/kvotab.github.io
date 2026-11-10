@@ -6639,6 +6639,10 @@
       const res = speciateCell(sys, out, b, totals, w, present,
         { tol: opts.tol, maxIter: opts.maxIter, floor: opts.floor, activeSet: true, cell });
       if (res.why === 'singular') throw new RtmError(`The speciation matrix is singular in cell ${cell}.`);
+      if (res.why === 'unsettled') {
+        throw new RtmError(`The speciation does not settle in cell ${cell}, neither with the minerals it starts with nor with any `
+          + `one of them gone (residual ${res.residual.toExponential(2)}).`);
+      }
       cells.push({ cell, converged: res.converged, iterations: res.iterations, residual: res.residual,
         minerals: sys.minOf.reduce((n, k, j) => n + (k >= 0 && present[j] ? 1 : 0), 0) });
     }
@@ -7339,11 +7343,20 @@
       relation can place, at a part in 1e12 of that total. From ln C =
       ln(1e-300) the damped iteration would take hundreds of steps to arrive,
       and stop before it did.
+
+      Only a relation that holds places a species: a mineral's while it is
+      held at saturation, not one at none or at its upper bound, which says
+      nothing of the water. FeS(ppt) at none in an oxic water, its sulfide
+      at e^-326, put Fe+2 at e^302, capped at the largest total, and every
+      iron species after it: the capped steps took 95 iterations a cell to
+      bring them down at 5e-3 mol/kgw of calcite, and with 1e-2 did not in
+      a hundred.
     */
     {
       const have = new Set();
       for (let k = 0; k < na; k++) if (lin[k] || C[off + part[k]] > 0) have.add(part[k]);
-      const there = (j, skip) => eqs[j].net.every(([si]) => si === skip || have.has(si) || at[si] < 0 && C[off + si] > 0);
+      const there = (j, skip) => (minOf[j] < 0 || present[j] === 1)
+        && eqs[j].net.every(([si]) => si === skip || have.has(si) || at[si] < 0 && C[off + si] > 0);
       const guess = [];
       for (let k = 0; k < na; k++) if (sys.exch && sys.exch[k] && !have.has(part[k])) { x[k] = 0; guess.push(k); }
       const zero = [];
@@ -7407,10 +7420,22 @@
       why = 'singular';
       return false;
     };
+    /*
+      Where no set settles, the reason is the first one's: the matrix
+      singular, or the iteration not settled ('unsettled') -- not every
+      failure called singular, as each attempt's was.
+    */
     let ok = solve();
     if (opts.activeSet && !ok) {
       // A start, or an event, that has two such minerals there at once; not the one an event brought in (opts.enter).
-      for (const j of mins) if (present[j] && j !== opts.enter && attempt(j, -1)) { ok = true; break; }
+      const failed = why || 'unsettled';
+      let tried = 0;
+      for (const j of mins) {
+        if (!present[j] || j === opts.enter) continue;
+        tried++;
+        if (attempt(j, -1)) { ok = true; break; }
+      }
+      if (!ok && tried) why = failed;
     }
     if (opts.activeSet && ok) {
       const groups = sys.groups;
@@ -7475,10 +7500,14 @@
           ok = solve();
           // It cannot be there beside one that is: that one goes over to it.
           if (!ok) {
+            const failed = why || 'unsettled';
+            let tried = 0;
             for (const j of mins) {
               if (j === pick || !present[j]) continue;
+              tried++;
               if (attempt(j, pick)) { ok = true; break; }
             }
+            if (!ok && tried) why = failed;
           }
           continue;
         }
@@ -13222,7 +13251,7 @@
         worstRes = Math.max(worstRes, res.residual);
         if (!res.converged && !why) {
           why = res.why === 'singular' ? `the relations do not determine the held species in cell ${c}`
-            : res.why ? `${res.why} in cell ${c}`
+            : res.why && res.why !== 'unsettled' ? `${res.why} in cell ${c}`
               : `the held equilibria did not settle in cell ${c} (residual ${res.residual.toExponential(2)})`;
         }
         for (let k = 0; k < na; k++) {

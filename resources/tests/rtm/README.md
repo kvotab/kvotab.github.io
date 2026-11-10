@@ -441,10 +441,13 @@ its species by hand to 1e-15; manganese dissolved in one alone, so none;
 and none in a model without the electron, the radiolysis default, whose
 radicals and peroxides (CO3-, C2O6-2) are carbon(5) by formula.
 The example run with steps a tenth of the run long: every point shown
-keeps its iron and its manganese to 1e-12 and, re-speciated from what it
-shows (`RtmModel.speciate`), stays where it is to 1e-10 -- the one a step
-after the pyrolusite has dissolved away among them, whose FeS(ppt), none
-in the run, is 3e-45 in the state. Read as some, before 2026-11-10, its
+keeps its iron and its manganese to 1e-12 and is its own speciation:
+re-speciated from what it shows (`RtmModel.speciate`), each settles at
+its first evaluation, its relations and totals holding there to 1e-13 --
+the one a step after the pyrolusite has dissolved away among them, whose
+FeS(ppt), none in the run, is 3e-45 in the state. (The one polishing step
+moves a trace species by what the point's conditioning lets it: 2.8e-8 of
+nitrate at 6e-19 at the moment the pyrolusite is gone.) Read as some, before 2026-11-10, its
 speciation did not settle and the point was shown as the solver left it,
 and before that as the speciation left it, the ferrihydrite dissolved
 into the water as iron(3), the pe at 8 between 5.7 and 4.6 and the iron
@@ -455,17 +458,30 @@ ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by
 worker, no step longer than a day and 193 points; the panel's Maximum
 step, 5 days, in its place where it is given.
 Redox zones along a plume (since 2026-11-10), the example run by the
-worker as the page runs it, 3021 points: every tenth point shown,
-re-speciated from what it shows, stays where it is to 1e-9 (5e-11) and
-settles. A mineral the run holds at none is read back as none: FeS(ppt)
+worker as the page runs it, 3021 points: every tenth point shown is its
+own speciation, re-speciated from what it shows settling at its first
+evaluation, its relations and totals holding there to 1.5e-13 (the
+polishing step moving nitrate at 1e-25 by 7e-7 where a front passes). A
+mineral the run holds at none is read back as none: FeS(ppt)
 in the oxic water ahead of the plume is 1e-33 or so in the state, the
 arithmetic's, and read as some it was held at saturation where it cannot
 be -- before 2026-11-10 223 of every tenth point's 303 did not settle and
 were shown as the solver left them, the pe up to 6 % off, at 110 ms a
-point; 1.4 ms now. And the zones from the inlet by the pe -- methane
+point, and 206 of them re-speciated did not settle either; 1.4 ms now. And the zones from the inlet by the pe -- methane
 below -2.5, iron below 3, manganese below 10, nitrate below 12.5, the
 oxygen -- at days 20, 30 and 40, each zone's far edge further downstream
 each time: 3, 8, 12 and 14 m; 7, 12, 18 and 20; 11, 16, 24 and 26.
+The plume's start with more calcite (since 2026-11-10): the example with
+5e-3, 1e-2, 0.1 and 1 mol/kgw of calcite compiles and starts in a few
+iterations a cell, 7 at most, each cell's water taking the same calcite,
+7.43e-4 mol, whatever there is of it. Before, a species that starts at
+none was placed by any relation whose other species were there, a
+mineral's at none among them: FeS(ppt) at none in the oxic water put
+Fe+2 at e^302, capped at the largest total, and every iron species after
+it; the capped steps took 95 iterations a cell at 5e-3 and did not settle
+in a hundred at 1e-2, which was reported as a singular matrix. A start
+that does not settle (three iterations allowed) says so, not that the
+matrix is singular.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
