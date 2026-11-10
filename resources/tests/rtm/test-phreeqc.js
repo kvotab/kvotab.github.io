@@ -3861,6 +3861,98 @@ function againstStability(engine) {
 }
 
 /* ======================================================================
+   A REDOX LADDER, against PHREEQC: a handed-off water with nitrogen, iron,
+   sulfur and carbon, the database's couples placed where each turns over
+   -- at pH 7 along pe at 25 C, and at pH 5 along Eh at 40 C. Handed off
+   with the floor at nought, every species the database has of the water's
+   elements written, at none where the water has none of it: sulfide and
+   methane in a water at pe 10, made from its sulfate and its carbonate --
+   at pe 4 it would have no nitrate to make the rest of the nitrogen's
+   from, PHREEQC counting none below 1e-30. Each species' valence state is told from
+   its name and its relations as PHREEQC has it in its database; and at
+   each rung PHREEQC's SOLUTION of the model's own totals, at that pH and
+   pe, gives the couple's two valence states the same amount of the
+   element. The range stays where water does, between H2 and O2 at 1 atm:
+   PHREEQC's dissolved O2 and H2 run away outside it.
+   ====================================================================== */
+function againstLadder(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const water = (tc) => `SOLUTION 1\n temp ${tc}\n units mmol/kgw\n pH 7\n pe 10\n Na 2\n Cl 2\n N 0.2\n S 1\n C 2\n Fe 0.01\nEND\n`;
+  const reply = (msg) => { let r = null; handleRtmMessage(msg, (x) => { if (x.type !== 'progress') r = x; }); if (r.type === 'error') throw new Error(r.error); return r; };
+  const ladder = (tc, pHAt, axes, peOf) => {
+    engine.load(dbText);
+    const text = P.waterToModel({ engine, database, water: { name: 'redox', text: water(tc) }, activity: true, exact: true, redox: true,
+      floor: 0 }).text;
+    const m = RtmModel.compile(text);
+    const C = m.composition;
+    // The model's own totals, mol/kgw, as PHREEQC is given them at each rung.
+    const y0 = m.toConcentrations(m.initialState());
+    const totals = ['Na', 'Cl', 'N', 'S', 'C', 'Fe'].map((el) => ` ${el} ${C.elements.find((e) => e.el === el).terms
+      .filter((tm) => tm[2] === 'water').reduce((acc, [k, n]) => acc + n * y0[k], 0).toPrecision(17)}`).join('\n');
+    // Every species of the four elements in a valence state, and the one PHREEQC's database has it in.
+    const told = ['N', 'Fe', 'S', 'C'].map((el) => C.elements.find((e) => e.el === el).terms.filter((tm) => tm[2] === 'water'));
+    const grid = reply({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes, pHAt });
+    const items = C.couples.map((cp) => {
+      const terms = C.elements.find((e) => e.el === cp.el).terms.filter((tm) => tm[2] === 'water');
+      return { cp, hi: terms.filter((tm) => tm[3] === cp.hi).map(([k, n]) => [k, n]), lo: terms.filter((tm) => tm[3] === cp.lo).map(([k, n]) => [k, n]) };
+    });
+    const L = reply({ type: 'diagramLadder', id: 2, text, at: 'start', cell: 0, axes, pHAt, grid: grid.states,
+      couples: items.map((it) => ({ hi: it.hi, lo: it.lo })) });
+    // PHREEQC's amount of the element in each of the couple's states, at the rung.
+    let worst = 0;
+    let where = '';
+    const rungs = [];
+    items.forEach((it, q) => {
+      for (const v of L.rungs[q].roots) {
+        const name = (s) => `${it.cp.el}(${s})`;
+        engine.load(dbText);
+        const rows = engine.run(`SOLUTION 1\n temp ${tc}\n units mol/kgw\n pH ${pHAt}\n pe ${peOf(v).toPrecision(17)}\n${totals}\n`
+          + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n 10 PUNCH TOT("${name(it.cp.hi)}"), TOT("${name(it.cp.lo)}")\nEND\n`);
+        const [a, b] = rows[rows.length - 1].map(Number);
+        const d = Math.abs(Math.log(a / b));
+        if (!(d <= worst)) { worst = d; where = `${it.cp.ox.join('+')}/${it.cp.red.join('+')} at ${v.toFixed(4)}`; }
+        rungs.push(`${it.cp.ox.join('+')}/${it.cp.red.join('+')} ${v.toFixed(3)}`);
+      }
+    });
+    return { m, told, items, L, grid, worst, where, rungs };
+  };
+  const at25 = ladder(25, 7, [{ kind: 'pe', from: -7, to: 13.5, n: 206 }], (v) => v);
+  const stateOf = (o, nm) => {
+    const k = o.m.speciesNames.indexOf(nm);
+    for (const terms of o.told) for (const tm of terms) if (tm[0] === k) return tm[3];
+    return undefined;
+  };
+  const want = { 'NO3-': 5, 'NO2-': 3, N2: 0, 'NH4+': -3, NH3: -3, 'NH4SO4-': -3, 'Fe+2': 2, 'Fe+3': 3, 'Fe(OH)2+': 3, 'Fe(OH)3-': 2,
+    'FeHSO4+2': 3, 'FeHSO4+': 2, FeSO4: 2, 'Fe2(OH)2+4': 3, 'SO4-2': 6, 'HS-': -2, H2S: -2, 'CO3-2': 4, 'HCO3-': 4, CO2: 4, CH4: -4,
+    'FeHCO3+': 2 };
+  const off = Object.entries(want).filter(([nm, s]) => at25.m.speciesNames.includes(nm) && stateOf(at25, nm) !== s);
+  const untold = at25.told.flat().filter((tm) => tm[3] === null).map(([k]) => at25.m.speciesNames[k]);
+  const seen = Object.keys(want).filter((nm) => at25.m.speciesNames.includes(nm)).length;
+  check('a handed-off water\'s valence states, from each species\' name and its relations: every species of N, Fe, S and C in '
+    + 'the water in one, the one phreeqc.dat has it in -- FeHSO4+2 Fe(3) and S(6), FeHSO4+ Fe(2), NH4SO4- N(-3) and S(6), '
+    + 'Fe2(OH)2+4 Fe(3), CH4 C(-4)',
+  !off.length && !untold.length && seen >= 20, `${seen} species checked${off.length ? `; off: ${off.map(([nm]) => `${nm} ${stateOf(at25, nm)}`).join(', ')}` : ''}`
+    + `${untold.length ? `; untold: ${untold.join(', ')}` : ''}`);
+  const names = at25.items.map((it) => `${it.cp.ox.join('+')}/${it.cp.red.join('+')}`).sort().join(' ');
+  check('  its couples, phreeqc.dat\'s half-reactions with the electron in them between two valence states: nitrate to nitrite, '
+    + 'nitrogen and ammonium, sulfate to sulfide, carbonate to methane, ferric to ferrous',
+  names === 'CO3-2/CH4 Fe+3/Fe+2 NO3-/N2 NO3-/NH4+ NO3-/NO2- SO4-2/HS-', names);
+  check('  a redox ladder at pH 7 along pe: each couple turns over once inside the water\'s own range, and at each rung PHREEQC\'s '
+    + 'SOLUTION of the water at pH 7 and that pe gives the two states the same amount of the element, to 1e-8',
+  !at25.grid.failed && at25.L.unsolved === 0 && at25.items.length === 6 && at25.L.rungs.every((r) => r.roots.length === 1)
+    && at25.worst < 1e-8,
+  `${at25.rungs.join(', ')}; the worst ${at25.worst.toExponential(1)} (${at25.where})`);
+  const per40 = RtmModel.ehPerPe(313.15);
+  const eh40 = ladder(40, 5, [{ kind: 'Eh', from: -5 * per40, to: 15.5 * per40, n: 206 }], (v) => v / per40);
+  check('  the same water at 40 C, at pH 5 along Eh: each rung\'s pe its Eh over the volts of a pe at 40 C, PHREEQC\'s SOLUTION '
+    + 'at that pH, pe and temperature gives the two states the same amount of the element, to 1e-8',
+  !eh40.grid.failed && eh40.L.unsolved === 0 && eh40.items.length === 6 && eh40.L.rungs.every((r) => r.roots.length === 1)
+    && eh40.worst < 1e-8
+    && Math.abs(eh40.L.ehPe / per40 - 1) < 1e-15,
+  `${eh40.rungs.join(', ')}; the worst ${eh40.worst.toExponential(1)} (${eh40.where})`);
+}
+
+/* ======================================================================
    INVERSE MODELS, through PHREEQC: its INVERSE_MODELING between waters of a
    run (viewRun's `only` and `inverse`), read back from what it prints.
    ====================================================================== */
@@ -4808,6 +4900,8 @@ function againstKineticsHandOff(engine) {
   againstEh(wasm);
   console.log('\n--- a silicate stability map: each phase per mole of aluminium, against PHREEQC\'s SOLUTION at its boundaries ---');
   againstStability(wasm);
+  console.log('\n--- a redox ladder: valence states, the couples, and where each turns over against PHREEQC\'s SOLUTION there ---');
+  againstLadder(wasm);
   console.log('\n--- inverse models: PHREEQC\'s INVERSE_MODELING between waters of a run, read back from what it prints ---');
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');

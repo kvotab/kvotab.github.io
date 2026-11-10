@@ -183,6 +183,27 @@ time  Na+  Cl-  Ca+2  SO4-2  cell = 4
 '''
 
 # A first-order decay at a rate kk of <PARAMETERS>: a sweep of kk leaves exp(-kk t) of A, what the sweeps block checks.
+# One couple, iron(3) over iron(2), no complexes and no activities: it turns over where the two are as much, at pe 13.02
+# whatever the pH, the relation's log K by hand.
+LADDER_MODEL = '''
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = always
+
+<SPECIES>
+H+    1e-3
+OH-   1e-11
+e-    electron  pe=12
+Fe+2  1e-5
+Fe+3  1e-5
+Cl-   5e-5
+
+<EQUILIBRIUM>
+ <=> H+ + OH-, logK = -14
+Fe+2 <=> Fe+3 + e-, logK = -13.02
+'''
+
 SWEEP_MODEL = '''
 <SETTINGS>
 MODE = batch
@@ -561,7 +582,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '31:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '32:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1188,6 +1209,56 @@ async def main():
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 
+            # --- a redox ladder: each couple where it turns over, the pH held; by hand, iron(3) over iron(2) alone ---
+            before = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, LADDER_MODEL)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled:')", True, tries=40)
+            await page.ev("document.querySelector('[data-tab=\"diagram\"]').click()")
+            await asyncio.sleep(0.4)
+            await page.ev("(() => { const e = document.getElementById('rtmDgYKind'); e.value = 'pHheld';"
+                          " e.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('and the pH held at: one number, the neutral water\'s to begin with, no range', await page.ev(
+                "['rtmDgYFromWord', 'rtmDgYRange', 'rtmDgYSp'].map((id) => document.getElementById(id).getClientRects().length)"
+                ".concat([document.getElementById('rtmDgYFrom').value, document.getElementById('rtmDgYFrom').getAttribute('aria-label')])"),
+                [0, 0, 0, '7', 'the pH'])
+            await page.ev("(() => { const e = document.getElementById('rtmDgXKind'); e.value = 'pH';"
+                          " e.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmDgGo').click()")
+            await asyncio.sleep(0.3)
+            check('  refused where the pH is what is varied', await page.ev("document.getElementById('rtmStatus').textContent"),
+                  'The pH is what is varied: it cannot be held as well.')
+            await dg(calc=[['rtmDgXKind', 'pe'], ['rtmDgXFrom', '10'], ['rtmDgXTo', '16'], ['rtmDgXN', '61'], ['rtmDgYFrom', '3']],
+                     show=[['rtmDgShow', 'ladder']])
+            await settle(page, "/turns over here/.test(document.getElementById('rtmDgNote').textContent)", True, tries=60, pause=0.25)
+            rung = "(() => { const d = document.getElementById('rtmChartDg').data; return d.filter((t) => t.line && t.line.width === 2.4).map((t) => t.y[0]); })()"
+            pe_rung = await page.ev(rung)
+            check('along pe from 10 to 16, the pH held at 3: the redox couples as a ladder, iron(3) over iron(2) turning over at pe '
+                  '13.02, the relation\'s log K, to 1e-9; the water\'s own pe, 12, dotted; the note saying so', [
+                      isinstance(pe_rung, list) and len(pe_rung) == 1 and abs(pe_rung[0] - 13.02) < 1e-9,
+                      await page.ev("document.getElementById('rtmChartDg').data.filter((t) => t.line && t.line.dash === 'dot').map((t) => t.y[0])"),
+                      await page.ev("document.getElementById('rtmDgNote').textContent")],
+                  [True, [12], 'cell 0 as it starts, its pH held at 3.000; 1 couple turns over here: Fe+3/Fe+2 at pe 13.02'])
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"diagram\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            lcsv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, ...(await r.body).trim().split('\\n')] : null; })()")
+            check('  saved as CSV: a row per couple, its pe and its Eh', isinstance(lcsv, list) and lcsv[:2] == ['rtm_ladder_pH_3.csv',
+                  'couple,oxidised,reduced,pe,Eh (V)'] and lcsv[2].startswith('Fe+3/Fe+2,Fe(3),Fe(2),13.02') and len(lcsv) == 3, True)
+            per25 = math.log(10) * 0.0083147 * 298.15 / 96.4935
+            await dg(calc=[['rtmDgXKind', 'Eh'], ['rtmDgXFrom', '0.6'], ['rtmDgXTo', '0.95'], ['rtmDgXN', '36'], ['rtmDgYFrom', '3']],
+                     show=[['rtmDgShow', 'ladder']])
+            await settle(page, "/turns over here/.test(document.getElementById('rtmDgNote').textContent)", True, tries=60, pause=0.25)
+            eh_rung = await page.ev(rung)
+            check('  along Eh: the same couple at 13.02 times the volts of a pe at 25 C, to 1e-9', isinstance(eh_rung, list)
+                  and len(eh_rung) == 1 and abs(eh_rung[0] - 13.02 * per25) < 1e-9, True)
+            await dg(calc=[['rtmDgYKind', ''], ['rtmDgXKind', 'pH']])
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
             # --- the model run again for each value of what is varied: the Sweeps tab ---
             before = await page.ev("document.getElementById('rtmText').value")
             await set_text(page, SWEEP_MODEL)
@@ -1343,6 +1414,23 @@ async def main():
               document.getElementById('chart').data.length > 0])()""" % json.dumps(hostile.rstrip('\n'))) if body else None
             check('  a model text that would close the script and add an image comes through as text: nothing of it runs, no '
                   'image, the two scripts the page has, the comment shown as it is written', inert, [True, 0, 2, True, True])
+            # A groundwater's redox ladder at pH 7, phreeqc.dat's couples: nitrate to nitrogen at the top, carbonate to methane at the
+            # foot, where test-phreeqc.js has them against PHREEQC; the water's limits dashed, the water itself dotted at pe 4.
+            ok = await example('redoxladder', "/turns? over here/.test(document.getElementById('rtmDgNote').textContent)")
+            lad = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              const rungs = d.filter((t) => t.line && t.line.width === 2.4).map((t) => [t.hovertemplate.split(':')[0], t.y[0]])
+                .sort((a, b) => b[1] - a[1]);
+              const want = [11.930, 7.285, 6.135, 4.468, -3.654, -4.047];
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, document.getElementById('rtmDgShow').value,
+                document.getElementById('rtmDgYKind').value, rungs.map(([n]) => n).join(' > '),
+                rungs.length === 6 && rungs.every(([, v], i) => Math.abs(v - want[i]) < 0.005),
+                d.filter((t) => t.line && t.line.dash === 'dash').map((t) => t.y[0].toFixed(2)).join(' '),
+                d.filter((t) => t.line && t.line.dash === 'dot').map((t) => t.y[0].toFixed(2)).join(' '), p.layout.yaxis.title.text]; })()""")
+            check('the redox ladder example opens on its ladder at pH 7: nitrate to nitrogen, to nitrite and to ammonium, ferric to '
+                  'ferrous, sulfate to sulfide and carbonate to methane, each where test-phreeqc.js has phreeqc.dat\'s; O2 and H2 at '
+                  '1 atm dashed, the water itself dotted at pe 4', [ok, lad],
+                  [True, ['diagram', 'ladder', 'pHheld', 'NO3-/N2 > NO3-/NO2- > NO3-/NH4+ > Fe+3/Fe+2 > SO4-2/HS- > CO3-2/CH4', True,
+                          '13.78 -7.00', '4.00', 'pe']])
             # A silicate stability diagram: each phase per mole of aluminium over an activity ratio, quartz and silica dotted.
             ok = await example('silicates', "document.getElementById('rtmChartDg').data"
                                             ".filter((t) => / at saturation$/.test(t.name || '')).length === 2")

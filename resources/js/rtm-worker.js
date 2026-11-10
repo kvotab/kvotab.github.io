@@ -459,7 +459,15 @@ function rtmDiagramSetup(msg) {
   // Volts to a pe, at the cell's temperature as the water is taken.
   const ehPe = RtmModel.ehPerPe((model.temperatures ? model.temperatures(t)[cell] : 25) + 273.15);
   const pHAxis = axes.findIndex((ax) => ax.kind === 'pH');
-  if ((totAxis >= 0 || axes.some((ax) => ax.kind === 'ratio')) && pHAxis < 0 && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
+  // A pH asked for, where nothing varied is the pH: held there, as PHREEQC's SOLUTION holds the pH it is given.
+  if (msg.pHAt !== undefined && msg.pHAt !== null) {
+    if (pHAxis >= 0) throw new Error('The pH is what is varied: it cannot be held as well.');
+    if (!(iH >= 0 && rtmSolute(model, iH))) throw new Error('A pH held is the activity of H+, and the model has no H+ in its water.');
+    if (!Number.isFinite(msg.pHAt)) throw new Error('The pH to hold the water at is a number.');
+    pHHeld = msg.pHAt;
+    held[iH] = true;
+    holds.push({ ax: { kind: 'pH', k: iH }, a: -1 });
+  } else if ((totAxis >= 0 || axes.some((ax) => ax.kind === 'ratio')) && pHAxis < 0 && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
     const g0 = new Float64Array(ns);
     if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
     pHHeld = -(Math.log(base[b + iH]) + g0[iH]) / Math.LN10;
@@ -507,7 +515,7 @@ function rtmDiagramSetup(msg) {
     holds.forEach(({ ax }, h) => { if (ax.kind === 'pH' || ax.kind === 'la' || ax.kind === 'ratio') out[h] = lnG[ax.k]; });
     return out;
   };
-  return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas };
+  return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas, ehPe };
 }
 
 function rtmDiagram(msg, post) {
@@ -552,6 +560,37 @@ function rtmDiagram(msg, post) {
       if (post && Date.now() - lastReport > 250) {
         lastReport = Date.now();
         post({ type: 'progress', id: msg.id, frac: done / npts, done, npts });
+      }
+    }
+  }
+  /*
+    A point that settled neither from the point before it nor from the
+    water itself, tried again from the point after it: the walk back the
+    other way. The walk starts at one end of the range, which may be far
+    from the water -- pe -10 from a water at pe 4, its sulfate and
+    carbonate to be turned into sulfide and methane in one go -- and every
+    point after it then starts from the water too, until one is near enough;
+    from that one back, each is a step from a point settled beside it.
+  */
+  if (failed) {
+    let near = null;
+    for (let jj = 0; jj < n2; jj++) {
+      const j = n2 - 1 - jj;
+      for (let step = 0; step < n1; step++) {
+        const i = j % 2 ? step : n1 - 1 - step;
+        const p = j * n1 + i;
+        if (!Number.isNaN(states[p * ns])) { near = states.subarray(p * ns, (p + 1) * ns); continue; }
+        if (!near) continue;
+        const y = Float64Array.from(base);
+        y.set(near, b);
+        let ok = false;
+        try { ok = settle(y, [axes[0].values[i], axes[1] ? axes[1].values[j] : 0], S.gammas(y)); } catch (e) { ok = false; }
+        if (!ok) continue;
+        states.set(y.subarray(b, b + ns), p * ns);
+        model.quantitiesAt(y, t, cell, which, qOut);
+        quant.set(qOut, p * nq);
+        near = states.subarray(p * ns, (p + 1) * ns);
+        failed--;
       }
     }
   }
@@ -653,6 +692,108 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     return { labelOf, disc, n: per ? none : none + 1 };
   }
   throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance or phase.`);
+}
+
+/*
+  A REDOX LADDER: where each of the model's couples turns over at a pH --
+  the pe, or the Eh, at which the water holds as much of the element in the
+  couple's oxidised state as in its reduced one, the two states' amounts in
+  the water or in the whole cell -- as the textbooks' ladders place them,
+  but for this water: its totals, its complexes and its activity model.
+  Found along the diagram's pe or Eh at the pH held, between each two
+  neighbouring points whose sign of the log of the one amount over the
+  other differs, by holding the water at points between them and speciating
+  it again: false position, Illinois' way, to 1e-10 in the axis' units, and
+  halving where an amount is none -- a mineral not there yet.
+*/
+function rtmDiagramLadder(msg, post) {
+  const S = rtmDiagramSetup(msg);
+  if (!S) return { type: 'diagramLadder', id: msg.id, missing: true };
+  const { model, base, b, ns, axes, holds, settle, gammas, pHHeld, ehPe } = S;
+  if (axes.length !== 1 || (axes[0].kind !== 'pe' && axes[0].kind !== 'Eh') || pHHeld === null) {
+    throw new Error('A redox ladder is along pe or Eh alone, the pH held.');
+  }
+  const xs = axes[0].values;
+  const n1 = xs.length;
+  const grid = msg.grid;
+  if (!grid || grid.length !== n1 * ns) throw new Error('The points sent are not the diagram\'s.');
+  const couples = msg.couples || [];
+  const amount = (c, terms) => {
+    let s = 0;
+    for (const [k, n] of terms) s += n * Math.max(0, c[k]);
+    return s;
+  };
+  // The log of the oxidised state's amount over the reduced one's: zero where the couple turns over.
+  const disc = (c, cp) => Math.log(amount(c, cp.hi)) - Math.log(amount(c, cp.lo));
+  const y = new Float64Array(base.length);
+  const at = (v, near) => {
+    for (const start of near ? [near, null] : [null]) {
+      y.set(base);
+      if (start) y.set(start, b);
+      const lnGamma = start ? gammas(y) : holds.map(() => 0);
+      let ok = false;
+      try { ok = settle(y, [v], lnGamma); } catch (e) { ok = false; }
+      if (ok) return y.slice(b, b + ns);
+    }
+    return null;
+  };
+  let unsolved = 0;
+  let lastReport = Date.now();
+  const rungs = couples.map((cp, q) => {
+    const g = Array.from({ length: n1 }, (_, i) => disc(grid.subarray(i * ns, (i + 1) * ns), cp));
+    const roots = [];
+    for (let i = 0; i + 1 < n1; i++) {
+      let gLo = g[i];
+      let gHi = g[i + 1];
+      if (Number.isNaN(gLo) || Number.isNaN(gHi) || gLo === gHi || Math.sign(gLo) === Math.sign(gHi)) continue;
+      if (gLo === 0) { roots.push(xs[i]); continue; }
+      let lo = xs[i];
+      let hi = xs[i + 1];
+      let cLo = grid.subarray(i * ns, (i + 1) * ns);
+      let cHi = grid.subarray((i + 1) * ns, (i + 2) * ns);
+      const up = gLo < 0;
+      let side = 0;
+      let solved = true;
+      for (let it = 0; it < 200 && Math.abs(hi - lo) > RTM_BOUND_TOL; it++) {
+        let v = (lo + hi) / 2;
+        if (Number.isFinite(gLo) && Number.isFinite(gHi)) {
+          const f = lo + (hi - lo) * (gLo / (gLo - gHi));
+          if (f > Math.min(lo, hi) && f < Math.max(lo, hi)) v = f;
+        }
+        const c = at(v, Math.abs(v - lo) <= Math.abs(hi - v) ? cLo : cHi);
+        if (!c) { solved = false; break; }
+        const gv = disc(c, cp);
+        if (Number.isNaN(gv)) { solved = false; break; }
+        // Illinois: an end kept twice running has its difference halved, so that both ends close in.
+        if ((gv < 0) === up) {
+          lo = v; cLo = c; gLo = gv;
+          if (side === 1) gHi /= 2;
+          side = 1;
+        } else {
+          hi = v; cHi = c; gHi = gv;
+          if (side === -1) gLo /= 2;
+          side = -1;
+        }
+        if (gv === 0) { lo = v; hi = v; }
+      }
+      if (!solved) unsolved++;
+      roots.push((lo + hi) / 2);
+    }
+    if (post && Date.now() - lastReport > 250) {
+      lastReport = Date.now();
+      post({ type: 'progress', id: msg.id, frac: (q + 1) / couples.length, done: q + 1, npts: couples.length });
+    }
+    // Where it does not turn over in the range: its sign at either end -- above it, below it, or none of the element.
+    const finite = g.filter((v) => !Number.isNaN(v));
+    return { roots, first: finite.length ? finite[0] : null, last: finite.length ? finite[finite.length - 1] : null };
+  });
+  // The water's own pe, and its pH, where it has an electron and an H+.
+  const iH = model.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  if (model.act) RtmModel.activityAt(model.act, base, b, lnG, new Float64Array(ns), S.cell);
+  const waterPe = model.electron >= 0 && base[b + model.electron] > 0 ? -Math.log10(base[b + model.electron]) : null;
+  const waterPH = iH >= 0 && base[b + iH] > 0 ? -(Math.log(base[b + iH]) + lnG[iH]) / Math.LN10 : null;
+  return { type: 'diagramLadder', id: msg.id, rungs, unsolved, pHHeld, ehPe, waterPe, waterPH };
 }
 
 function rtmDiagramBounds(msg, post) {
@@ -1477,6 +1618,14 @@ function handleRtmMessage(msg, post) {
     try {
       const reply = rtmDiagramBounds(msg, post);
       post(reply, reply.labels ? [reply.labels.buffer] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'diagramLadder') {
+    try {
+      post(rtmDiagramLadder(msg, post));
     } catch (e) {
       post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
     }

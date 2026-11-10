@@ -7476,6 +7476,90 @@ Ca+2 + 2 X- <=> CaX2,              logK = 0.8
   listOf(cm.composition.sulfate) === 'CaSO4*1 SO4-2*1'
     && listOf(cm.composition.carbonate) === 'CO3-2*2 CaCO3*2 CaHCO3+*1 HCO3-*1',
   `${listOf(cm.composition.sulfate)} | ${listOf(cm.composition.carbonate)}`);
+  // VALENCE STATES, and the couples a redox ladder places: from a name that is a formula with one element left over, and
+  // from the relations -- a complex its ions', a mineral or a species on an exchanger its ions', a mineral made with the
+  // electron what the electrons it moves leave it.
+  const vm = RtmModel.compile(`
+<SETTINGS>
+MODE = batch
+TEND = 1
+EQUILIBRATE = always
+ACTIVITY = davies
+
+<SPECIES>
+H+  1e-7
+OH- 1e-7
+e-  electron pe=4
+Na+ 1e-3
+Cl- 1e-3
+Ca+2 1e-3
+NO3- 1e-4
+NO2- 0
+N2  0
+NH4+ 0
+SO4-2 1e-3
+HS- 0
+S2O3-2 0
+CO3-2 1e-5
+HCO3- 2e-3
+CH4 0
+Fe+2 1e-5
+Fe+3 0
+Fe(OH)3 0
+Fe(OH)3- 0
+FeSO4 0
+FeHS+ 0
+Mn+2 1e-6
+O2  0
+Pyrolusite 1e-6 mineral
+Pyrite 0 mineral
+Calcite 1e-3 mineral
+X- exchanger 1e-3
+FeX2 exchange
+
+<EQUILIBRIUM>
+ <=> H+ + OH-, logK = -14
+NO3- + 2 H+ + 2 e- <=> NO2- + H2O, logK = 28.570
+2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O, logK = 207.08
+NO3- + 10 H+ + 8 e- <=> NH4+ + 3 H2O, logK = 119.077
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O, logK = 33.65
+2 SO4-2 + 10 H+ + 8 e- <=> S2O3-2 + 5 H2O, logK = 38.014
+CO3-2 + H+ <=> HCO3-, logK = 10.329
+CO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O, logK = 41.071
+Fe+2 <=> Fe+3 + e-, logK = -13.02
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+, logK = -12.56
+Fe+2 + 3 H2O <=> Fe(OH)3- + 3 H+, logK = -31
+Fe+2 + SO4-2 <=> FeSO4, logK = 2.25
+Fe+2 + HS- <=> FeHS+, logK = 5.62
+Pyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O, logK = 41.38
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+Fe+2 + 2 X- <=> FeX2, logK = 0.44
+
+<REACTIONS>
+Pyrite + 3.5 O2 => Fe+2 + 2 SO4-2 + 2 H+, k = 0
+`);
+  const vn = vm.speciesNames;
+  const stateIn = (nm, el) => {
+    const e = vm.composition.elements.find((x) => x.el === el);
+    const tm = e && e.terms.find(([k]) => vn[k] === nm);
+    return tm ? tm[3] : undefined;
+  };
+  const wantStates = [['NO3-', 'N', 5], ['NO2-', 'N', 3], ['N2', 'N', 0], ['NH4+', 'N', -3], ['SO4-2', 'S', 6], ['HS-', 'S', -2],
+    ['S2O3-2', 'S', 2], ['CH4', 'C', -4], ['HCO3-', 'C', 4], ['Fe(OH)3', 'Fe', 3], ['Fe(OH)3-', 'Fe', 2], ['FeSO4', 'Fe', 2],
+    ['FeSO4', 'S', 6], ['FeHS+', 'Fe', 2], ['FeHS+', 'S', -2], ['Pyrolusite', 'Mn', 4], ['Calcite', 'C', 4], ['Calcite', 'Ca', 2],
+    ['FeX2', 'Fe', 2], ['O2', 'O', undefined], ['Pyrite', 'Fe', null], ['Pyrite', 'S', null]];
+  const statesOff = wantStates.filter(([nm, el, s]) => stateIn(nm, el) !== s);
+  check('valence states: from a name that is a formula with one element left over, H +1 and O -2 -- Fe(OH)3- Fe(2), S2O3-2 '
+    + 'S(2), a mean -- and from the relations, a complex its ions\' (FeSO4 Fe(2) and S(6), FeHS+ S(-2)), a mineral and a '
+    + 'species on an exchanger their ions\' (Calcite, FeX2), a mineral made with the electron what it moves leaves it '
+    + '(Pyrolusite Mn(4)); not from a reaction with O2, whose electrons go through the oxygen, which would make Pyrite\'s S '
+    + 'S(6): its Fe and S untold', !statesOff.length,
+  statesOff.map(([nm, el, s]) => `${nm} ${el}: ${stateIn(nm, el)} for ${s}`).join(', '));
+  const coupleList = vm.composition.couples.map((c) => `${c.ox.join('+')}/${c.red.join('+')} ${c.el}(${c.hi})/${c.el}(${c.lo})`).join(', ');
+  check('  the couples: each relation with the electron in it between two valence states, the oxidised first, the water\'s '
+    + 'own (O, H) not among them', coupleList === 'NO3-/NO2- N(5)/N(3), NO3-/N2 N(5)/N(0), NO3-/NH4+ N(5)/N(-3), '
+    + 'SO4-2/HS- S(6)/S(-2), SO4-2/S2O3-2 S(6)/S(2), CO3-2/CH4 C(4)/C(-4), Fe+3/Fe+2 Fe(3)/Fe(2), Pyrolusite/Mn+2 Mn(4)/Mn(2)',
+  coupleList);
   const cc0 = cm.initialState();
   const ci = (n) => cc0[cn.indexOf(n)];
   const twoQ = Int32Array.from(['alk(CO3)', 'tot(SO4)', 'tot(S)'].map((k) => cm.quantities.findIndex((q) => q.key === k)));

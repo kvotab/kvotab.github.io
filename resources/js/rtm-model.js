@@ -2122,13 +2122,46 @@
         }
       }
     }
+    const states = valenceStatesOf(species, nameOf, made, where, relations);
     const byElement = new Map();
     for (let k = 0; k < ns; k++) {
       if (!made[k]) continue;
       for (const [el, n] of made[k]) {
         if (el === 'H' || el === 'O' || !ELEMENT_SYMBOLS.has(el) || !(n > 0)) continue;
         if (!byElement.has(el)) byElement.set(el, []);
-        byElement.get(el).push([k, n, where[k]]);
+        const s = states[k] && states[k].get(el);
+        byElement.get(el).push([k, n, where[k], s === undefined ? null : s]);
+      }
+    }
+    /*
+      THE COUPLES: each relation with the electron in it between two valence
+      states of an element, the database's half-reactions as PHREEQC writes
+      them -- SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O, S(6) and S(-2) -- named by
+      the species of each state the relation has, the oxidised first. Not the
+      water's own, O and H: where it gives way is drawn as itself. The first
+      relation between two states names them.
+    */
+    const couples = [];
+    for (const eq of equilibria) {
+      if (!eq.net.some(([k]) => species[k].electron)) continue;
+      const byState = new Map();
+      for (const [k] of eq.net) {
+        if (!made[k] || species[k].electron) continue;
+        for (const [el, n] of made[k]) {
+          if (el === 'H' || el === 'O' || !ELEMENT_SYMBOLS.has(el) || !(n > 0)) continue;
+          const s = states[k] && states[k].get(el);
+          if (s === undefined) continue;
+          if (!byState.has(el)) byState.set(el, new Map());
+          const m = byState.get(el);
+          if (!m.has(s)) m.set(s, []);
+          if (!m.get(s).includes(nameOf[k])) m.get(s).push(nameOf[k]);
+        }
+      }
+      for (const [el, m] of byState) {
+        if (m.size !== 2) continue;
+        const [hi, lo] = [...m.keys()].sort((a, b) => b - a);
+        if (couples.some((c) => c.el === el && c.hi === hi && c.lo === lo)) continue;
+        couples.push({ el, hi, lo, ox: m.get(hi), red: m.get(lo), line: eq.line });
       }
     }
     const sulfate = [];
@@ -2146,7 +2179,114 @@
       }
     }
     return { elements: [...byElement].sort(([a], [b]) => a.localeCompare(b)).map(([el, terms]) => ({ el, terms })),
-      sulfate, carbonate };
+      sulfate, carbonate, couples };
+  }
+
+  // The elements that are one valence state in every water: the alkalis, the alkaline earths and fluorine.
+  const FIXED_VALENCE = { Li: 1, Na: 1, K: 1, Rb: 1, Cs: 1, Be: 2, Mg: 2, Ca: 2, Sr: 2, Ba: 2, Ra: 2, F: -1 };
+
+  /**
+   * Each species' valence state of each element in it but H and O, as
+   * PHREEQC's Fe(2) and Fe(3) are: a Map of symbol to state for each
+   * species, a state missing where nothing tells it.
+   *
+   * From the name, where it is a formula with one element left over once H
+   * is +1, O -2 -- but nought in H2 and O2 -- and the alkalis, the alkaline
+   * earths and fluorine what they always are: that one is what the charge
+   * leaves it. Fe(OH)2+ Fe(3), HS- S(-2), NH4+ N(-3), CH4 C(-4); a mean
+   * where it is one, S2O3-2 S(2). Then from the relations, again and again
+   * while that tells more: a species whose element the others of a relation
+   * all have takes what balances them -- a complex its ions' states, Fe+2 +
+   * SO4-2 <=> FeSO4 Fe(2) and S(6); a mineral or a species on an exchanger,
+   * whose name tells nothing, its ions' -- and where the relation has the
+   * electron in it, the electrons it moves are that element's when every
+   * other element of the relation is known and balances: Pyrolusite + 4 H+ +
+   * 2 e- <=> Mn+2 + 2 H2O, Mn(4). Not a relation with O2 or H2 in it, whose
+   * electrons go through the water's own oxygen or hydrogen.
+   */
+  function valenceStatesOf(species, nameOf, made, where, relations) {
+    const ns = species.length;
+    const states = species.map(() => null);
+    const isEl = (el) => el !== 'H' && el !== 'O' && ELEMENT_SYMBOLS.has(el);
+    for (let k = 0; k < ns; k++) {
+      if (!made[k] || where[k] === 'mineral') continue;
+      const els = [...made[k]];
+      const m = new Map();
+      states[k] = m;
+      // A site's species, CaX2 or Hfo_wOZn+: what it holds is told by its relation.
+      if (els.some(([el]) => !ELEMENT_SYMBOLS.has(el))) continue;
+      const sp = species[k];
+      let rest = sp.z !== null && sp.z !== undefined ? sp.z : chargeOf(nameOf[k]);
+      const alone = els.length === 1;
+      const unknown = [];
+      for (const [el, n] of els) {
+        if (el === 'H') rest -= alone ? 0 : n;
+        else if (el === 'O') rest += alone ? 0 : 2 * n;
+        else if (FIXED_VALENCE[el] !== undefined) { m.set(el, FIXED_VALENCE[el]); rest -= n * FIXED_VALENCE[el]; }
+        else unknown.push([el, n]);
+      }
+      if (unknown.length === 1 && unknown[0][1] > 0) m.set(unknown[0][0], Math.round((rest / unknown[0][1]) * 1e9) / 1e9);
+    }
+    const stateOf = (k, el) => (states[k] ? states[k].get(el) : undefined);
+    // O2 and H2: a relation with either moves electrons through the water's own O or H, which no balance here sees.
+    const waterRedox = (k) => {
+      const els = made[k] ? [...made[k].keys()] : [];
+      return els.length === 1 && (els[0] === 'O' || (els[0] === 'H' && !chargeOf(nameOf[k])));
+    };
+    for (let pass = 0, moved = true; moved && pass < 20; pass++) {
+      moved = false;
+      for (const terms of relations) {
+        if (terms.some(([k]) => waterRedox(k))) continue;
+        const electrons = terms.reduce((s, [k, nu]) => s + (species[k].electron ? nu : 0), 0);
+        // How far each element's states balance in the relation, where every species with it is known.
+        const balance = (el) => {
+          let r = 0;
+          for (const [k, nu] of terms) {
+            if (!made[k] || !made[k].has(el)) continue;
+            const s = stateOf(k, el);
+            if (s === undefined) return undefined;
+            r += nu * made[k].get(el) * s;
+          }
+          return r;
+        };
+        for (const [u, nuU] of terms) {
+          if (!made[u] || species[u].electron || !nuU) continue;
+          for (const [el, nU] of made[u]) {
+            if (!isEl(el) || !(nU > 0) || stateOf(u, el) !== undefined) continue;
+            let b = 0;
+            let others = 0;
+            for (const [k, nu] of terms) {
+              if (k === u || !made[k] || !made[k].has(el)) continue;
+              const s = stateOf(k, el);
+              if (s === undefined) { others = -1; break; }
+              b += nu * made[k].get(el) * s;
+              others++;
+            }
+            if (!(others > 0)) continue;
+            // The electrons are this element's where every other element of the relation balances on its own.
+            let mine = 0;
+            if (electrons) {
+              let rest = 0;
+              const seen = new Set();
+              for (const [k] of terms) for (const [e2] of (made[k] || [])) if (isEl(e2) && e2 !== el) seen.add(e2);
+              for (const e2 of seen) {
+                const r = balance(e2);
+                if (r === undefined) { rest = NaN; break; }
+                rest += r;
+              }
+              if (!Number.isFinite(rest)) continue;
+              mine = electrons - rest;
+            }
+            const v = (mine - b) / (nuU * nU);
+            if (!Number.isFinite(v)) continue;
+            if (!states[u]) states[u] = new Map();
+            states[u].set(el, Math.round(v * 1e9) / 1e9);
+            moved = true;
+          }
+        }
+      }
+    }
+    return states;
   }
 
   /**

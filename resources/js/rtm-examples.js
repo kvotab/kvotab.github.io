@@ -268,6 +268,39 @@ const RTM_EXAMPLES = [
     }
   },
   {
+    "id": "redoxladder",
+    "group": "Equilibrium diagrams",
+    "label": "A groundwater's redox ladder at pH 7",
+    "about": "A groundwater with nitrogen, sulfate, carbonate and a little iron, phreeqc.dat's couples between their valence states. Run it: the Diagrams tab holds the water at pH 7 and at each pe and draws where each couple turns over — the pe at which the water holds as much of the element in the couple's oxidised state as in its reduced one — as a ladder: nitrate to nitrogen near pe 12, to nitrite and to ammonium near 7 and 6, ferric iron to ferrous near 4.5, sulfate to sulfide and carbonate to methane below −3.5, between where water itself gives way, O₂ above and H₂ below; and the water itself, at pe 4, dotted between iron and sulfate. Eh in place of pe draws the same in volts.",
+    "text": "# The redox ladder of a groundwater: where each of its couples turns over at\n# pH 7, the pe at which the water holds as much of the element in the\n# couple's oxidised state as in its reduced one. Nitrate goes first, to\n# nitrogen near pe 12, then to nitrite and ammonium; ferric iron to ferrous\n# near pe 4.5; sulfate to sulfide and carbonate to methane below -3.5: the\n# order in which a water's oxidants are used up as it grows more reducing.\n# The Diagrams tab holds the water at pH 7 and at each pe, its own totals,\n# complexes and activities kept, and draws the ladder between where water\n# itself gives way, O2 above and H2 below at 1 atm. The water itself is at\n# pe 4: its nitrate gone to nitrogen, its iron ferrous, its sulfate not yet\n# touched. The constants are phreeqc.dat's; the water is made up.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+        2e-7\nOH-       5e-8\ne-        electron  pe=4\nNa+       2e-3\nCa+2      1.5e-3\nCl-       1e-3\nNO3-      0\nNO2-      0\nN2        1e-4\nNH4+      0\nNH3       0\nSO4-2     1e-3\nHSO4-     0\nHS-       0\nH2S       0\nCO3-2     0\nHCO3-     2e-3\nCO2       1e-3\nCH4       0\nCaHCO3+   0\nCaSO4     0\nFe+2      1e-5\nFeOH+     0\nFe+3      0\nFeOH+2    0\nFe(OH)2+  0\nFe(OH)3   0\nFe(OH)4-  0\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-,                       logK = -14\nNO3- + 2 H+ + 2 e- <=> NO2- + H2O,      logK = 28.57\n2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O,  logK = 207.08\nNO3- + 10 H+ + 8 e- <=> NH4+ + 3 H2O,   logK = 119.077\nNH4+ <=> NH3 + H+,                      logK = -9.252\nSO4-2 + H+ <=> HSO4-,                   logK = 1.988\nSO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O,    logK = 33.65\nHS- + H+ <=> H2S,                       logK = 6.994\nCO3-2 + H+ <=> HCO3-,                   logK = 10.329\nCO3-2 + 2 H+ <=> CO2 + H2O,             logK = 16.681\nCO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O,   logK = 41.071\nCa+2 + CO3-2 + H+ <=> CaHCO3+,          logK = 10.91\nCa+2 + SO4-2 <=> CaSO4,                 logK = 2.25\nFe+2 + H2O <=> FeOH+ + H+,              logK = -9.5\nFe+2 <=> Fe+3 + e-,                     logK = -13.02\nFe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "pe",
+          "sp": "",
+          "from": "-8",
+          "to": "15",
+          "n": "231"
+        },
+        "y": {
+          "kind": "pHheld",
+          "sp": "",
+          "from": "7",
+          "to": "",
+          "n": "41"
+        },
+        "show": "ladder",
+        "el": "",
+        "in": "water",
+        "q": "pH"
+      }
+    }
+  },
+  {
     "id": "stability",
     "group": "Equilibrium diagrams",
     "label": "Calcite or gypsum: a mineral stability diagram",

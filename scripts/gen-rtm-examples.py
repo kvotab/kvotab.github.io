@@ -1551,6 +1551,86 @@ Nuclide => , k = 0.023104906, on = inventory
 ))
 
 
+_after('pourbaix', dict(
+    id='redoxladder',
+    group='Equilibrium diagrams',
+    label="A groundwater's redox ladder at pH 7",
+    about="A groundwater with nitrogen, sulfate, carbonate and a little iron, phreeqc.dat's couples between their valence states. Run it: the Diagrams tab holds the water at pH 7 and at each pe and draws where each couple turns over — the pe at which the water holds as much of the element in the couple's oxidised state as in its reduced one — as a ladder: nitrate to nitrogen near pe 12, to nitrite and to ammonium near 7 and 6, ferric iron to ferrous near 4.5, sulfate to sulfide and carbonate to methane below −3.5, between where water itself gives way, O₂ above and H₂ below; and the water itself, at pe 4, dotted between iron and sulfate. Eh in place of pe draws the same in volts.",
+    text='''# The redox ladder of a groundwater: where each of its couples turns over at
+# pH 7, the pe at which the water holds as much of the element in the
+# couple's oxidised state as in its reduced one. Nitrate goes first, to
+# nitrogen near pe 12, then to nitrite and ammonium; ferric iron to ferrous
+# near pe 4.5; sulfate to sulfide and carbonate to methane below -3.5: the
+# order in which a water's oxidants are used up as it grows more reducing.
+# The Diagrams tab holds the water at pH 7 and at each pe, its own totals,
+# complexes and activities kept, and draws the ladder between where water
+# itself gives way, O2 above and H2 below at 1 atm. The water itself is at
+# pe 4: its nitrate gone to nitrogen, its iron ferrous, its sulfate not yet
+# touched. The constants are phreeqc.dat's; the water is made up.
+
+<SETTINGS>
+MODE = batch
+TEND = 1
+ACTIVITY = davies
+EQUILIBRATE = always
+
+<SPECIES>
+H+        2e-7
+OH-       5e-8
+e-        electron  pe=4
+Na+       2e-3
+Ca+2      1.5e-3
+Cl-       1e-3
+NO3-      0
+NO2-      0
+N2        1e-4
+NH4+      0
+NH3       0
+SO4-2     1e-3
+HSO4-     0
+HS-       0
+H2S       0
+CO3-2     0
+HCO3-     2e-3
+CO2       1e-3
+CH4       0
+CaHCO3+   0
+CaSO4     0
+Fe+2      1e-5
+FeOH+     0
+Fe+3      0
+FeOH+2    0
+Fe(OH)2+  0
+Fe(OH)3   0
+Fe(OH)4-  0
+
+<EQUILIBRIUM>
+H2O <=> H+ + OH-,                       logK = -14
+NO3- + 2 H+ + 2 e- <=> NO2- + H2O,      logK = 28.57
+2 NO3- + 12 H+ + 10 e- <=> N2 + 6 H2O,  logK = 207.08
+NO3- + 10 H+ + 8 e- <=> NH4+ + 3 H2O,   logK = 119.077
+NH4+ <=> NH3 + H+,                      logK = -9.252
+SO4-2 + H+ <=> HSO4-,                   logK = 1.988
+SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O,    logK = 33.65
+HS- + H+ <=> H2S,                       logK = 6.994
+CO3-2 + H+ <=> HCO3-,                   logK = 10.329
+CO3-2 + 2 H+ <=> CO2 + H2O,             logK = 16.681
+CO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O,   logK = 41.071
+Ca+2 + CO3-2 + H+ <=> CaHCO3+,          logK = 10.91
+Ca+2 + SO4-2 <=> CaSO4,                 logK = 2.25
+Fe+2 + H2O <=> FeOH+ + H+,              logK = -9.5
+Fe+2 <=> Fe+3 + e-,                     logK = -13.02
+Fe+3 + H2O <=> FeOH+2 + H+,             logK = -2.19
+Fe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,       logK = -5.67
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,        logK = -12.56
+Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,       logK = -21.6
+''',
+    view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pe', 'sp': '', 'from': '-8', 'to': '15', 'n': '231'},
+                                               'y': {'kind': 'pHheld', 'sp': '', 'from': '7', 'to': '', 'n': '41'}, 'show': 'ladder',
+                                               'el': '', 'in': 'water', 'q': 'pH'}},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 
