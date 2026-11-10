@@ -28,9 +28,12 @@
   border-right: 1px solid var(--border-color);
   background: var(--bg-surface);
 }
-.rtm-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px; }
+/* Both keep a scrollbar's gutter, so that the (i)s of the panel and of its foot end at the same line. */
+.rtm-side-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 0 14px 10px; scrollbar-gutter: stable; }
 .rtm-side-foot {
   flex: 0 0 auto;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
   padding: 8px 14px 10px;
   border-top: 1px solid var(--border-color);
   background: var(--bg-secondary);
@@ -141,6 +144,13 @@
 
 /* ---- buttons ------------------------------------------------------------ */
 .rtm-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 0 0 6px; }
+/* Keep this run, and which kept run is drawn beside the next. */
+.rtm-keep { align-items: center; font-size: 12px; }
+.rtm-keep label { display: inline-flex; align-items: center; gap: 4px; }
+.rtm-keep label[hidden] { display: none; }
+.rtm-keep select { max-width: 150px; }
+/* Its (i) at the panel's right, as every other (i) of the panel is. */
+.rtm-keep .kvot-info-slot { margin-left: auto; }
 .rtm-btn {
   padding: 5px 14px;
   border: 1px solid transparent;

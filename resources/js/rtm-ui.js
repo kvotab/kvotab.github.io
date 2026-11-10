@@ -719,6 +719,7 @@
     // A look at the run before this one, through PHREEQC, stays on its tab and says which run it is.
     runNumber++;
     renderFacts();
+    renderBeside();
     infoRefresh();
     renderSeriesList();
     renderCells();
@@ -1010,51 +1011,61 @@
   }
 
   /*
-    The quantities of the run on show, worked out in the worker from the
-    model and the stored concentrations it kept, and kept here: key|cell ->
-    the value at every stored point, cell counted as the model counts its
-    cells, rock layers included.
+    The quantities of a run, worked out in the worker from the model and the
+    stored concentrations it kept, and kept here: key|cell -> the value at
+    every stored point, cell counted as the model counts its cells, rock
+    layers included. The run on show has its own, and each run kept to draw
+    beside the next (keptRuns) its own: the worker keeps only the run it
+    made last, and works a kept run's out again from its numbers, sent with
+    the question.
   */
-  let qCache = new Map();
-  let qCacheRun = null;
-  const qAsked = new Set();
-  const qFailed = new Set();
-  function quantityCache() {
-    if (qCacheRun !== state.result) { qCache = new Map(); qCacheRun = state.result; qAsked.clear(); qFailed.clear(); }
-    return qCache;
+  const current = { r: null, cache: new Map(), asked: new Set(), failed: new Set() };
+  /** Where a run's quantities are kept: the run on show's, a kept run's, or null. */
+  function holderOf(r) {
+    if (r && r === state.result) {
+      if (current.r !== r) { current.r = r; current.cache = new Map(); current.asked = new Set(); current.failed = new Set(); }
+      return current;
+    }
+    return keptRuns.find((k) => k.r === r) || null;
   }
-  /** Whether a quantity in a model cell is still to come: neither kept nor given up on. */
-  const quantityPending = (key, cell) => !quantityCache().has(`${key}|${cell}`) && !qFailed.has(`${key}|${cell}`);
+  function quantityCache() { return holderOf(state.result).cache; }
+  /** Whether a quantity in a model cell of run r is still to come: neither kept nor given up on. */
+  const quantityPending = (key, cell, r = state.result) => {
+    const h = holderOf(r);
+    return !!h && !h.cache.has(`${key}|${cell}`) && !h.failed.has(`${key}|${cell}`);
+  };
 
-  /** A quantity's values in model cell `cell`, or null until worked out (fetchQuantities). */
-  function quantitySeries(key, cell) {
-    return quantityCache().get(`${key}|${cell}`) || null;
+  /** A quantity's values in model cell `cell` of run r, or null until worked out (fetchQuantities). */
+  function quantitySeries(key, cell, r = state.result) {
+    const h = holderOf(r);
+    return (h && h.cache.get(`${key}|${cell}`)) || null;
   }
 
   /**
    * Has the worker work out the quantities `keys` in model cells `cells` at
-   * every stored point of the run, unless they are kept or asked for
-   * already, and draws the charts again once they come. A worker started
-   * again since the run has lost it, and the run is sent with the question.
-   * One that fails is not asked again for this run: the status says why.
+   * every stored point of run r, unless they are kept or asked for already,
+   * and draws the charts again once they come. A worker that has made a run
+   * since -- or been started again -- has let it go, and the run is sent
+   * with the question. One that fails is not asked again for this run: the
+   * status says why.
    */
-  async function fetchQuantities(keys, cells) {
-    const r = state.result;
-    if (!r || !keys.length || !cells.length) return;
-    const cache = quantityCache();
+  async function fetchQuantities(keys, cells, r = state.result) {
+    const h = r && holderOf(r);
+    if (!h || !keys.length || !cells.length) return;
+    const cache = h.cache;
     const want = [];
-    for (const k of keys) for (const c of cells) if (!cache.has(`${k}|${c}`) && !qAsked.has(`${k}|${c}`)) want.push([k, c]);
+    for (const k of keys) for (const c of cells) if (!cache.has(`${k}|${c}`) && !h.asked.has(`${k}|${c}`)) want.push([k, c]);
     if (!want.length) return;
-    want.forEach(([k, c]) => qAsked.add(`${k}|${c}`));
+    want.forEach(([k, c]) => h.asked.add(`${k}|${c}`));
     const wk = [...new Set(want.map(([k]) => k))];
     const wc = [...new Set(want.map(([, c]) => c))];
+    const text = h === current ? ((state.ran && state.ran.text) || state.text) : h.text;
     const ask = (withRun) => request({ type: 'quantities', runKey: r.runKey, keys: wk, cells: wc,
-      ...(withRun ? { text: (state.ran && state.ran.text) || state.text, t: Float64Array.from(r.t),
-        states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
     try {
       let reply = await ask(false);
       if (reply.missing) reply = await ask(true);
-      if (qCacheRun !== r) return;
+      if (holderOf(r) !== h) return;
       const nc = reply.cells.length;
       reply.keys.forEach((k, q) => reply.cells.forEach((c, j) => {
         cache.set(`${k}|${c}`, reply.values.subarray((q * nc + j) * reply.n, (q * nc + j + 1) * reply.n));
@@ -1064,14 +1075,87 @@
       drawGradient();
       drawComp();
     } catch (e) {
-      want.forEach(([k, c]) => qFailed.add(`${k}|${c}`));
-      setStatus(`Could not work out ${wk.map(labelOf).join(', ')}: ${e.message}`, 'error');
+      want.forEach(([k, c]) => h.failed.add(`${k}|${c}`));
+      setStatus(`Could not work out ${wk.map(labelOf).join(', ')}${h === current ? '' : ` for the run ${h.label}`}: ${e.message}`, 'error');
     }
   }
 
-  /** The model cell a chart's cell and layer are: the fracture cell, then its rock layers. */
-  const modelCell = (cell, layer) => {
+  /*
+    THE RUNS KEPT to draw beside the next (Keep this run), as Kompartment
+    keeps its runs: up to four, each with the text it was made with, its
+    numbers and its summary -- its own species, cells and time unit -- and
+    its quantities as they are worked out for it. The one chosen is drawn
+    beside the run on show, dashed in the same colours, on Against time,
+    Against distance, Gradient and Composition, wherever it has the same
+    species or quantity and the cell; the notes say where it has not. A run
+    kept outlives the model it was made with: comparing two models is what
+    it is for.
+  */
+  const KEPT_MOST = 4;
+  const keptRuns = [];
+  let besideId = null;
+  let keptCount = 0;
+  /** The kept run drawn beside the run on show, or null: none chosen, or the run on show itself. */
+  function besideRun() {
+    const k = keptRuns.find((x) => x.id === besideId) || null;
+    return k && k.r !== state.result ? k : null;
+  }
+  /** Whether run r has species or quantity `name`. */
+  const runHas = (r, name) => r.model.species.includes(name) || (r.model.quantities || []).some((q) => q.key === name);
+  const runQuantity = (r, name) => !r.model.species.includes(name) && (r.model.quantities || []).some((q) => q.key === name);
+  /** Run r's stored times in the unit of the run on show. */
+  function besideTimes(k) {
+    const own = (k.r.model.timeUnit && k.r.model.timeUnit.seconds) || 1;
+    const here = timeUnit().seconds || 1;
+    if (!k.times || k.timesIn !== here) { k.times = Float64Array.from(k.r.t, (t) => (t * own) / here); k.timesIn = here; }
+    return k.times;
+  }
+
+  function keepRun() {
     const r = state.result;
+    if (!r) { setStatus('Run the model first: there is no run to keep.', 'error'); return; }
+    const already = keptRuns.find((k) => k.r === r);
+    if (already) { setStatus(`This run is kept already, ${already.label}.`, 'warn'); return; }
+    const now = new Date();
+    const two = (v) => String(v).padStart(2, '0');
+    let label = `kept at ${two(now.getHours())}:${two(now.getMinutes())}`;
+    if (keptRuns.some((k) => k.label === label)) label += `:${two(now.getSeconds())}`;
+    const k = { id: ++keptCount, label, r, text: (state.ran && state.ran.text) || state.text, stem: fileStem(),
+      cache: new Map(current.r === r ? current.cache : []), asked: new Set(), failed: new Set() };
+    keptRuns.push(k);
+    const gone = keptRuns.length > KEPT_MOST ? keptRuns.shift() : null;
+    besideId = k.id;
+    renderBeside();
+    setStatus(`This run is kept, ${label}: change the model or its settings and run again, and it is drawn beside the next`
+      + `${gone ? `; ${gone.label} is let go, ${KEPT_MOST} runs being kept at most` : ''}.`, 'ok');
+  }
+
+  function renderBeside() {
+    $('rtmKeep').disabled = !state.result;
+    $('rtmBesideWrap').hidden = !keptRuns.length;
+    if (besideId !== null && !keptRuns.some((k) => k.id === besideId)) besideId = null;
+    $('rtmBeside').innerHTML = `<option value="">nothing</option>${keptRuns.map((k) => `<option value="${k.id}"`
+      + `${k.id === besideId ? ' selected' : ''}>${esc(k.label)}${k.stem !== 'rtm' ? `, ${esc(k.stem.replace(/^rtm_/, ''))}` : ''}</option>`).join('')}`;
+  }
+
+  /** Why the kept run k has nothing to draw of `name` at a chart's cell and layer, or '' where it has. */
+  function besideWhy(k, name, cell, layer) {
+    const m = k.r.model;
+    if (!runHas(k.r, name)) return `it has no ${labelOf(name)}`;
+    if (isFace(cell)) return m.faces && m.faces[cell] ? '' : `it has no ${cell} end`;
+    const cells = m.fracture || 1;
+    if (!(cell < cells)) return `it has ${cells} cell${cells === 1 ? '' : 's'}`;
+    if (layer > 0 && !(layer < (m.stride || 1))) return 'it has no rock matrix';
+    return '';
+  }
+
+  /** What a chart's note says of the run beside: what of it is drawn, or why not. */
+  function besideNote(k, why) {
+    return why ? `${k.label} not beside it: ${why}` : `dashed, the run ${k.label}`;
+  }
+
+  /** The model cell a chart's cell and layer are: the fracture cell, then its rock layers. */
+  const modelCell = (cell, layer, r = state.result) => {
     const stride = (r && r.model.stride) || 1;
     return cell * stride + Math.min(layer, stride - 1);
   };
@@ -1196,10 +1280,9 @@
    * end of the column, what crosses it: the model's own sum over the states
    * beside that end, worked out at each stored point.
    */
-  function series(name, cell, layer = state.layer) {
-    const r = state.result;
+  function series(name, cell, layer = state.layer, r = state.result) {
     // A quantity: as the worker worked it out, or null until it has (fetchQuantities). An end has none.
-    if (isQuantity(name)) return isFace(cell) ? null : quantitySeries(name, modelCell(cell, layer));
+    if (runQuantity(r, name)) return isFace(cell) ? null : quantitySeries(name, modelCell(cell, layer, r), r);
     const ns = r.model.nspecies;
     const si = r.model.species.indexOf(name);
     if (si < 0) return null;
@@ -1247,8 +1330,39 @@
     const skipped = [];
     // Each key its colour, its measured points the same: Plotly's own ten, in the order picked.
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    // The kept run beside it: the same keys at the same cell, dashed in the same colours, its times in this run's unit.
+    const bk = besideRun();
+    const besideLeft = [];
+    const besideComing = [];
+    const besideTraces = [];
     for (const [pickIndex, nm] of state.picked.entries()) {
       const color = palette[pickIndex % palette.length];
+      if (bk) {
+        const why = besideWhy(bk, nm, state.cell, state.layer);
+        const mcK = face ? null : modelCell(state.cell, state.layer, bk.r);
+        if (why) besideLeft.push(why);
+        else if (runQuantity(bk.r, nm) && !face && quantityPending(nm, mcK, bk.r)) {
+          fetchQuantities([nm], [mcK], bk.r);
+          besideComing.push(labelOf(nm));
+        } else {
+          const ky = series(nm, state.cell, state.layer, bk.r);
+          const kt = besideTimes(bk);
+          const onRightK = axisOf(nm) === 'index';
+          const kx = [];
+          const kv = [];
+          for (let i = 0; ky && i < bk.r.n; i++) {
+            if (logT && !(kt[i] >= tmin && kt[i] > 0)) continue;
+            if (!Number.isFinite(ky[i]) || (logY && !onRightK && !(ky[i] > 0))) continue;
+            kx.push(kt[i]);
+            kv.push(ky[i]);
+          }
+          if (kx.length && onRightK && !right.includes(labelOf(nm))) right.push(labelOf(nm));
+          if (kx.length) {
+            besideTraces.push({ name: `${labelOf(nm)}, ${bk.label}`, x: kx, y: kv, mode: 'lines', type: 'scatter',
+              line: { color, dash: 'dash', width: 1.6 }, ...(onRightK ? { yaxis: 'y2' } : {}) });
+          }
+        }
+      }
       const y = series(nm, state.cell);
       if (!y) { if (face && isQuantity(nm)) skipped.push(labelOf(nm)); continue; }
       // An amount goes on the left with the species, log or not; pH, SI and the like on the right, linear.
@@ -1263,7 +1377,7 @@
         xs.push(t);
         ys.push(v);
       }
-      if (onRight) right.push(labelOf(nm));
+      if (onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
       if (xs.length) {
         traces.push({ name: labelOf(nm), x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
           ...(onRight ? { yaxis: 'y2' } : {}) });
@@ -1277,6 +1391,8 @@
         }
       }
     }
+    traces.push(...besideTraces);
+    const besideDrawn = besideTraces.length;
     const layout = baseLayout();
     layout.xaxis.type = logT ? 'log' : 'linear';
     layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
@@ -1292,7 +1408,9 @@
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     $('rtmTimeNote').textContent = [missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
-      skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : ''].filter(Boolean).join('; ');
+      skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : '',
+      bk && besideDrawn ? besideNote(bk) : '', bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
+      bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : ''].filter(Boolean).join('; ');
   }
 
   function drawProfile() {
@@ -1359,11 +1477,56 @@
         picks.push(idx);
       }
     }
-    const traces = picks.map((i) => {
+    // Each time its colour, Plotly's own order, so that the kept run's profile at it is drawn in the same.
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const traces = picks.map((i, q) => {
       const y = [];
       for (let k = 0; k < npts; k++) y.push(valueAt(i, k));
-      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter' };
+      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color: palette[q % palette.length] } };
     });
+    /*
+      The kept run beside it: at each time drawn, its stored time nearest,
+      along its own cells -- or into the rock behind its cell -- dashed in
+      the same colour; a time past its end is not drawn.
+    */
+    const bk = besideRun();
+    let besideSaid = '';
+    if (bk) {
+      const kr = bk.r;
+      const km = kr.model;
+      const kStride = km.stride || 1;
+      const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
+        : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
+          : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}` : '';
+      if (why) besideSaid = besideNote(bk, why);
+      else {
+        const kAtCell = across ? Math.min(state.profileLayer, km.fracture - 1) : 0;
+        const kx = across ? [0, ...km.matrix.depth] : km.centres;
+        const kn = across ? km.matrix.n + 1 : km.fracture;
+        const kCellAt = (k) => (across ? kAtCell * kStride + k : k * kStride + layer);
+        const kQuantity = runQuantity(kr, name);
+        const kCells = Array.from({ length: kn }, (_, k) => kCellAt(k));
+        const ksi = km.species.indexOf(name);
+        if (kQuantity && kCells.some((c) => quantityPending(name, c, kr))) {
+          fetchQuantities([name], kCells, kr);
+          besideSaid = `working out ${labelOf(name)} for ${bk.label}…`;
+        } else {
+          const kt = besideTimes(bk);
+          const pastIt = [];
+          picks.forEach((i, q) => {
+            if (r.t[i] > kt[kr.n - 1] * 1.000001) { pastIt.push(fmtTime(r.t[i])); return; }
+            const j = nearestIndex(kt, r.t[i]);
+            const y = [];
+            for (let k = 0; k < kn; k++) {
+              y.push(kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi]);
+            }
+            traces.push({ name: `${fmtTime(r.t[i])}, ${bk.label}`, x: kx, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter',
+              line: { color: palette[q % palette.length], dash: 'dash', width: 1.6 } });
+          });
+          besideSaid = [besideNote(bk), pastIt.length ? `${pastIt.join(', ')} past its end` : ''].filter(Boolean).join(', ');
+        }
+      }
+    }
     // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says.
     if (!across) {
       for (const d of measured('distance', name)) {
@@ -1398,6 +1561,7 @@
       });
       if (off.length) bits.push(`nearest stored time used for ${off.map(fmtTime).join(', ')}`);
     }
+    if (besideSaid) bits.push(besideSaid);
     $('rtmProfileNote').textContent = bits.join('; ');
   }
 
@@ -1528,7 +1692,69 @@
         zaxis: ax(logC ? `log₁₀ ${title}` : title, 'linear'), camera: { eye: { x: -1.6, y: -1.6, z: 1.0 } } };
       layout.margin = { l: 0, r: 0, t: 10, b: 0 };
     }
-    Plotly.react(plot, [trace], layout, PLOT_CONFIG);
+    /*
+      The kept run beside it: its own map, its cells and its stored times --
+      in this run's unit -- under this run's, or beside it as a second
+      surface, on one colour scale from the lowest of the two to the
+      highest.
+    */
+    const bk = besideRun();
+    const traces = [trace];
+    let besideSaid = '';
+    if (bk) {
+      const kr = bk.r;
+      const km = kr.model;
+      const kStride = km.stride || 1;
+      const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
+        : gl > 0 && !(gl < kStride) ? `it has no rock layer ${gl}` : '';
+      const kCells = why ? [] : Array.from({ length: km.fracture }, (_, c) => c * kStride + gl);
+      const kQuantity = !why && runQuantity(kr, name);
+      if (why) besideSaid = besideNote(bk, why);
+      else if (kQuantity && kCells.some((c) => quantityPending(name, c, kr))) {
+        fetchQuantities([name], kCells, kr);
+        besideSaid = `working out ${labelOf(name)} for ${bk.label}…`;
+      } else {
+        const kt = besideTimes(bk);
+        const ksi = km.species.indexOf(name);
+        const kcols = [];
+        for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) kcols.push(i);
+        const kz = [];
+        for (let c = 0; c < km.fracture; c++) {
+          kz.push(kcols.map((i) => {
+            const v = kQuantity ? (quantitySeries(name, kCells[c], kr) || [])[i] : kr.states[i * kr.width + kCells[c] * km.nspecies + ksi];
+            const u = logC ? (v > 0 ? Math.log10(v) : null) : (Number.isFinite(v) ? v : null);
+            if (u !== null) { lo = Math.min(lo, u); hi = Math.max(hi, u); }
+            return u;
+          }));
+        }
+        const second = { ...trace, x: kcols.map((i) => kt[i]), y: Array.from(km.centres), z: kz, showscale: false,
+          hovertemplate: trace.hovertemplate.replace('<extra></extra>', `<extra>${esc(bk.label)}</extra>`) };
+        const range = Number.isFinite(lo) ? { [view === 'surface' ? 'cmin' : 'zmin']: lo, [view === 'surface' ? 'cmax' : 'zmax']: hi } : {};
+        Object.assign(trace, range);
+        Object.assign(second, range);
+        const note = (text, x, y, xanchor = 'left') => ({ text: esc(text), xref: 'paper', yref: 'paper', x, y, xanchor, yanchor: 'bottom',
+          showarrow: false, font: { size: 11, color: themeColors().text } });
+        if (view === 'surface') {
+          layout.scene.domain = { x: [0, 0.49], y: [0, 1] };
+          layout.scene2 = { ...layout.scene, domain: { x: [0.51, 1], y: [0, 1] } };
+          second.scene = 'scene2';
+          layout.annotations = [note('this run', 0.02, 0.95), note(bk.label, 0.53, 0.95)];
+        } else {
+          layout.yaxis.domain = [0.54, 1];
+          layout.xaxis.anchor = 'y';
+          layout.xaxis2 = { ...layout.xaxis, anchor: 'y2', matches: 'x' };
+          layout.yaxis2 = { ...layout.yaxis, domain: [0, 0.44], anchor: 'x2' };
+          layout.xaxis.title = undefined;
+          layout.margin.t = 24;
+          second.xaxis = 'x2';
+          second.yaxis = 'y2';
+          layout.annotations = [note('this run', 0, 1.0), note(bk.label, 0, 0.445)];
+        }
+        traces.push(second);
+        besideSaid = `${bk.label} beside it, its own map${view === 'surface' ? ' to the right' : ' below'}, on one colour scale`;
+      }
+    }
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
     const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`];
     if (Number.isFinite(lo)) {
       bits.push(logC ? `10^${lo.toFixed(2)} to 10^${hi.toFixed(2)}`
@@ -1538,6 +1764,7 @@
       bits.push(`${r.n - cols.length} earlier points left off (t = 0 cannot go on a log axis)`);
     }
     if (nonPositive) bits.push(`${nonPositive} values at or below zero left blank`);
+    if (besideSaid) bits.push(besideSaid);
     $('rtmGradNote').textContent = bits.join('; ');
   }
 
@@ -1898,9 +2125,58 @@
       : `${npts} cells at ${fmtTime(r.t[atIndex])}${layer ? `, rock layer ${layer}` : ''}`,
     `${E.terms.length} species hold ${E.el} ${where}`];
     if (small.length > 1) bits.push(`${small.length} never come to 1 %, drawn as one band`);
+    const bk = besideRun();
+    if (bk) bits.push(besideNote(bk, 'bands that stack take no second run; the other views draw it'));
     if (along === 'distance' && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes).times[0])
       > 0.01 * Math.abs(r.t[atIndex] || 1)) bits.push('the nearest stored time');
     note.textContent = bits.join('; ');
+  }
+
+  /*
+    The kept run's waters for the waters drawn: on a Piper diagram its own
+    path -- every stored point at the cell, or every cell at its time
+    nearest -- and on the Schoeller and Stiff diagrams, beside each water,
+    the kept run's at the same cell at its time nearest, or at the same cell
+    of the column; null where it has none there. Its own species make its
+    poles; Schoeller and Stiff need its unit to be this run's.
+  */
+  function besideWaters({ r, view, along, layer, cell, atIndex, drawable }) {
+    const k = besideRun();
+    if (!k) return {};
+    const kr = k.r;
+    const km = kr.model;
+    const C = compositionOf(km);
+    const unit = poleUnit(km);
+    const why = !C ? 'it was made before the page could read what its species are made of'
+      : view !== 'piper' && unit.text !== poleUnit(r.model).text ? `its ions are in ${unit.text}, these in ${poleUnit(r.model).text}`
+        : along === 'time' && !(cell < (km.fracture || 1)) ? `it has ${km.fracture || 1} cells`
+          : along !== 'time' && !(km.transport && km.fracture > 1) ? 'it was a batch'
+            : layer > 0 && !(layer < (km.stride || 1)) ? 'it has no rock matrix' : '';
+    if (why) return { said: besideNote(k, why) };
+    const terms = poleTerms(C);
+    const kStride = km.stride || 1;
+    const kt = besideTimes(k);
+    const at = (i, mc, label, extra) => ({ w: waterAt(kr, terms, unit.scale, i, mc), label, ...extra });
+    let waters;
+    if (along === 'time') {
+      const mc = modelCell(cell, layer, kr);
+      if (view === 'piper') {
+        const logT = $('rtmCompLogT').checked;
+        const tmin = Number(state.compTMin) || 0;
+        const idx = [];
+        for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) idx.push(i);
+        const step = Math.max(1, Math.ceil(idx.length / 300));
+        waters = idx.filter((_, j) => j % step === 0 || j === idx.length - 1).map((i) => at(i, mc, fmtTime(kt[i])));
+      } else {
+        waters = drawable.map((wt) => (wt.t > kt[kr.n - 1] * 1.000001 ? null : at(nearestIndex(kt, wt.t), mc, fmtTime(wt.t))));
+      }
+    } else {
+      const j = nearestIndex(kt, r.t[atIndex]);
+      const cells = view === 'piper' ? Array.from({ length: km.fracture }, (_, c) => c) : drawable.map((wt) => wt.cell);
+      waters = cells.map((c) => (c < km.fracture ? at(j, c * kStride + layer, `cell ${c}`) : null));
+    }
+    const drawn = waters.filter(Boolean).length;
+    return { waters, label: k.label, said: drawn ? besideNote(k) : besideNote(k, 'none of its waters is at these times or cells') };
   }
 
   /**
@@ -1953,6 +2229,8 @@
     for (const wt of all) { wt.f = poleShares(wt.w); }
     const drawable = waters.filter((wt) => wt.f);
     if (!drawable.length) { fail('No water here has both cations and anions among the major ions to draw.'); return; }
+    const kept = besideWaters({ r, view, along, layer, cell, atIndex, drawable });
+    if (kept.waters) for (const wt of kept.waters) if (wt) wt.f = poleShares(wt.w);
     const xHead = [`t (${timeUnit().symbol})`, 'cell', 'distance (m)'];
     compTableNow = {
       head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type'],
@@ -1963,7 +2241,7 @@
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     const bits = [];
     if (view === 'piper') {
-      drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c);
+      drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
       const first = drawable[0];
       const last = drawable[drawable.length - 1];
       bits.push(along === 'time'
@@ -1971,17 +2249,70 @@
           + `${drawable.length > 1 ? `, ${faciesOf(last.f)} at ${fmtTime(last.t)}` : ''}`
         : `${where}: ${faciesOf(first.f)} in cell ${first.cell}${drawable.length > 1 ? `, ${faciesOf(last.f)} in cell ${last.cell}` : ''}`);
     } else if (view === 'schoeller') {
-      drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c);
+      drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept);
       bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
     } else {
-      drawStiff(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c);
+      drawStiff(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept);
       bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
     }
     if (measuredHere.length) bits.push(`${measuredHere.length} measured`);
+    if (kept.said) bits.push(kept.said);
     if (missing.length) bits.push(`the model has no ${missing.join(', ')}`);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
     note.textContent = bits.join('; ');
   }
+
+  /*
+    A Composition chart's points of the kept run: along the run at the cell,
+    every stored point after "from", a few hundred at most, or along the
+    column at its stored time nearest -- each pointAt(kr, i, mc) of it, or
+    null. The quantities it reads (needs) are asked of the worker first,
+    where they are still to come.
+  */
+  function besidePoints({ r, along, layer, cell, atIndex }, { needs = [], why: own = '', pointAt }) {
+    const k = besideRun();
+    if (!k) return {};
+    const kr = k.r;
+    const km = kr.model;
+    const lack = needs.filter((key) => !runHas(kr, key));
+    const why = own || (lack.length ? `it has no ${lack.map(labelOf).join(' or ')}`
+      : along === 'time' && !(cell < (km.fracture || 1)) ? `it has ${km.fracture || 1} cells`
+        : along !== 'time' && !(km.transport && km.fracture > 1) ? 'it was a batch'
+          : layer > 0 && !(layer < (km.stride || 1)) ? 'it has no rock matrix' : '');
+    if (why) return { said: besideNote(k, why) };
+    const kStride = km.stride || 1;
+    const cells = along === 'time' ? [modelCell(cell, layer, kr)] : Array.from({ length: km.fracture }, (_, c) => c * kStride + layer);
+    const qk = needs.filter((key) => runQuantity(kr, key));
+    if (cells.some((mc) => qk.some((key) => quantityPending(key, mc, kr)))) {
+      fetchQuantities(qk, cells, kr);
+      return { said: `working out ${qk.map(labelOf).join(', ')} for ${k.label}…` };
+    }
+    const kt = besideTimes(k);
+    const pts = [];
+    if (along === 'time') {
+      const logT = $('rtmCompLogT').checked;
+      const tmin = Number(state.compTMin) || 0;
+      const idx = [];
+      for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) idx.push(i);
+      const step = Math.max(1, Math.ceil(idx.length / 300));
+      for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
+        const pt = pointAt(kr, i, cells[0]);
+        if (pt) pts.push({ ...pt, label: fmtTime(kt[i]), t: kt[i], cell });
+      }
+    } else {
+      const j = nearestIndex(kt, r.t[atIndex]);
+      cells.forEach((mc, c) => {
+        const pt = pointAt(kr, j, mc);
+        if (pt) pts.push({ ...pt, label: `cell ${c}`, t: kt[j], cell: c, x: km.centres[c] });
+      });
+    }
+    return { pts, label: k.label, said: pts.length ? besideNote(k) : besideNote(k, 'none of its waters has these') };
+  }
+
+  /** The kept run's points as a dashed path of open diamonds. */
+  const besideTrace = (kept, x, y, text, c, extra = {}) => ({ type: 'scatter', mode: kept.pts.length > 1 ? 'lines+markers' : 'markers',
+    name: kept.label, x, y, line: { color: c.text, width: 1, dash: 'dash' },
+    marker: { size: 7, symbol: 'diamond-open', color: c.text, line: { width: 1.4 } }, text, hovertemplate: '%{text}<extra></extra>', ...extra });
 
   /*
     THE USSL DIAGRAM of irrigation water (Richards 1954, USDA Handbook 60;
@@ -2075,7 +2406,14 @@
         }
       }
     }
-    const all = [...pts, ...measuredPts];
+    // The kept run beside it: its own conductance and SAR.
+    const kept = besidePoints({ r, along, layer, cell, atIndex }, { needs: ['SC', 'SAR'], pointAt: (kr, i, mc) => {
+      const sc = (quantitySeries('SC', mc, kr) || [])[i];
+      const sar = (quantitySeries('SAR', mc, kr) || [])[i];
+      return sc > 0 && Number.isFinite(sar) ? { sc, sar } : null;
+    } });
+    const keptPts = kept.pts || [];
+    const all = [...pts, ...measuredPts, ...keptPts];
     const lo = Math.min(100, ...all.map((p) => p.sc * 0.8));
     const hi = Math.max(5000, ...all.map((p) => p.sc * 1.25));
     const top = Math.max(32, ...all.map((p) => p.sar * 1.1));
@@ -2094,6 +2432,7 @@
         colorbar: pts.length > 1 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0,
           tickfont: { size: 10 }, len: 0.7 } : undefined },
       text: pts.map(hover), hovertemplate: '%{text}<extra></extra>' });
+    if (keptPts.length) traces.push(besideTrace(kept, keptPts.map((p) => p.sc), keptPts.map((p) => p.sar), keptPts.map(hover), c));
     if (measuredPts.length) {
       traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.sc), y: measuredPts.map((p) => p.sar),
         marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } }, text: measuredPts.map(hover),
@@ -2131,7 +2470,7 @@
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     note.textContent = `${where}: ${usslClass(first.sc, first.sar)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
       + `${pts.length > 1 ? `, ${usslClass(last.sc, last.sar)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
-      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
+      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}${kept.said ? `; ${kept.said}` : ''}`;
   }
 
   /*
@@ -2275,7 +2614,28 @@
         if (pt) measuredPts.push({ ...pt, label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
       }
     }
-    const all = [...pts, ...measuredPts];
+    // The kept run beside it: its own cations, from what its species are made of, where it too is in mol/kgw.
+    const bk = besideRun();
+    let kTerms = null;
+    const kept = besidePoints({ r, along, layer, cell, atIndex }, {
+      why: bk && poleUnit(bk.r.model).scale !== 1000 ? 'its concentrations are not in mol/kgw' : '',
+      pointAt: (kr, i, mc) => {
+        if (!kTerms) {
+          const KC = compositionOf(kr.model);
+          const of = (el) => { const e = KC && KC.elements.find((x) => x.el === el); return e ? e.terms.filter((tm) => tm[2] === 'water') : []; };
+          kTerms = { Ca: of('Ca'), Mg: of('Mg'), Na: of('Na'), K: of('K') };
+        }
+        const base = i * kr.width + mc * kr.model.nspecies;
+        const cw = {};
+        for (const el of ['Ca', 'Mg', 'Na', 'K']) {
+          let sum = 0;
+          for (const [k, n] of kTerms[el]) sum += n * Math.max(0, kr.states[base + k]);
+          cw[el] = 1000 * charge[el] * sum;
+        }
+        return pointOf(cw);
+      } });
+    const keptPts = kept.pts || [];
+    const all = [...pts, ...measuredPts, ...keptPts];
     const right = Math.max(35, ...all.map((p) => p.epm * 1.05));
     const c = themeColors();
     const traces = [];
@@ -2294,6 +2654,7 @@
         colorbar: pts.length > 1 ? { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0,
           tickfont: { size: 10 }, len: 0.7 } : undefined },
       text: pts.map(hover), hovertemplate: '%{text}<extra></extra>' });
+    if (keptPts.length) traces.push(besideTrace(kept, keptPts.map((p) => p.epm), keptPts.map((p) => p.na), keptPts.map(hover), c));
     if (measuredPts.length) {
       traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.epm), y: measuredPts.map((p) => p.na),
         marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } }, text: measuredPts.map(hover),
@@ -2325,7 +2686,9 @@
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     note.textContent = `${where}: ${wilcoxClass(first.epm, first.na)} ${along === 'time' ? 'at the start' : `in cell ${first.cell}`}`
       + `${pts.length > 1 ? `, ${wilcoxClass(last.epm, last.na)} ${along === 'time' ? `at ${fmtTime(last.t)}` : `in cell ${last.cell}`}` : ''}`
-      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`;
+      + `${measuredPts.length ? `; ${measuredPts.length} measured` : ''}`
+      + `${kept.said ? `; ${kept.said}${keptPts.length ? `, ${wilcoxClass(keptPts[keptPts.length - 1].epm, keptPts[keptPts.length - 1].na)} `
+        + `${along === 'time' ? `at ${fmtTime(keptPts[keptPts.length - 1].t)}` : `in cell ${keptPts[keptPts.length - 1].cell}`}` : ''}` : ''}`;
   }
 
   /** The variables of a principal component analysis: as named, or the pH and each element dissolved. */
@@ -2419,6 +2782,15 @@
           label: along === 'time' ? `measured, ${fmtTime(row[0])}` : `measured, ${fmtNumber(row[0])} m` });
       }
     }
+    // The kept run beside it: its waters, every variable of them, put on these components as the measured ones are.
+    const kept = besidePoints({ r, along, layer, cell, atIndex }, { needs: keys, pointAt: (kr, i, mc) => {
+      const row = keys.map((key) => {
+        const si = kr.model.species.indexOf(key);
+        return si >= 0 ? kr.states[i * kr.width + mc * kr.model.nspecies + si] : (quantitySeries(key, mc, kr) || [])[i];
+      });
+      return row.every((v, j) => Number.isFinite(v) && (!logged[j] || v > 0)) ? { s: res.project(shape(row)) } : null;
+    } });
+    const keptPts = kept.pts || [];
     const c = themeColors();
     const X = res.scores.map((sc) => sc[0]);
     const Y = res.scores.map((sc) => sc[1]);
@@ -2429,6 +2801,10 @@
         colorbar: { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0, tickfont: { size: 10 },
           len: 0.7 } },
       text: usable.map((w, i) => hover(w.label, res.scores[i])), hovertemplate: '%{text}<extra></extra>' }];
+    if (keptPts.length) {
+      traces.push(besideTrace(kept, keptPts.map((p) => p.s[0]), keptPts.map((p) => p.s[1]),
+        keptPts.map((p) => hover(`${p.label}, ${kept.label}`, p.s)), c));
+    }
     if (measuredPts.length) {
       traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: measuredPts.map((p) => p.s[0]), y: measuredPts.map((p) => p.s[1]),
         marker: { size: 9, symbol: 'circle-open', color: c.text, line: { width: 1.6 } },
@@ -2436,7 +2812,8 @@
     }
     // Each variable an arrow to its correlations with the two components, drawn to the scores' reach.
     const corr = res.kept.map((j, k) => [res.vectors[k][0] * Math.sqrt(res.values[0]), res.vectors[k][1] * Math.sqrt(res.values[1])]);
-    const reach = Math.max(...X.map(Math.abs), ...Y.map(Math.abs), ...measuredPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]));
+    const reach = Math.max(...X.map(Math.abs), ...Y.map(Math.abs), ...measuredPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]),
+      ...keptPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]));
     const longest = Math.max(...corr.map(([a, b]) => Math.hypot(a, b)));
     const f = longest > 0 && reach > 0 ? (0.85 * reach) / longest : 1;
     const pct = (j) => (100 * res.explained[j]).toFixed(1);
@@ -2470,10 +2847,11 @@
     note.textContent = `${where}: ${usable.length} waters, ${q} variables${dropped.length ? ` (${dropped.join(', ')} the same in every `
       + 'water, left out)' : ''}; PC1 ${pct(0)} % of the variance, PC2 ${pct(1)} %${q > 2 ? `, PC3 ${pct(2)} %` : ''}`
       + `${usable.length < waters.length ? `; ${waters.length - usable.length} waters without every variable left out` : ''}`
-      + `${measuredPts.length ? `; ${measuredPts.length} measured, put on them` : ''}`;
+      + `${measuredPts.length ? `; ${measuredPts.length} measured, put on them` : ''}`
+      + `${kept.said ? `; ${kept.said}${keptPts.length ? ', put on these components' : ''}` : ''}`;
   }
 
-  function drawPiper(plot, waters, measured, colorTitle, c) {
+  function drawPiper(plot, waters, measured, colorTitle, c, kept = {}) {
     const frame = piperFrame(c);
     const traces = [...frame.traces];
     const hover = (wt) => `${esc(wt.label)}<br>${faciesOf(wt.f)}<br>`
@@ -2495,6 +2873,17 @@
         text: waters.map(hover), hovertemplate: '%{text}<extra></extra>',
       });
     });
+    // The kept run's waters: a dashed path of open diamonds.
+    const kw = (kept.waters || []).filter((wt) => wt && wt.f);
+    if (kw.length) {
+      const kp = kw.map((wt) => piperXY(wt.f));
+      panels.forEach((panel, q) => {
+        traces.push({ type: 'scatter', mode: kw.length > 1 ? 'lines+markers' : 'markers', name: kept.label, legendgroup: 'beside',
+          showlegend: q === 0, x: kp.map((pt) => pt[panel][0]), y: kp.map((pt) => pt[panel][1]),
+          line: { color: c.text, width: 1, dash: 'dash' }, marker: { size: 7, symbol: 'diamond-open', color: c.text, line: { width: 1.4 } },
+          text: kw.map(hover), hovertemplate: '%{text}<extra></extra>' });
+      });
+    }
     if (measured.length) {
       const mp = measured.map((wt) => piperXY(wt.f));
       panels.forEach((panel, q) => {
@@ -2515,7 +2904,7 @@
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
-  function drawSchoeller(plot, waters, measured, unit, c) {
+  function drawSchoeller(plot, waters, measured, unit, c, kept = {}) {
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
     const labels = POLES.map((p) => p.label);
     // On a log axis a pole the water has none of is a gap.
@@ -2523,6 +2912,13 @@
     const traces = waters.map((wt, q) => ({ type: 'scatter', mode: 'lines+markers', name: wt.label, x: labels, y: ys(wt),
       line: { color: palette[q % palette.length], width: 1.6 }, marker: { size: 6 },
       hovertemplate: `${esc(wt.label)}: %{x} %{y:.4g} ${esc(unit.text)}<extra></extra>` }));
+    // The kept run's water at each one's time or cell, dashed in its colour.
+    (kept.waters || []).forEach((wt, q) => {
+      if (!wt || q >= waters.length) return;
+      traces.push({ type: 'scatter', mode: 'lines+markers', name: `${wt.label}, ${kept.label}`, x: labels, y: ys(wt),
+        line: { color: palette[q % palette.length], width: 1.4, dash: 'dash' }, marker: { size: 6, symbol: 'diamond-open' },
+        hovertemplate: `${esc(wt.label)}, ${esc(kept.label)}: %{x} %{y:.4g} ${esc(unit.text)}<extra></extra>` });
+    });
     for (const wt of measured) {
       traces.push({ type: 'scatter', mode: 'lines+markers', name: wt.label, x: labels, y: ys(wt),
         line: { color: c.text, width: 1.2, dash: 'dot' }, marker: { size: 8, symbol: 'circle-open', color: c.text },
@@ -2544,13 +2940,14 @@
    * the cations to the left of zero -- Na + K, Ca, Mg from the top -- and
    * the anions to the right -- Cl, HCO3 + CO3, SO4 -- the points joined.
    */
-  function drawStiff(plot, waters, measured, unit, c) {
+  function drawStiff(plot, waters, measured, unit, c, kept = {}) {
     const all = [...waters, ...measured].slice(0, 12);
     const n = all.length;
     const cols = n <= 3 ? n : n <= 4 ? 2 : n <= 6 ? 3 : 4;
     const rows = Math.ceil(n / cols);
     let most = 0;
     for (const wt of all) for (const p of POLES) most = Math.max(most, wt.w[p.key]);
+    for (const wt of kept.waters || []) if (wt) for (const p of POLES) most = Math.max(most, wt.w[p.key]);
     const span = (most || 1) * 1.45;
     const layout = baseLayout();
     layout.hovermode = 'closest';
@@ -2579,6 +2976,16 @@
         text: ['Na + K', 'Cl', 'HCO₃ + CO₃', 'SO₄', 'Mg', 'Ca', 'Na + K'].map((nm, j) => `${esc(wt.label)}<br>${nm} `
           + `${[w.NaK, w.Cl, w.HCO3, w.SO4, w.Mg, w.Ca, w.NaK][j].toPrecision(4)} ${esc(unit.text)}`),
         hovertemplate: '%{text}<extra></extra>' });
+      // The kept run's water at the same time or cell: its outline, dashed.
+      const kw = !wt.measured && kept.waters ? kept.waters[q] : null;
+      if (kw) {
+        const k = kw.w;
+        traces.push({ type: 'scatter', mode: 'lines', xaxis: `x${ax}`, yaxis: `y${ax}`,
+          x: [-k.NaK, k.Cl, k.HCO3, k.SO4, -k.Mg, -k.Ca, -k.NaK], y: [3, 3, 2, 1, 1, 2, 3], line: { color: c.text, width: 1.2, dash: 'dash' },
+          text: ['Na + K', 'Cl', 'HCO₃ + CO₃', 'SO₄', 'Mg', 'Ca', 'Na + K'].map((nm, j) => `${esc(kw.label)}, ${esc(kept.label)}<br>${nm} `
+            + `${[k.NaK, k.Cl, k.HCO3, k.SO4, k.Mg, k.Ca, k.NaK][j].toPrecision(4)} ${esc(unit.text)}`),
+          hovertemplate: '%{text}<extra></extra>' });
+      }
       const ref = (side) => ({ xref: `x${ax} domain`, yref: `y${ax}`, showarrow: false, font: { size: 9, color: c.text },
         x: side ? 1 : 0, xanchor: side ? 'right' : 'left' });
       [['Na + K', 3], ['Ca', 2], ['Mg', 1]].forEach(([t, y]) => layout.annotations.push({ ...ref(0), y, text: t }));
@@ -5278,6 +5685,25 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       ],
     }),
 
+    'run:beside': () => ({
+      kicker: 'Runs', title: 'Keep this run',
+      lead: 'A run kept to draw beside the next: change the model or its settings, run again, and the two are on the same charts.',
+      sections: [
+        { heading: 'Keeping', list: [
+          '**Keep this run**: the run on show, kept with the text it was made with, its species, cells and time unit its own. Four are kept at most, the oldest let go.',
+          '**beside it**: which kept run is drawn beside the one on show, or nothing. A kept run outlives its model: another example, or a file opened since, is drawn beside it as well.',
+        ] },
+        { heading: 'Drawn beside', list: [
+          '**Against time**: each line ticked, of the kept run at the same cell and layer, dashed in the same colour, its times in this run\'s unit.',
+          '**Against distance**: each profile, of the kept run at its stored time nearest, dashed in the same colour along its own cells.',
+          '**Gradient**: the kept run\'s map under this run\'s, on one colour scale.',
+          '**Composition**: its waters beside these on the Piper, Schoeller, Stiff, Wilcox and USSL diagrams and the principal components; not where an element is, whose bands stack.',
+          'Only what the kept run has: the chart\'s note says where it has not the species or quantity, the cell or the rock.',
+        ] },
+      ],
+      more: more('Two runs side by side', 'help-beside'),
+    }),
+
     'pane:time': () => {
       const m = state.compiled;
       const still = m && m.transport ? m.species.filter((_, i) => !m.mobile[i]) : [];
@@ -5716,6 +6142,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     state.result = null;
     state.verify = null;
     anotherModel();
+    renderBeside();
     applyExampleView(e.view || null);
     saveState();
     compile();
@@ -6757,6 +7184,7 @@ END
       state.result = null;
       state.verify = null;
       anotherModel();
+      renderBeside();
       pqReport(pqWaterReport(reply));
       saveState();
       compile();
@@ -7274,6 +7702,14 @@ END
      --------------------------------------------------------------------- */
   registerActions({
     'rtm:run': () => { run(); },
+    'rtm:keepRun': () => keepRun(),
+    'rtm:beside': (ev, el) => {
+      besideId = Number(el.value) || null;
+      drawTime();
+      drawProfile();
+      drawGradient();
+      drawComp();
+    },
     'rtm:stop': () => stop(),
     'rtm:verify': () => { verify(); },
     'rtm:tab': (ev, el) => showTab(el.dataset.tab),

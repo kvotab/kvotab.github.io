@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261109l">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110d">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -195,6 +195,13 @@
             <button type="button" class="rtm-btn" id="rtmRun" data-on-click="rtm:run">Run</button>
             <button type="button" class="rtm-btn secondary" id="rtmStop" data-on-click="rtm:stop" disabled>Stop</button>
             <button type="button" class="rtm-btn secondary small" id="rtmVerify" data-on-click="rtm:verify">Check Jacobian</button>
+          </div>
+          <div class="rtm-actions rtm-keep">
+            <button type="button" class="rtm-btn secondary small" id="rtmKeep" data-on-click="rtm:keepRun" disabled>Keep this run</button>
+            <label id="rtmBesideWrap" hidden>beside it
+              <select id="rtmBeside" data-on-change="rtm:beside"></select>
+            </label>
+            <span class="kvot-info-slot" data-info-key="run:beside"></span>
           </div>
           <div class="rtm-progress" id="rtmProgress" hidden><div class="rtm-progress-fill" id="rtmProgressFill"></div></div>
           <div class="rtm-status" id="rtmStatus">Loading…</div>
@@ -2575,6 +2582,23 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             same runs give the same indices. They want runs: twenty at the least, and a few hundred
             before the intervals narrow.</p>
 
+          <h4 id="help-beside">Two runs side by side</h4>
+          <p><em>Keep this run</em>, under <em>Run</em>, keeps the run on show: its numbers, the text it
+            was made with, and its own species, cells and time unit. Change the model or its settings,
+            run again, and the kept run is drawn beside the new one; <em>beside it</em> chooses which, of
+            four kept at most, the oldest let go when a fifth is. A kept run outlives its model: another
+            example, or a file opened since, is drawn beside it as well. Against time, each line ticked
+            is drawn again for the kept run at the same cell and layer, dashed in the same colour, its
+            times in the new run's unit. Against distance, each profile is drawn again at the kept run's
+            stored time nearest, dashed in the same colour along its own cells, a time past its end left
+            out. On <em>Gradient</em> the kept run's own map goes under the new one's, or beside it as a
+            surface, on one colour scale. On <em>Composition</em> its waters go beside the new run's on
+            the Piper, Schoeller and Stiff diagrams, on the Wilcox and USSL diagrams, and on the principal
+            components, put on the new run's components; not where an element is, whose bands stack. Only
+            what the kept run has is drawn, and each chart's note says where it has not the species or
+            quantity, the cell or the rock, or where its ions are in another unit. Its quantities are
+            worked out again from its numbers when a chart first asks for them, and kept with it.</p>
+
           <h3 id="help-export">Taking the run away with you</h3>
           <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
@@ -3361,6 +3385,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110b"></script>
 </body>
 </html>

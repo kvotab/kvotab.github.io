@@ -1338,6 +1338,86 @@ async def main():
                   'aluminium over log a(H4SiO4) and log a(K+)/a(H+), gibbsite and kaolinite parted at -4.3925, quartz and amorphous '
                   'silica dotted at -3.9804 and -2.7118', [ok, sil],
                   [True, ['diagram', 'log a(K+)/a(H+)', 'Gibbsite K_feldspar K_mica Kaolinite', True, True, True, True, 'stable', 'Al']])
+            # --- a run kept, and the next drawn beside it on the charts of the run ---
+            ok = await example('salinisation', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'composition'"
+                                               " && !document.getElementById('rtmChartComp').hidden")
+            await page.ev("""(() => { const sel = document.getElementById('rtmCell'); sel.value = '19';
+              sel.dispatchEvent(new Event('change', { bubbles: true }));
+              for (const v of ['Na+', 'pH']) {
+                const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+                if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); }
+              } })()""")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).map((t) => t.name).join(' | ')", 'Na+ | pH', tries=60, pause=0.25)
+            first = await page.ev("Object.fromEntries(document.getElementById('rtmChartTime').data.map((t) => [t.name, t.y]))")
+            await page.ev("document.getElementById('rtmKeep').click()")
+            keep = await page.ev("[document.getElementById('rtmBesideWrap').hidden, document.getElementById('rtmBeside').selectedOptions[0].textContent,"
+                                 " /^This run is kept, kept at \\d\\d:\\d\\d/.test(document.getElementById('rtmStatus').textContent)]")
+            label = keep[1].split(',')[0]
+            check('Keep this run: the run kept, chosen to be drawn beside the next, named by the time it was kept and its example',
+                  [keep[0], bool(re.match(r'^kept at \d\d:\d\d(:\d\d)?, salinisation$', keep[1])), keep[2]], [False, True, True])
+            # The next run: the water through twice as fast.
+            await set_text(page, (await page.ev("document.getElementById('rtmText').value")).replace('VELOCITY = 1e-5', 'VELOCITY = 2e-5'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 4, tries=80, pause=0.25)
+            beside = await page.ev("""((label, first) => { const d = document.getElementById('rtmChartTime').data;
+              const of = (n) => d.find((t) => t.name === n);
+              const same = (a, b) => !!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]);
+              const na = of('Na+'), kna = of(`Na+, ${label}`), kph = of(`pH, ${label}`);
+              return [d.map((t) => t.name).join(' | '), same(Array.from(kna.y), first['Na+']), same(Array.from(kph.y), first.pH),
+                kna.line.dash, kna.line.color === na.line.color, kph.yaxis, !same(Array.from(na.y), first['Na+']),
+                document.getElementById('rtmTimeNote').textContent.includes(`dashed, the run ${label}`)]; })(%s, %s)"""
+                % (json.dumps(label), json.dumps(first)))
+            check('  run again, the water twice as fast: against time each line ticked again for the kept run, dashed in its colour, '
+                  'its values the first run\'s to the last digit, pH on its own axis; this run\'s not', beside,
+                  ['Na+ | pH | Na+, %s | pH, %s' % (label, label), True, True, 'dash', True, 'y2', True, True])
+            others = await page.ev("""((label) => { const p = document.getElementById('rtmChartProfile').data || [];
+              const g = document.getElementById('rtmChartGradient').data || [];
+              const piper = (document.getElementById('rtmChartComp').data || []).filter((t) => t.name === label);
+              return [p.filter((t) => t.name.endsWith(`, ${label}`)).length === p.filter((t) => !t.name.includes(', kept at')
+                && !t.name.startsWith('measured')).length && p.some((t) => t.name.endsWith(`, ${label}`)),
+                g.length, g[1] && g[1].xaxis, g.length === 2 && g[0].zmin === g[1].zmin && g[0].zmax === g[1].zmax,
+                piper.length, document.getElementById('rtmCompNote').textContent.includes(`dashed, the run ${label}`)]; })(%s)"""
+                % json.dumps(label))
+            check('  against distance each profile again for it, dashed; on Gradient its own map under this one, on one colour scale; '
+                  'on the Piper diagram its path through all three panels', others, [True, 2, 'x2', True, 3, True])
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            check('  beside it nothing: the run alone again', await page.ev(
+                "document.getElementById('rtmChartTime').data.map((t) => t.name).join(' | ')"), 'Na+ | pH')
+
+            # A run kept in seconds beside one in minutes: its times in minutes, the same decay on the same curve.
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 600\n\n<SPECIES>\nA  1\n\n<REACTIONS>\nA => , r = 0.01*[A]\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="A"]');
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await page.ev("document.getElementById('rtmKeep').click()")
+            label2 = (await page.ev("document.getElementById('rtmBeside').selectedOptions[0].textContent")).split(',')[0]
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTIME_UNIT = minute\nTEND = 10\n\n<SPECIES>\nA  1\n\n<REACTIONS>\nA => , r = 0.6*[A]\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 2, tries=60, pause=0.25)
+            units = await page.ev("""((label) => { const d = document.getElementById('rtmChartTime').data;
+              const a = d.find((t) => t.name === 'A'), k = d.find((t) => t.name === `A, ${label}`);
+              return [d.length, document.getElementById('rtmBeside').options.length, Math.max(...k.x),
+                Math.abs(k.y[k.y.length - 1] / a.y[a.y.length - 1] - 1) < 1e-3,
+                document.getElementById('rtmChartTime').layout.xaxis.title.text]; })(%s)""" % json.dumps(label2))
+            check('  a run kept in seconds beside one in minutes: its times drawn in minutes, 600 s at 10, the same decay to the same '
+                  'end; both kept runs on the menu', units, [2, 3, 10, True, 'time (min)'])
+            # Nothing left behind for what follows: no run beside, no ticks, the first cell -- a click at a time, as a reader
+            # makes them: a chart drawn and cleared in one go throws in Plotly, its legend's margins still to come.
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
+            await asyncio.sleep(0.3)
+            await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '0';"
+                          " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             ok = await example('exchangesweep', "/^4 of 4 runs done/.test(document.getElementById('rtmStatus').textContent)")
             check('the exchange example opens on Sweeps and runs four capacities, a curve each at the outlet against linear time',
                   [ok, await page.ev("(() => { const p = document.getElementById('rtmChartSw');"
