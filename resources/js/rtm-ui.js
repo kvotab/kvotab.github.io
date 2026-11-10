@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110g';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110h';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -49,6 +49,7 @@
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
+    compBudgetOf: '',      // a budget over the run: 'element:Ca' or 'species:X'
     compElement: '',
     compIn: 'water',
     compAs: 'percent',
@@ -110,7 +111,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        compView: state.compView, compBeside: state.compBeside, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
+        compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
         dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
@@ -146,9 +147,10 @@
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
       for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
-      if (['where', 'listing', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'listing', 'budget', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
+      if (typeof s.compBudgetOf === 'string') state.compBudgetOf = s.compBudgetOf;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
       if (s.compAlong === 'time' || s.compAlong === 'distance') state.compAlong = s.compAlong;
@@ -2181,26 +2183,38 @@
     document.querySelectorAll('[data-comp-for]').forEach((el) => { el.hidden = el.dataset.compFor !== view; });
     // The water as PHREEQC lists it: one cell at one time, and no picture to save.
     const listing = view === 'listing';
+    // A budget: of the whole column, along the run; of an element, or of one species.
+    const budget = view === 'budget';
+    {
+      const { els, sp } = budgetChoices(m);
+      if (!state.compBudgetOf || !((state.compBudgetOf.startsWith('element:') && els.includes(state.compBudgetOf.slice(8)))
+        || (state.compBudgetOf.startsWith('species:') && sp.includes(state.compBudgetOf.slice(8))))) {
+        state.compBudgetOf = els.length ? `element:${els[0]}` : sp.length ? `species:${sp[0]}` : '';
+      }
+      const opt = (v, label) => `<option value="${esc(v)}"${v === state.compBudgetOf ? ' selected' : ''}>${esc(label)}</option>`;
+      $('rtmCompBudgetOf').innerHTML = (els.length ? `<optgroup label="Elements">${els.map((e) => opt(`element:${e}`, e)).join('')}</optgroup>` : '')
+        + (sp.length ? `<optgroup label="Species">${sp.map((x) => opt(`species:${x}`, x)).join('')}</optgroup>` : '');
+    }
     document.querySelectorAll('[data-comp-hide]').forEach((el) => { el.hidden = el.dataset.compHide === view; });
-    $('rtmCompAlongWrap').hidden = !column || listing;
+    $('rtmCompAlongWrap').hidden = !column || listing || budget;
     const cells = m ? m.fracture : 1;
     if (!(state.compCell < cells)) state.compCell = 0;
     $('rtmCompCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === state.compCell ? ' selected' : ''}>`
       + `${i}${m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
-    $('rtmCompCellWrap').hidden = (along !== 'time' && !listing) || cells < 2;
+    $('rtmCompCellWrap').hidden = (along !== 'time' && !listing) || cells < 2 || budget;
     const nm = m && m.matrix ? m.matrix.n : 0;
     if (state.compLayer > nm) state.compLayer = 0;
     $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
     $('rtmCompLayerWrap').hidden = nm === 0;
     // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
-    $('rtmCompTimesWrap').hidden = along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view) && !listing;
+    $('rtmCompTimesWrap').hidden = (along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view) && !listing) || budget;
     $('rtmCompPcaVars').value = state.compPcaVars;
     $('rtmCompPcaLog').checked = state.compPcaLog;
     $('rtmCompBeside').checked = state.compBeside;
     $('rtmCompTimesLabel').textContent = along === 'time' && !listing ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' && !listing ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
-    $('rtmCompLogTWrap').hidden = along !== 'time' || view === 'schoeller' || view === 'stiff' || listing;
+    $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing;
     $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
     $('rtmCompTMin').value = state.compTMin;
     $('rtmCompTMinUnit').textContent = timeUnit().symbol;
@@ -2238,6 +2252,7 @@
     plot.hidden = false;
     if (state.compView === 'where') drawWhere(ctx);
     else if (state.compView === 'listing') drawListing(ctx);
+    else if (state.compView === 'budget') drawBudget(ctx);
     else if (state.compView === 'ussl') drawUssl(ctx);
     else if (state.compView === 'wilcox') drawWilcox(ctx);
     else if (state.compView === 'pca') drawPca(ctx);
@@ -2582,6 +2597,106 @@
       ] };
     compTextNow = listingText(title, p);
     note.textContent = `${title}; ${p.species.length} lines of species, ${p.si.length} phases${pqSaid ? `; ${pqSaid}` : ''}`;
+  }
+
+  /*
+    A BUDGET OVER THE RUN, of an element or of one species: what the column
+    holds of it at each stored time, in the water, on an exchanger or a
+    surface, in each mineral and in the rock, stacked, with what has gone
+    out at the right-hand end on top; beside it, dashed, what was there at
+    the start with what has come in at the left -- the gap between them what
+    the reactions made of it, drawn dotted on its own. The worker weighs and
+    sums it (rtmBudget); a run whose element no reaction makes or takes
+    closes to the solver's tolerance and the summing over the stored points.
+  */
+  const budgetCache = new Map();
+  async function fetchBudget(r, of, key) {
+    if (budgetCache.has(key)) return;
+    budgetCache.set(key, null);
+    const text = (state.ran && state.ran.text) || state.text;
+    const ask = (withRun) => request({ type: 'budget', runKey: r.runKey, of,
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      budgetCache.set(key, reply);
+    } catch (e) {
+      budgetCache.set(key, { error: e.message });
+    }
+    if (state.result === r && state.compView === 'budget') drawComp();
+  }
+
+  /** What a budget can be of: every element a species holds, then every species. */
+  function budgetChoices(m) {
+    const C = compositionOf(m);
+    const els = C ? C.elements.filter((e) => e.terms.length).map((e) => e.el) : [];
+    const sp = ((m && m.species) || []).filter((nm) => nm !== 'e-');
+    return { els, sp };
+  }
+
+  function drawBudget({ r, plot, fail, note }) {
+    const { els, sp } = budgetChoices(r.model);
+    let chosen = state.compBudgetOf;
+    if (!chosen || !(els.includes(chosen.replace(/^element:/, '')) && chosen.startsWith('element:')
+      || sp.includes(chosen.replace(/^species:/, '')) && chosen.startsWith('species:'))) {
+      chosen = els.length ? `element:${els[0]}` : `species:${sp[0]}`;
+    }
+    const kind = chosen.startsWith('species:') ? 'species' : 'element';
+    const name = chosen.slice(kind.length + 1);
+    const key = `${r.runKey}|${kind}|${name}`;
+    const got = budgetCache.get(key);
+    if (got === undefined || got === null) {
+      fetchBudget(r, { kind, name }, key);
+      fail(`Working out the budget of ${name}…`);
+      return;
+    }
+    if (got.error) { fail(`The budget of ${name} could not be kept: ${got.error}`); return; }
+    const pick = compTimeIndices(r);
+    const idx = pick.idx;
+    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+    const c = themeColors();
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22', '#17becf'];
+    const xs = idx.map((i) => r.t[i]);
+    const traces = got.bands.map((b, q) => ({ type: 'scatter', mode: 'lines', name: b.name, x: xs, y: idx.map((i) => b.values[i]),
+      stackgroup: 'held', line: { width: 0.6, color: palette[q % palette.length] } }));
+    const anyOut = got.transport && got.cumOut.some((v) => v !== 0);
+    if (anyOut) {
+      traces.push({ type: 'scatter', mode: 'lines', name: 'gone out at the right-hand end', x: xs, y: idx.map((i) => got.cumOut[i]),
+        stackgroup: 'held', line: { width: 0.6, color: '#7f7f7f' } });
+    }
+    const n = r.n;
+    const supplied = Float64Array.from(got.cumIn, (v) => got.total[0] + v);
+    traces.push({ type: 'scatter', mode: 'lines', name: got.transport ? 'there at the start, and come in at the left' : 'there at the start',
+      x: xs, y: idx.map((i) => supplied[i]), line: { color: c.text, dash: 'dash', width: 1.6 } });
+    traces.push({ type: 'scatter', mode: 'lines', name: 'made by reactions, net', x: xs, y: idx.map((i) => got.byReactions[i]),
+      line: { color: c.text, dash: 'dot', width: 1.6 } });
+    const layout = baseLayout();
+    layout.xaxis.type = pick.logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.yaxis.title = { text: got.transport ? "amount, concentration × m per m² of the water's cross-section" : 'amount per kg of water',
+      font: { size: 11 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    // What the note says: where it is at the end, what crossed the ends, and what the reactions made of it.
+    const last = n - 1;
+    const fmt = (v) => fmtNumber(v);
+    const where = got.bands.filter((b) => b.values[last] !== 0)
+      .map((b) => `${fmt(b.values[last])} ${b.name}${got.total[last] > 0 ? ` (${(100 * b.values[last] / got.total[last]).toFixed(1)} %)` : ''}`);
+    let scale = 0;
+    for (let i = 0; i < n; i++) scale = Math.max(scale, Math.abs(supplied[i]), Math.abs(got.total[i]));
+    let off = 0;
+    for (let i = 0; i < n; i++) off = Math.max(off, Math.abs(got.byReactions[i]));
+    const rel = scale > 0 ? off / scale : 0;
+    note.textContent = `${name}${kind === 'species' ? '' : ', all of it'} at the end: ${where.join(', ') || 'none in the column'}`
+      + `${got.transport ? `; ${fmt(got.cumIn[last])} came in at the left and ${fmt(got.cumOut[last])} went out at the right` : ''}`
+      + (rel < 1e-4 ? `; no reaction makes or takes any to speak of: what is left over, at most ${off.toExponential(1)}, ${rel.toExponential(1)}`
+        + ' of what was there and came in, is the solver\'s and the summing over the stored points\''
+        : `; made by reactions, net, ${fmt(got.byReactions[last])} by the end`);
+    const unit = timeUnit().symbol;
+    compTableNow = { head: [`t (${unit})`, ...got.bands.map((b) => b.name), ...(anyOut ? ['gone out at the right-hand end'] : []),
+      ...(got.transport ? ['come in at the left-hand end'] : []), 'made by reactions, net', 'in the column, all of it'],
+    name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}`,
+    rows: Array.from({ length: n }, (_, i) => [r.t[i], ...got.bands.map((b) => b.values[i]), ...(anyOut ? [got.cumOut[i]] : []),
+      ...(got.transport ? [got.cumIn[i]] : []), got.byReactions[i], got.total[i]]) };
   }
 
   /** The stored points along the run a chart in time draws: after "from" on a log axis. */
@@ -6935,6 +7050,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given.', view === 'listing'],
+            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made.', view === 'budget'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
@@ -8929,6 +9045,7 @@ END
       state.compPcaVars = $('rtmCompPcaVars').value.trim();
       state.compPcaLog = $('rtmCompPcaLog').checked;
       state.compBeside = $('rtmCompBeside').checked;
+      state.compBudgetOf = $('rtmCompBudgetOf').value;
       saveState();
       renderComp();
       drawComp();

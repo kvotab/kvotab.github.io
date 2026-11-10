@@ -1708,6 +1708,36 @@ async def main():
                   [True, 'rtm_freshening_water_cell19.txt', True,
                    '-----------------------------Solution composition------------------------------', True, 1,
                    'rtm_freshening_water_cell19.csv', 'species,in,molality,activity,log molality,log activity,log gamma'])
+            # The same run's calcium as a budget over the run: in the water, on the exchanger and in the calcite, stacked, what
+            # has gone out on top, and what was there and came in, dashed, along the top of the stack: it closes; the CSV a row
+            # for each stored time.
+            await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = '';"
+                          " const v = document.getElementById('rtmCompView'); v.value = 'budget';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " const o = document.getElementById('rtmCompBudgetOf'); o.value = 'element:Ca';"
+                          " o.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            budget = await settle(page, "(() => { const p = document.getElementById('rtmChartComp');"
+                                        " return !p.hidden && /^Ca, all of it at the end/.test(document.getElementById('rtmCompNote').textContent)"
+                                        " ? (p.data || []).map((t) => t.name).join(' | ') : ''; })()",
+                                  'in the water | on an exchanger | Calcite | gone out at the right-hand end | there at the start, and come in '
+                                  'at the left | made by reactions, net', tries=60, pause=0.25)
+            closed = re.search(r'no reaction makes or takes any to speak of: what is left over, at most [0-9.e+-]+, ([0-9.e+-]+) of',
+                               await page.ev("document.getElementById('rtmCompNote').textContent") or '')
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            bcsv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).trim().split('\\n')] : null; })()")
+            check('  its calcium as a budget over the run: in the water, on the exchanger and in the calcite, stacked, what has gone '
+                  'out on top and what was there and came in dashed beside them -- closing to 1e-5; the CSV a row for each stored time',
+                  [budget, closed is not None and float(closed.group(1)) < 1e-5,
+                   [bcsv[0], bcsv[1][0], len(bcsv[1]) > 100] if isinstance(bcsv, list) else bcsv],
+                  ['in the water | on an exchanger | Calcite | gone out at the right-hand end | there at the start, and come in at the '
+                   'left | made by reactions, net', True,
+                   ['rtm_freshening_budget_Ca.csv', 't (s),in the water,on an exchanger,Calcite,gone out at the right-hand end,'
+                    'come in at the left-hand end,"made by reactions, net","in the column, all of it"', True]])
             await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = '';"
                           " t.dispatchEvent(new Event('change', { bubbles: true }));"
                           " const v = document.getElementById('rtmCompView'); v.value = 'durov'; v.dispatchEvent(new Event('change', { bubbles: true })); })()")

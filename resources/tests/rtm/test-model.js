@@ -7859,6 +7859,56 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `${byCharge.size} charges, gamma apart within one by ${spread.toExponential(1)}; ${missing ? JSON.stringify(missing) : 'no reply'}`);
   }
   /*
+    A budget over the run, as the worker answers the Composition tab (budget): what the column holds of an element or a
+    species at each stored point, weighed by capacity and water as the model's own balance is, and what crosses each end.
+    What no reaction makes or takes closes: a tracer, a tracer into the rock matrix (its rock band), the calcium of the
+    acid column between the water and the calcite. A batch's carbon made by its source, 1e-5 a day for 160 days. And at
+    the steady state of a decaying nuclide (on its inventory, R = 10), what comes in less what goes out is what decays,
+    k times what the column holds -- the weights against the fluxes through the ends, no summing over stored points in it.
+  */
+  {
+    const exs = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES;
+    const budgetOf = (id, of) => {
+      let run = null;
+      handleRtmMessage({ type: 'run', id: 21, text: exs.find((e) => e.id === id).text, solver: { ...solverSw, rtol: 1e-6 } },
+        (msg) => { if (msg.type === 'result') run = msg; });
+      let b = null;
+      handleRtmMessage({ type: 'budget', id: 22, runKey: run.runKey, of }, (msg) => { b = msg; });
+      return { run, b };
+    };
+    const closes = ({ b }) => {
+      let scale = 0;
+      let off = 0;
+      for (let i = 0; i < b.total.length; i++) {
+        scale = Math.max(scale, Math.abs(b.total[i]), Math.abs(b.total[0] + b.cumIn[i]));
+        off = Math.max(off, Math.abs(b.byReactions[i]));
+      }
+      return off / scale;
+    };
+    const names = ({ b }) => b.bands.map((x) => x.name).join(' | ');
+    const tr = budgetOf('tracer', { kind: 'species', name: 'X' });
+    const mt = budgetOf('matrixtracer', { kind: 'species', name: 'X' });
+    const ac = budgetOf('acidcolumn', { kind: 'element', name: 'Ca' });
+    const rz = budgetOf('redoxzones', { kind: 'element', name: 'C' });
+    const nu = budgetOf('nuclideindices', { kind: 'species', name: 'Nuclide' });
+    const L = (x) => x.run.n - 1;
+    const rock = mt.b.bands.find((x) => x.name === 'in the rock');
+    const calcite = ac.b.bands.find((x) => x.name === 'Calcite');
+    const k = 0.023104906;
+    const steady = (nu.b.fluxIn[L(nu)] - nu.b.fluxOut[L(nu)]) / (k * nu.b.total[L(nu)]) - 1;
+    check('a budget over the run, as the worker answers the Composition tab: what no reaction makes or takes closes -- a '
+      + 'tracer, a tracer into the rock with its rock band, the acid column\'s calcium between the water and the calcite as '
+      + 'the calcite dissolves; a batch\'s carbon made by its source, 1e-5 a day for 160 days; and at a decaying nuclide\'s '
+      + 'steady state what comes in less what goes out is k times what the column holds',
+    closes(tr) < 1e-6 && closes(mt) < 1e-5 && closes(ac) < 1e-5 && rock && rock.values[L(mt)] > 0
+      && names(ac) === 'in the water | Calcite' && calcite.values[L(ac)] < calcite.values[0]
+      && !rz.b.transport && Math.abs(rz.b.byReactions[L(rz)] / 1.6e-3 - 1) < 1e-9 && Math.abs(steady) < 1e-8,
+    `tracer ${closes(tr).toExponential(1)}; into the rock ${closes(mt).toExponential(1)} (${names(mt)}); calcium `
+      + `${closes(ac).toExponential(1)} (${names(ac)}, the calcite ${calcite ? `${calcite.values[0].toExponential(3)} to `
+      + `${calcite.values[L(ac)].toExponential(3)}` : 'none'}); the batch's carbon made ${rz.b.byReactions[L(rz)].toExponential(6)}; `
+      + `the nuclide's steady balance off by ${steady.toExponential(1)}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

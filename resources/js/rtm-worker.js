@@ -338,6 +338,110 @@ function rtmQuantities(msg) {
   return { type: 'quantities', id: msg.id, keys, cells, n, values };
 }
 
+/*
+  A BUDGET OVER THE RUN: of an element, or of one species, per m2 of the
+  water's cross-section in a column -- per kilogram of water in a batch. At
+  each stored point what the column holds of it, cell by cell, each species
+  weighed by its capacity there (R in the fracture, Rm in the rock) and its
+  cell's water: the width of a fracture cell, and behind it each layer of
+  rock as the fracture's wall area per its water (aw) times the layer's
+  thickness -- the matrix's own balance, term for term. Grouped as it is:
+  in the water, on an exchanger, on a surface, in each mineral, in a gas,
+  and in the rock. And what has crossed each end, the flux there (the
+  model's faces, as the time chart draws it) summed over the stored points
+  by the trapezoidal rule: in at the left, out at the right. What the
+  reactions made of it is what is left over -- what the column holds now
+  less what it held at the start and what came in, plus what went out --
+  none for what chemistry only moves, the decay for a nuclide, and in it
+  the summing's error, which is the stored points'.
+*/
+function rtmBudget(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'budget', id: msg.id, missing: true };
+  const { model, t, states, n, width } = run;
+  const names = model.speciesNames;
+  const ns = names.length;
+  const C = model.composition;
+  const of = msg.of || {};
+  // What counts, and as how much: an element's species by their count of it, or the one species.
+  let terms;
+  if (of.kind === 'species') {
+    const k = names.indexOf(of.name);
+    if (k < 0) throw new Error(`The model has no species ${of.name}.`);
+    const found = C ? C.elements.flatMap((e) => e.terms).find((tm) => tm[0] === k) : null;
+    terms = [[k, 1, found ? found[2] : (model.mineral && model.mineral[k] ? 'mineral' : 'water')]];
+  } else {
+    const e = C ? C.elements.find((x) => x.el === of.name) : null;
+    if (!e) throw new Error(`No species of the model has any ${of.name}.`);
+    terms = e.terms.map(([k, c, where]) => [k, c, where]);
+  }
+  const transport = !!model.transport;
+  const stride = model.stride || 1;
+  const nf = transport ? model.fracture : model.cells;
+  const mx = model.matrix || null;
+  const widthOf = (i) => (transport ? model.grid.width[i] : 1);
+  // Each band: a mineral its own, the rest by where they are; the rock one band whatever is in it.
+  const bandOf = (k, where) => (where === 'mineral' ? names[k] : { water: 'in the water', exchange: 'on an exchanger',
+    surface: 'on a surface', gas: 'in a gas' }[where] || 'in the water');
+  // In one order whatever the species': the water, an exchanger, a surface, a gas, the minerals by name, the rock.
+  const rank = (b) => ({ 'in the water': 0, 'on an exchanger': 1, 'on a surface': 2, 'in a gas': 3 }[b] ?? 4);
+  const bandNames = [...new Set(terms.map(([k, , where]) => bandOf(k, where)))]
+    .sort((a, b) => rank(a) - rank(b) || (rank(a) === 4 ? a.localeCompare(b, 'en') : 0));
+  if (mx && stride > 1) bandNames.push('in the rock');
+  const bands = bandNames.map(() => new Float64Array(n));
+  const bandAt = new Map(bandNames.map((b, q) => [b, q]));
+  const rockAt = bandAt.has('in the rock') ? bandAt.get('in the rock') : -1;
+  for (let i = 0; i < n; i++) {
+    const base = i * width;
+    for (let cell = 0; cell < nf; cell++) {
+      const w = widthOf(cell);
+      for (let j = 0; j < stride; j++) {
+        const c = cell * stride + j;
+        const scale = j === 0 ? w : w * mx.aw * mx.d[j - 1];
+        for (const [k, cnt, where] of terms) {
+          const v = scale * model.massOf[c * ns + k] * cnt * states[base + c * ns + k];
+          if (j === 0) bands[bandAt.get(bandOf(k, where))][i] += v;
+          else if (rockAt >= 0) bands[rockAt][i] += v;
+        }
+      }
+    }
+  }
+  // What crosses each end, positive to the right: in at the left, out at the right.
+  const fluxAt = (side) => {
+    const out = new Float64Array(n);
+    if (!transport || !model.faces) return out;
+    for (let i = 0; i < n; i++) {
+      let v = 0;
+      for (const [k, cnt] of terms) {
+        const f = model.faces[side][k];
+        if (!f) continue;
+        let fv = f.constant;
+        for (const [idx, wt] of f.terms) fv += wt * states[i * width + idx];
+        v += cnt * fv;
+      }
+      out[i] = v;
+    }
+    return out;
+  };
+  const fluxIn = fluxAt('left');
+  const fluxOut = fluxAt('right');
+  const cumIn = new Float64Array(n);
+  const cumOut = new Float64Array(n);
+  const total = new Float64Array(n);
+  const byReactions = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    for (const b of bands) total[i] += b[i];
+    if (i > 0) {
+      const dt = t[i] - t[i - 1];
+      cumIn[i] = cumIn[i - 1] + 0.5 * (fluxIn[i] + fluxIn[i - 1]) * dt;
+      cumOut[i] = cumOut[i - 1] + 0.5 * (fluxOut[i] + fluxOut[i - 1]) * dt;
+    }
+    byReactions[i] = total[i] - total[0] - cumIn[i] + cumOut[i];
+  }
+  return { type: 'budget', id: msg.id, of: { kind: of.kind === 'species' ? 'species' : 'element', name: of.name }, transport,
+    bands: bandNames.map((name, q) => ({ name, values: bands[q] })), fluxIn, fluxOut, cumIn, cumOut, total, byReactions };
+}
+
 /**
  * One water of a run as PHREEQC lists it: the stored point `index` in cell
  * `cell` -- each species' ln of its activity coefficient, every quantity of
@@ -1721,6 +1825,16 @@ function handleRtmMessage(msg, post) {
       post(reply, reply.values ? [reply.values.buffer] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'quantities', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'budget') {
+    try {
+      const reply = rtmBudget(msg);
+      post(reply, reply.total ? [reply.fluxIn.buffer, reply.fluxOut.buffer, reply.cumIn.buffer, reply.cumOut.buffer,
+        reply.total.buffer, reply.byReactions.buffer, ...reply.bands.map((b) => b.values.buffer)] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'budget', error: rtmErrorMessage(e) });
     }
     return;
   }

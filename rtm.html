@@ -467,6 +467,7 @@
               <select id="rtmCompView" data-on-change="rtm:redrawComp">
                 <option value="where">where an element is</option>
                 <option value="listing">the water, as PHREEQC lists it</option>
+                <option value="budget">a budget over the run</option>
                 <option value="piper">a Piper diagram</option>
                 <option value="durov">a Durov diagram</option>
                 <option value="schoeller">a Schoeller diagram</option>
@@ -484,6 +485,9 @@
               amounts</label>
             <label data-comp-for="where">Element
               <select id="rtmCompElement" data-on-change="rtm:redrawComp"></select>
+            </label>
+            <label data-comp-for="budget">Of
+              <select id="rtmCompBudgetOf" data-on-change="rtm:redrawComp"></select>
             </label>
             <label data-comp-for="where">In
               <select id="rtmCompIn" data-on-change="rtm:redrawComp">
@@ -2417,6 +2421,19 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             apart the two are at most and what PHREEQC was not given. A water handed off from
             PHREEQC agrees to rounding; a constant of the model's own shows as the saturation index
             it moves.</p>
+          <p><em>A budget over the run</em> keeps account of an element, or of one species: at each
+            stored time how much of it the column holds — in the water, on an exchanger or a
+            surface, in each mineral, and in the rock matrix — stacked, with what has gone out
+            through the right-hand end on top, and dashed beside them what was there at the start
+            with what has come in through the left. Each species counts by its capacity in its cell
+            (<code>R=</code> in the column, <code>Rm=</code> in the rock) and by the cell's water:
+            the width of a cell, and a layer of rock as the fracture's wall area per its water times
+            the layer's thickness; per m² of the water's cross-section, as the flux through an end
+            is. The flux through each end is summed over the stored points by the trapezoidal rule.
+            What the reactions made of it is the gap between the two, drawn dotted: none for an
+            element chemistry only moves about, where the gap is the solver's tolerance and the
+            summing's, which the note gives; a nuclide's decay, or a source among the reactions,
+            where they make or take it.</p>
           <p>The water's major ions are drawn as the hydrochemists draw them, in equivalents: Ca
             and Mg twice their dissolved totals, Na and K together, Cl, the sulfate twice the sulfur
             in a species with four O to each S — <code>SO4-2</code>, <code>CaSO4</code>, not
@@ -3476,11 +3493,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20261110f"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261006z"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261110e"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261110f"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110n"></script>
 </body>
 </html>

@@ -491,6 +491,20 @@ log IAP less its log K its SI, to 8.9e-16 (pyrolusite, ferrihydrite and
 FeS); under Davies every ion of one charge one gamma, over five charges;
 the carbonate example, without ACTIVITY, every gamma 1; a run the worker
 does not have, said so, for the page to send it.
+A budget over the run (since 2026-11-10), as the worker answers the
+Composition tab: what the column holds of an element or a species at
+each stored point, each species weighed by its capacity and its cell's
+water as the model's own balance is (a rock layer by the fracture's wall
+area per water times its thickness), and what crosses each end summed over
+the stored points. What no reaction makes or takes closes: a tracer to
+2.4e-7 of what was there and came in, a tracer into the rock matrix, its
+rock band among the bands, to 6.4e-6, the acid column's calcium between
+the water and the calcite, all of the calcite dissolving, to 2.0e-6. The
+redox zones batch's carbon made by its source, 1.6e-3, 1e-5 a day for 160
+days, to 1e-9. And at a decaying nuclide's steady state (on its
+inventory, R = 10 from a parameter) what comes in less what goes out is
+k times what the column holds to 2.0e-10 -- the weights against the
+fluxes through the ends, with no summing over stored points in it.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1125,6 +1139,8 @@ What matters, by sensitivity indices (since 2026-11-10), on the sorbing front's 
 The examples of the sensitivity indices and the Durov diagram (since 2026-11-10) each open, once run, on their view: fresh water through a salty aquifer on a Durov diagram in linear time, the outlet's water from Na–Cl through Na–HCO₃, its pH highest there, between 8.7 and 9, and Mg–HCO₃ to Ca–HCO₃, its TDS from between 3600 and 3800 mg/kgw to between 450 and 550, the model in all five panels and the four measured waters one of each type; a decaying nuclide on its sensitivity indices from 300 runs, the retardation factor's and the velocity's first-order indices and deltas clear of the dummy's, the retardation factor's clear of the velocity's, the dispersivity's and the concentration flowing in's reaching the dummy's, and each first-order index's interval holding the exact one: the column is steady by the end, its outlet Wehner and Wilhelm's formula for a column with these boundaries (to 1.1e-4 at the corners of the draws), whose first-order indices are 0.709, 0.230, 0.0085 and 0.0040 by four million draws.
 
 The same water as PHREEQC lists it (since 2026-11-10), the freshening example's outlet at the end of the run, on the Composition tab: its blocks in PHREEQC's order -- the solution's composition, its description, the distribution of species, the saturation indices, the minerals, the exchange composition -- H+ and OH- first, CaHCO3+ under C and under Ca, each element's total as its species make it, the calcite at saturation, the exchanger's equivalent fractions adding up to 1; Cell and At in the toolbar, Along and log time not, Text among the saves and the picture's not. At `1 d` its water at the stored point nearest; saved as Text, `rtm_freshening_water_cell19.txt`, in PHREEQC's blocks and columns, and as CSV the distribution of species.
+
+Its calcium as a budget over the run (since 2026-11-10): in the water, on the exchanger and in the calcite, stacked, with what has gone out at the right-hand end on top, what was there at the start and came in at the left dashed along the top of the stack and what reactions made dotted; the note saying it closes, within 1e-5 of what was there and came in; saved as CSV, `rtm_freshening_budget_Ca.csv`, a row for each stored time.
 
 Two runs side by side (since 2026-11-10), on the salinisation example at cell 19, Na+ and pH ticked: Keep this run keeps it, chosen to be drawn beside the next and named by the time it was kept and its example. Run again with the water twice as fast: against time each line ticked again for the kept run, dashed in its colour, its values the first run's to the last digit, pH on its own axis, this run's not; against distance each profile again for it, dashed; on Gradient its own map under this one, on one colour scale; on the Piper diagram its path through all three panels; beside it nothing, the run alone again. A decay run kept in seconds beside the same decay in minutes: its times drawn in minutes, 600 s at 10, the same end to 1e-3; both kept runs on the menu. The test then clears what it ticked.
 
