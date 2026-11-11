@@ -2488,22 +2488,27 @@ console.log('\n--- opening skbrtm databases ---');
     const at = (name, cell = 0) => m.initialState()[cell * ns + m.speciesNames.indexOf(name)];
     const s = m.settings;
     check('the script gives the time span: 2 days is 172800 s', s.TEND === 172800, String(s.TEND));
-    check('  and DIFFUSION the column: 6 power-law cells over 10 um, dirichlet | neumann',
-      s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'dirichlet'
-      && s.RIGHT === 'neumann' && Math.abs(m.grid.L - 1e-5) < 1e-20);
+    check('  and DIFFUSION the column: 6 power-law cells over 10 um, reservoir | neumann -- a Dirichlet end where '
+      + 'something reacts is a reservoir, since the cell skbrtm holds there goes on reacting',
+      s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'reservoir'
+      && s.RIGHT === 'neumann' && Math.abs(m.grid.L - 1e-5) < 1e-20 && m.cells === 6 && m.reservoir.left === 6);
+    check('  skbrtm\'s power-law grid is this one, faces at L(i/N)^3, and nothing is said of it', !/midway/.test(res.text));
     check('names keep their spelling, and [h2o2] is the H2O2 of the stoichiometry',
       m.speciesNames.includes('H2O2') && !m.speciesNames.includes('h2o2') && m.speciesNames.includes('Fe(OH)3'),
       m.speciesNames.join(' '));
     check('a species DIFFUSION does not list moves at 1e-9; one it gives 0 does not',
       m.speciesList.find((x) => x.name === 'O2').D === 1e-9 && !m.mobile[m.speciesNames.indexOf('Site')]);
-    close('a value per cell width is per m2: Site holds 1e-4 * 1e-3 mol per m2 of the first cell',
-      at('Site') * m.grid.width[0], 1e-7, 1e-12);
-    check('  and nowhere else, as its SOLUTION says', at('Site', 1) === 0);
-    check('a species constant in one SOLUTION is held in those cells only: Red, in cell 0',
-      m.held.length === 1 && m.held[0].species === 'Red' && m.held[0].cells.join() === '0' && at('Red') === 1e-3,
-      JSON.stringify(m.held));
-    check('boundary_values, which skbrtm ignores, becomes the face value: O2 at 5e-4',
-      m.speciesList.find((x) => x.name === 'O2').left === 5e-4);
+    // What skbrtm puts in the cell it holds is the reservoir's: the surface and the held species with it.
+    const rv = m.reservoir.left;
+    close('a value per cell width is per m2: Site holds 1e-4 * 1e-3 mol per m2 of the cell skbrtm holds -- the '
+      + 'reservoir, as wide as the first cell', at('Site', rv) * m.grid.width[0], 1e-7, 1e-12);
+    check('  and none in the column, as its SOLUTIONs say: the first cell starts as the column does',
+      at('Site', 0) === 0 && at('Site', 1) === 0);
+    check('a species constant in the held cell is held in the reservoir and nowhere else: Red at 1e-3',
+      m.held.length === 0 && m.fixedAt[rv * ns + m.speciesNames.indexOf('Red')] === 1 && at('Red', rv) === 1e-3
+      && at('Red', 0) === 0, JSON.stringify(m.held));
+    check('boundary_values, which skbrtm ignores, is what the reservoir starts with: O2 at 5e-4',
+      at('O2', rv) === 5e-4 && /^O2\s+left\s+5e-4$/m.test(res.text), String(at('O2', rv)));
     check('  and the cell by the face starts where the column behind it does', at('O2') === 2.5e-4, String(at('O2')));
     check('a lone cell_id 3 goes in cell 3, every species set there as a SOLUTION does',
       at('Tr', 3) === 1 && at('O2', 3) === 0 && at('Tr', 0) === 0);
@@ -2526,6 +2531,44 @@ console.log('\n--- opening skbrtm databases ---');
     try { ran = run(m, { tend: s.TEND, rtol: 1e-6, atol: 1e-20, nonNegative: true }); } catch (e) { ran = e.message; }
     check('and the model runs to its TEND', ran && typeof ran === 'object' && ran.t[ran.t.length - 1] === s.TEND,
       typeof ran === 'string' ? ran : String(ran && ran.t[ran.t.length - 1]));
+  }
+  /*
+    A Dirichlet end, with something reacting and without: the first a
+    reservoir whose A decays as skbrtm's held cell does, the second a face
+    held at what skbrtm holds there. The second SOLUTION's 1-9 is skbrtm's
+    1 to 8, which leaves cell 9 in no SOLUTION.
+  */
+  const endCase = (rx) => RtmImport.convert([
+    { name: 'run.py', text: "pm = parent_directory() + '/databases/'\np0 = pm + 'diffusion.in'\np1 = pm + 'reaction.in'\n"
+      + "p2 = pm + 'solutions.in'\npaths = [p0, p1, p2]\nsolver = Solver(processes = (*db.reaction, *db.diffusion),\n"
+      + "                solutions = (*db.solution,), t_span = (0, 10, 'days'))" },
+    { name: 'diffusion.in', text: "DIFFUSION;col\ncells;10\ngrid_type;'linear'\nmax_length;0.01\nmin_length;0\n"
+      + "boundary_conditions;('dirichlet', 'neumann')\nSPECIES;DIFFUSION_COEFFICIENT\nA;1e-9\nB;1e-9\n" },
+    { name: 'reaction.in', text: rx
+      ? "REACTION;chem\nparameters; {'k0' : 1e-6}\nSTOICHIOMETRY;EXPRESSION;ARGUMENTS\nA => B; r = k0*[A]\n"
+      : 'REACTION;chem\nSTOICHIOMETRY;EXPRESSION;ARGUMENTS\nA = A; r = k; k = 0\nB = B; r = k; k = 0\n' },
+    { name: 'solutions.in', text: 'SOLUTION; face\nunits; mol/L\ncell_id; 0\nSPECIES;CONCENTRATION\nA;1e-3\n\n'
+      + 'SOLUTION; water\nunits; mol/L\ncell_id; 1-9\nSPECIES;CONCENTRATION\nA;0\n' },
+  ]);
+  {
+    const reacting = endCase(true);
+    const mr = RtmModel.compile(reacting.text);
+    check('a Dirichlet end where something reacts opens as a reservoir, A in it at what skbrtm holds in that cell',
+      mr.settings.LEFT === 'reservoir' && /^A\s+left\s+1e-3$/m.test(reacting.text) && !/left=/.test(reacting.text)
+      && mr.initialState()[mr.reservoir.left * 2] === 1e-3 && mr.initialState()[0] === 0,
+      reacting.text.slice(reacting.text.indexOf('<SETTINGS>')));
+    check('  a constant of the parameters dict is written as a number is, k0 = 1e-6', /k0 = 1e-6\b/.test(reacting.text));
+    check('  and one cell in no SOLUTION is said as one', /Cell 9 is in no SOLUTION, and starts with every species at zero/
+      .test(reacting.text.replace(/\n#\s*/g, ' ')), reacting.text.split('\n').filter((l) => /SOLUTION/.test(l)).join(' | '));
+    const T = 10 * 86400;
+    const g = run(mr, { tend: T, rtol: 1e-9, atol: 1e-24 });
+    close('  and run, the held cell\'s A decays there as skbrtm\'s does: A0 exp(-k0 t) at 10 days',
+      g.y[g.y.length - 1][mr.reservoir.left * 2], 1e-3 * Math.exp(-1e-6 * T), 1e-7);
+    const still = endCase(false);
+    const ms = RtmModel.compile(still.text);
+    check('  where nothing reacts the end is a face held at that value, left=, and no reservoir',
+      ms.settings.LEFT === 'dirichlet' && /^A\s+0\s+D=1e-9 left=0\.001$/m.test(still.text) && ms.reservoir.left === -1,
+      still.text.slice(still.text.indexOf('<SPECIES>'), still.text.indexOf('<SPECIES>') + 80));
   }
   // The real thing, when it is on this machine: skbrtm-main's five cases.
   const skb = path.join(require('os').homedir(), 'Downloads', 'skbrtm-main');
@@ -2550,6 +2593,348 @@ console.log('\n--- opening skbrtm databases ---');
   } else {
     console.log('      (skbrtm-main is not in ~/Downloads here; its own cases were not tried)');
   }
+}
+
+console.log('\n--- a reservoir at an end ---');
+{
+  /*
+    LEFT or RIGHT = reservoir: the face held, as at a dirichlet end, at the
+    water of a well-mixed reservoir that the column does not drain and the
+    chemistry does change -- a cell outside the column, with the model's
+    whole chemistry and no transport. Each check is against something the
+    reservoir's own code does not produce: a closed solution, the same column
+    at a dirichlet face, a batch run, its mirror image, and what crosses the
+    face.
+  */
+  const DAY = 86400;
+  const A0 = 1e-3;
+  const k0 = 1e-6;
+  const colText = (o = {}) => `
+<SETTINGS>
+MODE = transport
+CELLS = ${o.cells || 100}
+LENGTH = 0.1
+GRID = ${o.grid || 'powerlaw'}
+DIFFUSION = 1
+LEFT = ${o.left || 'reservoir'}
+RIGHT = ${o.right || 'neumann'}
+${o.velocity ? `ADVECTION = 1\nVELOCITY = ${o.velocity}` : ''}
+TEND = ${o.tend || 365 * DAY}
+
+<SPECIES>
+A  0  D=1e-9 ${o.faceA === undefined ? `left=${A0}` : o.faceA}
+B  0  D=1e-9
+
+${o.initial ? `<INITIAL>\n${o.initial}\n` : ''}
+<REACTIONS>
+${o.rx === undefined ? `A => B, k = ${k0}` : o.rx}
+`;
+  const col = (o) => RtmModel.compile(colText(o));
+  // The run at each of the times, each a step's end.
+  const landed = (m, times) => run(m, { tend: times[times.length - 1], outputTimes: times,
+    breaks: times.slice(0, -1), rtol: 1e-10, atol: 1e-24 }).grid;
+  // Crank's slab held at 1 at x = 0 and closed at L, as skbrtm's benchmarks 3 to 5 write it.
+  const crank = (x, t, L = 0.1) => {
+    let s = 0;
+    for (let n = 0; ; n++) {
+      const kn = ((2 * n + 1) * Math.PI) / (2 * L);
+      const fade = Math.exp(-1e-9 * kn * kn * t);
+      if (fade < 1e-30) break;
+      s += (4 / ((2 * n + 1) * Math.PI)) * Math.sin(kn * x) * fade;
+    }
+    return 1 - s;
+  };
+
+  // skbrtm's benchmark 5, written again here: A -> B diffusing in from a
+  // reservoir whose A decays, so that the face is at A0 exp(-k0 t), and the
+  // closed solution exp(-k0 t) times Crank's slab.
+  const m5 = col();
+  const t5 = [1, 10, 30, 100].map((d) => d * DAY);
+  const g5 = landed(m5, t5);
+  const errs = t5.map((t, j) => {
+    let worst = 0;
+    for (let i = 0; i < m5.cells; i++) {
+      const exact = A0 * Math.exp(-k0 * t) * crank(m5.grid.centres[i], t);
+      worst = Math.max(worst, Math.abs(g5.y[j][2 * i] - exact) / A0);
+    }
+    return worst;
+  });
+  check('a reservoir that reacts: A -> B diffusing in from a face at A0 exp(-k0 t) -- skbrtm\'s benchmark 5 -- '
+    + 'against its closed solution on 100 power-law cells', errs[0] < 1.5e-4 && errs[1] < 3e-5 && errs[3] < 1e-7,
+  `${errs.map((e) => e.toExponential(2)).join(', ')} of A0 at 1, 10, 30 and 100 days`);
+  const rv = m5.reservoir.left;
+  let batch = 0;
+  t5.forEach((t, j) => {
+    batch = Math.max(batch, Math.abs(g5.y[j][2 * rv] - A0 * Math.exp(-k0 * t)) / A0,
+      Math.abs(g5.y[j][2 * rv + 1] - A0 * (1 - Math.exp(-k0 * t))) / A0);
+  });
+  check('  the reservoir itself runs as a batch of the chemistry would, A0 exp(-k0 t) and A0 (1 - exp(-k0 t)): '
+    + 'what the column takes from it does not touch it', batch < 1e-8, `${batch.toExponential(2)} of A0`);
+  check('  it is a cell outside the column: cells is the column\'s 100, the reservoir the 101st, A@left in the state',
+    m5.cells === 100 && m5.allCells === 101 && rv === 100 && m5.reservoir.right === -1 && m5.species[2 * rv] === 'A@left'
+    && m5.nspecies === 202 && m5.temperatures(0).length === 100 && m5.held.length === 0,
+  `cells ${m5.cells}, allCells ${m5.allCells}, reservoir ${JSON.stringify(m5.reservoir)}`);
+
+  // With the flow carrying it in as well: A in a column fed from a reservoir
+  // that decays is exp(-k0 t) times the same column fed from a face held at A0
+  // with nothing reacting -- exactly, in the discrete equations too, since the
+  // reservoir's A is A0 exp(-k0 t) and the decay acts alike in every cell.
+  const tv = [2, 10, 30].map((d) => d * DAY);
+  const flow = { grid: 'linear', cells: 50, velocity: 1e-7, tend: 30 * DAY };
+  const mR = col(flow);
+  const gR = landed(mR, tv);
+  const gD = landed(col({ ...flow, left: 'dirichlet', rx: '' }), tv);
+  let ident = 0;
+  tv.forEach((t, j) => {
+    for (let i = 0; i < 50; i++) ident = Math.max(ident, Math.abs(gR.y[j][2 * i] - Math.exp(-k0 * t) * gD.y[j][2 * i]) / A0);
+  });
+  check('  with the flow carrying it in: exp(-k0 t) times the column at a dirichlet face where nothing reacts',
+    ident < 1e-8, `${ident.toExponential(2)} of A0 at 2, 10 and 30 days`);
+  // What the column gains is what crosses its ends, the reservoir's face read off the reservoir's water.
+  const yF = gR.y[1];
+  const f = new Float64Array(yF.length);
+  mR.rhs(tv[1], yF, f);
+  let gain = 0;
+  for (let i = 0; i < 50; i++) gain += (f[2 * i] + f[2 * i + 1]) * mR.grid.width[i];
+  const crossing = faceFlux(mR, 'left', 0, yF) + faceFlux(mR, 'left', 1, yF)
+    - faceFlux(mR, 'right', 0, yF) - faceFlux(mR, 'right', 1, yF);
+  close('  what the column of A and B gains is what crosses its two ends, the flux through the left one read '
+    + 'off the reservoir', gain, crossing, 1e-12);
+
+  // With nothing reacting it is a dirichlet face.
+  const tc = [1, 10].map((d) => d * DAY);
+  const still = landed(col({ grid: 'linear', rx: '', tend: tc[1] }), tc);
+  const held = landed(col({ grid: 'linear', rx: '', left: 'dirichlet', tend: tc[1] }), tc);
+  let same = 0;
+  tc.forEach((t, j) => { for (let i = 0; i < 100; i++) same = Math.max(same, Math.abs(still.y[j][2 * i] - held.y[j][2 * i]) / A0); });
+  check('  with nothing reacting it is a dirichlet face, to the solver\'s tolerance', same < 1e-9, `${same.toExponential(2)} of A0`);
+
+  // At the right-hand end the same, mirrored: cell i from the left is cell N - 1 - i from the right.
+  const fromLeft = landed(col({ grid: 'linear', cells: 40, tend: tc[1] }), tc);
+  const fromRight = landed(col({ grid: 'linear', cells: 40, tend: tc[1], left: 'neumann', right: 'reservoir',
+    faceA: `right=${A0}` }), tc);
+  let mirror = 0;
+  tc.forEach((t, j) => {
+    for (let i = 0; i < 40; i++) {
+      for (let s2 = 0; s2 < 2; s2++) {
+        mirror = Math.max(mirror, Math.abs(fromLeft.y[j][2 * i + s2] - fromRight.y[j][2 * (39 - i) + s2]) / A0);
+      }
+    }
+  });
+  check('  at the right-hand end it is the same thing mirrored', mirror < 1e-9, `${mirror.toExponential(2)} of A0`);
+
+  // The Jacobian, with a second-order reaction in the reservoir and the column alike.
+  const mJ = col({ cells: 12, rx: 'A + B => 2 B, k = 1e3', initial: 'B left 1e-4' });
+  const yJ = mJ.initialState().map((v, k) => v + 1e-5 * (1 + Math.sin(k)));
+  const vJ = RtmModel.verifyJacobian(mJ, 0, yJ);
+  check('  its Jacobian, a second-order reaction in the reservoir and in the column, against a difference',
+    vJ.discrepancies.length === 0, `${vJ.checked} entries`);
+
+  // <INITIAL> naming the reservoir.
+  const mI = col({ cells: 10, initial: 'A left 2e-3\nB left 1e-9/w  fixed' });
+  const rI = mI.reservoir.left;
+  const yI = mI.initialState();
+  check('an <INITIAL> line naming left starts the reservoir, over left=; an expression is read as the cell beside '
+    + 'it, w its width; and fixed holds it there alone', yI[2 * rI] === 2e-3
+    && Math.abs(yI[2 * rI + 1] - 1e-9 / mI.grid.width[0]) <= 1e-15 * yI[2 * rI + 1]
+    && mI.fixedAt[2 * rI + 1] === 1 && mI.fixedAt[2 * rI] === 0 && mI.fixedAt[1] === 0 && yI[0] === 0,
+  `A ${yI[2 * rI]}, B ${yI[2 * rI + 1]} against ${1e-9 / mI.grid.width[0]}`);
+  const refused = (fn) => { try { fn(); return ''; } catch (e) { return e.message; } };
+  const r1 = refused(() => col({ left: 'dirichlet', initial: 'A left 1e-3' }));
+  const r2 = refused(() => col({ initial: 'A left 1e-3 matrix' }));
+  check('  refused where that end is no reservoir, and with "matrix"',
+    /reservoir at the left end, and that end is dirichlet: LEFT = reservoir makes it one/.test(r1)
+    && /a reservoir has no rock behind it/.test(r2), `${r1} | ${r2}`);
+
+  // Nernst-Planck, and the activity's gradient, across a reservoir's face as across a dirichlet one.
+  const acid = (left, how, more = '') => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.02
+DIFFUSION = ${how}
+LEFT = ${left}
+RIGHT = neumann
+TEND = 3600
+${more}
+
+<SPECIES>
+H+    1e-7   D=9.31e-9   left=1e-2
+Na+   1e-2   D=1.33e-9   left=1e-12
+Cl-   1e-2   D=2.03e-9   left=1e-2
+`);
+  for (const [how, more, what] of [['nernst-planck', '', 'Nernst-Planck'],
+    [1, 'DIFFUSION_GRADIENT = activity\nACTIVITY = davies', 'the activity\'s gradient']]) {
+    const mD = acid('dirichlet', how, more);
+    const mRv = acid('reservoir', how, more);
+    const fD = new Float64Array(mD.nspecies);
+    const fR = new Float64Array(mRv.nspecies);
+    mD.rhs(0, mD.initialState(), fD);
+    mRv.rhs(0, mRv.initialState(), fR);
+    let gap = 0;
+    let scale = 0;
+    for (let k = 0; k < fD.length; k++) { gap = Math.max(gap, Math.abs(fD[k] - fR[k])); scale = Math.max(scale, Math.abs(fD[k])); }
+    const own = Math.max(...Array.from(fR.subarray(fD.length), Math.abs));
+    check(`${what} across a reservoir's face: what the dirichlet face puts into the cell beside it, and nothing out `
+      + 'of the reservoir', gap <= 1e-14 * scale && own === 0, `${(gap / scale).toExponential(1)} of the largest rate`);
+    const yN = mRv.initialState().map((v, k) => v * (1 + 0.3 * Math.sin(k)));
+    if (how === 'nernst-planck') {
+      const vN = RtmModel.verifyJacobian(mRv, 0, yN);
+      check('  and its Jacobian, the cell beside it against the reservoir\'s water', vN.discrepancies.length === 0,
+        `${vN.checked} entries`);
+    } else {
+      /*
+        The activity's part holds ln gamma where it is, in the Jacobian of any
+        face (see npFaces), so a difference finds it out on a plain column as
+        much as here; what is exact is that the column's entries are the
+        dirichlet face's, at the same water.
+      */
+      const entries = (mm, y) => {
+        const V = new Float64Array(mm.nnz);
+        mm.jac(0, y, V);
+        const out = new Map();
+        const { colPtr, rowIdx } = mm.pattern;
+        for (let c = 0; c < mm.nspecies; c++) for (let k = colPtr[c]; k < colPtr[c + 1]; k++) out.set(`${rowIdx[k]},${c}`, V[k]);
+        return out;
+      };
+      // The reservoir's water as the dirichlet face holds it, the column's moved.
+      const yR = yN.slice();
+      yR.set(mRv.initialState().subarray(mD.nspecies), mD.nspecies);
+      const eD = entries(mD, yR.subarray(0, mD.nspecies));
+      const eR = entries(mRv, yR);
+      let worst = 0;
+      for (const [key, val] of eD) worst = Math.max(worst, Math.abs(val - (eR.get(key) || 0)) / Math.max(Math.abs(val), 1e-300));
+      check('  and its Jacobian in the column is the dirichlet face\'s, entry for entry', worst < 1e-14 && eR.size > eD.size,
+        `${eD.size} entries, ${eR.size - eD.size} more for the reservoir`);
+    }
+  }
+
+  // Equilibria held all through the run, in the reservoir as in the column: its water goes as a batch run's.
+  const carbonate = (mode) => RtmModel.compile(`
+<SETTINGS>
+MODE = ${mode}
+${mode === 'transport' ? 'CELLS = 5\nLENGTH = 0.01\nDIFFUSION = 1\nLEFT = reservoir\nRIGHT = neumann' : ''}
+TEND = 1e5
+EQUILIBRATE = always
+
+<SPECIES>
+H+      1e-7   ${mode === 'transport' ? 'D=9.31e-9' : ''}
+OH-     1e-7   ${mode === 'transport' ? 'D=5.27e-9' : ''}
+CO2     2e-4   ${mode === 'transport' ? 'D=1.92e-9' : ''}
+HCO3-   2e-3   ${mode === 'transport' ? 'D=1.18e-9' : ''}
+CO3-2   1e-9   ${mode === 'transport' ? 'D=0.92e-9' : ''}
+Cl-     0      ${mode === 'transport' ? 'D=2.03e-9' : ''}
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+
+<REACTIONS>
+=> H+ + Cl-, k = 1.5e-8
+`);
+  const mC = carbonate('transport');
+  const mB = carbonate('batch');
+  const opts = { solver: 'ndf', tend: 1e5, rtol: 1e-9, atol: 1e-20, nonNegative: true };
+  const rC = FacsimileODE.runModel(mC, opts);
+  const rB = FacsimileODE.runModel(mB, opts);
+  const cC = mC.toConcentrations(rC.y[rC.y.length - 1]);
+  const cB = mB.toConcentrations(rB.y[rB.y.length - 1]);
+  const ns = mC.speciesNames.length;
+  let eqGap = 0;
+  for (let s2 = 0; s2 < ns; s2++) {
+    if (cB[s2] > 0) eqGap = Math.max(eqGap, Math.abs(cC[mC.reservoir.left * ns + s2] - cB[s2]) / cB[s2]);
+  }
+  check('equilibria held throughout the run: the reservoir\'s water at the end is the batch run\'s, acid and '
+    + 'carbonate', mC.nalgebraic > 0 && eqGap < 1e-6, `${eqGap.toExponential(2)} relative, the worst species`);
+
+  // A rock matrix behind the column: the reservoir after every layer of it, and the decay on the whole inventory,
+  // so that it acts alike in the water and the rock -- exp(-k t) times the column at a dirichlet face again.
+  const rockText = (left, rx) => `
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 2
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 0.1
+LEFT = ${left}
+RIGHT = free
+MATRIX_CELLS = 5
+MATRIX_GRID = reference
+MATRIX_FIRST = 0.002
+MATRIX_DEPTH = 0.05
+MATRIX_POROSITY = 0.01
+WETTED_SURFACE = 500
+TEND = 40
+
+<SPECIES>
+X  0  D=1e-3  left=1  Dm=1e-6
+
+<REACTIONS>
+${rx}
+`;
+  const kr = 0.05;
+  const mRock = RtmModel.compile(rockText('reservoir', `X => , k = ${kr}, on = inventory`));
+  const mRockD = RtmModel.compile(rockText('dirichlet', ''));
+  const tr = [10, 20, 40];
+  const gRock = landed(mRock, tr);
+  const gRockD = landed(mRockD, tr);
+  let rockGap = 0;
+  tr.forEach((t, j) => {
+    for (let k = 0; k < mRock.cells; k++) rockGap = Math.max(rockGap, Math.abs(gRock.y[j][k] - Math.exp(-kr * t) * gRockD.y[j][k]));
+  });
+  check('  with a rock matrix behind the column, the reservoir after all of it: exp(-k t) times the column at a '
+    + 'dirichlet face, in the water and in the rock', mRock.cells === 60 && mRock.reservoir.left === 60
+    && mRock.matrix.d.every((d, j) => d === mRockD.matrix.d[j]) && rockGap < 1e-8,
+  `${mRock.cells} cells, the reservoir at ${mRock.reservoir.left}; ${rockGap.toExponential(2)} of the face value`);
+
+  // The worker's budget, as the page's Composition tab asks for it: what crosses the reservoir's face is read off
+  // the reservoir's water, so a tracer through it closes, and what the column's A -> B takes from A is what B gains.
+  global.RtmModel = RtmModel;
+  global.FacsimileODE = FacsimileODE;
+  const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
+  const budgetOf = (text, name) => {
+    let ran = null;
+    handleRtmMessage({ type: 'run', id: 61, text,
+      solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 } },
+    (msg) => { if (msg.type === 'result') ran = msg; });
+    let b = null;
+    handleRtmMessage({ type: 'budget', id: 62, runKey: ran.runKey, of: { kind: 'species', name } }, (msg) => { b = msg; });
+    return b;
+  };
+  /*
+    What a budget leaves open at a face held by diffusion is its own summing of the flux over the stored points,
+    1e-5 of the tracer at rtol 1e-8 and a quarter of that at 1e-10, at a dirichlet face alike: so the tracer's
+    budget through the reservoir is checked against the dirichlet face's, to the solver's tolerance (two runs whose
+    steps need not fall alike), and A and B against that summing.
+  */
+  const tracerAt = (left) => colText({ grid: 'linear', cells: 30, rx: '', tend: 30 * DAY, left });
+  const bT = budgetOf(tracerAt('reservoir'), 'A');
+  const bTd = budgetOf(tracerAt('dirichlet'), 'A');
+  let open = 0;
+  let size = 0;
+  let apart = 0;
+  for (let i = 0; i < bT.total.length; i++) {
+    size = Math.max(size, Math.abs(bT.total[i]), Math.abs(bT.total[0] + bT.cumIn[i]));
+    open = Math.max(open, Math.abs(bT.byReactions[i]));
+    apart = Math.max(apart, Math.abs(bT.cumIn[i] - bTd.cumIn[i]), Math.abs(bT.total[i] - bTd.total[i]));
+  }
+  const decayed = colText({ grid: 'linear', cells: 30, tend: 30 * DAY });
+  const bA = budgetOf(decayed, 'A');
+  const bB = budgetOf(decayed, 'B');
+  let moved = 0;
+  let nets = 0;
+  for (let i = 0; i < bA.total.length; i++) {
+    moved = Math.max(moved, Math.abs(bA.byReactions[i]));
+    nets = Math.max(nets, Math.abs(bA.byReactions[i] + bB.byReactions[i]));
+  }
+  check('  the worker\'s budget, as the Composition tab asks for it: a tracer through a reservoir\'s face is the dirichlet '
+    + 'face\'s, and what the column\'s A -> B takes from A is what B gains, each crossing the face as the reservoir has it',
+  apart <= 1e-7 * size && open / size < 1e-4 && nets / moved < 1e-4
+    && bA.byReactions[bA.byReactions.length - 1] < 0,
+  `the tracer ${(apart / size).toExponential(1)} from the dirichlet face's and ${(open / size).toExponential(1)} open, as that `
+    + `one is; A and B ${(nets / moved).toExponential(1)} of what moved`);
 }
 
 console.log('\n--- the examples ---');

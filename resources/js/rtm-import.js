@@ -315,6 +315,20 @@
       const ar = list(b.values.arguments);
       sp.forEach((s, k) => { meet(s); srcRows.push({ sp: s, ex: ex[k] || '', ar: ar[k] || '', file: b.file }); });
     }
+    // Whether anything reacts or is made. skbrtm's Dirichlet cell is held against diffusion only, so where
+    // something does, the water held at that end changes as it runs: a reservoir here (see the column).
+    const changesSomething = (st) => {
+      const [l, r] = sides(st);
+      const net = new Map();
+      for (const [sgn, side] of [[-1, l || ''], [1, r || '']]) {
+        for (const m of terms(side)) {
+          const k = String(m[2]).toLowerCase();
+          net.set(k, (net.get(k) || 0) + sgn * Number(m[1] || 1));
+        }
+      }
+      return [...net.values()].some((c) => Math.abs(c) >= 1e-15);
+    };
+    const reacts = srcRows.length > 0 || rxRows.some((row) => changesSomething(row.st));
     for (const b of [...of('solution'), ...of('diffusion')]) for (const s of list(b.values.species)) meet(s);
     const order = [...spell.keys()].sort();
     // rtm.html's names: the spelling, unless it is not one of its names.
@@ -360,16 +374,17 @@
       bcs = list(maybe(v.boundary_conditions, ['dirichlet', 'neumann'])).map((x) => String(x).toLowerCase());
       settings.push('MODE = transport', `CELLS = ${cells}`, `LENGTH = ${fmt(hi - lo)}`);
       if (gridType === 'powerlaw') {
+        // skbrtm's power-law grid, faces at L*(i/N)^3 and the centres midway between them.
         settings.push('GRID = powerlaw', 'GRID_POWER = 3');
-        notes.push('skbrtm\'s power-law grid puts its edges at L*(i/N)^3 and its cell faces midway between the '
-          + 'centres; here the faces ARE L*(i/N)^3, which is the same layout made consistent.');
       } else if (gridType === 'logarithmic') {
         // skbrtm: edges geometric from min_length to max_length. The same
         // edges, measured from the first, are a log grid with this ratio.
         const q = Math.pow(hi / lo, 1 / cells);
         settings.push('GRID = log', `GRID_RATIO = ${fmt(Math.pow(q, cells - 1))}`);
       } else settings.push('GRID = linear');
-      settings.push('DIFFUSION = 1', `LEFT = ${bcs[0] || 'neumann'}`, `RIGHT = ${bcs[1] || 'neumann'}`);
+      // A Dirichlet end where something reacts is a reservoir: the cell skbrtm holds there goes on reacting.
+      const endKind = (bc) => (bc === 'dirichlet' && reacts ? 'reservoir' : bc || 'neumann');
+      settings.push('DIFFUSION = 1', `LEFT = ${endKind(bcs[0])}`, `RIGHT = ${endKind(bcs[1])}`);
       if (lo !== 0) notes.push(`min_length is ${lo} m; x here is measured from there, so a profile read at x is read at x + ${lo}.`);
       const listed = new Map();
       list(v.species).forEach((s, k) => listed.set(meet(s), Number(maybe(list(v.diffusion_coefficient)[k], 1e-9))));
@@ -388,10 +403,18 @@
         }
       }
       for (const side of [0, 1]) {
-        if (bcs[side] === 'dirichlet') {
-          notes.push(`The ${side ? 'right' : 'left'} end is dirichlet. skbrtm holds the ${side ? 'last' : 'first'} CELL at its `
+        if (bcs[side] !== 'dirichlet') continue;
+        const end = side ? 'right' : 'left';
+        if (reacts) {
+          notes.push(`The ${end} end is dirichlet. skbrtm holds the ${side ? 'last' : 'first'} CELL against diffusion only: `
+            + 'the reactions go on in it, so what it holds changes as they run. Here that cell is the reservoir at the '
+            + `face, ${end.toUpperCase()} = reservoir, which reacts as the held cell does and which the column does not `
+            + `drain. It starts with what skbrtm puts in that cell, and the column's ${side ? 'last' : 'first'} cell starts `
+            + 'where the column does.');
+        } else {
+          notes.push(`The ${end} end is dirichlet. skbrtm holds the ${side ? 'last' : 'first'} CELL at its `
             + 'starting value; here the FACE is held at that value and the cell starts where the column does. '
-            + `To hold the cell instead, as skbrtm does: ${side ? 'RIGHT' : 'LEFT'} = neumann, and "fixed" on that cell in <INITIAL>.`);
+            + `To hold the cell instead, as skbrtm does: ${end.toUpperCase()} = neumann, and "fixed" on that cell in <INITIAL>.`);
         }
       }
     } else settings.push('MODE = batch');
@@ -452,15 +475,37 @@
     }
     const uncovered = covered.map((c, i) => (c ? -1 : i)).filter((i) => i >= 0);
     if (uncovered.length && of('solution').length) {
-      notes.push(`${uncovered.length === cells ? 'No cell is' : `Cells ${uncovered[0]}-${uncovered[uncovered.length - 1]} are`} `
-        + 'in any SOLUTION, and start with every species at zero, as in skbrtm.');
+      // In runs, which need not be one: 3, 7-9.
+      const runs = [];
+      for (const i of uncovered) {
+        const r = runs[runs.length - 1];
+        if (r && i === r[1] + 1) r[1] = i; else runs.push([i, i]);
+      }
+      const said = runs.map(([a, b]) => (a === b ? `${a}` : `${a}-${b}`)).join(', ');
+      notes.push(`${uncovered.length === cells ? 'No cell is' : `${uncovered.length === 1 ? 'Cell' : 'Cells'} ${said} `
+        + `${uncovered.length === 1 ? 'is' : 'are'}`} in no SOLUTION, and start${uncovered.length === 1 ? 's' : ''} with every `
+        + 'species at zero, as in skbrtm.');
     }
 
     // A dirichlet face takes the value skbrtm held its cell at; the cell next
-    // to it starts where the column behind it does.
+    // to it starts where the column behind it does. Where something reacts the
+    // end is a reservoir instead, which starts with everything skbrtm holds in
+    // that cell -- what does not move as well as what does, and held where
+    // skbrtm holds it -- and the cell beside it starts as the column does.
     const faces = [];
+    const reservoir = { left: null, right: null };
     for (const [side, cell, next] of [['left', 0, 1], ['right', cells - 1, cells - 2]]) {
       if (!transport || bcs[side === 'left' ? 0 : 1] !== 'dirichlet') continue;
+      if (reacts) {
+        const held = new Map();
+        for (const key of order) {
+          const col = start.get(key);
+          held.set(key, faceValue[side].has(key) ? { v: fmt(faceValue[side].get(key)), held: col[cell].held } : col[cell]);
+          if (next >= 0 && next < cells) col[cell] = { v: col[next].v, held: col[next].held };
+        }
+        reservoir[side] = held;
+        continue;
+      }
       for (const key of order) {
         if (!(D.get(key) > 0)) continue;
         const col = start.get(key);
@@ -540,7 +585,7 @@
       for (const id of ids) {
         if (id === 'S__' || defined.has(id) || tables.some((t) => t.name === id) || extraParams.has(id)) continue;
         const p = paramOf(id);
-        if (p) extra.push(`${id} = ${p[1]}`);
+        if (p) extra.push(`${id} = ${typeof p[1] === 'number' ? fmt(p[1]) : p[1]}`);
         else warnings.push(`${where}: "${id}" is neither an argument, a species nor a parameter.`);
       }
       const all = [...argParts, ...extra];
@@ -706,6 +751,23 @@
         const range = c === e ? `${c}` : (c === 0 && e === cells - 1 ? 'all' : `${c}-${e}`);
         initial.push(`${nameOf(key).padEnd(10)} ${range.padEnd(6)} ${here.v}${here.held && !allHeld ? '  fixed' : ''}`);
         c = e + 1;
+      }
+    }
+    // A reservoir's start where it is not the species line's, and what skbrtm holds there.
+    for (const side of ['left', 'right']) {
+      if (!reservoir[side]) continue;
+      for (const key of order) {
+        const col = start.get(key);
+        const counts = new Map();
+        for (const c of col) counts.set(c.v, (counts.get(c.v) || 0) + 1);
+        const common = [...counts.entries()].sort((a, c) => c[1] - a[1])[0][0];
+        const line = Number.isFinite(Number(common)) ? common : '0';
+        const allHeld = col.every((c) => c.held);
+        const here = reservoir[side].get(key);
+        const differs = Number(here.v) !== Number(line) || !Number.isFinite(Number(here.v));
+        if (differs || (here.held && !allHeld)) {
+          initial.push(`${nameOf(key).padEnd(10)} ${side.padEnd(6)} ${here.v}${here.held && !allHeld ? '  fixed' : ''}`);
+        }
       }
     }
     if (initial.length) out.push('', '<INITIAL>', ...initial);

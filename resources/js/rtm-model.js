@@ -114,11 +114,14 @@
       that only the plain words reach the assembly. `semi-infinite` is an
       outlet only: the column goes on past its right-hand end, as FARF31's
       stream tube does, and EXTRA_CELLS of it stand for the rock beyond.
+      `reservoir` is a dirichlet face whose water reacts: a well-mixed cell
+      outside the column, which the column does not drain and the chemistry
+      does change (see THE RESERVOIRS).
     */
     LEFT: { def: 'dirichlet', kind: 'word',
-      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite'] },
+      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite', 'reservoir'] },
     RIGHT: { def: 'neumann', kind: 'word',
-      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite'] },
+      of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite', 'reservoir'] },
     // How many cells past a semi-infinite right-hand end; worked out unless given.
     EXTRA_CELLS: { def: 0, kind: 'int' },
     TEND: { def: 1, kind: 'number' },
@@ -710,13 +713,16 @@
    *   Fe      20     0.5            one cell
    *   U_site  0      2.1e-4/w/1000  per m2 of surface: w is the cell's width
    *   U_site  1-9    0  fixed       held there: nothing may change it in those cells
+   *   Red     left   1e-3  fixed    the reservoir at a reservoir end (LEFT = reservoir)
    *
    * <SPECIES> gives a concentration the whole domain starts at, which is all a
    * batch run can have; a front, a plume or a layer needs this. The value may
    * be an expression in what <PARAMETERS> can use -- x, i, w, the parameters,
    * the tables -- worked out once per cell. After it may come "fixed", which
    * holds the species at that value in those cells and nowhere else, and
-   * "matrix", which aims the line at the rock behind those cells.
+   * "matrix", which aims the line at the rock behind those cells. `left` or
+   * `right` in place of the cells names the reservoir at that end, which an
+   * expression reads as the cell beside it.
    */
   function readInitial(lines, index, cells) {
     const out = [];
@@ -758,17 +764,29 @@
             + `(${e.message.replace(/^Line \d+: /, '')}).`, line);
         }
       }
+      // The reservoir at an end, which is no cell of the column: see patchCells.
+      if (/^(left|right)$/i.test(where)) {
+        if (matrix) {
+          throw new RtmError(`"matrix" and ${where.toLowerCase()}: a reservoir has no rock behind it.`, line);
+        }
+        out.push({ si: index.get(name), from: -1, to: -1, reservoir: where.toLowerCase(), value, ast, src: raw,
+          matrix: false, fixed, line });
+        continue;
+      }
       let from;
       let to;
       if (/^all$/i.test(where)) { from = 0; to = cells - 1; } else {
         const m = /^(\d+)(?:\s*-\s*(\d+))?$/.exec(where);
-        if (!m) throw new RtmError(`"${where}" is not a cell or a range such as 0-9, or "all".`, line);
+        if (!m) {
+          throw new RtmError(`"${where}" is not a cell or a range such as 0-9, "all", or left or right for the `
+            + 'reservoir at that end.', line);
+        }
         from = Number(m[1]);
         to = m[2] === undefined ? from : Number(m[2]);
       }
       if (from > to) { const t = from; from = to; to = t; }
       if (to >= cells) throw new RtmError(`Cell ${to} is past the last one (${cells - 1}).`, line);
-      out.push({ si: index.get(name), from, to, value, ast, src: raw, matrix, fixed, line });
+      out.push({ si: index.get(name), from, to, reservoir: null, value, ast, src: raw, matrix, fixed, line });
     }
     return out;
   }
@@ -6668,7 +6686,7 @@
     // never as an unknown.
     const held = opts.fixed || model.fixed || [];
     const basis = opts.equilibria || opts.fixed
-      ? conservationBasis(eqs, ns, held, abundanceOf(out, ns, model.cells), site) : model.conservation;
+      ? conservationBasis(eqs, ns, held, abundanceOf(out, ns, model.allCells || model.cells), site) : model.conservation;
     const ne = eqs.length;
     const nb = basis.length;
     const cells = [];
@@ -6720,7 +6738,8 @@
       for (let q = 0; q < nb; q++) if (moved < 0 || Math.abs(alpha[q]) > Math.abs(alpha[moved])) moved = q;
     }
     // opts.cells: these cells only, the rest left as they are -- one water of a column, as a diagram asks.
-    for (const cell of opts.cells || Array.from({ length: model.cells }, (_, c) => c)) {
+    // Every cell the state has, a reservoir's included: its water is speciated as a cell's is.
+    for (const cell of opts.cells || Array.from({ length: model.allCells || model.cells }, (_, c) => c)) {
       const b = cell * ns;
       // The totals to hold, taken from the state as it stands; a mineral
       // there at the start is taken to be present until it proves otherwise.
@@ -9604,15 +9623,45 @@
     const nm = matrix ? matrix.n : 0;
     const stride = 1 + nm;
     const cellOf = (i, j) => i * stride + j;
+    /*
+      THE RESERVOIRS. A reservoir end (LEFT or RIGHT = reservoir) is a face
+      held, as a dirichlet one is, at the water of a well-mixed reservoir,
+      and that water is a cell of its own: outside the column, after every
+      cell of it in the state, with the model's whole chemistry -- as a batch
+      run of the model would have it -- and no transport at all. The column
+      takes from it and gives to it across the face without changing it;
+      only its own reactions do. A source whose strength decays, a chain whose
+      daughters grow in the water that feeds the column, and skbrtm's
+      Dirichlet end, whose held first cell goes on reacting, are each one.
+
+      It is the cell beside it in everything but transport -- the same i, x
+      and width to a parameter or a starting value -- so it has that cell's
+      parameters, temperature and R, and reacts as that cell would. It starts
+      where a dirichlet face is held, each species at its left= or right= or
+      else its <SPECIES> value, unless an <INITIAL> line names it. `cells`
+      stays the column's, so that nothing the page reads cell by cell meets
+      it; `allCells` and `reservoir` say where it is.
+    */
+    const resSides = transport
+      ? ['left', 'right'].filter((side) => settings[side.toUpperCase()] === 'reservoir') : [];
+    const resCell = { left: -1, right: -1 };
+    resSides.forEach((side, r) => { resCell[side] = ncol * stride + r; });
     const placeCells = (centre) => {
       const out = [];
       for (let i = 0; i < ncol; i++) {
         out.push({ i, j: 0, x: col.centres[i], xm: 0 });
         for (let j = 1; j <= nm; j++) out.push({ i, j, x: col.centres[i], xm: centre ? centre[j - 1] : 0 });
       }
+      for (const side of resSides) {
+        const i = side === 'left' ? 0 : last;
+        out.push({ i, j: 0, x: col.centres[i], xm: 0, reservoir: side });
+      }
       return out;
     };
     let geom = placeCells(null);
+    // Where a cell is, as a message says it: its index and its layer, or the reservoir it is.
+    const whereIs = (c) => (geom[c].reservoir ? ` in the ${geom[c].reservoir} reservoir`
+      : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
     const tables = readTables(sections.TABLES);
     let params = readParameters(sections.PARAMETERS, col, geom, tables);
     const ns = species.length;
@@ -10415,7 +10464,8 @@
     }
 
     /* ---- the grid and what moves --------------------------------------- */
-    const nc = ncol * stride;       // every cell, matrix layers and extra cells included
+    const ncCol = ncol * stride;    // every cell of the column, matrix layers and extra cells included
+    const nc = ncCol + resSides.length;   // and the reservoirs after them: see THE RESERVOIRS
     if (transport && !mobile.some(Boolean)) {
       warnings.push('Transport is on but nothing moves: give a species D = ... , or set a VELOCITY.');
     }
@@ -10489,6 +10539,16 @@
     for (let c = 0; c < nc; c++) for (let s = 0; s < ns; s++) if (fixed[s]) fixedAt[c * ns + s] = 1;
     const patchCells = (p) => {
       const out = [];
+      // A line naming an end is the reservoir there, and there must be one.
+      if (p.reservoir) {
+        if (resCell[p.reservoir] < 0) {
+          throw new RtmError(`"${p.reservoir}" in <INITIAL> is the reservoir at the ${p.reservoir} end, and that end is `
+            + `${transport ? `${settings[p.reservoir.toUpperCase()]}: ${p.reservoir.toUpperCase()} = reservoir makes it one`
+              : 'no end at all in a batch run'}.`, p.line);
+        }
+        out.push(resCell[p.reservoir]);
+        return out;
+      }
       // A line that reaches the last cell reaches the cells past a
       // semi-infinite end too: they are the column going on.
       const to = p.to === nf - 1 ? last : p.to;
@@ -10506,12 +10566,13 @@
       }
       if (p.fixed) for (const c of patchCells(p)) fixedAt[c * ns + p.si] = 1;
     }
-    // Held somewhere but not everywhere, by species: what the panel reports.
+    // Held somewhere but not everywhere, by species: what the panel reports,
+    // which is of the column's cells.
     const held = [];
     for (let s = 0; s < ns; s++) {
       if (fixed[s]) continue;
       const cellsHeld = [];
-      for (let c = 0; c < nc; c++) if (fixedAt[c * ns + s]) cellsHeld.push(c);
+      for (let c = 0; c < ncCol; c++) if (fixedAt[c * ns + s]) cellsHeld.push(c);
       if (cellsHeld.length) held.push({ species: nameOf[s], si: s, cells: cellsHeld });
     }
 
@@ -10639,6 +10700,9 @@
         // solver may ask for the entry whatever its value.
         touch(b + s, b + s);
         const g = geom[i];
+        // A reservoir has its chemistry and nothing else: what it gives the
+        // cell beside it is in that cell's row, below.
+        if (g.reservoir) continue;
         if (g.j === 0) {
           // Along the fracture, to the neighbouring fracture cells -- two
           // either way when advection is limited, the slope of the cell
@@ -10660,29 +10724,43 @@
         }
       }
     }
+    // A reservoir end: the cell beside it reads the reservoir, as diffusion and the flow across the face do.
+    for (const side of resSides) {
+      const i = side === 'left' ? 0 : last;
+      for (let s = 0; s < ns; s++) if (mobile[s]) touch(cellOf(i, 0) * ns + s, resCell[side] * ns + s);
+    }
     /*
       The faces Nernst-Planck and an activity gradient act across (npFaces):
       between column cells, and at a Dirichlet end between the water held
       there and the cell beside it. A is the side to the left, B the one to
       the right; at an end its side is -1, its concentrations held in bA or
       bB, and `cell` is the cell beside it, whose temperature the water held
-      there has.
+      there has. At a reservoir end the water is the reservoir's, read from
+      the state where it is, and its side is closed (closedA, closedB): the
+      flux reaches the cell beside it and leaves the reservoir as it was.
     */
     const diffFaces = [];
     if (npIons.length || agSpecies.length) {
       const heldAt = (side) => Float64Array.from(species, (sp) => (sp[side] == null ? sp.initial : sp[side]));
       if (settings.LEFT === 'dirichlet') {
         diffFaces.push({ A: -1, B: cellOf(0, 0) * ns, iA: -1, iB: 0, cell: cellOf(0, 0), d: col.centres[0], wA: 0,
-          wB: col.width[0], closedB: false, bA: heldAt('left'), bB: null });
+          wB: col.width[0], closedA: false, closedB: false, bA: heldAt('left'), bB: null, res: false });
+      } else if (resCell.left >= 0) {
+        diffFaces.push({ A: resCell.left * ns, B: cellOf(0, 0) * ns, iA: -1, iB: 0, cell: resCell.left, d: col.centres[0],
+          wA: 0, wB: col.width[0], closedA: true, closedB: false, bA: null, bB: null, res: true });
       }
       for (let i = 0; i < last; i++) {
         diffFaces.push({ A: cellOf(i, 0) * ns, B: cellOf(i + 1, 0) * ns, iA: i, iB: i + 1, cell: -1,
-          d: col.centres[i + 1] - col.centres[i], wA: col.width[i], wB: col.width[i + 1], closedB: semi && i + 1 === last,
-          bA: null, bB: null });
+          d: col.centres[i + 1] - col.centres[i], wA: col.width[i], wB: col.width[i + 1], closedA: false,
+          closedB: semi && i + 1 === last, bA: null, bB: null, res: false });
       }
       if (settings.RIGHT === 'dirichlet') {
         diffFaces.push({ A: cellOf(last, 0) * ns, B: -1, iA: last, iB: -1, cell: cellOf(last, 0), d: grid.L - col.centres[nf - 1],
-          wA: col.width[last], wB: 0, closedB: false, bA: null, bB: heldAt('right') });
+          wA: col.width[last], wB: 0, closedA: false, closedB: false, bA: null, bB: heldAt('right'), res: false });
+      } else if (resCell.right >= 0) {
+        diffFaces.push({ A: cellOf(last, 0) * ns, B: resCell.right * ns, iA: last, iB: -1, cell: resCell.right,
+          d: grid.L - col.centres[nf - 1], wA: col.width[last], wB: 0, closedA: false, closedB: true, bA: null, bB: null,
+          res: true });
       }
     }
     // Nernst-Planck: every coupled ion on either side of a face reads every
@@ -10690,7 +10768,7 @@
     for (const f of diffFaces) {
       for (const { s: k } of npIons) {
         for (const { s: mm } of npIons) {
-          if (f.A >= 0) { touch(f.A + k, f.A + mm); if (f.B >= 0) touch(f.A + k, f.B + mm); }
+          if (f.A >= 0 && !f.closedA) { touch(f.A + k, f.A + mm); if (f.B >= 0) touch(f.A + k, f.B + mm); }
           if (f.B >= 0 && !f.closedB) { touch(f.B + k, f.B + mm); if (f.A >= 0) touch(f.B + k, f.A + mm); }
         }
       }
@@ -10866,6 +10944,13 @@
             const g = D / (d * w);
             const cb = species[s].left == null ? species[s].initial : species[s].left;
             if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb }); }
+          } else if (resCell.left >= 0) {
+            // A reservoir is a dirichlet face whose water is in the state: the
+            // same coefficient, on the reservoir's concentration, and nothing in
+            // the reservoir's own row -- the column does not drain it.
+            const d = col.centres[0] - 0;
+            const g = D / (d * w);
+            if (g) { flowIn.push({ row, col: row, value: -g }); flowIn.push({ row, col: resCell.left * ns + s, value: g }); }
           }
           // --- the face to the right ---
           if (i < last) {
@@ -10877,12 +10962,18 @@
             const g = D / (d * w);
             const cb = species[s].right == null ? species[s].initial : species[s].right;
             if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb }); }
+          } else if (resCell.right >= 0) {
+            const d = grid.L - col.centres[nf - 1];
+            const g = D / (d * w);
+            if (g) { flowIn.push({ row, col: row, value: -g }); flowIn.push({ row, col: resCell.right * ns + s, value: g }); }
           }
           // --- advection, upwind ---
           if (v !== 0) {
             const a = u / w;
             if (v > 0) {
               if (i > 0) flowIn.push({ row, col: cellOf(i - 1, 0) * ns + s, value: a });
+              // The flow carries the reservoir's water in, as it carries a dirichlet face's.
+              else if (resCell.left >= 0) flowIn.push({ row, col: resCell.left * ns + s, value: a });
               else if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') {
                 const cb = species[s].left == null ? species[s].initial : species[s].left;
                 boundary.push({ row, value: a * cb });
@@ -10890,6 +10981,7 @@
               flowIn.push({ row, col: row, value: -a });
             } else {
               if (i < last) flowIn.push({ row, col: cellOf(i + 1, 0) * ns + s, value: -a });
+              else if (resCell.right >= 0) flowIn.push({ row, col: resCell.right * ns + s, value: -a });
               else if (settings.RIGHT === 'dirichlet' || settings.RIGHT === 'robin') {
                 const cb = species[s].right == null ? species[s].initial : species[s].right;
                 boundary.push({ row, value: -a * cb });
@@ -10986,20 +11078,31 @@
         if (!mobile[s]) continue;
         const cbLeft = species[s].left == null ? species[s].initial : species[s].left;
         const cbRight = species[s].right == null ? species[s].initial : species[s].right;
+        // A reservoir's water is a state, so what crosses beside it is a term on that state, not a constant.
+        const resL = resCell.left >= 0 ? resCell.left * ns + s : -1;
+        const resR = resCell.right >= 0 ? resCell.right * ns + s : -1;
         // The left face, x = 0.
         if (v > 0) {
-          if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') left.constant += u * cbLeft;
+          if (resL >= 0) left.terms.push([resL, u]);
+          else if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') left.constant += u * cbLeft;
         } else if (v < 0) left.terms.push([at(0, s), u]);
         if (settings.LEFT === 'dirichlet') {
           const g = dispersionAt(s, 0) / col.centres[0];
           if (g) { left.terms.push([at(0, s), -g]); left.constant += g * cbLeft; }
+        } else if (resL >= 0) {
+          const g = dispersionAt(s, 0) / col.centres[0];
+          if (g) left.terms.push([at(0, s), -g], [resL, g]);
         }
         // The right face, x = LENGTH.
         if (v > 0) right.terms.push([at(N, s), u]);
+        else if (v < 0 && resR >= 0) right.terms.push([resR, u]);
         else if (v < 0 && (settings.RIGHT === 'dirichlet' || settings.RIGHT === 'robin')) right.constant += u * cbRight;
         if (settings.RIGHT === 'dirichlet') {
           const g = dispersionAt(s, N) / (grid.L - col.centres[N]);
           if (g) { right.terms.push([at(N, s), g]); right.constant -= g * cbRight; }
+        } else if (resR >= 0) {
+          const g = dispersionAt(s, N) / (grid.L - col.centres[N]);
+          if (g) right.terms.push([at(N, s), g], [resR, -g]);
         } else if (semi) {
           const D = dispersionAt(s, N);
           if (nb > 0) {
@@ -11179,7 +11282,7 @@
       const ni = npIons.length;
       const slots = new Int32Array(4 * ni * ni).fill(-1);
       const aslots = new Int32Array(4 * agSpecies.length).fill(-1);
-      const onA = (k) => f.A >= 0 && !fixedAt[f.A + k];
+      const onA = (k) => f.A >= 0 && !f.closedA && !fixedAt[f.A + k];
       const onB = (k) => f.B >= 0 && !f.closedB && !fixedAt[f.B + k];
       npIons.forEach(({ s: k }, a) => {
         npIons.forEach(({ s: mm }, c) => {
@@ -11197,7 +11300,7 @@
     });
     // Each column cell's ln gamma, and each end's water's, read afresh with every call.
     const lnGcol = actGrad ? new Float64Array(ncol * ns) : null;
-    const lnGend = actGrad ? npFaces.map((f) => (f.bA || f.bB ? new Float64Array(ns) : null)) : null;
+    const lnGend = actGrad ? npFaces.map((f) => (f.bA || f.bB || f.res ? new Float64Array(ns) : null)) : null;
     const gScratch = actGrad ? new Float64Array(ns) : null;
     const dScratch = actGrad ? new Float64Array(ns) : null;
     /*
@@ -11265,7 +11368,12 @@
           activityAt(act, y, c * ns, gScratch, dScratch, c);
           lnGcol.set(gScratch, i * ns);
         }
-        npFaces.forEach((f, q) => { if (lnGend[q]) activityAt(act, f.bA || f.bB, 0, lnGend[q], dScratch, f.cell); });
+        npFaces.forEach((f, q) => {
+          if (!lnGend[q]) return;
+          // A reservoir's water is in the state, where it is now; a dirichlet end's is held.
+          if (f.res) activityAt(act, y, f.closedA ? f.A : f.B, lnGend[q], dScratch, f.cell);
+          else activityAt(act, f.bA || f.bB, 0, lnGend[q], dScratch, f.cell);
+        });
       }
       for (let q = 0; q < npFaces.length; q++) {
         const f = npFaces[q];
@@ -11275,10 +11383,12 @@
         const cB = f.bB || y;
         const oB = f.bB ? 0 : f.B;
         if (actGrad) {
-          const gA = f.bA ? lnGend[q] : lnGcol;
-          const ogA = f.bA ? 0 : f.iA * ns;
-          const gB = f.bB ? lnGend[q] : lnGcol;
-          const ogB = f.bB ? 0 : f.iB * ns;
+          const endA = f.bA || (f.res && f.closedA);
+          const endB = f.bB || (f.res && f.closedB);
+          const gA = endA ? lnGend[q] : lnGcol;
+          const ogA = endA ? 0 : f.iA * ns;
+          const gB = endB ? lnGend[q] : lnGcol;
+          const ogB = endB ? 0 : f.iB * ns;
           for (const k of agSpecies) activityPart(k, cA[oA + k], cB[oB + k], gA[ogA + k], gB[ogB + k]);
         }
         let N = 0;
@@ -11293,14 +11403,14 @@
           if (coupled) {
             for (const { s: k, z, D } of npIons) {
               const J = D * z * 0.5 * (cA[oA + k] + cB[oB + k]) * pull;
-              if (f.A >= 0 && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
+              if (f.A >= 0 && !f.closedA && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
               if (f.B >= 0 && !f.closedB && !fixedAt[f.B + k]) out[f.B + k] += J / f.wB;
             }
           }
           for (const k of agSpecies) {
             if (actD[k] === 0) continue;
             const J = (-species[k].D * actD[k]) / f.d;
-            if (f.A >= 0 && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
+            if (f.A >= 0 && !f.closedA && !fixedAt[f.A + k]) out[f.A + k] -= J / f.wA;
             if (f.B >= 0 && !f.closedB && !fixedAt[f.B + k]) out[f.B + k] += J / f.wB;
           }
           continue;
@@ -11420,7 +11530,7 @@
       if (pt) { pt.kSc = new Float64Array(nc); pt.fRTc = new Float64Array(nc); }
       if (gasT && gasT.fixed === 'volume') gasT.lnGc = new Float64Array(nc);
     }
-    const cellName = (c) => (nc === 1 ? '' : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
+    const cellName = (c) => (nc === 1 ? '' : whereIs(c));
     /** Each cell's temperature at time t, and what reads it there; nothing where it is a number. */
     function thermoAt(t) {
       if (!thermo.varies || (thermo.clock ? t === thermo.t : thermo.ready)) return;
@@ -11669,6 +11779,12 @@
     for (let i = 0; i < nc; i++) {
       for (let s = 0; s < ns; s++) initial[i * ns + s] = species[s].initial;
     }
+    // A reservoir starts where a dirichlet face is held, at left= or right= where
+    // a species gives one; an <INITIAL> line naming it comes after, and wins.
+    for (const side of resSides) {
+      const b = resCell[side] * ns;
+      for (let s = 0; s < ns; s++) if (species[s][side] != null) initial[b + s] = species[s][side];
+    }
     /*
       A Dirichlet face does NOT set the cell that touches it. It used to start
       that cell at the face value, to spare the solver a jump on its first
@@ -11701,7 +11817,7 @@
               + 'value may use x, w, xl, xr, i, the parameters and the tables.', patch.line);
           }
           if (!Number.isFinite(v)) {
-            throw new RtmError(`"${patch.src}" is not a number in cell ${g.i}.`, patch.line);
+            throw new RtmError(`"${patch.src}" is not a number${whereIs(c)}.`, patch.line);
           }
         }
         initial[c * ns + patch.si] = v;
@@ -11712,9 +11828,15 @@
       equilibria: the speciation holds a species everywhere or nowhere, and
       would move it in the very cells it was meant to stay put in.
     */
-    if (settings.EQUILIBRATE && held.length) {
+    // The reservoirs count here too: what is held in one and nowhere else is held in some cells only.
+    const heldSomewhere = [];
+    for (let s = 0; s < ns; s++) {
+      if (fixed[s]) continue;
+      for (let c = 0; c < nc; c++) if (fixedAt[c * ns + s]) { heldSomewhere.push({ species: nameOf[s], si: s }); break; }
+    }
+    if (settings.EQUILIBRATE && heldSomewhere.length) {
       const inEq = new Set(equilibriumSpecies(equilibria));
-      const bad = held.filter((h) => inEq.has(h.si));
+      const bad = heldSomewhere.filter((h) => inEq.has(h.si));
       if (bad.length) {
         throw new RtmError(`${bad.map((h) => h.species).join(', ')} ${bad.length > 1 ? 'are' : 'is'} held in `
           + `some cells only and takes part in an <EQUILIBRIUM>; EQUILIBRATE = ${settings.EQUILIBRATE === 2 ? 'always' : 1} `
@@ -11735,7 +11857,7 @@
       ex.capacity = new Float64Array(nc * nx);
       ex.shift = new Float64Array(nc * ns);
       ex.load = [];
-      const where = (c) => (nc === 1 ? '' : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
+      const where = (c) => (nc === 1 ? '' : whereIs(c));
       for (let c = 0; c < nc; c++) {
         const b = c * ns;
         ex.exchangers.forEach((k, x) => {
@@ -11799,7 +11921,7 @@
       sf.shift = new Float64Array(nc * ns);
       sf.sites = new Float64Array(nc * nt);
       sf.load = [];
-      const where = (c) => (nc === 1 ? '' : ` in cell ${geom[c].i}${geom[c].j > 0 ? `, layer ${geom[c].j} of the rock` : ''}`);
+      const where = (c) => (nc === 1 ? '' : whereIs(c));
       for (let c = 0; c < nc; c++) {
         const b = c * ns;
         sf.types.forEach((t, ti) => {
@@ -12403,7 +12525,8 @@
     for (let c = 0; c < nc; c++) {
       const g = geom[c];
       for (let s = 0; s < ns; s++) {
-        stateNames.push(nc === 1 ? nameOf[s] : g.j === 0 ? `${nameOf[s]}@${g.i}` : `${nameOf[s]}@${g.i}.${g.j}`);
+        stateNames.push(nc === 1 ? nameOf[s] : g.reservoir ? `${nameOf[s]}@${g.reservoir}`
+          : g.j === 0 ? `${nameOf[s]}@${g.i}` : `${nameOf[s]}@${g.i}.${g.j}`);
       }
     }
 
@@ -12449,7 +12572,11 @@
       timeUnit: TIME_UNITS[settings.TIME_UNIT],
       grid,
       transport,
-      cells: nc,               // every cell, matrix layers and extra cells included
+      cells: ncCol,            // every cell of the column, matrix layers and extra cells included
+      // ...and the reservoirs after them, which only the solver and the model's own code meet:
+      // where each is in the state, -1 for an end that is no reservoir (THE RESERVOIRS).
+      allCells: nc,
+      reservoir: { left: resCell.left, right: resCell.right },
       fracture: nf,            // the cells along the column
       // The cells past a semi-infinite right-hand end, after the column's own
       // in the state: how many, and where. Null for any other end.
@@ -12526,7 +12653,8 @@
       temperature: { given: tcFixed !== null ? tcFixed : settings.TEMPERATURE, varies: thermo.varies, cells: tempCells,
         clock: tempClock, relations: relT.length, phases: phT.length, reads: readsT },
       thermoAt,
-      temperatures(t) { thermoAt(t); return Float64Array.from(thermo.tc); },
+      // The column's cells' temperatures: a reservoir's is the cell's beside it.
+      temperatures(t) { thermoAt(t); return Float64Array.from(thermo.tc.subarray(0, ncCol)); },
       // What the run can be read as besides its species (QUANTITIES), and what <DATA> measured.
       quantities: qList,
       quantitiesAt,
@@ -12585,7 +12713,9 @@
       for (let c = 0; c < nc; c++) if (initial[c * ns + electron] > 0) given++;
       if (given && given < nc) {
         throw new RtmError(`${eName}, the electron, is given an activity in ${given} of the ${nc} cells: give it `
-          + 'in every cell, or in none and let the water there set it.', species[electron].line);
+          + 'in every cell, or in none and let the water there set it.'
+          + (resSides.length ? ` A reservoir is one of the ${nc}: an <INITIAL> line naming ${resSides.join(' or ')} gives it its own.`
+            : ''), species[electron].line);
       }
       if (!given && !settings.EQUILIBRATE) {
         throw new RtmError(`${eName} is the electron and has nothing to start from: give it a pe, ${eName} electron `
@@ -12640,7 +12770,7 @@
           const total = p.ratio * initial[b + p.mineral];
           if (!(total > 0)) {
             throw new RtmError(`The sites of ${nameOf[ex.exchangers[x]]} go with ${nameOf[p.mineral]}, and the water's own `
-              + `speciation leaves none of it${nc === 1 ? '' : ` in cell ${geom[Math.floor(q / nx)].i}`}.`,
+              + `speciation leaves none of it${nc === 1 ? '' : whereIs(Math.floor(q / nx))}.`,
             species[p.species].line);
           }
           ex.capacity[q] = total;
@@ -12671,7 +12801,7 @@
           const total = t.per.ratio * initial[b + t.per.mineral];
           if (!(total > 0)) {
             throw new RtmError(`The sites of ${nameOf[t.sitesFrom]} go with ${nameOf[t.per.mineral]}, and the water's own `
-              + `speciation leaves none of it${nc === 1 ? '' : ` in cell ${geom[Math.floor(q / nt)].i}`}.`, species[t.sitesFrom].line);
+              + `speciation leaves none of it${nc === 1 ? '' : whereIs(Math.floor(q / nt))}.`, species[t.sitesFrom].line);
           }
           sf.sites[q] = total;
           for (const k of t.members) sf.shift[b + k] = Math.log(sf.n[k] / total);
@@ -12688,7 +12818,8 @@
           + `cell${stuck.length > 1 ? 's' : ''} (worst residual `
           + `${Math.max(...stuck.map((c) => c.residual)).toExponential(2)}).`);
       }
-      model.speciated = done.cells;
+      // The column's cells, as the page reports them: a reservoir's speciation is in the warning above.
+      model.speciated = done.cells.slice(0, ncCol);
     }
 
     if (settings.EQUILIBRATE === 2 && equilibria.length) {
@@ -12766,7 +12897,8 @@
     const ns = base.speciesNames.length;
     // Each cell's temperature, and what reads it, at the time asked for (compile's thermoAt).
     const thermoAt = base.thermoAt || (() => {});
-    const nc = base.cells;
+    // Every cell the state has: the reservoirs hold their relations as the column's cells do.
+    const nc = base.allCells || base.cells;
     const nBase = base.nspecies;
     const fixed = base.fixed;
     // An exchanger, the electron or a potential is no amount: it counts in no total, whatever its R.

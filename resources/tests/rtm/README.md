@@ -135,6 +135,39 @@ column, and Abramowitz & Stegun 7.1.26 — used everywhere else here — carries
 *absolute* error bound of 1.5e-7, which that factor turns into 1e14. The block
 uses the Numerical Recipes form instead, whose bound is fractional.
 
+**A reservoir at an end** (`LEFT = reservoir`, since 2026-11-11). A face held at
+the water of a reservoir that the chemistry changes and the column does not
+drain: a cell outside the column with the model's chemistry and no transport.
+Each check is against something that code does not produce:
+
+- skbrtm's benchmark 5, written out again: A → B diffusing in from a face at
+  A₀·exp(−k₀t), against its closed solution, exp(−k₀t) times Crank's slab. On
+  100 power-law cells it is 7.7e-5, 1.4e-5, 8.3e-6 and 1.2e-8 of A₀ at 1, 10,
+  30 and 100 days.
+- The reservoir's own water against the batch solution, to 1e-11.
+- With the flow as well: exp(−k₀t) times the same column at a dirichlet face
+  where nothing reacts. That is an identity of the discrete equations, and it
+  holds to 1e-10. With a rock matrix behind the column and the decay on the
+  whole inventory, it holds in the water and the rock alike, to 7e-11.
+- What the column gains against what crosses its two ends, the left face read
+  off the reservoir: 6e-15.
+- With nothing reacting it is the dirichlet face; at the right-hand end, the
+  left one mirrored.
+- The Jacobian against a difference, with a second-order reaction in the
+  reservoir and the column. Nernst-Planck across the face against the
+  dirichlet face's rates, and its Jacobian against a difference. The activity
+  gradient's Jacobian against the dirichlet face's, entry for entry; it holds
+  ln γ at any face, so a difference finds it out on a plain column too.
+- Equilibria held all through the run, in the reservoir as in the column: its
+  water at the end against a batch run of the same water, to 7e-15.
+- `<INITIAL>` naming `left`: over `left=`, an expression read as the cell
+  beside it, `fixed` holding it there alone; refused where that end is no
+  reservoir, and with `matrix`.
+- The worker's budget: a tracer through the reservoir's face against the
+  dirichlet face's, to the solver's tolerance. A and B together close within
+  the budget's own summing of the flux over the stored points, 2e-5 at
+  rtol 1e-8, which a dirichlet face leaves open just the same.
+
 **Transport.** Diffusion against `erfc`, and not at one grid: the error has to
 fall by four each time the cells are doubled, which is a far stronger statement
 than any single number being close. Advection against Ogata–Banks, compared at
@@ -264,7 +297,13 @@ independently rather than against the code's own output:
   skbrtm's `(kr/kh)`, `boundary_values`, `units:` with a colon, a lone `cell_id`,
   a species constant in one cell, a value per cell width -- opens, compiles and
   runs, with each of skbrtm's four misreadings named. When skbrtm-main is in
-  `~/Downloads`, its five cases are opened and run as well.
+  `~/Downloads`, its five cases are opened and run as well. A Dirichlet end
+  where something reacts opens as a reservoir holding what skbrtm puts in that
+  cell: `boundary_values`, the value per cell width, the `constant` species,
+  held there and nowhere else. The first cell starts as the column does, and
+  the reservoir's A decays as skbrtm's held cell does. Where nothing reacts
+  the end is a face held at that value. One cell in no SOLUTION is said as
+  one, and a constant of the parameters dict is written as a number is.
 
 **The examples the page offers.** Every one of them is compiled and run here,
 so the picker cannot hand a reader something broken, and the two with a

@@ -946,7 +946,7 @@
               <tr><td><code>VELOCITY</code></td><td>m/s, positive left to right. Advection is upwind unless <code>ADVECTION_SCHEME</code> says otherwise, so it is stable at any step but adds numerical dispersion of <code>v·Δx/2</code>.</td></tr>
               <tr><td><code>ADVECTION_SCHEME</code></td><td><em>upwind</em> (the default) or <em>limited</em>: second order where a profile is smooth and upwind where it turns, so a front stays sharp — see <em>What it actually solves</em> below.</td></tr>
               <tr><td><code>POROSITY</code></td><td>Divides the velocity to give the pore-water speed.</td></tr>
-              <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>), and on the right <em>semi-infinite</em> — see below.</td></tr>
+              <tr><td><code>LEFT</code>, <code>RIGHT</code></td><td>What each end of the column is: <em>dirichlet</em>, <em>reservoir</em>, <em>neumann</em>, <em>robin</em> (<em>cauchy</em>) or <em>free</em> (<em>outflow</em>), and on the right <em>semi-infinite</em> — see below.</td></tr>
               <tr><td><code>EXTRA_CELLS</code></td><td>With <code>RIGHT = semi-infinite</code>: how many cells stand for the column past its end. Worked out unless given.</td></tr>
               <tr><td><code>TRAVEL_TIME</code></td><td>The time the water takes to cross the column, in the model's time unit, which is how a far-field path is described. It sets <code>VELOCITY</code> to <code>POROSITY</code>·<code>LENGTH</code>/<code>TRAVEL_TIME</code> and turns <code>ADVECTION</code> on.</td></tr>
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise.</td></tr>
@@ -968,7 +968,8 @@ H+     1.0E-7  D=9.3E-9  left=1.0E-7
 UO2                      # no number: starts at zero, does not move</pre>
           <p>A name, the concentration it starts at, and then any of: <code>fixed</code> to hold it
             there for ever, <code>D=</code> its diffusion coefficient in m²/s, and
-            <code>left=</code> / <code>right=</code> the concentration at a Dirichlet face. A
+            <code>left=</code> / <code>right=</code> the concentration at a Dirichlet face, or what a
+            reservoir there starts with. A
             species with no <code>D</code> does not diffuse; but in a column with
             <code>ADVECTION</code> the water carries every species that is not fixed, <code>D</code> or
             no <code>D</code>. <code>immobile</code> keeps a species where it is whatever the column
@@ -1211,9 +1212,9 @@ distance  pH     at = 36000
             model from the one that was meant.</p>
 
           <h4>The two ends of the column</h4>
-          <p>Four kinds of face, under the names the transport literature gives them. Which you
-            want depends on what is on the other side: a reservoir, a wall, water arriving, or
-            nothing at all.</p>
+          <p>Four kinds of face, under the names the transport literature gives them, and two more.
+            Which you want depends on what is on the other side: a reservoir, a wall, water arriving,
+            or nothing at all — and, for a reservoir, whether its water changes.</p>
           <table class="rtm-table">
             <tbody>
               <tr><td><code>dirichlet</code><br><span class="rtm-muted">first type</span></td>
@@ -1223,6 +1224,21 @@ distance  pH     at = 36000
                   well-mixed reservoir. It sets nothing inside the column: every cell, the one
                   touching the face included, starts where <code>&lt;SPECIES&gt;</code> and
                   <code>&lt;INITIAL&gt;</code> put it.</td></tr>
+              <tr><td><code>reservoir</code></td>
+                <td>A <code>dirichlet</code> face whose reservoir reacts. Its water is a cell of its own,
+                  outside the column, with the model's whole chemistry — reactions, relations, equilibria
+                  held — and no transport: the column takes from it and gives to it across the face
+                  without changing it, and only its own reactions do. Diffusion sees it half a cell away
+                  and the flow carries it in, as at a <code>dirichlet</code> face. It starts at each
+                  species' <code>left=</code> or <code>right=</code>, or else its
+                  <code>&lt;SPECIES&gt;</code> value, unless an <code>&lt;INITIAL&gt;</code> line names
+                  it, with <code>left</code> or <code>right</code> in place of the cells —
+                  <code>Red&nbsp;left&nbsp;1e-3&nbsp;fixed</code> — where an expression is read as the
+                  cell beside it. It has that cell's parameters, temperature and <code>R</code>, and
+                  reacts as that cell would: a source whose strength decays, a nuclide chain whose
+                  daughters grow in the water that feeds the column. With nothing reacting it is
+                  <code>dirichlet</code>. The charts show the column; what crosses the face is under
+                  <em>flux through the left end</em> (or the right).</td></tr>
               <tr><td><code>neumann</code><br><span class="rtm-muted">second type</span></td>
                 <td>Nothing crosses. A wall.</td></tr>
               <tr><td><code>robin</code>, <code>cauchy</code><br><span class="rtm-muted">third type</span></td>
@@ -1496,7 +1512,8 @@ O2      all   2.1E-4
 Fe      20    0.5                 # one cell
 U_site  0     2.1e-4/w/1000       # per m2 of surface, spread through cell 0
 B       5-9   0      fixed        # held at 0 in cells 5 to 9, and only there
-X       0     1      fixed        # a reservoir: cell 0 held at 1, feeding the rest</pre>
+X       0     1      fixed        # a reservoir: cell 0 held at 1, feeding the rest
+Red     left  1e-3   fixed        # the reservoir at the left end, with LEFT = reservoir</pre>
           <p>Optional, and only useful with transport: it overrides the concentration in
             <code>&lt;SPECIES&gt;</code> cell by cell, which is how you start a front, a plume or a
             layer. The value may be an expression in what a parameter can use, worked out in each
@@ -1510,6 +1527,11 @@ X       0     1      fixed        # a reservoir: cell 0 held at 1, feeding the r
             it already is. A species held in some cells only cannot be put on the
             <code>&lt;EQUILIBRIUM&gt;</code> relations by <code>EQUILIBRATE</code>, and the page says
             so rather than moving it anyway.</p>
+          <p><code>left</code> or <code>right</code> in place of the cells names the reservoir at that
+            end, where <code>LEFT</code> or <code>RIGHT</code> is <code>reservoir</code>: what it starts
+            with, over the species' <code>left=</code> or <code>right=</code>, and <code>fixed</code> to
+            hold it there. An expression is read as the cell beside the reservoir, its <code>x</code>,
+            its <code>w</code> and its parameters. See <em>The two ends of the column</em>.</p>
 
           <h4>&lt;PARAMETERS&gt;</h4>
           <pre>DOSE  all  0.64                  # the same everywhere
@@ -2308,7 +2330,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
           <p>Where skbrtm would read the text differently from what it says, the model follows the
             text and the difference is written at the top of it. Every rate law is read both ways,
             and one whose arguments skbrtm pastes in so that the value changes is named, with the
-            factor. A Dirichlet end holds the face here, where skbrtm holds the first cell; a
+            factor. A Dirichlet end holds the face here, where skbrtm holds the first cell; where
+            anything reacts it is a <code>reservoir</code>, since the cell skbrtm holds goes on reacting,
+            and what skbrtm puts in that cell starts the reservoir; a
             <code>REGRESSION</code> becomes a <code>&lt;TABLE&gt;</code> of its own data, where
             skbrtm fits a function to it; a <code>constant</code> species becomes <code>fixed</code>,
             in the cells its <code>SOLUTION</code> names; and a lone <code>cell_id</code> means that
@@ -2358,7 +2382,7 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             coefficient is the same the term is nothing in a neutral water. The charge comes from the
             name, <code>z=</code> where it should not; a <code>PECLET</code> dispersion moves every
             species alike and is left as it is. It acts between the cells of the column and at a
-            Dirichlet end, between the water held there and the cell beside it, half a cell away; the
+            Dirichlet or reservoir end, between the water held there and the cell beside it, half a cell away; the
             rock matrix keeps each species on its own.</p>
           <p>The gradients are of concentrations unless <code>DIFFUSION_GRADIENT = activity</code>,
             which needs <code>ACTIVITY</code>: then each is the difference in concentration times
@@ -3701,13 +3725,13 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111c"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111e"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261111a"></script>
   <script src="./resources/js/rtm-worker.js?v=20261111d"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
-  <script src="./resources/js/rtm-import.js?v=20260923"></script>
+  <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
   <script src="./resources/js/rtm-ui.js?v=20261111h"></script>
 </body>
