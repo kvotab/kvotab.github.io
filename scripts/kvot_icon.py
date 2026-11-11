@@ -1,7 +1,7 @@
 """Shared by the page-icon generators that build their drawing from blocks:
 gen-flashcards-icon.py, gen-winnetkakort-icon.py, gen-sl-icon.py, gen-gitarr-icon.py,
-gen-svensk_text-icon.py and gen-pylab-icon.py (gen-kvot-touch-icon.py uses only its
-rasteriser).
+gen-svensk_text-icon.py, gen-pylab-icon.py and gen-rtm-icon.py (gen-kvot-touch-icon.py
+uses only its rasteriser).
 
 The kvot mark's language, as kompartment/icon.svg sets it out: true 30-degree
 isometric, every edge horizontal, at 30 degrees or upright; one flat tone per

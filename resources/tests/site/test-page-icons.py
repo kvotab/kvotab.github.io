@@ -8,7 +8,7 @@ An iPhone puts a page saved to its home screen there with the picture its
 `apple-touch-icon` link names, 180 x 180; without one it draws the title's
 first letter on a grey tile (Glosor showed a "G", 2026-10-17). So for every
 published page (the .html files at the top of the repository, but the 404
-page, which nobody saves):
+page and Google's site-verification file, which nobody saves):
 
   * there is exactly one apple-touch-icon link, to a 180 x 180 PNG that is
     the drawing, in the kvot mark's three tones;
@@ -49,6 +49,7 @@ OWN = {
     'kompartment.html': ('kompartment/icon-180.png', False),
     'pylab.html': ('resources/images/pylab-icon-180.png', True),
     'rb.html': ('resources/images/rb-icon-180.png', False),
+    'rtm.html': ('resources/images/rtm-icon-180.png', True),
     'smui.html': ('resources/images/smui-icon-180.png', False),
     'solna.html': ('resources/images/sl-icon-180.png', True),
     'svensk-text-free.html': ('resources/images/svensk_text-icon-180.png', True),
@@ -97,8 +98,10 @@ def is_drawing(png, size):
     return (w, h) == (size, size) and share is not None and all(v >= 0.004 for v in share.values())
 
 
+# Not a page anyone saves: the 404 page, and the file Google's Search Console reads to see that the site is Kvot AB's.
 pages = sorted(p for p in subprocess.run(['git', 'ls-files', '*.html'], cwd=ROOT, capture_output=True, text=True,
-                                         check=True).stdout.split() if '/' not in p and p != '404.html')
+                                         check=True).stdout.split()
+               if '/' not in p and p != '404.html' and not re.fullmatch(r'google[0-9a-f]+\.html', p))
 check('the pages are found', len(pages) > 20)
 seen_png = {}
 for page in pages:
