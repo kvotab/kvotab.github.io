@@ -1769,7 +1769,10 @@ function rtmSweep(msg, post) {
   by `delta` of itself and lowered by as much (RtmModel.withValue), one at a
   time, the page's solver settings each time; or put at the values the
   page gives it, `up` and `down` -- a relation's log K a little either way,
-  which moves its K by a factor. Kept of each run, at one cell:
+  which moves its K by a factor. With `times`, each run is also read at
+  those times, the same for every run, from the solver itself, and keeps at
+  the cell every species and every quantity but a reaction's at each: what
+  each constant does through the run. Kept of each run, at one cell:
   every species and quantity at the end of the run, and its largest and
   smallest over the stored points -- what the page sets against the run as
   written to say how much each constant moves what it draws. A run that
@@ -1784,6 +1787,8 @@ function rtmEach(msg, post) {
   const runs = [];
   let names = null;
   let keys = null;
+  let seriesKeys = null;
+  let seriesTimes = null;
   const started = Date.now();
   let lastReport = 0;
   jobs.forEach((job, r) => {
@@ -1795,14 +1800,16 @@ function rtmEach(msg, post) {
       const text = tg ? RtmModel.withValue(msg.text, tg.vary, put) : msg.text;
       const model = RtmModel.compile(text);
       const tend = s.tend > 0 ? s.tend : model.settings.TEND;
-      const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {
+      const times = Array.isArray(msg.times) && msg.times.length ? msg.times.filter((x) => x <= tend * (1 + 1e-12)) : null;
+      const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, (t, nsteps) => {
         const now = Date.now();
         if (now - lastReport < 250) return true;
         lastReport = now;
         post({ type: 'progress', id: msg.id, run: r, runs: jobs.length, t, tend, nsteps,
           frac: Math.min(1, (r + Math.min(1, t / tend)) / jobs.length) });
         return true;
-      }, model));
+      }, model), ...(times ? { outputTimes: times } : {}) });
+      if (times && (!res.grid || res.grid.t.length < times.length)) throw new Error('the run did not reach every time asked for');
       const n = res.t.length;
       const width = model.stateWidth || model.nspecies;
       const states = rtmConcentrations(model, res.y, n, width, res.t);
@@ -1832,16 +1839,39 @@ function rtmEach(msg, post) {
           for (let q = 0; q < which.length; q++) keep(ns + which[q], qOut[q], last);
         }
       }
-      runs.push({ target: job.target, factor: job.factor, ok: true, end, max, min, tend: res.t[n - 1],
+      // Through the run: at the times asked for, every species at the cell and every quantity but a reaction's.
+      let series = null;
+      if (times) {
+        const keep = model.quantities.map((q, k) => (q.group === 'reactions' || q.of ? -1 : k)).filter((k) => k >= 0);
+        seriesKeys = seriesKeys || [...model.speciesNames, ...keep.map((k) => model.quantities[k].key)];
+        const nk = ns + keep.length;
+        const gt = res.grid.t;
+        const gs = rtmConcentrations(model, res.grid.y, gt.length, width, gt);
+        const keepWhich = Int32Array.from(keep);
+        const kOut = new Float64Array(keep.length);
+        series = new Float64Array(gt.length * nk);
+        for (let i = 0; i < gt.length; i++) {
+          const c = gs.subarray(i * width, (i + 1) * width);
+          for (let k = 0; k < ns; k++) series[i * nk + k] = c[cell * ns + k];
+          if (keep.length) {
+            model.quantitiesAt(c, gt[i], cell, keepWhich, kOut);
+            for (let q = 0; q < keep.length; q++) series[i * nk + ns + q] = kOut[q];
+          }
+        }
+        seriesTimes = seriesTimes || Array.from(gt);
+      }
+      runs.push({ target: job.target, factor: job.factor, ok: true, end, max, min, tend: res.t[n - 1], ...(series ? { series } : {}),
         steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
     } catch (e) {
       runs.push({ target: job.target, factor: job.factor, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
     }
   });
   const transfer = [];
-  for (const run of runs) if (run.ok) transfer.push(run.end.buffer, run.max.buffer, run.min.buffer);
+  for (const run of runs) {
+    if (run.ok) transfer.push(run.end.buffer, run.max.buffer, run.min.buffer, ...(run.series ? [run.series.buffer] : []));
+  }
   return { reply: { type: 'each', id: msg.id, runs, species: names || [], keys: keys || [], cell: msg.cell, delta,
-    seconds: (Date.now() - started) / 1000 }, transfer };
+    ...(seriesKeys ? { seriesKeys, times: seriesTimes } : {}), seconds: (Date.now() - started) / 1000 }, transfer };
 }
 
 /*

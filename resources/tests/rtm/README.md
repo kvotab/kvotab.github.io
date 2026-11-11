@@ -645,6 +645,15 @@ the free A+ the closed form's, x + K x^2 = 0.01, to the last digit; its
 exponent, -0.276392907, the closed form's own central difference to the
 last digit and its derivative, -K x/(1 + 2 K x) = -0.276393202, to 1e-6
 (3e-7, the difference's own).
+Each constant in turn, through the run (since 2026-11-11): every run read
+at the same 198 times by the solver itself, a hundred spread evenly and a
+hundred in the logarithm (`times`, the solver's own output at them, not
+interpolated afterwards), and at each how much each constant moves a
+result. A decay's A, A0 e^-kt, moves -kt per cent for each per cent of k
+at every one, to 1e-4 of kT (3.1e-6); a chain's B the closed form's
+central difference at every one, to 1e-4 (8.2e-6), and its derivative
+(3.9e-5); the calcite water's Ca half a per cent for each per cent of K
+at every one, to 1e-9 (1.2e-13).
 A mineral's dissolution front, as the Composition tab follows it (since
 2026-11-11): halite in a column of the test's own, 20 cells over 1 m,
 fresh water flowing in at 1e-5 m/s, the water at saturation holding S =
@@ -1305,7 +1314,7 @@ Two runs side by side (since 2026-11-10), on the salinisation example at cell 19
 
 The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARAMETERS>`: the parameter is offered, and a new choice starts from half its value, the value and twice it (0.05, 0.1, 0.2); 0.1 to 0.4 in 4 makes four runs; against what was varied, A at the end of each is exp(-10 kk) to the solver's tolerance (1.1e-5 at rtol 1e-6); against time, a curve per run named for its value.
 
-Each constant in turn (since 2026-11-11), on the same decay: first in Vary, "its one constant, 1 % either way (3 runs)", the values and the second choice hidden; three runs; A at the end, exp(-10 kk), moving -1 per cent for each per cent of kk, a bar to the left in orange, to 1e-4; the note giving A as written, 0.3679, and kk the one that moves it; the CSV `rtm_each_constant_A_end.csv` a row for kk. Each log K in turn: none offered for the decay, which has no relation; calcite into water with nothing but its ions, "its one log K, K 1 % either way (3 runs)", Ca+2 at the end moving half a per cent for each per cent of K, a bar to the right in blue, to 1e-6, the note giving Ca as written, 5.754e-5.
+Each constant in turn (since 2026-11-11), on the same decay: first in Vary, "its one constant, 1 % either way (3 runs)", the values and the second choice hidden; three runs; A at the end, exp(-10 kk), moving -1 per cent for each per cent of kk, a bar to the left in orange, to 1e-4; the note giving A as written, 0.3679, and kk the one that moves it; the CSV `rtm_each_constant_A_end.csv` a row for kk. Each log K in turn: none offered for the decay, which has no relation; calcite into water with nothing but its ions, "its one log K, K 1 % either way (3 runs)", Ca+2 at the end moving half a per cent for each per cent of K, a bar to the right in blue, to 1e-6, the note giving Ca as written, 5.754e-5. Through the run, on the decay: one curve, kk, A moving -kk t per cent for each per cent of kk, -0.5 at day 5 and -1 at the end, at 198 times.
 
 Breakthrough numbers (since 2026-11-11), under Against time, on a column of the test's own: a tracer X and Y held back with R = 4, 100 cells over 1 m, its dispersion a dispersivity (PECLET 100), for six pore volumes, at cells 24, 49, 74 and the last. Y's semi-discrete equations are X's with time over 4, so its half-way is at four times X's time at every cell, within 1e-3 (3e-6, 3e-6, 2.6e-5 and, at the outlet, where Y is still going at the end of the run and its half-way is of the 0.9987 it got to, 8.8e-4); X's retardation within 1 % of 1 (1.005 to 0.996); only the outlet's Y said to be at its farthest at the end of the run. Out of the column, from the budget: six pore volumes of a unit concentration came in, 0.04 m/d x 150 d = 6 to 1e-12; 5/6 of X gone out to 1e-6 and 1/3 of Y to 1e-3, what reactions made next to nothing. Kept, and run again with Y's R = 2: this run's Y half-way at twice X's time and the kept run's at four, each in rows of its own, and both runs' rows of what has come out.
 

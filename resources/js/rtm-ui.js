@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111f';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111g';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -6826,14 +6826,19 @@
     setProgress(0);
     setStatus(`Running ${nruns} times…`);
     const text = state.text;
+    // Every run read at the same times, through the run: a hundred spread evenly and a hundred in the logarithm.
+    const tend = solver.tend > 0 ? solver.tend : state.compiled.settings.TEND;
+    const times = [...new Set([...Array.from({ length: 100 }, (_, i) => (tend * (i + 1)) / 100),
+      ...Array.from({ length: 100 }, (_, i) => tend * 10 ** (-6 + (6 * i) / 99))])].sort((a, b) => a - b);
     try {
       const reply = await request({ type: 'each', text, solver, targets: targets.map((t) => ({ vary: t.vary, base: t.base,
         ...(t.k ? { up: t.up, down: t.down } : {}) })),
-        delta: EACH_DELTA, cell: w.cell }, (p) => {
+        delta: EACH_DELTA, cell: w.cell, ...(tend > 0 ? { times } : {}) }, (p) => {
         setProgress(p.frac);
         setStatus(`Running ${p.run + 1} of ${p.runs}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}, ${p.nsteps.toLocaleString()} steps`);
       });
       swResult = { kind: 'each', what, reply, targets, left, text };
+      w.show = 'ranked';
       const failed = reply.runs.filter((r) => !r.ok);
       setProgress(null);
       setStatus(`${reply.runs.length - failed.length} of ${reply.runs.length} runs done in ${reply.seconds.toFixed(2)} s`
@@ -6858,6 +6863,7 @@
 
   function drawEach(plot, note) {
     const w = state.sw;
+    if (w.show === 'through' && swResult.reply.times) { drawEachTime(plot, note); return; }
     const rp = swResult.reply;
     const key = w.key;
     const q = isQuantity(key) ? quantityOf(key) : null;
@@ -6929,19 +6935,101 @@
     rows: rows.map((r) => [r.t.label, r.t.base, y0, r.up, r.dn, r.s]) };
   }
 
+  /*
+    EACH CONSTANT IN TURN, THROUGH THE RUN: every run read at the same times
+    by the solver itself, a hundred spread evenly and a hundred in the
+    logarithm, and at each how much each constant moves what is drawn, as
+    the ranking has it: the change in its logarithm over the change in the
+    constant's, between the run raised and the run lowered. The eight that
+    move it most anywhere in the run drawn, a curve each. A reaction's rate
+    or extent is kept at the end only, too many in a network to keep
+    through the run.
+  */
+  function drawEachTime(plot, note) {
+    const w = state.sw;
+    const rp = swResult.reply;
+    const key = w.key;
+    const q = isQuantity(key) ? quantityOf(key) : null;
+    const index = !!(q && q.axis === 'index');
+    const yTitle = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : key;
+    const keys = rp.seriesKeys || [];
+    const k = keys.indexOf(key);
+    const base = rp.runs.find((r) => r.target === -1);
+    if (!base || !base.ok || k < 0) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      $('rtmSwEmpty').hidden = false;
+      $('rtmSwEmpty').textContent = !base || !base.ok ? 'The model as written did not run: nothing to set the others against.'
+        : `${yTitle} is kept at the end of each run only: a reaction's rate and extent are too many in a network to keep through it.`;
+      note.textContent = '';
+      return;
+    }
+    const nk = keys.length;
+    const ts = rp.times;
+    const at = (run, i) => run.series[i * nk + k];
+    const curves = swResult.targets.map((t, j) => {
+      const up = rp.runs.find((r) => r.target === j && r.factor > 1);
+      const dn = rp.runs.find((r) => r.target === j && r.factor < 1);
+      if (!up || !dn || !up.ok || !dn.ok || !up.series || !dn.series) return { t, e: null, most: -1 };
+      const den = t.k ? 2 * Math.log(1.01) : 2 * rp.delta;
+      const e = ts.map((_, i) => {
+        const a = at(up, i);
+        const b = at(dn, i);
+        const y0 = at(base, i);
+        let v = null;
+        if (index) v = (a - b) / 2;
+        else if (a > 0 && b > 0) v = (Math.log(a) - Math.log(b)) / den;
+        else if (y0 !== 0 && Number.isFinite(y0)) v = (a - b) / (den * y0);
+        return Number.isFinite(v) ? v : null;
+      });
+      let most = 0;
+      let when = null;
+      e.forEach((v, i) => { if (v !== null && Math.abs(v) > most) { most = Math.abs(v); when = i; } });
+      return { t, e, most, when };
+    }).sort((x, z) => z.most - x.most);
+    const shown = curves.filter((x) => x.e && x.most > 0).slice(0, 8);
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#17becf'];
+    const logT = $('rtmSwLogT').checked;
+    const keep = ts.map((x) => !logT || x > 0);
+    const layout = baseLayout();
+    layout.xaxis.type = logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    const nkK = swResult.targets.filter((t) => t.k).length;
+    const ncC = swResult.targets.length - nkK;
+    const ofEach = `for 1 % more of each${!ncC ? ' K' : nkK ? ' constant or K' : ''}`;
+    layout.yaxis.title = { text: `${index ? 'change' : '% change'} in ${yTitle} at cell ${rp.cell}, ${ofEach}`, font: { size: 11 } };
+    layout.yaxis.zeroline = true;
+    Plotly.react(plot, shown.map((x, q2) => ({ type: 'scatter', mode: 'lines', name: x.t.label, x: ts.filter((_, i) => keep[i]),
+      y: x.e.filter((_, i) => keep[i]), line: { color: palette[q2], width: 1.8 } })), layout, PLOT_CONFIG);
+    const fmt = (v) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e4 ? String(Number(v.toPrecision(3))) : v.toExponential(2));
+    const top = shown[0];
+    note.textContent = [`${yTitle} at cell ${rp.cell} through the run, at ${ts.length} times`,
+      `${swResult.targets.length} constant${swResult.targets.length === 1 ? '' : 's'}, ${rp.runs.length} runs`,
+      shown.length < curves.length ? `the ${shown.length} that move it most drawn` : '',
+      top ? `the most ${top.t.label}, ${fmt(top.e[top.when])} at ${fmtTime(ts[top.when])}` : '',
+      swResult.left.length ? `left out: ${swResult.left.join('; ')}` : '']
+      .filter(Boolean).join('; ');
+    swTableNow = { head: [`t (${timeUnit().symbol})`, ...curves.map((x) => x.t.label)],
+      name: `rtm_each_through_the_run_${key.replace(/[^\w.-]+/g, '_')}`,
+      rows: ts.map((x, i) => [x, ...curves.map((c) => (c.e ? c.e[i] : null))]) };
+  }
+
   function renderSwShow() {
     $('rtmSwShowBar').hidden = !swResult;
     if (!swResult) return;
     const w = state.sw;
     if (swResult.kind === 'each') {
-      w.show = 'ranked';
       const ks = swResult.targets.every((t) => t.k);
-      $('rtmSwShow').innerHTML = `<option value="ranked" selected>each ${ks ? 'log K' : 'constant'}, by how much it moves it</option>`;
+      const opts = [['ranked', `each ${ks ? 'log K' : 'constant'}, by how much it moves it`],
+        ...(swResult.reply.times ? [['through', 'through the run, the eight that move it most']] : [])];
+      if (!opts.some(([v]) => v === w.show)) w.show = 'ranked';
+      $('rtmSwShow').innerHTML = opts.map(([v, t]) => `<option value="${v}"${v === w.show ? ' selected' : ''}>${esc(t)}</option>`).join('');
       if (!speciesNames().includes(w.key) && !(quantityOf(w.key) && !quantityOf(w.key).of)) w.key = speciesNames()[0] || '';
       $('rtmSwKey').innerHTML = pickerOptions(w.key, false);
       $('rtmSwOf').value = w.of;
-      $('rtmSwOfWrap').hidden = false;
-      $('rtmSwLogTWrap').hidden = true;
+      $('rtmSwOfWrap').hidden = w.show !== 'ranked';
+      $('rtmSwLogT').checked = w.logT;
+      $('rtmSwLogTWrap').hidden = w.show !== 'through';
       $('rtmSwLogWrap').hidden = true;
       return;
     }
@@ -9378,6 +9466,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**against what was varied**: a species or a quantity at the cell, its value at the end, its largest or its smallest, a point per run; over two, a curve for each value of the second, contours or a surface.',
           '**against time, a curve per run**, at the cell; **along the column at the end, a curve per run**. The curves go from dark to light as the value grows.',
           '**each constant, by how much it moves it**, after each in turn: a bar for each of the 25 that move it most, the per cent a species or an amount changes for 1 % more of the constant — the change in its logarithm over the change in the constant\'s, between the run 1 % up and the run 1 % down; for pH, an SI and the like, how much it changes. Blue raises it, orange lowers it. A log K on the same scale: the per cent it changes for 1 % more of K. At the end, its largest or its smallest, at the cell.',
+          '**through the run, the eight that move it most**, after each in turn: every run read at the same 200 times by the solver itself, a hundred spread evenly and a hundred in the logarithm, and at each the per cent it changes for 1 % more of each, a curve for each of the eight that move it most anywhere in the run. A reaction\'s rate or extent is kept at the end only.',
         ] },
         { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.', SAVE_HTML] },
       ],

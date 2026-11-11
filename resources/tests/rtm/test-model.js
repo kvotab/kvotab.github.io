@@ -8768,6 +8768,62 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `${pairEx.toFixed(9)}`);
   }
   /*
+    Each constant in turn, through the run: every run read at the same times by the solver itself, a hundred spread
+    evenly and a hundred in the logarithm, at each how much each constant moves a result. A decay's A, A0 e^-kt, moves
+    -kt per cent for each per cent of k at every one of them, to 1e-4 of kT; a chain's B for k1 and k2 the closed form's
+    central difference at every one, to 1e-4, and its derivative, to 1e-4; and the calcite water's Ca half a per cent for
+    each per cent of K at every one, to 1e-9.
+  */
+  {
+    const gridOf = (T) => [...new Set([...Array.from({ length: 100 }, (_, i) => (T * (i + 1)) / 100),
+      ...Array.from({ length: 100 }, (_, i) => T * 10 ** (-6 + (6 * i) / 99))])].sort((a, b) => a - b);
+    const eachT = (text, targets, T) => {
+      let got = null;
+      handleRtmMessage({ type: 'each', id: 51, text, solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20 }, targets, delta: 0.01, cell: 0,
+        times: gridOf(T) }, (msg) => { if (msg.type !== 'progress') got = msg; });
+      return got;
+    };
+    const curve = (rp, key, j, den) => {
+      const nk = rp.seriesKeys.length;
+      const k = rp.seriesKeys.indexOf(key);
+      return rp.times.map((_, i) => (Math.log(rp.runs[1 + 2 * j].series[i * nk + k]) - Math.log(rp.runs[2 + 2 * j].series[i * nk + k])) / den);
+    };
+    const rateTargetsT = (text) => RtmModel.tunables(text).filter((x) => x.kind === 'rate')
+      .map((x) => ({ vary: { kind: 'rate', name: x.name }, base: x.value }));
+    const decayText = '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA  1\nB  0\n\n<REACTIONS>\nA => B, k = 0.1\n';
+    const rd = eachT(decayText, rateTargetsT(decayText), 10);
+    const ed = curve(rd, 'A', 0, 0.02);
+    const decayOff = Math.max(...rd.times.map((t, i) => Math.abs(ed[i] + 0.1 * t)));
+    const chainText = '<SETTINGS>\nMODE = batch\nTEND = 5\n\n<SPECIES>\nA  1\nB  0\nC  0\n\n<REACTIONS>\nA => B, k = 0.4\nB => C, k = 0.15\n';
+    const rch = eachT(chainText, rateTargetsT(chainText), 5);
+    const k1 = 0.4;
+    const k2 = 0.15;
+    const lnBt = (a1, a2, t) => Math.log((a1 * (Math.exp(-a1 * t) - Math.exp(-a2 * t))) / (a2 - a1));
+    const ex1 = (t) => k1 * (1 / k1 - (t * Math.exp(-k1 * t)) / (Math.exp(-k1 * t) - Math.exp(-k2 * t)) + 1 / (k2 - k1));
+    const ex2 = (t) => k2 * ((t * Math.exp(-k2 * t)) / (Math.exp(-k1 * t) - Math.exp(-k2 * t)) - 1 / (k2 - k1));
+    const e1 = curve(rch, 'B', 0, 0.02);
+    const e2 = curve(rch, 'B', 1, 0.02);
+    let cdOff = 0;
+    let exOff = 0;
+    rch.times.forEach((t, i) => {
+      cdOff = Math.max(cdOff, Math.abs(e1[i] - (lnBt(k1 * 1.01, k2, t) - lnBt(k1 * 0.99, k2, t)) / 0.02),
+        Math.abs(e2[i] - (lnBt(k1, k2 * 1.01, t) - lnBt(k1, k2 * 0.99, t)) / 0.02));
+      exOff = Math.max(exOff, Math.abs(e1[i] - ex1(t)), Math.abs(e2[i] - ex2(t)));
+    });
+    const LKt = Math.log10(1.01);
+    const calciteT = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nCa+2     1e-10\nCO3-2    1e-10\n'
+      + 'Calcite  1e-3   mineral\n\n<EQUILIBRIUM>\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\n';
+    const rcal = eachT(calciteT, RtmModel.tunables(calciteT).filter((x) => x.kind === 'logK')
+      .map((x) => ({ vary: { kind: 'logK', name: x.name }, base: x.value, up: x.value + LKt, down: x.value - LKt })), 1);
+    const calOffT = Math.max(...curve(rcal, 'Ca+2', 0, 2 * Math.log(1.01)).map((e) => Math.abs(e - 0.5)));
+    check('each constant in turn through the run, at 198 times read by the solver itself: a decay\'s A moves -kt per cent '
+      + 'for each per cent of k at every one, to 1e-4 of kT; a chain\'s B the closed form\'s central difference and its '
+      + 'derivative at every one, to 1e-4; the calcite water\'s Ca half a per cent for each per cent of K at every one, to 1e-9',
+    rd.times.length === 198 && decayOff < 1e-4 && cdOff < 1e-4 && exOff < 1e-4 && calOffT < 1e-9 && rd.seriesKeys.join() === 'A,B',
+    `${rd.times.length} times; -kt off by ${decayOff.toExponential(1)}; the chain's ${cdOff.toExponential(1)} off the closed form's `
+      + `difference, ${exOff.toExponential(1)} off its derivative; the calcite's half off by ${calOffT.toExponential(1)}`);
+  }
+  /*
     A mineral's dissolution front, as the Composition tab follows it: halite in a column of the test's own, 20 cells over
     1 m, fresh water flowing in at 1e-5 m/s, the water at saturation holding S = sqrt K = 0.1 of Na+ and of Cl-. The
     length of column cleared of halite -- each cell its width times the share of its first amount gone -- moves, over the

@@ -1472,6 +1472,21 @@ async def main():
                     'the most kk, -1'],
                    ['rtm_each_constant_A_end.csv', 'constant,as the text gives it,"A at the end, as written",with 1 % more of it,'
                     'with 1 % less,% change for 1 % more', 2]])
+            # Through the run: A, exp(-kk t), moves -kk t per cent for each per cent of kk -- -0.5 at day 5, -1 at the end.
+            await page.ev("(() => { const s = document.getElementById('rtmSwShow'); s.value = 'through';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            through = await page.ev("""(() => { const p = document.getElementById('rtmChartSw'), t = p.data[0];
+              const near = (x0) => t.y[t.x.reduce((b, x, i) => (Math.abs(x - x0) < Math.abs(t.x[b] - x0) ? i : b), 0)];
+              return [document.getElementById('rtmSwShow').selectedOptions[0].textContent, p.data.length, t.name,
+                Math.abs(near(5) + 0.5) < 1e-3, Math.abs(near(10) + 1) < 1e-4, p.layout.yaxis.title.text,
+                document.getElementById('rtmSwNote').textContent.split('; ')[0]]; })()""")
+            check('  through the run: A, exp(-kk t), moving -kk t per cent for each per cent of kk, -0.5 at day 5 and -1 at the end',
+                  through, ['through the run, the eight that move it most', 1, 'kk', True, True,
+                            '% change in A at cell 0, for 1 % more of each', 'A at cell 0 through the run, at 198 times'])
+            await page.ev("(() => { const s = document.getElementById('rtmSwShow'); s.value = 'ranked';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = 'parameter:kk';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
