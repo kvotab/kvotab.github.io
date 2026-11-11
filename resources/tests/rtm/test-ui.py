@@ -1418,6 +1418,40 @@ async def main():
             check('  and against time, a curve per run, named for its value', await page.ev(
                 "document.getElementById('rtmChartSw').data.map((t) => t.name).join(' / ')"),
                 'kk = 0.1 / kk = 0.2 / kk = 0.3 / kk = 0.4')
+            # Each constant in turn: kk, the model's one, raised and lowered 1 %, three runs. A at the end, exp(-10 kk), moves
+            # -10 kk = -1 per cent for each per cent of kk: a bar to the left; the CSV a row for it.
+            await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = '*each';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            each_bar = await page.ev("[document.getElementById('rtmSwWhat').selectedOptions[0].textContent,"
+                                     " document.getElementById('rtmSwOverWrap').hidden, document.getElementById('rtmSwAndWrap').hidden]")
+            await page.ev("document.getElementById('rtmSwGo').click()")
+            each_done = await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 17)", '3 of 3 runs done ', tries=60, pause=0.5)
+            await page.ev("(() => { const k = document.getElementById('rtmSwKey'); k.value = 'A';"
+                          " k.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            ranked = await page.ev("""(() => { const p = document.getElementById('rtmChartSw'), t = p.data[0];
+              return [document.getElementById('rtmSwShow').value, t.type + ' ' + t.orientation, t.y.join(' | '), Math.abs(t.x[0] + 1) < 1e-4,
+                t.marker.color[0], p.layout.xaxis.title.text, document.getElementById('rtmSwNote').textContent]; })()""")
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"sweep\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            each_csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).trim().split('\\n')] : null; })()")
+            check('each constant in turn, first in Vary: kk, the model\'s one, raised and lowered 1 %, three runs; A at the end, '
+                  'exp(-10 kk), moves -1 per cent for each per cent of kk, a bar to the left, to 1e-4; the CSV a row for it',
+                  [each_bar, each_done, ranked, [each_csv[0], each_csv[1][0], len(each_csv[1])] if isinstance(each_csv, list) else each_csv],
+                  [['its one constant, 1 % either way (3 runs)', True, True], '3 of 3 runs done ',
+                   ['ranked', 'bar h', 'kk', True, '#e0663e', '% change in A, at the end, for 1 % more of each',
+                    'A, at the end at cell 0, 0.3679 as written; 1 constant, 3 runs; 1 moves it by more than 0.1 % for 1 % more, '
+                    'the most kk, -1'],
+                   ['rtm_each_constant_A_end.csv', 'constant,as the text gives it,"A at the end, as written",with 1 % more of it,'
+                    'with 1 % less,% change for 1 % more', 2]])
+            await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = 'parameter:kk';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

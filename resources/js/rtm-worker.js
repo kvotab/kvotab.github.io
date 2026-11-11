@@ -1764,6 +1764,83 @@ function rtmSweep(msg, post) {
 }
 
 /*
+  EACH CONSTANT IN TURN: the model as written, then again with each
+  constant named -- a reaction's, or a parameter, given one value -- raised
+  by `delta` of itself and lowered by as much (RtmModel.withValue), one at a
+  time, the page's solver settings each time. Kept of each run, at one cell:
+  every species and quantity at the end of the run, and its largest and
+  smallest over the stored points -- what the page sets against the run as
+  written to say how much each constant moves what it draws. A run that
+  fails says why and the rest go on.
+*/
+function rtmEach(msg, post) {
+  const s = msg.solver || {};
+  const targets = msg.targets || [];
+  const delta = msg.delta > 0 ? msg.delta : 0.01;
+  const jobs = [{ target: -1, factor: 1 }];
+  targets.forEach((_, j) => { jobs.push({ target: j, factor: 1 + delta }, { target: j, factor: 1 - delta }); });
+  const runs = [];
+  let names = null;
+  let keys = null;
+  const started = Date.now();
+  let lastReport = 0;
+  jobs.forEach((job, r) => {
+    const t0 = Date.now();
+    try {
+      const tg = job.target >= 0 ? targets[job.target] : null;
+      const text = tg ? RtmModel.withValue(msg.text, tg.vary, tg.base * job.factor) : msg.text;
+      const model = RtmModel.compile(text);
+      const tend = s.tend > 0 ? s.tend : model.settings.TEND;
+      const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {
+        const now = Date.now();
+        if (now - lastReport < 250) return true;
+        lastReport = now;
+        post({ type: 'progress', id: msg.id, run: r, runs: jobs.length, t, tend, nsteps,
+          frac: Math.min(1, (r + Math.min(1, t / tend)) / jobs.length) });
+        return true;
+      }, model));
+      const n = res.t.length;
+      const width = model.stateWidth || model.nspecies;
+      const states = rtmConcentrations(model, res.y, n, width, res.t);
+      const ns = model.speciesNames.length;
+      const nq = model.quantities.length;
+      names = names || model.speciesNames;
+      keys = keys || model.quantities.map((q) => q.key);
+      const cell = Math.min(msg.cell, model.fracture - 1) * (model.stride || 1);
+      // Every quantity but what is a sum over the run, which is worked out otherwise.
+      const which = Int32Array.from(model.quantities.map((q, k) => (q.of ? -1 : k)).filter((k) => k >= 0));
+      const qOut = new Float64Array(which.length);
+      const end = new Float64Array(ns + nq).fill(NaN);
+      const max = new Float64Array(ns + nq).fill(-Infinity);
+      const min = new Float64Array(ns + nq).fill(Infinity);
+      const keep = (k, v, last) => {
+        if (!Number.isFinite(v)) return;
+        if (v > max[k]) max[k] = v;
+        if (v < min[k]) min[k] = v;
+        if (last) end[k] = v;
+      };
+      for (let i = 0; i < n; i++) {
+        const c = states.subarray(i * width, (i + 1) * width);
+        const last = i === n - 1;
+        for (let k = 0; k < ns; k++) keep(k, c[cell * ns + k], last);
+        if (which.length) {
+          model.quantitiesAt(c, res.t[i], cell, which, qOut);
+          for (let q = 0; q < which.length; q++) keep(ns + which[q], qOut[q], last);
+        }
+      }
+      runs.push({ target: job.target, factor: job.factor, ok: true, end, max, min, tend: res.t[n - 1],
+        steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
+    } catch (e) {
+      runs.push({ target: job.target, factor: job.factor, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
+    }
+  });
+  const transfer = [];
+  for (const run of runs) if (run.ok) transfer.push(run.end.buffer, run.max.buffer, run.min.buffer);
+  return { reply: { type: 'each', id: msg.id, runs, species: names || [], keys: keys || [], cell: msg.cell, delta,
+    seconds: (Date.now() - started) / 1000 }, transfer };
+}
+
+/*
   FITTING: the numbers named -- a setting, a parameter, a species' start or
   what flows in, a relation's log K, a reaction's constant -- moved until the
   run is as near as it can be to what <DATA> measured, as PhreePlot's fit and
@@ -2117,6 +2194,15 @@ function handleRtmMessage(msg, post) {
       post(reply, transfer);
     } catch (e) {
       post({ type: 'error', id, stage: 'sweep', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'each') {
+    try {
+      const { reply, transfer } = rtmEach(msg, post);
+      post(reply, transfer);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'each', error: rtmErrorMessage(e) });
     }
     return;
   }

@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111d';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -6399,16 +6399,25 @@
     const w = state.sw;
     const groups = tuneChoices();
     const all = groups.flatMap((g) => g.items.map((it) => it.value));
-    if (all.length && !all.includes(w.what)) w.what = (all.find((v) => v === 'setting:VELOCITY' && m && m.transport)
-      || all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('initial:')) || all[0]);
+    // Each constant in turn, where the model has any.
+    const each = eachTargets();
+    if (all.length && !all.includes(w.what) && !(w.what === SW_EACH && each.targets.length)) {
+      w.what = (all.find((v) => v === 'setting:VELOCITY' && m && m.transport)
+        || all.find((v) => v.startsWith('parameter:')) || all.find((v) => v.startsWith('initial:')) || all[0]);
+    }
     if (w.what2 && !all.includes(w.what2)) w.what2 = '';
     const opts = (chosen) => groups.map((g) => `<optgroup label="${esc(g.label)}">${g.items.map((it) => `<option value="${esc(it.value)}"`
       + `${it.value === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
-    $('rtmSwWhat').innerHTML = opts(w.what);
+    const eachOpt = each.targets.length ? `<optgroup label="Each constant in turn"><option value="${SW_EACH}"`
+      + `${w.what === SW_EACH ? ' selected' : ''}>${each.targets.length === 1 ? 'its one constant' : `each of its ${each.targets.length} `
+      + 'constants'}, 1 % either way (${2 * each.targets.length + 1} runs)</option></optgroup>` : '';
+    $('rtmSwWhat').innerHTML = eachOpt + opts(w.what);
     $('rtmSwWhat2').innerHTML = `<option value=""${w.what2 ? '' : ' selected'}>nothing else</option>${opts(w.what2)}`;
     $('rtmSwValues').value = w.values;
     $('rtmSwValues2').value = w.values2;
     $('rtmSwMore2').hidden = !w.what2;
+    $('rtmSwOverWrap').hidden = w.what === SW_EACH;
+    $('rtmSwAndWrap').hidden = w.what === SW_EACH;
     const cells = m ? m.fracture : 1;
     if (!(w.cell < cells)) w.cell = cells - 1;
     $('rtmSwCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === w.cell ? ' selected' : ''}>`
@@ -6451,6 +6460,7 @@
     if (swBusy || state.running) return;
     if (!state.compiled) { setStatus('The model does not compile: there is nothing to run.', 'error'); return; }
     const w = state.sw;
+    if (w.what === SW_EACH) { await eachGo(); return; }
     const vary = [swVary(w.what), ...(w.what2 ? [swVary(w.what2)] : [])];
     const lists = [swValues(w.values), ...(w.what2 ? [swValues(w.values2)] : [])];
     if (lists.some((l) => !l)) { setStatus('Give the values: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm.', 'error'); return; }
@@ -6499,10 +6509,191 @@
     return swResult.vary.map((v, d) => `${swVaryLabel(v)} = ${fmtNumber(run.values[d])}`).join(', ');
   }
 
+  /*
+    EACH CONSTANT IN TURN: every number a reaction's line names and every
+    parameter given one value throughout, each raised by 1 % of itself and
+    lowered by as much, one at a time, with the model as written besides --
+    the worker runs them (rtmEach) and keeps every species and quantity at
+    the cell, at the end and at its largest and smallest. How much each moves
+    what is drawn is the change in its logarithm over the change in theirs,
+    between the two runs: the per cent it changes for 1 % more of the
+    constant -- for pH, an SI and the like, how much it changes. A constant
+    one value put in for all would move by more than 1 % is left out, and
+    the note says why: two lines with the same equation and different
+    constants, a parameter with a value for each cell; and an expression or
+    nought, which 1 % does not move.
+  */
+  const SW_EACH = '*each';
+  const EACH_DELTA = 0.01;
+  /** The constants each in turn runs, { vary, base, label }, and those left out, with why. */
+  function eachTargets() {
+    const out = [];
+    const left = [];
+    const m = state.compiled;
+    if (!m || typeof RtmModel === 'undefined' || !RtmModel.tunables) return { targets: out, left };
+    const text = state.text;
+    // Lines the text has once changed, each with the number it had: the same number put back changes nothing.
+    const sameEverywhere = (vary, base) => {
+      let back;
+      try { back = RtmModel.withValue(text, vary, base); } catch (e) { return false; }
+      if (back === text) return true;
+      const a = text.split(/\r?\n/);
+      const b = back.split(/\r?\n/);
+      if (a.length !== b.length) return false;
+      return a.every((line, i) => {
+        if (line === b[i]) return true;
+        const x = line.trim().split(/[\s,=]+/);
+        const y = b[i].trim().split(/[\s,=]+/);
+        return x.length === y.length && x.every((tok, j) => tok === y[j] || (Number.isFinite(Number(tok)) && Number(tok) === Number(y[j])));
+      });
+    };
+    for (const p of m.parameters || []) {
+      const vary = { kind: 'parameter', name: p };
+      const given = RtmModel.valueIn(text, vary);
+      const base = given === null ? NaN : Number(given);
+      if (!Number.isFinite(base)) { left.push(`${p}, an expression`); continue; }
+      if (base === 0) { left.push(`${p}, nought`); continue; }
+      if (!sameEverywhere(vary, base)) { left.push(`${p}, a value for each cell`); continue; }
+      out.push({ vary, base, label: p });
+    }
+    const consts = RtmModel.tunables(text).filter((x) => x.kind === 'rate');
+    const byName = new Map();
+    for (const x of consts) { if (!byName.has(x.name)) byName.set(x.name, []); byName.get(x.name).push(x.value); }
+    for (const [name, values] of byName) {
+      const vary = { kind: 'rate', name };
+      const label = swVaryLabel(vary);
+      if (values.some((v) => v !== values[0])) { left.push(`${label}, lines alike with other values`); continue; }
+      if (values[0] === 0) { left.push(`${label}, nought`); continue; }
+      out.push({ vary, base: values[0], label });
+    }
+    return { targets: out, left };
+  }
+
+  async function eachGo() {
+    const w = state.sw;
+    const { targets, left } = eachTargets();
+    if (!targets.length) { setStatus('The model has no constant to move: no number a reaction\'s line names, no parameter.', 'error'); return; }
+    let solver;
+    try { solver = solverPayload(); } catch (e) { setStatus(e.message, 'error'); return; }
+    const nruns = 2 * targets.length + 1;
+    swBusy = true;
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmStop').disabled = false;
+    $('rtmSwGo').disabled = true;
+    setProgress(0);
+    setStatus(`Running ${nruns} times…`);
+    const text = state.text;
+    try {
+      const reply = await request({ type: 'each', text, solver, targets: targets.map((t) => ({ vary: t.vary, base: t.base })),
+        delta: EACH_DELTA, cell: w.cell }, (p) => {
+        setProgress(p.frac);
+        setStatus(`Running ${p.run + 1} of ${p.runs}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}, ${p.nsteps.toLocaleString()} steps`);
+      });
+      swResult = { kind: 'each', reply, targets, left, text };
+      const failed = reply.runs.filter((r) => !r.ok);
+      setProgress(null);
+      setStatus(`${reply.runs.length - failed.length} of ${reply.runs.length} runs done in ${reply.seconds.toFixed(2)} s`
+        + `${failed.length ? `; ${eachRunName(failed[0])} failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+      renderSwShow();
+      drawSw();
+    } catch (e) {
+      setProgress(null);
+      setStatus(`The runs could not be made: ${e.message}`, 'error');
+    } finally {
+      swBusy = false;
+      state.running = false;
+      $('rtmRun').disabled = false;
+      $('rtmStop').disabled = true;
+      $('rtmSwGo').disabled = false;
+    }
+  }
+
+  /** A run of each in turn by its name: the model as written, or a constant raised or lowered. */
+  const eachRunName = (run) => (run.target < 0 ? 'the model as written'
+    : `${swResult.targets[run.target].label} ${run.factor > 1 ? 'raised' : 'lowered'} 1 %`);
+
+  function drawEach(plot, note) {
+    const w = state.sw;
+    const rp = swResult.reply;
+    const key = w.key;
+    const q = isQuantity(key) ? quantityOf(key) : null;
+    const index = !!(q && q.axis === 'index');
+    const k = !q ? rp.species.indexOf(key) : (rp.keys.indexOf(key) >= 0 ? rp.species.length + rp.keys.indexOf(key) : -1);
+    const of = w.of === 'max' || w.of === 'min' ? w.of : 'end';
+    const ofText = { end: 'at the end', max: 'its largest', min: 'its smallest' }[of];
+    const yTitle = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : key;
+    const base = rp.runs.find((r) => r.target === -1);
+    const failed = rp.runs.filter((r) => !r.ok).length;
+    if (!base || !base.ok || k < 0) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      $('rtmSwEmpty').hidden = false;
+      $('rtmSwEmpty').textContent = !base || !base.ok ? 'The model as written did not run: nothing to set the others against.'
+        : `${key} is not among what these runs kept.`;
+      note.textContent = '';
+      return;
+    }
+    const y0 = base[of][k];
+    const rows = swResult.targets.map((t, j) => {
+      const up = rp.runs.find((r) => r.target === j && r.factor > 1);
+      const dn = rp.runs.find((r) => r.target === j && r.factor < 1);
+      if (!up || !dn || !up.ok || !dn.ok) return { t, s: null, up: null, dn: null };
+      const a = up[of][k];
+      const b = dn[of][k];
+      let s = null;
+      if (index) s = ((a - b) / (2 * rp.delta)) * 0.01;
+      else if (a > 0 && b > 0) s = (Math.log(a) - Math.log(b)) / (2 * rp.delta);
+      else if (y0 !== 0 && Number.isFinite(y0)) s = (a - b) / (2 * rp.delta * y0);
+      return { t, s: Number.isFinite(s) ? s : null, up: a, dn: b };
+    }).sort((x, z) => (z.s === null ? -1 : x.s === null ? 1 : Math.abs(z.s) - Math.abs(x.s)));
+    const shown = rows.filter((r) => r.s !== null).slice(0, 25);
+    const per = index ? `change in ${yTitle}, ${ofText}, for 1 % more of each` : `% change in ${yTitle}, ${ofText}, for 1 % more of each`;
+    const c = themeColors();
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.height = Math.max(320, 24 * shown.length + 110);
+    layout.xaxis.title = { text: per, font: { size: 11 } };
+    layout.xaxis.zeroline = true;
+    layout.xaxis.zerolinecolor = c.text;
+    layout.yaxis.automargin = true;
+    layout.yaxis.autorange = 'reversed';
+    layout.yaxis.type = 'category';
+    layout.margin.l = 20;
+    const fmt = (v) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e4 ? String(Number(v.toPrecision(3))) : v.toExponential(2));
+    Plotly.react(plot, [{ type: 'bar', orientation: 'h', x: shown.map((r) => r.s), y: shown.map((r) => r.t.label),
+      marker: { color: shown.map((r) => (r.s >= 0 ? '#3b82c4' : '#e0663e')) },
+      text: shown.map((r) => fmt(r.s)), textposition: 'outside', cliponaxis: false,
+      hovertemplate: '%{y}<br>%{x:.4g}<extra></extra>', showlegend: false }], layout, PLOT_CONFIG);
+    const strong = rows.filter((r) => r.s !== null && Math.abs(r.s) > (index ? 1e-3 : 0.1));
+    const top = rows[0] && rows[0].s !== null ? rows[0] : null;
+    note.textContent = [`${yTitle}, ${ofText} at cell ${rp.cell}, ${fmtNumber(y0)} as written`,
+      `${rows.length} constant${rows.length === 1 ? '' : 's'}, ${rp.runs.length} runs${failed ? `, ${failed} failed` : ''}`,
+      `${strong.length} move${strong.length === 1 ? 's' : ''} it by more than ${index ? '0.001' : '0.1 %'} for 1 % more`
+        + `${top ? `, the most ${top.t.label}, ${fmt(top.s)}` : ''}`,
+      rows.length > shown.length ? `the ${shown.length} that move it most drawn` : '',
+      swResult.left.length ? `left out: ${swResult.left.join('; ')}` : '']
+      .filter(Boolean).join('; ');
+    swTableNow = { head: ['constant', 'as the text gives it', `${key} ${ofText}, as written`, 'with 1 % more of it', 'with 1 % less',
+      index ? 'change for 1 % more' : '% change for 1 % more'], name: `rtm_each_constant_${key.replace(/[^\w.-]+/g, '_')}_${of}`,
+    rows: rows.map((r) => [r.t.label, r.t.base, y0, r.up, r.dn, r.s]) };
+  }
+
   function renderSwShow() {
     $('rtmSwShowBar').hidden = !swResult;
     if (!swResult) return;
     const w = state.sw;
+    if (swResult.kind === 'each') {
+      w.show = 'ranked';
+      $('rtmSwShow').innerHTML = '<option value="ranked" selected>each constant, by how much it moves it</option>';
+      if (!speciesNames().includes(w.key) && !(quantityOf(w.key) && !quantityOf(w.key).of)) w.key = speciesNames()[0] || '';
+      $('rtmSwKey').innerHTML = pickerOptions(w.key, false);
+      $('rtmSwOf').value = w.of;
+      $('rtmSwOfWrap').hidden = false;
+      $('rtmSwLogTWrap').hidden = true;
+      $('rtmSwLogWrap').hidden = true;
+      return;
+    }
     const two = swResult.vary.length === 2;
     const column = swResult.reply.runs.some((r) => r.ok && r.nf > 1);
     const opts = [
@@ -6567,6 +6758,7 @@
     }
     empty.hidden = true;
     plot.hidden = false;
+    if (swResult.kind === 'each') { drawEach(plot, note); return; }
     const w = state.sw;
     const rp = swResult.reply;
     const runs = rp.runs;
@@ -8926,12 +9118,14 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'What is run', list: [
           '**Vary**: a setting with a number — VELOCITY, TEMPERATURE, TEND, … — a parameter of <PARAMETERS>, a species\' concentration at the start on its line, what flows in at the left, its left=, a relation\'s or a phase\'s logK, or a number a reaction\'s line names. **and** a second one runs every pair.',
           '**over**: a list, 0.5, 1, 2, or a range, 1e-6 to 1e-4 in 5, with log after it to space them in the logarithm. A new choice starts from half, the value and twice it, a log K from a unit either side. 400 runs at most.',
+          '**each constant in turn**, first in **Vary** where the model has any: every number a reaction\'s line names and every parameter given one value throughout, each raised 1 % and lowered 1 %, one at a time, with the model as written — twice as many runs as constants, and one. Lines alike with other values, a parameter with a value for each cell, an expression or nought are left out, and the note says which.',
           '**keeping cell**: the cell whose every species and quantity is kept along each run; along the column, each run\'s end is kept whole.',
           'A run that fails says why on the status line, and the rest go on. Stop stops them all.',
         ] },
         { heading: 'Show', list: [
           '**against what was varied**: a species or a quantity at the cell, its value at the end, its largest or its smallest, a point per run; over two, a curve for each value of the second, contours or a surface.',
           '**against time, a curve per run**, at the cell; **along the column at the end, a curve per run**. The curves go from dark to light as the value grows.',
+          '**each constant, by how much it moves it**, after each in turn: a bar for each of the 25 that move it most, the per cent a species or an amount changes for 1 % more of the constant — the change in its logarithm over the change in the constant\'s, between the run 1 % up and the run 1 % down; for pH, an SI and the like, how much it changes. Blue raises it, orange lowers it. At the end, its largest or its smallest, at the cell.',
         ] },
         { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.', SAVE_HTML] },
       ],

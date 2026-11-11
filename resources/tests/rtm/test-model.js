@@ -8277,6 +8277,67 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `left ${hErr.toExponential(1)}`);
   }
   /*
+    Each constant in turn (rtmEach): the model as written, then each constant raised and lowered 1 % of itself, one at a
+    time; how much a result moves is the change in its logarithm over the change in the constant's. A decay A => B at k
+    0.1 for 10 days beside a C => D that A never reads: A at the end, A0 e^-kT, moves -kT = -1 per cent for each per cent
+    of k, to 1e-4, and not for the other's, to 1e-4. A chain A => B => C: B's for k1 and k2 the closed form's, to 1e-4,
+    what is left the difference's own, a central one over 2 %; against the closed form's own central difference to
+    1e-5, the solver's. A parameter a rate law reads, kk, the same as a line's constant. And the built-in model at the
+    fuel surface, H2O2 at the end: the radiolysis that makes it, k = G*DOSE, moved alike by G and by DOSE, to 1e-5 -- the
+    two products differ in their last bit, and the solver takes other steps -- and up; the three that take most of it,
+    down.
+  */
+  {
+    const eachOf = (text, targets, solver = { method: 'ndf', rtol: 1e-6, atol: 1e-20 }) => {
+      let got = null;
+      handleRtmMessage({ type: 'each', id: 48, text, solver, targets, delta: 0.01, cell: 0 },
+        (msg) => { if (msg.type !== 'progress') got = msg; });
+      return got;
+    };
+    const rateTargets = (text) => RtmModel.tunables(text).filter((x) => x.kind === 'rate')
+      .map((x) => ({ vary: { kind: 'rate', name: x.name }, base: x.value }));
+    const moves = (rp, key, j, of = 'end') => {
+      const k = rp.species.indexOf(key);
+      return (Math.log(rp.runs[1 + 2 * j][of][k]) - Math.log(rp.runs[2 + 2 * j][of][k])) / (2 * rp.delta);
+    };
+    const twoDecays = '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA  1\nB  0\nC  1\nD  0\n\n<REACTIONS>\n'
+      + 'A => B, k = 0.1\nC => D, k = 0.3\n';
+    const r1 = eachOf(twoDecays, rateTargets(twoDecays));
+    const ownOff = Math.abs(moves(r1, 'A', 0) + 1);
+    const otherOff = Math.abs(moves(r1, 'A', 1));
+    const chain = '<SETTINGS>\nMODE = batch\nTEND = 5\n\n<SPECIES>\nA  1\nB  0\nC  0\n\n<REACTIONS>\nA => B, k = 0.4\nB => C, k = 0.15\n';
+    const r2 = eachOf(chain, rateTargets(chain));
+    const k1 = 0.4;
+    const k2 = 0.15;
+    const T = 5;
+    const lnB = (a1, a2) => Math.log((a1 * (Math.exp(-a1 * T) - Math.exp(-a2 * T))) / (a2 - a1));
+    const ex1 = k1 * (1 / k1 - (T * Math.exp(-k1 * T)) / (Math.exp(-k1 * T) - Math.exp(-k2 * T)) + 1 / (k2 - k1));
+    const ex2 = k2 * ((T * Math.exp(-k2 * T)) / (Math.exp(-k1 * T) - Math.exp(-k2 * T)) - 1 / (k2 - k1));
+    const cd1 = (lnB(k1 * 1.01, k2) - lnB(k1 * 0.99, k2)) / 0.02;
+    const cd2 = (lnB(k1, k2 * 1.01) - lnB(k1, k2 * 0.99)) / 0.02;
+    const chainOff = Math.max(Math.abs(moves(r2, 'B', 0) - ex1), Math.abs(moves(r2, 'B', 1) - ex2));
+    const solverOff = Math.max(Math.abs(moves(r2, 'B', 0) - cd1), Math.abs(moves(r2, 'B', 1) - cd2));
+    const r3 = eachOf(decay, [{ vary: { kind: 'parameter', name: 'kk' }, base: 0.1 }]);
+    const paramOff = Math.abs(moves(r3, 'A', 0) + 1);
+    const bi = ['=> H2O2 | G', '=> H2O2 | DOSE', 'Hr + H2O2 => H2O + OHr | k', 'e- + H2O2 => OHr + OH- | k',
+      'H2O2 + U_site => OHra + OHra | k'];
+    const biTargets = rateTargets(RTM_DEFAULT_MODEL).filter((x) => bi.includes(x.vary.name))
+      .sort((a, b) => bi.indexOf(a.vary.name) - bi.indexOf(b.vary.name));
+    const r4 = eachOf(RTM_DEFAULT_MODEL, biTargets);
+    const bm = biTargets.map((_, j) => moves(r4, 'H2O2', j));
+    const allOk = [r1, r2, r3, r4].every((rp) => rp.runs.every((r) => r.ok));
+    check('each constant in turn: a decay\'s A at the end moves -kT per cent for each per cent of k, to 1e-4, and not for a '
+      + 'constant it never reads; a chain\'s B for k1 and k2 the closed form\'s to 1e-4, its central difference to 1e-5; a '
+      + 'parameter a rate law reads as a line\'s constant; and the built-in model\'s H2O2 at the fuel surface up with the '
+      + 'radiolysis that makes it, G and DOSE alike to 1e-5, and down with the three that take most of it',
+    allOk && r1.runs.length === 5 && ownOff < 1e-4 && otherOff < 1e-4 && chainOff < 1e-4 && solverOff < 1e-5 && paramOff < 1e-4
+      && biTargets.length === 5 && Math.abs(bm[0] - bm[1]) < 1e-5 && bm[0] > 0 && bm.slice(2).every((v) => v < 0),
+    `-kT off by ${ownOff.toExponential(1)}, the other ${otherOff.toExponential(1)}; the chain ${moves(r2, 'B', 0).toFixed(6)} and `
+      + `${moves(r2, 'B', 1).toFixed(6)} for ${ex1.toFixed(6)} and ${ex2.toFixed(6)}, ${chainOff.toExponential(1)} off, the closed `
+      + `form's difference ${solverOff.toExponential(1)}; kk off by ${paramOff.toExponential(1)}; H2O2: ${bi.map((n, j) => `${n} `
+      + `${bm[j] === undefined ? '?' : bm[j].toFixed(4)}`).join(', ')}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

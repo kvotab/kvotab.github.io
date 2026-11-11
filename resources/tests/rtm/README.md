@@ -579,6 +579,23 @@ calcite: the calcite relation all that made Ca+2, the calcite dissolved
 at every stored point to 1e-12 of it (6.8e-15), and H+ made by the line,
 1e-4, and taken by the water, the bicarbonate and the CO2 relations, to
 1e-12 of it (6.8e-16).
+Each constant in turn (since 2026-11-11): the model as written, then each
+constant raised and lowered 1 % of itself, one at a time (`rtmEach`); how
+much a result moves is the change in its logarithm over the change in the
+constant's. A decay A => B at k 0.1 for 10 days beside a C => D that A
+never reads: A at the end, A0 e^-kT, moves -kT = -1 per cent for each per
+cent of k, to 1e-4 (4.3e-8), and not for the other's (3.1e-8). A chain
+A => B => C at k1 0.4 and k2 0.15 for 5: B's two the closed form's,
+0.203102 and -0.451163, to 1e-4 (3.0e-5, the 2 % central difference's
+own), and the closed form's own central difference to 1e-5 (1.8e-6, the
+solver's). kk, a parameter a rate law reads, as a line's constant. The
+built-in model's H2O2 at the end at the fuel surface: up 0.94 per cent
+with the radiolysis that makes it, k = G*DOSE, G and DOSE alike to 1e-5
+(1.3e-6: G and DOSE raised 1 % give products a bit apart, and the solver
+takes 865 steps and 871); down with the three that take most of it. The
+whole ranking of the built-in model, 135 constants and 271 runs, takes
+218 s and is not in the test: 22 move H2O2 at the fuel surface by more
+than 0.01 per cent for 1 %.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1229,6 +1246,8 @@ Time in pore volumes, and several cells at once (since 2026-11-11), on the same 
 Two runs side by side (since 2026-11-10), on the salinisation example at cell 19, Na+ and pH ticked: Keep this run keeps it, chosen to be drawn beside the next and named by the time it was kept and its example. Run again with the water twice as fast: against time each line ticked again for the kept run, dashed in its colour, its values the first run's to the last digit, pH on its own axis, this run's not; against distance each profile again for it, dashed; on Gradient its own map under this one, on one colour scale; on the Piper diagram its path through all three panels; beside it nothing, the run alone again. A decay run kept in seconds beside the same decay in minutes: its times drawn in minutes, 600 s at 10, the same end to 1e-3; both kept runs on the menu. The test then clears what it ticked.
 
 The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARAMETERS>`: the parameter is offered, and a new choice starts from half its value, the value and twice it (0.05, 0.1, 0.2); 0.1 to 0.4 in 4 makes four runs; against what was varied, A at the end of each is exp(-10 kk) to the solver's tolerance (1.1e-5 at rtol 1e-6); against time, a curve per run named for its value.
+
+Each constant in turn (since 2026-11-11), on the same decay: first in Vary, "its one constant, 1 % either way (3 runs)", the values and the second choice hidden; three runs; A at the end, exp(-10 kk), moving -1 per cent for each per cent of kk, a bar to the left in orange, to 1e-4; the note giving A as written, 0.3679, and kk the one that moves it; the CSV `rtm_each_constant_A_end.csv` a row for kk.
 
 Breakthrough numbers (since 2026-11-11), under Against time, on a column of the test's own: a tracer X and Y held back with R = 4, 100 cells over 1 m, its dispersion a dispersivity (PECLET 100), for six pore volumes, at cells 24, 49, 74 and the last. Y's semi-discrete equations are X's with time over 4, so its half-way is at four times X's time at every cell, within 1e-3 (3e-6, 3e-6, 2.6e-5 and, at the outlet, where Y is still going at the end of the run and its half-way is of the 0.9987 it got to, 8.8e-4); X's retardation within 1 % of 1 (1.005 to 0.996); only the outlet's Y said to be at its farthest at the end of the run. Out of the column, from the budget: six pore volumes of a unit concentration came in, 0.04 m/d x 150 d = 6 to 1e-12; 5/6 of X gone out to 1e-6 and 1/3 of Y to 1e-3, what reactions made next to nothing. Kept, and run again with Y's R = 2: this run's Y half-way at twice X's time and the kept run's at four, each in rows of its own, and both runs' rows of what has come out.
 
