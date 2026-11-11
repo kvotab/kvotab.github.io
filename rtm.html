@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110e">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110f">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -304,6 +304,21 @@
             </span>
             <span class="kvot-info-slot" data-info-key="pane:profile"></span>
             <span class="rtm-muted" id="rtmProfileNote"></span>
+          </div>
+          <div class="rtm-toolbar rtm-play" id="rtmProfilePlayRow" hidden>
+            <button type="button" class="rtm-btn secondary small" id="rtmProfilePlay" data-on-click="rtm:profilePlay">play</button>
+            <input type="range" id="rtmProfileAt" min="0" max="0" step="1" value="0" aria-label="The stored time drawn"
+              data-on-input="rtm:profileAt" data-on-change="rtm:profileAtDone">
+            <span class="rtm-play-time" id="rtmProfileAtLabel"></span>
+            <label>Pace
+              <select id="rtmProfilePace" data-on-change="rtm:profilePace">
+                <option value="5">the run in 5 s</option>
+                <option value="10">the run in 10 s</option>
+                <option value="30">the run in 30 s</option>
+                <option value="points">a point a frame</option>
+              </select>
+            </label>
+            <button type="button" class="rtm-btn secondary small" id="rtmProfileAll" data-on-click="rtm:profileAll">back to Times</button>
           </div>
           <div class="plot" id="rtmChartProfile" hidden></div>
           <p class="rtm-empty" id="rtmProfileEmpty">A profile needs a run in transport mode.</p>
@@ -2341,6 +2356,14 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             one time — the first of the <em>Times</em>, or the end of the run — each in its colour on
             the time chart, pH, pe and the like on an axis of their own on the right: a plume's redox
             zones side by side.</p>
+          <p>Under <em>Against distance</em>'s bar a slider steps through the stored points, one time
+            at a time: the chart draws what <em>Show</em> has at that time — one curve, or those ticked
+            against time — on axes that span the whole run, so that a front moves across a still
+            frame. <em>Play</em> moves it on from where it is, or from the start, at the <em>Pace</em>
+            chosen: the whole run in 5, 10 or 30 seconds, evenly in time, or a stored point a frame,
+            which is slower where the solver stored more. What <code>&lt;DATA&gt;</code> measured is drawn faint, and as
+            itself at the stored time nearest its own. <em>Back to Times</em>, or typing
+            <em>Times</em>, draws the <em>Times</em> again.</p>
           <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
             them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
             is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
@@ -3524,6 +3547,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110p"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110q"></script>
 </body>
 </html>

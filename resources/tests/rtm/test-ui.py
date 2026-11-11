@@ -1750,6 +1750,78 @@ async def main():
                                                      bool(phead) and all(h.endswith(' (mg/kgw)') for h in phead[1:]), grad],
                   [[['CaX2 concentration', 'CaX2 as the model has it, not in mg/kgw: no formula mass'], ['Ca+2 (mg/kgw)', '']],
                    'distance from the left-hand face (m)', True, 'Ca+2 (mg/kgw)'])
+            # Against distance one time at a time: the slider under the bar at the end while the Times are drawn; moved, one
+            # curve at the stored point it is at, on an axis that spans the whole run and so holds still from point to point;
+            # the very curve the Times draw at that stored time, typed; play moves it on through the run at the pace chosen and
+            # stops at the end; back to Times draws the eight again; those ticked against time follow the slider too.
+            t300 = await page.ev("(() => { document.querySelector('[data-tab=\"time\"]').click();"
+                                 " return document.getElementById('rtmChartTime').data.find((t) => t.name === 'Ca, dissolved').x[300]; })()")
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = 'Ca+2';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            row_js = ("(() => { const a = document.getElementById('rtmProfileAt'), p = document.getElementById('rtmChartProfile');"
+                      " return [document.getElementById('rtmProfilePlayRow').hidden, a.max, a.value, document.getElementById('rtmProfileAtLabel').textContent,"
+                      " document.getElementById('rtmProfileAll').disabled, document.getElementById('rtmProfilePlay').textContent, p.data.length,"
+                      " JSON.stringify(p.layout.yaxis.range)]; })()")
+
+            async def slide(v):
+                await page.ev("(() => { const a = document.getElementById('rtmProfileAt'); a.value = %s;"
+                              " a.dispatchEvent(new Event('input', { bubbles: true })); a.dispatchEvent(new Event('change', { bubbles: true })); })()"
+                              % json.dumps(str(v)))
+                await asyncio.sleep(0.4)
+            at_times = await page.ev(row_js)
+            await slide(100)
+            at100 = await page.ev(row_js)
+            note100 = await page.ev("document.getElementById('rtmProfileNote').textContent")
+            await slide(300)
+            at300 = await page.ev(row_js)
+            y300 = await page.ev("Array.from(document.getElementById('rtmChartProfile').data[0].y)")
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = %s;"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(repr(t300)))
+            await asyncio.sleep(0.5)
+            typed = await page.ev("[Array.from(document.getElementById('rtmChartProfile').data[0].y), document.getElementById('rtmProfileAtLabel').textContent]")
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('  against distance one time at a time: the slider at the end under the Times, the eight curves; at a stored point '
+                  'one curve, the note saying so, its axis the same from point to point; the very curve the Times draw at that '
+                  'stored time, typed, which brings the Times back',
+                  [at_times[:7], at100[:7], note100, at100[7] == at300[7], typed[0] == y300 and len(y300) == 20, typed[1]],
+                  [[False, '513', '513', 'drag or play', True, 'play', 8], [False, '513', '100', '1.31 h', False, 'play', 1],
+                   '20 cells over 0.2 m; at 1.31 h on the slider, the axis over the whole run', True, True, 'drag or play'])
+            await slide(300)
+            await page.ev("(() => { const s = document.getElementById('rtmProfilePace'); s.value = '5';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmProfilePlay').click()")
+            await asyncio.sleep(0.3)
+            p1 = await page.ev(row_js)
+            await asyncio.sleep(1.0)
+            p2 = await page.ev(row_js)
+            ended = await settle(page, "document.getElementById('rtmProfilePlay').textContent", 'play', tries=40, pause=0.25)
+            p3 = await page.ev(row_js)
+            await page.ev("document.getElementById('rtmProfileAll').click()")
+            await asyncio.sleep(0.3)
+            back = await page.ev(row_js)
+            check('  play, the run in 5 s: the slider moving on from point 300, the button pause, the axis still; at the end of the '
+                  'run it stops, the button play again; back to Times the eight curves again',
+                  [p1[5], 300 < int(p1[2]) < int(p2[2]) < 513, p1[7] == p2[7] == at300[7], ended, p3[2], p3[3], back[:7]],
+                  ['pause', True, True, 'play', '513', '6.94 d', [False, '513', '513', 'drag or play', True, 'play', 8]])
+            await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = '*ticked';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            await slide(60)
+            tk60 = await page.ev(row_js)
+            tk_names = await page.ev("document.getElementById('rtmChartProfile').data.map((t) => t.name).join(' | ')")
+            await slide(450)
+            tk450 = await page.ev(row_js)
+            check('  those ticked against time on the slider: the four at its stored point, their axis the same from point to point',
+                  [tk60[2:4], tk_names, tk60[7] == tk450[7], tk450[3]],
+                  [['60', '18.4 min'], 'Ca, dissolved | Mg, dissolved | Na, dissolved | Cl-', True, '2.04 d'])
+            await page.ev("document.getElementById('rtmProfileAll').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = 'Ca+2';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
             await asyncio.sleep(0.3)
             # The same water as PHREEQC lists it, on the Composition tab: one cell at one stored point, from the model's own

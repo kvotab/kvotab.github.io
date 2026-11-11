@@ -325,6 +325,10 @@
 }
 .rtm-toolbar label { display: flex; gap: 5px; align-items: center; }
 .rtm-toolbar label[hidden] { display: none; }
+/* Against distance's slider through the stored times, and play: the slider takes what the row leaves. */
+.rtm-play[hidden] { display: none; }
+.rtm-play input[type="range"] { flex: 1 1 260px; min-width: 160px; margin: 0; }
+.rtm-play .rtm-play-time { min-width: 6em; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
 .rtm-toolbar input[type="text"], .rtm-toolbar select {
   padding: 2px 5px;
   border: 1px solid var(--input-border);

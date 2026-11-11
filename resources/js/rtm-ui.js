@@ -38,6 +38,9 @@
     gradLayer: 0,
     profileSpecies: '',
     profileTimes: '',      // empty for a spread over the run; else a list
+    // The slider's time on Against distance, in the model's unit: null for the Times; and how fast play goes through the run.
+    profileAt: null,
+    profilePace: '10',
     gradSpecies: '',
     gradScale: 'YlOrRd',
     gradView: 'map',       // the gradient as a map, as contours of it, or as a surface
@@ -110,7 +113,7 @@
         tab: state.tab, syntax: state.syntax, sideWidth: state.sideWidth, sections: state.sections,
         layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
         gradLayer: state.gradLayer,
-        profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
+        profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
         concUnit: state.concUnit,
@@ -145,6 +148,8 @@
       if (typeof s.syntax === 'boolean') state.syntax = s.syntax;
       if (typeof s.profileSpecies === 'string') state.profileSpecies = s.profileSpecies;
       if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
+      if (s.profileAt === null || Number.isFinite(s.profileAt)) state.profileAt = s.profileAt;
+      if (PROFILE_PACES.includes(s.profilePace)) state.profilePace = s.profilePace;
       if (typeof s.gradSpecies === 'string') state.gradSpecies = s.gradSpecies;
       if (typeof s.gradScale === 'string') state.gradScale = s.gradScale;
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
@@ -729,6 +734,7 @@
 
   function afterRun(reply, ms, partial) {
     setProgress(null);
+    profileStop();
     state.compiled = reply.model;
     // A look at the run before this one, through PHREEQC, stays on its tab and says which run it is.
     runNumber++;
@@ -1581,11 +1587,113 @@
       .filter(Boolean).join('; ');
   }
 
+  /*
+    ONE TIME AT A TIME, ON AGAINST DISTANCE: a slider through the stored
+    points, and play, which moves it on through the run -- evenly in time,
+    the whole run in 5, 10 or 30 seconds, or a stored point a frame, which
+    is slower where the solver stored more. On the slider the chart draws
+    what it shows at that one time on axes that span the whole run, so that
+    a front moves across a still frame; Back to Times draws the Times again.
+  */
+  const PROFILE_PACES = ['5', '10', '30', 'points'];
+  let profilePlaying = null;
+  function profileStop() {
+    if (!profilePlaying) return;
+    cancelAnimationFrame(profilePlaying.raf);
+    profilePlaying = null;
+    $('rtmProfilePlay').textContent = 'play';
+  }
+  function profilePlay() {
+    if (profilePlaying) { profileStop(); saveState(); return; }
+    const r = state.result;
+    if (!r || !(r.n > 1)) return;
+    // From where the slider is, or from the start where it is at the end or not yet used.
+    let i0 = state.profileAt === null ? 0 : nearestIndex(r.t, state.profileAt);
+    if (i0 >= r.n - 1) i0 = 0;
+    const p = { i0, wall0: performance.now(), last: -1, raf: 0 };
+    profilePlaying = p;
+    $('rtmProfilePlay').textContent = 'pause';
+    const frame = (now) => {
+      if (profilePlaying !== p) return;
+      if (state.result !== r) { profileStop(); return; }
+      let i;
+      if (state.profilePace === 'points') i = Math.min(r.n - 1, p.i0 + Math.floor(((now - p.wall0) * 30) / 1000));
+      else {
+        const t = r.t[p.i0] + ((now - p.wall0) / (Number(state.profilePace) * 1000)) * (r.t[r.n - 1] - r.t[0]);
+        i = t >= r.t[r.n - 1] ? r.n - 1 : nearestIndex(r.t, t);
+      }
+      if (i !== p.last) {
+        p.last = i;
+        state.profileAt = r.t[i];
+        drawProfile();
+      }
+      if (i >= r.n - 1) { profileStop(); saveState(); return; }
+      p.raf = requestAnimationFrame(frame);
+    };
+    p.raf = requestAnimationFrame(frame);
+  }
+  // The slider's row: under a run along a column, its thumb at the time drawn, or at the end under the Times.
+  function renderProfilePlay(r) {
+    const ok = !!(r && r.model.transport && r.model.fracture > 1 && r.n > 1);
+    $('rtmProfilePlayRow').hidden = !ok;
+    if (!ok) { profileStop(); return; }
+    const i = state.profileAt === null ? r.n - 1 : nearestIndex(r.t, state.profileAt);
+    const at = $('rtmProfileAt');
+    at.max = String(r.n - 1);
+    at.value = String(i);
+    $('rtmProfileAtLabel').textContent = state.profileAt === null ? 'drag or play' : fmtTime(r.t[i]);
+    $('rtmProfilePace').value = state.profilePace;
+    $('rtmProfileAll').disabled = state.profileAt === null;
+    $('rtmProfilePlay').textContent = profilePlaying ? 'pause' : 'play';
+  }
+  /*
+    What a profile's values come to over every stored point of a run -- the
+    least, the greatest and the least above zero -- for an axis that holds
+    still on the slider; kept for the run, which does not change.
+  */
+  const spanCache = new Map();
+  function spanOver(key, n, npts, at) {
+    if (key !== null && spanCache.has(key)) return spanCache.get(key);
+    const s = { lo: Infinity, hi: -Infinity, pos: Infinity };
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < npts; k++) {
+        const v = at(i, k);
+        if (!Number.isFinite(v)) continue;
+        if (v < s.lo) s.lo = v;
+        if (v > s.hi) s.hi = v;
+        if (v > 0 && v < s.pos) s.pos = v;
+      }
+    }
+    if (key === null) return s;
+    if (spanCache.size > 400) spanCache.clear();
+    spanCache.set(key, s);
+    return s;
+  }
+  // The same of a few values, kept nowhere: what was measured.
+  const spanOf = (ys) => spanOver(null, 1, ys.length, (i, k) => ys[k]);
+  // An axis's range over those spans: log from the floor, or from the least above zero, to the greatest; linear a little wider.
+  function stillRange(spans, log, floor) {
+    const lo = Math.min(...spans.map((s) => s.lo));
+    const hi = Math.max(...spans.map((s) => s.hi));
+    const pos = Math.min(...spans.map((s) => s.pos));
+    if (log) {
+      const top = hi > 0 ? Math.log10(hi) : NaN;
+      const bottom = floor.lo !== null ? floor.lo : Math.log10(pos);
+      if (!Number.isFinite(top) || !Number.isFinite(bottom)) return null;
+      const pad = Math.max(0.05, 0.04 * (top - bottom));
+      return top > bottom ? [floor.lo !== null ? bottom : bottom - pad, top + pad] : [bottom - 1, bottom + 1];
+    }
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return null;
+    const pad = 0.05 * (hi - lo) || 0.05 * Math.abs(hi) || 1;
+    return [lo - pad, hi + pad];
+  }
+
   function drawProfile() {
     if (typeof Plotly === 'undefined') return;
     const plot = $('rtmChartProfile');
     const empty = $('rtmProfileEmpty');
     const r = state.result;
+    renderProfilePlay(r);
     if (!r || !r.model.transport || r.model.fracture < 2) {
       Plotly.purge(plot);
       plot.hidden = true;
@@ -1645,12 +1753,15 @@
       const v = quantity ? (quantitySeries(name, cellAt(k)) || [])[i] : r.states[i * r.width + stateIndex(k)];
       return v === undefined ? v : v * f;
     };
-    // Either the times the reader asked for, or eight spread over the run: a
-    // profile is only readable with a handful of curves on it.
-    const asked = parseTimes(state.profileTimes);
+    // The slider's one time; or the times the reader asked for, or eight
+    // spread over the run: a profile is only readable with a handful of
+    // curves on it.
+    const slider = state.profileAt !== null;
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes);
     const picks = [];
     const past = [];
-    if (asked.times.length) {
+    if (slider) picks.push(nearestIndex(r.t, state.profileAt));
+    else if (asked.times.length) {
       for (const want of asked.times) {
         if (want > r.t[r.n - 1] * 1.000001) { past.push(want); continue; }
         const idx = nearestIndex(r.t, want);
@@ -1680,6 +1791,8 @@
     */
     const bk = besideRun();
     let besideSaid = '';
+    // On the slider, what the kept run's values come to over its run: the axis holds them too.
+    const spans = [];
     if (bk) {
       const kr = bk.r;
       const km = kr.model;
@@ -1705,14 +1818,16 @@
         } else {
           const kt = besideTimes(bk);
           const pastIt = [];
+          const kValue = (j, k) => {
+            const v = kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi];
+            return v === undefined ? v : v * kf;
+          };
+          if (slider) spans.push(spanOver(`${kr.runKey}|${name}|${across}|${layer}|${kAtCell}|${kf}`, kr.n, kn, kValue));
           picks.forEach((i, q) => {
             if (r.t[i] > kt[kr.n - 1] * 1.000001) { pastIt.push(fmtTime(r.t[i])); return; }
             const j = nearestIndex(kt, r.t[i]);
             const y = [];
-            for (let k = 0; k < kn; k++) {
-              const v = kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi];
-              y.push(v === undefined ? v : v * kf);
-            }
+            for (let k = 0; k < kn; k++) y.push(kValue(j, k));
             traces.push({ name: `${fmtTime(r.t[i])}, ${bk.label}`, x: kx, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter',
               line: { color: palette[q % palette.length], dash: 'dash', width: 1.6 }, ...meta });
           });
@@ -1720,12 +1835,16 @@
         }
       }
     }
-    // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says.
+    // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says;
+    // on the slider faint but at the stored time nearest its own.
     if (!across) {
       for (const d of measured('distance', name)) {
         const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
-        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers', type: 'scatter',
-          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 } }, ...meta });
+        const ys = f === 1 ? d.y : d.y.map((v) => v * f);
+        if (slider) spans.push(spanOf(ys));
+        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: ys, mode: 'markers', type: 'scatter',
+          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 },
+            opacity: slider && nearestIndex(r.t, at) !== picks[0] ? 0.3 : 1 }, ...meta });
       }
     }
     const layout = baseLayout();
@@ -1738,6 +1857,12 @@
     $('rtmProfileYFrom').disabled = !$('rtmProfileLog').checked;
     const floor = logAxis ? logFloor(state.profileYFrom) : logFloor('');
     if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, traces.map((t) => t.y));
+    // On the slider the axis spans the whole run, the kept one's and what was measured too: a front moves across a still frame.
+    if (slider) {
+      spans.push(spanOver(`${r.runKey}|${name}|${across}|${layer}|${atCell}|${f}`, r.n, npts, valueAt));
+      const still = stillRange(spans, logAxis, floor);
+      if (still) layout.yaxis.range = still;
+    }
     const q = quantity ? quantityOf(name) : null;
     layout.yaxis.title = { text: suffix ? `${q ? q.label : u.bare ? `${name} concentration` : name}${suffix}`
       : q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${name} concentration`, font: { size: 11 } };
@@ -1749,6 +1874,7 @@
     */
     const bits = [across ? `${nm} layers to ${r.model.matrix.total} m, the fracture at depth 0`
       : `${r.model.fracture} cells over ${r.model.length} m${nm && layer ? `, rock layer ${layer}` : ''}`];
+    if (slider) bits.push(`at ${fmtTime(r.t[picks[0]])} on the slider, the axis over the whole run`);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
     if (past.length) bits.push(`${past.map(fmtTime).join(', ')} past the end of the run`);
     if (asked.times.length && picks.length) {
@@ -1789,12 +1915,17 @@
       $('rtmProfileNote').textContent = '';
       return;
     }
-    const asked = parseTimes(state.profileTimes);
+    // The slider's time; or the first of Times, or the end of the run.
+    const slider = state.profileAt !== null;
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes);
     const end = r.t[r.n - 1];
-    const want = asked.times.length ? asked.times[0] : end;
-    const past = want > end * 1.000001;
+    const want = slider ? state.profileAt : asked.times.length ? asked.times[0] : end;
+    const past = !slider && want > end * 1.000001;
     const i = past ? r.n - 1 : nearestIndex(r.t, want);
     const log = $('rtmProfileLog').checked;
+    // On the slider, what each curve comes to over the run, on the left and on the right: axes that hold still.
+    const spansL = [];
+    const spansR = [];
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
     const traces = [];
     const right = [];
@@ -1818,8 +1949,9 @@
       const keep = (v) => (Number.isFinite(v) ? v * f : null);
       const quantity = runQuantity(r, key);
       const si = r.model.species.indexOf(key);
-      const y = Array.from({ length: npts }, (_, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[i]
-        : r.states[i * r.width + cellAt(k) * r.model.nspecies + si]));
+      const valueAt = (j, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[j] : r.states[j * r.width + cellAt(k) * r.model.nspecies + si]);
+      const y = Array.from({ length: npts }, (_, k) => valueAt(i, k));
+      if (slider) (onRight ? spansR : spansL).push(spanOver(`${r.runKey}|${key}|${g.across}|${layer}|${g.atCell}|${f}`, r.n, npts, valueAt));
       if (onRight && !right.includes(labelOf(key))) right.push(labelOf(key));
       traces.push({ name: labelOf(key), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color },
         ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
@@ -1848,8 +1980,10 @@
           } else {
             const ksi = km.species.indexOf(key);
             const kKeep = (v) => (Number.isFinite(v) ? v * kf : null);
-            const ky = Array.from({ length: kn }, (_, k) => kKeep(kQuantity ? (quantitySeries(key, kCellAt(k), kr) || [])[kI]
-              : kr.states[kI * kr.width + kCellAt(k) * km.nspecies + ksi]));
+            const kValue = (j, k) => kKeep(kQuantity ? (quantitySeries(key, kCellAt(k), kr) || [])[j]
+              : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi]);
+            const ky = Array.from({ length: kn }, (_, k) => kValue(kI, k));
+            if (slider) (onRight ? spansR : spansL).push(spanOver(`${kr.runKey}|${key}|${across}|${layer}|${kAtCell}|${kf}`, kr.n, kn, kValue));
             besideTraces.push({ name: `${labelOf(key)}, ${bk.label}`, x: kx, y: ky, mode: across ? 'lines+markers' : 'lines',
               type: 'scatter', line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
           }
@@ -1859,8 +1993,11 @@
       if (!across) {
         for (const d of measured('distance', key)) {
           const at = d.tab.at !== null ? d.tab.at : end;
-          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers',
-            type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
+          const ys = f === 1 ? d.y : d.y.map((v) => v * f);
+          if (slider) (onRight ? spansR : spansL).push(spanOf(ys));
+          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: ys, mode: 'markers',
+            type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 },
+              opacity: slider && nearestIndex(r.t, at) !== i ? 0.3 : 1 }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
         }
       }
     }
@@ -1874,13 +2011,22 @@
     const floor = log ? logFloor(state.profileYFrom) : logFloor('');
     const onLeft = traces.filter((t) => !t.yaxis);
     if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, onLeft.map((t) => t.y));
+    if (slider && spansL.length) {
+      const still = stillRange(spansL, log, floor);
+      if (still) layout.yaxis.range = still;
+    }
     if (right.length) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
         title: { text: right.join(', '), font: { size: 11 } } };
+      if (slider && spansR.length) {
+        const still = stillRange(spansR, false, logFloor(''));
+        if (still) layout.yaxis2.range = still;
+      }
       layout.margin.r = 64;
     }
-    const bits = [g.where, `at ${fmtTime(r.t[i])}${asked.times.length && !past ? '' : ', the end of the run'}`];
+    const bits = [g.where, `at ${fmtTime(r.t[i])}${slider ? ' on the slider, the axes over the whole run'
+      : asked.times.length && !past ? '' : ', the end of the run'}`];
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
     if (past) bits.push(`${fmtTime(want)} is past it`);
     else if (asked.times.length && Math.abs(r.t[i] - want) > 0.01 * Math.max(want, 1e-300)) {
@@ -6538,6 +6684,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      --------------------------------------------------------------------- */
   function showTab(name) {
     state.tab = name;
+    if (name !== 'profile') profileStop();
     document.querySelectorAll('.rtm-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -7205,6 +7352,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
           '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so; with those ticked against time it is left off.',
+          '**The slider** under the bar: one time at a time, a stored point a step. The chart draws what Show has at that time — one curve, or those ticked against time — on axes that span the whole run, so that a front moves across a still frame. What `<DATA>` measured is faint, and as itself at the stored time nearest its own.',
+          '**play**: moves the slider on from where it is, or from the start, at the **Pace** chosen: the whole run in 5, 10 or 30 s, evenly in time, or a stored point a frame, slower where the solver stored more; **pause** stops it. **back to Times** draws the Times again, and so does typing them.',
           '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
           SAVE_HTML,
         ] },
@@ -7654,6 +7803,9 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     // The unit the concentrations are shown in: the example's, and the model's own where it gives none.
     state.concUnit = v && CONC_UNITS[v.unit] ? v.unit : '';
     renderUnits();
+    // Against distance at the Times, or at the example's one time on the slider.
+    profileStop();
+    state.profileAt = v && v.profile && Number.isFinite(v.profile.at) ? v.profile.at : null;
     if (!v) return;
     if (v.picked) state.picked = v.picked.slice();
     if (Number.isInteger(v.cell)) state.cell = v.cell;
@@ -9213,6 +9365,28 @@ END
       saveState();
       drawTime();
     },
+    // Against distance at the slider's one time; play moves it on through the run.
+    'rtm:profileAt': (ev, el) => {
+      const r = state.result;
+      if (!r) return;
+      profileStop();
+      state.profileAt = r.t[Math.max(0, Math.min(r.n - 1, Math.round(Number(el.value)) || 0))];
+      drawProfile();
+    },
+    'rtm:profileAtDone': () => saveState(),
+    'rtm:profilePlay': () => profilePlay(),
+    'rtm:profilePace': (ev, el) => {
+      state.profilePace = PROFILE_PACES.includes(el.value) ? el.value : '10';
+      saveState();
+      // At the new pace from where it is.
+      if (profilePlaying) { profileStop(); profilePlay(); }
+    },
+    'rtm:profileAll': () => {
+      profileStop();
+      state.profileAt = null;
+      saveState();
+      drawProfile();
+    },
     // One unit for every chart of concentrations and the listing: the four selects as one.
     'rtm:concUnit': (ev, el) => {
       state.concUnit = CONC_UNITS[el.value] ? el.value : '';
@@ -9240,6 +9414,8 @@ END
       // Switching what the picker means resets what it points at.
       if (axis !== state.profileAxis) { state.profileAxis = axis; state.profileLayer = 0; renderLayerPickers(); }
       else state.profileLayer = Number($('rtmProfileLayer').value) || 0;
+      // Times typed: the Times again, not the slider's.
+      if ($('rtmProfileTimes').value !== state.profileTimes) { profileStop(); state.profileAt = null; }
       state.profileTimes = $('rtmProfileTimes').value;
       state.profileYFrom = $('rtmProfileYFrom').value;
       saveState();
