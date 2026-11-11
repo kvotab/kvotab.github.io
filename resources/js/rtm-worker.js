@@ -1767,7 +1767,9 @@ function rtmSweep(msg, post) {
   EACH CONSTANT IN TURN: the model as written, then again with each
   constant named -- a reaction's, or a parameter, given one value -- raised
   by `delta` of itself and lowered by as much (RtmModel.withValue), one at a
-  time, the page's solver settings each time. Kept of each run, at one cell:
+  time, the page's solver settings each time; or put at the values the
+  page gives it, `up` and `down` -- a relation's log K a little either way,
+  which moves its K by a factor. Kept of each run, at one cell:
   every species and quantity at the end of the run, and its largest and
   smallest over the stored points -- what the page sets against the run as
   written to say how much each constant moves what it draws. A run that
@@ -1788,7 +1790,9 @@ function rtmEach(msg, post) {
     const t0 = Date.now();
     try {
       const tg = job.target >= 0 ? targets[job.target] : null;
-      const text = tg ? RtmModel.withValue(msg.text, tg.vary, tg.base * job.factor) : msg.text;
+      const put = !tg ? null : job.factor > 1 ? (Number.isFinite(tg.up) ? tg.up : tg.base * job.factor)
+        : (Number.isFinite(tg.down) ? tg.down : tg.base * job.factor);
+      const text = tg ? RtmModel.withValue(msg.text, tg.vary, put) : msg.text;
       const model = RtmModel.compile(text);
       const tend = s.tend > 0 ? s.tend : model.settings.TEND;
       const res = FacsimileODE.runModel(model, rtmSolveOptions(s, tend, (t, nsteps) => {

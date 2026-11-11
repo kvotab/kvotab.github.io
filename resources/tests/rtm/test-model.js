@@ -8723,6 +8723,51 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `${bm[j] === undefined ? '?' : bm[j].toFixed(4)}`).join(', ')}`);
   }
   /*
+    Each log K in turn: every relation's and phase's log K moved by log10 1.01 either way, its K 1 % more and 1 % less;
+    how much a result moves is the change in its logarithm over K's. Calcite into water with nothing but its ions: Ca =
+    sqrt K, half a per cent for each per cent of K, to 1e-9. An ion pair A+ + B- <=> AB at log K 2 with 0.01 of each: the
+    free A+ the closed form's, x + K x^2 = 0.01, to 1e-12; its exponent the closed form's own central difference to 1e-9,
+    and its derivative, -K x/(1 + 2 K x), to 1e-6 -- what is left the difference's own.
+  */
+  {
+    const LK = Math.log10(1.01);
+    const kTargets = (text) => RtmModel.tunables(text).filter((x) => x.kind === 'logK')
+      .map((x) => ({ vary: { kind: 'logK', name: x.name }, base: x.value, up: x.value + LK, down: x.value - LK }));
+    const eachK = (text) => {
+      let got = null;
+      handleRtmMessage({ type: 'each', id: 49, text, solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20 }, targets: kTargets(text),
+        delta: 0.01, cell: 0 }, (msg) => { if (msg.type !== 'progress') got = msg; });
+      return got;
+    };
+    const movesK = (rp, key) => {
+      const k = rp.species.indexOf(key);
+      return (Math.log(rp.runs[1].end[k]) - Math.log(rp.runs[2].end[k])) / (2 * Math.log(1.01));
+    };
+    const calciteText = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nCa+2     1e-10\nCO3-2    1e-10\n'
+      + 'Calcite  1e-3   mineral\n\n<EQUILIBRIUM>\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\n';
+    const rc = eachK(calciteText);
+    const caWritten = rc.runs[0].end[rc.species.indexOf('Ca+2')];
+    const caOff = Math.abs(caWritten / Math.sqrt(10 ** -8.48) - 1);
+    const halfOff = Math.abs(movesK(rc, 'Ca+2') - 0.5);
+    const pairText = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nA+    1e-2\nB-    1e-2\nAB    0\n\n'
+      + '<EQUILIBRIUM>\nA+ + B- <=> AB, logK = 2\n';
+    const rq = eachK(pairText);
+    const K = 100;
+    const free = (KK) => (-1 + Math.sqrt(1 + 0.04 * KK)) / (2 * KK);
+    const freeOff = Math.abs(rq.runs[0].end[rq.species.indexOf('A+')] / free(K) - 1);
+    const pairCd = (Math.log(free(K * 1.01)) - Math.log(free(K / 1.01))) / (2 * Math.log(1.01));
+    const pairEx = (-K * free(K)) / (1 + 2 * K * free(K));
+    const pairE = movesK(rq, 'A+');
+    check('each log K in turn: calcite into water with nothing but its ions, Ca = sqrt K, half a per cent for each per cent '
+      + 'of K, to 1e-9; an ion pair\'s free ion the closed form\'s, its exponent for the pair\'s K that form\'s central '
+      + 'difference to 1e-9 and its derivative to 1e-6',
+    rc.runs.every((r) => r.ok) && rq.runs.every((r) => r.ok) && rc.runs.length === 3 && caOff < 1e-12 && halfOff < 1e-9
+      && freeOff < 1e-12 && Math.abs(pairE - pairCd) < 1e-9 && Math.abs(pairE - pairEx) < 1e-6,
+    `Ca ${caWritten.toExponential(6)}, sqrt K off by ${caOff.toExponential(1)}, the half off by ${halfOff.toExponential(1)}; A+ `
+      + `off by ${freeOff.toExponential(1)}, its exponent ${pairE.toFixed(9)}, the difference ${pairCd.toFixed(9)}, the derivative `
+      + `${pairEx.toFixed(9)}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

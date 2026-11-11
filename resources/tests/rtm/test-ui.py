@@ -1452,6 +1452,32 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = 'parameter:kk';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            # Each log K in turn: calcite dissolving into water with nothing but its ions, Ca = sqrt K, half a per cent for
+            # each per cent of K -- a bar to the right; the decay's text has no relation, so no log K was offered.
+            no_k = await page.ev("[...document.getElementById('rtmSwWhat').options].some((o) => o.value === '*eachK')")
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nCa+2     1e-10\n'
+                                 'CO3-2    1e-10\nCalcite  1e-3   mineral\n\n<EQUILIBRIUM>\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 3 species')", True, tries=40)
+            await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = '*eachK';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            k_opt = await page.ev("document.getElementById('rtmSwWhat').selectedOptions[0].textContent")
+            await page.ev("document.getElementById('rtmSwGo').click()")
+            k_done = await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 17)", '3 of 3 runs done ', tries=60, pause=0.5)
+            await page.ev("(() => { const k = document.getElementById('rtmSwKey'); k.value = 'Ca+2';"
+                          " k.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            k_ranked = await page.ev("""(() => { const p = document.getElementById('rtmChartSw'), t = p.data[0];
+              return [document.getElementById('rtmSwShow').selectedOptions[0].textContent, t.y.join(' | '), Math.abs(t.x[0] - 0.5) < 1e-6,
+                t.marker.color[0], p.layout.xaxis.title.text, document.getElementById('rtmSwNote').textContent]; })()""")
+            check('  each log K in turn: none offered where the text has no relation; calcite into water with nothing but its '
+                  'ions, Ca = sqrt K, moving half a per cent for each per cent of K, a bar to the right, to 1e-6',
+                  [no_k, k_opt, k_done, k_ranked],
+                  [False, "its one log K, K 1 % either way (3 runs)", '3 of 3 runs done ',
+                   ['each log K, by how much it moves it', 'log K of Calcite <=> Ca+2 + CO3-2', True, '#3b82c4',
+                    '% change in Ca+2, at the end, for 1 % more of each K',
+                    'Ca+2, at the end at cell 0, 5.754e-5 as written; 1 log K, 3 runs; 1 moves it by more than 0.1 % for 1 % more, '
+                    'the most log K of Calcite <=> Ca+2 + CO3-2, 0.5']])
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 
