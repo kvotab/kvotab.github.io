@@ -121,12 +121,11 @@ Drive each file's name, type and size and opens the files as picked ones
 open, the resource key with both requests and no picker shown. A request
 that cannot be acted on is said, with the picker offered instead; a file
 Drive will not show the page is said and the rest still open; Cancel lets
-Drive's files go. Last, the dialog's offer to add the Data Browser to that
-menu asks for `drive.install` with `drive.file`, from the click; the box
-left unticked is said, and once given it is said done, the access kept, and
-the offer not made again in the tab. The file with the 5 MB datasets is made
-in the test with h5py and numpy. 121 checks. RB_TEST_HTTP and RB_TEST_CDP
-choose other ports than 8765 and 9222.
+Drive's files go. Last, the dialog makes no offer to add the Data Browser to
+Drive's Open with menu: a grant of `drive.install` asked for by the page
+installs nothing, so that takes the Google Workspace Marketplace. The file
+with the 5 MB datasets is made in the test with h5py and numpy. 113 checks.
+RB_TEST_HTTP and RB_TEST_CDP choose other ports than 8765 and 9222.
 
     python3 test-drive.py
 

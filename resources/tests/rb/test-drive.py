@@ -60,10 +60,9 @@ Checked:
     instead; a file Drive will not show the page is said and the rest still
     open; with no account named the reader chooses one; Cancel lets Drive's
     files go;
-  - the dialog's offer to add the Data Browser to Drive's Open with menu asks
-    Google, from the click, for drive.install with drive.file; that box left
-    unticked is said; given, it is said done, the access kept, and the offer
-    not made again in the tab.
+  - the dialog makes no offer to add the Data Browser to Drive's Open with
+    menu: a grant of drive.install asked for by the page installs nothing
+    (tried); installing it from the Google Workspace Marketplace does.
 
 Start the server and the browser as in README.md (RB_TEST_HTTP and
 RB_TEST_CDP choose other ports), then
@@ -94,7 +93,6 @@ CLIENT = '000000000000-test.apps.googleusercontent.com'
 KEY = 'AIzaTEST-KEY-not-a-real-one'
 APP = '123456789012'
 SCOPE = 'https://www.googleapis.com/auth/drive.file'
-INSTALL = 'https://www.googleapis.com/auth/drive.install'
 USER = '109876543210987654321'   # a Google account ID, as Drive's Open with names the reader
 SIGN_IN = 'https://accounts.google.com/gsi/client'
 PICKER = 'https://apis.google.com/js/api.js'
@@ -828,8 +826,7 @@ async def main():
             check('saying what Drive asked for', await page.ev("document.getElementById('driveLaunchText').textContent"),
                   'Google Drive asked the Data Browser to open 2 files. They open here as files from your own'
                   ' disk do: read in this browser, and sent nowhere else.')
-            check('and not the picker\'s text, nor the offer to add the page to Drive', await page.ev(SHOWN_PS),
-                  'driveLaunchText access')
+            check('and not the picker\'s text', await page.ev(SHOWN_PS), 'driveLaunchText access')
             check('its button is Open, once Google\'s scripts are loaded',
                   await settle(page, f"!{CHOOSE}.disabled && {CHOOSE}.textContent"), 'Open')
             check('Drive\'s request is gone from the address, the rest of it kept',
@@ -871,9 +868,9 @@ async def main():
                 await page.load(n, CONFIG_JS, state)
                 check(f'a request from Drive that cannot be acted on is said: “{said[:48]}…”',
                       await settle(page, f'{DIALOG_SHOWN} && {DIALOG_ERROR}'), said)
-            check('the picker is offered instead, and the offer to add the page to Drive',
+            check('the picker is offered instead',
                   [await settle(page, f"!{CHOOSE}.disabled && {CHOOSE}.textContent"), await page.ev(SHOWN_PS)],
-                  ['Choose files…', 'drivePickText access driveInstallLine'])
+                  ['Choose files…', 'drivePickText access'])
             check('nothing was asked of Drive for them', len(page.drive), asked)
 
             # A file Drive will not show the page; no account named, so the reader chooses one.
@@ -905,42 +902,15 @@ async def main():
                    await page.ev('Object.keys(loadedFiles).length')],
                   [[{'overrides': {}, 'active': True}], 1, 0])
 
-            # --- the Data Browser added to Drive's Open with menu -------------
+            # No offer to add the page to Drive's Open with menu: a grant of
+            # drive.install asked for by the page installs nothing (tried).
             await page.load(13, CONFIG_JS)
             await page.click(BUTTON)
-            check('the dialog offers to add the Data Browser to Drive\'s Open with menu, once Google\'s scripts load',
-                  await settle(page, "(() => { const b = document.getElementById('driveInstallBtn');"
-                                     " return getComputedStyle(b.closest('p')).display !== 'none' && !b.disabled"
-                                     " && b.textContent; })()"), 'add the Data Browser to that menu')
-            await page.ev(f'{T}.nextToken = {{ kind: "token", scope: {json.dumps(SCOPE)} }}; true')
-            await page.click('#driveInstallBtn')
-            check('it asks Google, from the click, for that as well as for the files',
-                  await page.ev(f'{T}.tokenRequests'), [{'overrides': {'scope': f'{SCOPE} {INSTALL}'}, 'active': True}])
-            check('that box left unticked on Google\'s page is said',
-                  await settle(page, f"{DIALOG_ERROR}.startsWith('The Data Browser was not added to Google Drive')"))
-            check('and the offer stays', await page.ev(f"({SHOWN_PS}).includes('driveInstallLine')"))
-            await page.ev(f'{T}.nextToken = {{ kind: "token", scope: {json.dumps(f"{SCOPE} {INSTALL}")} }}; true')
-            await page.click('#driveInstallBtn')
-            check('asked again, without the accounts again',
-                  (await page.ev(f'{T}.tokenRequests'))[1:],
-                  [{'overrides': {'prompt': '', 'scope': f'{SCOPE} {INSTALL}'}, 'active': True}])
-            check('given, it is said done, with where to look', await settle(page,
-                  "document.getElementById('driveNote').textContent"
-                  ".startsWith('Done: Google has let the Data Browser add itself to your Google Drive.')"))
-            check('in the dialog, which stays open, the offer and the error gone',
-                  [await page.ev(DIALOG_SHOWN), await page.ev(SHOWN_PS), await page.ev(DIALOG_ERROR)],
-                  [True, 'drivePickText access', ''])
-            before = await pick(page, {'action': 'cancel'})
-            await page.click('#driveChooseBtn')
-            await opened(page, before)
-            check('the access given with it is kept: Choose files goes straight to the picker',
-                  [len(await page.ev(f'{T}.tokenRequests')), await page.ev(f'{T}.pickers.length'),
-                   await page.ev(DIALOG_SHOWN)], [2, 1, False])
-            await page.ev('driveToken = null; true')
-            await page.ev(f'{T}.nextToken = {{ kind: "error", error: "access_denied" }}; true')
-            await page.click(BUTTON)
-            await settle(page, f'{DIALOG_SHOWN} && !!{DIALOG_ERROR}')
-            check('nor is it offered again in the tab', await page.ev(SHOWN_PS), 'drivePickText access')
+            await settle(page, f"!{CHOOSE}.disabled")
+            check('the dialog makes no offer to add the Data Browser to Drive\'s Open with menu',
+                  [await page.ev(SHOWN_PS),
+                   await page.ev("document.getElementById('driveDialog').textContent.includes('Open with')")],
+                  ['drivePickText access', False])
 
             check('nothing outside the stand-ins was fetched from Google', page.unexpected, [])
         finally:

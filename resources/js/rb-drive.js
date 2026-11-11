@@ -34,15 +34,16 @@
 
    OPEN WITH. Google Drive lists this page under "Open with", for the kinds
    of file the Cloud project's Drive UI integration names, once the reader
-   lets it: the dialog's offer to add the Data Browser to that menu asks
-   Google for drive.install as well, which reaches no file. Drive then
-   opens this page at the integration's address with `state`, JSON naming
-   the files by ID, their resource keys and the reader's Google account.
-   The page takes it out of the address and opens the dialog by itself:
-   its Open is the click that lets Google's window open, sent straight to
-   that account. Drive gives drive.file access to a file opened with the
-   page, so each one's name and size are asked of the Drive API, and it
-   opens as a picked file does.
+   has installed the Data Browser from the Google Workspace Marketplace,
+   which grants drive.install (it reaches no file). A grant of drive.install
+   asked for by the page itself installs nothing: tried, 2026-11-11. Drive
+   then opens this page at the integration's address with `state`, JSON
+   naming the files by ID, their resource keys and the reader's Google
+   account. The page takes it out of the address and opens the dialog by
+   itself: its Open is the click that lets Google's window open, sent
+   straight to that account. Drive gives drive.file access to a file opened
+   with the page, so each one's name and size are asked of the Drive API,
+   and it opens as a picked file does.
 
    THE TOKEN is kept in this script's memory and nowhere else, never in
    storage, and is gone when the tab closes. It is attached ONLY in
@@ -58,8 +59,6 @@
 
 /** Access to the files the reader picks with this page, and to no others. */
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
-/** Lets Google Drive list this page under "Open with"; it reaches no file (non-sensitive too). */
-const DRIVE_INSTALL_SCOPE = 'https://www.googleapis.com/auth/drive.install';
 const DRIVE_SIGN_IN_SCRIPT = 'https://accounts.google.com/gsi/client';
 const DRIVE_PICKER_SCRIPT = 'https://apis.google.com/js/api.js';
 const DRIVE_FILES_API = 'https://www.googleapis.com/drive/v3/files/';
@@ -71,9 +70,8 @@ const DRIVE_LAUNCH_MAX = 50;
 let driveToken = null;          // { value, expires }, expires in ms since the epoch
 let driveTokenClient = null;    // Google's token client, once its script is loaded
 let driveAskedThisTab = false;  // whether Google has answered once in this tab
-let driveAskingFor = 'pick';    // what the access asked for is for: 'pick', 'launch' or 'install'
-let driveInstalled = false;     // whether Google has said the page is in Drive's Open with menu
-let driveLaunch = null;         // the files Drive's Open with asked to open, until opened or let go
+let driveAskingFor = 'pick';    // what the access asked for is for: 'pick' or 'launch'
+let driveLaunch = null;        // the files Drive's Open with asked to open, until opened or let go
 let driveLoading = null;        // the promise of Google's scripts, once asked for
 let drivePicker = null;         // the picker on show, to be disposed of
 let driveQueue = Promise.resolve();  // one pick's files opened after another's
@@ -216,7 +214,6 @@ function openDriveDialog(message = '') {
   const dialog = document.getElementById('driveDialog');
   if (!dialog) return;
   showDriveDialogMode();
-  showDriveDialogNote('');
   showDriveDialogError(message);
   dialog.style.display = '';
   if (driveTokenClient) {
@@ -234,8 +231,7 @@ function openDriveDialog(message = '') {
 
 /**
  * The dialog as it is for what it is open for: the files Drive's Open with
- * asked to open (rb-drive-launch on it), or the picker, with the offer to
- * add the Data Browser to that menu unless Google has said it is there.
+ * asked to open (rb-drive-launch on it), or the picker.
  */
 function showDriveDialogMode() {
   const dialog = document.getElementById('driveDialog');
@@ -247,8 +243,6 @@ function showDriveDialogMode() {
       ? 'Google Drive asked the Data Browser to open a file. It opens here as a file from your own disk does: read in this browser, and sent nowhere else.'
       : `Google Drive asked the Data Browser to open ${n} files. They open here as files from your own disk do: read in this browser, and sent nowhere else.`;
   }
-  const offer = document.getElementById('driveInstallLine');
-  if (offer) offer.hidden = driveInstalled;
 }
 
 /** Close the dialog; files Drive's Open with asked to open are let go. */
@@ -260,36 +254,16 @@ function closeDriveDialog() {
 
 /**
  * The dialog's Choose files button, or Open for the files Drive's Open with
- * asked to open: ask Google for access, from this click; with the access
- * already given, straight to the picker. After a failure to load Google's
- * scripts it is Try again, and loads them.
+ * asked to open: ask Google for access, from this click. After a failure to
+ * load Google's scripts it is Try again, and loads them.
  */
 function chooseDriveFiles() {
   if (!driveTokenClient) {
     openDriveDialog();
     return;
   }
-  showDriveDialogNote('');
   showDriveDialogError('');
-  if (driveLaunch) {
-    requestDriveToken('launch');
-  } else if (driveTokenValid()) {
-    closeDriveDialog();
-    showDrivePicker();
-  } else {
-    requestDriveToken('pick');
-  }
-}
-
-/**
- * The dialog's offer to add the Data Browser to Google Drive's Open with
- * menu: ask Google, from this click, for that as well as for drive.file.
- */
-function addDriveToOpenWith() {
-  if (!driveTokenClient) return;
-  showDriveDialogNote('');
-  showDriveDialogError('');
-  requestDriveToken('install');
+  requestDriveToken(driveLaunch ? 'launch' : 'pick');
 }
 
 /**
@@ -301,22 +275,12 @@ function setDriveChooseState(state) {
   button.disabled = state === 'loading';
   button.textContent = state === 'loading' ? 'Connecting…' : state === 'failed' ? 'Try again'
     : driveLaunch ? 'Open' : 'Choose files…';
-  const offer = document.getElementById('driveInstallBtn');
-  if (offer) offer.disabled = state !== 'ready';
   if (state === 'ready' && document.getElementById('driveDialog').style.display !== 'none') button.focus();
 }
 
 /** @param {string} message - Empty to hide the dialog's error */
 function showDriveDialogError(message) {
   const el = document.getElementById('driveError');
-  if (!el) return;
-  el.textContent = message || '';
-  el.style.display = message ? '' : 'none';
-}
-
-/** @param {string} message - Empty to hide the dialog's note: what was done */
-function showDriveDialogNote(message) {
-  const el = document.getElementById('driveNote');
   if (!el) return;
   el.textContent = message || '';
   el.style.display = message ? '' : 'none';
@@ -403,9 +367,9 @@ function driveTokenValid() {
  * a window of its own. The first time in a tab Google lets the reader choose
  * an account; after that it asks only for what has not been agreed to. For
  * the files Drive's Open with asked to open, it goes straight to the account
- * Drive is open in; to add the page to that menu, it asks for that as well.
+ * Drive is open in.
  *
- * @param {'pick'|'launch'|'install'} [purpose] - What the access is for
+ * @param {'pick'|'launch'} [purpose] - What the access is for
  */
 function requestDriveToken(purpose = 'pick') {
   driveAskingFor = purpose;
@@ -414,15 +378,13 @@ function requestDriveToken(purpose = 'pick') {
     overrides.prompt = '';
     overrides.login_hint = driveLaunch.userId;
   }
-  if (purpose === 'install') overrides.scope = `${DRIVE_SCOPE} ${DRIVE_INSTALL_SCOPE}`;
   driveTokenClient.requestAccessToken(overrides);
 }
 
 /**
  * Google's answer. Access refused, or the box for Drive left unticked on
  * Google's page, is said in the dialog; access given opens the picker, or
- * the files Drive's Open with asked to open. Asked to add the page to that
- * menu, the dialog stays and says whether it was.
+ * the files Drive's Open with asked to open.
  *
  * @param {{access_token?: string, expires_in?: number|string, scope?: string,
  *          error?: string, error_description?: string}} response
@@ -435,34 +397,19 @@ function onDriveToken(response) {
   if (!response || response.error) {
     const error = response && response.error;
     const why = error === 'access_denied'
-      ? `${purpose === 'install' ? 'The Data Browser was not added to Google Drive' : 'Google Drive was not opened'}: access was not given.`
+      ? 'Google Drive was not opened: access was not given.'
       : `Google did not give access (${error || 'no answer'}${response && response.error_description ? `: ${response.error_description}` : ''}).`;
     openDriveDialog(why);
     return;
   }
-  const oauth2 = window.google.accounts.oauth2;
-  if (oauth2.hasGrantedAllScopes(response, DRIVE_INSTALL_SCOPE)) driveInstalled = true;
-  const files = oauth2.hasGrantedAllScopes(response, DRIVE_SCOPE);
-  if (files) keepDriveToken(response);
-  if (purpose === 'install') {
-    openDriveDialog();
-    if (driveInstalled) {
-      showDriveDialogNote('Done: Google has let the Data Browser add itself to your Google Drive. In Drive, '
-        + 'right-click a file it reads, such as an .h5 file, and look under Open with; Google can take a few '
-        + 'minutes to show it there.');
-    } else {
-      showDriveDialogError('The Data Browser was not added to Google Drive: the box for it was left '
-        + 'unticked on Google’s page.');
-    }
-    return;
-  }
-  if (!files) {
+  if (!window.google.accounts.oauth2.hasGrantedAllScopes(response, DRIVE_SCOPE)) {
     openDriveDialog(purpose === 'launch'
       ? 'Google Drive was not opened: the access to open the file was not given. Open again, and tick it on Google’s page.'
       : 'Google Drive was not opened: the access to open the files you pick was not given. Choose files again, '
         + 'and tick it on Google’s page.');
     return;
   }
+  keepDriveToken(response);
   const launch = driveLaunch;
   closeDriveDialog();
   if (purpose === 'launch' && launch) openDriveLaunch(launch);
