@@ -1469,7 +1469,12 @@
       font: { color: c.text, size: 11 },
       legend: { orientation: 'h', y: -0.18, font: { size: 10 } },
       xaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid },
-      yaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid, exponentformat: 'power' },
+      // automargin: a tick label as long as 2.824×10⁻⁷ is wider than the 70 px
+      // margin, and ran under the axis title; the margin now grows to take
+      // the labels, and the title stands off beyond them -- 8 px, from the
+      // template, which every y axis takes, whose title a chart sets anew.
+      yaxis: { gridcolor: c.grid, zeroline: false, linecolor: c.grid, exponentformat: 'power', automargin: true },
+      template: { layout: { yaxis: { title: { standoff: 8 } } } },
       hovermode: 'x unified',
       // Said explicitly: Plotly's default hover box is near-white whatever the
       // page is, which on the dark theme is light text on a light background.
@@ -1768,7 +1773,7 @@
     if (right.length) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
-        title: { text: right.join(', '), font: { size: 11 } } };
+        automargin: true, title: { text: right.join(', '), font: { size: 11 } } };
       layout.margin.r = 64;
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -2364,7 +2369,7 @@
     if (right.length) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
-        title: { text: right.join(', '), font: { size: 11 } } };
+        automargin: true, title: { text: right.join(', '), font: { size: 11 } } };
       if (slider && spansR.length) {
         const still = stillRange(spansR, false, logFloor(''));
         if (still) layout.yaxis2.range = still;
@@ -7460,7 +7465,7 @@
     if (right) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
-        title: { text: [...new Set(curves.filter((cv) => cv.index).map((cv) => axisLabelOf(cv.key)))].join(', '), font: { size: 11 } } };
+        automargin: true, title: { text: [...new Set(curves.filter((cv) => cv.index).map((cv) => axisLabelOf(cv.key)))].join(', '), font: { size: 11 } } };
       layout.margin.r = 64;
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -11199,7 +11204,7 @@ END
         font: { size: 11 } } };
     layout.yaxis = { ...layout.yaxis, domain: [0.62, 1], exponentformat: 'none',
       title: { text: 'pH', font: { size: 11 } } };
-    layout.yaxis2 = { gridcolor: c.grid, linecolor: c.grid, domain: [0, 0.52], anchor: 'x', zeroline: true,
+    layout.yaxis2 = { gridcolor: c.grid, linecolor: c.grid, domain: [0, 0.52], anchor: 'x', zeroline: true, automargin: true,
       zerolinecolor: c.text, zerolinewidth: 1, title: { text: 'saturation index', font: { size: 11 } } };
     layout.margin = { ...layout.margin, b: 48 };
     layout.legend = { ...layout.legend, y: -0.16 };

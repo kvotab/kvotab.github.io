@@ -1506,6 +1506,24 @@ async def main():
             check('  and against time, a curve per run, named for its value', await page.ev(
                 "document.getElementById('rtmChartSw').data.map((t) => t.name).join(' / ')"),
                 'kk = 0.1 / kk = 0.2 / kk = 0.3 / kk = 0.4')
+            # A long tick label stands clear of the axis title: A at the end near 1.1e-7, four runs a hair apart, on a
+            # linear axis, ticked 1.1251×10⁻⁷ and the like. The y axis grows its margin to take its labels (automargin);
+            # with the 70 px every chart had, the title lay over them.
+            await page.ev("(() => { const v = document.getElementById('rtmSwValues'); v.value = '1.6, 1.6001, 1.6002, 1.6003';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmSwGo').click()")
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 17)", '4 of 4 runs done ', tries=60, pause=0.5)
+            await page.ev("""(() => { const s = document.getElementById('rtmSwShow'); s.value = 'summary'; s.dispatchEvent(new Event('change', { bubbles: true }));
+              const k = document.getElementById('rtmSwKey'); k.value = 'A'; k.dispatchEvent(new Event('change', { bubbles: true }));
+              const l = document.getElementById('rtmSwLog'); l.checked = false; l.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await asyncio.sleep(0.6)
+            clear = await page.ev("""(() => { const p = document.getElementById('rtmChartSw');
+              const ticks = [...p.querySelectorAll('.ytick text')].filter((t) => t.textContent);
+              const title = p.querySelector('.g-ytitle').getBoundingClientRect();
+              return [ticks.some((t) => /×10/.test(t.textContent)), Math.round(title.right - Math.min(...ticks.map((t) => t.getBoundingClientRect().left)))]; })()""")
+            check(f'  a long tick label stands clear of the axis title (labels in ×10ⁿ, the title\'s right edge less the labels\' left: {clear})',
+                  isinstance(clear, list) and clear[0] is True and clear[1] <= 0, True)
+            await page.ev("(() => { const l = document.getElementById('rtmSwLog'); l.checked = true; l.dispatchEvent(new Event('change', { bubbles: true })); })()")
             # Each constant in turn: kk, the model's one, raised and lowered 1 %, three runs. A at the end, exp(-10 kk), moves
             # -10 kk = -1 per cent for each per cent of kk: a bar to the left; the CSV a row for it.
             await page.ev("(() => { const s = document.getElementById('rtmSwWhat'); s.value = '*each';"
