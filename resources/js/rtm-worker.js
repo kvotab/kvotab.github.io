@@ -574,6 +574,209 @@ function rtmLines(msg) {
     at: column ? 'column' : Number(msg.at), transport, n, nlines: nl, lines };
 }
 
+/*
+  WHAT THE RELATIONS MOVED, relation by relation, over the whole column. Of
+  every species that is an amount -- not the electron or a potential, nor
+  one held fixed in every cell, whatever the relations want of which the
+  holding gives -- what the budget counts the reactions as having made (as
+  rtmBudget has it: what the column holds now less what it held at the
+  start and what came in, plus what went out) less what the <REACTIONS>
+  lines made of it (model.linesBySpeciesAt, summed over the stored points)
+  is what the relations moved of it. Each relation's extent follows through
+  their stoichiometry, read off a species of its own, each relation making
+  a species no other makes; what does not fit is the summing's error, each
+  species' own. Worked out once a run (rtmRelationsSolve), then weighed
+  for the budget asked for: a relation's part is its extent times what it
+  makes of the budget's species, or of its element in them.
+*/
+let rtmRelKept = null;
+function rtmRelationsSolve(run) {
+  if (rtmRelKept && rtmRelKept.run === run) return rtmRelKept;
+  const { model, t, states, n, width } = run;
+  const ns = model.speciesNames.length;
+  const sl = model.speciesList || [];
+  const eqs = model.equilibria || [];
+  const ne = eqs.length;
+  const transport = !!model.transport;
+  const stride = model.stride || 1;
+  const nf = transport ? model.fracture : model.cells;
+  const mx = model.matrix || null;
+  const nc = model.cells;
+  const fixedEverywhere = (k) => {
+    for (let c = 0; c < nc; c++) if (!model.fixedAt[c * ns + k]) return false;
+    return true;
+  };
+  const rows = [];
+  for (let k = 0; k < ns; k++) if (!(sl[k] && (sl[k].electron || sl[k].potential)) && !fixedEverywhere(k)) rows.push(k);
+  const rowOf = new Int32Array(ns).fill(-1);
+  rows.forEach((k, q) => { rowOf[k] = q; });
+  const nr = rows.length;
+  const cells = [];
+  for (let cell = 0; cell < nf; cell++) {
+    const wd = transport ? model.grid.width[cell] : 1;
+    for (let j = 0; j < stride; j++) cells.push([cell * stride + j, j === 0 ? wd : wd * mx.aw * mx.d[j - 1]]);
+  }
+  // What the column holds of each species, what crosses each end, and what the lines move of it, at each stored point.
+  const held = new Float64Array(n * ns);
+  const fin = new Float64Array(n * ns);
+  const fout = new Float64Array(n * ns);
+  const byLines = new Float64Array(n * ns);
+  const buf = new Float64Array(ns);
+  const faceFlux = (side, i, k) => {
+    const f = transport && model.faces ? model.faces[side][k] : null;
+    if (!f) return 0;
+    let v = f.constant;
+    for (const [idx, wt] of f.terms) v += wt * states[i * width + idx];
+    return v;
+  };
+  for (let i = 0; i < n; i++) {
+    const c = states.subarray(i * width, (i + 1) * width);
+    for (const [cell, scale] of cells) {
+      for (let k = 0; k < ns; k++) held[i * ns + k] += scale * model.massOf[cell * ns + k] * c[cell * ns + k];
+      if (model.linesBySpeciesAt) {
+        model.linesBySpeciesAt(c, t[i], cell, buf);
+        for (let k = 0; k < ns; k++) byLines[i * ns + k] += scale * buf[k];
+      }
+    }
+    for (let k = 0; k < ns; k++) {
+      fin[i * ns + k] = faceFlux('left', i, k);
+      fout[i * ns + k] = faceFlux('right', i, k);
+    }
+  }
+  // What the relations moved of each species since the start.
+  const moved = new Float64Array(n * nr);
+  const cumIn = new Float64Array(ns);
+  const cumOut = new Float64Array(ns);
+  const cumLines = new Float64Array(ns);
+  for (let i = 0; i < n; i++) {
+    if (i > 0) {
+      const dt = t[i] - t[i - 1];
+      for (let k = 0; k < ns; k++) {
+        const a = i * ns + k;
+        const z = a - ns;
+        cumIn[k] += 0.5 * (fin[a] + fin[z]) * dt;
+        cumOut[k] += 0.5 * (fout[a] + fout[z]) * dt;
+        cumLines[k] += 0.5 * (byLines[a] + byLines[z]) * dt;
+      }
+    }
+    for (let q = 0; q < nr; q++) {
+      const k = rows[q];
+      moved[i * nr + q] = held[i * ns + k] - held[k] - cumIn[k] + cumOut[k] - cumLines[k];
+    }
+  }
+  /*
+    The relations' stoichiometry through those species, A (nr x ne). Each
+    relation's extent is read off one species of its own: the one fewest
+    relations share -- the species it defines, mostly -- chosen column by
+    column as Gaussian elimination would pivot, so that the extents are the
+    run's wherever no two relations' moves can stand in for each other. Read
+    so, a relation's extent rests on its own species' balance, and a shared
+    species' summing error stays in its own budget instead of spreading to
+    small relations through a least-squares fit.
+  */
+  const A = Array.from({ length: nr }, () => new Float64Array(ne));
+  eqs.forEach((eq, j) => { for (const [k, cnt] of eq.net) if (rowOf[k] >= 0) A[rowOf[k]][j] += cnt; });
+  const count = A.map((row) => row.reduce((s, v) => s + (v !== 0 ? 1 : 0), 0));
+  const W = A.map((row) => Float64Array.from(row));
+  const used = new Uint8Array(nr);
+  const pivots = [];
+  let determined = ne > 0 && ne <= nr;
+  for (let j = 0; determined && j < ne; j++) {
+    let colMax = 0;
+    for (let q = 0; q < nr; q++) if (!used[q]) colMax = Math.max(colMax, Math.abs(W[q][j]));
+    let best = -1;
+    for (let q = 0; q < nr; q++) {
+      if (used[q] || !(Math.abs(W[q][j]) > 1e-10 * colMax)) continue;
+      if (best < 0 || count[q] < count[best] || (count[q] === count[best] && Math.abs(W[q][j]) > Math.abs(W[best][j]))) best = q;
+    }
+    if (best < 0) { determined = false; break; }
+    used[best] = 1;
+    pivots.push(best);
+    for (let q = 0; q < nr; q++) {
+      if (used[q] || W[q][j] === 0) continue;
+      const f = W[q][j] / W[best][j];
+      for (let jj = j; jj < ne; jj++) W[q][jj] -= f * W[best][jj];
+    }
+  }
+  // The square system of those species, LU with partial pivoting once, solved at each stored point.
+  const xi = new Float64Array(n * ne);
+  if (determined) {
+    const S = pivots.map((q) => Float64Array.from(A[q]));
+    const perm = Int32Array.from({ length: ne }, (_, i) => i);
+    for (let k = 0; k < ne; k++) {
+      let p = k;
+      for (let i = k + 1; i < ne; i++) if (Math.abs(S[i][k]) > Math.abs(S[p][k])) p = i;
+      if (p !== k) { [S[p], S[k]] = [S[k], S[p]]; [perm[p], perm[k]] = [perm[k], perm[p]]; }
+      for (let i = k + 1; i < ne; i++) {
+        const f = S[i][k] / S[k][k];
+        S[i][k] = f;
+        for (let jj = k + 1; jj < ne; jj++) S[i][jj] -= f * S[k][jj];
+      }
+    }
+    const y = new Float64Array(ne);
+    for (let i = 0; i < n; i++) {
+      for (let k = 0; k < ne; k++) {
+        let v = moved[i * nr + pivots[perm[k]]];
+        for (let jj = 0; jj < k; jj++) v -= S[k][jj] * y[jj];
+        y[k] = v;
+      }
+      for (let k = ne - 1; k >= 0; k--) {
+        let v = y[k];
+        for (let jj = k + 1; jj < ne; jj++) v -= S[k][jj] * xi[i * ne + jj];
+        xi[i * ne + k] = v / S[k][k];
+      }
+    }
+  }
+  rtmRelKept = { run, rows, rowOf, xi, moved, determined, ne, nr };
+  return rtmRelKept;
+}
+
+function rtmRelations(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'relations', id: msg.id, missing: true };
+  const { model, n } = run;
+  const names = model.speciesNames;
+  const ns = names.length;
+  const C = model.composition;
+  const of = msg.of || {};
+  const w = new Float64Array(ns);
+  if (of.kind === 'species') {
+    const k = names.indexOf(of.name);
+    if (k < 0) throw new Error(`The model has no species ${of.name}.`);
+    w[k] = 1;
+  } else {
+    const e = C ? C.elements.find((x) => x.el === of.name) : null;
+    if (!e) throw new Error(`No species of the model has any ${of.name}.`);
+    for (const [k, cnt] of e.terms) w[k] += cnt;
+  }
+  const S = rtmRelationsSolve(run);
+  const eqs = model.equilibria || [];
+  // What the relations moved of it all together, and each one's part where they can be told apart.
+  const together = new Float64Array(n);
+  for (let q = 0; q < S.nr; q++) {
+    const wk = w[S.rows[q]];
+    if (!wk) continue;
+    for (let i = 0; i < n; i++) together[i] += wk * S.moved[i * S.nr + q];
+  }
+  const relations = [];
+  if (S.determined) {
+    eqs.forEach((eq, j) => {
+      let wn = 0;
+      for (const [k, cnt] of eq.net) if (S.rowOf[k] >= 0) wn += w[k] * cnt;
+      if (wn === 0) return;
+      const part = new Float64Array(n);
+      let any = false;
+      for (let i = 0; i < n; i++) {
+        part[i] = wn * S.xi[i * S.ne + j];
+        if (part[i] !== 0) any = true;
+      }
+      if (any) relations.push({ index: j, line: eq.line, name: eq.eqn || `relation ${j + 1}`, part });
+    });
+  }
+  return { type: 'relations', id: msg.id, of: { kind: of.kind === 'species' ? 'species' : 'element', name: of.name }, n,
+    nrel: eqs.length, determined: S.determined, relations, together };
+}
+
 /**
  * One water of a run as PHREEQC lists it: the stored point `index` in cell
  * `cell` -- each species' ln of its activity coefficient, every quantity of
@@ -1976,6 +2179,15 @@ function handleRtmMessage(msg, post) {
       post(reply, reply.lines ? reply.lines.flatMap((l) => [l.made.buffer, l.taken.buffer, l.madeCum.buffer, l.takenCum.buffer]) : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'lines', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'relations') {
+    try {
+      const reply = rtmRelations(msg);
+      post(reply, reply.relations ? [reply.together.buffer, ...reply.relations.map((x) => x.part.buffer)] : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'relations', error: rtmErrorMessage(e) });
     }
     return;
   }

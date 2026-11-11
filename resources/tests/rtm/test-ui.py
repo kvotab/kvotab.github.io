@@ -884,19 +884,19 @@ async def main():
               const d = document.getElementById('rtmChartComp').data;
               const all = by('every reaction');
               const gross = v(all[2]) - v(all[3]);
-              const rest = v(by('what no line accounts for')[4]);
+              const rest = v(by("the summing's error")[4]);
               const made = v(by('made by reactions, net, as the budget has it')[4]);
               return [rows[0][0].textContent + ' [' + rows[0][1].textContent + ']', v(rows[0][5]) > 0.85,
                 rows.filter((r) => r[1].textContent.includes(',')).map((r) => r[0].textContent + ' [' + r[1].textContent + ']').join(' | '),
                 d.filter((t) => t.stackgroup && t.showlegend !== false).length, d.some((t) => /^the other \\d+ reactions$/.test(t.name)),
                 d[d.length - 1].name, d.every((t) => !t.stackgroup || t.y.every((y) => (t.stackgroup === 'made' ? y >= 0 : y <= 0))),
                 Math.abs(v(all[4]) + rest - made) <= 1e-12 * gross, Math.abs(rest) / gross < 1e-6,
-                document.getElementById('rtmCompNote').textContent.endsWith("is the summing's over the stored points"),
+                /; the summing's error [-0-9.e+]+, [0-9.e+-]+ of what was made and taken$/.test(document.getElementById('rtmCompNote').textContent),
                 document.getElementById('rtmChartComp').layout.yaxis.title.text]; })()""")
             check('the budget by each reaction, of the built-in model\'s H2O2 over the whole column: the radiolysis first, nine '
                   'tenths of what is made; each equilibrium written as two lines one reaction; the eight that move most named and '
-                  'the rest together, made above nought and taken below; every reaction\'s net and what no line accounts for '
-                  'together what the reactions made, the leftover the summing\'s', by_rx,
+                  'the rest together, made above nought and taken below; every reaction\'s net and the summing\'s error '
+                  'together what the reactions made, the model having no relations', by_rx,
                   ['=> H2O2 [73]', True, 'H+ + HO2- <=> H2O2 [135, 149] | HO2- + H2O <=> OH- + H2O2 [138, 150]', 9, True,
                    'made less taken, every reaction', True, True, True, True,
                    "made (+) and taken (−) per s<br>concentration × m per m² of the water's cross-section"])
@@ -915,7 +915,7 @@ async def main():
                   'in and out besides; the CSV each reaction\'s rates and sum at every stored point',
                   [surface is not None and float(surface.group(1)) > 95,
                    await page.ev("[...document.querySelectorAll('#rtmCompLines tbody tr')].some((tr) => tr.children[0].textContent"
-                                 " === 'what no line accounts for')"),
+                                 " === \"the summing's error\")"),
                    # The name after the Example picker, which still shows the example before the built-in model was put back.
                    [rcsv[0].split('_', 2)[-1], rcsv[1][0][:111], len(rcsv[1]) > 500] if isinstance(rcsv, list) else rcsv],
                   [True, False, ['budget_H2O2_by_reaction_cell0.csv',
@@ -2883,10 +2883,24 @@ async def main():
               const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
               const v = (td) => (td.dataset.v === undefined ? null : Number(td.dataset.v));
               const first = rows[0];
-              const rest = v(rows.find((r) => r[0].textContent === 'what no line accounts for')[4]);
+              const every = v(rows.find((r) => r[0].textContent === 'every relation')[4]);
+              const err = v(rows.find((r) => r[0].textContent === "the summing's error")[4]);
               return [rows.map((r) => r[0].textContent).join(' | '), first[1].textContent, v(first[2]) > 0, v(first[3]),
-                rest < -0.9 * v(first[2]), document.getElementById('rtmCompNote').textContent.endsWith('is what the relations moved, with the summing\\'s error')]; })()""")
+                every < -0.9 * v(first[2]), Math.abs(err) < 1e-6 * v(first[2]),
+                /; the relations took [0-9.e+-]+ net, 7 of them, the most by Siderite <=> Fe\\+2 \\+ CO3-2 \\(-0\\.05[0-9]+\\); the summing's error [-0-9.e+]+, [0-9.e+-]+ of what was made and taken$/
+                  .test(document.getElementById('rtmCompNote').textContent)]; })()""")
             plume_line = str(await page.ev("document.getElementById('rtmText').value.split('\\n').findIndex((l) => l.startsWith('CH2O => CO3-2')) + 1"))
+            # HCO3-, which no line makes: the chart saying so, and the table its relation all that made it.
+            await pick('rtmCompBudgetOf', 'species:HCO3-')
+            await settle(page, "/makes or takes any HCO3-/.test(document.getElementById('rtmCompEmpty').textContent)", True, tries=80, pause=0.25)
+            hco3 = await page.ev("""(() => {
+              const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
+              const v = (td) => (td.dataset.v === undefined ? null : Number(td.dataset.v));
+              const by = (name) => rows.find((r) => r[0].textContent === name);
+              return [document.getElementById('rtmCompEmpty').textContent.replace(/of it, [-0-9.e+]+ by/, 'of it, X by'),
+                !document.getElementById('rtmCompLines').hidden, rows.map((r) => r[0].textContent).join(' | '),
+                v(by('CO3-2 + H+ <=> HCO3-')[4]) === v(by('made by reactions, net, as the budget has it')[4]),
+                v(by("the summing's error")[4])]; })()""")
             await pick('rtmCompBudgetOf', 'element:C')
             await settle(page, "/makes or takes any C/.test(document.getElementById('rtmCompEmpty').textContent)", True, tries=80, pause=0.25)
             carbon = await page.ev("document.getElementById('rtmCompEmpty').textContent")
@@ -2902,13 +2916,19 @@ async def main():
             c5csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? (await r.body).trim().split('\\n') : null; })()")
             c5rows = [[float(x) for x in line.split(',')] for line in c5csv[1:]] if isinstance(c5csv, list) else []
             check('  the budget by each reaction on the plume: of CO3-2 over the whole column the organic carbon\'s oxidation all '
-                  'that makes it, nothing taking it, and the relations taking nearly all of it on; carbon, all of it, made and '
-                  'taken by no line, the leftover the summing\'s; of CH2O at cell 5 what the line took at every stored point the '
-                  'rate drawn against time, and its sum the extent, to the last digit',
-                  [co3, carbon, len(c5rows) == len(rate5), all(row[2] == -r for row, r in zip(c5rows, rate5)),
+                  'that makes it, nothing taking it, and the relations, relation by relation, taking nearly all of it on, the most '
+                  'into siderite, the summing\'s error under 1e-6; HCO3-, which no line makes, all of it from its own relation; '
+                  'carbon, all of it, made and taken by no line, the leftover the summing\'s; of CH2O at cell 5 what the line took '
+                  'at every stored point the rate drawn against time, and its sum the extent, to the last digit',
+                  [co3, hco3, carbon, len(c5rows) == len(rate5), all(row[2] == -r for row, r in zip(c5rows, rate5)),
                    all(row[3] == -e for row, e in zip(c5rows, ext5)), all(row[1] == 0 for row in c5rows)],
-                  [['CH2O => CO3-2 + 6 H+ + 4 e- | every reaction | what no line accounts for | made by reactions, net, as the budget has it',
-                    plume_line, True, 0, True, True],
+                  [['CH2O => CO3-2 + 6 H+ + 4 e- | every reaction | Each relation, over the run | Siderite <=> Fe+2 + CO3-2 | '
+                    'CO3-2 + 2 H+ <=> CO2 + H2O | CO3-2 + H+ <=> HCO3- | CO3-2 + 10 H+ + 8 e- <=> CH4 + 3 H2O | '
+                    'Ca+2 + CO3-2 + H+ <=> CaHCO3+ | Calcite <=> Ca+2 + CO3-2 | Ca+2 + CO3-2 <=> CaCO3 | every relation | '
+                    'the summing\'s error | made by reactions, net, as the budget has it', plume_line, True, 0, True, True, True],
+                   ['No <REACTIONS> line makes or takes any HCO3- over the whole column: what the reactions made of it, X by the end, '
+                    'is what the relations moved, in the table.', True, 'every reaction | Each relation, over the run | '
+                    'CO3-2 + H+ <=> HCO3- | every relation | the summing\'s error | made by reactions, net, as the budget has it', True, 0],
                    'No <REACTIONS> line makes or takes any C, all of it over the whole column: what the budget counts the reactions '
                    'as having made of it, ' + carbon.split('of it, ')[-1].split(' by the end')[0] + ' by the end, is the summing\'s '
                    'error, the relations only moving an element between its species.' if isinstance(carbon, str) else carbon,

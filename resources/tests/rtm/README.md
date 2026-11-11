@@ -562,6 +562,23 @@ A's start less A and line 2 took C, to 3e-4 of A's start (1.1e-4 and
 relations: for each of the 32 species a line moves, the reactions'
 parts together are what the budget counts the reactions as having made,
 to 2e-5 of what they made and took (5.1e-6 the worst).
+What the relations moved, relation by relation (since 2026-11-11): for
+every species, what the budget counts the reactions as having made less
+what the lines made is what the relations moved of it; each relation's
+extent is read off the balance of a species of its own, the one fewest
+relations share. On the plume, for every species, the lines', the
+relations' parts and the summing's error add up to the budget's, the
+error under 2e-5 of what was made and taken (1.1e-6, Ca+2, the worst; a
+least-squares fit over every species, tried first, let the big species'
+errors spread into small relations' extents, NO2-'s as large as its own
+flows); HCO3-, which only its own relation makes, all of it from that
+relation, to the last digit; carbon, iron and calcium, all of each, moved
+by no relation; CO3-2 taken on most into siderite. An acid added at a
+steady rate to a water of the test's own held at saturation with
+calcite: the calcite relation all that made Ca+2, the calcite dissolved
+at every stored point to 1e-12 of it (6.8e-15), and H+ made by the line,
+1e-4, and taken by the water, the bicarbonate and the CO2 relations, to
+1e-12 of it (6.8e-16).
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1219,7 +1236,7 @@ The run against what was measured, one to one (since 2026-11-11), on the calcite
 
 What each reaction does (since 2026-11-11). On the plume example, at cell 5, where the plume passes: the series list has a group for it after the saturation indices, the one line's rate and extent, `CH2O => CO3-2 + 6 H+ + 4 e-, rate` and `..., extent`. Ticked beside CH2O on a linear axis, the rate is on the right and is kdoc [CH2O], 0.05 of the CH2O drawn, at every stored point to the last digit; the extent is on the left, at each point the trapezoid of the rate's curve up to there, summed step by step as the worker sums it, to the last digit. On Diagrams, cell 5 as the run ends with its pH from 5 to 9: the rate is the same at each pH, the run's last to the last digit (CH2O is in no relation), drawn as `... rate (mol/kgw/d)`, and the extent is not offered. On Sweeps, kk varied in a decay: the rate offered, kk A at the end of each run within 5e-5, as `A => B, rate (/s)`; the extent not. On Uncertainty, the two lines' rates offered and not their extents.
 
-The budget by each reaction (since 2026-11-11). On the built-in model, its H2O2 over the whole column: the radiolysis that makes it first, line 73, nine tenths of what is made; the two equilibria written as two lines each one reaction, `H+ + HO2- <=> H2O2 [135, 149]` and `HO2- + H2O <=> OH- + H2O2 [138, 150]`; the eight that move most named and the rest together, made above nought and taken below; every reaction's net and what no line accounts for together what the reactions made, to 1e-12, the leftover under 1e-6 of what they made and took and the note calling it the summing's. At the fuel surface, cell 0, the radiolysis over 95 % of what is made, no leftover row, and the CSV `rtm_budget_H2O2_by_reaction_cell0.csv` each reaction's rates and sum at every stored point. On the plume: of CO3-2 the organic carbon's oxidation all that makes it and nothing taking it, the relations taking over nine tenths of it on; carbon, all of it, made by no line, the leftover the summing's; and of CH2O at cell 5, in the CSV, what the line took at every stored point the rate Against time draws there and its sum the extent, to the last digit.
+The budget by each reaction (since 2026-11-11). On the built-in model, its H2O2 over the whole column: the radiolysis that makes it first, line 73, nine tenths of what is made; the two equilibria written as two lines each one reaction, `H+ + HO2- <=> H2O2 [135, 149]` and `HO2- + H2O <=> OH- + H2O2 [138, 150]`; the eight that move most named and the rest together, made above nought and taken below; every reaction's net and the summing's error together what the reactions made, to 1e-12, the error under 1e-6 of what they made and took, the model having no relations. At the fuel surface, cell 0, the radiolysis over 95 % of what is made, no leftover row, and the CSV `rtm_budget_H2O2_by_reaction_cell0.csv` each reaction's rates and sum at every stored point. On the plume: of CO3-2 the organic carbon's oxidation all that makes it and nothing taking it, and the relations, relation by relation, taking over nine tenths of it on, the most into siderite, the summing's error under 1e-6 of what was made; HCO3-, which no line makes, the chart saying so and the table its own relation all that made it, the summing's error nought; carbon, all of it, made by no line, the leftover the summing's; and of CH2O at cell 5, in the CSV, what the line took at every stored point the rate Against time draws there and its sum the extent, to the last digit.
 
 The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it. From the fit, on the Uncertainty tab, then gives kc as a lognormal about its fitted value, times or over its standard error, alone and so without the box of the fit's correlations.
 

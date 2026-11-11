@@ -8131,6 +8131,51 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `the relations took ${(-hRest).toExponential(4)} of ${hplus.lines[0].madeCum[PL].toExponential(4)}; CO3-2's took `
       + `${(-co3Rest).toExponential(4)} of ${co3.lines[0].madeCum[PL].toExponential(4)}; at cell 5 off by ${off5}`);
 
+    /*
+      What the relations moved, relation by relation (rtmRelations): for every species, what the budget counts the
+      reactions as having made less what the lines made is what the relations moved; each relation's extent is read off a
+      species of its own. On the plume, for every species, the lines', the relations' parts and the summing's error add up
+      to the budget's, the error under 2e-5 of what was made and taken; HCO3-, which only its own relation makes, all of
+      it from that relation; an element's total, carbon, iron or calcium, moved by no relation.
+    */
+    const relOf = (runKey, of) => {
+      let got = null;
+      handleRtmMessage({ type: 'relations', id: 46, runKey, of }, (msg) => { got = msg; });
+      return got;
+    };
+    let relWorst = 0;
+    let relWorstOf = '';
+    let relCount = 0;
+    for (const nm of pm.species) {
+      if (nm === 'e-') continue;
+      const of = { kind: 'species', name: nm };
+      const rr = relOf(pRun.runKey, of);
+      const bb = budgetOf(pRun.runKey, of);
+      const ll = pl(of);
+      let lnet = 0;
+      let moved = 0;
+      for (const x of ll.lines) { lnet += x.madeCum[PL] + x.takenCum[PL]; moved += x.madeCum[PL] - x.takenCum[PL]; }
+      let rsum = 0;
+      for (const x of rr.relations) { rsum += x.part[PL]; moved += Math.abs(x.part[PL]); }
+      relCount += rr.relations.length;
+      const err = Math.abs(bb.byReactions[PL] - lnet - rsum) / (moved || 1);
+      if (err > relWorst) { relWorst = err; relWorstOf = nm; }
+    }
+    const hco3 = relOf(pRun.runKey, { kind: 'species', name: 'HCO3-' });
+    const hco3B = budgetOf(pRun.runKey, { kind: 'species', name: 'HCO3-' });
+    const hco3Off = Math.abs(hco3.relations[0].part[PL] - hco3B.byReactions[PL]) / hco3B.byReactions[PL];
+    const elementsMoved = ['C', 'Fe', 'Ca'].map((el) => relOf(pRun.runKey, { kind: 'element', name: el }).relations.length);
+    const co3R = relOf(pRun.runKey, { kind: 'species', name: 'CO3-2' });
+    check('  what the relations moved, relation by relation, on the plume: for every species the lines\', the relations\' '
+      + 'parts and the summing\'s error add up to the budget\'s, the error under 2e-5 of what was made and taken; HCO3-, '
+      + 'which only its own relation makes, all of it from that relation; carbon, iron and calcium, all of each, moved by no '
+      + 'relation; CO3-2 taken on most into siderite',
+    hco3.determined && relWorst < 2e-5 && hco3.relations.length === 1 && hco3.relations[0].name === 'CO3-2 + H+ <=> HCO3-'
+      && hco3Off < 1e-12 && elementsMoved.join() === '0,0,0'
+      && co3R.relations.reduce((b, x) => (Math.abs(x.part[PL]) > Math.abs(b.part[PL]) ? x : b)).name === 'Siderite <=> Fe+2 + CO3-2',
+    `${relCount} relation parts over the species; the worst error ${relWorstOf} at ${relWorst.toExponential(2)}; HCO3- off by `
+      + `${hco3Off.toExponential(1)}; relations moving C, Fe, Ca: ${elementsMoved.join(', ')}`);
+
     const chainText = '<SETTINGS>\nMODE = batch\nTEND = 50\nTIME_UNIT = day\n\n<SPECIES>\nA  1e-3\nB  0\nC  0\n\n'
       + '<REACTIONS>\nA => B, k = 0.2\nB => C, k = 0.1\n';
     let cRun = null;
@@ -8195,6 +8240,41 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       && madeOff < 3e-4 && tookOff < 3e-4 && oneWay && touched > 30 && worst < 2e-5,
     `made off by ${madeOff.toExponential(2)}, taken by ${tookOff.toExponential(2)} over ${cRun.n} points; the built-in `
       + `model's ${touched} species a line moves, the worst ${worstOf} at ${worst.toExponential(2)} of what the lines moved`);
+
+    // An acid added at a steady rate to a water held at saturation with calcite: the calcite relation's part of Ca+2 the
+    // calcite dissolved at every stored point; H+ made by the line and taken by the water, bicarbonate and CO2 relations;
+    // the summing's error, with nothing flowing, nothing.
+    const calText = '<SETTINGS>\nMODE = batch\nTEND = 1000\nEQUILIBRATE = always\n\n<SPECIES>\nH+      1e-7\nOH-     1e-7\n'
+      + 'Ca+2    1e-4\nCO3-2   1e-6\nHCO3-   1e-4\nCO2     1e-5\nCl-     0\nCalcite 1e-3   mineral\n\n<REACTIONS>\n'
+      + '=> H+ + Cl-, r = 1e-7\n\n<EQUILIBRIUM>\n <=> H+ + OH-, logK = -14\nCO3-2 + H+ <=> HCO3-, logK = 10.329\n'
+      + 'CO3-2 + 2 H+ <=> CO2, logK = 16.681\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\n';
+    let calRun = null;
+    handleRtmMessage({ type: 'run', id: 47, text: calText, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20 } },
+      (msg) => { if (msg.type === 'result') calRun = msg; });
+    const calConc = (nm, i) => calRun.states[i * calRun.width + calRun.model.species.indexOf(nm)];
+    const CL = calRun.n - 1;
+    const caR = relOf(calRun.runKey, { kind: 'species', name: 'Ca+2' });
+    const caB = budgetOf(calRun.runKey, { kind: 'species', name: 'Ca+2' });
+    const dissolved = calConc('Calcite', 0) - calConc('Calcite', CL);
+    let calOff = 0;
+    for (let i = 0; i < calRun.n; i++) {
+      calOff = Math.max(calOff, Math.abs(caR.relations[0].part[i] - (calConc('Calcite', 0) - calConc('Calcite', i))) / dissolved);
+    }
+    const hR = relOf(calRun.runKey, { kind: 'species', name: 'H+' });
+    const hB = budgetOf(calRun.runKey, { kind: 'species', name: 'H+' });
+    const hL = linesOf(calRun.runKey, { kind: 'species', name: 'H+' });
+    const hLines = hL.lines[0].madeCum[CL];
+    const hErr = Math.abs(hB.byReactions[CL] - hLines - hR.relations.reduce((s0, x) => s0 + x.part[CL], 0)) / hLines;
+    check('  an acid added to a water held at saturation with calcite: the calcite relation all that made Ca+2, the calcite '
+      + 'dissolved at every stored point, to 1e-12 of it; H+ made by the line, 1e-4, and taken by the water, the bicarbonate '
+      + 'and the CO2 relations, to 1e-12 of it',
+    caR.relations.map((x) => `${x.name} [${x.line}]`).join(' | ') === 'Calcite <=> Ca+2 + CO3-2 [23]' && dissolved > 5e-5
+      && calOff < 1e-12 && Math.abs(caB.byReactions[CL] - caR.relations[0].part[CL]) < 1e-12 * dissolved
+      && hR.relations.map((x) => x.name).join(' | ') === '<=> H+ + OH- | CO3-2 + H+ <=> HCO3- | CO3-2 + 2 H+ <=> CO2'
+      && Math.abs(hLines / 1e-4 - 1) < 1e-12 && hErr < 1e-12,
+    `the calcite dissolved ${dissolved.toExponential(6)}, its relation's part off by ${calOff.toExponential(1)}; H+ made by the `
+      + `line ${hLines.toExponential(6)}, taken by ${hR.relations.map((x) => `${x.name} ${(-x.part[CL]).toExponential(4)}`).join(', ')}, `
+      + `left ${hErr.toExponential(1)}`);
   }
   /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none

@@ -9902,6 +9902,8 @@
       not. Without a kf an equilibrium is used for speciation and nothing else.
     */
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
+    // Each relation by its equation, as the budget by each reaction names it.
+    for (const eq of equilibria) eq.eqn = eq.text ? splitTop(eq.text)[0].trim() : '';
     atFixedTemperature(equilibria);
     /*
       Under ACTIVITY a pair relaxes to its K in activities, so its backward
@@ -12327,6 +12329,40 @@
       }
       return out;
     }
+    /*
+      WHAT THE LINES MOVE OF EACH SPECIES in model cell `cell` of the
+      concentrations c at time t: every <REACTIONS> line's part of the
+      derivative together, species by species, as the derivative works it
+      out -- an amount a unit of the cell's water and of time. Into out, one
+      a species. What the relations moved of each is what the budget counts
+      the reactions as having made less this, summed over the stored points.
+    */
+    function linesBySpeciesAt(c, t, cell, out) {
+      out.fill(0);
+      if (!reactions.length) return out;
+      thermoAt(t);
+      if (ntv) atTheClock(t);
+      const b = cell * ns;
+      if (nq) aqAt(c, b, false);
+      rates(c, b, P, cell * np, lineR, lineD, t, TV, AQ);
+      const sc = reactScale[cell];
+      for (const rx of reactions) {
+        for (let j = rx.chanFirst; j < rx.chanFirst + rx.chanCount; j++) {
+          const r = lineR[j];
+          if (r === 0) continue;
+          const sp = chanSpecies[j];
+          const coef = chanCoef[j];
+          const whole = chanWhole[j];
+          const cap = chanCap[j];
+          for (let m = 0; m < sp.length; m++) {
+            const p = sp[m];
+            if (fixedAt[b + p]) continue;
+            out[p] += coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
+          }
+        }
+      }
+      return out;
+    }
     /**
      * A water as PHREEQC lists it, cell `cell` of the concentrations c at
      * time t: each species' ln of its activity coefficient (none without
@@ -12495,6 +12531,7 @@
       quantities: qList,
       quantitiesAt,
       lineTermsAt,
+      linesBySpeciesAt,
       listingAt,
       data,
       // What each species is made of, for the views of where an element is and of the water's major ions.
