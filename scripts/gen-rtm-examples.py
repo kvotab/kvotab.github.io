@@ -215,7 +215,11 @@ X  0.0  D=2.0E-8  left=1.0
         id='danckwerts', group='Transport', label='Danckwerts inlet and free exit',
         about='The third-type inlet: the flow carries the concentration in and nothing else '
               'crosses. The column then balances exactly — what goes in less what leaves is all '
-              'that changes the mass in it, to one part in 10^15.',
+              'that changes the mass in it, to one part in 10^15. It opens on Against time in pore '
+              'volumes, X at four cells a quarter of the column apart: at a Péclet number of 5 the '
+              'front spreads as it goes, half-way up at 0.29 pore volumes a quarter of the way along '
+              'and at 0.86 at the outlet.',
+        view={'tab': 'time', 'picked': ['X'], 'cells': '9, 19, 29, 39', 'timeIn': 'pv', 'logT': False, 'logY': False},
         text='''\
 # The four kinds of face, and why the inlet matters.
 #

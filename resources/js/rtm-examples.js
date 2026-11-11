@@ -116,7 +116,17 @@ const RTM_EXAMPLES = [
     "id": "danckwerts",
     "group": "Transport",
     "label": "Danckwerts inlet and free exit",
-    "about": "The third-type inlet: the flow carries the concentration in and nothing else crosses. The column then balances exactly — what goes in less what leaves is all that changes the mass in it, to one part in 10^15.",
+    "about": "The third-type inlet: the flow carries the concentration in and nothing else crosses. The column then balances exactly — what goes in less what leaves is all that changes the mass in it, to one part in 10^15. It opens on Against time in pore volumes, X at four cells a quarter of the column apart: at a Péclet number of 5 the front spreads as it goes, half-way up at 0.29 pore volumes a quarter of the way along and at 0.86 at the outlet.",
+    "view": {
+      "tab": "time",
+      "picked": [
+        "X"
+      ],
+      "cells": "9, 19, 29, 39",
+      "timeIn": "pv",
+      "logT": false,
+      "logY": false
+    },
     "text": "# The four kinds of face, and why the inlet matters.\n#\n#   robin (cauchy)  the flow carries left= in and NOTHING else crosses:\n#                   the whole flux through the face is u*c. Danckwerts' inlet.\n#   free (outflow)  zero gradient; the flow takes what it takes.\n#   dirichlet       the face HELD at left=, which adds a diffusive flux on top\n#                   of what the water brings -- more goes in than the flow\n#                   carries, and the column's mass balance does not close.\n#   neumann         nothing crosses.\n#\n# Switch LEFT to dirichlet and compare the profiles at the same time.\n\n<SETTINGS>\nMODE = transport\nCELLS = 40\nLENGTH = 1.0\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = 1.0E-6\nLEFT = robin\nRIGHT = free\nTEND = 2.0E6\nTIME_UNIT = second\n\n<SPECIES>\nX  0.0  D=2.0E-7  left=1.0\n\n<REACTIONS>\n"
   },
   {

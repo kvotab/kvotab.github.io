@@ -51,6 +51,10 @@
     gradCFrom: '',
     // The unit a concentration is shown in (CONC_UNITS): empty for the model's own.
     concUnit: '',
+    // What time is shown in on Against time, Against distance and Gradient: '' the model's own unit, 'pv' pore volumes.
+    timeIn: '',
+    // Against time at several cells: the list typed in Cells; empty for the one cell Cell chooses.
+    cells: '',
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
@@ -116,7 +120,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        concUnit: state.concUnit,
+        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
@@ -156,6 +160,8 @@
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
       for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
       if (typeof s.concUnit === 'string' && (s.concUnit === '' || CONC_UNITS[s.concUnit])) state.concUnit = s.concUnit;
+      if (s.timeIn === '' || s.timeIn === 'pv') state.timeIn = s.timeIn;
+      if (typeof s.cells === 'string') state.cells = s.cells;
       if (['where', 'listing', 'budget', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
@@ -433,22 +439,31 @@
   const TIME_UNITS = { s: 1, min: 60, h: 3600, d: 86400, a: 365.25 * 86400, y: 365.25 * 86400 };
 
   /**
-   * "0, 1 h, 30 d, 500 y" -> seconds, plus whatever could not be read.
+   * "0, 1 h, 30 d, 500 y, 2 PV" -> times in the model's own unit, plus whatever could not be read.
    *
    * A unit is glued to its number first, so that a space between the two does
    * not split them, and a bare list of numbers still separates on spaces.
+   * PV is pore volumes, where the water flows; inPv reads a bare number in
+   * them too, as on a time axis shown in pore volumes (timeAxis).
    */
-  function parseTimes(text) {
-    const glued = String(text).replace(/(\d)\s+(s|min|h|d|a|y)\b/gi, '$1$2');
+  function parseTimes(text, inPv = false) {
+    const glued = String(text).replace(/(\d)\s+(s|min|h|d|a|y|pv)\b/gi, '$1$2');
     const times = [];
     const bad = [];
     const own = timeUnit().seconds;
+    const tw = poreTime();
     for (const tok of glued.split(/[\s,;]+/).filter(Boolean)) {
-      const m = /^([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(s|min|h|d|a|y)?$/i.exec(tok);
+      const m = /^([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(s|min|h|d|a|y|pv)?$/i.exec(tok);
       if (!m) { bad.push(tok); continue; }
+      const unit = m[2] ? m[2].toLowerCase() : '';
+      if (unit === 'pv' || (!unit && inPv)) {
+        if (tw > 0) times.push(Number(m[1]) * tw);
+        else bad.push(tok);
+        continue;
+      }
       // A bare number is in the model's own unit; a suffixed one is converted
       // into it, so "500 a" means the same thing whatever the model counts in.
-      times.push((Number(m[1]) * (m[2] ? TIME_UNITS[m[2].toLowerCase()] : own)) / own);
+      times.push((Number(m[1]) * (unit ? TIME_UNITS[unit] : own)) / own);
     }
     return { times, bad };
   }
@@ -462,6 +477,84 @@
       if (d < gap) { gap = d; best = i; }
     }
     return best;
+  }
+
+  /*
+    TIME IN PORE VOLUMES, on Against time, Against distance and Gradient
+    (Time in): the model's own unit, or -- where the water flows -- the pore
+    volumes that have flowed into the column, t/t_w, t_w the time the water
+    takes to cross it: TRAVEL_TIME, or LENGTH over the pore-water speed
+    |VELOCITY|/POROSITY. The flow is one number for the whole run, so a pore
+    volume is a fixed length of time and the axis is the time axis scaled. A
+    run kept beside counts in its own: two runs at different speeds line up.
+  */
+  /** A pore volume of run r -- the time its water takes to cross the column, in its model's unit -- or 0 where it does not flow. */
+  function poreTime(r = state.result) {
+    const m = r ? r.model : state.compiled;
+    return m && m.transport && m.travelTime > 0 ? m.travelTime : 0;
+  }
+  /**
+   * The time axis run r is shown on: { pv, tw, sym, title, why } -- pv whether in pore volumes, tw a pore volume (0 where
+   * the water does not flow), sym what a number on it is in, why the note's words where pore volumes are chosen and r has none.
+   */
+  function timeAxis(r = state.result) {
+    const tw = poreTime(r);
+    const sym = timeUnit().symbol;
+    if (state.timeIn === 'pv' && tw > 0) return { pv: true, tw, sym: 'PV', title: 'pore volumes', why: '' };
+    const m = r ? r.model : state.compiled;
+    return { pv: false, tw, sym, title: `time (${sym})`,
+      why: state.timeIn === 'pv' && m ? `time in ${timeUnit().name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
+  }
+  /** Run r's stored times on the axis: its own, or its pore volumes, kept with the run. */
+  function axisTimes(r, ax) {
+    if (!ax.pv) return r.t;
+    if (!r.pvAxis || r.pvAxis.tw !== ax.tw) r.pvAxis = { tw: ax.tw, x: Float64Array.from(r.t, (t) => t / ax.tw) };
+    return r.pvAxis.x;
+  }
+  /** A time of the run, in the model's unit, for a person on the axis: 1.25 PV, or as fmtTime writes it. */
+  const fmtOnAxis = (ax, t) => (ax.pv ? `${(t / ax.tw).toPrecision(3)} PV` : fmtTime(t));
+  /** A number on the axis -- a "from" -- for a person. */
+  const fmtAxisNumber = (ax, v) => (ax.pv ? `${Number(v.toPrecision(3))} PV` : fmtTime(v));
+
+  // The Time in selects, on Against time, Against distance and Gradient, as one: what the run on show can be shown in.
+  const TIME_SELECTS = ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'];
+  function renderTimeIn() {
+    const r = state.result || (state.compiled ? { model: state.compiled } : null);
+    const flows = poreTime(r) > 0;
+    const html = `<option value="">${esc(timeUnit().name)}s</option>`
+      + `<option value="pv"${flows ? '' : ' disabled'}>pore volumes${flows ? '' : ', where the water flows'}</option>`;
+    const ax = timeAxis(r);
+    for (const id of TIME_SELECTS) {
+      const sel = $(id);
+      if (!sel) continue;
+      sel.innerHTML = html;
+      sel.value = ax.pv ? 'pv' : '';
+    }
+    // A "from" is read on the axis.
+    $('rtmTMinUnit').textContent = ax.sym;
+    $('rtmGradTMinUnit').textContent = ax.sym;
+  }
+  /*
+    What was typed on one time axis, put on the other, so that the picture
+    stays as it was: each "from", and each bare number of the Times; a time
+    with its unit means the same on either and stays as typed.
+  */
+  function retypeTimes(from, to) {
+    const turn = (v) => {
+      const t = from.pv ? v * from.tw : v;
+      const x = Number((to.pv ? t / to.tw : t).toPrecision(6));
+      return x !== 0 && (Math.abs(x) < 1e-3 || Math.abs(x) >= 1e6) ? x.toExponential() : String(x);
+    };
+    for (const id of ['rtmTMin', 'rtmGradTMin']) {
+      const el = $(id);
+      const v = Number(el.value);
+      if (el.value.trim() && Number.isFinite(v)) el.value = turn(v);
+    }
+    state.gradTMin = $('rtmGradTMin').value;
+    const times = $('rtmProfileTimes');
+    times.value = times.value.replace(/(^|[\s,;])([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(?!\s*(?:s|min|h|d|a|y|pv)\b)(?=$|[\s,;])/gi,
+      (all, lead, num) => `${lead}${turn(Number(num))}`);
+    state.profileTimes = times.value;
   }
 
   /* ---------------------------------------------------------------------
@@ -612,8 +705,8 @@
     $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
     $('rtmHmaxUnit').textContent = `${u.name}s; 0: a tenth of the run for the NDF, no limit for the ports`;
     $('rtmH0Unit').textContent = `${u.name}s; 0: chosen from the derivative at the start`;
-    $('rtmTMinUnit').textContent = u.symbol;
-    $('rtmGradTMinUnit').textContent = u.symbol;
+    // The charts' time: in the model's unit, or in pore volumes where the water flows; each "from" in it.
+    renderTimeIn();
     if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
     if (m.tables && m.tables.length) bits.push(`${m.tables.length} table${m.tables.length === 1 ? '' : 's'}: ${m.tables.join(', ')}`);
     // A release history, or anything else a rate law reads at the clock, and
@@ -1133,6 +1226,21 @@
     if (!k.times || k.timesIn !== here) { k.times = Float64Array.from(k.r.t, (t) => (t * own) / here); k.timesIn = here; }
     return k.times;
   }
+  /** The kept run k's stored times on the time axis ax (timeAxis): in this run's unit, or in its own pore volumes; null where it has none. */
+  function besideAxis(k, ax) {
+    if (!ax.pv) return besideTimes(k);
+    const tw = poreTime(k.r);
+    return tw > 0 ? axisTimes(k.r, { pv: true, tw }) : null;
+  }
+  // Why a kept run is not beside a chart in pore volumes.
+  const BESIDE_NO_PV = 'its water does not flow: it has no pore volumes';
+  // What a chart in pore volumes says of the kept run's own, where one of them is not as long as one of this run's.
+  function besidePoreNote(k, ax) {
+    if (!ax.pv) return '';
+    const own = (k.r.model.timeUnit && k.r.model.timeUnit.seconds) || 1;
+    const tw = (poreTime(k.r) * own) / (timeUnit().seconds || 1);
+    return Math.abs(tw - ax.tw) > 1e-9 * ax.tw ? ` in its own pore volumes, ${fmtTime(tw)} each` : '';
+  }
 
   function keepRun() {
     const r = state.result;
@@ -1215,7 +1323,37 @@
     }
     sel.innerHTML = opts.join('');
     sel.parentElement.hidden = cells === 1;
+    $('rtmCellsWrap').hidden = cells === 1;
+    $('rtmCells').value = state.cells;
     renderLayerPickers();
+  }
+
+  /*
+    AGAINST TIME AT SEVERAL CELLS: the list typed in Cells -- cell numbers,
+    and end for the last -- each ticked series at each of them, in its own
+    colour in steps of lightness down the column, faintest at the cell
+    nearest the inlet (cellColour). Six at most: more steps of one colour
+    than that cannot be told apart. Empty, the one cell Cell chooses, or an
+    end of the column.
+  */
+  const CELLS_MOST = 6;
+  function cellsAsked(r = state.result) {
+    const m = r ? r.model : state.compiled;
+    const n = m ? m.fracture || 1 : 1;
+    const cells = [];
+    const bad = [];
+    for (const tok of String(state.cells).split(/[\s,;]+/).filter(Boolean)) {
+      const c = /^end$/i.test(tok) ? n - 1 : /^\d+$/.test(tok) ? Number(tok) : NaN;
+      if (!(c >= 0 && c < n)) bad.push(tok);
+      else if (!cells.includes(c)) cells.push(c);
+    }
+    const more = cells.length > CELLS_MOST ? cells.splice(CELLS_MOST) : [];
+    return { cells: n > 1 ? cells : [], bad, more, n };
+  }
+  /** Where the time chart is: the cells listed in Cells, or the one Cell chooses -- a cell or an end of the column. */
+  function timeCells(r = state.result) {
+    const asked = cellsAsked(r);
+    return { ...asked, several: asked.cells.length > 0, at: asked.cells.length ? asked.cells : [state.cell] };
   }
 
   /** The layer selects, one per chart: the fracture, then each matrix layer by depth. */
@@ -1238,8 +1376,8 @@
     $('rtmLayer').innerHTML = layerOptions(state.layer);
     $('rtmProfileLayer').innerHTML = layerOptions(state.profileLayer);
     $('rtmGradLayer').innerHTML = layerOptions(state.gradLayer);
-    // An end of the column has no rock behind it.
-    $('rtmLayerWrap').hidden = nm === 0 || isFace(state.cell);
+    // An end of the column has no rock behind it; the cells listed in Cells have.
+    $('rtmLayerWrap').hidden = nm === 0 || (isFace(state.cell) && !cellsAsked().cells.length);
     $('rtmGradLayerWrap').hidden = nm === 0;
     $('rtmProfileAxisWrap').hidden = nm === 0;
     $('rtmProfileAxis').value = state.profileAxis;
@@ -1469,6 +1607,10 @@
     const plot = $('rtmChartTime');
     const empty = $('rtmTimeEmpty');
     const r = state.result;
+    // Cell stands aside while Cells lists some.
+    const tc = timeCells(r);
+    const several = tc.several;
+    $('rtmCell').disabled = several;
     if (!r || !state.picked.length) {
       Plotly.purge(plot);
       plot.hidden = true;
@@ -1478,86 +1620,100 @@
     }
     empty.hidden = true;
     plot.hidden = false;
+    // Where: the cells listed in Cells, or the one Cell chooses -- a cell, or an end of the column.
+    const face = !several && isFace(state.cell);
     // The quantities picked that the worker has still to work out: asked for, and drawn when they come.
-    const face = isFace(state.cell);
-    const missing = face ? [] : state.picked.filter((k) => isQuantity(k) && quantityPending(k, modelCell(state.cell, state.layer)));
-    if (missing.length) fetchQuantities(missing, [modelCell(state.cell, state.layer)]);
+    const mcs = face ? [] : tc.at.map((c) => modelCell(c, state.layer));
+    const missing = face ? [] : state.picked.filter((k) => isQuantity(k) && mcs.some((mc) => quantityPending(k, mc)));
+    if (missing.length) fetchQuantities(missing, mcs);
     const logT = $('rtmLogT').checked;
     const logY = $('rtmLogY').checked;
+    // The time axis: the model's unit, or pore volumes where the water flows; the "from" is read on it.
+    const ax = timeAxis(r);
+    const xr = axisTimes(r, ax);
     const tmin = Number($('rtmTMin').value) || 0;
     const traces = [];
     const right = [];
     const skipped = [];
     // Each key its colour, its measured points the same: Plotly's own ten, in the order picked.
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    // At several cells, each in steps of lightness of it down the column from the inlet, and named by where it is.
+    const leftward = !!(r.model.settings && r.model.settings.ADVECTION && r.model.settings.VELOCITY < 0);
+    const fromInlet = tc.at.slice().sort((a, b) => (leftward ? b - a : a - b));
+    const centre = (c) => `${Number(r.model.centres[c].toPrecision(3))} m`;
     // The unit the concentrations are shown in, and what has none in it: left off, and the note says so.
     const u = shownUnit(r);
     const unitLeft = [];
-    // The kept run beside it: the same keys at the same cell, dashed in the same colours, its times in this run's unit.
+    // The kept run beside it: the same keys at the same cells, dashed in the same colours, at its times on this axis.
     const bk = besideRun();
+    const kt = bk ? besideAxis(bk, ax) : null;
     const besideLeft = [];
     const besideComing = [];
     const besideTraces = [];
     for (const [pickIndex, nm] of state.picked.entries()) {
-      const color = palette[pickIndex % palette.length];
+      const base = palette[pickIndex % palette.length];
       const shown = runHas(r, nm) ? shownAs(r, nm, u) : null;
       if (shown && shown.why) { unitLeft.push([labelOf(nm), shown.why]); continue; }
       const f = shown ? shown.f : 1;
-      if (bk) {
-        const why = besideWhy(bk, nm, state.cell, state.layer);
-        const mcK = face ? null : modelCell(state.cell, state.layer, bk.r);
-        const kShown = why ? null : shownAs(bk.r, nm, u);
-        if (why) besideLeft.push(why);
-        else if (kShown && kShown.why) besideLeft.push(besideUnitWhy(u, labelOf(nm), kShown.why));
-        else if (runQuantity(bk.r, nm) && !face && quantityPending(nm, mcK, bk.r)) {
-          fetchQuantities([nm], [mcK], bk.r);
-          besideComing.push(labelOf(nm));
-        } else {
-          const ky = series(nm, state.cell, state.layer, bk.r);
-          const kf = kShown ? kShown.f : 1;
-          const kt = besideTimes(bk);
-          const onRightK = axisOf(nm) === 'index';
-          const kx = [];
-          const kv = [];
-          for (let i = 0; ky && i < bk.r.n; i++) {
-            if (logT && !(kt[i] >= tmin && kt[i] > 0)) continue;
-            const v = ky[i] * kf;
-            if (!Number.isFinite(v) || (logY && !onRightK && !(v > 0))) continue;
-            kx.push(kt[i]);
-            kv.push(v);
-          }
-          if (kx.length && onRightK && !right.includes(labelOf(nm))) right.push(labelOf(nm));
-          if (kx.length) {
-            besideTraces.push({ name: `${labelOf(nm)}, ${bk.label}`, x: kx, y: kv, mode: 'lines', type: 'scatter',
-              line: { color, dash: 'dash', width: 1.6 }, ...(onRightK ? { yaxis: 'y2' } : {}) });
-          }
-        }
-      }
-      const y = series(nm, state.cell);
-      if (!y) { if (face && isQuantity(nm)) skipped.push(labelOf(nm)); continue; }
       // An amount goes on the left with the species, log or not; pH, SI and the like on the right, linear.
       const onRight = axisOf(nm) === 'index';
-      const xs = [];
-      const ys = [];
-      for (let i = 0; i < r.n; i++) {
-        const t = r.t[i];
-        if (logT && !(t >= tmin && t > 0)) continue;
-        const v = y[i] * f;
-        if (!Number.isFinite(v) || (logY && !onRight && !(v > 0))) continue;
-        xs.push(t);
-        ys.push(v);
-      }
-      if (onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
-      if (xs.length) {
-        traces.push({ name: labelOf(nm), x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
-          ...(onRight ? { yaxis: 'y2' } : {}) });
-      }
-      // What <DATA> measured of it, at this cell and layer: points, in the unit shown.
-      if (!face) {
-        for (const d of measured('time', nm)) {
-          if ((d.tab.cell || 0) !== state.cell || (d.tab.layer || 0) !== state.layer) continue;
-          traces.push({ name: `${labelOf(nm)}, measured`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers', type: 'scatter',
-            marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}) });
+      for (const cell of tc.at) {
+        const color = several ? cellColour(base, fromInlet.indexOf(cell), tc.at.length) : base;
+        const name = several ? `${labelOf(nm)} at ${centre(cell)}` : labelOf(nm);
+        if (bk) {
+          const why = !kt ? BESIDE_NO_PV : besideWhy(bk, nm, cell, state.layer);
+          const mcK = face ? null : modelCell(cell, state.layer, bk.r);
+          const kShown = why ? null : shownAs(bk.r, nm, u);
+          // What the kept run has not is worth saying only of what this run draws: a tick left from another model is neither's.
+          if (why) { if (runHas(r, nm)) besideLeft.push(why); }
+          else if (kShown && kShown.why) besideLeft.push(besideUnitWhy(u, labelOf(nm), kShown.why));
+          else if (runQuantity(bk.r, nm) && !face && quantityPending(nm, mcK, bk.r)) {
+            fetchQuantities([nm], [mcK], bk.r);
+            besideComing.push(labelOf(nm));
+          } else {
+            const ky = series(nm, cell, state.layer, bk.r);
+            const kf = kShown ? kShown.f : 1;
+            const kx = [];
+            const kv = [];
+            for (let i = 0; ky && i < bk.r.n; i++) {
+              if (logT && !(kt[i] >= tmin && kt[i] > 0)) continue;
+              const v = ky[i] * kf;
+              if (!Number.isFinite(v) || (logY && !onRight && !(v > 0))) continue;
+              kx.push(kt[i]);
+              kv.push(v);
+            }
+            if (kx.length && onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
+            if (kx.length) {
+              besideTraces.push({ name: `${name}, ${bk.label}`, x: kx, y: kv, mode: 'lines', type: 'scatter',
+                line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}) });
+            }
+          }
+        }
+        const y = series(nm, cell);
+        if (!y) { if (face && isQuantity(nm)) skipped.push(labelOf(nm)); continue; }
+        const xs = [];
+        const ys = [];
+        for (let i = 0; i < r.n; i++) {
+          const x = xr[i];
+          if (logT && !(x >= tmin && x > 0)) continue;
+          const v = y[i] * f;
+          if (!Number.isFinite(v) || (logY && !onRight && !(v > 0))) continue;
+          xs.push(x);
+          ys.push(v);
+        }
+        if (onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
+        if (xs.length) {
+          traces.push({ name, x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
+            ...(onRight ? { yaxis: 'y2' } : {}) });
+        }
+        // What <DATA> measured of it, at this cell and layer: points, in the unit shown, at their times on the axis.
+        if (!face) {
+          for (const d of measured('time', nm)) {
+            if ((d.tab.cell || 0) !== cell || (d.tab.layer || 0) !== state.layer) continue;
+            traces.push({ name: `${name}, measured`, x: ax.pv ? d.x.map((t) => t / ax.tw) : d.x, y: f === 1 ? d.y : d.y.map((v) => v * f),
+              mode: 'markers', type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
+              ...(onRight ? { yaxis: 'y2' } : {}) });
+          }
         }
       }
     }
@@ -1565,7 +1721,7 @@
     const besideDrawn = besideTraces.length;
     const layout = baseLayout();
     layout.xaxis.type = logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.xaxis.title = { text: ax.title, font: { size: 11 } };
     layout.yaxis.type = logY ? 'log' : 'linear';
     // Where the log axis starts: the curves on the left, and the kept run's and what was measured with them.
     $('rtmYFrom').disabled = !logY;
@@ -1583,10 +1739,16 @@
       layout.margin.r = 64;
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
-    $('rtmTimeNote').textContent = [missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
+    $('rtmTimeNote').textContent = [several ? `at cell${tc.at.length > 1 ? 's' : ''} ${tc.at.join(', ')}`
+      + `${tc.at.length > 1 ? ', faintest nearest the inlet' : ''}` : '',
+      tc.bad.length ? `could not read ${tc.bad.join(', ')} as a cell: ${tc.n} cells, 0 to ${tc.n - 1}` : '',
+      tc.more.length ? `${CELLS_MOST} cells at most: ${tc.more.join(', ')} left off` : '',
+      ax.pv ? `a pore volume ${fmtTime(ax.tw)}` : '', ax.why,
+      missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
       skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : '',
       u.why, unitNote(u, unitLeft),
-      bk && besideDrawn ? besideNote(bk) : '', bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
+      bk && besideDrawn ? besideNote(bk) + besidePoreNote(bk, ax) : '',
+      bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
       bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft, u)]
       .filter(Boolean).join('; ');
   }
@@ -1645,7 +1807,7 @@
     const at = $('rtmProfileAt');
     at.max = String(r.n - 1);
     at.value = String(i);
-    $('rtmProfileAtLabel').textContent = state.profileAt === null ? 'drag or play' : fmtTime(r.t[i]);
+    $('rtmProfileAtLabel').textContent = state.profileAt === null ? 'drag or play' : fmtOnAxis(timeAxis(r), r.t[i]);
     $('rtmProfilePace').value = state.profilePace;
     $('rtmProfileAll').disabled = state.profileAt === null;
     $('rtmProfilePlay').textContent = profilePlaying ? 'pause' : 'play';
@@ -1759,9 +1921,11 @@
     };
     // The slider's one time; or the times the reader asked for, or eight
     // spread over the run: a profile is only readable with a handful of
-    // curves on it.
+    // curves on it. Each named on the time axis, in pore volumes where they
+    // are chosen, and the Times' bare numbers read in them.
+    const ax = timeAxis(r);
     const slider = state.profileAt !== null;
-    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes);
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax.pv);
     const picks = [];
     const past = [];
     if (slider) picks.push(nearestIndex(r.t, state.profileAt));
@@ -1785,13 +1949,14 @@
     const traces = picks.map((i, q) => {
       const y = [];
       for (let k = 0; k < npts; k++) y.push(valueAt(i, k));
-      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color: palette[q % palette.length] },
+      return { name: fmtOnAxis(ax, r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color: palette[q % palette.length] },
         ...meta };
     });
     /*
-      The kept run beside it: at each time drawn, its stored time nearest,
-      along its own cells -- or into the rock behind its cell -- dashed in
-      the same colour; a time past its end is not drawn.
+      The kept run beside it: at each time drawn, its stored time nearest --
+      in pore volumes, its own nearest the same pore volume -- along its own
+      cells, or into the rock behind its cell, dashed in the same colour; a
+      time past its end is not drawn.
     */
     const bk = besideRun();
     let besideSaid = '';
@@ -1805,7 +1970,8 @@
       const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
         : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
           : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}`
-            : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
+            : ax.pv && !poreTime(kr) ? BESIDE_NO_PV
+              : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
       const kf = kShown && kShown.f ? kShown.f : 1;
       if (why) besideSaid = besideNote(bk, why);
       else {
@@ -1820,7 +1986,8 @@
           fetchQuantities([name], kCells, kr);
           besideSaid = `working out ${labelOf(name)} for ${bk.label}…`;
         } else {
-          const kt = besideTimes(bk);
+          const kt = besideAxis(bk, ax);
+          const xr = axisTimes(r, ax);
           const pastIt = [];
           const kValue = (j, k) => {
             const v = kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi];
@@ -1828,14 +1995,14 @@
           };
           if (slider) spans.push(spanOver(`${kr.runKey}|${name}|${across}|${layer}|${kAtCell}|${kf}`, kr.n, kn, kValue));
           picks.forEach((i, q) => {
-            if (r.t[i] > kt[kr.n - 1] * 1.000001) { pastIt.push(fmtTime(r.t[i])); return; }
-            const j = nearestIndex(kt, r.t[i]);
+            if (xr[i] > kt[kr.n - 1] * 1.000001) { pastIt.push(fmtOnAxis(ax, r.t[i])); return; }
+            const j = nearestIndex(kt, xr[i]);
             const y = [];
             for (let k = 0; k < kn; k++) y.push(kValue(j, k));
-            traces.push({ name: `${fmtTime(r.t[i])}, ${bk.label}`, x: kx, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter',
+            traces.push({ name: `${fmtOnAxis(ax, r.t[i])}, ${bk.label}`, x: kx, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter',
               line: { color: palette[q % palette.length], dash: 'dash', width: 1.6 }, ...meta });
           });
-          besideSaid = [besideNote(bk), pastIt.length ? `${pastIt.join(', ')} past its end` : ''].filter(Boolean).join(', ');
+          besideSaid = [besideNote(bk) + besidePoreNote(bk, ax), pastIt.length ? `${pastIt.join(', ')} past its end` : ''].filter(Boolean).join(', ');
         }
       }
     }
@@ -1846,7 +2013,7 @@
         const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
         const ys = f === 1 ? d.y : d.y.map((v) => v * f);
         if (slider) spans.push(spanOf(ys));
-        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: ys, mode: 'markers', type: 'scatter',
+        traces.push({ name: `measured, ${fmtOnAxis(ax, at)}`, x: d.x, y: ys, mode: 'markers', type: 'scatter',
           marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 },
             opacity: slider && nearestIndex(r.t, at) !== picks[0] ? 0.3 : 1 }, ...meta });
       }
@@ -1878,15 +2045,17 @@
     */
     const bits = [across ? `${nm} layers to ${r.model.matrix.total} m, the fracture at depth 0`
       : `${r.model.fracture} cells over ${r.model.length} m${nm && layer ? `, rock layer ${layer}` : ''}`];
-    if (slider) bits.push(`at ${fmtTime(r.t[picks[0]])} on the slider, the axis over the whole run`);
+    if (slider) bits.push(`at ${fmtOnAxis(ax, r.t[picks[0]])} on the slider, the axis over the whole run`);
+    if (ax.pv) bits.push(`a pore volume ${fmtTime(ax.tw)}`);
+    if (ax.why) bits.push(ax.why);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
-    if (past.length) bits.push(`${past.map(fmtTime).join(', ')} past the end of the run`);
+    if (past.length) bits.push(`${past.map((t) => fmtOnAxis(ax, t)).join(', ')} past the end of the run`);
     if (asked.times.length && picks.length) {
       const off = asked.times.filter((w) => {
         const got = r.t[nearestIndex(r.t, w)];
         return Math.abs(got - w) > 0.01 * Math.max(w, 1e-300);
       });
-      if (off.length) bits.push(`nearest stored time used for ${off.map(fmtTime).join(', ')}`);
+      if (off.length) bits.push(`nearest stored time used for ${off.map((t) => fmtOnAxis(ax, t)).join(', ')}`);
     }
     if (u.why) bits.push(u.why);
     if (own) bits.push(ownUnitNote(u, labelOf(name), shown.why));
@@ -1919,9 +2088,10 @@
       $('rtmProfileNote').textContent = '';
       return;
     }
-    // The slider's time; or the first of Times, or the end of the run.
+    // The slider's time; or the first of Times, or the end of the run; on the time axis, in pore volumes where they are chosen.
+    const ax = timeAxis(r);
     const slider = state.profileAt !== null;
-    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes);
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax.pv);
     const end = r.t[r.n - 1];
     const want = slider ? state.profileAt : asked.times.length ? asked.times[0] : end;
     const past = !slider && want > end * 1.000001;
@@ -1934,8 +2104,9 @@
     const traces = [];
     const right = [];
     const bk = besideRun();
-    const kt = bk ? besideTimes(bk) : null;
-    const kI = bk && !(r.t[i] > kt[bk.r.n - 1] * 1.000001) ? nearestIndex(kt, r.t[i]) : -1;
+    const kt = bk ? besideAxis(bk, ax) : null;
+    const xi = axisTimes(r, ax)[i];
+    const kI = kt && !(xi > kt[bk.r.n - 1] * 1.000001) ? nearestIndex(kt, xi) : -1;
     const besideTraces = [];
     const besideLeft = [];
     const besideComing = [];
@@ -1967,7 +2138,7 @@
         const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, key) ? `it has no ${labelOf(key)}`
           : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
             : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}`
-              : kI < 0 ? `${fmtTime(r.t[i])} is past its end`
+              : !kt ? BESIDE_NO_PV : kI < 0 ? `${fmtOnAxis(ax, r.t[i])} is past its end`
                 : kShown && kShown.why ? besideUnitWhy(u, labelOf(key), kShown.why) : '';
         const kf = kShown && kShown.f ? kShown.f : 1;
         if (why) besideLeft.push(why);
@@ -1999,7 +2170,7 @@
           const at = d.tab.at !== null ? d.tab.at : end;
           const ys = f === 1 ? d.y : d.y.map((v) => v * f);
           if (slider) (onRight ? spansR : spansL).push(spanOf(ys));
-          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: ys, mode: 'markers',
+          traces.push({ name: `${labelOf(key)}, measured, ${fmtOnAxis(ax, at)}`, x: d.x, y: ys, mode: 'markers',
             type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 },
               opacity: slider && nearestIndex(r.t, at) !== i ? 0.3 : 1 }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
         }
@@ -2029,17 +2200,19 @@
       }
       layout.margin.r = 64;
     }
-    const bits = [g.where, `at ${fmtTime(r.t[i])}${slider ? ' on the slider, the axes over the whole run'
+    const bits = [g.where, `at ${fmtOnAxis(ax, r.t[i])}${slider ? ' on the slider, the axes over the whole run'
       : asked.times.length && !past ? '' : ', the end of the run'}`];
+    if (ax.pv) bits.push(`a pore volume ${fmtTime(ax.tw)}`);
+    if (ax.why) bits.push(ax.why);
     if (asked.bad.length) bits.push(`could not read ${asked.bad.join(', ')}`);
-    if (past) bits.push(`${fmtTime(want)} is past it`);
+    if (past) bits.push(`${fmtOnAxis(ax, want)} is past it`);
     else if (asked.times.length && Math.abs(r.t[i] - want) > 0.01 * Math.max(want, 1e-300)) {
-      bits.push(`the nearest stored time to ${fmtTime(want)}`);
+      bits.push(`the nearest stored time to ${fmtOnAxis(ax, want)}`);
     }
     if (asked.times.length > 1) bits.push('the first of Times alone');
     if (u.why) bits.push(u.why);
     if (unitLeft.length) bits.push(unitNote(u, unitLeft));
-    if (bk && besideTraces.length) bits.push(besideNote(bk));
+    if (bk && besideTraces.length) bits.push(besideNote(bk) + besidePoreNote(bk, ax));
     if (bk && besideComing.length) bits.push(`working out ${besideComing.join(', ')} for ${bk.label}…`);
     if (bk && besideLeft.length) bits.push(besideNote(bk, [...new Set(besideLeft)].join('; ')));
     if (floorNote(floor, onLeft, u)) bits.push(floorNote(floor, onLeft, u));
@@ -2153,13 +2326,49 @@
     }
     return stops[stops.length - 1][1];
   }
-  // OKLab's lightness of a colour, 0 black to 1 white.
-  function oklabL(h) {
+  // A colour in OKLab, [L, a, b]: L its lightness, 0 black to 1 white.
+  function toOklab(h) {
     const [r, g, b] = hexRgb(h).map((v) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
     const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
     const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
     const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
-    return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+    return [0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s,
+      1.9779984951 * l - 2.428592205 * m + 0.4505937099 * s,
+      0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s];
+  }
+  const oklabL = (h) => toOklab(h)[0];
+  // Back from OKLab to a colour, its chroma eased off, the hue kept, until a screen can show it.
+  function fromOklab([L, a, b]) {
+    const lin = (k) => {
+      const l = (L + k * (0.3963377774 * a + 0.2158037573 * b)) ** 3;
+      const m = (L - k * (0.1055613458 * a + 0.0638541728 * b)) ** 3;
+      const s = (L - k * (0.0894841775 * a + 1.291485548 * b)) ** 3;
+      return [4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s, -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+        -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s];
+    };
+    let k = 1;
+    let rgb = lin(k);
+    while (k > 0.01 && rgb.some((v) => v < -1e-7 || v > 1 + 1e-7)) { k *= 0.95; rgb = lin(k); }
+    return rgbHex(rgb.map((v) => {
+      const c = Math.min(1, Math.max(0, v));
+      return 255 * (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
+    }));
+  }
+  /*
+    A series' colour at the j-th of n cells from the inlet, on Against time
+    at several cells: its own hue at equal steps of OKLab lightness, the
+    cell nearest the inlet faintest -- nearest the page's own colour, light
+    on a light page and dark on a dark one -- so that the further down the
+    column, the more a curve stands out. Every step of Plotly's ten keeps
+    3:1 against the page, light or dark, and six cells are at least 0.06
+    apart in lightness.
+  */
+  const CELL_LIGHTNESS = { light: [0.62, 0.28], dark: [0.6, 0.92] };
+  function cellColour(hex, j, n) {
+    if (n < 2) return hex;
+    const [L0, L1] = CELL_LIGHTNESS[document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'];
+    const [, a, b] = toOklab(hex);
+    return fromOklab([L0 + ((L1 - L0) * j) / (n - 1), a, b]);
   }
   /*
     K colours for K zones in order, from the scale chosen, at equal steps of
@@ -2202,13 +2411,16 @@
       $('rtmGradNote').textContent = '';
       return;
     }
+    // Time across, in the model's unit or in pore volumes; the "from" read on it.
+    const ax = timeAxis(r);
+    const xr = axisTimes(r, ax);
     const cols = [];
-    for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) cols.push(i);
+    for (let i = 0; i < r.n; i++) if (!logT || (xr[i] > 0 && xr[i] >= tmin)) cols.push(i);
     if (!cols.length) {
       Plotly.purge(plot);
       plot.hidden = true;
       empty.hidden = false;
-      empty.textContent = `Nothing is stored after ${fmtTime(tmin)}: lower the "from" time.`;
+      empty.textContent = `Nothing is stored after ${fmtAxisNumber(ax, tmin)}: lower the "from" time.`;
       $('rtmGradNote').textContent = '';
       return;
     }
@@ -2216,7 +2428,8 @@
     const bk = besideRun();
     const kr = bk ? bk.r : null;
     const kWhy = !bk ? '' : !kr.model.transport || !(kr.model.fracture > 1) ? 'it was a batch'
-      : gl > 0 && !(gl < (kr.model.stride || 1)) ? `it has no rock layer ${gl}` : !zoneItems(kr.model).length ? 'it has no redox zones' : '';
+      : gl > 0 && !(gl < (kr.model.stride || 1)) ? `it has no rock layer ${gl}` : !zoneItems(kr.model).length ? 'it has no redox zones'
+        : ax.pv && !poreTime(kr) ? BESIDE_NO_PV : '';
     const KZ = bk && !kWhy ? zonesOf(kr, gl) : null;
     // One list, by name: the zones either run holds, in the order they turn over, the run's own reading first.
     const rungOf = new Map();
@@ -2241,7 +2454,7 @@
     const colorscale = [];
     colours.forEach((col, j) => { colorscale.push([j / K, col], [(j + 1) / K, col]); });
     const view = state.gradView || 'map';
-    const sym = timeUnit().symbol;
+    const at = ax.pv ? '%{x:.3g} PV' : `t = %{x:.3e} ${ax.sym}`;
     const big = cells * cols.length > 400000;
     const mapOf = (z, run, cs, ncells) => {
       const at = z.items.map((it) => names.indexOf(it.name));
@@ -2262,10 +2475,10 @@
     };
     const own = mapOf(Z, r, cols, cells);
     const trace = {
-      type: 'heatmap', x: cols.map((i) => r.t[i]), y: Array.from(r.model.centres), z: own.zz, zmin: -0.5, zmax: K - 0.5, zauto: false,
+      type: 'heatmap', x: cols.map((i) => xr[i]), y: Array.from(r.model.centres), z: own.zz, zmin: -0.5, zmax: K - 0.5, zauto: false,
       colorscale, connectgaps: false, zsmooth: false, meta: { categories: names },
-      ...(big ? { hovertemplate: `t = %{x:.3e} ${sym}<br>x = %{y:.3e} m<extra></extra>` }
-        : { text: own.text, hovertemplate: `t = %{x:.3e} ${sym}<br>x = %{y:.3e} m<br>%{text}<extra></extra>` }),
+      ...(big ? { hovertemplate: `${at}<br>x = %{y:.3e} m<extra></extra>` }
+        : { text: own.text, hovertemplate: `${at}<br>x = %{y:.3e} m<br>%{text}<extra></extra>` }),
       colorbar: { title: { text: 'the couple holding the pe', side: 'right', font: { size: 11 } }, tickvals: names.map((_, j) => j),
         ticktext: names.map((nm) => esc(nm)), thickness: 14, outlinewidth: 0, tickfont: { size: 10 } },
     };
@@ -2273,12 +2486,12 @@
     layout.hovermode = 'closest';
     layout.margin.l = 92;
     layout.xaxis.type = logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+    layout.xaxis.title = { text: ax.title, font: { size: 11 } };
     layout.yaxis.title = { text: 'distance from the left-hand face (m)', font: { size: 11 } };
     const traces = [trace];
     let besideSaid = bk && kWhy ? besideNote(bk, kWhy) : '';
     if (KZ) {
-      const kt = besideTimes(bk);
+      const kt = besideAxis(bk, ax);
       const kcols = [];
       for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) kcols.push(i);
       const theirs = mapOf(KZ, kr, kcols, kr.model.fracture);
@@ -2294,7 +2507,7 @@
       layout.xaxis.title = undefined;
       layout.margin.t = 24;
       layout.annotations = [note('this run', 0, 1.0), note(bk.label, 0, 0.445)];
-      besideSaid = `${bk.label} beside it, its own zones below, in the same colours`;
+      besideSaid = `${bk.label} beside it${besidePoreNote(bk, ax)}, its own zones below, in the same colours`;
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     // What share of the map each zone holds, in order; the couples that hold the pe nowhere in it.
@@ -2306,6 +2519,8 @@
     const never = Z.items.filter((it, q) => !Z.count[q]).map((it) => it.name);
     const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`,
       `the redox zones by the couple holding the pe, oxidised first: ${shares.join(', ')} of the waters`];
+    if (ax.pv) bits.push(`a pore volume ${fmtTime(ax.tw)}`);
+    if (ax.why) bits.push(ax.why);
     if (never.length) bits.push(`never holding it: ${never.join(', ')}`);
     if (logT && cols.length < r.n) bits.push(`${r.n - cols.length} earlier points left off (t = 0 cannot go on a log axis)`);
     if (view !== 'map') bits.push('drawn as a map: zones are no amount to draw contours of or raise into a surface');
@@ -2382,13 +2597,16 @@
       same "from" the time chart has, and the note says what it left out.
     */
     const tmin = Number($('rtmGradTMin').value) || 0;
+    // Time across, in the model's unit or in pore volumes; the "from" read on it.
+    const ax = timeAxis(r);
+    const xr = axisTimes(r, ax);
     const cols = [];
-    for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) cols.push(i);
+    for (let i = 0; i < r.n; i++) if (!logT || (xr[i] > 0 && xr[i] >= tmin)) cols.push(i);
     if (!cols.length) {
       Plotly.purge(plot);
       plot.hidden = true;
       empty.hidden = false;
-      empty.textContent = `Nothing is stored after ${fmtTime(tmin)}: lower the "from" time.`;
+      empty.textContent = `Nothing is stored after ${fmtAxisNumber(ax, tmin)}: lower the "from" time.`;
       $('rtmGradNote').textContent = '';
       return;
     }
@@ -2415,15 +2633,16 @@
     // puts the axis title through them.
     layout.margin.l = 92;
     layout.xaxis.type = logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.xaxis.title = { text: ax.title, font: { size: 11 } };
     layout.yaxis.title = { text: 'distance from the left-hand face (m)', font: { size: 11 } };
     // Distance up the page from zero at the origin, the ordinary way round.
     // As a map, as contours of it, or as a surface over time and distance.
     const view = state.gradView || 'map';
     const title = suffix ? `${q ? q.label : name}${suffix}` : q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : name;
+    const at = ax.pv ? '%{x:.3g} PV' : `t = %{x:.3e} ${ax.sym}`;
     const trace = {
       type: view === 'contour' ? 'contour' : view === 'surface' ? 'surface' : 'heatmap',
-      x: cols.map((i) => r.t[i]),
+      x: cols.map((i) => xr[i]),
       y: Array.from(r.model.centres),
       z,
       colorscale: state.gradScale,
@@ -2437,8 +2656,8 @@
       */
       zsmooth: $('rtmGradSmooth').checked ? 'best' : false,
       hovertemplate: logC
-        ? 't = %{x:.3e} s<br>x = %{y:.3e} m<br>log₁₀ c = %{z:.3f}<extra></extra>'
-        : 't = %{x:.3e} s<br>x = %{y:.3e} m<br>c = %{z:.4e}<extra></extra>',
+        ? `${at}<br>x = %{y:.3e} m<br>log₁₀ c = %{z:.3f}<extra></extra>`
+        : `${at}<br>x = %{y:.3e} m<br>c = %{z:.4e}<extra></extra>`,
       colorbar: {
         title: { text: logC ? `log₁₀ ${title}` : title, side: 'right', font: { size: 11 } },
         thickness: 14, outlinewidth: 0, tickfont: { size: 10 },
@@ -2450,9 +2669,9 @@
       delete trace.zsmooth;
       delete trace.connectgaps;
       const c = themeColors();
-      const ax = (text, type) => ({ title: { text, font: { size: 11 } }, type, gridcolor: c.grid, color: c.text });
-      layout.scene = { xaxis: ax(`time (${timeUnit().symbol})`, logT ? 'log' : 'linear'), yaxis: ax('distance (m)', 'linear'),
-        zaxis: ax(logC ? `log₁₀ ${title}` : title, 'linear'), camera: { eye: { x: -1.6, y: -1.6, z: 1.0 } } };
+      const axis3 = (text, type) => ({ title: { text, font: { size: 11 } }, type, gridcolor: c.grid, color: c.text });
+      layout.scene = { xaxis: axis3(ax.title, logT ? 'log' : 'linear'), yaxis: axis3('distance (m)', 'linear'),
+        zaxis: axis3(logC ? `log₁₀ ${title}` : title, 'linear'), camera: { eye: { x: -1.6, y: -1.6, z: 1.0 } } };
       layout.margin = { l: 0, r: 0, t: 10, b: 0 };
     }
     /*
@@ -2471,7 +2690,8 @@
       const kShown = runHas(kr, name) && !own ? shownAs(kr, name, u) : null;
       const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
         : gl > 0 && !(gl < kStride) ? `it has no rock layer ${gl}`
-          : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
+          : ax.pv && !poreTime(kr) ? BESIDE_NO_PV
+            : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
       const kf = kShown && kShown.f ? kShown.f : 1;
       const kCells = why ? [] : Array.from({ length: km.fracture }, (_, c) => c * kStride + gl);
       const kQuantity = !why && runQuantity(kr, name);
@@ -2480,7 +2700,7 @@
         fetchQuantities([name], kCells, kr);
         besideSaid = `working out ${labelOf(name)} for ${bk.label}…`;
       } else {
-        const kt = besideTimes(bk);
+        const kt = besideAxis(bk, ax);
         const ksi = km.species.indexOf(name);
         const kcols = [];
         for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) kcols.push(i);
@@ -2517,7 +2737,7 @@
           layout.annotations = [note('this run', 0, 1.0), note(bk.label, 0, 0.445)];
         }
         traces.push(second);
-        besideSaid = `${bk.label} beside it, its own map${view === 'surface' ? ' to the right' : ' below'}, on one colour scale`;
+        besideSaid = `${bk.label} beside it${besidePoreNote(bk, ax)}, its own map${view === 'surface' ? ' to the right' : ' below'}, on one colour scale`;
       }
     }
     /*
@@ -2539,6 +2759,8 @@
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`];
+    if (ax.pv) bits.push(`a pore volume ${fmtTime(ax.tw)}`);
+    if (ax.why) bits.push(ax.why);
     if (Number.isFinite(lo)) {
       bits.push(logC ? `10^${lo.toFixed(2)} to 10^${hi.toFixed(2)}`
         : `${lo.toExponential(3)} to ${hi.toExponential(3)}`);
@@ -6593,12 +6815,15 @@
     // What is ticked that this model has: a pick outlives the model it was made in.
     const here = state.picked.filter((k) => r.model.species.includes(k) || isQuantity(k));
     const names = here.length ? here : r.model.species;
-    const face = isFace(state.cell);
+    // At the cells listed in Cells, each column saying where; or at the one cell Cell chooses, or an end.
+    const tc = timeCells(r);
+    const face = !tc.several && isFace(state.cell);
     const keys = face ? [] : names.filter((k) => isQuantity(k));
-    if (keys.length) await fetchQuantities(keys, [modelCell(state.cell, state.layer)]);
+    if (keys.length) await fetchQuantities(keys, tc.at.map((c) => modelCell(c, state.layer)));
     // At a cell the layer shown, at an end what crosses it.
-    const where = face ? `through the ${state.cell} end`
-      : `@ cell ${state.cell}${state.layer > 0 && r.model.matrix ? ` rock ${state.layer}` : ''}`;
+    const rock = state.layer > 0 && r.model.matrix ? ` rock ${state.layer}` : '';
+    const whereOf = (c) => (face ? `through the ${state.cell} end`
+      : `@ cell ${c}${rock}${tc.several ? ` (${Number(r.model.centres[c].toPrecision(6))} m)` : ''}`);
     const unitOf = (k) => { const q = isQuantity(k) ? quantityOf(k) : null; return q && q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''; };
     /*
       In the unit shown, each concentration's header saying it; one that has
@@ -6610,21 +6835,31 @@
     // At an end what crosses it, per m2 of the water's cross-section: the unit times m per the time unit.
     const per = face ? ` · m/${timeUnit().symbol}` : '';
     const own = (n) => (unitOf(n) || (r.model.activity && !isQuantity(n) ? ` (mol/kgw${per})` : ''));
-    const headOf = (n, j) => {
+    const headOf = (n, j, where) => {
       const sh = shown[j];
       if (!u.id || !sh) return `${labelOf(n)}${unitOf(n)} ${where}`;
       if (sh.why) return `${labelOf(n)}${own(n)} ${where}`;
       return `${labelOf(n)}${u.bare ? ` ${u.text}` : ` (${u.text}${per})`} ${where}`;
     };
-    const head = [`t (${timeUnit().symbol})`, ...names.map(headOf)];
-    const cols = names.map((n, j) => {
-      const c = series(n, state.cell);
+    // Each key at each cell, in the order picked; in pore volumes, they come first, then the time.
+    const ax = timeAxis(r);
+    const at = face ? [state.cell] : tc.at;
+    const head = [...(ax.pv ? ['pore volumes'] : []), `t (${timeUnit().symbol})`];
+    const cols = [];
+    names.forEach((n, j) => {
       const f = shown[j] && shown[j].f ? shown[j].f : 1;
-      return c && f !== 1 ? c.map((v) => v * f) : c;
+      for (const c of at) {
+        head.push(headOf(n, j, whereOf(c)));
+        const s = series(n, c);
+        cols.push(s && f !== 1 ? s.map((v) => v * f) : s);
+      }
     });
+    const xr = axisTimes(r, ax);
     const rows = [];
-    for (let i = 0; i < r.n; i++) rows.push([r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
-    return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${state.cell}` };
+    for (let i = 0; i < r.n; i++) {
+      rows.push([...(ax.pv ? [xr[i]] : []), r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
+    }
+    return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${at.join('_')}` };
   }
 
   async function downloadCsv() {
@@ -6656,7 +6891,7 @@
       const title = (grid.colorbar && grid.colorbar.title && grid.colorbar.title.text) || 'value';
       // A map of categories, the redox zones: each by its name.
       const cat = grid.meta && grid.meta.categories;
-      return { head: [`distance (m) \\ time (${timeUnit().symbol}): ${title}`, ...grid.x], name,
+      return { head: [`distance (m) \\ ${timeAxis().title}: ${title}`, ...grid.x], name,
         rows: grid.y.map((y, j) => [y, ...grid.z[j].map((v) => (v === null || v === undefined ? null : cat ? cat[v] : v))]) };
     }
     const xs = [...new Set(data.flatMap((tr) => Array.from(tr.x || [])))].sort((a, b) => a - b);
@@ -7596,13 +7831,15 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         sections: [
           { heading: 'The toolbar', list: [
             '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
+            '**Cells**: what is ticked at several cells at once, breakthrough curves down the column — a list of cell numbers such as `4, 9, 14, end`, `end` the last; six at most. Each keeps its colour, in steps of lightness down the column, faintest at the cell nearest the inlet; the legend and the CSV give each cell’s distance. Empty, the one cell **Cell** chooses.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
+            '**Time in**: the model’s own unit, or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
-            '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
+            '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
             '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
             '**clear**: unticks everything.',
-            '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown or through the end shown, a row per stored point.',
+            '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown, at each of the Cells, or through the end shown, a row per stored point; in pore volumes a column of them first, then the time.',
             '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
             SAVE_HTML,
             '**View in Data Browser**: the whole run as an HDF5 file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
@@ -7628,7 +7865,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Those ticked against time, at one time**, first in Show: each species and quantity ticked on Against time, a curve each in its colour there, at one time — a plume’s zones side by side. pH, pe, a saturation index and the like go on an axis of their own on the right, as they are.',
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
-          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
+          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days), or PV, pore volumes, where the water flows; a bare number is in the model’s own unit, or in pore volumes where they are chosen. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
+          '**Time in**: as on Against time, one choice for the three charts: the model’s own unit, or pore volumes. The legend, the slider and the note name each time in it; a run kept beside is drawn at the stored point nearest the same pore volume of its own. Changing it turns the bare numbers of Times into the other, so that the same curves are drawn.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
           '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so; with those ticked against time it is left off.',
@@ -7652,6 +7890,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Show**, and **Layer** with a rock matrix: what is drawn — a species, or a quantity such as pH or a saturation index — along the fracture or along one layer of rock.',
             '**The redox zones**, first in Show in a model with the electron: each cell at each time coloured by the couple that holds its pe, the one with the most poising capacity there, n·Tox·Tred/(Tox + Tred) of what the cell holds in its two states, O₂ and H₂ against the water itself; oxic first and down the ladder, in the Colours chosen at equal steps of lightness. Hover for the couple and the pe; the note gives each zone\'s share. A map only.',
             '**As**: a map, contours of it with their values on them, or a surface in three dimensions, the value up, which the mouse turns.',
+            '**Time in**: as on Against time, the model’s own unit, or pore volumes where the water flows; a run kept beside in its own.',
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
             '**from**, after log concentration: where the colour scale starts, a plain number such as `1e-10`; empty, the least value there is. What lies below it takes its colour, or on a surface lies below the box; the CSV and Excel files have every value still.',
@@ -8084,6 +8323,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     // The unit the concentrations are shown in: the example's, and the model's own where it gives none.
     state.concUnit = v && CONC_UNITS[v.unit] ? v.unit : '';
     renderUnits();
+    // Time in pore volumes where the example asks, else in the model's unit; at the cells it lists, else at its one cell.
+    state.timeIn = v && v.timeIn === 'pv' ? 'pv' : '';
+    state.cells = v && typeof v.cells === 'string' ? v.cells : '';
+    $('rtmCells').value = state.cells;
+    renderTimeIn();
     // Against distance at the Times, or at the example's one time on the slider.
     profileStop();
     state.profileAt = v && v.profile && Number.isFinite(v.profile.at) ? v.profile.at : null;
@@ -9639,12 +9883,26 @@ END
     'rtm:redraw': () => {
       const cell = $('rtmCell').value;
       state.cell = isFace(cell) ? cell : (Number(cell) || 0);
+      state.cells = $('rtmCells').value;
       state.layer = Number($('rtmLayer').value) || 0;
-      // An end has no layer to pick.
-      $('rtmLayerWrap').hidden = !(state.compiled && state.compiled.matrix) || isFace(state.cell);
+      // An end has no layer to pick; the cells listed in Cells have.
+      $('rtmLayerWrap').hidden = !(state.compiled && state.compiled.matrix) || (isFace(state.cell) && !cellsAsked().cells.length);
       state.yFrom = $('rtmYFrom').value;
       saveState();
       drawTime();
+    },
+    // One time axis for Against time, Against distance and Gradient: the three selects as one.
+    'rtm:timeIn': (ev, el) => {
+      const before = timeAxis();
+      state.timeIn = el.value === 'pv' ? 'pv' : '';
+      const after = timeAxis();
+      // The same picture on the other axis: each "from" and the Times' bare numbers put on it.
+      if (before.pv !== after.pv) retypeTimes(before, after);
+      renderTimeIn();
+      saveState();
+      drawTime();
+      drawProfile();
+      drawGradient();
     },
     // Against distance at the slider's one time; play moves it on through the run.
     'rtm:profileAt': (ev, el) => {
@@ -9921,7 +10179,9 @@ END
   $('rtmYFrom').value = state.yFrom;
   $('rtmProfileYFrom').value = state.profileYFrom;
   $('rtmGradCFrom').value = state.gradCFrom;
+  $('rtmCells').value = state.cells;
   renderUnits();
+  renderTimeIn();
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.
   if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });

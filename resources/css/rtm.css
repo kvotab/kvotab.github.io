@@ -501,6 +501,7 @@
 .rtm-check.inline { display: inline-flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
 
 .rtm-times { width: 15rem; min-width: 8rem; }
+.rtm-cells { width: 10rem; min-width: 6rem; }
 
 /* The Diagrams tab: an axis is a phrase -- Vary pH from 2 to 12 in 101 points -- kept on one line where it fits. */
 .rtm-dg-axis { display: inline-flex; flex-wrap: wrap; gap: 5px; align-items: center; }

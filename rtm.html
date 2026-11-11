@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261110f">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111a">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -247,9 +247,13 @@
             <label>Cell
               <select id="rtmCell" data-on-change="rtm:redraw"></select>
             </label>
+            <label id="rtmCellsWrap" hidden>Cells
+              <input type="text" id="rtmCells" class="rtm-cells" placeholder="or several: 4, 9, end" data-on-change="rtm:redraw">
+            </label>
             <label id="rtmLayerWrap" hidden>Layer
               <select id="rtmLayer" data-on-change="rtm:redraw"></select>
             </label>
+            <label>Time in <select id="rtmTimeInTime" data-on-change="rtm:timeIn"></select></label>
             <label><input type="checkbox" id="rtmLogT" checked data-on-change="rtm:redraw"> log time</label>
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
             <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
@@ -292,6 +296,7 @@
               <input type="text" id="rtmProfileTimes" class="rtm-times" placeholder="spread over the run"
                 data-on-change="rtm:redrawProfile">
             </label>
+            <label>Time in <select id="rtmTimeInProfile" data-on-change="rtm:timeIn"></select></label>
             <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
             <label>from <input type="text" id="rtmProfileYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawProfile"></label>
             <label>Units <select id="rtmUnitProfile" data-on-change="rtm:concUnit"></select></label>
@@ -458,6 +463,7 @@
                 <option value="Greys">grey</option>
               </select>
             </label>
+            <label>Time in <select id="rtmTimeInGrad" data-on-change="rtm:timeIn"></select></label>
             <label><input type="checkbox" id="rtmGradLogT" checked data-on-change="rtm:redrawGradient"> log time</label>
             <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
             <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
@@ -2346,8 +2352,8 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             crosses one end of the column (see <em>The two ends of the column</em>).
             <em>Against distance</em> draws one species or quantity across all the cells, at several
             times. Which times is up to you: the <em>Times</em> field takes a list — <code>0, 1 h,
-            30 d, 500 y</code>, or bare numbers in the model's own unit — and leaving it empty spreads
-            eight over the run. Each log concentration axis, on <em>Gradient</em> its colour scale, can
+            30 d, 500 y</code>, <code>2 PV</code> for two pore volumes, or bare numbers in the model's
+            own unit — and leaving it empty spreads eight over the run. Each log concentration axis, on <em>Gradient</em> its colour scale, can
             start where you say: <em>from</em> after its box takes a concentration such as
             <code>1e-10</code>, below which a curve drops out of view, and left empty reaches the least
             drawn. A run with the electron can span 150 decades, methane at 10<sup>−144</sup> where
@@ -2364,6 +2370,27 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             which is slower where the solver stored more. What <code>&lt;DATA&gt;</code> measured is drawn faint, and as
             itself at the stored time nearest its own. <em>Back to Times</em>, or typing
             <em>Times</em>, draws the <em>Times</em> again.</p>
+          <p><em>Time in</em>, on the bars of <em>Against time</em>, <em>Against distance</em> and
+            <em>Gradient</em>, is one choice for the three: time in the model's own unit, or — where
+            the water flows — in pore volumes, the volumes of water that have flowed into the column,
+            each as much as its pores hold. A pore volume is the time the water takes to cross the
+            column: <code>TRAVEL_TIME</code>, or <code>LENGTH</code> over the pore water's speed,
+            |<code>VELOCITY</code>|/<code>POROSITY</code>. The flow is one number for the whole run, so
+            the curves are the same and only the axis counts differently. Column experiments are read
+            this way: a tracer reaches the outlet after about one pore volume, and a species held back
+            by sorption with a retardation factor <i>R</i> after about <i>R</i>. A run kept beside is
+            drawn in its own pore volumes, so that two runs at different speeds line up where the same
+            water has flowed in: with the dispersion set by <code>PECLET</code>, a dispersivity, a
+            tracer at twice the speed draws the first run's curves. The <em>from</em> boxes and the
+            bare numbers of <em>Times</em> are read in it, and turned into the other when it changes;
+            the CSV of <em>Against time</em> gains a column of pore volumes before the time.</p>
+          <p><em>Cells</em>, after <em>Cell</em> on <em>Against time</em>, draws what is ticked at
+            several cells at once — <code>4, 9, 14, end</code>, <code>end</code> the last — the
+            breakthrough curves down a column. Each keeps its colour, in steps of lightness down the
+            column, faintest at the cell nearest the inlet, so that the further along the flow, the more
+            a curve stands out; six cells at most, as more steps of one colour cannot be told apart.
+            The legend and the CSV give each cell's distance from the left-hand face. Left empty, the
+            one cell <em>Cell</em> chooses is drawn, or what crosses an end.</p>
           <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
             them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
             is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
@@ -3556,12 +3583,12 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
   <script src="./resources/js/rtm-model.js?v=20261110h"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261110a"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261111a"></script>
   <script src="./resources/js/rtm-worker.js?v=20261110g"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110r"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111a"></script>
 </body>
 </html>

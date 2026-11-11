@@ -7992,6 +7992,33 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     `${[...named, ...wrong].join('; ') || 'every one as by hand'}; the summary's ${same ? 'the same' : 'not the same'}`);
   }
   /*
+    A pore volume, for a time axis counted in them (Time in, on the page): the time the water takes to cross the column,
+    in the summary the page reads -- TRAVEL_TIME where it is given, else LENGTH over the pore water's speed
+    |VELOCITY|/POROSITY, the water flowing either way; none where it stands, nor in a batch. By hand: the freshening
+    column 0.2 m at 1e-5 m/s, 2e4 s; the far field's TRAVEL_TIME, 100 a; the tracer 1 m at 1e-6 m/s, 1e6 s; 0.5 m at
+    0.002 m/h through a porosity of 0.4, 100 h.
+  */
+  {
+    const exs = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES;
+    const poreTime = (text) => { let s = null; handleRtmMessage({ type: 'compile', id: 34, text }, (msg) => { s = msg.model; }); return s ? s.travelTime : undefined; };
+    const column = (flow) => `<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 0.5\nDIFFUSION = 1\n${flow}TEND = 10\nTIME_UNIT = hour\n`
+      + '<SPECIES>\nTr 0 D=1e-9 left=1\n<REACTIONS>\n';
+    const got = {
+      freshening: poreTime(exs.find((e) => e.id === 'freshening').text),
+      farfield: poreTime(exs.find((e) => e.id === 'farfield').text),
+      tracer: poreTime(exs.find((e) => e.id === 'tracer').text),
+      porous: poreTime(column('ADVECTION = 1\nVELOCITY = 0.002\nPOROSITY = 0.4\n')),
+      leftward: poreTime(column('ADVECTION = 1\nVELOCITY = -0.002\nPOROSITY = 0.4\n')),
+      still: poreTime(column('')),
+      batch: poreTime('<SETTINGS>\nMODE = batch\nTEND = 1\n<SPECIES>\nA 1\n<REACTIONS>\n'),
+    };
+    const want = { freshening: 2e4, farfield: 100, tracer: 1e6, porous: 100, leftward: 100, still: null, batch: null };
+    const wrong = Object.entries(want).filter(([k, w]) => (w === null ? got[k] !== null : !(Math.abs(got[k] / w - 1) < 1e-12)));
+    check('a pore volume in the summary the page reads: the travel time, TRAVEL_TIME or LENGTH over |VELOCITY|/POROSITY, the '
+      + 'water flowing either way, as by hand; none where the water stands, nor in a batch',
+    !wrong.length, Object.entries(got).map(([k, v]) => `${k} ${v}`).join(', '));
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

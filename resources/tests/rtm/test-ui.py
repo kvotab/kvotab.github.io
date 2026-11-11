@@ -1823,6 +1823,112 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = 'Ca+2';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            # Time in pore volumes, and several cells at once on Against time: breakthrough curves. The freshening column is
+            # 0.2 m at 1e-5 m/s with a porosity of 1, so a pore volume is 2e4 s: every stored time over it, the "from" turned
+            # with it, what was measured put on the axis by its own time, the three selects as one; the chloride at the outlet
+            # half-way from the brackish water's to the fresh one's at about one pore volume (the cell's centre 0.975 of the
+            # way along, the front spread a little). At four cells down the column each species' curves in its colour,
+            # faintest at the inlet and every step 3:1 against the page, each the very curve the one cell draws; the CSV
+            # with the pore volumes first and each cell's distance; a cell that is not there, said. Gradient across pore
+            # volumes, its CSV saying so; Against distance's Times read in them, 2 PV as typed; back in seconds, the Times'
+            # bare numbers and each "from" turned into seconds and the same curves drawn.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.4)
+            in_s = await page.ev("Array.from(document.getElementById('rtmChartTime').data.find((t) => t.name === 'Cl-').x)")
+            await unit('rtmTimeInTime', 'pv')
+            pv = await page.ev("""(() => { const p = document.getElementById('rtmChartTime'), d = p.data;
+              const cl = d.find((t) => t.name === 'Cl-'), y = cl.y, h = (y[0] + y[y.length - 1]) / 2;
+              let half = null;
+              for (let i = 1; i < y.length && half === null; i++) {
+                if ((y[i - 1] - h) * (y[i] - h) <= 0) half = cl.x[i - 1] + ((h - y[i - 1]) / (y[i] - y[i - 1])) * (cl.x[i] - cl.x[i - 1]);
+              }
+              return [p.layout.xaxis.title.text, ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join(' '),
+                `${document.getElementById('rtmTMin').value} ${document.getElementById('rtmTMinUnit').textContent}`,
+                document.getElementById('rtmTimeNote').textContent, Array.from(d.find((t) => t.name === 'Cl-, measured').x),
+                Array.from(cl.x), half]; })()""")
+            check('  time in pore volumes on Against time: each stored time over 2e4 s, the from turned with it, what was measured '
+                  'at its own time over the same, the three selects as one; the outlet\'s chloride half-way at about one pore volume',
+                  [pv[:4], [round(v, 12) for v in pv[4]], len(pv[5]) == len(in_s) > 100
+                   and max(abs(x * 2e4 / t - 1) for x, t in zip(pv[5], in_s) if t > 0) < 1e-12,
+                   isinstance(pv[6], (int, float)) and 0.9 < pv[6] < 1.0],
+                  [['pore volumes', 'pv pv pv', '5e-11 PV', 'a pore volume 5.56 h'], [0.5, 2.25, 5.0, 20.0], True, True])
+
+            async def cells(text):
+                await page.ev("(() => { const c = document.getElementById('rtmCells'); c.value = %s;"
+                              " c.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(text))
+                await asyncio.sleep(0.6)
+
+            def lum(rgb):
+                c = [v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4 for v in (x / 255 for x in rgb)]
+                return 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]
+            await cells('4, 9, 14, end')
+            four = await page.ev("""(() => { const d = document.getElementById('rtmChartTime').data;
+              const cl = d.filter((t) => /^Cl- at /.test(t.name) && !/measured/.test(t.name));
+              return [cl.map((t) => t.name).join(' | '), cl.map((t) => t.line.color), getComputedStyle(document.body).backgroundColor,
+                d.filter((t) => / at /.test(t.name) && !/measured/.test(t.name)).length, Array.from(cl[1].y),
+                document.getElementById('rtmCell').disabled, document.getElementById('rtmTimeNote').textContent]; })()""")
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv4 = await page.ev("""(async () => { const r = window.__saved[0]; const l = r ? (await r.body).split('\\n') : [''];
+              const row = (l[101] || '').split(',').slice(0, 2).map(Number);
+              return [r && r.name, l[0].startsWith('pore volumes,t (s),"Ca, dissolved (mg/kgw) @ cell 4 (0.045 m)",'
+                + '"Ca, dissolved (mg/kgw) @ cell 9 (0.095 m)"'), l[0].endsWith(',Cl- (mg/kgw) @ cell 19 (0.195 m)'),
+                Math.abs(row[0] * 2e4 / row[1] - 1) < 1e-12]; })()""")
+            await cells('')
+            await unit('rtmCell', '9')
+            one = await page.ev("Array.from(document.getElementById('rtmChartTime').data.find((t) => t.name === 'Cl-').y)")
+            await unit('rtmCell', '19')
+            await cells('4, 40, x')
+            bad = await page.ev("document.getElementById('rtmTimeNote').textContent")
+            await cells('')
+            bg = [int(v) for v in re.findall(r'\d+', four[2])[:3]] if isinstance(four, list) else [0, 0, 0]
+            ratios = [(max(lum(c), lum(bg)) + 0.05) / (min(lum(c), lum(bg)) + 0.05)
+                      for c in ([int(h[k:k + 2], 16) for k in (1, 3, 5)] for h in four[1])] if isinstance(four, list) else []
+            check('  four cells down the column: each species at each, named by its distance, faintest at the inlet, every step '
+                  '3:1 against the page, cell 9\'s curve the very one Cell draws, Cell set aside; the CSV with the pore volumes '
+                  'first and each cell\'s distance; a cell that is not there, said',
+                  [four[0], four[3], len(ratios) == 4 and all(a < b for a, b in zip(ratios, ratios[1:])) and min(ratios) >= 3,
+                   four[4] == one and len(one) > 100, four[5], four[6], csv4, bad],
+                  ['Cl- at 0.045 m | Cl- at 0.095 m | Cl- at 0.145 m | Cl- at 0.195 m', 16, True, True, True,
+                   'at cells 4, 9, 14, 19, faintest nearest the inlet; a pore volume 5.56 h',
+                   ['rtm_cell4_9_14_19.csv', True, True, True],
+                   'at cell 4; could not read 40, x as a cell: 20 cells, 0 to 19; a pore volume 5.56 h'])
+            await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")
+            await asyncio.sleep(0.6)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"gradient\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            grad_pv = await page.ev("""(async () => { const p = document.getElementById('rtmChartGradient'), r = window.__saved[0];
+              const tx = document.getElementById('rtmChartTime').data.find((t) => t.name === 'Cl-').x, gx = p.data[0].x;
+              return [p.layout.xaxis.title.text, p.data[0].hovertemplate.split('<br>')[0],
+                `${document.getElementById('rtmGradTMin').value} ${document.getElementById('rtmGradTMinUnit').textContent}`,
+                r ? (await r.body).split('\\n')[0].split(',')[0] : null, gx.length === tx.length - 1 && gx.every((x, k) => x === tx[k + 1])]; })()""")
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '0.5, 1, 2 PV, 5';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            prof_js = "[document.getElementById('rtmChartProfile').data.map((t) => t.name).join(' | '), Array.from(document.getElementById('rtmChartProfile').data[1].y)]"
+            prof_pv = await page.ev(prof_js)
+            await unit('rtmTimeInProfile', '')
+            back = await page.ev("""[...%s, document.getElementById('rtmProfileTimes').value, document.getElementById('rtmTMin').value,
+              document.getElementById('rtmGradTMin').value, ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join('|'),
+              document.getElementById('rtmChartTime').layout.xaxis.title.text]""" % prof_js)
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('  Gradient across pore volumes, its from turned, its CSV saying so; Against distance\'s Times read in them, 2 PV '
+                  'as typed; back in seconds, the Times\' bare numbers and each from turned into seconds, the same curves drawn',
+                  [grad_pv, prof_pv[0], back[0], back[1] == prof_pv[1] and len(back[1]) == 20, back[2:]],
+                  [['pore volumes', '%{x:.3g} PV', '5e-11 PV', 'distance (m) \\ pore volumes: Ca+2 (mg/kgw)', True],
+                   '0.498 PV | 0.999 PV | 2.00 PV | 4.97 PV', '2.77 h | 5.55 h | 11.1 h | 1.15 d', True,
+                   ['10000, 20000, 2 PV, 100000', '1e-6', '1e-6', '||', 'time (s)']])
             await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
             await asyncio.sleep(0.3)
             # The same water as PHREEQC lists it, on the Composition tab: one cell at one stored point, from the model's own
@@ -1925,6 +2031,75 @@ async def main():
             await page.ev("(() => { const b = document.getElementById('rtmCompLogT'); b.checked = true;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            # A tracer kept and run again at twice the speed, its dispersion a dispersivity (PECLET) and the run half as long,
+            # at three cells down the column: in hours the faster front reaches each cell in half the time; in pore volumes,
+            # each run in its own, the two cross one half at the same pore volume and the curves lie on each other, to the
+            # solver's tolerance; the note says how long each run's pore volume is.
+            tracer = ('# A tracer through a column, its dispersion a dispersivity: PECLET = LENGTH over it.\n\n<SETTINGS>\n'
+                      'MODE = transport\nCELLS = 25\nLENGTH = 0.5\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = %s\nPOROSITY = 0.4\n'
+                      'PECLET = 50\nLEFT = robin\nRIGHT = free\nTEND = %s\nTIME_UNIT = hour\n\n<SPECIES>\nTr  0.0  left=1.0\n\n'
+                      '<REACTIONS>\n')
+            boxes = await page.ev("[document.getElementById('rtmLogT').checked, document.getElementById('rtmLogY').checked]")
+
+            async def box(bid, on):
+                await page.ev("(() => { const b = document.getElementById(%s); b.checked = %s;"
+                              " b.dispatchEvent(new Event('change', { bubbles: true })); })()" % (json.dumps(bid), json.dumps(on)))
+                await asyncio.sleep(0.3)
+            await set_text(page, tracer % ('0.002', '500'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 1 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="Tr"]');
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await cells('4, 12, end')
+            await box('rtmLogT', False)
+            await box('rtmLogY', False)
+            await page.ev("document.getElementById('rtmKeep').click()")
+            klabel = (await page.ev("document.getElementById('rtmBeside').selectedOptions[0].textContent")).split(',')[0]
+            await set_text(page, tracer % ('0.004', '250'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 1 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 6, tries=40, pause=0.25)
+            halves_js = """((label) => { const d = document.getElementById('rtmChartTime').data;
+              const half = (t) => { for (let i = 1; i < t.y.length; i++) if (t.y[i - 1] < 0.5 && t.y[i] >= 0.5) {
+                return t.x[i - 1] + ((0.5 - t.y[i - 1]) / (t.y[i] - t.y[i - 1])) * (t.x[i] - t.x[i - 1]); } return null; };
+              const names = ['Tr at 0.09 m', 'Tr at 0.25 m', 'Tr at 0.49 m'];
+              let apart = 0;
+              for (const n of names) {
+                const a = d.find((t) => t.name === n), b = d.find((t) => t.name === `${n}, ${label}`);
+                for (let i = 0; i < a.x.length; i++) {
+                  let j = 1;
+                  while (j < b.x.length - 1 && b.x[j] < a.x[i]) j++;
+                  const y = b.y[j - 1] + ((b.y[j] - b.y[j - 1]) * (a.x[i] - b.x[j - 1])) / (b.x[j] - b.x[j - 1]);
+                  apart = Math.max(apart, Math.abs(y - a.y[i]));
+                }
+              }
+              return [names.map((n) => half(d.find((t) => t.name === n))), names.map((n) => half(d.find((t) => t.name === `${n}, ${label}`))),
+                apart, document.getElementById('rtmTimeNote').textContent]; })(%s)""" % json.dumps(klabel)
+            hours = await page.ev(halves_js)
+            await unit('rtmTimeInTime', 'pv')
+            pvs = await page.ev(halves_js)
+            ok_hours = isinstance(hours, list) and all(isinstance(v, (int, float)) for v in hours[0] + hours[1]) \
+                and max(abs(a / b - 0.5) for a, b in zip(hours[0], hours[1])) < 1e-4
+            ok_pv = isinstance(pvs, list) and all(isinstance(v, (int, float)) for v in pvs[0] + pvs[1]) \
+                and max(abs(a - b) for a, b in zip(pvs[0], pvs[1])) < 1e-5
+            check('  a tracer kept and run again at twice the speed, the same dispersivity: in hours its front at each cell in half '
+                  'the time, in pore volumes, each run in its own, at the same pore volume and the curves on each other to 1e-4; the '
+                  f'note giving each run\'s pore volume (half-way at {pvs[0] if isinstance(pvs, list) else pvs} PV, '
+                  f'{pvs[2] if isinstance(pvs, list) else ""} apart at most)',
+                  [ok_hours, ok_pv, isinstance(pvs, list) and pvs[2] < 1e-4, isinstance(pvs, list) and pvs[3]],
+                  [True, True, True, f'at cells 4, 12, 24, faintest nearest the inlet; a pore volume 2.08 d; in the model\'s own unit: '
+                   f'mg/kgw needs ACTIVITY, whose concentrations are mol/kgw; dashed, the run {klabel} in its own pore volumes, 4.17 d each'])
+            # As the next model finds them: in seconds, at one cell, nothing beside, the log boxes as they were.
+            await unit('rtmTimeInTime', '')
+            await cells('')
+            await box('rtmLogT', boxes[0])
+            await box('rtmLogY', boxes[1])
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
             # A model without ACTIVITY, mg/kgw still chosen: its concentrations are in whatever unit its text means, so they are
             # drawn as it has them and the note says why; mg and µg on the menu, not to be chosen; times 10^3 a thousand times,
             # the title saying so.
@@ -1949,6 +2124,21 @@ async def main():
                   [['as the model has them | × 10³ | × 10⁶ | × 10⁹ | mg/kgw, under ACTIVITY (off) | µg/kgw, under ACTIVITY (off)', '',
                     'concentration', "in the model's own unit: mg/kgw needs ACTIVITY, whose concentrations are mol/kgw"],
                    0.002, 'concentration × 10³', True])
+            # The Danckwerts example opens on Against time in pore volumes, its tracer at four cells a quarter of the column
+            # apart, as its description says: at a Péclet number of 5 the front spreading as it goes, half-way up at 0.29 pore
+            # volumes a quarter of the way along and at 0.86 at the outlet.
+            ok = await example('danckwerts', "document.getElementById('rtmStatus').textContent.startsWith('Done')"
+                                             " && document.querySelector('.rtm-tabs button.active').dataset.tab === 'time'")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 4, tries=40, pause=0.25)
+            dw = await page.ev("""(() => { const p = document.getElementById('rtmChartTime'), d = p.data;
+              const half = (t) => { for (let i = 1; i < t.y.length; i++) if (t.y[i - 1] < 0.5 && t.y[i] >= 0.5) {
+                return t.x[i - 1] + ((0.5 - t.y[i - 1]) / (t.y[i] - t.y[i - 1])) * (t.x[i] - t.x[i - 1]); } return null; };
+              return [p.layout.xaxis.title.text, p.layout.xaxis.type, d.map((t) => t.name).join(' | '), document.getElementById('rtmCells').value,
+                document.getElementById('rtmTimeNote').textContent, d.map((t) => Number(half(t).toFixed(2)))]; })()""")
+            check('the Danckwerts example opens on Against time in pore volumes at four cells a quarter of the column apart, '
+                  'the front half-way up at 0.29 pore volumes a quarter of the way along and at 0.86 at the outlet', [ok, dw],
+                  [True, ['pore volumes', 'linear', 'X at 0.238 m | X at 0.488 m | X at 0.738 m | X at 0.988 m', '9, 19, 29, 39',
+                          'at cells 9, 19, 29, 39, faintest nearest the inlet; a pore volume 11.6 d', [0.29, 0.53, 0.75, 0.86]]])
             ok = await example('calcitefit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
             fitted = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                    " [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2)"
