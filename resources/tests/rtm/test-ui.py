@@ -699,7 +699,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '37:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '38:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1725,6 +1725,24 @@ async def main():
               document.getElementById('chart').data.length > 0])()""" % json.dumps(hostile.rstrip('\n'))) if body else None
             check('  a model text that would close the script and add an image comes through as text: nothing of it runs, no '
                   'image, the two scripts the page has, the comment shown as it is written', inert, [True, 0, 2, True, True])
+            # Iron with carbonate and two solids, phreeqc.dat's hematite and siderite: the species or the phase that holds most of
+            # the iron, Fe+3, Fe+2, hematite and siderite each a field of its own and their boundaries found -- test-phreeqc.js
+            # has them against PHREEQC; a solid's points read as its index per mole of iron, a species' as its share of the iron
+            # dissolved; In stands aside, the species being the water's; the water's limits dashed.
+            ok = await example('pourbaixsolids', "/its boundaries found/.test(document.getElementById('rtmStatus').textContent)", tries=240)
+            solids = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              const fills = new Set(d.filter((t) => t.fill === 'toself').map((t) => t.name));
+              const text = d[0].text.flat();
+              const pairs = d.find((t) => t.name === 'boundaries');
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, document.getElementById('rtmDgShow').value,
+                document.getElementById('rtmDgEl').value, document.getElementById('rtmDgInWrap').hidden,
+                ['Fe+2', 'Fe+3', 'Hematite', 'Siderite'].every((nm) => fills.has(nm)), !!pairs && pairs.x.length > 10,
+                text.some((t) => /^Hematite, SI over its Fe /.test(t || '')), text.some((t) => /^Fe\\+2: [0-9.]+ % of the Fe dissolved$/.test(t || '')),
+                p.layout.yaxis.title.text, d.filter((t) => t.line && t.line.dash === 'dash').length]; })()""")
+            check('the iron and carbonate example opens on the species or the phase that holds most of the iron over pH and Eh: '
+                  'Fe+3, Fe+2, hematite and siderite each a field, their boundaries found; a solid\'s points its index per mole '
+                  'of iron, a species\' its share of the iron dissolved; the water\'s limits dashed', [ok, solids],
+                  [True, ['diagram', 'mixed', 'Fe', True, True, True, True, True, 'Eh (V)', 2]])
             # A groundwater's redox ladder at pH 7, phreeqc.dat's couples: nitrate to nitrogen at the top, carbonate to methane at the
             # foot, where test-phreeqc.js has them against PHREEQC; the water's limits dashed, the water itself dotted at pe 4.
             ok = await example('redoxladder', "/turns? over here/.test(document.getElementById('rtmDgNote').textContent)")

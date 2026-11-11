@@ -3980,6 +3980,85 @@ function againstStability(engine) {
 }
 
 /* ======================================================================
+   A POURBAIX MAP WITH ITS SOLIDS, against PHREEQC: a water with iron at
+   1e-6 and carbonate handed off with its activity coefficients and its
+   couples tied to the electron, phreeqc.dat's hematite and siderite
+   written in <PHASES> at the database's log K, mapped over pH 3 to 11 and
+   pe -12 to 16 as the species or the phase that holds most of the iron.
+   The totals are held over the map, so that at each point of each boundary
+   PHREEQC's SOLUTION of the same water at that pH and pe gives what the
+   page found there: two phases the same saturation index per mole of
+   iron, a phase beside a species an index of 0, two species the same
+   amount of iron. The same water: PHREEQC's hydrogen, H2, left out of it as
+   the hand-off leaves it out of the model's -- at pe -8 and pH 8.4 PHREEQC
+   would hold 1e-4 mol/kgw of it, lowering its activity of water by 1.7e-6
+   and moving hematite's index per mole by 1e-6.
+   ====================================================================== */
+function againstPourbaixSolids(engine) {
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7\n pe 4\n Na 1\n Cl 1\n Fe 1e-3\n C(4) 1\nEND\n';
+  const phases = [['Hematite', '+ 6 H+ <=> 2 Fe+3 + 3 H2O'], ['Siderite', '<=> Fe+2 + CO3-2']];
+  engine.load(dbText);
+  const lk = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + `${phases.map(([pq], i) => ` ${10 + 10 * i} PUNCH LK_PHASE("${pq}")`).join('\n')}\nEND\n`);
+  const logKs = lk[lk.length - 1].map(Number);
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'iron', text: water }, activity: true, exact: true });
+  const text = `${res.text}\n<PHASES>\n${phases.map(([nm, rx], i) => `${nm} ${rx},  logK = ${logKs[i]}`).join('\n')}\n`;
+  const m = RtmModel.compile(text);
+  const terms = m.composition.elements.find((e) => e.el === 'Fe').terms.filter((tm) => tm[2] === 'water').map(([k, n]) => [k, n]);
+  const keys = phases.map(([nm]) => `SI(${nm})`);
+  const per = keys.map((key) => m.quantities.find((q) => q.key === key).makeup.Fe);
+  const axes = [{ kind: 'pH', from: 3, to: 11, n: 33 }, { kind: 'pe', from: -12, to: 16, n: 57 }];
+  const reply = (msg) => { let r = null; handleRtmMessage(msg, (x) => { if (x.type !== 'progress') r = x; }); if (r.type === 'error') throw new Error(r.error); return r; };
+  const grid = reply({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes });
+  const b = reply({ type: 'diagramBounds', id: 2, text, at: 'start', cell: 0, axes, grid: grid.states,
+    criterion: { kind: 'mixed', terms, keys, per } });
+  // The water's totals, held over the map; each species of the iron by PHREEQC's name.
+  const y0 = m.toConcentrations(m.initialState());
+  const totalOf = (el) => m.composition.elements.find((e) => e.el === el).terms.filter((tm) => tm[2] === 'water')
+    .reduce((acc, [k, n]) => acc + n * y0[k], 0);
+  const totals = { Na: totalOf('Na'), Cl: totalOf('Cl'), Fe: totalOf('Fe') };
+  const carbon = totalOf('C');
+  const pqName = new Map([...res.names].map(([pq, mine]) => [mine, pq]));
+  const termNames = terms.map(([k]) => pqName.get(m.speciesNames[k]) || m.speciesNames[k]);
+  const nt = terms.length;
+  const label = (q) => (q < nt ? m.speciesNames[terms[q][0]] : phases[q - nt][0]);
+  const pqAt = (pH, pe) => {
+    engine.load(dbText);
+    const rows = engine.run(`SOLUTION_SPECIES\n2 H+ + 2 e- = H2\n log_k -100\nSOLUTION 1\n units mol/kgw\n pH ${pH.toPrecision(17)}\n pe ${pe.toPrecision(17)}\n`
+      + `${Object.entries(totals).map(([el, v]) => ` ${el} ${v.toPrecision(17)}`).join('\n')}\n C(4) ${carbon.toPrecision(17)}\n`
+      + `SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n${phases.map(([pq], i) => ` ${10 + 10 * i} PUNCH SI("${pq}")/${per[i]}`).join('\n')}\n`
+      + `${termNames.map((nm, i) => ` ${100 + 10 * i} PUNCH MOL("${nm}")*${terms[i][1]}`).join('\n')}\nEND\n`);
+    const v = rows[rows.length - 1].map(Number);
+    return { s: v.slice(0, phases.length), c: v.slice(phases.length) };
+  };
+  const measure = (w, a, z) => {
+    if (a < nt && z < nt) return Math.log10(w.c[a]) - Math.log10(w.c[z]);
+    if (a >= nt && z >= nt) return w.s[a - nt] - w.s[z - nt];
+    return a >= nt ? w.s[a - nt] : -w.s[z - nt];
+  };
+  let worst = 0;
+  let where = '';
+  let points = 0;
+  for (const ln of b.lines) {
+    ln.x.forEach((x, i) => {
+      const d = Math.abs(measure(pqAt(x, ln.y[i]), ln.a, ln.b));
+      points++;
+      if (!(d <= worst)) { worst = d; where = `${label(ln.a)}|${label(ln.b)} at pH ${x.toFixed(3)}, pe ${ln.y[i].toFixed(3)}`; }
+    });
+  }
+  const pairs = [...new Set(b.lines.map((ln) => [label(ln.a), label(ln.b)].sort().join('|')))].sort().join(' ');
+  check('a Pourbaix map with its solids of a handed-off water, iron at 1e-6 with carbonate, phreeqc.dat\'s hematite and '
+    + 'siderite, over pH 3 to 11 and pe -12 to 16: at every point of every boundary PHREEQC\'s SOLUTION of the same water at '
+    + 'that pH and pe gives two phases the same index per mole of iron, a phase beside a species an index of 0, two species '
+    + 'the same amount of iron, to 1e-8',
+  !grid.failed && !b.unsolved && b.junctions.every((jn) => jn.solved) && /Hematite/.test(pairs) && /Siderite/.test(pairs)
+    && worst < 1e-8,
+  `${b.lines.length} boundaries (${pairs}), ${b.junctions.length} points where three meet, ${points} points against PHREEQC: `
+    + `the worst ${worst.toExponential(1)} (${where})`);
+}
+
+/* ======================================================================
    A SOLUBILITY DIAGRAM, against PHREEQC: a water of 10 mM NaCl with a
    trace of aluminium handed off with its activity coefficients, gibbsite
    and amorphous Al(OH)3 written in <PHASES> at the database's log K, and
@@ -5284,6 +5363,8 @@ function againstKineticsHandOff(engine) {
   againstStability(wasm);
   console.log('\n--- a solubility diagram: the water at saturation with gibbsite and amorphous Al(OH)3 against PHREEQC\'s SOLUTION ---');
   againstSolubility(wasm);
+  console.log('\n--- a Pourbaix map with its solids: hematite, siderite and the iron\'s species against PHREEQC\'s SOLUTION ---');
+  againstPourbaixSolids(wasm);
   console.log('\n--- a redox ladder: valence states, the couples, and where each turns over against PHREEQC\'s SOLUTION there ---');
   againstLadder(wasm);
   console.log('\n--- the couples across a map of pH and pe or Eh, against PHREEQC\'s SOLUTION along each line ---');

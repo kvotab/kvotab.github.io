@@ -345,6 +345,39 @@ const RTM_EXAMPLES = [
     }
   },
   {
+    "id": "pourbaixsolids",
+    "group": "Equilibrium diagrams",
+    "label": "Iron and carbonate: an Eh–pH diagram with hematite and siderite",
+    "about": "Iron at 1e-6 mol/kgw in a water with carbonate, its species dissolved and two of its solids from phreeqc.dat, hematite and siderite. Run it: the Diagrams tab holds the water at each pH and Eh and draws the species or the phase that holds most of the iron -- the textbook Pourbaix diagram with its solids: Fe+3 in acid and oxidising water, Fe+2 in acid and reducing, hematite over most of the rest, and siderite where reducing water meets the carbonate, between where water itself gives way.",
+    "text": "# Iron at 1e-6 mol/kgw in a water with carbonate, its species dissolved and\n# two of its solids, hematite and siderite. The Diagrams tab holds the water\n# at each pH and Eh and draws the species or the phase that holds most of the\n# iron: where a solid is at saturation or over, the most stable of them per\n# mole of iron; elsewhere the species dissolved holding most of it -- the\n# Eh-pH diagram textbooks draw at a total of 1e-6, with where water itself\n# gives way. phreeqc.dat's constants at 25 C.\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = always\n\n<SPECIES>\nH+           1e-7\nOH-          1e-7\ne-           electron  pe=4\nNa+          1e-3\nCl-          1e-3\nCO2          1e-4\nHCO3-        1e-3\nCO3-2        1e-6\nFe+2         1e-6\nFe+3         0\nFeOH+        0\nFe(OH)2      0\nFe(OH)3-     0\nFeOH+2       0\nFe(OH)2+     0\nFe(OH)3      0\nFe(OH)4-     0\nFeCO3        0\nFeHCO3+      0\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                         logK = -14\nCO2 + H2O <=> H+ + HCO3-,              logK = -6.352\nHCO3- <=> H+ + CO3-2,                  logK = -10.329\nFe+2 <=> Fe+3 + e-,                    logK = -13.02\nFe+2 + H2O <=> FeOH+ + H+,             logK = -9.5\nFe+2 + 2 H2O <=> Fe(OH)2 + 2 H+,       logK = -20.57\nFe+2 + 3 H2O <=> Fe(OH)3- + 3 H+,      logK = -31\nFe+3 + H2O <=> FeOH+2 + H+,            logK = -2.19\nFe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,      logK = -5.67\nFe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56\nFe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6\nFe+2 + CO3-2 <=> FeCO3,                logK = 4.38\nFe+2 + HCO3- <=> FeHCO3+,              logK = 2\n\n<PHASES>\nHematite + 6 H+ <=> 2 Fe+3 + 3 H2O,    logK = -4.008\nSiderite <=> Fe+2 + CO3-2,             logK = -10.89\n",
+    "view": {
+      "tab": "diagram",
+      "go": true,
+      "dg": {
+        "cell": 0,
+        "at": "start",
+        "x": {
+          "kind": "pH",
+          "sp": "",
+          "from": "0",
+          "to": "14",
+          "n": "141"
+        },
+        "y": {
+          "kind": "Eh",
+          "sp": "",
+          "from": "-0.8",
+          "to": "1.2",
+          "n": "81"
+        },
+        "show": "mixed",
+        "el": "Fe",
+        "in": "water",
+        "q": "pH"
+      }
+    }
+  },
+  {
     "id": "redoxladder",
     "group": "Equilibrium diagrams",
     "label": "A groundwater's redox ladder at pH 7",

@@ -9107,6 +9107,71 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   ironOut.map((o) => `${o.n}: lines within ${o.line.toExponential(1)}, ${o.nj} meeting points within ${o.meet.toExponential(1)}, `
     + `area ${o.area.toExponential(1)}`).join('; ') + ` | ${ironOut[0].pairs}`);
 
+  /*
+    A POURBAIX MAP WITH ITS SOLIDS: the same iron at 1e-6, without activity
+    coefficients, with hematite and an iron(2) hydroxide of the test's own,
+    FeOH2s, log K 11.85 -- the species or the phase that holds most of the
+    iron. Each species dissolved is C(Fe+2) 10^(a + b pH + c pe), the total
+    1e-6 fixing C(Fe+2); hematite's index per mole of iron is
+    log C(Fe+3) + 3 pH + 2.004, the hydroxide's log C(Fe+2) + 2 pH - 11.85.
+    Every point of every boundary is where its two fields' measures are
+    equal -- two species' amounts, two phases' indices per mole, or a
+    phase's index zero -- to 1e-9; the two phases' boundary is the straight
+    line pe = -0.834 - pH; both points where three meet solved. A map
+    without the phases' counts refused.
+  */
+  const solidsText = `${ironText}\n<PHASES>\nHematite + 6 H+ <=> 2 Fe+3 + 3 H2O,  logK = -4.008\nFeOH2s + 2 H+ <=> Fe+2 + 2 H2O,  logK = 11.85\n`;
+  const solidsModel = RtmModel.compile(solidsText);
+  const solidTerms = solidsModel.composition.elements.find((e) => e.el === 'Fe').terms.filter((tm) => tm[2] === 'water').map(([k, n]) => [k, n]);
+  const solidNames = solidTerms.map(([k]) => solidsModel.speciesNames[k]);
+  const solidKeys = ['SI(Hematite)', 'SI(FeOH2s)'];
+  const solidPer = solidKeys.map((key) => solidsModel.quantities.find((q) => q.key === key).makeup.Fe);
+  const solidAxes = [{ kind: 'pH', from: 0, to: 14, n: 57 }, { kind: 'pe', from: -16, to: 20, n: 73 }];
+  const solidGrid = askW({ type: 'diagram', id: 20, text: solidsText, at: 'start', cell: 0, axes: solidAxes });
+  const solidMap = askW({ type: 'diagramBounds', id: 21, text: solidsText, at: 'start', cell: 0, axes: solidAxes, grid: solidGrid.states,
+    criterion: { kind: 'mixed', terms: solidTerms, keys: solidKeys, per: solidPer } });
+  const solidLabel = (q) => (q < solidNames.length ? solidNames[q] : solidKeys[q - solidNames.length].slice(3, -1));
+  const solidAt = (pH, pe) => {
+    const L = solidNames.map((nm) => { const [a0, b0, c0] = ironLine[nm]; return a0 + b0 * pH + c0 * pe; });
+    const sum = L.reduce((acc, l) => acc + 10 ** l, 0);
+    const C = L.map((l) => (1e-6 * 10 ** l) / sum);
+    return { C, s: [Math.log10(C[solidNames.indexOf('Fe+3')]) + 3 * pH + 2.004, Math.log10(C[solidNames.indexOf('Fe+2')]) + 2 * pH - 11.85] };
+  };
+  const solidDisc = (pH, pe, a, z) => {
+    const { C, s: sc } = solidAt(pH, pe);
+    const nt = solidNames.length;
+    if (a < nt && z < nt) return Math.log10(C[a]) - Math.log10(C[z]);
+    if (a >= nt && z >= nt) return sc[a - nt] - sc[z - nt];
+    return a >= nt ? sc[a - nt] : -sc[z - nt];
+  };
+  let solidWorst = 0;
+  let solidLine = 0;
+  for (const ln of solidMap.lines) {
+    ln.x.forEach((x, i) => { solidWorst = Math.max(solidWorst, Math.abs(solidDisc(x, ln.y[i], ln.a, ln.b))); });
+    if ([solidLabel(ln.a), solidLabel(ln.b)].sort().join('|') === 'FeOH2s|Hematite') {
+      ln.x.forEach((x, i) => { solidLine = Math.max(solidLine, Math.abs(ln.y[i] + x + 0.834)); });
+    }
+  }
+  const solidMeet = Math.max(...solidMap.junctions.map((jn) => Math.max(Math.abs(solidDisc(jn.x, jn.y, jn.labels[0], jn.labels[1])),
+    Math.abs(solidDisc(jn.x, jn.y, jn.labels[1], jn.labels[2])))));
+  const solidPairs = [...new Set(solidMap.lines.map((ln) => [solidLabel(ln.a), solidLabel(ln.b)].sort().join('|')))].sort().join(' ');
+  const solidRefused = (() => {
+    try {
+      askW({ type: 'diagramBounds', id: 22, text: solidsText, at: 'start', cell: 0, axes: solidAxes, grid: solidGrid.states,
+        criterion: { kind: 'mixed', terms: solidTerms, keys: solidKeys } });
+      return '';
+    } catch (e) { return e.message; }
+  })();
+  check('a Pourbaix map with its solids, iron at 1e-6 without activity coefficients, hematite and an iron(2) hydroxide: every '
+    + 'point of every boundary where its two fields\' measures are equal, to 1e-9; hematite\'s and the hydroxide\'s boundary on '
+    + 'pe = -0.834 - pH to 1e-12; both points where three meet solved; the phases\' counts asked for',
+  !solidGrid.failed && !solidMap.unsolved && solidWorst < 1e-9 && solidLine < 1e-12 && solidMeet < 1e-12
+    && solidMap.junctions.length === 2 && solidMap.junctions.every((jn) => jn.solved)
+    && solidPairs === 'Fe+2|Fe+3 Fe+2|FeOH2s Fe+2|Hematite Fe+3|Hematite FeOH2s|Hematite'
+    && /Each phase weighed by its count of the element/.test(solidRefused),
+  `${solidPairs}: within ${solidWorst.toExponential(1)}, the line within ${solidLine.toExponential(1)}, where three meet within `
+    + `${solidMeet.toExponential(1)}; "${solidRefused}"`);
+
   // A phase map: calcium's total held, carbonate's and sulfate's activities varied, no complexes: SI(Calcite) is
   // log Ca + la(CO3-2) + 8.48, SI(Gypsum) log Ca + la(SO4-2) + 4.58, and the boundaries are where either is zero or they meet.
   const phaseText = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = always\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\nCa+2  1e-2\n'

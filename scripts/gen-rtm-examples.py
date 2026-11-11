@@ -1929,6 +1929,71 @@ pH    Zn_sorbed
 ))
 
 
+_after('pourbaix', dict(
+    id='pourbaixsolids',
+    group='Equilibrium diagrams',
+    label='Iron and carbonate: an Eh–pH diagram with hematite and siderite',
+    about="Iron at 1e-6 mol/kgw in a water with carbonate, its species dissolved and two of its solids from phreeqc.dat, hematite and siderite. Run it: the Diagrams tab holds the water at each pH and Eh and draws the species or the phase that holds most of the iron -- the textbook Pourbaix diagram with its solids: Fe+3 in acid and oxidising water, Fe+2 in acid and reducing, hematite over most of the rest, and siderite where reducing water meets the carbonate, between where water itself gives way.",
+    text='''\
+# Iron at 1e-6 mol/kgw in a water with carbonate, its species dissolved and
+# two of its solids, hematite and siderite. The Diagrams tab holds the water
+# at each pH and Eh and draws the species or the phase that holds most of the
+# iron: where a solid is at saturation or over, the most stable of them per
+# mole of iron; elsewhere the species dissolved holding most of it -- the
+# Eh-pH diagram textbooks draw at a total of 1e-6, with where water itself
+# gives way. phreeqc.dat's constants at 25 C.
+<SETTINGS>
+MODE = batch
+TEND = 1
+ACTIVITY = davies
+EQUILIBRATE = always
+
+<SPECIES>
+H+           1e-7
+OH-          1e-7
+e-           electron  pe=4
+Na+          1e-3
+Cl-          1e-3
+CO2          1e-4
+HCO3-        1e-3
+CO3-2        1e-6
+Fe+2         1e-6
+Fe+3         0
+FeOH+        0
+Fe(OH)2      0
+Fe(OH)3-     0
+FeOH+2       0
+Fe(OH)2+     0
+Fe(OH)3      0
+Fe(OH)4-     0
+FeCO3        0
+FeHCO3+      0
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,                         logK = -14
+CO2 + H2O <=> H+ + HCO3-,              logK = -6.352
+HCO3- <=> H+ + CO3-2,                  logK = -10.329
+Fe+2 <=> Fe+3 + e-,                    logK = -13.02
+Fe+2 + H2O <=> FeOH+ + H+,             logK = -9.5
+Fe+2 + 2 H2O <=> Fe(OH)2 + 2 H+,       logK = -20.57
+Fe+2 + 3 H2O <=> Fe(OH)3- + 3 H+,      logK = -31
+Fe+3 + H2O <=> FeOH+2 + H+,            logK = -2.19
+Fe+3 + 2 H2O <=> Fe(OH)2+ + 2 H+,      logK = -5.67
+Fe+3 + 3 H2O <=> Fe(OH)3 + 3 H+,       logK = -12.56
+Fe+3 + 4 H2O <=> Fe(OH)4- + 4 H+,      logK = -21.6
+Fe+2 + CO3-2 <=> FeCO3,                logK = 4.38
+Fe+2 + HCO3- <=> FeHCO3+,              logK = 2
+
+<PHASES>
+Hematite + 6 H+ <=> 2 Fe+3 + 3 H2O,    logK = -4.008
+Siderite <=> Fe+2 + CO3-2,             logK = -10.89
+''',
+    view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pH', 'sp': '', 'from': '0', 'to': '14', 'n': '141'},
+                                               'y': {'kind': 'Eh', 'sp': '', 'from': '-0.8', 'to': '1.2', 'n': '81'}, 'show': 'mixed',
+                                               'el': 'Fe', 'in': 'water', 'q': 'pH'}},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

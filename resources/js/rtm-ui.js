@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111i';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111j';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5670,7 +5670,8 @@
     const lines = two && kinds.includes('pH') && (kinds.includes('pe') || kinds.includes('Eh'))
       && !!(dgResult.composition && dgResult.composition.couples && dgResult.composition.couples.length);
     const opts = two
-      ? [['predominance', 'the species that holds most of an element'], ['phase', 'the phase furthest over saturation, or at it'],
+      ? [['predominance', 'the species that holds most of an element'], ['mixed', 'the species or the phase that holds most of an element'],
+        ['phase', 'the phase furthest over saturation, or at it'],
         ['stable', 'the phases of an element, the most stable per mole of it'],
         ...(lines ? [['couples', 'the redox couples, as lines']] : []), ['contour', 'a species or a quantity, as contours']]
       : [...(dgResult.reply.sat ? [['solubility', 'what dissolves: the total at saturation']] : []),
@@ -5694,9 +5695,10 @@
     $('rtmDgEl').innerHTML = els.length ? els.map((e) => `<option value="${esc(e)}"${e === d.el ? ' selected' : ''}>${esc(e)}</option>`).join('')
       : '<option value="">none</option>';
     $('rtmDgIn').value = d.in;
-    const byEl = ['shares', 'logc', 'predominance', 'stable'].includes(d.show);
+    const byEl = ['shares', 'logc', 'predominance', 'mixed', 'stable'].includes(d.show);
     $('rtmDgElWrap').hidden = !byEl;
-    $('rtmDgInWrap').hidden = !(byEl || d.show === 'ladder' || d.show === 'couples') || d.show === 'stable';
+    // Species and phases: the species in the water, the phases beside them.
+    $('rtmDgInWrap').hidden = !(byEl || d.show === 'ladder' || d.show === 'couples') || d.show === 'stable' || d.show === 'mixed';
     $('rtmDgQWrap').hidden = !(d.show === 'quantity' || d.show === 'contour');
     if (!speciesNames().includes(d.q) && !(quantityOf(d.q) && !quantityOf(d.q).of)) d.q = quantityOf('pH') ? 'pH' : (speciesNames()[0] || '');
     $('rtmDgQ').innerHTML = pickerOptions(d.q, false);
@@ -5991,6 +5993,8 @@
     let criterion;
     let nameOf;
     let satKeys = [];
+    // Of species and phases, which fields are phases: their points read as an index per mole, the rest as a share.
+    let solidNames = null;
     if (d.show === 'predominance') {
       const terms = dgTerms(d.el);
       if (terms.length < 2) { fail(`No two species hold ${d.el || 'an element'} ${d.in === 'all' ? 'in the cell' : 'in the water'}.`); return; }
@@ -6015,6 +6019,64 @@
       }
       criterion = { kind: 'predominance', terms: terms.map(([k, n]) => [k, n]) };
       nameOf = (lab) => termName(terms[lab]);
+    } else if (d.show === 'mixed') {
+      /*
+        The species or the phase that holds most of the element: where the
+        phase made of it most stable per mole of it -- its saturation index
+        over its count of the element, a mineral of the model's there taken
+        as at saturation -- is at saturation or over, that phase, the
+        element held in a solid there; elsewhere the species dissolved
+        holding most of it. A Pourbaix diagram with its solids, the element
+        dissolved at the water's total, as the worker's boundaries take it.
+      */
+      const C = dgResult.composition;
+      const e = C && C.elements.find((x) => x.el === d.el);
+      const terms = e ? e.terms.filter((tm) => tm[2] === 'water') : [];
+      const made = rp.keys.filter((key) => key.startsWith('SI(')).map((key) => {
+        const q = quantityOf(key);
+        return { key, n: (q && q.makeup && q.makeup[d.el]) || 0, q: rp.keys.indexOf(key), k: names.indexOf(key.slice(3, -1)) };
+      }).filter((x) => x.n > 0);
+      if (!terms.length) { fail(`No species dissolved holds ${d.el || 'an element'}.`); return; }
+      if (!made.length) {
+        fail(`No phase is made of ${d.el}: give one in <PHASES>, or draw the species that holds most of it.`);
+        return;
+      }
+      const nt = terms.length;
+      for (let p = 0; p < n1 * n2; p++) {
+        let best = -1;
+        let most = -Infinity;
+        for (let j = 0; j < made.length; j++) {
+          const x = made[j];
+          let v = rp.quant[p * rp.nq + x.q];
+          if (x.k >= 0 && rp.states[p * rp.ns + x.k] > 0) v = Math.max(0, v);
+          v /= x.n;
+          if (Number.isFinite(v) && v > most) { most = v; best = j; }
+        }
+        let label;
+        if (best >= 0 && most >= 0) {
+          label = made[best].key.slice(3, -1);
+          share[p] = most;
+        } else {
+          let held = -1;
+          let amount = -Infinity;
+          let sum = 0;
+          for (let q = 0; q < nt; q++) {
+            const v = terms[q][1] * rp.states[p * rp.ns + terms[q][0]];
+            if (!Number.isFinite(v)) { held = -2; break; }
+            sum += Math.max(0, v);
+            if (v > amount) { amount = v; held = q; }
+          }
+          if (held < 0) continue;
+          label = names[terms[held][0]];
+          share[p] = sum > 0 ? (100 * amount) / sum : null;
+        }
+        let c = names2.indexOf(label);
+        if (c < 0) { c = names2.length; names2.push(label); }
+        at[p] = c;
+      }
+      criterion = { kind: 'mixed', terms: terms.map(([k, n]) => [k, n]), keys: made.map((x) => x.key), per: made.map((x) => x.n) };
+      nameOf = (lab) => (lab < nt ? names[terms[lab][0]] : made[lab - nt].key.slice(3, -1));
+      solidNames = new Set(made.map((x) => x.key.slice(3, -1)));
     } else if (d.show === 'stable') {
       /*
         Each phase of the element weighed per mole of it: its saturation index
@@ -6089,7 +6151,8 @@
     const text = ys.map((_, j) => xs.map((_, i) => {
       const p = j * n1 + i;
       if (at[p] < 0) return 'did not settle';
-      if (d.show === 'stable') return `${names2[at[p]]}, SI over its ${d.el} ${(share[p] + 0).toFixed(2)}`;
+      if (d.show === 'stable' || (solidNames && solidNames.has(names2[at[p]]))) return `${names2[at[p]]}, SI over its ${d.el} ${(share[p] + 0).toFixed(2)}`;
+      if (d.show === 'mixed') return `${names2[at[p]]}: ${share[p] === null ? '' : `${share[p].toFixed(1)} % of the ${d.el} dissolved`}`;
       return d.show === 'predominance' ? `${names2[at[p]]}: ${share[p] === null ? '' : `${share[p].toFixed(1)} %`}`
         : `${names2[at[p]]}${names2[at[p]] === 'none over saturation' ? `, the nearest SI ${share[p].toFixed(2)}` : `, SI ${(share[p] + 0).toFixed(2)}`}`;
     }));
@@ -6170,8 +6233,10 @@
     Plotly.react(plot, [...traces, ...dgWaterLines(ax, ay, xs, ys)], layout, PLOT_CONFIG);
     const counts = names2.map((nm, c) => [nm, at.filter((v) => v === c).length]).filter(([, k]) => k > 0);
     dgTableNow = { head: [dgLabel(ax), dgLabel(ay), d.show === 'predominance' ? `the species holding most of the ${d.el}`
-      : d.show === 'stable' ? `the phase most stable per mole of ${d.el}` : 'the phase furthest over saturation, or at it',
-    d.show === 'predominance' ? 'its share (%)' : d.show === 'stable' ? `its SI over its ${d.el}` : 'its SI'],
+      : d.show === 'mixed' ? `the species or the phase holding most of the ${d.el}`
+        : d.show === 'stable' ? `the phase most stable per mole of ${d.el}` : 'the phase furthest over saturation, or at it',
+    d.show === 'predominance' ? 'its share (%)' : d.show === 'mixed' ? `a species' share of the ${d.el} dissolved (%), or a phase's SI over its ${d.el}`
+      : d.show === 'stable' ? `its SI over its ${d.el}` : 'its SI'],
     rows: at.map((c, p) => [xs[p % n1], ys[Math.floor(p / n1)], c >= 0 ? names2[c] : null, share[p]]),
     name: `rtm_diagram_${d.show}` };
     if (bounds) {
@@ -9634,6 +9699,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           ] },
           { heading: 'Show', list: two ? [
             '**the species that holds most of an element**, in the water or the whole cell: over pH and pe or Eh, a Pourbaix diagram, with the water\'s own limits, O₂ above and H₂ below at 1 atm and 25 °C: in volts 1.229 − 0.0592 pH and −0.0592 pH.',
+            '**the species or the phase that holds most of an element**: where a phase made of the element is at saturation or over, the most stable of them per mole of it — its saturation index over its count of the element — holds it, a solid\'s field; elsewhere the species dissolved holding most of it. Over pH and pe or Eh, a Pourbaix diagram with its solids — hematite and siderite beside Fe+2 and Fe+3 — at the water\'s own total of the element dissolved, as textbooks draw one at 10⁻⁶ mol/kgw. Its boundaries are found as the others\' are: between two phases where their indices per mole are equal, between a phase and a species where the phase comes to saturation.',
             '**the phase furthest over saturation, or at it**: a mineral stability diagram.',
             '**the phases of an element, the most stable per mole of it**: each phase\'s saturation index over its count of the element — aluminium in a silicate — the largest the phase the rest would turn into, the element kept in the solids, whatever of it is dissolved: over log a(H4SiO4) and log a(K+)/a(H+), Garrels and Christ\'s diagram of K-feldspar, muscovite, kaolinite and gibbsite. A phase without the element that comes to saturation on the map, quartz say, is dotted across it where it does.',
             '**the redox couples, as lines**, over pH and pe or Eh: each couple of the redox ladder traced across the map, where the water holds as much of its element in either state — the textbooks\' diagram of a water\'s couples — a colour to each element and a dash to each couple, between where water gives way, the water itself marked. A couple that does not turn over on the map is said in the note.',

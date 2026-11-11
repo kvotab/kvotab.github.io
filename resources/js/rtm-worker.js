@@ -1282,6 +1282,65 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     return { labelOf, disc, n: per ? none : none + 1 };
   }
   /*
+    mixed: { terms: [[k, n], ...], keys: ['SI(Hematite)', ...], per: [n, ...] }
+    -- the species of an element dissolved, with their counts of it, and the
+    phases made of it, with theirs: where the phase most stable per mole of
+    the element -- its saturation index over its count -- is at saturation
+    or over, the field is that phase, the element held in a solid there;
+    elsewhere the species holding most of it. The species are labelled
+    first, then the phases. Between two species the log of the one's amount
+    of the element over the other's, between two phases the difference of
+    their indices per mole, and between a phase and a species the phase's
+    own index per mole, zero where it comes to saturation: a Pourbaix
+    diagram with its solids, the dissolved element at the water's total.
+  */
+  if (crit.kind === 'mixed') {
+    const terms = crit.terms;
+    if (!Array.isArray(terms) || !terms.length) throw new Error('A map of species and phases needs a species of the element.');
+    const which = Int32Array.from((crit.keys || []).map((key) => model.quantities.findIndex((q) => q.key === key)));
+    if (!which.length || [...which].some((x) => x < 0)) throw new Error('The phases of the map are not the model\'s.');
+    const per = (crit.per || []).map(Number);
+    if (per.length !== which.length || per.some((n) => !(n > 0 && Number.isFinite(n)))) {
+      throw new Error('Each phase weighed by its count of the element: a positive number for each.');
+    }
+    const mineral = crit.keys.map((key) => {
+      const k = model.speciesNames.indexOf(key.slice(3, -1));
+      return k >= 0 && model.speciesList[k].mineral ? k : -1;
+    });
+    const nt = terms.length;
+    const y = Float64Array.from(base);
+    const out = new Float64Array(which.length);
+    const score = new Float64Array(which.length);
+    const scores = (c) => {
+      y.set(c, b);
+      model.quantitiesAt(y, t, cell, which, out);
+      for (let q = 0; q < out.length; q++) score[q] = (mineral[q] >= 0 && c[mineral[q]] > 0 ? Math.max(0, out[q]) : out[q]) / per[q];
+      return score;
+    };
+    const labelOf = (c) => {
+      const s = scores(c);
+      let best = -1;
+      let most = -Infinity;
+      for (let q = 0; q < s.length; q++) if (Number.isFinite(s[q]) && s[q] > most + (best < 0 ? 0 : RTM_BOUND_TIE)) { most = s[q]; best = q; }
+      if (best >= 0 && most >= 0) return nt + best;
+      let held = -1;
+      let amount = -Infinity;
+      for (let q = 0; q < nt; q++) {
+        const v = terms[q][1] * c[terms[q][0]];
+        if (!Number.isFinite(v)) return -1;
+        if (v > amount && (held < 0 || !(Math.log(v) - Math.log(amount) <= RTM_BOUND_TIE))) { amount = v; held = q; }
+      }
+      return held;
+    };
+    const disc = (c, a, z) => {
+      if (a < nt && z < nt) return Math.log(terms[a][1] * c[terms[a][0]]) - Math.log(terms[z][1] * c[terms[z][0]]);
+      const s = scores(c);
+      if (a >= nt && z >= nt) return s[a - nt] - s[z - nt];
+      return a >= nt ? s[a - nt] : -s[z - nt];
+    };
+    return { labelOf, disc, n: nt + which.length };
+  }
+  /*
     states: { hi: [[k, n], ...], lo: [[k, n], ...] } -- an element's amounts in
     a couple's two valence states; the field is the state holding more of it,
     the oxidised where they are as much, and between them the log of the one
@@ -1305,7 +1364,7 @@ function rtmMapCriterion(model, crit, base, b, t, cell) {
     const disc = (c, a) => (a === 0 ? 1 : -1) * lnRatio(c);
     return { labelOf, disc, n: 2 };
   }
-  throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance, phase or states.`);
+  throw new Error(`"${crit.kind}" is no map to find the boundaries of: predominance, phase, mixed or states.`);
 }
 
 /*
