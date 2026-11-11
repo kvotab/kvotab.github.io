@@ -1843,12 +1843,8 @@
   function elementsOf(name) {
     let s = String(name).replace(/\(g\)$/, '').replace(/(?:[+-]+[0-9]*)$/, '');
     if (!s || !/^[A-Z(]/.test(s)) return null;
-    const nuclide = /^([A-Z][a-z]?)(\d+)$/.exec(s);
-    if (nuclide && ELEMENT_SYMBOLS.has(nuclide[1])) {
-      const w = ATOMIC_WEIGHTS[nuclide[1]];
-      const A = Number(nuclide[2]);
-      if ((w && A >= 0.75 * w && A <= 1.35 * w) || s === 'H3') return new Map([[nuclide[1], 1]]);
-    }
+    const nuclide = nuclideOf(name);
+    if (nuclide) return new Map([[nuclide[0], 1]]);
     const total = new Map();
     const addTo = (m, el, n) => m.set(el, (m.get(el) || 0) + n);
     for (const piece of s.split(':')) {
@@ -1890,6 +1886,88 @@
       for (const [el, n] of stack[0]) addTo(total, el, n * lead);
     }
     return total.size ? total : null;
+  }
+
+  /**
+   * A nuclide's name, an element and its mass number, as elementsOf reads
+   * it -- U238, Ra226+2, C14, tritium's H3 -- as [symbol, mass number]; null
+   * for any other name, O2 and S8 among them.
+   */
+  function nuclideOf(name) {
+    const s = String(name).replace(/\(g\)$/, '').replace(/(?:[+-]+[0-9]*)$/, '');
+    const m = /^([A-Z][a-z]?)(\d+)$/.exec(s);
+    if (!m || !ELEMENT_SYMBOLS.has(m[1])) return null;
+    const w = ATOMIC_WEIGHTS[m[1]];
+    const A = Number(m[2]);
+    return (w && A >= 0.75 * w && A <= 1.35 * w) || s === 'H3' ? [m[1], A] : null;
+  }
+
+  /**
+   * A species' formula mass, g/mol, from its name: what it is made of
+   * (elementsOf) by the standard atomic weights -- CaHCO3+ 101.10, CO2(g)
+   * 44.01 -- and a nuclide by its mass number, U238 238 and C14 14, within
+   * about 0.1 % of its atomic mass (tritium's, 3.016, within 0.6 %). Null
+   * where the name is no formula, or has a symbol that is no element: X-,
+   * CaX2, Hfo_wOH, Tracer.
+   */
+  function formulaMass(name) {
+    const nuclide = nuclideOf(name);
+    if (nuclide) return nuclide[1];
+    const made = elementsOf(name);
+    if (!made) return null;
+    let m = 0;
+    for (const [el, n] of made) {
+      const w = ATOMIC_WEIGHTS[el];
+      if (!w) return null;
+      m += n * w;
+    }
+    return m;
+  }
+
+  /**
+   * Each species' formula mass, g/mol, or null: what a concentration in
+   * mol/kgw is weighed by to show it in mg/kgw. A species by its name
+   * (formulaMass); a mineral by what a relation it is in makes of it, as
+   * compositionOf reads what it is made of, the water's mass among the rest
+   * -- Ferrihydrite + 3 H+ <=> Fe+3 + 3 H2O weighs it as Fe(OH)3, 106.87 --
+   * and by its name where no relation weighs it. Null for the electron and a
+   * surface's potential, which are no amounts, and where a name, or a part
+   * of the relation, is no formula.
+   */
+  function formulaMassesOf(species, nameOf, index, equilibria, reactions) {
+    const out = species.map((sp, k) => (sp.electron || sp.potential || sp.mineral ? null : formulaMass(nameOf[k])));
+    const water = formulaMass('H2O');
+    const relations = [
+      ...equilibria.map((eq) => ({ terms: eq.net, water: eq.water || 0 })),
+      ...reactions.map((rx) => ({ terms: [...rx.reactants.map(([c, nm]) => [index.get(nm), -c]),
+        ...rx.products.map(([c, nm]) => [index.get(nm), c])].filter(([k]) => k !== undefined), water: 0 })),
+    ];
+    // -(sum nu M + water M(H2O))/nu over the rest, the electron weighing nothing; null where one of the rest has no mass.
+    const fromRelation = (m, { terms, water: w }) => {
+      let nuM = 0;
+      let sum = w * water;
+      for (const [k, nu] of terms) {
+        if (k === m) { nuM += nu; continue; }
+        if (species[k].electron) continue;
+        if (!(out[k] > 0)) return null;
+        sum += nu * out[k];
+      }
+      const M = nuM ? -sum / nuM : NaN;
+      return M > 0 ? M : null;
+    };
+    // Twice over: a mineral made from another mineral is weighed once that one is.
+    for (let pass = 0; pass < 2; pass++) {
+      for (let m = 0; m < species.length; m++) {
+        if (!species[m].mineral || out[m] !== null) continue;
+        for (const rel of relations) {
+          if (!rel.terms.some(([k]) => k === m)) continue;
+          out[m] = fromRelation(m, rel);
+          if (out[m] !== null) break;
+        }
+      }
+    }
+    for (let m = 0; m < species.length; m++) if (species[m].mineral && out[m] === null) out[m] = formulaMass(nameOf[m]);
+    return out;
   }
 
   /**
@@ -11847,6 +11925,8 @@
     for (let k = 0; k < ns; k++) if (isSolute(k) && !species[k].electron) qSolutes.push(k);
     // What each species is made of: the composition views', and the carbonate and sulfate below.
     const composition = compositionOf(species, nameOf, index, equilibria, reactions, isSolute);
+    // And what each weighs, g/mol: a concentration shown in mg/kgw.
+    const masses = formulaMassesOf(species, nameOf, index, equilibria, reactions);
     const qIons = qSolutes.filter((k) => qAct.z[k]);
     const tkOf = (cell) => (thermo.tk ? thermo.tk[cell] : (typeof settings.TEMPERATURE === 'number' ? settings.TEMPERATURE : 25)
       + 273.15);
@@ -12316,6 +12396,8 @@
       data,
       // What each species is made of, for the views of where an element is and of the water's major ions.
       composition,
+      // Each species' formula mass, g/mol, or null where it has none (formulaMassesOf).
+      masses,
       nchannels: channels.length,
       warnings,
       density: nnz / (n * n),
@@ -13987,5 +14069,5 @@
     readSections, derivative, symmetricEigen, pca,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };
+    SECTIONS, SETTINGS, elementsOf, formulaMass, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };
 }));

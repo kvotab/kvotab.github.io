@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110i';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110j';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -46,6 +46,8 @@
     yFrom: '',
     profileYFrom: '',
     gradCFrom: '',
+    // The unit a concentration is shown in (CONC_UNITS): empty for the model's own.
+    concUnit: '',
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
@@ -111,6 +113,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
+        concUnit: state.concUnit,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
@@ -147,6 +150,7 @@
       if (['map', 'contour', 'surface'].includes(s.gradView)) state.gradView = s.gradView;
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
       for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
+      if (typeof s.concUnit === 'string' && (s.concUnit === '' || CONC_UNITS[s.concUnit])) state.concUnit = s.concUnit;
       if (['where', 'listing', 'budget', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
@@ -475,6 +479,7 @@
       renderFacts();
       renderSeriesList();
       renderCells();
+      renderUnits();
       renderComp();
       renderDg();
       renderSw();
@@ -734,6 +739,7 @@
     renderCells();
     renderProfileSpecies();
     renderGradSpecies();
+    renderUnits();
     renderComp();
     renderDg();
     renderSw();
@@ -1321,6 +1327,105 @@
   }
 
   /*
+    THE UNIT A CONCENTRATION IS SHOWN IN, on Against time, Against distance
+    and Gradient and in the water's listing: the model's own, or -- under
+    ACTIVITY, whose concentrations are mol/kgw -- mmol, µmol or nmol per
+    kgw, or mg or µg per kgw by the formula mass: a species by its own
+    (formulaMassesOf in rtm-model.js), a mineral by what its relation makes
+    it, an element's total or a valence state's by the element's atomic
+    weight, the sulfate's as SO4. Without ACTIVITY a concentration is in
+    whatever unit the text means: shown times 10^3, 10^6 or 10^9, and never
+    weighed. pH, pe, an SI and the like are shown as they are. What has no
+    such unit -- a pressure, an alkalinity in mg, a species with no formula
+    in mg -- is left off a chart of several, which the note says, and a
+    chart of one draws it as the model has it.
+  */
+  const CONC_UNITS = {
+    mmol: { scale: 1e3, text: 'mmol/kgw', bare: '× 10³' },
+    umol: { scale: 1e6, text: 'µmol/kgw', bare: '× 10⁶' },
+    nmol: { scale: 1e9, text: 'nmol/kgw', bare: '× 10⁹' },
+    mg: { scale: 1e3, mass: true, text: 'mg/kgw' },
+    ug: { scale: 1e6, mass: true, text: 'µg/kgw' },
+  };
+  /**
+   * The unit chosen, as run r can show it: { id, scale, mass, text, bare, why } -- id '' the model's own; text what an
+   * axis says, '× 10³' without ACTIVITY (bare); why the note's words where a mass is the model's own for want of ACTIVITY.
+   */
+  function shownUnit(r = state.result) {
+    const act = !!(r && r.model && r.model.activity);
+    const u = CONC_UNITS[state.concUnit];
+    const own = { id: '', scale: 1, mass: false, text: act ? 'mol/kgw' : '', bare: !act, why: '' };
+    if (!u) return own;
+    if (u.mass && !act) return { ...own, why: `in the model's own unit: ${u.text} needs ACTIVITY, whose concentrations are mol/kgw` };
+    return { id: state.concUnit, scale: u.scale, mass: !!u.mass, text: act ? u.text : u.bare, bare: !act, why: '' };
+  }
+  /** A title in the unit shown: 'concentration (mg/kgw)', 'concentration × 10³' without ACTIVITY; in the model's own as it is. */
+  const inUnit = (title, u) => (!u.id ? title : u.bare ? `${title} ${u.text}` : `${title} (${u.text})`);
+  /**
+   * How run r shows `key` in the unit u (shownUnit): { f }, its values times f; { why }, why it cannot be -- a pressure,
+   * a species with no formula in mg; or null, no concentration (pH, an SI and the like), shown as it is.
+   */
+  function shownAs(r, key, u) {
+    const m = r.model;
+    const k = m.species.indexOf(key);
+    const q = k < 0 ? (m.quantities || []).find((x) => x.key === key) : null;
+    if (k < 0 && (!q || q.axis === 'index')) return null;
+    if (!u.id) return { f: 1 };
+    if (u.mass && !m.activity) return { why: 'no ACTIVITY' };
+    if (k >= 0) {
+      // The electron's state is its activity, a potential's exp(-F psi/RT): neither an amount.
+      if ((m.redox && m.redox.name === key) || (m.surface && (m.surface.potentials || []).some((p) => p.name === key))) {
+        return { why: 'no amount' };
+      }
+      if (!u.mass) return { f: u.scale };
+      const M = m.masses ? m.masses[k] : null;
+      return M > 0 ? { f: u.scale * M } : { why: 'no formula mass' };
+    }
+    if (q.unit === 'eq/kgw' && !u.mass) return { f: u.scale };
+    if (q.unit !== 'mol/kgw') return { why: q.unit === 'eq/kgw' ? 'in equivalents' : `in ${q.unit || 'a unit of its own'}` };
+    if (!u.mass) return { f: u.scale };
+    const M = q.group === 'totals' ? totalMass(key) : null;
+    return M > 0 ? { f: u.scale * M } : { why: 'no formula mass' };
+  }
+  /** What one mole of a total weighs, g/mol: an element's, or a valence state's, its atomic weight; the sulfate's SO4's. */
+  function totalMass(key) {
+    if (key === 'tot(SO4)') return RtmModel.formulaMass('SO4');
+    const el = /^tot\(([A-Z][a-z]?)(?:\(-?[\d.]+\))?\)$/.exec(key);
+    return el ? RtmModel.ATOMIC_WEIGHTS[el[1]] || null : null;
+  }
+  /** What a chart's note says of the keys left off in the unit shown: [[label, why]]. */
+  function unitNote(u, left) {
+    if (!left.length) return '';
+    const by = new Map();
+    for (const [label, why] of left) {
+      if (!by.has(why)) by.set(why, []);
+      if (!by.get(why).includes(label)) by.get(why).push(label);
+    }
+    return `left off${u.bare ? '' : `, not in ${u.text}`}: ${[...by].map(([why, ls]) => `${ls.join(', ')} (${why})`).join(', ')}`;
+  }
+  /** What a chart of one key says where it draws it as the model has it, not in the unit chosen. */
+  const ownUnitNote = (u, label, why) => `${label} as the model has it${u.bare ? '' : `, not in ${u.text}`}: ${why}`;
+  /** Why the kept run's `label` is not drawn beside: it cannot be shown in the unit chosen. */
+  const besideUnitWhy = (u, label, why) => `its ${label} cannot be ${u.bare ? 'scaled' : `shown in ${u.text}`} (${why})`;
+
+  // The unit selects, one on each chart's bar and on the listing's, as one: what the model on show can be shown in.
+  const UNIT_SELECTS = ['rtmUnitTime', 'rtmUnitProfile', 'rtmUnitGrad', 'rtmUnitComp'];
+  function renderUnits() {
+    const r = state.result || (state.compiled ? { model: state.compiled } : null);
+    const act = !!(r && r.model.activity);
+    const opts = [['', act ? 'mol/kgw' : 'as the model has them', false],
+      ...Object.entries(CONC_UNITS).map(([id, x]) => [id, act ? x.text : x.mass ? `${x.text}, under ACTIVITY` : x.bare, !act && !!x.mass])];
+    const html = opts.map(([id, label, off]) => `<option value="${id}"${off ? ' disabled' : ''}>${esc(label)}</option>`).join('');
+    const now = shownUnit(r).id;
+    for (const id of UNIT_SELECTS) {
+      const sel = $(id);
+      if (!sel) continue;
+      sel.innerHTML = html;
+      sel.value = now;
+    }
+  }
+
+  /*
     THE FLOOR OF A LOG CONCENTRATION AXIS: the least concentration it shows,
     typed after its box; empty, the axis reaches the least drawn, as Plotly
     ranges it. A redox run's species span 150 decades -- methane at 1e-144
@@ -1340,12 +1445,13 @@
     for (const ys of arrays) for (const v of ys) if (v > 0 && Number.isFinite(v)) top = Math.max(top, Math.log10(v));
     return top > lo ? [lo, top + Math.max(0.05, 0.04 * (top - lo))] : [lo, lo + 1];
   }
-  // What a chart's note says of its floor: where the axis starts and which curves lie wholly below it, or what was not read.
-  function floorNote(f, curves) {
+  // What a chart's note says of its floor: where the axis starts, in the unit shown, and which curves lie wholly below it, or what was not read.
+  function floorNote(f, curves, u = null) {
     if (f.bad) return `could not read "${f.bad}" as where the log axis starts`;
     if (f.lo === null) return '';
     const under = curves.filter((cv) => !Array.from(cv.y || []).some((v) => v >= f.at)).map((cv) => cv.name);
-    return `the log axis from ${f.at.toExponential()}${under.length ? `, below it all through: ${under.join(', ')}` : ''}`;
+    return `the log axis from ${f.at.toExponential()}${u && u.id && !u.bare ? ` ${u.text}` : ''}`
+      + `${under.length ? `, below it all through: ${under.join(', ')}` : ''}`;
   }
 
   function drawTime() {
@@ -1374,6 +1480,9 @@
     const skipped = [];
     // Each key its colour, its measured points the same: Plotly's own ten, in the order picked.
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    // The unit the concentrations are shown in, and what has none in it: left off, and the note says so.
+    const u = shownUnit(r);
+    const unitLeft = [];
     // The kept run beside it: the same keys at the same cell, dashed in the same colours, its times in this run's unit.
     const bk = besideRun();
     const besideLeft = [];
@@ -1381,24 +1490,31 @@
     const besideTraces = [];
     for (const [pickIndex, nm] of state.picked.entries()) {
       const color = palette[pickIndex % palette.length];
+      const shown = runHas(r, nm) ? shownAs(r, nm, u) : null;
+      if (shown && shown.why) { unitLeft.push([labelOf(nm), shown.why]); continue; }
+      const f = shown ? shown.f : 1;
       if (bk) {
         const why = besideWhy(bk, nm, state.cell, state.layer);
         const mcK = face ? null : modelCell(state.cell, state.layer, bk.r);
+        const kShown = why ? null : shownAs(bk.r, nm, u);
         if (why) besideLeft.push(why);
+        else if (kShown && kShown.why) besideLeft.push(besideUnitWhy(u, labelOf(nm), kShown.why));
         else if (runQuantity(bk.r, nm) && !face && quantityPending(nm, mcK, bk.r)) {
           fetchQuantities([nm], [mcK], bk.r);
           besideComing.push(labelOf(nm));
         } else {
           const ky = series(nm, state.cell, state.layer, bk.r);
+          const kf = kShown ? kShown.f : 1;
           const kt = besideTimes(bk);
           const onRightK = axisOf(nm) === 'index';
           const kx = [];
           const kv = [];
           for (let i = 0; ky && i < bk.r.n; i++) {
             if (logT && !(kt[i] >= tmin && kt[i] > 0)) continue;
-            if (!Number.isFinite(ky[i]) || (logY && !onRightK && !(ky[i] > 0))) continue;
+            const v = ky[i] * kf;
+            if (!Number.isFinite(v) || (logY && !onRightK && !(v > 0))) continue;
             kx.push(kt[i]);
-            kv.push(ky[i]);
+            kv.push(v);
           }
           if (kx.length && onRightK && !right.includes(labelOf(nm))) right.push(labelOf(nm));
           if (kx.length) {
@@ -1416,7 +1532,7 @@
       for (let i = 0; i < r.n; i++) {
         const t = r.t[i];
         if (logT && !(t >= tmin && t > 0)) continue;
-        const v = y[i];
+        const v = y[i] * f;
         if (!Number.isFinite(v) || (logY && !onRight && !(v > 0))) continue;
         xs.push(t);
         ys.push(v);
@@ -1426,11 +1542,11 @@
         traces.push({ name: labelOf(nm), x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
           ...(onRight ? { yaxis: 'y2' } : {}) });
       }
-      // What <DATA> measured of it, at this cell and layer: points.
+      // What <DATA> measured of it, at this cell and layer: points, in the unit shown.
       if (!face) {
         for (const d of measured('time', nm)) {
           if ((d.tab.cell || 0) !== state.cell || (d.tab.layer || 0) !== state.layer) continue;
-          traces.push({ name: `${labelOf(nm)}, measured`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
+          traces.push({ name: `${labelOf(nm)}, measured`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers', type: 'scatter',
             marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}) });
         }
       }
@@ -1447,8 +1563,9 @@
     const onLeft = traces.filter((t) => !t.yaxis);
     if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, onLeft.map((t) => t.y));
     // An end's flux is per m2 of the water's cross-section, positive to the right.
+    const flux = u.id && !u.bare ? `${u.text} · m/${timeUnit().symbol}` : `concentration · m/${timeUnit().symbol}`;
     layout.yaxis.title = { text: face
-      ? `flux through the ${state.cell} end (concentration · m/${timeUnit().symbol})` : 'concentration', font: { size: 11 } };
+      ? `flux through the ${state.cell} end (${flux})${u.id && u.bare ? ` ${u.text}` : ''}` : inUnit('concentration', u), font: { size: 11 } };
     if (right.length) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
@@ -1458,8 +1575,9 @@
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     $('rtmTimeNote').textContent = [missing.length ? `working out ${missing.map(labelOf).join(', ')}…` : '',
       skipped.length ? `${skipped.join(', ')}: a quantity of the water, which an end has none of` : '',
+      u.why, unitNote(u, unitLeft),
       bk && besideDrawn ? besideNote(bk) : '', bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
-      bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft)]
+      bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft, u)]
       .filter(Boolean).join('; ');
   }
 
@@ -1512,7 +1630,21 @@
       $('rtmProfileNote').textContent = '';
       return;
     }
-    const valueAt = (i, k) => (quantity ? (quantitySeries(name, cellAt(k)) || [])[i] : r.states[i * r.width + stateIndex(k)]);
+    /*
+      In the unit shown, the kept run's and what was measured by the same;
+      a key that has none in it -- no formula to weigh -- as the model has
+      it, and the note says so.
+    */
+    const u = shownUnit(r);
+    const shown = shownAs(r, name, u);
+    const own = !!(shown && shown.why);
+    const f = shown && shown.f ? shown.f : 1;
+    const suffix = u.id && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
+    const meta = suffix ? { meta: { unitSuffix: suffix } } : {};
+    const valueAt = (i, k) => {
+      const v = quantity ? (quantitySeries(name, cellAt(k)) || [])[i] : r.states[i * r.width + stateIndex(k)];
+      return v === undefined ? v : v * f;
+    };
     // Either the times the reader asked for, or eight spread over the run: a
     // profile is only readable with a handful of curves on it.
     const asked = parseTimes(state.profileTimes);
@@ -1538,7 +1670,8 @@
     const traces = picks.map((i, q) => {
       const y = [];
       for (let k = 0; k < npts; k++) y.push(valueAt(i, k));
-      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color: palette[q % palette.length] } };
+      return { name: fmtTime(r.t[i]), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color: palette[q % palette.length] },
+        ...meta };
     });
     /*
       The kept run beside it: at each time drawn, its stored time nearest,
@@ -1551,9 +1684,12 @@
       const kr = bk.r;
       const km = kr.model;
       const kStride = km.stride || 1;
+      const kShown = runHas(kr, name) && !own ? shownAs(kr, name, u) : null;
       const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
         : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
-          : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}` : '';
+          : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}`
+            : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
+      const kf = kShown && kShown.f ? kShown.f : 1;
       if (why) besideSaid = besideNote(bk, why);
       else {
         const kAtCell = across ? Math.min(state.profileLayer, km.fracture - 1) : 0;
@@ -1574,10 +1710,11 @@
             const j = nearestIndex(kt, r.t[i]);
             const y = [];
             for (let k = 0; k < kn; k++) {
-              y.push(kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi]);
+              const v = kQuantity ? (quantitySeries(name, kCellAt(k), kr) || [])[j] : kr.states[j * kr.width + kCellAt(k) * km.nspecies + ksi];
+              y.push(v === undefined ? v : v * kf);
             }
             traces.push({ name: `${fmtTime(r.t[i])}, ${bk.label}`, x: kx, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter',
-              line: { color: palette[q % palette.length], dash: 'dash', width: 1.6 } });
+              line: { color: palette[q % palette.length], dash: 'dash', width: 1.6 }, ...meta });
           });
           besideSaid = [besideNote(bk), pastIt.length ? `${pastIt.join(', ')} past its end` : ''].filter(Boolean).join(', ');
         }
@@ -1587,8 +1724,8 @@
     if (!across) {
       for (const d of measured('distance', name)) {
         const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
-        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
-          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 } } });
+        traces.push({ name: `measured, ${fmtTime(at)}`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers', type: 'scatter',
+          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 } }, ...meta });
       }
     }
     const layout = baseLayout();
@@ -1602,8 +1739,8 @@
     const floor = logAxis ? logFloor(state.profileYFrom) : logFloor('');
     if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, traces.map((t) => t.y));
     const q = quantity ? quantityOf(name) : null;
-    layout.yaxis.title = { text: q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${name} concentration`,
-      font: { size: 11 } };
+    layout.yaxis.title = { text: suffix ? `${q ? q.label : u.bare ? `${name} concentration` : name}${suffix}`
+      : q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${name} concentration`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     /*
       The run is stored thinned, so a wanted time lands on the nearest point
@@ -1621,8 +1758,10 @@
       });
       if (off.length) bits.push(`nearest stored time used for ${off.map(fmtTime).join(', ')}`);
     }
+    if (u.why) bits.push(u.why);
+    if (own) bits.push(ownUnitNote(u, labelOf(name), shown.why));
     if (besideSaid) bits.push(besideSaid);
-    if (floorNote(floor, traces)) bits.push(floorNote(floor, traces));
+    if (floorNote(floor, traces, own ? null : u)) bits.push(floorNote(floor, traces, own ? null : u));
     $('rtmProfileNote').textContent = bits.join('; ');
   }
 
@@ -1665,26 +1804,36 @@
     const besideTraces = [];
     const besideLeft = [];
     const besideComing = [];
+    // The unit the concentrations are shown in, and what has none in it: left off, and the note says so.
+    const u = shownUnit(r);
+    const unitLeft = [];
     for (const key of keys) {
       const color = palette[state.picked.indexOf(key) % palette.length];
       const onRight = axisOf(key) === 'index';
+      const shown = shownAs(r, key, u);
+      if (shown && shown.why) { unitLeft.push([labelOf(key), shown.why]); continue; }
+      const f = shown ? shown.f : 1;
+      const meta = u.id && shown ? { meta: { unitSuffix: u.bare ? ` ${u.text}` : ` (${u.text})` } } : {};
       // Every value as it is, none at all on a log axis too: Plotly leaves it out there, and what is saved keeps it.
-      const keep = (v) => (Number.isFinite(v) ? v : null);
+      const keep = (v) => (Number.isFinite(v) ? v * f : null);
       const quantity = runQuantity(r, key);
       const si = r.model.species.indexOf(key);
       const y = Array.from({ length: npts }, (_, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[i]
         : r.states[i * r.width + cellAt(k) * r.model.nspecies + si]));
       if (onRight && !right.includes(labelOf(key))) right.push(labelOf(key));
       traces.push({ name: labelOf(key), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color },
-        ...(onRight ? { yaxis: 'y2' } : {}) });
+        ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
       if (bk) {
         const kr = bk.r;
         const km = kr.model;
         const kStride = km.stride || 1;
+        const kShown = runHas(kr, key) ? shownAs(kr, key, u) : null;
         const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, key) ? `it has no ${labelOf(key)}`
           : across && !(km.matrix && km.matrix.n) ? 'it has no rock matrix'
             : !across && layer > 0 && !(layer < kStride) ? `it has no rock layer ${layer}`
-              : kI < 0 ? `${fmtTime(r.t[i])} is past its end` : '';
+              : kI < 0 ? `${fmtTime(r.t[i])} is past its end`
+                : kShown && kShown.why ? besideUnitWhy(u, labelOf(key), kShown.why) : '';
+        const kf = kShown && kShown.f ? kShown.f : 1;
         if (why) besideLeft.push(why);
         else {
           const kAtCell = across ? Math.min(state.profileLayer, km.fracture - 1) : 0;
@@ -1698,10 +1847,11 @@
             besideComing.push(labelOf(key));
           } else {
             const ksi = km.species.indexOf(key);
-            const ky = Array.from({ length: kn }, (_, k) => keep(kQuantity ? (quantitySeries(key, kCellAt(k), kr) || [])[kI]
+            const kKeep = (v) => (Number.isFinite(v) ? v * kf : null);
+            const ky = Array.from({ length: kn }, (_, k) => kKeep(kQuantity ? (quantitySeries(key, kCellAt(k), kr) || [])[kI]
               : kr.states[kI * kr.width + kCellAt(k) * km.nspecies + ksi]));
             besideTraces.push({ name: `${labelOf(key)}, ${bk.label}`, x: kx, y: ky, mode: across ? 'lines+markers' : 'lines',
-              type: 'scatter', line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}) });
+              type: 'scatter', line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
           }
         }
       }
@@ -1709,8 +1859,8 @@
       if (!across) {
         for (const d of measured('distance', key)) {
           const at = d.tab.at !== null ? d.tab.at : end;
-          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: d.y, mode: 'markers', type: 'scatter',
-            marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}) });
+          traces.push({ name: `${labelOf(key)}, measured, ${fmtTime(at)}`, x: d.x, y: f === 1 ? d.y : d.y.map((v) => v * f), mode: 'markers',
+            type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } }, ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
         }
       }
     }
@@ -1719,7 +1869,7 @@
     layout.xaxis.title = { text: across ? `depth into the rock behind cell ${g.atCell} (m)`
       : 'distance from the left-hand face (m)', font: { size: 11 } };
     layout.yaxis.type = log ? 'log' : 'linear';
-    layout.yaxis.title = { text: 'concentration', font: { size: 11 } };
+    layout.yaxis.title = { text: inUnit('concentration', u), font: { size: 11 } };
     $('rtmProfileYFrom').disabled = !log;
     const floor = log ? logFloor(state.profileYFrom) : logFloor('');
     const onLeft = traces.filter((t) => !t.yaxis);
@@ -1737,10 +1887,12 @@
       bits.push(`the nearest stored time to ${fmtTime(want)}`);
     }
     if (asked.times.length > 1) bits.push('the first of Times alone');
+    if (u.why) bits.push(u.why);
+    if (unitLeft.length) bits.push(unitNote(u, unitLeft));
     if (bk && besideTraces.length) bits.push(besideNote(bk));
     if (bk && besideComing.length) bits.push(`working out ${besideComing.join(', ')} for ${bk.label}…`);
     if (bk && besideLeft.length) bits.push(besideNote(bk, [...new Set(besideLeft)].join('; ')));
-    if (floorNote(floor, onLeft)) bits.push(floorNote(floor, onLeft));
+    if (floorNote(floor, onLeft, u)) bits.push(floorNote(floor, onLeft, u));
     // The note first: a longer one moves the chart down, and Plotly places its legend for where the chart is when drawn.
     $('rtmProfileNote').textContent = bits.join('; ');
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -1791,8 +1943,14 @@
       $('rtmGradNote').textContent = '';
       return;
     }
+    // In the unit shown; a key that has none in it -- no formula to weigh -- as the model has it, and the note says so.
+    const u = shownUnit(r);
+    const shown = shownAs(r, name, u);
+    const own = !!(shown && shown.why);
+    const f = shown && shown.f ? shown.f : 1;
+    const suffix = u.id && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
     const valueAt = (i, c) => (quantity ? (quantitySeries(name, c * stride + gl) || [])[i]
-      : r.states[i * r.width + (c * stride + gl) * ns + si]);
+      : r.states[i * r.width + (c * stride + gl) * ns + si]) * f;
 
     /*
       A log time axis cannot show t = 0, and a stiff run's first steps are
@@ -1838,7 +1996,7 @@
     // Distance up the page from zero at the origin, the ordinary way round.
     // As a map, as contours of it, or as a surface over time and distance.
     const view = state.gradView || 'map';
-    const title = q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : name;
+    const title = suffix ? `${q ? q.label : name}${suffix}` : q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : name;
     const trace = {
       type: view === 'contour' ? 'contour' : view === 'surface' ? 'surface' : 'heatmap',
       x: cols.map((i) => r.t[i]),
@@ -1886,8 +2044,11 @@
       const kr = bk.r;
       const km = kr.model;
       const kStride = km.stride || 1;
+      const kShown = runHas(kr, name) && !own ? shownAs(kr, name, u) : null;
       const why = !km.transport || !(km.fracture > 1) ? 'it was a batch' : !runHas(kr, name) ? `it has no ${labelOf(name)}`
-        : gl > 0 && !(gl < kStride) ? `it has no rock layer ${gl}` : '';
+        : gl > 0 && !(gl < kStride) ? `it has no rock layer ${gl}`
+          : kShown && kShown.why ? besideUnitWhy(u, labelOf(name), kShown.why) : '';
+      const kf = kShown && kShown.f ? kShown.f : 1;
       const kCells = why ? [] : Array.from({ length: km.fracture }, (_, c) => c * kStride + gl);
       const kQuantity = !why && runQuantity(kr, name);
       if (why) besideSaid = besideNote(bk, why);
@@ -1902,7 +2063,7 @@
         const kz = [];
         for (let c = 0; c < km.fracture; c++) {
           kz.push(kcols.map((i) => {
-            const v = kQuantity ? (quantitySeries(name, kCells[c], kr) || [])[i] : kr.states[i * kr.width + kCells[c] * km.nspecies + ksi];
+            const v = (kQuantity ? (quantitySeries(name, kCells[c], kr) || [])[i] : kr.states[i * kr.width + kCells[c] * km.nspecies + ksi]) * kf;
             const u = logC ? (v > 0 ? Math.log10(v) : null) : (Number.isFinite(v) ? v : null);
             if (u !== null) { lo = Math.min(lo, u); hi = Math.max(hi, u); }
             return u;
@@ -1964,9 +2125,11 @@
     if (nonPositive) bits.push(`${nonPositive} values at or below zero left blank`);
     if (floor.bad) bits.push(floorNote(floor, []));
     else if (floor.lo !== null && Number.isFinite(lo)) {
-      bits.push(`the colour scale from ${floor.at.toExponential()}${lo < floor.lo
+      bits.push(`the colour scale from ${floor.at.toExponential()}${suffix && !u.bare ? ` ${u.text}` : ''}${lo < floor.lo
         ? `, below it ${view === 'surface' ? 'out of the box' : 'in its colour'}` : ''}`);
     }
+    if (u.why) bits.push(u.why);
+    if (own) bits.push(ownUnitNote(u, labelOf(name), shown.why));
     if (besideSaid) bits.push(besideSaid);
     $('rtmGradNote').textContent = bits.join('; ');
   }
@@ -2445,8 +2608,10 @@
   /** The listing as PHREEQC prints it, to compare line by line. */
   function listingText(title, p) {
     const out = [title, ''];
-    out.push(listingBar('Solution composition'), '', `\t${'Elements'.padEnd(15)}${'Molality'.padStart(12)}`, '');
-    for (const [el, v] of p.composition) out.push(`\t${el.padEnd(15)}${lsE(v).padStart(12)}`);
+    // In a unit chosen, a column after PHREEQC's own (listingUnit).
+    const U = p.unit || null;
+    out.push(listingBar('Solution composition'), '', `\t${'Elements'.padEnd(15)}${'Molality'.padStart(12)}${U ? U.head.padStart(16) : ''}`, '');
+    for (const [el, v] of p.composition) out.push(`\t${el.padEnd(15)}${lsE(v).padStart(12)}${U ? lsE(U.el(el, v)).padStart(16) : ''}`);
     out.push('', listingBar('Description of solution'), '');
     const B = p.pq;
     for (const [label, v, unit] of p.description) {
@@ -2456,6 +2621,7 @@
     out.push('', listingBar('Distribution of species'), '',
       `${''.padEnd(43)}${'Log'.padStart(10)}${'Log'.padStart(10)}${'Log'.padStart(10)}`,
       `   ${'Species'.padEnd(15)}${'Molality'.padStart(12)}${'Activity'.padStart(12)}${'Molality'.padStart(10)}${'Activity'.padStart(10)}${'Gamma'.padStart(10)}`
+        + (U ? U.head.padStart(16) : '')
         + (B ? `${'PHREEQC m'.padStart(12)}${'PHREEQC lg'.padStart(11)}${'d log m'.padStart(10)}` : ''), '');
     let group = null;
     for (const [sp, g, mol, a, lm, la, lg] of p.species) {
@@ -2463,11 +2629,12 @@
         group = g;
         if (g) {
           const tot = p.groupTotals.get(g);
-          out.push(`${g.padEnd(14)}${tot === undefined ? '' : lsE(tot)}`);
+          out.push(`${g.padEnd(14)}${tot === undefined ? '' : lsE(tot)}${U && tot !== undefined && g !== 'other' ? `  ${lsE(U.el(g, tot))}` : ''}`);
         }
       }
       const v = B ? B.sp.get(sp) : null;
       out.push(`   ${sp.padEnd(15)}${lsE(mol).padStart(12)}${lsE(a).padStart(12)}${lsF(lm).padStart(10)}${lsF(la).padStart(10)}${lsF(lg).padStart(10)}`
+        + (U ? lsE(U.sp(sp, mol)).padStart(16) : '')
         + (B ? (v ? `${lsE(v[0]).padStart(12)}${lsF(v[1]).padStart(11)}${lsE(mol > 0 && v[0] > 0 ? lm - Math.log10(v[0]) : null).padStart(10)}`
           : `${'not given'.padStart(12)}`) : ''));
     }
@@ -2514,6 +2681,9 @@
     }
     const m = r.model;
     const p = listingParts(r, got, atIndex, mc);
+    const u = shownUnit(r);
+    p.unit = listingUnit(r, u);
+    const U = p.unit;
     // Beside PHREEQC: its numbers once it has them, through the database the PHREEQC tab has chosen.
     let pqSaid = '';
     if (state.compBeside) {
@@ -2540,7 +2710,8 @@
     const table = (head, rows, kinds) => `<table><thead><tr>${head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>`
       + rows.map((rw) => `<tr>${rw.map((v, i) => td(v, kinds[i])).join('')}</tr>`).join('') + '</tbody></table>';
     let html = `<h4 class="rtm-listing-title">${esc(title)}</h4>`;
-    html += '<h4>Solution composition</h4>' + table(['Element', 'Molality'], p.composition, ['t', 'e']);
+    html += '<h4>Solution composition</h4>' + table(['Element', 'Molality', ...(U ? [U.head] : [])],
+      U ? p.composition.map(([el, v]) => [el, v, U.el(el, v)]) : p.composition, ['t', 'e', 'e']);
     html += '<h4>Description of solution</h4>' + table(['', 'Value', 'Unit', ...(B ? ['PHREEQC'] : [])],
       p.description.map(([label, v, unit]) => [label, lsDesc(label, v), unit,
         ...(B ? [B.desc.has(label) ? lsDesc(label, B.desc.get(label)) : ''] : [])]), ['t', 't', 't', 't']);
@@ -2549,16 +2720,21 @@
     for (const [sp, g, mol, a, lm, la, lg] of p.species) {
       if (g !== group) {
         group = g;
-        if (g) body += `<tr class="rtm-listing-group"><td>${esc(g)}</td><td>${esc(g === 'other' ? '' : lsE(p.groupTotals.get(g)))}</td>`
-          + `${'<td></td>'.repeat(B ? 7 : 4)}</tr>`;
+        if (g) {
+          body += `<tr class="rtm-listing-group"><td>${esc(g)}</td><td>${esc(g === 'other' ? '' : lsE(p.groupTotals.get(g)))}</td>`
+            + `${'<td></td>'.repeat(4)}${U ? `<td>${esc(g === 'other' ? '' : lsE(U.el(g, p.groupTotals.get(g))))}</td>` : ''}`
+            + `${B ? '<td></td>'.repeat(3) : ''}</tr>`;
+        }
       }
       const v = B ? B.sp.get(sp) : null;
       body += `<tr><td class="rtm-listing-sp">${esc(sp)}</td>${td(mol, 'e')}${td(a, 'e')}${td(lm)}${td(la)}${td(lg)}`
+        + (U ? td(U.sp(sp, mol), 'e') : '')
         + (B ? (v ? `${td(v[0], 'e')}${td(v[1])}${td(mol > 0 && v[0] > 0 ? lm - Math.log10(v[0]) : null, 'e')}`
           : '<td>not given</td><td></td><td></td>') : '') + '</tr>';
     }
     html += '<h4>Distribution of species</h4><table><thead><tr><th>Species</th><th>Molality</th><th>Activity</th><th>Log molality</th>'
-      + `<th>Log activity</th><th>Log gamma</th>${B ? '<th>PHREEQC molality</th><th>PHREEQC log gamma</th><th>Δ log molality</th>' : ''}`
+      + `<th>Log activity</th><th>Log gamma</th>${U ? `<th>${esc(U.head)}</th>` : ''}`
+      + `${B ? '<th>PHREEQC molality</th><th>PHREEQC log gamma</th><th>Δ log molality</th>' : ''}`
       + `</tr></thead><tbody>${body}</tbody></table>`;
     const siRows = p.si.map(([ph, s, iap, k]) => [ph, s, iap, k, ...(B ? (B.si.has(ph) ? [B.si.get(ph), s - B.si.get(ph)] : [null, null]) : [])]);
     if (p.si.length) {
@@ -2578,13 +2754,15 @@
     const name = `${fileStem()}_water_cell${cell}${layer ? `_layer${layer}` : ''}`;
     const withPq = (rw) => {
       const v = B ? B.sp.get(rw[0]) : null;
-      return [...rw, ...(B ? (v ? [v[0], v[1], rw[2] > 0 && v[0] > 0 ? rw[4] - Math.log10(v[0]) : null] : [null, null, null]) : [])];
+      return [...rw, ...(U ? [U.sp(rw[0], rw[2])] : []),
+        ...(B ? (v ? [v[0], v[1], rw[2] > 0 && v[0] > 0 ? rw[4] - Math.log10(v[0]) : null] : [null, null, null]) : [])];
     };
-    compTableNow = { head: ['species', 'in', 'molality', 'activity', 'log molality', 'log activity', 'log gamma',
+    compTableNow = { head: ['species', 'in', 'molality', 'activity', 'log molality', 'log activity', 'log gamma', ...(U ? [U.head] : []),
       ...(B ? ['PHREEQC molality', 'PHREEQC log gamma', 'log molality, the model less PHREEQC'] : [])], name,
       rows: p.species.map((rw) => withPq(rw.map((v) => (v === undefined ? null : v)))),
       extra: [
-        { name: 'composition', head: ['element', 'molality'], rows: p.composition },
+        { name: 'composition', head: ['element', 'molality', ...(U ? [U.head] : [])],
+          rows: U ? p.composition.map(([el, v]) => [el, v, U.el(el, v)]) : p.composition },
         { name: 'description', head: ['', 'value', 'unit', ...(B ? ['PHREEQC'] : [])],
           rows: p.description.map(([label, v, unit]) => [label, v, unit, ...(B ? [B.desc.has(label) ? B.desc.get(label) : null] : [])]) },
         ...(p.si.length ? [{ name: 'saturation indices', head: ['phase', 'SI', 'log IAP', 'log K',
@@ -2596,7 +2774,32 @@
         ...(p.gases.length ? [{ name: 'gases', head: ['gas', 'partial pressure (atm)'], rows: p.gases }] : []),
       ] };
     compTextNow = listingText(title, p);
-    note.textContent = `${title}; ${p.species.length} lines of species, ${p.si.length} phases${pqSaid ? `; ${pqSaid}` : ''}`;
+    note.textContent = `${title}; ${p.species.length} lines of species, ${p.si.length} phases${U && U.none.length
+      ? `; no ${U.head}: ${U.none.join(', ')}, no formula mass` : ''}${u.why ? `; ${u.why}` : ''}${pqSaid ? `; ${pqSaid}` : ''}`;
+  }
+
+  /**
+   * The listing's column in the unit chosen (shownUnit), or null in the
+   * model's own: { head, el(name, v), sp(name, v), none } -- an element's
+   * total, or a valence state's, by the element's atomic weight, a species
+   * by its formula mass; none the species that have none, blank.
+   */
+  function listingUnit(r, u) {
+    if (!u.id) return null;
+    const none = [];
+    const head = u.bare ? `Molality ${u.text}` : u.text;
+    const times = (v, f) => (f === null || v === null || v === undefined || !Number.isFinite(v) ? null : v * f);
+    const el = (name, v) => {
+      if (!u.mass) return times(v, u.scale);
+      const w = RtmModel.ATOMIC_WEIGHTS[String(name).replace(/\(.*$/, '')];
+      return times(v, w ? u.scale * w : null);
+    };
+    const sp = (name, v) => {
+      const sh = shownAs(r, name, u);
+      if (!(sh && sh.f)) { if (!none.includes(name)) none.push(name); return null; }
+      return times(v, sh.f);
+    };
+    return { head, el, sp, none };
   }
 
   /*
@@ -3544,22 +3747,11 @@
       + `${kept.said ? `; ${kept.said}${keptPts.length ? ', put on these components' : ''}` : ''}`;
   }
 
-  // The standard atomic weights, the model's (rtm-model.js): a species' formula mass, for the Durov diagram's total dissolved solids.
-  const ATOMIC_WEIGHTS = RtmModel.ATOMIC_WEIGHTS;
-
-  /** A species' formula mass, g/mol, from its name; null where it has no formula, or an element without a weight. */
-  function formulaMass(name) {
-    const made = RtmModel.elementsOf(name);
-    const pairs = made ? [...made] : [];
-    if (!pairs.length) return null;
-    let m = 0;
-    for (const [el, n] of pairs) {
-      const w = ATOMIC_WEIGHTS[el];
-      if (!w) return null;
-      m += n * w;
-    }
-    return m;
-  }
+  /**
+   * A species' formula mass, g/mol, for the Durov diagram's total dissolved solids: from its name by the standard atomic
+   * weights, the model's rule (formulaMass in rtm-model.js); null where it has no formula, or an element without a weight.
+   */
+  const formulaMass = (name) => RtmModel.formulaMass(name);
 
   /**
    * What the total dissolved solids of run r are made of: every species
@@ -5984,8 +6176,28 @@
     const where = face ? `through the ${state.cell} end`
       : `@ cell ${state.cell}${state.layer > 0 && r.model.matrix ? ` rock ${state.layer}` : ''}`;
     const unitOf = (k) => { const q = isQuantity(k) ? quantityOf(k) : null; return q && q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''; };
-    const head = [`t (${timeUnit().symbol})`, ...names.map((n) => `${labelOf(n)}${unitOf(n)} ${where}`)];
-    const cols = names.map((n) => series(n, state.cell));
+    /*
+      In the unit shown, each concentration's header saying it; one that has
+      none in it -- no formula to weigh, a pressure -- as the model has it,
+      its header saying in what: mol/kgw under ACTIVITY.
+    */
+    const u = shownUnit(r);
+    const shown = names.map((n) => shownAs(r, n, u));
+    // At an end what crosses it, per m2 of the water's cross-section: the unit times m per the time unit.
+    const per = face ? ` · m/${timeUnit().symbol}` : '';
+    const own = (n) => (unitOf(n) || (r.model.activity && !isQuantity(n) ? ` (mol/kgw${per})` : ''));
+    const headOf = (n, j) => {
+      const sh = shown[j];
+      if (!u.id || !sh) return `${labelOf(n)}${unitOf(n)} ${where}`;
+      if (sh.why) return `${labelOf(n)}${own(n)} ${where}`;
+      return `${labelOf(n)}${u.bare ? ` ${u.text}` : ` (${u.text}${per})`} ${where}`;
+    };
+    const head = [`t (${timeUnit().symbol})`, ...names.map(headOf)];
+    const cols = names.map((n, j) => {
+      const c = series(n, state.cell);
+      const f = shown[j] && shown[j].f ? shown[j].f : 1;
+      return c && f !== 1 ? c.map((v) => v * f) : c;
+    });
     const rows = [];
     for (let i = 0; i < r.n; i++) rows.push([r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
     return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${state.cell}` };
@@ -6028,7 +6240,8 @@
       Array.from(tr.x || []).forEach((x, i) => m.set(x, tr.y[i]));
       return m;
     });
-    return { head: [xTitle, ...data.map((tr) => tr.name)], name,
+    // A curve in a unit chosen says it (shownUnit): Ca+2 (mg/kgw).
+    return { head: [xTitle, ...data.map((tr) => `${tr.name}${(tr.meta && tr.meta.unitSuffix) || ''}`)], name,
       rows: xs.map((x) => [x, ...cols.map((m) => (m.has(x) ? m.get(x) : null))]) };
   }
 
@@ -6960,6 +7173,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
+            '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
             '**clear**: unticks everything.',
             '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown or through the end shown, a row per stored point.',
             '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
@@ -6990,6 +7204,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days); a bare number is in the model’s own unit. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
+          '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so; with those ticked against time it is left off.',
           '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
           SAVE_HTML,
         ] },
@@ -7010,6 +7225,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
             '**from**, after log concentration: where the colour scale starts, a plain number such as `1e-10`; empty, the least value there is. What lies below it takes its colour, or on a surface lies below the box; the CSV and Excel files have every value still.',
+            '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so.',
             '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
             '**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.',
             SAVE_HTML,
@@ -7033,7 +7249,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         sections: [
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
-            ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given.', view === 'listing'],
+            ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
             ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made.', view === 'budget'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
@@ -7435,6 +7651,9 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       state[k] = typeof floors[k] === 'string' ? floors[k] : '';
       $(id).value = state[k];
     }
+    // The unit the concentrations are shown in: the example's, and the model's own where it gives none.
+    state.concUnit = v && CONC_UNITS[v.unit] ? v.unit : '';
+    renderUnits();
     if (!v) return;
     if (v.picked) state.picked = v.picked.slice();
     if (Number.isInteger(v.cell)) state.cell = v.cell;
@@ -7888,7 +8107,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110h';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110i';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -8994,6 +9213,16 @@ END
       saveState();
       drawTime();
     },
+    // One unit for every chart of concentrations and the listing: the four selects as one.
+    'rtm:concUnit': (ev, el) => {
+      state.concUnit = CONC_UNITS[el.value] ? el.value : '';
+      renderUnits();
+      saveState();
+      drawTime();
+      drawProfile();
+      drawGradient();
+      drawComp();
+    },
     'rtm:redrawGradient': () => {
       state.gradSpecies = $('rtmGradSpecies').value;
       state.gradLayer = Number($('rtmGradLayer').value) || 0;
@@ -9235,6 +9464,7 @@ END
   $('rtmYFrom').value = state.yFrom;
   $('rtmProfileYFrom').value = state.profileYFrom;
   $('rtmGradCFrom').value = state.gradCFrom;
+  renderUnits();
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.
   if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });

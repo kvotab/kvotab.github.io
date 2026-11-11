@@ -7954,6 +7954,44 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `${apart.toExponential(1)}; ${fr.join(' | ')}`);
   }
   /*
+    What each species weighs, for a concentration shown in mg/kgw: by its name and the standard atomic weights, a nuclide
+    by its mass number; a mineral by what its relation makes of it, the water in it counted and the electron weighing
+    nothing -- Ferrihydrite + 3 H+ <=> Fe+3 + 3 H2O weighs Fe(OH)3, Pyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O MnO2 --
+    gypsum with its two waters; none for the electron, an exchanger and what is on it, or a site on a surface. The page
+    reads them in the model's summary. By hand: Fe(OH)3 55.845 + 3 x 17.007, MnO2 54.938 + 2 x 15.999, FeS 55.845 + 32.06,
+    FeCO3 and CaCO3 the metal + 60.008, CaSO4:2H2O 136.134 + 2 x 18.015.
+  */
+  {
+    const exs = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES;
+    const byName = { 'Ca+2': 40.078, 'CaHCO3+': 101.094, 'CO2(g)': 44.009, 'SO4-2': 96.056, 'CaSO4:2H2O': 172.164,
+      'UO2_2(OH)2+2': 2 * (238.03 + 2 * 15.999) + 2 * 17.007, U238: 238, 'Ra226+2': 226, C14: 14, H3: 3,
+      'X-': null, CaX2: null, Hfo_wOH: null, Tracer: null, 'e-': null };
+    const off = (got, want) => (want === null ? (got === null ? 0 : Infinity) : got === null ? Infinity : Math.abs(got / want - 1));
+    const named = Object.entries(byName).filter(([nm, want]) => !(off(RtmModel.formulaMass(nm), want) < 1e-12))
+      .map(([nm, want]) => `${nm} ${RtmModel.formulaMass(nm)} for ${want}`);
+    const massesOf = (id, names) => {
+      const m = RtmModel.compile(exs.find((e) => e.id === id).text);
+      return names.map((nm) => m.masses[m.speciesNames.indexOf(nm)]);
+    };
+    const minerals = { redoxplume: [['Ferrihydrite', 106.866], ['Pyrolusite', 86.936], ['FeS_ppt', 87.905], ['Siderite', 115.853],
+      ['Calcite', 100.086], ['e-', null], ['CH2O', 30.026]], inversecolumn: [['Gypsum', 172.164], ['Calcite', 100.086]],
+      sorptionedge: [['Zn+2', 65.38], ['Hfo_wOH', null], ['Hfo_sOZn+', null]], freshening: [['CaX2', null], ['X-', null]] };
+    const wrong = [];
+    for (const [id, list] of Object.entries(minerals)) {
+      const got = massesOf(id, list.map(([nm]) => nm));
+      list.forEach(([nm, want], j) => { if (!(off(got[j], want) < 1e-12)) wrong.push(`${id} ${nm} ${got[j]} for ${want}`); });
+    }
+    let summary = null;
+    const plume = exs.find((e) => e.id === 'redoxplume').text;
+    handleRtmMessage({ type: 'compile', id: 33, text: plume }, (msg) => { summary = msg.model; });
+    const same = summary && JSON.stringify(summary.masses) === JSON.stringify(RtmModel.compile(plume).masses);
+    check('what each species weighs, for mg/kgw: by its name, a nuclide by its mass number, none for an exchanger, a site or the '
+      + 'electron; a mineral by its relation, the water in it counted and the electron nothing -- Ferrihydrite as Fe(OH)3, '
+      + 'Pyrolusite as MnO2, FeS, siderite, calcite, gypsum with its two waters -- as by hand; the summary the page reads has them',
+    !named.length && !wrong.length && same,
+    `${[...named, ...wrong].join('; ') || 'every one as by hand'}; the summary's ${same ? 'the same' : 'not the same'}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

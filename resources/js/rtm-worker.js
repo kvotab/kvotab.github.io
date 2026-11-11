@@ -210,6 +210,8 @@ function rtmSummary(model) {
     data: model.data || [],
     // What each species is made of: where an element is, and the water's major ions (compositionOf).
     composition: model.composition || null,
+    // Each species' formula mass, g/mol, or null: a concentration in mol/kgw shown in mg/kgw (formulaMassesOf).
+    masses: model.masses || null,
     // The species dissolved in the water: those a diagram can hold an activity of.
     solutes: model.speciesNames.filter((_, k) => rtmSolute(model, k)),
   };

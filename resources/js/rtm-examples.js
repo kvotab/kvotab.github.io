@@ -246,7 +246,7 @@ const RTM_EXAMPLES = [
     "id": "freshening",
     "group": "What the water is made of",
     "label": "Fresh water through a salty aquifer: a Durov diagram",
-    "about": "Fresh water, calcium and bicarbonate, through an aquifer that still holds brackish water, with calcite and an exchanger loaded from it — the Piper path the other way round. Run it: the Composition tab draws the outlet's water on a Durov diagram, from Na–Cl through Na–HCO₃, the exchanger giving up its sodium for the fresh water's calcium and the pH rising near 9, and Mg–HCO₃ to Ca–HCO₃, a freshening aquifer's sequence, beside waters measured there; the pH is under the square, and the total dissolved solids, falling from near 3700 mg/kgw to 500, to its right.",
+    "about": "Fresh water, calcium and bicarbonate, through an aquifer that still holds brackish water, with calcite and an exchanger loaded from it — the Piper path the other way round. Run it: the Composition tab draws the outlet's water on a Durov diagram, from Na–Cl through Na–HCO₃, the exchanger giving up its sodium for the fresh water's calcium and the pH rising near 9, and Mg–HCO₃ to Ca–HCO₃, a freshening aquifer's sequence, beside waters measured there; the pH is under the square, and the total dissolved solids, falling from near 3700 mg/kgw to 500, to its right. Against time draws the outlet's calcium, magnesium, sodium and chloride in mg/kgw, each by its atomic weight, beside the same measurements.",
     "text": "# Fresh water, calcium and bicarbonate, through an aquifer that still holds\n# brackish water, with calcite and an exchanger loaded from it: the exchanger\n# gives up its sodium, then its magnesium, for the fresh water's calcium, and\n# calcite dissolves where the calcium is taken. The water at the outlet goes\n# from Na-Cl through Na-HCO3, its pH near 9, and Mg-HCO3 to Ca-HCO3, the\n# sequence of an aquifer freshening. The Composition tab draws its path on a\n# Durov diagram, the pH under the square and the total dissolved solids to its\n# right, beside waters measured at the outlet. The constants are\n# phreeqc.dat's; the waters and the measurements are made up, and D stands\n# for the dispersion.\n<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 0.2\nVELOCITY = 1e-5\nDIFFUSION = 1\nADVECTION = 1\nLEFT = robin\nRIGHT = free\nACTIVITY = davies\nEQUILIBRATE = always\nTEND = 6e5\n\n<SPECIES>\nCa+2      1e-3     D=1e-7  left=2.5e-3\nMg+2      5.3e-3   D=1e-7  left=5e-4\nNa+       4.9e-2   D=1e-7  left=6e-4\nK+        1e-3     D=1e-7  left=1e-4\nCl-       5.5e-2   D=1e-7  left=7e-4\nSO4-2     2.8e-3   D=1e-7  left=3e-4\nHCO3-     2e-3     D=1e-7  left=5.4e-3\nCO3-2     1e-5     D=1e-7  left=1e-5\nCO2       1e-4     D=1e-7  left=5e-4\nCaHCO3+   0        D=1e-7\nCaCO3     0        D=1e-7\nMgHCO3+   0        D=1e-7\nCaSO4     0        D=1e-7\nMgSO4     0        D=1e-7\nNaSO4-    0        D=1e-7\nNaHCO3    0        D=1e-7\nH+        3e-8     D=1e-7  left=1e-7\nOH-       3e-7     D=1e-7  left=1e-7\nCalcite   0.05     mineral\nX-        exchanger 6e-2\nNaX       exchange\nCaX2      exchange\nMgX2      exchange\nKX        exchange\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\nCO3-2 + H+ <=> HCO3-, logK = 10.329\nCO3-2 + 2 H+ <=> CO2 + H2O, logK = 16.681\nCa+2 + HCO3- <=> CaHCO3+, logK = 1.106\nCa+2 + CO3-2 <=> CaCO3, logK = 3.224\nMg+2 + HCO3- <=> MgHCO3+, logK = 1.07\nCa+2 + SO4-2 <=> CaSO4, logK = 2.25\nMg+2 + SO4-2 <=> MgSO4, logK = 2.37\nNa+ + SO4-2 <=> NaSO4-, logK = 0.7\nNa+ + HCO3- <=> NaHCO3, logK = -0.25\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\nNa+ + X- <=> NaX, logK = 0\nCa+2 + 2 X- <=> CaX2, logK = 0.8\nMg+2 + 2 X- <=> MgX2, logK = 0.6\nK+ + X- <=> KX, logK = 0.7\n\n<DATA>\ntime   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  cell = 19\n1e4    1.0e-3   5.5e-3   5.0e-2   1.0e-3   5.6e-2   2.7e-3   2.1e-3\n4.5e4  7e-5     1.6e-4   8.4e-3   2.0e-4   1.0e-3   3.1e-4   7.0e-3\n1e5    5.6e-4   2.5e-3   1.0e-3   2.4e-4   7.5e-4   3.0e-4   5.9e-3\n4e5    2.3e-3   5.2e-4   6.5e-4   1.0e-4   7.0e-4   3.0e-4   5.4e-3\n",
     "view": {
       "tab": "composition",
@@ -255,7 +255,17 @@ const RTM_EXAMPLES = [
         "along": "time",
         "cell": 19,
         "logT": false
-      }
+      },
+      "picked": [
+        "tot(Ca)",
+        "tot(Mg)",
+        "tot(Na)",
+        "Cl-"
+      ],
+      "cell": 19,
+      "logT": false,
+      "logY": true,
+      "unit": "mg"
     }
   },
   {

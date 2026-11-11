@@ -1651,6 +1651,107 @@ async def main():
                   'the measured waters one of each type', [ok, fresh],
                   [True, ['cell 19: Na–Cl at the start, Ca–HCO₃ at 6.94 d; 4 measured', False, 5, 3, True, 'Na–HCO₃', True, True, True,
                           'Na–Cl / Na–HCO₃ / Mg–HCO₃ / Ca–HCO₃']])
+            # The same run in the unit the example gives, mg/kgw, on every chart of concentrations. Against time at the outlet the
+            # calcium, magnesium, sodium and chloride dissolved, each by its atomic weight, and what was measured of them by the
+            # same -- 1.0e-3 mol/kgw of calcium 40.078 mg/kgw; in mmol/kgw, chosen on another tab's bar, a thousand times the
+            # model's, the four selects as one; a species whose name is no formula left off in mg, the note naming it, and in
+            # the CSV in its own unit, the rest's headers in mg/kgw; the run kept and run again, the kept one beside it in mg
+            # too, the same to the last digit.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 8, tries=60, pause=0.25)
+            units_js = "['rtmUnitTime', 'rtmUnitProfile', 'rtmUnitGrad', 'rtmUnitComp'].map((id) => document.getElementById(id).value).join(' ')"
+            ca_js = "Array.from(document.getElementById('rtmChartTime').data.find((t) => t.name === 'Ca, dissolved').y)"
+            mg = await page.ev("""(() => { const p = document.getElementById('rtmChartTime');
+              return [%s, [...document.getElementById('rtmUnitTime').options].map((o) => o.textContent).join(' | '),
+                p.layout.yaxis.title.text, Array.from(p.data.find((t) => t.name === 'Ca, dissolved, measured').y), %s]; })()"""
+                               % (units_js, ca_js))
+
+            async def unit(sel, value):
+                await page.ev("(() => { const s = document.getElementById(%s); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % (json.dumps(sel), json.dumps(value)))
+                await asyncio.sleep(0.5)
+            await unit('rtmUnitProfile', 'mmol')
+            mmol = await page.ev("[%s, document.getElementById('rtmChartTime').layout.yaxis.title.text, %s]" % (units_js, ca_js))
+            await unit('rtmUnitTime', '')
+            own = await page.ev("[document.getElementById('rtmChartTime').layout.yaxis.title.text, %s]" % ca_js)
+            ratio = lambda a, b, f: (isinstance(a, list) and isinstance(b, list) and len(a) == len(b) > 100
+                                     and max(abs(x / (y * f) - 1) for x, y in zip(a, b) if y > 0) < 1e-12)
+            check('  in mg/kgw, as the example has it, against time: the outlet\'s calcium 40078 times its mol/kgw, the measured '
+                  'calcium by the same -- 1.0e-3 mol/kgw 40.078 mg/kgw; in mmol/kgw, chosen on another tab, a thousand times, the '
+                  'four selects as one; in the model\'s own the title as it was',
+                  [mg[0], mg[1], mg[2], [round(v, 9) for v in mg[3]], ratio(mg[4], own[1], 40078), mmol[0], mmol[1],
+                   ratio(mmol[2], own[1], 1000), own[0]],
+                  ['mg mg mg mg', 'mol/kgw | mmol/kgw | µmol/kgw | nmol/kgw | mg/kgw | µg/kgw', 'concentration (mg/kgw)',
+                   [40.078, 2.80546, 22.44368, 92.1794], True, 'mmol mmol mmol mmol', 'concentration (mmol/kgw)', True,
+                   'concentration'])
+            await unit('rtmUnitTime', 'mg')
+            await page.ev("""(() => { for (const v of ['CaX2', 'Ca+2']) {
+                const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+                if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } } })()""")
+            await settle(page, "document.getElementById('rtmChartTime').data.some((t) => t.name === 'Ca+2')", True, tries=40, pause=0.25)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            left = await page.ev("""(async () => { const r = window.__saved[0];
+              return [document.getElementById('rtmChartTime').data.map((t) => t.name).join(' | '),
+                document.getElementById('rtmTimeNote').textContent, r ? (await r.body).split('\\n')[0] : null]; })()""")
+            check('  a species whose name is no formula, CaX2, ticked in mg: left off, the note naming it; in the CSV in its own '
+                  'unit, mol/kgw, the rest in mg/kgw', left,
+                  ['Ca, dissolved | Ca, dissolved, measured | Mg, dissolved | Mg, dissolved, measured | Na, dissolved | '
+                   'Na, dissolved, measured | Cl- | Cl-, measured | Ca+2', 'left off, not in mg/kgw: CaX2 (no formula mass)',
+                   't (s),"Ca, dissolved (mg/kgw) @ cell 19","Mg, dissolved (mg/kgw) @ cell 19","Na, dissolved (mg/kgw) @ cell 19",'
+                   'Cl- (mg/kgw) @ cell 19,CaX2 (mol/kgw) @ cell 19,Ca+2 (mg/kgw) @ cell 19'])
+            await page.ev("document.getElementById('rtmKeep').click()")
+            klabel = (await page.ev("document.getElementById('rtmBeside').selectedOptions[0].textContent")).split(',')[0]
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 14, tries=80, pause=0.25)
+            kept = await page.ev("""((label) => { const d = document.getElementById('rtmChartTime').data;
+              const of = (n) => d.find((t) => t.name === n);
+              const same = (a, b) => !!a && !!b && a.y.length === b.y.length && Array.from(a.y).every((v, i) => v === b.y[i]);
+              return [['Ca, dissolved', 'Na, dissolved', 'Cl-', 'Ca+2'].map((n) => same(of(n), of(`${n}, ${label}`))),
+                of(`Ca+2, ${label}`).line.dash, !d.some((t) => t.name.startsWith('CaX2'))]; })(%s)""" % json.dumps(klabel))
+            check('  the run kept and run again: beside it, dashed, the kept run in mg/kgw, the same to the last digit, CaX2 left '
+                  'off for it too', kept, [[True, True, True, True], 'dash', True])
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            await page.ev("""(() => { for (const v of ['CaX2', 'Ca+2']) {
+                const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+                if (el && el.checked) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); } } })()""")
+            await asyncio.sleep(0.3)
+            # Against distance and Gradient, a chart of one: CaX2 drawn as the model has it, which the note says, Ca+2 in mg/kgw
+            # with the unit in its title and in the CSV's headers.
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            prof = []
+            for key in ['CaX2', 'Ca+2']:
+                await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(key))
+                await asyncio.sleep(0.6)
+                prof.append(await page.ev("[document.getElementById('rtmChartProfile').layout.yaxis.title.text,"
+                                          " document.getElementById('rtmProfileNote').textContent.split('; ').slice(1).join('; ')]"))
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"profile\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            phead = await page.ev("(async () => { const r = window.__saved[0]; return r ? (await r.body).split('\\n')[0].split(',') : null; })()")
+            await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmGradSpecies'); s.value = 'Ca+2';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            grad = await page.ev("document.getElementById('rtmChartGradient').data[0].colorbar.title.text")
+            check('  against distance CaX2 as the model has it, the note saying why, and Ca+2 in mg/kgw, the CSV\'s headers saying '
+                  'so; on Gradient Ca+2 in mg/kgw', [prof, phead[0] if phead else None,
+                                                     bool(phead) and all(h.endswith(' (mg/kgw)') for h in phead[1:]), grad],
+                  [[['CaX2 concentration', 'CaX2 as the model has it, not in mg/kgw: no formula mass'], ['Ca+2 (mg/kgw)', '']],
+                   'distance from the left-hand face (m)', True, 'Ca+2 (mg/kgw)'])
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await asyncio.sleep(0.3)
             # The same water as PHREEQC lists it, on the Composition tab: one cell at one stored point, from the model's own
             # speciation, in PHREEQC's blocks; a complex under each of its elements, each element's total as its species make
             # it, the calcite at saturation, the exchanger's equivalent fractions adding up to 1; a time asked for; the Text
@@ -1702,12 +1803,17 @@ async def main():
             saved = await page.ev("(async () => Promise.all(window.__saved.map(async (r) => [r.name, (await r.body).split('\\n')])))()")
             txt = saved[0] if isinstance(saved, list) and saved else ['', ['']]
             csv = saved[1] if isinstance(saved, list) and len(saved) > 1 else ['', ['']]
-            check('  at a time asked for, 1 d, its water; saved as Text in PHREEQC\'s columns and blocks, and as CSV the distribution '
-                  'of species', [at1, txt[0], bool(re.match(r'The water of cell 19 \(1\.95e-1 m\) at (1\.0\d d|2[34]\.\d h)$', txt[1][0])), txt[1][2], any(l.strip().startswith('pH  =') for l in txt[1]),
-                                 sum(1 for l in txt[1] if l.startswith('Ca ')), csv[0], csv[1][0]],
+            # In mg/kgw, as the example has it: a column after PHREEQC's own, calcium's total by its atomic weight.
+            ca_line = next((l.split() for l in txt[1] if l.startswith('\tCa ')), None)
+            check('  at a time asked for, 1 d, its water; saved as Text in PHREEQC\'s columns and blocks, a column in mg/kgw after '
+                  'them, and as CSV the distribution of species, the same column last',
+                  [at1, txt[0], bool(re.match(r'The water of cell 19 \(1\.95e-1 m\) at (1\.0\d d|2[34]\.\d h)$', txt[1][0])), txt[1][2], any(l.strip().startswith('pH  =') for l in txt[1]),
+                   sum(1 for l in txt[1] if l.startswith('Ca ')), txt[1][4].split(), bool(ca_line) and len(ca_line) == 3
+                   and abs(float(ca_line[2]) / (float(ca_line[1]) * 40078) - 1) < 1e-3, csv[0], csv[1][0]],
                   [True, 'rtm_freshening_water_cell19.txt', True,
                    '-----------------------------Solution composition------------------------------', True, 1,
-                   'rtm_freshening_water_cell19.csv', 'species,in,molality,activity,log molality,log activity,log gamma'])
+                   ['Elements', 'Molality', 'mg/kgw'], True,
+                   'rtm_freshening_water_cell19.csv', 'species,in,molality,activity,log molality,log activity,log gamma,mg/kgw'])
             # The same run's calcium as a budget over the run: in the water, on the exchanger and in the calcite, stacked, what
             # has gone out on top, and what was there and came in, dashed, along the top of the stack: it closes; the CSV a row
             # for each stored time.
@@ -1746,6 +1852,30 @@ async def main():
             await page.ev("(() => { const b = document.getElementById('rtmCompLogT'); b.checked = true;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            # A model without ACTIVITY, mg/kgw still chosen: its concentrations are in whatever unit its text means, so they are
+            # drawn as it has them and the note says why; mg and µg on the menu, not to be chosen; times 10^3 a thousand times,
+            # the title saying so.
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA  2e-3\nB  0\n\n<REACTIONS>\nA => B, k = 0.1\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="A"]');
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).some((t) => t.name === 'A')", True, tries=40, pause=0.25)
+            a_js = "document.getElementById('rtmChartTime').data.find((t) => t.name === 'A').y[0]"
+            bare = await page.ev("""(() => { const p = document.getElementById('rtmChartTime');
+              return [[...document.getElementById('rtmUnitTime').options].map((o) => o.textContent + (o.disabled ? ' (off)' : '')).join(' | '),
+                document.getElementById('rtmUnitTime').value, p.layout.yaxis.title.text, document.getElementById('rtmTimeNote').textContent,
+                %s]; })()""" % a_js)
+            await unit('rtmUnitTime', 'mmol')
+            bare2 = await page.ev("[document.getElementById('rtmChartTime').layout.yaxis.title.text, %s]" % a_js)
+            check('a model without ACTIVITY, mg/kgw chosen before: drawn as its text has it, the note saying why; mg and µg on the '
+                  'menu, not to be chosen; times 10^3 a thousand times, the title saying so',
+                  [bare[:4], bare[4], bare2[0], isinstance(bare2[1], (int, float)) and bare2[1] == bare[4] * 1000],
+                  [['as the model has them | × 10³ | × 10⁶ | × 10⁹ | mg/kgw, under ACTIVITY (off) | µg/kgw, under ACTIVITY (off)', '',
+                    'concentration', "in the model's own unit: mg/kgw needs ACTIVITY, whose concentrations are mol/kgw"],
+                   0.002, 'concentration × 10³', True])
             ok = await example('calcitefit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
             fitted = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                    " [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2)"

@@ -10,6 +10,7 @@ other than this code.
 They are embedded rather than fetched, so that a page opened from a disk can
 still load them.
 """
+import datetime
 import json
 import re
 from pathlib import Path
@@ -1420,7 +1421,7 @@ _after('salinitypca', dict(
     id='freshening',
     group='What the water is made of',
     label='Fresh water through a salty aquifer: a Durov diagram',
-    about="Fresh water, calcium and bicarbonate, through an aquifer that still holds brackish water, with calcite and an exchanger loaded from it — the Piper path the other way round. Run it: the Composition tab draws the outlet's water on a Durov diagram, from Na–Cl through Na–HCO₃, the exchanger giving up its sodium for the fresh water's calcium and the pH rising near 9, and Mg–HCO₃ to Ca–HCO₃, a freshening aquifer's sequence, beside waters measured there; the pH is under the square, and the total dissolved solids, falling from near 3700 mg/kgw to 500, to its right.",
+    about="Fresh water, calcium and bicarbonate, through an aquifer that still holds brackish water, with calcite and an exchanger loaded from it — the Piper path the other way round. Run it: the Composition tab draws the outlet's water on a Durov diagram, from Na–Cl through Na–HCO₃, the exchanger giving up its sodium for the fresh water's calcium and the pH rising near 9, and Mg–HCO₃ to Ca–HCO₃, a freshening aquifer's sequence, beside waters measured there; the pH is under the square, and the total dissolved solids, falling from near 3700 mg/kgw to 500, to its right. Against time draws the outlet's calcium, magnesium, sodium and chloride in mg/kgw, each by its atomic weight, beside the same measurements.",
     text='''# Fresh water, calcium and bicarbonate, through an aquifer that still holds
 # brackish water, with calcite and an exchanger loaded from it: the exchanger
 # gives up its sodium, then its magnesium, for the fresh water's calcium, and
@@ -1494,7 +1495,8 @@ time   tot(Ca)  tot(Mg)  tot(Na)  K+       Cl-      tot(S)   alk(CO3)  cell = 19
 1e5    5.6e-4   2.5e-3   1.0e-3   2.4e-4   7.5e-4   3.0e-4   5.9e-3
 4e5    2.3e-3   5.2e-4   6.5e-4   1.0e-4   7.0e-4   3.0e-4   5.4e-3
 ''',
-    view={'tab': 'composition', 'comp': {'view': 'durov', 'along': 'time', 'cell': 19, 'logT': False}},
+    view={'tab': 'composition', 'comp': {'view': 'durov', 'along': 'time', 'cell': 19, 'logT': False},
+          'picked': ['tot(Ca)', 'tot(Mg)', 'tot(Na)', 'Cl-'], 'cell': 19, 'logT': False, 'logY': True, 'unit': 'mg'},
 ))
 
 _after('frontuncertainty', dict(
@@ -1877,10 +1879,17 @@ if (typeof module !== 'undefined' && module.exports) {{
     # The page's own cache stamp, bumped so that a reader gets the new set.
     page = ROOT / 'rtm.html'
     src = page.read_text()
+    # Today's date and a letter, the next letter on a day it was bumped already: a, b ... z, za, zb ... -- each later than the
+    # one before, in a string's order too. The letter alone, past z, made a stamp of '{'.
     pat = re.compile(r'(rtm-examples\.js\?v=)([0-9]{8})([a-z]*)')
     if pat.search(src):
+        today = datetime.date.today().strftime('%Y%m%d')
+
         def bump(m):
-            return m.group(1) + m.group(2) + (chr(ord(m.group(3) or '`') + 1) if m.group(3) else 'a')
+            s = m.group(3)
+            if m.group(2) != today or not s:
+                return m.group(1) + today + 'a'
+            return m.group(1) + today + (s + 'a' if s[-1] == 'z' else s[:-1] + chr(ord(s[-1]) + 1))
         page.write_text(pat.sub(bump, src))
 
     kb = OUT.stat().st_size / 1024

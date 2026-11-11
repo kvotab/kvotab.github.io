@@ -254,6 +254,7 @@
             <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
             <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
             <label>from <input type="text" id="rtmYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redraw"></label>
+            <label>Units <select id="rtmUnitTime" data-on-change="rtm:concUnit"></select></label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
@@ -293,6 +294,7 @@
             </label>
             <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
             <label>from <input type="text" id="rtmProfileYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawProfile"></label>
+            <label>Units <select id="rtmUnitProfile" data-on-change="rtm:concUnit"></select></label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="csv">CSV</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="xlsx">Excel</button>
@@ -445,6 +447,7 @@
             <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
             <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
             <label>from <input type="text" id="rtmGradCFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawGradient"></label>
+            <label>Units <select id="rtmUnitGrad" data-on-change="rtm:concUnit"></select></label>
             <label><input type="checkbox" id="rtmGradSmooth" data-on-change="rtm:redrawGradient"> smooth</label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="csv">CSV</button>
@@ -520,6 +523,7 @@
             <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
             <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
             <label data-comp-for="listing"><input type="checkbox" id="rtmCompBeside" data-on-change="rtm:redrawComp"> beside PHREEQC</label>
+            <label data-comp-for="listing">Units <select id="rtmUnitComp" data-on-change="rtm:concUnit"></select></label>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="csv">CSV</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
@@ -2337,6 +2341,24 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             one time — the first of the <em>Times</em>, or the end of the run — each in its colour on
             the time chart, pH, pe and the like on an axis of their own on the right: a plume's redox
             zones side by side.</p>
+          <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
+            them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
+            is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
+            formula mass: a species by its name, <code>CaHCO3+</code> 101.094 g/mol by the standard
+            atomic weights, and a nuclide by its mass number, <code>U238</code> 238 g/mol, which is its
+            atomic mass to about 0.1&nbsp;% (tritium's to 0.6&nbsp;%); a mineral by what its relation
+            makes of it, the water in it counted — <code>Ferrihydrite + 3 H+ &lt;=&gt; Fe+3 + 3 H2O</code>
+            weighs it as Fe(OH)<sub>3</sub>, 106.866 g/mol; an element's total, or a valence state's, by
+            the element's atomic weight, <code>tot(Ca)</code> at 1 mmol/kgw 40.078 mg/kgw; the sulfate's
+            as SO<sub>4</sub>. Without an <code>ACTIVITY</code> a concentration is in whatever unit the
+            text means, and is shown times 10<sup>3</sup>, 10<sup>6</sup> or 10<sup>9</sup> — never
+            weighed. pH, pe, a saturation index and the like are as they are. What has no such unit —
+            a gas's partial pressure, the alkalinity in mg, which would need saying what it is counted
+            as, a species whose name is no formula (<code>CaX2</code>, <code>Hfo_wOH</code>) in mg — is
+            left off a chart of several and drawn as the model has it on a chart of one, and the note
+            says which. What <code>&lt;DATA&gt;</code> measured and a run kept beside are shown in the
+            same unit, a log axis's <em>from</em> is read in it, and the axis titles and what is saved
+            say it; the listing gains a column in it after PHREEQC's own.</p>
           <p>The list holds the species first, then what the run comes to besides them, in groups:
             <em>the water</em> — pH as −log a(H<sup>+</sup>), pe, and Eh in volts, the pe times ln 10&nbsp;<i>RT</i>/<i>F</i>
             at the water's temperature with the <i>R</i> and <i>F</i> PHREEQC prints its redox couples' Eh with, 0.059156 V
@@ -3494,14 +3516,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261110g"></script>
+  <script src="./resources/js/rtm-model.js?v=20261110h"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261006z"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261110f"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261110a"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261110g"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261110o"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261110p"></script>
 </body>
 </html>

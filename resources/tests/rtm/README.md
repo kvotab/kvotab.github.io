@@ -514,6 +514,16 @@ nuclides' sum, by hand, and its uranium's budget the budgets of U238 and
 U234 added, to 1.8e-15; the far field's Ra226 and the release history's
 I129 and Cs135 each one atom. Until then each counted as its mass number
 of atoms: tot(U) was 238 [U238] + 234 [U234].
+What each species weighs (since 2026-11-10), for a concentration shown in
+mg/kgw: by its name and the standard atomic weights -- Ca+2 40.078,
+CaHCO3+ 101.094, CO2(g) 44.009, CaSO4:2H2O 172.164, UO2_2(OH)2+2 -- and
+a nuclide by its mass number, U238 238, C14 14, H3 3; none for X-, CaX2,
+Hfo_wOH, Tracer or the electron. A mineral by what its relation makes of
+it, the water in it counted and the electron weighing nothing, as by
+hand: ferrihydrite as Fe(OH)3, 106.866, pyrolusite as MnO2, 86.936, from
+Pyrolusite + 4 H+ + 2 e- <=> Mn+2 + 2 H2O, FeS(ppt) 87.905, siderite
+115.853, calcite 100.086, gypsum with its two waters; on a surface none.
+The worker's summary carries them for the page.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1150,6 +1160,8 @@ The examples of the sensitivity indices and the Durov diagram (since 2026-11-10)
 The same water as PHREEQC lists it (since 2026-11-10), the freshening example's outlet at the end of the run, on the Composition tab: its blocks in PHREEQC's order -- the solution's composition, its description, the distribution of species, the saturation indices, the minerals, the exchange composition -- H+ and OH- first, CaHCO3+ under C and under Ca, each element's total as its species make it, the calcite at saturation, the exchanger's equivalent fractions adding up to 1; Cell and At in the toolbar, Along and log time not, Text among the saves and the picture's not. At `1 d` its water at the stored point nearest; saved as Text, `rtm_freshening_water_cell19.txt`, in PHREEQC's blocks and columns, and as CSV the distribution of species.
 
 Its calcium as a budget over the run (since 2026-11-10): in the water, on the exchanger and in the calcite, stacked, with what has gone out at the right-hand end on top, what was there at the start and came in at the left dashed along the top of the stack and what reactions made dotted; the note saying it closes, within 1e-5 of what was there and came in; saved as CSV, `rtm_freshening_budget_Ca.csv`, a row for each stored time.
+
+The same run in mg/kgw (since 2026-11-10), as the freshening example gives it: the four Units selects at mg, the menu mol, mmol, µmol and nmol per kgw and mg and µg per kgw. Against time at the outlet the calcium, magnesium, sodium and chloride dissolved, the title concentration (mg/kgw), calcium's curve 40078 times its mol/kgw to 1e-12 and what was measured of it 40.078, 2.80546, 22.44368 and 92.1794 mg/kgw; mmol/kgw chosen on Against distance's bar sets all four, a thousand times the model's; in the model's own the title as it was. CaX2 ticked in mg: left off, the note naming it, no formula mass; the CSV `t (s)`, each in mg/kgw and CaX2 in mol/kgw. Kept and run again: beside it, dashed, the kept run in mg/kgw, the same to the last digit. Against distance CaX2 alone as the model has it, the note saying why, and Ca+2 in mg/kgw, every header of the CSV after the distance ending ` (mg/kgw)`; on Gradient Ca+2 (mg/kgw). The water's listing then has a column in mg/kgw after PHREEQC's own: in the Text, calcium's total its molality times 40078 to the four figures printed, and last in the CSV. A model without ACTIVITY with mg/kgw still chosen: drawn as its text has it, the note saying mg/kgw needs ACTIVITY; mg and µg on the menu, not to be chosen; times 10³ a thousand times, the title concentration × 10³.
 
 Two runs side by side (since 2026-11-10), on the salinisation example at cell 19, Na+ and pH ticked: Keep this run keeps it, chosen to be drawn beside the next and named by the time it was kept and its example. Run again with the water twice as fast: against time each line ticked again for the kept run, dashed in its colour, its values the first run's to the last digit, pH on its own axis, this run's not; against distance each profile again for it, dashed; on Gradient its own map under this one, on one colour scale; on the Piper diagram its path through all three panels; beside it nothing, the run alone again. A decay run kept in seconds beside the same decay in minutes: its times drawn in minutes, 600 s at 10, the same end to 1e-3; both kept runs on the menu. The test then clears what it ticked.
 
