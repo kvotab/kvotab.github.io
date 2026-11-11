@@ -3980,6 +3980,60 @@ function againstStability(engine) {
 }
 
 /* ======================================================================
+   A SOLUBILITY DIAGRAM, against PHREEQC: a water of 10 mM NaCl with a
+   trace of aluminium handed off with its activity coefficients, gibbsite
+   and amorphous Al(OH)3 written in <PHASES> at the database's log K, and
+   the water held at saturation with each from pH 4 to 9 on the Diagrams
+   tab. At each point PHREEQC's SOLUTION of the same water -- the page's
+   sodium and chloride, at the page's pH, "Al 1e-6 Gibbsite 0" -- sets the
+   aluminium as the page does, and the two totals must agree.
+   ====================================================================== */
+function againstSolubility(engine) {
+  const water = 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na 10\n Cl 10\n Al 1e-6\nEND\n';
+  // PHREEQC's name, the page's, and the reaction after the name.
+  const phases = [['Gibbsite', 'Gibbsite', '+ 3 H+ <=> Al+3 + 3 H2O'], ['Al(OH)3(a)', 'Al(OH)3(a)', '+ 3 H+ <=> Al+3 + 3 H2O']];
+  engine.load(dbText);
+  const lk = engine.run(`${water.replace('END\n', '')}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+    + `${phases.map(([pq], i) => ` ${10 + 10 * i} PUNCH LK_PHASE("${pq}")`).join('\n')}\nEND\n`);
+  const logKs = lk[lk.length - 1].map(Number);
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'aluminium', text: water }, activity: true });
+  const text = `${res.text}\n<PHASES>\n${phases.map(([, nm, rx], i) => `${nm} ${rx},  logK = ${logKs[i]}`).join('\n')}\n`;
+  const m = RtmModel.compile(text);
+  const ns = m.speciesNames.length;
+  const reply = (msg) => { let r = null; handleRtmMessage(msg, (x) => { if (x.type !== 'progress') r = x; }); if (r.type === 'error') throw new Error(r.error); return r; };
+  const g = reply({ type: 'diagram', id: 1, text, at: 'start', cell: 0, axes: [{ kind: 'pH', from: 4, to: 9, n: 11 }],
+    sat: phases.map(([, nm]) => ({ phase: nm })) });
+  const totalOf = (y, el) => m.composition.elements.find((e) => e.el === el).terms.filter((tm) => tm[2] === 'water')
+    .reduce((acc, [k, n]) => acc + n * y[k], 0);
+  let worst = 0;
+  let where = '';
+  let least = Infinity;
+  let leastAt = '';
+  g.sat.forEach((sx, j) => {
+    g.x.forEach((pH, i) => {
+      const y = sx.states.subarray(i * ns, (i + 1) * ns);
+      const al = totalOf(y, 'Al');
+      engine.load(dbText);
+      const rows = engine.run(`SOLUTION 1\n units mol/kgw\n pH ${pH.toPrecision(17)}\n Na ${totalOf(y, 'Na').toPrecision(17)}\n`
+        + ` Cl ${totalOf(y, 'Cl').toPrecision(17)}\n Al 1e-6 ${phases[j][0]} 0\nSELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+        + ' 10 PUNCH TOT("Al")\nEND\n');
+      const pq = Number(rows[rows.length - 1][0]);
+      const d = Math.abs(al / pq - 1);
+      if (!(d <= worst)) { worst = d; where = `${phases[j][0]} at pH ${pH.toFixed(1)}`; }
+      if (j === 0 && al < least) { least = al; leastAt = pH.toFixed(1); }
+    });
+  });
+  check('a solubility diagram of a handed-off water, 10 mM NaCl with aluminium, at saturation with phreeqc.dat\'s gibbsite and '
+    + 'amorphous Al(OH)3 from pH 4 to 9: at each point PHREEQC\'s SOLUTION of the page\'s water there, "Al 1e-6 Gibbsite 0", '
+    + 'sets the same aluminium, to 1e-6',
+  !g.failed && worst < 1e-6,
+  `${g.sat.length} phases at ${g.x.length} points, ${g.failed} left blank; the worst ${worst.toExponential(1)} (${where}); `
+    + `gibbsite least soluble at pH ${leastAt}, ${least.toExponential(3)} mol/kgw`);
+  return worst;
+}
+
+/* ======================================================================
    A REDOX LADDER, against PHREEQC: a handed-off water with nitrogen, iron,
    sulfur and carbon, the database's couples placed where each turns over
    -- at pH 7 along pe at 25 C, and at pH 5 along Eh at 40 C. Handed off
@@ -5228,6 +5282,8 @@ function againstKineticsHandOff(engine) {
   againstEh(wasm);
   console.log('\n--- a silicate stability map: each phase per mole of aluminium, against PHREEQC\'s SOLUTION at its boundaries ---');
   againstStability(wasm);
+  console.log('\n--- a solubility diagram: the water at saturation with gibbsite and amorphous Al(OH)3 against PHREEQC\'s SOLUTION ---');
+  againstSolubility(wasm);
   console.log('\n--- a redox ladder: valence states, the couples, and where each turns over against PHREEQC\'s SOLUTION there ---');
   againstLadder(wasm);
   console.log('\n--- the couples across a map of pH and pe or Eh, against PHREEQC\'s SOLUTION along each line ---');

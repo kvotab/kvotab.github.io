@@ -699,7 +699,7 @@ async def main():
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '35:12')
+                " + ':' + s.querySelectorAll('optgroup').length; })()"), '36:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -1778,6 +1778,52 @@ async def main():
                   'aluminium over log a(H4SiO4) and log a(K+)/a(H+), gibbsite and kaolinite parted at -4.3925, quartz and amorphous '
                   'silica dotted at -3.9804 and -2.7118', [ok, sil],
                   [True, ['diagram', 'log a(K+)/a(H+)', 'Gibbsite K_feldspar K_mica Kaolinite', True, True, True, True, 'stable', 'Al']])
+            # A solubility diagram: the aluminium at saturation with gibbsite at each pH, its species dotted beside it and
+            # adding up to it, least at pH 6.35 in the example's water.
+            ok = await example('gibbsite', "document.getElementById('rtmStatus').textContent.startsWith('Diagram worked out')")
+            gib = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              const tot = d.find((t) => t.name === 'Al dissolved, at saturation with Gibbsite');
+              const sp = d.filter((t) => t.line && t.line.dash === 'dot');
+              let add = 0;
+              tot.x.forEach((x, i) => { const v = sp.reduce((acc, t) => acc + 10 ** t.y[i], 0); add = Math.max(add, Math.abs(v / 10 ** tot.y[i] - 1)); });
+              const least = tot.x[tot.y.indexOf(Math.min(...tot.y))];
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, document.getElementById('rtmDgShow').value,
+                document.getElementById('rtmDgYKind').value, document.getElementById('rtmDgYPhases').value,
+                sp.map((t) => t.name).join(' '), add < 1e-12, Math.abs(least - 6.35) < 1e-9, p.layout.yaxis.title.text,
+                document.getElementById('rtmDgSatWrap').hidden, /the Al set by Gibbsite/.test(document.getElementById('rtmDgNote').textContent)]; })()""")
+            check('the gibbsite example opens on what dissolves at saturation with gibbsite, pH 4 to 10: the aluminium least at pH '
+                  '6.35, its five species dotted beside it adding up to it, to 1e-12', [ok, gib],
+                  [True, ['diagram', 'solubility', 'sat', 'Gibbsite', 'Al+3 AlOH+2 Al(OH)2+ Al(OH)3 Al(OH)4-', True, True,
+                          'log concentration (mol/kgw)', True, True]])
+            # Amorphous Al(OH)3 named beside it, a water of its own: a second line, no species; on the saturation indices, the
+            # water at saturation with it chosen, its own index 0 and gibbsite's 10.8 - 8.11 above at every pH, whatever the
+            # activity coefficients, the same water's. The CSV a column for each line.
+            await page.ev("""(() => { const f = document.getElementById('rtmDgYPhases'); f.value = 'Gibbsite, Al(OH)3(a)';
+              f.dispatchEvent(new Event('change', { bubbles: true })); document.getElementById('rtmDgGo').click(); })()""")
+            two_lines = await settle(page, "document.getElementById('rtmChartDg').data.filter((t) => / at saturation with /.test(t.name)).length"
+                                     " + 10 * document.getElementById('rtmChartDg').data.filter((t) => t.line && t.line.dash === 'dot').length",
+                                     2, tries=60, pause=0.5)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"diagram\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            sol_csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).split('\\n')[0]] : null; })()")
+            await page.ev("(() => { const s = document.getElementById('rtmDgShow'); s.value = 'si'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            await page.ev("(() => { const s = document.getElementById('rtmDgSat'); s.value = '1'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            amorph = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
+              const of = (nm) => d.find((t) => t.name === nm).y;
+              const off = (y, v) => Math.max(...y.map((u) => Math.abs(u - v)));
+              return [document.getElementById('rtmDgSatWrap').hidden, [...document.getElementById('rtmDgSat').options].map((o) => o.textContent).join(' | '),
+                off(of('SI(Al(OH)3(a))'), 0) < 1e-9, off(of('SI(Gibbsite)'), 10.8 - 8.11) < 1e-9,
+                /at saturation with Al\\(OH\\)3\\(a\\)/.test(document.getElementById('rtmDgNote').textContent)]; })()""")
+            check('  amorphous Al(OH)3 named beside it: a line of its own and no species; the CSV a column for each; the water at '
+                  'saturation with it chosen, its index 0 and gibbsite\'s 2.69 above at every pH, to 1e-9', [two_lines, sol_csv, amorph],
+                  [2, ['rtm_solubility_pH.csv', 'pH,"Al dissolved, at saturation with Gibbsite","Al dissolved, at saturation with Al(OH)3(a)"'],
+                   [False, 'Gibbsite | Al(OH)3(a)', True, True, True]])
             # --- a run kept, and the next drawn beside it on the charts of the run ---
             ok = await example('salinisation', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'composition'"
                                                " && !document.getElementById('rtmChartComp').hidden")

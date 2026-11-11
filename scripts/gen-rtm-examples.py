@@ -1176,6 +1176,52 @@ def _after(eid, *new):
     EXAMPLES[i + 1:i + 1] = list(new)
 
 
+_after('silicates', dict(
+    id='gibbsite',
+    group='Equilibrium diagrams',
+    label='Gibbsite: its solubility against pH',
+    about="The aluminium a water of 10 mM NaCl holds at saturation with gibbsite, at every pH from 4 to 10, as PhreePlot's solubility diagrams draw it from PHREEQC. Run it: the Diagrams tab draws what dissolves, falling with the pH as Al³⁺, least near pH 6.4 and rising again as Al(OH)₄⁻, each species of the aluminium beside it. Write Al(OH)3(a) after Gibbsite, with a comma, and work it out again: the amorphous solid's line comes above, nearly three orders of magnitude more soluble.",
+    text='''\
+# The aluminium a water holds at saturation with gibbsite, at every pH: the
+# solubility diagram PhreePlot draws from PHREEQC. 10 mM NaCl gives the water
+# its ionic strength, under Davies' activity coefficients. The Diagrams tab
+# sets the aluminium at each pH so that gibbsite's saturation index is 0, as
+# PHREEQC's SOLUTION does with "Al 1 Gibbsite 0"; amorphous Al(OH)3 is in
+# <PHASES> too, to be named beside it. phreeqc.dat's constants at 25 C.
+<SETTINGS>
+MODE = batch
+TEND = 1
+ACTIVITY = davies
+EQUILIBRATE = 1
+
+<SPECIES>
+H+        1e-7
+OH-       1e-7
+Na+       1e-2
+Cl-       1e-2
+Al+3      1e-9
+AlOH+2    0
+Al(OH)2+  0
+Al(OH)3   0
+Al(OH)4-  0
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,                       logK = -14
+Al+3 + H2O <=> AlOH+2 + H+,          logK = -5
+Al+3 + 2 H2O <=> Al(OH)2+ + 2 H+,    logK = -10.1
+Al+3 + 3 H2O <=> Al(OH)3 + 3 H+,     logK = -16.9
+Al+3 + 4 H2O <=> Al(OH)4- + 4 H+,    logK = -22.7
+
+<PHASES>
+Gibbsite + 3 H+ <=> Al+3 + 3 H2O,     logK = 8.11
+Al(OH)3(a) + 3 H+ <=> Al+3 + 3 H2O,   logK = 10.8
+''',
+    view={'tab': 'diagram', 'go': True, 'dg': {'cell': 0, 'at': 'start', 'x': {'kind': 'pH', 'sp': '', 'from': '4', 'to': '10', 'n': '121'},
+                                               'y': {'kind': 'sat', 'sp': '', 'from': '-12', 'to': '16', 'n': '41', 'phases': 'Gibbsite'},
+                                               'show': 'solubility', 'el': 'Al', 'in': 'water', 'q': 'pH', 'satAt': 0}},
+))
+
+
 _after('salinisation', dict(
     id='sodicwater',
     group='What the water is made of',

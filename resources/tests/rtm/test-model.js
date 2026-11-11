@@ -9298,6 +9298,66 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   `within ${held.toExponential(1)}, the pH held at ${rg.pHHeld}; ${refusedRatio.map((x) => `"${x}"`).join(' | ')}`);
 
   /*
+    A SOLUBILITY DIAGRAM: the water held at saturation with a phase at each
+    pH, the phase's element set so that its saturation index is 0, or the
+    one asked. Without activity coefficients each has a closed form:
+    amorphous silica's silicon K (1 + K1/[H+]), and quartz held half a unit
+    under saturation 10^-0.5 of its own; gibbsite's aluminium
+    Ksp [H+]^3 (1 + b1/[H+] + b2/[H+]^2 + b3/[H+]^3 + b4/[H+]^4), least where
+    the closed form is least. Two things varied, a total varied, a phase the
+    model has not, and one whose element what is varied holds, refused.
+  */
+  const silSat = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = 1\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\nNa+  1e-3\nCl-  1e-3\n'
+    + 'H4SiO4  1e-4\nH3SiO4-  1e-7\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\nH4SiO4 <=> H3SiO4- + H+,  logK = -9.83\n\n'
+    + '<PHASES>\nSiO2(a) + 2 H2O <=> H4SiO4,  logK = -2.71\nQuartz + 2 H2O <=> H4SiO4,  logK = -3.98\n';
+  const gibSat = '<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = 1\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\nNa+  1e-3\nCl-  1e-3\n'
+    + 'Al+3  1e-9\nAlOH+2  1e-9\nAl(OH)2+  1e-9\nAl(OH)3  1e-9\nAl(OH)4-  1e-9\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\n'
+    + 'Al+3 + H2O <=> AlOH+2 + H+,  logK = -5\nAl+3 + 2 H2O <=> Al(OH)2+ + 2 H+,  logK = -10.1\n'
+    + 'Al+3 + 3 H2O <=> Al(OH)3 + 3 H+,  logK = -16.9\nAl+3 + 4 H2O <=> Al(OH)4- + 4 H+,  logK = -22.7\n\n'
+    + '<PHASES>\nGibbsite + 3 H+ <=> Al+3 + 3 H2O,  logK = 8.11\n';
+  const satSil = askW({ type: 'diagram', id: 16, text: silSat, at: 'start', cell: 0, axes: [{ kind: 'pH', from: 2, to: 11, n: 10 }],
+    sat: [{ phase: 'SiO2(a)' }, { phase: 'Quartz', si: -0.5 }] });
+  let silWorst = 0;
+  let siWorst = 0;
+  satSil.sat.forEach((sx) => {
+    const lk = sx.phase === 'Quartz' ? -3.98 - 0.5 : -2.71;
+    satSil.x.forEach((pH, i) => {
+      silWorst = Math.max(silWorst, Math.abs(sx.total[i] / (10 ** lk * (1 + 10 ** (pH - 9.83))) - 1));
+      siWorst = Math.max(siWorst, Math.abs(sx.quant[i * satSil.nq + satSil.keys.indexOf(`SI(${sx.phase})`)] - sx.si));
+    });
+  });
+  const satGib = askW({ type: 'diagram', id: 17, text: gibSat, at: 'start', cell: 0, axes: [{ kind: 'pH', from: 3, to: 11, n: 81 }],
+    sat: [{ phase: 'Gibbsite' }] });
+  const gibbsite = (pH) => {
+    const h = 10 ** -pH;
+    return 10 ** 8.11 * h ** 3 * (1 + 10 ** -5 / h + 10 ** -10.1 / h ** 2 + 10 ** -16.9 / h ** 3 + 10 ** -22.7 / h ** 4);
+  };
+  let gibWorst = 0;
+  satGib.x.forEach((pH, i) => { gibWorst = Math.max(gibWorst, Math.abs(satGib.sat[0].total[i] / gibbsite(pH) - 1)); });
+  const leastAt = (vals) => satGib.x[vals.indexOf(Math.min(...vals))];
+  const gibLeast = [leastAt(Array.from(satGib.sat[0].total)), leastAt(Array.from(satGib.x, gibbsite))];
+  const refusedSat = (axes, sat, text = gibSat) => {
+    try { askW({ type: 'diagram', id: 18, text, at: 'start', cell: 0, axes, sat }); return ''; } catch (e) { return e.message; }
+  };
+  const satRefusals = [
+    refusedSat([{ kind: 'pH', from: 3, to: 11, n: 3 }, { kind: 'la', species: 'Na+', from: -4, to: -2, n: 3 }], [{ phase: 'Gibbsite' }]),
+    refusedSat([{ kind: 'tot', species: 'Na', from: -4, to: -2, n: 3 }], [{ phase: 'Gibbsite' }]),
+    refusedSat([{ kind: 'pH', from: 3, to: 11, n: 3 }], [{ phase: 'Boehmite' }]),
+    refusedSat([{ kind: 'la', species: 'Al+3', from: -8, to: -4, n: 3 }], [{ phase: 'Gibbsite' }]),
+  ];
+  check('a solubility diagram: at saturation with amorphous silica, and with quartz held 0.5 under it, the silicon K (1 + K1/[H+]) '
+    + 'from pH 2 to 11 to 1e-12, each index the one asked to 1e-10; gibbsite\'s aluminium its closed form over the five species '
+    + 'from pH 3 to 11 to 1e-12, least at the closed form\'s least, pH 6.3; two things varied, a total varied, a phase the model '
+    + 'has not and one whose aluminium the axis holds, refused',
+  !satSil.failed && !satGib.failed && silWorst < 1e-12 && siWorst < 1e-10 && gibWorst < 1e-12
+    && gibLeast[0] === gibLeast[1] && Math.abs(gibLeast[0] - 6.3) < 1e-9
+    && /one thing varied, not two/.test(satRefusals[0]) && /A total varied cannot be set by a saturation/.test(satRefusals[1])
+    && /Boehmite: the model has no phase of that name\. Its phases: Gibbsite\./.test(satRefusals[2])
+    && /Gibbsite: its Al is held by what is varied/.test(satRefusals[3]),
+  `silicon within ${silWorst.toExponential(1)}, indices within ${siWorst.toExponential(1)}, aluminium within `
+    + `${gibWorst.toExponential(1)}, least at pH ${gibLeast.join(' and ')}; ${satRefusals.map((x) => `"${x}"`).join(' | ')}`);
+
+  /*
     PRINCIPAL COMPONENTS (RtmModel.pca), as the Composition tab gives them.
     Two variables correlated by r have eigenvalues 1 + r and 1 - r and
     components (1, 1) and (1, -1) over root 2. A table of six waters and four

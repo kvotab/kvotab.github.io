@@ -684,6 +684,7 @@
                 <option value="ratio">log activity over H+ of</option>
                 <option value="tot">log total of</option>
                 <option value="pHheld">the pH held at</option>
+                <option value="sat">the water at saturation with</option>
               </select>
               <span id="rtmDgYMore">
                 <select id="rtmDgYSp" aria-label="of which" data-on-change="rtm:dgSettings"></select>
@@ -691,6 +692,8 @@
                 <span id="rtmDgYRange">to <input type="text" id="rtmDgYTo" class="rtm-dg-num" aria-label="to" data-on-change="rtm:dgSettings">
                 in <input type="text" id="rtmDgYN" class="rtm-dg-num" aria-label="points" data-on-change="rtm:dgSettings"> points</span>
               </span>
+              <span id="rtmDgYSat" hidden><input type="text" id="rtmDgYPhases" class="rtm-times" aria-label="the phases"
+                placeholder="each of its phases, or those named" data-on-change="rtm:dgSettings"></span>
             </span>
           </div>
             </div>
@@ -702,6 +705,9 @@
           <div class="rtm-toolbar" id="rtmDgShowBar" hidden>
             <label>Show
               <select id="rtmDgShow" data-on-change="rtm:dgRedraw"></select>
+            </label>
+            <label id="rtmDgSatWrap" hidden>at saturation with
+              <select id="rtmDgSat" data-on-change="rtm:dgRedraw"></select>
             </label>
             <label id="rtmDgElWrap">of
               <select id="rtmDgEl" data-on-change="rtm:dgRedraw"></select>
@@ -2936,6 +2942,22 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             species or quantity as contours. Against PHREEQC's <code>SOLUTION</code> at the same pH,
             pe or total, a handed-off water's species agree to 8 in 10<sup>9</sup>. The numbers go
             to CSV and Excel, a row per point, and the picture to SVG and PNG, or as a live page to HTML.</p>
+          <p>One thing varied and <em>the water at saturation with</em> a phase draws a solubility
+            diagram, as PhreePlot's species calculations do. At each point the phase's first element,
+            H and O aside — gibbsite's aluminium, calcite's calcium, CO<sub>2</sub>(g)'s carbon — is
+            set to the total at which the phase's saturation index is 0, or the number written after
+            its name, <code>CO2(g) -3.5</code>, as PHREEQC's <code>SOLUTION</code> sets an element by a
+            phase: <code>Al 1 Gibbsite 0</code>. Several phases, separated by commas, are each a water of
+            their own; with none named, every phase of the model is. <em>What dissolves</em> draws each
+            phase's element dissolved at saturation, its log against what is varied: gibbsite's aluminium
+            falls with the pH as Al<sup>3+</sup>, is least near pH 6.5 and rises again as
+            Al(OH)<sub>4</sub><sup>−</sup>. With one phase each species of the element is drawn beside
+            it, what it holds of the element, so that they add up to the total. The other views are of
+            the water at saturation with the phase chosen. The total is found by Newton's method in its
+            logarithm, a few speciations a point; a point whose total would lie outside 10<sup>−30</sup>
+            to 100 mol/kgw is left blank. Against PHREEQC's <code>SOLUTION</code> of the same water at the
+            same pH, a handed-off water's aluminium at saturation with gibbsite and with amorphous
+            Al(OH)<sub>3</sub> agrees to 1 in 10<sup>8</sup>.</p>
           <p id="help-ladder">Along pe or Eh with the pH held, <em>the redox couples, as a ladder</em>
             places each of the model's couples where it turns over, as the textbooks' redox ladders
             do: the pe, or the Eh, at which the water holds as much of the element in the couple's
@@ -3906,12 +3928,12 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
   <script src="./resources/js/rtm-model.js?v=20261111e"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261111a"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111f"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261111b"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111g"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111p"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111q"></script>
 </body>
 </html>

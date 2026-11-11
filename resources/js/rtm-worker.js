@@ -903,6 +903,39 @@ function rtmDiagramSetup(msg) {
   for (const ax of axes) if (ax.kind !== 'tot') held[ax.k] = true;
   const totAxis = axes.findIndex((ax) => ax.kind === 'tot');
   /*
+    The water at saturation with a phase, or with each of several: the
+    phase's first element, H and O aside -- gibbsite's aluminium, calcite's
+    calcium -- set at every point to the total at which the phase's
+    saturation index is the one asked, 0 unless given, as PHREEQC's SOLUTION
+    sets an element by a phase ("Al 1 Gibbsite 0"). Against one thing
+    varied, which is not a total and holds nothing of that element.
+  */
+  let sat = null;
+  if (msg.sat && msg.sat.length) {
+    if (axes.length !== 1) throw new Error('A water at saturation is drawn against one thing varied, not two.');
+    if (totAxis >= 0) throw new Error('A total varied cannot be set by a saturation as well: vary the pH, the pe, an Eh or an activity.');
+    const els = (model.composition && model.composition.elements) || [];
+    const phases = model.quantities.filter((q) => q.key.startsWith('SI(')).map((q) => q.key.slice(3, -1));
+    sat = msg.sat.map((s) => {
+      const q = model.quantities.findIndex((x) => x.key === `SI(${s.phase})`);
+      if (q < 0) {
+        throw new Error(`${s.phase}: the model has no phase of that name. Its phases: `
+          + `${phases.join(', ') || 'none -- give one in <PHASES>'}.`);
+      }
+      const makeup = model.quantities[q].makeup || {};
+      const el = Object.keys(makeup).find((e) => els.some((c) => c.el === e));
+      if (!el) throw new Error(`${s.phase}: nothing it is made of, H and O aside, has a total in the water to set.`);
+      const weights = new Float64Array(ns);
+      for (const [k, n] of els.find((c) => c.el === el).terms) weights[k] = n;
+      if (axes[0].k !== undefined && weights[axes[0].k]) {
+        throw new Error(`${s.phase}: its ${el} is held by what is varied, which leaves no total of it to set. Vary something else.`);
+      }
+      const si = s.si === undefined || s.si === null || s.si === '' ? 0 : Number(s.si);
+      if (!Number.isFinite(si)) throw new Error(`${s.phase}: the saturation index to hold it at is a number.`);
+      return { phase: s.phase, si, q, el, n: makeup[el], weights };
+    });
+  }
+  /*
     A total varied without the pH: the pH held where the water has it, as
     PHREEQC's SOLUTION holds the pH it is given. Left to itself, the element
     would come in as whichever species its conserved total is kept in, and
@@ -924,7 +957,7 @@ function rtmDiagramSetup(msg) {
     pHHeld = msg.pHAt;
     held[iH] = true;
     holds.push({ ax: { kind: 'pH', k: iH }, a: -1 });
-  } else if ((totAxis >= 0 || axes.some((ax) => ax.kind === 'ratio')) && pHAxis < 0 && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
+  } else if ((totAxis >= 0 || sat || axes.some((ax) => ax.kind === 'ratio')) && pHAxis < 0 && iH >= 0 && rtmSolute(model, iH) && !held[iH]) {
     const g0 = new Float64Array(ns);
     if (model.act) RtmModel.activityAt(model.act, base, b, g0, new Float64Array(ns), cell);
     pHHeld = -(Math.log(base[b + iH]) + g0[iH]) / Math.LN10;
@@ -936,9 +969,10 @@ function rtmDiagramSetup(msg) {
   /*
     The water y (every cell; this one is speciated) held at vals, from each
     held species' ln gamma as lnGamma has it: both are moved to the answer.
-    False where it does not settle.
+    False where it does not settle. total: an element's total to set, in
+    place of a total axis's -- a saturation's.
   */
-  const settle = (y, vals, lnGamma) => {
+  const settle = (y, vals, lnGamma, total) => {
     for (let it = 0; it < 40; it++) {
       holds.forEach(({ ax, a }, h) => {
         const v = a >= 0 ? vals[a] : pHHeld;
@@ -949,7 +983,7 @@ function rtmDiagramSetup(msg) {
         else if (ax.kind === 'ratio') y[b + ax.k] = 10 ** (v - ax.z * (pHAxis >= 0 ? vals[pHAxis] : pHHeld)) * Math.exp(-lnGamma[h]);
       });
       const r = RtmModel.speciate(model, y, { fixed: held, cells: [cell], t,
-        total: totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name } : undefined });
+        total: total || (totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name } : undefined) });
       if (!r.cells.length || !r.cells[0].converged) return false;
       y.set(r.y.subarray(b, b + ns), b);
       if (!model.act) return true;
@@ -972,12 +1006,106 @@ function rtmDiagramSetup(msg) {
     holds.forEach(({ ax }, h) => { if (ax.kind === 'pH' || ax.kind === 'la' || ax.kind === 'ratio') out[h] = lnG[ax.k]; });
     return out;
   };
-  return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas, ehPe };
+  return { model, base, t, b, cell, ns, axes, holds, pHHeld, settle, gammas, ehPe, sat };
+}
+
+/*
+  A WATER AT SATURATION with each phase asked, at every point of the one
+  thing varied: the phase's element set to the total at which its
+  saturation index is the one asked. The index rises with the log of that
+  total, n to one where the element's species keep their shares -- n the
+  phase's count of it -- so Newton in the log total, its slope n at first
+  and then the last two tries', gets there in a few speciations. Each point
+  starts from the one before, then from the water itself. One that cannot
+  be settled -- the total out of 1e-30 to 100 mol/kgw, or a speciation
+  that does not settle -- is left blank. The reply is a diagram's of one
+  thing varied, the waters of the first phase as its own, and each phase's
+  waters, quantities and totals in sat.
+*/
+function rtmDiagramSat(S, msg, post) {
+  const { model, base, t, b, cell, ns, axes, holds, pHHeld, settle } = S;
+  const n1 = axes[0].values.length;
+  const nq = model.quantities.length;
+  const which = Int32Array.from({ length: nq }, (_, q) => q);
+  const qOut = new Float64Array(nq);
+  const one = new Float64Array(1);
+  const npts = n1 * S.sat.length;
+  let done = 0;
+  let lastReport = Date.now();
+  const out = S.sat.map((ph) => {
+    const states = new Float64Array(n1 * ns).fill(NaN);
+    const quant = new Float64Array(n1 * nq).fill(NaN);
+    const total = new Float64Array(n1).fill(NaN);
+    const only = Int32Array.of(ph.q);
+    const siOf = (y) => { model.quantitiesAt(y, t, cell, only, one); return one[0]; };
+    const totalOf = (y) => {
+      let v = 0;
+      for (let k = 0; k < ns; k++) if (ph.weights[k]) v += ph.weights[k] * y[b + k];
+      return v;
+    };
+    // One try: the water from y0, the element at 10^L, settled; its index less the one asked.
+    const tryAt = (y0, g0, vals, L) => {
+      const y = Float64Array.from(y0);
+      const g = g0.slice();
+      let ok = false;
+      try { ok = settle(y, vals, g, { weights: ph.weights, value: 10 ** L, name: ph.el }); } catch (e) { ok = false; }
+      if (!ok) return null;
+      const f = siOf(y) - ph.si;
+      return Number.isFinite(f) ? { y, g, L, f } : null;
+    };
+    const solve = (y0, g0, vals) => {
+      const T0 = totalOf(y0);
+      let a = T0 > 0 ? tryAt(y0, g0, vals, Math.log10(T0)) : null;
+      if (!a) a = tryAt(y0, g0, vals, -6);
+      if (!a) return null;
+      let slope = ph.n || 1;
+      for (let it = 0; it < 60 && Math.abs(a.f) > 1e-10; it++) {
+        let step = Math.max(-4, Math.min(4, -a.f / slope));
+        let c = null;
+        for (let h = 0; h < 12 && !c; h++, step /= 2) {
+          const L = a.L + step;
+          if (L >= -30 && L <= 2) c = tryAt(a.y, a.g, vals, L);
+        }
+        if (!c) return null;
+        const s = (c.f - a.f) / (c.L - a.L);
+        if (Number.isFinite(s) && s > 0) slope = s;
+        a = c;
+      }
+      // To 1e-10 where it gets there; within 1e-8, the noise of an activity model's own settling, it is taken.
+      return Math.abs(a.f) <= 1e-8 ? a : null;
+    };
+    let failed = 0;
+    let cur = Float64Array.from(base);
+    let lnGamma = holds.map(() => 0);
+    for (let i = 0; i < n1; i++) {
+      const vals = [axes[0].values[i], 0];
+      let a = solve(cur, lnGamma, vals);
+      if (!a) a = solve(Float64Array.from(base), holds.map(() => 0), vals);
+      if (a) {
+        cur = a.y;
+        lnGamma = a.g;
+        states.set(a.y.subarray(b, b + ns), i * ns);
+        model.quantitiesAt(a.y, t, cell, which, qOut);
+        quant.set(qOut, i * nq);
+        total[i] = 10 ** a.L;
+      } else failed++;
+      done++;
+      if (post && Date.now() - lastReport > 250) {
+        lastReport = Date.now();
+        post({ type: 'progress', id: msg.id, frac: done / npts, done, npts });
+      }
+    }
+    return { phase: ph.phase, si: ph.si, el: ph.el, n: ph.n, total, states, quant, failed };
+  });
+  return { type: 'diagram', id: msg.id, n1, n2: 1, x: axes[0].values, y: null, ns, species: model.speciesNames,
+    states: out[0].states, nq, keys: model.quantities.map((q) => q.key), quant: out[0].quant,
+    failed: out.reduce((acc, o) => acc + o.failed, 0), t, cell, pHHeld, sat: out };
 }
 
 function rtmDiagram(msg, post) {
   const S = rtmDiagramSetup(msg);
   if (!S) return { type: 'diagram', id: msg.id, missing: true };
+  if (S.sat) return rtmDiagramSat(S, msg, post);
   const { model, base, t, b, cell, ns, axes, holds, pHHeld, settle } = S;
   const n1 = axes[0].values.length;
   const n2 = axes[1] ? axes[1].values.length : 1;
@@ -2243,7 +2371,10 @@ function handleRtmMessage(msg, post) {
   if (msg.type === 'diagram') {
     try {
       const reply = rtmDiagram(msg, post);
-      post(reply, reply.states ? [reply.states.buffer, reply.quant.buffer] : []);
+      // Each buffer once: a saturation's first phase's waters are the diagram's own.
+      const buffers = new Set(reply.states ? [reply.states.buffer, reply.quant.buffer] : []);
+      for (const s of reply.sat || []) [s.states, s.quant, s.total].forEach((a) => buffers.add(a.buffer));
+      post(reply, [...buffers]);
     } catch (e) {
       post({ type: 'error', id, stage: 'diagram', error: rtmErrorMessage(e) });
     }

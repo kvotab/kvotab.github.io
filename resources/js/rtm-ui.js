@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111g';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111h';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -81,8 +81,8 @@
     dg: {
       cell: 0, at: 'start',
       x: { kind: 'pH', sp: '', from: '2', to: '12', n: '101' },
-      y: { kind: '', sp: '', from: '-12', to: '16', n: '41' },
-      show: 'shares', el: '', in: 'water', q: '',
+      y: { kind: '', sp: '', from: '-12', to: '16', n: '41', phases: '' },
+      show: 'shares', el: '', in: 'water', q: '', satAt: 0,
     },
     // The Sweeps tab: what is varied over what values, the cell kept; then what is drawn of the runs.
     sw: { what: '', values: '', what2: '', values2: '', cell: 0, show: 'summary', key: '', of: 'end', logT: true },
@@ -194,9 +194,11 @@
         for (const key of ['x', 'y']) {
           const ax = s.dg[key];
           if (!ax || typeof ax !== 'object') continue;
-          if (['pH', 'pe', 'Eh', 'la', 'ratio', 'tot', ...(key === 'y' ? ['', 'pHheld'] : [])].includes(ax.kind)) d[key].kind = ax.kind;
+          if (['pH', 'pe', 'Eh', 'la', 'ratio', 'tot', ...(key === 'y' ? ['', 'pHheld', 'sat'] : [])].includes(ax.kind)) d[key].kind = ax.kind;
           for (const f of ['sp', 'from', 'to', 'n']) if (typeof ax[f] === 'string') d[key][f] = ax[f];
         }
+        if (s.dg.y && typeof s.dg.y.phases === 'string') d.y.phases = s.dg.y.phases;
+        if (Number.isInteger(s.dg.satAt) && s.dg.satAt >= 0) d.satAt = s.dg.satAt;
         for (const f of ['show', 'el', 'q']) if (typeof s.dg[f] === 'string') d[f] = s.dg[f];
         if (s.dg.in === 'water' || s.dg.in === 'all') d.in = s.dg.in;
       }
@@ -5642,7 +5644,10 @@
       $(`rtmDg${axis}To`).value = ax.to;
       $(`rtmDg${axis}N`).value = ax.n;
     }
-    $('rtmDgYMore').hidden = !d.y.kind;
+    $('rtmDgYMore').hidden = !d.y.kind || d.y.kind === 'sat';
+    // At saturation: the phases, each by name, an index after one held at other than 0.
+    $('rtmDgYSat').hidden = d.y.kind !== 'sat';
+    $('rtmDgYPhases').value = d.y.phases || '';
     // The pH held: one number, no range.
     const held = d.y.kind === 'pHheld';
     $('rtmDgYFromWord').hidden = held;
@@ -5668,12 +5673,18 @@
       ? [['predominance', 'the species that holds most of an element'], ['phase', 'the phase furthest over saturation, or at it'],
         ['stable', 'the phases of an element, the most stable per mole of it'],
         ...(lines ? [['couples', 'the redox couples, as lines']] : []), ['contour', 'a species or a quantity, as contours']]
-      : [...(ladder ? [['ladder', 'the redox couples, as a ladder']] : []),
+      : [...(dgResult.reply.sat ? [['solubility', 'what dissolves: the total at saturation']] : []),
+        ...(ladder && !dgResult.reply.sat ? [['ladder', 'the redox couples, as a ladder']] : []),
         ['shares', 'the species of an element, as shares'], ['logc', 'the species of an element, as log concentrations'],
         ['si', 'the saturation indices'], ['quantity', 'a species or a quantity']];
     const d = state.dg;
     if (!opts.some(([v]) => v === d.show)) d.show = opts[0][0];
     $('rtmDgShow').innerHTML = opts.map(([v, t]) => `<option value="${v}"${v === d.show ? ' selected' : ''}>${esc(t)}</option>`).join('');
+    // Of a saturation with several phases, the views of one water are of the phase chosen.
+    const sats = dgResult.reply.sat || [];
+    if (!(d.satAt < sats.length)) d.satAt = 0;
+    $('rtmDgSatWrap').hidden = !(sats.length > 1 && d.show !== 'solubility');
+    $('rtmDgSat').innerHTML = sats.map((x, j) => `<option value="${j}"${j === d.satAt ? ' selected' : ''}>${esc(dgSatName(x))}</option>`).join('');
     const C = dgResult.composition;
     // For the most stable phase, the elements two phases or more are made of; else those two species or more hold.
     const els = d.show === 'stable' ? dgStableElements()
@@ -5721,6 +5732,7 @@
       ax.to = $(`rtmDg${axis}To`).value.trim();
       ax.n = $(`rtmDg${axis}N`).value.trim();
     }
+    d.y.phases = $('rtmDgYPhases').value.trim();
   }
 
   async function dgGo() {
@@ -5730,9 +5742,30 @@
     const axis = (ax) => ({ kind: ax.kind, species: ax.sp, from: Number(ax.from), to: Number(ax.to), n: Math.round(Number(ax.n)) });
     // The pH held at a number, where nothing varied is the pH: the water speciated at it at every point.
     const held = d.y.kind === 'pHheld';
-    const axes = [axis(d.x), ...(d.y.kind && !held ? [axis(d.y)] : [])];
+    // At saturation with each phase named, or with every phase of the model: against the one thing varied.
+    const atSat = d.y.kind === 'sat';
+    const axes = [axis(d.x), ...(d.y.kind && !held && !atSat ? [axis(d.y)] : [])];
     const bad = axes.find((ax) => !Number.isFinite(ax.from) || !Number.isFinite(ax.to) || !(ax.n >= 2 && ax.n <= 400));
     if (bad) { setStatus('Each axis needs a from, a to and from 2 to 400 points.', 'error'); return; }
+    let sat = null;
+    if (atSat) {
+      if (d.x.kind === 'tot') {
+        setStatus('A total varied cannot be set by a saturation as well: vary the pH, the pe, an Eh or an activity.', 'error');
+        return;
+      }
+      const named = d.y.phases.split(/[,;]/).map((x) => x.trim()).filter(Boolean);
+      const items = named.length ? named : quantityList().filter((q) => q.key.startsWith('SI(')).map((q) => q.key.slice(3, -1));
+      if (!items.length) { setStatus('The model has no phase to hold the water at saturation with: give one in <PHASES>.', 'error'); return; }
+      sat = [];
+      for (const item of items) {
+        const m = /^(\S+)(?:\s+([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?))?$/.exec(item);
+        if (!m) {
+          setStatus(`"${item}": a phase's name, and after it the saturation index to hold it at where that is not 0: CO2(g) -3.5.`, 'error');
+          return;
+        }
+        sat.push({ phase: m[1], si: m[2] === undefined ? 0 : Number(m[2]) });
+      }
+    }
     const pHAt = held ? Number(String(d.y.from).trim() || NaN) : null;
     if (held && !Number.isFinite(pHAt)) { setStatus('The pH to hold the water at is a number: 7, say.', 'error'); return; }
     if (held && d.x.kind === 'pH') { setStatus('The pH is what is varied: it cannot be held as well.', 'error'); return; }
@@ -5741,23 +5774,26 @@
     const text = d.at === 'end' ? ((state.ran && state.ran.text) || state.text) : state.text;
     const stride = (state.compiled && state.compiled.stride) || 1;
     const ask = (withRun) => request({ type: 'diagram', text, at: d.at, cell: d.cell * stride, axes,
-      ...(held ? { pHAt } : {}), ...(d.at === 'end' ? { runKey: r.runKey } : {}),
+      ...(held ? { pHAt } : {}), ...(sat ? { sat } : {}), ...(d.at === 'end' ? { runKey: r.runKey } : {}),
       ...(withRun ? { t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) },
     (p) => { setProgress(p.frac); setStatus(`Working out the diagram: ${p.done.toLocaleString()} of ${p.npts.toLocaleString()} points…`); });
     dgBusy = true;
     $('rtmDgGo').disabled = true;
     $('rtmStop').disabled = false;
     const started = Date.now();
-    setStatus(`Working out the diagram: ${axes.reduce((n, ax) => n * ax.n, 1).toLocaleString()} points…`);
+    setStatus(`Working out the diagram: ${(axes.reduce((n, ax) => n * ax.n, 1) * (sat ? sat.length : 1)).toLocaleString()} points…`);
     try {
       let reply = await ask(false);
       if (reply.missing) reply = await ask(true);
-      const said = `Diagram worked out in ${((Date.now() - started) / 1000).toFixed(2)} s: ${(reply.n1 * reply.n2).toLocaleString()} points`
+      const said = `Diagram worked out in ${((Date.now() - started) / 1000).toFixed(2)} s: `
+        + `${(reply.n1 * reply.n2 * (reply.sat ? reply.sat.length : 1)).toLocaleString()} points`
         + `${reply.failed ? `, ${reply.failed.toLocaleString()} of which did not settle and are left blank` : ''}.`;
       // What the boundaries of a map are worked out from, and each map's once they are: null where they could not be.
       dgResult = { reply, axes, composition: state.compiled.composition, at: d.at, cell: d.cell, text, cellIndex: d.cell * stride,
         runKey: d.at === 'end' ? r.runKey : null, said, saidKind: reply.failed ? 'warn' : 'ok', bounds: new Map(), pHAt,
         ladders: new Map(), couples: new Map() };
+      // A saturation opens on what dissolves, its element's species ready for the other views.
+      if (reply.sat) { d.show = 'solubility'; d.el = reply.sat[0].el; d.satAt = 0; }
       setProgress(null);
       setStatus(said, dgResult.saidKind);
       renderDgShow();
@@ -5773,9 +5809,20 @@
     }
   }
 
+  /** The phase a saturation's views are of, by name and, where it is not 0, its index. */
+  const dgSatName = (s) => `${s.phase}${s.si ? `, SI ${s.si}` : ''}`;
+
+  /** The worked-out waters as the views read them: of a saturation, those at saturation with the phase chosen. */
+  function dgReply() {
+    const rp = dgResult.reply;
+    if (!rp.sat) return rp;
+    const s = rp.sat[Math.min(Math.max(0, state.dg.satAt | 0), rp.sat.length - 1)];
+    return { ...rp, states: s.states, quant: s.quant, failed: s.failed, satOf: s };
+  }
+
   /** A value of a point: a species' concentration, or a quantity. */
   function dgValue(key, p) {
-    const rp = dgResult.reply;
+    const rp = dgReply();
     const k = rp.species.indexOf(key);
     if (k >= 0 && !isQuantity(key)) return rp.states[p * rp.ns + k];
     const q = rp.keys.indexOf(key);
@@ -5804,11 +5851,13 @@
       + 'own relations, as PhreePlot does with PHREEQC\'s.'); return; }
     empty.hidden = true;
     plot.hidden = false;
-    const rp = dgResult.reply;
+    const rp = dgReply();
     const d = state.dg;
     const [ax, ay] = dgResult.axes;
+    const sats = dgResult.reply.sat || null;
     const where = `cell ${dgResult.cell} as it ${dgResult.at === 'end' ? 'ends the run' : 'starts'}`
-      + `${rp.pHHeld !== null && rp.pHHeld !== undefined ? `, its pH held at ${rp.pHHeld.toFixed(3)}` : ''}`;
+      + `${rp.pHHeld !== null && rp.pHHeld !== undefined ? `, its pH held at ${rp.pHHeld.toFixed(3)}` : ''}`
+      + `${rp.satOf && d.show !== 'solubility' ? `, at saturation with ${dgSatName(rp.satOf)}` : ''}`;
     const names = rp.species;
     const layout = baseLayout();
     layout.hovermode = 'closest';
@@ -5818,7 +5867,32 @@
     if (!rp.y) {
       const traces = [];
       const cols = [];
-      if (d.show === 'shares' || d.show === 'logc') {
+      if (d.show === 'solubility' && sats) {
+        /*
+          What dissolves: at each point, each phase's element at the total
+          that holds the phase at saturation, its log; with one phase, each
+          species of the element beside it, what it holds of it -- 2 for
+          Al2(OH)2+4 -- so that the species add up to the total.
+        */
+        const C = dgResult.composition;
+        const waterTerms = (el) => {
+          const e = C && C.elements.find((x) => x.el === el);
+          return e ? e.terms.filter((tm) => tm[2] === 'water') : [];
+        };
+        const logOf = (v) => (Number.isFinite(v) && v > 0 ? Math.log10(v) : null);
+        for (const sx of sats) {
+          const terms = waterTerms(sx.el);
+          cols.push([`${sx.el} dissolved, at saturation with ${dgSatName(sx)}`, xs.map((_, p) => logOf(terms.reduce(
+            (acc, [k, n]) => acc + n * sx.states[p * rp.ns + k], 0))), { width: 2.6 }]);
+        }
+        if (sats.length === 1) {
+          for (const [k, n] of waterTerms(sats[0].el)) {
+            cols.push([`${n === 1 ? '' : `${n} `}${names[k]}`, xs.map((_, p) => logOf(n * sats[0].states[p * rp.ns + k])),
+              { width: 1.2, dash: 'dot' }]);
+          }
+        }
+        layout.yaxis.title = { text: 'log concentration (mol/kgw)', font: { size: 11 } };
+      } else if (d.show === 'shares' || d.show === 'logc') {
         const terms = dgTerms(d.el);
         if (terms.length < 2) { fail(`No two species hold ${d.el || 'an element'} ${d.in === 'all' ? 'in the cell' : 'in the water'}.`); return; }
         const totals = xs.map((_, p) => terms.reduce((s, [k, n]) => s + n * Math.max(0, rp.states[p * rp.ns + k]), 0));
@@ -5851,13 +5925,19 @@
         layout.yaxis.title = { text: q ? `${q.label}${q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''}` : `${key} (mol/kgw)`,
           font: { size: 11 } };
       }
-      cols.forEach(([label, y], q) => traces.push({ type: 'scatter', mode: 'lines', name: label, x: xs, y,
-        line: { color: DG_PALETTE[q % DG_PALETTE.length], width: 1.8 },
+      cols.forEach(([label, y, style], q) => traces.push({ type: 'scatter', mode: 'lines', name: label, x: xs, y,
+        line: { color: DG_PALETTE[q % DG_PALETTE.length], width: 1.8, ...(style || {}) },
         hovertemplate: `${esc(label)}: %{y:.4g}<extra></extra>` }));
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
       dgTableNow = { head: [dgLabel(ax), ...cols.map(([label]) => label)], rows: xs.map((x, p) => [x, ...cols.map(([, y]) => y[p])]),
-        name: `rtm_diagram_${ax.kind}` };
-      note.textContent = `${where}; ${xs.length} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`;
+        name: d.show === 'solubility' ? `rtm_solubility_${ax.kind}` : `rtm_diagram_${ax.kind}` };
+      if (d.show === 'solubility' && sats) {
+        const blank = sats.reduce((acc, sx) => acc + sx.failed, 0);
+        note.textContent = `${where}; ${xs.length} points, at each ${sats.map((sx) => `the ${sx.el} set by ${dgSatName(sx)}`).join(', ')}`
+          + `${blank ? `; ${blank} left blank: they did not settle` : ''}`;
+      } else {
+        note.textContent = `${where}; ${xs.length} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`;
+      }
       return;
     }
     // Two axes: a grid, y outer and x inner.
@@ -9515,6 +9595,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'What is worked out', list: [
             '**The water of cell**, **as it starts** or **ends the run**: the water held. Its totals stay as they are, but for what is varied; there is no charge balance, as in PHREEQC\'s SOLUTION.',
             '**Vary**: **pH**, the activity of H+; **pe**, the electron\'s; **Eh (V)**, that pe in volts at the water\'s temperature; **log activity of** a species dissolved; **log activity over H+ of** a cation, log a(K+)/a(H+) or log a(Ca+2)/a(H+)², the cation held at the activity that gives it over the H+ there, the pH of the other axis or the water\'s; **log total of** an element in the cell, mol/kgw. **and** a second one makes a grid; **and the pH held at** a number holds the water at that pH at every point, as PHREEQC\'s SOLUTION holds the pH it is given.',
+            '**and the water at saturation with**: one thing varied, and at each point the water held at saturation with each phase named — every phase of the model where none is — each a water of its own: the phase\'s first element, H and O aside — gibbsite\'s aluminium, calcite\'s calcium, CO2(g)\'s carbon — set to the total at which its saturation index is 0, or the number after its name: `CO2(g) -3.5`. As PHREEQC\'s SOLUTION sets an element by a phase, `Al 1 Gibbsite 0`. A point whose total would be outside 1e-30 to 100 mol/kgw is left blank.',
             'A mineral there stays at saturation while there is any of it. A point that settles neither from the point before it nor from the water is tried again from the point after it; one that still does not is left blank, and the status line counts them.',
             '**Work it out**: in the background; a grid of 101 × 41 takes a second or less.',
           ] },
@@ -9527,6 +9608,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             'A map\'s **boundaries** are found between the grid\'s points, the water speciated again there, to 1e-10; where three fields meet, the point is solved for. A field narrower than the grid can be missed.',
           ] : [
             '**the redox couples, as a ladder**, along pe or Eh with the pH held: each relation of <EQUILIBRIUM> with the electron in it between two valence states of an element — SO4-2 + 9 H+ + 8 e- <=> HS- + 4 H2O — placed where it turns over, the pe at which this water holds as much of the element in the oxidised state as in the reduced one, in the water or the whole cell, found to 1e-10. Where water gives way, O₂ and H₂ at 1 atm and 25 °C, dashed; the water\'s own pe dotted. The note says which couples turn over outside the range.',
+            '**what dissolves: the total at saturation**, after a saturation: each phase\'s element dissolved at saturation with it, as its log — a solubility diagram; with one phase, each species of the element beside it, what it holds of it, 2 for Al2(OH)2+4, so that they add up to the total. The views below are then of the water at saturation with the phase chosen in **at saturation with**.',
             '**the species of an element** as shares of it, or as log concentrations.',
             '**the saturation indices** of every phase and mineral.',
             '**a species or a quantity**: pH, a total, an <OUTPUT>, …',
@@ -11581,6 +11663,7 @@ END
       d.el = $('rtmDgEl').value;
       d.in = $('rtmDgIn').value;
       d.q = $('rtmDgQ').value;
+      d.satAt = Number($('rtmDgSat').value) || 0;
       saveState();
       renderDgShow();
       drawDg();
