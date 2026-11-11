@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Terms of use — kvot ab</title>
+  <meta name="description" content="The terms on which kvotab.se and its tools, the Data Browser among them, may be used, and where to get help.">
+  <link rel="canonical" href="https://kvotab.se/terms.html">
+  <script>
+    // Set the theme before first paint so dark-mode visitors get no white flash.
+    (function () {
+      try {
+        var t = localStorage.getItem('kvot-theme');
+        if (!t) t = matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { /* storage unavailable — site.js will apply the default */ }
+    })();
+  </script>
+  <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
+  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
+  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+  <style>
+    .terms { max-width: 70ch; line-height: 1.6; }
+    .terms li { margin: 0 0 10px; }
+    .terms .updated { margin-top: 40px; color: var(--text-secondary); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <header></header>
+
+  <div class="content landing">
+    <div class="landing-inner terms">
+      <h1>Terms of use</h1>
+      <p class="tagline">
+        kvotab.se and the tools on it are published by Kvot AB. These terms
+        apply to all of them, the Data Browser and its use with Google Drive
+        among them. By using the site or a tool you accept them.
+      </p>
+
+      <h2 id="use">Using the tools</h2>
+      <ul>
+        <li><strong>Free, with no account.</strong> The tools are free to use
+          and need no account. You may use them for any lawful purpose.</li>
+        <li><strong>Your files stay yours.</strong> The tools run in your
+          browser, and the files you open in them are read there; they are not
+          uploaded to Kvot AB. <a href="privacy.html">Privacy</a> sets out what
+          is done with your data. You need the right to open the files you open,
+          and what you do with them and with the results is up to you.</li>
+        <li><strong>Google Drive.</strong> Opening files from Google Drive in
+          the Data Browser also comes under
+          <a href="https://policies.google.com/terms" target="_blank" rel="noopener noreferrer">Google's terms of service</a>.
+          You can withdraw the access you gave at any time in
+          <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">your Google Account</a>.</li>
+        <li><strong>Other people's software.</strong> Some tools include
+          libraries, fonts and data made by others, under their own licences,
+          listed in the notices linked at the foot of every page.</li>
+      </ul>
+
+      <h2 id="no-warranty">No warranty</h2>
+      <p>
+        The site and its tools are provided as they are, without warranty of
+        any kind. They can be wrong, change, or stop working. Check a result
+        before you rely on it, above all in work that others depend on.
+      </p>
+
+      <h2 id="liability">Liability</h2>
+      <p>
+        As far as the law allows, Kvot AB is not liable for any loss or damage
+        that comes from using, or being unable to use, the site or its tools,
+        including lost data and decisions taken on their results. Nothing in
+        these terms limits a right you have by law that cannot be given up.
+      </p>
+
+      <h2 id="changes">Changes</h2>
+      <p>
+        Kvot AB may change these terms; the date at the foot of this page says
+        when they last changed. These terms are governed by Swedish law.
+      </p>
+
+      <h2 id="support">Help and support</h2>
+      <p>
+        Each tool explains its use on its own page: the Data Browser's opening
+        panel, for one, says how to load and look at files. For a problem or a
+        question, write to <a href="mailto:pa@kvotab.se">pa@kvotab.se</a>,
+        saying which tool, what you did and what happened. Do not attach a
+        file that you may not share.
+      </p>
+
+      <h2 id="contact">Contact</h2>
+      <p>
+        Kvot AB, Valhallagatan 16, 753 34 Uppsala, Sweden.
+        <a href="mailto:pa@kvotab.se">pa@kvotab.se</a>
+      </p>
+
+      <p class="updated">Last updated 11 November 2026.</p>
+    </div>
+  </div>
+
+  <div id="kvotmap"></div>
+  <footer></footer>
+
+  <script src="./resources/js/kvot-errors.js?v=20260921"></script>
+  <script src="./resources/js/kvot-safe.js?v=20260911"></script>
+  <script src="./resources/js/kvot-actions.js?v=20260902"></script>
+  <script src="./resources/js/kvot-icons.js?v=20260902"></script>
+  <script src="./resources/js/site.js?v=20261102c"></script>
+  <script>
+    KVOT.renderHeader('Terms of use');
+    KVOT.renderNav('terms.html');
+    KVOT.renderFooter();
+    KVOT.initMap('kvotmap');
+  </script>
+</body>
+</html>
