@@ -276,6 +276,23 @@
   white-space: nowrap;
 }
 .rtm-tabs button:hover { color: var(--text-primary); }
+/*
+  The tabs come in groups -- the model; the run; the waters' chemistry; many
+  runs; the solver's check and the help -- and the first tab of each stands
+  apart from the tab before it, a short line in the middle of the space
+  between them (left counts from inside the tab's 1 px border).
+*/
+.rtm-tabs button.rtm-tabgroup { position: relative; margin-left: 11px; }
+.rtm-tabs button.rtm-tabgroup::before {
+  content: '';
+  position: absolute;
+  left: -8px;
+  top: 8px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--border-color);
+  pointer-events: none;
+}
 .rtm-tabs button.active {
   background: var(--bg-primary);
   color: var(--text-primary);

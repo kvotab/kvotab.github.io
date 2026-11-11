@@ -1374,6 +1374,11 @@ between the mark and the buttons, in either mode, so the last of them can be
 reached. The line under the tabs is the bar's background, not a border, because
 the scrolling row would clip a tab reaching over a border. So the test also
 checks that the open tab reaches the bar's foot in its pane's colour.
+The tabs come in the order of the work: Model, what a run is made from; Against
+time, Against distance, Gradient and Composition, the run itself; Diagrams and
+PHREEQC, the waters' chemistry; Sweeps, Fit and Uncertainty, many runs; then
+Jacobian and Help. The test reads them in that order, and finds a wider space
+with a short line in it before the first tab of each group.
 
 The choice is kept in the browser (`kvot.rtm.full`), and the test profile keeps
 it from run to run. rtm.html's head reads it before anything else, so the test

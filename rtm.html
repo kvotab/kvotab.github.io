@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111b">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111c">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -220,18 +220,22 @@
              The two buttons are outside the tablist, which holds only the tabs. -->
         <div class="rtm-tabbar">
           <a class="rtm-homelink rtm-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
+          <!-- The tabs in the order of the work, a short line between groups (rtm-tabgroup on each group's first): the
+               model the run is made from; the run, against time, along the column, both at once and what its water is
+               made of; the waters' chemistry, in diagrams and through PHREEQC; many runs, swept, fitted and drawn from
+               distributions; the solver's own check, and the help. -->
           <div class="rtm-tabs" role="tablist">
-            <button type="button" class="active" data-tab="time" data-on-click="rtm:tab">Against time</button>
+            <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
+            <button type="button" class="active rtm-tabgroup" data-tab="time" data-on-click="rtm:tab">Against time</button>
             <button type="button" data-tab="profile" data-on-click="rtm:tab">Against distance</button>
             <button type="button" data-tab="gradient" data-on-click="rtm:tab">Gradient</button>
             <button type="button" data-tab="composition" data-on-click="rtm:tab">Composition</button>
-            <button type="button" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
-            <button type="button" data-tab="sweep" data-on-click="rtm:tab">Sweeps</button>
+            <button type="button" class="rtm-tabgroup" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
+            <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
+            <button type="button" class="rtm-tabgroup" data-tab="sweep" data-on-click="rtm:tab">Sweeps</button>
             <button type="button" data-tab="fit" data-on-click="rtm:tab">Fit</button>
             <button type="button" data-tab="uncertainty" data-on-click="rtm:tab">Uncertainty</button>
-            <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
-            <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
-            <button type="button" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
+            <button type="button" class="rtm-tabgroup" data-tab="jacobian" data-on-click="rtm:tab">Jacobian</button>
             <button type="button" data-tab="help" data-on-click="rtm:tab">Help</button>
           </div>
           <span class="rtm-tabend">

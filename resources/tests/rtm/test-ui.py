@@ -3770,6 +3770,13 @@ async def main():
             r = await page.ev(FULL)
             check('the site\'s header, menu and footer around the page, the full-window button not pressed',
                   (r['on'], r['site'], r['top'], r['mine'], r['pressed']), (False, [True, True, True], 43, [False, False], 'false'))
+            # The tabs in the order of the work, a space with a line in it before
+            # the first tab of each group.
+            check('the tabs in the order of the work, in groups: the model; the run; the waters\' chemistry; many runs; the check and the help',
+                  await page.ev("""(() => { const b = [...document.querySelectorAll('.rtm-tabs button')];
+                    return b.map((x, i) => (i && x.getBoundingClientRect().left - b[i - 1].getBoundingClientRect().right > 8
+                      && getComputedStyle(x, '::before').width === '1px' ? '| ' : '') + x.dataset.tab).join(' '); })()"""),
+                  'model | time profile gradient composition | diagram phreeqc | sweep fit uncertainty | jacobian help')
             # The line under the tabs is the bar's background, which the open
             # tab covers by reaching the bar's foot in its pane's colour.
             check('the open tab stands on the line under the tabs, in the colour of its pane', await page.ev(
@@ -3804,7 +3811,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'time profile gradient composition diagram sweep fit uncertainty phreeqc model jacobian help'])
+                [True, ['gradient'], 'model time profile gradient composition diagram phreeqc sweep fit uncertainty jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"
