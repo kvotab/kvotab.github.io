@@ -2460,7 +2460,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             chemistry</em>);
             <em>saturation indices</em> of each phase of <code>&lt;PHASES&gt;</code> and each
             mineral; a gas's partial pressure; each species' share of its exchanger, as an equivalent
-            fraction, or of its sites on a surface; the text's <code>&lt;OUTPUT&gt;</code>; and under an
+            fraction, or of its sites on a surface; the text's <code>&lt;OUTPUT&gt;</code>;
+            <em>what each reaction does</em>, each <code>&lt;REACTIONS&gt;</code> line's rate and its
+            extent (below), shut until it is opened where there are more than six lines; and under an
             <code>ACTIVITY</code> the <em>log activities</em>, a group shut until it is opened. They are worked out from the
             stored concentrations with the model's own activity model, in the background the first
             time a chart asks for them, and kept for the run. A handed-off water's pH, ionic
@@ -2471,6 +2473,20 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             it is. What <code>&lt;DATA&gt;</code> measured of what is drawn appears as open circles in
             its colour: a table in time at the cell and layer it names, one in distance with the time
             it was taken at.</p>
+          <p><em>What each reaction does</em> is a group of two for each line of
+            <code>&lt;REACTIONS&gt;</code>. Its <em>rate</em> is the forward rate less the backward one,
+            worked out at each stored point by the very code the solver runs, in the cell's own terms:
+            times what the cell holds of the species for a rate on the inventory, and times the
+            porosity in the rock, so that times the cell's water it is what the reaction moves there in
+            a unit of time — what the budget on the <em>Composition</em> tab counts as made by
+            reactions. It goes on the right, as pH does. Its <em>extent</em> is what it has done since
+            the start, the rate summed over the stored points by the trapezoidal rule, as close as they
+            are to each other. On <em>Gradient</em> a rate shows where a reaction runs and when — the
+            front where organic carbon meets an oxidant, a mineral dissolving behind an acid front —
+            and an extent along the column at the end, how much it did where. A held equilibrium has no
+            rate of its own and is not among them. <em>Diagrams</em>, <em>Sweeps</em> and
+            <em>Uncertainty</em>, which read a quantity point by point, offer the rates and not the
+            extents.</p>
           <p><em>Gradient</em> puts the whole run in one picture: time across, distance up,
             concentration as colour. Where <em>Against distance</em> shows a handful of moments,
             this shows every stored one, so a front's arrival and how far it gets are a shape
@@ -3640,14 +3656,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261110h"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111a"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
   <script src="./resources/js/rtm-examples.js?v=20261111a"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261110g"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111e"></script>
 </body>
 </html>

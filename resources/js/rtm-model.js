@@ -9653,6 +9653,8 @@
       return aqKeys.get(key);
     };
     for (const rx of reactions) {
+      // Which channels are this line's: its forward one first, then a backward one (what each reaction does, QUANTITIES).
+      rx.chanFirst = channels.length;
       const stoich = new Map();
       const bump = (i, c) => stoich.set(i, (stoich.get(i) || 0) + c);
       for (const [c, name] of rx.reactants) bump(needSpecies(name, rx.line), -c);
@@ -9823,6 +9825,7 @@
         const spec = rx.rates.k || rx.rates.kf;
         channels.push(build({ kind: 'k', src: spec.src }, rx.reactants, +1));
       }
+      rx.chanCount = channels.length - rx.chanFirst;
     }
 
     /*
@@ -12215,6 +12218,50 @@
         for (const [k, n] of sarNa) na += n * c[b + k];
         for (const [k, n] of sarCaMg) camg += n * c[b + k];
         return camg > 0 ? (1000 * na) / Math.sqrt(1000 * camg) : NaN;
+      });
+    }
+    /*
+      WHAT EACH REACTION DOES: each <REACTIONS> line's rate -- its forward
+      channel's less its backward one's, from the very code the derivative
+      runs -- in the cell's own terms: times what the cell holds of the
+      species for a rate on the inventory, times the porosity in the rock,
+      so that times the cell's water it is what the reaction moves there in
+      a unit of time, as the derivative and the budget count it. And its
+      extent, what it has done since the start: a quantity of the run rather
+      than of a point, the rate summed over the stored points, which the
+      worker sums (rtmQuantities); `of` names the rate it sums. A held
+      equilibrium has no rate of its own and is not among them.
+    */
+    if (reactions.length) {
+      const Rq = new Float64Array(Math.max(nchan, 1));
+      const Dq = new Float64Array(1);
+      let ratesAt = -1;
+      const chanRatesAt = (c, b, cell, t) => {
+        if (ratesAt !== qEval) {
+          if (ntv) atTheClock(t);
+          if (nq) aqAt(c, b, false);
+          rates(c, b, P, cell * np, Rq, Dq, t, TV, AQ);
+          ratesAt = qEval;
+        }
+        return Rq;
+      };
+      const sym = (TIME_UNITS[settings.TIME_UNIT] || TIME_UNITS.second).symbol;
+      const mol = !!(act && act.kind !== 'none');
+      const eqs = reactions.map((rx) => splitTop(rx.text)[0].trim());
+      reactions.forEach((rx, n) => {
+        const j = rx.chanFirst;
+        const jb = rx.chanCount > 1 ? j + 1 : -1;
+        const ch = channels[j];
+        // Whose capacity a rate on the inventory is a share of, as the derivative has it.
+        const cap = ch.whole ? (ch.capOf >= 0 ? ch.capOf : (ch.net.length ? ch.net[0][0] : -1)) : -1;
+        const name = eqs.indexOf(eqs[n]) !== eqs.lastIndexOf(eqs[n]) ? `${eqs[n]} (line ${rx.line})` : eqs[n];
+        addQ(`rate(${n + 1})`, `${name}, rate`, 'reactions', mol ? `mol/kgw/${sym}` : `/${sym}`, 'index', (c, b, cell, t) => {
+          const R = chanRatesAt(c, b, cell, t);
+          const net = R[j] - (jb >= 0 ? R[jb] : 0);
+          return net * (ch.whole ? (cap >= 0 ? massOf[b + cap] : 1) : reactScale[cell]);
+        });
+        addQ(`extent(${n + 1})`, `${name}, extent`, 'reactions', mol ? 'mol/kgw' : '', 'conc', () => NaN);
+        qList[qList.length - 1].of = `rate(${n + 1})`;
       });
     }
     /**

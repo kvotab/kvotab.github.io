@@ -324,9 +324,12 @@ function rtmQuantities(msg) {
   if (!run) return { type: 'quantities', id: msg.id, missing: true };
   const { model, t, states, n, width } = run;
   const keys = msg.keys;
-  const which = Int32Array.from(keys.map((k) => model.quantities.findIndex((q) => q.key === k)));
-  const unknown = keys.filter((k, q) => which[q] < 0);
+  const qs = model.quantities;
+  const known = keys.map((k) => qs.find((q) => q.key === k));
+  const unknown = keys.filter((k, q) => !known[q]);
   if (unknown.length) throw new Error(`The model has no quantity ${unknown.join(', ')}.`);
+  // An extent is worked out at each point as the rate it sums (`of`), and summed after.
+  const which = Int32Array.from(known.map((q) => qs.findIndex((x) => x.key === (q.of || q.key))));
   const cells = msg.cells;
   const values = new Float64Array(keys.length * cells.length * n);
   const out = new Float64Array(keys.length);
@@ -337,6 +340,27 @@ function rtmQuantities(msg) {
       for (let q = 0; q < keys.length; q++) values[(q * cells.length + j) * n + i] = out[q];
     }
   }
+  /*
+    What a reaction has done since the start: its rate summed over the
+    stored points by the trapezoidal rule, none at the start -- as the
+    budget sums what crosses the ends, and as close as the stored points
+    are to each other.
+  */
+  known.forEach((q, k) => {
+    if (!q.of) return;
+    for (let j = 0; j < cells.length; j++) {
+      const at = (k * cells.length + j) * n;
+      let sum = 0;
+      let prev = values[at];
+      values[at] = 0;
+      for (let i = 1; i < n; i++) {
+        const rate = values[at + i];
+        sum += 0.5 * (rate + prev) * (t[i] - t[i - 1]);
+        prev = rate;
+        values[at + i] = sum;
+      }
+    }
+  });
   return { type: 'quantities', id: msg.id, keys, cells, n, values };
 }
 

@@ -393,7 +393,13 @@ async def main():
             check('the species picker is filled, the species first and then the quantities', await page.ev(
                 "[document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"species\"]').length,"
                 " [...document.querySelectorAll('#rtmSeries .rtm-item:not([data-group=\"species\"]) input')]"
-                ".map((i) => i.value).join(' ')]"), [36, 'pH I charge tot(C) alk(CO3)'])
+                ".map((i) => i.value).join(' ')]"),
+                [36, 'pH I charge tot(C) alk(CO3) ' + ' '.join(f'rate({n}) extent({n})' for n in range(1, 128))])
+            check('  what each of its 127 reactions does, a group shut until it is opened: a network\'s 254 entries', await page.ev(
+                "(() => { const h = document.querySelector('#rtmSeries .rtm-series-head[data-group=\"reactions\"]');"
+                " const items = [...document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"reactions\"]')];"
+                " return [h ? h.getAttribute('aria-expanded') : null, items.length, items.every((e) => e.hidden)]; })()"),
+                ['false', 254, True])
             check('and there is a cell to choose, or an end of the column', await page.ev(
                 "[...document.getElementById('rtmCell').options].map((o) => o.value).slice(18).join(',')"),
                 '18,19,left,right')
@@ -850,7 +856,7 @@ async def main():
             check('a quantity on the gradient: the pH in every cell, from the run\'s concentrations', ph, [True, True])
             check('the picker offers the species and then the quantities, grouped', await page.ev(
                 "[...document.querySelectorAll('#rtmGradSpecies optgroup')].map((g) => g.label).join('|')"),
-                'Species|The water|Totals in the water')
+                'Species|The water|Totals in the water|What each reaction does')
             await grad("""const s = document.getElementById('rtmGradSpecies');
               s.value = 'H2O2'; s.dispatchEvent(new Event('change', { bubbles: true }));""")
 
@@ -869,7 +875,7 @@ async def main():
             check('the list groups the species and what the run comes to besides them, the log activities shut', await page.ev(
                 "[...document.querySelectorAll('#rtmSeries .rtm-series-head')]"
                 ".map((b) => b.dataset.group + ':' + b.getAttribute('aria-expanded')).join(' ')"),
-                'species:true water:true saturation:true outputs:true activities:false')
+                'species:true water:true saturation:true outputs:true reactions:true activities:false')
             check('  a shut group\'s entries are hidden until it is opened', await page.ev(
                 "[...document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"activities\"]')].every((e) => e.hidden)"), True)
             await page.ev("document.querySelector('#rtmSeries .rtm-series-head[data-group=\"activities\"]').click()")
@@ -1326,6 +1332,19 @@ async def main():
             # To the solver's tolerance, rtol 1e-6 on the way: 1.1e-5 at kk = 0.4. test-model.js has a sweep's run the same to
             # the bit as the text run by itself.
             check('against what was varied: A at the end of each run, exp(-10 kk)', summ, ['0.1 0.2 0.3 0.4', True])
+            # The reaction's rate is offered, kk A at the end of each run; its extent, a sum over the run, is not.
+            await page.ev("(() => { const k = document.getElementById('rtmSwKey'); k.value = 'rate(1)';"
+                          " k.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            sw_rate = await page.ev("""(() => { const p = document.getElementById('rtmChartSw'), t = p.data[0];
+              return [[...document.getElementById('rtmSwKey').options].map((o) => o.value).filter((v) => /^(rate|extent)\\(/.test(v)).join(' '),
+                p.layout.yaxis.title.text, t.x.join(' '),
+                Math.max(...t.x.map((k, i) => Math.abs(t.y[i] / (k * Math.exp(-10 * k)) - 1))) < 5e-5]; })()""")
+            check('  a reaction\'s rate among what can be drawn, kk A at the end of each run; its extent, a sum over the run, not',
+                  sw_rate, ['rate(1)', 'A => B, rate (/s), at the end at cell 0', '0.1 0.2 0.3 0.4', True])
+            await page.ev("(() => { const k = document.getElementById('rtmSwKey'); k.value = 'A';"
+                          " k.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
             await page.ev("(() => { const s = document.getElementById('rtmSwShow'); s.value = 'time';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.4)
@@ -2719,6 +2738,68 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmGradSpecies'); s.value = 'pe';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.5)
+            # What each reaction does, at cell 5, where the plume passes. The plume's one line, the organic carbon oxidised,
+            # has its rate and its extent in a group of the series. The rate goes on the right with the pH and the like,
+            # kdoc [CH2O]: 0.05 of the CH2O drawn beside it at every stored point, to the last digit. The extent goes on the
+            # left with the amounts: at each point the trapezoid of the rate's curve up to there, from 0 at the start, which
+            # a linear axis draws.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '5';"
+                          " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            rx_list = await page.ev("""(() => { const heads = [...document.querySelectorAll('#rtmSeries .rtm-series-head')];
+              const h = heads.find((b) => b.dataset.group === 'reactions');
+              return [heads.map((b) => b.dataset.group).join(' '), h ? h.textContent : null,
+                [...document.querySelectorAll('#rtmSeries label[data-group="reactions"]')]
+                  .map((l) => `${l.querySelector('input').value}: ${l.textContent}${l.hidden ? ' (hidden)' : ''}`).join(' | ')]; })()""")
+            await page.ev("""(() => { const b = document.getElementById('rtmLogY'); b.checked = false;
+              b.dispatchEvent(new Event('change', { bubbles: true }));
+              for (const k of ['CH2O', 'rate(1)', 'extent(1)']) {
+                const i = document.querySelector(`#rtmSeries input[value="${k}"]`); i.checked = true;
+                i.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).length", 3, tries=60, pause=0.25)
+            rx = await page.ev("""(() => { const p = document.getElementById('rtmChartTime'), d = p.data;
+              return [d.map((t) => t.name + (t.yaxis === 'y2' ? ' (right)' : '')).join(' | '), p.layout.yaxis2 ? p.layout.yaxis2.title.text : null,
+                d[0].x, ...d.map((t) => t.y)]; })()""")
+            t5, ch2o, rate5, ext5 = rx[2:6] if isinstance(rx, list) and len(rx) == 6 else [[0.0], [0.0], [1.0], [1.0]]
+            # The worker's sum, step by step as it adds.
+            trap, s = [0.0], 0.0
+            for i in range(1, len(t5)):
+                s += 0.5 * (rate5[i] + rate5[i - 1]) * (t5[i] - t5[i - 1])
+                trap.append(s)
+            check('  what each reaction does, a group of the series: the plume\'s one line, its rate and its extent; at cell 5 the '
+                  'rate on the right, kdoc [CH2O] at every stored point to the last digit, and the extent on the left with the '
+                  'amounts, at each point the trapezoid of the rate\'s curve up to there',
+                  [rx_list, rx[0] if isinstance(rx, list) else rx, rx[1] if isinstance(rx, list) else None,
+                   len(t5) == len(ch2o) == len(rate5) == len(ext5) > 100, max(abs(r - 0.05 * c) for r, c in zip(rate5, ch2o)),
+                   max(abs(e - w) for e, w in zip(ext5, trap)), ext5[-1] > 1e-3],
+                  [['species water totals saturation reactions activities', 'What each reaction does 2',
+                    'rate(1): CH2O => CO3-2 + 6 H+ + 4 e-, rate | extent(1): CH2O => CO3-2 + 6 H+ + 4 e-, extent'],
+                   'CH2O | CH2O => CO3-2 + 6 H+ + 4 e-, rate (right) | CH2O => CO3-2 + 6 H+ + 4 e-, extent',
+                   'CH2O => CO3-2 + 6 H+ + 4 e-, rate', True, 0.0, 0.0, True])
+            await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
+            await page.ev("""(() => { const b = document.getElementById('rtmLogY'); b.checked = true;
+              b.dispatchEvent(new Event('change', { bubbles: true }));
+              const c = document.getElementById('rtmCell'); c.value = '0'; c.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await asyncio.sleep(0.3)
+            # In a diagram, the rate of the water held: cell 5 as the run ends, its pH from 5 to 9. CH2O is in no relation,
+            # so the rate is the same at each pH, the run's last. The extent, a sum over the run and no value of one water,
+            # is not offered.
+            await page.ev("document.querySelector('[data-tab=\"diagram\"]').click()")
+            await asyncio.sleep(0.3)
+            dg_ids = ['rtmDgCell', 'rtmDgAt', 'rtmDgYKind', 'rtmDgXKind', 'rtmDgXFrom', 'rtmDgXTo', 'rtmDgXN']
+            dg_before = await page.ev("%s.map((id) => document.getElementById(id).value)" % json.dumps(dg_ids))
+            await dg(calc=list(zip(dg_ids, ['5', 'end', '', 'pH', '5', '9', '5'])), show=[['rtmDgShow', 'quantity'], ['rtmDgQ', 'rate(1)']])
+            dg_rate = await page.ev("""(() => { const p = document.getElementById('rtmChartDg'), d = p.data;
+              return [[...document.getElementById('rtmDgQ').options].map((o) => o.value).filter((v) => /^(rate|extent)\\(/.test(v)).join(' '),
+                p.layout.yaxis.title.text, d.length, d[0].x, d[0].y]; })()""")
+            check('  in a diagram the rate of the water held, mol/kgw a day: cell 5 as the run ends, its pH from 5 to 9, the run\'s '
+                  'last rate at each, CH2O in no relation; the extent, a sum over the run, not offered',
+                  [dg_rate[:4], [v == rate5[-1] for v in dg_rate[4]]] if isinstance(dg_rate, list) else dg_rate,
+                  [['rate(1)', 'CH2O => CO3-2 + 6 H+ + 4 e-, rate (mol/kgw/d)', 1, [5, 6, 7, 8, 9]], [True] * 5])
+            await page.ev(''.join("(() => { const e = document.getElementById('%s'); e.value = %s;"
+                                  " e.dispatchEvent(new Event('change', { bubbles: true })); })();" % (k, json.dumps(v))
+                                  for k, v in zip(dg_ids, dg_before or [])))
             # An example that gives no floor: each axis from the least drawn again.
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = 'tracer';"
@@ -2804,6 +2885,9 @@ async def main():
             await page.ev("document.getElementById('rtmUnGo').click()")
             done = await settle(page, "/^101 of 101 runs done/.test(document.getElementById('rtmStatus').textContent)", True, tries=80, pause=0.5)
             check('101 runs, the model as written beside them', done, True)
+            check('  the reactions\' rates among what the bands can be drawn of; their extents, sums over the run, not', await page.ev(
+                "[...document.getElementById('rtmUnKey').options].map((o) => o.value).filter((v) => /^(rate|extent)\\(/.test(v)).join(' ')"),
+                'rate(1) rate(2)')
             await page.ev("""(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;
               HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };
                 if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()""")

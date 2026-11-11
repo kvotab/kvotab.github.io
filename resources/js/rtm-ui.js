@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261110j';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1088,29 +1088,35 @@
   const quantityOf = (key) => quantityList().find((q) => q.key === key) || null;
   /** Whether a key is one of the model's quantities rather than a species. */
   const isQuantity = (key) => !speciesNames().includes(key) && !!quantityOf(key);
-  const GROUP_ORDER = ['water', 'totals', 'saturation', 'gases', 'exchange', 'surface', 'outputs', 'activities'];
+  const GROUP_ORDER = ['water', 'totals', 'saturation', 'gases', 'exchange', 'surface', 'outputs', 'reactions', 'activities'];
   const GROUP_LABELS = { species: 'Species', water: 'The water', totals: 'Totals in the water', saturation: 'Saturation indices',
-    gases: 'Gases', exchange: 'On the exchanger', surface: 'On the surface', outputs: 'From <OUTPUT>', activities: 'Log activities' };
-  // Shut until opened: the log activities, one a solute.
+    gases: 'Gases', exchange: 'On the exchanger', surface: 'On the surface', outputs: 'From <OUTPUT>',
+    reactions: 'What each reaction does', activities: 'Log activities' };
+  // Shut until opened: the log activities, one a solute; and what each reaction does in a network of more than six lines,
+  // two entries a line.
   const GROUP_SHUT = new Set(['activities']);
+  const REACTIONS_OPEN_MOST = 12;
   /** A key as the charts and their legends name it: a species its name, a quantity its label. */
   const labelOf = (key) => (isQuantity(key) ? quantityOf(key).label : key);
   /** Which axis a key goes on: the left for a species and an amount, the right for the rest. */
   const axisOf = (key) => (isQuantity(key) && quantityOf(key).axis === 'index' ? 'index' : 'conc');
 
-  /** The groups a picker offers, in order: the species, then each group of quantities that has any. */
-  function pickerGroups() {
+  /**
+   * The groups a picker offers, in order: the species, then each group of quantities that has any. `sums` false leaves out
+   * what is a sum over the run, a reaction's extent: Diagrams, Sweeps and Uncertainty read a quantity point by point.
+   */
+  function pickerGroups(sums = true) {
     const groups = [{ id: 'species', items: speciesNames().map((nm) => ({ key: nm, label: nm })) }];
     for (const g of GROUP_ORDER) {
-      const items = quantityList().filter((q) => q.group === g).map((q) => ({ key: q.key, label: q.label }));
+      const items = quantityList().filter((q) => q.group === g && (sums || !q.of)).map((q) => ({ key: q.key, label: q.label }));
       if (items.length) groups.push({ id: g, items });
     }
     return groups;
   }
 
-  /** <optgroup>s of every key a one-quantity chart can show, `chosen` selected. */
-  function pickerOptions(chosen) {
-    return pickerGroups().map((g) => `<optgroup label="${esc(GROUP_LABELS[g.id])}">${g.items.map((it) => `<option value="`
+  /** <optgroup>s of every key a one-quantity chart can show, `chosen` selected; `sums` as pickerGroups has it. */
+  function pickerOptions(chosen, sums = true) {
+    return pickerGroups(sums).map((g) => `<optgroup label="${esc(GROUP_LABELS[g.id])}">${g.items.map((it) => `<option value="`
       + `${esc(it.key)}"${it.key === chosen ? ' selected' : ''}>${esc(it.label)}</option>`).join('')}</optgroup>`).join('');
   }
 
@@ -1121,10 +1127,10 @@
     // The title is the name alone, for one too long for its cell. Which
     // species do not move is in the (i) of this tab, pane:time. With
     // quantities beside the species, each group has a heading across the grid,
-    // and one long group (the log activities) is shut until it is opened.
+    // and the long groups (the log activities, a network's reactions) are shut until opened.
     box.innerHTML = groups.map((g) => {
       const shut = groups.length > 1 && (state.sections[`series:${g.id}`] === undefined
-        ? GROUP_SHUT.has(g.id) : !state.sections[`series:${g.id}`]);
+        ? GROUP_SHUT.has(g.id) || (g.id === 'reactions' && g.items.length > REACTIONS_OPEN_MOST) : !state.sections[`series:${g.id}`]);
       const head = groups.length > 1
         ? `<button type="button" class="rtm-series-head" data-group="${g.id}" aria-expanded="${!shut}" `
           + `data-on-click="rtm:toggleGroup">${esc(GROUP_LABELS[g.id])} <span class="rtm-muted">${g.items.length}</span></button>`
@@ -5221,8 +5227,8 @@
     $('rtmDgElWrap').hidden = !byEl;
     $('rtmDgInWrap').hidden = !(byEl || d.show === 'ladder' || d.show === 'couples') || d.show === 'stable';
     $('rtmDgQWrap').hidden = !(d.show === 'quantity' || d.show === 'contour');
-    if (!speciesNames().includes(d.q) && !quantityOf(d.q)) d.q = quantityOf('pH') ? 'pH' : (speciesNames()[0] || '');
-    $('rtmDgQ').innerHTML = pickerOptions(d.q);
+    if (!speciesNames().includes(d.q) && !(quantityOf(d.q) && !quantityOf(d.q).of)) d.q = quantityOf('pH') ? 'pH' : (speciesNames()[0] || '');
+    $('rtmDgQ').innerHTML = pickerOptions(d.q, false);
   }
 
   /** The elements two phases or more are made of, aluminium first where it is one: what a stability diagram weighs by. */
@@ -6263,8 +6269,8 @@
     ];
     if (!opts.some(([v]) => v === w.show)) w.show = opts[0][0];
     $('rtmSwShow').innerHTML = opts.map(([v, t]) => `<option value="${v}"${v === w.show ? ' selected' : ''}>${esc(t)}</option>`).join('');
-    if (!speciesNames().includes(w.key) && !quantityOf(w.key)) w.key = speciesNames()[0] || '';
-    $('rtmSwKey').innerHTML = pickerOptions(w.key);
+    if (!speciesNames().includes(w.key) && !(quantityOf(w.key) && !quantityOf(w.key).of)) w.key = speciesNames()[0] || '';
+    $('rtmSwKey').innerHTML = pickerOptions(w.key, false);
     $('rtmSwOf').value = w.of;
     $('rtmSwLogT').checked = w.logT;
     $('rtmSwOfWrap').hidden = w.show === 'time' || w.show === 'profile';
@@ -7230,8 +7236,8 @@
     if (u.show === 'profile' && !column) u.show = 'time';
     $('rtmUnShow').querySelector('option[value="profile"]').hidden = !column;
     $('rtmUnShow').value = u.show;
-    if (!speciesNames().includes(u.key) && !quantityOf(u.key)) u.key = speciesNames()[0] || '';
-    $('rtmUnKey').innerHTML = pickerOptions(u.key);
+    if (!speciesNames().includes(u.key) && !(quantityOf(u.key) && !quantityOf(u.key).of)) u.key = speciesNames()[0] || '';
+    $('rtmUnKey').innerHTML = pickerOptions(u.key, false);
     $('rtmUnOf').value = u.of;
     $('rtmUnOfWrap').hidden = u.show === 'time' || u.show === 'profile';
     $('rtmUnLogTWrap').hidden = u.show !== 'time';
@@ -8535,7 +8541,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**HDF5**: the same file, as a download.',
           ] },
           { heading: 'The list', text: [
-            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water and, in a model with the electron where it is in two valence states or more, in each, tot(Fe(2)) as PHREEQC’s TOT("Fe(2)"), saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
+            'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water and, in a model with the electron where it is in two valence states or more, in each, tot(Fe(2)) as PHREEQC’s TOT("Fe(2)"), saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, what each reaction does (shut until opened where there are more than six lines), and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
+            'What each reaction does: for each `<REACTIONS>` line its **rate** — the forward rate less the backward one, from the very code the solver runs, times what the cell holds of the species for a rate on the inventory and times the porosity in the rock, so that it is what the reaction moves in the cell’s water in a unit of time — on the right with pH and the like; and its **extent**, what it has done since the start, the rate summed over the stored points, as close as they are to each other. A rate drawn on Gradient shows where a reaction runs and when; an extent at the end of the run along the column, how much it did where. A held equilibrium has no rate of its own and is not among them; Diagrams, Sweeps and Uncertainty, which read a quantity point by point, offer the rates and not the extents.',
             'An amount goes on the left-hand axis with the species, log or not; pH, pe, Eh, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
             'In a column a species diffuses when it has a `D`, and with `ADVECTION` and a `VELOCITY` the flow carries every species that is not `fixed`, whatever its `D`.',
             still.length ? `In this model these do not move: ${someOf(still)}.` : '',
@@ -9477,7 +9484,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261110i';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

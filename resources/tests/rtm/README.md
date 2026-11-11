@@ -530,6 +530,20 @@ the pore water's speed |VELOCITY|/POROSITY, as by hand -- the freshening
 column 2e4 s, the far field 100 a, the tracer 1e6 s, 0.5 m at 0.002 m/h
 through a porosity of 0.4 100 h, the same flowing to the left; none where
 the water stands, nor in a batch.
+What each reaction does (since 2026-11-11): two quantities for each
+`<REACTIONS>` line, its rate (on the right, mol/kgw a time unit, or per
+time unit without ACTIVITY) and its extent (on the left with the amounts),
+named by the line's equation. A first-order decay A => B at k 0.1 a day
+over 200 days: its rate k [A] at every stored point to the last digit,
+from the code the solver runs; its extent, the rate summed over the stored
+points by the trapezoidal rule, A's start less A to 2e-4 of the start
+(4.7e-5 measured over 123 points). A reversible C <=> D at kf 0.3 and
+kb 0.1: its rate kf [C] - kb [D] exactly, and 1.4e-16 of its first once
+it has settled. The plume: its organic carbon's extent, each cell's
+times its width and summed over the column, what the budget counts the
+reactions as having taken of CH2O, to 1e-6 (1.0e-7 measured): two sums
+over the same stored points, the one of the rates, the other of what the
+column holds and what crosses its ends.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1184,6 +1198,8 @@ The Sweeps tab (since 2026-11-09), on a first-order decay at a rate kk of `<PARA
 Breakthrough numbers (since 2026-11-11), under Against time, on a column of the test's own: a tracer X and Y held back with R = 4, 100 cells over 1 m, its dispersion a dispersivity (PECLET 100), for six pore volumes, at cells 24, 49, 74 and the last. Y's semi-discrete equations are X's with time over 4, so its half-way is at four times X's time at every cell, within 1e-3 (3e-6, 3e-6, 2.6e-5 and, at the outlet, where Y is still going at the end of the run and its half-way is of the 0.9987 it got to, 8.8e-4); X's retardation within 1 % of 1 (1.005 to 0.996); only the outlet's Y said to be at its farthest at the end of the run. Out of the column, from the budget: six pore volumes of a unit concentration came in, 0.04 m/d x 150 d = 6 to 1e-12; 5/6 of X gone out to 1e-6 and 1/3 of Y to 1e-3, what reactions made next to nothing. Kept, and run again with Y's R = 2: this run's Y half-way at twice X's time and the kept run's at four, each in rows of its own, and both runs' rows of what has come out.
 
 The run against what was measured, one to one (since 2026-11-11), on the calcite example once it has fitted itself: fitted again from the text's own numbers (kc 5e-4, CO2 1e-3), so that the fit's first misfit is the run on show's, read exactly at the times measured; the run on show, read between its stored points, within 2e-3 of it (6.6e-4 measured), and the fitted run's sum of squares the fit's misfit to the last digit; the CSV `rtm_against_measured.csv` a row per value measured with each run's value and residual, the chart circles for this run and diamonds for the fitted one. Then the run's own values at four stored points written as its `<DATA>`, pH less 0.1 and Ca_mg twice and half by turns: each pH residual +0.1 and each Ca_mg one log10 2 either way to 1e-12, the table pH's bias +0.1 and spread 0.1, Ca_mg's bias a factor of 1 and spread a factor of 2, sums of squares 0.04 and 0.3625, all together 0.2243 and 0.4025; the fit, made against the old measurements, left out and the note saying so. Kept, and run again with kc doubled: the kept run's rows the first run's to the character, its points hollow, this run's sum of squares above the kept one's. A tracer's profile at a stored time, twice over at three cells and before and past the column, as a table in distance: each residual -log10 2, the ends read as the end cells; with a table in time, a value after the run's end and an amount of none, both said.
+
+What each reaction does (since 2026-11-11). On the plume example, at cell 5, where the plume passes: the series list has a group for it after the saturation indices, the one line's rate and extent, `CH2O => CO3-2 + 6 H+ + 4 e-, rate` and `..., extent`. Ticked beside CH2O on a linear axis, the rate is on the right and is kdoc [CH2O], 0.05 of the CH2O drawn, at every stored point to the last digit; the extent is on the left, at each point the trapezoid of the rate's curve up to there, summed step by step as the worker sums it, to the last digit. On Diagrams, cell 5 as the run ends with its pH from 5 to 9: the rate is the same at each pH, the run's last to the last digit (CH2O is in no relation), drawn as `... rate (mol/kgw/d)`, and the extent is not offered. On Sweeps, kk varied in a decay: the rate offered, kk A at the end of each run within 5e-5, as `A => B, rate (/s)`; the extent not. On Uncertainty, the two lines' rates offered and not their extents.
 
 The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it. From the fit, on the Uncertainty tab, then gives kc as a lognormal about its fitted value, times or over its standard error, alone and so without the box of the fit's correlations.
 

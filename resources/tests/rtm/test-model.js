@@ -8019,6 +8019,63 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     !wrong.length, Object.entries(got).map(([k, v]) => `${k} ${v}`).join(', '));
   }
   /*
+    What each reaction does: each <REACTIONS> line's rate, from the code the solver runs, and its extent, the rate summed
+    over the stored points. A first-order decay A => B: its rate k [A] at every stored point to the last digit, and A at
+    every point A0 less the extent, to the summing's error. A reversible C <=> D: its rate kf [C] - kb [D] exactly, and
+    none to speak of once it has settled, D three times C. And the plume: its organic carbon's extent, each cell's times
+    the cell's width and summed over the column, minus the budget's what reactions made of CH2O -- two sums over the same
+    stored points, the one of the rates, the other of what the column holds and what crosses its ends.
+  */
+  {
+    const decay = '<SETTINGS>\nMODE = batch\nTEND = 200\nTIME_UNIT = day\n\n<SPECIES>\nA  2e-3\nB  0\nC  1e-3\nD  0\n\n'
+      + '<REACTIONS>\nA => B, k = 0.1\nC <=> D, kf = 0.3, kb = 0.1\n';
+    const dm = RtmModel.compile(decay);
+    const listed = dm.quantities.filter((q) => q.group === 'reactions').map((q) => `${q.key} ${q.label} [${q.unit}] ${q.axis}${q.of ? ` of ${q.of}` : ''}`);
+    let dRun = null;
+    handleRtmMessage({ type: 'run', id: 35, text: decay, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20 } },
+      (msg) => { if (msg.type === 'result') dRun = msg; });
+    let dq = null;
+    handleRtmMessage({ type: 'quantities', id: 36, runKey: dRun.runKey, keys: ['rate(1)', 'extent(1)', 'rate(2)'], cells: [0] },
+      (msg) => { dq = msg; });
+    const n = dRun.n;
+    const conc = (name, i) => dRun.states[i * dRun.width + dm.speciesNames.indexOf(name)];
+    let rateOff = 0;
+    let rate2Off = 0;
+    let extentOff = 0;
+    for (let i = 0; i < n; i++) {
+      rateOff = Math.max(rateOff, Math.abs(dq.values[i] - 0.1 * conc('A', i)));
+      rate2Off = Math.max(rate2Off, Math.abs(dq.values[2 * n + i] - (0.3 * conc('C', i) - 0.1 * conc('D', i))));
+      extentOff = Math.max(extentOff, Math.abs(conc('A', 0) - dq.values[n + i] - conc('A', i)) / conc('A', 0));
+    }
+    const settled = Math.abs(dq.values[3 * n - 1]) / (0.3 * conc('C', 0));
+    check('what each reaction does: two quantities a line, its rate on the right and its extent, a sum, on the left; a decay\'s '
+      + 'rate k [A] to the last digit and A its start less the extent to 2e-4 of it; a reversible line\'s rate kf [C] - kb [D] '
+      + 'exactly, and none to speak of once it has settled',
+    listed.join(' | ') === 'rate(1) A => B, rate [/d] index | extent(1) A => B, extent [] conc of rate(1) | '
+      + 'rate(2) C <=> D, rate [/d] index | extent(2) C <=> D, extent [] conc of rate(2)'
+      && rateOff === 0 && rate2Off === 0 && extentOff < 2e-4 && settled < 1e-9,
+    `${listed.length} quantities; k [A] off by ${rateOff}, kf [C] - kb [D] by ${rate2Off}; A0 - extent off A by `
+      + `${extentOff.toExponential(2)} of A0 over ${n} points; settled at ${settled.toExponential(1)} of the first rate`);
+
+    const plume = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxplume').text;
+    let pRun = null;
+    handleRtmMessage({ type: 'run', id: 37, text: plume, solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20, maxPoints: 4000 } },
+      (msg) => { if (msg.type === 'result') pRun = msg; });
+    const pm = pRun.model;
+    const pCells = Array.from({ length: pm.fracture }, (_, k) => k * (pm.stride || 1));
+    let pq = null;
+    handleRtmMessage({ type: 'quantities', id: 38, runKey: pRun.runKey, keys: ['extent(1)'], cells: pCells }, (msg) => { pq = msg; });
+    let pb = null;
+    handleRtmMessage({ type: 'budget', id: 39, runKey: pRun.runKey, of: { kind: 'species', name: 'CH2O' } }, (msg) => { pb = msg; });
+    let summed = 0;
+    pCells.forEach((c, j) => { summed += pm.width[j] * pq.values[j * pRun.n + pRun.n - 1]; });
+    const made = pb.byReactions[pRun.n - 1];
+    check('the plume\'s organic carbon: its extent, each cell\'s times its width and summed over the column, what the budget '
+      + 'counts the reactions as having taken of CH2O, to 1e-6',
+    Math.abs(-made / summed - 1) < 1e-6, `${summed.toExponential(6)} against ${(-made).toExponential(6)}, `
+      + `${Math.abs(-made / summed - 1).toExponential(2)} apart`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a
