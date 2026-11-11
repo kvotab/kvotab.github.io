@@ -820,8 +820,12 @@ function rtmSolute(model, k) {
 /** One axis of a diagram: what it holds, and its values from `from` to `to` in `n` steps. */
 function rtmDiagramAxis(model, ax) {
   const ns = model.speciesNames.length;
-  const values = Float64Array.from({ length: ax.n }, (_, i) => (ax.n === 1 ? ax.from : ax.from + ((ax.to - ax.from) * i) / (ax.n - 1)));
-  if (!(ax.n >= 2 && ax.n <= 400) || !Number.isFinite(ax.from) || !Number.isFinite(ax.to) || ax.from === ax.to) {
+  // Its values given outright -- a fit's, the values a table measured at -- or from and to in n points.
+  const given = !!ax.values;
+  const values = given ? Float64Array.from(ax.values)
+    : Float64Array.from({ length: ax.n }, (_, i) => (ax.n === 1 ? ax.from : ax.from + ((ax.to - ax.from) * i) / (ax.n - 1)));
+  if (given ? !(values.length >= 1 && values.every(Number.isFinite))
+    : !(ax.n >= 2 && ax.n <= 400) || !Number.isFinite(ax.from) || !Number.isFinite(ax.to) || ax.from === ax.to) {
     throw new Error(`${RTM_DIAGRAM_KINDS[ax.kind] || ax.kind}: from and to two different numbers, and from 2 to 400 points.`);
   }
   const solute = (k) => rtmSolute(model, k);
@@ -882,7 +886,8 @@ function rtmDiagramSetup(msg) {
     t = run.t[run.n - 1];
     base = Float64Array.from(run.states.subarray((run.n - 1) * run.width, run.n * run.width));
   } else {
-    model = rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text);
+    // A fit's model, compiled already with the numbers it is trying; else the text's.
+    model = msg.model || (rtmKept && rtmKept.text === msg.text ? rtmKept.model : RtmModel.compile(msg.text));
     const y0 = model.initialState();
     base = Float64Array.from(model.toConcentrations ? model.toConcentrations(y0) : y0);
   }
@@ -2033,6 +2038,9 @@ function rtmFitPoints(model, columns, tend) {
         if (tab.kind === 'time') {
           points.push({ table: ti, kind: 'time', t: row[0], cell: (tab.cell || 0) * stride + Math.min(tab.layer || 0, stride - 1),
             x: null, key, k, q, index, value });
+        } else if (tab.kind === 'speciation') {
+          points.push({ table: ti, kind: 'speciation', axis: tab.axis, t: null, cell: (tab.cell || 0) * stride, x: row[0],
+            key, k, q, index, value });
         } else {
           points.push({ table: ti, kind: 'distance', t: tab.at !== null ? tab.at : tend, cell: null, layer: Math.min(tab.layer || 0, stride - 1),
             x: row[0], key, k, q, index, value });
@@ -2041,6 +2049,38 @@ function rtmFitPoints(model, columns, tend) {
     });
   });
   return { points, skipped };
+}
+
+/*
+  THE WATERS OF A TABLE AGAINST pH, pe OR Eh, as a fit reads them: the
+  water of the table's cell as the model starts it, held at each value and
+  speciated there as the Diagrams tab speciates it, walking up the values
+  from the water and each from the one before; the water itself where one
+  does not settle from the one before. A map from each value to its water.
+  Throws where a water does not settle at all.
+*/
+function rtmSpeciationTable(model, tab, values) {
+  const stride = model.stride || 1;
+  const S = rtmDiagramSetup({ model, at: 'start', cell: (tab.cell || 0) * stride, axes: [{ kind: tab.axis, values }] });
+  const waters = new Map();
+  let cur = Float64Array.from(S.base);
+  let lnGamma = S.holds.map(() => 0);
+  for (const x of S.axes[0].values) {
+    let y = Float64Array.from(cur);
+    let g = lnGamma.slice();
+    let ok = false;
+    try { ok = S.settle(y, [x, 0], g); } catch (e) { ok = false; }
+    if (!ok) {
+      y = Float64Array.from(S.base);
+      g = S.holds.map(() => 0);
+      try { ok = S.settle(y, [x, 0], g); } catch (e) { ok = false; }
+    }
+    if (!ok) throw new Error(`the water of cell ${tab.cell || 0} does not settle at ${tab.axis} ${x}`);
+    cur = y;
+    lnGamma = g;
+    waters.set(x, y);
+  }
+  return { waters, t: S.t };
 }
 
 /** A key's value in model cell `cell` of concentrations c at time t: a species', or a quantity's. */
@@ -2106,10 +2146,14 @@ function rtmFit(msg, post) {
   const { points, skipped } = rtmFitPoints(model0, msg.columns || null, tend0);
   const n = points.length;
   if (!n) throw new Error('<DATA> has no values of the columns asked for to fit to.');
-  const times = [...new Set(points.map((p) => p.t))].sort((a, b) => a - b);
-  if (times[times.length - 1] > tend0 * (1 + 1e-12)) {
+  // The points of a run, in time or in distance, and those of a water held at a pH, a pe or an Eh, which need no run.
+  const times = [...new Set(points.filter((p) => p.kind !== 'speciation').map((p) => p.t))].sort((a, b) => a - b);
+  if (times.length && times[times.length - 1] > tend0 * (1 + 1e-12)) {
     throw new Error(`<DATA> has a value at ${times[times.length - 1]}, after the run ends at ${tend0}: run it longer (TEND).`);
   }
+  const specTables = [...new Set(points.filter((p) => p.kind === 'speciation').map((p) => p.table))];
+  const specValues = new Map(specTables.map((ti) => [ti,
+    [...new Set(points.filter((p) => p.table === ti).map((p) => p.x))].sort((a, b) => a - b)]));
   const out1 = new Float64Array(1);
   let runs = 0;
   const maxRuns = msg.maxRuns || 60 * (np + 2);
@@ -2120,16 +2164,28 @@ function rtmFit(msg, post) {
     if (runs >= maxRuns) throw Object.assign(new Error('the runs allowed are used up'), { budget: true });
     runs++;
     const model = RtmModel.compile(textAt(th));
-    const tend = s.tend > 0 ? s.tend : model.settings.TEND;
-    const res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, () => true, model), outputTimes: times,
-      maxPoints: keep ? 400 : 4 });
-    if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
-    const conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
+    let res = null;
+    let conc = null;
+    if (times.length) {
+      const tend = s.tend > 0 ? s.tend : model.settings.TEND;
+      res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, () => true, model), outputTimes: times,
+        maxPoints: keep ? 400 : 4 });
+      if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
+      conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
+    }
+    // Each table against pH, pe or Eh: its water speciated at every value it measured, with these numbers.
+    const spec = new Map(specTables.map((ti) => [ti, rtmSpeciationTable(model, model.data[ti], specValues.get(ti))]));
     const r = new Float64Array(n);
     points.forEach((p, i) => {
-      const c = conc[times.indexOf(p.t)];
-      const v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
-        : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
+      let v;
+      if (p.kind === 'speciation') {
+        const w = spec.get(p.table);
+        v = rtmValueAt(model, w.waters.get(p.x), w.t, p.cell, p.k, p.q, out1);
+      } else {
+        const c = conc[times.indexOf(p.t)];
+        v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
+          : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
+      }
       r[i] = p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value);
     });
     let ssr = 0;
@@ -2144,8 +2200,9 @@ function rtmFit(msg, post) {
     return keep ? { r, ssr, model, res, conc } : { r, ssr };
   };
   const step = (i) => (logged[i] ? 1e-3 : 1e-4 * Math.max(1, Math.abs(theta[i])));
-  // How much the solver's tolerance alone moves the misfit: 2 |r| |dr|, each residual off by rtol / ln 10.
-  const rtolRun = Number(s.rtol) > 0 ? Number(s.rtol) : 1e-6;
+  // How much the solver's tolerance alone moves the misfit: 2 |r| |dr|, each residual off by rtol / ln 10. A speciation
+  // alone, no run, settles to the rounding: 1e-10 of a value.
+  const rtolRun = !times.length ? 1e-10 : Number(s.rtol) > 0 ? Number(s.rtol) : 1e-6;
   const noise = (ssr) => 2 * Math.sqrt(ssr * n) * (rtolRun / Math.LN10);
   // Forward differences to steer by; central ones at the end, for the standard errors, whose forward bias is half a step.
   const jacobian = (th, r0, central = false) => {
@@ -2255,16 +2312,35 @@ function rtmFit(msg, post) {
     } catch (e) { if (!e.budget) throw e; }
   }
   const se = cov ? cov.map((row, a) => Math.sqrt(Math.max(0, row[a]))) : null;
-  // The best run where it was measured: each table's columns at its cell along the run, or along the column at its time.
+  // The best run where it was measured: each table's columns at its cell along the run, or along the column at its time;
+  // a table against pH, pe or Eh its water speciated at 101 values from a little below the least measured to a little above
+  // the most, or at those measured alone where the water does not settle that far out.
   const { model, res } = best;
-  const conc = res.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.t[i]) : y));
+  const conc = res ? res.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.t[i]) : y)) : null;
   const curves = [];
   const seen = new Set();
+  const specCurve = new Map();
   for (const p of points) {
-    const id = p.kind === 'time' ? `t|${p.cell}|${p.key}` : `x|${p.t}|${p.layer}|${p.key}`;
+    const id = p.kind === 'time' ? `t|${p.cell}|${p.key}` : p.kind === 'speciation' ? `s|${p.table}|${p.key}` : `x|${p.t}|${p.layer}|${p.key}`;
     if (seen.has(id)) continue;
     seen.add(id);
-    if (p.kind === 'time') {
+    if (p.kind === 'speciation') {
+      if (!specCurve.has(p.table)) {
+        const vals = specValues.get(p.table);
+        const lo = vals[0];
+        const hi = vals[vals.length - 1];
+        const pad = hi > lo ? 0.05 * (hi - lo) : 0.5;
+        const grid = Array.from({ length: 101 }, (_, i) => lo - pad + ((hi - lo + 2 * pad) * i) / 100);
+        let w;
+        try { w = { x: grid, ...rtmSpeciationTable(model, model.data[p.table], grid) }; } catch (e) {
+          w = { x: vals, ...rtmSpeciationTable(model, model.data[p.table], vals) };
+        }
+        specCurve.set(p.table, w);
+      }
+      const w = specCurve.get(p.table);
+      curves.push({ kind: 'speciation', axis: p.axis, table: p.table, cell: p.cell, key: p.key, index: p.index, x: w.x.slice(),
+        y: w.x.map((x) => rtmValueAt(model, w.waters.get(x), w.t, p.cell, p.k, p.q, out1)) });
+    } else if (p.kind === 'time') {
       curves.push({ kind: 'time', cell: p.cell, key: p.key, index: p.index, x: Array.from(res.t),
         y: conc.map((c, i) => rtmValueAt(model, c, res.t[i], p.cell, p.k, p.q, out1)) });
     } else {
@@ -2281,8 +2357,8 @@ function rtmFit(msg, post) {
       theta: theta[i], se: se ? se[i] : null })),
     corr: cov ? cov.map((row, a) => row.map((v, b) => v / Math.sqrt(cov[a][a] * cov[b][b]))) : null,
     history,
-    points: points.map((p, i) => ({ kind: p.kind, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key, index: p.index,
-      value: p.value, residual: best.r[i] })),
+    points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
+      index: p.index, value: p.value, residual: best.r[i] })),
     curves,
     text: textAt(theta),
   };

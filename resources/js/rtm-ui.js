@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111h';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111i';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5928,6 +5928,19 @@
       cols.forEach(([label, y, style], q) => traces.push({ type: 'scatter', mode: 'lines', name: label, x: xs, y,
         line: { color: DG_PALETTE[q % DG_PALETTE.length], width: 1.8, ...(style || {}) },
         hovertemplate: `${esc(label)}: %{y:.4g}<extra></extra>` }));
+      // What <DATA> measured of the quantity drawn, in a table against the same thing in the same cell's water: its points.
+      let measured = 0;
+      if (d.show === 'quantity' && !sats) {
+        for (const tab of (state.compiled && state.compiled.data) || []) {
+          const j = tab.kind === 'speciation' && tab.axis === ax.kind && (tab.cell || 0) === dgResult.cell ? tab.columns.indexOf(d.q) : -1;
+          if (j < 0) continue;
+          const rows = tab.rows.filter((row) => row[j + 1] !== null);
+          measured += rows.length;
+          traces.push({ type: 'scatter', mode: 'markers', name: `${labelOf(d.q)}, measured`, x: rows.map((row) => row[0]),
+            y: rows.map((row) => row[j + 1]), marker: { size: 8, symbol: 'circle-open', color: DG_PALETTE[0], line: { width: 1.6 } },
+            hovertemplate: `${esc(labelOf(d.q))}, measured: %{y:.4g}<extra></extra>` });
+        }
+      }
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
       dgTableNow = { head: [dgLabel(ax), ...cols.map(([label]) => label)], rows: xs.map((x, p) => [x, ...cols.map(([, y]) => y[p])]),
         name: d.show === 'solubility' ? `rtm_solubility_${ax.kind}` : `rtm_diagram_${ax.kind}` };
@@ -5936,7 +5949,8 @@
         note.textContent = `${where}; ${xs.length} points, at each ${sats.map((sx) => `the ${sx.el} set by ${dgSatName(sx)}`).join(', ')}`
           + `${blank ? `; ${blank} left blank: they did not settle` : ''}`;
       } else {
-        note.textContent = `${where}; ${xs.length} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`;
+        note.textContent = `${where}; ${xs.length} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`
+          + `${measured ? `; ${measured} measured, from <DATA>` : ''}`;
       }
       return;
     }
@@ -7437,9 +7451,12 @@
   /** A fitted point's place, for a legend or a hover: the column, and its cell and time or its distance and time. */
   const fitWhere = (p) => {
     const stride = (state.compiled && state.compiled.stride) || 1;
+    if (p.kind === 'speciation') return `the water of cell ${Math.floor(p.cell / stride)}`;
     return p.kind === 'time' ? `cell ${Math.floor(p.cell / stride)}${p.cell % stride ? `, rock layer ${p.cell % stride}` : ''}`
       : `at ${fmtTime(p.t)}`;
   };
+  // Where along its table a point is: a time, a distance, or the pH, pe or Eh its water is held at.
+  const fitAlong = (p) => (p.kind === 'time' ? fmtTime(p.t) : p.kind === 'speciation' ? `${p.axis} ${fmtNumber(p.x)}` : `${fmtNumber(p.x)} m`);
 
   /*
     The Show bar: after a fit, all four; before one, the run against what
@@ -7482,11 +7499,15 @@
     const layout = baseLayout();
     layout.hovermode = 'closest';
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
-    const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)', 'measured', 'the run', 'residual'], name: 'rtm_fit',
-      rows: r.points.map((p) => {
-        const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
-        return [labelOf(p.key), fitWhere(p), p.t, p.x, p.value, run, p.residual];
-      }) });
+    // A column for the pH, pe or Eh a water was held at, where a table is against one.
+    const heldAxes = [...new Set(r.points.filter((p) => p.kind === 'speciation').map((p) => p.axis))];
+    const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)',
+      ...(heldAxes.length ? [heldAxes.length === 1 ? heldAxes[0] : 'pH, pe or Eh'] : []), 'measured', 'the run', 'residual'], name: 'rtm_fit',
+    rows: r.points.map((p) => {
+      const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
+      return [labelOf(p.key), fitWhere(p), p.t, p.kind === 'speciation' ? null : p.x,
+        ...(heldAxes.length ? [p.kind === 'speciation' ? p.x : null] : []), p.value, run, p.residual];
+    }) });
     if (show === 'history') {
       Plotly.react(plot, [{ type: 'scatter', mode: 'lines+markers', name: 'the misfit', x: r.history.map((h) => h.iteration),
         y: r.history.map((h) => h.ssr), line: { color: palette[0] }, marker: { size: 6 },
@@ -7503,7 +7524,7 @@
         const pts = r.points.map((p, i) => [p, i]).filter(([p]) => p.key === key);
         return { type: 'scatter', mode: 'markers', name: labelOf(key), x: pts.map(([, i]) => i + 1), y: pts.map(([p]) => p.residual),
           marker: { size: 8, color: palette[q % palette.length] },
-          text: pts.map(([p]) => `${esc(labelOf(p.key))}, ${esc(fitWhere(p))}, ${p.kind === 'time' ? fmtTime(p.t) : `${fmtNumber(p.x)} m`}`),
+          text: pts.map(([p]) => `${esc(labelOf(p.key))}, ${esc(fitWhere(p))}, ${esc(fitAlong(p))}`),
           hovertemplate: '%{text}: %{y:.4g}<extra></extra>' };
       });
       layout.xaxis.title = { text: 'the point measured, in the order of <DATA>', font: { size: 11 } };
@@ -7515,33 +7536,44 @@
       return;
     }
     // The run at the fitted numbers where it was measured, and the measurements: along the run at a cell where the tables
-    // are in time, along the column at a time where they are in distance.
+    // are in time, along the column at a time where they are in distance; a water held at each pH, pe or Eh where they
+    // are against one, a sorption edge.
     const logT = $('rtmFitLogT').checked;
     const logY = $('rtmFitLogY').checked;
     const timeCurves = r.curves.filter((c) => c.kind === 'time');
-    const curves = timeCurves.length ? timeCurves : r.curves;
-    const along = timeCurves.length ? 'time' : 'distance';
-    const several = new Set(curves.map((c) => (along === 'time' ? c.cell : c.t))).size > 1;
+    const heldCurves = r.curves.filter((c) => c.kind === 'speciation');
+    const curves = timeCurves.length ? timeCurves : heldCurves.length ? heldCurves : r.curves;
+    const along = timeCurves.length ? 'time' : heldCurves.length ? 'speciation' : 'distance';
+    const tableOf = (c) => (along === 'time' ? c.cell : along === 'speciation' ? c.table : c.t);
+    const several = new Set(curves.map(tableOf)).size > 1;
+    // Only pH, SI, a share and the like: on the left, as they are, and no log axis to choose.
+    const allIndex = curves.every((c) => c.index);
+    $('rtmFitLogYWrap').hidden = show !== 'data' || allIndex;
     const traces = [];
     let right = false;
     curves.forEach((c, q) => {
       const color = palette[q % palette.length];
-      const where = several ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell } : { kind: 'distance', t: c.t })}` : '';
+      const where = several ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell }
+        : along === 'speciation' ? { kind: 'speciation', cell: c.cell } : { kind: 'distance', t: c.t })}` : '';
       const name = `${labelOf(c.key)}${where}`;
-      const onRight = c.index;
+      const onRight = c.index && !allIndex;
       right = right || onRight;
-      const keep = c.x.map((x, i) => (along !== 'time' || !logT || x > 0) && Number.isFinite(c.y[i]) && (onRight || !logY || c.y[i] > 0));
+      const keep = c.x.map((x, i) => (along !== 'time' || !logT || x > 0) && Number.isFinite(c.y[i])
+        && (c.index || !logY || c.y[i] > 0));
       traces.push({ type: 'scatter', mode: 'lines', name, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]),
         line: { color, width: 1.8 }, ...(onRight ? { yaxis: 'y2' } : {}) });
-      const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell : p.t === c.t));
+      const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell
+        : along === 'speciation' ? p.table === c.table : p.t === c.t));
       traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? p.t : p.x)),
         y: pts.map((p) => p.value), marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
         ...(onRight ? { yaxis: 'y2' } : {}) });
     });
     layout.xaxis.type = along === 'time' && logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
-    layout.yaxis.type = logY ? 'log' : 'linear';
-    layout.yaxis.title = { text: 'concentration, or an amount of <OUTPUT>', font: { size: 11 } };
+    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : along === 'speciation' ? dgLabel({ kind: curves[0].axis })
+      : 'distance from the left-hand face (m)', font: { size: 11 } };
+    layout.yaxis.type = logY && !allIndex ? 'log' : 'linear';
+    layout.yaxis.title = { text: allIndex ? [...new Set(curves.map((cv) => axisLabelOf(cv.key)))].join(', ')
+      : 'concentration, or an amount of <OUTPUT>', font: { size: 11 } };
     if (right) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
@@ -7550,7 +7582,8 @@
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     fitTableNow = pointsTable();
-    note.textContent = `the run at the fitted numbers${r.curves.length > curves.length ? '; the tables in distance are in the CSV' : ''}`;
+    note.textContent = `${along === 'speciation' ? `the water at the fitted numbers, held at each ${curves[0].axis}` : 'the run at the fitted numbers'}`
+      + `${r.curves.length > curves.length ? `; the tables ${along === 'time' ? 'in distance or against a pH' : 'in distance'} are in the CSV` : ''}`;
   }
 
   /*
@@ -7572,7 +7605,7 @@
     const stride = (m && m.stride) || 1;
     const points = [];
     let skipped = 0;
-    ((m && m.data) || []).forEach((tab, table) => tab.columns.forEach((key, j) => {
+    ((m && m.data) || []).forEach((tab, table) => tab.kind !== 'speciation' && tab.columns.forEach((key, j) => {
       const index = axisOf(key) === 'index';
       for (const row of tab.rows) {
         const value = row[j + 1];
@@ -9648,6 +9681,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'What is fitted', list: [
           '**Fit** … **from**: up to four numbers and where each starts — a setting, a parameter, a species\' start or what flows in, a relation\'s or a phase\'s log K, a number a reaction\'s line names (k, kf, or a constant of a rate law). A new choice starts from the value the text gives it.',
           '**to**: the columns of <DATA> fitted to, every one unless unticked.',
+          'A table against pH, pe or Eh — a sorption edge, the share of a metal on a surface at each pH — needs no run: its water is held at each value it measured and speciated there, as on the Diagrams tab, and the fit draws it against that value.',
           'A number above zero is fitted in its logarithm, so it stays above zero; a log K and the temperature as they are. Give each a start above zero where it is fitted in its logarithm.',
         ] },
         { heading: 'How', list: [
@@ -10428,7 +10462,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111e';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111f';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

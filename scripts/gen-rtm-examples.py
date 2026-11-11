@@ -1899,6 +1899,36 @@ CH2O => CO3-2 + 6 H+ + 4 e-, r = kdoc*[CH2O]
 ))
 
 
+_after('calcitefit', dict(
+    id='zincfit',
+    group='Fitting and uncertainty',
+    label='Zinc on ferrihydrite: its sorption edge fitted',
+    about="Zinc and a ferrihydrite surface, as in Zinc on ferrihydrite, with the share of the zinc on the surface measured at eight pHs -- made up for the purpose. Run it: the Fit tab moves the log K of the zinc on the strong sites and on the weak ones from phreeqc.dat's 0.99 and -1.99 until the water held at each pH is as near as it can be to what <DATA> measured, as PhreePlot fits a sorption edge, and draws the edge through the measurements. Diagrams draws them too, beside Zn_sorbed against pH.",
+    text=_retitled(_text('sorptionedge'), '''# Zinc on ferrihydrite, its strong and weak sites as Dzombak and Morel give
+# them, and the share of the zinc on the surface measured at eight pHs, in
+# <DATA>: a table against pH is of the water held at each pH, as the Diagrams
+# tab holds it. The Fit tab moves the log K of the zinc on each kind of site
+# until the edge goes through the measurements, as PhreePlot fits one.
+# phreeqc.dat's constants; no double layer; the measurements are made up.''') + '''
+<OUTPUT>
+Zn_sorbed = 100 * ([Hfo_sOZn+] + [Hfo_wOZn+]) / ([Zn+2] + [ZnOH+] + [Zn(OH)2] + [ZnCl+] + [Hfo_sOZn+] + [Hfo_wOZn+]),  unit = %
+
+<DATA>
+pH    Zn_sorbed
+4.5   0.5
+5.0   2.7
+5.5   17.3
+6.0   36.1
+6.5   72.0
+7.0   93.4
+7.5   99.1
+8.0   99.5
+''',
+    view={'tab': 'fit', 'fit': {'params': [{'what': 'logK:Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+', 'start': '0.99'},
+                                           {'what': 'logK:Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+', 'start': '-1.99'}], 'off': []}, 'go': True},
+))
+
+
 def main():
     examples = list(EXAMPLES)
 

@@ -613,6 +613,30 @@ const RTM_EXAMPLES = [
     }
   },
   {
+    "id": "zincfit",
+    "group": "Fitting and uncertainty",
+    "label": "Zinc on ferrihydrite: its sorption edge fitted",
+    "about": "Zinc and a ferrihydrite surface, as in Zinc on ferrihydrite, with the share of the zinc on the surface measured at eight pHs -- made up for the purpose. Run it: the Fit tab moves the log K of the zinc on the strong sites and on the weak ones from phreeqc.dat's 0.99 and -1.99 until the water held at each pH is as near as it can be to what <DATA> measured, as PhreePlot fits a sorption edge, and draws the edge through the measurements. Diagrams draws them too, beside Zn_sorbed against pH.",
+    "text": "# Zinc on ferrihydrite, its strong and weak sites as Dzombak and Morel give\n# them, and the share of the zinc on the surface measured at eight pHs, in\n# <DATA>: a table against pH is of the water held at each pH, as the Diagrams\n# tab holds it. The Fit tab moves the log K of the zinc on each kind of site\n# until the edge goes through the measurements, as PhreePlot fits one.\n# phreeqc.dat's constants; no double layer; the measurements are made up.\n\n<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = davies\nEQUILIBRATE = 1\n\n<SPECIES>\nH+          1e-7\nOH-         1e-7\nNa+         1e-2\nCl-         1e-2\nZn+2        1e-6\nZnOH+       0\nZn(OH)2     0\nZnCl+       0\nHfo_sOH     surface  sites=5e-6\nHfo_sOH2+   surface\nHfo_sO-     surface\nHfo_sOZn+   surface\nHfo_wOH     surface  sites=2e-4\nHfo_wOH2+   surface\nHfo_wO-     surface\nHfo_wOZn+   surface\n\n<EQUILIBRIUM>\n <=> H+ + OH-,                          logK = -14\nZn+2 + H2O <=> ZnOH+ + H+,              logK = -8.96\nZn+2 + 2 H2O <=> Zn(OH)2 + 2 H+,        logK = -16.9\nZn+2 + Cl- <=> ZnCl+,                   logK = 0.43\nHfo_sOH + H+ <=> Hfo_sOH2+,             logK = 7.29\nHfo_sOH <=> Hfo_sO- + H+,               logK = -8.93\nHfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+,      logK = 0.99\nHfo_wOH + H+ <=> Hfo_wOH2+,             logK = 7.29\nHfo_wOH <=> Hfo_wO- + H+,               logK = -8.93\nHfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+,      logK = -1.99\n\n<OUTPUT>\nZn_sorbed = 100 * ([Hfo_sOZn+] + [Hfo_wOZn+]) / ([Zn+2] + [ZnOH+] + [Zn(OH)2] + [ZnCl+] + [Hfo_sOZn+] + [Hfo_wOZn+]),  unit = %\n\n<DATA>\npH    Zn_sorbed\n4.5   0.5\n5.0   2.7\n5.5   17.3\n6.0   36.1\n6.5   72.0\n7.0   93.4\n7.5   99.1\n8.0   99.5\n",
+    "view": {
+      "tab": "fit",
+      "fit": {
+        "params": [
+          {
+            "what": "logK:Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+",
+            "start": "0.99"
+          },
+          {
+            "what": "logK:Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+",
+            "start": "-1.99"
+          }
+        ],
+        "off": []
+      },
+      "go": true
+    }
+  },
+  {
     "id": "frontuncertainty",
     "group": "Fitting and uncertainty",
     "label": "A sorbing front: its uncertainty",

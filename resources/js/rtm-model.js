@@ -1996,8 +1996,12 @@
    * table belongs on the same line: cell = 19 for one in time (the column's
    * cell, from 0; the first unless said), layer = 2 for the rock behind it,
    * at = 3600 for one in distance (in the model's time unit; the end of the
-   * run unless said). Then a row of numbers per point, a dash for one not
-   * measured. Returns [{ kind, columns, cell, layer, at, rows, line }].
+   * run unless said). A table whose first column is pH, pe or Eh is of a
+   * water held there rather than of a run -- a sorption edge -- the water
+   * of cell = 0 unless said, as the model starts it, speciated at each value
+   * as the Diagrams tab speciates it: kind 'speciation', its axis that
+   * first column. Then a row of numbers per point, a dash for one not
+   * measured. Returns [{ kind, axis, columns, cell, layer, at, rows, line }].
    */
   function readData(lines) {
     const tables = [];
@@ -2005,14 +2009,19 @@
     for (const { text, line } of lines) {
       const tokens = text.split(/\s+/).filter(Boolean);
       const first = tokens[0].toLowerCase();
-      if (['time', 't', 'distance', 'x'].includes(first)) {
+      if (['time', 't', 'distance', 'x', 'ph', 'pe', 'eh'].includes(first)) {
         const quals = {};
         const rest = text.slice(text.indexOf(tokens[0]) + tokens[0].length)
           .replace(/(^|\s)(cell|layer|at)\s*=\s*(\S+)/gi, (_, sp, k, v) => { quals[k.toLowerCase()] = v; return ' '; });
         const columns = rest.split(/\s+/).filter(Boolean);
-        const kind = first === 'time' || first === 't' ? 'time' : 'distance';
+        const kind = first === 'time' || first === 't' ? 'time' : first === 'distance' || first === 'x' ? 'distance' : 'speciation';
+        const axis = kind === 'speciation' ? { ph: 'pH', pe: 'pe', eh: 'Eh' }[first] : null;
         if (!columns.length) {
           throw new RtmError(`"${text}": a table in <DATA> names its columns after ${tokens[0]}: time  Ca+2  pH  cell = 19.`, line);
+        }
+        if (kind === 'speciation' && (quals.at !== undefined || quals.layer !== undefined)) {
+          throw new RtmError(`"${text}": a table against ${axis} is of the water of a cell held there, cell = 0; `
+            + 'at = and layer = are for tables in time and in distance.', line);
         }
         const whole = (key) => {
           const v = Number(quals[key]);
@@ -2025,7 +2034,7 @@
         if (kind === 'distance' && quals.cell !== undefined) {
           throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time.`, line);
         }
-        cur = { kind, columns, cell: quals.cell !== undefined ? whole('cell') : null,
+        cur = { kind, axis, columns, cell: quals.cell !== undefined ? whole('cell') : null,
           layer: quals.layer !== undefined ? whole('layer') : 0,
           at: quals.at !== undefined ? constValue(quals.at, line, 'at') : null, rows: [], line };
         tables.push(cur);
@@ -2033,15 +2042,15 @@
       }
       if (!cur) {
         throw new RtmError('<DATA> begins with a line naming the columns of a table: time  Ca+2  pH  cell = 19, '
-          + 'or distance  Ca+2  at = 3600.', line);
+          + 'distance  Ca+2  at = 3600, or pH  Zn_sorbed  cell = 0 for a water held at each pH.', line);
       }
       if (tokens.length !== cur.columns.length + 1) {
         throw new RtmError(`"${text}": the table on line ${cur.line} has ${cur.columns.length + 1} columns, `
-          + `${cur.kind} and ${cur.columns.join(', ')}; a dash for a value not measured.`, line);
+          + `${cur.axis || cur.kind} and ${cur.columns.join(', ')}; a dash for a value not measured.`, line);
       }
       const row = tokens.map((v) => (v === '-' ? null : Number(v)));
       if (row[0] === null || row.some((v) => v !== null && !Number.isFinite(v))) {
-        throw new RtmError(`"${text}": every value is a number, or a dash where nothing was measured; the ${cur.kind} always.`, line);
+        throw new RtmError(`"${text}": every value is a number, or a dash where nothing was measured; the ${cur.axis || cur.kind} always.`, line);
       }
       cur.rows.push(row);
     }
@@ -12515,7 +12524,7 @@
           + `quantities${qList.length ? ` (${qList.slice(0, 6).map((q) => q.key).join(', ')}${qList.length > 6 ? ' and more' : ''})` : ''}.`,
         tab.line);
       }
-      if (tab.kind === 'time' && tab.cell !== null && tab.cell >= nf) {
+      if ((tab.kind === 'time' || tab.kind === 'speciation') && tab.cell !== null && tab.cell >= nf) {
         throw new RtmError(`<DATA>, the table on line ${tab.line}: cell = ${tab.cell}, where the column has ${nf} (0 to ${nf - 1}).`,
           tab.line);
       }

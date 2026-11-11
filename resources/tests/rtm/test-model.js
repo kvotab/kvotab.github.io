@@ -8993,6 +8993,45 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   const badFitOff = badFit.filter(([, got, re]) => !re.test(got));
   check(`  and refused, each with its reason: ${badFit.map(([w]) => w).join(', ')}`, !badFitOff.length,
     badFitOff.map(([w, got]) => `${w}: "${got}"`).join(' | '));
+  /*
+    A SORPTION EDGE FITTED: a table against pH in <DATA>, the water held at
+    each pH and speciated, no run. Zinc on ferrihydrite's strong and weak
+    sites, the share of the zinc on the surface worked out by the page at
+    log K 1.30 and -1.60, then fitted from phreeqc.dat's 0.99 and -1.99:
+    back to 1.30 and -1.60, to 1e-9. A table against pH that says where in
+    time is refused.
+  */
+  const { RTM_EXAMPLES: edgeExamples } = require(path.join(jsDir, 'rtm-examples.js'));
+  const zincBase = edgeExamples.find((e) => e.id === 'sorptionedge').text;
+  const zincOut = '\n<OUTPUT>\nZn_sorbed = 100 * ([Hfo_sOZn+] + [Hfo_wOZn+]) / ([Zn+2] + [ZnOH+] + [Zn(OH)2] + [ZnCl+] + [Hfo_sOZn+] '
+    + '+ [Hfo_wOZn+]),  unit = %\n';
+  const sEq = 'Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+';
+  const wEq = 'Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+';
+  const zincTruth = RtmModel.withValue(RtmModel.withValue(zincBase + zincOut, { kind: 'logK', name: sEq }, 1.3),
+    { kind: 'logK', name: wEq }, -1.6);
+  const edgePHs = [4.5, 5, 5.5, 6, 6.5, 7, 7.5, 8];
+  let edgeGrid = null;
+  handleRtmMessage({ type: 'diagram', id: 19, text: zincTruth, at: 'start', cell: 0, axes: [{ kind: 'pH', values: edgePHs }] },
+    (m) => { if (m.type !== 'progress') edgeGrid = m; });
+  const zq = edgeGrid.keys.indexOf('Zn_sorbed');
+  const edgeText = `${zincBase}${zincOut}\n<DATA>\npH  Zn_sorbed\n${edgePHs.map((x, i) => `${x} ${edgeGrid.quant[i * edgeGrid.nq + zq]}`)
+    .join('\n')}\n`;
+  const edgeModel = RtmModel.compile(edgeText);
+  const fEdge = fitOf(edgeText, [{ kind: 'logK', name: sEq, start: 0.99 }, { kind: 'logK', name: wEq, start: -1.99 }]);
+  const edgeAt = (() => {
+    try { RtmModel.compile(`${zincBase}${zincOut}\n<DATA>\npH  Zn_sorbed  at = 3\n5 10\n`); return ''; } catch (e) { return e.message; }
+  })();
+  check('a sorption edge fitted: a table against pH read as the water held at each pH, no run; the share of zinc on '
+    + 'ferrihydrite worked out at log K 1.30 and -1.60, fitted from phreeqc.dat\'s 0.99 and -1.99 back to them, to 1e-9; the fit '
+    + 'drawn against pH, a little either side of the values measured; a table against pH that says where in time refused',
+  edgeModel.data[0].kind === 'speciation' && edgeModel.data[0].axis === 'pH' && edgeModel.data[0].rows.length === 8
+    && fEdge.type === 'fit' && Math.abs(fEdge.params[0].value - 1.3) < 1e-9 && Math.abs(fEdge.params[1].value + 1.6) < 1e-9
+    && fEdge.points.every((pt) => pt.kind === 'speciation' && pt.axis === 'pH')
+    && fEdge.curves.length === 1 && fEdge.curves[0].kind === 'speciation' && fEdge.curves[0].x.length === 101
+    && Math.abs(fEdge.curves[0].x[0] - 4.325) < 1e-12 && Math.abs(fEdge.curves[0].x[100] - 8.175) < 1e-12
+    && /a table against pH is of the water of a cell held there/.test(edgeAt),
+  `log K ${fEdge.params ? fEdge.params.map((pt) => pt.value).join(', ') : fEdge.error} in ${fEdge.runs} speciations, the misfit `
+    + `${fEdge.ssr0} to ${fEdge.ssr}; "${edgeAt}"`);
   check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,
