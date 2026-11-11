@@ -332,27 +332,129 @@
 }
 .rtm-pane[hidden] { display: none; }
 
+/*
+  A tab's controls, in the order they are used. A bar of what is drawn
+  (.rtm-toolbar), with what can be done with it at its right end (.rtm-end:
+  the Export menu, the (i)); under it, smaller and quieter, how it is drawn
+  (.rtm-how: the axes, the units), each setting with its own words beside it
+  (.rtm-grp); under that the chart's note. On the tabs that work something
+  out first, what to work out is a box of its own (.rtm-setup), the button
+  that does it at the box's right (.rtm-setup-go); what was worked out is
+  shown under the box once there is something to show. A bar marked hidden
+  is not drawn: the rule below has to say so, since display: flex outranks
+  the browser's own [hidden].
+*/
 .rtm-toolbar {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 6px 16px;
   align-items: center;
   margin: 0 0 8px;
   font-size: 12px;
+  color: var(--text-secondary);
 }
-.rtm-toolbar label { display: flex; gap: 5px; align-items: center; }
+.rtm-toolbar[hidden] { display: none; }
+.rtm-toolbar label { display: flex; gap: 6px; align-items: center; }
 .rtm-toolbar label[hidden] { display: none; }
+.rtm-toolbar input[type="checkbox"] { margin: 0; }
+.rtm-end { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-left: auto; }
+.rtm-how { gap: 6px 22px; color: var(--text-muted); }
+.rtm-grp { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.rtm-grp[hidden], .rtm-how:not(:has(label:not([hidden]))) { display: none; }
+.rtm-note { margin: -2px 0 8px; }
+.rtm-note:empty { display: none; }
+
+.rtm-setup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px 24px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+.rtm-setup-body { flex: 1 1 30rem; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.rtm-setup-body > .rtm-toolbar { margin: 0; }
+.rtm-setup-go { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+.rtm-setup-go .rtm-btn { padding: 5px 16px; font-size: 12px; }
+
+/*
+  Export: one menu at the right end of a tab's bar instead of a button for
+  each format. It is a popover, so a click elsewhere or Escape shuts it and
+  it is drawn above the pane's scrolling; rtm-ui.js puts it under its
+  button, right edges together, and shuts it once a format is chosen. Each
+  format's few words come from data-hint, out of its text, which the (i)s
+  and the tests read as the format's name.
+*/
+.rtm-export { display: inline-flex; }
+.rtm-menu-btn::after {
+  content: "";
+  display: inline-block;
+  margin-left: 6px;
+  vertical-align: 2px;
+  border: 4px solid transparent;
+  border-top-color: currentColor;
+  border-bottom: 0;
+}
+.rtm-menu {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  min-width: 15rem;
+  padding: 4px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.rtm-menu-item {
+  display: flex;
+  align-items: baseline;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 5px;
+  background: none;
+  color: inherit;
+  font: 600 12px var(--font-sans);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rtm-menu-item[hidden] { display: none; }
+.rtm-menu-item::after { content: attr(data-hint); margin-left: auto; padding-left: 18px; color: var(--text-muted); font-weight: 400; font-size: 11px; }
+.rtm-menu-item:hover, .rtm-menu-item:focus-visible { background: var(--bg-surface); outline: none; }
+.rtm-menu-item:disabled { opacity: 0.5; cursor: not-allowed; }
+.rtm-menu-sep { height: 1px; margin: 4px 6px; background: var(--border-color); }
 /* Against distance's slider through the stored times, and play: the slider takes what the row leaves. */
 .rtm-play[hidden] { display: none; }
 .rtm-play input[type="range"] { flex: 1 1 260px; min-width: 160px; margin: 0; }
 .rtm-play .rtm-play-time { min-width: 6em; font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+/*
+  Every field 24 px high, the values in the page's own ink. A select is as
+  wide as the choice it shows (field-sizing: content), not as its longest
+  choice, which can be a reaction's whole equation; between 3.5rem and 22rem
+  (13rem in the quieter row), and where field-sizing is not known, as wide
+  as its longest choice within the same bounds. A text field keeps the width
+  the page gives its text, its padding and border outside it (content-box),
+  so a placeholder fits as written.
+*/
 .rtm-toolbar input[type="text"], .rtm-toolbar select {
-  padding: 2px 5px;
+  height: 24px;
   border: 1px solid var(--input-border);
-  border-radius: 4px;
+  border-radius: 5px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
   font-size: 12px;
   font-family: var(--font-mono);
 }
+.rtm-toolbar select { box-sizing: border-box; field-sizing: content; min-width: 3.5rem; max-width: 22rem; padding: 0 2px 0 5px; }
+.rtm-how select { max-width: 13rem; }
+.rtm-toolbar input[type="text"] { box-sizing: content-box; height: 22px; padding: 0 5px; }
+#rtmSwValues, #rtmSwValues2 { width: 18.5rem; }
 
 /* ---- the species picker -------------------------------------------------
    The same shape as the one on facsimile.html: a grid whose columns line up,
@@ -425,7 +527,8 @@
 /* ---- charts and the empty state ----------------------------------------- */
 .plot { width: 100%; height: 460px; }
 .plot[hidden] { display: none; }
-.rtm-empty { margin: 0; padding: 24px 12px 40px; color: var(--text-muted); font-size: 12px; }
+/* What a tab shows before there is anything to show: what to do, in the middle of where the chart will be. */
+.rtm-empty { max-width: 44rem; margin: 0 auto; padding: 40px 16px 48px; color: var(--text-muted); font-size: 12.5px; line-height: 1.6; text-align: center; }
 .rtm-empty[hidden] { display: none; }
 
 /* ---- the model text -----------------------------------------------------
@@ -721,7 +824,7 @@
 .rtm-pq-report .error { border-left: 3px solid var(--color-kvot-accent); padding-left: 6px; }
 .rtm-pq-summary { margin: 4px 0 12px; }
 /* Inverse models, below the look through PHREEQC. */
-.rtm-pq-inv { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+.rtm-pq-inv { margin-top: 22px; }
 .rtm-pq-models { font-size: 12px; margin: 4px 0 12px; }
 .rtm-pq-models td { vertical-align: top; }
 .rtm-pq-stale {

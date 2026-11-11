@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111c">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111d">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -259,26 +259,39 @@
             <label id="rtmLayerWrap" hidden>Layer
               <select id="rtmLayer" data-on-change="rtm:redraw"></select>
             </label>
+            <span class="rtm-end">
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportTime" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportTime" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:downloadCsv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="time" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="time" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="time" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="time" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:downloadHdf5" data-hint="the whole run, as a file">HDF5</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:toHdf5" data-hint="the whole run, in a new tab">View in Data Browser</button>
+                </div>
+              </div>
+              <span class="kvot-info-slot" data-info-key="pane:time"></span>
+            </span>
+          </div>
+          <div class="rtm-toolbar rtm-how">
             <label>Time in <select id="rtmTimeInTime" data-on-change="rtm:timeIn"></select></label>
-            <label><input type="checkbox" id="rtmLogT" checked data-on-change="rtm:redraw"> log time</label>
-            <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
-            <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
-            <label>from <input type="text" id="rtmYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redraw"></label>
+            <span class="rtm-grp">
+              <label><input type="checkbox" id="rtmLogT" checked data-on-change="rtm:redraw"> log time</label>
+              <label>from <input type="text" id="rtmTMin" value="1e-6" style="width:70px" data-on-change="rtm:redraw"> <span id="rtmTMinUnit">s</span></label>
+            </span>
+            <span class="rtm-grp">
+              <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
+              <label>from <input type="text" id="rtmYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redraw"></label>
+            </span>
             <label>Units <select id="rtmUnitTime" data-on-change="rtm:concUnit"></select></label>
             <label id="rtmBtcWrap" hidden><input type="checkbox" id="rtmBtc" data-on-change="rtm:btc"> breakthrough numbers</label>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="time" data-as="html">HTML</button>
-            </span>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:toHdf5">View in Data Browser</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadHdf5">HDF5</button>
-            <span class="kvot-info-slot" data-info-key="pane:time"></span>
-            <span class="rtm-muted" id="rtmTimeNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmTimeNote"></p>
           <div class="rtm-series" id="rtmSeries"></div>
           <div class="plot" id="rtmChartTime" hidden></div>
           <div class="rtm-fit-result" id="rtmTimeNumbers" hidden></div>
@@ -304,20 +317,30 @@
               <input type="text" id="rtmProfileTimes" class="rtm-times" placeholder="spread over the run"
                 data-on-change="rtm:redrawProfile">
             </label>
-            <label>Time in <select id="rtmTimeInProfile" data-on-change="rtm:timeIn"></select></label>
-            <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
-            <label>from <input type="text" id="rtmProfileYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawProfile"></label>
-            <label>Units <select id="rtmUnitProfile" data-on-change="rtm:concUnit"></select></label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="profile" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportProfile" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportProfile" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="profile" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="profile" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="profile" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="profile" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="profile" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
+              <span class="kvot-info-slot" data-info-key="pane:profile"></span>
             </span>
-            <span class="kvot-info-slot" data-info-key="pane:profile"></span>
-            <span class="rtm-muted" id="rtmProfileNote"></span>
           </div>
+          <div class="rtm-toolbar rtm-how">
+            <label>Time in <select id="rtmTimeInProfile" data-on-change="rtm:timeIn"></select></label>
+            <span class="rtm-grp">
+              <label><input type="checkbox" id="rtmProfileLog" checked data-on-change="rtm:redrawProfile"> log concentration</label>
+              <label>from <input type="text" id="rtmProfileYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawProfile"></label>
+            </span>
+            <label>Units <select id="rtmUnitProfile" data-on-change="rtm:concUnit"></select></label>
+          </div>
+          <p class="rtm-muted rtm-note" id="rtmProfileNote"></p>
           <div class="rtm-toolbar rtm-play" id="rtmProfilePlayRow" hidden>
             <button type="button" class="rtm-btn secondary small" id="rtmProfilePlay" data-on-click="rtm:profilePlay">play</button>
             <input type="range" id="rtmProfileAt" min="0" max="0" step="1" value="0" aria-label="The stored time drawn"
@@ -343,15 +366,17 @@
             <label>Example
               <select id="rtmExample" data-on-change="rtm:chooseExample"></select>
             </label>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:applyModel">Apply</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:resetModel">Reset to the built-in model</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:loadFile">Open…</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
             <button type="button" class="rtm-btn secondary small" id="rtmPqToggle" data-on-click="rtm:pqPanel"
               aria-expanded="false" aria-controls="rtmPq">From PHREEQC…</button>
-            <label class="rtm-check inline"><input type="checkbox" id="rtmSyntax" checked
-              data-on-change="rtm:syntaxToggle"> colour the syntax</label>
-            <span class="kvot-info-slot" data-info-key="pane:model"></span>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:resetModel">Reset to the built-in model</button>
+            <span class="rtm-end">
+              <label class="rtm-check inline"><input type="checkbox" id="rtmSyntax" checked
+                data-on-change="rtm:syntaxToggle"> colour the syntax</label>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:applyModel">Apply</button>
+              <span class="kvot-info-slot" data-info-key="pane:model"></span>
+            </span>
             <input type="file" id="rtmFile" accept=".txt,.rtm,.in,.py" multiple hidden data-on-change="rtm:fileChosen">
           </div>
           <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
@@ -471,23 +496,35 @@
                 <option value="Greys">grey</option>
               </select>
             </label>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportGradient" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportGradient" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="gradient" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="gradient" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="gradient" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="gradient" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="gradient" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
+              <span class="kvot-info-slot" data-info-key="pane:gradient"></span>
+            </span>
+          </div>
+          <div class="rtm-toolbar rtm-how">
             <label>Time in <select id="rtmTimeInGrad" data-on-change="rtm:timeIn"></select></label>
-            <label><input type="checkbox" id="rtmGradLogT" checked data-on-change="rtm:redrawGradient"> log time</label>
-            <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
-            <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
-            <label>from <input type="text" id="rtmGradCFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawGradient"></label>
+            <span class="rtm-grp">
+              <label><input type="checkbox" id="rtmGradLogT" checked data-on-change="rtm:redrawGradient"> log time</label>
+              <label>from <input type="text" id="rtmGradTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawGradient"> <span id="rtmGradTMinUnit">s</span></label>
+            </span>
+            <span class="rtm-grp">
+              <label><input type="checkbox" id="rtmGradLogC" data-on-change="rtm:redrawGradient"> log concentration</label>
+              <label>from <input type="text" id="rtmGradCFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redrawGradient"></label>
+            </span>
             <label>Units <select id="rtmUnitGrad" data-on-change="rtm:concUnit"></select></label>
             <label><input type="checkbox" id="rtmGradSmooth" data-on-change="rtm:redrawGradient"> smooth</label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="gradient" data-as="html">HTML</button>
-            </span>
-            <span class="kvot-info-slot" data-info-key="pane:gradient"></span>
-            <span class="rtm-muted" id="rtmGradNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmGradNote"></p>
           <div class="plot" id="rtmChartGradient" hidden></div>
           <p class="rtm-empty" id="rtmGradEmpty">A gradient needs a run in transport mode.</p>
         </section>
@@ -514,8 +551,6 @@
               <input type="text" id="rtmCompPcaVars" class="rtm-times" placeholder="pH and each element dissolved"
                 data-on-change="rtm:redrawComp">
             </label>
-            <label data-comp-for="pca"><input type="checkbox" id="rtmCompPcaLog" checked data-on-change="rtm:redrawComp"> logs of
-              amounts</label>
             <label data-comp-for="where">Element
               <select id="rtmCompElement" data-on-change="rtm:redrawComp"></select>
             </label>
@@ -559,21 +594,33 @@
               <input type="text" id="rtmCompTimes" class="rtm-times" placeholder="spread over the run"
                 data-on-change="rtm:redrawComp">
             </label>
-            <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
-            <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportComp" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportComp" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="txt" data-comp-for="listing" data-hint="in PHREEQC's columns">Text</button>
+                  <div class="rtm-menu-sep" role="separator" data-comp-hide="listing"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="svg" data-comp-hide="listing" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="png" data-comp-hide="listing" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="composition" data-as="html" data-comp-hide="listing" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
+              <span class="kvot-info-slot" data-info-key="pane:composition"></span>
+            </span>
+          </div>
+          <div class="rtm-toolbar rtm-how">
+            <span class="rtm-grp">
+              <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
+              <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
+            </span>
+            <label data-comp-for="pca"><input type="checkbox" id="rtmCompPcaLog" checked data-on-change="rtm:redrawComp"> logs of
+              amounts</label>
             <label data-comp-for="listing"><input type="checkbox" id="rtmCompBeside" data-on-change="rtm:redrawComp"> beside PHREEQC</label>
             <label data-comp-for="listing">Units <select id="rtmUnitComp" data-on-change="rtm:concUnit"></select></label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="txt" data-comp-for="listing">Text</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="svg" data-comp-hide="listing">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="png" data-comp-hide="listing">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="composition" data-as="html" data-comp-hide="listing">HTML</button>
-            </span>
-            <span class="kvot-info-slot" data-info-key="pane:composition"></span>
-            <span class="rtm-muted" id="rtmCompNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmCompNote"></p>
           <div class="rtm-toolbar rtm-play" id="rtmCompPlayRow" hidden>
             <button type="button" class="rtm-btn secondary small" id="rtmCompPlay" data-on-click="rtm:compPlay">play</button>
             <input type="range" id="rtmCompAt" min="0" max="0" step="1" value="0" aria-label="The stored time drawn"
@@ -597,6 +644,8 @@
 
         <!-- ---- equilibrium diagrams of the model's own chemistry, as PhreePlot draws PHREEQC's ---- -->
         <section class="rtm-pane" data-pane="diagram" hidden>
+          <div class="rtm-setup">
+            <div class="rtm-setup-body">
           <div class="rtm-toolbar">
             <label>The water of cell
               <select id="rtmDgCell" data-on-change="rtm:dgSettings"></select>
@@ -607,6 +656,8 @@
                 <option value="end">ends the run</option>
               </select>
             </label>
+          </div>
+          <div class="rtm-toolbar">
             <span class="rtm-dg-axis">Vary
               <select id="rtmDgXKind" aria-label="what to vary" data-on-change="rtm:dgSettings">
                 <option value="pH">pH</option>
@@ -621,6 +672,8 @@
               to <input type="text" id="rtmDgXTo" class="rtm-dg-num" aria-label="to" data-on-change="rtm:dgSettings">
               in <input type="text" id="rtmDgXN" class="rtm-dg-num" aria-label="points" data-on-change="rtm:dgSettings"> points
             </span>
+          </div>
+          <div class="rtm-toolbar">
             <span class="rtm-dg-axis">and
               <select id="rtmDgYKind" aria-label="what else to vary" data-on-change="rtm:dgSettings">
                 <option value="">nothing else</option>
@@ -639,8 +692,12 @@
                 in <input type="text" id="rtmDgYN" class="rtm-dg-num" aria-label="points" data-on-change="rtm:dgSettings"> points</span>
               </span>
             </span>
-            <button type="button" class="rtm-btn small" id="rtmDgGo" data-on-click="rtm:dgGo">Work it out</button>
-            <span class="kvot-info-slot" data-info-key="pane:diagram"></span>
+          </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmDgGo" data-on-click="rtm:dgGo">Work it out</button>
+              <span class="kvot-info-slot" data-info-key="pane:diagram"></span>
+            </div>
           </div>
           <div class="rtm-toolbar" id="rtmDgShowBar" hidden>
             <label>Show
@@ -658,15 +715,21 @@
             <label id="rtmDgQWrap">
               <select id="rtmDgQ" aria-label="what to draw" data-on-change="rtm:dgRedraw"></select>
             </label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="diagram" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportDg" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportDg" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="diagram" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="diagram" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="diagram" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="diagram" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="diagram" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
             </span>
-            <span class="rtm-muted" id="rtmDgNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmDgNote"></p>
           <div class="plot" id="rtmChartDg" hidden></div>
           <p class="rtm-empty" id="rtmDgEmpty">Choose what to vary and work it out: the water of a cell held at each value
             and speciated by the model's own relations, as PhreePlot does with PHREEQC's.</p>
@@ -674,22 +737,32 @@
 
         <!-- ---- the model run again for each value of what is varied, as Gibbs Studio's parametric runs ---- -->
         <section class="rtm-pane" data-pane="sweep" hidden>
+          <div class="rtm-setup">
+            <div class="rtm-setup-body">
           <div class="rtm-toolbar">
             <span class="rtm-dg-axis">Vary
               <select id="rtmSwWhat" aria-label="what to vary" data-on-change="rtm:swSettings"></select>
               <span id="rtmSwOverWrap">over <input type="text" id="rtmSwValues" class="rtm-times" aria-label="the values"
                 placeholder="0.5, 1, 2 — or 1e-6 to 1e-4 in 5 log" data-on-change="rtm:swSettings"></span>
             </span>
+          </div>
+          <div class="rtm-toolbar">
             <span class="rtm-dg-axis" id="rtmSwAndWrap">and
               <select id="rtmSwWhat2" aria-label="what else to vary" data-on-change="rtm:swSettings"></select>
               <span id="rtmSwMore2">over <input type="text" id="rtmSwValues2" class="rtm-times" aria-label="its values"
                 placeholder="0.5, 1, 2 — or 1e-6 to 1e-4 in 5 log" data-on-change="rtm:swSettings"></span>
             </span>
+          </div>
+          <div class="rtm-toolbar">
             <label id="rtmSwCellWrap">keeping cell
               <select id="rtmSwCell" data-on-change="rtm:swSettings"></select>
             </label>
-            <button type="button" class="rtm-btn small" id="rtmSwGo" data-on-click="rtm:swGo">Run them</button>
-            <span class="kvot-info-slot" data-info-key="pane:sweep"></span>
+          </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmSwGo" data-on-click="rtm:swGo">Run them</button>
+              <span class="kvot-info-slot" data-info-key="pane:sweep"></span>
+            </div>
           </div>
           <div class="rtm-toolbar" id="rtmSwShowBar" hidden>
             <label>Show
@@ -707,15 +780,21 @@
             </label>
             <label id="rtmSwLogWrap"><input type="checkbox" id="rtmSwLog" checked data-on-change="rtm:swRedraw"> log</label>
             <label id="rtmSwLogTWrap"><input type="checkbox" id="rtmSwLogT" checked data-on-change="rtm:swRedraw"> log time</label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="sweep" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportSw" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportSw" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="sweep" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="sweep" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="sweep" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="sweep" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="sweep" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
             </span>
-            <span class="rtm-muted" id="rtmSwNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmSwNote"></p>
           <div class="plot" id="rtmChartSw" hidden></div>
           <p class="rtm-empty" id="rtmSwEmpty">Choose what to vary and over what values, and run them: the model run again for
             each, as Gibbs Studio's parametric runs do.</p>
@@ -723,12 +802,20 @@
 
         <!-- ---- the model fitted to what <DATA> measured, as PhreePlot's and Gibbs Studio's fits ---- -->
         <section class="rtm-pane" data-pane="fit" hidden>
-          <div class="rtm-toolbar">
-            <span class="rtm-fit-params" id="rtmFitParams"></span>
-            <button type="button" class="rtm-btn secondary small" id="rtmFitAdd" data-on-click="rtm:fitAdd">and another</button>
-            <span class="rtm-dg-axis" id="rtmFitColsWrap">to <span class="rtm-fit-cols" id="rtmFitCols"></span></span>
-            <button type="button" class="rtm-btn small" id="rtmFitGo" data-on-click="rtm:fitGo">Fit</button>
-            <span class="kvot-info-slot" data-info-key="pane:fit"></span>
+          <div class="rtm-setup">
+            <div class="rtm-setup-body">
+              <div class="rtm-toolbar">
+                <span class="rtm-fit-params" id="rtmFitParams"></span>
+                <button type="button" class="rtm-btn secondary small" id="rtmFitAdd" data-on-click="rtm:fitAdd">and another</button>
+              </div>
+              <div class="rtm-toolbar">
+                <span class="rtm-dg-axis" id="rtmFitColsWrap">to <span class="rtm-fit-cols" id="rtmFitCols"></span></span>
+              </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmFitGo" data-on-click="rtm:fitGo">Fit</button>
+              <span class="kvot-info-slot" data-info-key="pane:fit"></span>
+            </div>
           </div>
           <div class="rtm-fit-result" id="rtmFitResult" hidden></div>
           <div class="rtm-toolbar" id="rtmFitShowBar" hidden>
@@ -742,16 +829,22 @@
             </label>
             <label id="rtmFitLogTWrap"><input type="checkbox" id="rtmFitLogT" data-on-change="rtm:fitRedraw"> log time</label>
             <label id="rtmFitLogYWrap"><input type="checkbox" id="rtmFitLogY" checked data-on-change="rtm:fitRedraw"> log amounts</label>
-            <button type="button" class="rtm-btn secondary small" id="rtmFitApply" data-on-click="rtm:fitApply">Put the fitted values in the model</button>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="fit" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <button type="button" class="rtm-btn secondary small" id="rtmFitApply" data-on-click="rtm:fitApply">Put the fitted values in the model</button>
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportFit" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportFit" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="fit" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="fit" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="fit" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="fit" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="fit" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
             </span>
-            <span class="rtm-muted" id="rtmFitNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmFitNote"></p>
           <div class="plot" id="rtmChartFit" hidden></div>
           <div class="rtm-fit-result" id="rtmFitMatch" hidden></div>
           <p class="rtm-empty" id="rtmFitEmpty">Name what to fit and fit it: the numbers moved until the run is as near as it
@@ -760,11 +853,12 @@
 
         <!-- ---- the model run for draws of what is uncertain, as Gibbs Studio's Monte Carlo ---- -->
         <section class="rtm-pane" data-pane="uncertainty" hidden>
+          <div class="rtm-setup">
+            <div class="rtm-setup-body">
           <div class="rtm-toolbar">
             <span class="rtm-fit-params" id="rtmUnRows"></span>
             <button type="button" class="rtm-btn secondary small" id="rtmUnAdd" data-on-click="rtm:unAdd">and another</button>
             <button type="button" class="rtm-btn secondary small" id="rtmUnFromFit" data-on-click="rtm:unFromFit">From the fit</button>
-            <span class="kvot-info-slot" data-info-key="pane:uncertainty"></span>
           </div>
           <div class="rtm-toolbar">
             <label>Runs <input type="text" id="rtmUnN" class="rtm-dg-num" data-on-change="rtm:unSettings"></label>
@@ -780,7 +874,12 @@
               <select id="rtmUnCell" data-on-change="rtm:unSettings"></select>
             </label>
             <label id="rtmUnCorrWrap" hidden><input type="checkbox" id="rtmUnCorr" checked data-on-change="rtm:unSettings"> with the fit's correlations</label>
-            <button type="button" class="rtm-btn small" id="rtmUnGo" data-on-click="rtm:unGo">Run them</button>
+          </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmUnGo" data-on-click="rtm:unGo">Run them</button>
+              <span class="kvot-info-slot" data-info-key="pane:uncertainty"></span>
+            </div>
           </div>
           <div class="rtm-toolbar" id="rtmUnShowBar" hidden>
             <label>Show
@@ -804,15 +903,21 @@
             </label>
             <label id="rtmUnLogTWrap"><input type="checkbox" id="rtmUnLogT" data-on-change="rtm:unRedraw"> log time</label>
             <label id="rtmUnLogYWrap"><input type="checkbox" id="rtmUnLogY" checked data-on-change="rtm:unRedraw"> log</label>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="csv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="xlsx">Excel</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="svg">SVG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="png">PNG</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="uncertainty" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportUn" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportUn" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="uncertainty" data-as="csv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="uncertainty" data-as="xlsx" data-hint="the numbers, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="uncertainty" data-as="svg" data-hint="the chart, as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="uncertainty" data-as="png" data-hint="the chart, as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="uncertainty" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
             </span>
-            <span class="rtm-muted" id="rtmUnNote"></span>
           </div>
+          <p class="rtm-muted rtm-note" id="rtmUnNote"></p>
           <div class="plot" id="rtmChartUn" hidden></div>
           <p class="rtm-empty" id="rtmUnEmpty">Give what is uncertain a distribution and run them: the model run for each draw,
             the runs drawn as bands, as Gibbs Studio's Monte Carlo does.</p>
@@ -820,6 +925,8 @@
 
         <!-- ---- the run, seen through PHREEQC ---- -->
         <section class="rtm-pane" data-pane="phreeqc" hidden>
+          <div class="rtm-setup">
+            <div class="rtm-setup-body">
           <div class="rtm-toolbar">
             <label>Database
               <select id="rtmPqViewDb" data-on-change="rtm:pqDbChosen"></select>
@@ -830,13 +937,19 @@
             <label>Cells
               <input type="text" id="rtmPqCells" placeholder="all" style="width:84px" data-on-change="rtm:pqSettings">
             </label>
+          </div>
+          <div class="rtm-toolbar">
             <label>Phases
               <input type="text" id="rtmPqPhases" class="rtm-times" placeholder="any within 3 of saturation"
                 data-on-change="rtm:pqSettings">
             </label>
             <label><input type="checkbox" id="rtmPqFill" data-on-change="rtm:pqSettings"> fill in from the water</label>
-            <button type="button" class="rtm-btn small" id="rtmPqLook" data-on-click="rtm:pqView">Look through PHREEQC</button>
-            <span class="kvot-info-slot" data-info-key="pane:phreeqc"></span>
+          </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmPqLook" data-on-click="rtm:pqView">Look through PHREEQC</button>
+              <span class="kvot-info-slot" data-info-key="pane:phreeqc"></span>
+            </div>
           </div>
           <div class="rtm-toolbar" id="rtmPqShow" hidden>
             <label id="rtmPqModeWrap">Show
@@ -852,15 +965,24 @@
               <select id="rtmPqTime" data-on-change="rtm:pqRedraw"></select>
             </label>
             <label id="rtmPqLogTWrap"><input type="checkbox" id="rtmPqLogT" checked data-on-change="rtm:pqRedraw"> log time</label>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqCsv">CSV</button>
-            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="phreeqc" data-as="html">HTML</button>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPq" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportPq" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqCsv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="phreeqc" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
+            </span>
           </div>
           <p class="rtm-pq-stale" id="rtmPqStale" hidden></p>
           <div class="plot" id="rtmChartPq" hidden></div>
           <div class="rtm-pq-summary" id="rtmPqSummary" hidden></div>
           <p class="rtm-empty" id="rtmPqEmpty">Run the model, then look at it through PHREEQC: the pH as an activity, the
             ionic strength and the saturation index of every phase, at each stored time.</p>
-          <div class="rtm-toolbar rtm-pq-inv" id="rtmPqInvBar">
+          <div class="rtm-setup rtm-pq-inv" id="rtmPqInvBar">
+            <div class="rtm-setup-body">
+          <div class="rtm-toolbar">
             <span class="rtm-dg-axis">Inverse models from
               <select id="rtmPqInvFrom" aria-label="the water to start from" data-on-change="rtm:pqInvSettings"></select>
               <span id="rtmPqInvFromAtWrap">at <input type="text" id="rtmPqInvFromAt" class="rtm-dg-num" aria-label="at the time"
@@ -871,6 +993,8 @@
               <span id="rtmPqInvToAtWrap">at <input type="text" id="rtmPqInvToAt" class="rtm-dg-num" aria-label="at the time"
                 data-on-change="rtm:pqInvSettings"></span>
             </span>
+          </div>
+          <div class="rtm-toolbar">
             <label>with
               <input type="text" id="rtmPqInvPhases" class="rtm-times" placeholder="the model's minerals and gases"
                 data-on-change="rtm:pqInvSettings">
@@ -880,15 +1004,24 @@
             </label>
             <label><input type="checkbox" id="rtmPqInvRange" data-on-change="rtm:pqInvSettings"> ranges</label>
             <label><input type="checkbox" id="rtmPqInvMinimal" data-on-change="rtm:pqInvSettings"> minimal models only</label>
-            <button type="button" class="rtm-btn small" id="rtmPqInvGo" data-on-click="rtm:pqInverse">Find the models</button>
-            <span class="kvot-info-slot" data-info-key="pq:inverse"></span>
+          </div>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmPqInvGo" data-on-click="rtm:pqInverse">Find the models</button>
+              <span class="kvot-info-slot" data-info-key="pq:inverse"></span>
+            </div>
           </div>
           <div class="rtm-toolbar" id="rtmPqInvShow" hidden>
-            <span class="rtm-saves" aria-label="Save">
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqInvCsv">CSV</button>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:export" data-pane="inverse" data-as="html">HTML</button>
-            </span>
             <span class="rtm-muted" id="rtmPqInvNote"></span>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqInv" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportPqInv" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqInvCsv" data-hint="the numbers">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="inverse" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                </div>
+              </div>
+            </span>
           </div>
           <div class="plot" id="rtmChartPqInv" hidden></div>
           <div class="rtm-pq-summary" id="rtmPqInvOut" hidden></div>
@@ -917,6 +1050,13 @@
             site's header and footer; the kvot mark at the left of the tabs then goes to the home
             page, and the switch beside the button changes between light and dark. The page
             remembers the choice.</p>
+          <p>The tabs follow the work: the model, then the run, then the chemistry of its waters, then
+            the tabs that run the model many times, then the solver's check. On a tab that draws the
+            run, the bar at the top chooses what is drawn, with <em>Export</em> and the tab's (i) at
+            its right end, and the row under it, in smaller type, how it is drawn: the axes, the time
+            and the units. A tab that works something out first — Diagrams, PHREEQC, Sweeps, Fit,
+            Uncertainty — sets it up in a box, with the button that does it at the box's right; what
+            came of it is drawn under the box, with its own bar, once there is something to draw.</p>
 
           <h3 id="help-model-text">The model text</h3>
           <p>Sixteen sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
@@ -2986,7 +3126,8 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             worked out again from its numbers when a chart first asks for them, and kept with it.</p>
 
           <h3 id="help-export">Taking the run away with you</h3>
-          <p><em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
+          <p><em>Export</em>, the menu at the right end of a tab's bar, saves what the tab shows, in
+            the formats that tab has. <em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
             model text the run was made with on a second sheet. On <em>Against distance</em> and
             <em>Gradient</em> they write what the chart draws: a row per distance and a column per
@@ -3771,6 +3912,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111n"></script>
 </body>
 </html>

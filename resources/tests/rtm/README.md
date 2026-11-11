@@ -1380,6 +1380,27 @@ PHREEQC, the waters' chemistry; Sweeps, Fit and Uncertainty, many runs; then
 Jacobian and Help. The test reads them in that order, and finds a wider space
 with a short line in it before the first tab of each group.
 
+**How each tab is laid out.** After the first transport run the test opens
+every tab in turn and reads its layout. Nothing marked `hidden` may be drawn
+anywhere on the page: a bar's `display: flex` outranks the browser's own
+`[hidden]` rule, and that is how the empty result bars of Diagrams, Sweeps,
+Fit, Uncertainty and PHREEQC came to be drawn before there was any result,
+so `rtm.css` now says `.rtm-toolbar[hidden] { display: none }`. Hidden but
+holding its place (`visibility: hidden`) counts as not drawn: the progress
+bar keeps its space so that the Run button does not jump. Every format
+a tab saves -- each `rtm:export` button, the CSVs of their own, HDF5 and
+View in Data Browser -- must sit in that tab's one Export menu (PHREEQC has
+two, one for each chart), and the menu at the right end of its bar. On the
+tabs that work something out first, the setup is a box with its button at
+the box's right. Then Export on Gradient is pressed with the mouse: the menu
+must open 4 px under its button with the right edges together and its first
+format focused, shut at a press on the chart, and shut again once a format
+is chosen. The menu is a popover, so the browser itself does the opening,
+shutting and Escape, but not on a chart: Plotly lays a cover over the page
+when it is pressed, the release lands on the cover, and the menu stayed
+open. So `rtm-ui.js` also shuts an open menu at any press outside it and its
+button, besides placing it and moving the focus.
+
 The choice is kept in the browser (`kvot.rtm.full`), and the test profile keeps
 it from run to run. rtm.html's head reads it before anything else, so the test
 clears it before the first load, from `rtm.css`, a file of the same origin that

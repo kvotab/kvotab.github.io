@@ -535,6 +535,69 @@ async def main():
             check('and the list has not moved', await page.ev(
                 "document.querySelector('#rtmSeries .rtm-item').getBoundingClientRect().top"), top)
 
+            # --- how each tab is laid out -------------------------------------
+            # A bar of what is drawn, Export and the (i) at its right end; every
+            # format a tab saves in that one menu; a tab that works something out
+            # sets it up in a box, the button that does it at the box's right;
+            # and nothing marked hidden is drawn. A bar's display: flex outranks
+            # the browser's own [hidden], and drew the empty result bars of
+            # Diagrams, Sweeps, Fit, Uncertainty and PHREEQC before any result.
+            LAYOUT = """(() => {
+              const pane = document.querySelector('.rtm-pane:not([hidden])');
+              const drawn = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
+              const saves = '[data-on-click="rtm:export"], [data-on-click="rtm:downloadCsv"], [data-on-click="rtm:pqCsv"],'
+                + ' [data-on-click="rtm:pqInvCsv"], [data-on-click="rtm:toHdf5"], [data-on-click="rtm:downloadHdf5"]';
+              const menus = [...pane.querySelectorAll('.rtm-menu-btn')];
+              return {
+                hiddenDrawn: [...document.querySelectorAll('.rtm [hidden]')].filter(drawn).map((e) => e.id || e.className || e.tagName),
+                menus: menus.length,
+                loose: [...pane.querySelectorAll(saves)].filter((b) => !b.closest('.rtm-menu')).length,
+                atEnd: menus.filter(drawn).every((b) => b.closest('.rtm-toolbar').getBoundingClientRect().right
+                  - b.closest('.rtm-end').getBoundingClientRect().right < 1),
+                go: [...pane.querySelectorAll('.rtm-setup')].map((x) => { const go = x.querySelector('.rtm-setup-go .rtm-btn');
+                  return !!go && x.getBoundingClientRect().right - go.getBoundingClientRect().right < 50; }),
+              };
+            })()"""
+            layout = {}
+            for tab in ['model', 'time', 'profile', 'gradient', 'composition', 'diagram', 'phreeqc', 'sweep', 'fit',
+                        'uncertainty', 'jacobian', 'help']:
+                await page.ev("document.querySelector('.rtm-tabs [data-tab=\"%s\"]').click()" % tab)
+                await asyncio.sleep(0.8)
+                layout[tab] = await page.ev(LAYOUT)
+            check('nothing marked hidden is drawn, on any tab',
+                  {t: v['hiddenDrawn'] for t, v in layout.items() if v['hiddenDrawn']}, {})
+            check('every format a tab saves in its Export menu, one to a chart, at the right end of its bar',
+                  {t: [v['menus'], v['loose'], v['atEnd']] for t, v in layout.items()},
+                  {'model': [0, 0, True], 'time': [1, 0, True], 'profile': [1, 0, True], 'gradient': [1, 0, True],
+                   'composition': [1, 0, True], 'diagram': [1, 0, True], 'phreeqc': [2, 0, True], 'sweep': [1, 0, True],
+                   'fit': [1, 0, True], 'uncertainty': [1, 0, True], 'jacobian': [0, 0, True], 'help': [0, 0, True]})
+            check('a tab that works something out sets it up in a box, the button that does it at the box\'s right',
+                  {t: v['go'] for t, v in layout.items() if v['go']},
+                  {'diagram': [True], 'phreeqc': [True, True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
+            # Export, pressed with the mouse: under its button, right edges
+            # together, its first format taking the focus; a click elsewhere
+            # shuts it -- on the chart too, where Plotly's cover takes the
+            # release and the browser's own dismissal missed it -- and so does
+            # a format chosen.
+            await page.ev("document.querySelector('.rtm-tabs [data-tab=\"gradient\"]').click()")
+            await asyncio.sleep(1.0)
+            await press(page, '[popovertarget="rtmExportGradient"]')
+            check('Export opens under its button, right edges together, its first format focused', await page.ev(
+                """(() => { const m = document.getElementById('rtmExportGradient'), b = document.querySelector('[popovertarget="rtmExportGradient"]');
+                  const r = m.getBoundingClientRect(), q = b.getBoundingClientRect();
+                  return [m.matches(':popover-open'), Math.round(r.top - q.bottom), Math.round(r.right - q.right), document.activeElement.textContent,
+                    [...m.querySelectorAll('.rtm-menu-item')].map((x) => x.textContent).join(' ')]; })()"""),
+                [True, 4, 0, 'CSV', 'CSV Excel SVG PNG HTML'])
+            await press(page, '#rtmChartGradient')
+            check('  a click elsewhere shuts it', await page.ev(
+                "document.getElementById('rtmExportGradient').matches(':popover-open')"), False)
+            await press(page, '[popovertarget="rtmExportGradient"]')
+            await press(page, '#rtmExportGradient [data-as="png"]')
+            check('  and so does a format chosen', await page.ev(
+                "document.getElementById('rtmExportGradient').matches(':popover-open')"), False)
+            await page.ev("document.querySelector('.rtm-tabs [data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.8)
+
             # The profile tab: one curve per stored time, one point per cell.
             await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
             await asyncio.sleep(1.5)

@@ -8693,6 +8693,62 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'jacobian') drawJacobianPattern();
   }
 
+  /*
+    Export, on each tab: a menu that is a popover (rtm.html), opened and shut
+    by the browser -- its button, a click elsewhere, Escape. Here it is put
+    under its button, right edges together, or above it where the window has
+    no room below; the first format takes the focus and the arrow keys move
+    through the rest; a format chosen shuts it, and so does the page
+    scrolling under it, which would leave it behind.
+  */
+  function setupMenus() {
+    const menus = [...document.querySelectorAll('.rtm-menu[popover]')];
+    if (!menus.length || typeof HTMLElement.prototype.showPopover !== 'function') return;
+    const items = (menu) => [...menu.querySelectorAll('.rtm-menu-item')].filter((b) => !b.hidden && !b.disabled);
+    for (const menu of menus) {
+      const button = document.querySelector(`[popovertarget="${menu.id}"]`);
+      menu.addEventListener('beforetoggle', (ev) => {
+        if (ev.newState !== 'open' || !button) return;
+        const r = button.getBoundingClientRect();
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        menu.style.right = `${Math.max(4, Math.round(document.documentElement.clientWidth - r.right))}px`;
+      });
+      menu.addEventListener('toggle', (ev) => {
+        if (ev.newState !== 'open' || !button) return;
+        const m = menu.getBoundingClientRect();
+        if (m.bottom > window.innerHeight - 4) {
+          menu.style.top = `${Math.max(4, Math.round(button.getBoundingClientRect().top - 4 - m.height))}px`;
+        }
+        const first = items(menu)[0];
+        if (first) first.focus({ preventScroll: true });
+      });
+      menu.addEventListener('click', (ev) => { if (ev.target.closest('.rtm-menu-item')) menu.hidePopover(); });
+      menu.addEventListener('keydown', (ev) => {
+        const list = items(menu);
+        const at = list.indexOf(document.activeElement);
+        const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: list.length - 1 }[ev.key];
+        if (to === undefined || !list.length) return;
+        ev.preventDefault();
+        list[(to + list.length) % list.length].focus();
+      });
+    }
+    document.addEventListener('scroll', (ev) => {
+      for (const menu of menus) {
+        if (menu.matches(':popover-open') && !menu.contains(ev.target)) menu.hidePopover();
+      }
+    }, true);
+    // A press anywhere but on the menu or its button shuts it. The browser does
+    // that itself, except on a chart: Plotly lays a cover over the page on the
+    // press, the release lands on the cover, and the menu stayed open.
+    document.addEventListener('pointerdown', (ev) => {
+      for (const menu of menus) {
+        if (!menu.matches(':popover-open') || menu.contains(ev.target)) continue;
+        const button = document.querySelector(`[popovertarget="${menu.id}"]`);
+        if (!button || !button.contains(ev.target)) menu.hidePopover();
+      }
+    }, true);
+  }
+
   function resize() {
     if (typeof Plotly === 'undefined') return;
     ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
@@ -8938,6 +8994,13 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
   // A chart saved as a page, the same on every chart's (i).
   const SAVE_HTML = '**HTML**: the chart as a page of its own, as live as it is here — zoom, pan, hover — with the note above it and the model text under it, plotly.js in the file, so that it opens in any browser without the internet.';
+  /** A tab's Export menu in its (i): what each of its formats saves; after, where the menu waits for a chart. */
+  const exportSection = (list, after) => ({
+    heading: 'Export',
+    text: after ? 'The menu at the right end of the bar over the chart, once there is a chart: a format each.'
+      : 'The menu at the right end of the bar: a format each.',
+    list,
+  });
 
   const TOPICS = {
     'sec:model': () => {
@@ -9314,12 +9377,14 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
             '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
             '**clear**: unticks everything.',
+          ] },
+          exportSection([
             '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown, at each of the Cells, or through the end shown, a row per stored point; in pore volumes a column of them first, then the time.',
             '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
             SAVE_HTML,
-            '**View in Data Browser**: the whole run as an HDF5 file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
-            '**HDF5**: the same file, as a download.',
-          ] },
+            '**HDF5**: the whole run as an HDF5 file, as a download.',
+            '**View in Data Browser**: the same file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
+          ]),
           { heading: 'The list', text: [
             'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water and, in a model with the electron where it is in two valence states or more, in each, tot(Fe(2)) as PHREEQC’s TOT("Fe(2)"), saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, what each reaction does (shut until opened where there are more than six lines), and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
             'What each reaction does: for each `<REACTIONS>` line its **rate** — the forward rate less the backward one, from the very code the solver runs, times what the cell holds of the species for a rate on the inventory and times the porosity in the rock, so that it is what the reaction moves in the cell’s water in a unit of time — on the right with pH and the like; and its **extent**, what it has done since the start, the rate summed over the stored points, as close as they are to each other. A rate drawn on Gradient shows where a reaction runs and when; an extent at the end of the run along the column, how much it did where. A held equilibrium has no rate of its own and is not among them; Diagrams, Sweeps and Uncertainty, which read a quantity point by point, offer the rates and not the extents.',
@@ -9348,9 +9413,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so; with those ticked against time it is left off.',
           '**The slider** under the bar: one time at a time, a stored point a step. The chart draws what Show has at that time — one curve, or those ticked against time — on axes that span the whole run, so that a front moves across a still frame. What `<DATA>` measured is faint, and as itself at the stored time nearest its own.',
           '**play**: moves the slider on from where it is, or from the start, at the **Pace** chosen: the whole run in 5, 10 or 30 s, evenly in time, or a stored point a frame, slower where the solver stored more; **pause** stops it. **back to Times** draws the Times again, and so does typing them.',
-          '**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.',
-          SAVE_HTML,
         ] },
+        exportSection(['**CSV**, **Excel**: the curves drawn, a row per distance. **SVG**, **PNG**: the chart as a figure.', SAVE_HTML]),
         { heading: 'Which times are drawn', text: 'Each time asked for is drawn at the nearest stored point; nothing is interpolated. The legend names the time drawn, and the note says which moved by more than 1 %, which could not be read and which lie past the end of the run.' },
       ],
       more: more('Reading the charts', 'help-charts'),
@@ -9372,9 +9436,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**from**, after log concentration: where the colour scale starts, a plain number such as `1e-10`; empty, the least value there is. What lies below it takes its colour, or on a surface lies below the box; the CSV and Excel files have every value still.',
             '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so.',
             '**smooth**: interpolates between the cells. It looks better and claims a resolution the run has not got, which is why it is off.',
-            '**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.',
-            SAVE_HTML,
           ] },
+          exportSection(['**CSV**, **Excel**: the numbers drawn, a row per cell and a column per time. **SVG**, **PNG**: the picture.', SAVE_HTML]),
           { heading: 'Colours', choices: [
             ['yellow to red', 'Light for low, dark red for high.', cur === 'YlOrRd'],
             ['viridis', 'Dark purple to yellow, even in lightness, and in order when printed in grey.', cur === 'Viridis'],
@@ -9417,10 +9480,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**The slider** under the bar, along the column, for where an element is and the diagrams: the column at one stored time at a time, and **play** to move it on through the run at the **Pace** chosen, as on Against distance. The axes hold still: the triangles and the diamond of themselves, the rest drawn to what every stored point of every cell comes to — the Schoeller’s and the Stiff’s scales, the Durov’s pH and dissolved solids, the USSL’s conductance and SAR, the Wilcox’s cations, an element’s amounts and which of its species are bands of their own; principal components are the whole run’s, each time’s waters put on them. **back to At** draws At’s time again, and so does typing At.',
             '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper, a USSL or a Wilcox diagram, and principal components, draw every stored point.',
             '**Of**: the variables of a principal component analysis, as the time chart names them — `pH, tot(Ca), Na+, SI(Calcite)`. **logs of amounts**: an amount as its log, where every water has some of it. A variable the same in every water is left out.',
+          ] },
+          exportSection([
             '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type, or its scores; for principal components Excel adds the loadings and the variance each component carries. **SVG**, **PNG**: the picture.',
             '**Text**, for the water as PHREEQC lists it: every block in PHREEQC\'s columns, to set beside its output; its CSV is the distribution of species, its Excel workbook every block on a sheet of its own.',
             SAVE_HTML,
-          ] },
+          ]),
         ],
         more: more('Reading the charts', 'help-composition'),
       };
@@ -9451,7 +9516,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**the saturation indices** of every phase and mineral.',
             '**a species or a quantity**: pH, a total, an <OUTPUT>, …',
           ] },
-          { heading: 'Saving', list: ['**CSV**, **Excel**: a row per point, what is drawn there, or per couple of a ladder, its pe and its Eh; a map\'s Excel workbook has its boundaries on a sheet of their own. **SVG**, **PNG**: the picture.', SAVE_HTML] },
+          exportSection(['**CSV**, **Excel**: a row per point, what is drawn there, or per couple of a ladder, its pe and its Eh; a map\'s Excel workbook has its boundaries on a sheet of their own. **SVG**, **PNG**: the picture.', SAVE_HTML], true),
         ],
         more: more('Diagrams of the model\'s own chemistry', 'help-diagrams'),
       };
@@ -9474,7 +9539,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**each constant, by how much it moves it**, after each in turn: a bar for each of the 25 that move it most, the per cent a species or an amount changes for 1 % more of the constant — the change in its logarithm over the change in the constant\'s, between the run 1 % up and the run 1 % down; for pH, an SI and the like, how much it changes. Blue raises it, orange lowers it. A log K on the same scale: the per cent it changes for 1 % more of K. At the end, its largest or its smallest, at the cell.',
           '**through the run, the eight that move it most**, after each in turn: every run read at the same 200 times by the solver itself, a hundred spread evenly and a hundred in the logarithm, and at each the per cent it changes for 1 % more of each, a curve for each of the eight that move it most anywhere in the run. A reaction\'s rate or extent is kept at the end only.',
         ] },
-        { heading: 'Saving', list: ['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.', SAVE_HTML] },
+        exportSection(['**CSV**, **Excel**: what is drawn, a row per value or per point. **SVG**, **PNG**: the picture.', SAVE_HTML], true),
       ],
       more: more('Sweeps over runs', 'help-sweeps'),
     }),
@@ -9497,9 +9562,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',
           '**the run against what was measured, one to one**, last in Show, with a fit or without one: each value measured set against the run’s at the same place and time — the run on show read between its stored points and its cells, linearly — on equal axes with the line of one to one, amounts on log axes with twice and half dashed, pH, SI and the like on their own. Under it, for each column: its points, the bias (the mean residual, for an amount shown as the factor the run is of what was measured), the spread (their root mean square), the sum of squares and the worst point; then all the columns together, as the Fit sums them. After a fit the fitted run is there as diamonds, at the times measured; a run kept beside, hollow.',
           '**Put the fitted values in the model**: each written into the text where it came from, to six figures.',
-          '**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.',
-          SAVE_HTML,
         ] },
+        exportSection(['**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.', SAVE_HTML], true),
       ],
       more: more('Fitting to what was measured', 'help-fit'),
     }),
@@ -9520,7 +9584,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**what matters, by rank correlation**: Spearman\'s rank correlation of each number drawn with that value, from −1 to 1.',
           '**what matters, by sensitivity indices**: from the same runs, nothing run again, each number\'s first-order Sobol\' index (EASI), the share of the value\'s variance it explains alone; Borgonovo\'s δ, how far knowing it moves the value\'s whole distribution, read off the value\'s normal scores so that runs that end alike do not throw it; and PAWN\'s median Kolmogorov–Smirnov distance — each with a 95 % interval from 100 bootstrap resamples. A dummy drawn and never used shows how large chance alone makes them: a number whose bars are no longer than the dummy\'s makes no difference the runs can tell. Twenty runs at the least; a few hundred narrow the intervals.',
         ] },
-        { heading: 'Saving', list: ['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value; the indices with their intervals, Excel adding the runs. **SVG**, **PNG**: the picture.', SAVE_HTML] },
+        exportSection(['**CSV**, **Excel**: the percentiles at each time or cell, or each run\'s numbers and value; the indices with their intervals, Excel adding the runs. **SVG**, **PNG**: the picture.', SAVE_HTML], true),
       ],
       more: more('Uncertainty', 'help-uncertainty'),
     }),
@@ -9536,12 +9600,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       sections: [
         { heading: 'The toolbar', list: [
           '**Example**: loads one of the examples. The text is replaced without asking, and a line under the picker says what the model is and where it comes from.',
-          '**Apply**: compiles the text now.',
-          '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
           '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model. Dropping files, or their folder, anywhere on the page does the same.',
-          '**Save**: the text, as `model.rtm`.',
           '**From PHREEQC…**: opens a panel where PHREEQC speciates a water and the water, as PHREEQC leaves it, becomes the text. Its own (i) says how.',
+          '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
           '**colour the syntax**: paints comments, section headings, numbers, functions and the words that mean something where they stand. Turn it off for a very large model. The choice is kept.',
+          '**Save**: the text, as `model.rtm`.',
+          '**Apply**: compiles the text now.',
         ] },
         { heading: 'Keep in mind', text: 'A reload does not bring the built-in model back: the text stays in this browser until Reset, an example, a file or a water from PHREEQC replaces it.' },
       ],
@@ -9674,7 +9738,6 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'What comes back', list: [
           'The pH as an activity, and the saturation index of every phase that comes within 3 of saturation, or of the **Phases** named, drawn against time for one cell or, under **Show**, against distance at one of the times looked at. The CSV holds every cell and the ionic strength, the charge balance and the activity of water as well.',
-          SAVE_HTML,
           'Which phases are supersaturated anywhere, and where and when.',
           'How far the activity coefficients of the model’s own equilibria moved along the run, in log K. That is how far constants made for the start have gone wrong; a model with `ACTIVITY` follows them, and then it says how close its own stay to PHREEQC’s.',
           'Each mineral of the model: the saturation index PHREEQC finds where the model has some of it, and where it has none.',
@@ -9682,6 +9745,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'A water that is far from neutral, which usually means the model leaves out a counter-ion.',
         ] },
         { heading: 'Settings', text: '**Times per cell**: at most this many stored times, spread over the run (0 reads them all). **Cells**: a list such as `0, 5, 10-19`, or empty for all.' },
+        exportSection(['**CSV**: every water looked at, a row each: its time, cell and layer, its ionic strength, pH, −log m(H+), charge balance and a(H2O), and the saturation index of each phase.', SAVE_HTML], true),
       ],
       more: more('A run through PHREEQC', 'help-phreeqc-run'),
     }),
@@ -9702,9 +9766,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'What comes back', list: [
           'Each model’s mole transfers as bars, dissolving above zero, the ranges as whiskers; and a table of each, with the adjustments PHREEQC made and its three measures of misfit. To four figures, as PHREEQC prints them.',
-          '**CSV**: every number of every model.',
-          SAVE_HTML,
         ] },
+        exportSection(['**CSV**: every number of every model.', SAVE_HTML], true),
       ],
       more: more('Inverse models through PHREEQC', 'help-phreeqc-inverse'),
     }),
@@ -11701,6 +11764,7 @@ END
   // The (i)s: "Read more in Help" shows the Help tab, and kvot-info.js then
   // scrolls it to the heading.
   if (typeof KvotInfo !== 'undefined') KvotInfo.setup({ topics: TOPICS, onMore: () => showTab('help') });
+  setupMenus();
   pqLoad();
   pqWriteControls();
   if (pq.missingDb) {
