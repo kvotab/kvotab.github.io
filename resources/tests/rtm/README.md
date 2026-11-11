@@ -645,6 +645,15 @@ the free A+ the closed form's, x + K x^2 = 0.01, to the last digit; its
 exponent, -0.276392907, the closed form's own central difference to the
 last digit and its derivative, -K x/(1 + 2 K x) = -0.276393202, to 1e-6
 (3e-7, the difference's own).
+A mineral's dissolution front, as the Composition tab follows it (since
+2026-11-11): halite in a column of the test's own, 20 cells over 1 m,
+fresh water flowing in at 1e-5 m/s, the water at saturation holding S =
+sqrt K = 0.1 of Na+ and of Cl-. The length of column cleared of halite,
+each cell its width times the share of its first amount gone, moves over
+the second half of the run at v S/(S + M) to 2 %, M the halite in each
+kilogram of water: 0.4, 5.5e-3 fast, and 0.8, 4.4e-3 slow; at the end it
+is 0.4047 m from the inlet for 0.4000, and 0.2251 for 0.2222, within a
+cell. On 100 cells the speed was 2.4e-4 off, but a run took 200 s.
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1305,6 +1314,8 @@ The run against what was measured, one to one (since 2026-11-11), on the calcite
 What each reaction does (since 2026-11-11). On the plume example, at cell 5, where the plume passes: the series list has a group for it after the saturation indices, the one line's rate and extent, `CH2O => CO3-2 + 6 H+ + 4 e-, rate` and `..., extent`. Ticked beside CH2O on a linear axis, the rate is on the right and is kdoc [CH2O], 0.05 of the CH2O drawn, at every stored point to the last digit; the extent is on the left, at each point the trapezoid of the rate's curve up to there, summed step by step as the worker sums it, to the last digit. On Diagrams, cell 5 as the run ends with its pH from 5 to 9: the rate is the same at each pH, the run's last to the last digit (CH2O is in no relation), drawn as `... rate (mol/kgw/d)`, and the extent is not offered. On Sweeps, kk varied in a decay: the rate offered, kk A at the end of each run within 5e-5, as `A => B, rate (/s)`; the extent not. On Uncertainty, the two lines' rates offered and not their extents.
 
 The budget by each reaction (since 2026-11-11). On the built-in model, its H2O2 over the whole column: the radiolysis that makes it first, line 73, nine tenths of what is made; the two equilibria written as two lines each one reaction, `H+ + HO2- <=> H2O2 [135, 149]` and `HO2- + H2O <=> OH- + H2O2 [138, 150]`; the eight that move most named and the rest together, made above nought and taken below; every reaction's net and the summing's error together what the reactions made, to 1e-12, the error under 1e-6 of what they made and took, the model having no relations. At the fuel surface, cell 0, the radiolysis over 95 % of what is made, no leftover row, and the CSV `rtm_budget_H2O2_by_reaction_cell0.csv` each reaction's rates and sum at every stored point. On the plume: of CO3-2 the organic carbon's oxidation all that makes it and nothing taking it, and the relations, relation by relation, taking over nine tenths of it on, the most into siderite, the summing's error under 1e-6 of what was made; HCO3-, which no line makes, the chart saying so and the table its own relation all that made it, the summing's error nought; carbon, all of it, made by no line, the leftover the summing's; and of CH2O at cell 5, in the CSV, what the line took at every stored point the rate Against time draws there and its sum the extent, to the last digit.
+
+Where the minerals' fronts are (since 2026-11-11), on the Composition tab, halite into fresh water in a column of the test's own: the length of column cleared of it, `Halite, cleared to`, moving at v S/(S + M), a fifth of the water's speed, to 2 %, 0.4 m from the inlet by the end to within a cell, and the halite gone at the inlet; with twice the halite, a ninth of the water's speed; the CSV a row per stored time, `t (s),"Halite, cleared to (m)"`.
 
 The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it. From the fit, on the Uncertainty tab, then gives kc as a lognormal about its fitted value, times or over its standard error, alone and so without the box of the fit's correlations.
 

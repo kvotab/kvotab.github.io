@@ -8768,6 +8768,49 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + `${pairEx.toFixed(9)}`);
   }
   /*
+    A mineral's dissolution front, as the Composition tab follows it: halite in a column of the test's own, 20 cells over
+    1 m, fresh water flowing in at 1e-5 m/s, the water at saturation holding S = sqrt K = 0.1 of Na+ and of Cl-. The
+    length of column cleared of halite -- each cell its width times the share of its first amount gone -- moves, over the
+    second half of the run, at v S/(S + M) to 2 %, M the halite in each kilogram of water: 0.4 and twice it, the front
+    half as fast and a little less; and at the end it is where that speed puts it, to within a cell.
+  */
+  {
+    const haliteText = (M) => '<SETTINGS>\nMODE = transport\nCELLS = 20\nLENGTH = 1\nVELOCITY = 1e-5\nADVECTION = 1\nDIFFUSION = 1\n'
+      + 'LEFT = robin\nRIGHT = free\nTEND = 2e5\nEQUILIBRATE = always\n\n<SPECIES>\nNa+      0.1     D=1e-9   left=0\n'
+      + `Cl-      0.1     D=1e-9   left=0\nHalite   ${M}     mineral\n\n<EQUILIBRIUM>\nHalite <=> Na+ + Cl-, logK = -2\n`;
+    const front = (M) => {
+      let run = null;
+      handleRtmMessage({ type: 'run', id: 50, text: haliteText(M), solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20 } },
+        (msg) => { if (msg.type === 'result' || msg.type === 'error') run = msg; });
+      const m = run.model;
+      const k = m.species.indexOf('Halite');
+      const at = (i, c) => run.states[i * run.width + c * m.nspecies + k];
+      const pos = Array.from({ length: run.n }, (_, i) => {
+        let s0 = 0;
+        for (let c = 0; c < m.fracture; c++) if (at(0, c) > 0) s0 += m.width[c] * Math.max(0, 1 - at(i, c) / at(0, c));
+        return s0;
+      });
+      const T = run.t[run.n - 1];
+      let cnt = 0; let sx = 0; let sy = 0; let sxx = 0; let sxy = 0;
+      for (let i = 0; i < run.n; i++) {
+        if (run.t[i] < T / 2) continue;
+        cnt++; sx += run.t[i]; sy += pos[i]; sxx += run.t[i] ** 2; sxy += run.t[i] * pos[i];
+      }
+      const v = (cnt * sxy - sx * sy) / (cnt * sxx - sx * sx);
+      const want = (1e-5 * 0.1) / (0.1 + M);
+      return { v, want, end: pos[run.n - 1], at: want * T, dx: m.width[0] };
+    };
+    const f1 = front(0.4);
+    const f2 = front(0.8);
+    check('a dissolution front: halite into fresh water moves at v S/(S + M) to 2 %, M 0.4 and twice it, and at the end is '
+      + 'where that speed puts it, to within a cell',
+    Math.abs(f1.v / f1.want - 1) < 0.02 && Math.abs(f2.v / f2.want - 1) < 0.02 && Math.abs(f1.end - f1.at) < f1.dx
+      && Math.abs(f2.end - f2.at) < f2.dx,
+    `M 0.4: ${f1.v.toExponential(4)} m/s for ${f1.want.toExponential(4)}, ${(f1.v / f1.want - 1).toExponential(1)} off, at ${f1.end.toFixed(4)} m `
+      + `for ${f1.at.toFixed(4)}; M 0.8: ${f2.v.toExponential(4)} for ${f2.want.toExponential(4)}, ${(f2.v / f2.want - 1).toExponential(1)} off, `
+      + `at ${f2.end.toFixed(4)} m for ${f2.at.toFixed(4)}`);
+  }
+  /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none
     in the oxic water once put Fe+2 at e^302, capped at the largest total, every iron species after it, and the capped
     steps took 95 iterations a cell at 5e-3 mol/kgw of calcite and did not settle in a hundred at 1e-2 -- reported as a

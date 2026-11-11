@@ -265,6 +265,29 @@ A => B, r = kk*[A]
 B => , r = 0*zz*[B]
 '''
 
+# Halite in a column, fresh water flowing in: its dissolution front moves at v S/(S + M), S = sqrt K = 0.1, M the halite.
+HALITE_MODEL = '''
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 1
+VELOCITY = 1e-5
+ADVECTION = 1
+DIFFUSION = 1
+LEFT = robin
+RIGHT = free
+TEND = 2e5
+EQUILIBRATE = always
+
+<SPECIES>
+Na+      0.1     D=1e-9   left=0
+Cl-      0.1     D=1e-9   left=0
+Halite   %s     mineral
+
+<EQUILIBRIUM>
+Halite <=> Na+ + Cl-, logK = -2
+'''
+
 def check(label, got, want=True):
     global checks
     checks += 1
@@ -3008,6 +3031,52 @@ async def main():
             # The ticks put back as they were, one click: what follows reads the chart's first trace.
             await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
             await asyncio.sleep(0.3)
+            await set_text(page, before)
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+
+            # --- where the minerals' fronts are: halite into fresh water, 20 cells over 1 m ---
+            # On the Composition tab, the length of column cleared of halite moves at v S/(S + M), 2e-6 m/s, a fifth of the
+            # water's speed, to 2 %, and is 0.4 m from the inlet by the end, to within a cell; the halite gone at the inlet.
+            # With twice the halite, a ninth of the water's speed. The CSV a row per stored time.
+            before = await page.ev("document.getElementById('rtmText').value")
+            comp_before = await page.ev("document.getElementById('rtmCompView').value")
+
+            async def halite_fronts(amount):
+                await set_text(page, HALITE_MODEL % amount)
+                await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 3 species')", True, tries=40)
+                await page.ev("document.getElementById('rtmRun').click()")
+                await wait_run(page)
+                await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+                await pick('rtmCompView', 'fronts')
+                await settle(page, "!document.getElementById('rtmCompLines').hidden", True, tries=40, pause=0.25)
+                return await page.ev("""(() => {
+                  const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
+                  const v = (td) => (td && td.dataset.v !== undefined ? Number(td.dataset.v) : null);
+                  const front = rows.find((r) => r[0].textContent === 'Halite, cleared to');
+                  const p = document.getElementById('rtmChartComp');
+                  return [p.data.map((t) => t.name).join(' | '), front ? [v(front[1]), v(front[2]), v(front[3])] : null,
+                    rows.some((r) => r[0].textContent === 'Halite gone at the inlet'), p.layout.yaxis.title.text,
+                    document.getElementById('rtmCompNote').textContent.startsWith('1 front over 1 m; the fastest Halite, cleared to')]; })()""")
+
+            f04 = await halite_fronts('0.4')
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            fcsv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name.split('_').slice(-1)[0], (await r.body).trim().split('\\n')] : null; })()")
+            f08 = await halite_fronts('0.8')
+            ok04 = isinstance(f04, list) and f04[1] and abs(f04[1][0] - 0.4) < 0.05 and abs(f04[1][1] / 2e-6 - 1) < 0.02 and abs(f04[1][2] / 0.2 - 1) < 0.02
+            ok08 = isinstance(f08, list) and f08[1] and abs(f08[1][2] * 9 - 1) < 0.02
+            check('where the minerals\' fronts are: halite into fresh water, the length of column cleared of it moving at v S/(S + M), '
+                  'a fifth of the water\'s speed, to 2 %, 0.4 m by the end to within a cell, gone at the inlet; with twice the halite a '
+                  'ninth of it; the CSV a row per stored time',
+                  [f04[0] if isinstance(f04, list) else f04, ok04, f04[2:] if isinstance(f04, list) else None, ok08,
+                   [fcsv[0], fcsv[1][0], len(fcsv[1]) > 100] if isinstance(fcsv, list) else fcsv],
+                  ['Halite, cleared to', True, [True, 'distance from the inlet (m)', True], True,
+                   ['fronts.csv', 't (s),"Halite, cleared to (m)"', True]])
+            await pick('rtmCompView', comp_before)
             await set_text(page, before)
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
 

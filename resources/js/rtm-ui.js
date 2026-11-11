@@ -170,7 +170,7 @@
       if (s.timeIn === '' || s.timeIn === 'pv') state.timeIn = s.timeIn;
       if (typeof s.cells === 'string') state.cells = s.cells;
       if (typeof s.btc === 'boolean') state.btc = s.btc;
-      if (['where', 'listing', 'budget', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
+      if (['where', 'listing', 'budget', 'fronts', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
       if (typeof s.compBudgetOf === 'string') state.compBudgetOf = s.compBudgetOf;
@@ -3183,25 +3183,27 @@
           + `${m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
       $('rtmCompBudgetAtWrap').hidden = !(byLines && column);
     }
-    $('rtmCompAlongWrap').hidden = !column || listing || budget;
+    // The minerals' fronts: along the whole column, through the whole run.
+    const fronts = view === 'fronts';
+    $('rtmCompAlongWrap').hidden = !column || listing || budget || fronts;
     const cells = m ? m.fracture : 1;
     if (!(state.compCell < cells)) state.compCell = 0;
     $('rtmCompCell').innerHTML = Array.from({ length: cells }, (_, i) => `<option value="${i}"${i === state.compCell ? ' selected' : ''}>`
       + `${i}${m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
-    $('rtmCompCellWrap').hidden = (along !== 'time' && !listing) || cells < 2 || budget;
+    $('rtmCompCellWrap').hidden = (along !== 'time' && !listing) || cells < 2 || budget || fronts;
     const nm = m && m.matrix ? m.matrix.n : 0;
     if (state.compLayer > nm) state.compLayer = 0;
     $('rtmCompLayer').innerHTML = layerOptions(state.compLayer);
     $('rtmCompLayerWrap').hidden = nm === 0;
     // Along the run, the times are those the water is drawn at (where an element is needs none); across the column, one time.
-    $('rtmCompTimesWrap').hidden = (along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view) && !listing) || budget;
+    $('rtmCompTimesWrap').hidden = (along === 'time' && ['where', 'ussl', 'wilcox', 'pca'].includes(view) && !listing) || budget || fronts;
     $('rtmCompPcaVars').value = state.compPcaVars;
     $('rtmCompPcaLog').checked = state.compPcaLog;
     $('rtmCompBeside').checked = state.compBeside;
     $('rtmCompTimesLabel').textContent = along === 'time' && !listing ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' && !listing ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
-    $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing;
+    $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing || fronts;
     $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
     $('rtmCompTMin').value = state.compTMin;
     $('rtmCompTMinUnit').textContent = timeUnit().symbol;
@@ -3244,6 +3246,7 @@
     if (state.compView === 'where') drawWhere(ctx);
     else if (state.compView === 'listing') drawListing(ctx);
     else if (state.compView === 'budget') drawBudget(ctx);
+    else if (state.compView === 'fronts') drawFronts(ctx);
     else if (state.compView === 'ussl') drawUssl(ctx);
     else if (state.compView === 'wilcox') drawWilcox(ctx);
     else if (state.compView === 'pca') drawPca(ctx);
@@ -4038,6 +4041,126 @@
             ...(relRows.length ? [['every relation', null, null, null, relSum, null, null]] : []),
             [together ? "the relations, together, with the summing's error" : "the summing's error", null, null, null, together ? leftover : error, null, null],
             ['made by reactions, net, as the budget has it', null, null, null, made, null, null]] : [])] }],
+    };
+  }
+
+  /*
+    WHERE THE MINERALS' FRONTS ARE: along the column, from the inlet, at each
+    stored time. A mineral the column holds at the start: the length of
+    column it has been cleared of, each cell counting its width times the
+    share of its first amount gone -- for a sharp front from the inlet where
+    the front is, the front cell's share placing it inside the cell, and for
+    a spread one the middle of the spread. A mineral it holds none of at the
+    start: the zone it has formed in, its edges the first and the last cell
+    from the inlet holding any -- more than a millionth of its most -- at
+    their centres. Each front's speed is the slope of its place against time
+    over the second half of the run, by least squares; set against the
+    water's own speed, the column's length over the time it takes the water
+    to cross it.
+  */
+  function drawFronts({ r, plot, layer, fail, note }) {
+    const m = r.model;
+    if (!(m.transport && m.fracture > 1)) { fail('A front moves along a column: this run is not one.'); return; }
+    const C = compositionOf(m);
+    const ks = [...new Set(C.elements.flatMap((e) => e.terms.filter((tm) => tm[2] === 'mineral').map((tm) => tm[0])))];
+    if (!ks.length) { fail('The model has no mineral: there is no front to follow.'); return; }
+    const nf = m.fracture;
+    const stride = m.stride || 1;
+    const ns = m.nspecies;
+    const n = r.n;
+    const L = m.length;
+    const leftward = !!(m.settings && m.settings.ADVECTION && m.settings.VELOCITY < 0);
+    const order = Array.from({ length: nf }, (_, j) => (leftward ? nf - 1 - j : j));
+    const fromInlet = (x) => (leftward ? L - x : x);
+    const at = (i, cell, k) => r.states[i * r.width + (cell * stride + layer) * ns + k];
+    const sym = timeUnit().symbol;
+    const lines = [];
+    const events = [];
+    for (const k of ks) {
+      const name = m.species[k];
+      let most = 0;
+      for (let i = 0; i < n; i++) for (const cell of order) most = Math.max(most, at(i, cell, k));
+      if (!(most > 0)) continue;
+      const start = order.map((cell) => at(0, cell, k));
+      if (start.some((v) => v > 0)) {
+        const pos = new Float64Array(n);
+        for (let i = 0; i < n; i++) {
+          let s = 0;
+          order.forEach((cell, j) => { if (start[j] > 0) s += m.width[cell] * Math.max(0, 1 - at(i, cell, k) / start[j]); });
+          pos[i] = s;
+        }
+        if (pos[n - 1] > 0) lines.push({ name, label: `${name}, cleared to`, pos, dash: 'solid' });
+        const inlet = Array.from({ length: n }, (_, i) => i).find((i) => start[0] > 0 && !(at(i, order[0], k) > 0));
+        if (inlet !== undefined) events.push([`${name} gone at the inlet`, r.t[inlet]]);
+        const all = Array.from({ length: n }, (_, i) => i).find((i) => order.every((cell) => !(at(i, cell, k) > 0)));
+        if (all !== undefined) events.push([`${name} gone from the column`, r.t[all]]);
+      } else {
+        const up = new Float64Array(n).fill(NaN);
+        const down = new Float64Array(n).fill(NaN);
+        let first = -1;
+        for (let i = 0; i < n; i++) {
+          let a = -1;
+          let b = -1;
+          order.forEach((cell, j) => { if (at(i, cell, k) > 1e-6 * most) { if (a < 0) a = j; b = j; } });
+          if (a < 0) continue;
+          if (first < 0) { first = i; events.push([`${name} first formed, ${fmtNumber(fromInlet(m.centres[order[a]]))} m from the inlet`, r.t[i]]); }
+          up[i] = fromInlet(m.centres[order[a]]);
+          down[i] = fromInlet(m.centres[order[b]]);
+        }
+        lines.push({ name, label: `${name}, formed from`, pos: up, dash: 'dash' }, { name, label: `${name}, formed to`, pos: down, dash: 'dot' });
+      }
+    }
+    if (!lines.length) { fail('No mineral moved: none dissolved where it was, and none formed where it was not.'); return; }
+    // Each front's speed over the second half of the run, and the water's.
+    const half = r.t[n - 1] / 2;
+    const speed = (pos) => {
+      let cnt = 0; let sx = 0; let sy = 0; let sxx = 0; let sxy = 0;
+      for (let i = 0; i < n; i++) {
+        if (!(r.t[i] >= half) || !Number.isFinite(pos[i])) continue;
+        cnt++; sx += r.t[i]; sy += pos[i]; sxx += r.t[i] * r.t[i]; sxy += r.t[i] * pos[i];
+      }
+      const d = cnt * sxx - sx * sx;
+      return cnt > 1 && d > 0 ? (cnt * sxy - sx * sy) / d : null;
+    };
+    const water = poreTime(r) > 0 ? L / poreTime(r) : null;
+    const rows = lines.map((x) => {
+      const v = speed(x.pos);
+      return { ...x, end: x.pos[n - 1], v, share: v !== null && water ? v / water : null };
+    });
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22', '#17becf'];
+    const colourOf = new Map([...new Set(rows.map((x) => x.name))].map((nm, q) => [nm, palette[q % palette.length]]));
+    const xs = Array.from(r.t);
+    const traces = rows.map((x) => ({ type: 'scatter', mode: 'lines', name: x.label, x: xs, y: Array.from(x.pos, (v) => (Number.isFinite(v) ? v : null)),
+      line: { color: colourOf.get(x.name), width: 1.8, dash: x.dash }, connectgaps: false }));
+    const layout = baseLayout();
+    layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+    layout.yaxis.title = { text: `distance from the inlet (m)${stride > 1 && layer ? `, rock layer ${layer}` : ''}`, font: { size: 11 } };
+    layout.yaxis.range = [0, L];
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    const num = (v) => (v === null || v === undefined || !Number.isFinite(v) ? '' : esc(v === 0 ? '0' : fit4(v)));
+    const td = (v, text = num(v)) => `<td${v === null || v === undefined || !Number.isFinite(v) ? '' : ` data-v="${v}"`}>${text}</td>`;
+    const box = $('rtmCompLines');
+    box.innerHTML = `<table><thead><tr><th>Each front, from the inlet</th><th>at the end (m)</th><th>speed (m/${esc(sym)})</th>`
+      + '<th>of the water\'s speed</th></tr></thead><tbody>'
+      + rows.map((x) => `<tr><td>${esc(x.label)}</td>${td(x.end)}${td(x.v)}${td(x.share)}</tr>`).join('') + '</tbody></table>'
+      + (events.length ? `<table><thead><tr><th>When</th><th>t (${esc(sym)})</th></tr></thead><tbody>${events.sort((a, b) => a[1] - b[1])
+        .map(([what, t]) => `<tr><td>${esc(what)}</td>${td(t)}</tr>`).join('')}</tbody></table>` : '')
+      + `<p>A mineral the column holds at the start: the length of column cleared of it, each cell its width times the share of `
+      + `its first amount gone. One it holds none of: the first and the last cell holding any. A speed is over the second half `
+      + `of the run${water ? `; the water's, ${fmtNumber(water)} m/${esc(sym)}, the column's length over the time it takes the water to cross it` : ''}.</p>`;
+    box.hidden = false;
+    const lead = rows.filter((x) => x.v !== null).sort((a, b) => Math.abs(b.v) - Math.abs(a.v))[0];
+    note.textContent = [`${rows.length} front${rows.length === 1 ? '' : 's'} over ${fmtNumber(L)} m`,
+      lead ? `the fastest ${lead.label} ${fmtNumber(lead.end)} m by the end, at ${fit4(lead.v)} m/${sym}`
+        + `${lead.share !== null ? `, ${fit4(lead.share)} of the water's speed` : ''}` : '']
+      .filter(Boolean).join('; ');
+    compTableNow = {
+      head: [`t (${sym})`, ...rows.map((x) => `${x.label} (m)`)],
+      name: `${fileStem()}_fronts${layer ? `_layer${layer}` : ''}`,
+      rows: Array.from({ length: n }, (_, i) => [r.t[i], ...rows.map((x) => (Number.isFinite(x.pos[i]) ? x.pos[i] : null))]),
+      extra: [{ name: 'speeds', head: ['front', 'at the end (m)', `speed (m/${sym})`, "of the water's speed"],
+        rows: rows.map((x) => [x.label, x.end, x.v, x.share]) },
+      ...(events.length ? [{ name: 'when', head: ['what', `t (${sym})`], rows: events }] : [])],
     };
   }
 
@@ -9096,6 +9219,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
             ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, and the summing\'s error left.', view === 'budget'],
+            ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],

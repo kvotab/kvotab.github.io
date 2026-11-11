@@ -494,6 +494,7 @@
                 <option value="where">where an element is</option>
                 <option value="listing">the water, as PHREEQC lists it</option>
                 <option value="budget">a budget over the run</option>
+                <option value="fronts">where the minerals' fronts are</option>
                 <option value="piper">a Piper diagram</option>
                 <option value="durov">a Durov diagram</option>
                 <option value="schoeller">a Schoeller diagram</option>
@@ -2643,6 +2644,18 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             makes none of it, and so does a line that moves it from one species to another: the
             organic carbon's oxidation turns one species of carbon into another and makes no
             carbon.</p>
+          <p><em>Where the minerals' fronts are</em> follows each mineral's fronts along a column,
+            from the inlet, through the run. Of a mineral the column holds at the start, the length of
+            column it has been cleared of: each cell counts its width times the share of its first
+            amount that is gone, which for a sharp front from the inlet is where the front is, its
+            cell's share placing it inside the cell, and for a spread one the middle of the spread. Of a
+            mineral that forms where there was none, the zone it has formed in, its edges the first and
+            the last cell holding any. A table gives each front at the end and its speed over the second
+            half of the run, against the water's own speed, the column's length over the time it takes
+            the water to cross it, and when each mineral was gone or first formed. A mineral dissolving
+            into water that carries none of it moves its front at v S/(S + M), v the water's speed, S
+            what the water holds at saturation and M the mineral in each kilogram of water: the front
+            waits while the water carries away what it dissolves.</p>
           <p>The water's major ions are drawn as the hydrochemists draw them, in equivalents: Ca
             and Mg twice their dissolved totals, Na and K together, Cl, the sulfate twice the sulfur
             in a species with four O to each S — <code>SO4-2</code>, <code>CaSO4</code>, not
@@ -3740,6 +3753,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111i"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111j"></script>
 </body>
 </html>
