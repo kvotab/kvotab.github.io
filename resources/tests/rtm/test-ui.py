@@ -3018,6 +3018,39 @@ async def main():
                    True, True, True, True])
             await pick('rtmCompBudgetAt', 'column')
             await pick('rtmCompBudgetBy', 'where')
+            # The run's balance, every element at once: on the plume, which no reaction makes an element in, every one of
+            # its ten closes, to 1e-6 and better, and the reactions' choice is not offered; a bar each.
+            await pick('rtmCompBudgetOf', 'all:')
+            await settle(page, "/^10 elements/.test(document.getElementById('rtmCompNote').textContent)", True, tries=80, pause=0.25)
+
+            async def every_element():
+                return await page.ev("""(() => {
+                  const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
+                  const off = rows.map((r) => Number(r[r.length - 2].dataset.v || 0));
+                  return [rows.map((r) => r[0].textContent).join(' '), rows.map((r) => r[r.length - 1].textContent),
+                    Math.max(...off), document.getElementById('rtmCompBudgetByWrap').hidden,
+                    document.getElementById('rtmChartComp').data[0].type, document.getElementById('rtmCompNote').textContent]; })()""")
+
+            plume_all = await every_element()
+            check('  every element at once on the plume: each of its ten closes, to 1e-6 and better, the reactions\' choice not '
+                  'offered, a bar each',
+                  [plume_all[0], set(plume_all[1]), plume_all[2] < 1e-6, plume_all[3], plume_all[4],
+                   plume_all[5].endswith('no reaction makes or takes any')] if isinstance(plume_all, list) else plume_all,
+                  ['C Ca Cl Fe K Mg Mn N Na S', {'closes'}, True, True, 'bar', True])
+            await pick('rtmCompBudgetOf', comp_before[1])
+            await pick('rtmCompView', comp_before[0])
+            await asyncio.sleep(0.3)
+            # And the U-238 chain, every element of which a decay makes or takes, and the uranium its source too.
+            ok = await example('u238chain', "document.getElementById('rtmStatus').textContent.startsWith('Done')")
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await pick('rtmCompView', 'budget')
+            await pick('rtmCompBudgetOf', 'all:')
+            await settle(page, "/^5 elements/.test(document.getElementById('rtmCompNote').textContent)", True, tries=80, pause=0.25)
+            chain_all = await every_element()
+            check('  and on the U-238 chain every element made or taken by reactions, a decay or the source',
+                  [ok, chain_all[0], set(chain_all[1]), chain_all[5].split('; ')[1].startswith('made or taken by reactions: ')]
+                  if isinstance(chain_all, list) else chain_all,
+                  [True, 'Pb Po Ra Th U', {'made or taken by reactions'}, True])
             await pick('rtmCompBudgetOf', comp_before[1])
             await pick('rtmCompView', comp_before[0])
             await asyncio.sleep(0.3)

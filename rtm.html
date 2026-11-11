@@ -2621,7 +2621,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             What the reactions made of it is the gap between the two, drawn dotted: none for an
             element chemistry only moves about, where the gap is the solver's tolerance and the
             summing's, which the note gives; a nuclide's decay, or a source among the reactions,
-            where they make or take it.</p>
+            where they make or take it. <em>Every element</em>, first in <em>Of</em>, sets the balance
+            of each element side by side: what was there at the start, came in, went out, is there at
+            the end and what the reactions made, and how far it is off its balance, the most the
+            reactions made or took of it at any stored time as a share of the most the column held or
+            was given. Below 10<sup>−4</sup> it closes; above, a reaction makes or takes it — the
+            check that a run kept what it should, at a glance.</p>
           <p><em>By each reaction</em>, where the model has <code>&lt;REACTIONS&gt;</code>, it splits
             what the reactions made line by line. Each line's rate of making it and of taking it is
             worked out at each stored point as the solver's derivative works it out: the line's rates
@@ -3753,6 +3758,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111j"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111k"></script>
 </body>
 </html>

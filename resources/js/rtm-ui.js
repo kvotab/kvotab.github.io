@@ -3162,20 +3162,23 @@
     {
       const { els, sp } = budgetChoices(m);
       if (!state.compBudgetOf || !((state.compBudgetOf.startsWith('element:') && els.includes(state.compBudgetOf.slice(8)))
-        || (state.compBudgetOf.startsWith('species:') && sp.includes(state.compBudgetOf.slice(8))))) {
+        || (state.compBudgetOf.startsWith('species:') && sp.includes(state.compBudgetOf.slice(8)))
+        || (state.compBudgetOf === BUDGET_ALL && els.length))) {
         state.compBudgetOf = els.length ? `element:${els[0]}` : sp.length ? `species:${sp[0]}` : '';
       }
       const opt = (v, label) => `<option value="${esc(v)}"${v === state.compBudgetOf ? ' selected' : ''}>${esc(label)}</option>`;
-      $('rtmCompBudgetOf').innerHTML = (els.length ? `<optgroup label="Elements">${els.map((e) => opt(`element:${e}`, e)).join('')}</optgroup>` : '')
+      $('rtmCompBudgetOf').innerHTML = (els.length ? `<optgroup label="Elements">${opt(BUDGET_ALL, 'every element')}`
+        + `${els.map((e) => opt(`element:${e}`, e)).join('')}</optgroup>` : '')
         + (sp.length ? `<optgroup label="Species">${sp.map((x) => opt(`species:${x}`, x)).join('')}</optgroup>` : '');
     }
     document.querySelectorAll('[data-comp-hide]').forEach((el) => { el.hidden = el.dataset.compHide === view; });
     // By each reaction, where the model has <REACTIONS> lines: over the whole column, or at one of its cells.
     {
       const hasLines = !!(m && (m.quantities || []).some((q) => q.group === 'reactions'));
-      const byLines = budget && hasLines && state.compBudgetBy === 'lines';
+      const every = state.compBudgetOf === BUDGET_ALL;
+      const byLines = budget && hasLines && state.compBudgetBy === 'lines' && !every;
       $('rtmCompBudgetBy').value = hasLines ? state.compBudgetBy : 'where';
-      $('rtmCompBudgetByWrap').hidden = !budget || !hasLines;
+      $('rtmCompBudgetByWrap').hidden = !budget || !hasLines || every;
       const nfc = m ? m.fracture : 1;
       if (state.compBudgetAt !== 'column' && !(state.compBudgetAt >= 0 && state.compBudgetAt < nfc)) state.compBudgetAt = 'column';
       $('rtmCompBudgetAt').innerHTML = `<option value="column"${state.compBudgetAt === 'column' ? ' selected' : ''}>the whole column</option>`
@@ -3203,7 +3206,9 @@
     $('rtmCompTimesLabel').textContent = along === 'time' && !listing ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' && !listing ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
-    $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing || fronts;
+    // Every element at once has no time axis to draw.
+    $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing || fronts
+      || (budget && state.compBudgetOf === BUDGET_ALL);
     $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
     $('rtmCompTMin').value = state.compTMin;
     $('rtmCompTMinUnit').textContent = timeUnit().symbol;
@@ -3747,6 +3752,83 @@
     if (state.btc && state.tab === 'time') drawTime();
   }
 
+  /*
+    THE RUN'S BALANCE, EVERY ELEMENT AT ONCE: of each element the budget
+    keeps (rtmBudget, one each) what the column held at the start, what came
+    in and went out, what it holds at the end and what the reactions made of
+    it, and how far its balance is from closing -- the most the reactions
+    made of it at any stored point, as a share of the most the column held or
+    was given -- the budget's own measure. Below 1e-4 it closes, to the
+    solver's tolerance and the summing over the stored points; above, a
+    reaction makes or takes it: a decay, a source. Drawn as a bar each, on a
+    log axis.
+  */
+  const BUDGET_ALL = 'all:';
+  function drawBudgetAll({ r, plot, fail, note }, els) {
+    const keys = els.map((el) => `${r.runKey}|element|${el}`);
+    const got = keys.map((key) => budgetCache.get(key));
+    const coming = [];
+    got.forEach((g, q) => { if (g === undefined || g === null) { coming.push(els[q]); if (g === undefined) fetchBudget(r, { kind: 'element', name: els[q] }, keys[q]); } });
+    if (coming.length) { fail(`Working out the budget of every element: ${els.length - coming.length} of ${els.length}…`); return; }
+    const bad = got.find((g) => g.error);
+    if (bad) { fail(`A budget could not be kept: ${bad.error}`); return; }
+    const last = r.n - 1;
+    const rows = els.map((el, q) => {
+      const g = got[q];
+      let scale = 0;
+      let off = 0;
+      for (let i = 0; i <= last; i++) {
+        scale = Math.max(scale, Math.abs(g.total[i]), Math.abs(g.total[0] + g.cumIn[i]));
+        off = Math.max(off, Math.abs(g.byReactions[i]));
+      }
+      const rel = scale > 0 ? off / scale : 0;
+      return { el, start: g.total[0], cin: g.cumIn[last], gone: g.cumOut[last], end: g.total[last], made: g.byReactions[last], rel,
+        closes: rel < 1e-4, transport: g.transport };
+    });
+    const transport = rows.some((x) => x.transport);
+    const c = themeColors();
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.xaxis.type = 'log';
+    layout.xaxis.title = { text: 'the most the reactions made or took of it, as a share of the most the column held or was given', font: { size: 11 } };
+    layout.yaxis.type = 'category';
+    layout.yaxis.autorange = 'reversed';
+    layout.yaxis.automargin = true;
+    layout.height = Math.max(260, 26 * rows.length + 110);
+    // A balance that closes to the last digit has nothing to draw on a log axis: drawn at the floor, 1e-17.
+    const floor = 1e-17;
+    Plotly.react(plot, [{ type: 'bar', orientation: 'h', y: rows.map((x) => x.el), x: rows.map((x) => Math.max(x.rel, floor)),
+      marker: { color: rows.map((x) => (x.closes ? '#3b82c4' : '#e0663e')) }, showlegend: false,
+      text: rows.map((x) => (x.rel > 0 ? x.rel.toExponential(1) : '0')), textposition: 'outside', cliponaxis: false,
+      hovertemplate: '%{y}: %{text}<extra></extra>' }], {
+      ...layout,
+      shapes: [{ type: 'line', xref: 'x', yref: 'paper', x0: 1e-4, x1: 1e-4, y0: 0, y1: 1, line: { color: c.text, width: 1, dash: 'dot' } }],
+    }, PLOT_CONFIG);
+    const num = (v) => (v === null || v === undefined || !Number.isFinite(v) ? '' : esc(v === 0 ? '0' : fit4(v)));
+    const td = (v, text = num(v)) => `<td${v === null || v === undefined || !Number.isFinite(v) ? '' : ` data-v="${v}"`}>${text}</td>`;
+    const box = $('rtmCompLines');
+    box.innerHTML = `<table><thead><tr><th>Every element</th><th>there at the start</th>${transport ? '<th>came in at the left</th>'
+      + '<th>went out at the right</th>' : ''}<th>there at the end</th><th>made by reactions, net</th><th>off its balance</th><th></th>`
+      + '</tr></thead><tbody>'
+      + rows.map((x) => `<tr><td>${esc(x.el)}</td>${td(x.start)}${transport ? `${td(x.cin)}${td(x.gone)}` : ''}${td(x.end)}${td(x.made)}`
+        + `${td(x.rel, x.rel > 0 ? esc(x.rel.toExponential(1)) : '0')}<td>${x.closes ? 'closes' : 'made or taken by reactions'}</td></tr>`).join('')
+      + '</tbody></table>'
+      + `<p>Amounts ${transport ? "per m² of the water's cross-section, concentration × m" : 'per kg of water'}. Off its balance: the most the `
+      + 'reactions made or took of it at any stored time, as a share of the most the column held or was given. Below 1e-4 the '
+      + 'balance closes, to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points; above, a reaction '
+      + 'makes or takes it — a decay, a source.</p>';
+    box.hidden = false;
+    const made = rows.filter((x) => !x.closes);
+    const worst = rows.filter((x) => x.closes).reduce((b, x) => (b === null || x.rel > b.rel ? x : b), null);
+    note.textContent = [`${rows.length} element${rows.length === 1 ? '' : 's'}`,
+      worst ? `${rows.length - made.length} close, the worst ${worst.el} at ${worst.rel > 0 ? worst.rel.toExponential(1) : '0'}` : '',
+      made.length ? `made or taken by reactions: ${made.map((x) => `${x.el} (${fmtNumber(x.made)})`).join(', ')}` : 'no reaction makes or takes any']
+      .filter(Boolean).join('; ');
+    compTableNow = { head: ['element', 'there at the start', ...(transport ? ['came in at the left', 'went out at the right'] : []),
+      'there at the end', 'made by reactions, net', 'off its balance', 'closes'], name: `${fileStem()}_budget_every_element`,
+    rows: rows.map((x) => [x.el, x.start, ...(transport ? [x.cin, x.gone] : []), x.end, x.made, x.rel, x.closes ? 'yes' : 'no']) };
+  }
+
   /** What a budget can be of: every element a species holds, then every species. */
   function budgetChoices(m) {
     const C = compositionOf(m);
@@ -3757,6 +3839,7 @@
 
   function drawBudget({ r, plot, fail, note }) {
     const { els, sp } = budgetChoices(r.model);
+    if (state.compBudgetOf === BUDGET_ALL && els.length) { drawBudgetAll({ r, plot, fail, note }, els); return; }
     let chosen = state.compBudgetOf;
     if (!chosen || !(els.includes(chosen.replace(/^element:/, '')) && chosen.startsWith('element:')
       || sp.includes(chosen.replace(/^species:/, '')) && chosen.startsWith('species:'))) {
@@ -9218,7 +9301,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
-            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, and the summing\'s error left.', view === 'budget'],
+            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, and the summing\'s error left.', view === 'budget'],
             ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
