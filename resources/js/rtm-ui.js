@@ -69,6 +69,9 @@
     compLayer: 0,
     compTimes: '',
     compTMin: '1e-6',
+    // The column at the slider's one time, in the model's unit: null for At; and how fast play goes through the run.
+    compAt: null,
+    compPace: '10',
     // Principal components: of what, and whether an amount is taken as its log.
     compPcaVars: '',
     compPcaLog: true,
@@ -125,7 +128,7 @@
         concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
-        compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
+        compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog, compAt: state.compAt, compPace: state.compPace,
         dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
         // Which built-in model this text was written against, and whether the
         // reader had changed it. Without both, a stored text shadows a built-in
@@ -178,6 +181,8 @@
       if (typeof s.compTMin === 'string') state.compTMin = s.compTMin;
       if (typeof s.compPcaVars === 'string') state.compPcaVars = s.compPcaVars;
       if (typeof s.compPcaLog === 'boolean') state.compPcaLog = s.compPcaLog;
+      if (s.compAt === null || Number.isFinite(s.compAt)) state.compAt = s.compAt;
+      if (PROFILE_PACES.includes(s.compPace)) state.compPace = s.compPace;
       if (s.dg && typeof s.dg === 'object') {
         const d = state.dg;
         if (Number.isInteger(s.dg.cell) && s.dg.cell >= 0) d.cell = s.dg.cell;
@@ -831,6 +836,7 @@
   function afterRun(reply, ms, partial) {
     setProgress(null);
     profileStop();
+    compStop();
     state.compiled = reply.model;
     // A look at the run before this one, through PHREEQC, stays on its tab and says which run it is.
     runNumber++;
@@ -3202,10 +3208,12 @@
     const stride = r.model.stride || 1;
     const layer = Math.min(state.compLayer, stride - 1);
     const cell = Math.min(state.compCell, r.model.fracture - 1);
-    // Across the column, one time: the first asked for, or the end of the run.
+    // Across the column, one time: the slider's, or the first asked for, or the end of the run.
     const asked = parseTimes(state.compTimes);
-    const atIndex = asked.times.length ? nearestIndex(r.t, asked.times[0]) : r.n - 1;
-    const ctx = { r, plot, along, layer, cell, asked, atIndex, column, fail, note };
+    const still = compSliding(r) && state.compAt !== null;
+    const atIndex = still ? nearestIndex(r.t, state.compAt) : asked.times.length ? nearestIndex(r.t, asked.times[0]) : r.n - 1;
+    renderCompPlay(r, atIndex);
+    const ctx = { r, plot, along, layer, cell, asked, atIndex, column, fail, note, still };
     empty.hidden = true;
     plot.hidden = false;
     if (state.compView === 'where') drawWhere(ctx);
@@ -3215,6 +3223,89 @@
     else if (state.compView === 'wilcox') drawWilcox(ctx);
     else if (state.compView === 'pca') drawPca(ctx);
     else drawWaters(ctx);
+    if (still && !plot.hidden && note.textContent) note.textContent += '; on the slider, the axes over the whole run';
+  }
+
+  /*
+    ONE TIME AT A TIME, ON THE COMPOSITION TAB: the column at the slider's
+    stored point -- its waters on the diagram chosen, or an element along
+    it -- and play, which moves it on through the run at the Pace chosen,
+    as on Against distance. The axes hold still: the triangles and the
+    diamond are still of themselves, and the rest are drawn to what every
+    stored point of every cell of the run comes to -- the Schoeller's and
+    the Stiff's scales, the Durov's pH and dissolved solids, the USSL's
+    conductance and SAR, the Wilcox's cations, an element's amounts; the
+    principal components are the whole run's waters', each time's put on
+    them. Back to At draws the time At gives again, and so does typing it.
+  */
+  const COMP_PLAYABLE = ['where', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'];
+  function compSliding(r) {
+    return !!(r && r.model.transport && r.model.fracture > 1 && r.n > 1) && state.compAlong === 'distance'
+      && COMP_PLAYABLE.includes(state.compView);
+  }
+  let compPlaying = null;
+  function compStop() {
+    if (!compPlaying) return;
+    cancelAnimationFrame(compPlaying.raf);
+    compPlaying = null;
+    $('rtmCompPlay').textContent = 'play';
+  }
+  function compPlay() {
+    if (compPlaying) { compStop(); saveState(); return; }
+    const r = state.result;
+    if (!compSliding(r)) return;
+    // From where the slider is, or from the start where it is at the end or not yet used.
+    let i0 = state.compAt === null ? 0 : nearestIndex(r.t, state.compAt);
+    if (i0 >= r.n - 1) i0 = 0;
+    const p = { i0, wall0: performance.now(), last: -1, raf: 0 };
+    compPlaying = p;
+    $('rtmCompPlay').textContent = 'pause';
+    const frame = (now) => {
+      if (compPlaying !== p) return;
+      if (state.result !== r) { compStop(); return; }
+      let i;
+      if (state.compPace === 'points') i = Math.min(r.n - 1, p.i0 + Math.floor(((now - p.wall0) * 30) / 1000));
+      else {
+        const t = r.t[p.i0] + ((now - p.wall0) / (Number(state.compPace) * 1000)) * (r.t[r.n - 1] - r.t[0]);
+        i = t >= r.t[r.n - 1] ? r.n - 1 : nearestIndex(r.t, t);
+      }
+      if (i !== p.last) {
+        p.last = i;
+        state.compAt = r.t[i];
+        drawComp();
+      }
+      if (i >= r.n - 1) { compStop(); saveState(); return; }
+      p.raf = requestAnimationFrame(frame);
+    };
+    p.raf = requestAnimationFrame(frame);
+  }
+  // The slider's row: under a view of the column at one time, its thumb at the time drawn, At's where the slider is not in use.
+  function renderCompPlay(r, atIndex) {
+    const ok = compSliding(r);
+    $('rtmCompPlayRow').hidden = !ok;
+    if (!ok) { compStop(); return; }
+    const at = $('rtmCompAt');
+    at.max = String(r.n - 1);
+    at.value = String(atIndex);
+    $('rtmCompAtLabel').textContent = state.compAt === null ? 'drag or play' : fmtTime(r.t[atIndex]);
+    $('rtmCompPace').value = state.compPace;
+    $('rtmCompAll').disabled = state.compAt === null;
+    $('rtmCompPlay').textContent = compPlaying ? 'pause' : 'play';
+  }
+  /*
+    What every stored point of every cell of the column comes to, folded
+    into one value by `step` from `start` -- an axis's least and greatest --
+    kept for the run under `key`, which does not change.
+  */
+  const compStillCache = new Map();
+  function overRun(key, r, layer, start, step) {
+    if (compStillCache.has(key)) return compStillCache.get(key);
+    const stride = r.model.stride || 1;
+    let acc = start;
+    for (let i = 0; i < r.n; i++) for (let k = 0; k < r.model.fracture; k++) acc = step(acc, i, k * stride + layer);
+    if (compStillCache.size > 200) compStillCache.clear();
+    compStillCache.set(key, acc);
+    return acc;
   }
 
   /*
@@ -3716,7 +3807,7 @@
    * along the run at one cell, or along the column at one time. A species
    * that never comes to 1 % is drawn with the others like it, as one band.
    */
-  function drawWhere({ r, plot, along, layer, cell, atIndex, fail, note }) {
+  function drawWhere({ r, plot, along, layer, cell, atIndex, fail, note, still }) {
     const list = compElements(r.model, state.compIn);
     if (!list.length) {
       fail(state.compIn === 'water' ? 'No element is dissolved in two species or more here: try the whole cell.'
@@ -3757,6 +3848,27 @@
       b.most = most;
       b.mean = sum / npts;
     }
+    /*
+      On the slider, which species are bands of their own, and in what order, by the whole run -- each one's largest and
+      mean share over every stored point of every cell -- so that the bands and their colours stay from one time to the
+      next; and amounts on an axis to the most the run holds anywhere.
+    */
+    const sliding = still && along !== 'time';
+    let runTop = 0;
+    if (sliding) {
+      const run = overRun(`${r.runKey}|where|${E.el}|${state.compIn}|${layer}`, r, layer,
+        { most: new Float64Array(E.terms.length), sum: new Float64Array(E.terms.length), n: 0, top: 0 }, (a, i, mc) => {
+          const v = E.terms.map(([k, n]) => n * Math.max(0, r.states[i * r.width + mc * ns + k]));
+          let tot = 0;
+          for (const x of v) tot += x;
+          if (tot > 0) v.forEach((x, q) => { const f = x / tot; if (f > a.most[q]) a.most[q] = f; a.sum[q] += f; });
+          a.n++;
+          if (tot > a.top) a.top = tot;
+          return a;
+        });
+      bands.forEach((b, q) => { b.most = run.most[q]; b.mean = run.sum[q] / Math.max(1, run.n); });
+      runTop = run.top;
+    }
     // The largest at the bottom; a species never 1 % of the total, with the rest like it.
     bands.sort((a, b) => b.mean - a.mean);
     const kept = bands.filter((b) => b.most >= 0.01);
@@ -3782,6 +3894,7 @@
     layout.yaxis.title = { text: percent ? `share of the ${E.el} ${where} (%)` : `${E.el} ${where} (concentration × count)`,
       font: { size: 11 } };
     if (percent) layout.yaxis.range = [0, 100];
+    else if (sliding && runTop > 0) layout.yaxis.range = [0, 1.05 * runTop];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     const xHead = along === 'time' ? `t (${timeUnit().symbol})` : 'distance (m)';
     compTableNow = { head: [xHead, ...kept.map((b) => `${b.name}${percent ? ' (%)' : ''}`), `${E.el} ${where}, all of it`],
@@ -3793,7 +3906,7 @@
     if (small.length > 1) bits.push(`${small.length} never come to 1 %, drawn as one band`);
     const bk = besideRun();
     if (bk) bits.push(besideNote(bk, 'bands that stack take no second run; the other views draw it'));
-    if (along === 'distance' && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes).times[0])
+    if (along === 'distance' && !sliding && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes).times[0])
       > 0.01 * Math.abs(r.t[atIndex] || 1)) bits.push('the nearest stored time');
     note.textContent = bits.join('; ');
   }
@@ -3850,7 +3963,7 @@
    * diagram, a path through the run or along the column; as a Schoeller
    * diagram, a line per water; or as Stiff diagrams, one per water.
    */
-  function drawWaters({ r, plot, along, layer, cell, asked, atIndex, fail, note }) {
+  function drawWaters({ r, plot, along, layer, cell, asked, atIndex, fail, note, still }) {
     const C = compositionOf(r.model);
     const terms = poleTerms(C);
     const unit = poleUnit(r.model);
@@ -3922,6 +4035,44 @@
       if (!T) durovSaid = [durovSaid, 'no TDS: the concentrations are not mol/kgw, which an ACTIVITY makes them'].filter(Boolean).join('; ');
       else if (T.without.length) durovSaid = [durovSaid, `the TDS leaves out ${T.without.join(', ')}, which have no formula`].filter(Boolean).join('; ');
     }
+    /*
+      On the slider, the axes over the whole run: the ions' least and greatest, and the Durov's pH and dissolved solids, at
+      every stored point of every cell, the kept run's beside it too -- a pH still to be worked out is left for the next
+      drawing rather than kept short.
+    */
+    let axes = null;
+    if (still && along !== 'time') {
+      axes = { lo: Infinity, hi: -Infinity, phLo: Infinity, phHi: -Infinity, tds: 0 };
+      const bk = kept.waters ? besideRun() : null;
+      const runs = [[r, terms, unit.scale]];
+      if (bk && compositionOf(bk.r.model)) runs.push([bk.r, poleTerms(compositionOf(bk.r.model)), poleUnit(bk.r.model).scale]);
+      for (const [run, tms, sc] of runs) {
+        const ions = overRun(`${run.runKey}|ions|${layer}|${sc}`, run, layer, { lo: Infinity, hi: -Infinity }, (a, i, mc) => {
+          const w = waterAt(run, tms, sc, i, mc);
+          for (const p of POLES) {
+            const v = w[p.key];
+            if (v > 0) { if (v < a.lo) a.lo = v; if (v > a.hi) a.hi = v; }
+          }
+          return a;
+        });
+        axes.lo = Math.min(axes.lo, ions.lo);
+        axes.hi = Math.max(axes.hi, ions.hi);
+        if (view !== 'durov') continue;
+        const rs = run.model.stride || 1;
+        const all = Array.from({ length: run.model.fracture }, (_, k) => k * rs + layer);
+        if (runHas(run, 'pH') && all.some((mc) => quantityPending('pH', mc, run))) continue;
+        const d = overRun(`${run.runKey}|durov|${layer}`, run, layer, { phLo: Infinity, phHi: -Infinity, tds: 0 }, (a, i, mc) => {
+          const ph = runHas(run, 'pH') ? quantitySeries('pH', mc, run) : null;
+          if (ph && Number.isFinite(ph[i])) { a.phLo = Math.min(a.phLo, ph[i]); a.phHi = Math.max(a.phHi, ph[i]); }
+          const tds = tdsAt(run, i, mc);
+          if (Number.isFinite(tds)) a.tds = Math.max(a.tds, tds);
+          return a;
+        });
+        axes.phLo = Math.min(axes.phLo, d.phLo);
+        axes.phHi = Math.max(axes.phHi, d.phHi);
+        axes.tds = Math.max(axes.tds, d.tds);
+      }
+    }
     const xHead = [`t (${timeUnit().symbol})`, 'cell', 'distance (m)'];
     compTableNow = {
       head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type',
@@ -3934,7 +4085,7 @@
     const where = along === 'time' ? `cell ${cell}${layer ? `, rock layer ${layer}` : ''}` : `the column at ${fmtTime(r.t[atIndex])}`;
     const bits = [];
     if (view === 'piper' || view === 'durov') {
-      if (view === 'durov') drawDurov(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
+      if (view === 'durov') drawDurov(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept, axes);
       else drawPiper(plot, drawable, measuredHere.filter((wt) => wt.f), colorTitle, c, kept);
       const first = drawable[0];
       const last = drawable[drawable.length - 1];
@@ -3943,10 +4094,10 @@
           + `${drawable.length > 1 ? `, ${faciesOf(last.f)} at ${fmtTime(last.t)}` : ''}`
         : `${where}: ${faciesOf(first.f)} in cell ${first.cell}${drawable.length > 1 ? `, ${faciesOf(last.f)} in cell ${last.cell}` : ''}`);
     } else if (view === 'schoeller') {
-      drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept);
+      drawSchoeller(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept, axes);
       bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
     } else {
-      drawStiff(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept);
+      drawStiff(plot, drawable, measuredHere.filter((wt) => wt.f), unit, c, kept, axes);
       bits.push(`${where}: ${drawable.length} water${drawable.length === 1 ? '' : 's'}`);
     }
     if (measuredHere.length) bits.push(`${measuredHere.length} measured`);
@@ -4035,7 +4186,7 @@
    * what <DATA> measured there -- an SC column and a SAR one, or the SAR from
    * Na, Ca and Mg as the model names them.
    */
-  function drawUssl({ r, plot, along, layer, cell, atIndex, fail, note }) {
+  function drawUssl({ r, plot, along, layer, cell, atIndex, fail, note, still }) {
     const keys = ['SC', 'SAR'];
     const lack = keys.filter((k) => !quantityOf(k));
     if (lack.length) {
@@ -4108,7 +4259,21 @@
       return sc > 0 && Number.isFinite(sar) ? { sc, sar } : null;
     } });
     const keptPts = kept.pts || [];
-    const all = [...pts, ...measuredPts, ...keptPts];
+    // On the slider, the conductance and SAR every stored point of every cell comes to, the kept run's too: still axes.
+    const span = [];
+    if (still && along !== 'time') {
+      const bk = keptPts.length ? besideRun() : null;
+      for (const run of bk ? [r, bk.r] : [r]) {
+        const e = overRun(`${run.runKey}|ussl|${layer}`, run, layer, { lo: Infinity, hi: 0, top: 0 }, (a, i, mc) => {
+          const sc = (quantitySeries('SC', mc, run) || [])[i];
+          const sar = (quantitySeries('SAR', mc, run) || [])[i];
+          if (sc > 0 && Number.isFinite(sar)) { a.lo = Math.min(a.lo, sc); a.hi = Math.max(a.hi, sc); a.top = Math.max(a.top, sar); }
+          return a;
+        });
+        if (e.hi > 0) span.push({ sc: e.lo, sar: 0 }, { sc: e.hi, sar: e.top });
+      }
+    }
+    const all = [...pts, ...measuredPts, ...keptPts, ...span];
     const lo = Math.min(100, ...all.map((p) => p.sc * 0.8));
     const hi = Math.max(5000, ...all.map((p) => p.sc * 1.25));
     const top = Math.max(32, ...all.map((p) => p.sar * 1.1));
@@ -4243,7 +4408,7 @@
     return epm < 7.5 ? 'excellent to good' : 'good to permissible';
   }
 
-  function drawWilcox({ r, plot, along, layer, cell, atIndex, fail, note }) {
+  function drawWilcox({ r, plot, along, layer, cell, atIndex, fail, note, still }) {
     if (poleUnit(r.model).scale !== 1000) {
       fail('A Wilcox diagram needs the concentrations in mol/kgw, which a model with ACTIVITY has: its classes are set by the '
         + 'cations\' total in milliequivalents.');
@@ -4312,25 +4477,36 @@
     // The kept run beside it: its own cations, from what its species are made of, where it too is in mol/kgw.
     const bk = besideRun();
     let kTerms = null;
+    const keptPoint = (kr, i, mc) => {
+      if (!kTerms) {
+        const KC = compositionOf(kr.model);
+        const of = (el) => { const e = KC && KC.elements.find((x) => x.el === el); return e ? e.terms.filter((tm) => tm[2] === 'water') : []; };
+        kTerms = { Ca: of('Ca'), Mg: of('Mg'), Na: of('Na'), K: of('K') };
+      }
+      const base = i * kr.width + mc * kr.model.nspecies;
+      const cw = {};
+      for (const el of ['Ca', 'Mg', 'Na', 'K']) {
+        let sum = 0;
+        for (const [k, n] of kTerms[el]) sum += n * Math.max(0, kr.states[base + k]);
+        cw[el] = 1000 * charge[el] * sum;
+      }
+      return pointOf(cw);
+    };
     const kept = besidePoints({ r, along, layer, cell, atIndex }, {
-      why: bk && poleUnit(bk.r.model).scale !== 1000 ? 'its concentrations are not in mol/kgw' : '',
-      pointAt: (kr, i, mc) => {
-        if (!kTerms) {
-          const KC = compositionOf(kr.model);
-          const of = (el) => { const e = KC && KC.elements.find((x) => x.el === el); return e ? e.terms.filter((tm) => tm[2] === 'water') : []; };
-          kTerms = { Ca: of('Ca'), Mg: of('Mg'), Na: of('Na'), K: of('K') };
-        }
-        const base = i * kr.width + mc * kr.model.nspecies;
-        const cw = {};
-        for (const el of ['Ca', 'Mg', 'Na', 'K']) {
-          let sum = 0;
-          for (const [k, n] of kTerms[el]) sum += n * Math.max(0, kr.states[base + k]);
-          cw[el] = 1000 * charge[el] * sum;
-        }
-        return pointOf(cw);
-      } });
+      why: bk && poleUnit(bk.r.model).scale !== 1000 ? 'its concentrations are not in mol/kgw' : '', pointAt: keptPoint });
     const keptPts = kept.pts || [];
-    const all = [...pts, ...measuredPts, ...keptPts];
+    // On the slider, the most cations every stored point of every cell comes to, the kept run's too: a still axis.
+    const span = [];
+    if (still && along !== 'time') {
+      const most = (run, at) => overRun(`${run.runKey}|wilcox|${layer}`, run, layer, { hi: 0 }, (a, i, mc) => {
+        const pt = at(i, mc);
+        if (pt) a.hi = Math.max(a.hi, pt.epm);
+        return a;
+      }).hi;
+      span.push({ epm: most(r, waterAt) });
+      if (keptPts.length) span.push({ epm: most(bk.r, (i, mc) => keptPoint(bk.r, i, mc)) });
+    }
+    const all = [...pts, ...measuredPts, ...keptPts, ...span];
     const right = Math.max(35, ...all.map((p) => p.epm * 1.05));
     const c = themeColors();
     const traces = [];
@@ -4409,7 +4585,8 @@
    * the waters' scale, and the waters <DATA> measured of every variable put
    * on the same components.
    */
-  function drawPca({ r, plot, along, layer, cell, atIndex, fail, note }) {
+  const pcaRunCache = new Map();
+  function drawPca({ r, plot, along, layer, cell, atIndex, fail, note, still }) {
     const keys = pcaKeys(r);
     const names = r.model.species;
     const unknown = keys.filter((k) => !names.includes(k) && !quantityOf(k));
@@ -4450,18 +4627,41 @@
         x: r.model.centres[k], label: `cell ${k}`, color: r.model.centres[k] }));
       colorTitle = 'distance (m)';
     }
-    const usable = waters.filter((w) => w.row.every(Number.isFinite));
-    // An amount as its log, where every water has some of it.
+    let usable = waters.filter((w) => w.row.every(Number.isFinite));
+    /*
+      On the slider, the components are the whole run's: every cell's waters at the stored points (a few thousand at
+      most), worked out once a run, and each time's waters put on them -- the axes and the arrows hold still while the
+      waters move. Otherwise those drawn.
+    */
+    const sliding = still && along !== 'time';
+    let fitRows = usable.map((w) => w.row);
+    if (sliding) {
+      const step = Math.max(1, Math.ceil((r.n * cells.length) / 4000));
+      fitRows = [];
+      for (let i = 0; i < r.n; i += step) for (const mc of cells) fitRows.push(keys.map((k) => valueOf(k, i, mc)));
+      fitRows = fitRows.filter((row) => row.every(Number.isFinite));
+    }
+    // An amount as its log, where every water has some of it -- on the slider every water of the run, so that it is the
+    // same from one time to the next, a water then without any of one left off that time.
     const amount = (k) => names.includes(k) || quantityOf(k).axis === 'conc';
-    const logged = keys.map((k, j) => state.compPcaLog && amount(k) && usable.length > 0 && usable.every((w) => w.row[j] > 0));
+    const logged = keys.map((k, j) => state.compPcaLog && amount(k) && fitRows.length > 0 && fitRows.every((row) => row[j] > 0)
+      && (sliding || usable.every((w) => w.row[j] > 0)));
+    if (sliding) usable = usable.filter((w) => w.row.every((v, j) => !logged[j] || v > 0));
     const shape = (row) => row.map((v, j) => (logged[j] ? Math.log10(v) : v));
     let res;
+    const runKey = `${r.runKey}|${keys.join(',')}|${layer}|${logged.join(',')}`;
     try {
-      res = RtmModel.pca(usable.map((w) => shape(w.row)), { names: keys });
+      if (sliding && pcaRunCache.has(runKey)) res = pcaRunCache.get(runKey);
+      else {
+        res = RtmModel.pca(fitRows.map(shape), { names: keys });
+        if (sliding) { if (pcaRunCache.size > 20) pcaRunCache.clear(); pcaRunCache.set(runKey, res); }
+      }
     } catch (e) {
       fail(e.message);
       return;
     }
+    // The waters drawn, on the components: their own scores, or on the slider each put on the run's.
+    const scores = sliding ? usable.map((w) => res.project(shape(w.row))) : res.scores;
     const q = res.kept.length;
     const dropped = keys.filter((_, j) => !res.kept.includes(j));
     // What <DATA> measured of every variable, here: put on the model's components.
@@ -4487,15 +4687,15 @@
     } });
     const keptPts = kept.pts || [];
     const c = themeColors();
-    const X = res.scores.map((sc) => sc[0]);
-    const Y = res.scores.map((sc) => sc[1]);
+    const X = scores.map((sc) => sc[0]);
+    const Y = scores.map((sc) => sc[1]);
     const hover = (label, sc) => `${esc(label)}<br>PC1 ${sc[0].toFixed(3)}, PC2 ${sc[1].toFixed(3)}`;
     const traces = [{ type: 'scatter', mode: usable.length > 1 ? 'lines+markers' : 'markers', name: 'the model', x: X, y: Y,
       line: { color: c.grid, width: 1 },
       marker: { size: 7, color: usable.map((w) => w.color), colorscale: 'Viridis', showscale: true,
         colorbar: { title: { text: colorTitle, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0, tickfont: { size: 10 },
           len: 0.7 } },
-      text: usable.map((w, i) => hover(w.label, res.scores[i])), hovertemplate: '%{text}<extra></extra>' }];
+      text: usable.map((w, i) => hover(w.label, scores[i])), hovertemplate: '%{text}<extra></extra>' }];
     if (keptPts.length) {
       traces.push(besideTrace(kept, keptPts.map((p) => p.s[0]), keptPts.map((p) => p.s[1]),
         keptPts.map((p) => hover(`${p.label}, ${kept.label}`, p.s)), c));
@@ -4507,8 +4707,10 @@
     }
     // Each variable an arrow to its correlations with the two components, drawn to the scores' reach.
     const corr = res.kept.map((j, k) => [res.vectors[k][0] * Math.sqrt(res.values[0]), res.vectors[k][1] * Math.sqrt(res.values[1])]);
+    // On the slider, the whole run's waters as well as those drawn: the arrows' reach and the axes hold still.
+    const whole = sliding ? res.scores : [];
     const reach = Math.max(...X.map(Math.abs), ...Y.map(Math.abs), ...measuredPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]),
-      ...keptPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]));
+      ...keptPts.flatMap((p) => [Math.abs(p.s[0]), Math.abs(p.s[1])]), ...whole.flatMap((sc) => [Math.abs(sc[0]), Math.abs(sc[1])]));
     const longest = Math.max(...corr.map(([a, b]) => Math.hypot(a, b)));
     const f = longest > 0 && reach > 0 ? (0.85 * reach) / longest : 1;
     const pct = (j) => (100 * res.explained[j]).toFixed(1);
@@ -4518,6 +4720,17 @@
     layout.yaxis.title = { text: `PC2, ${pct(1)} %`, font: { size: 11 } };
     layout.xaxis.zeroline = true;
     layout.yaxis.zeroline = true;
+    if (sliding) {
+      const extent = (j) => {
+        const v = [...whole.map((sc) => sc[j]), ...scores.map((sc) => sc[j]), ...measuredPts.map((p) => p.s[j]), ...keptPts.map((p) => p.s[j])];
+        const lo = Math.min(...v, -0.85 * reach);
+        const hi = Math.max(...v, 0.85 * reach);
+        const pad = 0.08 * (hi - lo || 1);
+        return [lo - pad, hi + pad];
+      };
+      layout.xaxis.range = extent(0);
+      layout.yaxis.range = extent(1);
+    }
     layout.annotations = corr.flatMap(([a, b], k) => [
       { x: a * f, y: b * f, xref: 'x', yref: 'y', ax: 0, ay: 0, axref: 'x', ayref: 'y', text: '', showarrow: true, arrowhead: 2,
         arrowsize: 1, arrowwidth: 1.2, arrowcolor: c.text },
@@ -4529,7 +4742,7 @@
     let sum = 0;
     compTableNow = {
       head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', ...pcs], name: `rtm_pca_${along === 'time' ? `cell${cell}` : 'column'}`,
-      rows: [...usable.map((w, i) => [`model, ${w.label}`, w.t, w.cell, w.x === undefined ? null : w.x, ...res.scores[i]]),
+      rows: [...usable.map((w, i) => [`model, ${w.label}`, w.t, w.cell, w.x === undefined ? null : w.x, ...scores[i]]),
         ...measuredPts.map((p) => [p.label, null, null, null, ...p.s])],
       extra: [
         { name: 'loadings', head: ['variable', 'as', 'mean', 'standard deviation', ...pcs],
@@ -4618,7 +4831,7 @@
    * The Durov diagram of waters (each with its shares f, and its ph and tds
    * where there are), the measured ones and the kept run's.
    */
-  function drawDurov(plot, waters, measured, colorTitle, c, kept = {}) {
+  function drawDurov(plot, waters, measured, colorTitle, c, kept = {}, axes = null) {
     const H = DUROV_H;
     const P = DUROV_PANEL;
     const kw = (kept.waters || []).filter((wt) => wt && wt.f);
@@ -4627,16 +4840,19 @@
     const withTds = all.filter((wt) => Number.isFinite(wt.tds));
     const hasPh = waters.some((wt) => Number.isFinite(wt.ph));
     const hasTds = waters.some((wt) => Number.isFinite(wt.tds));
+    // On the slider, the run's least and greatest pH and its most dissolved solids anywhere: panels that hold still.
+    const runPh = axes && Number.isFinite(axes.phLo) ? [axes.phLo, axes.phHi] : [];
+    const runTds = axes && axes.tds > 0 ? [axes.tds] : [];
     // The pH from a half unit below the lowest to a half above the highest, a unit at least; the TDS from nothing.
     let phLo = 0;
     let phHi = 1;
     if (hasPh) {
-      const v = withPh.map((wt) => wt.ph);
+      const v = [...withPh.map((wt) => wt.ph), ...runPh];
       phLo = Math.floor(2 * (Math.min(...v) - 0.25)) / 2;
       phHi = Math.ceil(2 * (Math.max(...v) + 0.25)) / 2;
       if (phHi - phLo < 1) phHi = phLo + 1;
     }
-    const tdsTop = hasTds ? niceAbove(1.05 * Math.max(...withTds.map((wt) => wt.tds))) : 1;
+    const tdsTop = hasTds ? niceAbove(1.05 * Math.max(...withTds.map((wt) => wt.tds), ...runTds)) : 1;
     const phY = (ph) => (-P * (ph - phLo)) / (phHi - phLo);
     const tdsX = (tds) => 1 + (P * tds) / tdsTop;
     const traces = [];
@@ -4796,7 +5012,7 @@
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
-  function drawSchoeller(plot, waters, measured, unit, c, kept = {}) {
+  function drawSchoeller(plot, waters, measured, unit, c, kept = {}, axes = null) {
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
     const labels = POLES.map((p) => p.label);
     // On a log axis a pole the water has none of is a gap.
@@ -4822,6 +5038,16 @@
     layout.xaxis.title = { text: 'cations, then anions', font: { size: 11 } };
     layout.yaxis.type = 'log';
     layout.yaxis.title = { text: unit.text, font: { size: 11 } };
+    // On the slider, from the least the run's ions come to anywhere to the greatest, what was measured too: a still axis.
+    if (axes && axes.hi > 0) {
+      let lo = axes.lo;
+      let hi = axes.hi;
+      for (const wt of measured) for (const p of POLES) if (wt.w[p.key] > 0) { lo = Math.min(lo, wt.w[p.key]); hi = Math.max(hi, wt.w[p.key]); }
+      const a = Math.log10(lo);
+      const b = Math.log10(hi);
+      const pad = Math.max(0.05, 0.04 * (b - a));
+      layout.yaxis.range = [a - pad, b + pad];
+    }
     // A line between the cations and the anions.
     layout.shapes = [{ type: 'line', xref: 'x', yref: 'paper', x0: 2.5, x1: 2.5, y0: 0, y1: 1, line: { color: c.grid, width: 1, dash: 'dot' } }];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -4832,12 +5058,13 @@
    * the cations to the left of zero -- Na + K, Ca, Mg from the top -- and
    * the anions to the right -- Cl, HCO3 + CO3, SO4 -- the points joined.
    */
-  function drawStiff(plot, waters, measured, unit, c, kept = {}) {
+  function drawStiff(plot, waters, measured, unit, c, kept = {}, axes = null) {
     const all = [...waters, ...measured].slice(0, 12);
     const n = all.length;
     const cols = n <= 3 ? n : n <= 4 ? 2 : n <= 6 ? 3 : 4;
     const rows = Math.ceil(n / cols);
-    let most = 0;
+    // One scale for them all; on the slider, the greatest the run's ions come to anywhere.
+    let most = axes && axes.hi > 0 ? axes.hi : 0;
     for (const wt of all) for (const p of POLES) most = Math.max(most, wt.w[p.key]);
     for (const wt of kept.waters || []) if (wt) for (const p of POLES) most = Math.max(most, wt.w[p.key]);
     const span = (most || 1) * 1.45;
@@ -7660,6 +7887,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function showTab(name) {
     state.tab = name;
     if (name !== 'profile') profileStop();
+    if (name !== 'composition') compStop();
     document.querySelectorAll('.rtm-tabs button').forEach((b) => {
       b.classList.toggle('active', b.dataset.tab === name);
     });
@@ -8398,6 +8626,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           ] },
           { heading: 'The toolbar', list: [
             '**Along**, in a column: the run at one **Cell**, or the column at one time, **At**.',
+            '**The slider** under the bar, along the column, for where an element is and the diagrams: the column at one stored time at a time, and **play** to move it on through the run at the **Pace** chosen, as on Against distance. The axes hold still: the triangles and the diamond of themselves, the rest drawn to what every stored point of every cell comes to — the Schoeller’s and the Stiff’s scales, the Durov’s pH and dissolved solids, the USSL’s conductance and SAR, the Wilcox’s cations, an element’s amounts and which of its species are bands of their own; principal components are the whole run’s, each time’s waters put on them. **back to At** draws At’s time again, and so does typing At.',
             '**Times**: the waters a Schoeller or Stiff diagram draws, six spread over the run unless given; a Piper, a USSL or a Wilcox diagram, and principal components, draw every stored point.',
             '**Of**: the variables of a principal component analysis, as the time chart names them — `pH, tot(Ca), Na+, SI(Calcite)`. **logs of amounts**: an amount as its log, where every water has some of it. A variable the same in every water is left out.',
             '**CSV**, **Excel**: the numbers drawn — each band, or each water\'s ions, shares and type, or its scores; for principal components Excel adds the loadings and the variance each component carries. **SVG**, **PNG**: the picture.',
@@ -8790,9 +9019,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     state.cells = v && typeof v.cells === 'string' ? v.cells : '';
     $('rtmCells').value = state.cells;
     renderTimeIn();
-    // Against distance at the Times, or at the example's one time on the slider.
+    // Against distance at the Times, or at the example's one time on the slider; the Composition tab at At.
     profileStop();
     state.profileAt = v && v.profile && Number.isFinite(v.profile.at) ? v.profile.at : null;
+    compStop();
+    state.compAt = null;
     if (!v) return;
     if (v.picked) state.picked = v.picked.slice();
     if (Number.isInteger(v.cell)) state.cell = v.cell;
@@ -10437,6 +10668,8 @@ END
       state.compAlong = $('rtmCompAlong').value;
       state.compCell = Number($('rtmCompCell').value) || 0;
       state.compLayer = Number($('rtmCompLayer').value) || 0;
+      // At typed: At again, not the slider's.
+      if ($('rtmCompTimes').value !== state.compTimes) { compStop(); state.compAt = null; }
       state.compTimes = $('rtmCompTimes').value;
       state.compTMin = $('rtmCompTMin').value;
       state.compPcaVars = $('rtmCompPcaVars').value.trim();
@@ -10447,6 +10680,27 @@ END
       renderComp();
       drawComp();
       infoRefresh();
+    },
+    // The Composition tab at the slider's one time; play moves it on through the run.
+    'rtm:compAt': (ev, el) => {
+      const r = state.result;
+      if (!r) return;
+      compStop();
+      state.compAt = r.t[Math.max(0, Math.min(r.n - 1, Math.round(Number(el.value)) || 0))];
+      drawComp();
+    },
+    'rtm:compAtDone': () => saveState(),
+    'rtm:compPlay': () => compPlay(),
+    'rtm:compPace': (ev, el) => {
+      state.compPace = PROFILE_PACES.includes(el.value) ? el.value : '10';
+      saveState();
+      if (compPlaying) { compStop(); compPlay(); }
+    },
+    'rtm:compAll': () => {
+      compStop();
+      state.compAt = null;
+      saveState();
+      drawComp();
     },
     'rtm:dgSettings': () => { readDg(); saveState(); renderDg(); infoRefresh(); },
     'rtm:dgGo': () => { readDg(); saveState(); renderDg(); dgGo(); },

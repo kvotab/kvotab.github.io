@@ -2031,6 +2031,85 @@ async def main():
             await page.ev("(() => { const b = document.getElementById('rtmCompLogT'); b.checked = true;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            # Play on the Composition tab, the same run along the column: no slider along the run; along the column one, at
+            # the end under At. At a stored point the column at that time, the very waters At draws when given that time;
+            # from point 100 to point 400 the waters move and the axes hold still -- the Durov's pH and dissolved solids, the
+            # Schoeller's scale, the bands of where an element is, and the principal components, whose loadings and variance
+            # are the whole run's; play, the run in 5 s, moves on from 300 and stops at the end; back to At, At's time again.
+            t400 = await page.ev("document.getElementById('rtmChartTime').data.find((t) => t.name === 'Ca, dissolved').x[400]")
+            comp_row = ("(() => { const a = document.getElementById('rtmCompAt'); return [document.getElementById('rtmCompPlayRow').hidden,"
+                        " a.max, a.value, document.getElementById('rtmCompAtLabel').textContent, document.getElementById('rtmCompAll').disabled,"
+                        " document.getElementById('rtmCompPlay').textContent]; })()")
+            row_time = await page.ev(comp_row)
+            await page.ev("(() => { const s = document.getElementById('rtmCompAlong'); s.value = 'distance';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.8)
+            row_col = await page.ev(comp_row)
+
+            async def comp_slide(v):
+                await page.ev("(() => { const a = document.getElementById('rtmCompAt'); a.value = %s;"
+                              " a.dispatchEvent(new Event('input', { bubbles: true })); a.dispatchEvent(new Event('change', { bubbles: true })); })()"
+                              % json.dumps(str(v)))
+                await asyncio.sleep(0.8)
+
+            async def comp_view(v):
+                await page.ev("(() => { const s = document.getElementById('rtmCompView'); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(v))
+                await asyncio.sleep(1.0)
+            look = """(() => { const p = document.getElementById('rtmChartComp'), L = p.layout;
+              return [Object.keys(L).filter((k) => /^[xy]axis/.test(k)).sort().map((k) => `${k}:${JSON.stringify(L[k].range || null)}`).join(' '),
+                (L.annotations || []).map((a) => `${a.text}@${a.x},${a.y}`).join(' '), JSON.stringify(p.data.map((t) => [t.name, t.x, t.y])),
+                p.data.map((t) => t.name).join(' | ')]; })()"""
+            stills = {}
+            for v in ['durov', 'schoeller', 'where', 'pca']:
+                await comp_view(v)
+                await comp_slide(100)
+                a = await page.ev(look)
+                await comp_slide(400)
+                b = await page.ev(look)
+                stills[v] = [a[0] == b[0], a[1] == b[1] if v in ('durov', 'pca') else True, a[2] != b[2], a[3] == b[3]]
+            note400 = await page.ev("document.getElementById('rtmCompNote').textContent")
+            await comp_view('piper')
+            await comp_slide(400)
+            slid = await page.ev("JSON.stringify(document.getElementById('rtmChartComp').data.find((t) => t.name === 'the model'))")
+            label400 = (await page.ev(comp_row))[3]
+            await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = %s;"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(repr(t400)))
+            await asyncio.sleep(0.8)
+            typed = await page.ev("JSON.stringify(document.getElementById('rtmChartComp').data.find((t) => t.name === 'the model'))")
+            typed_row = await page.ev(comp_row)
+            check('  the Composition tab one time at a time: no slider along the run, along the column one at the end under At; at a '
+                  'stored point the very waters At draws when given its time, typing At bringing At back; from point 100 to 400 the '
+                  'waters move and the axes hold still on the Durov, the Schoeller, where an element is (its bands the same) and the '
+                  'principal components (their loadings the same), the note saying so',
+                  [row_time[0], row_col, stills, slid == typed, label400, typed_row[3], note400.endswith('on the slider, the axes over the whole run')],
+                  [True, [False, '513', '513', 'drag or play', True, 'play'],
+                   {'durov': [True, True, True, True], 'schoeller': [True, True, True, True], 'where': [True, True, True, True],
+                    'pca': [True, True, True, True]}, True, '1.08 d', 'drag or play', True])
+            await page.ev("(() => { const t = document.getElementById('rtmCompTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            await comp_slide(300)
+            await page.ev("(() => { const s = document.getElementById('rtmCompPace'); s.value = '5';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmCompPlay').click()")
+            await asyncio.sleep(0.3)
+            c1 = await page.ev(comp_row)
+            await asyncio.sleep(1.0)
+            c2 = await page.ev(comp_row)
+            c_ended = await settle(page, "document.getElementById('rtmCompPlay').textContent", 'play', tries=40, pause=0.25)
+            c3 = await page.ev(comp_row)
+            await page.ev("document.getElementById('rtmCompAll').click()")
+            await asyncio.sleep(0.4)
+            c_back = await page.ev(comp_row)
+            check('  play on the Composition tab, the run in 5 s: the slider moving on from point 300, the button pause; at the end of '
+                  'the run it stops; back to At, At\'s time again',
+                  [c1[5], 300 < int(c1[2]) < int(c2[2]) < 513, c_ended, c3[2:4], c_back],
+                  ['pause', True, 'play', ['513', '6.94 d'], [False, '513', '513', 'drag or play', True, 'play']])
+            # As the examples after it find the tab: along the run, a Durov diagram.
+            await page.ev("(() => { const s = document.getElementById('rtmCompAlong'); s.value = 'time';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await comp_view('durov')
             # A tracer kept and run again at twice the speed, its dispersion a dispersivity (PECLET) and the run half as long,
             # at three cells down the column: in hours the faster front reaches each cell in half the time; in pore volumes,
             # each run in its own, the two cross one half at the same pore volume and the curves lie on each other, to the
