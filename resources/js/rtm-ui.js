@@ -8684,6 +8684,16 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     });
     document.querySelectorAll('.rtm-pane').forEach((p) => { p.hidden = p.dataset.pane !== name; });
     saveState();
+    // A chart drawn while its tab was hidden -- a run that ends, or quantities
+    // that arrive, while another tab is open -- was laid out at Plotly's own
+    // 700 px, and a legend that wrapped there keeps its place when the chart
+    // is resized: on Against time it lay over the x axis's title. A chart not
+    // as wide as its box is cleared here and drawn afresh below; one drawn
+    // where it is seen keeps its zoom.
+    const afresh = typeof Plotly === 'undefined' ? []
+      : [...document.querySelectorAll(`.rtm-pane[data-pane="${name}"] .plot`)]
+        .filter((p) => !p.hidden && p._fullLayout && Math.abs(p._fullLayout.width - p.clientWidth) > 1);
+    afresh.forEach((p) => Plotly.purge(p));
     // Plotly needs telling once its div stops being display:none.
     if (name === 'time') { drawTime(); resize(); }
     // Drawn while hidden, at Plotly's own width, a legend that wrapped there keeps its place when the chart is resized: drawn afresh.
@@ -8694,7 +8704,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
-    if (name === 'phreeqc') { pqRenderView(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 

@@ -2820,6 +2820,32 @@ async def main():
                 """(() => { const p = document.getElementById('rtmChartProfile');
                   return p.querySelector('.legend').getBoundingClientRect().top >= p.querySelector('.g-xtitle').getBoundingClientRect().bottom; })()"""),
                 True)
+            # The same on Against time and Composition: each cleared and drawn again by one of its own settings while
+            # Against distance is open is drawn at 700 px, Plotly's own width; when its tab opens it is drawn afresh at its
+            # box's width, its legend under the x axis's title. On Against time the legend lay 25 px over the title.
+            hidden_drawn, shown = {}, {}
+            # Composition at where an element is, which has a legend; the view it was at is put back after.
+            comp_view = await page.ev("document.getElementById('rtmCompView').value")
+            await page.ev("document.getElementById('rtmCompView').value = 'where'")
+            for tab, plot, ctl in [('time', 'rtmChartTime', 'rtmLogY'), ('composition', 'rtmChartComp', 'rtmCompView')]:
+                await page.ev("(() => { Plotly.purge(document.getElementById('%s'));"
+                              " document.getElementById('%s').dispatchEvent(new Event('change', { bubbles: true })); })()" % (plot, ctl))
+                await asyncio.sleep(0.8)
+                hidden_drawn[tab] = await page.ev("(() => { const p = document.getElementById('%s');"
+                                                  " return p._fullLayout ? Math.round(p._fullLayout.width) : null; })()" % plot)
+            for tab, plot in [('time', 'rtmChartTime'), ('composition', 'rtmChartComp')]:
+                await page.ev("document.querySelector('[data-tab=\"%s\"]').click()" % tab)
+                await asyncio.sleep(1.0)
+                shown[tab] = await page.ev("""(() => { const p = document.getElementById('%s');
+                  return [Math.abs(p._fullLayout.width - p.clientWidth) <= 1,
+                    p.querySelector('.legend').getBoundingClientRect().top >= p.querySelector('.g-xtitle').getBoundingClientRect().bottom]; })()""" % plot)
+            check('  Against time and Composition drawn while their tabs were hidden, at 700 px; when shown, drawn afresh at their '
+                  'boxes\' width, the legend under the x axis\'s title', [hidden_drawn, shown],
+                  [{'time': 700, 'composition': 700}, {'time': [True, True], 'composition': [True, True]}])
+            await page.ev("(() => { const v = document.getElementById('rtmCompView'); v.value = %s;"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(comp_view))
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await settle(page, "(document.getElementById('rtmChartProfile').data || []).length", 9, tries=60, pause=0.5)
             # At a time asked for, the first of Times alone: on day 20 methane at the inlet, and the iron zone still at 5.5 m.
             await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '20, 30';"
                           " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
