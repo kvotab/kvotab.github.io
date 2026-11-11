@@ -544,6 +544,24 @@ times its width and summed over the column, what the budget counts the
 reactions as having taken of CH2O, to 1e-6 (1.0e-7 measured): two sums
 over the same stored points, the one of the rates, the other of what the
 column holds and what crosses its ends.
+The budget by each reaction (since 2026-11-11): what each `<REACTIONS>`
+line made and took of what a budget is of, its part of the rate of change
+the derivative gives it, weighed as the budget weighs it, summed over the
+stored points; a line and one written apart that undoes it one reaction.
+On the plume, while the worker keeps its run: CH2O's one line all of what
+the reactions made of it, to 1e-6 (1.0e-7 measured); carbon, all of it,
+made and taken by no line, the line moving it from CH2O to the carbonate;
+H+ made six to each CH2O taken, to 1e-12 (1.2e-15), and as much taken
+on by the relations, to 7e-6 of it, as they take most of the CO3-2; at cell 5
+what the line took of CH2O at every stored point its rate, and its sum
+its extent, to the last digit. A pair written apart, A => B and B => A,
+does of B what C <=> D at the same constants does of D, to the last digit
+measured. A chain A => B => C over 267 stored points: of B, line 1 made
+A's start less A and line 2 took C, to 3e-4 of A's start (1.1e-4 and
+5.0e-5), neither the other way. The built-in model, which has no
+relations: for each of the 32 species a line moves, the reactions'
+parts together are what the budget counts the reactions as having made,
+to 2e-5 of what they made and took (5.1e-6 the worst).
 `speciate` for a diagram: one cell of a column speciated alone, the other
 left exactly as it was, and the carbon's total set there to 0.05 mol/kgw
 through the conserved total that carries it, to 1e-12, the relations held.
@@ -1200,6 +1218,8 @@ Breakthrough numbers (since 2026-11-11), under Against time, on a column of the 
 The run against what was measured, one to one (since 2026-11-11), on the calcite example once it has fitted itself: fitted again from the text's own numbers (kc 5e-4, CO2 1e-3), so that the fit's first misfit is the run on show's, read exactly at the times measured; the run on show, read between its stored points, within 2e-3 of it (6.6e-4 measured), and the fitted run's sum of squares the fit's misfit to the last digit; the CSV `rtm_against_measured.csv` a row per value measured with each run's value and residual, the chart circles for this run and diamonds for the fitted one. Then the run's own values at four stored points written as its `<DATA>`, pH less 0.1 and Ca_mg twice and half by turns: each pH residual +0.1 and each Ca_mg one log10 2 either way to 1e-12, the table pH's bias +0.1 and spread 0.1, Ca_mg's bias a factor of 1 and spread a factor of 2, sums of squares 0.04 and 0.3625, all together 0.2243 and 0.4025; the fit, made against the old measurements, left out and the note saying so. Kept, and run again with kc doubled: the kept run's rows the first run's to the character, its points hollow, this run's sum of squares above the kept one's. A tracer's profile at a stored time, twice over at three cells and before and past the column, as a table in distance: each residual -log10 2, the ends read as the end cells; with a table in time, a value after the run's end and an amount of none, both said.
 
 What each reaction does (since 2026-11-11). On the plume example, at cell 5, where the plume passes: the series list has a group for it after the saturation indices, the one line's rate and extent, `CH2O => CO3-2 + 6 H+ + 4 e-, rate` and `..., extent`. Ticked beside CH2O on a linear axis, the rate is on the right and is kdoc [CH2O], 0.05 of the CH2O drawn, at every stored point to the last digit; the extent is on the left, at each point the trapezoid of the rate's curve up to there, summed step by step as the worker sums it, to the last digit. On Diagrams, cell 5 as the run ends with its pH from 5 to 9: the rate is the same at each pH, the run's last to the last digit (CH2O is in no relation), drawn as `... rate (mol/kgw/d)`, and the extent is not offered. On Sweeps, kk varied in a decay: the rate offered, kk A at the end of each run within 5e-5, as `A => B, rate (/s)`; the extent not. On Uncertainty, the two lines' rates offered and not their extents.
+
+The budget by each reaction (since 2026-11-11). On the built-in model, its H2O2 over the whole column: the radiolysis that makes it first, line 73, nine tenths of what is made; the two equilibria written as two lines each one reaction, `H+ + HO2- <=> H2O2 [135, 149]` and `HO2- + H2O <=> OH- + H2O2 [138, 150]`; the eight that move most named and the rest together, made above nought and taken below; every reaction's net and what no line accounts for together what the reactions made, to 1e-12, the leftover under 1e-6 of what they made and took and the note calling it the summing's. At the fuel surface, cell 0, the radiolysis over 95 % of what is made, no leftover row, and the CSV `rtm_budget_H2O2_by_reaction_cell0.csv` each reaction's rates and sum at every stored point. On the plume: of CO3-2 the organic carbon's oxidation all that makes it and nothing taking it, the relations taking over nine tenths of it on; carbon, all of it, made by no line, the leftover the summing's; and of CH2O at cell 5, in the CSV, what the line took at every stored point the rate Against time draws there and its sum the extent, to the last digit.
 
 The Fit tab (since 2026-11-09), on the calcite-at-a-rate example's text: the parameter kc offered from the value the text gives it and both `<DATA>` columns ticked, a relation's log K among what can be fitted; kc fitted, the table giving it and its error as a factor, the chart the run at it beside what was measured; and Put the fitted values in the model writing kc into its line. The check loads the example's text rather than the example, whose view would untick the time chart's log boxes for the checks after it. From the fit, on the Uncertainty tab, then gives kc as a lognormal about its fitted value, times or over its standard error, alone and so without the box of the fit's correlations.
 

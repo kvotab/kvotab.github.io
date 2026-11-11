@@ -12255,6 +12255,8 @@
         // Whose capacity a rate on the inventory is a share of, as the derivative has it.
         const cap = ch.whole ? (ch.capOf >= 0 ? ch.capOf : (ch.net.length ? ch.net[0][0] : -1)) : -1;
         const name = eqs.indexOf(eqs[n]) !== eqs.lastIndexOf(eqs[n]) ? `${eqs[n]} (line ${rx.line})` : eqs[n];
+        rx.name = name;
+        rx.eq = eqs[n];
         addQ(`rate(${n + 1})`, `${name}, rate`, 'reactions', mol ? `mol/kgw/${sym}` : `/${sym}`, 'index', (c, b, cell, t) => {
           const R = chanRatesAt(c, b, cell, t);
           const net = R[j] - (jb >= 0 ? R[jb] : 0);
@@ -12274,6 +12276,55 @@
       qW = activityAt(qAct, c, b, qG, qD, cell);
       qEval++;
       for (let q = 0; q < which.length; q++) out[q] = qFn[which[q]](c, b, cell, t);
+      return out;
+    }
+    /*
+      WHAT EACH LINE MOVES of a sum of species -- each weighed by w, its
+      count of an element, or 1 for the one species a budget is of, 0 for the
+      rest -- in model cell `cell` of the concentrations c at time t: each
+      <REACTIONS> line's part of the rate of change the derivative gives that
+      sum there, worked out as the derivative works it out: each of the
+      line's channels' rates from the very code it runs, times their net
+      coefficients, times what the cell holds for a rate on the inventory or
+      the porosity in the rock, a species held fixed not moved. An amount a
+      unit of the cell's water and of time: times the cell's water, what the
+      line moves of it there. Into out, one a line. A line that moves the
+      sum's parts into each other -- an element from one of its species to
+      another -- moves none of it, its terms cancelling: to the rounding,
+      none.
+    */
+    const lineR = new Float64Array(Math.max(nchan, 1));
+    const lineD = new Float64Array(1);
+    function lineTermsAt(c, t, cell, w, out) {
+      out.fill(0);
+      if (!reactions.length) return out;
+      thermoAt(t);
+      if (ntv) atTheClock(t);
+      const b = cell * ns;
+      if (nq) aqAt(c, b, false);
+      rates(c, b, P, cell * np, lineR, lineD, t, TV, AQ);
+      const sc = reactScale[cell];
+      for (let n = 0; n < reactions.length; n++) {
+        const rx = reactions[n];
+        let v = 0;
+        let a = 0;
+        for (let j = rx.chanFirst; j < rx.chanFirst + rx.chanCount; j++) {
+          const r = lineR[j];
+          if (r === 0) continue;
+          const sp = chanSpecies[j];
+          const coef = chanCoef[j];
+          const whole = chanWhole[j];
+          const cap = chanCap[j];
+          for (let m = 0; m < sp.length; m++) {
+            const p = sp[m];
+            if (!w[p] || fixedAt[b + p]) continue;
+            const term = w[p] * coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
+            v += term;
+            a += Math.abs(term);
+          }
+        }
+        out[n] = Math.abs(v) > 1e-13 * a ? v : 0;
+      }
       return out;
     }
     /**
@@ -12394,7 +12445,11 @@
       fixedAt,
       held: held.map((h) => ({ species: h.species, cells: h.cells })),
       tables: [...tables.keys()],
-      reactions: reactions.map((rx) => ({ line: rx.line, text: rx.text })),
+      // Each <REACTIONS> line: where it is, its equation and its name, and what its forward channel moves -- for the budget
+      // by each reaction, which counts a line and one written apart that undoes it as one pair.
+      reactions: reactions.map((rx) => ({ line: rx.line, text: rx.text, name: rx.name, eq: rx.eq,
+        net: channels[rx.chanFirst] ? channels[rx.chanFirst].net.map(([k, c]) => [k, c]) : [],
+        whole: !!(channels[rx.chanFirst] && channels[rx.chanFirst].whole), both: rx.chanCount > 1 })),
       nreactions: reactions.length,
       equilibria,
       nequilibria: equilibria.length,
@@ -12439,6 +12494,7 @@
       // What the run can be read as besides its species (QUANTITIES), and what <DATA> measured.
       quantities: qList,
       quantitiesAt,
+      lineTermsAt,
       listingAt,
       data,
       // What each species is made of, for the views of where an element is and of the water's major ions.

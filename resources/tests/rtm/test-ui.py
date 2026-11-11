@@ -860,6 +860,73 @@ async def main():
             await grad("""const s = document.getElementById('rtmGradSpecies');
               s.value = 'H2O2'; s.dispatchEvent(new Event('change', { bubbles: true }));""")
 
+            # --- the budget by each reaction, on the built-in model's hydrogen peroxide ---
+            # Over the whole column, what each reaction made and took of H2O2. The radiolysis that makes it comes first,
+            # nine tenths of what is made. Each equilibrium written as two lines is one reaction, both lines given. The
+            # eight that move most are named and the rest together, made above nought and taken below. Every reaction's
+            # net and what no line accounts for are together what the budget counts the reactions as having made, the
+            # leftover the summing's, the model having no relations. At the fuel surface, cell 0, the radiolysis makes
+            # nearly all of it, and the CSV has each reaction's rates and sum at every stored point.
+            async def pick(id_, value):
+                await page.ev("(() => { const s = document.getElementById(%s); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % (json.dumps(id_), json.dumps(value)))
+
+            comp_before = await page.ev("[document.getElementById('rtmCompView').value, document.getElementById('rtmCompBudgetOf').value]")
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await pick('rtmCompView', 'budget')
+            await pick('rtmCompBudgetOf', 'species:H2O2')
+            await pick('rtmCompBudgetBy', 'lines')
+            await settle(page, "!document.getElementById('rtmCompLines').hidden", True, tries=80, pause=0.25)
+            by_rx = await page.ev("""(() => {
+              const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
+              const v = (td) => (td.dataset.v === undefined ? null : Number(td.dataset.v));
+              const by = (name) => rows.find((r) => r[0].textContent === name);
+              const d = document.getElementById('rtmChartComp').data;
+              const all = by('every reaction');
+              const gross = v(all[2]) - v(all[3]);
+              const rest = v(by('what no line accounts for')[4]);
+              const made = v(by('made by reactions, net, as the budget has it')[4]);
+              return [rows[0][0].textContent + ' [' + rows[0][1].textContent + ']', v(rows[0][5]) > 0.85,
+                rows.filter((r) => r[1].textContent.includes(',')).map((r) => r[0].textContent + ' [' + r[1].textContent + ']').join(' | '),
+                d.filter((t) => t.stackgroup && t.showlegend !== false).length, d.some((t) => /^the other \\d+ reactions$/.test(t.name)),
+                d[d.length - 1].name, d.every((t) => !t.stackgroup || t.y.every((y) => (t.stackgroup === 'made' ? y >= 0 : y <= 0))),
+                Math.abs(v(all[4]) + rest - made) <= 1e-12 * gross, Math.abs(rest) / gross < 1e-6,
+                document.getElementById('rtmCompNote').textContent.endsWith("is the summing's over the stored points"),
+                document.getElementById('rtmChartComp').layout.yaxis.title.text]; })()""")
+            check('the budget by each reaction, of the built-in model\'s H2O2 over the whole column: the radiolysis first, nine '
+                  'tenths of what is made; each equilibrium written as two lines one reaction; the eight that move most named and '
+                  'the rest together, made above nought and taken below; every reaction\'s net and what no line accounts for '
+                  'together what the reactions made, the leftover the summing\'s', by_rx,
+                  ['=> H2O2 [73]', True, 'H+ + HO2- <=> H2O2 [135, 149] | HO2- + H2O <=> OH- + H2O2 [138, 150]', 9, True,
+                   'made less taken, every reaction', True, True, True, True,
+                   "made (+) and taken (−) per s<br>concentration × m per m² of the water's cross-section"])
+            await pick('rtmCompBudgetAt', '0')
+            await settle(page, "/^H2O2 at cell 0:/.test(document.getElementById('rtmCompNote').textContent)", True, tries=80, pause=0.25)
+            at0 = await page.ev("document.getElementById('rtmCompNote').textContent")
+            surface = re.search(r'made by \d+ reactions, [0-9.e+-]+, the most by => H2O2 \(([0-9.]+) %\)', at0 or '')
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            rcsv = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).trim().split('\\n')] : null; })()")
+            check('  at the fuel surface, cell 0, the radiolysis nearly all that makes it, and no leftover where the water carries it '
+                  'in and out besides; the CSV each reaction\'s rates and sum at every stored point',
+                  [surface is not None and float(surface.group(1)) > 95,
+                   await page.ev("[...document.querySelectorAll('#rtmCompLines tbody tr')].some((tr) => tr.children[0].textContent"
+                                 " === 'what no line accounts for')"),
+                   # The name after the Example picker, which still shows the example before the built-in model was put back.
+                   [rcsv[0].split('_', 2)[-1], rcsv[1][0][:111], len(rcsv[1]) > 500] if isinstance(rcsv, list) else rcsv],
+                  [True, False, ['budget_H2O2_by_reaction_cell0.csv',
+                                 't (s),"=> H2O2 (line 73), made per s","=> H2O2 (line 73), taken per s","=> H2O2 (line 73), net since the start"',
+                                 True]])
+            await pick('rtmCompBudgetAt', 'column')
+            await pick('rtmCompBudgetBy', 'where')
+            await pick('rtmCompBudgetOf', comp_before[1])
+            await pick('rtmCompView', comp_before[0])
+            await asyncio.sleep(0.3)
+
             # --- what a run can be read as: quantities, <OUTPUT>, <DATA>, saving ---
             # The model and the picks of the checks before are put back after it: the ones after read them.
             before = await page.ev("[document.getElementById('rtmText').value, "
@@ -2800,6 +2867,57 @@ async def main():
             await page.ev(''.join("(() => { const e = document.getElementById('%s'); e.value = %s;"
                                   " e.dispatchEvent(new Event('change', { bubbles: true })); })();" % (k, json.dumps(v))
                                   for k, v in zip(dg_ids, dg_before or [])))
+            # The budget by each reaction on the plume. CO3-2 over the whole column: the organic carbon's oxidation is all
+            # that makes it and nothing takes it, and what no line accounts for is nearly all of it again, the relations
+            # taking it on to the bicarbonate, CO2 and the minerals. Carbon, all of it: no line makes or takes any, the line
+            # moving it from CH2O to the carbonate, the leftover the summing's. CH2O at cell 5: what the line took of it at
+            # every stored point is the rate drawn against time above, and its sum the extent, to the last digit.
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            comp_before = await page.ev("[document.getElementById('rtmCompView').value, document.getElementById('rtmCompBudgetOf').value]")
+            await pick('rtmCompView', 'budget')
+            await pick('rtmCompBudgetOf', 'species:CO3-2')
+            await pick('rtmCompBudgetBy', 'lines')
+            await pick('rtmCompBudgetAt', 'column')
+            await settle(page, "/^CO3-2 over the whole column/.test(document.getElementById('rtmCompNote').textContent)", True, tries=80, pause=0.25)
+            co3 = await page.ev("""(() => {
+              const rows = [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.children]);
+              const v = (td) => (td.dataset.v === undefined ? null : Number(td.dataset.v));
+              const first = rows[0];
+              const rest = v(rows.find((r) => r[0].textContent === 'what no line accounts for')[4]);
+              return [rows.map((r) => r[0].textContent).join(' | '), first[1].textContent, v(first[2]) > 0, v(first[3]),
+                rest < -0.9 * v(first[2]), document.getElementById('rtmCompNote').textContent.endsWith('is what the relations moved, with the summing\\'s error')]; })()""")
+            plume_line = str(await page.ev("document.getElementById('rtmText').value.split('\\n').findIndex((l) => l.startsWith('CH2O => CO3-2')) + 1"))
+            await pick('rtmCompBudgetOf', 'element:C')
+            await settle(page, "/makes or takes any C/.test(document.getElementById('rtmCompEmpty').textContent)", True, tries=80, pause=0.25)
+            carbon = await page.ev("document.getElementById('rtmCompEmpty').textContent")
+            await pick('rtmCompBudgetOf', 'species:CH2O')
+            await pick('rtmCompBudgetAt', '5')
+            await settle(page, "/^CH2O at cell 5/.test(document.getElementById('rtmCompNote').textContent)", True, tries=80, pause=0.25)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            c5csv = await page.ev("(async () => { const r = window.__saved[0]; return r ? (await r.body).trim().split('\\n') : null; })()")
+            c5rows = [[float(x) for x in line.split(',')] for line in c5csv[1:]] if isinstance(c5csv, list) else []
+            check('  the budget by each reaction on the plume: of CO3-2 over the whole column the organic carbon\'s oxidation all '
+                  'that makes it, nothing taking it, and the relations taking nearly all of it on; carbon, all of it, made and '
+                  'taken by no line, the leftover the summing\'s; of CH2O at cell 5 what the line took at every stored point the '
+                  'rate drawn against time, and its sum the extent, to the last digit',
+                  [co3, carbon, len(c5rows) == len(rate5), all(row[2] == -r for row, r in zip(c5rows, rate5)),
+                   all(row[3] == -e for row, e in zip(c5rows, ext5)), all(row[1] == 0 for row in c5rows)],
+                  [['CH2O => CO3-2 + 6 H+ + 4 e- | every reaction | what no line accounts for | made by reactions, net, as the budget has it',
+                    plume_line, True, 0, True, True],
+                   'No <REACTIONS> line makes or takes any C, all of it over the whole column: what the budget counts the reactions '
+                   'as having made of it, ' + carbon.split('of it, ')[-1].split(' by the end')[0] + ' by the end, is the summing\'s '
+                   'error, the relations only moving an element between its species.' if isinstance(carbon, str) else carbon,
+                   True, True, True, True])
+            await pick('rtmCompBudgetAt', 'column')
+            await pick('rtmCompBudgetBy', 'where')
+            await pick('rtmCompBudgetOf', comp_before[1])
+            await pick('rtmCompView', comp_before[0])
+            await asyncio.sleep(0.3)
             # An example that gives no floor: each axis from the least drawn again.
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await page.ev("(() => { const s = document.getElementById('rtmExample'); s.value = 'tracer';"

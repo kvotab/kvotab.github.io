@@ -8074,6 +8074,127 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + 'counts the reactions as having taken of CH2O, to 1e-6',
     Math.abs(-made / summed - 1) < 1e-6, `${summed.toExponential(6)} against ${(-made).toExponential(6)}, `
       + `${Math.abs(-made / summed - 1).toExponential(2)} apart`);
+
+    /*
+      The budget by each reaction (rtmLines): what each <REACTIONS> line made and took of what a budget is of, its part
+      of the rate of change the derivative gives it, weighed as the budget weighs it, summed over the stored points. The
+      plume, while the worker still keeps its run: CH2O's one line all of what the reactions made of it; carbon, all of
+      it, made and taken by no line, the line moving it from one species to another; H+ made six to each CH2O taken, to
+      the rounding, and taken on by the relations, as CO3-2 is; and at cell 5 what the line took of CH2O its rate and its
+      extent to the last digit. A chain A => B => C: of B, line 1 made A's start less A and line 2 took C, at every
+      stored point to the summing's error, neither the other way. The built-in model, which has no relations: for every
+      species the lines' parts together are what the budget counts the reactions as having made, to the summing's error.
+    */
+    const linesOf = (runKey, of, at) => {
+      let got = null;
+      handleRtmMessage({ type: 'lines', id: 40, runKey, of, ...(at === undefined ? {} : { at }) }, (msg) => { got = msg; });
+      return got;
+    };
+    const budgetOf = (runKey, of) => {
+      let got = null;
+      handleRtmMessage({ type: 'budget', id: 41, runKey, of }, (msg) => { got = msg; });
+      return got;
+    };
+    const pl = (of, at) => linesOf(pRun.runKey, of, at);
+    const PL = pRun.n - 1;
+    const ch2o = pl({ kind: 'species', name: 'CH2O' });
+    const ch2oB = budgetOf(pRun.runKey, { kind: 'species', name: 'CH2O' });
+    const carbon = pl({ kind: 'element', name: 'C' });
+    const hplus = pl({ kind: 'species', name: 'H+' });
+    const hplusB = budgetOf(pRun.runKey, { kind: 'species', name: 'H+' });
+    const co3 = pl({ kind: 'species', name: 'CO3-2' });
+    const co3B = budgetOf(pRun.runKey, { kind: 'species', name: 'CO3-2' });
+    const ch2oTook = ch2o.lines[0].takenCum[PL];
+    const ch2oOff = Math.abs(ch2oB.byReactions[PL] - ch2oTook) / -ch2oTook;
+    const sixOff = Math.abs(hplus.lines[0].madeCum[PL] + 6 * ch2oTook) / hplus.lines[0].madeCum[PL];
+    const hRest = hplusB.byReactions[PL] - hplus.lines[0].madeCum[PL];
+    const co3Rest = co3B.byReactions[PL] - co3.lines[0].madeCum[PL];
+    const at5 = 5 * (pm.stride || 1);
+    const c5 = pl({ kind: 'species', name: 'CH2O' }, at5);
+    let q5 = null;
+    handleRtmMessage({ type: 'quantities', id: 44, runKey: pRun.runKey, keys: ['rate(1)', 'extent(1)'], cells: [at5] }, (msg) => { q5 = msg; });
+    let off5 = 0;
+    for (let i = 0; i < pRun.n; i++) {
+      off5 = Math.max(off5, Math.abs(c5.lines[0].taken[i] + q5.values[i]), Math.abs(c5.lines[0].made[i]),
+        Math.abs(c5.lines[0].takenCum[i] + q5.values[pRun.n + i]));
+    }
+    check('the budget by each reaction, on the plume: CH2O\'s one line all of what the reactions made of it, to 1e-6; carbon, '
+      + 'all of it, made and '
+      + 'taken by no line; H+ made six to each CH2O taken, to 1e-12, and nearly all of it taken on by the relations, as '
+      + 'CO3-2 is; at cell 5 what the line took of CH2O its rate and its extent to the last digit',
+    ch2o.lines.length === 1 && ch2o.lines[0].lines.join() === `${plume.split('\n').findIndex((l) => l.startsWith('CH2O => CO3-2')) + 1}`
+      && ch2oOff < 1e-6 && carbon.lines.length === 0
+      && sixOff < 1e-12 && hRest < -0.99 * hplus.lines[0].madeCum[PL] && co3Rest < -0.9 * co3.lines[0].madeCum[PL]
+      && c5.at === at5 && off5 === 0,
+    `CH2O taken ${(-ch2oTook).toExponential(6)}, the budget's ${(-ch2oB.byReactions[PL]).toExponential(6)}, `
+      + `${ch2oOff.toExponential(2)} apart; carbon's lines ${carbon.lines.length}; H+ six to one off by ${sixOff.toExponential(1)}, `
+      + `the relations took ${(-hRest).toExponential(4)} of ${hplus.lines[0].madeCum[PL].toExponential(4)}; CO3-2's took `
+      + `${(-co3Rest).toExponential(4)} of ${co3.lines[0].madeCum[PL].toExponential(4)}; at cell 5 off by ${off5}`);
+
+    const chainText = '<SETTINGS>\nMODE = batch\nTEND = 50\nTIME_UNIT = day\n\n<SPECIES>\nA  1e-3\nB  0\nC  0\n\n'
+      + '<REACTIONS>\nA => B, k = 0.2\nB => C, k = 0.1\n';
+    let cRun = null;
+    handleRtmMessage({ type: 'run', id: 42, text: chainText, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20 } },
+      (msg) => { if (msg.type === 'result') cRun = msg; });
+    const cl = linesOf(cRun.runKey, { kind: 'species', name: 'B' });
+    const cConc = (nm, i) => cRun.states[i * cRun.width + cRun.model.species.indexOf(nm)];
+    let madeOff = 0;
+    let tookOff = 0;
+    for (let i = 0; i < cRun.n; i++) {
+      madeOff = Math.max(madeOff, Math.abs(cl.lines[0].madeCum[i] - (1e-3 - cConc('A', i))) / 1e-3);
+      tookOff = Math.max(tookOff, Math.abs(-cl.lines[1].takenCum[i] - cConc('C', i)) / 1e-3);
+    }
+    const oneWay = !cl.lines[0].taken.some((v) => v !== 0) && !cl.lines[1].made.some((v) => v !== 0);
+
+    let bRun = null;
+    handleRtmMessage({ type: 'run', id: 43, text: RTM_DEFAULT_MODEL, solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20 } },
+      (msg) => { if (msg.type === 'result') bRun = msg; });
+    let worst = 0;
+    let worstOf = '';
+    let touched = 0;
+    for (const nm of bRun.model.species) {
+      if (nm === 'e-') continue;
+      const bl = linesOf(bRun.runKey, { kind: 'species', name: nm });
+      const bb = budgetOf(bRun.runKey, { kind: 'species', name: nm });
+      const L = bRun.n - 1;
+      let net = 0;
+      let gross = 0;
+      for (const x of bl.lines) { net += x.madeCum[L] + x.takenCum[L]; gross += x.madeCum[L] - x.takenCum[L]; }
+      if (bl.lines.length) touched++;
+      const off = gross > 0 ? Math.abs(bb.byReactions[L] - net) / gross : Math.abs(bb.byReactions[L]);
+      if (off > worst) { worst = off; worstOf = nm; }
+    }
+    // A line and one written apart that undoes it: one pair, what the two do net, as a line written both ways does.
+    const pairText = '<SETTINGS>\nMODE = batch\nTEND = 20\nTIME_UNIT = day\n\n<SPECIES>\nA  1e-3\nB  0\nC  1e-3\nD  0\n\n'
+      + '<REACTIONS>\nA => B, k = 0.3\nC <=> D, kf = 0.3, kb = 0.1\nB => A, k = 0.1\n';
+    let prRun = null;
+    handleRtmMessage({ type: 'run', id: 45, text: pairText, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20 } },
+      (msg) => { if (msg.type === 'result') prRun = msg; });
+    const prB = linesOf(prRun.runKey, { kind: 'species', name: 'B' });
+    const prD = linesOf(prRun.runKey, { kind: 'species', name: 'D' });
+    let pairOff = 0;
+    let pairScale = 0;
+    for (let i = 0; i < prRun.n; i++) {
+      for (const k of ['made', 'taken', 'madeCum', 'takenCum']) {
+        pairOff = Math.max(pairOff, Math.abs(prB.lines[0][k][i] - prD.lines[0][k][i]));
+        pairScale = Math.max(pairScale, Math.abs(prD.lines[0][k][i]));
+      }
+    }
+    check('  a line and one written apart that undoes it, one pair: of B, A => B and B => A together what C <=> D does '
+      + 'of D, to 1e-9',
+    prB.lines.map((x) => `${x.name} [${x.lines.join(', ')}]`).join(' | ') === 'A <=> B [13, 15]'
+      && prD.lines.map((x) => `${x.name} [${x.lines.join(', ')}]`).join(' | ') === 'C <=> D [14]'
+      && prD.lines[0].made.some((v) => v > 0) && pairOff <= 1e-9 * pairScale,
+    `${prB.lines.map((x) => `${x.name} [${x.lines.join(', ')}]`).join(' | ')}; ${prD.lines.map((x) => `${x.name} `
+      + `[${x.lines.join(', ')}]`).join(' | ')}; off by ${(pairOff / pairScale).toExponential(1)}`);
+    check('  of B in a chain A => B => C, line 1 made A\'s start less A and line 2 took C, at '
+      + 'every stored point to 3e-4 of A\'s start, neither the other way; in the built-in model, no relations in it, for '
+      + 'every species the lines\' parts together what the budget counts the reactions as having made, to 2e-5 of what '
+      + 'they made and took',
+    cl.lines.map((x) => `${x.lines.join(',')} ${x.name}`).join(' | ') === '12 A => B | 13 B => C' && cl.nlines === 2
+      && madeOff < 3e-4 && tookOff < 3e-4 && oneWay && touched > 30 && worst < 2e-5,
+    `made off by ${madeOff.toExponential(2)}, taken by ${tookOff.toExponential(2)} over ${cRun.n} points; the built-in `
+      + `model's ${touched} species a line moves, the worst ${worstOf} at ${worst.toExponential(2)} of what the lines moved`);
   }
   /*
     The plume's start with more calcite. Only a relation that holds places a species that starts at none: FeS(ppt) at none

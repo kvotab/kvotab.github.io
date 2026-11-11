@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -61,6 +61,8 @@
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
     compBudgetOf: '',      // a budget over the run: 'element:Ca' or 'species:X'
+    compBudgetBy: 'where', // by where it is held, or by each <REACTIONS> line ('lines')
+    compBudgetAt: 'column', // by each line: over the whole column, or at a cell (its number)
     compElement: '',
     compIn: 'water',
     compAs: 'percent',
@@ -126,7 +128,7 @@
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
         concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc,
-        compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
+        compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compBudgetBy: state.compBudgetBy, compBudgetAt: state.compBudgetAt, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog, compAt: state.compAt, compPace: state.compPace,
         dg: state.dg, sw: state.sw, fit: state.fit, unc: state.unc,
@@ -172,6 +174,8 @@
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
       if (typeof s.compBudgetOf === 'string') state.compBudgetOf = s.compBudgetOf;
+      if (s.compBudgetBy === 'where' || s.compBudgetBy === 'lines') state.compBudgetBy = s.compBudgetBy;
+      if (s.compBudgetAt === 'column' || Number.isInteger(s.compBudgetAt)) state.compBudgetAt = s.compBudgetAt;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
       if (s.compAlong === 'time' || s.compAlong === 'distance') state.compAlong = s.compAlong;
@@ -3166,6 +3170,19 @@
         + (sp.length ? `<optgroup label="Species">${sp.map((x) => opt(`species:${x}`, x)).join('')}</optgroup>` : '');
     }
     document.querySelectorAll('[data-comp-hide]').forEach((el) => { el.hidden = el.dataset.compHide === view; });
+    // By each reaction, where the model has <REACTIONS> lines: over the whole column, or at one of its cells.
+    {
+      const hasLines = !!(m && (m.quantities || []).some((q) => q.group === 'reactions'));
+      const byLines = budget && hasLines && state.compBudgetBy === 'lines';
+      $('rtmCompBudgetBy').value = hasLines ? state.compBudgetBy : 'where';
+      $('rtmCompBudgetByWrap').hidden = !budget || !hasLines;
+      const nfc = m ? m.fracture : 1;
+      if (state.compBudgetAt !== 'column' && !(state.compBudgetAt >= 0 && state.compBudgetAt < nfc)) state.compBudgetAt = 'column';
+      $('rtmCompBudgetAt').innerHTML = `<option value="column"${state.compBudgetAt === 'column' ? ' selected' : ''}>the whole column</option>`
+        + Array.from({ length: column ? nfc : 0 }, (_, i) => `<option value="${i}"${i === state.compBudgetAt ? ' selected' : ''}>cell ${i}`
+          + `${m && m.centres ? ` (${m.centres[i].toExponential(2)} m)` : ''}</option>`).join('');
+      $('rtmCompBudgetAtWrap').hidden = !(byLines && column);
+    }
     $('rtmCompAlongWrap').hidden = !column || listing || budget;
     const cells = m ? m.fracture : 1;
     if (!(state.compCell < cells)) state.compCell = 0;
@@ -3199,10 +3216,12 @@
     compTableNow = null;
     compTextNow = '';
     $('rtmCompListing').hidden = true;
+    $('rtmCompLines').hidden = true;
     const fail = (text) => {
       Plotly.purge(plot);
       plot.hidden = true;
       $('rtmCompListing').hidden = true;
+      $('rtmCompLines').hidden = true;
       empty.hidden = false;
       empty.textContent = text;
       note.textContent = '';
@@ -3743,6 +3762,11 @@
     const kind = chosen.startsWith('species:') ? 'species' : 'element';
     const name = chosen.slice(kind.length + 1);
     const key = `${r.runKey}|${kind}|${name}`;
+    // By each reaction: each <REACTIONS> line's part of what the reactions made of it.
+    if (state.compBudgetBy === 'lines' && (r.model.quantities || []).some((q) => q.group === 'reactions')) {
+      drawBudgetLines({ r, plot, fail, note }, kind, name, key);
+      return;
+    }
     const got = budgetCache.get(key);
     if (got === undefined || got === null) {
       fetchBudget(r, { kind, name }, key);
@@ -3796,6 +3820,181 @@
     name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}`,
     rows: Array.from({ length: n }, (_, i) => [r.t[i], ...got.bands.map((b) => b.values[i]), ...(anyOut ? [got.cumOut[i]] : []),
       ...(got.transport ? [got.cumIn[i]] : []), got.byReactions[i], got.total[i]]) };
+  }
+
+  /*
+    A BUDGET BY EACH REACTION: what the reactions made of it, line by line.
+    Each <REACTIONS> line's rate of making it and of taking it at each
+    stored point, over the whole column or in one cell -- the worker works
+    each out as the derivative does (rtmLines) -- stacked, what the lines
+    make above nought and what they take below, the lines that move most of
+    it named and the rest together, and made less taken by every line
+    dotted. Under the chart, over the run, what each line made and took, its
+    rate summed over the stored points. Over the whole column, what no line
+    accounts for: what the budget counts the reactions as having made less
+    what the lines did -- what the relations moved, held or as fast pairs,
+    with the summing's error, the summing's alone in a model with none.
+  */
+  const linesCache = new Map();
+  const LINES_NAMED = 8;
+  async function fetchLines(r, of, at, key) {
+    if (linesCache.has(key)) return;
+    linesCache.set(key, null);
+    const h = holderOf(r);
+    const text = h && h !== current ? h.text : ((state.ran && state.ran.text) || state.text);
+    const ask = (withRun) => request({ type: 'lines', runKey: r.runKey, of, at,
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      linesCache.set(key, reply);
+    } catch (e) {
+      linesCache.set(key, { error: e.message });
+    }
+    if (state.result === r && state.compView === 'budget') drawComp();
+  }
+
+  function drawBudgetLines({ r, plot, fail, note }, kind, name, key) {
+    const m = r.model;
+    const column = !!(m.transport && m.fracture > 1);
+    const stride = m.stride || 1;
+    const layer = Math.min(state.compLayer, stride - 1);
+    const cellAt = column && state.compBudgetAt !== 'column' && state.compBudgetAt < m.fracture ? state.compBudgetAt : null;
+    const whole = cellAt === null;
+    const at = whole ? 'column' : cellAt * stride + layer;
+    const what = `${name}${kind === 'element' ? ', all of it' : ''}`;
+    const got = linesCache.get(`${key}|${at}`);
+    if (got === undefined || got === null) fetchLines(r, { kind, name }, at, `${key}|${at}`);
+    // Over the whole column the budget too: what the reactions made, of which the lines' parts are.
+    const bud = whole ? budgetCache.get(key) : null;
+    if (whole && (bud === undefined || bud === null)) fetchBudget(r, { kind, name }, key);
+    if (got === undefined || got === null || (whole && (bud === undefined || bud === null))) {
+      fail(`Working out what each reaction made and took of ${name}…`);
+      return;
+    }
+    if (got.error) { fail(`What each reaction made and took of ${name} could not be worked out: ${got.error}`); return; }
+    if (whole && bud.error) { fail(`The budget of ${name} could not be kept: ${bud.error}`); return; }
+    const n = r.n;
+    const last = n - 1;
+    const fmt = (v) => fmtNumber(v);
+    // What no line accounts for: what the relations moved, but of an element, which they only move between its species.
+    const hasRelations = (m.nequilibria || 0) > 0;
+    const relations = hasRelations && kind === 'species';
+    const restIs = relations ? 'what the relations moved, held or as fast pairs, with the summing\'s error'
+      : `the summing's error, ${hasRelations ? 'the relations only moving an element between its species' : 'the model having no relations'}`;
+    const made = whole ? bud.byReactions[last] : null;
+    const place = whole ? (m.transport ? ' over the whole column' : '')
+      : ` at cell ${cellAt}${stride > 1 && layer ? `, rock layer ${layer}` : ''}`;
+    if (!got.lines.length) {
+      fail(`No <REACTIONS> line makes or takes any ${what}${place}`
+        + (whole ? `: what the budget counts the reactions as having made of it, ${fmt(made)} by the end, is ${restIs}.` : '.'));
+      return;
+    }
+    const pick = compTimeIndices(r);
+    const idx = pick.idx;
+    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+    // The lines by how much of it they move over the run, made and taken together.
+    const ranked = got.lines.map((l) => ({ l, made: l.madeCum[last], taken: l.takenCum[last], gross: l.madeCum[last] - l.takenCum[last] }))
+      .sort((a, b) => b.gross - a.gross || a.l.index - b.l.index);
+    const named = ranked.slice(0, LINES_NAMED);
+    const rest = ranked.slice(LINES_NAMED);
+    const c = themeColors();
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22'];
+    const xs = idx.map((i) => r.t[i]);
+    const traces = [];
+    const add = (label, color, mk, tk, group) => {
+      const anyMade = mk.some((v) => v > 0);
+      const anyTaken = tk.some((v) => v < 0);
+      if (anyMade) {
+        traces.push({ type: 'scatter', mode: 'lines', name: label, legendgroup: group, x: xs, y: idx.map((i) => mk[i]),
+          stackgroup: 'made', line: { width: 0.6, color } });
+      }
+      if (anyTaken) {
+        traces.push({ type: 'scatter', mode: 'lines', name: label, legendgroup: group, showlegend: !anyMade, x: xs,
+          y: idx.map((i) => tk[i]), stackgroup: 'taken', line: { width: 0.6, color } });
+      }
+    };
+    named.forEach(({ l }, q) => add(l.name, palette[q], l.made, l.taken, `line${l.index}`));
+    if (rest.length) {
+      const mk = new Float64Array(n);
+      const tk = new Float64Array(n);
+      for (const { l } of rest) for (let i = 0; i < n; i++) { mk[i] += l.made[i]; tk[i] += l.taken[i]; }
+      add(`the other ${rest.length} reaction${rest.length === 1 ? '' : 's'}`, '#7f7f7f', mk, tk, 'rest');
+    }
+    const net = new Float64Array(n);
+    for (const { l } of ranked) for (let i = 0; i < n; i++) net[i] += l.made[i] + l.taken[i];
+    traces.push({ type: 'scatter', mode: 'lines', name: 'made less taken, every reaction', x: xs, y: idx.map((i) => net[i]),
+      line: { color: c.text, dash: 'dot', width: 1.6 } });
+    const sym = timeUnit().symbol;
+    const layout = baseLayout();
+    layout.xaxis.type = pick.logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+    const per = !whole ? `per kg of the water of cell ${cellAt}${stride > 1 && layer ? `, rock layer ${layer}` : ''}`
+      : m.transport ? "concentration × m per m² of the water's cross-section" : 'per kg of water';
+    layout.yaxis.title = { text: `made (+) and taken (−) per ${sym}<br>${per}`, font: { size: 11 } };
+    layout.margin.l = 86;
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    // Over the run: what each line made and took, the lines together, and over the whole column what no line accounts for.
+    const sumMade = ranked.reduce((s, x) => s + x.made, 0);
+    const sumTaken = ranked.reduce((s, x) => s + x.taken, 0);
+    const netLines = sumMade + sumTaken;
+    const leftover = whole ? made - netLines : null;
+    const gross = sumMade - sumTaken;
+    const rel = whole && gross > 0 ? Math.abs(leftover) / gross : null;
+    const relText = rel === null ? '' : rel < 0.01 ? rel.toExponential(1) : `${(100 * rel).toPrecision(3)} %`;
+    const share = (v, of) => (of !== 0 && v !== 0 ? v / of : null);
+    const num = (v) => (v === null || v === undefined ? '' : esc(v === 0 ? '0' : fit4(v)));
+    const td = (v, text = num(v)) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${text}</td>`;
+    const pctTd = (v) => td(v, v === null ? '' : `${esc((100 * v).toPrecision(3))} %`);
+    const rowsHtml = ranked.map(({ l, made: mk, taken: tk }) => `<tr><td>${esc(l.name)}</td><td>${l.lines.join(', ')}</td>${td(mk)}${td(tk)}`
+      + `${td(mk + tk)}${pctTd(share(mk, sumMade))}${pctTd(share(tk, sumTaken))}</tr>`).join('');
+    const blank = '<td></td>';
+    const box = $('rtmCompLines');
+    box.innerHTML = `<table><thead><tr><th>Each reaction, over the run: ${esc(what)}${esc(place)}</th><th>line</th><th>made</th>`
+      + '<th>taken</th><th>net</th><th>of what was made</th><th>of what was taken</th></tr></thead>'
+      + `<tbody>${rowsHtml}<tr><td>every reaction</td>${blank}${td(sumMade)}${td(sumTaken)}${td(netLines)}${blank}${blank}</tr>`
+      + (whole ? `<tr><td>what no line accounts for</td>${blank}${blank}${blank}${td(leftover)}${blank}${blank}</tr>`
+        + `<tr><td>made by reactions, net, as the budget has it</td>${blank}${blank}${blank}${td(made)}${blank}${blank}</tr>` : '')
+      + '</tbody></table>'
+      + `<p>Each reaction's rate of making it and of taking it summed over the stored points by the trapezoidal rule, ${esc(per)}; `
+      + 'a line and one written apart that undoes it are one reaction, both lines given. '
+      + (whole ? `What no line accounts for is what the budget counts the reactions as having made less what the lines did: ${restIs}.`
+        : 'At a cell the water carries it in and out besides, which only the budget of the whole column weighs.') + '</p>';
+    box.hidden = false;
+    const makers = ranked.filter((x) => x.made > 0);
+    const takers = ranked.filter((x) => x.taken < 0);
+    const topMaker = makers.length ? makers.reduce((b, x) => (x.made > b.made ? x : b)) : null;
+    const topTaker = takers.length ? takers.reduce((b, x) => (x.taken < b.taken ? x : b)) : null;
+    note.textContent = [`${what}${place}: ${makers.length ? `made by ${makers.length} reaction${makers.length === 1 ? '' : 's'}, `
+      + `${fmt(sumMade)}, the most by ${topMaker.l.name} (${(100 * topMaker.made / sumMade).toPrecision(3)} %)` : 'made by no reaction'}`,
+    takers.length ? `taken by ${takers.length}, ${fmt(-sumTaken)}, the most by ${topTaker.l.name} `
+      + `(${(100 * topTaker.taken / sumTaken).toPrecision(3)} %)` : 'taken by none',
+    whole ? `what no line accounts for, ${fmt(leftover)}, ${relText} of what the reactions made and took, is ${
+      relations ? 'what the relations moved, with the summing\'s error' : 'the summing\'s over the stored points'}` : '']
+      .filter(Boolean).join('; ');
+    // Saved: each line's rates and its sum at every stored point; in Excel, the table over the run on a sheet of its own.
+    const head = [`t (${sym})`];
+    for (const { l } of ranked) {
+      const who = `${l.name} (line${l.lines.length > 1 ? 's' : ''} ${l.lines.join(' and ')})`;
+      head.push(`${who}, made per ${sym}`, `${who}, taken per ${sym}`, `${who}, net since the start`);
+    }
+    head.push('every reaction, net since the start', ...(whole ? ['made by reactions, net, as the budget has it'] : []));
+    compTableNow = {
+      head,
+      name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}_by_reaction${whole ? '' : `_cell${cellAt}${layer ? `_layer${layer}` : ''}`}`,
+      rows: Array.from({ length: n }, (_, i) => {
+        const row = [r.t[i]];
+        let all = 0;
+        for (const { l } of ranked) { row.push(l.made[i], l.taken[i], l.madeCum[i] + l.takenCum[i]); all += l.madeCum[i] + l.takenCum[i]; }
+        row.push(all, ...(whole ? [bud.byReactions[i]] : []));
+        return row;
+      }),
+      extra: [{ name: 'over the run', head: ['reaction', 'line', 'made', 'taken', 'net', 'of what was made', 'of what was taken'],
+        rows: [...ranked.map(({ l, made: mk, taken: tk }) => [l.name, l.lines.join(', '), mk, tk, mk + tk, share(mk, sumMade), share(tk, sumTaken)]),
+          ['every reaction', null, sumMade, sumTaken, netLines, null, null],
+          ...(whole ? [['what no line accounts for', null, null, null, leftover, null, null],
+            ['made by reactions, net, as the budget has it', null, null, null, made, null, null]] : [])] }],
+    };
   }
 
   /** The stored points along the run a chart in time draws: after "from" on a log axis. */
@@ -8615,7 +8814,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
-            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made.', view === 'budget'],
+            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what no line accounts for — what the relations moved, held or as fast pairs, with the summing\'s error.', view === 'budget'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
@@ -9484,7 +9683,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -10683,6 +10882,8 @@ END
       state.compPcaLog = $('rtmCompPcaLog').checked;
       state.compBeside = $('rtmCompBeside').checked;
       state.compBudgetOf = $('rtmCompBudgetOf').value;
+      state.compBudgetBy = $('rtmCompBudgetBy').value === 'lines' ? 'lines' : 'where';
+      { const at = $('rtmCompBudgetAt').value; state.compBudgetAt = at === '' || at === 'column' ? 'column' : Number(at); }
       saveState();
       renderComp();
       drawComp();

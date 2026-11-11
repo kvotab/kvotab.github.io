@@ -468,6 +468,112 @@ function rtmBudget(msg) {
     bands: bandNames.map((name, q) => ({ name, values: bands[q] })), fluxIn, fluxOut, cumIn, cumOut, total, byReactions };
 }
 
+/*
+  WHAT EACH REACTION MADE AND TOOK of what a budget is of: each <REACTIONS>
+  line's part of the rate of change the derivative gives it
+  (model.lineTermsAt) at each stored point -- over the whole column, each
+  model cell weighed by its water as rtmBudget weighs it, or in one model
+  cell, a kilogram of its water -- what it made apart from what it took,
+  cell by cell, each summed over the stored points by the trapezoidal rule,
+  none at the start, as the budget sums what crosses the ends. Over the
+  column the lines' parts together are what the budget counts the
+  reactions as having made, but for what the relations moved, held or as
+  fast pairs, and the summing's error. A line and one written apart that
+  undoes it -- the same species, each coefficient the other way, neither
+  on the inventory -- count as one pair, what the two do net: a fast
+  equilibrium written as two lines would otherwise make and take far more
+  than ever happens, and hide what does. Only what moves any of it is sent.
+*/
+function rtmLines(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'lines', id: msg.id, missing: true };
+  const { model, t, states, n, width } = run;
+  const names = model.speciesNames;
+  const ns = names.length;
+  const C = model.composition;
+  const of = msg.of || {};
+  // Each species by its count of the element, or the one species.
+  const w = new Float64Array(ns);
+  if (of.kind === 'species') {
+    const k = names.indexOf(of.name);
+    if (k < 0) throw new Error(`The model has no species ${of.name}.`);
+    w[k] = 1;
+  } else {
+    const e = C ? C.elements.find((x) => x.el === of.name) : null;
+    if (!e) throw new Error(`No species of the model has any ${of.name}.`);
+    for (const [k, cnt] of e.terms) w[k] += cnt;
+  }
+  const rx = model.reactions || [];
+  const nl = rx.length;
+  const transport = !!model.transport;
+  const stride = model.stride || 1;
+  const nf = transport ? model.fracture : model.cells;
+  const mx = model.matrix || null;
+  // Where: the whole column, each model cell with its water -- a fracture cell's width, a layer of rock's wall area per
+  // water times its thickness -- or one model cell.
+  const column = msg.at === undefined || msg.at === 'column';
+  const cells = [];
+  if (column) {
+    for (let cell = 0; cell < nf; cell++) {
+      const wd = transport ? model.grid.width[cell] : 1;
+      for (let j = 0; j < stride; j++) cells.push([cell * stride + j, j === 0 ? wd : wd * mx.aw * mx.d[j - 1]]);
+    }
+  } else {
+    const c = Number(msg.at);
+    if (!(Number.isInteger(c) && c >= 0 && c < model.cells)) throw new Error(`The model has no cell ${msg.at}.`);
+    cells.push([c, 1]);
+  }
+  // The lines, and the pairs: each line that undoes one before it, written apart, joins it.
+  const keyOf = (net, sign) => net.map(([k, cnt]) => `${k}:${sign * cnt}`).sort().join(',');
+  const groups = [];
+  const waiting = new Map();
+  rx.forEach((x, l) => {
+    if (x.both || x.whole || !x.net || !x.net.length) { groups.push([l]); return; }
+    const undo = keyOf(x.net, -1);
+    if (waiting.has(undo)) {
+      groups[waiting.get(undo)].push(l);
+      waiting.delete(undo);
+      return;
+    }
+    groups.push([l]);
+    const mine = keyOf(x.net, 1);
+    if (!waiting.has(mine)) waiting.set(mine, groups.length - 1);
+  });
+  const ng = groups.length;
+  const made = Array.from({ length: ng }, () => new Float64Array(n));
+  const taken = Array.from({ length: ng }, () => new Float64Array(n));
+  const out = new Float64Array(nl);
+  for (let i = 0; i < n; i++) {
+    const c = states.subarray(i * width, (i + 1) * width);
+    for (const [cell, scale] of cells) {
+      model.lineTermsAt(c, t[i], cell, w, out);
+      for (let g = 0; g < ng; g++) {
+        const ls = groups[g];
+        const v = scale * (ls.length === 1 ? out[ls[0]] : out[ls[0]] + out[ls[1]]);
+        if (v > 0) made[g][i] += v;
+        else if (v < 0) taken[g][i] += v;
+      }
+    }
+  }
+  const summed = (rate) => {
+    const s = new Float64Array(n);
+    for (let i = 1; i < n; i++) s[i] = s[i - 1] + 0.5 * (rate[i] + rate[i - 1]) * (t[i] - t[i - 1]);
+    return s;
+  };
+  const lines = [];
+  for (let g = 0; g < ng; g++) {
+    if (!made[g].some((v) => v !== 0) && !taken[g].some((v) => v !== 0)) continue;
+    const ls = groups[g];
+    const first = rx[ls[0]];
+    // A pair by the first of its lines, both ways.
+    const name = ls.length === 1 ? first.name || first.text : (first.eq || first.name).replace('=>', '<=>');
+    lines.push({ index: ls[0], lines: ls.map((l) => rx[l].line), name, made: made[g], taken: taken[g],
+      madeCum: summed(made[g]), takenCum: summed(taken[g]) });
+  }
+  return { type: 'lines', id: msg.id, of: { kind: of.kind === 'species' ? 'species' : 'element', name: of.name },
+    at: column ? 'column' : Number(msg.at), transport, n, nlines: nl, lines };
+}
+
 /**
  * One water of a run as PHREEQC lists it: the stored point `index` in cell
  * `cell` -- each species' ln of its activity coefficient, every quantity of
@@ -1861,6 +1967,15 @@ function handleRtmMessage(msg, post) {
         reply.total.buffer, reply.byReactions.buffer, ...reply.bands.map((b) => b.values.buffer)] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'budget', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'lines') {
+    try {
+      const reply = rtmLines(msg);
+      post(reply, reply.lines ? reply.lines.flatMap((l) => [l.made.buffer, l.taken.buffer, l.madeCum.buffer, l.takenCum.buffer]) : []);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'lines', error: rtmErrorMessage(e) });
     }
     return;
   }
