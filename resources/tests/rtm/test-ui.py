@@ -1745,11 +1745,12 @@ async def main():
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.6)
             grad = await page.ev("document.getElementById('rtmChartGradient').data[0].colorbar.title.text")
+            no_zones = await page.ev("[...document.getElementById('rtmGradSpecies').options].some((o) => o.value === '*zones')")
             check('  against distance CaX2 as the model has it, the note saying why, and Ca+2 in mg/kgw, the CSV\'s headers saying '
-                  'so; on Gradient Ca+2 in mg/kgw', [prof, phead[0] if phead else None,
-                                                     bool(phead) and all(h.endswith(' (mg/kgw)') for h in phead[1:]), grad],
+                  'so; on Gradient Ca+2 in mg/kgw, and no redox zones in Show, the model having no electron',
+                  [prof, phead[0] if phead else None, bool(phead) and all(h.endswith(' (mg/kgw)') for h in phead[1:]), grad, no_zones],
                   [[['CaX2 concentration', 'CaX2 as the model has it, not in mg/kgw: no formula mass'], ['Ca+2 (mg/kgw)', '']],
-                   'distance from the left-hand face (m)', True, 'Ca+2 (mg/kgw)'])
+                   'distance from the left-hand face (m)', True, 'Ca+2 (mg/kgw)', False])
             # Against distance one time at a time: the slider under the bar at the end while the Times are drawn; moved, one
             # curve at the stored point it is at, on an axis that spans the whole run and so holds still from point to point;
             # the very curve the Times draw at that stored time, typed; play moves it on through the run at the pace chosen and
@@ -2170,6 +2171,78 @@ async def main():
             await page.ev("(() => { document.getElementById('rtmGradSpecies').value = 'pe'; document.getElementById('rtmGradLogC').checked = false;"
                           " document.getElementById('rtmGradCFrom').value = ''; const v = document.getElementById('rtmGradView'); v.value = 'contour';"
                           " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.5)
+            # The redox zones on Gradient, first in Show in a model with the electron: each cell at each stored time by the
+            # couple holding its pe, the most poising capacity n Tox Tred/(Tox + Tred), O2 2 Tox against the water. In the
+            # order the couples turn over -- oxic, nitrate, manganese, iron, sulfate, methane -- the nitrite never holding it;
+            # at the end from the inlet sulfate, methane, iron, manganese, nitrate and the oxygen ahead; a map, not contours,
+            # log concentration and smooth not to be had; the CSV by name. And cell 15 at every stored time worked out by
+            # hand from every species' concentration there, the time chart's CSV, with each couple's species written out.
+            await page.ev("(() => { const s = document.getElementById('rtmGradSpecies'); s.value = '*zones';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(1.2)
+            zmap = await page.ev("""(() => { const p = document.getElementById('rtmChartGradient'), d = p.data[0];
+              const names = d.colorbar.ticktext;
+              const last = d.z.map((row) => names[row[row.length - 1]]);
+              return [document.getElementById('rtmGradSpecies').options[0].textContent, d.type, names.join(' | '),
+                last.filter((v, c) => c === 0 || v !== last[c - 1]).join(' > '),
+                document.getElementById('rtmGradNote').textContent.split('; ').slice(1).join('; '),
+                document.getElementById('rtmGradLogC').disabled, document.getElementById('rtmGradSmooth').disabled]; })()""")
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"gradient\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            # Every species at cell 15: nothing ticked against time, the CSV every species.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
+            await asyncio.sleep(0.3)
+            await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '15';"
+                          " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            saved = await page.ev("(async () => Promise.all(window.__saved.map(async (r) => [r.name, (await r.body).trim().split('\\n')])))()")
+            zone_csv = saved[0] if isinstance(saved, list) and saved else ['', ['']]
+            cell_csv = saved[1] if isinstance(saved, list) and len(saved) > 1 else ['', ['']]
+            couples = [('O2/H2O', 2, {'O2': 2}, None), ('NO3-/NO2-', 2, {'NO3-': 1}, {'NO2-': 1}), ('NO3-/N2', 5, {'NO3-': 1}, {'N2': 2}),
+                       ('SO4-2/HS-', 8, {'SO4-2': 1, 'HSO4-': 1}, {'HS-': 1, 'H2S': 1, 'FeS_ppt': 1}),
+                       ('CO3-2/CH4', 8, {k: 1 for k in ('CO3-2', 'HCO3-', 'CO2', 'CaHCO3+', 'CaCO3', 'Calcite', 'Siderite')}, {'CH4': 1}),
+                       ('Fe+3/Fe+2', 1, {k: 1 for k in ('Fe+3', 'FeOH+2', 'Fe(OH)2+', 'Fe(OH)3', 'Fe(OH)4-', 'Ferrihydrite')},
+                        {k: 1 for k in ('Fe+2', 'FeOH+', 'FeS_ppt', 'Siderite')}),
+                       ('Pyrolusite/Mn+2', 2, {'Pyrolusite': 1}, {'Mn+2': 1})]
+            by_hand = []
+            head = [h.rsplit(' @ cell 15', 1)[0] for h in cell_csv[1][0].split(',')]
+            for line in cell_csv[1][1:]:
+                v = dict(zip(head, [float(x) if x else 0.0 for x in line.split(',')]))
+                tot = lambda terms: sum(n * max(0.0, v[k]) for k, n in terms.items())
+                best, zone = 0.0, ''
+                for name, n, ox, red in couples:
+                    o = tot(ox)
+                    beta = n * (o if red is None else (o * tot(red) / (o + tot(red)) if o + tot(red) > 0 else 0.0))
+                    if beta > best:
+                        best, zone = beta, name
+                by_hand.append(zone)
+            row15 = next((l.split(',')[1:] for l in zone_csv[1][1:] if l.split(',')[0] == '15.5'), [])
+            check('  the redox zones on Gradient, first in Show with the electron: oxic, nitrate, manganese, iron, sulfate and '
+                  'methane in the order they turn over, the nitrite never holding the pe; at the end from the inlet sulfate, '
+                  'methane, iron, manganese, nitrate and the oxygen ahead; a map, log concentration and smooth not to be had; '
+                  'cell 15 at all its stored times the couple worked out by hand from every species there, oxic, then nitrate, '
+                  'manganese and iron as the plume reaches it',
+                  [zmap, zone_csv[0], len(row15), row15 == by_hand, [z for j, z in enumerate(by_hand) if j == 0 or z != by_hand[j - 1]]],
+                  [['The redox zones: the couple holding the pe', 'heatmap',
+                    'O2/H2O | NO3-/N2 | Pyrolusite/Mn+2 | Fe+3/Fe+2 | SO4-2/HS- | CO3-2/CH4',
+                    'SO4-2/HS- > CO3-2/CH4 > Fe+3/Fe+2 > Pyrolusite/Mn+2 > NO3-/N2 > O2/H2O',
+                    'the redox zones by the couple holding the pe, oxidised first: O2/H2O 57.4 %, NO3-/N2 4.1 %, Pyrolusite/Mn+2 '
+                    '14.2 %, Fe+3/Fe+2 12.6 %, SO4-2/HS- 2.7 %, CO3-2/CH4 9.0 % of the waters; never holding it: NO3-/NO2-; '
+                    'drawn as a map: zones are no amount to draw contours of or raise into a surface', True, True],
+                   'rtm_gradient__zones.csv', 3021, True, ['O2/H2O', 'NO3-/N2', 'Pyrolusite/Mn+2', 'Fe+3/Fe+2']])
+            await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '0';"
+                          " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmGradSpecies'); s.value = 'pe';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.5)
             # An example that gives no floor: each axis from the least drawn again.
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")

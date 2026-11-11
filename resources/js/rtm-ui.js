@@ -1267,8 +1267,12 @@
 
   function renderGradSpecies() {
     const names = speciesNames();
-    if (!names.includes(state.gradSpecies) && !quantityOf(state.gradSpecies)) state.gradSpecies = names[0] || '';
-    $('rtmGradSpecies').innerHTML = pickerOptions(state.gradSpecies);
+    const zones = zoneItems(state.compiled).length > 0;
+    if (!(zones && state.gradSpecies === GRAD_ZONES) && !names.includes(state.gradSpecies) && !quantityOf(state.gradSpecies)) {
+      state.gradSpecies = names[0] || '';
+    }
+    $('rtmGradSpecies').innerHTML = (zones ? `<option value="${GRAD_ZONES}"${state.gradSpecies === GRAD_ZONES ? ' selected' : ''}>`
+      + 'The redox zones: the couple holding the pe</option>' : '') + pickerOptions(state.gradSpecies);
   }
 
   /* ---------------------------------------------------------------------
@@ -2044,6 +2048,271 @@
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
+  /*
+    THE REDOX ZONES, ON GRADIENT: each cell at each stored time coloured by
+    the redox couple that holds its pe -- the one with the most poising
+    capacity there, the electrons it takes or gives for a change in pe:
+    n Tox Tred/(Tox + Tred), n the electrons between its two states (the
+    couples of compositionOf, as the redox ladder has them) and T what the
+    cell holds in each, minerals and all; the water's own O2 2 Tox to each O
+    of it, and H2 Tred to each H, the water the other state of each. The
+    zones in the order the couples turn over, each read off the run where
+    its two states come nearest even -- pe less log10(Tox/Tred)/n there --
+    oxic first and down the ladder. A model without the electron has none.
+  */
+  const GRAD_ZONES = '*zones';
+  /** The couples a run's zones can be: [{ name, n, hi: [[k, n]] or null, lo: likewise, top, bottom }], or [] without the electron. */
+  function zoneItems(m) {
+    const C = m && m.composition;
+    if (!m || !m.redox || !C) return [];
+    const items = dgCoupleItems(C, true, m.species).filter((it) => it.hi.length && it.lo.length)
+      .map((it) => ({ name: `${it.cp.ox.join(' + ')}/${it.cp.red.join(' + ')}`, n: it.cp.hi - it.cp.lo, hi: it.hi, lo: it.lo }));
+    // The water's own: a species made of O alone, or of H alone, with no charge -- O2 and H2.
+    const own = (el) => m.species.map((nm, k) => {
+      const made = /[+-]/.test(nm) ? null : RtmModel.elementsOf(nm);
+      return made && made.size === 1 && made.has(el) ? [k, made.get(el)] : null;
+    }).filter(Boolean);
+    const o = own('O');
+    const h = own('H');
+    if (o.length) items.unshift({ name: `${o.map(([k]) => m.species[k]).join(' + ')}/H2O`, n: 2, hi: o, lo: null, top: true });
+    if (h.length) items.push({ name: `H2O/${h.map(([k]) => m.species[k]).join(' + ')}`, n: 1, hi: null, lo: h, bottom: true });
+    return items;
+  }
+  /**
+   * Run r's zones at a layer: { items, zone: each model cell along the column by stored point the item holding the pe
+   * (-1: none), pe likewise, rung: each item's pe of turning over, read off the run, count: how many waters each holds }.
+   */
+  const zoneCache = new Map();
+  function zonesOf(r, layer) {
+    const key = `${r.runKey}|${layer}`;
+    if (zoneCache.has(key)) return zoneCache.get(key);
+    const m = r.model;
+    const items = zoneItems(m);
+    const ns = m.nspecies;
+    const stride = m.stride || 1;
+    const e = m.redox ? m.species.indexOf(m.redox.name) : -1;
+    const cells = m.fracture;
+    const zone = new Int16Array(cells * r.n).fill(-1);
+    const pe = new Float64Array(cells * r.n);
+    const near = items.map(() => Infinity);
+    const rung = items.map((it) => (it.top ? Infinity : it.bottom ? -Infinity : NaN));
+    const count = items.map(() => 0);
+    const sum = (terms, b) => { let s = 0; for (const [k, c] of terms) s += c * Math.max(0, r.states[b + k]); return s; };
+    for (let c = 0; c < cells; c++) {
+      for (let i = 0; i < r.n; i++) {
+        const b = i * r.width + (c * stride + Math.min(layer, stride - 1)) * ns;
+        const p = e >= 0 ? -Math.log10(r.states[b + e]) : NaN;
+        pe[c * r.n + i] = p;
+        let most = 0;
+        let z = -1;
+        items.forEach((it, q) => {
+          const ox = it.hi ? sum(it.hi, b) : Infinity;
+          const red = it.lo ? sum(it.lo, b) : Infinity;
+          const beta = it.n * (it.hi && it.lo ? (ox + red > 0 ? (ox * red) / (ox + red) : 0) : it.hi ? ox : red);
+          if (beta > most) { most = beta; z = q; }
+          if (it.hi && it.lo && ox > 0 && red > 0 && Number.isFinite(p)) {
+            const d = Math.log10(ox / red) / it.n;
+            if (Math.abs(d) < near[q]) { near[q] = Math.abs(d); rung[q] = p - d; }
+          }
+        });
+        zone[c * r.n + i] = z;
+        if (z >= 0) count[z]++;
+      }
+    }
+    const out = { items, zone, pe, rung, count };
+    if (zoneCache.size > 20) zoneCache.clear();
+    zoneCache.set(key, out);
+    return out;
+  }
+  // The colour scales of the Gradient, as Plotly has them, dark at 0: the zones' colours are sampled from the one chosen.
+  const GRAD_SCALE_STOPS = {
+    YlOrRd: [[0, '#800026'], [0.125, '#bd0026'], [0.25, '#e31a1c'], [0.375, '#fc4e2a'], [0.5, '#fd8d3c'], [0.625, '#feb24c'],
+      [0.75, '#fed976'], [0.875, '#ffeda0'], [1, '#ffffcc']],
+    Viridis: [[0, '#440154'], [0.0627, '#48186a'], [0.1255, '#472d7b'], [0.1882, '#424086'], [0.251, '#3b528b'], [0.3137, '#33638d'],
+      [0.3765, '#2c728e'], [0.4392, '#26828e'], [0.502, '#21918c'], [0.5647, '#1fa088'], [0.6275, '#28ae80'], [0.6902, '#3fbc73'],
+      [0.7529, '#5ec962'], [0.8157, '#84d44b'], [0.8784, '#addc30'], [0.9412, '#d8e219'], [1, '#fde725']],
+    Cividis: [[0, '#00204c'], [0.0588, '#002a66'], [0.1176, '#00346e'], [0.1765, '#273f6c'], [0.2353, '#3c4a6b'], [0.2941, '#4c556b'],
+      [0.3529, '#5b5f6d'], [0.4118, '#686a70'], [0.4706, '#757575'], [0.5294, '#838178'], [0.5882, '#928c78'], [0.6471, '#a19876'],
+      [0.7059, '#b0a572'], [0.7647, '#c0b16d'], [0.8235, '#d1bf66'], [0.8824, '#e1cc5c'], [0.9412, '#f3db4f'], [1, '#ffe945']],
+    Greys: [[0, '#000000'], [1, '#ffffff']],
+  };
+  const hexRgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const rgbHex = (v) => `#${v.map((x) => Math.round(x).toString(16).padStart(2, '0')).join('')}`;
+  // A scale's colour p of the way from its light end to its dark end, as Plotly blends it.
+  function scaleAt(stops, p) {
+    const x = Math.min(1, Math.max(0, 1 - p));
+    for (let i = 1; i < stops.length; i++) {
+      if (x <= stops[i][0]) {
+        const [x0, c0] = stops[i - 1];
+        const [x1, c1] = stops[i];
+        const w = (x - x0) / (x1 - x0);
+        const a = hexRgb(c0);
+        const b = hexRgb(c1);
+        return rgbHex(a.map((v, j) => v + w * (b[j] - v)));
+      }
+    }
+    return stops[stops.length - 1][1];
+  }
+  // OKLab's lightness of a colour, 0 black to 1 white.
+  function oklabL(h) {
+    const [r, g, b] = hexRgb(h).map((v) => { const c = v / 255; return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+    const l = Math.cbrt(0.4122214708 * r + 0.5363325363 * g + 0.0514459929 * b);
+    const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
+    const s = Math.cbrt(0.0883024619 * r + 0.2817188376 * g + 0.6299787005 * b);
+    return 0.2104542553 * l + 0.793617785 * m - 0.0040720468 * s;
+  }
+  /*
+    K colours for K zones in order, from the scale chosen, at equal steps of
+    lightness between 0.12 and 0.92 of the way along it -- no zone white or
+    black -- the first, the most oxidised, nearest the page: light to dark
+    on a light page and dark to light on a dark one, so that the oxic water
+    recedes and the more reduced a zone the more it stands out.
+  */
+  function zoneColours(K, scale) {
+    const stops = GRAD_SCALE_STOPS[scale] || GRAD_SCALE_STOPS.YlOrRd;
+    const fine = Array.from({ length: 161 }, (_, j) => { const p = 0.12 + (0.8 * j) / 160; return [p, oklabL(scaleAt(stops, p))]; });
+    const [L0, L1] = [fine[0][1], fine[fine.length - 1][1]];
+    const out = [];
+    for (let j = 0; j < K; j++) {
+      const want = K === 1 ? (L0 + L1) / 2 : L0 + ((L1 - L0) * j) / (K - 1);
+      let q = 1;
+      while (q < fine.length - 1 && (fine[q][1] - want) * (L1 - L0) < 0) q++;
+      const [pa, la] = fine[q - 1];
+      const [pb, lb] = fine[q];
+      out.push(scaleAt(stops, lb === la ? pb : pa + ((want - la) / (lb - la)) * (pb - pa)));
+    }
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? out.reverse() : out;
+  }
+
+  /*
+    The zones as a map: the run's, and the kept run's under it, on one list
+    of zones in the order the couples turn over -- the zones either holds
+    somewhere -- each its colour. A map of categories only: the As of
+    contours or a surface, log concentration and smooth do not apply to it.
+  */
+  function drawGradZones(r, plot, gl, logT, tmin) {
+    const empty = $('rtmGradEmpty');
+    const cells = r.model.fracture;
+    const Z = zonesOf(r, gl);
+    if (!Z.items.length) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = 'This model has no redox zones: they need the electron and a couple of an element\'s valence states.';
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+    const cols = [];
+    for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) cols.push(i);
+    if (!cols.length) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = `Nothing is stored after ${fmtTime(tmin)}: lower the "from" time.`;
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+    // The kept run beside it: its own zones, of its own couples, where it has the column and the layer.
+    const bk = besideRun();
+    const kr = bk ? bk.r : null;
+    const kWhy = !bk ? '' : !kr.model.transport || !(kr.model.fracture > 1) ? 'it was a batch'
+      : gl > 0 && !(gl < (kr.model.stride || 1)) ? `it has no rock layer ${gl}` : !zoneItems(kr.model).length ? 'it has no redox zones' : '';
+    const KZ = bk && !kWhy ? zonesOf(kr, gl) : null;
+    // One list, by name: the zones either run holds, in the order they turn over, the run's own reading first.
+    const rungOf = new Map();
+    for (const z of KZ ? [Z, KZ] : [Z]) {
+      z.items.forEach((it, q) => { if (z.count[q] && !rungOf.has(it.name)) rungOf.set(it.name, z.rung[q]); });
+    }
+    const names = [...rungOf.keys()].sort((a, b) => {
+      const ra = rungOf.get(a);
+      const rb = rungOf.get(b);
+      return (Number.isNaN(rb) ? -Infinity : rb) - (Number.isNaN(ra) ? -Infinity : ra);
+    });
+    const K = names.length;
+    if (!K) {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = 'No couple holds the pe anywhere in this run: none of them has both its states in any cell.';
+      $('rtmGradNote').textContent = '';
+      return;
+    }
+    const colours = zoneColours(K, state.gradScale);
+    const colorscale = [];
+    colours.forEach((col, j) => { colorscale.push([j / K, col], [(j + 1) / K, col]); });
+    const view = state.gradView || 'map';
+    const sym = timeUnit().symbol;
+    const big = cells * cols.length > 400000;
+    const mapOf = (z, run, cs, ncells) => {
+      const at = z.items.map((it) => names.indexOf(it.name));
+      const zz = [];
+      const text = [];
+      for (let c = 0; c < ncells; c++) {
+        const row = [];
+        const words = [];
+        for (const i of cs) {
+          const q = z.zone[c * run.n + i];
+          row.push(q >= 0 && at[q] >= 0 ? at[q] : null);
+          if (!big) words.push(q >= 0 ? `${z.items[q].name}, pe ${z.pe[c * run.n + i].toFixed(2)}` : 'no couple holds it');
+        }
+        zz.push(row);
+        text.push(words);
+      }
+      return { zz, text };
+    };
+    const own = mapOf(Z, r, cols, cells);
+    const trace = {
+      type: 'heatmap', x: cols.map((i) => r.t[i]), y: Array.from(r.model.centres), z: own.zz, zmin: -0.5, zmax: K - 0.5, zauto: false,
+      colorscale, connectgaps: false, zsmooth: false, meta: { categories: names },
+      ...(big ? { hovertemplate: `t = %{x:.3e} ${sym}<br>x = %{y:.3e} m<extra></extra>` }
+        : { text: own.text, hovertemplate: `t = %{x:.3e} ${sym}<br>x = %{y:.3e} m<br>%{text}<extra></extra>` }),
+      colorbar: { title: { text: 'the couple holding the pe', side: 'right', font: { size: 11 } }, tickvals: names.map((_, j) => j),
+        ticktext: names.map((nm) => esc(nm)), thickness: 14, outlinewidth: 0, tickfont: { size: 10 } },
+    };
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.margin.l = 92;
+    layout.xaxis.type = logT ? 'log' : 'linear';
+    layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+    layout.yaxis.title = { text: 'distance from the left-hand face (m)', font: { size: 11 } };
+    const traces = [trace];
+    let besideSaid = bk && kWhy ? besideNote(bk, kWhy) : '';
+    if (KZ) {
+      const kt = besideTimes(bk);
+      const kcols = [];
+      for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) kcols.push(i);
+      const theirs = mapOf(KZ, kr, kcols, kr.model.fracture);
+      traces.push({ ...trace, x: kcols.map((i) => kt[i]), y: Array.from(kr.model.centres), z: theirs.zz, showscale: false,
+        ...(big ? {} : { text: theirs.text }), xaxis: 'x2', yaxis: 'y2',
+        hovertemplate: trace.hovertemplate.replace('<extra></extra>', `<extra>${esc(bk.label)}</extra>`) });
+      const note = (text, x, y) => ({ text: esc(text), xref: 'paper', yref: 'paper', x, y, xanchor: 'left', yanchor: 'bottom',
+        showarrow: false, font: { size: 11, color: themeColors().text } });
+      layout.yaxis.domain = [0.54, 1];
+      layout.xaxis.anchor = 'y';
+      layout.xaxis2 = { ...layout.xaxis, anchor: 'y2', matches: 'x' };
+      layout.yaxis2 = { ...layout.yaxis, domain: [0, 0.44], anchor: 'x2' };
+      layout.xaxis.title = undefined;
+      layout.margin.t = 24;
+      layout.annotations = [note('this run', 0, 1.0), note(bk.label, 0, 0.445)];
+      besideSaid = `${bk.label} beside it, its own zones below, in the same colours`;
+    }
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    // What share of the map each zone holds, in order; the couples that hold the pe nowhere in it.
+    const total = Z.count.reduce((a, b) => a + b, 0);
+    const shares = names.map((nm) => {
+      const q = Z.items.findIndex((it) => it.name === nm);
+      return q >= 0 && Z.count[q] ? `${nm} ${((100 * Z.count[q]) / Math.max(1, total)).toFixed(1)} %` : '';
+    }).filter(Boolean);
+    const never = Z.items.filter((it, q) => !Z.count[q]).map((it) => it.name);
+    const bits = [`${cells} cells × ${cols.length} stored times${gl ? `, rock layer ${gl}` : ''}`,
+      `the redox zones by the couple holding the pe, oxidised first: ${shares.join(', ')} of the waters`];
+    if (never.length) bits.push(`never holding it: ${never.join(', ')}`);
+    if (logT && cols.length < r.n) bits.push(`${r.n - cols.length} earlier points left off (t = 0 cannot go on a log axis)`);
+    if (view !== 'map') bits.push('drawn as a map: zones are no amount to draw contours of or raise into a surface');
+    if (besideSaid) bits.push(besideSaid);
+    $('rtmGradNote').textContent = bits.join('; ');
+  }
+
   /**
    * The whole run as one picture: time across, distance down, concentration as
    * colour. What a stack of profiles says one curve at a time, this says at
@@ -2075,6 +2344,15 @@
     const stride = r.model.stride || 1;
     const gl = Math.min(state.gradLayer, stride - 1);
     const logT = $('rtmGradLogT').checked;
+    // The redox zones are categories: no log of them, no from, no smoothing between them.
+    const zones = name === GRAD_ZONES;
+    $('rtmGradLogC').disabled = zones;
+    $('rtmGradSmooth').disabled = zones;
+    if (zones) {
+      $('rtmGradCFrom').disabled = true;
+      drawGradZones(r, plot, gl, logT, Number($('rtmGradTMin').value) || 0);
+      return;
+    }
     // A quantity: every cell's, from the worker; pH, SI and the like are on a scale of their own, never logged again.
     const quantity = isQuantity(name);
     const q = quantity ? quantityOf(name) : null;
@@ -6376,8 +6654,10 @@
     const grid = data.find((tr) => ['heatmap', 'contour', 'surface'].includes(tr.type));
     if (grid) {
       const title = (grid.colorbar && grid.colorbar.title && grid.colorbar.title.text) || 'value';
+      // A map of categories, the redox zones: each by its name.
+      const cat = grid.meta && grid.meta.categories;
       return { head: [`distance (m) \\ time (${timeUnit().symbol}): ${title}`, ...grid.x], name,
-        rows: grid.y.map((y, j) => [y, ...grid.z[j].map((v) => (v === null || v === undefined ? null : v))]) };
+        rows: grid.y.map((y, j) => [y, ...grid.z[j].map((v) => (v === null || v === undefined ? null : cat ? cat[v] : v))]) };
     }
     const xs = [...new Set(data.flatMap((tr) => Array.from(tr.x || [])))].sort((a, b) => a - b);
     const xTitle = (plot.layout && plot.layout.xaxis && plot.layout.xaxis.title && plot.layout.xaxis.title.text) || 'x';
@@ -7370,6 +7650,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         sections: [
           { heading: 'The toolbar', list: [
             '**Show**, and **Layer** with a rock matrix: what is drawn — a species, or a quantity such as pH or a saturation index — along the fracture or along one layer of rock.',
+            '**The redox zones**, first in Show in a model with the electron: each cell at each time coloured by the couple that holds its pe, the one with the most poising capacity there, n·Tox·Tred/(Tox + Tred) of what the cell holds in its two states, O₂ and H₂ against the water itself; oxic first and down the ladder, in the Colours chosen at equal steps of lightness. Hover for the couple and the pe; the note gives each zone\'s share. A map only.',
             '**As**: a map, contours of it with their values on them, or a surface in three dimensions, the value up, which the mouse turns.',
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
