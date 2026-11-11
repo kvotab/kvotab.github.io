@@ -1102,6 +1102,12 @@
   const REACTIONS_OPEN_MOST = 12;
   /** A key as the charts and their legends name it: a species its name, a quantity its label. */
   const labelOf = (key) => (isQuantity(key) ? quantityOf(key).label : key);
+  /** A key as a right-hand axis's title names it: a quantity with a unit its label and the unit, Eh (V); else its label. */
+  const axisLabelOf = (key) => {
+    if (!isQuantity(key)) return key;
+    const q = quantityOf(key);
+    return q.unit && !q.label.includes(q.unit) ? `${q.label} (${q.unit})` : q.label;
+  };
   /** Which axis a key goes on: the left for a species and an amount, the right for the rest. */
   const axisOf = (key) => (isQuantity(key) && quantityOf(key).axis === 'index' ? 'index' : 'conc');
 
@@ -1709,7 +1715,7 @@
               kx.push(kt[i]);
               kv.push(v);
             }
-            if (kx.length && onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
+            if (kx.length && onRight && !right.includes(axisLabelOf(nm))) right.push(axisLabelOf(nm));
             if (kx.length) {
               besideTraces.push({ name: `${name}, ${bk.label}`, x: kx, y: kv, mode: 'lines', type: 'scatter',
                 line: { color, dash: 'dash', width: 1.6 }, ...(onRight ? { yaxis: 'y2' } : {}) });
@@ -1728,7 +1734,7 @@
           xs.push(x);
           ys.push(v);
         }
-        if (onRight && !right.includes(labelOf(nm))) right.push(labelOf(nm));
+        if (onRight && !right.includes(axisLabelOf(nm))) right.push(axisLabelOf(nm));
         if (xs.length) {
           traces.push({ name, x: xs, y: ys, mode: 'lines', type: 'scatter', line: { color },
             ...(onRight ? { yaxis: 'y2' } : {}) });
@@ -2292,7 +2298,7 @@
       const valueAt = (j, k) => keep(quantity ? (quantitySeries(key, cellAt(k)) || [])[j] : r.states[j * r.width + cellAt(k) * r.model.nspecies + si]);
       const y = Array.from({ length: npts }, (_, k) => valueAt(i, k));
       if (slider) (onRight ? spansR : spansL).push(spanOver(`${r.runKey}|${key}|${g.across}|${layer}|${g.atCell}|${f}`, r.n, npts, valueAt));
-      if (onRight && !right.includes(labelOf(key))) right.push(labelOf(key));
+      if (onRight && !right.includes(axisLabelOf(key))) right.push(axisLabelOf(key));
       traces.push({ name: labelOf(key), x, y, mode: across ? 'lines+markers' : 'lines', type: 'scatter', line: { color },
         ...(onRight ? { yaxis: 'y2' } : {}), ...meta });
       if (bk) {
@@ -7454,7 +7460,7 @@
     if (right) {
       const c = themeColors();
       layout.yaxis2 = { overlaying: 'y', side: 'right', gridcolor: c.grid, zeroline: false, linecolor: c.grid, showgrid: false,
-        title: { text: [...new Set(curves.filter((cv) => cv.index).map((cv) => labelOf(cv.key)))].join(', '), font: { size: 11 } } };
+        title: { text: [...new Set(curves.filter((cv) => cv.index).map((cv) => axisLabelOf(cv.key)))].join(', '), font: { size: 11 } } };
       layout.margin.r = 64;
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);

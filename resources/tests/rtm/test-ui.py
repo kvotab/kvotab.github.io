@@ -981,6 +981,8 @@ async def main():
             check('pH and SI(Halite) on the right-hand axis, the <OUTPUT> in mol/kgw on the left, the pH <DATA> measured as '
                   'points in the colour of its line', traces,
                   'pH|y2|lines / pH, measured|y2|markers / SI(Halite)|y2|lines / acid (mol/kgw)|y|lines')
+            check('  the right-hand axis names them as they are, pH and an SI having no unit', await page.ev(
+                "document.getElementById('rtmChartTime').layout.yaxis2.title.text"), 'pH, SI(Halite)')
             at500 = await page.ev("(() => { const t = document.getElementById('rtmChartTime').data[0]; let k = 0;"
                                   " t.x.forEach((x, i) => { if (Math.abs(x - 500) < Math.abs(t.x[k] - 500)) k = i; });"
                                   " return [t.x[k], t.y[k], document.getElementById('rtmChartTime').data[1].marker.color"
@@ -2941,7 +2943,23 @@ async def main():
                   [['species water totals saturation reactions activities', 'What each reaction does 2',
                     'rate(1): CH2O => CO3-2 + 6 H+ + 4 e-, rate | extent(1): CH2O => CO3-2 + 6 H+ + 4 e-, extent'],
                    'CH2O | CH2O => CO3-2 + 6 H+ + 4 e-, rate (right) | CH2O => CO3-2 + 6 H+ + 4 e-, extent',
-                   'CH2O => CO3-2 + 6 H+ + 4 e-, rate', True, 0.0, 0.0, True])
+                   'CH2O => CO3-2 + 6 H+ + 4 e-, rate (mol/kgw/d)', True, 0.0, 0.0, True])
+            # The right-hand axis names each with its unit: with Eh and pe ticked beside the rate, the rate in mol/kgw a day,
+            # Eh in volts and pe, which has none, bare; on Against distance the same, those ticked against time at the end.
+            await page.ev("""(() => { for (const k of ['Eh', 'pe']) {
+                const i = document.querySelector(`#rtmSeries input[value="${k}"]`); i.checked = true;
+                i.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await asyncio.sleep(0.6)
+            t_axis = await page.ev("document.getElementById('rtmChartTime').layout.yaxis2.title.text")
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = '*ticked';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            d_axis = await settle(page, "(() => { const p = document.getElementById('rtmChartProfile');"
+                                        " return p.layout && p.layout.yaxis2 ? p.layout.yaxis2.title.text : ''; })()",
+                                  'CH2O => CO3-2 + 6 H+ + 4 e-, rate (mol/kgw/d), Eh (V), pe', tries=40, pause=0.25)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            check('  the right-hand axis names each with its unit, against time and along the column: the rate in mol/kgw a day, '
+                  'Eh in volts, pe bare', [t_axis, d_axis], ['CH2O => CO3-2 + 6 H+ + 4 e-, rate (mol/kgw/d), Eh (V), pe'] * 2)
             await page.ev('document.querySelector(\'[data-on-click="rtm:clearSeries"]\').click()')
             await page.ev("""(() => { const b = document.getElementById('rtmLogY'); b.checked = true;
               b.dispatchEvent(new Event('change', { bubbles: true }));
