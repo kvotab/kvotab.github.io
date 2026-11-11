@@ -2286,6 +2286,72 @@ async def main():
                    '6 values measured, each column in its own unit; this run read between its stored points and cells, linearly; '
                    '1 amount at or below zero left out; 1 after the run\'s end; '
                    'the fit was made against other measurements: <DATA> has changed since'])
+            # Breakthrough numbers under Against time: a tracer X and Y held back with R = 4, in a column whose dispersion is a
+            # dispersivity, for six pore volumes, at four cells. Y's semi-discrete equations are X's with time over 4, so it is
+            # half-way at four times X's time at every cell, to the solver's tolerance (the outlet's Y still going at the end,
+            # half-way of the 0.9987 it got to); X's retardation within 1 % of 1. Out of the column: six pore volumes of a
+            # unit concentration came in, u T = 0.04 m/d x 150 d = 6; X's share gone out 5/6, Y's 1/3, what reactions made
+            # next to nothing. Kept, and run again with Y's R = 2: this run's Y at twice X's time, the kept run's still four.
+            btc_text = ('# A tracer and a species held back four times as much, through a column whose dispersion is a dispersivity.\n\n'
+                        '<SETTINGS>\nMODE = transport\nCELLS = 100\nLENGTH = 1.0\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = 0.01\n'
+                        'POROSITY = 0.25\nPECLET = 100\nLEFT = robin\nRIGHT = free\nTEND = 150\nTIME_UNIT = day\n\n<SPECIES>\n'
+                        'X  0.0  left=1.0\nY  0.0  left=1.0  R=4\n\n<REACTIONS>\n')
+            numbers_js = ("[...document.querySelectorAll('#rtmTimeNumbers tbody tr')].map((tr) => [tr.children[0].textContent,"
+                          " ...[...tr.children].slice(1).map((td) => (td.dataset.v === undefined ? td.textContent : Number(td.dataset.v)))])")
+            far_js = ("Object.fromEntries([...document.querySelectorAll('#rtmTimeNumbers tbody tr')].filter((tr) => tr.children.length === 6)"
+                      ".map((tr) => [tr.children[0].textContent, tr.children[2].textContent.endsWith('at the end of the run')]))")
+
+            async def numbers_after_run(text):
+                await set_text(page, text)
+                await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 2 species')", True, tries=40, pause=0.25)
+                await page.ev("document.getElementById('rtmRun').click()")
+                await wait_run(page)
+                await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+                return await settle(page, "[...document.querySelectorAll('#rtmTimeNumbers tbody tr')].length >= 10", True, tries=60, pause=0.25)
+            await set_text(page, btc_text)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 2 species')", True, tries=40, pause=0.25)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await tick('X', True)
+            await tick('Y', True)
+            await cells('24, 49, 74, end')
+            await page.ev("(() => { const b = document.getElementById('rtmBtc'); b.checked = true; b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            ok = await numbers_after_run(btc_text)
+            rows = await page.ev(numbers_js)
+            at_end = await page.ev(far_js)
+            half = {r[0]: r for r in rows if isinstance(r, list) and ' at ' in r[0]}
+            out_rows = {r[0]: r for r in rows if isinstance(r, list) and ' at ' not in r[0]}
+            sites = ['0.245', '0.495', '0.745', '0.995']
+            ratios = [half[f'Y at {c} m'][3] / half[f'X at {c} m'][3] for c in sites] if len(half) == 8 else []
+            rx = [half[f'X at {c} m'][5] for c in sites] if len(half) == 8 else []
+            x_out = out_rows.get('X', [None] * 8)
+            y_out = out_rows.get('Y', [None] * 8)
+            check('  breakthrough numbers: Y, held back with R = 4, half-way at four times the tracer\'s time at each of four cells, '
+                  'the tracer\'s retardation within 1 % of 1, the outlet\'s Y still going at the end; six came in, 5/6 of the tracer '
+                  f'gone out and 1/3 of Y, reactions next to nothing (ratios {ratios}, X\'s retardation {rx})',
+                  [ok, len(ratios) == 4 and max(abs(q - 4) for q in ratios) < 1e-3, len(rx) == 4 and max(abs(v - 1) for v in rx) < 0.01,
+                   [name for name, end in sorted(at_end.items()) if end] if isinstance(at_end, dict) else at_end,
+                   isinstance(x_out[3], float) and abs(x_out[3] - 6) < 1e-12 and abs(x_out[7] - 5 / 6) < 1e-6 and abs(x_out[6]) < 1e-5,
+                   isinstance(y_out[7], float) and abs(y_out[7] - 1 / 3) < 1e-3 and abs(y_out[6]) < 1e-3],
+                  [True, True, True, ['Y at 0.995 m'], True, True])
+            await page.ev("document.getElementById('rtmKeep').click()")
+            klabel = (await page.ev("document.getElementById('rtmBeside').selectedOptions[0].textContent")).split(',')[0]
+            await numbers_after_run(btc_text.replace('R=4', 'R=2'))
+            rows2 = await page.ev(numbers_js)
+            half2 = {r[0]: r for r in rows2 if isinstance(r, list) and r[0].count(' at ') >= 1 and r[0][:1] in 'XY'}
+            mine2 = [half2[f'Y at {c} m'][3] / half2[f'X at {c} m'][3] for c in sites[:3]] if f'Y at 0.245 m' in half2 else []
+            kept2 = [half2[f'Y at {c} m, {klabel}'][3] / half2[f'X at {c} m, {klabel}'][3] for c in sites[:3]] if f'Y at 0.245 m, {klabel}' in half2 else []
+            check('  kept, and run again with Y\'s R = 2: this run\'s Y half-way at twice the tracer\'s time, the kept run\'s at four, each in '
+                  'rows of its own; what has come out of the column for both runs',
+                  [len(mine2) == 3 and max(abs(q - 2) for q in mine2) < 1e-3, len(kept2) == 3 and max(abs(q - 4) for q in kept2) < 1e-3,
+                   sorted(r[1] for r in rows2 if isinstance(r, list) and r[0] in ('X', 'Y'))],
+                  [True, True, sorted(['this run', 'this run', klabel, klabel])])
+            # As the checks after find the time chart: nothing beside, one cell, no numbers, X and Y unticked.
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("(() => { const b = document.getElementById('rtmBtc'); b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await cells('')
+            await tick('X', False)
+            await tick('Y', False)
             ok = await example('frontuncertainty', "/runs done in|could not/.test(document.getElementById('rtmStatus').textContent)")
             bands = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                   " document.getElementById('rtmStatus').textContent.slice(0, 20),"

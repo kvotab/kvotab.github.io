@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111a">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -259,6 +259,7 @@
             <label><input type="checkbox" id="rtmLogY" checked data-on-change="rtm:redraw"> log concentration</label>
             <label>from <input type="text" id="rtmYFrom" placeholder="the least" style="width:70px" data-on-change="rtm:redraw"></label>
             <label>Units <select id="rtmUnitTime" data-on-change="rtm:concUnit"></select></label>
+            <label id="rtmBtcWrap" hidden><input type="checkbox" id="rtmBtc" data-on-change="rtm:btc"> breakthrough numbers</label>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:clearSeries">clear</button>
             <span class="rtm-saves" aria-label="Save">
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:downloadCsv">CSV</button>
@@ -274,6 +275,7 @@
           </div>
           <div class="rtm-series" id="rtmSeries"></div>
           <div class="plot" id="rtmChartTime" hidden></div>
+          <div class="rtm-fit-result" id="rtmTimeNumbers" hidden></div>
           <p class="rtm-empty" id="rtmTimeEmpty">Run the model, then tick a species to draw it.</p>
         </section>
 
@@ -2393,6 +2395,21 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             a curve stands out; six cells at most, as more steps of one colour cannot be told apart.
             The legend and the CSV give each cell's distance from the left-hand face. Left empty, the
             one cell <em>Cell</em> chooses is drawn, or what crosses an end.</p>
+          <p><em>Breakthrough numbers</em>, in a column, puts two tables under the time chart. Of each
+            curve drawn: where it starts, the farthest it gets from there and when, and when it is first
+            half-way from the one to the other, between stored points — read off every stored point,
+            whatever the axes leave out. Where the water flows, that time is given in pore volumes too,
+            and with it the retardation it implies: those pore volumes over the share of the column the
+            water has crossed to get there, so that what moves with the water reads 1, and a species
+            sorbed linearly with a retardation factor <i>R</i> reads <i>R</i> times what a tracer reads.
+            The half-way is a front's median rather than its mean, and a front that spreads much moves
+            it a little — in a short or dispersive column even a tracer reads a little off 1 — so a
+            species is best set against a tracer in the same run. Of each species and each element's
+            total ticked: what has come out of the column, from its budget as the Composition tab keeps
+            it — what was there at the start, what came in at the left, what went out at the right,
+            what is there at the end and what reactions made or took — and the share gone out of what
+            was there and came in. A run kept beside has rows of its own, and Excel has both tables on
+            sheets of their own.</p>
           <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
             them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
             is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
@@ -3604,6 +3621,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111c"></script>
 </body>
 </html>

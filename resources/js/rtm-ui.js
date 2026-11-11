@@ -55,6 +55,8 @@
     timeIn: '',
     // Against time at several cells: the list typed in Cells; empty for the one cell Cell chooses.
     cells: '',
+    // Under Against time, where each curve is half-way and what has gone out of the column (breakthrough numbers).
+    btc: false,
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
@@ -120,7 +122,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells,
+        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog,
@@ -162,6 +164,7 @@
       if (typeof s.concUnit === 'string' && (s.concUnit === '' || CONC_UNITS[s.concUnit])) state.concUnit = s.concUnit;
       if (s.timeIn === '' || s.timeIn === 'pv') state.timeIn = s.timeIn;
       if (typeof s.cells === 'string') state.cells = s.cells;
+      if (typeof s.btc === 'boolean') state.btc = s.btc;
       if (['where', 'listing', 'budget', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
@@ -1329,6 +1332,9 @@
     sel.parentElement.hidden = cells === 1;
     $('rtmCellsWrap').hidden = cells === 1;
     $('rtmCells').value = state.cells;
+    // Breakthrough numbers are a column's: a batch has none.
+    $('rtmBtcWrap').hidden = cells === 1;
+    $('rtmBtc').checked = state.btc;
     renderLayerPickers();
   }
 
@@ -1616,6 +1622,7 @@
     const several = tc.several;
     $('rtmCell').disabled = several;
     if (!r || !state.picked.length) {
+      drawBtc(null);
       Plotly.purge(plot);
       plot.hidden = true;
       empty.hidden = false;
@@ -1755,6 +1762,144 @@
       bk && besideComing.length ? `working out ${besideComing.join(', ')} for ${bk.label}…` : '',
       bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft, u)]
       .filter(Boolean).join('; ');
+    drawBtc(r, tc, u, bk);
+  }
+
+  /*
+    BREAKTHROUGH NUMBERS, under Against time: of each curve drawn, where it
+    starts, the farthest it gets from there and when, and when it is
+    half-way from the one to the other -- the first time, between stored
+    points linearly -- read off every stored point, whatever the axes leave
+    out; where the water flows, that time in pore volumes, and the
+    retardation it implies: those pore volumes over the share of the column
+    the water has crossed to get there, 1 for what moves with the water.
+    The half-way is a front's median, not its mean: where a front spreads
+    much, even what moves with the water reads a little off 1, so a species
+    is best set against a tracer in the same run. And of each species and
+    each element's total, what has come out of the column: its budget over
+    the run, as the Composition tab keeps it -- what the column held at the
+    start, what came in at the left, what went out at the right, what it
+    holds at the end and what reactions made or took -- and the share gone
+    out of what was there and came in.
+  */
+  /** Where a curve starts, the farthest it gets from there and when, and when it is first half-way; null where it has no number. */
+  function halfWay(t, y) {
+    const n = y.length;
+    if (!n || Array.prototype.some.call(y, (v) => !Number.isFinite(v))) return null;
+    const y0 = y[0];
+    let far = 0;
+    let iFar = 0;
+    for (let i = 1; i < n; i++) {
+      const d = Math.abs(y[i] - y0);
+      if (d > far) { far = d; iFar = i; }
+    }
+    if (!(far > 1e-12 * Math.max(Math.abs(y0), Math.abs(y[iFar])))) return { moves: false, start: y0 };
+    const half = y0 + (y[iFar] - y0) / 2;
+    let tHalf = t[iFar];
+    for (let i = 1; i <= iFar; i++) {
+      const a = y[i - 1] - half;
+      const b = y[i] - half;
+      if (a === 0) { tHalf = t[i - 1]; break; }
+      if (a * b < 0 || b === 0) { tHalf = t[i - 1] + ((t[i] - t[i - 1]) * (half - y[i - 1])) / (y[i] - y[i - 1]); break; }
+    }
+    // When it gets there: the first time within 1e-4 of the farthest -- a plateau's last wiggle is no time -- and at the
+    // end of the run only where it is still going then.
+    let iReach = iFar;
+    for (let i = 0; i <= iFar; i++) if (Math.abs(y[i] - y0) >= far * (1 - 1e-4)) { iReach = i; break; }
+    return { moves: true, start: y0, far: y[iFar], tFar: t[iReach], atEnd: iReach === n - 1, half, tHalf };
+  }
+  /** What a budget can be kept of for a key: a species, or an element's total in the water; null for anything else. */
+  function budgetFor(key, r) {
+    if (r.model.species.includes(key)) return key === 'e-' ? null : { kind: 'species', name: key };
+    const el = /^tot\(([A-Z][a-z]?)\)$/.exec(key);
+    const C = el ? compositionOf(r.model) : null;
+    return C && C.elements.some((e) => e.el === el[1] && e.terms.length) ? { kind: 'element', name: el[1] } : null;
+  }
+  let btcNow = null;
+  function drawBtc(r, tc, u, bk) {
+    const box = $('rtmTimeNumbers');
+    btcNow = null;
+    if (!state.btc || !r || !r.model.transport || !(r.model.fracture > 1)) { box.hidden = true; box.innerHTML = ''; return; }
+    const here = timeUnit().seconds || 1;
+    // The runs: this one, and the one kept beside, its times in this run's unit and its own pore volume.
+    const runs = [{ r, suffix: '', label: 'this run', t: r.t, tw: poreTime(r) }];
+    if (bk) {
+      const own = (bk.r.model.timeUnit && bk.r.model.timeUnit.seconds) || 1;
+      runs.push({ r: bk.r, suffix: `, ${bk.label}`, label: bk.label, t: besideTimes(bk), tw: (poreTime(bk.r) * own) / here, kept: true });
+    }
+    const half = [];
+    const out = [];
+    const coming = new Set();
+    for (const run of runs) {
+      const m = run.r.model;
+      const L = m.length;
+      const leftward = !!(m.settings && m.settings.ADVECTION && m.settings.VELOCITY < 0);
+      // How far the water has come from the inlet to a cell, or to an end.
+      const crossed = (cell) => (cell === 'left' ? (leftward ? L : 0) : cell === 'right' ? (leftward ? 0 : L)
+        : leftward ? L - m.centres[cell] : m.centres[cell]);
+      for (const nm of state.picked) {
+        if (!runHas(run.r, nm)) continue;
+        const shown = shownAs(run.r, nm, u);
+        if (shown && shown.why) continue;
+        const f = shown ? shown.f : 1;
+        for (const cell of tc.at) {
+          if (run.kept && besideWhy(bk, nm, cell, state.layer)) continue;
+          const y = series(nm, cell, state.layer, run.r);
+          if (!y) continue;
+          const h = halfWay(run.t, f === 1 ? y : Float64Array.from(y, (v) => v * f));
+          if (!h) continue;
+          const name = `${tc.several ? `${labelOf(nm)} at ${Number(m.centres[cell].toPrecision(3))} m` : labelOf(nm)}${run.suffix}`;
+          const pv = h.moves && run.tw > 0 ? h.tHalf / run.tw : null;
+          const d = crossed(cell);
+          half.push({ name, h, pv, R: pv !== null && d > 0 ? pv / (d / L) : null });
+        }
+        // What has come out of the column: the budget of a species, or of an element's total.
+        const of = budgetFor(nm, run.r);
+        if (!of) continue;
+        const key = `${run.r.runKey}|${of.kind}|${of.name}`;
+        const got = budgetCache.get(key);
+        if (got === undefined || got === null) { coming.add(labelOf(nm)); fetchBudget(run.r, of, key); continue; }
+        if (got.error) continue;
+        const n = got.total.length;
+        const start = got.total[0];
+        const cin = got.cumIn[n - 1];
+        const gone = got.cumOut[n - 1];
+        out.push({ name: `${of.kind === 'element' ? `${of.name}, all of it` : labelOf(nm)}`, run: run.label, start, cin, gone,
+          end: got.total[n - 1], made: got.byReactions[n - 1], share: start + cin > 0 ? gone / (start + cin) : null });
+      }
+    }
+    // Each number to four figures, the whole of it in data-v for whoever reads the page by machine.
+    const num = (v) => (v === null || v === undefined ? '' : esc(v === 0 ? '0' : fit4(v)));
+    const td = (v, text = num(v)) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${text}</td>`;
+    const halfHtml = half.map(({ name, h, pv, R }) => (h.moves
+      ? `<tr><td>${esc(name)}</td>${td(h.start)}`
+        + `${td(h.far, `${num(h.far)} ${h.atEnd ? 'at the end of the run' : `at ${esc(fmtTime(h.tFar))}`}`)}`
+        + `${td(h.tHalf, `${num(h.half)} at ${esc(fmtTime(h.tHalf))}`)}${td(pv, pv === null ? '' : esc(pv.toPrecision(3)))}`
+        + `${td(R, R === null ? '' : esc(R.toPrecision(3)))}</tr>`
+      : `<tr><td>${esc(name)}</td>${td(h.start)}<td colspan="4">does not move</td></tr>`)).join('');
+    const outHtml = out.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.run)}</td>${td(o.start)}${td(o.cin)}${td(o.gone)}`
+      + `${td(o.end)}${td(o.made)}${td(o.share, o.share === null ? '' : `${esc((100 * o.share).toPrecision(3))} %`)}</tr>`).join('');
+    const unitText = u.id && !u.bare ? ` (${u.text})` : '';
+    box.innerHTML = (half.length ? `<table><thead><tr><th>Where each curve is half-way${esc(unitText)}</th><th>it starts at</th>`
+      + '<th>the farthest it gets</th><th>half-way</th><th>in pore volumes</th><th>retardation</th></tr></thead>'
+      + `<tbody>${halfHtml}</tbody></table>` : '')
+      + (out.length ? '<table><thead><tr><th>What has come out of the column</th><th>run</th><th>there at the start</th>'
+        + '<th>came in at the left</th><th>went out at the right</th><th>there at the end</th><th>made by reactions, net</th>'
+        + `<th>gone out of what was there and came in</th></tr></thead><tbody>${outHtml}</tbody></table>` : '')
+      + `<p>${[half.length ? 'Half-way from where a curve starts to the farthest it gets, the first time, between stored points; the '
+        + 'retardation the pore volumes then over the share of the column the water has crossed to get there, 1 for what moves '
+        + 'with the water, a median that a front spreading much moves a little' : '',
+      out.length ? 'Amounts as the budget on the Composition tab keeps them, concentration × m per m² of the water\'s '
+        + 'cross-section' : '', coming.size ? `working out the budget of ${[...coming].join(', ')}…` : '']
+      .filter(Boolean).join('. ')}.</p>`;
+    box.hidden = !half.length && !out.length && !coming.size;
+    btcNow = {
+      half: { name: 'half-way', head: ['curve', 'starts at', 'farthest', 'farthest at', 'half-way', 'half-way at', 'in pore volumes', 'retardation'],
+        rows: half.map(({ name, h, pv, R }) => (h.moves ? [name, h.start, h.far, h.tFar, h.half, h.tHalf, pv, R] : [name, h.start, null, null, null, null, null, null])) },
+      out: { name: 'out of the column', head: ['of', 'run', 'there at the start', 'came in at the left', 'went out at the right', 'there at the end',
+        'made by reactions, net', 'gone out of what was there and came in'],
+      rows: out.map((o) => [o.name, o.run, o.start, o.cin, o.gone, o.end, o.made, o.share]) },
+    };
   }
 
   /*
@@ -3466,7 +3611,9 @@
   async function fetchBudget(r, of, key) {
     if (budgetCache.has(key)) return;
     budgetCache.set(key, null);
-    const text = (state.ran && state.ran.text) || state.text;
+    // The text the run was made with: the run on show's, or the kept run's own.
+    const h = holderOf(r);
+    const text = h && h !== current ? h.text : ((state.ran && state.ran.text) || state.text);
     const ask = (withRun) => request({ type: 'budget', runKey: r.runKey, of,
       ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
     try {
@@ -3477,6 +3624,8 @@
       budgetCache.set(key, { error: e.message });
     }
     if (state.result === r && state.compView === 'budget') drawComp();
+    // What has come out of the column, under Against time, where it is shown; else when its tab is.
+    if (state.btc && state.tab === 'time') drawTime();
   }
 
   /** What a budget can be of: every element a species holds, then every species. */
@@ -7168,7 +7317,9 @@
     for (let i = 0; i < r.n; i++) {
       rows.push([...(ax.pv ? [xr[i]] : []), r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
     }
-    return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${at.join('_')}` };
+    // In Excel, the breakthrough numbers on sheets of their own where they are shown.
+    const extra = state.btc && btcNow ? [btcNow.half, btcNow.out].filter((tb) => tb.rows.length) : [];
+    return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${at.join('_')}`, ...(extra.length ? { extra } : {}) };
   }
 
   async function downloadCsv() {
@@ -8143,6 +8294,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Cells**: what is ticked at several cells at once, breakthrough curves down the column — a list of cell numbers such as `4, 9, 14, end`, `end` the last; six at most. Each keeps its colour, in steps of lightness down the column, faintest at the cell nearest the inlet; the legend and the CSV give each cell’s distance. Empty, the one cell **Cell** chooses.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**Time in**: the model’s own unit, or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
+            '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
@@ -10199,6 +10351,12 @@ END
       // An end has no layer to pick; the cells listed in Cells have.
       $('rtmLayerWrap').hidden = !(state.compiled && state.compiled.matrix) || (isFace(state.cell) && !cellsAsked().cells.length);
       state.yFrom = $('rtmYFrom').value;
+      saveState();
+      drawTime();
+    },
+    // Where each curve is half-way and what has come out of the column, under Against time.
+    'rtm:btc': (ev, el) => {
+      state.btc = !!el.checked;
       saveState();
       drawTime();
     },
