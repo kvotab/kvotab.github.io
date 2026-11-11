@@ -2146,6 +2146,146 @@ async def main():
             check(f'the calcite example fitted on the Fit tab: kc and its CO2 at the start from 1e-4 and 5e-4 to 5.1e-4 and '
                   f'1.0e-3 ({fitted})', isinstance(fitted, list) and fitted[0] == 'fit' and len(fitted[1]) == 2
                   and abs(fitted[1][0][1] / 5.1e-4 - 1) < 0.02 and abs(fitted[1][1][1] / 1.01e-3 - 1) < 0.02, True)
+            # The run against what was measured, one to one, on the same example. The fit started from the text's own numbers
+            # (kc 5e-4, CO2 1e-3): its first misfit is this run's, read exactly at the times measured, and the run on show,
+            # read between its stored points, comes within 2e-3 of it; the fitted run's sum of squares is the fit's misfit to
+            # the last digit, diamonds beside the run's circles. Then the run's own values at four stored points as <DATA>,
+            # pH less 0.1 and Ca_mg twice and half by turns: pH's bias +0.1 and spread 0.1, Ca_mg's bias a factor of 1 and
+            # spread a factor of 2, the sums of squares 0.04 and 4 (log10 2)^2, exactly; the fit, made against the old
+            # measurements, left out and said. The run kept, and run again with kc doubled: the kept run's figures the first
+            # run's, hollow. A table in distance: a tracer's profile at a stored time, twice over, at three cells and past
+            # both ends: each residual -log10 2, the ends read as the end cells; a value after the run's end and an amount of
+            # none, said.
+            async def fit_csv(show):
+                await page.ev("(() => { const s = document.getElementById('rtmFitShow'); s.value = %s;"
+                              " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(show))
+                await asyncio.sleep(0.8)
+                await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                              " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                              " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+                await page.ev("document.querySelector('[data-pane=\"fit\"][data-as=\"csv\"]').click()")
+                await asyncio.sleep(1)
+                await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+                got = await page.ev("(async () => { const r = window.__saved[0]; return r ? [r.name, (await r.body).split('\\n')] : null; })()")
+                return got if isinstance(got, list) else [None, ['']]
+            match_rows = "[...document.querySelectorAll('#rtmFitMatch tbody tr')].map((tr) => [...tr.children].map((td) => td.textContent).join(' | '))"
+            calc_text = await page.ev("document.getElementById('rtmText').value")
+            await page.ev("""(() => { const rows = document.querySelectorAll('#rtmFitParams input');
+              rows[0].value = '5e-4'; rows[1].value = '1e-3'; rows[0].dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await asyncio.sleep(0.3)
+            await page.ev("document.getElementById('rtmFitGo').click()")
+            await settle(page, "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)", True, tries=120, pause=0.5)
+            history = await fit_csv('history')
+            misfits = [float(row.split(',')[1]) for row in history[1][1:] if row]
+            both = await fit_csv('match')
+            pts = [row.split(',') for row in both[1][1:] if row]
+            ss_run = sum(float(p[6]) ** 2 for p in pts)
+            ss_fit = sum(float(p[8]) ** 2 for p in pts)
+            seen = await page.ev("""[document.getElementById('rtmChartFit').data.filter((t) => t.mode === 'markers').map((t) => `${t.name} ${t.marker.symbol}`).join(' | '),
+              document.querySelectorAll('#rtmFitMatch tbody tr').length, document.getElementById('rtmFitNote').textContent]""")
+            check('  the run against what was measured beside the fit made from the text\'s own numbers: the run on show, read between '
+                  'its stored points, within 2e-3 of the fit\'s first misfit; the fitted run\'s sum of squares the fit\'s misfit to the '
+                  f'last digit; diamonds beside circles (this run {ss_run:.7g}, the fit\'s first {misfits[0] if misfits else None})',
+                  [both[0], both[1][0], len(pts), bool(misfits) and abs(ss_run / misfits[0] - 1) < 2e-3,
+                   bool(misfits) and abs(ss_fit / misfits[-1] - 1) < 1e-12, seen],
+                  ['rtm_against_measured.csv', 'column,where,time,distance (m),measured,this run,"residual, this run",the fitted run,'
+                   '"residual, the fitted run"', 10, True, True,
+                   ['pH circle | Ca_mg (mg/kgw) circle | pH, fitted diamond | Ca_mg (mg/kgw), fitted diamond', 6,
+                    '10 values measured, each column in its own unit; this run read between its stored points and cells, linearly; '
+                    'the fitted run at the times measured, as the fit ran it']])
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+
+            async def tick(value, on):
+                await page.ev("""((v, on) => { const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+                  if (el && el.checked !== on) { el.checked = on; el.dispatchEvent(new Event('change', { bubbles: true })); } })(%s, %s)"""
+                              % (json.dumps(value), json.dumps(on)))
+                await asyncio.sleep(0.3)
+            # The two read off the time chart, ticked for it and unticked after: the ticks as the checks after this find them.
+            await tick('pH', True)
+            await tick('Ca_mg', True)
+            await settle(page, "['pH', 'Ca_mg (mg/kgw)'].every((n) => (document.getElementById('rtmChartTime').data || []).some((t) => t.name === n))",
+                         True, tries=40, pause=0.25)
+            stored = await page.ev("""(() => { const d = document.getElementById('rtmChartTime').data;
+              const ph = d.find((t) => t.name === 'pH'), ca = d.find((t) => t.name === 'Ca_mg (mg/kgw)'), n = ph.x.length;
+              return [Math.round(n / 4), Math.round(n / 2), Math.round(3 * n / 4), n - 1].map((i) => [ph.x[i], ph.y[i], ca.x[i] === ph.x[i] ? ca.y[i] : null]); })()""")
+            await tick('pH', False)
+            await tick('Ca_mg', False)
+            rows = '\n'.join(f'{t!r}  {ph - 0.1!r}  {ca * (2 if k % 2 == 0 else 0.5)!r}' for k, (t, ph, ca) in enumerate(stored))
+            await set_text(page, calc_text[:calc_text.rindex('\n<DATA>') + 1] + f'<DATA>\ntime   pH     Ca_mg    cell = 0\n{rows}\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 9 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"fit\"]').click()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length", 3, tries=40, pause=0.25)
+            shifted = await fit_csv('match')
+            res = {}
+            for row in shifted[1][1:]:
+                if row:
+                    f = row.split(',')
+                    res.setdefault(f[0], []).append(float(f[6]))
+            first = await page.ev(match_rows)
+            check('  the run\'s own values as <DATA>, pH less 0.1, Ca_mg twice and half by turns: pH\'s bias +0.1 and spread 0.1, '
+                  'Ca_mg\'s bias a factor of 1 and spread a factor of 2, the sums of squares 0.04 and 4 (log10 2)^2, exactly; the '
+                  'fit, made against the old measurements, left out and said',
+                  [[round(v, 12) for v in res.get('pH', [])], [round(v, 12) for v in res.get('Ca_mg (mg/kgw)', [])],
+                   [r.split(' | ')[:6] for r in first], await page.ev("document.getElementById('rtmFitNote').textContent")],
+                  [[0.1] * 4, [round(-math.log10(2), 12), round(math.log10(2), 12)] * 2,
+                   [['pH', 'this run', '4', '+0.1', '0.1', '0.04'], ['Ca_mg (mg/kgw)', 'this run', '4', '+0.000 (× 1)', '0.301 (× 2)', '0.3625'],
+                    ['all together, as the Fit sums them', 'this run', '8', '', '0.2243', '0.4025']],
+                   '8 values measured, each column in its own unit; this run read between its stored points and cells, linearly; '
+                   'the fit was made against other measurements: <DATA> has changed since'])
+            await page.ev("document.getElementById('rtmKeep').click()")
+            klabel = (await page.ev("document.getElementById('rtmBeside').selectedOptions[0].textContent")).split(',')[0]
+            shifted_text = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, shifted_text.replace('kc  all  5e-4', 'kc  all  1e-3'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 9 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length", 6, tries=40, pause=0.25)
+            beside = await page.ev(match_rows)
+            kept_rows = [r.replace(f' | {klabel} | ', ' | this run | ') for r in beside if f' | {klabel} | ' in r]
+            check('  the run kept and run again with kc doubled: the kept run\'s figures the first run\'s, hollow, this run further off',
+                  [kept_rows == first, await page.ev("document.getElementById('rtmChartFit').data.filter((t) => t.mode === 'markers')"
+                                                     ".map((t) => t.marker.symbol).join(' ')"),
+                   float(beside[-2].split(' | ')[5]) > float(beside[-1].split(' | ')[5])],
+                  [True, 'circle circle circle-open circle-open', True])
+            await page.ev("(() => { const s = document.getElementById('rtmBeside'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await set_text(page, tracer % ('0.002', '500'))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 1 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await tick('Tr', True)
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).some((t) => t.name === 'Tr')", True, tries=40, pause=0.25)
+            t_at = await page.ev("(() => { const x = document.getElementById('rtmChartTime').data.find((t) => t.name === 'Tr').x; return x[Math.round(x.length / 2)]; })()")
+            await tick('Tr', False)
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmProfileSpecies'); s.value = 'Tr';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " const t = document.getElementById('rtmProfileTimes'); t.value = %s; t.dispatchEvent(new Event('change', { bubbles: true })); })()"
+                          % json.dumps(repr(t_at)))
+            await asyncio.sleep(0.6)
+            prof, cx = await page.ev("[Array.from(document.getElementById('rtmChartProfile').data[0].y), Array.from(document.getElementById('rtmChartProfile').data[0].x)]")
+            dist = '\n'.join(f'{x!r}  {2 * prof[c]!r}' for x, c in [(0.0, 0), (cx[4], 4), (cx[12], 12), (cx[24], 24), (0.5, 24)])
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await set_text(page, (tracer % ('0.002', '500')) + f'\n<DATA>\ndistance   Tr    at = {t_at!r}\n{dist}\n\ntime   Tr   cell = 24\n600    0.5\n200    0\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 1 species')", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"fit\"]').click()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length", 2, tries=40, pause=0.25)
+            along = await fit_csv('match')
+            check('  a table in distance, a tracer\'s profile at a stored time twice over: each residual -log10 2, past both ends read '
+                  'as the end cells; a value after the run\'s end and an amount of none, said',
+                  [[round(float(row.split(',')[6]), 12) for row in along[1][1:] if row and row.split(',')[6]],
+                   (await page.ev(match_rows))[0].split(' | ')[:5],
+                   await page.ev("document.getElementById('rtmFitNote').textContent")],
+                  [[round(-math.log10(2), 12)] * 5, ['Tr', 'this run', '5', '−0.301 (× 0.5)', '0.301 (× 2)'],
+                   '6 values measured, each column in its own unit; this run read between its stored points and cells, linearly; '
+                   '1 amount at or below zero left out; 1 after the run\'s end; '
+                   'the fit was made against other measurements: <DATA> has changed since'])
             ok = await example('frontuncertainty', "/runs done in|could not/.test(document.getElementById('rtmStatus').textContent)")
             bands = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                   " document.getElementById('rtmStatus').textContent.slice(0, 20),"

@@ -703,6 +703,7 @@
                 <option value="data">the run and what was measured</option>
                 <option value="residuals">the residuals</option>
                 <option value="history">the misfit as it fell</option>
+                <option value="match">the run against what was measured, one to one</option>
               </select>
             </label>
             <label id="rtmFitLogTWrap"><input type="checkbox" id="rtmFitLogT" data-on-change="rtm:fitRedraw"> log time</label>
@@ -718,6 +719,7 @@
             <span class="rtm-muted" id="rtmFitNote"></span>
           </div>
           <div class="plot" id="rtmChartFit" hidden></div>
+          <div class="rtm-fit-result" id="rtmFitMatch" hidden></div>
           <p class="rtm-empty" id="rtmFitEmpty">Name what to fit and fit it: the numbers moved until the run is as near as it
             can be to what &lt;DATA&gt; measured, as PhreePlot and Gibbs Studio fit PHREEQC.</p>
         </section>
@@ -2746,6 +2748,19 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             can be worked out by hand, its value and standard error are the hand's to a part in a
             million. <em>Put the fitted values in the model</em> writes them into the text where they
             came from, to six figures.</p>
+          <p>The last of <em>Show</em>, <em>the run against what was measured, one to one</em>,
+            needs no fit: each value <code>&lt;DATA&gt;</code> measured is set against the run's at
+            the same place and time — the run on show read between its stored points and, along the
+            column, between the cells either side, as the fit reads a table in distance — on equal
+            axes with the line of one to one through them, amounts on log axes with the lines of
+            twice and half dashed, pH, a saturation index and the like on axes of their own. Under
+            it a table says, column by column, how far off the run is: the bias, the mean residual,
+            which for an amount is shown as the factor the run is of what was measured on the whole;
+            the spread, the residuals' root mean square; the sum of their squares; and the worst
+            point. Then all the columns together, whose sum of squares is the fit's misfit. After a
+            fit the fitted run is there too, as diamonds, at the times measured, beside the run as
+            it was; a run kept beside is set against the same measurements, hollow, so that two
+            models are judged by the same numbers.</p>
 
           <h4 id="help-uncertainty">Uncertainty</h4>
           <p><em>Uncertainty</em> runs the model for draws of what is not known exactly, as Gibbs
@@ -3589,6 +3604,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20260923"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111b"></script>
 </body>
 </html>

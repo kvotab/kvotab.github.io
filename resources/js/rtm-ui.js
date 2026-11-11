@@ -848,6 +848,9 @@
     drawProfile();
     drawGradient();
     drawComp();
+    // The run against what was measured, where it is open; else when its tab is shown.
+    if (state.tab === 'fit') drawFit();
+    else renderFitShow();
     pqRenderView();
     if (partial) return;
     openExampleView();
@@ -1190,6 +1193,7 @@
       drawProfile();
       drawGradient();
       drawComp();
+      if (state.tab === 'fit') drawFit();
     } catch (e) {
       want.forEach(([k, c]) => h.failed.add(`${k}|${c}`));
       setStatus(`Could not work out ${wk.map(labelOf).join(', ')}${h === current ? '' : ` for the run ${h.label}`}: ${e.message}`, 'error');
@@ -6118,6 +6122,9 @@
           + `step${p.iteration === 1 ? '' : 's'}…`);
       });
       fitResult = reply;
+      // The run at the fitted numbers first; the run against what was measured, before and after, a choice away.
+      renderFitShow();
+      $('rtmFitShow').value = 'data';
       setProgress(null);
       setStatus(`Fitted in ${reply.seconds.toFixed(2)} s, ${reply.runs} runs: ${reply.why}. The misfit went from `
         + `${reply.ssr0.toPrecision(4)} to ${reply.ssr.toPrecision(4)}.`, 'ok');
@@ -6150,7 +6157,7 @@
     const box = $('rtmFitResult');
     const r = fitResult;
     box.hidden = !r;
-    $('rtmFitShowBar').hidden = !r;
+    renderFitShow();
     if (!r) return;
     const rows = r.params.map((p) => {
       const se = p.se;
@@ -6187,23 +6194,42 @@
       : `at ${fmtTime(p.t)}`;
   };
 
+  /*
+    The Show bar: after a fit, all four; before one, the run against what
+    was measured alone, where there is a run and <DATA> has measured
+    something; with neither, no bar.
+  */
+  function renderFitShow() {
+    const sel = $('rtmFitShow');
+    const canMatch = !!state.result && matchPoints().points.length > 0;
+    for (const o of sel.options) o.disabled = o.value === 'match' ? !canMatch : !fitResult;
+    if (sel.selectedOptions[0] && sel.selectedOptions[0].disabled) sel.value = fitResult ? 'data' : 'match';
+    $('rtmFitShowBar').hidden = !fitResult && !canMatch;
+    $('rtmFitApply').hidden = !fitResult;
+  }
+
   function drawFit() {
     if (typeof Plotly === 'undefined') return;
     const plot = $('rtmChartFit');
     const empty = $('rtmFitEmpty');
     const note = $('rtmFitNote');
     fitTableNow = null;
+    if (!fitEmptyText) fitEmptyText = empty.textContent;
+    renderFitShow();
+    const show = $('rtmFitShow').value;
+    $('rtmFitMatch').hidden = true;
+    if (show === 'match' && !$('rtmFitShowBar').hidden) { drawMatch(plot, empty, note); return; }
     if (!fitResult) {
       Plotly.purge(plot);
       plot.hidden = true;
       empty.hidden = false;
+      empty.textContent = fitEmptyText;
       note.textContent = '';
       return;
     }
     empty.hidden = true;
     plot.hidden = false;
     const r = fitResult;
-    const show = $('rtmFitShow').value;
     $('rtmFitLogTWrap').hidden = show !== 'data' || !r.curves.some((c) => c.kind === 'time');
     $('rtmFitLogYWrap').hidden = show !== 'data';
     const layout = baseLayout();
@@ -6278,6 +6304,289 @@
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     fitTableNow = pointsTable();
     note.textContent = `the run at the fitted numbers${r.curves.length > curves.length ? '; the tables in distance are in the CSV' : ''}`;
+  }
+
+  /*
+    THE RUN AGAINST WHAT WAS MEASURED, one to one (Show on the Fit tab, with
+    a fit or without one): each value <DATA> measured set against the run's
+    there, and for each column how far off -- the mean residual, its root
+    mean square and the worst point -- with the residual the Fit takes: an
+    amount's the log10 of the run's value over the one measured, pH, SI and
+    the like the run's less the one measured. The run on show is read between
+    its stored points, and along the column between the cells either side,
+    as the Fit reads a table in distance; the fitted run's values are the
+    fit's own, at the times measured; a run kept beside is read as the run on
+    show is. An amount measured at or below zero has no logarithm and is left
+    out, as the Fit leaves it out.
+  */
+  /** Each value <DATA> measured, where it is and what kind of residual it has; and how many amounts at or below zero were left out. */
+  function matchPoints() {
+    const m = state.compiled;
+    const stride = (m && m.stride) || 1;
+    const points = [];
+    let skipped = 0;
+    ((m && m.data) || []).forEach((tab, table) => tab.columns.forEach((key, j) => {
+      const index = axisOf(key) === 'index';
+      for (const row of tab.rows) {
+        const value = row[j + 1];
+        if (value === null) continue;
+        if (!index && !(value > 0)) { skipped++; continue; }
+        const layer = Math.min(tab.layer || 0, stride - 1);
+        points.push(tab.kind === 'time'
+          ? { table, key, index, value, kind: 'time', t: row[0], x: null, cell: tab.cell || 0, layer }
+          : { table, key, index, value, kind: 'distance', t: tab.at, x: row[0], cell: null, layer });
+      }
+    }));
+    return { points, skipped };
+  }
+  // A point's name, the same for the Fit's own points and the page's: its table, its column, its time or its distance.
+  const matchId = (p) => `${p.table}|${p.key}|${p.kind === 'time' ? `t${p.t}` : `x${p.x}`}`;
+  /** Where t falls among run r's stored times: [i, w], (1 - w) of point i and w of point i + 1; null outside the run. */
+  function bracketTime(r, t) {
+    const T = r.t;
+    const n = r.n;
+    const tol = 1e-12 * Math.max(Math.abs(T[n - 1]), 1e-300);
+    if (!(t >= T[0] - tol && t <= T[n - 1] + tol)) return null;
+    if (t >= T[n - 1]) return [n - 1, 0];
+    let lo = 0;
+    let hi = n - 1;
+    while (hi - lo > 1) {
+      const mid = (lo + hi) >> 1;
+      if (T[mid] <= t) lo = mid; else hi = mid;
+    }
+    const gap = T[hi] - T[lo];
+    return [lo, gap > 0 && t > T[lo] ? (t - T[lo]) / gap : 0];
+  }
+  /** Run r's `key` in model cell mc at stored point i: a number, undefined while a quantity is being worked out, NaN where it failed. */
+  function matchValueIn(r, key, mc, i) {
+    if (runQuantity(r, key)) {
+      const s = quantitySeries(key, mc, r);
+      return s ? s[i] : quantityPending(key, mc, r) ? undefined : NaN;
+    }
+    return r.states[i * r.width + mc * r.model.nspecies + r.model.species.indexOf(key)];
+  }
+  /**
+   * Run r at each point measured: { v, res } for each, null where it has no value there, undefined while a quantity
+   * is still to come; what is to be worked out (key -> model cells), and why some have none.
+   */
+  function matchRun(r, points) {
+    const m = r.model;
+    const stride = m.stride || 1;
+    const nf = m.fracture || 1;
+    const pending = new Map();
+    const lacks = new Set();
+    let after = 0;
+    const out = points.map((p) => {
+      if (p.layer > 0 && !(p.layer < stride)) { lacks.add(`no rock layer ${p.layer}`); return null; }
+      if (!runHas(r, p.key)) { lacks.add(`no ${labelOf(p.key)}`); return null; }
+      if (p.kind === 'time' && !(p.cell < nf)) { lacks.add(`no cell ${p.cell}`); return null; }
+      const b = bracketTime(r, p.t === null ? r.t[r.n - 1] : p.t);
+      if (!b) { after++; return null; }
+      const [i, w] = b;
+      let waiting = false;
+      const at = (mc) => {
+        const a = matchValueIn(r, p.key, mc, i);
+        const c = w > 0 ? matchValueIn(r, p.key, mc, i + 1) : a;
+        if (a === undefined || c === undefined) {
+          waiting = true;
+          if (!pending.has(p.key)) pending.set(p.key, new Set());
+          pending.get(p.key).add(mc);
+          return NaN;
+        }
+        return w > 0 ? a + (c - a) * w : a;
+      };
+      let v;
+      if (p.kind === 'time') v = at(p.cell * stride + p.layer);
+      else {
+        // Along the fracture: between the two cells either side, as a straight line; past the ends, the end cell.
+        const xs = m.centres;
+        if (nf === 1 || p.x <= xs[0]) v = at(p.layer);
+        else if (p.x >= xs[nf - 1]) v = at((nf - 1) * stride + p.layer);
+        else {
+          let c = 0;
+          while (c < nf - 2 && xs[c + 1] < p.x) c++;
+          const f = (p.x - xs[c]) / (xs[c + 1] - xs[c]);
+          v = at(c * stride + p.layer) * (1 - f) + at((c + 1) * stride + p.layer) * f;
+        }
+      }
+      if (waiting) return undefined;
+      if (!Number.isFinite(v)) return null;
+      return { v, res: p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value) };
+    });
+    return { out, pending, lacks, after };
+  }
+  /** How far off a run is, column by column and all together: points, mean residual, root mean square, sum of squares, the worst. */
+  function matchStats(points, rows) {
+    const blank = () => ({ n: 0, sum: 0, ss: 0, worst: null });
+    const by = new Map();
+    const all = blank();
+    rows.forEach((row, j) => {
+      if (!row) return;
+      const p = points[j];
+      if (!by.has(p.key)) by.set(p.key, blank());
+      for (const s of [by.get(p.key), all]) {
+        s.n++;
+        s.sum += row.res;
+        s.ss += row.res * row.res;
+        if (!s.worst || Math.abs(row.res) > Math.abs(s.worst.res)) s.worst = { res: row.res, p };
+      }
+    });
+    const done = (s) => ({ ...s, bias: s.n ? s.sum / s.n : NaN, rms: s.n ? Math.sqrt(s.ss / s.n) : NaN });
+    return { by: new Map([...by].map(([k, s]) => [k, done(s)])), all: done(all) };
+  }
+  // A point's place for a person: its cell and time, or its distance and time.
+  function matchWhere(p, r) {
+    const stride = (state.compiled && state.compiled.stride) || 1;
+    if (p.kind === 'time') return `cell ${p.cell}${p.layer && stride > 1 ? `, rock layer ${p.layer}` : ''}, ${fmtTime(p.t)}`;
+    return `${fmtNumber(p.x)} m at ${fmtTime(p.t === null ? r.t[r.n - 1] : p.t)}`;
+  }
+  // A residual for a person: an amount's as the factor the run is of what was measured, pH and the like as the difference.
+  const matchRes = (res, index) => (index ? `${res < 0 ? '−' : '+'}${fit4(Math.abs(res))}`
+    : `${res < 0 ? '−' : '+'}${Math.abs(res).toFixed(3)} (× ${fit4(10 ** res)})`);
+
+  let fitEmptyText = '';
+  function drawMatch(plot, empty, note) {
+    const r = state.result;
+    const { points, skipped } = matchPoints();
+    const box = $('rtmFitMatch');
+    const nothing = (text) => {
+      Plotly.purge(plot);
+      plot.hidden = true;
+      empty.hidden = false;
+      empty.textContent = text;
+      note.textContent = '';
+    };
+    if (!r || !points.length) { nothing('Run the model: each value <DATA> measured is then set against the run\'s.'); return; }
+    // The runs set against what was measured: the run on show, the fitted run, the run kept beside.
+    const mine = matchRun(r, points);
+    const runs = [{ label: 'this run', suffix: '', symbol: 'circle', rows: mine.out, how: mine, r }];
+    // The fitted run where the fit was made against these very measurements: each of its points one of these, the same value.
+    const here = new Map(points.map((p) => [matchId(p), p]));
+    const staleFit = !!fitResult && !fitResult.points.every((fp) => { const p = here.get(matchId(fp)); return p && p.value === fp.value; });
+    if (fitResult && !staleFit) {
+      const fitted = new Map(fitResult.points.map((fp) => [matchId(fp), fp]));
+      runs.push({ label: 'the fitted run', suffix: ', fitted', symbol: 'diamond', how: null, r: null, rows: points.map((p) => {
+        const fp = fitted.get(matchId(p));
+        return fp ? { v: fp.index ? fp.value + fp.residual : fp.value * 10 ** fp.residual, res: fp.residual } : null;
+      }) });
+    }
+    const bk = besideRun();
+    if (bk) {
+      const theirs = matchRun(bk.r, points);
+      runs.push({ label: bk.label, suffix: `, ${bk.label}`, symbol: 'circle-open', rows: theirs.out, how: theirs, r: bk.r });
+    }
+    // What is still to be worked out: asked for, and drawn when it comes.
+    const coming = new Set();
+    for (const run of runs) {
+      if (!run.how) continue;
+      for (const [key, cells] of run.how.pending) { coming.add(labelOf(key)); fetchQuantities([key], [...cells], run.r); }
+    }
+    if (coming.size) { nothing(`Working out ${[...coming].join(', ')} where it was measured…`); return; }
+    // A kept run without any of the columns is left out of the table and the chart; the note says what it has not got.
+    const keptHow = bk ? runs[runs.length - 1].how : null;
+    for (let q = runs.length - 1; q > 0; q--) if (!runs[q].rows.some(Boolean)) runs.splice(q, 1);
+    empty.hidden = true;
+    plot.hidden = false;
+    const keys = [...new Set(points.map((p) => p.key))];
+    const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const both = points.some((p) => p.index) && points.some((p) => !p.index);
+    const span = { amount: [Infinity, -Infinity], index: [Infinity, -Infinity] };
+    const widen = (kind, v) => {
+      if (!Number.isFinite(v) || (kind === 'amount' && !(v > 0))) return;
+      span[kind][0] = Math.min(span[kind][0], v);
+      span[kind][1] = Math.max(span[kind][1], v);
+    };
+    const traces = [];
+    for (const run of runs) {
+      for (const key of keys) {
+        const js = points.map((_, j) => j).filter((j) => points[j].key === key && run.rows[j]);
+        if (!js.length) continue;
+        const index = points[js[0]].index;
+        const kind = index ? 'index' : 'amount';
+        const color = palette[keys.indexOf(key) % palette.length];
+        js.forEach((j) => { widen(kind, points[j].value); widen(kind, run.rows[j].v); });
+        traces.push({ type: 'scatter', mode: 'markers', name: `${labelOf(key)}${run.suffix}`,
+          x: js.map((j) => points[j].value), y: js.map((j) => run.rows[j].v),
+          marker: { size: run.symbol === 'diamond' ? 9 : 8, symbol: run.symbol, color, line: { width: 1.6, color } },
+          text: js.map((j) => `${esc(labelOf(key))}, ${esc(matchWhere(points[j], r))}, ${esc(run.label)}: measured `
+            + `${fit4(points[j].value)}, the run ${fit4(run.rows[j].v)}, ${matchRes(run.rows[j].res, index)}`),
+          hovertemplate: '%{text}<extra></extra>', ...(both && index ? { xaxis: 'x2', yaxis: 'y2' } : {}) });
+      }
+    }
+    // Each panel square on equal axes, the line of one to one through it; for amounts, twice and half as much dashed.
+    const c = themeColors();
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    const guides = [];
+    const panel = (kind, xa, ya, domain) => {
+      const [lo, hi] = span[kind];
+      if (!(hi >= lo)) return;
+      const log = kind === 'amount';
+      const a = log ? Math.log10(lo) : lo;
+      const b = log ? Math.log10(hi) : hi;
+      const pad = Math.max(0.05 * (b - a), log ? 0.15 : 0.05 * Math.max(Math.abs(a), Math.abs(b), 1e-300));
+      const range = [a - pad, b + pad];
+      const from = log ? 10 ** range[0] : range[0];
+      const to = log ? 10 ** range[1] : range[1];
+      const axisOn = (text, anchor) => ({ title: { text, font: { size: 11 } }, type: log ? 'log' : 'linear', range, gridcolor: c.grid,
+        zeroline: false, linecolor: c.grid, exponentformat: 'power', anchor, constrain: 'domain', ...(domain ? { domain } : {}) });
+      layout[xa === 'x' ? 'xaxis' : 'xaxis2'] = axisOn(`measured${both ? (log ? ', amounts' : ', pH, SI and the like') : ''}`,
+        ya === 'y' ? 'y' : 'y2');
+      layout[ya === 'y' ? 'yaxis' : 'yaxis2'] = { ...axisOn('the run', xa === 'x' ? 'x' : 'x2'), scaleanchor: xa, scaleratio: 1,
+        ...(domain ? { domain: [0, 1] } : {}) };
+      const line = (k, dash, name) => guides.push({ type: 'scatter', mode: 'lines', x: [from, to], y: [from * k, to * k],
+        line: { color: c.text, width: dash ? 1 : 1.2, dash: dash || 'solid' }, hoverinfo: 'skip', showlegend: false, name,
+        ...(xa === 'x' ? {} : { xaxis: 'x2', yaxis: 'y2' }) });
+      line(1, '', 'one to one');
+      if (log) { line(2, 'dash', 'twice'); line(0.5, 'dash', 'half'); }
+    };
+    if (both) {
+      panel('amount', 'x', 'y', [0, 0.45]);
+      panel('index', 'x2', 'y2', [0.55, 1]);
+    } else panel(points[0].index ? 'index' : 'amount', 'x', 'y', null);
+    Plotly.react(plot, [...guides, ...traces], layout, PLOT_CONFIG);
+    // The table: each column, each run; then each run all together, its sum of squares the Fit's misfit.
+    const stats = runs.map((run) => matchStats(points, run.rows));
+    const rows = [];
+    const html = [];
+    // kind: 'amount', 'index', or 'all' -- the columns together, whose residuals are of both kinds: no bias, no factor.
+    const line = (col, run, s, kind) => {
+      const worst = s.worst ? `${matchRes(s.worst.res, s.worst.p.index)}, ${kind === 'all' ? `${labelOf(s.worst.p.key)}, ` : ''}`
+        + `${matchWhere(s.worst.p, r)}` : '';
+      const spread = !s.n ? '' : kind === 'amount' ? `${s.rms.toFixed(3)} (× ${fit4(10 ** s.rms)})` : fit4(s.rms);
+      rows.push([col, run.label, s.n, kind === 'all' ? null : s.bias, s.rms, s.ss, s.worst ? s.worst.res : null,
+        s.worst ? `${labelOf(s.worst.p.key)}, ${matchWhere(s.worst.p, r)}` : '']);
+      html.push(`<tr><td>${esc(col)}</td><td>${esc(run.label)}</td><td>${s.n}</td>`
+        + `<td>${kind === 'all' || !s.n ? '' : esc(matchRes(s.bias, kind === 'index'))}</td><td>${esc(spread)}</td>`
+        + `<td>${s.n ? esc(fit4(s.ss)) : ''}</td><td>${esc(worst)}</td></tr>`);
+    };
+    for (const key of keys) {
+      const kind = points.find((p) => p.key === key).index ? 'index' : 'amount';
+      runs.forEach((run, q) => { const s = stats[q].by.get(key); if (s) line(labelOf(key), run, s, kind); });
+    }
+    runs.forEach((run, q) => line('all together, as the Fit sums them', run, stats[q].all, 'all'));
+    box.innerHTML = '<table><thead><tr><th>Column</th><th>Run</th><th>points</th><th>bias, the mean residual</th>'
+      + '<th>spread, its root mean square</th><th>sum of squares</th><th>the worst</th></tr></thead>'
+      + `<tbody>${html.join('')}</tbody></table>`
+      + '<p>A residual is log₁₀ of the run over what was measured for an amount, shown as the factor the run is of it, '
+      + 'and the run less what was measured for pH, SI and the like.</p>';
+    box.hidden = false;
+    fitTableNow = { head: ['column', 'where', 'time', 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
+      name: 'rtm_against_measured',
+      rows: points.map((p, j) => [labelOf(p.key), p.kind === 'time' ? `cell ${p.cell}` : 'along the column',
+        p.t === null ? r.t[r.n - 1] : p.t, p.x, p.value, ...runs.flatMap((run) => (run.rows[j] ? [run.rows[j].v, run.rows[j].res] : [null, null]))]),
+      extra: [{ name: 'how far off', head: ['column', 'run', 'points', 'bias', 'spread (root mean square)', 'sum of squares',
+        'worst residual', 'where'], rows }] };
+    const kept = bk ? runs.find((run) => run.r === bk.r) : null;
+    const left = [skipped ? `${skipped} amount${skipped === 1 ? '' : 's'} at or below zero left out` : '',
+      mine.after ? `${mine.after} after the run's end` : '', mine.lacks.size ? `this run has ${[...mine.lacks].join(', ')}` : '',
+      keptHow && keptHow.lacks.size ? `${bk.label} has ${[...keptHow.lacks].join(', ')}` : '',
+      keptHow && keptHow.after ? `${keptHow.after} after the end of ${bk.label}` : '',
+      staleFit ? 'the fit was made against other measurements: <DATA> has changed since' : ''];
+    note.textContent = [`${points.length} value${points.length === 1 ? '' : 's'} measured, each column in its own unit`,
+      'this run read between its stored points and cells, linearly',
+      runs.some((run) => run.symbol === 'diamond') ? 'the fitted run at the times measured, as the fit ran it' : '',
+      kept ? `${bk.label} hollow` : '', ...left].filter(Boolean).join('; ');
   }
 
   /** The fitted numbers into the model text, to six figures, each where withValue puts it. */
@@ -8014,6 +8323,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'Then', list: [
           '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',
+          '**the run against what was measured, one to one**, last in Show, with a fit or without one: each value measured set against the run’s at the same place and time — the run on show read between its stored points and its cells, linearly — on equal axes with the line of one to one, amounts on log axes with twice and half dashed, pH, SI and the like on their own. Under it, for each column: its points, the bias (the mean residual, for an amount shown as the factor the run is of what was measured), the spread (their root mean square), the sum of squares and the worst point; then all the columns together, as the Fit sums them. After a fit the fitted run is there as diamonds, at the times measured; a run kept beside, hollow.',
           '**Put the fitted values in the model**: each written into the text where it came from, to six figures.',
           '**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.',
           SAVE_HTML,
@@ -9875,6 +10185,7 @@ END
       drawProfile();
       drawGradient();
       drawComp();
+      if (state.tab === 'fit') drawFit();
     },
     'rtm:stop': () => stop(),
     'rtm:verify': () => { verify(); },
