@@ -47,9 +47,19 @@
           <em>Google Drive</em> and then <em>Choose files</em>, Google asks
           whether kvotab.se may open the files you pick. If you agree, the page
           can open the files you pick in Google's file picker, and only those
-          (the permission Google calls <code>drive.file</code>). It cannot list,
+          (the permission Google calls <code>drive.file</code>), as it can a
+          file you open with it from Google Drive itself. It cannot list,
           read, change or delete anything else in your Drive, and it is not
           given your name, email address or other account details.</li>
+        <li><strong>Google Drive's <em>Open with</em> menu.</strong> You can
+          add the Data Browser to that menu, to open a file with it from Google
+          Drive. Google then asks whether kvotab.se may add itself to your
+          Google Drive (the permission Google calls <code>drive.install</code>):
+          that puts the Data Browser in the menu, and reaches no file. When you
+          open a file with it, Google Drive opens the Data Browser at an
+          address that holds the file's ID and your Google account's ID. The
+          page uses them only in its requests to Google, for that file, and
+          takes them out of the address straight away.</li>
         <li><strong>What it does with them.</strong> Each file you pick is
           downloaded straight from Google into your browser and opened there,
           so that you can look at it, draw it and export from it, as with a file
@@ -65,11 +75,14 @@
           used to train AI models.</li>
         <li><strong>Google's part.</strong> Google's sign-in and file picker
           are loaded from Google the first time you click <em>Google Drive</em>
-          in a tab, and <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's privacy policy</a>
+          in a tab, or when Google Drive opens a file in the Data Browser, and
+          <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google's privacy policy</a>
           applies to them.</li>
         <li><strong>Taking the access back.</strong> You can withdraw it at any
           time in <a href="https://myaccount.google.com/connections" target="_blank" rel="noopener noreferrer">your Google Account</a>,
-          under third-party connections.</li>
+          under third-party connections. The Data Browser leaves Google
+          Drive's <em>Open with</em> menu when you disconnect it from Drive, in
+          Google Drive's settings under <em>Manage apps</em>.</li>
       </ul>
       <p>
         Kvot AB's use and transfer of information received from Google APIs
@@ -116,7 +129,7 @@
         <a href="mailto:pa@kvotab.se">pa@kvotab.se</a>
       </p>
 
-      <p class="updated">Last updated 10 November 2026.</p>
+      <p class="updated">Last updated 11 November 2026.</p>
     </div>
   </div>
 

@@ -112,9 +112,21 @@ worker's, each with the token; a dataset of 5 MB, larger than the worker
 reads through its block cache, is one request of its own; its values are the
 same as the same file's read whole; a MAT-file is still read whole; when
 Google stops taking the token the next read says so and the file stays open,
-and once Google gives a new one the worker reads on with it. The file with
-the 5 MB datasets is made in the test with h5py and numpy. 86 checks.
-RB_TEST_HTTP and RB_TEST_CDP choose other ports than 8765 and 9222.
+and once Google gives a new one the worker reads on with it. Then the page
+opened as "Open with" in Google Drive opens it, with `state` in the address:
+the dialog opens by itself and says what Drive asked for, the request leaves
+the address, and nothing is asked of Drive before Open; Open asks Google
+from the click, with the account Drive named as the login hint, then asks
+Drive each file's name, type and size and opens the files as picked ones
+open, the resource key with both requests and no picker shown. A request
+that cannot be acted on is said, with the picker offered instead; a file
+Drive will not show the page is said and the rest still open; Cancel lets
+Drive's files go. Last, the dialog's offer to add the Data Browser to that
+menu asks for `drive.install` with `drive.file`, from the click; the box
+left unticked is said, and once given it is said done, the access kept, and
+the offer not made again in the tab. The file with the 5 MB datasets is made
+in the test with h5py and numpy. 121 checks. RB_TEST_HTTP and RB_TEST_CDP
+choose other ports than 8765 and 9222.
 
     python3 test-drive.py
 

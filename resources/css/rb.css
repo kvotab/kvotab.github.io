@@ -358,6 +358,34 @@
     html:not(.rb-drive-ready) .rb-drive-only {
       display: none;
     }
+    /* Its dialog says what it is open for: the picker, or the files that
+       "Open with" in Google Drive asked to open (rb-drive-launch). */
+    #driveDialog.rb-drive-launch .rb-drive-pick-only,
+    #driveDialog:not(.rb-drive-launch) .rb-drive-launch-only,
+    #driveDialog p[hidden] {
+      display: none;
+    }
+    .rb-drive-link {
+      padding: 0;
+      border: 0;
+      background: none;
+      font: inherit;
+      color: var(--link-color);
+      text-align: inherit;
+      cursor: pointer;
+    }
+    .rb-drive-link:hover:not(:disabled) {
+      text-decoration: underline;
+    }
+    .rb-drive-link:disabled {
+      color: inherit;
+      cursor: default;
+    }
+    .rb-drive-note {
+      margin-top: 8px;
+      font-size: 12px;
+      color: var(--color-text-primary);
+    }
 
     /* URL dialog overlay & modal */
     .url-dialog-overlay {

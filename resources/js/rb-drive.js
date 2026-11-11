@@ -32,26 +32,48 @@
    gives it for an hour), and after that asks Google again from the click
    itself: once the reader has agreed, Google's window closes by itself.
 
+   OPEN WITH. Google Drive lists this page under "Open with", for the kinds
+   of file the Cloud project's Drive UI integration names, once the reader
+   lets it: the dialog's offer to add the Data Browser to that menu asks
+   Google for drive.install as well, which reaches no file. Drive then
+   opens this page at the integration's address with `state`, JSON naming
+   the files by ID, their resource keys and the reader's Google account.
+   The page takes it out of the address and opens the dialog by itself:
+   its Open is the click that lets Google's window open, sent straight to
+   that account. Drive gives drive.file access to a file opened with the
+   page, so each one's name and size are asked of the Drive API, and it
+   opens as a picked file does.
+
    THE TOKEN is kept in this script's memory and nowhere else, never in
    storage, and is gone when the tab closes. It is attached ONLY in
    driveFileRequest, to a URL that function builds itself for
-   www.googleapis.com from a file ID the picker gave. Nothing else on the page
-   sends it anywhere. The worker reading a large file is handed that URL with
-   those headers, and sends them to that URL alone; when Google gives a new
-   token, the files it reads are handed the new headers.
+   www.googleapis.com from a file ID the picker or Drive's Open with gave.
+   Nothing else on the page sends it anywhere. The worker reading a large
+   file is handed that URL with those headers, and sends them to that URL
+   alone; when Google gives a new token, the files it reads are handed the
+   new headers.
    ========================================================================== */
 
 'use strict';   // see the script manifest in rb.html for why
 
 /** Access to the files the reader picks with this page, and to no others. */
 const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+/** Lets Google Drive list this page under "Open with"; it reaches no file (non-sensitive too). */
+const DRIVE_INSTALL_SCOPE = 'https://www.googleapis.com/auth/drive.install';
 const DRIVE_SIGN_IN_SCRIPT = 'https://accounts.google.com/gsi/client';
 const DRIVE_PICKER_SCRIPT = 'https://apis.google.com/js/api.js';
 const DRIVE_FILES_API = 'https://www.googleapis.com/drive/v3/files/';
+/** A Drive file ID, or a resource key: they go into URLs and headers, so only these characters. */
+const DRIVE_ID = /^[A-Za-z0-9_-]{1,200}$/;
+/** The most files one "Open with" in Drive opens. */
+const DRIVE_LAUNCH_MAX = 50;
 
 let driveToken = null;          // { value, expires }, expires in ms since the epoch
 let driveTokenClient = null;    // Google's token client, once its script is loaded
 let driveAskedThisTab = false;  // whether Google has answered once in this tab
+let driveAskingFor = 'pick';    // what the access asked for is for: 'pick', 'launch' or 'install'
+let driveInstalled = false;     // whether Google has said the page is in Drive's Open with menu
+let driveLaunch = null;         // the files Drive's Open with asked to open, until opened or let go
 let driveLoading = null;        // the promise of Google's scripts, once asked for
 let drivePicker = null;         // the picker on show, to be disposed of
 let driveQueue = Promise.resolve();  // one pick's files opened after another's
@@ -95,6 +117,77 @@ function setUpGoogleDrive() {
       }
     });
   }
+
+  // Opened by "Open with" in Google Drive: the files it names wait for the dialog's Open.
+  const launch = driveLaunchRequest(window.location.search);
+  if (launch) {
+    forgetDriveLaunchAddress();
+    if (launch.error) {
+      openDriveDialog(launch.error);
+    } else {
+      driveLaunch = launch;
+      openDriveDialog();
+    }
+  }
+}
+
+/**
+ * What Google Drive asked this page to open, when its "Open with" opened
+ * it: the address's `state`, JSON naming the files by ID, with their
+ * resource keys, the action, and the reader's Google account ID. null when
+ * the address has no `state`; `{error}` when it cannot be acted on. The IDs
+ * and keys go into URLs and headers, so they are held to the characters
+ * Drive uses, as the picker's are, and the account ID to digits.
+ *
+ * @param {string} search - The address's query, location.search
+ * @returns {{ids: string[], keys: Map<string, string>, userId: string}|{error: string}|null}
+ */
+function driveLaunchRequest(search) {
+  const raw = new URLSearchParams(search).get('state');
+  if (raw === null) return null;
+  let state = null;
+  try { state = JSON.parse(raw); } catch (_) { ignoreFailure('driveLaunchRequest', _); }
+  if (!state || typeof state !== 'object' || Array.isArray(state)) {
+    return { error: 'This page was opened with a request from Google Drive that it cannot read.' };
+  }
+  if (state.action !== 'open') {
+    return { error: state.action === 'create'
+      ? 'The Data Browser makes no new files in Google Drive: open one that is there.'
+      : 'This page was opened with a request from Google Drive that it cannot act on.' };
+  }
+  const ids = Array.isArray(state.ids) ? [...new Set(state.ids.map(String))] : [];
+  if (ids.length === 0) {
+    return { error: Array.isArray(state.exportIds) && state.exportIds.length
+      ? 'Google Docs, Sheets and Slides files live only in Google Drive, and have no file of their own to open here.'
+      : 'Google Drive asked this page to open no file.' };
+  }
+  if (ids.length > DRIVE_LAUNCH_MAX) {
+    return { error: `Google Drive asked this page to open ${ids.length} files; it opens up to ${DRIVE_LAUNCH_MAX} at once.` };
+  }
+  if (!ids.every(id => DRIVE_ID.test(id))) {
+    return { error: 'Google Drive asked this page to open a file by an ID that is not a Drive file’s.' };
+  }
+  const given = state.resourceKeys && typeof state.resourceKeys === 'object' ? state.resourceKeys : {};
+  const keys = new Map();
+  for (const id of ids) {
+    const key = Object.prototype.hasOwnProperty.call(given, id) ? String(given[id]) : '';
+    if (DRIVE_ID.test(key)) keys.set(id, key);
+  }
+  const userId = String(state.userId == null ? '' : state.userId);
+  return { ids, keys, userId: /^[0-9]{1,40}$/.test(userId) ? userId : '' };
+}
+
+/**
+ * Take Drive's request out of the address, the rest of it kept: so that a
+ * reload does not act on it again, and the address passed on does not carry
+ * it (it holds the reader's Google account ID).
+ */
+function forgetDriveLaunchAddress() {
+  try {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('state');
+    window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+  } catch (_) { ignoreFailure('forgetDriveLaunchAddress', _); }
 }
 
 /* ── the button and the dialog ───────────────────────────────────────── */
@@ -122,6 +215,8 @@ function openGoogleDrive() {
 function openDriveDialog(message = '') {
   const dialog = document.getElementById('driveDialog');
   if (!dialog) return;
+  showDriveDialogMode();
+  showDriveDialogNote('');
   showDriveDialogError(message);
   dialog.style.display = '';
   if (driveTokenClient) {
@@ -137,23 +232,64 @@ function openDriveDialog(message = '') {
     });
 }
 
-/** Close the dialog. */
+/**
+ * The dialog as it is for what it is open for: the files Drive's Open with
+ * asked to open (rb-drive-launch on it), or the picker, with the offer to
+ * add the Data Browser to that menu unless Google has said it is there.
+ */
+function showDriveDialogMode() {
+  const dialog = document.getElementById('driveDialog');
+  dialog.classList.toggle('rb-drive-launch', !!driveLaunch);
+  const text = document.getElementById('driveLaunchText');
+  if (text && driveLaunch) {
+    const n = driveLaunch.ids.length;
+    text.textContent = n === 1
+      ? 'Google Drive asked the Data Browser to open a file. It opens here as a file from your own disk does: read in this browser, and sent nowhere else.'
+      : `Google Drive asked the Data Browser to open ${n} files. They open here as files from your own disk do: read in this browser, and sent nowhere else.`;
+  }
+  const offer = document.getElementById('driveInstallLine');
+  if (offer) offer.hidden = driveInstalled;
+}
+
+/** Close the dialog; files Drive's Open with asked to open are let go. */
 function closeDriveDialog() {
+  driveLaunch = null;
   const dialog = document.getElementById('driveDialog');
   if (dialog) dialog.style.display = 'none';
 }
 
 /**
- * The dialog's Choose files button: ask Google for access, from this click.
- * After a failure to load Google's scripts it is Try again, and loads them.
+ * The dialog's Choose files button, or Open for the files Drive's Open with
+ * asked to open: ask Google for access, from this click; with the access
+ * already given, straight to the picker. After a failure to load Google's
+ * scripts it is Try again, and loads them.
  */
 function chooseDriveFiles() {
   if (!driveTokenClient) {
     openDriveDialog();
     return;
   }
+  showDriveDialogNote('');
   showDriveDialogError('');
-  requestDriveToken();
+  if (driveLaunch) {
+    requestDriveToken('launch');
+  } else if (driveTokenValid()) {
+    closeDriveDialog();
+    showDrivePicker();
+  } else {
+    requestDriveToken('pick');
+  }
+}
+
+/**
+ * The dialog's offer to add the Data Browser to Google Drive's Open with
+ * menu: ask Google, from this click, for that as well as for drive.file.
+ */
+function addDriveToOpenWith() {
+  if (!driveTokenClient) return;
+  showDriveDialogNote('');
+  showDriveDialogError('');
+  requestDriveToken('install');
 }
 
 /**
@@ -163,13 +299,24 @@ function setDriveChooseState(state) {
   const button = document.getElementById('driveChooseBtn');
   if (!button) return;
   button.disabled = state === 'loading';
-  button.textContent = state === 'loading' ? 'Connecting…' : state === 'failed' ? 'Try again' : 'Choose files…';
+  button.textContent = state === 'loading' ? 'Connecting…' : state === 'failed' ? 'Try again'
+    : driveLaunch ? 'Open' : 'Choose files…';
+  const offer = document.getElementById('driveInstallBtn');
+  if (offer) offer.disabled = state !== 'ready';
   if (state === 'ready' && document.getElementById('driveDialog').style.display !== 'none') button.focus();
 }
 
 /** @param {string} message - Empty to hide the dialog's error */
 function showDriveDialogError(message) {
   const el = document.getElementById('driveError');
+  if (!el) return;
+  el.textContent = message || '';
+  el.style.display = message ? '' : 'none';
+}
+
+/** @param {string} message - Empty to hide the dialog's note: what was done */
+function showDriveDialogNote(message) {
+  const el = document.getElementById('driveNote');
   if (!el) return;
   el.textContent = message || '';
   el.style.display = message ? '' : 'none';
@@ -254,15 +401,28 @@ function driveTokenValid() {
 /**
  * Ask Google for access. It must run within a click: Google's sign-in opens
  * a window of its own. The first time in a tab Google lets the reader choose
- * an account; after that it asks only for what has not been agreed to.
+ * an account; after that it asks only for what has not been agreed to. For
+ * the files Drive's Open with asked to open, it goes straight to the account
+ * Drive is open in; to add the page to that menu, it asks for that as well.
+ *
+ * @param {'pick'|'launch'|'install'} [purpose] - What the access is for
  */
-function requestDriveToken() {
-  driveTokenClient.requestAccessToken(driveAskedThisTab ? { prompt: '' } : {});
+function requestDriveToken(purpose = 'pick') {
+  driveAskingFor = purpose;
+  const overrides = driveAskedThisTab ? { prompt: '' } : {};
+  if (purpose === 'launch' && driveLaunch && driveLaunch.userId) {
+    overrides.prompt = '';
+    overrides.login_hint = driveLaunch.userId;
+  }
+  if (purpose === 'install') overrides.scope = `${DRIVE_SCOPE} ${DRIVE_INSTALL_SCOPE}`;
+  driveTokenClient.requestAccessToken(overrides);
 }
 
 /**
  * Google's answer. Access refused, or the box for Drive left unticked on
- * Google's page, is said in the dialog; access given opens the picker.
+ * Google's page, is said in the dialog; access given opens the picker, or
+ * the files Drive's Open with asked to open. Asked to add the page to that
+ * menu, the dialog stays and says whether it was.
  *
  * @param {{access_token?: string, expires_in?: number|string, scope?: string,
  *          error?: string, error_description?: string}} response
@@ -270,31 +430,61 @@ function requestDriveToken() {
 function onDriveToken(response) {
   // Google has answered, so the reader has been to its page: an account is chosen.
   driveAskedThisTab = true;
+  const purpose = driveAskingFor;
+  driveAskingFor = 'pick';
   if (!response || response.error) {
     const error = response && response.error;
     const why = error === 'access_denied'
-      ? 'Google Drive was not opened: access was not given.'
+      ? `${purpose === 'install' ? 'The Data Browser was not added to Google Drive' : 'Google Drive was not opened'}: access was not given.`
       : `Google did not give access (${error || 'no answer'}${response && response.error_description ? `: ${response.error_description}` : ''}).`;
     openDriveDialog(why);
     return;
   }
-  if (!window.google.accounts.oauth2.hasGrantedAllScopes(response, DRIVE_SCOPE)) {
-    openDriveDialog('Google Drive was not opened: the access to open the files you pick was '
-      + 'not given. Choose files again, and tick it on Google’s page.');
+  const oauth2 = window.google.accounts.oauth2;
+  if (oauth2.hasGrantedAllScopes(response, DRIVE_INSTALL_SCOPE)) driveInstalled = true;
+  const files = oauth2.hasGrantedAllScopes(response, DRIVE_SCOPE);
+  if (files) keepDriveToken(response);
+  if (purpose === 'install') {
+    openDriveDialog();
+    if (driveInstalled) {
+      showDriveDialogNote('Done: Google has let the Data Browser add itself to your Google Drive. In Drive, '
+        + 'right-click a file it reads, such as an .h5 file, and look under Open with; Google can take a few '
+        + 'minutes to show it there.');
+    } else {
+      showDriveDialogError('The Data Browser was not added to Google Drive: the box for it was left '
+        + 'unticked on Google’s page.');
+    }
     return;
   }
+  if (!files) {
+    openDriveDialog(purpose === 'launch'
+      ? 'Google Drive was not opened: the access to open the file was not given. Open again, and tick it on Google’s page.'
+      : 'Google Drive was not opened: the access to open the files you pick was not given. Choose files again, '
+        + 'and tick it on Google’s page.');
+    return;
+  }
+  const launch = driveLaunch;
+  closeDriveDialog();
+  if (purpose === 'launch' && launch) openDriveLaunch(launch);
+  else showDrivePicker();
+}
+
+/**
+ * Keep the access Google gave, and hand it to the files read a piece at a
+ * time, which go on with it.
+ *
+ * @param {{access_token: string, expires_in?: number|string}} response
+ */
+function keepDriveToken(response) {
   // Google's tokens last an hour; one is let go a minute early, so that a
   // file is never asked for with a token about to run out.
   const seconds = Number(response.expires_in);
   const life = Number.isFinite(seconds) && seconds > 0 ? seconds : 3600;
   driveToken = { value: response.access_token, expires: Date.now() + Math.max(life - 60, life / 2) * 1000 };
-  // The files open and read a piece at a time go on with the new access.
   for (const [fid, file] of driveLazyFiles) {
     const request = driveFileRequest(file);
     rbLazyCall('headers', { fid, headers: request.headers }).catch(() => driveLazyFiles.delete(fid));
   }
-  closeDriveDialog();
-  showDrivePicker();
 }
 
 /**
@@ -305,8 +495,8 @@ function onDriveToken(response) {
 function onDriveTokenError(err) {
   const type = err && err.type;
   if (type === 'popup_failed_to_open') {
-    openDriveDialog('The browser did not let Google’s sign-in window open. Choose files '
-      + 'again, or allow pop-ups for this site.');
+    openDriveDialog('The browser did not let Google’s sign-in window open: click again, or allow '
+      + 'pop-ups for this site.');
   } else if (type === 'popup_closed') {
     // Closed by the reader: nothing to say unless the dialog is up.
     if (document.getElementById('driveDialog').style.display !== 'none') {
@@ -390,9 +580,9 @@ function onDrivePicked(data) {
  */
 function driveDocument(doc) {
   if (!doc || typeof doc !== 'object') return null;
-  const D = window.google.picker.Document || {};
+  const D = (window.google && window.google.picker && window.google.picker.Document) || {};
   const id = String(doc[D.ID || 'id'] || '');
-  if (!/^[A-Za-z0-9_-]{1,200}$/.test(id)) {
+  if (!DRIVE_ID.test(id)) {
     reportFailure('googleDrive:pick', new Error(`the picker gave the file ID ${JSON.stringify(id.slice(0, 40))}`),
                   { userMessage: 'A file picked in Google Drive could not be opened.' });
     return null;
@@ -404,7 +594,7 @@ function driveDocument(doc) {
     name: driveFileName(doc[D.NAME || 'name'], id),
     mimeType: String(doc[D.MIME_TYPE || 'mimeType'] || ''),
     size: Number.isFinite(size) && size >= 0 ? size : NaN,
-    resourceKey: /^[A-Za-z0-9_-]{1,200}$/.test(key) ? key : ''
+    resourceKey: DRIVE_ID.test(key) ? key : ''
   };
 }
 
@@ -435,25 +625,75 @@ function driveFileName(name, id) {
 /* ── the files ───────────────────────────────────────────────────────── */
 
 /**
- * What to ask the Drive API for a file's bytes, with the access attached.
- * THE ONLY PLACE THE TOKEN IS ATTACHED, and only to a URL built here, for
- * www.googleapis.com, from a file ID the picker gave and driveDocument
- * checked. null when the access has run out. A part of the file is asked
- * for with these and a Range header, here for its first megabyte and by
- * rb-lazy-worker.js for each piece of a file read a piece at a time.
+ * What to ask the Drive API for a file's bytes, or for its name, type and
+ * size, with the access attached. THE ONLY PLACE THE TOKEN IS ATTACHED, and
+ * only to a URL built here, for www.googleapis.com, from a file ID the
+ * picker gave and driveDocument checked, or Drive's Open with gave and
+ * driveLaunchRequest checked. null when the access has run out. A part of
+ * the file is asked for with these and a Range header, here for its first
+ * megabyte and by rb-lazy-worker.js for each piece of a file read a piece
+ * at a time.
  *
  * @param {{id: string, resourceKey: string}} file
+ * @param {'media'|'details'} [what] - Its bytes, or its name, type and size
  * @returns {{url: string, headers: object}|null}
  */
-function driveFileRequest(file) {
+function driveFileRequest(file, what = 'media') {
   if (!driveTokenValid()) return null;
   const headers = { Authorization: `Bearer ${driveToken.value}` };
   // A file shared by link may need its resource key as well as its ID.
   if (file.resourceKey) headers['X-Goog-Drive-Resource-Keys'] = `${file.id}/${file.resourceKey}`;
+  const query = what === 'details' ? 'fields=name,mimeType,size' : 'alt=media';
   return {
-    url: `${DRIVE_FILES_API}${encodeURIComponent(file.id)}?alt=media&supportsAllDrives=true`,
+    url: `${DRIVE_FILES_API}${encodeURIComponent(file.id)}?${query}&supportsAllDrives=true`,
     headers
   };
+}
+
+/**
+ * A file Drive's Open with asked this page to open, as driveDocument makes a
+ * picked one: Drive's request names it by ID only, so its name, type and
+ * size are asked of the Drive API.
+ *
+ * @param {{id: string, resourceKey: string}} file
+ * @returns {Promise<object>}
+ */
+async function fetchDriveDetails(file) {
+  const request = driveFileRequest(file, 'details');
+  if (!request) {
+    throw new Error('Google’s access has run out (it lasts an hour). Open the file from Google Drive again.');
+  }
+  const response = await fetch(request.url, { headers: request.headers });
+  if (!response.ok) throw new Error(await explainDriveFailure(response, { ...file, name: '' }));
+  let details = null;
+  try { details = await response.json(); } catch (_) { ignoreFailure('fetchDriveDetails', _); }
+  if (!details || typeof details !== 'object') {
+    throw new Error('Google Drive did not say what the file it asked this page to open is.');
+  }
+  return driveDocument({ id: file.id, name: details.name, mimeType: details.mimeType,
+                         sizeBytes: details.size, resourceKey: file.resourceKey });
+}
+
+/**
+ * Open the files Drive's Open with asked this page to open, after any
+ * picked before them: each one's details asked of Drive, all at once, then
+ * the files opened as picked files are. One Drive will not show is said, and
+ * the rest still open.
+ *
+ * @param {{ids: string[], keys: Map<string, string>}} launch
+ */
+function openDriveLaunch(launch) {
+  driveQueue = driveQueue
+    .then(async () => {
+      const details = await Promise.all(launch.ids.map(id =>
+        fetchDriveDetails({ id, resourceKey: launch.keys.get(id) || '' }).catch((err) => {
+          reportFailure('googleDrive:launch', err, { userMessage: err.message });
+          return null;
+        })));
+      const files = details.filter(Boolean);
+      if (files.length) await openDriveFiles(files);
+    })
+    .catch(err => reportFailure('googleDrive:queue', err, { userMessage: 'Opening files from Google Drive failed.' }));
 }
 
 /**
@@ -605,7 +845,8 @@ async function openDriveFileLazily(file) {
 /**
  * The reason a Drive request failed, in words, from the status and the
  * reason Google gives in its error. A 401 means the access is no longer
- * good, so it is forgotten and the next click asks again.
+ * good, so it is forgotten and the next click asks again. A file with no
+ * name yet is one Drive's Open with asked for, its details not yet had.
  *
  * @param {Response} response
  * @param {{name: string}} file
@@ -627,11 +868,16 @@ async function explainDriveFailure(response, file) {
   const status = response.status;
   if (status === 401) {
     driveToken = null;
-    return 'Google no longer accepts the access given (it lasts an hour). Click Google Drive and pick the file again.';
+    return `Google no longer accepts the access given (it lasts an hour). ${name
+      ? 'Click Google Drive and pick the file again.' : 'Open the file from Google Drive again.'}`;
   }
   if (reason === 'cannotDownloadFile') return `The owner of ${name} does not let it be downloaded, so it cannot be opened here.`;
   if (reason === 'cannotDownloadAbusiveFile') return `Google has marked ${name} as possibly harmful, and only its owner can download it.`;
   if (reason === 'fileNotDownloadable') return `${name} lives only in Google Drive, as a Google Docs, Sheets or Slides file does, and has no file of its own to open here.`;
+  if (!name && (status === 404 || reason === 'appNotAuthorizedToFile' || reason === 'insufficientFilePermissions')) {
+    return 'Google Drive did not let this page see the file it asked it to open. Open the file from Google Drive '
+      + 'again, signed in to Google with the same account there and here.';
+  }
   if (reason === 'appNotAuthorizedToFile' || reason === 'insufficientFilePermissions') {
     return `Google Drive did not give this page access to ${name}. Click Google Drive and pick it again.`;
   }

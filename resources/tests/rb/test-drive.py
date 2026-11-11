@@ -9,7 +9,8 @@ addresses through Chrome's request interception (CDP Fetch):
     rb-drive-config.js                       a project, or none, or no file
     https://accounts.google.com/gsi/client   Google's sign-in: answers a token
     https://apis.google.com/js/api.js        the picker: answers files picked
-    https://www.googleapis.com/drive/v3/files/<id>   the Drive API: the bytes
+    https://www.googleapis.com/drive/v3/files/<id>   the Drive API: the bytes,
+                                             or the name, type and size
 
 The stand-ins take Google's documented names (initTokenClient, PickerBuilder,
 DocsView, Action.PICKED, ...); what Google's real ones do with them is not
@@ -47,7 +48,22 @@ Checked:
     the worker's, each with the token; its values the same as the same file's
     read whole; a MAT-file still read whole; and when Google stops taking the
     token, the next read says so, and once Google gives a new one the worker
-    reads on with it, the file open all the while.
+    reads on with it, the file open all the while;
+  - opened by "Open with" in Drive (its `state` in the address), the page
+    opens the dialog by itself, saying what Drive asked for, takes the request
+    out of the address, and asks Drive nothing before Open; Open asks Google
+    from the click, straight for the account Drive named, then asks Drive
+    each file's name, type and size and opens them as picked files open, the
+    resource key with both requests, no picker shown;
+  - a request from Drive that cannot be acted on (an ID that is no Drive ID,
+    no JSON, Drive's New, a Google Docs file) is said, the picker offered
+    instead; a file Drive will not show the page is said and the rest still
+    open; with no account named the reader chooses one; Cancel lets Drive's
+    files go;
+  - the dialog's offer to add the Data Browser to Drive's Open with menu asks
+    Google, from the click, for drive.install with drive.file; that box left
+    unticked is said; given, it is said done, the access kept, and the offer
+    not made again in the tab.
 
 Start the server and the browser as in README.md (RB_TEST_HTTP and
 RB_TEST_CDP choose other ports), then
@@ -78,6 +94,8 @@ CLIENT = '000000000000-test.apps.googleusercontent.com'
 KEY = 'AIzaTEST-KEY-not-a-real-one'
 APP = '123456789012'
 SCOPE = 'https://www.googleapis.com/auth/drive.file'
+INSTALL = 'https://www.googleapis.com/auth/drive.install'
+USER = '109876543210987654321'   # a Google account ID, as Drive's Open with names the reader
 SIGN_IN = 'https://accounts.google.com/gsi/client'
 PICKER = 'https://apis.google.com/js/api.js'
 FILES_API = 'https://www.googleapis.com/drive/v3/files/'
@@ -213,6 +231,9 @@ DRIVE_FILES = {
     'fileL': ('application/x-hdf5', fixture('sample-a.h5'), None),
     'fileB': ('application/x-hdf5', big_file(), None),
 }
+# id: the name the Drive API gives the file, asked for its details
+DRIVE_NAMES = {'fileA': 'sample-a.h5', 'fileM': 'matlab-v7.mat', 'fileJ': 'runs.json',
+               'fileS': 'results/b.h5', 'fileL': 'big-a.h5', 'fileB': 'big.h5'}
 # id: (status, reason, message)
 DRIVE_ERRORS = {
     'denied': (403, 'cannotDownloadFile', 'The user does not have permission to download this file.'),
@@ -353,6 +374,11 @@ class Page:
                 elif fid not in DRIVE_FILES or (DRIVE_FILES[fid][2] and keys != f'{fid}/{DRIVE_FILES[fid][2]}'):
                     # A file shared by link is not found without its resource key.
                     await error(404, 'notFound', f'File not found: {fid}.')
+                elif 'alt' not in urllib.parse.parse_qs(parts.query):   # its details, as JSON
+                    kind, body, _ = DRIVE_FILES[fid]
+                    details = {'name': DRIVE_NAMES[fid], 'mimeType': kind, 'size': str(len(body))}
+                    await self.fulfill(rid, 200, {**cors, 'Content-Type': 'application/json'},
+                                       json.dumps(details).encode())
                 else:
                     kind, body, _ = DRIVE_FILES[fid]
                     m = re.fullmatch(r'bytes=(\d+)-(\d*)', rng or '')
@@ -398,14 +424,22 @@ class Page:
             await self.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y,
                                                          'button': 'left', 'clickCount': 1})
 
-    async def load(self, n, config):
+    async def load(self, n, config, state=None):
+        """The page, afresh; with `state`, as Drive's Open with opens it (a
+        dict as JSON, a string as it is)."""
         self.config = config
         self.fail_scripts = set()
-        await self.call('Page.navigate', {'url': f'{ORIGIN}/rb.html?drive={n}'})
+        query = f'drive={n}'
+        if state is not None:
+            query += '&state=' + urllib.parse.quote(state if isinstance(state, str) else json.dumps(state))
+        await self.call('Page.navigate', {'url': f'{ORIGIN}/rb.html?{query}'})
         await settle(self, "document.readyState === 'complete' && typeof setUpGoogleDrive === 'function'"
                            " && typeof waitForH5Wasm === 'function'", True, tries=200)
         await self.ev('waitForH5Wasm().then(() => true)', timeout=60)
-        await self.ev('window.__driveTest = { token: %s, scope: %s, nextToken: { kind: "token" } }; true'
+        # Merged into what the stand-ins have recorded: opened by Drive, the
+        # page loads Google's scripts by itself, maybe before this runs.
+        await self.ev('window.__driveTest = Object.assign(window.__driveTest || {},'
+                      ' { token: %s, scope: %s, nextToken: { kind: "token" } }); true'
                       % (json.dumps(TOKEN), json.dumps(SCOPE)))
 
 
@@ -780,6 +814,133 @@ async def main():
             check('with the new token', [d['auth'] for d in page.drive[seen:] if d['id'] == 'fileB'],
                   [f'Bearer {TOKEN2}'])
             await page.ev("localStorage.removeItem('kvot-rb-lazy'); true")
+
+            # --- opened by "Open with" in Google Drive -------------------------
+            OPENED = "(async () => { await driveQueue; return true; })()"
+            SHOWN_PS = ("[...document.querySelectorAll('#driveDialog p')]"
+                        ".filter(p => getComputedStyle(p).display !== 'none').map(p => p.id || 'access').join(' ')")
+            page.drive.clear()
+            page.valid_tokens = {TOKEN}
+            await page.load(6, CONFIG_JS, {'ids': ['fileA', 'fileM'], 'resourceKeys': {'fileM': 'rk-1'},
+                                           'action': 'open', 'userId': USER})
+            errors_before = len(page.errors)
+            check('opened by Drive\'s Open with, the page opens the dialog by itself', await settle(page, DIALOG_SHOWN))
+            check('saying what Drive asked for', await page.ev("document.getElementById('driveLaunchText').textContent"),
+                  'Google Drive asked the Data Browser to open 2 files. They open here as files from your own'
+                  ' disk do: read in this browser, and sent nowhere else.')
+            check('and not the picker\'s text, nor the offer to add the page to Drive', await page.ev(SHOWN_PS),
+                  'driveLaunchText access')
+            check('its button is Open, once Google\'s scripts are loaded',
+                  await settle(page, f"!{CHOOSE}.disabled && {CHOOSE}.textContent"), 'Open')
+            check('Drive\'s request is gone from the address, the rest of it kept',
+                  await page.ev('location.search'), '?drive=6')
+            check('nothing is asked of Drive before the click', page.drive, [])
+            await page.click('#driveChooseBtn')
+            await settle(page, "['sample-a.h5', 'matlab-v7.mat'].every(n => n in loadedFiles)", True, tries=200)
+            await page.ev(OPENED, timeout=60)
+            check('Open asked Google, from the click, straight for the account Drive is open in',
+                  await page.ev(f'{T}.tokenRequests'), [{'overrides': {'prompt': '', 'login_hint': USER}, 'active': True}])
+            details = [d for d in page.drive if 'alt' not in d['query']]
+            check('each file\'s name, type and size were asked of Drive once, shared drives included',
+                  [sorted(d['id'] for d in details),
+                   all(d['query'] == {'fields': ['name,mimeType,size'], 'supportsAllDrives': ['true']} for d in details)],
+                  [['fileA', 'fileM'], True])
+            check('then each file\'s content, as a picked file\'s is',
+                  sorted(d['id'] for d in page.drive if d['query'].get('alt') == ['media']), ['fileA', 'fileM'])
+            check('every request with the token', all(d['auth'] == f'Bearer {TOKEN}' for d in page.drive))
+            check('the file shared by link with its resource key, both times',
+                  [d['keys'] for d in page.drive if d['id'] == 'fileM'], ['fileM/rk-1'] * 2)
+            check('each opened under the name Drive gave it, with its tab', await page.ev(
+                "['sample-a.h5', 'matlab-v7.mat'].every(n => n in loadedFiles"
+                " && [...document.querySelectorAll('#fileTabs .file-tab')].some(t => t.dataset.file === n))"))
+            check('no picker was shown, and the dialog closed',
+                  [await page.ev(f'{T}.pickers.length'), await page.ev(DIALOG_SHOWN)], [0, False])
+            check('nothing went wrong on the way', new_errors(page, errors_before), '')
+
+            # A request from Drive that cannot be acted on: said, the picker offered instead.
+            asked = len(page.drive)
+            for n, state, said in (
+                    (7, {'ids': ['../up'], 'action': 'open'},
+                     'Google Drive asked this page to open a file by an ID that is not a Drive file’s.'),
+                    (8, '{"ids": ["fileA"', 'This page was opened with a request from Google Drive that it cannot read.'),
+                    (9, {'action': 'create', 'folderId': 'root'},
+                     'The Data Browser makes no new files in Google Drive: open one that is there.'),
+                    (10, {'exportIds': ['doc1'], 'action': 'open'},
+                     'Google Docs, Sheets and Slides files live only in Google Drive, and have no file of their'
+                     ' own to open here.')):
+                await page.load(n, CONFIG_JS, state)
+                check(f'a request from Drive that cannot be acted on is said: “{said[:48]}…”',
+                      await settle(page, f'{DIALOG_SHOWN} && {DIALOG_ERROR}'), said)
+            check('the picker is offered instead, and the offer to add the page to Drive',
+                  [await settle(page, f"!{CHOOSE}.disabled && {CHOOSE}.textContent"), await page.ev(SHOWN_PS)],
+                  ['Choose files…', 'drivePickText access driveInstallLine'])
+            check('nothing was asked of Drive for them', len(page.drive), asked)
+
+            # A file Drive will not show the page; no account named, so the reader chooses one.
+            await page.load(11, CONFIG_JS, {'ids': ['gone', 'fileA'], 'action': 'open'})
+            await settle(page, f"!{CHOOSE}.disabled")
+            errors_before = len(page.errors)
+            await page.click('#driveChooseBtn')
+            await settle(page, "'sample-a.h5' in loadedFiles", True, tries=200)
+            await page.ev(OPENED, timeout=60)
+            check('with no account named, Open lets the reader choose one',
+                  await page.ev(f'{T}.tokenRequests'), [{'overrides': {}, 'active': True}])
+            check('a file Drive will not show the page is said, with what to do',
+                  'Google Drive did not let this page see the file it asked it to open' in new_errors(page, errors_before))
+            check('and the other still opens', await page.ev("'sample-a.h5' in loadedFiles"))
+
+            # Cancel lets Drive's file go; the button then works as it does.
+            await page.load(12, CONFIG_JS, {'ids': ['fileA'], 'action': 'open', 'userId': USER})
+            check('one file is said as one', await settle(page,
+                  "document.getElementById('driveLaunchText').textContent"
+                  ".startsWith('Google Drive asked the Data Browser to open a file. It opens here')"))
+            await settle(page, f"!{CHOOSE}.disabled")
+            await page.click('#driveDialog .url-btn-cancel')
+            check('Cancel closes the dialog', await page.ev(DIALOG_SHOWN), False)
+            before = await pick(page, {'action': 'cancel'})
+            await page.click(BUTTON)
+            await opened(page, before)
+            check('and lets the file go: the button asks Google and shows the picker, as it does',
+                  [await page.ev(f'{T}.tokenRequests'), await page.ev(f'{T}.pickers.length'),
+                   await page.ev('Object.keys(loadedFiles).length')],
+                  [[{'overrides': {}, 'active': True}], 1, 0])
+
+            # --- the Data Browser added to Drive's Open with menu -------------
+            await page.load(13, CONFIG_JS)
+            await page.click(BUTTON)
+            check('the dialog offers to add the Data Browser to Drive\'s Open with menu, once Google\'s scripts load',
+                  await settle(page, "(() => { const b = document.getElementById('driveInstallBtn');"
+                                     " return getComputedStyle(b.closest('p')).display !== 'none' && !b.disabled"
+                                     " && b.textContent; })()"), 'add the Data Browser to that menu')
+            await page.ev(f'{T}.nextToken = {{ kind: "token", scope: {json.dumps(SCOPE)} }}; true')
+            await page.click('#driveInstallBtn')
+            check('it asks Google, from the click, for that as well as for the files',
+                  await page.ev(f'{T}.tokenRequests'), [{'overrides': {'scope': f'{SCOPE} {INSTALL}'}, 'active': True}])
+            check('that box left unticked on Google\'s page is said',
+                  await settle(page, f"{DIALOG_ERROR}.startsWith('The Data Browser was not added to Google Drive')"))
+            check('and the offer stays', await page.ev(f"({SHOWN_PS}).includes('driveInstallLine')"))
+            await page.ev(f'{T}.nextToken = {{ kind: "token", scope: {json.dumps(f"{SCOPE} {INSTALL}")} }}; true')
+            await page.click('#driveInstallBtn')
+            check('asked again, without the accounts again',
+                  (await page.ev(f'{T}.tokenRequests'))[1:],
+                  [{'overrides': {'prompt': '', 'scope': f'{SCOPE} {INSTALL}'}, 'active': True}])
+            check('given, it is said done, with where to look', await settle(page,
+                  "document.getElementById('driveNote').textContent"
+                  ".startsWith('Done: Google has let the Data Browser add itself to your Google Drive.')"))
+            check('in the dialog, which stays open, the offer and the error gone',
+                  [await page.ev(DIALOG_SHOWN), await page.ev(SHOWN_PS), await page.ev(DIALOG_ERROR)],
+                  [True, 'drivePickText access', ''])
+            before = await pick(page, {'action': 'cancel'})
+            await page.click('#driveChooseBtn')
+            await opened(page, before)
+            check('the access given with it is kept: Choose files goes straight to the picker',
+                  [len(await page.ev(f'{T}.tokenRequests')), await page.ev(f'{T}.pickers.length'),
+                   await page.ev(DIALOG_SHOWN)], [2, 1, False])
+            await page.ev('driveToken = null; true')
+            await page.ev(f'{T}.nextToken = {{ kind: "error", error: "access_denied" }}; true')
+            await page.click(BUTTON)
+            await settle(page, f'{DIALOG_SHOWN} && !!{DIALOG_ERROR}')
+            check('nor is it offered again in the tab', await page.ev(SHOWN_PS), 'drivePickText access')
 
             check('nothing outside the stand-ins was fetched from Google', page.unexpected, [])
         finally:
