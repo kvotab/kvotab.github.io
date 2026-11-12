@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111k';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111l';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5932,10 +5932,13 @@
         hovertemplate: `${esc(label)}: %{y:.4g}<extra></extra>` }));
       // What <DATA> measured of the quantity drawn, in a table against the same thing in the same cell's water: its points.
       let measured = 0;
+      let ownWater = 0;
       if (d.show === 'quantity' && !sats) {
         for (const tab of (state.compiled && state.compiled.data) || []) {
           const j = tab.kind === 'speciation' && tab.axis === ax.kind && (tab.cell || 0) === dgResult.cell ? tab.columns.indexOf(d.q) : -1;
           if (j < 0) continue;
+          // A water of the table's own, Zn+2 = 1e-4, is not the one drawn: its measurements are the Fit's to draw.
+          if (tab.water && tab.water.length) { ownWater++; continue; }
           const rows = tab.rows.filter((row) => row[j + 1] !== null);
           measured += rows.length;
           traces.push({ type: 'scatter', mode: 'markers', name: `${labelOf(d.q)}, measured`, x: rows.map((row) => row[0]),
@@ -5952,7 +5955,8 @@
           + `${blank ? `; ${blank} left blank: they did not settle` : ''}`;
       } else {
         note.textContent = `${where}; ${xs.length} points${rp.failed ? `, ${rp.failed} left blank: they did not settle` : ''}`
-          + `${measured ? `; ${measured} measured, from <DATA>` : ''}`;
+          + `${measured ? `; ${measured} measured, from <DATA>` : ''}`
+          + `${ownWater ? `; ${ownWater} table${ownWater === 1 ? '' : 's'} of a water of ${ownWater === 1 ? 'its' : 'their'} own left to the Fit tab` : ''}`;
       }
       return;
     }
@@ -7528,7 +7532,11 @@
   /** A fitted point's place, for a legend or a hover: the column, and its cell and time or its distance and time. */
   const fitWhere = (p) => {
     const stride = (state.compiled && state.compiled.stride) || 1;
-    if (p.kind === 'speciation') return `the water of cell ${Math.floor(p.cell / stride)}`;
+    // A table's own water, Zn+2 = 1e-4: the species it starts as the table says.
+    if (p.kind === 'speciation') {
+      return `the water of cell ${Math.floor(p.cell / stride)}${p.water && p.water.length
+        ? `, ${p.water.map(([nm, v]) => `${nm} = ${fmtNumber(v)}`).join(', ')}` : ''}`;
+    }
     return p.kind === 'time' ? `cell ${Math.floor(p.cell / stride)}${p.cell % stride ? `, rock layer ${p.cell % stride}` : ''}`
       : `at ${fmtTime(p.t)}`;
   };
@@ -7640,7 +7648,7 @@
     curves.forEach((c, q) => {
       const color = palette[q % palette.length];
       const where = several ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell }
-        : along === 'speciation' ? { kind: 'speciation', cell: c.cell } : { kind: 'distance', t: c.t })}` : '';
+        : along === 'speciation' ? { kind: 'speciation', cell: c.cell, water: c.water } : { kind: 'distance', t: c.t })}` : '';
       const name = `${labelOf(c.key)}${where}`;
       const onRight = c.index && !allIndex;
       right = right || onRight;
@@ -9772,6 +9780,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**to**: the columns of <DATA> fitted to, every one unless unticked.',
           'A table against pH, pe or Eh — a sorption edge, the share of a metal on a surface at each pH — needs no run: its water is held at each value it measured and speciated there, as on the Diagrams tab, and the fit draws it against that value.',
           'A column sd(Ca+2) beside Ca+2 in <DATA> gives each value its standard deviation: the fit is then weighted, each residual over its own deviation, the misfit χ² on the points less the numbers fitted, the standard errors the deviations\' own. Every value fitted needs one, or none does.',
+          'A table against pH may have a water of its own — `pH  Zn_sorbed  Zn+2 = 1e-4` — the model with those species started there: edges at several loadings or ionic strengths fitted together, which pins down what one edge leaves loose, a weak site\'s constant beside a strong one\'s. Each is drawn as a curve of its own, named by its water.',
           'A number above zero is fitted in its logarithm, so it stays above zero; a log K and the temperature as they are. Give each a start above zero where it is fitted in its logarithm.',
         ] },
         { heading: 'How', list: [
@@ -10552,7 +10561,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111g';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111h';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

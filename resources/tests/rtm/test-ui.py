@@ -2762,28 +2762,36 @@ async def main():
             await cells('')
             await tick('X', False)
             await tick('Y', False)
-            # A sorption edge fitted: the zinc example's share of zinc on ferrihydrite, a table against pH, fitted with no run from
-            # phreeqc.dat's log K to 1.3394 and -1.5625: drawn against pH, the edge through the eight measurements, on the left as
-            # the share it is; the CSV a pH column. On Diagrams, Zn_sorbed against pH, the measurements beside it.
+            # Sorption edges fitted: the zinc example's share of zinc on ferrihydrite, two tables against pH, the second of its own
+            # water at a hundred times the zinc, fitted with no run from phreeqc.dat's log K to 1.3257 and -1.5925: drawn against
+            # pH, each edge through its eight measurements and named by its water, on the left as the share it is; the CSV a pH
+            # column and each point's water. On Diagrams, Zn_sorbed against pH, the first table's measurements beside it, the
+            # second's of a water of its own left to the Fit tab.
             ok = await example('zincfit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
             zfit = await page.ev("""(() => { const p = document.getElementById('rtmChartFit'), d = p.data;
               const rows = [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2).map((tr) => Number(tr.children[2].textContent));
               const m = d.find((t) => t.mode === 'markers');
-              return [document.querySelector('.rtm-tabs button.active').dataset.tab, Math.abs(rows[0] - 1.3394) < 2e-3 && Math.abs(rows[1] + 1.5625) < 2e-3,
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, Math.abs(rows[0] - 1.3257) < 2e-3 && Math.abs(rows[1] + 1.5925) < 2e-3,
                 p.layout.xaxis.title.text, d.map((t) => `${t.mode}:${t.x.length}`).join(' '), !!p.layout.yaxis2, p.layout.yaxis.title.text,
                 document.getElementById('rtmFitLogYWrap').hidden, document.getElementById('rtmFitNote').textContent,
                 !!(m && m.error_y && m.error_y.array.every((v) => v === 1)),
-                /χ² 3\\.541 on 6 degrees of freedom .* a chance of 0\\.738\\. .*The standard errors are the standard deviations' own/
-                  .test(document.getElementById('rtmFitResult').textContent)]; })()""")
+                /χ² 8\\.104 on 14 degrees of freedom .* a chance of 0\\.884\\. .*The standard errors are the standard deviations' own/
+                  .test(document.getElementById('rtmFitResult').textContent),
+                d.filter((t) => t.mode === 'lines').map((t) => t.name).join(' | ')]; })()""")
             zcsv = await fit_csv('data')
-            check('the zinc example\'s sorption edge fitted with no run, a table against pH, each measurement weighed by its '
-                  'standard deviation of 1 %: the strong and weak sites\' log K from 0.99 and -1.99 to 1.3394 and -1.5625; drawn against '
-                  'pH, the edge through the eight measured with their deviations, on the left as a share; chi-square 3.541 on 6 degrees '
-                  'of freedom, a chance of 0.738; the CSV a pH column, the deviations and the residuals over them',
-                  [ok, zfit, zcsv[0], zcsv[1][0] if zcsv[1] else ''],
-                  [True, ['fit', True, 'pH', 'lines:101 markers:8', False, 'Zn_sorbed (%)', True, 'the water at the fitted numbers, held at each pH',
-                          True, True],
-                   'rtm_fit.csv', 'column,where,time,distance (m),pH,measured,sd,the run,residual,residual over its sd'])
+            # Each point's water, the CSV's second column, read as CSV: a water of its own is quoted, holding a comma.
+            zwhere = sorted(set(r[1] for r in __import__('csv').reader(zcsv[1][1:]) if len(r) > 1)) if zcsv[1] else []
+            check('the zinc example\'s two sorption edges fitted together with no run, tables against pH, the second of its own water '
+                  'at a hundred times the zinc, each measurement weighed by its standard deviation of 1 %: the strong and weak sites\' '
+                  'log K from 0.99 and -1.99 to 1.3257 and -1.5925; drawn against pH, each edge through its eight measured with their '
+                  'deviations and named by its water, on the left as a share; chi-square 8.104 on 14 degrees of freedom, a chance of '
+                  '0.884; the CSV a pH column, the deviations, the residuals over them, and each point\'s water',
+                  [ok, zfit, zcsv[0], zcsv[1][0] if zcsv[1] else '', zwhere],
+                  [True, ['fit', True, 'pH', 'lines:101 markers:8 lines:101 markers:8', False, 'Zn_sorbed (%)', True,
+                          'the water at the fitted numbers, held at each pH', True, True,
+                          'Zn_sorbed (%), the water of cell 0 | Zn_sorbed (%), the water of cell 0, Zn+2 = 0.0001'],
+                   'rtm_fit.csv', 'column,where,time,distance (m),pH,measured,sd,the run,residual,residual over its sd',
+                   ['the water of cell 0', 'the water of cell 0, Zn+2 = 0.0001']])
             await page.ev("document.querySelector('.rtm-tabs [data-tab=\"diagram\"]').click()")
             await asyncio.sleep(0.4)
             await page.ev("""(() => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
@@ -2796,9 +2804,9 @@ async def main():
             zdg = await page.ev("""(() => { const d = document.getElementById('rtmChartDg').data;
               const m = d.find((t) => t.mode === 'markers');
               return [d.map((t) => t.name).join(' | '), m ? m.x.join(' ') : null,
-                /8 measured, from <DATA>/.test(document.getElementById('rtmDgNote').textContent)]; })()""")
-            check('  and on Diagrams, Zn_sorbed against pH with the eight measured beside it',
-                  zdg, ['Zn_sorbed (%) | Zn_sorbed (%), measured', '4.5 5 5.5 6 6.5 7 7.5 8', True])
+                /8 measured, from <DATA>; 1 table of a water of its own left to the Fit tab/.test(document.getElementById('rtmDgNote').textContent)]; })()""")
+            check('  and on Diagrams, Zn_sorbed against pH with the first table\'s eight measured beside it, the second\'s of a water of '
+                  'its own left to the Fit tab', zdg, ['Zn_sorbed (%) | Zn_sorbed (%), measured', '4.5 5 5.5 6 6.5 7 7.5 8', True])
             ok = await example('frontuncertainty', "/runs done in|could not/.test(document.getElementById('rtmStatus').textContent)")
             bands = await page.ev("[document.querySelector('.rtm-tabs button.active').dataset.tab,"
                                   " document.getElementById('rtmStatus').textContent.slice(0, 20),"

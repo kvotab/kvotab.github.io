@@ -9033,6 +9033,48 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
   `log K ${fEdge.params ? fEdge.params.map((pt) => pt.value).join(', ') : fEdge.error} in ${fEdge.runs} speciations, the misfit `
     + `${fEdge.ssr0} to ${fEdge.ssr}; "${edgeAt}"`);
   /*
+    SEVERAL WATERS IN ONE FIT: a second edge, its table's own water started
+    with a hundred times the zinc (Zn+2 = 1e-4 on its line), each value of
+    both given a deviation of 1. Worked out by the page at log K 1.30 and
+    -1.60, fitted from 0.99 and -1.99: back to 1.30 and -1.60 to 1e-9, each
+    table's curve of its own water; and against the first edge alone, the
+    weak sites' standard error halved and the two constants' correlation
+    with it, the strong sites full at the higher loading. A water of its
+    own on a table in time refused, and one starting a species the model
+    has not.
+  */
+  const edgeAt2 = (zn) => {
+    let g = null;
+    handleRtmMessage({ type: 'diagram', id: 23, text: RtmModel.withValue(zincTruth, { kind: 'initial', name: 'Zn+2' }, zn), at: 'start',
+      cell: 0, axes: [{ kind: 'pH', values: edgePHs }] }, (m) => { if (m.type !== 'progress') g = m; });
+    const q = g.keys.indexOf('Zn_sorbed');
+    return edgePHs.map((_, i) => g.quant[i * g.nq + q]);
+  };
+  const edgeTable = (vals, water) => `pH  Zn_sorbed  sd(Zn_sorbed)${water ? `  ${water}` : ''}\n${edgePHs.map((x, i) => `${x} ${vals[i]} 1`).join('\n')}\n`;
+  const edgeLow = edgeAt2(1e-6);
+  const edgeHigh = edgeAt2(1e-4);
+  const edgeParams = [{ kind: 'logK', name: sEq, start: 0.99 }, { kind: 'logK', name: wEq, start: -1.99 }];
+  const fOne = fitOf(`${zincBase}${zincOut}\n<DATA>\n${edgeTable(edgeLow)}`, edgeParams);
+  const fTwo2 = fitOf(`${zincBase}${zincOut}\n<DATA>\n${edgeTable(edgeLow)}\n${edgeTable(edgeHigh, 'Zn+2 = 1e-4')}`, edgeParams);
+  const ownRefused = [
+    (() => { try { RtmModel.compile(`${zincBase}${zincOut}\n<DATA>\ntime  Zn_sorbed  Zn+2 = 1e-4\n1 10\n`); return ''; } catch (e) { return e.message; } })(),
+    (() => { try { RtmModel.compile(`${zincBase}${zincOut}\n<DATA>\npH  Zn_sorbed  Cd+2 = 1e-4\n5 10\n`); return ''; } catch (e) { return e.message; } })(),
+  ];
+  check('several waters in one fit: a second sorption edge at a hundred times the zinc, its table\'s own water, each value with a '
+    + 'deviation of 1: back to log K 1.30 and -1.60 to 1e-9, each table drawn in its own water; the weak sites\' standard error '
+    + 'and the correlation of the two halved against the first edge alone; a water of its own on a table in time, and one '
+    + 'starting a species the model has not, refused',
+  fTwo2.type === 'fit' && Math.abs(fTwo2.params[0].value - 1.3) < 1e-9 && Math.abs(fTwo2.params[1].value + 1.6) < 1e-9
+    && fTwo2.curves.length === 2 && fTwo2.curves[0].water.length === 0 && JSON.stringify(fTwo2.curves[1].water) === '[["Zn+2",0.0001]]'
+    && fTwo2.points.slice(8).every((pt) => JSON.stringify(pt.water) === '[["Zn+2",0.0001]]')
+    && fTwo2.params[1].se < 0.6 * fOne.params[1].se && Math.abs(fTwo2.corr[0][1]) < 0.6 * Math.abs(fOne.corr[0][1])
+    && /a table against pH, pe or Eh has; one in time or in distance is the run's/.test(ownRefused[0])
+    && /"Cd\+2 = " starts a species the model has not/.test(ownRefused[1]),
+  `two edges: ${fTwo2.params ? fTwo2.params.map((pt) => `${pt.value} ± ${pt.se.toFixed(4)}`).join(', ') : fTwo2.error}, correlation `
+    + `${fTwo2.corr ? fTwo2.corr[0][1].toFixed(3) : '-'}; one edge: ${fOne.params.map((pt) => `± ${pt.se.toFixed(4)}`).join(', ')}, `
+    + `correlation ${fOne.corr[0][1].toFixed(3)}; ${ownRefused.map((x) => `"${x}"`).join(' | ')}`);
+
+  /*
     A FIT WEIGHTED by each value's standard deviation, sd(A): the decay
     measured with the same noise, each value given the deviation
     s d ln 10 that makes its residual's, in log10, s -- 0.01 and 0.02 by

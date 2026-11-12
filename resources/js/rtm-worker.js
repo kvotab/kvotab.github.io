@@ -2119,9 +2119,17 @@ function rtmFitPoints(model, columns, tend) {
   water of the table's cell as the model starts it, held at each value and
   speciated there as the Diagrams tab speciates it, walking up the values
   from the water and each from the one before; the water itself where one
-  does not settle from the one before. A map from each value to its water.
-  Throws where a water does not settle at all.
+  does not settle from the one before. A map from each value to its water,
+  and the model they are of. Throws where a water does not settle at all.
+  A table with a water of its own, Zn+2 = 1e-4 on its line, is of the text
+  with those species started there, compiled afresh (rtmTableText).
 */
+function rtmTableText(text, tab) {
+  let out = text;
+  for (const [name, v] of tab.water || []) out = RtmModel.withValue(out, { kind: 'initial', name }, v);
+  return out;
+}
+
 function rtmSpeciationTable(model, tab, values) {
   const stride = model.stride || 1;
   const S = rtmDiagramSetup({ model, at: 'start', cell: (tab.cell || 0) * stride, axes: [{ kind: tab.axis, values }] });
@@ -2143,7 +2151,7 @@ function rtmSpeciationTable(model, tab, values) {
     lnGamma = g;
     waters.set(x, y);
   }
-  return { waters, t: S.t };
+  return { waters, t: S.t, model };
 }
 
 /** A key's value in model cell `cell` of concentrations c at time t: a species', or a quantity's. */
@@ -2282,6 +2290,9 @@ function rtmFit(msg, post) {
   }
   points.forEach((p) => { p.sdr = !weighted ? 1 : p.index ? p.sd : p.sd / (p.value * Math.LN10); });
   const specTables = [...new Set(points.filter((p) => p.kind === 'speciation').map((p) => p.table))];
+  // A table's own water: the text at theta with its species started as the table says, compiled; else the model itself.
+  const tableModel = (model, th, ti) => (model.data[ti].water && model.data[ti].water.length
+    ? RtmModel.compile(rtmTableText(textAt(th), model.data[ti])) : model);
   const specValues = new Map(specTables.map((ti) => [ti,
     [...new Set(points.filter((p) => p.table === ti).map((p) => p.x))].sort((a, b) => a - b)]));
   const out1 = new Float64Array(1);
@@ -2303,14 +2314,15 @@ function rtmFit(msg, post) {
       if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
       conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
     }
-    // Each table against pH, pe or Eh: its water speciated at every value it measured, with these numbers.
-    const spec = new Map(specTables.map((ti) => [ti, rtmSpeciationTable(model, model.data[ti], specValues.get(ti))]));
+    // Each table against pH, pe or Eh: its water speciated at every value it measured, with these numbers -- a table with a
+    // water of its own, of the text with its species started there.
+    const spec = new Map(specTables.map((ti) => [ti, rtmSpeciationTable(tableModel(model, th, ti), model.data[ti], specValues.get(ti))]));
     const r = new Float64Array(n);
     points.forEach((p, i) => {
       let v;
       if (p.kind === 'speciation') {
         const w = spec.get(p.table);
-        v = rtmValueAt(model, w.waters.get(p.x), w.t, p.cell, p.k, p.q, out1);
+        v = rtmValueAt(w.model, w.waters.get(p.x), w.t, p.cell, p.k, p.q, out1);
       } else {
         const c = conc[times.indexOf(p.t)];
         v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
@@ -2466,15 +2478,17 @@ function rtmFit(msg, post) {
         const hi = vals[vals.length - 1];
         const pad = hi > lo ? 0.05 * (hi - lo) : 0.5;
         const grid = Array.from({ length: 101 }, (_, i) => lo - pad + ((hi - lo + 2 * pad) * i) / 100);
+        const tm = tableModel(model, theta, p.table);
         let w;
-        try { w = { x: grid, ...rtmSpeciationTable(model, model.data[p.table], grid) }; } catch (e) {
-          w = { x: vals, ...rtmSpeciationTable(model, model.data[p.table], vals) };
+        try { w = { x: grid, ...rtmSpeciationTable(tm, model.data[p.table], grid) }; } catch (e) {
+          w = { x: vals, ...rtmSpeciationTable(tm, model.data[p.table], vals) };
         }
         specCurve.set(p.table, w);
       }
       const w = specCurve.get(p.table);
-      curves.push({ kind: 'speciation', axis: p.axis, table: p.table, cell: p.cell, key: p.key, index: p.index, x: w.x.slice(),
-        y: w.x.map((x) => rtmValueAt(model, w.waters.get(x), w.t, p.cell, p.k, p.q, out1)) });
+      curves.push({ kind: 'speciation', axis: p.axis, table: p.table, cell: p.cell, key: p.key, index: p.index,
+        water: model.data[p.table].water || [], x: w.x.slice(),
+        y: w.x.map((x) => rtmValueAt(w.model, w.waters.get(x), w.t, p.cell, p.k, p.q, out1)) });
     } else if (p.kind === 'time') {
       curves.push({ kind: 'time', cell: p.cell, key: p.key, index: p.index, x: Array.from(res.t),
         y: conc.map((c, i) => rtmValueAt(model, c, res.t[i], p.cell, p.k, p.q, out1)) });
@@ -2496,6 +2510,7 @@ function rtmFit(msg, post) {
     corr: cov ? cov.map((row, a) => row.map((v, b) => v / Math.sqrt(cov[a][a] * cov[b][b]))) : null,
     history,
     points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
+      water: p.kind === 'speciation' ? model0.data[p.table].water || [] : null,
       index: p.index, value: p.value, residual: best.r[i] * p.sdr, sd: p.sd, normalized: weighted ? best.r[i] : null })),
     curves,
     text: textAt(theta),

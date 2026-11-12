@@ -2002,8 +2002,11 @@
    * as the Diagrams tab speciates it: kind 'speciation', its axis that
    * first column. Then a row of numbers per point, a dash for one not
    * measured. A column sd(Ca+2) beside Ca+2 is the standard deviation of
-   * each value of it, which a fit weighs it by.
-   * Returns [{ kind, axis, columns, cell, layer, at, rows, line }].
+   * each value of it, which a fit weighs it by. A table against pH, pe or
+   * Eh may start its water with species of its own, Zn+2 = 1e-4 on its line
+   * (no spaces in the number): the model with those species started there,
+   * a water of its own -- a sorption edge at another loading.
+   * Returns [{ kind, axis, columns, water: [[name, value]], cell, layer, at, rows, line }].
    */
   function readData(lines) {
     const tables = [];
@@ -2013,13 +2016,20 @@
       const first = tokens[0].toLowerCase();
       if (['time', 't', 'distance', 'x', 'ph', 'pe', 'eh'].includes(first)) {
         const quals = {};
+        const water = [];
         const rest = text.slice(text.indexOf(tokens[0]) + tokens[0].length)
-          .replace(/(^|\s)(cell|layer|at)\s*=\s*(\S+)/gi, (_, sp, k, v) => { quals[k.toLowerCase()] = v; return ' '; });
+          .replace(/(^|\s)(cell|layer|at)\s*=\s*(\S+)/gi, (_, sp, k, v) => { quals[k.toLowerCase()] = v; return ' '; })
+          // Any other name = number: a species started there in the table's own water.
+          .replace(/(^|\s)([^\s=]+)\s*=\s*(\S+)/g, (_, sp, name, v) => { water.push([name, v]); return ' '; });
         const columns = rest.split(/\s+/).filter(Boolean);
         const kind = first === 'time' || first === 't' ? 'time' : first === 'distance' || first === 'x' ? 'distance' : 'speciation';
         const axis = kind === 'speciation' ? { ph: 'pH', pe: 'pe', eh: 'Eh' }[first] : null;
         if (!columns.length) {
           throw new RtmError(`"${text}": a table in <DATA> names its columns after ${tokens[0]}: time  Ca+2  pH  cell = 19.`, line);
+        }
+        if (kind !== 'speciation' && water.length) {
+          throw new RtmError(`"${text}": ${water[0][0]} = sets a water of the table's own, which a table against pH, pe or Eh `
+            + 'has; one in time or in distance is the run\'s, of the model\'s own water.', line);
         }
         if (kind === 'speciation' && (quals.at !== undefined || quals.layer !== undefined)) {
           throw new RtmError(`"${text}": a table against ${axis} is of the water of a cell held there, cell = 0; `
@@ -2036,7 +2046,8 @@
         if (kind === 'distance' && quals.cell !== undefined) {
           throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time.`, line);
         }
-        cur = { kind, axis, columns, cell: quals.cell !== undefined ? whole('cell') : null,
+        cur = { kind, axis, columns, water: water.map(([name, v]) => [name, constValue(v, line, name)]),
+          cell: quals.cell !== undefined ? whole('cell') : null,
           layer: quals.layer !== undefined ? whole('layer') : 0,
           at: quals.at !== undefined ? constValue(quals.at, line, 'at') : null, rows: [], line };
         tables.push(cur);
@@ -12540,6 +12551,15 @@
         throw new RtmError(`<DATA>, the table on line ${tab.line}: "${colName}" is no species and none of the page's `
           + `quantities${qList.length ? ` (${qList.slice(0, 6).map((q) => q.key).join(', ')}${qList.length > 6 ? ' and more' : ''})` : ''}.`,
         tab.line);
+      }
+      for (const [name, v] of tab.water || []) {
+        if (!index.has(name)) {
+          throw new RtmError(`<DATA>, the table on line ${tab.line}: "${name} = " starts a species the model has not.`, tab.line);
+        }
+        if (!(v >= 0)) {
+          throw new RtmError(`<DATA>, the table on line ${tab.line}: ${name} = ${v}; a species starts at a number of nought or more.`,
+            tab.line);
+        }
       }
       if ((tab.kind === 'time' || tab.kind === 'speciation') && tab.cell !== null && tab.cell >= nf) {
         throw new RtmError(`<DATA>, the table on line ${tab.line}: cell = ${tab.cell}, where the column has ${nf} (0 to ${nf - 1}).`,

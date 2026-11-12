@@ -1357,7 +1357,11 @@ distance  pH     at = 36000
             there rather than of a run — a sorption edge, the share of a metal on a surface at each pH: the water
             of the cell <code>cell =</code> names, the first unless said, as the model starts it, held at each
             value and speciated by the model's own relations, as the Diagrams tab speciates it. <em>Fit</em> fits
-            to it without a run, and Diagrams draws it beside the quantity it measures, against the same thing.</p>
+            to it without a run, and Diagrams draws it beside the quantity it measures, against the same thing.
+            Such a table may have a water of its own: <code>Zn+2 = 1e-4</code> on its line, after the columns and
+            without spaces in the number, starts that species there, in the model's water as its text is with
+            that one start changed — a second edge at a hundred times the zinc, or one at another ionic strength.
+            Diagrams leaves it to the Fit tab, which draws each table as a curve of its own.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -3091,6 +3095,11 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             deviations' own rather than the residuals' scatter. Every value fitted needs a deviation, or none does.
             The chart draws each measurement with its deviation either side, and the residuals over their
             deviations, in a band of one either way.</p>
+          <p>Several tables against pH, each with a water of its own, are fitted together: one sorption edge
+            leaves a strong site's constant and a weak one's loosely tied to each other, both shaping the same
+            curve, and a second edge at a loading that fills the strong sites pins the weak one down. Each table's
+            water is compiled afresh with the numbers tried, its own starts put in, and each is drawn as a curve of
+            its own, named by its water.</p>
           <p>The misfit is the sum of the squared residuals: for an amount the log<sub>10</sub> of
             the run's value over the one measured, so that a factor of two counts the same at any
             size and a value at or below zero is left out; for pH, a saturation index and the like
@@ -3953,14 +3962,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111g"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111h"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261111g"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111j"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261112d"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111k"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111t"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111u"></script>
 </body>
 </html>
