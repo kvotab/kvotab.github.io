@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111j">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111k">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -625,7 +625,7 @@
           <div class="rtm-toolbar rtm-how">
             <span class="rtm-grp">
               <label id="rtmCompLogTWrap"><input type="checkbox" id="rtmCompLogT" checked data-on-change="rtm:redrawComp"> log time</label>
-              <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" value="1e-6" style="width:70px" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
+              <label id="rtmCompTMinWrap">from <input type="text" id="rtmCompTMin" class="rtm-from" value="1e-6" data-on-change="rtm:redrawComp"> <span id="rtmCompTMinUnit">s</span></label>
             </span>
             <label data-comp-for="pca"><input type="checkbox" id="rtmCompPcaLog" checked data-on-change="rtm:redrawComp"> logs of
               amounts</label>
@@ -2693,7 +2693,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             drawn in its own pore volumes, so that two runs at different speeds line up where the same
             water has flowed in: with the dispersion set by <code>PECLET</code>, a dispersivity, a
             tracer at twice the speed draws the first run's curves. Whichever is chosen, the model and
-            its run are as they were: only the times shown change. The <em>from</em> boxes and the bare
+            its run are as they were: only the times shown change. A time unit chosen here is the one
+            the other tabs show their times in too — Composition, Sweeps, Fit, Uncertainty and a run
+            through PHREEQC, their axes, colour scales and tables — and every time the page writes, in
+            a legend, a note or the status line; rates and speeds stay per the model's own unit. Pore
+            volumes are for these three charts alone, and with them chosen the others keep the
+            model's own unit. The <em>from</em> boxes and the bare
             numbers of <em>Times</em> are read in it, and turned into the other when it changes; the CSV
             of <em>Against time</em> gains a column of the chosen unit, or of pore volumes, before the
             time in the model's own. Opening skbrtm's files with their script shows the run in the unit
@@ -4084,6 +4089,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111f"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zd"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111ze"></script>
 </body>
 </html>

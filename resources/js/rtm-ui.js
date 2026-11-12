@@ -51,7 +51,8 @@
     gradCFrom: '',
     // The unit a concentration is shown in (CONC_UNITS): empty for the model's own.
     concUnit: '',
-    // What time is shown in on Against time, Against distance and Gradient: '' the model's own unit, 'pv' pore volumes.
+    // What time is shown in: '' the model's own unit, s, min, h, d or a another, 'pv' pore volumes (on Against time,
+    // Against distance and Gradient; elsewhere the model's own unit).
     timeIn: '',
     // Against time at several cells: the list typed in Cells; empty for the one cell Cell chooses.
     cells: '',
@@ -415,14 +416,17 @@
   }
 
   /**
-   * A time in the model's own unit, written for a person.
+   * A time in the model's own unit, written for a person: in the unit Time in
+   * shows, where one is chosen.
    *
-   * Scaled up the ladder when that reads better -- 5000 s is 1.39 h -- but
+   * Else scaled up the ladder when that reads better -- 5000 s is 1.39 h -- but
    * never below the model's own unit: a model written in years has nothing to
    * say about seconds, and "3.16e7 s" where the reader wrote 1 would answer a
    * question nobody asked.
    */
   const fmtTime = (t) => {
+    const st = shownTime();
+    if (st.fixed) return `${(t * st.per).toPrecision(3)} ${st.sym}`;
     const u = timeUnit();
     const s = t * u.seconds;
     const ladder = [[1, 's'], [60, 'min'], [3600, 'h'], [86400, 'd'], [365.25 * 86400, 'a']];
@@ -518,6 +522,30 @@
   */
   const SHOW_UNITS = [['s', 'seconds', 1], ['min', 'minutes', 60], ['h', 'hours', 3600], ['d', 'days', 86400],
     ['a', 'years', 365.25 * 86400]];
+  /**
+   * The time unit times are shown in, on every tab and wherever the page writes
+   * one: { fixed, per, sym } -- the unit Time in has chosen, or the model's own
+   * where none is, or where pore volumes are, which only the three charts with
+   * Time in are drawn in. per is what a time of the model is multiplied by.
+   */
+  function shownTime() {
+    const own = timeUnit();
+    const want = SHOW_UNITS.find(([sym]) => sym === state.timeIn && sym !== own.symbol);
+    return want ? { fixed: true, per: own.seconds / want[2], sym: want[0] } : { fixed: false, per: 1, sym: own.symbol };
+  }
+  /** A time of the model as it is shown; anything not a number as it is. */
+  const showT = (t) => (Number.isFinite(t) ? t * shownTime().per : t);
+  /** Composition's "from", typed in the unit shown, in the model's unit. */
+  const compFrom = () => (Number(state.compTMin) || 0) / shownTime().per;
+  /** A number typed on one time axis -- { per } -- written on another. */
+  const turnTime = (v, from, to) => {
+    const x = Number(((v / from.per) * to.per).toPrecision(6));
+    return x !== 0 && (Math.abs(x) < 1e-3 || Math.abs(x) >= 1e6) ? x.toExponential() : String(x);
+  };
+  /** The bare numbers of a list of times written on another axis; those with a unit as they were typed. */
+  const turnBareTimes = (text, from, to) => String(text).replace(
+    /(^|[\s,;])([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(?!\s*(?:s|min|h|d|a|y|pv)\b)(?=$|[\s,;])/gi,
+    (all, lead, num) => `${lead}${turnTime(Number(num), from, to)}`);
   /** A pore volume of run r -- the time its water takes to cross the column, in its model's unit -- or 0 where it does not flow. */
   function poreTime(r = state.result) {
     const m = r ? r.model : state.compiled;
@@ -531,13 +559,11 @@
    */
   function timeAxis(r = state.result) {
     const tw = poreTime(r);
-    const own = timeUnit();
     if (state.timeIn === 'pv' && tw > 0) return { pv: true, fixed: true, tw, per: 1 / tw, sym: 'PV', title: 'pore volumes', why: '' };
     const m = r ? r.model : state.compiled;
-    const want = SHOW_UNITS.find(([sym]) => sym === state.timeIn && sym !== own.symbol);
-    const sym = want ? want[0] : own.symbol;
-    return { pv: false, fixed: !!want, tw, per: want ? own.seconds / want[2] : 1, sym, title: `time (${sym})`,
-      why: state.timeIn === 'pv' && m ? `time in ${own.name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
+    const st = shownTime();
+    return { pv: false, fixed: st.fixed, tw, per: st.per, sym: st.sym, title: `time (${st.sym})`,
+      why: state.timeIn === 'pv' && m ? `time in ${timeUnit().name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
   }
   /** Run r's stored times on the axis: its own, or scaled, kept with the run. */
   function axisTimes(r, ax) {
@@ -576,20 +602,23 @@
     with its unit means the same on either and stays as typed.
   */
   function retypeTimes(from, to) {
-    const turn = (v) => {
-      const x = Number(((v / from.per) * to.per).toPrecision(6));
-      return x !== 0 && (Math.abs(x) < 1e-3 || Math.abs(x) >= 1e6) ? x.toExponential() : String(x);
-    };
     for (const id of ['rtmTMin', 'rtmGradTMin']) {
       const el = $(id);
       const v = Number(el.value);
-      if (el.value.trim() && Number.isFinite(v)) el.value = turn(v);
+      if (el.value.trim() && Number.isFinite(v)) el.value = turnTime(v, from, to);
     }
     state.gradTMin = $('rtmGradTMin').value;
     const times = $('rtmProfileTimes');
-    times.value = times.value.replace(/(^|[\s,;])([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(?!\s*(?:s|min|h|d|a|y|pv)\b)(?=$|[\s,;])/gi,
-      (all, lead, num) => `${lead}${turn(Number(num))}`);
+    times.value = turnBareTimes(times.value, from, to);
     state.profileTimes = times.value;
+  }
+  /** Composition's "from" and Times, in the unit shown, put in another: pore volumes are not among them. */
+  function retypeShown(from, to) {
+    const v = Number(state.compTMin);
+    if (String(state.compTMin).trim() && Number.isFinite(v)) state.compTMin = turnTime(v, from, to);
+    state.compTimes = turnBareTimes(state.compTimes, from, to);
+    $('rtmCompTMin').value = state.compTMin;
+    $('rtmCompTimes').value = state.compTimes;
   }
 
   /* ---------------------------------------------------------------------
@@ -3402,7 +3431,7 @@
       || (budget && state.compBudgetOf === BUDGET_ALL);
     $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
     $('rtmCompTMin').value = state.compTMin;
-    $('rtmCompTMinUnit').textContent = timeUnit().symbol;
+    $('rtmCompTMinUnit').textContent = shownTime().sym;
   }
 
   function drawComp() {
@@ -3432,7 +3461,7 @@
     const layer = Math.min(state.compLayer, stride - 1);
     const cell = Math.min(state.compCell, r.model.fracture - 1);
     // Across the column, one time: the slider's, or the first asked for, or the end of the run.
-    const asked = parseTimes(state.compTimes);
+    const asked = parseTimes(state.compTimes, shownTime());
     const still = compSliding(r) && state.compAt !== null;
     const atIndex = still ? nearestIndex(r.t, state.compAt) : asked.times.length ? nearestIndex(r.t, asked.times[0]) : r.n - 1;
     renderCompPlay(r, atIndex);
@@ -4053,10 +4082,10 @@
     if (got.error) { fail(`The budget of ${name} could not be kept: ${got.error}`); return; }
     const pick = compTimeIndices(r);
     const idx = pick.idx;
-    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(compFrom())}: lower the "from" time.`); return; }
     const c = themeColors();
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22', '#17becf'];
-    const xs = idx.map((i) => r.t[i]);
+    const xs = idx.map((i) => showT(r.t[i]));
     const traces = got.bands.map((b, q) => ({ type: 'scatter', mode: 'lines', name: b.name, x: xs, y: idx.map((i) => b.values[i]),
       stackgroup: 'held', line: { width: 0.6, color: palette[q % palette.length] } }));
     const anyOut = got.transport && got.cumOut.some((v) => v !== 0);
@@ -4072,7 +4101,7 @@
       line: { color: c.text, dash: 'dot', width: 1.6 } });
     const layout = baseLayout();
     layout.xaxis.type = pick.logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
     layout.yaxis.title = { text: got.transport ? "amount, concentration × m per m² of the water's cross-section" : 'amount per kg of water',
       font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -4091,11 +4120,11 @@
       + (rel < 1e-4 ? `; no reaction makes or takes any to speak of: what is left over, at most ${off.toExponential(1)}, ${rel.toExponential(1)}`
         + ' of what was there and came in, is the solver\'s and the summing over the stored points\''
         : `; made by reactions, net, ${fmt(got.byReactions[last])} by the end`);
-    const unit = timeUnit().symbol;
+    const unit = shownTime().sym;
     compTableNow = { head: [`t (${unit})`, ...got.bands.map((b) => b.name), ...(anyOut ? ['gone out at the right-hand end'] : []),
       ...(got.transport ? ['come in at the left-hand end'] : []), 'made by reactions, net', 'in the column, all of it'],
     name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}`,
-    rows: Array.from({ length: n }, (_, i) => [r.t[i], ...got.bands.map((b) => b.values[i]), ...(anyOut ? [got.cumOut[i]] : []),
+    rows: Array.from({ length: n }, (_, i) => [showT(r.t[i]), ...got.bands.map((b) => b.values[i]), ...(anyOut ? [got.cumOut[i]] : []),
       ...(got.transport ? [got.cumIn[i]] : []), got.byReactions[i], got.total[i]]) };
   }
 
@@ -4185,13 +4214,13 @@
     }
     const pick = compTimeIndices(r);
     const idx = pick.idx;
-    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+    if (!idx.length) { fail(`Nothing is stored after ${fmtTime(compFrom())}: lower the "from" time.`); return; }
     if (ranked.length) {
       const named = ranked.slice(0, LINES_NAMED);
       const rest = ranked.slice(LINES_NAMED);
       const c = themeColors();
       const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22'];
-      const xs = idx.map((i) => r.t[i]);
+      const xs = idx.map((i) => showT(r.t[i]));
       const traces = [];
       const add = (label, color, mk, tk, group) => {
         const anyMade = mk.some((v) => v > 0);
@@ -4218,7 +4247,7 @@
         line: { color: c.text, dash: 'dot', width: 1.6 } });
       const layout = baseLayout();
       layout.xaxis.type = pick.logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+      layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
       layout.yaxis.title = { text: `made (+) and taken (−) per ${sym}<br>${per}`, font: { size: 11 } };
       layout.margin.l = 86;
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -4281,7 +4310,7 @@
       : `the summing's error ${fmt(error)}, ${errText} of what was made and taken`) : '']
       .filter(Boolean).join('; ');
     // Saved: each line's rates and its sum at every stored point, each relation's part; in Excel, the table on a sheet of its own.
-    const head = [`t (${sym})`];
+    const head = [`t (${shownTime().sym})`];
     for (const { l } of ranked) {
       const who = `${l.name} (line${l.lines.length > 1 ? 's' : ''} ${l.lines.join(' and ')})`;
       head.push(`${who}, made per ${sym}`, `${who}, taken per ${sym}`, `${who}, net since the start`);
@@ -4296,7 +4325,7 @@
       head,
       name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}_by_reaction${whole ? '' : `_cell${cellAt}${layer ? `_layer${layer}` : ''}`}`,
       rows: Array.from({ length: n }, (_, i) => {
-        const row = [r.t[i]];
+        const row = [showT(r.t[i])];
         let all = 0;
         for (const { l } of ranked) { row.push(l.made[i], l.taken[i], l.madeCum[i] + l.takenCum[i]); all += l.madeCum[i] + l.takenCum[i]; }
         row.push(all);
@@ -4403,11 +4432,12 @@
     });
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#bcbd22', '#17becf'];
     const colourOf = new Map([...new Set(rows.map((x) => x.name))].map((nm, q) => [nm, palette[q % palette.length]]));
-    const xs = Array.from(r.t);
+    const tShown = shownTime();
+    const xs = Array.from(r.t, (t) => t * tShown.per);
     const traces = rows.map((x) => ({ type: 'scatter', mode: 'lines', name: x.label, x: xs, y: Array.from(x.pos, (v) => (Number.isFinite(v) ? v : null)),
       line: { color: colourOf.get(x.name), width: 1.8, dash: x.dash }, connectgaps: false }));
     const layout = baseLayout();
-    layout.xaxis.title = { text: `time (${sym})`, font: { size: 11 } };
+    layout.xaxis.title = { text: `time (${tShown.sym})`, font: { size: 11 } };
     layout.yaxis.title = { text: `distance from the inlet (m)${stride > 1 && layer ? `, rock layer ${layer}` : ''}`, font: { size: 11 } };
     layout.yaxis.range = [0, L];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -4417,8 +4447,8 @@
     box.innerHTML = `<table><thead><tr><th>Each front, from the inlet</th><th>at the end (m)</th><th>speed (m/${esc(sym)})</th>`
       + '<th>of the water\'s speed</th></tr></thead><tbody>'
       + rows.map((x) => `<tr><td>${esc(x.label)}</td>${td(x.end)}${td(x.v)}${td(x.share)}</tr>`).join('') + '</tbody></table>'
-      + (events.length ? `<table><thead><tr><th>When</th><th>t (${esc(sym)})</th></tr></thead><tbody>${events.sort((a, b) => a[1] - b[1])
-        .map(([what, t]) => `<tr><td>${esc(what)}</td>${td(t)}</tr>`).join('')}</tbody></table>` : '')
+      + (events.length ? `<table><thead><tr><th>When</th><th>t (${esc(tShown.sym)})</th></tr></thead><tbody>${events.sort((a, b) => a[1] - b[1])
+        .map(([what, t]) => `<tr><td>${esc(what)}</td>${td(t * tShown.per)}</tr>`).join('')}</tbody></table>` : '')
       + `<p>A mineral the column holds at the start: the length of column cleared of it, each cell its width times the share of `
       + `its first amount gone. One it holds none of: the first and the last cell holding any. A speed is over the second half `
       + `of the run${water ? `; the water's, ${fmtNumber(water)} m/${esc(sym)}, the column's length over the time it takes the water to cross it` : ''}.</p>`;
@@ -4429,19 +4459,19 @@
         + `${lead.share !== null ? `, ${fit4(lead.share)} of the water's speed` : ''}` : '']
       .filter(Boolean).join('; ');
     compTableNow = {
-      head: [`t (${sym})`, ...rows.map((x) => `${x.label} (m)`)],
+      head: [`t (${tShown.sym})`, ...rows.map((x) => `${x.label} (m)`)],
       name: `${fileStem()}_fronts${layer ? `_layer${layer}` : ''}`,
-      rows: Array.from({ length: n }, (_, i) => [r.t[i], ...rows.map((x) => (Number.isFinite(x.pos[i]) ? x.pos[i] : null))]),
+      rows: Array.from({ length: n }, (_, i) => [r.t[i] * tShown.per, ...rows.map((x) => (Number.isFinite(x.pos[i]) ? x.pos[i] : null))]),
       extra: [{ name: 'speeds', head: ['front', 'at the end (m)', `speed (m/${sym})`, "of the water's speed"],
         rows: rows.map((x) => [x.label, x.end, x.v, x.share]) },
-      ...(events.length ? [{ name: 'when', head: ['what', `t (${sym})`], rows: events }] : [])],
+      ...(events.length ? [{ name: 'when', head: ['what', `t (${tShown.sym})`], rows: events.map(([what, t]) => [what, t * tShown.per]) }] : [])],
     };
   }
 
   /** The stored points along the run a chart in time draws: after "from" on a log axis. */
   function compTimeIndices(r) {
     const logT = $('rtmCompLogT').checked;
-    const tmin = Number(state.compTMin) || 0;
+    const tmin = compFrom();
     const out = [];
     for (let i = 0; i < r.n; i++) if (!logT || (r.t[i] > 0 && r.t[i] >= tmin)) out.push(i);
     return { idx: out, logT };
@@ -4470,9 +4500,9 @@
     if (along === 'time') {
       const pick = compTimeIndices(r);
       idx = pick.idx;
-      if (!idx.length) { fail(`Nothing is stored after ${fmtTime(Number(state.compTMin) || 0)}: lower the "from" time.`); return; }
+      if (!idx.length) { fail(`Nothing is stored after ${fmtTime(compFrom())}: lower the "from" time.`); return; }
       const mc = modelCell(cell, layer);
-      xs = idx.map((i) => r.t[i]);
+      xs = idx.map((i) => showT(r.t[i]));
       valueAt = (j, k) => r.states[idx[j] * r.width + mc * ns + k];
     } else {
       xs = Array.from(r.model.centres);
@@ -4535,14 +4565,14 @@
     const layout = baseLayout();
     const where = state.compIn === 'water' ? 'dissolved' : 'in the cell';
     layout.xaxis.type = along === 'time' && $('rtmCompLogT').checked ? 'log' : 'linear';
-    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)',
+    layout.xaxis.title = { text: along === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)',
       font: { size: 11 } };
     layout.yaxis.title = { text: percent ? `share of the ${E.el} ${where} (%)` : `${E.el} ${where} (concentration × count)`,
       font: { size: 11 } };
     if (percent) layout.yaxis.range = [0, 100];
     else if (sliding && runTop > 0) layout.yaxis.range = [0, 1.05 * runTop];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
-    const xHead = along === 'time' ? `t (${timeUnit().symbol})` : 'distance (m)';
+    const xHead = along === 'time' ? `t (${shownTime().sym})` : 'distance (m)';
     compTableNow = { head: [xHead, ...kept.map((b) => `${b.name}${percent ? ' (%)' : ''}`), `${E.el} ${where}, all of it`],
       rows: xs.map((x, j) => [x, ...shown.map((col) => col[j]), total[j]]),
       name: `rtm_${E.el}_${along === 'time' ? `cell${cell}` : 'column'}` };
@@ -4552,7 +4582,7 @@
     if (small.length > 1) bits.push(`${small.length} never come to 1 %, drawn as one band`);
     const bk = besideRun();
     if (bk) bits.push(besideNote(bk, 'bands that stack take no second run; the other views draw it'));
-    if (along === 'distance' && !sliding && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes).times[0])
+    if (along === 'distance' && !sliding && state.compTimes.trim() && Math.abs(r.t[atIndex] - parseTimes(state.compTimes, shownTime()).times[0])
       > 0.01 * Math.abs(r.t[atIndex] || 1)) bits.push('the nearest stored time');
     note.textContent = bits.join('; ');
   }
@@ -4587,7 +4617,7 @@
       const mc = modelCell(cell, layer, kr);
       if (view === 'piper' || view === 'durov') {
         const logT = $('rtmCompLogT').checked;
-        const tmin = Number(state.compTMin) || 0;
+        const tmin = compFrom();
         const idx = [];
         for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) idx.push(i);
         const step = Math.max(1, Math.ceil(idx.length / 300));
@@ -4629,9 +4659,9 @@
         const take = idx.filter((_, j) => j % step === 0 || j === idx.length - 1);
         for (const i of take) {
           waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]),
-            color: logT ? Math.log10(r.t[i]) : r.t[i], i, mc });
+            color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), i, mc });
         }
-        colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+        colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
       } else {
         // The times asked for, or six spread over the run.
         const picks = asked.times.length ? [...new Set(asked.times.map((tt) => nearestIndex(r.t, tt)))]
@@ -4719,11 +4749,11 @@
         axes.tds = Math.max(axes.tds, d.tds);
       }
     }
-    const xHead = [`t (${timeUnit().symbol})`, 'cell', 'distance (m)'];
+    const xHead = [`t (${shownTime().sym})`, 'cell', 'distance (m)'];
     compTableNow = {
       head: ['water', ...xHead, ...POLES.map((p) => `${p.label} (${unit.text})`), ...POLES.map((p) => `${p.label} (% of the ${p.cation ? 'cations' : 'anions'})`), 'type',
         ...(view === 'durov' ? ['pH', 'TDS (mg/kgw)'] : [])],
-      rows: all.map((wt) => [wt.measured ? wt.label : `model, ${wt.label}`, wt.t, wt.cell, wt.x !== undefined ? wt.x : null,
+      rows: all.map((wt) => [wt.measured ? wt.label : `model, ${wt.label}`, showT(wt.t), wt.cell, wt.x !== undefined ? wt.x : null,
         ...POLES.map((p) => wt.w[p.key]), ...POLES.map((p) => (wt.f ? 100 * wt.f[p.key] : null)), wt.f ? faciesOf(wt.f) : null,
         ...(view === 'durov' ? [Number.isFinite(wt.ph) ? wt.ph : null, Number.isFinite(wt.tds) ? wt.tds : null] : [])]),
       name: `rtm_${view}_${along === 'time' ? `cell${cell}` : 'column'}`,
@@ -4783,7 +4813,7 @@
     const pts = [];
     if (along === 'time') {
       const logT = $('rtmCompLogT').checked;
-      const tmin = Number(state.compTMin) || 0;
+      const tmin = compFrom();
       const idx = [];
       for (let i = 0; i < kr.n; i++) if (!logT || (kt[i] > 0 && kt[i] >= tmin)) idx.push(i);
       const step = Math.max(1, Math.ceil(idx.length / 300));
@@ -4859,10 +4889,10 @@
       const step = Math.max(1, Math.ceil(idx.length / 300));
       for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
         if (sc && sar && sc[i] > 0 && Number.isFinite(sar[i])) {
-          pts.push({ sc: sc[i], sar: sar[i], color: logT ? Math.log10(r.t[i]) : r.t[i], label: fmtTime(r.t[i]), t: r.t[i], cell });
+          pts.push({ sc: sc[i], sar: sar[i], color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), label: fmtTime(r.t[i]), t: r.t[i], cell });
         }
       }
-      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
     } else {
       cells.forEach((mc, k) => {
         const sc = quantitySeries('SC', mc);
@@ -4968,8 +4998,8 @@
     ];
     // Log axes take their annotations' x in log10.
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
-    compTableNow = { head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', 'SC (µS/cm)', 'SAR', 'class'], name: 'rtm_ussl',
-      rows: [...pts.map((p) => [`model, ${p.label}`, p.t, p.cell, p.x === undefined ? null : p.x, p.sc, p.sar, usslClass(p.sc, p.sar)]),
+    compTableNow = { head: ['water', `t (${shownTime().sym})`, 'cell', 'distance (m)', 'SC (µS/cm)', 'SAR', 'class'], name: 'rtm_ussl',
+      rows: [...pts.map((p) => [`model, ${p.label}`, showT(p.t), p.cell, p.x === undefined ? null : p.x, p.sc, p.sar, usslClass(p.sc, p.sar)]),
         ...measuredPts.map((p) => [p.label, null, null, null, p.sc, p.sar, usslClass(p.sc, p.sar)])] };
     const first = pts[0];
     const last = pts[pts.length - 1];
@@ -5093,9 +5123,9 @@
       const step = Math.max(1, Math.ceil(idx.length / 300));
       for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
         const pt = waterAt(i, mc);
-        if (pt) pts.push({ ...pt, color: logT ? Math.log10(r.t[i]) : r.t[i], label: fmtTime(r.t[i]), t: r.t[i], cell });
+        if (pt) pts.push({ ...pt, color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), label: fmtTime(r.t[i]), t: r.t[i], cell });
       }
-      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
     } else {
       for (let k = 0; k < r.model.fracture; k++) {
         const pt = waterAt(atIndex, k * stride + layer);
@@ -5194,9 +5224,9 @@
       label(25, 8, 'doubtful to<br>unsuitable'), label((30 + right) / 2, 8, 'unsuitable'), label(11, 70, 'permissible<br>to doubtful'),
       label(11, 90.5, 'doubtful to unsuitable'), label(25, 97.6, 'unsuitable')];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
-    compTableNow = { head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', 'cations (meq/kgw)', 'percent sodium (%)', 'class'],
+    compTableNow = { head: ['water', `t (${shownTime().sym})`, 'cell', 'distance (m)', 'cations (meq/kgw)', 'percent sodium (%)', 'class'],
       name: 'rtm_wilcox',
-      rows: [...pts.map((p) => [`model, ${p.label}`, p.t, p.cell, p.x === undefined ? null : p.x, p.epm, p.na, wilcoxClass(p.epm, p.na)]),
+      rows: [...pts.map((p) => [`model, ${p.label}`, showT(p.t), p.cell, p.x === undefined ? null : p.x, p.epm, p.na, wilcoxClass(p.epm, p.na)]),
         ...measuredPts.map((p) => [p.label, null, null, null, p.epm, p.na, wilcoxClass(p.epm, p.na)])] };
     const first = pts[0];
     const last = pts[pts.length - 1];
@@ -5265,9 +5295,9 @@
       const step = Math.max(1, Math.ceil(idx.length / 400));
       for (const i of idx.filter((_, j) => j % step === 0 || j === idx.length - 1)) {
         waters.push({ row: keys.map((k) => valueOf(k, i, mc)), t: r.t[i], cell, label: fmtTime(r.t[i]),
-          color: logT ? Math.log10(r.t[i]) : r.t[i] });
+          color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]) });
       }
-      colorTitle = logT ? `log₁₀ time (${timeUnit().symbol})` : `time (${timeUnit().symbol})`;
+      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
     } else {
       cells.forEach((mc, k) => waters.push({ row: keys.map((key) => valueOf(key, atIndex, mc)), t: r.t[atIndex], cell: k,
         x: r.model.centres[k], label: `cell ${k}`, color: r.model.centres[k] }));
@@ -5387,8 +5417,8 @@
     const pcs = Array.from({ length: q }, (_, j) => `PC${j + 1}`);
     let sum = 0;
     compTableNow = {
-      head: ['water', `t (${timeUnit().symbol})`, 'cell', 'distance (m)', ...pcs], name: `rtm_pca_${along === 'time' ? `cell${cell}` : 'column'}`,
-      rows: [...usable.map((w, i) => [`model, ${w.label}`, w.t, w.cell, w.x === undefined ? null : w.x, ...scores[i]]),
+      head: ['water', `t (${shownTime().sym})`, 'cell', 'distance (m)', ...pcs], name: `rtm_pca_${along === 'time' ? `cell${cell}` : 'column'}`,
+      rows: [...usable.map((w, i) => [`model, ${w.label}`, showT(w.t), w.cell, w.x === undefined ? null : w.x, ...scores[i]]),
         ...measuredPts.map((p) => [p.label, null, null, null, ...p.s])],
       extra: [
         { name: 'loadings', head: ['variable', 'as', 'mean', 'standard deviation', ...pcs],
@@ -7351,13 +7381,13 @@
     const keep = ts.map((x) => !logT || x > 0);
     const layout = baseLayout();
     layout.xaxis.type = logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${timeUnit().symbol})`, font: { size: 11 } };
+    layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
     const nkK = swResult.targets.filter((t) => t.k).length;
     const ncC = swResult.targets.length - nkK;
     const ofEach = `for 1 % more of each${!ncC ? ' K' : nkK ? ' constant or K' : ''}`;
     layout.yaxis.title = { text: `${index ? 'change' : '% change'} in ${yTitle} at cell ${rp.cell}, ${ofEach}`, font: { size: 11 } };
     layout.yaxis.zeroline = true;
-    Plotly.react(plot, shown.map((x, q2) => ({ type: 'scatter', mode: 'lines', name: x.t.label, x: ts.filter((_, i) => keep[i]),
+    Plotly.react(plot, shown.map((x, q2) => ({ type: 'scatter', mode: 'lines', name: x.t.label, x: ts.filter((_, i) => keep[i]).map(showT),
       y: x.e.filter((_, i) => keep[i]), line: { color: palette[q2], width: 1.8 } })), layout, PLOT_CONFIG);
     const fmt = (v) => (Math.abs(v) >= 1e-3 && Math.abs(v) < 1e4 ? String(Number(v.toPrecision(3))) : v.toExponential(2));
     const top = shown[0];
@@ -7367,9 +7397,9 @@
       top ? `the most ${top.t.label}, ${fmt(top.e[top.when])} at ${fmtTime(ts[top.when])}` : '',
       swResult.left.length ? `left out: ${swResult.left.join('; ')}` : '']
       .filter(Boolean).join('; ');
-    swTableNow = { head: [`t (${timeUnit().symbol})`, ...curves.map((x) => x.t.label)],
+    swTableNow = { head: [`t (${shownTime().sym})`, ...curves.map((x) => x.t.label)],
       name: `rtm_each_through_the_run_${key.replace(/[^\w.-]+/g, '_')}`,
-      rows: ts.map((x, i) => [x, ...curves.map((c) => (c.e ? c.e[i] : null))]) };
+      rows: ts.map((x, i) => [showT(x), ...curves.map((c) => (c.e ? c.e[i] : null))]) };
   }
 
   function renderSwShow() {
@@ -7474,13 +7504,13 @@
     if (w.show === 'time' || w.show === 'profile') {
       const traces = ok.map((run) => {
         const y = swSeries(run, key, w.show === 'time' ? 'cell' : 'end');
-        const x = w.show === 'time' ? Array.from(run.t) : Array.from(run.centres);
+        const x = w.show === 'time' ? Array.from(run.t, showT) : Array.from(run.centres);
         const keep = x.map((xx, i) => (w.show !== 'time' || !w.logT || xx > 0) && Number.isFinite(y[i]) && (!logY || y[i] > 0));
         return { type: 'scatter', mode: 'lines', name: swRunName(run), x: x.filter((_, i) => keep[i]), y: y.filter((_, i) => keep[i]),
           line: { color: swColour(runs.indexOf(run), runs.length), width: 1.6 } };
       });
       layout.xaxis.type = w.show === 'time' && w.logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: w.show === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.xaxis.title = { text: w.show === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)', font: { size: 11 } };
       layout.yaxis.type = logY ? 'log' : 'linear';
       layout.yaxis.title = { text: yTitle, font: { size: 11 } };
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -7808,20 +7838,20 @@
     const bandAt = r.points.some((p) => p.band);
     const curveWhere = (c) => fitWhere(c.kind === 'speciation' ? c : c.kind === 'time' ? { kind: 'time', cell: c.cell }
       : { kind: 'distance', t: c.t });
-    const curveAlong = (c) => (c.kind === 'time' ? `time (${timeUnit().symbol})` : c.kind === 'distance' ? 'distance (m)'
+    const curveAlong = (c) => (c.kind === 'time' ? `time (${shownTime().sym})` : c.kind === 'distance' ? 'distance (m)'
       : c.axis === 'tot' ? `${fitHeldName(c)} (mol/kgw)` : fitHeldName(c));
-    const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)',
+    const pointsTable = () => ({ head: ['column', 'where', `time (${shownTime().sym})`, 'distance (m)',
       ...heldAxes.map((name) => (/^sys\(/.test(name) ? `${name} (mol/kgw)` : name)), 'measured', ...(r.weighted ? ['sd'] : []),
       'the run', ...(bandAt ? ['about 95 % from', 'about 95 % to'] : []), 'residual', ...(r.weighted ? ['residual over its sd'] : [])],
     name: 'rtm_fit',
     rows: r.points.map((p) => {
       const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
-      return [labelOf(p.key), fitWhere(p), p.t, p.kind === 'speciation' ? null : p.x,
+      return [labelOf(p.key), fitWhere(p), showT(p.t), p.kind === 'speciation' ? null : p.x,
         ...heldAxes.map((name) => heldValue(p, name)), p.value, ...(r.weighted ? [p.sd] : []), run,
         ...(bandAt ? (p.band || [null, null]) : []), p.residual, ...(r.weighted ? [p.normalized] : [])];
     }),
     extra: [{ name: 'curves', head: ['column', 'where', 'against', 'at', 'the run', 'about 95 % from', 'about 95 % to'],
-      rows: r.curves.flatMap((c) => c.x.map((x, i) => [labelOf(c.key), curveWhere(c), curveAlong(c), x, c.y[i],
+      rows: r.curves.flatMap((c) => c.x.map((x, i) => [labelOf(c.key), curveWhere(c), curveAlong(c), c.kind === 'time' ? showT(x) : x, c.y[i],
         c.band ? c.band.lo[i] : null, c.band ? c.band.hi[i] : null])) }] });
     if (show === 'history') {
       Plotly.react(plot, [{ type: 'scatter', mode: 'lines+markers', name: 'the misfit', x: r.history.map((h) => h.iteration),
@@ -7892,7 +7922,7 @@
         && (c.index || !logY || c.y[i] > 0));
       // The band, about 95 % for the curve: its lower edge, then its upper filled down to it, under the line.
       if (c.band) {
-        const bx = c.x.filter((_, i) => keep[i]);
+        const bx = c.x.filter((_, i) => keep[i]).map((x) => (along === 'time' ? showT(x) : x));
         const side = onRight ? { yaxis: 'y2' } : {};
         traces.push({ type: 'scatter', mode: 'lines', name: 'about 95 % for the curve, from', x: bx, y: c.band.lo.filter((_, i) => keep[i]),
           line: { width: 0, color }, hoverinfo: 'skip', showlegend: false, legendgroup: 'band', ...side });
@@ -7901,11 +7931,12 @@
           legendgroup: 'band', ...side });
         banded = true;
       }
-      traces.push({ type: 'scatter', mode: 'lines', name, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]),
+      traces.push({ type: 'scatter', mode: 'lines', name, x: c.x.filter((_, i) => keep[i]).map((x) => (along === 'time' ? showT(x) : x)),
+        y: c.y.filter((_, i) => keep[i]),
         line: { color, width: 1.8 }, ...(onRight ? { yaxis: 'y2' } : {}) });
       const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell
         : along === 'speciation' ? p.table === c.table : p.t === c.t));
-      traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? p.t : p.x)),
+      traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? showT(p.t) : p.x)),
         y: pts.map((p) => p.value), marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
         ...(r.weighted ? { error_y: { type: 'data', array: pts.map((p) => p.sd), visible: true, color, thickness: 1.2, width: 4 } } : {}),
         ...(onRight ? { yaxis: 'y2' } : {}) });
@@ -7913,7 +7944,7 @@
     layout.xaxis.type = (along === 'time' && logT) || totAxis ? 'log' : 'linear';
     // A total in mol/kgw in powers of ten, as the amounts are: 10⁻⁶, not 1µ.
     if (totAxis) layout.xaxis.exponentformat = 'power';
-    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})`
+    layout.xaxis.title = { text: along === 'time' ? `time (${shownTime().sym})`
       : totAxis ? `${curves[0].species} in the cell, dissolved, sorbed and as minerals (mol/kgw)`
         : along === 'speciation' ? dgLabel({ kind: curves[0].axis }) : 'distance from the left-hand face (m)', font: { size: 11 } };
     layout.yaxis.type = logY && !allIndex ? 'log' : 'linear';
@@ -8199,10 +8230,10 @@
       + '<p>A residual is log₁₀ of the run over what was measured for an amount, shown as the factor the run is of it, '
       + 'and the run less what was measured for pH, SI and the like.</p>';
     box.hidden = false;
-    fitTableNow = { head: ['column', 'where', 'time', 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
+    fitTableNow = { head: ['column', 'where', `time (${shownTime().sym})`, 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
       name: 'rtm_against_measured',
       rows: points.map((p, j) => [labelOf(p.key), p.kind === 'time' ? `cell ${p.cell}` : 'along the column',
-        p.t === null ? r.t[r.n - 1] : p.t, p.x, p.value, ...runs.flatMap((run) => (run.rows[j] ? [run.rows[j].v, run.rows[j].res] : [null, null]))]),
+        showT(p.t === null ? r.t[r.n - 1] : p.t), p.x, p.value, ...runs.flatMap((run) => (run.rows[j] ? [run.rows[j].v, run.rows[j].res] : [null, null]))]),
       extra: [{ name: 'how far off', head: ['column', 'run', 'points', 'bias', 'spread (root mean square)', 'sum of squares',
         'worst residual', 'where'], rows }] };
     const kept = bk ? runs.find((run) => run.r === bk.r) : null;
@@ -8616,7 +8647,7 @@
       }));
       const logT = u.show === 'time' && $('rtmUnLogT').checked;
       const keep = xs.map((x) => !logT || x > 0);
-      const X = xs.filter((_, i) => keep[i]);
+      const X = xs.filter((_, i) => keep[i]).map((x) => (u.show === 'time' ? showT(x) : x));
       const B = bands.map((b) => b.filter((_, i) => keep[i]));
       const traces = [
         { type: 'scatter', mode: 'lines', x: X, y: B[0], line: { width: 0 }, hoverinfo: 'skip', showlegend: false },
@@ -8636,18 +8667,18 @@
       if (u.show === 'time') {
         for (const d of measured('time', key)) {
           if ((d.tab.cell || 0) !== u.cell || (d.tab.layer || 0) !== 0) continue;
-          traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: d.x, y: d.y,
+          traces.push({ type: 'scatter', mode: 'markers', name: 'measured', x: d.x.map(showT), y: d.y,
             marker: { size: 8, symbol: 'circle-open', color: c.text, line: { width: 1.6 } } });
         }
       }
       layout.xaxis.type = logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: u.show === 'time' ? `time (${timeUnit().symbol})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.xaxis.title = { text: u.show === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)', font: { size: 11 } };
       layout.yaxis.type = logY ? 'log' : 'linear';
       layout.yaxis.title = { text: yTitle, font: { size: 11 } };
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
-      unTableNow = { head: [u.show === 'time' ? `t (${timeUnit().symbol})` : 'distance (m)', ...UN_P.map((p) => `${labelOf(key)}, ${p} %`),
+      unTableNow = { head: [u.show === 'time' ? `t (${shownTime().sym})` : 'distance (m)', ...UN_P.map((p) => `${labelOf(key)}, ${p} %`),
         ...(base ? [`${labelOf(key)}, the model as written`] : [])], name: `rtm_uncertainty_${u.show}`,
-      rows: xs.map((x, i) => [x, ...bands.map((b) => b[i]), ...(base ? [runSeries(rp, base, key, where)[i]] : [])]) };
+      rows: xs.map((x, i) => [u.show === 'time' ? showT(x) : x, ...bands.map((b) => b[i]), ...(base ? [runSeries(rp, base, key, where)[i]] : [])]) };
       note.textContent = `${what}; ${u.show === 'time' ? `cell ${rp.cell}` : 'the end of each run'}`;
       return;
     }
@@ -9940,7 +9971,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
             '**Cells**: what is ticked at several cells at once, breakthrough curves down the column — a list of cell numbers such as `4, 9, 14, end`, `end` the last; six at most. Each keeps its colour, in steps of lightness down the column, faintest at the cell nearest the inlet; the legend and the CSV give each cell’s distance. Empty, the one cell **Cell** chooses.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
-            '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
+            '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. A time unit chosen is the one the other tabs, and every time written out, show too; rates stay per the model’s own unit, and pore volumes are for these three charts alone. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
@@ -9977,7 +10008,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Those ticked against time, at one time**, first in Show: each species and quantity ticked on Against time, a curve each in its colour there, at one time — a plume’s zones side by side. pH, pe, a saturation index and the like go on an axis of their own on the right, as they are.',
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
-          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days), or PV, pore volumes, where the water flows; a bare number is in the model’s own unit, or in pore volumes where they are chosen. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
+          '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days), or PV, pore volumes, where the water flows; a bare number is in the unit **Time in** shows, or in pore volumes where they are chosen. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
           '**Time in**: as on Against time, one choice for the three charts: the model’s own unit, another time unit, or pore volumes. The legend, the slider and the note name each time in it; a run kept beside is drawn at the stored point nearest the same pore volume of its own. Changing it turns the bare numbers of Times into the other, so that the same curves are drawn.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
@@ -12019,7 +12050,7 @@ END
     // Against distance, each cell at its centre along the column, in order.
     if (distance) rows.sort((a, b) => T.cell[a] - T.cell[b]);
     const where = (i) => (v.centres && v.centres[T.cell[i]] !== undefined ? v.centres[T.cell[i]] : T.cell[i]);
-    const x = rows.map((i) => (distance ? where(i) : T.t[i]));
+    const x = rows.map((i) => (distance ? where(i) : showT(T.t[i])));
     const traces = [{ name: 'pH, −log a(H+)', x, y: rows.map((i) => T.pH[i]), mode: 'lines', type: 'scatter',
       yaxis: 'y', line: { width: 2 } }];
     for (const p of v.phases) {
@@ -12028,7 +12059,7 @@ END
     const layout = baseLayout();
     const c = themeColors();
     layout.xaxis = { ...layout.xaxis, type: logT ? 'log' : 'linear', anchor: 'y2',
-      title: { text: distance ? `distance (m), at ${at > 0 ? fmtTime(at) : 'the start'}` : `time (${timeUnit().symbol})`,
+      title: { text: distance ? `distance (m), at ${at > 0 ? fmtTime(at) : 'the start'}` : `time (${shownTime().sym})`,
         font: { size: 11 } } };
     layout.yaxis = { ...layout.yaxis, domain: [0.62, 1], exponentformat: 'none',
       title: { text: 'pH', font: { size: 11 } } };
@@ -12281,12 +12312,17 @@ END
     // One time axis for Against time, Against distance and Gradient: the three selects as one.
     'rtm:timeIn': (ev, el) => {
       const before = timeAxis();
+      const shownBefore = shownTime();
       // The model's own unit is no choice of its own: it follows the model.
       const v = el.value;
       state.timeIn = v === 'pv' || (SHOW_UNITS.some(([sym]) => sym === v) && v !== timeUnit().symbol) ? v : '';
       const after = timeAxis();
-      // The same picture on the other axis: each "from" and the Times' bare numbers put on it.
+      const shownAfter = shownTime();
+      // The same picture on the other axis: each "from" and the Times' bare numbers put on it; Composition's too.
       if (before.per !== after.per) retypeTimes(before, after);
+      if (shownBefore.per !== shownAfter.per) retypeShown(shownBefore, shownAfter);
+      // The panel says how long the run is, and a travel time: in the unit shown, written again.
+      if (shownBefore.per !== shownAfter.per) renderFacts();
       renderTimeIn();
       saveState();
       drawTime();

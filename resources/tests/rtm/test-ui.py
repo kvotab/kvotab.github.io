@@ -368,6 +368,34 @@ async def set_text(page, text):
     })()""" % json.dumps(text))
 
 
+TIME_SECONDS = {'s': 1, 'min': 60, 'h': 3600, 'd': 86400, 'a': 365.25 * 86400}
+
+
+async def in_another_unit(page, tab, read):
+    """A tab with no Time in of its own, its time axis read -- read gives [title, times] -- in the model's own unit and
+    in another chosen on Against time's Time in, the tab drawn afresh each time: [the title in the other unit, every time
+    the model's over the same factor]. Time in is put back to the model's own after."""
+    async def choose(unit):
+        await page.ev("(() => { const s = document.getElementById('rtmTimeInTime'); s.value = %s;"
+                      " s.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(unit))
+        await page.ev("document.querySelector('[data-tab=\"%s\"]').click()" % tab)
+        await asyncio.sleep(0.6)
+    before = await page.ev(read)
+    own = re.search(r'\(([a-z]+)\)$', str(before[0] if isinstance(before, list) else ''))
+    if not own or own.group(1) not in TIME_SECONDS:
+        return [before, None]
+    own = own.group(1)
+    want = 'd' if own == 'h' else 'h'
+    await choose(want)
+    after = await page.ev(read)
+    await choose(own)
+    back = await page.ev(read)
+    f = TIME_SECONDS[own] / TIME_SECONDS[want]
+    same = isinstance(after, list) and len(after[1]) == len(before[1]) > 1 \
+        and all(abs(a - b * f) <= 1e-9 * abs(b * f) for a, b in zip(after[1], before[1]) if b) and back == before
+    return [after[0] == f'time ({want})', same]
+
+
 async def press(page, sel):
     """A click with the mouse at the middle of the element, so that whatever lies on top of it is what is hit."""
     x, y = await page.ev("(() => { const e = document.querySelector(%s); e.scrollIntoView({ block: 'nearest' });"
@@ -1605,6 +1633,10 @@ async def main():
             check('  and against time, a curve per run, named for its value', await page.ev(
                 "document.getElementById('rtmChartSw').data.map((t) => t.name).join(' / ')"),
                 'kk = 0.1 / kk = 0.2 / kk = 0.3 / kk = 0.4')
+            check('  in the unit Time in chooses, which Sweeps has none of its own: its axis named so, every time scaled',
+                  await in_another_unit(page, 'sweep', "(() => { const p = document.getElementById('rtmChartSw');"
+                                                        " return [p.layout.xaxis.title.text, Array.from(p.data[0].x)]; })()"),
+                  [True, True])
             # A long tick label stands clear of the axis title: A at the end near 1.1e-7, four runs a hair apart, on a
             # linear axis, ticked 1.1251×10⁻⁷ and the like. The y axis grows its margin to take its labels (automargin);
             # with the 70 px every chart had, the title lay over them.
@@ -2381,6 +2413,27 @@ async def main():
             csv_h = await page.ev("""(async () => { const r = window.__saved[0]; const l = r ? (await r.body).split('\\n') : [''];
               const row = (l[101] || '').split(',').slice(0, 2).map(Number);
               return [l[0].split(',').slice(0, 2).join(','), Math.abs(row[0] * 3600 / row[1] - 1) < 1e-12]; })()""")
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await page.ev("""(() => { for (const [id, v] of [['rtmCompView', 'durov'], ['rtmCompAlong', 'time']]) {
+              const s = document.getElementById(id); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await asyncio.sleep(1.0)
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-pane=\"composition\"][data-as=\"csv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            comp_h = await page.ev("""(async () => { const p = document.getElementById('rtmChartComp'), out = [];
+              for (const t of p.data || []) { const c = t.marker && t.marker.colorbar; if (c && c.title) out.push(c.title.text || c.title); }
+              const r = window.__saved[0];
+              const from = document.getElementById('rtmCompTMin');
+              return [out, r ? (await r.body).split('\\n')[0].split(',').slice(0, 2).join(',') : null,
+                document.getElementById('rtmCompTMinUnit').textContent, from.scrollWidth <= from.clientWidth,
+                document.getElementById('rtmFacts').textContent.includes('run for 167 h.')]; })()""")
+            check('  Composition, which has no Time in of its own, in hours too: the Durov path\'s colour scale of time, its CSV\'s '
+                  'time column and its from, whole in its box; and the panel\'s facts, 6.94 d run for 167 h', [isinstance(comp_h, list) and len(comp_h[0]) > 0
+                                               and all(str(t).endswith('time (h)') for t in comp_h[0])] + (comp_h[1:] if isinstance(comp_h, list) else [comp_h]),
+                  [True, 'water,t (h)', 'h', True, True])
             await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
             await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '5, 1 d';"
                           " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
@@ -2743,7 +2796,7 @@ async def main():
                   f'last digit; diamonds beside circles (this run {ss_run:.7g}, the fit\'s first {misfits[0] if misfits else None})',
                   [both[0], both[1][0], len(pts), bool(misfits) and abs(ss_run / misfits[0] - 1) < 2e-3,
                    bool(misfits) and abs(ss_fit / misfits[-1] - 1) < 1e-12, seen],
-                  ['rtm_against_measured.csv', 'column,where,time,distance (m),measured,this run,"residual, this run",the fitted run,'
+                  ['rtm_against_measured.csv', 'column,where,time (d),distance (m),measured,this run,"residual, this run",the fitted run,'
                    '"residual, the fitted run"', 10, True, True,
                    ['pH circle | Ca_mg (mg/kgw) circle | pH, fitted diamond | Ca_mg (mg/kgw), fitted diamond', 6,
                     '10 values measured, each column in its own unit; this run read between its stored points and cells, linearly; '
@@ -2964,7 +3017,7 @@ async def main():
             check('  the CSV a pH column and a sys(Zn) one, an isotherm\'s point at the pH its line holds and at its total, the '
                   'deviations, the residuals over them, and each point\'s water',
                   [zcsv[0], zcsv[1][0] if zcsv[1] else '', zwhere, ziso_row],
-                  ['rtm_fit.csv', 'column,where,time,distance (m),pH,sys(Zn) (mol/kgw),measured,sd,the run,about 95 % from,about 95 % to,'
+                  ['rtm_fit.csv', 'column,where,time (s),distance (m),pH,sys(Zn) (mol/kgw),measured,sd,the run,about 95 % from,about 95 % to,'
                    'residual,residual over its sd',
                    ['the water of cell 0', 'the water of cell 0, Zn+2 = 0.0001', 'the water of cell 0, pH = 6.5'], ['6.5', '1e-7']])
             await page.ev("""(() => {
@@ -3072,6 +3125,11 @@ async def main():
             await page.ev("(() => { const s = document.getElementById('rtmUnShow'); s.value = 'time';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
+            check('the Uncertainty tab\'s bands against time in the unit Time in chooses: its axis named so, every time scaled',
+                  await in_another_unit(page, 'uncertainty', "(() => { const p = document.getElementById('rtmChartUn');"
+                                                              " const m = p.data.find((t) => t.name === 'the median');"
+                                                              " return [p.layout.xaxis.title.text, m ? Array.from(m.x) : []]; })()"),
+                  [True, True])
             # Redox zones: organic carbon at a hundredth of a millimole a day through a groundwater's oxidants, each drawn as its
             # element's total in a valence state, a day at most between points (MAX_STEP). Each oxidant lasts as long as its
             # electrons: the oxygen's 0.25 mM to day 25, the nitrate's 0.15 to N2 another 18.75 days, the pyrolusite's 0.1 mmol
@@ -3600,6 +3658,11 @@ async def main():
             check('  the table gives the fitted kc and its error as a factor; the chart the run at it beside what was measured, '
                   'each curve with its band', res, ['kc', True, True, 'pH / pH, measured / Ca_mg (mg/kgw) / Ca_mg (mg/kgw), measured', 4])
             # A note of one's own first: the example's text as it comes would not be kept, as it can be had again.
+            check('  the Fit tab in the unit Time in chooses: its axis named so, what was measured on it by its time scaled',
+                  await in_another_unit(page, 'fit', "(() => { const p = document.getElementById('rtmChartFit');"
+                                                      " const m = p.data.find((t) => / measured$/.test(t.name));"
+                                                      " return [p.layout.xaxis.title.text, m ? Array.from(m.x) : []]; })()"),
+                  [True, True])
             prefit = await page.ev("document.getElementById('rtmText').value") + '# a note of my own\n'
             await set_text(page, prefit)
             await asyncio.sleep(1.0)
