@@ -414,13 +414,23 @@ async def main():
             check('and the panel says what is being solved', await page.ev(
                 "document.getElementById('rtmFacts').textContent.startsWith('A column of 20 cells over 200 µm')"), True)
             # The model in its own words above it: the comment the text begins with, the rules of its box left out and its
-            # margin taken off, three paragraphs; no label over it.
-            check('the panel gives the model in its own words, the comment its text begins with, in paragraphs', await page.ev(
-                "(() => { const a = document.getElementById('rtmAbout');"
-                " return [a.hidden, [...a.children].map((c) => c.tagName + ':' + c.textContent.slice(0, 40)),"
-                " /What is being solved/.test(document.getElementById('rtmSide').textContent)]; })()"),
-                [False, ['P:WATER RADIOLYSIS AND URANIUM DISSOLUTION', 'P:119 reactions and 8 radiolysis sources o',
-                         'P:Set MODE = batch to ignore the film and '], False])
+            # margin taken off; its line written ## the title; longer than 300 characters, folded after its first
+            # paragraph, More opening the second and Less folding it again; no label over it.
+            about = ("(() => { const a = document.getElementById('rtmAbout');"
+                     " return [a.hidden, [...a.children].map((c) => `${c.tagName}${c.className ? '.' + c.className.split(' ').pop() : ''}:`"
+                     " + c.textContent.slice(0, 40)), /What is being solved/.test(document.getElementById('rtmSide').textContent)]; })()")
+            folded = await page.ev(about)
+            await page.ev("document.querySelector('#rtmAbout .rtm-about-more').click()")
+            opened = await page.ev(about)
+            expanded = await page.ev("document.querySelector('#rtmAbout .rtm-about-more').getAttribute('aria-expanded')")
+            await page.ev("document.querySelector('#rtmAbout .rtm-about-more').click()")
+            again = await page.ev(about)
+            check('the panel gives the model in its own words: its title, a line written ##, and its first paragraph, folded; '
+                  'More opens the rest, Less folds it again', [folded, opened, expanded, again == folded],
+                  [[False, ['P.rtm-about-title:Water radiolysis and uranium dissolution', 'P:119 reactions and 8 radiolysis sources o',
+                            'BUTTON.rtm-about-more:More'], False],
+                   [False, ['P.rtm-about-title:Water radiolysis and uranium dissolution', 'P:119 reactions and 8 radiolysis sources o',
+                            'P:Set MODE = batch to ignore the film and ', 'BUTTON.rtm-about-more:Less'], False], 'true', True])
             check('the species picker is filled, the species first and then the quantities', await page.ev(
                 "[document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"species\"]').length,"
                 " [...document.querySelectorAll('#rtmSeries .rtm-item:not([data-group=\"species\"]) input')]"
@@ -821,15 +831,40 @@ async def main():
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
             await settle(page, "document.getElementById('rtmFacts').textContent.startsWith('A batch')", True, tries=40)
+            robFolded = await page.ev("[...document.getElementById('rtmAbout').children].map((c) => c.tagName).join(' ')")
+            await page.ev("document.querySelector('#rtmAbout .rtm-about-more').click()")
             rob = await page.ev("""(() => { const a = document.getElementById('rtmAbout');
               return [a.hidden, [...a.children].map((c) => c.tagName).join(' '), a.querySelector('pre').textContent.split('\\n')[0],
                 a.children[0].textContent, document.getElementById('rtmFacts').textContent]; })()""")
-            check('a description with tables in it: Robertson\'s reactions and its answer kept line for line, the prose in '
-                  'paragraphs; under it, what is solved', rob,
-                  [False, 'P PRE P P PRE P', 'A       -> B         k1 = 0.04',
+            check('a description with tables in it, folded after its first paragraph: More opens Robertson\'s reactions and '
+                  'its answer kept line for line, the prose in paragraphs; under it, what is solved', [robFolded, rob],
+                  ['P BUTTON', [False, 'P PRE P P PRE P BUTTON', 'A       -> B         k1 = 0.04',
                    'Robertson\'s problem, the classic test of a stiff solver.',
                    'A batch, one well-mixed water, run for 116 d.3 species and 3 reactions with a rate law.'
-                   '3 equations to solve, with 8 non-zeros in their Jacobian.'])
+                   '3 equations to solve, with 8 non-zeros in their Jacobian.']])
+            # A text of one's own: its title written ##; one long paragraph, folded after the sentences that fit in 200
+            # characters; a short one shown whole, with no More.
+            await set_text(page, '## A model of my own\n'
+                                 '# The first sentence says what it is. The second sentence says a little more\n'
+                                 '# about it. The third goes on for longer than the two before it, so that the\n'
+                                 '# paragraph runs well past the three hundred characters at which a description\n'
+                                 '# is folded, and the fold falls after the sentences that fit in two hundred.\n'
+                                 '# The fourth is there to make sure.\n\n'
+                                 '<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nA  1\nB  0\n\n<REACTIONS>\nA => B, k = 1\n')
+            await settle(page, "document.getElementById('rtmFacts').textContent.startsWith('A batch, one well-mixed water, run for 1.00 s')",
+                         True, tries=40)
+            own = await page.ev("[...document.getElementById('rtmAbout').children].map((c) => `${c.tagName}:${c.textContent}`)")
+            await page.ev("document.querySelector('#rtmAbout .rtm-about-more').click()")
+            ownOpen = await page.ev("document.getElementById('rtmAbout').children[1].textContent.length")
+            await set_text(page, '## A model of my own\n# Short, and whole.\n\n'
+                                 '<SETTINGS>\nMODE = batch\nTEND = 2\n\n<SPECIES>\nA  1\nB  0\n\n<REACTIONS>\nA => B, k = 1\n')
+            await settle(page, "document.getElementById('rtmFacts').textContent.startsWith('A batch, one well-mixed water, run for 2.00 s')",
+                         True, tries=40)
+            short = await page.ev("[...document.getElementById('rtmAbout').children].map((c) => `${c.tagName}:${c.textContent}`)")
+            check('a text of one\'s own: its title written ##; one long paragraph folded after the sentences that fit in 200 '
+                  'characters, More opening all 335; a short one whole, with no More', [own, ownOpen, short],
+                  [['P:A model of my own', 'P:The first sentence says what it is. The second sentence says a little more about it.',
+                    'BUTTON:More'], 335, ['P:A model of my own', 'P:Short, and whole.']])
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'farfield'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
             await settle(page, "document.getElementById('rtmFacts').textContent"

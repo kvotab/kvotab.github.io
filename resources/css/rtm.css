@@ -131,6 +131,9 @@
   color: var(--text-secondary);
 }
 .rtm-about > :last-child { margin-bottom: 0; }
+/* Its title, a first line written ##; and More, which opens a long one folded after its first paragraph. */
+.rtm-about p.rtm-about-title { margin: 0 0 4px; font-size: 13px; font-weight: 600; line-height: 1.35; }
+.rtm-about .rtm-about-more { margin: 0; }
 .rtm-facts { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
 .rtm-facts p { margin: 0 0 4px; }
 .rtm-about:not([hidden]) + .rtm-facts { padding-top: 8px; border-top: 1px solid var(--border-color); }

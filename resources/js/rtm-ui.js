@@ -621,19 +621,30 @@
 
   /*
     THE MODEL'S OWN DESCRIPTION: the comment its text begins with, before
-    anything else in it. Its lines run together into paragraphs, a line of
-    only # between them; a line indented further than the rest -- a table
-    of reactions, a formula -- keeps its line and its spacing; a rule of =
-    or - alone, which only draws a box, is left out. [{ pre, text }], none
-    where the text does not begin with a comment.
+    anything else in it. Its first line with words, written ## -- as
+    MATLAB's %% starts a cell -- is its title, a rule of = or - before it
+    left aside. Its lines run together into paragraphs, a line of only #
+    between them; a line indented further than the rest -- a table of
+    reactions, a formula -- keeps its line and its spacing; a rule of = or -
+    alone, which only draws a box, is left out. { title, blocks: [{ pre,
+    text }] }, empty where the text does not begin with a comment.
   */
   function modelAbout(text) {
-    const lines = [];
+    const raws = [];
     for (const raw of String(text || '').split(/\r?\n/)) {
-      if (!lines.length && !raw.trim()) continue;
-      const m = /^\s*#+(.*)$/.exec(raw);
-      if (!m) break;
-      lines.push(/^\s*([=\-*_~#+])\1{2,}\s*$/.test(m[1]) ? '' : m[1].replace(/\s+$/, ''));
+      if (!raws.length && !raw.trim()) continue;
+      if (!/^\s*#/.test(raw)) break;
+      raws.push(raw);
+    }
+    let title = '';
+    let words = false;
+    const lines = [];
+    for (const raw of raws) {
+      const [, hashes, rest] = /^\s*(#+)(.*)$/.exec(raw);
+      if (!rest.trim() || /^\s*([=\-*_~#+])\1{2,}\s*$/.test(rest)) { lines.push(''); continue; }
+      if (!words && hashes.length >= 2) { title = rest.trim(); words = true; continue; }
+      words = true;
+      lines.push(rest.replace(/\s+$/, ''));
     }
     // The comment's own margin, the least indent of its words: a line indented further is a table's.
     const indents = lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)[0].length);
@@ -647,23 +658,72 @@
       if (!cur || cur.pre !== pre) { cur = { pre, lines: [] }; blocks.push(cur); }
       cur.lines.push(pre ? body : body.trim());
     }
-    return blocks.map((b) => {
-      if (!b.pre) return { pre: false, text: b.lines.join(' ') };
-      // A table starts at its own left edge.
-      const cut = Math.min(...b.lines.map((l) => /^ */.exec(l)[0].length));
-      return { pre: true, text: b.lines.map((l) => l.slice(cut)).join('\n') };
-    });
+    return {
+      title,
+      blocks: blocks.map((bl) => {
+        if (!bl.pre) return { pre: false, text: bl.lines.join(' ') };
+        // A table starts at its own left edge.
+        const cut = Math.min(...bl.lines.map((l) => /^ */.exec(l)[0].length));
+        return { pre: true, text: bl.lines.map((l) => l.slice(cut)).join('\n') };
+      }),
+    };
+  }
+
+  /*
+    A long description is folded after its first paragraph, More opening the
+    rest; a first paragraph that is long itself, after its first sentences.
+    Long: more than ABOUT_LONG characters, the title aside. Folded, a long
+    first paragraph shows its sentences up to ABOUT_LEAD characters, one at
+    least -- cut at a word, with an ellipsis, only where that one is longer
+    than ABOUT_LONG. Opened, it stays open until another description comes.
+  */
+  const ABOUT_LONG = 300;
+  const ABOUT_LEAD = 200;
+  let aboutOpen = false;
+  let aboutKey = '';
+  function aboutLead(text) {
+    const ends = [];
+    const re = /[.!?]["')\]]*(?=\s+["'(<A-Z0-9]|$)/g;
+    for (let m = re.exec(text); m; m = re.exec(text)) ends.push(m.index + m[0].length);
+    const within = ends.filter((e) => e <= ABOUT_LEAD);
+    if (within.length) return text.slice(0, within[within.length - 1]);
+    if (ends.length && ends[0] <= ABOUT_LONG) return text.slice(0, ends[0]);
+    const at = text.lastIndexOf(' ', ABOUT_LEAD);
+    return `${text.slice(0, at > 0 ? at : ABOUT_LEAD)}…`;
   }
 
   function renderAbout() {
     const box = $('rtmAbout');
-    const blocks = modelAbout(state.text);
-    box.replaceChildren(...blocks.map((b) => {
-      const el = document.createElement(b.pre ? 'pre' : 'p');
-      el.textContent = b.text;
-      return el;
-    }));
-    box.hidden = !blocks.length;
+    const { title, blocks } = modelAbout(state.text);
+    const key = [title, ...blocks.map((bl) => bl.text)].join('\n');
+    if (key !== aboutKey) { aboutKey = key; aboutOpen = false; }
+    const long = blocks.reduce((n, bl) => n + bl.text.length, 0) > ABOUT_LONG;
+    const first = blocks[0];
+    const shown = !long || aboutOpen ? blocks
+      : [first.pre || first.text.length <= ABOUT_LONG ? first : { pre: false, text: aboutLead(first.text) }];
+    const els = [];
+    if (title) {
+      const h = document.createElement('p');
+      h.className = 'rtm-about-title';
+      h.textContent = title;
+      els.push(h);
+    }
+    for (const bl of shown) {
+      const el = document.createElement(bl.pre ? 'pre' : 'p');
+      el.textContent = bl.text;
+      els.push(el);
+    }
+    if (long) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'rtm-more rtm-about-more';
+      more.dataset.onClick = 'rtm:aboutMore';
+      more.setAttribute('aria-expanded', String(aboutOpen));
+      more.textContent = aboutOpen ? 'Less' : 'More';
+      els.push(more);
+    }
+    box.replaceChildren(...els);
+    box.hidden = !els.length;
   }
 
   /*
@@ -9376,7 +9436,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ],
         sections: [{
           heading: 'Its own words',
-          text: 'The comment the text begins with, before anything else in it: its lines run together into paragraphs, a line of only `#` between them, and a line indented further than the rest — a table of reactions, a formula — keeps its line. A rule of `=` or `-` alone is left out. Nothing is shown where the text begins with no comment.',
+          list: [
+            'The comment the text begins with, before anything else in it: its lines run together into paragraphs, a line of only `#` between them, and a line indented further than the rest — a table of reactions, a formula — keeps its line. A rule of `=` or `-` alone is left out. Nothing is shown where the text begins with no comment.',
+            'Its first line with words, written `##` — as MATLAB’s `%%` starts a cell — is its title, in bold: `## Zinc on ferrihydrite`.',
+            'A long one, more than 300 characters, is folded after its first paragraph — after the first sentences of a first paragraph that is long itself — and **More** opens the rest, **Less** folds it again.',
+          ],
         }, {
           heading: 'What is solved, a sentence at a time',
           list: [
@@ -12029,6 +12093,13 @@ END
     'rtm:toHdf5': () => { viewInHdf5Browser(); },
     'rtm:downloadHdf5': () => downloadHdf5(),
     'rtm:solverChanged': () => { readSolverControls(); updateSolverOptions(); saveState(); infoRefresh(); },
+    'rtm:aboutMore': () => {
+      aboutOpen = !aboutOpen;
+      renderAbout();
+      // The button is drawn anew: the reader's focus goes back to it.
+      const btn = $('rtmAbout').querySelector('.rtm-about-more');
+      if (btn) btn.focus();
+    },
     'rtm:more': () => {
       const open = !state.sections[ADVANCED_KEY];
       state.sections[ADVANCED_KEY] = open;

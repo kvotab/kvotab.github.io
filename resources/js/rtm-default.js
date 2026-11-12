@@ -5,7 +5,7 @@
    edit those, or the script, rather than this file.
    ========================================================================== */
 const RTM_DEFAULT_MODEL = `# ============================================================================
-#  WATER RADIOLYSIS AND URANIUM DISSOLUTION AT A SPENT-FUEL SURFACE
+## Water radiolysis and uranium dissolution at a spent-fuel surface
 #
 #  119 reactions and 8 radiolysis sources over 36 species, from the skbrtm
 #  example set (examples/transport/PA_BRUM_test). The left-hand boundary is

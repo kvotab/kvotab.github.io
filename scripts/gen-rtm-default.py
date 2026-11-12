@@ -145,7 +145,7 @@ def build(source):
         lines.append('  '.join(bits).rstrip())
 
     text = f"""# ============================================================================
-#  WATER RADIOLYSIS AND URANIUM DISSOLUTION AT A SPENT-FUEL SURFACE
+## Water radiolysis and uranium dissolution at a spent-fuel surface
 #
 #  {len(reactions)} reactions and {len(sources)} radiolysis sources over {len(names)} species, from the skbrtm
 #  example set (examples/transport/PA_BRUM_test). The left-hand boundary is
