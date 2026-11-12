@@ -2845,31 +2845,37 @@ async def main():
                 !!(m && m.error_y && m.error_y.array.every((v) => v === 1)),
                 /χ² 12\\.18 on 22 degrees of freedom \\(24 points, 2 numbers\\).* a chance of 0\\.953\\. .*The standard errors are the standard deviations' own/
                   .test(document.getElementById('rtmFitResult').textContent),
-                d.filter((t) => t.mode === 'lines').map((t) => t.name).join(' | '),
+                d.filter((t) => t.mode === 'lines' && t.legendgroup !== 'band').map((t) => t.name).join(' | '),
                 document.getElementById('rtmFitAgainstWrap').hidden, [...document.getElementById('rtmFitAgainst').options].map((o) => o.textContent).join(' | '),
-                p.layout.xaxis.type, document.getElementById('rtmFitLogTWrap').hidden]; })()""")
+                p.layout.xaxis.type, document.getElementById('rtmFitLogTWrap').hidden,
+                ((bands, lines) => bands.length === 2 * lines.length && bands.filter((t) => t.showlegend).length === 1
+                  && bands.every((t) => t.hoverinfo === 'skip') && bands.filter((t, i) => i % 2).every((t) => t.fill === 'tonexty')
+                  && lines.every((l, q) => l.y.every((y, i) => bands[2 * q].y[i] < y && y < bands[2 * q + 1].y[i])))(
+                  d.filter((t) => t.legendgroup === 'band'), d.filter((t) => t.mode === 'lines' && t.legendgroup !== 'band'))]; })()""")
             check('the zinc example\'s two sorption edges and its isotherm fitted together with no run, tables against pH, the second '
                   'of its own water at a hundred times the zinc, and one against sys(Zn) at pH 6.5, each measurement weighed by its '
                   'standard deviation of 1 %: the strong and weak sites\' log K from 0.99 and -1.99 to 1.3108 and -1.5953; drawn '
                   'against pH first, each edge through its eight measured with their deviations and named by its water, on the left '
-                  'as a share; chi-square 12.18 on 22 degrees of freedom, a chance of 0.953; against offered: pH, or the zinc in the cell',
+                  'as a share; chi-square 12.18 on 22 degrees of freedom, a chance of 0.953; against offered: pH, or the zinc in the cell; '
+                  'each curve with its band, about 95 % for it, shaded under it and about it, one legend entry for them all',
                   [ok, zfit],
-                  [True, ['fit', True, 'pH', 'lines:101 markers:8 lines:101 markers:8', False, 'Zn_sorbed (%)', True,
-                          'the water at the fitted numbers, held at each pH', True, True,
+                  [True, ['fit', True, 'pH', 'lines:101 lines:101 lines:101 markers:8 lines:101 lines:101 lines:101 markers:8', False,
+                          'Zn_sorbed (%)', True, 'the water at the fitted numbers, held at each pH; shaded, about 95 % for the curve, from the fitted numbers\' standard errors and correlations', True, True,
                           'Zn_sorbed (%), the water of cell 0 | Zn_sorbed (%), the water of cell 0, Zn+2 = 0.0001',
-                          False, 'pH | the Zn in the cell, sys(Zn)', 'linear', True]])
+                          False, 'pH | the Zn in the cell, sys(Zn)', 'linear', True, True]])
             await page.ev("(() => { const s = document.getElementById('rtmFitAgainst'); s.value = 'held:sys(Zn)';"
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.6)
             ziso = await page.ev("""(() => { const p = document.getElementById('rtmChartFit'), d = p.data;
               const m = d.find((t) => t.mode === 'markers');
               return [p.layout.xaxis.type, p.layout.xaxis.exponentformat, p.layout.xaxis.title.text, d.map((t) => `${t.mode}:${t.x.length}`).join(' '),
-                d.filter((t) => t.mode === 'lines').map((t) => t.name).join(' | '), document.getElementById('rtmFitNote').textContent,
-                m ? m.x.join(' ') : null, document.getElementById('rtmFitAgainst').value]; })()""")
+                d.filter((t) => t.mode === 'lines' && t.legendgroup !== 'band').map((t) => t.name).join(' | '),
+                document.getElementById('rtmFitNote').textContent, m ? m.x.join(' ') : null, document.getElementById('rtmFitAgainst').value]; })()""")
             check('  against the zinc in the cell: the isotherm at pH 6.5 on a log axis in powers of ten through its eight measured, '
                   'named by the pH its line holds', ziso,
-                  ['log', 'power', 'Zn in the cell, dissolved, sorbed and as minerals (mol/kgw)', 'lines:101 markers:8',
-                   'Zn_sorbed (%), the water of cell 0, pH = 6.5', 'the water at the fitted numbers, with each total of Zn in the cell',
+                  ['log', 'power', 'Zn in the cell, dissolved, sorbed and as minerals (mol/kgw)', 'lines:101 lines:101 lines:101 markers:8',
+                   'Zn_sorbed (%), the water of cell 0, pH = 6.5',
+                   'the water at the fitted numbers, with each total of Zn in the cell; shaded, about 95 % for the curve, from the fitted numbers\' standard errors and correlations',
                    '1e-7 3e-7 0.000001 0.000003 0.00001 0.00003 0.0001 0.0003', 'held:sys(Zn)'])
             zcsv = await fit_csv('data')
             # Each point's water, the CSV's second column, read as CSV: a water of its own is quoted, holding a comma.
@@ -2879,8 +2885,24 @@ async def main():
             check('  the CSV a pH column and a sys(Zn) one, an isotherm\'s point at the pH its line holds and at its total, the '
                   'deviations, the residuals over them, and each point\'s water',
                   [zcsv[0], zcsv[1][0] if zcsv[1] else '', zwhere, ziso_row],
-                  ['rtm_fit.csv', 'column,where,time,distance (m),pH,sys(Zn) (mol/kgw),measured,sd,the run,residual,residual over its sd',
+                  ['rtm_fit.csv', 'column,where,time,distance (m),pH,sys(Zn) (mol/kgw),measured,sd,the run,about 95 % from,about 95 % to,'
+                   'residual,residual over its sd',
                    ['the water of cell 0', 'the water of cell 0, Zn+2 = 0.0001', 'the water of cell 0, pH = 6.5'], ['6.5', '1e-7']])
+            await page.ev("""(() => {
+              window.__xlsx = null;
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.xlsx')) window.__xlsx = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((buf) => JSZip.loadAsync(buf)).then((z) => z.file('xl/workbook.xml').async('string'));
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"fit\"][data-as=\"xlsx\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            fsheets = await page.ev("(async () => { const w = await window.__xlsx;"
+                                    " return w ? [...w.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]) : null; })()")
+            check('  saved to Excel: the points, every curve with its band on a sheet of its own, and the model text', fsheets,
+                  ['run', 'curves', 'model'])
             await page.ev("document.querySelector('.rtm-tabs [data-tab=\"diagram\"]').click()")
             await asyncio.sleep(0.4)
             await page.ev("""(() => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };
@@ -3494,9 +3516,10 @@ async def main():
             res = await page.ev("""(() => { const t = document.querySelector('#rtmFitResult table tbody tr');
               const v = Number(t.children[2].textContent);
               return [t.children[0].textContent, v > 4e-4 && v < 6e-4, /× or ÷/.test(t.children[3].textContent),
-                document.getElementById('rtmChartFit').data.map((d) => d.name).join(' / ')]; })()""")
-            check('  the table gives the fitted kc and its error as a factor; the chart the run at it beside what was measured', res,
-                  ['kc', True, True, 'pH / pH, measured / Ca_mg (mg/kgw) / Ca_mg (mg/kgw), measured'])
+                document.getElementById('rtmChartFit').data.filter((d) => d.legendgroup !== 'band').map((d) => d.name).join(' / '),
+                document.getElementById('rtmChartFit').data.filter((d) => d.legendgroup === 'band').length]; })()""")
+            check('  the table gives the fitted kc and its error as a factor; the chart the run at it beside what was measured, '
+                  'each curve with its band', res, ['kc', True, True, 'pH / pH, measured / Ca_mg (mg/kgw) / Ca_mg (mg/kgw), measured', 4])
             await page.ev("document.getElementById('rtmFitApply').click()")
             applied = await settle(page, "/^kc\\s+all\\s+0\\.000\\d+/m.test(document.getElementById('rtmText').value)"
                                          " && document.getElementById('rtmStatus').textContent.startsWith('The fitted values are in')", True, tries=40)

@@ -8959,6 +8959,75 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && Math.abs(fTwo.params[0].value / 0.3 - 1) < 1e-7 && Math.abs(fTwo.params[1].value / 2 - 1) < 1e-7,
   `kk ${fExact.params[0].value} in ${fExact.runs} runs; noisy ${fNoisy.params[0].value} for ${kHat}, se ${fNoisy.params[0].se} for `
     + `${seHat}; two ${fTwo.params.map((p) => p.value.toPrecision(9)).join(', ')}`);
+  /*
+    THE BAND about each fitted curve, about 95 %: for the decay measured
+    with noise, log10 A = -kk t / ln 10, so in theta = log10 kk the curve's
+    slope is -kk t and the band, in log10, 1.96 se(theta) kk t either way --
+    at each point measured and at every point of the curve, to 1e-5 of the
+    widest. kk and A's start together from noisy data, correlated: the band
+    against 20000 draws of the two from their covariance, the middle 95 %
+    of the curves the draws make, at three times, to 2 %. Unweighted with as
+    many numbers as points: no covariance and no band.
+  */
+  {
+    const kkB = fNoisy.params[0].value;
+    const seB = fNoisy.params[0].se;
+    const cB = fNoisy.curves[0];
+    const wOf = (t) => 1.96 * seB * kkB * t;
+    const wMax = wOf(Math.max(...cB.x));
+    let curveOff = cB.band ? 0 : Infinity;
+    if (cB.band) {
+      cB.x.forEach((t, i) => {
+        curveOff = Math.max(curveOff, Math.abs(Math.log10(cB.band.hi[i] / cB.y[i]) - wOf(t)) / wMax,
+          Math.abs(Math.log10(cB.y[i] / cB.band.lo[i]) - wOf(t)) / wMax);
+      });
+    }
+    let pointOff = 0;
+    for (const pt of fNoisy.points) {
+      const run = pt.value * 10 ** pt.residual;
+      pointOff = pt.band ? Math.max(pointOff, Math.abs(Math.log10(pt.band[1] / run) - wOf(pt.t)) / wMax,
+        Math.abs(Math.log10(run / pt.band[0]) - wOf(pt.t)) / wMax) : Infinity;
+    }
+    const fTwoN = fitOf(`${decay}\n<DATA>\ntime  A  cell = 0\n${fts.map((t, i) => `${t} ${2 * Math.exp(-0.3 * t) * 10 ** fNoise[i]}`)
+      .join('\n')}\n`, [{ kind: 'parameter', name: 'kk', start: 0.1 }, { kind: 'initial', name: 'A', start: 1 }]);
+    const th = fTwoN.params.map((pp) => pp.theta);
+    const Cv = fTwoN.params.map((pp, a) => fTwoN.params.map((qq, b) => fTwoN.corr[a][b] * pp.se * qq.se));
+    const L11 = Math.sqrt(Cv[0][0]);
+    const L21 = Cv[1][0] / L11;
+    const L22 = Math.sqrt(Cv[1][1] - L21 * L21);
+    // Mulberry32: a linear congruential generator's low bits put the draws' tails 2 % out.
+    let seed = 20261112;
+    const rnd = () => {
+      seed = (seed + 0x6D2B79F5) | 0;
+      let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const gauss = () => { let u = 0; while (!u) u = rnd(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * rnd()); };
+    const c2 = fTwoN.curves[0];
+    const probe = [2, 5, 10].map((t) => c2.x.reduce((b, x, i) => (Math.abs(x - t) < Math.abs(c2.x[b] - t) ? i : b), 0));
+    const draws = probe.map(() => []);
+    for (let k = 0; k < 20000; k++) {
+      const z1 = gauss();
+      const z2 = gauss();
+      const kd = 10 ** (th[0] + L11 * z1);
+      const a0 = 10 ** (th[1] + L21 * z1 + L22 * z2);
+      probe.forEach((i, j) => draws[j].push(Math.log10(a0 * Math.exp(-kd * c2.x[i]))));
+    }
+    const ratios = probe.map((i, j) => {
+      const sorted = draws[j].sort((x, y) => x - y);
+      const mc = (sorted[Math.floor(0.975 * 19999)] - sorted[Math.floor(0.025 * 19999)]) / 2;
+      return c2.band ? Math.log10(c2.band.hi[i] / c2.y[i]) / mc : NaN;
+    });
+    const fBare = fitOf(decayData(['5 0.3']), [{ kind: 'parameter', name: 'kk', start: 0.1 }]);
+    check('the band about a fitted curve, about 95 %: the decay\'s, 1.96 se(log10 kk) kk t either way in log10, at each point '
+      + 'measured and along the curve to 1e-5 of the widest; kk and A\'s start together, correlated, the band against 20000 draws of '
+      + 'the two to 2 % at three times; none with as many numbers as points',
+    curveOff < 1e-5 && pointOff < 1e-5 && ratios.every((x) => Math.abs(x - 1) < 0.02)
+      && fBare.type === 'fit' && !fBare.curves[0].band && fBare.points.every((pt) => pt.band === null),
+    `along the curve ${curveOff.toExponential(1)}, at the points ${pointOff.toExponential(1)} of the widest; correlation `
+      + `${fTwoN.corr ? fTwoN.corr[0][1].toFixed(3) : '-'}, the band over the draws' ${ratios.map((x) => x.toFixed(4)).join(', ')}`);
+  }
   // A relation's log K and a reaction's own constant: B over A is K, the total grows by q a second.
   const pair = (logK, q) => '<SETTINGS>\nMODE = batch\nTEND = 10\nEQUILIBRATE = always\n\n<SPECIES>\nA  1e-3\nB  1e-3\n\n'
     + `<EQUILIBRIUM>\nA <=> B, logK = ${logK}\n\n<REACTIONS>\n=> A, r = q, q = ${q}\n`;

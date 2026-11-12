@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111m';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111n';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -7776,15 +7776,25 @@
       .sort((a, b) => heldRank(a) - heldRank(b));
     const heldValue = (p, name) => (p.kind !== 'speciation' ? null : fitHeldName(p) === name ? p.x
       : name === 'pH' && p.pH !== null && p.pH !== undefined ? p.pH : null);
+    // The band, about 95 % for the run, at each point measured; every curve with its band on a sheet of its own.
+    const bandAt = r.points.some((p) => p.band);
+    const curveWhere = (c) => fitWhere(c.kind === 'speciation' ? c : c.kind === 'time' ? { kind: 'time', cell: c.cell }
+      : { kind: 'distance', t: c.t });
+    const curveAlong = (c) => (c.kind === 'time' ? `time (${timeUnit().symbol})` : c.kind === 'distance' ? 'distance (m)'
+      : c.axis === 'tot' ? `${fitHeldName(c)} (mol/kgw)` : fitHeldName(c));
     const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)',
       ...heldAxes.map((name) => (/^sys\(/.test(name) ? `${name} (mol/kgw)` : name)), 'measured', ...(r.weighted ? ['sd'] : []),
-      'the run', 'residual', ...(r.weighted ? ['residual over its sd'] : [])], name: 'rtm_fit',
+      'the run', ...(bandAt ? ['about 95 % from', 'about 95 % to'] : []), 'residual', ...(r.weighted ? ['residual over its sd'] : [])],
+    name: 'rtm_fit',
     rows: r.points.map((p) => {
       const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
       return [labelOf(p.key), fitWhere(p), p.t, p.kind === 'speciation' ? null : p.x,
-        ...heldAxes.map((name) => heldValue(p, name)), p.value, ...(r.weighted ? [p.sd] : []), run, p.residual,
-        ...(r.weighted ? [p.normalized] : [])];
-    }) });
+        ...heldAxes.map((name) => heldValue(p, name)), p.value, ...(r.weighted ? [p.sd] : []), run,
+        ...(bandAt ? (p.band || [null, null]) : []), p.residual, ...(r.weighted ? [p.normalized] : [])];
+    }),
+    extra: [{ name: 'curves', head: ['column', 'where', 'against', 'at', 'the run', 'about 95 % from', 'about 95 % to'],
+      rows: r.curves.flatMap((c) => c.x.map((x, i) => [labelOf(c.key), curveWhere(c), curveAlong(c), x, c.y[i],
+        c.band ? c.band.lo[i] : null, c.band ? c.band.hi[i] : null])) }] });
     if (show === 'history') {
       Plotly.react(plot, [{ type: 'scatter', mode: 'lines+markers', name: 'the misfit', x: r.history.map((h) => h.iteration),
         y: r.history.map((h) => h.ssr), line: { color: palette[0] }, marker: { size: 6 },
@@ -7835,6 +7845,12 @@
     $('rtmFitLogYWrap').hidden = show !== 'data' || allIndex;
     const traces = [];
     let right = false;
+    let banded = false;
+    // A colour of the palette, see-through: a band's.
+    const tint = (hex, a) => {
+      const v = parseInt(hex.slice(1), 16);
+      return `rgba(${(v >> 16) & 255}, ${(v >> 8) & 255}, ${v & 255}, ${a})`;
+    };
     curves.forEach((c, q) => {
       const color = palette[q % palette.length];
       // A water of its own, or one held at a pH of the table's, is named by it even alone.
@@ -7846,6 +7862,17 @@
       right = right || onRight;
       const keep = c.x.map((x, i) => (along !== 'time' || !logT || x > 0) && Number.isFinite(c.y[i])
         && (c.index || !logY || c.y[i] > 0));
+      // The band, about 95 % for the curve: its lower edge, then its upper filled down to it, under the line.
+      if (c.band) {
+        const bx = c.x.filter((_, i) => keep[i]);
+        const side = onRight ? { yaxis: 'y2' } : {};
+        traces.push({ type: 'scatter', mode: 'lines', name: 'about 95 % for the curve, from', x: bx, y: c.band.lo.filter((_, i) => keep[i]),
+          line: { width: 0, color }, hoverinfo: 'skip', showlegend: false, legendgroup: 'band', ...side });
+        traces.push({ type: 'scatter', mode: 'lines', name: 'about 95 % for the curve', x: bx, y: c.band.hi.filter((_, i) => keep[i]),
+          line: { width: 0, color }, fill: 'tonexty', fillcolor: tint(color, 0.16), hoverinfo: 'skip', showlegend: !banded,
+          legendgroup: 'band', ...side });
+        banded = true;
+      }
       traces.push({ type: 'scatter', mode: 'lines', name, x: c.x.filter((_, i) => keep[i]), y: c.y.filter((_, i) => keep[i]),
         line: { color, width: 1.8 }, ...(onRight ? { yaxis: 'y2' } : {}) });
       const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell
@@ -7872,9 +7899,10 @@
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     fitTableNow = pointsTable();
-    note.textContent = along !== 'speciation' ? 'the run at the fitted numbers'
+    note.textContent = `${along !== 'speciation' ? 'the run at the fitted numbers'
       : totAxis ? `the water at the fitted numbers, with each total of ${curves[0].species} in the cell`
-        : `the water at the fitted numbers, held at each ${curves[0].axis}`;
+        : `the water at the fitted numbers, held at each ${curves[0].axis}`}`
+      + `${banded ? '; shaded, about 95 % for the curve, from the fitted numbers\' standard errors and correlations' : ''}`;
   }
 
   /*
@@ -9991,6 +10019,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'Levenberg and Marquardt\'s least squares, each derivative from a run with one number moved a little, with the panel\'s solver settings. The run is read at exactly the times measured.',
           'An amount\'s residual is log₁₀ of the run over what was measured, so a factor of two counts the same at any size; pH, SI and the like count as their difference.',
           'The standard errors and correlations are the Jacobian\'s at the end, the residuals giving the scatter; about 95 % is 1.96 standard errors either way, as a factor for a number fitted in its logarithm.',
+          'The band shaded about each curve is about 95 % for the curve: 1.96 of its standard deviation either way, from the fitted numbers\' standard errors and correlations — the delta method, the curve worked out again with each number moved a step either side. An amount\'s goes as a factor either way, as the fit compares amounts. It is narrow where the measurements pin the curve down, wider between them and past them. The CSV gives it at each point measured, Excel at every point of every curve, on a sheet of its own.',
         ] },
         { heading: 'Then', list: [
           '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',

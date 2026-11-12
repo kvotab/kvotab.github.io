@@ -2518,19 +2518,89 @@ function rtmFit(msg, post) {
       }
       const w = specCurve.get(p.table);
       curves.push({ kind: 'speciation', axis: p.axis, species: p.species, pH: p.pH, table: p.table, cell: p.cell, key: p.key,
-        index: p.index, water: model.data[p.table].water || [], x: w.x.slice(),
+        k: p.k, q: p.q, index: p.index, water: model.data[p.table].water || [], x: w.x.slice(),
         y: w.x.map((x) => rtmValueAt(w.model, w.waters.get(x), w.t, p.cell, p.k, p.q, out1)) });
     } else if (p.kind === 'time') {
-      curves.push({ kind: 'time', cell: p.cell, key: p.key, index: p.index, x: Array.from(res.t),
+      curves.push({ kind: 'time', cell: p.cell, key: p.key, k: p.k, q: p.q, index: p.index, x: Array.from(res.t),
         y: conc.map((c, i) => rtmValueAt(model, c, res.t[i], p.cell, p.k, p.q, out1)) });
     } else {
       const c = best.conc[times.indexOf(p.t)];
       const stride = model.stride || 1;
       const xs = Array.from(model.grid.centres.slice(0, model.fracture));
-      curves.push({ kind: 'distance', t: p.t, layer: p.layer, key: p.key, index: p.index, x: xs,
+      curves.push({ kind: 'distance', t: p.t, layer: p.layer, key: p.key, k: p.k, q: p.q, index: p.index, x: xs,
         y: xs.map((_, i) => rtmValueAt(model, c, p.t, i * stride + p.layer, p.k, p.q, out1)) });
     }
   }
+  /*
+    THE BAND, about 95 % either way of the fitted run: 1.96 of its standard
+    deviation from the fitted numbers' covariance by the delta method,
+    g' C g, g the run's derivative in each number fitted (in theta, as C is)
+    -- an amount's in its log10, as the fit compares amounts, so that the
+    band goes as a factor either way and stays above nought; pH, a share
+    and the like as they are. At each point measured g is the Jacobian's own
+    row, times the point's deviation; along each curve, central differences
+    of the curves at theta a fit's step either side, worked out as the
+    curves are -- a run with the curves' times among its output times, a
+    table's water at its curve's values. None without a covariance, nor
+    where a curve moved off does not settle.
+  */
+  const BAND = 1.96;
+  const spread = (g) => {
+    let v = 0;
+    for (let a = 0; a < np; a++) for (let b = 0; b < np; b++) v += g[a] * cov[a][b] * g[b];
+    return BAND * Math.sqrt(Math.max(0, v));
+  };
+  const banded = (y, w, index) => (!Number.isFinite(y) || !Number.isFinite(w) ? [null, null]
+    : index ? [y - w, y + w] : y > 0 ? [y / 10 ** w, y * 10 ** w] : [null, null]);
+  const pointBand = cov && J ? points.map((p, i) => {
+    const run = p.index ? p.value + best.r[i] * p.sdr : p.value * 10 ** (best.r[i] * p.sdr);
+    return banded(run, spread(J[i].map((x) => x * p.sdr)), p.index);
+  }) : null;
+  if (cov) {
+    const curvesAt = (th) => {
+      const m = RtmModel.compile(textAt(th));
+      const at = new Map();
+      const runTimes = [...new Set(curves.flatMap((c) => (c.kind === 'time' ? c.x : c.kind === 'distance' ? [c.t] : [])))]
+        .sort((a, b) => a - b);
+      if (runTimes.length) {
+        const tend = s.tend > 0 ? s.tend : m.settings.TEND;
+        const r = FacsimileODE.runModel(m, { ...rtmSolveOptions(s, tend, () => true, m), outputTimes: runTimes, maxPoints: 4 });
+        if (!r.grid || r.grid.t.length < runTimes.length) throw new Error('the run did not reach every time of the curves');
+        runTimes.forEach((t, i) => at.set(t, m.toConcentrations ? m.toConcentrations(r.grid.y[i], r.grid.t[i]) : r.grid.y[i]));
+      }
+      const stride = m.stride || 1;
+      const spec = new Map();
+      return curves.map((c) => {
+        if (c.kind === 'time') return c.x.map((t) => rtmValueAt(m, at.get(t), t, c.cell, c.k, c.q, out1));
+        if (c.kind === 'distance') return c.x.map((_, i) => rtmValueAt(m, at.get(c.t), c.t, i * stride + c.layer, c.k, c.q, out1));
+        if (!spec.has(c.table)) spec.set(c.table, rtmSpeciationTable(tableModel(m, th, c.table), m.data[c.table], c.x));
+        const w = spec.get(c.table);
+        return c.x.map((x) => rtmValueAt(w.model, w.waters.get(x), w.t, c.cell, c.k, c.q, out1));
+      });
+    };
+    const tr = (c, v) => (c.index ? v : Math.log10(Math.max(v, 1e-300)));
+    try {
+      const g = curves.map((c) => c.y.map(() => new Float64Array(np)));
+      for (let j = 0; j < np; j++) {
+        const h = step(j);
+        const up = theta.slice();
+        const dn = theta.slice();
+        up[j] += h;
+        dn[j] -= h;
+        const yu = curvesAt(up);
+        const yd = curvesAt(dn);
+        curves.forEach((c, q) => c.y.forEach((_, i) => { g[q][i][j] = (tr(c, yu[q][i]) - tr(c, yd[q][i])) / (2 * h); }));
+      }
+      curves.forEach((c, q) => {
+        const both = c.y.map((y, i) => banded(y, spread(g[q][i]), c.index));
+        c.band = { lo: both.map((b) => b[0]), hi: both.map((b) => b[1]) };
+      });
+    } catch (e) {
+      // A curve moved off that does not settle: no band, the fit as it is.
+      for (const c of curves) delete c.band;
+    }
+  }
+  for (const c of curves) { delete c.k; delete c.q; }
   return {
     type: 'fit', id: msg.id, why, runs, seconds: (Date.now() - started) / 1000, n, np, skipped, ssr0, ssr: best.ssr, sd, weighted,
     // Weighted: the misfit is chi-square on n - np degrees of freedom, and the chance of one at least as large by the deviations alone.
@@ -2543,7 +2613,8 @@ function rtmFit(msg, post) {
     points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, species: p.species || null,
       pH: p.kind === 'speciation' ? p.pH : null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
       water: p.kind === 'speciation' ? model0.data[p.table].water || [] : null,
-      index: p.index, value: p.value, residual: best.r[i] * p.sdr, sd: p.sd, normalized: weighted ? best.r[i] : null })),
+      index: p.index, value: p.value, residual: best.r[i] * p.sdr, sd: p.sd, normalized: weighted ? best.r[i] : null,
+      band: pointBand ? pointBand[i] : null })),
     curves,
     text: textAt(theta),
   };

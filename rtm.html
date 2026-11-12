@@ -3147,6 +3147,16 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             deviations' own rather than the residuals' scatter. Every value fitted needs a deviation, or none does.
             The chart draws each measurement with its deviation either side, and the residuals over their
             deviations, in a band of one either way.</p>
+          <p>After a fit each curve is drawn with a band about it, shaded in its colour: about 95&nbsp;% for the
+            curve, the fitted numbers being as uncertain as their standard errors and correlations say. The
+            curve's standard deviation at each point is g'&nbsp;C&nbsp;g, C the fitted numbers' covariance and g the
+            curve's slope in each of them, worked out by drawing the curve again with each number moved a
+            step either side — the delta method — and the band is 1.96 of it either way, an amount's as a
+            factor, in its logarithm, as the fit compares amounts. It is narrow where the measurements pin the
+            curve down and widens between them and past them; where the fitted numbers are correlated it can
+            narrow at a point between, as a line fitted through points pivots about their middle. The CSV
+            gives the band at each point measured, and Excel at every point of every curve on a sheet of its
+            own. A fit with as many numbers as points, unweighted, has no covariance and no band.</p>
           <p>Several tables against pH, each with a water of its own, are fitted together: one sorption edge
             leaves a strong site's constant and a weak one's loosely tied to each other, both shaping the same
             curve, and a second edge at a loading that fills the strong sites pins the weak one down. Each table's
@@ -4025,11 +4035,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20261111i"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111l"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111m"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111x"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111y"></script>
 </body>
 </html>
