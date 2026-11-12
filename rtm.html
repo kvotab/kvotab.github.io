@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111h">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111i">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -384,6 +384,9 @@
             </span>
             <input type="file" id="rtmFile" accept=".txt,.rtm,.in,.py,.zip" multiple hidden data-on-change="rtm:fileChosen">
           </div>
+          <!-- The text just put aside, offered back: whatever replaces the text puts the one there aside first. -->
+          <p class="rtm-aside-note" id="rtmAsideNote" hidden><span id="rtmAsideText"></span>
+            <button type="button" class="rtm-more" id="rtmBringBack" data-on-click="rtm:bringBack">Bring it back</button></p>
           <p class="rtm-muted rtm-example-about" id="rtmExampleAbout" hidden></p>
           <!--
             A water from PHREEQC. PHREEQC itself -- the USGS's IPhreeqc, compiled
@@ -1127,6 +1130,13 @@
             <em>Open…</em> loads a model text from a file, and so does dropping the file anywhere on
             the page; either also reads skbrtm's database files, see <em>Opening skbrtm and BRUM
             databases</em>, and a <code>.zip</code> of any of these, as its folder would be read.</p>
+          <p>Nothing you have written is lost when the text is replaced. An example, <em>Reset to the
+            built-in model</em>, a file, a water from PHREEQC and the fitted values put in each replace
+            the text without asking, and each first puts the text that was there aside, if it is one you
+            changed or opened: the line under the toolbar names it, and <em>Bring it back</em> swaps the
+            two back. The Example picker lists the last five texts put aside under <em>Your earlier
+            texts</em>, by title and the time they were put aside, and keeps them between visits. An
+            example or the built-in model as it comes is not kept, since it can be had again.</p>
           <p><em>Colour the syntax</em>, on the Model tab, paints comments, section headings,
             numbers, function names and the words that mean something where they stand — a setting
             and the words its value may take, <code>fixed</code> and <code>D</code> on a species
@@ -4069,6 +4079,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zb"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zc"></script>
 </body>
 </html>

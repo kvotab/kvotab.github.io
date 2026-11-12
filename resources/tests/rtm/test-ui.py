@@ -407,7 +407,7 @@ async def main():
         # same origin that runs no script.
         await page.call('Page.navigate', {'url': f'http://127.0.0.1:{HTTP}/resources/css/rtm.css'}, session=page.sid)
         await settle(page, 'document.readyState', 'complete', tries=40, pause=0.25)
-        await page.ev("localStorage.removeItem('kvot.rtm.full')")
+        await page.ev("localStorage.removeItem('kvot.rtm.full'); localStorage.removeItem('kvot-rtm-aside-v1')")
         await page.call('Page.navigate', {'url': URL}, session=page.sid)
         try:
             await asyncio.sleep(5)
@@ -750,8 +750,9 @@ async def main():
             # --- the example picker, and the time unit -------------------------
             check('the picker offers every example, in groups', await page.ev(
                 "(() => { const s = document.getElementById('rtmExample');"
-                " return s.querySelectorAll('option[value]:not([value=\"\"])').length"
-                " + ':' + s.querySelectorAll('optgroup').length; })()"), '38:12')
+                " return s.querySelectorAll('option[value]:not([value=\"\"]):not([value^=\"aside:\"])').length"
+                " + ':' + [...s.querySelectorAll('optgroup')].filter((g) => g.label !== 'Your earlier texts').length; })()"),
+                '38:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -3552,10 +3553,18 @@ async def main():
                 document.getElementById('rtmChartFit').data.filter((d) => d.legendgroup === 'band').length]; })()""")
             check('  the table gives the fitted kc and its error as a factor; the chart the run at it beside what was measured, '
                   'each curve with its band', res, ['kc', True, True, 'pH / pH, measured / Ca_mg (mg/kgw) / Ca_mg (mg/kgw), measured', 4])
+            # A note of one's own first: the example's text as it comes would not be kept, as it can be had again.
+            prefit = await page.ev("document.getElementById('rtmText').value") + '# a note of my own\n'
+            await set_text(page, prefit)
+            await asyncio.sleep(1.0)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40, pause=0.25)
             await page.ev("document.getElementById('rtmFitApply').click()")
             applied = await settle(page, "/^kc\\s+all\\s+0\\.000\\d+/m.test(document.getElementById('rtmText').value)"
                                          " && document.getElementById('rtmStatus').textContent.startsWith('The fitted values are in')", True, tries=40)
             check('  and Put the fitted values in the model writes kc into its line in <PARAMETERS>', applied, True)
+            check('  the text before them, a note added, put aside, the line under the toolbar offering it back', await page.ev(
+                "[!document.getElementById('rtmAsideNote').hidden,"
+                " JSON.parse(localStorage.getItem('kvot-rtm-aside-v1'))[0].text === %s]" % json.dumps(prefit)), [True, True])
             await page.ev("document.querySelector('[data-tab=\"uncertainty\"]').click()")
             await asyncio.sleep(0.3)
             await page.ev("document.getElementById('rtmUnFromFit').click()")
@@ -4455,6 +4464,82 @@ async def main():
             await page.ev("localStorage.removeItem('kvot.rtm.full')")
             await page.call('Emulation.setDeviceMetricsOverride',
                             {'width': 1500, 'height': 950, 'deviceScaleFactor': 1, 'mobile': False}, session=page.sid)
+
+            # --- texts put aside ---------------------------------------------------
+            # Whatever replaces the model text first puts the text there aside, if it is one the reader changed or
+            # opened: the browser's own undo stops where the page sets the text. The line under the toolbar names it
+            # and brings it back, the two swapped; the Example picker lists the last five, kept between visits. An
+            # example or the built-in model as it comes is not kept. From none: the list cleared and the page reloaded.
+            ASIDE = """(() => { const note = document.getElementById('rtmAsideNote'), sel = document.getElementById('rtmExample');
+              const group = [...sel.querySelectorAll('optgroup')].find((g) => g.label === 'Your earlier texts');
+              let stored = 'unread'; try { stored = JSON.parse(localStorage.getItem('kvot-rtm-aside-v1') || '[]').map((x) => x.title); } catch (e) { /* none */ }
+              return { note: note.hidden ? null : document.getElementById('rtmAsideText').textContent,
+                button: !note.hidden && !document.getElementById('rtmBringBack').hidden,
+                listed: group ? [...group.children].map((o) => o.textContent.replace(/ — today \\d\\d:\\d\\d$/, '')) : [],
+                stored, picker: sel.value }; })()"""
+            CHOOSE = """((v) => { const s = document.getElementById('rtmExample'); s.value = v;
+              s.dispatchEvent(new Event('change', { bubbles: true })); })(%s)"""
+            TEXT = "document.getElementById('rtmText').value"
+            await page.ev("localStorage.removeItem('kvot-rtm-aside-v1')")
+            await page.call('Page.reload', {'ignoreCache': True}, session=page.sid)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=120, pause=0.25)
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+            robertson = await page.ev("RTM_EXAMPLES.find((e) => e.id === 'robertson').text")
+            await page.ev(CHOOSE % json.dumps('robertson'))
+            await settle(page, TEXT + " === RTM_EXAMPLES.find((e) => e.id === 'robertson').text", True, tries=20, pause=0.25)
+            check('texts put aside: the built-in model as it comes, replaced by an example, is not kept', await page.ev(ASIDE),
+                  {'note': None, 'button': False, 'listed': [], 'stored': [], 'picker': 'robertson'})
+            mine = '## My own model\n' + robertson
+            await set_text(page, mine)
+            await page.ev(CHOOSE % json.dumps('mm'))
+            await asyncio.sleep(0.5)
+            check('  a text of one\'s own, replaced by an example, is put aside: the line under the toolbar names it, the picker '
+                  'lists it, and it is kept', await page.ev(ASIDE),
+                  {'note': 'Your earlier text, “My own model”, was put aside.', 'button': True, 'listed': ['My own model'],
+                   'stored': ['My own model'], 'picker': 'mm'})
+            await press(page, '#rtmBringBack')
+            await asyncio.sleep(0.5)
+            check('  Bring it back: the text back, the example as it comes not kept in its place',
+                  [await page.ev(TEXT) == mine, await page.ev(ASIDE)],
+                  [True, {'note': '“My own model” is back.', 'button': False, 'listed': [], 'stored': [], 'picker': ''}])
+            await press(page, '[data-on-click="rtm:resetModel"]')
+            await asyncio.sleep(0.5)
+            reset = await page.ev(ASIDE)
+            await page.ev(CHOOSE % json.dumps('aside:0'))
+            await asyncio.sleep(0.5)
+            check('  Reset puts it aside too, and choosing it in the picker brings it back',
+                  [reset['note'], reset['listed'], await page.ev(TEXT) == mine, (await page.ev(ASIDE))['listed'],
+                   (await page.ev(ASIDE))['picker']],
+                  ['Your earlier text, “My own model”, was put aside.', ['My own model'], True, [], ''])
+            dropped = '## A dropped model\n<SPECIES>\nA 1\nB 0\n\n<REACTIONS>\nA => B, k = 1\n'
+            await page.ev(drop_js % json.dumps([['dropped.rtm', dropped]]))
+            await settle(page, TEXT + " === %s" % json.dumps(dropped), True, tries=20, pause=0.25)
+            on_drop = await page.ev(ASIDE)
+            await set_text(page, dropped + '# typed\n')
+            check('  and so does a file opened; typing on in the new text puts the offer away, the picker keeping the text',
+                  [on_drop['note'], on_drop['listed'], (await page.ev(ASIDE))['note'], (await page.ev(ASIDE))['listed']],
+                  ['Your earlier text, “My own model”, was put aside.', ['My own model'], None, ['My own model']])
+            for name in ['Third', 'Fourth', 'Fifth', 'Sixth']:
+                await page.ev(CHOOSE % json.dumps('robertson'))
+                await asyncio.sleep(0.3)
+                await set_text(page, f'## {name}\n' + robertson)
+            await page.ev(CHOOSE % json.dumps('robertson'))
+            await asyncio.sleep(0.3)
+            check('  the last five kept, the oldest let go', (await page.ev(ASIDE))['listed'],
+                  ['Sixth', 'Fifth', 'Fourth', 'Third', 'A dropped model'])
+            await set_text(page, '## Fourth\n' + robertson)
+            await page.ev(CHOOSE % json.dumps('mm'))
+            await asyncio.sleep(0.3)
+            check('  a text put aside again moves to the top, once', (await page.ev(ASIDE))['listed'],
+                  ['Fourth', 'Sixth', 'Fifth', 'Third', 'A dropped model'])
+            await page.call('Page.reload', {'ignoreCache': True}, session=page.sid)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=120, pause=0.25)
+            kept = await page.ev(ASIDE)
+            await page.ev(CHOOSE % json.dumps('aside:3'))
+            await asyncio.sleep(0.5)
+            check('  and kept between visits: after a reload the five are listed, and one of them comes back',
+                  [kept['listed'], kept['note'], await page.ev(TEXT) == '## Third\n' + robertson],
+                  [['Fourth', 'Sixth', 'Fifth', 'Third', 'A dropped model'], None, True])
 
             check('no console errors throughout', page.errors[:3], [])
         finally:

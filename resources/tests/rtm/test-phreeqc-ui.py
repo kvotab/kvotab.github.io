@@ -33,7 +33,7 @@ URL = f'http://127.0.0.1:{HTTP}/rtm.html'
 FILE_URL = 'file://' + os.path.join(ROOT, 'rtm.html')
 
 CLEAN = ("try{localStorage.removeItem('kvot-rtm-v1');localStorage.removeItem('kvot-rtm-phreeqc-v1');"
-         "localStorage.removeItem('kvot.rtm.full')}catch(e){}")
+         "localStorage.removeItem('kvot.rtm.full');localStorage.removeItem('kvot-rtm-aside-v1')}catch(e){}")
 
 failures = []
 checks = 0
@@ -223,8 +223,13 @@ async def main():
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             check('... and shown when they are chosen', await page.ev(
                 "document.getElementById('rtmPqRelaxWrap').hidden"), False)
+            first = await page.ev("document.getElementById('rtmText').value")
             await write_from_example(page)
             pairs = await page.ev("document.getElementById('rtmText').value")
+            check('a second water written puts the first one\'s model aside, the line under the toolbar offering it back',
+                  await page.ev("[!document.getElementById('rtmAsideNote').hidden,"
+                                " JSON.parse(localStorage.getItem('kvot-rtm-aside-v1'))[0].text === %s]" % json.dumps(first)),
+                  [True, True])
             check('as fast pairs, every relation has its kf and the start alone is speciated', isinstance(pairs, str)
                   and pairs.count('kf = ') == 30 and 'EQUILIBRATE = 1' in pairs, True)
             await page.ev("(() => { const s = document.getElementById('rtmPqHold'); s.value = 'exact';"

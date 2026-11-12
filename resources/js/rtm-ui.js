@@ -8206,9 +8206,11 @@
     try {
       for (const p of fitResult.params) text = RtmModel.withValue(text, p, Number(p.value.toPrecision(6)));
     } catch (e) { setStatus(`The fitted values could not be put in: ${e.message}`, 'error'); return; }
+    const kept = putAside(text);
     state.text = text;
     $('rtmText').value = text;
     renderHighlight();
+    showAside(kept);
     state.fit.params.forEach((row, i) => { if (fitResult.params[i]) row.start = fmtNumber(Number(fitResult.params[i].value.toPrecision(6))); });
     saveState();
     compile().then(() => setStatus(`The fitted values are in the model text: ${fitResult.params.map((p) => `${swVaryLabel(p)} = `
@@ -10158,7 +10160,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       ],
       sections: [
         { heading: 'The toolbar', list: [
-          '**Example**: loads one of the examples. The text is replaced without asking, and a line under the picker says what the model is and where it comes from.',
+          '**Example**: loads one of the examples, and a line under the picker says what the model is and where it comes from. Under **Your earlier texts** it lists the last five texts put aside, by title and when.',
           '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model — or a `.zip` of either, read as its folder would be. Dropping files, their folder or a `.zip` anywhere on the page does the same.',
           '**From PHREEQC…**: opens a panel where PHREEQC speciates a water and the water, as PHREEQC leaves it, becomes the text. Its own (i) says how.',
           '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
@@ -10167,7 +10169,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Save**: the text, as `model.rtm`.',
           '**Apply**: compiles the text now.',
         ] },
-        { heading: 'Keep in mind', text: 'A reload does not bring the built-in model back: the text stays in this browser until Reset, an example, a file or a water from PHREEQC replaces it.' },
+        { heading: 'Nothing lost', text: 'Whatever replaces the text — an example, Reset, a file, a water from PHREEQC, the fitted values put in — first puts it aside, if it is one you changed or opened: **Bring it back**, in the line under the toolbar, swaps the two back, and the Example picker keeps the last five between visits. An example or the built-in model as it comes is not kept, as it can be had again. A reload does not bring the built-in model back: the text stays in this browser until something replaces it.' },
       ],
       more: more('The model text', 'help-model-text'),
     }),
@@ -10359,10 +10361,15 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       if (!g) { g = { name: e.group, items: [] }; groups.push(g); }
       g.items.push(e);
     }
-    sel.innerHTML = '<option value="">— choose one —</option>'
+    const was = sel.value;
+    const mine = aside.length ? '<optgroup label="Your earlier texts">'
+      + aside.map((x, i) => `<option value="aside:${i}">${esc(`${x.title} — ${asideWhen(x.at)}`)}</option>`).join('')
+      + '</optgroup>' : '';
+    sel.innerHTML = '<option value="">— choose one —</option>' + mine
       + groups.map((g) => `<optgroup label="${esc(g.name)}">`
         + g.items.map((e) => `<option value="${esc(e.id)}">${esc(e.label)}</option>`).join('')
         + '</optgroup>').join('');
+    if (was && [...sel.options].some((o) => o.value === was)) sel.value = was;
   }
 
   /**
@@ -10377,6 +10384,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     const e = EXAMPLES.find((x) => x.id === id);
     const about = $('rtmExampleAbout');
     if (!e) { about.hidden = true; $('rtmExample').value = ''; return; }
+    const kept = putAside(e.text);
     state.text = e.text;
     $('rtmText').value = e.text;
     renderHighlight();
@@ -10387,6 +10395,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     anotherModel();
     renderBeside();
     applyExampleView(e.view || null);
+    showAside(kept);
     saveState();
     compile();
   }
@@ -10765,6 +10774,122 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   }
 
   /* ---------------------------------------------------------------------
+     Texts put aside
+     --------------------------------------------------------------------- */
+  /*
+    Whatever replaces the model text -- an example, Reset, a file, a water
+    from PHREEQC, the fitted values put in -- first puts the text there
+    aside, if it is one worth keeping: a text the reader changed or opened,
+    not an example or the built-in model as they come, which can be had
+    again. The browser's own undo stops where the page sets the text, so
+    without this an afternoon's edits went with one slip on the Example
+    picker. The line under the toolbar offers the text just put aside back;
+    the last ASIDE_MAX are kept between visits under a key of their own --
+    not in the state saved at every compile -- and the Example picker lists
+    them under "Your earlier texts". Nothing is asked first.
+  */
+  const ASIDE_KEY = 'kvot-rtm-aside-v1';
+  const ASIDE_MAX = 5;
+  let aside = [];             // [{ text, title, at }], the latest first
+
+  function loadAside() {
+    try {
+      const a = JSON.parse(localStorage.getItem(ASIDE_KEY) || '[]');
+      if (Array.isArray(a)) {
+        aside = a.filter((x) => x && typeof x.text === 'string' && typeof x.title === 'string' && Number.isFinite(x.at))
+          .slice(0, ASIDE_MAX);
+      }
+    } catch (e) { aside = []; }
+  }
+
+  /** Kept between visits: as many as the browser will keep, the oldest let go first; all of them for this visit. */
+  function saveAside() {
+    for (let n = aside.length; n >= 0; n -= 1) {
+      try {
+        if (n) localStorage.setItem(ASIDE_KEY, JSON.stringify(aside.slice(0, n)));
+        else localStorage.removeItem(ASIDE_KEY);
+        return;
+      } catch (e) { /* more than the browser keeps: one fewer */ }
+    }
+  }
+
+  /** A text worth keeping: not empty, and not an example or the built-in model as they come. */
+  function worthKeeping(text) {
+    return !!String(text || '').trim() && text !== RTM_DEFAULT_MODEL && !EXAMPLES.some((e) => e.text === text);
+  }
+
+  /** What a text is called in the list: its ## title, else its first comment, else how long it is. */
+  function asideTitle(text) {
+    let title = modelAbout(text).title;
+    if (!title) {
+      const lines = String(text).split(/\r?\n/);
+      const comment = lines.slice(0, 12).map((l) => (/^\s*#/.test(l) ? l.replace(/^\s*#+\s*/, '').trim() : ''))
+        .find((l) => /[A-Za-z]/.test(l) && !/^[=\-#\s]+$/.test(l));
+      title = comment || `a text of ${lines.length} lines`;
+    }
+    return title.length > 60 ? `${title.slice(0, 59)}…` : title;
+  }
+
+  /** When it was put aside, as the list says it: the time today, the day and the time before. */
+  function asideWhen(at) {
+    const d = new Date(at);
+    const now = new Date();
+    const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    if (d.toDateString() === now.toDateString()) return `today ${hm}`;
+    const day = `${d.getDate()} ${['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][d.getMonth()]}`;
+    return `${day}${d.getFullYear() === now.getFullYear() ? '' : ` ${d.getFullYear()}`} ${hm}`;
+  }
+
+  /**
+   * The text there now put aside, before next replaces it: the entry, or
+   * null where it is not kept -- nothing changes, or it is not worth keeping.
+   * A text already in the list moves to its top.
+   */
+  function putAside(next) {
+    const text = state.text;
+    if (text === next || !worthKeeping(text)) return null;
+    const entry = { text, title: asideTitle(text), at: Date.now() };
+    aside = [entry, ...aside.filter((x) => x.text !== text)].slice(0, ASIDE_MAX);
+    saveAside();
+    renderExamples();
+    return entry;
+  }
+
+  /** The line under the toolbar: the text just put aside, with the button that brings it back; or the one come back. */
+  function showAside(kept, back) {
+    const note = $('rtmAsideNote');
+    if (!note) return;
+    if (!kept && !back) { note.hidden = true; return; }
+    $('rtmAsideText').textContent = back
+      ? `“${back.title}” is back${kept ? `, and the text it replaced, “${kept.title}”, was put aside.` : '.'}`
+      : `Your earlier text, “${kept.title}”, was put aside.`;
+    $('rtmBringBack').hidden = !kept;
+    note.hidden = false;
+  }
+
+  /** One of the texts put aside, the i-th from the latest, back in the text; the one it replaces put aside in turn. */
+  function bringBack(i) {
+    const entry = aside[i];
+    $('rtmExample').value = '';
+    if (!entry) return;
+    aside.splice(i, 1);
+    saveAside();
+    const kept = putAside(entry.text);
+    renderExamples();
+    state.text = entry.text;
+    $('rtmText').value = entry.text;
+    renderHighlight();
+    $('rtmExampleAbout').hidden = true;
+    state.result = null;
+    state.verify = null;
+    anotherModel();
+    renderBeside();
+    showAside(kept, entry);
+    saveState();
+    compile();
+  }
+
+  /* ---------------------------------------------------------------------
      Files
      --------------------------------------------------------------------- */
   function saveFile() {
@@ -10935,6 +11060,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     const about = $('rtmExampleAbout');
     const skbrtm = typeof RtmImport !== 'undefined'
       && files.some((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text));
+    let next;
+    let said = '';
     if (skbrtm) {
       let res;
       try {
@@ -10943,25 +11070,28 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         setStatus(`These could not be opened as skbrtm databases: ${e.message}`, 'error');
         return;
       }
-      state.text = res.text;
+      next = res.text;
       const n = files.filter((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text)).length;
-      about.textContent = `Opened ${n} skbrtm file${n === 1 ? '' : 's'} as one model.`
+      said = `Opened ${n} skbrtm file${n === 1 ? '' : 's'} as one model.`
         + (res.warnings.length ? ` ${res.warnings.length} thing${res.warnings.length === 1 ? '' : 's'} that `
           + 'skbrtm would read differently, or that needs a look, are noted at the top of the text.' : '');
-      about.hidden = false;
     } else {
       // A model file before any other text file that came with it.
       const pick = files.find((f) => /\.rtm$/i.test(f.name)) || files[0];
       if (files.length > 1) {
         setStatus(`One model text at a time: ${pick.name} was opened, the other ${files.length - 1} were not.`, 'warn');
       }
-      state.text = pick.text;
-      about.hidden = true;
+      next = pick.text;
     }
+    const kept = putAside(next);
+    state.text = next;
+    about.textContent = said;
+    about.hidden = !said;
     $('rtmExample').value = '';
     $('rtmText').value = state.text;
     renderHighlight();
     anotherModel();
+    showAside(kept);
     showTab('model');
     scheduleCompile(0);
   }
@@ -11560,10 +11690,12 @@ END
           phases: pq.minerals && pq.eq === 'exact', redox: pq.redox && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
           date: new Date().toISOString().slice(0, 10) },
       });
-      // As an example is loaded: the text replaced outright, and said so below the panel.
+      // As an example is loaded: the text replaced, the one there put aside, and said so below the panel.
+      const kept = putAside(reply.text);
       state.text = reply.text;
       $('rtmText').value = reply.text;
       renderHighlight();
+      showAside(kept);
       $('rtmExample').value = '';
       $('rtmExampleAbout').hidden = true;
       state.result = null;
@@ -12346,6 +12478,8 @@ END
     },
     'rtm:textChanged': () => {
       state.text = $('rtmText').value;
+      // Typing goes on with this text: the offer of the one put aside goes, the picker keeps it.
+      showAside(null);
       // Synchronously, not on the compile's timer: the textarea's own text is
       // transparent while the colouring is on, so the coloured copy is what
       // the reader is watching themselves type.
@@ -12356,13 +12490,19 @@ END
     'rtm:lineNumbersToggle': (ev, el) => { state.lineNumbers = !!el.checked; applyLineNumbers(); saveState(); },
     'rtm:applyModel': () => { state.text = $('rtmText').value; scheduleCompile(0); },
     'rtm:resetModel': () => {
+      const kept = putAside(RTM_DEFAULT_MODEL);
       state.text = RTM_DEFAULT_MODEL;
       $('rtmText').value = state.text;
       renderHighlight();
       state.picked = [];
+      showAside(kept);
       scheduleCompile(0);
     },
-    'rtm:chooseExample': (ev, el) => chooseExample(el.value),
+    'rtm:chooseExample': (ev, el) => {
+      if (el.value.startsWith('aside:')) bringBack(Number(el.value.slice(6)));
+      else chooseExample(el.value);
+    },
+    'rtm:bringBack': () => bringBack(0),
     'rtm:loadFile': () => $('rtmFile').click(),
     'rtm:fileChosen': (ev) => { fileChosen(ev); },
     'rtm:saveFile': () => saveFile(),
@@ -12452,6 +12592,7 @@ END
      Boot
      --------------------------------------------------------------------- */
   loadState();
+  loadAside();
   migrateStoredText();
   $('rtmText').value = state.text;
   // scroll does not bubble, so it cannot be delegated like the rest.

@@ -755,6 +755,12 @@
 .rtm-listing td.rtm-listing-sp { padding-left: 14px; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
 
+/* The line that offers back the text just put aside, under the toolbar; its button a link in the line. */
+.rtm-aside-note { margin: 0 0 6px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
+.rtm-aside-note[hidden] { display: none; }
+.rtm-aside-note .rtm-more { margin: 0 0 0 4px; }
+.rtm-aside-note .rtm-more[hidden] { display: none; }
+
 .rtm-example-about {
   margin: 0 0 6px;
   font-size: 11px;
