@@ -588,6 +588,42 @@ A => B, r = ${law}
   }
 }
 {
+  /*
+    CHECK JACOBIAN WHERE A RATE LAW BENDS NEAR THE STEP: a
+    Langmuir-Hinshelwood factor, 8.1e4[H2]/(8.1e4[H2] + 1), at [H2] = 0
+    beside a species at 55.56: the check steps H2 by 3.4e-6, a quarter of
+    the 1.2e-5 the factor turns over at, and its central difference comes
+    back 8 % high, one halving extrapolated 0.5 %. Ridders' tableau, steps
+    shrinking by 1.4 from it, finds the analytic entry, -k [S] 8.1e4: no
+    disagreement. The same entry made 0.1 % wrong, or 0.03 %, is still
+    reported, with the tableau's difference -- the true derivative -- beside
+    it.
+  */
+  const lh = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nW  55.56\nH2  0\nS  1e-3\nP  0\n\n'
+    + '<REACTIONS>\nS + H2 => P, r = k*[S]*(8.1e4*[H2]/(8.1e4*[H2]+1)), k = 1e3\n');
+  const y = lh.initialState();
+  const clean = RtmModel.verifyJacobian(lh, 0, y);
+  const iH = lh.species.indexOf('H2');
+  let k = -1;
+  for (let q = lh.pattern.colPtr[iH]; q < lh.pattern.colPtr[iH + 1]; q++) if (lh.pattern.rowIdx[q] === iH) k = q;
+  const V = new Float64Array(lh.nnz);
+  lh.jac(0, y, V);
+  const want = -1e3 * 1e-3 * 8.1e4;
+  const jac0 = lh.jac.bind(lh);
+  const wrong = [1.001, 1.0003].map((f) => {
+    lh.jac = (t, yy, out) => { jac0(t, yy, out); out[k] *= f; };
+    const v = RtmModel.verifyJacobian(lh, 0, y);
+    lh.jac = jac0;
+    return v.discrepancies;
+  });
+  check('Check Jacobian where a rate law bends near its step: a Langmuir-Hinshelwood factor at [H2] = 0, its central difference '
+    + '8 % out, found by Ridders\' tableau to agree; the entry made 0.1 % and 0.03 % wrong still reported, the true derivative '
+    + 'beside it', Math.abs(V[k] / want - 1) < 1e-12 && clean.discrepancies.length === 0
+    && wrong.every((d) => d.length === 1 && d[0].row === iH && d[0].col === iH && Math.abs(d[0].numeric / want - 1) < 1e-6),
+  `the entry ${V[k]} for ${want}; ${clean.discrepancies.length} disagreed of ${clean.checked}; made wrong: `
+    + `${wrong.map((d) => d.map((x) => `${x.analytic} against ${x.numeric}`).join(', ')).join(' | ')}`);
+}
+{
   // The three that are refused in a rate law, each for its own reason, and
   // each of which still works where nothing is differentiated.
   const inLaw = (law) => {

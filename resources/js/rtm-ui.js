@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111n';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111o';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -57,6 +57,8 @@
     cells: '',
     // Under Against time, where each curve is half-way and what has gone out of the column (breakthrough numbers).
     btc: false,
+    // The list of what to draw on Against time, as tall as its corner was dragged; 0 for its own height.
+    seriesHeight: 0,
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
@@ -127,7 +129,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc,
+        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc, seriesHeight: state.seriesHeight,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compBudgetBy: state.compBudgetBy, compBudgetAt: state.compBudgetAt, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog, compAt: state.compAt, compPace: state.compPace,
@@ -170,6 +172,7 @@
       if (s.timeIn === '' || s.timeIn === 'pv') state.timeIn = s.timeIn;
       if (typeof s.cells === 'string') state.cells = s.cells;
       if (typeof s.btc === 'boolean') state.btc = s.btc;
+      if (Number.isFinite(s.seriesHeight) && s.seriesHeight >= 0) state.seriesHeight = s.seriesHeight;
       if (['where', 'listing', 'budget', 'fronts', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
@@ -9841,6 +9844,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**View in Data Browser**: the same file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
           ]),
           { heading: 'The list', text: [
+            'Drag its bottom right-hand corner to make it as tall as you like; the page keeps the height, for the next visit too. A double click on the corner gives it back its own.',
             'A ticked entry is filled in the accent colour. The species come first, then what the model can be read as besides them, in groups that open and shut: the water (pH, pe, Eh, ionic strength, a(H2O), charge balance), the totals of each element in the water and, in a model with the electron where it is in two valence states or more, in each, tot(Fe(2)) as PHREEQC’s TOT("Fe(2)"), saturation indices, gases, what is on an exchanger or a surface, the text’s `<OUTPUT>`, what each reaction does (shut until opened where there are more than six lines), and under an `ACTIVITY` the log activities, shut until opened. They are worked out from the stored concentrations with the model’s own activity model, the first time they are asked for.',
             'What each reaction does: for each `<REACTIONS>` line its **rate** — the forward rate less the backward one, from the very code the solver runs, times what the cell holds of the species for a rate on the inventory and times the porosity in the rock, so that it is what the reaction moves in the cell’s water in a unit of time — on the right with pH and the like; and its **extent**, what it has done since the start, the rate summed over the stored points, as close as they are to each other. A rate drawn on Gradient shows where a reaction runs and when; an extent at the end of the run along the column, how much it did where. A held equilibrium has no rate of its own and is not among them; Diagrams, Sweeps and Uncertainty, which read a quantity point by point, offer the rates and not the extents.',
             'An amount goes on the left-hand axis with the species, log or not; pH, pe, Eh, a saturation index, a log activity or a share on the right, as it is. What `<DATA>` measured of something ticked is drawn as points beside it, at the cell its table names.',
@@ -10794,7 +10798,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111i';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111j';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -12202,6 +12206,48 @@ END
     'rtm:pqInvCsv': () => pqInvCsv(),
   });
 
+  /*
+    THE LIST ON AGAINST TIME, AS TALL AS IT IS DRAGGED. The browser's own
+    resize corner sets its height; the cap that keeps it short until then is
+    lifted as a drag on that corner begins, from the height it has, so that
+    the drag can take it anywhere. The height a drag leaves is kept, for the
+    next visit too.
+  */
+  function initSeriesResize() {
+    const list = $('rtmSeries');
+    const apply = () => {
+      list.classList.toggle('sized', state.seriesHeight > 0);
+      list.style.height = state.seriesHeight > 0 ? `${state.seriesHeight}px` : '';
+    };
+    const atCorner = (ev) => {
+      const b = list.getBoundingClientRect();
+      return ev.clientX >= b.right - 18 && ev.clientY >= b.bottom - 18;
+    };
+    list.addEventListener('pointerdown', (ev) => {
+      if (!atCorner(ev)) return;
+      list.style.height = `${list.getBoundingClientRect().height}px`;
+      list.classList.add('sized');
+    });
+    // A double click on the corner gives it back its own height.
+    list.addEventListener('dblclick', (ev) => {
+      if (!atCorner(ev)) return;
+      state.seriesHeight = 0;
+      apply();
+      saveState();
+    });
+    // What the drag left, once it has stopped moving: a list sized, whose height changes, is kept at it.
+    let keep = null;
+    new ResizeObserver(() => {
+      if (!list.classList.contains('sized') || !list.offsetHeight) return;
+      clearTimeout(keep);
+      keep = setTimeout(() => {
+        const h = Math.round(list.getBoundingClientRect().height);
+        if (h > 0 && h !== state.seriesHeight) { state.seriesHeight = h; saveState(); }
+      }, 300);
+    }).observe(list);
+    apply();
+  }
+
   /* ---------------------------------------------------------------------
      Boot
      --------------------------------------------------------------------- */
@@ -12219,6 +12265,7 @@ END
   writeSolverControls();
   updateSolverOptions();
   initSideResize();
+  initSeriesResize();
   initSections();
   initDrop();
   fullState();

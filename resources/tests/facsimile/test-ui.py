@@ -1798,6 +1798,13 @@ async def main():
                 " const a = getComputedStyle(ta), b = getComputedStyle(pre);"
                 " return ['fontFamily', 'fontSize', 'lineHeight', 'letterSpacing', 'paddingLeft',"
                 " 'paddingTop', 'borderLeftWidth', 'tabSize', 'whiteSpace'].every(k => a[k] === b[k]); })()"), True)
+            # The copy's <code> and what it holds in the textarea's face too: left to the browser, <code> takes its own
+            # monospace -- Menlo here, Consolas or whatever a reader has chosen elsewhere -- and the copy's letters drift
+            # from where the caret and the selection are.
+            check('and the copy is drawn in the textarea\'s face, its <code> and every span in it', await page.ev(
+                "(() => { const f = (el) => getComputedStyle(el).fontFamily;"
+                " const ta = document.getElementById('facModelText'), code = document.querySelector('#facHighlight code');"
+                " return f(code) === f(ta) && [...code.querySelectorAll('span')].every((x) => f(x) === f(ta)); })()"), True)
             check('and the same size in the same place, to the pixel', await page.ev(
                 "(() => { const ta = document.getElementById('facModelText').getBoundingClientRect();"
                 " const pre = document.getElementById('facHighlight').getBoundingClientRect();"

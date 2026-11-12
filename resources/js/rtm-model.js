@@ -14157,6 +14157,62 @@
     const yp = Float64Array.from(y);
     const fp2 = new Float64Array(n);
     const fm2 = new Float64Array(n);
+    /*
+      Ridders' method, for a disagreement looked at again: the central
+      difference of column c at the step h and at steps shrinking by 1.4 each
+      time, RIDDERS_LEVELS of them, and for each row the differences
+      extrapolated to a step of nought through a Neville tableau -- taking
+      away h^2, h^4 and on as far as they go -- stopping where rounding
+      begins to grow faster than the extrapolation gains. { value, err } of
+      row r, the column's differences worked out once, when it first has a
+      disagreement.
+    */
+    const RIDDERS_LEVELS = 10;
+    const RIDDERS_SHRINK = 1.4;
+    let riddersCol = -1;
+    let riddersD = null;
+    const ridders = (c, h, r) => {
+      if (riddersCol !== c) {
+        riddersCol = c;
+        riddersD = [];
+        let hh = h;
+        for (let i = 0; i < RIDDERS_LEVELS; i++) {
+          yp[c] = y[c] + hh;
+          model.rhs(t, yp, fp2);
+          yp[c] = y[c] - hh;
+          model.rhs(t, yp, fm2);
+          yp[c] = y[c];
+          const d = new Float64Array(n);
+          let finite = true;
+          for (let q = 0; q < n; q++) {
+            d[q] = (fp2[q] - fm2[q]) / (2 * hh);
+            if (!Number.isFinite(d[q])) finite = false;
+          }
+          if (!finite) break;
+          riddersD.push(d);
+          hh /= RIDDERS_SHRINK;
+        }
+      }
+      if (!riddersD.length) return null;
+      const shrink2 = RIDDERS_SHRINK * RIDDERS_SHRINK;
+      let prev = [riddersD[0][r]];
+      let value = prev[0];
+      let err = Infinity;
+      for (let i = 1; i < riddersD.length; i++) {
+        const col = [riddersD[i][r]];
+        let fac = shrink2;
+        for (let j = 1; j <= i; j++) {
+          col[j] = (col[j - 1] * fac - prev[j - 1]) / (fac - 1);
+          fac *= shrink2;
+          const e = Math.max(Math.abs(col[j] - col[j - 1]), Math.abs(col[j] - prev[j - 1]));
+          if (e <= err) { err = e; value = col[j]; }
+        }
+        // Rounding has taken over once the diagonal moves by more than twice the best error.
+        if (Math.abs(col[i] - prev[i - 1]) >= 2 * err) break;
+        prev = col;
+      }
+      return { value, err };
+    };
     const discrepancies = [];
     let checked = 0;
     let unresolvable = 0;
@@ -14228,7 +14284,6 @@
       for (let r = 0; r < n; r++) if (!Number.isFinite(fm[r])) { ok = false; break; }
       if (!ok) { model.rhs(t, y, fm); step = h; }
       const inColumn = new Map();
-      let halved = false;
       for (let k = colPtr[c]; k < colPtr[c + 1]; k++) inColumn.set(rowIdx[k], V[k]);
       let scale = 0;
       for (let r = 0; r < n; r++) scale = Math.max(scale, Math.abs((fp[r] - fm[r]) / step));
@@ -14276,29 +14331,28 @@
         const tol = Math.max(rtol * Math.max(Math.abs(analytic), Math.abs(numeric)), floor);
         if (Math.abs(analytic - numeric) <= tol) continue;
         /*
-          A disagreement is looked at again before it is reported: the
-          difference taken at half the step as well, and the two extrapolated,
-          (4 D(h/2) - D(h))/3, which takes away the h^2 that a central
-          difference carries. Where the entry's function varies on a scale
-          not far above the step -- a limited advection's slope where the
-          gradients are a few times what the step moves them by -- that h^2 is
-          the disagreement; a Jacobian that is wrong stays wrong.
+          A disagreement is looked at again before it is reported, by
+          Ridders' method (above): steps shrinking from h, extrapolated to
+          nought. Where the entry's function bends on a scale not far above
+          the step, the central difference's h^2 and on are the disagreement
+          -- a limited advection's slope where the gradients are a few times
+          what the step moves them by; a Langmuir-Hinshelwood factor
+          8.1e4[H2]/(8.1e4[H2] + 1) at [H2] = 0, which turns over at 1.2e-5
+          against a step of 3.4e-6, its difference 8 % out and one halving
+          extrapolated still 0.5 %. The tableau reaches the analytic entry; a
+          Jacobian that is wrong stays wrong.
         */
+        // The difference reported is the tableau's, the nearest to the derivative there is.
+        let best = numeric;
         if (step === 2 * h) {
-          if (!halved) {
-            yp[c] = y[c] + h / 2;
-            model.rhs(t, yp, fp2);
-            yp[c] = y[c] - h / 2;
-            model.rhs(t, yp, fm2);
-            yp[c] = y[c];
-            halved = true;
+          const est = ridders(c, h, r);
+          if (est) {
+            best = est.value;
+            const tol2 = Math.max(rtol * Math.max(Math.abs(analytic), Math.abs(est.value)), floor);
+            if (Math.abs(analytic - est.value) <= tol2) continue;
           }
-          const half = (fp2[r] - fm2[r]) / h;
-          const extrapolated = (4 * half - numeric) / 3;
-          const tol2 = Math.max(rtol * Math.max(Math.abs(analytic), Math.abs(extrapolated)), floor);
-          if (Math.abs(analytic - extrapolated) <= tol2) continue;
         }
-        discrepancies.push({ row: r, col: c, analytic, numeric });
+        discrepancies.push({ row: r, col: c, analytic, numeric: best });
       }
     }
     return { checked, unresolvable, discrepancies, outsidePattern: outside };

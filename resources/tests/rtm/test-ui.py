@@ -552,6 +552,35 @@ async def main():
                 "document.querySelectorAll('#rtmSeries .rtm-item.on').length"), 0)
             check('and the list has not moved', await page.ev(
                 "document.querySelector('#rtmSeries .rtm-item').getBoundingClientRect().top"), top)
+            # The list as tall as its corner is dragged. The browser's own resize sets its height; the page lifts the cap
+            # that keeps it short as a drag on the corner begins, here as the page sees one start. Its rows keep the height
+            # of their names however tall or short it is made -- shorter, it scrolls: a grid of a fixed height squeezed
+            # them into one another, the names clipped, and its scrollbar went. The height is kept, and a double click
+            # on the corner gives it back its own.
+            SERIES = """(() => { const s = document.getElementById('rtmSeries');
+              const hs = [...s.querySelectorAll('.rtm-item')].filter((e) => e.offsetParent).map((e) => e.getBoundingClientRect().height);
+              return [Math.round(s.getBoundingClientRect().height), s.classList.contains('sized'), Math.min(...hs), Math.max(...hs),
+                s.scrollHeight > s.clientHeight]; })()"""
+            at_first = await page.ev(SERIES)
+            await page.ev("""(() => { const s = document.getElementById('rtmSeries'); const b = s.getBoundingClientRect();
+              s.dispatchEvent(new PointerEvent('pointerdown', { clientX: b.right - 6, clientY: b.bottom - 6, bubbles: true }));
+              s.style.height = '450px'; })()""")
+            await asyncio.sleep(0.8)
+            tall = await page.ev(SERIES)
+            kept = await page.ev("JSON.parse(localStorage.getItem('kvot-rtm-v1')).seriesHeight")
+            await page.ev("document.getElementById('rtmSeries').style.height = '70px'")
+            await asyncio.sleep(0.8)
+            short = await page.ev(SERIES)
+            await page.ev("""(() => { const s = document.getElementById('rtmSeries'); const b = s.getBoundingClientRect();
+              s.dispatchEvent(new MouseEvent('dblclick', { clientX: b.right - 6, clientY: b.bottom - 6, bubbles: true })); })()""")
+            await asyncio.sleep(0.5)
+            back = await page.ev(SERIES)
+            kept_back = await page.ev("JSON.parse(localStorage.getItem('kvot-rtm-v1')).seriesHeight")
+            check('the list on Against time drags as tall as wanted, past its 150 px: 450 px, its rows the height of their names; '
+                  'made shorter than they are, it scrolls, the rows as they were; the height kept, and a double click on the '
+                  'corner gives it back its own', [at_first, tall[:4], kept, short, back, kept_back],
+                  [[150, False, 18, 18, True], [450, True, 18, 18], 450, [70, True, 18, 18, True],
+                   [150, False, 18, 18, True], 0])
 
             # --- how each tab is laid out -------------------------------------
             # A bar of what is drawn, Export and the (i) at its right end; every
@@ -3961,6 +3990,53 @@ async def main():
                 " const pre = document.getElementById('rtmHighlight');"
                 " return Math.round(a.top - b.top) === 0 && Math.round(a.left - b.left) === 0"
                 " && ta.scrollWidth === pre.scrollWidth && ta.scrollHeight === pre.scrollHeight; })()"), True)
+            # The copy's characters land where the textarea's do, whatever the browser's own monospace: the copy's <code>
+            # is drawn in the textarea's face, where it took the browser's monospace -- Menlo here, Consolas or Courier
+            # elsewhere, a hair or a tenth of a character off Plex Mono, so that the caret and the selection fell beside
+            # the letters seen. With the browser's fixed-width font set to Times New Roman, as a reader's settings can, a
+            # click on the left of each character of the copy puts the caret before it; left to the default, three clicks
+            # in four were a character or more out.
+            await page.call('Page.setFontFamilies', {'fontFamilies': {'fixed': 'Times New Roman'}}, session=page.sid)
+            await asyncio.sleep(0.5)
+            faces = await page.ev("""(() => { const f = (el) => getComputedStyle(el).fontFamily;
+              const ta = document.getElementById('rtmText'), code = document.querySelector('#rtmHighlight > code');
+              return [f(code) === f(ta), [...code.querySelectorAll('span')].every((x) => f(x) === f(ta))]; })()""")
+            spots = await page.ev("""(() => { const code = document.querySelector('#rtmHighlight > code'); const out = []; let offset = 0;
+              const lines = document.getElementById('rtmText').value.split('\\n');
+              const box = document.getElementById('rtmText').getBoundingClientRect();
+              [...code.children].slice(0, 12).forEach((span, li) => {
+                const walker = document.createTreeWalker(span, NodeFilter.SHOW_TEXT); let node, col = 0;
+                while ((node = walker.nextNode())) {
+                  for (let i = 0; i < node.data.length; i++, col++) {
+                    if (node.data[i] === '\\n' || col % 4) continue;
+                    const r = document.createRange(); r.setStart(node, i); r.setEnd(node, i + 1); const b = r.getBoundingClientRect();
+                    if (b.width > 0 && b.left > box.left && b.right < box.right - 20 && b.top > box.top && b.bottom < box.bottom - 20) {
+                      out.push([b.left + b.width * 0.25, b.top + b.height / 2, offset + col]);
+                    }
+                  }
+                }
+                offset += lines[li].length + 1;
+              });
+              return out; })()""")
+            misplaced = []
+            for x, y, want in spots:
+                for kind in ('mousePressed', 'mouseReleased'):
+                    await page.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y, 'button': 'left', 'clickCount': 1},
+                                    session=page.sid)
+                got = await page.ev("document.getElementById('rtmText').selectionStart")
+                if got != want:
+                    misplaced.append((want, got))
+            await page.call('Page.setFontFamilies', {'fontFamilies': {'fixed': 'Menlo'}}, session=page.sid)
+            check(f'the copy is in the textarea\'s face, whatever the browser\'s monospace: with Times New Roman for it, a click on '
+                  f'the left of each of {len(spots)} characters of the copy puts the caret before that character',
+                  [faces, len(spots) > 60, misplaced], [[True, True], True, []])
+            # Coloured, a selection is a tint the coloured copy is read through, the textarea's own text left unpainted:
+            # it was white on the accent over the copy, and a letter beside it half hidden where the two did not lie
+            # exactly together.
+            check('  and a selection is a tint the coloured copy is read through, its own text unpainted', await page.ev(
+                "(() => { const st = getComputedStyle(document.getElementById('rtmText'), '::selection');"
+                " const a = /\\/\\s*([0-9.]+)\\)$/.exec(st.backgroundColor);"
+                " return [st.color, a ? Number(a[1]) : null]; })()"), ['rgba(0, 0, 0, 0)', 0.3])
             # The box keeps the edge every input on the site has. The rule that
             # sizes the two boxes together paints a transparent border to do
             # it, and it is the more specific selector, so asking for the real

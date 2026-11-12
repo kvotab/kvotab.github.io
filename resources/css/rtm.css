@@ -476,11 +476,15 @@
    is picked repeated as chips above, each of which removes its own.
    ------------------------------------------------------------------------ */
 .rtm-series {
+  box-sizing: border-box;
   margin: 0 0 10px;
   max-height: 150px;
   min-height: 60px;
   overflow-y: auto;
   resize: vertical;
+  /* A row the height of its names: a box made shorter than its rows scrolls rather than squeezing them -- the names
+     clip their overflow, which lets a grid of a fixed height shrink their rows to nothing. */
+  grid-auto-rows: max-content;
   border: 1px solid var(--border-color);
   border-radius: 6px;
   background: var(--bg-primary);
@@ -492,6 +496,8 @@
   padding: 5px 6px;
   align-content: start;
 }
+/* Dragged by its corner, as tall as the reader likes: the cap is lifted as the drag begins (initSeriesResize). */
+.rtm-series.sized { max-height: none; }
 .rtm-item {
   display: flex;
   align-items: baseline;
@@ -577,11 +583,22 @@
   border: 1px solid transparent;
   border-radius: 6px;
   font: 12px/1.5 var(--font-mono);
+  font-kerning: none;
+  font-variant-ligatures: none;
   letter-spacing: normal;
   tab-size: 4;
   white-space: pre;
   overflow: auto;
 }
+/*
+  The copy's <code> in the textarea's own face. Left to the browser it takes
+  the browser's monospace -- Menlo here, Courier or Consolas elsewhere, or
+  whatever the reader has chosen -- a hair or a tenth of a character wider
+  or narrower than Plex Mono, and the coloured copy drifts from where the
+  caret and the selection are: Consolas a whole character out by the
+  twelfth.
+*/
+.rtm-code-box .rtm-code-hl code { font: inherit; font-kerning: none; font-variant-ligatures: none; }
 /*
   Addressed as `.rtm-code-box textarea` rather than as `.rtm-text`, and not
   for tidiness: the rule above it is `.rtm-code-box textarea` too, and it
@@ -615,6 +632,9 @@
 }
 .rtm-code-box.hl .rtm-code-hl { display: block; }
 .rtm-code-box ::selection { background: var(--accent-fill); color: #fff; }
+/* Coloured, the selection is a tint the coloured copy is read through, its own text left unpainted: what is selected
+   stays readable, in its colours, whatever a browser makes of a selection's colour in a textarea. */
+.rtm-code-box.hl textarea::selection { background: color-mix(in srgb, var(--accent-fill) 30%, transparent); color: transparent; }
 
 /* The colours themselves: comments recede, everything else is a hue apart.
    The same six as facsimile.html, so a reader who knows one knows the other. */

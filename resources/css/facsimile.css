@@ -683,7 +683,11 @@ table.fac-table tr:nth-child(even) td { background: var(--table-stripe); }
 }
 .fac-code-box.hl .fac-code-hl { display: block; }
 .fac-code-box textarea.error { border-color: var(--color-kvot-accent); }
+/* The copy's <code> in the textarea's own face: left to the browser it takes its monospace, Menlo or Consolas, a hair or
+   a tenth of a character off Plex Mono, and the coloured copy drifts from the caret and the selection. */
+.fac-code-box .fac-code-hl code { font: inherit; font-kerning: none; font-variant-ligatures: none; }
 .fac-code-box ::selection { background: var(--accent-fill); color: #fff; }
+.fac-code-box.hl textarea::selection { background: color-mix(in srgb, var(--accent-fill) 30%, transparent); color: transparent; }
 
 /* The colours themselves: comments recede, everything else is a hue apart. */
 .hl-com { color: var(--text-secondary); font-style: italic; }
