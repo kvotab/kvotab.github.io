@@ -424,15 +424,21 @@
    * say about seconds, and "3.16e7 s" where the reader wrote 1 would answer a
    * question nobody asked.
    */
+  /** A time's number for a person: to three figures, those from a thousand to a million written out -- 1890, not 1.89e+3. */
+  const fmtTimeNumber = (v) => {
+    const r = Number(v.toPrecision(3));
+    return Math.abs(r) >= 1e3 && Math.abs(r) < 1e6 ? String(r) : v.toPrecision(3);
+  };
+
   const fmtTime = (t) => {
     const st = shownTime();
-    if (st.fixed) return `${(t * st.per).toPrecision(3)} ${st.sym}`;
+    if (st.fixed) return `${fmtTimeNumber(t * st.per)} ${st.sym}`;
     const u = timeUnit();
     const s = t * u.seconds;
     const ladder = [[1, 's'], [60, 'min'], [3600, 'h'], [86400, 'd'], [365.25 * 86400, 'a']];
     let pick = Math.max(0, ladder.findIndex(([sec]) => sec === u.seconds));
     while (pick + 1 < ladder.length && Math.abs(s) >= ladder[pick + 1][0]) pick++;
-    return `${(s / ladder[pick][0]).toPrecision(3)} ${ladder[pick][1]}`;
+    return `${fmtTimeNumber(s / ladder[pick][0])} ${ladder[pick][1]}`;
   };
 
   /** A number for a person: as written when it is short, to four figures when it is not. */
@@ -572,7 +578,7 @@
     return r.axisT.x;
   }
   /** A time of the run, in the model's unit, for a person on the axis: 1.25 PV, 3.50 h, or as fmtTime writes it. */
-  const fmtOnAxis = (ax, t) => (ax.fixed ? `${(t * ax.per).toPrecision(3)} ${ax.sym}` : fmtTime(t));
+  const fmtOnAxis = (ax, t) => (ax.fixed ? `${fmtTimeNumber(t * ax.per)} ${ax.sym}` : fmtTime(t));
   /** A number on the axis -- a "from" -- for a person. */
   const fmtAxisNumber = (ax, v) => (ax.fixed ? `${Number(v.toPrecision(3))} ${ax.sym}` : fmtTime(v));
 

@@ -2434,6 +2434,15 @@ async def main():
                   'time column and its from, whole in its box; and the panel\'s facts, 6.94 d run for 167 h', [isinstance(comp_h, list) and len(comp_h[0]) > 0
                                                and all(str(t).endswith('time (h)') for t in comp_h[0])] + (comp_h[1:] if isinstance(comp_h, list) else [comp_h]),
                   [True, 'water,t (h)', 'h', True, True])
+            # A time from a thousand up written out: the run's 6.94 d in minutes is 10000 min, not 1.00e+4 min.
+            await page.ev("(() => { const s = document.getElementById('rtmTimeInTime'); s.value = 'min';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            in_min = await page.ev("document.getElementById('rtmFacts').textContent.includes('run for 10000 min.')")
+            await page.ev("(() => { const s = document.getElementById('rtmTimeInTime'); s.value = 'h';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            check('  a time from a thousand up written out: the run of 6.94 d in minutes is 10000 min, not 1.00e+4 min', in_min, True)
             await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
             await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '5, 1 d';"
                           " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
