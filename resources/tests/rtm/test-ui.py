@@ -412,7 +412,15 @@ async def main():
                                         ".textContent.slice(0, 9)", 'Compiled:')
             check('the built-in model compiles on load', status, 'Compiled:')
             check('and the panel says what is being solved', await page.ev(
-                "document.getElementById('rtmFacts').textContent.startsWith('transport')"), True)
+                "document.getElementById('rtmFacts').textContent.startsWith('A column of 20 cells over 200 µm')"), True)
+            # The model in its own words above it: the comment the text begins with, the rules of its box left out and its
+            # margin taken off, three paragraphs; no label over it.
+            check('the panel gives the model in its own words, the comment its text begins with, in paragraphs', await page.ev(
+                "(() => { const a = document.getElementById('rtmAbout');"
+                " return [a.hidden, [...a.children].map((c) => c.tagName + ':' + c.textContent.slice(0, 40)),"
+                " /What is being solved/.test(document.getElementById('rtmSide').textContent)]; })()"),
+                [False, ['P:WATER RADIOLYSIS AND URANIUM DISSOLUTION', 'P:119 reactions and 8 radiolysis sources o',
+                         'P:Set MODE = batch to ignore the film and '], False])
             check('the species picker is filled, the species first and then the quantities', await page.ev(
                 "[document.querySelectorAll('#rtmSeries .rtm-item[data-group=\"species\"]').length,"
                 " [...document.querySelectorAll('#rtmSeries .rtm-item:not([data-group=\"species\"]) input')]"
@@ -663,7 +671,9 @@ async def main():
             await settle(page, "document.getElementById('rtmStatus')"
                                ".textContent.startsWith('Compiled: 1 species')", True, tries=40)
             check('the aliases reach the panel as the names they mean', await page.ev(
-                "document.getElementById('rtmFacts').textContent.includes('robin | free')"), True)
+                "(() => { const t = document.getElementById('rtmFacts').textContent;"
+                " return t.includes('The left end is robin: the flow carries in what it is given.')"
+                " && t.includes('The right end is free: the flow takes what it takes.'); })()"), True)
             check('and no warning is raised when the flow suits the faces', await page.ev(
                 "document.getElementById('rtmModelNote').hidden"), True)
             await page.ev("document.getElementById('rtmRun').click()")
@@ -806,10 +816,30 @@ async def main():
             await settle(page, "document.getElementById('rtmFacts').textContent"
                                ".includes('12 matrix layers to 12.5 m')", True, tries=40)
             facts = await page.ev("document.getElementById('rtmFacts').textContent")
+            # Robertson's problem in its own words: prose run together into paragraphs, its table of reactions and its
+            # answer kept line for line, from their own left edge.
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmFacts').textContent.startsWith('A batch')", True, tries=40)
+            rob = await page.ev("""(() => { const a = document.getElementById('rtmAbout');
+              return [a.hidden, [...a.children].map((c) => c.tagName).join(' '), a.querySelector('pre').textContent.split('\\n')[0],
+                a.children[0].textContent, document.getElementById('rtmFacts').textContent]; })()""")
+            check('a description with tables in it: Robertson\'s reactions and its answer kept line for line, the prose in '
+                  'paragraphs; under it, what is solved', rob,
+                  [False, 'P PRE P P PRE P', 'A       -> B         k1 = 0.04',
+                   'Robertson\'s problem, the classic test of a stiff solver.',
+                   'A batch, one well-mixed water, run for 116 d.3 species and 3 reactions with a rate law.'
+                   '3 equations to solve, with 8 non-zeros in their Jacobian.'])
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'farfield'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmFacts').textContent"
+                               ".includes('12 matrix layers to 12.5 m')", True, tries=40)
+            facts = await page.ev("document.getElementById('rtmFacts').textContent")
             check('a far-field path has twelve matched layers, the first worked out from the path',
                   isinstance(facts, str) and 'matched: the first 11.5 mm (worked out from the path)' in facts, True)
             check('  and the panel says how many cells stand past the right-hand end',
-                  isinstance(facts, str) and 'robin | semi-infinite boundaries, 5 cells past the right-hand end' in facts, True)
+                  isinstance(facts, str) and 'The right end is semi-infinite: the column goes on past it, in 5 more cells.' in facts,
+                  True)
             check('  and the travel time the flow makes',
                   isinstance(facts, str) and 'a travel time of 100 a' in facts, True)
             await page.ev("document.getElementById('rtmRun').click()")
@@ -842,10 +872,10 @@ async def main():
             # --- a release history, read at the clock -------------------------
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'releasehistory'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
-            await settle(page, "document.getElementById('rtmFacts').textContent.includes('read at the clock')", True, tries=40)
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('Read at the clock')", True, tries=40)
             check('a release history: the panel says what is read at the clock and how many corners it has', await page.ev(
                 "document.getElementById('rtmFacts').textContent.includes("
-                "'read at the clock: release, the run started again at 5 corners up to TEND')"), True)
+                "'Read at the clock: release, the run started again at 5 corners up to TEND.')"), True)
             await page.ev("document.getElementById('rtmRun').click()")
             run = await wait_run(page)
             check('  it runs, and the status line says it was started again at them',
@@ -3545,7 +3575,7 @@ async def main():
               t.dispatchEvent(new Event('input', { bubbles: true }));
             })()""")
             await settle(page, "document.getElementById('rtmFacts')"
-                               ".textContent.startsWith('batch')", True, tries=40)
+                               ".textContent.startsWith('A batch')", True, tries=40)
             check('switching to batch recompiles to one cell', await page.ev(
                 "document.getElementById('rtmCell').options.length"), 1)
             # A batch is one cell, so the whole canvas is that one block: it has
@@ -3619,9 +3649,9 @@ async def main():
             check('a model with a parameter, an R= and an equilibrium compiles', said, 'Compiled:')
             facts = await page.ev("document.getElementById('rtmFacts').textContent")
             check('the panel reports the equilibrium and its conserved total',
-                  isinstance(facts, str) and '1 equilibrium, 1 conserved total' in facts, True)
+                  isinstance(facts, str) and '1 relation at equilibrium, which conserves 1 total.' in facts, True)
             check('and says the initial state was equilibrated',
-                  isinstance(facts, str) and 'initial state equilibrated' in facts, True)
+                  isinstance(facts, str) and 'The water is brought to equilibrium before the run starts' in facts, True)
             check('and names the parameter',
                   isinstance(facts, str) and '1 parameter: DOSE' in facts, True)
             await page.ev("document.getElementById('rtmRun').click()")
@@ -3965,7 +3995,7 @@ async def main():
             facts = await page.ev("document.getElementById('rtmFacts').textContent")
             check('the panel describes the power-law grid', 'power-law grid, exponent 3' in facts, True)
             check('  names the table', '1 table: prof' in facts, True)
-            check('  and says where X is held', 'X held in cells 1–7' in facts, True)
+            check('  and says where X is held', 'X is held in cells 1–7.' in facts, True)
             check('the colouring passes a <TABLE>, Fe(OH)3 and (2/3) through unchanged', await page.ev(
                 "document.getElementById('rtmHighlight').textContent === document.getElementById('rtmText').value + '\\n'"),
                 True)
@@ -3994,7 +4024,7 @@ async def main():
             await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')",
                          True, tries=40)
             check('  and it compiles, with the script\'s time span', await page.ev(
-                "document.getElementById('rtmFacts').textContent.includes('TEND 10.0 s')"), True)
+                "document.getElementById('rtmFacts').textContent.includes('run for 10.0 s.')"), True)
 
             # --- the full window ----------------------------------------------
             # The page without the site's header, menu and footer, by the button

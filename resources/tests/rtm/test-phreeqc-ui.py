@@ -200,8 +200,9 @@ async def main():
             status = await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and it compiles', status, 'Compiled:')
             check('with the relations held, in activities: the model facts say so', await page.ev(
-                "/all held throughout the run, 52 species algebraic in every cell · in activities, "
-                "Debye–Hückel at 15 °C \\(33 ions\\)/.test(document.getElementById('rtmFacts').textContent)"), True)
+                "/All are held exactly at every step of the run: 52 species worked out from the totals in every cell\\..*"
+                "The relations hold between activities, by Debye–Hückel at 15\\s°C, for 33 ions\\./"
+                ".test(document.getElementById('rtmFacts').textContent)"), True)
             check('its couples tied to the electron, the water PHREEQC\'s next step: the report and the model facts say so',
                   isinstance(report, str)
                   and "Redox: 4 species tied to the electron e- by the database's reactions (HS-, H2, CH4 and Fe+3)" in report
@@ -434,7 +435,7 @@ async def main():
                   and re.search(r'^CaX2 +[0-9.e-]+ +exchange +a=5 +b=0\.165$', ex_text, re.M) is not None, True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and the model facts count the species on it', await page.ev(
-                "/species on the exchanger X-, Gaines/.test(document.getElementById('rtmFacts').textContent)"), True)
+                "/species on the exchanger X-, by Gaines–Thomas\\./.test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
@@ -632,7 +633,7 @@ async def main():
                   and re.search(r'^Na\+ +[0-9.e-]+ +a=', sit_text, re.M) is None, True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and the model facts give SIT and its pairs', await page.ev(
-                "/in activities, SIT at [0-9.]+ °C \\([0-9]+ ions, [0-9]+ pairs in <SIT>\\)/"
+                "/between activities, by SIT at [0-9.]+\\s°C, for [0-9]+ ions, with [0-9]+ pairs in <SIT>\\./"
                 ".test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
@@ -676,7 +677,7 @@ async def main():
                   and re.search(r'^Na\+ +[0-9.e-]+ +a=', pz_text, re.M) is None, True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and the model facts give Pitzer, its parameters and the MacInnes scaling', await page.ev(
-                "/in activities, Pitzer at [0-9.]+ °C \\([0-9]+ ions, [0-9]+ parameters in <PITZER>, MacInnes scaled\\)/"
+                "/between activities, by Pitzer at [0-9.]+\\s°C, for [0-9]+ ions, with [0-9]+ parameters in <PITZER>, MacInnes scaled\\./"
                 ".test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
@@ -726,7 +727,7 @@ async def main():
                   and re.search(r'^TEMPERATURES +0\.01 +25 +60 +100 +150$', ll_text, re.M) is not None, True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and the model facts give LLNL\'s B-dot', await page.ev(
-                "/in activities, LLNL\u2019s B-dot at [0-9.]+ °C/.test(document.getElementById('rtmFacts').textContent)"), True)
+                "/between activities, by LLNL\u2019s B-dot at [0-9.]+\\s°C/.test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
@@ -886,7 +887,7 @@ async def main():
                   and re.search(r'^Aragonite +[0-9.e-]+ +mineral$', ss_text, re.M) is not None, True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('and the model facts give the solid solution and its miscibility gap', await page.ev(
-                "/the solid solution CaSrCO3 \\(Aragonite, Strontianite\\), a0 3\\.43 and a1 -1\\.82 at 25 °C, a miscibility gap, "
+                "/The solid solution CaSrCO3 \\(Aragonite, Strontianite\\), a0 3\\.43 and a1 -1\\.82 at 25 °C, a miscibility gap, "
                 "there while the water is saturated in it/.test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
@@ -1029,7 +1030,7 @@ async def main():
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             await until(page, "/warm\\(t\\)/.test(document.getElementById('rtmFacts').textContent) || ''")
             check('and with TEMPERATURE a table read at the clock the model facts say so', await page.ev(
-                "/the temperature TEMPERATURE = warm\\(t\\): 15 °C at the start, and it goes with time · [0-9]+ log K go with it/"
+                "/The temperature is warm\\(t\\): 15\\s°C at the start, and it goes with time; [0-9]+ log K follow it/"
                 ".test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)

@@ -117,12 +117,23 @@
 .rtm-check-line[hidden] { display: none; }
 .rtm-check-line > .rtm-check { flex: 1 1 auto; min-width: 0; margin: 0; }
 
-.rtm-facts {
+/* The model in its own words, the comment its text begins with; then what the page solves, a sentence a line. */
+.rtm-about { margin: 0 0 8px; font-size: 12px; line-height: 1.5; color: var(--text-primary); }
+.rtm-about[hidden] { display: none; }
+.rtm-about p { margin: 0 0 6px; }
+.rtm-about pre {
+  margin: 0 0 6px;
   font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 1.6;
+  font-size: 10.5px;
+  line-height: 1.45;
+  white-space: pre;
+  overflow-x: auto;
   color: var(--text-secondary);
 }
+.rtm-about > :last-child { margin-bottom: 0; }
+.rtm-facts { font-size: 12px; line-height: 1.45; color: var(--text-secondary); }
+.rtm-facts p { margin: 0 0 4px; }
+.rtm-about:not([hidden]) + .rtm-facts { padding-top: 8px; border-top: 1px solid var(--border-color); }
 .rtm-muted { color: var(--text-muted); font-size: 11px; line-height: 1.5; }
 .rtm-muted[hidden] { display: none; }
 

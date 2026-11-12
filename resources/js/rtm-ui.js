@@ -619,34 +619,96 @@
     }
   }
 
+  /*
+    THE MODEL'S OWN DESCRIPTION: the comment its text begins with, before
+    anything else in it. Its lines run together into paragraphs, a line of
+    only # between them; a line indented further than the rest -- a table
+    of reactions, a formula -- keeps its line and its spacing; a rule of =
+    or - alone, which only draws a box, is left out. [{ pre, text }], none
+    where the text does not begin with a comment.
+  */
+  function modelAbout(text) {
+    const lines = [];
+    for (const raw of String(text || '').split(/\r?\n/)) {
+      if (!lines.length && !raw.trim()) continue;
+      const m = /^\s*#+(.*)$/.exec(raw);
+      if (!m) break;
+      lines.push(/^\s*([=\-*_~#+])\1{2,}\s*$/.test(m[1]) ? '' : m[1].replace(/\s+$/, ''));
+    }
+    // The comment's own margin, the least indent of its words: a line indented further is a table's.
+    const indents = lines.filter((l) => l.trim()).map((l) => /^ */.exec(l)[0].length);
+    const margin = indents.length ? Math.min(...indents) : 0;
+    const blocks = [];
+    let cur = null;
+    for (const l of lines) {
+      if (!l.trim()) { cur = null; continue; }
+      const body = l.slice(margin);
+      const pre = /^\s/.test(body);
+      if (!cur || cur.pre !== pre) { cur = { pre, lines: [] }; blocks.push(cur); }
+      cur.lines.push(pre ? body : body.trim());
+    }
+    return blocks.map((b) => {
+      if (!b.pre) return { pre: false, text: b.lines.join(' ') };
+      // A table starts at its own left edge.
+      const cut = Math.min(...b.lines.map((l) => /^ */.exec(l)[0].length));
+      return { pre: true, text: b.lines.map((l) => l.slice(cut)).join('\n') };
+    });
+  }
+
+  function renderAbout() {
+    const box = $('rtmAbout');
+    const blocks = modelAbout(state.text);
+    box.replaceChildren(...blocks.map((b) => {
+      const el = document.createElement(b.pre ? 'pre' : 'p');
+      el.textContent = b.text;
+      return el;
+    }));
+    box.hidden = !blocks.length;
+  }
+
+  /*
+    WHAT THE PAGE SOLVES, said from the compiled model a sentence at a
+    time: a batch, or a column and the rock behind it, and for how long; the
+    species and the reactions with a rate law; what moves, and through which
+    ends; the relations held at equilibrium and how, between activities or
+    concentrations, with exchangers, surfaces, the electron, a gas, solid
+    solutions; the temperature; parameters, tables, what is read at the
+    clock; and how many equations that makes.
+  */
   function renderFacts() {
+    renderAbout();
     const el = $('rtmFacts');
     const m = state.compiled;
     if (!m) { el.textContent = state.compileError ? 'Does not compile; see the Model tab.' : 'Not compiled yet.'; return; }
     const s = m.settings;
-    const bits = [
-      `${s.MODE === 'transport' ? 'transport' : 'batch'} · ${m.nspecies} species · ${m.nreactions} reactions`,
-    ];
+    const count = (n, one, many) => `${n} ${n === 1 ? one : many || `${one}s`}`;
+    const listed = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+    const say = [];
+    const tend = fmtTime(s.TEND);
     if (m.transport) {
-      // The layout in words: its kind, the number that shapes it, and a
-      // pinned surface layer when there is one.
+      // The layout in words: its kind, the number that shapes it, and a pinned surface layer when there is one.
       const g = m.grid || { kind: s.GRID };
-      const shape = g.kind === 'log' ? `log grid, last cell ${g.ratio}× the first`
-        : g.kind === 'powerlaw' ? `power-law grid, exponent ${g.power}`
-          : g.kind === 'faces' ? 'faces as given' : `${g.kind} grid`;
-      bits.push(`${m.fracture} cells over ${m.length != null ? m.length : s.LENGTH} m, ${shape}`
-        + (g.surface > 0 ? `, surface layer ${g.surface} m` : ''));
+      const shape = g.kind === 'log' ? `on a log grid, the last cell ${g.ratio}× the first`
+        : g.kind === 'powerlaw' ? `on a power-law grid, exponent ${g.power}`
+          : g.kind === 'faces' ? 'its faces as given' : g.kind === 'linear' ? 'evenly spaced' : `on a ${g.kind} grid`;
+      say.push(`A column of ${count(m.fracture, 'cell')} over ${fmtLength(m.length != null ? m.length : s.LENGTH)}, ${shape}`
+        + `${g.surface > 0 ? `, the first a surface layer ${g.surface} m thick` : ''}, run for ${tend}.`);
+    } else {
+      say.push(`A batch, one well-mixed water, run for ${tend}.`);
+    }
+    say.push(`${count(m.nspecies, 'species', 'species')} and ${m.nreactions ? count(m.nreactions, 'reaction') : 'no reactions'} `
+      + 'with a rate law.');
+    if (m.transport) {
       if (m.matrix) {
+        // How the layers came out: the first, how they grow, and why the first is what it is -- the thing a reader most
+        // needs to see of a layout worked out for them.
         const x = m.matrix;
-        // How the layers came out: the first, how they grow, and why the
-        // first is what it is -- the thing a reader most needs to see of a
-        // layout worked out for them.
         const why = { matched: 'worked out from the path', e: 'FARFCOMP’s rule', given: 'MATRIX_FIRST' }[x.rule] || '';
-        bits.push(`dual porosity: ${x.n} matrix layer${x.n === 1 ? '' : 's'} to `
-          + `${x.total} m behind each cell, ${x.grid}: the first ${fmtLength(x.thickness[0])} (${why})`
-          + (x.n > 1 ? `, growing by ${x.ratio.toFixed(3)}` : '')
-          + `; porosity ${x.porosity}, ${fmtNumber(x.aw)} m² of wall per m³ of water`
-          + (x.enters.length ? ` · ${x.enters.join(', ')} enter${x.enters.length === 1 ? 's' : ''} the rock` : ' · nothing enters the rock'));
+        say.push(`Behind each cell, rock in ${count(x.n, 'matrix layer')} to ${x.total} m, ${x.grid}: the first `
+          + `${fmtLength(x.thickness[0])}${why ? ` (${why})` : ''}${x.n > 1 ? `, growing by ${x.ratio.toFixed(3)}` : ''}; `
+          + `porosity ${x.porosity}, ${fmtNumber(x.aw)} m² of wall per m³ of water.`);
+        say.push(x.enters.length ? `${listed(x.enters)} enter${x.enters.length === 1 ? 's' : ''} the rock.`
+          : 'Nothing enters the rock.');
       }
       const moves = [];
       if (s.DIFFUSION) {
@@ -657,61 +719,87 @@
         moves.push(`${s.ADVECTION_SCHEME === 'limited' ? 'limited ' : ''}advection at ${fmtNumber(s.VELOCITY)} m/${timeUnit().symbol}`
           + (m.travelTime ? `, a travel time of ${fmtTime(m.travelTime)}` : ''));
       }
-      if (s.PECLET > 0 && s.ADVECTION) moves.push(`Peclet number ${s.PECLET}`);
-      bits.push(moves.length ? moves.join(' + ') : 'nothing moves');
-      bits.push(`${s.LEFT} | ${s.RIGHT} boundaries`
-        + (m.extra ? `, ${m.extra.n} cell${m.extra.n === 1 ? '' : 's'} past the right-hand end` : ''));
+      say.push(moves.length ? `Transport by ${moves.join(' and ')}${s.PECLET > 0 && s.ADVECTION ? `; Peclet number ${s.PECLET}` : ''}.`
+        : 'Nothing moves between the cells.');
+      // Each end by its name and what it does, in a few words.
+      const does = {
+        dirichlet: 'held at what it is given', neumann: 'nothing crosses it', robin: 'the flow carries in what it is given',
+        free: 'the flow takes what it takes', 'semi-infinite': 'the column goes on past it',
+        reservoir: 'a well-mixed water of its own, which reacts',
+      };
+      say.push(`The left end is ${s.LEFT}${does[s.LEFT] ? `: ${does[s.LEFT]}` : ''}.`);
+      say.push(`The right end is ${s.RIGHT}${does[s.RIGHT] ? `: ${does[s.RIGHT]}` : ''}`
+        + `${m.extra ? `, in ${count(m.extra.n, 'more cell')}` : ''}.`);
     }
     if (m.nequilibria) {
+      const n = m.nequilibria;
       const h = m.heldEquilibria;
       const a = m.activity;
-      bits.push(`${m.nequilibria} equilibri${m.nequilibria === 1 ? 'um' : 'a'}`
-        + `, ${m.nconserved} conserved total${m.nconserved === 1 ? '' : 's'}`
-        + (m.speciated ? ` · initial state equilibrated (${m.speciated.iterations} iterations)` : '')
-        + (h ? ` · ${h.relations === m.nequilibria ? 'all' : h.relations} held throughout the run, `
-          + `${h.species} species algebraic in every cell`
-          + (h.minerals ? `, ${h.minerals} mineral${h.minerals === 1 ? '' : 's'} at saturation while there is any` : '') : '')
-        + (a ? ` · in activities, ${a.kind === 'davies' ? 'Davies' : a.kind === 'sit' ? 'SIT' : a.kind === 'pitzer' ? 'Pitzer'
-          : a.kind === 'llnl' ? 'LLNL’s B-dot' : 'Debye–Hückel'} at `
-          + `${typeof a.temperature === 'number' ? `${a.temperature} °C` : 'each cell’s temperature'} `
-          + `(${a.ions} ion${a.ions === 1 ? '' : 's'}`
-          + `${a.kind === 'sit' ? `, ${a.sit} pair${a.sit === 1 ? '' : 's'} in <SIT>` : ''}`
-          + `${a.kind === 'pitzer' && a.pitzer ? `, ${a.pitzer.params} parameter${a.pitzer.params === 1 ? '' : 's'} in <PITZER>`
-            + `${a.pitzer.macinnes ? ', MacInnes scaled' : ''}` : ''}`
-          // Volumes that correct no log K say so, unless <CONDUCTANCE> makes the density of them.
-          + `${a.volumes && !(a.volumes.idle && a.conductance) ? `, log K at ${a.volumes.idle ? '1 atm: the'
-            : `the pressure from ${a.volumes.given}`} molar volume${a.volumes.given === 1 ? '' : 's'} in <VOLUMES>`
-            + `${a.volumes.idle ? ' correct nothing' : ''}` : ''})`
-          + `${a.conductance ? ' · the conductance, the density and the viscosity from <CONDUCTANCE>' : ''}` : '')
-        + (m.exchange ? ` · ${m.exchange.species} species on the exchanger${m.exchange.exchangers.length === 1 ? ''
-          : 's'} ${m.exchange.exchangers.join(', ')}, Gaines–Thomas` : '')
-        + (m.surface ? ` · ${m.surface.species} species on ${m.surface.sites.length === 1 ? 'a surface'
-          : `${m.surface.sites.length} kinds of surface site`} (${m.surface.sites.join(', ')}), each with its fraction `
-          + 'of the sites for its activity'
-          + (m.surface.potentials && m.surface.potentials.length ? `, ${m.surface.potentials.map((pp) => (pp.plane !== null
-            && pp.plane !== undefined ? `CD-MUSIC's plane ${pp.plane} ` : 'the double layer\'s ')
-            + `potential ${pp.name}${pp.psi ? ` at ${fmtMv(pp.psi)} to start with` : ''}`).join(', ')}` : '') : '')
-        + (m.redox ? ` · ${m.redox.relations} relation${m.redox.relations === 1 ? '' : 's'} tied to the electron `
-          + `${m.redox.name}${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}` : '')
-        + (m.gas ? ` · ${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
+      say.push(`${count(n, 'relation')} at equilibrium, which conserve${n === 1 ? 's' : ''} ${count(m.nconserved, 'total')}.`);
+      if (m.speciated) {
+        say.push(`The water is brought to equilibrium before the run starts, in ${count(m.speciated.iterations, 'iteration')}.`);
+      }
+      if (h) {
+        say.push(`${h.relations === n ? (n === 1 ? 'It is' : 'All are') : `${h.relations} are`} held exactly at every step of `
+          + `the run: ${count(h.species, 'species', 'species')} worked out from the totals in every cell`
+          + `${h.minerals ? `, ${count(h.minerals, 'mineral')} at saturation while there is any` : ''}.`);
+      }
+      if (a) {
+        const name = { davies: 'Davies', sit: 'SIT', pitzer: 'Pitzer', llnl: 'LLNL’s B-dot' }[a.kind] || 'Debye–Hückel';
+        const own = [
+          ...(a.kind === 'sit' ? [`${count(a.sit, 'pair')} in <SIT>`] : []),
+          ...(a.kind === 'pitzer' && a.pitzer ? [`${count(a.pitzer.params, 'parameter')} in <PITZER>`
+            + `${a.pitzer.macinnes ? ', MacInnes scaled' : ''}`] : []),
+        ];
+        // Volumes that correct no log K say so, unless <CONDUCTANCE> makes the density of them.
+        const vol = !a.volumes || (a.volumes.idle && a.conductance) ? ''
+          : a.volumes.idle ? '; log K at 1 atm: the molar volumes in <VOLUMES> correct nothing'
+            : `; log K at the pressure from ${count(a.volumes.given, 'molar volume')} in <VOLUMES>`;
+        say.push(`The relations hold between activities, by ${name} at `
+          + `${typeof a.temperature === 'number' ? `${a.temperature}\u00a0°C` : 'each cell’s temperature'}, for ${count(a.ions, 'ion')}`
+          + `${own.length ? `, with ${own.join(', ')}` : ''}${vol}.`);
+        if (a.conductance) say.push('The conductance, the density and the viscosity come from <CONDUCTANCE>.');
+      } else {
+        say.push('The relations hold between concentrations: no activity coefficients.');
+      }
+      if (m.exchange) {
+        say.push(`${count(m.exchange.species, 'species', 'species')} on the exchanger${m.exchange.exchangers.length === 1 ? ''
+          : 's'} ${m.exchange.exchangers.join(', ')}, by Gaines–Thomas.`);
+      }
+      if (m.surface) {
+        const pots = (m.surface.potentials || []).map((pp) => `${pp.plane !== null && pp.plane !== undefined
+          ? `CD-MUSIC's plane ${pp.plane} ` : 'the double layer\'s '}potential ${pp.name}${pp.psi ? ` at ${fmtMv(pp.psi)} to start with` : ''}`);
+        say.push(`${count(m.surface.species, 'species', 'species')} on ${m.surface.sites.length === 1 ? 'a surface'
+          : `${m.surface.sites.length} kinds of surface site`} (${m.surface.sites.join(', ')}), each with its fraction of the `
+          + `sites for its activity${pots.length ? `; ${pots.join(', ')}` : ''}.`);
+      }
+      if (m.redox) {
+        say.push(`${count(m.redox.relations, 'relation')} tied to the electron ${m.redox.name}`
+          + `${m.redox.pe ? `, pe ${fmtPe(m.redox.pe)} ${m.redox.fixed ? 'held' : 'at the start'}` : ''}.`);
+      }
+      if (m.gas) {
+        say.push(`${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
           ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V`
-          : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}` : '')
-        + (m.solidSolutions && m.solidSolutions.length ? ` · ${m.solidSolutions.map((ss) => `the solid solution ${ss.name} `
-          + `(${ss.members.join(', ')}), ${ss.binary ? `a0 ${fmtNumber(ss.binary.a0)} and a1 ${fmtNumber(ss.binary.a1)} at 25 °C`
-            + `${ss.binary.gap ? ', a miscibility gap' : ''}` : 'ideal'}`).join(', ')}, there while the water is `
-          + 'saturated in it' : ''));
+          : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}.`);
+      }
+      for (const ss of m.solidSolutions || []) {
+        say.push(`The solid solution ${ss.name} (${ss.members.join(', ')}), ${ss.binary
+          ? `a0 ${fmtNumber(ss.binary.a0)} and a1 ${fmtNumber(ss.binary.a1)} at 25 °C${ss.binary.gap ? ', a miscibility gap' : ''}`
+          : 'ideal'}, there while the water is saturated in it.`);
+      }
     }
     // The temperature, where it goes with the cell or the time, and the log K that follow it.
     const T = m.temperature;
     if (T && (T.varies || T.relations || T.phases)) {
-      const range = T.start ? (T.start[0] === T.start[1] ? `${fmtNumber(T.start[0])} °C`
-        : `${fmtNumber(T.start[0])} to ${fmtNumber(T.start[1])} °C`) : '';
-      const how = !T.varies ? `${fmtNumber(T.given)} °C`
-        : `TEMPERATURE = ${T.given}: ${range}${T.cells ? ' from cell to cell' : ''}`
+      // A number and its unit kept on one line.
+      const range = T.start ? (T.start[0] === T.start[1] ? `${fmtNumber(T.start[0])}\u00a0°C`
+        : `${fmtNumber(T.start[0])} to ${fmtNumber(T.start[1])}\u00a0°C`) : '';
+      const how = !T.varies ? `${fmtNumber(T.given)}\u00a0°C`
+        : `${T.given}: ${range}${T.cells ? ' from cell to cell' : ''}`
           + `${T.clock ? `${T.cells ? ', ' : ' '}at the start, and it goes with time` : ''}`;
       const k = T.relations + T.phases;
-      bits.push(`the temperature ${how}${k ? ` · ${k} log K ${k === 1 ? 'goes' : 'go'} with it, by dH or an analytic `
-        + 'expression' : ''}`);
+      say.push(`The temperature is ${how}${k ? `; ${k} log K ${k === 1 ? 'follows' : 'follow'} it, by dH or an analytic `
+        + 'expression' : ''}.`);
     }
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
@@ -721,13 +809,13 @@
     $('rtmH0Unit').textContent = `${u.name}s; 0: chosen from the derivative at the start`;
     // The charts' time: in the model's unit, or in pore volumes where the water flows; each "from" in it.
     renderTimeIn();
-    if (m.nparameters) bits.push(`${m.nparameters} parameter${m.nparameters === 1 ? '' : 's'}: ${m.parameters.join(', ')}`);
-    if (m.tables && m.tables.length) bits.push(`${m.tables.length} table${m.tables.length === 1 ? '' : 's'}: ${m.tables.join(', ')}`);
+    if (m.nparameters) say.push(`${count(m.nparameters, 'parameter')}: ${m.parameters.join(', ')}.`);
+    if (m.tables && m.tables.length) say.push(`${count(m.tables.length, 'table')}: ${m.tables.join(', ')}.`);
     // A release history, or anything else a rate law reads at the clock, and
     // the corners the run is started again at so that none is stepped over.
     if (m.clockTables && m.clockTables.length) {
-      bits.push(`read at the clock: ${m.clockTables.map((c) => c.name).join(', ')}`
-        + (m.breaks ? `, the run started again at ${m.breaks} corner${m.breaks === 1 ? '' : 's'} up to TEND` : ''));
+      say.push(`Read at the clock: ${listed(m.clockTables.map((c) => c.name))}`
+        + (m.breaks ? `, the run started again at ${count(m.breaks, 'corner')} up to TEND` : '') + '.');
     }
     // A species held in some cells only; one held everywhere is in its line.
     for (const h of m.held || []) {
@@ -735,13 +823,15 @@
       const contiguous = c.every((v, k) => k === 0 || v === c[k - 1] + 1);
       const where = c.length === 1 ? `cell ${c[0]}`
         : contiguous ? `cells ${c[0]}–${c[c.length - 1]}` : `${c.length} cells`;
-      bits.push(`${h.species} held in ${where}`);
+      say.push(`${h.species} is held in ${where}.`);
     }
-    if (m.anyMass) bits.push('a mass matrix is in force');
-    bits.push(`${m.states} equations, ${m.nnz} non-zeros`);
-    bits.push(`TEND ${fmtTime(s.TEND)}`);
-    el.textContent = bits.join('\n');
-    el.style.whiteSpace = 'pre-line';
+    if (m.anyMass) say.push('A mass matrix is in force.');
+    say.push(`${count(m.states, 'equation')} to solve, with ${count(m.nnz, 'non-zero')} in their Jacobian.`);
+    el.replaceChildren(...say.map((t) => {
+      const p = document.createElement('p');
+      p.textContent = t;
+      return p;
+    }));
   }
 
   /* ---------------------------------------------------------------------
@@ -9278,25 +9368,28 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const warned = m ? m.warnings.length : 0;
       return {
         kicker: 'Section', title: 'Model',
-        lead: 'What the text on the Model tab compiles to, read back from it. Nothing here is set in the panel: change the text, and this follows.',
+        lead: 'What the model is, in its own words, and what the page solves, read from the text on the Model tab. Nothing here is set in the panel: change the text, and this follows.',
         facts: [
           ['Compiles', '0.4 s after the last keystroke, or on Apply'],
           ['Warnings', m ? (warned ? `${warned}, listed under the text on the Model tab` : 'none')
             : (state.compileError ? 'the text does not compile; the status line says why' : 'not compiled yet')],
         ],
         sections: [{
-          heading: 'Line by line',
+          heading: 'Its own words',
+          text: 'The comment the text begins with, before anything else in it: its lines run together into paragraphs, a line of only `#` between them, and a line indented further than the rest — a table of reactions, a formula — keeps its line. A rule of `=` or `-` alone is left out. Nothing is shown where the text begins with no comment.',
+        }, {
+          heading: 'What is solved, a sentence at a time',
           list: [
-            '`batch` or `transport`, and how many species and reactions: `MODE`, `<SPECIES>` and `<REACTIONS>`.',
-            'For a column, the cells: how many, over what length and how laid out, from `CELLS`, `LENGTH` and `GRID` with its `GRID_RATIO` or `GRID_POWER`, and a first cell pinned by `SURFACE_LAYER`.',
-            'With a rock matrix, `dual porosity`: how many layers behind each cell, `matched` or `reference`, to `MATRIX_DEPTH`; the first layer, why it is that thick and how fast the rest grow; the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `De=` and so enter the rock.',
-            'What moves: `diffusion` (`Nernst-Planck diffusion` under `DIFFUSION = nernst-planck`, `down the activities` under `DIFFUSION_GRADIENT = activity`), `advection` at the `VELOCITY` with the travel time it makes (`limited advection` under `ADVECTION_SCHEME = limited`), the Peclet number, or `nothing moves`.',
-            'The two ends, `LEFT | RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean, and how many cells stand for the column past a `semi-infinite` end.',
-            'Equilibria and the totals they conserve, and whether `EQUILIBRATE` put the starting state on them.',
-            'Parameters and tables by name, and a species held in some cells only.',
-            'The tables a rate law reads at the clock, `read at the clock`, and how many corners of theirs the run is started again at.',
-            '`a mass matrix is in force`: a species has an `R=`, or a rock matrix gives it a capacity.',
-            'The equations, species times cells with the rock layers counted; the non-zeros of the Jacobian; and `TEND`, in the model’s time unit.',
+            'A batch, one well-mixed water, or a column: how many cells, over what length and how laid out (`CELLS`, `LENGTH`, `GRID` with its `GRID_RATIO` or `GRID_POWER`, a first cell pinned by `SURFACE_LAYER`); and for how long it runs, `TEND` in the model’s time unit.',
+            'How many species, and how many reactions with a rate law: `<SPECIES>` and `<REACTIONS>`.',
+            'With a rock matrix: how many layers behind each cell, `matched` or `reference`, to `MATRIX_DEPTH`; the first layer, why it is that thick and how fast the rest grow; the `MATRIX_POROSITY`, the wall area per m³ of flowing water, and the species that have a `De=` and so enter the rock.',
+            'What moves: diffusion (Nernst-Planck diffusion under `DIFFUSION = nernst-planck`, down the activities under `DIFFUSION_GRADIENT = activity`), advection at the `VELOCITY` with the travel time it makes (limited advection under `ADVECTION_SCHEME = limited`) and the Peclet number; or nothing.',
+            'The two ends, `LEFT` and `RIGHT`, with `cauchy` and `outflow` read as the `robin` and `free` they mean, and how many cells stand for the column past a `semi-infinite` end.',
+            'The relations of `<EQUILIBRIUM>` and the totals they conserve; whether `EQUILIBRATE` puts the starting water on them, and holds them exactly at every step; whether they hold between activities, by which `ACTIVITY` and at what temperature, or between concentrations; exchangers, surfaces, the electron, a gas phase and solid solutions.',
+            'The temperature, where it goes with the cell or the time, and the log K that follow it.',
+            'Parameters and tables by name; the tables a rate law reads at the clock, and how many corners of theirs the run is started again at; a species held in some cells only.',
+            '`A mass matrix is in force`: a species has an `R=`, or a rock matrix gives it a capacity.',
+            'How many equations — the species times the cells, the rock layers counted — and the non-zeros of their Jacobian.',
           ],
         }],
         more: more('<SETTINGS>', 'help-settings'),

@@ -7,9 +7,9 @@
 const RTM_DEFAULT_MODEL = `# ============================================================================
 #  WATER RADIOLYSIS AND URANIUM DISSOLUTION AT A SPENT-FUEL SURFACE
 #
-#  119 reactions over 36 species, from the skbrtm example set
-#  (examples/transport/PA_BRUM_test). The left-hand boundary is the fuel
-#  surface; the domain is the thin film of water in front of it.
+#  119 reactions and 8 radiolysis sources over 36 species, from the skbrtm
+#  example set (examples/transport/PA_BRUM_test). The left-hand boundary is
+#  the fuel surface; the domain is the thin film of water in front of it.
 #
 #  Set MODE = batch to ignore the film and stir everything together, which is
 #  much quicker and is the right first look at a reaction set.
