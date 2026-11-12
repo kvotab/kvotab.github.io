@@ -2001,7 +2001,9 @@
    * of cell = 0 unless said, as the model starts it, speciated at each value
    * as the Diagrams tab speciates it: kind 'speciation', its axis that
    * first column. Then a row of numbers per point, a dash for one not
-   * measured. Returns [{ kind, axis, columns, cell, layer, at, rows, line }].
+   * measured. A column sd(Ca+2) beside Ca+2 is the standard deviation of
+   * each value of it, which a fit weighs it by.
+   * Returns [{ kind, axis, columns, cell, layer, at, rows, line }].
    */
   function readData(lines) {
     const tables = [];
@@ -12519,6 +12521,21 @@
     const data = readData(sections.DATA);
     for (const tab of data) {
       for (const colName of tab.columns) {
+        // A standard deviation, sd(Ca+2): of a column of the same table, and above zero where it is given.
+        const sdOf = /^sd\((.+)\)$/.exec(colName);
+        if (sdOf) {
+          if (!tab.columns.includes(sdOf[1])) {
+            throw new RtmError(`<DATA>, the table on line ${tab.line}: "${colName}" is the standard deviation of a column the `
+              + `table has not: ${sdOf[1]}.`, tab.line);
+          }
+          const j = tab.columns.indexOf(colName) + 1;
+          const bad = tab.rows.find((row) => row[j] !== null && !(row[j] > 0));
+          if (bad) {
+            throw new RtmError(`<DATA>, the table on line ${tab.line}: ${colName} is ${bad[j]} at ${bad[0]}; a standard deviation `
+              + 'is above zero, or a dash where none is given.', tab.line);
+          }
+          continue;
+        }
         if (index.has(colName) || qList.some((q) => q.key === colName)) continue;
         throw new RtmError(`<DATA>, the table on line ${tab.line}: "${colName}" is no species and none of the page's `
           + `quantities${qList.length ? ` (${qList.slice(0, 6).map((q) => q.key).join(', ')}${qList.length > 6 ? ' and more' : ''})` : ''}.`,

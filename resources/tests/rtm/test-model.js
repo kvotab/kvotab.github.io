@@ -9032,6 +9032,42 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && /a table against pH is of the water of a cell held there/.test(edgeAt),
   `log K ${fEdge.params ? fEdge.params.map((pt) => pt.value).join(', ') : fEdge.error} in ${fEdge.runs} speciations, the misfit `
     + `${fEdge.ssr0} to ${fEdge.ssr}; "${edgeAt}"`);
+  /*
+    A FIT WEIGHTED by each value's standard deviation, sd(A): the decay
+    measured with the same noise, each value given the deviation
+    s d ln 10 that makes its residual's, in log10, s -- 0.01 and 0.02 by
+    turns. By hand: kk = -sum(t ln d / s^2) / sum(t^2 / s^2), its standard
+    error in log10 kk 1 / (kk sqrt(sum t^2 / s^2)) -- the deviations', not
+    the scatter's -- and chi-square on 9 degrees of freedom, whose tail is
+    SciPy's chi2.sf(10.2642159..., 9) = 0.329522. Values with a deviation
+    and without one in the same fit refused, and a deviation of a column
+    the table has not, and one at or below zero.
+  */
+  const fw = fts.map((_, i) => (i % 2 ? 0.02 : 0.01));
+  const wRows = fts.map((t, i) => `${t} ${fd[i]} ${fw[i] * fd[i] * Math.LN10}`);
+  const fWeighted = fitOf(`${decay}\n<DATA>\ntime  A  sd(A)  cell = 0\n${wRows.join('\n')}\n`, [{ kind: 'parameter', name: 'kk', start: 0.1 }]);
+  const Swt = fts.reduce((acc, t, i) => acc + (t * t) / fw[i] ** 2, 0);
+  const kW = -fts.reduce((acc, t, i) => acc + (t * Math.log(fd[i])) / fw[i] ** 2, 0) / Swt;
+  const seW = 1 / (kW * Math.sqrt(Swt));
+  const chiW = fts.reduce((acc, t, i) => acc + ((-kW * t - Math.log(fd[i])) / (Math.LN10 * fw[i])) ** 2, 0);
+  const wPartly = fitOf(`${decay}\n<DATA>\ntime  A  sd(A)  cell = 0\n${wRows.slice(0, 9).join('\n')}\n10 ${fd[9]} -\n`,
+    [{ kind: 'parameter', name: 'kk', start: 0.1 }]);
+  const wCompile = (rows) => { try { RtmModel.compile(`${decay}\n<DATA>\n${rows}\n`); return ''; } catch (e) { return e.message; } };
+  const wNoColumn = wCompile('time  A  sd(B)  cell = 0\n1 0.8 0.01');
+  const wNegative = wCompile('time  A  sd(A)  cell = 0\n1 0.8 -0.01');
+  // To the solver's tolerance, as the unweighted fit: its 1e-9 in A is 4e-8 in a residual over a deviation of 0.01.
+  check('a fit weighted by each value\'s standard deviation, sd(A): kk as worked out by hand to 1e-6, its standard error the '
+    + 'deviations\' own to 1e-5, chi-square to 1e-6 and its tail SciPy\'s 0.329522 to 1e-6; values with a deviation and without '
+    + 'one refused, and a deviation of no column, and one below zero',
+  fWeighted.type === 'fit' && fWeighted.weighted === true && Math.abs(fWeighted.params[0].value / kW - 1) < 1e-6
+    && Math.abs(fWeighted.params[0].se / seW - 1) < 1e-5 && Math.abs(fWeighted.chi2 / chiW - 1) < 1e-6 && fWeighted.dof === 9
+    && Math.abs(fWeighted.pChi2 - 0.32952204621995784) < 1e-6
+    && fWeighted.points.every((pt, i) => Math.abs(pt.normalized * fw[i] - pt.residual) < 1e-15 && pt.sd === fw[i] * fd[i] * Math.LN10)
+    && wPartly.type === 'error' && /some have not \(A\): give one, sd\(A\), to every value fitted, or to none/.test(wPartly.error)
+    && /"sd\(B\)" is the standard deviation of a column the table has not: B/.test(wNoColumn)
+    && /a standard deviation is above zero/.test(wNegative),
+  `kk ${fWeighted.params ? fWeighted.params[0].value : fWeighted.error} for ${kW}, se ${fWeighted.params ? fWeighted.params[0].se : ''} `
+    + `for ${seW}, chi2 ${fWeighted.chi2} for ${chiW} (p ${fWeighted.pChi2}); "${wPartly.error}" | "${wNoColumn}" | "${wNegative}"`);
   check('  alk(CO3), the carbonate\'s alkalinity, and tot(SO4) where some of the sulfur is not sulfate, by hand',
     ![...twoQ].some((x) => x < 0) && Math.abs(twoV[0] / alkWant - 1) < 1e-14
     && Math.abs(twoV[1] / (ci('SO4-2') + ci('CaSO4')) - 1) < 1e-14 && Math.abs(twoV[2] - twoV[1] - ci('HS-')) < 1e-18,

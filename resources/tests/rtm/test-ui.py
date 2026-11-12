@@ -2768,15 +2768,22 @@ async def main():
             ok = await example('zincfit', "/^Fitted in|could not/.test(document.getElementById('rtmStatus').textContent)")
             zfit = await page.ev("""(() => { const p = document.getElementById('rtmChartFit'), d = p.data;
               const rows = [...document.querySelectorAll('#rtmFitResult tbody tr')].slice(0, 2).map((tr) => Number(tr.children[2].textContent));
+              const m = d.find((t) => t.mode === 'markers');
               return [document.querySelector('.rtm-tabs button.active').dataset.tab, Math.abs(rows[0] - 1.3394) < 2e-3 && Math.abs(rows[1] + 1.5625) < 2e-3,
                 p.layout.xaxis.title.text, d.map((t) => `${t.mode}:${t.x.length}`).join(' '), !!p.layout.yaxis2, p.layout.yaxis.title.text,
-                document.getElementById('rtmFitLogYWrap').hidden, document.getElementById('rtmFitNote').textContent]; })()""")
+                document.getElementById('rtmFitLogYWrap').hidden, document.getElementById('rtmFitNote').textContent,
+                !!(m && m.error_y && m.error_y.array.every((v) => v === 1)),
+                /χ² 3\\.541 on 6 degrees of freedom .* a chance of 0\\.738\\. .*The standard errors are the standard deviations' own/
+                  .test(document.getElementById('rtmFitResult').textContent)]; })()""")
             zcsv = await fit_csv('data')
-            check('the zinc example\'s sorption edge fitted with no run, a table against pH: the strong and weak sites\' log K from '
-                  '0.99 and -1.99 to 1.3394 and -1.5625; drawn against pH, the edge through the eight measured, on the left as a '
-                  'share; the CSV a pH column', [ok, zfit, zcsv[0], zcsv[1][0] if zcsv[1] else ''],
-                  [True, ['fit', True, 'pH', 'lines:101 markers:8', False, 'Zn_sorbed (%)', True, 'the water at the fitted numbers, held at each pH'],
-                   'rtm_fit.csv', 'column,where,time,distance (m),pH,measured,the run,residual'])
+            check('the zinc example\'s sorption edge fitted with no run, a table against pH, each measurement weighed by its '
+                  'standard deviation of 1 %: the strong and weak sites\' log K from 0.99 and -1.99 to 1.3394 and -1.5625; drawn against '
+                  'pH, the edge through the eight measured with their deviations, on the left as a share; chi-square 3.541 on 6 degrees '
+                  'of freedom, a chance of 0.738; the CSV a pH column, the deviations and the residuals over them',
+                  [ok, zfit, zcsv[0], zcsv[1][0] if zcsv[1] else ''],
+                  [True, ['fit', True, 'pH', 'lines:101 markers:8', False, 'Zn_sorbed (%)', True, 'the water at the fitted numbers, held at each pH',
+                          True, True],
+                   'rtm_fit.csv', 'column,where,time,distance (m),pH,measured,sd,the run,residual,residual over its sd'])
             await page.ev("document.querySelector('.rtm-tabs [data-tab=\"diagram\"]').click()")
             await asyncio.sleep(0.4)
             await page.ev("""(() => { const set = (id, v) => { const e = document.getElementById(id); e.value = v; e.dispatchEvent(new Event('change', { bubbles: true })); };

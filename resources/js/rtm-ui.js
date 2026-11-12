@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111j';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111k';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -7373,7 +7373,7 @@
   /** The columns <DATA> measures, in the order its tables give them. */
   function fitColumns() {
     const data = (state.compiled && state.compiled.data) || [];
-    return [...new Set(data.flatMap((tab) => tab.columns))];
+    return [...new Set(data.flatMap((tab) => tab.columns.filter((c) => !/^sd\(.+\)$/.test(c))))];
   }
 
   function renderFit() {
@@ -7505,12 +7505,24 @@
     const corr = r.corr && r.params.length > 1
       ? `<p>Correlations: ${r.params.flatMap((p, a) => r.params.slice(a + 1).map((q, b) => `${esc(swVaryLabel(p))} with `
         + `${esc(swVaryLabel(q))} ${r.corr[a][a + 1 + b].toFixed(3)}`)).join('; ')}.</p>` : '';
+    const runs = `in ${r.runs} runs, ${esc(r.why)}${r.skipped ? `; ${r.skipped} amount${r.skipped === 1 ? '' : 's'} at or below zero left out` : ''}`;
+    /*
+      Weighted, each residual over the standard deviation <DATA> gives it: the
+      misfit is chi-square on n - np degrees of freedom, near 1 a degree where
+      the model and the deviations both hold, and the standard errors are the
+      deviations' own. Unweighted, the residuals' scatter stands in for them.
+    */
+    const misfit = r.weighted
+      ? `<p>The misfit, each residual over its standard deviation: χ² ${r.chi2.toPrecision(4)} on ${r.dof} degree${r.dof === 1 ? '' : 's'} `
+        + `of freedom (${r.n} point${r.n === 1 ? '' : 's'}, ${r.np} number${r.np === 1 ? '' : 's'})`
+        + `${r.dof > 0 ? `, ${(r.chi2 / r.dof).toPrecision(3)} a degree; a χ² this large or larger by the deviations alone has a chance of `
+          + `${r.pChi2 < 1e-4 ? r.pChi2.toExponential(1) : r.pChi2.toFixed(3)}` : ''}. From ${r.ssr0.toPrecision(4)} to `
+        + `${r.chi2.toPrecision(4)} ${runs}. The standard errors are the standard deviations' own, not the residuals' scatter.</p>`
+      : `<p>The misfit: the residuals' standard deviation ${r.sd !== null ? r.sd.toPrecision(3) : 'not known (as many numbers as points)'}`
+        + ` over ${r.n} point${r.n === 1 ? '' : 's'} and ${r.np} number${r.np === 1 ? '' : 's'}; the sum of their squares from `
+        + `${r.ssr0.toPrecision(4)} to ${r.ssr.toPrecision(4)} ${runs}.</p>`;
     box.innerHTML = '<table><thead><tr><th>Fitted</th><th>from</th><th>to</th><th>standard error</th><th>about 95 %</th></tr></thead>'
-      + `<tbody>${rows}</tbody></table>`
-      + `<p>The misfit: the residuals' standard deviation ${r.sd !== null ? r.sd.toPrecision(3) : 'not known (as many numbers as points)'}`
-      + ` over ${r.n} point${r.n === 1 ? '' : 's'} and ${r.np} number${r.np === 1 ? '' : 's'}; the sum of their squares from `
-      + `${r.ssr0.toPrecision(4)} to ${r.ssr.toPrecision(4)} in ${r.runs} runs, ${esc(r.why)}`
-      + `${r.skipped ? `; ${r.skipped} amount${r.skipped === 1 ? '' : 's'} at or below zero left out` : ''}.</p>${corr}`;
+      + `<tbody>${rows}</tbody></table>${misfit}${corr}`;
   }
 
   /** A fitted point's place, for a legend or a hover: the column, and its cell and time or its distance and time. */
@@ -7567,11 +7579,13 @@
     // A column for the pH, pe or Eh a water was held at, where a table is against one.
     const heldAxes = [...new Set(r.points.filter((p) => p.kind === 'speciation').map((p) => p.axis))];
     const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)',
-      ...(heldAxes.length ? [heldAxes.length === 1 ? heldAxes[0] : 'pH, pe or Eh'] : []), 'measured', 'the run', 'residual'], name: 'rtm_fit',
+      ...(heldAxes.length ? [heldAxes.length === 1 ? heldAxes[0] : 'pH, pe or Eh'] : []), 'measured', ...(r.weighted ? ['sd'] : []),
+      'the run', 'residual', ...(r.weighted ? ['residual over its sd'] : [])], name: 'rtm_fit',
     rows: r.points.map((p) => {
       const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
       return [labelOf(p.key), fitWhere(p), p.t, p.kind === 'speciation' ? null : p.x,
-        ...(heldAxes.length ? [p.kind === 'speciation' ? p.x : null] : []), p.value, run, p.residual];
+        ...(heldAxes.length ? [p.kind === 'speciation' ? p.x : null] : []), p.value, ...(r.weighted ? [p.sd] : []), run, p.residual,
+        ...(r.weighted ? [p.normalized] : [])];
     }) });
     if (show === 'history') {
       Plotly.react(plot, [{ type: 'scatter', mode: 'lines+markers', name: 'the misfit', x: r.history.map((h) => h.iteration),
@@ -7587,17 +7601,24 @@
       const keys = [...new Set(r.points.map((p) => p.key))];
       const traces = keys.map((key, q) => {
         const pts = r.points.map((p, i) => [p, i]).filter(([p]) => p.key === key);
-        return { type: 'scatter', mode: 'markers', name: labelOf(key), x: pts.map(([, i]) => i + 1), y: pts.map(([p]) => p.residual),
+        return { type: 'scatter', mode: 'markers', name: labelOf(key), x: pts.map(([, i]) => i + 1),
+          y: pts.map(([p]) => (r.weighted ? p.normalized : p.residual)),
           marker: { size: 8, color: palette[q % palette.length] },
           text: pts.map(([p]) => `${esc(labelOf(p.key))}, ${esc(fitWhere(p))}, ${esc(fitAlong(p))}`),
           hovertemplate: '%{text}: %{y:.4g}<extra></extra>' };
       });
       layout.xaxis.title = { text: 'the point measured, in the order of <DATA>', font: { size: 11 } };
-      layout.yaxis.title = { text: 'residual: log₁₀(run / measured), or run − measured for pH, SI and the like', font: { size: 11 } };
-      layout.shapes = [{ type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: themeColors().text, width: 1, dash: 'dot' } }];
+      layout.yaxis.title = { text: r.weighted ? 'residual over its standard deviation'
+        : 'residual: log₁₀(run / measured), or run − measured for pH, SI and the like', font: { size: 11 } };
+      // Weighted, a residual within its standard deviation is inside the band of ±1.
+      if (r.weighted) {
+        layout.shapes = [{ type: 'rect', xref: 'paper', x0: 0, x1: 1, y0: -1, y1: 1, line: { width: 0 }, fillcolor: 'rgba(128,128,128,0.12)' }];
+      }
+      layout.shapes = [...(layout.shapes || []),
+        { type: 'line', xref: 'paper', x0: 0, x1: 1, y0: 0, y1: 0, line: { color: themeColors().text, width: 1, dash: 'dot' } }];
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
       fitTableNow = pointsTable();
-      note.textContent = `${r.n} points`;
+      note.textContent = `${r.n} points${r.weighted ? ', each over its standard deviation; the band is one either way' : ''}`;
       return;
     }
     // The run at the fitted numbers where it was measured, and the measurements: along the run at a cell where the tables
@@ -7631,6 +7652,7 @@
         : along === 'speciation' ? p.table === c.table : p.t === c.t));
       traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? p.t : p.x)),
         y: pts.map((p) => p.value), marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
+        ...(r.weighted ? { error_y: { type: 'data', array: pts.map((p) => p.sd), visible: true, color, thickness: 1.2, width: 4 } } : {}),
         ...(onRight ? { yaxis: 'y2' } : {}) });
     });
     layout.xaxis.type = along === 'time' && logT ? 'log' : 'linear';
@@ -7671,6 +7693,7 @@
     const points = [];
     let skipped = 0;
     ((m && m.data) || []).forEach((tab, table) => tab.kind !== 'speciation' && tab.columns.forEach((key, j) => {
+      if (/^sd\(.+\)$/.test(key)) return;
       const index = axisOf(key) === 'index';
       for (const row of tab.rows) {
         const value = row[j + 1];
@@ -9748,6 +9771,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Fit** … **from**: up to four numbers and where each starts — a setting, a parameter, a species\' start or what flows in, a relation\'s or a phase\'s log K, a number a reaction\'s line names (k, kf, or a constant of a rate law). A new choice starts from the value the text gives it.',
           '**to**: the columns of <DATA> fitted to, every one unless unticked.',
           'A table against pH, pe or Eh — a sorption edge, the share of a metal on a surface at each pH — needs no run: its water is held at each value it measured and speciated there, as on the Diagrams tab, and the fit draws it against that value.',
+          'A column sd(Ca+2) beside Ca+2 in <DATA> gives each value its standard deviation: the fit is then weighted, each residual over its own deviation, the misfit χ² on the points less the numbers fitted, the standard errors the deviations\' own. Every value fitted needs one, or none does.',
           'A number above zero is fitted in its logarithm, so it stays above zero; a log K and the temperature as they are. Give each a start above zero where it is fitted in its logarithm.',
         ] },
         { heading: 'How', list: [
@@ -10528,7 +10552,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111g';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

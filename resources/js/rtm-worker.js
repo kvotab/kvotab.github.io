@@ -2085,24 +2085,28 @@ function rtmFitPoints(model, columns, tend) {
   let skipped = 0;
   model.data.forEach((tab, ti) => {
     tab.columns.forEach((key, j) => {
+      // A column's standard deviation, sd(Ca+2), is read with the column.
+      if (/^sd\(.+\)$/.test(key)) return;
       if (columns && !columns.includes(key)) return;
       const k = model.speciesNames.indexOf(key);
       const q = k >= 0 ? -1 : model.quantities.findIndex((qq) => qq.key === key);
       const index = q >= 0 && model.quantities[q].axis === 'index';
+      const jsd = tab.columns.indexOf(`sd(${key})`);
       for (const row of tab.rows) {
         const value = row[j + 1];
         if (value === null) continue;
         // An amount is compared in its logarithm, which none and less have not got.
         if (!index && !(value > 0)) { skipped++; continue; }
+        const sd = jsd >= 0 ? row[jsd + 1] : null;
         if (tab.kind === 'time') {
           points.push({ table: ti, kind: 'time', t: row[0], cell: (tab.cell || 0) * stride + Math.min(tab.layer || 0, stride - 1),
-            x: null, key, k, q, index, value });
+            x: null, key, k, q, index, value, sd });
         } else if (tab.kind === 'speciation') {
           points.push({ table: ti, kind: 'speciation', axis: tab.axis, t: null, cell: (tab.cell || 0) * stride, x: row[0],
-            key, k, q, index, value });
+            key, k, q, index, value, sd });
         } else {
           points.push({ table: ti, kind: 'distance', t: tab.at !== null ? tab.at : tend, cell: null, layer: Math.min(tab.layer || 0, stride - 1),
-            x: row[0], key, k, q, index, value });
+            x: row[0], key, k, q, index, value, sd });
         }
       }
     });
@@ -2163,6 +2167,58 @@ function rtmValueAlong(model, c, t, layer, x, k, q, out) {
   return at(i) * (1 - f) + at(i + 1) * f;
 }
 
+/*
+  THE CHANCE OF A CHI-SQUARE AT LEAST AS LARGE, on nu degrees of freedom:
+  Q(nu/2, x/2), the upper regularised incomplete gamma function -- its
+  series below a + 1, Lentz's continued fraction above, as Numerical
+  Recipes gives them -- with ln Gamma by Lanczos' approximation (g = 7,
+  nine terms, to 1e-15).
+*/
+function rtmLnGamma(z) {
+  const c = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (z < 0.5) return Math.log(Math.PI / Math.abs(Math.sin(Math.PI * z))) - rtmLnGamma(1 - z);
+  const x = z - 1;
+  let a = c[0];
+  const t = x + 7.5;
+  for (let i = 1; i < 9; i++) a += c[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+function rtmChiSquareTail(x, nu) {
+  const a = nu / 2;
+  const z = x / 2;
+  if (!(z > 0)) return 1;
+  const lead = -z + a * Math.log(z) - rtmLnGamma(a);
+  if (z < a + 1) {
+    let sum = 1 / a;
+    let del = sum;
+    for (let n = 1; n < 1000; n++) {
+      del *= z / (a + n);
+      sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-16) break;
+    }
+    return Math.max(0, 1 - sum * Math.exp(lead));
+  }
+  const tiny = 1e-300;
+  let b = z + 1 - a;
+  let c = 1 / tiny;
+  let d = 1 / b;
+  let h = d;
+  for (let i = 1; i < 1000; i++) {
+    const an = -i * (i - a);
+    b += 2;
+    d = an * d + b;
+    if (Math.abs(d) < tiny) d = tiny;
+    c = b + an / c;
+    if (Math.abs(c) < tiny) c = tiny;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-16) break;
+  }
+  return Math.exp(lead) * h;
+}
+
 /** x of A x = b, A small and dense, by Gaussian elimination with partial pivoting; null where A is singular. */
 function rtmSolveSmall(A, b) {
   const n = b.length;
@@ -2210,6 +2266,21 @@ function rtmFit(msg, post) {
   if (times.length && times[times.length - 1] > tend0 * (1 + 1e-12)) {
     throw new Error(`<DATA> has a value at ${times[times.length - 1]}, after the run ends at ${tend0}: run it longer (TEND).`);
   }
+  /*
+    WEIGHTED, where <DATA> gives each value a standard deviation, sd(Ca+2):
+    each residual over its own, in its own units -- for an amount, compared
+    in its log10, sd / (value ln 10) -- so that the misfit is chi-square and
+    the standard errors come from the standard deviations given, not from
+    the scatter. Every value fitted, or none: a misfit half of numbers over
+    their deviations and half of bare numbers means nothing.
+  */
+  const weighted = points.some((p) => p.sd !== null);
+  if (weighted && points.some((p) => p.sd === null)) {
+    const bare = [...new Set(points.filter((p) => p.sd === null).map((p) => p.key))];
+    throw new Error(`Some values fitted have a standard deviation and some have not (${bare.join(', ')}): give one, `
+      + `sd(${bare[0]}), to every value fitted, or to none.`);
+  }
+  points.forEach((p) => { p.sdr = !weighted ? 1 : p.index ? p.sd : p.sd / (p.value * Math.LN10); });
   const specTables = [...new Set(points.filter((p) => p.kind === 'speciation').map((p) => p.table))];
   const specValues = new Map(specTables.map((ti) => [ti,
     [...new Set(points.filter((p) => p.table === ti).map((p) => p.x))].sort((a, b) => a - b)]));
@@ -2245,7 +2316,7 @@ function rtmFit(msg, post) {
         v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
           : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
       }
-      r[i] = p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value);
+      r[i] = (p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value)) / p.sdr;
     });
     let ssr = 0;
     for (const x of r) ssr += x * x;
@@ -2262,7 +2333,9 @@ function rtmFit(msg, post) {
   // How much the solver's tolerance alone moves the misfit: 2 |r| |dr|, each residual off by rtol / ln 10. A speciation
   // alone, no run, settles to the rounding: 1e-10 of a value.
   const rtolRun = !times.length ? 1e-10 : Number(s.rtol) > 0 ? Number(s.rtol) : 1e-6;
-  const noise = (ssr) => 2 * Math.sqrt(ssr * n) * (rtolRun / Math.LN10);
+  // Weighted, a residual's noise is over its standard deviation: the smallest deviation the largest.
+  const noiseScale = weighted ? Math.max(...points.map((p) => 1 / p.sdr)) : 1;
+  const noise = (ssr) => 2 * Math.sqrt(ssr * n) * (rtolRun / Math.LN10) * noiseScale;
   // Forward differences to steer by; central ones at the end, for the standard errors, whose forward bias is half a step.
   const jacobian = (th, r0, central = false) => {
     const J = Array.from({ length: n }, () => new Float64Array(np));
@@ -2355,7 +2428,9 @@ function rtmFit(msg, post) {
   let cov = null;
   let sd = null;
   const best = evaluate(theta, true);
-  if (n > np) {
+  // Weighted, the covariance is (J'J)^-1 of the residuals over their deviations, as it stands; unweighted, scaled by the
+  // scatter the residuals show, which needs a point more than the numbers fitted.
+  if (weighted ? n >= np : n > np) {
     try {
       J = jacobian(theta, best.r, true);
       const A = Array.from({ length: np }, (_, a) => Array.from({ length: np }, (_, b) => {
@@ -2363,10 +2438,11 @@ function rtmFit(msg, post) {
         for (let i = 0; i < n; i++) v += J[i][a] * J[i][b];
         return v;
       }));
-      sd = Math.sqrt(best.ssr / (n - np));
+      if (n > np) sd = Math.sqrt(best.ssr / (n - np));
+      const scale = weighted ? 1 : sd * sd;
       const inv = Array.from({ length: np }, (_, a) => rtmSolveSmall(A, Array.from({ length: np }, (_, b) => (a === b ? 1 : 0))));
       if (inv.every((col) => col && col.every(Number.isFinite))) {
-        cov = inv.map((col, a) => col.map((v, b) => sd * sd * inv[b][a]));
+        cov = inv.map((col, a) => col.map((v, b) => scale * inv[b][a]));
       }
     } catch (e) { if (!e.budget) throw e; }
   }
@@ -2411,13 +2487,16 @@ function rtmFit(msg, post) {
     }
   }
   return {
-    type: 'fit', id: msg.id, why, runs, seconds: (Date.now() - started) / 1000, n, np, skipped, ssr0, ssr: best.ssr, sd,
+    type: 'fit', id: msg.id, why, runs, seconds: (Date.now() - started) / 1000, n, np, skipped, ssr0, ssr: best.ssr, sd, weighted,
+    // Weighted: the misfit is chi-square on n - np degrees of freedom, and the chance of one at least as large by the deviations alone.
+    chi2: weighted ? best.ssr : null, dof: n - np,
+    pChi2: weighted && n > np ? rtmChiSquareTail(best.ssr, n - np) : null,
     params: params.map((p, i) => ({ kind: p.kind, name: p.name, start: p.start, logged: logged[i], value: fromTheta(theta[i], i),
       theta: theta[i], se: se ? se[i] : null })),
     corr: cov ? cov.map((row, a) => row.map((v, b) => v / Math.sqrt(cov[a][a] * cov[b][b]))) : null,
     history,
     points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
-      index: p.index, value: p.value, residual: best.r[i] })),
+      index: p.index, value: p.value, residual: best.r[i] * p.sdr, sd: p.sd, normalized: weighted ? best.r[i] : null })),
     curves,
     text: textAt(theta),
   };

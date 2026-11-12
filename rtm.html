@@ -1347,7 +1347,9 @@ distance  pH     at = 36000
             time (from 0, the first unless said; <code>layer =</code> for the rock behind it),
             <code>at =</code> for one in distance (the end of the run unless said). A row of numbers
             per point follows, a dash for a value not measured. A column the model has no name for is
-            an error, so that a misspelt one is not silently left off.</p>
+            an error, so that a misspelt one is not silently left off. A column <code>sd(Ca+2)</code> beside
+            <code>Ca+2</code> gives the standard deviation of each of its values, in its units, above zero or a
+            dash; <em>Fit</em> weighs the values by it.</p>
           <pre>pH    Zn_sorbed  cell = 0
 4.5   0.5
 6.0   36.1</pre>
@@ -3079,6 +3081,16 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             pe or Eh needs no run: its water is held at each value it measured and speciated there, as
             PhreePlot fits a sorption edge — the log K of a metal on each kind of site moved until the
             edge goes through the measurements — and the fit draws it against that value.</p>
+          <p>Where <code>&lt;DATA&gt;</code> gives each value a standard deviation, <code>sd(Ca+2)</code>
+            beside <code>Ca+2</code>, the fit is weighted: each residual is over its own deviation — an amount's,
+            compared in its log<sub>10</sub>, over the deviation divided by the value and by ln&nbsp;10 — so that
+            the misfit is χ² on as many degrees of freedom as points less numbers fitted. Near 1 a degree, the
+            model and the deviations both hold; much more, the model misses the measurements by more than they
+            scatter, or the deviations are too small; much less, they are too large. The result says χ², χ² a degree
+            and the chance of one at least as large from the deviations alone, and the standard errors are the
+            deviations' own rather than the residuals' scatter. Every value fitted needs a deviation, or none does.
+            The chart draws each measurement with its deviation either side, and the residuals over their
+            deviations, in a band of one either way.</p>
           <p>The misfit is the sum of the squared residuals: for an amount the log<sub>10</sub> of
             the run's value over the one measured, so that a factor of two counts the same at any
             size and a value at or below zero is left out; for pH, a saturation index and the like
@@ -3941,14 +3953,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111f"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111g"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261111f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111i"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261111g"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111j"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111s"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111t"></script>
 </body>
 </html>
