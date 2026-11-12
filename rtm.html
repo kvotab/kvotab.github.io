@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111l">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111m">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -481,7 +481,8 @@
                 data-on-input="rtm:textChanged"></textarea>
             </div>
           </div>
-          <p class="rtm-muted" id="rtmModelNote"></p>
+          <!-- The warnings, one a line; a line of the text one names, a link to it (rtm-ui.js linkLines). -->
+          <ul class="rtm-muted rtm-model-note" id="rtmModelNote" hidden></ul>
         </section>
 
         <!-- ---- the Jacobian ---- -->
@@ -1149,7 +1150,8 @@
             warnings and errors count them: the lines the warnings under the text name are marked in
             amber, the line an error names in red, until the text compiles again. They are a column
             of their own, so a long line scrolled sideways never passes under them. The choice is
-            remembered too.</p>
+            remembered too. A warning or an error that names a line — <em>Line 194</em> — is a link to
+            it: a click goes to that line of the text, selects it and puts the keyboard there.</p>
 
           <h4 id="help-settings">&lt;SETTINGS&gt;</h4>
           <table class="rtm-table">
@@ -4122,6 +4124,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111g"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zh"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zi"></script>
 </body>
 </html>

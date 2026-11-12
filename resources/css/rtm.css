@@ -760,6 +760,21 @@
 .rtm-listing td.rtm-listing-sp { padding-left: 14px; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
 
+/* The warnings under the model text, one a line. */
+.rtm-model-note { margin: 11px 0; padding: 0; list-style: none; }
+.rtm-model-note li + li { margin-top: 2px; }
+/* A line of the model text a warning or an error names: a link to it, in the accent as text. */
+.rtm-line-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-text);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
 /* Ready to save: a small window over the page, in its colours, the file's name and its two buttons. */
 .rtm-save-ready {
   max-width: 26rem;

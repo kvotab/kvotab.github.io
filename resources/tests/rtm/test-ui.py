@@ -4336,12 +4336,33 @@ async def main():
                   [await page.ev("document.getElementById('rtmLineNumbers').checked"), ln['shown'], ln['count'] == ln['lines'],
                    ln['inView'] > 20, ln['worst'], ln['marked']],
                   [True, True, True, True, 0, [['194', 'warn']]])
+            # A line a warning names, a link to it: the built-in model's one warning, listed under the text, its Line 194 a
+            # link; a click goes to the line -- on the Model tab, the whole line selected, the keyboard in the text, the
+            # line in view though the text was scrolled to its top.
+            AT_LINE = """(() => { const ta = document.getElementById('rtmText');
+              const n = ta.value.slice(0, ta.selectionStart).split('\\n').length;
+              const lh = parseFloat(getComputedStyle(ta).lineHeight), y = (n - 1) * lh - ta.scrollTop;
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, document.activeElement === ta, n,
+                ta.value.slice(ta.selectionStart, ta.selectionEnd) === ta.value.split('\\n')[n - 1], y >= 0 && y <= ta.clientHeight - lh]; })()"""
+            listed = await page.ev("[document.querySelectorAll('#rtmModelNote li').length,"
+                                   " [...document.querySelectorAll('#rtmModelNote .rtm-line-link')].map((b) => b.textContent)]")
+            await page.ev("document.getElementById('rtmText').scrollTop = 0")
+            await asyncio.sleep(0.2)
+            await page.ev("document.querySelector('#rtmModelNote .rtm-line-link').click()")
+            await asyncio.sleep(0.3)
+            check('a line a warning names is a link to it: the built-in model\'s one warning listed, Line 194 a link, and a click '
+                  'goes to the line, selected whole, the keyboard in the text, the line in view',
+                  [listed, await page.ev(AT_LINE)], [[1, ['Line 194']], ['model', True, 194, True, True]])
             was_text = await page.ev("document.getElementById('rtmText').value")
             await page.ev("""(() => { const ta = document.getElementById('rtmText');
               ta.value = '<SPECIES>\\nA 1\\n\\n<REACTIONS>\\nA => Q, k = 1\\n'; ta.dispatchEvent(new Event('input', { bubbles: true })); })()""")
             await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('The model does not compile')", True, tries=40)
             err = await page.ev(LINES)
             check('  an error marks the line it names', [err['count'], err['marked']], [6, [['5', 'error']]])
+            await page.ev("document.querySelector('#rtmStatus .rtm-line-link').click()")
+            await asyncio.sleep(0.3)
+            check('  and the line an error names, in the status line, a link to it: line 5 selected', await page.ev(AT_LINE),
+                  ['model', True, 5, True, True])
             await page.ev("(() => { const c = document.getElementById('rtmLineNumbers');"
                           " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)

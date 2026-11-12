@@ -662,8 +662,15 @@
         setStatus(`Compiled: ${m.nspecies} species, ${m.nreactions} reactions, ${m.cells} cell`
           + `${m.cells === 1 ? '' : 's'} — ${m.states} equations, Jacobian with ${m.nnz} non-zeros `
           + `(${(100 * m.density).toFixed(2)} % of the matrix). Ready to run.${warn}${note}`, 'ok');
+        linkLines($('rtmStatus'));
       }
-      $('rtmModelNote').textContent = m.warnings.join('  ');
+      // The warnings one a line, a line of the text one names a link to it.
+      $('rtmModelNote').replaceChildren(...m.warnings.map((w) => {
+        const li = document.createElement('li');
+        li.textContent = w;
+        linkLines(li);
+        return li;
+      }));
       $('rtmModelNote').hidden = !m.warnings.length;
       renderLineNumbers();
       infoRefresh();
@@ -674,9 +681,62 @@
       renderFacts();
       renderLineNumbers();
       infoRefresh();
-      if (!state.running) setStatus(`The model does not compile: ${e.message}${note}`, 'error');
+      if (!state.running) {
+        setStatus(`The model does not compile: ${e.message}${note}`, 'error');
+        linkLines($('rtmStatus'));
+      }
       return false;
     }
+  }
+
+  /*
+    A LINE OF THE MODEL TEXT NAMED -- "Line 194: the charges do not balance",
+    "<DATA>, the table on line 5" -- in a warning under the text or in what
+    the status line says of the compile, a link to it: a click goes to the
+    line, scrolled into view a third of the way down the box, the whole line
+    selected and the keyboard in it.
+  */
+  const LINE_NAMED = /\b([Ll]ine) (\d+)\b/g;
+  function linkLines(el) {
+    const found = [];
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      LINE_NAMED.lastIndex = 0;
+      if (LINE_NAMED.test(node.data) && !node.parentElement.closest('button')) found.push(node);
+    }
+    for (const node of found) {
+      const frag = document.createDocumentFragment();
+      let last = 0;
+      // matchAll starts where the expression's last test left it.
+      LINE_NAMED.lastIndex = 0;
+      for (const m of node.data.matchAll(LINE_NAMED)) {
+        frag.append(node.data.slice(last, m.index));
+        const link = document.createElement('button');
+        link.type = 'button';
+        link.className = 'rtm-line-link';
+        link.dataset.onClick = 'rtm:goLine';
+        link.dataset.line = m[2];
+        link.textContent = m[0];
+        frag.append(link);
+        last = m.index + m[0].length;
+      }
+      frag.append(node.data.slice(last));
+      node.replaceWith(frag);
+    }
+  }
+
+  /** Line n of the model text: on the Model tab, scrolled to, selected whole, the keyboard in it. */
+  function goLine(n) {
+    const ta = $('rtmText');
+    const lines = ta.value.split('\n');
+    if (!(n >= 1 && n <= lines.length)) return;
+    if (state.tab !== 'model') showTab('model');
+    let start = 0;
+    for (let i = 0; i < n - 1; i += 1) start += lines[i].length + 1;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(start, start + lines[n - 1].length);
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (n - 1) * lh - ta.clientHeight / 3);
   }
 
   /*
@@ -10294,7 +10354,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
-      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
+      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text. A line a warning or an error names is a link to it: a click goes to that line and selects it.',
       facts: [
         ['Examples', `${EXAMPLES.length} in ${new Set(EXAMPLES.map((e) => e.group)).size} groups`],
         ['Open… or a drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
@@ -12687,6 +12747,7 @@ END
       else chooseExample(el.value);
     },
     'rtm:bringBack': () => bringBack(0),
+    'rtm:goLine': (ev, el) => goLine(Number(el.dataset.line)),
     // Ready to save: its Save… a click of its own for the dialog to open out of; Cancel, or Escape, an answer.
     'rtm:saveReadyGo': () => {
       const r = saveReady;
