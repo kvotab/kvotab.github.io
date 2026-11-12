@@ -124,7 +124,8 @@
       of: ['dirichlet', 'neumann', 'robin', 'cauchy', 'free', 'outflow', 'semi-infinite', 'reservoir'] },
     // How many cells past a semi-infinite right-hand end; worked out unless given.
     EXTRA_CELLS: { def: 0, kind: 'int' },
-    TEND: { def: 1, kind: 'number' },
+    // How long to run. Like MAX_STEP and TRAVEL_TIME, a time that may carry a unit of its own: TEND = 1890 days.
+    TEND: { def: 1, kind: 'time' },
     /*
       The longest step the solver takes, in the model's time unit, where the
       panel's Maximum step is 0: a chart draws the steps a run takes, and a
@@ -133,7 +134,7 @@
       otherwise drawn from steps a tenth of the run long, across its turns.
       0, the default, leaves it to the solver.
     */
-    MAX_STEP: { def: 0, kind: 'number' },
+    MAX_STEP: { def: 0, kind: 'time' },
     /*
       The unit every time in the model is written in. It converts NOTHING: the
       solver integrates whatever numbers it is given, so a model in years has
@@ -220,7 +221,7 @@
     WETTED_SURFACE: { def: 0, kind: 'number' },
     APERTURE: { def: 0, kind: 'number' },
     TRANSPORT_RESISTANCE: { def: 0, kind: 'number' },
-    TRAVEL_TIME: { def: 0, kind: 'number' },
+    TRAVEL_TIME: { def: 0, kind: 'time' },
     PECLET: { def: 0, kind: 'number' },
   };
 
@@ -324,6 +325,33 @@
     return v;
   }
 
+  /*
+    A TIME THAT MAY CARRY A UNIT OF ITS OWN -- 1890 days, 5 a, 2.5h -- any
+    word TIME_UNIT takes, after the number, which may be arithmetic. The unit
+    converts this one number and nothing else: the rate constants are in the
+    model's unit whatever is written here. { text, seconds }: the number's
+    text, and the unit's length in seconds, null where none is written.
+  */
+  function splitTime(raw, what, line) {
+    const s = String(raw).trim();
+    const u = /^(.*?[0-9.)\s])\s*([A-Za-z]+)\s*$/.exec(s);
+    if (!u) return { text: s, seconds: null };
+    const unit = TIME_UNITS[u[2].toLowerCase()];
+    if (!unit) {
+      throw new RtmError(`${what} = "${s}": "${u[2]}" is not a unit of time. After the number may come s, min, h, d or a, `
+        + 'or second(s), minute(s), hour(s), day(s) or year(s).', line);
+    }
+    return { text: u[1].trim(), seconds: unit.seconds };
+  }
+
+  /** A time typed with or without a unit, in the unit a model counts in -- its TIME_UNIT -- as the page's Simulated time is. */
+  function readTime(raw, own = 'second', what = 'The time') {
+    const { text, seconds } = splitTime(raw, what);
+    const v = constValue(text, undefined, what);
+    const ownSeconds = (TIME_UNITS[String(own).toLowerCase()] || TIME_UNITS.second).seconds;
+    return seconds === null ? v : (v * seconds) / ownSeconds;
+  }
+
   /** `NAME = value` lines, read against the table above. */
   function readSettings(lines) {
     const out = {};
@@ -332,6 +360,8 @@
     // CELLS and LENGTH, and only a CELLS the text wrote can disagree with it.
     const given = new Set();
     Object.defineProperty(out, 'given', { value: given, enumerable: false });
+    // Times written with a unit of their own, put into the model's once TIME_UNIT, which may come after them, is known.
+    const inUnits = [];
     for (const { text, line } of lines) {
       const m = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(text);
       if (!m) throw new RtmError(`"${text}" is not NAME = value.`, line);
@@ -369,11 +399,17 @@
         try { v = constValue(raw, line, name); } catch (e) { v = null; }
         out[name] = v !== null ? v : raw;
         Object.defineProperty(out, `${name}_line`, { value: line, enumerable: false });
+      } else if (spec.kind === 'time') {
+        const { text: num, seconds } = splitTime(raw, name, line);
+        out[name] = constValue(num, line, name);
+        if (seconds !== null) inUnits.push([name, seconds]);
       } else {
         const v = constValue(raw, line, name);
         out[name] = spec.kind === 'int' ? Math.round(v) : v;
       }
     }
+    const ownSeconds = (TIME_UNITS[String(out.TIME_UNIT)] || TIME_UNITS.second).seconds;
+    for (const [name, seconds] of inUnits) out[name] = (out[name] * seconds) / ownSeconds;
     // FACES implies the grid it describes, whatever GRID says.
     if (out.FACES && !given.has('GRID')) out.GRID = 'faces';
     if (out.GRID === 'faces' && !out.FACES) {
@@ -14550,5 +14586,5 @@
     readSections, derivative, symmetricEigen, pca,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
-    SECTIONS, SETTINGS, elementsOf, formulaMass, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };
+    SECTIONS, SETTINGS, readTime, elementsOf, formulaMass, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };
 }));

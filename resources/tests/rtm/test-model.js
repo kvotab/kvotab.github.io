@@ -616,6 +616,32 @@ A => B, r = ${law}
 }
 {
   /*
+    A TIME IN <SETTINGS> WITH A UNIT OF ITS OWN: TEND, MAX_STEP and
+    TRAVEL_TIME each put into the model's unit, whichever of it and
+    TIME_UNIT comes first; arithmetic before the unit, the unit glued or
+    apart; the unit converting that number alone -- A => B at k = 1e-3 per
+    second run to TEND = 1 h is exp(-3.6), as the rate constant is read per
+    second whatever TEND says -- and a word that is no unit of time said so.
+    The page's Simulated time reads the same, by readTime.
+  */
+  const tset = (s) => RtmModel.compile(`<SETTINGS>\n${s}\n\n<SPECIES>\nA 1\nB 0\n\n<REACTIONS>\nA => B, k = 1e-3\n`).settings;
+  const read = [tset('TEND = 1890 days').TEND, tset('TEND = 1890 days\nTIME_UNIT = day').TEND, tset('TIME_UNIT = minute\nTEND = 2 h').TEND,
+    tset('TEND = 2h\nTIME_UNIT = minute').TEND, tset('TEND = 365*2 d').TEND, tset('TEND = 5 a\nTIME_UNIT = year').TEND,
+    tset('MAX_STEP = 1 d').MAX_STEP, tset('MODE = transport\nCELLS = 4\nLENGTH = 1\nTRAVEL_TIME = 0.5 h\nTIME_UNIT = min').TRAVEL_TIME, tset('TEND = 1e5').TEND];
+  check('a time in <SETTINGS> with a unit of its own, put into the model\'s: 1890 days 1.63296e8 s or 1890 d; 2 h 120 min, '
+    + 'TIME_UNIT before or after; 2*365 d; 5 a in years; MAX_STEP 1 d; TRAVEL_TIME 0.5 h in minutes; 1e5 as it is',
+  JSON.stringify(read) === JSON.stringify([163296000, 1890, 120, 120, 63072000, 5, 86400, 30, 100000]), JSON.stringify(read));
+  let said = '';
+  try { tset('TEND = 10 weeks'); } catch (e) { said = e.message; }
+  check('  a word that is no unit of time, said so', /"weeks" is not a unit of time/.test(said), said);
+  const hour = RtmModel.compile('<SETTINGS>\nTEND = 1 h\n\n<SPECIES>\nA 1\nB 0\n\n<REACTIONS>\nA => B, k = 1e-3\n');
+  const rh = run(hour, { tend: hour.settings.TEND });
+  close('  the unit converts TEND alone: A => B at k = 1e-3 /s to TEND = 1 h is exp(-3.6)', last(rh)[0], Math.exp(-3.6), 1e-6);
+  check('  and the page\'s Simulated time reads a unit the same way', RtmModel.readTime('1890 days', 'second') === 163296000
+    && RtmModel.readTime('2 h', 'minute') === 120 && RtmModel.readTime('7', 'day') === 7, '');
+}
+{
+  /*
     CHECK JACOBIAN WHERE A RATE LAW BENDS NEAR THE STEP: a
     Langmuir-Hinshelwood factor, 8.1e4[H2]/(8.1e4[H2] + 1), at [H2] = 0
     beside a species at 55.56: the check steps H2 by 3.4e-6, a quarter of
@@ -2551,6 +2577,8 @@ console.log('\n--- opening skbrtm databases ---');
     const at = (name, cell = 0) => m.initialState()[cell * ns + m.speciesNames.indexOf(name)];
     const s = m.settings;
     check('the script gives the time span: 2 days is 172800 s', s.TEND === 172800, String(s.TEND));
+    check('  TEND written in the script\'s own unit, the model in seconds', /^TEND = 2 days$/m.test(res.text)
+      && /^TIME_UNIT = second$/m.test(res.text), (res.text.match(/^TEND = .*$/m) || ['none'])[0]);
     // The model counts in seconds, as skbrtm does; the page shows the run in the unit the script ran in.
     check('  the model in seconds, and the unit the script ran in handed to the page to show the run in: days',
       s.TIME_UNIT === 'second' && res.timeUnit === 'days', `${s.TIME_UNIT}, ${res.timeUnit}`);

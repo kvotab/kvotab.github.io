@@ -419,7 +419,8 @@
       }
     } else settings.push('MODE = batch');
     if (script && script.tend) {
-      settings.push(`TEND = ${fmt(script.tend)}`);
+      // In the script's own unit, as it wrote it; the model counts in seconds, and puts it into them.
+      settings.push(`TEND = ${fmt(script.span[1] - script.span[0])} ${script.unit}`);
     } else {
       settings.push('TEND = 1');
       warnings.push(script ? 'The script\'s t_span could not be read; TEND is 1 s.' : 'No script was opened, so TEND is 1 s: set it, in seconds.');

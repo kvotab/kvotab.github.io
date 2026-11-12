@@ -794,6 +794,32 @@ async def main():
             await page.ev("document.getElementById('rtmRun').click()")
             run = await wait_run(page)
             check('an example runs', isinstance(run, str) and run.startswith('Done'), True)
+            # Simulated time with a unit of its own, as TEND takes one: 1 h of Robertson's problem, in seconds, runs to
+            # 3600 s; a unit that is none is said so, and nothing runs.
+            async def tend(text):
+                await page.ev("(() => { const t = document.getElementById('rtmTend'); t.value = %s;"
+                              " t.dispatchEvent(new Event('change', { bubbles: true })); })()" % json.dumps(text))
+                await asyncio.sleep(0.2)
+            await tend('1 h')
+            await page.ev("document.getElementById('rtmRun').click()")
+            run1h = await wait_run(page)
+            # Read on Against time, A ticked: the run's last stored time.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.6)
+            await page.ev("(() => { const el = document.querySelector('#rtmSeries input[value=\"A\"]');"
+                          " if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()")
+            await asyncio.sleep(0.6)
+            end1h = await page.ev("(() => { const d = document.getElementById('rtmChartTime').data || [];"
+                                  " return d.length ? Math.max(...d[0].x) : null; })()")
+            await tend('1 fortnight')
+            await page.ev("document.getElementById('rtmRun').click()")
+            await asyncio.sleep(0.5)
+            bad = await page.ev("[document.getElementById('rtmStatus').className, document.getElementById('rtmStatus').textContent]")
+            await tend('')
+            check('Simulated time with a unit of its own: 1 h of Robertson\'s problem, in seconds, runs to 3600 s; a unit that '
+                  'is none, said', [isinstance(run1h, str) and run1h.startswith('Done'), end1h, bad[0],
+                                    str(bad[1]).startswith('The simulated time must be a positive number of seconds, or one with its unit')],
+                  [True, 3600, 'rtm-status error', True])
 
             # The U-238 chain is in years: the axis, the panel and the boxes
             # must all say so rather than calling them seconds.
@@ -4462,7 +4488,8 @@ async def main():
             await page.ev(drop_js % json.dumps(skb_h))
             await settle(page, "document.getElementById('rtmFacts').textContent.includes('run for 2.00 h.')", True, tries=40)
             check("skbrtm's files with a script that ran for 2 hours: the model in seconds, as skbrtm counts, and Time in hours",
-                  await page.ev("[/^TIME_UNIT = second$/m.test(document.getElementById('rtmText').value),"
+                  await page.ev("[/^TIME_UNIT = second$/m.test(document.getElementById('rtmText').value)"
+                                " && /^TEND = 2 hours$/m.test(document.getElementById('rtmText').value),"
                                 " document.getElementById('rtmFacts').textContent.includes('run for 2.00 h.'),"
                                 " ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join(' ')]"),
                   [True, True, 'h h h'])

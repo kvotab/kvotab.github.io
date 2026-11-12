@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111p';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111q';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -922,7 +922,7 @@
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
     const u = timeUnit();
-    $('rtmTendUnit').textContent = `${u.name}s; blank uses TEND from the text`;
+    $('rtmTendUnit').textContent = `${u.name}s, or with a unit; blank uses TEND from the text`;
     $('rtmHmaxUnit').textContent = `${u.name}s; 0: a tenth of the run for the NDF, no limit for the ports`;
     $('rtmH0Unit').textContent = `${u.name}s; 0: chosen from the derivative at the start`;
     // The charts' time: in the model's unit, or in pore volumes where the water flows; each "from" in it.
@@ -992,7 +992,13 @@
       smoothEst: s.smoothEst !== false,
     };
     if (String(s.tend).trim()) {
-      out.tend = num(s.tend, `The simulated time must be a positive number of ${timeUnit().name}s`, (x) => x > 0);
+      // A unit of its own may follow the number, as in TEND: 1890 days.
+      let t = NaN;
+      try { t = RtmModel.readTime(s.tend, timeUnit().name, 'The simulated time'); } catch (e) { t = NaN; }
+      if (!(t > 0)) {
+        throw new Error(`The simulated time must be a positive number of ${timeUnit().name}s, or one with its unit: 1890 days`);
+      }
+      out.tend = t;
     }
     return out;
   }
@@ -6919,7 +6925,7 @@
     if (!m) return [];
     const kinds = (typeof RtmModel !== 'undefined' && RtmModel.SETTINGS) || {};
     const groups = [];
-    const settings = Object.entries(kinds).filter(([, spec]) => spec.kind === 'number' || spec.kind === 'int')
+    const settings = Object.entries(kinds).filter(([, spec]) => spec.kind === 'number' || spec.kind === 'int' || spec.kind === 'time')
       .map(([name]) => ({ value: `setting:${name}`, label: `${name}${typeof m.settings[name] === 'number' ? ` (${fmtNumber(m.settings[name])})` : ''}` }));
     groups.push({ label: 'Settings', items: settings });
     // Each label says what it is, as the closed menu shows the label alone, and the number the text gives it.
@@ -9695,7 +9701,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         : `${tend} ${u.symbol}${fmtTime(tend).endsWith(` ${u.symbol}`) ? '' : ` (${fmtTime(tend)})`}`;
       return {
         kicker: 'Solver', title: 'Simulated time',
-        lead: `How long to run, in the model’s own time unit, ${u.name}s. Blank runs to the TEND the model text gives.`,
+        lead: `How long to run, in the model’s own time unit, ${u.name}s, or with a unit of its own after the number — \`1890 days\`, \`5 a\` — put into the model’s. Blank runs to the TEND the model text gives.`,
         facts: [['TEND', said], ['Unless the text gives one', `1 ${u.symbol}`], ['Allowed', 'a number above 0, or blank']],
         sections: [
           { text: 'A plain number: the box takes no unit, because the model has one. `TIME_UNIT` in the text converts nothing; it says which unit every rate constant, diffusivity and velocity is already written in, so 10 here is ten of those.' },
@@ -11199,7 +11205,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111k';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111l';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
