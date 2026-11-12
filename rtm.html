@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111n">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111o">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -481,6 +481,8 @@
                 data-on-input="rtm:textChanged"></textarea>
             </div>
           </div>
+          <!-- The name the cursor is on and the lines that use it, each a link (rtm-ui.js showUses). -->
+          <div class="rtm-muted rtm-uses" id="rtmUses">Put the cursor on a name to see where it is used.</div>
           <!-- The warnings, one a line; a line of the text one names, a link to it (rtm-ui.js linkLines). -->
           <ul class="rtm-muted rtm-model-note" id="rtmModelNote" hidden></ul>
         </section>
@@ -1152,6 +1154,17 @@
             of their own, so a long line scrolled sideways never passes under them. The choice is
             remembered too. A warning or an error that names a line — <em>Line 194</em> — is a link to
             it: a click goes to that line of the text, selects it and puts the keyboard there.</p>
+          <p>Put the cursor on a name — a species, a parameter, a table — and the line under the text says
+            where it is used, and what each line does with it. On <code>UVIO2s+2</code> in the built-in
+            model: <em>in the list of species on line 56 · made on lines 181, 184, 188 and 191 · used up on
+            lines 182 and 187</em>. A line whose rate reads the species is named only where the line
+            neither makes it nor uses it up: there it speeds or slows the reaction without taking part in
+            it, or the equation has its name mistyped. A species no line makes, uses up or reads is said
+            to be so. Each line is a link that puts the cursor on the name there; the lines are marked
+            beside the line numbers and, with the syntax coloured, the name wherever it stands in the
+            text. A kind of line past six lists its first four and, say, <em>16 more</em>, which lists
+            them all. It is read from the text as it stands, so it works while the text does not
+            compile.</p>
 
           <h4 id="help-settings">&lt;SETTINGS&gt;</h4>
           <table class="rtm-table">
@@ -2590,7 +2603,8 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             <code>databases</code> together, or a <code>.zip</code> of either, with <em>Open…</em> or
             dropped; what is in it besides those is passed over, and so is what a Mac adds to a
             <code>.zip</code> it makes (<code>__MACOSX</code>). The script says which files are read, in what order, and for how long; without it
-            every database selected is read and <code>TEND</code> is one second, to be set by hand. The model counts
+            every database selected is read and <code>TEND</code> is one second, to be set by hand, in seconds or
+            with a unit of its own. The model counts
             in seconds, as skbrtm does, whatever unit the script names; <code>TEND</code> keeps the script's
             unit, <code>TEND = 1890 days</code>, and <em>Time in</em> shows the run in it.
             The files are read as skbrtm reads them — a <code>SOLUTION</code> sets every species in
@@ -4118,14 +4132,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111m"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111n"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
   <script src="./resources/js/rtm-worker.js?v=20261111n"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
-  <script src="./resources/js/rtm-import.js?v=20261111g"></script>
+  <script src="./resources/js/rtm-import.js?v=20261111h"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zk"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zl"></script>
 </body>
 </html>

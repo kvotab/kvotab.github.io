@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111r';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111s';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -796,6 +796,199 @@
     ta.setSelectionRange(start, start + lines[n - 1].length);
     const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
     ta.scrollTop = Math.max(0, (n - 1) * lh - ta.clientHeight / 3);
+  }
+
+  /*
+    WHERE A NAME IS USED: the name the caret is on -- a species, a parameter,
+    a table -- and every line that names it, said in words under the text,
+    each line a link that puts the caret on the name there. The lines are
+    marked beside the line numbers and, with the colouring on, the name in
+    the text itself, through the CSS Custom Highlight API: ranges over the
+    coloured copy, so that nothing in it is rewritten and it still lines up
+    with the text to the pixel. It is read from the text as it stands
+    (RtmModel.usesOf), so a text that does not compile is read too.
+
+    The line under the text keeps two lines' height, so that the text box
+    stays where it is as the caret goes from name to name: a kind of line
+    past USES_MANY lists its first USES_FIRST and "and 16 more", which lists
+    them all. A line whose rate reads a species is said only where the line
+    does not make it or use it up: every rate in a model like the built-in
+    one reads what its line uses up, and saying so would say each line twice.
+  */
+  const USES_MANY = 6;
+  const USES_FIRST = 4;
+  const USE_MARK = 'rtm-use';
+  /** What a line does with the name, in the order the sentence says it: [role, of one line, of several]. */
+  const USE_WORDS = {
+    species: [
+      ['listed', 'in the list of species on', 'in the list of species on'],
+      ['start', 'its starting amount set on', 'its starting amounts set on'],
+      ['added', 'added on', 'added on'],
+      ['made', 'made on', 'made on'],
+      ['usedUp', 'used up on', 'used up on'],
+      ['removed', 'removed on', 'removed on'],
+      ['both', 'on both sides of', 'on both sides of'],
+      ['twoWay', 'in the two-way reaction on', 'in the two-way reactions on'],
+      ['read', 'read by the rate on', 'read by the rates on'],
+      ['equilibrium', 'in the equilibrium on', 'in the equilibria on'],
+      ['phase', 'in the phase on', 'in the phases on'],
+      ['output', 'read by the output on', 'read by the outputs on'],
+      ['data', 'measured, in the data on', 'measured, in the data on'],
+      ['other', 'also on', 'also on'],
+    ],
+    parameter: [['set', 'set on', 'set on'], ['used', 'used on', 'used on']],
+    table: [['table', 'given on', 'given on'], ['used', 'read on', 'read on']],
+  };
+  // The roles that say a species does something, and what is said where it does none.
+  const USE_ACTS = ['added', 'made', 'usedUp', 'removed', 'both', 'twoWay', 'read', 'equilibrium', 'phase', 'output'];
+  const USE_IDLE = {
+    species: 'no line makes it, uses it up or reads it',
+    parameter: 'used on no line',
+    table: 'read on no line',
+  };
+  const USE_TERMS = ['added', 'made', 'usedUp', 'removed', 'both', 'twoWay'];
+
+  let usesNames = { text: null, names: null };   // the text's names, read again when the text changes
+  let usesNow = null;                             // what the line under the text shows: RtmModel.usesOf's
+  let usesDrawn = null;
+  let usesOpen = '';                              // kind|name whose lines are all listed
+  let usesFrame = 0;
+  let useLines = new Set();                       // the lines marked beside the line numbers
+
+  /** Once a frame at most: the caret moves many times a frame while a selection is dragged. */
+  function scheduleUses() {
+    if (usesFrame) return;
+    usesFrame = requestAnimationFrame(() => { usesFrame = 0; showUses(); });
+  }
+
+  function showUses() {
+    const ta = $('rtmText');
+    const box = $('rtmUses');
+    if (!ta || !box || typeof RtmModel === 'undefined' || !RtmModel.usesOf) return;
+    const text = ta.value;
+    if (usesNames.text !== text) usesNames = { text, names: RtmModel.namesOf(text) };
+    const at = RtmModel.nameAt(text, ta.selectionStart, ta.selectionEnd, usesNames.names);
+    usesNow = at ? RtmModel.usesOf(text, at.name, at.kind) : null;
+    // All of a name's lines stay listed while the caret stays on it.
+    if (!usesNow || usesOpen !== `${usesNow.kind}|${usesNow.name}`) usesOpen = '';
+    const here = text.slice(0, ta.selectionStart).split('\n').length;
+    const key = usesNow ? `${usesNow.kind}|${usesNow.name}|${usesOpen === `${usesNow.kind}|${usesNow.name}`}|${here}|`
+      + usesNow.places.map((p) => `${p.line}:${p.start}`).join(',') : '';
+    if (key !== usesDrawn) {
+      usesDrawn = key;
+      drawUses(box, usesNow, here);
+    }
+    const lines = new Set(usesNow ? usesNow.places.map((p) => p.line) : []);
+    if (lines.size !== useLines.size || [...lines].some((l) => !useLines.has(l))) {
+      useLines = lines;
+      renderLineNumbers();
+    }
+    markUses(usesNow);
+  }
+
+  /** The sentence under the text: the name, then what each kind of line does with it, each line a link. */
+  function drawUses(box, uses, here) {
+    box.replaceChildren();
+    if (!uses) {
+      box.textContent = 'Put the cursor on a name to see where it is used.';
+      return;
+    }
+    const name = document.createElement('strong');
+    name.textContent = uses.name;
+    box.append(name, ' — ');
+    const open = usesOpen === `${uses.kind}|${uses.name}`;
+    const terms = new Set(USE_TERMS.flatMap((r) => uses.roles[r] || []));
+    let said = 0;
+    for (const [role, one, several] of USE_WORDS[uses.kind]) {
+      let lines = uses.roles[role] || [];
+      if (role === 'read' && uses.kind === 'species') lines = lines.filter((l) => !terms.has(l));
+      if (!lines.length) continue;
+      if (said) box.append(' · ');
+      said += 1;
+      box.append(`${lines.length === 1 ? one : several} `);
+      if (lines.length === 1) {
+        box.append(useLink(lines[0], `line ${lines[0]}`, here));
+        continue;
+      }
+      box.append('lines ');
+      const shown = open || lines.length <= USES_MANY ? lines : lines.slice(0, USES_FIRST);
+      shown.forEach((l, i) => {
+        if (i) box.append(i === shown.length - 1 && shown.length === lines.length ? ' and ' : ', ');
+        box.append(useLink(l, String(l), here));
+      });
+      if (shown.length < lines.length) {
+        const more = document.createElement('button');
+        more.type = 'button';
+        more.className = 'rtm-line-link';
+        more.dataset.onClick = 'rtm:usesMore';
+        more.textContent = `${lines.length - shown.length} more`;
+        box.append(' and ', more);
+      }
+    }
+    const acts = uses.kind === 'species' ? USE_ACTS : ['used'];
+    if (!acts.some((r) => (uses.roles[r] || []).length)) box.append(said ? ' · ' : '', USE_IDLE[uses.kind]);
+  }
+
+  /** A line the name is on, as a link that puts the caret on the name there; the caret's own line in bold. */
+  function useLink(line, label, here) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = line === here ? 'rtm-line-link here' : 'rtm-line-link';
+    b.dataset.onClick = 'rtm:goUse';
+    b.dataset.line = String(line);
+    b.textContent = label;
+    return b;
+  }
+
+  /** The name on line n, selected, the keyboard in the text; scrolled to only where the line is out of view. */
+  function goUse(n) {
+    const ta = $('rtmText');
+    const p = usesNow && usesNow.places.find((q) => q.line === n);
+    if (!p) { goLine(n); return; }
+    const lines = ta.value.split('\n');
+    let start = 0;
+    for (let i = 0; i < n - 1; i += 1) start += lines[i].length + 1;
+    if (state.tab !== 'model') showTab('model');
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(start + p.start, start + p.end);
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    const pad = parseFloat(getComputedStyle(ta).paddingTop) || 0;
+    const top = pad + (n - 1) * lh;
+    if (top < ta.scrollTop || top + lh > ta.scrollTop + ta.clientHeight) {
+      ta.scrollTop = Math.max(0, (n - 1) * lh - ta.clientHeight / 3);
+    }
+    scheduleUses();
+  }
+
+  /** The name marked wherever it stands in the coloured copy: none where the colouring is off or the API missing. */
+  function markUses(uses) {
+    if (typeof Highlight !== 'function' || typeof CSS === 'undefined' || !CSS.highlights) return;
+    const code = $('rtmHighlight') && $('rtmHighlight').firstElementChild;
+    const ranges = [];
+    if (uses && state.syntax && code) {
+      for (const p of uses.places) {
+        const el = code.children[p.line - 1];
+        const r = el && textRange(el, p.start, p.end);
+        if (r) ranges.push(r);
+      }
+    }
+    if (ranges.length) CSS.highlights.set(USE_MARK, new Highlight(...ranges));
+    else CSS.highlights.delete(USE_MARK);
+  }
+
+  /** A range over characters start to end of an element's text, across the spans the colouring split it into. */
+  function textRange(el, start, end) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const r = document.createRange();
+    let pos = 0;
+    let begun = false;
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const len = node.data.length;
+      if (!begun && start < pos + len) { r.setStart(node, start - pos); begun = true; }
+      if (begun && end <= pos + len) { r.setEnd(node, end - pos); return r; }
+      pos += len;
+    }
+    return null;
   }
 
   /*
@@ -10413,7 +10606,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
-      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text. A line a warning or an error names is a link to it: a click goes to that line and selects it.',
+      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text. A line a warning or an error names is a link to it: a click goes to that line and selects it. Put the cursor on a name and the line under the text says where it is used: listed, made, used up, read by a rate, each line a link.',
       facts: [
         ['Examples', `${EXAMPLES.length} in ${new Set(EXAMPLES.map((e) => e.group)).size} groups`],
         ['Open… or a drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
@@ -10931,7 +11124,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     as many as the text has -- an empty last line is a line the caret can
     stand on -- moved up as far as the text is scrolled. The lines the
     compile's warnings name (Line 194: ...) are marked in the warning's tone,
-    the line its error names in the error's. Drawn again only when the count
+    the line its error names in the error's, and the lines that name the
+    name the caret is on (showUses) in bold. Drawn again only when the count
     or the marks change; until the text compiles again, the marks stay on
     the lines they were given.
   */
@@ -10947,6 +11141,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     }
     const e = state.compileError;
     if (e && Number.isInteger(e.line) && e.line > 0) marks.set(e.line, 'error');
+    // The lines that name the name the caret is on (showUses).
+    for (const line of useLines) marks.set(line, marks.has(line) ? `${marks.get(line)} use` : 'use');
     return marks;
   }
 
@@ -10963,7 +11159,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     let n = 1;
     for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) n += 1;
     const marks = lineMarks();
-    const key = `${n}|${[...marks].map(([line, kind]) => `${line}${kind[0]}`).join(',')}`;
+    const key = `${n}|${[...marks].map(([line, kind]) => `${line}${kind}`).join(',')}`;
     if (key !== lineNosDrawn) {
       lineNosDrawn = key;
       const out = new Array(n);
@@ -10991,6 +11187,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     const ta = $('rtmText');
     if (!pre || !ta) return;
     renderLineNumbers();
+    // Where the name the caret is on is used, read again from the text as it now is, and marked again.
+    scheduleUses();
     const code = pre.firstElementChild;
     if (!state.syntax) { code.textContent = ''; hlLines = []; hlSecs = []; return; }
     const lines = ta.value.split('\n');
@@ -11427,7 +11625,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111m';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111n';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -12808,6 +13006,13 @@ END
     'rtm:bringBack': () => bringBack(0),
     'rtm:goLine': (ev, el) => goLine(Number(el.dataset.line)),
     'rtm:fixName': (ev, el) => fixName(Number(el.dataset.line), el.dataset.from, el.dataset.to),
+    'rtm:goUse': (ev, el) => goUse(Number(el.dataset.line)),
+    // Every line of the name's listed, until the caret goes to another name.
+    'rtm:usesMore': () => {
+      if (usesNow) usesOpen = `${usesNow.kind}|${usesNow.name}`;
+      usesDrawn = null;
+      showUses();
+    },
     // Ready to save: its Save… a click of its own for the dialog to open out of; Cancel, or Escape, an answer.
     'rtm:saveReadyGo': () => {
       const r = saveReady;
@@ -12916,6 +13121,14 @@ END
     if (pre && state.syntax) { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; }
     if (state.lineNumbers) $('rtmLineNos').firstElementChild.style.transform = `translateY(${-ta.scrollTop}px)`;
   }, { passive: true });
+  // Where the caret is: the name it is on, and where that is used (showUses). selectionchange comes to the
+  // document, or to the textarea itself in the browsers that send it there; the rest are for those that send neither.
+  for (const type of ['keyup', 'mouseup', 'focus', 'select', 'selectionchange']) {
+    $('rtmText').addEventListener(type, scheduleUses);
+  }
+  document.addEventListener('selectionchange', () => {
+    if (document.activeElement === $('rtmText')) scheduleUses();
+  });
   applySyntaxMode();
   applyLineNumbers();
   renderExamples();

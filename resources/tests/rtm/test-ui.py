@@ -4408,6 +4408,126 @@ async def main():
                    await page.ev("JSON.parse(localStorage.getItem('kvot-rtm-v1')).lineNumbers")],
                   [True, True, [['194', 'warn']], True])
 
+            # Where a name is used: the caret on UVIO2s+2 in the built-in model's line 182, and the line under the text
+            # says where it is listed, made and used up -- the Help's own example -- each line a link, the caret's own
+            # in bold; the lines marked beside the numbers, and the name in the coloured copy at its nine places; the
+            # text box as high as it was under the hint. A link puts the caret on the name on its line.
+            USES = """(() => { const u = document.getElementById('rtmUses');
+              const h = CSS.highlights.get('rtm-use');
+              return { text: u.textContent,
+                links: [...u.querySelectorAll('.rtm-line-link')].map((b) => [b.textContent, b.classList.contains('here')]),
+                marked: [...document.querySelectorAll('#rtmLineNos span')].map((x) => [x.textContent, x.className]),
+                ranges: h ? [...h].map((r) => r.toString()) : [],
+                box: Math.round(document.getElementById('rtmCodeBox').getBoundingClientRect().height) }; })()"""
+
+            async def caret_on(find, line, after):
+                """The caret `after` characters into the first `find` on a line of the model text, the keyboard there."""
+                await page.ev("""((find, line, after) => { const ta = document.getElementById('rtmText');
+                  const lines = ta.value.split('\\n'); let at = 0;
+                  for (let i = 0; i < line - 1; i += 1) at += lines[i].length + 1;
+                  ta.focus(); at += lines[line - 1].indexOf(find) + after; ta.setSelectionRange(at, at); })(%s, %d, %d)"""
+                              % (json.dumps(find), line, after))
+
+            async def uses_say(start):
+                return await settle(page, "document.getElementById('rtmUses').textContent.startsWith(%s)" % json.dumps(start),
+                                    True, tries=60, pause=0.1)
+
+            hint = await page.ev(USES)
+            await caret_on('UVIO2s+2', 182, 2)
+            await uses_say('UVIO2s+2 —')
+            on = await page.ev(USES)
+            example = await page.ev("""(() => { const p = [...document.querySelectorAll('#rtmHelp p, p')].find((x) =>
+              x.textContent.trim().startsWith('Put the cursor on a name')); const em = p && p.querySelector('em');
+              return em ? em.textContent.replace(/\\s+/g, ' ') : null; })()""")
+            check('where a name is used: the caret on UVIO2s+2, and the line under the text says where it is listed, made and '
+                  'used up, as the Help\'s example has it; each line a link, the caret\'s line in bold; the lines marked '
+                  'beside the numbers, the name at its nine places in the text; the text box as high as under the hint',
+                  [hint['text'], on['text'], on['text'] == f'UVIO2s+2 — {example}', on['links'], on['marked'], on['ranges'],
+                   on['box'] == hint['box']],
+                  ['Put the cursor on a name to see where it is used.',
+                   'UVIO2s+2 — in the list of species on line 56 · made on lines 181, 184, 188 and 191 · used up on lines '
+                   '182 and 187', True,
+                   [['line 56', False], ['181', False], ['184', False], ['188', False], ['191', False], ['182', True],
+                    ['187', False]],
+                   [['56', 'use'], ['181', 'use'], ['182', 'use'], ['184', 'use'], ['187', 'use'], ['188', 'use'],
+                    ['191', 'use'], ['194', 'warn']], ['UVIO2s+2'] * 9, True])
+            await page.ev("[...document.querySelectorAll('#rtmUses .rtm-line-link')].find((b) => b.textContent === '187')"
+                          ".click()")
+            await settle(page, "[...document.querySelectorAll('#rtmUses .rtm-line-link.here')].map((b) => b.textContent)"
+                               ".join()", '187', tries=40, pause=0.1)
+            went = await page.ev("""(() => { const ta = document.getElementById('rtmText');
+              return [document.activeElement === ta, ta.value.slice(0, ta.selectionStart).split('\\n').length,
+                ta.value.slice(ta.selectionStart, ta.selectionEnd)]; })()""")
+            check('  a line\'s link puts the caret on the name there, selected, the keyboard in the text; the line under the '
+                  'text says the same, that line now in bold', [went, (await page.ev(USES))['text'] == on['text']],
+                  [[True, 187, 'UVIO2s+2'], True])
+            # A name on many lines: OH-, made on 38. Its first four and "34 more", the box still as high; a click lists all
+            # of them, until the caret goes to another name. The colouring off, no name is marked in the text, the
+            # numbers still; on again, every one of its 57 places.
+            await caret_on('OH-', 28, 1)
+            await uses_say('OH- —')
+            many = await page.ev(USES)
+            made = [78, 79, 80, 81, 82, 84, 85, 88, 89, 99, 100, 101, 109, 111, 113, 116, 117, 118, 120, 125, 126, 127, 128,
+                    129, 132, 137, 138, 143, 145, 146, 156, 159, 162, 167, 169, 175, 179, 184]
+            await page.ev("[...document.querySelectorAll('#rtmUses .rtm-line-link')].find((b) => b.textContent === '34 more')"
+                          ".click()")
+            await uses_say('OH- —')
+            await asyncio.sleep(0.2)
+            listed = (await page.ev(USES))['text']
+            await caret_on('=>', 78, 1)
+            await uses_say('Put the cursor')
+            await caret_on('OH-', 28, 1)
+            await uses_say('OH- —')
+            again = (await page.ev(USES))['text']
+            await page.ev("(() => { const c = document.getElementById('rtmSyntax');"
+                          " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            plain = await page.ev(USES)
+            await page.ev("(() => { const c = document.getElementById('rtmSyntax');"
+                          " c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.4)
+            coloured = await page.ev(USES)
+            short = ('OH- — in the list of species on line 28 · added on line 76 · made on lines 78, 79, 80, 81 and 34 more '
+                     '· used up on lines 94, 107, 136, 140 and 150')
+            check('  a name on many lines, OH- made on 38: the first four and 34 more, the box as high; a click lists them '
+                  'all, until the caret goes to another name; the colouring off, nothing marked in the text but the numbers '
+                  'still; on again, all 57 places',
+                  [many['text'], many['box'] == hint['box'], listed, again, plain['ranges'], len(plain['marked']) > 40,
+                   len(coloured['ranges']), set(coloured['ranges'])],
+                  [short, True, 'OH- — in the list of species on line 28 · added on line 76 · made on lines '
+                   + ', '.join(str(n) for n in made[:-1]) + f' and {made[-1]} · used up on lines 94, 107, 136, 140 and 150',
+                   short, [], True, 57, {'OH-'}])
+            # A model of our own: a rate that reads a species its line does not make or use up, said; a species no line
+            # makes, uses up or reads, said so; a parameter; the caret on no name, the hint; and a text that does not
+            # compile read all the same.
+            USED = ('<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nA  1\nB  0\nAB  0\nBx  0\nZ  0\n\n'
+                    '<PARAMETERS>\nkk  all  2\n\n<REACTIONS>\nA => B, k = 1\nBx => AB, r = kk*[B]\nB + A => AB, k = 2\n')
+            await set_text(page, USED)
+            said = []
+            for find, line, after, start in [('[B]', 17, 1, 'B —'), ('Z', 10, 0, 'Z —'), ('kk', 17, 1, 'kk —'),
+                                             ('=>', 16, 1, 'Put the cursor')]:
+                await caret_on(find, line, after)
+                await uses_say(start)
+                said.append(await page.ev("document.getElementById('rtmUses').textContent"))
+            await set_text(page, f'{USED}A => Q, k = 1\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('The model does not compile')", True,
+                         tries=40, pause=0.25)
+            await caret_on('A', 19, 0)
+            await uses_say('A —')
+            said.append(await page.ev("document.getElementById('rtmUses').textContent"))
+            check('  a rate reading a species its line does not make or use up, said; a species nothing makes, uses up or reads, '
+                  'said so; a parameter set and used; on no name, the hint; a text that does not compile, read all the same',
+                  said,
+                  ['B — in the list of species on line 7 · made on line 16 · used up on line 18 · read by the rate on line 17',
+                   'Z — in the list of species on line 10 · no line makes it, uses it up or reads it',
+                   'kk — set on line 13 · used on line 17',
+                   'Put the cursor on a name to see where it is used.',
+                   'A — in the list of species on line 6 · used up on lines 16, 18 and 19'])
+            await page.ev("""((text) => { const ta = document.getElementById('rtmText');
+              document.getElementById('rtmStatus').textContent = '';
+              ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); })(%s)""" % json.dumps(was_text))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
+
             # --- the run as an HDF5 file --------------------------------------
             # The bytes are checked against the real library in test-hdf5.py;
             # what is checked here is that the page can build them at all --

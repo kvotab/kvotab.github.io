@@ -1836,6 +1836,233 @@
   }
 
   /* ======================================================================
+     2. (continued) Where a name is used
+     ====================================================================== */
+  /*
+    WHERE A NAME IS USED, for the line the page shows under the model text:
+    every line that names a species, a parameter or a table, and what the
+    line does with it -- a species listed, started, made, used up, read by a
+    rate. It is read from the text as it stands, which need not compile, and
+    as the compiler reads it: a # starts a comment where readSections says it
+    does, an equation is the line up to its first comma outside brackets, and
+    its sides are split on " + " with the spaces.
+
+    A species is a name only whole, where the compiler would take it for one:
+    first on its <SPECIES> or <INITIAL> line, a term of an equation with or
+    without a coefficient (2 H2O, 2H2O), in a rate's [ ] or { }, the phase of
+    SI( ) and SR( ), a column of <DATA>. CO2 is not in CO2-, nor O2 in H2O2:
+    a charge written against a name is part of it. A parameter or a table is
+    a word -- a letter or _, then letters, digits and _ -- and never one in
+    the brackets a species stands in.
+  */
+  const WORD_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+  /** The text a line at a time: { line, section, header (a heading's words after its name, else null), code }. */
+  function textLines(text) {
+    const out = [];
+    let section = '';
+    String(text).split('\n').forEach((raw0, i) => {
+      const raw = raw0.endsWith('\r') ? raw0.slice(0, -1) : raw0;
+      const at = /(^|\s)#/.exec(raw);
+      const code = at ? raw.slice(0, at.index + at[1].length) : raw;
+      const head = /^<\s*([A-Za-z_]+)((?:\s+[^\s<>]+)*)\s*>$/.exec(code.trim());
+      if (head) section = head[1].toUpperCase();
+      out.push({ line: i + 1, section, header: head ? head[2].trim().split(/\s+/).filter(Boolean) : null, code });
+    });
+    return out;
+  }
+
+  /** The names a text gives: its species, from <SPECIES>; its parameters, from <PARAMETERS>; its tables. */
+  function namesOf(text) {
+    const species = new Set();
+    const parameters = new Set();
+    const tables = new Set();
+    for (const l of textLines(text)) {
+      if (l.header) {
+        if (l.section === 'TABLE' && l.header.length) tables.add(l.header[0]);
+        continue;
+      }
+      const first = l.code.trim().split(/[\s,;]+/)[0];
+      if (!first) continue;
+      if (l.section === 'SPECIES' && SPECIES_NAME.test(first)) species.add(first);
+      else if (l.section === 'PARAMETERS' && WORD_NAME.test(first)) parameters.add(first);
+    }
+    return { species, parameters, tables };
+  }
+
+  /**
+   * Whether a species can begin at code[i]: after a space, a bracket, a comma or an arrow; in SI( ), SR( ) and
+   * the other keys that take a species; or after a coefficient written against it, 2H2O, the number standing
+   * where a term begins.
+   */
+  function speciesStarts(code, i) {
+    if (i === 0) return true;
+    const c = code[i - 1];
+    if (/[\s[{,;=>]/.test(c)) return true;
+    if (c === '(') return /(?:^|[^A-Za-z0-9_])(?:SI|SR|la|share|p|a|sd)\s*\($/.test(code.slice(0, i));
+    if (!/[0-9.]/.test(c)) return false;
+    let k = i - 1;
+    while (k > 0 && /[0-9.]/.test(code[k - 1])) k -= 1;
+    return /^(?:\d+\.?\d*|\.\d+)$/.test(code.slice(k, i)) && (k === 0 || /[\s=>]/.test(code[k - 1]));
+  }
+
+  /** Where a species stands in a line's code, whole: [[start, end], ...]. */
+  function speciesPlaces(code, name) {
+    const out = [];
+    if (!name) return out;
+    for (let i = code.indexOf(name); i >= 0; i = code.indexOf(name, i + 1)) {
+      const end = i + name.length;
+      // A letter, a digit or a charge against its end makes it another name: CO2-, H2O2, UO2+2.
+      if (end < code.length && /[A-Za-z0-9_(+-]/.test(code[end])) continue;
+      if (speciesStarts(code, i)) out.push([i, end]);
+    }
+    return out;
+  }
+
+  /** Where a word -- a parameter, a table -- stands in a line's code, whole and outside [ ] and { }. */
+  function wordPlaces(code, name) {
+    const out = [];
+    if (!name) return out;
+    for (let i = code.indexOf(name); i >= 0; i = code.indexOf(name, i + 1)) {
+      const end = i + name.length;
+      if (end < code.length && /[A-Za-z0-9_]/.test(code[end])) continue;
+      if (i > 0 && /[A-Za-z0-9_.]/.test(code[i - 1])) continue;
+      let square = 0;
+      let curly = 0;
+      for (let k = 0; k < i; k += 1) {
+        const ch = code[k];
+        if (ch === '[') square += 1;
+        else if (ch === ']') square -= 1;
+        else if (ch === '{') curly += 1;
+        else if (ch === '}') curly -= 1;
+      }
+      if (square <= 0 && curly <= 0) out.push([i, end]);
+    }
+    return out;
+  }
+
+  /** Where a reaction line's equation ends: its first comma outside brackets, or the end of the line. */
+  function equationEnd(code) {
+    let depth = 0;
+    for (let k = 0; k < code.length; k += 1) {
+      const ch = code[k];
+      if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+      else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+      else if (ch === ',' && depth === 0) return k;
+    }
+    return code.length;
+  }
+
+  /** An equation's two sides, as parseReaction finds its arrow: { arrow, lhs, rhs }, <= turned round; or null. */
+  function sidesOf(eq) {
+    for (const arrow of ['<=>', '=>', '<=', '=']) {
+      const at = eq.indexOf(arrow);
+      if (at < 0) continue;
+      const a = eq.slice(0, at);
+      const b = eq.slice(at + arrow.length);
+      return arrow === '<=' ? { arrow, lhs: b, rhs: a } : { arrow, lhs: a, rhs: b };
+    }
+    return null;
+  }
+
+  /** A side's terms as [coefficient, name], read as parseSide reads them, nothing refused. */
+  function termsOf(side) {
+    const text = side.trim();
+    if (!text) return [];
+    return text.split(/\s\+\s/).map((t) => {
+      const m = /^(\d+(?:\.\d+)?)?\s*(.+)$/.exec(t.trim());
+      return m ? [m[1] ? Number(m[1]) : 1, m[2].trim()] : [0, ''];
+    });
+  }
+
+  /**
+   * Every line of a text that names a species, a parameter or a table (kind), and what it does there:
+   * { name, kind, places: [{ line, start, end }], roles: { role: [line, ...] } }, the places in the order of the
+   * text, a role's lines rising. A species' roles: listed (first on its <SPECIES> line), start (first on an
+   * <INITIAL> line), added (by a source, => X), made, usedUp, removed (by a sink, X =>), both (as many on either
+   * side), twoWay (in a reaction <=>), read (by the line's rate, past its equation), equilibrium, phase, output,
+   * data (a column of <DATA>) and other. A parameter's: set (first on a <PARAMETERS> line) and used. A table's:
+   * table (its heading) and used.
+   */
+  function usesOf(text, name, kind) {
+    const places = [];
+    const roles = {};
+    const add = (role, line) => {
+      const list = roles[role] || (roles[role] = []);
+      if (list[list.length - 1] !== line) list.push(line);
+    };
+    for (const { line, section, header, code } of textLines(text)) {
+      if (header && !(kind === 'table' && section === 'TABLE')) continue;
+      const found = kind === 'species' ? speciesPlaces(code, name) : wordPlaces(code, name);
+      if (!found.length) continue;
+      for (const [start, end] of found) places.push({ line, start, end });
+      if (kind === 'table') { add(header ? 'table' : 'used', line); continue; }
+      const lead = code.length - code.trimStart().length;
+      const first = found[0][0] === lead && code.slice(lead).split(/[\s,;]+/)[0] === name;
+      if (kind === 'parameter') { add(section === 'PARAMETERS' && first ? 'set' : 'used', line); continue; }
+      if (section === 'SPECIES') add(first ? 'listed' : 'other', line);
+      else if (section === 'INITIAL') add(first ? 'start' : 'other', line);
+      else if (section === 'REACTIONS') {
+        const cut = equationEnd(code);
+        const sides = sidesOf(code.slice(0, cut));
+        let term = false;
+        if (sides) {
+          const sum = (side) => termsOf(side).reduce((a, [c, n]) => (n === name ? a + c : a), 0);
+          const left = sum(sides.lhs);
+          const right = sum(sides.rhs);
+          if (left || right) {
+            term = true;
+            if (sides.arrow === '<=>') add('twoWay', line);
+            else if (!sides.lhs.trim()) add('added', line);
+            else if (!sides.rhs.trim()) add('removed', line);
+            else add(right > left ? 'made' : left > right ? 'usedUp' : 'both', line);
+          }
+        }
+        if (found.some(([s]) => s >= cut)) add('read', line);
+        if (!term && found.some(([s]) => s < cut)) add('other', line);
+      } else {
+        add({ EQUILIBRIUM: 'equilibrium', PHASES: 'phase', OUTPUT: 'output', DATA: 'data' }[section] || 'other', line);
+      }
+    }
+    return { name, kind, places, roles };
+  }
+
+  /**
+   * The name at a place in the text: the caret (start === end) on it or just after it, or a selection that is
+   * the name exactly, given the text's names (namesOf). A species before a parameter before a table, the longest
+   * where two would do. { name, kind } or null: on no name, in a comment, a selection over more than one line.
+   */
+  function nameAt(text, start, end, names) {
+    const s = String(text);
+    if (!(start >= 0) || !(end >= start)) return null;
+    const from = s.lastIndexOf('\n', start - 1) + 1;
+    let to = s.indexOf('\n', start);
+    if (to < 0) to = s.length;
+    if (end > to) return null;
+    let raw = s.slice(from, to);
+    if (raw.endsWith('\r')) raw = raw.slice(0, -1);
+    const at = /(^|\s)#/.exec(raw);
+    const code = at ? raw.slice(0, at.index + at[1].length) : raw;
+    const a = start - from;
+    const b = end - from;
+    if (b > code.length) return null;
+    const kinds = /^<.*>$/.test(code.trim()) ? [['table', names.tables]]
+      : [['species', names.species], ['parameter', names.parameters], ['table', names.tables]];
+    let best = null;
+    for (const [kind, set] of kinds) {
+      for (const name of set) {
+        if (!code.includes(name)) continue;
+        const found = kind === 'species' ? speciesPlaces(code, name) : wordPlaces(code, name);
+        for (const [p, q] of found) {
+          const hit = a === b ? p <= a && a <= q : p === a && q === b;
+          if (hit && (!best || q - p > best.len)) best = { name, kind, len: q - p };
+        }
+      }
+    }
+    return best ? { name: best.name, kind: best.kind } : null;
+  }
+
+  /* ======================================================================
      2a. Activity: the ionic strength, and what it does to the equilibria
      ====================================================================== */
 
@@ -14588,6 +14815,8 @@
     chargeOf, debyeHuckelAB, ehPerPe, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
     pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP, potentialRow,
     readSections, derivative, symmetricEigen, pca,
+    // Where a name is used, for the line under the model text.
+    namesOf, nameAt, usesOf,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
     SECTIONS, SETTINGS, readTime, elementsOf, formulaMass, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };

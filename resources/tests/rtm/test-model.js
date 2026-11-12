@@ -2584,6 +2584,14 @@ console.log('\n--- opening skbrtm databases ---');
     // The model counts in seconds, as skbrtm does; the page shows the run in the unit the script ran in.
     check('  the model in seconds, and the unit the script ran in handed to the page to show the run in: days',
       s.TIME_UNIT === 'second' && res.timeUnit === 'days', `${s.TIME_UNIT}, ${res.timeUnit}`);
+    // Without the script, TEND is a second and the note at the top says how to set it -- on one line, so that the
+    // lines under it keep the numbers they had.
+    const bare = RtmImport.convert(files.filter((f) => f.name !== 'run.py'));
+    const said = bare.text.split('\n').filter((l) => l.startsWith('# NOTE No script was opened'));
+    check('  without the script, TEND is a second, and the note says how to set it, in seconds or with a unit, in one line',
+      /^TEND = 1$/m.test(bare.text) && said.length === 1
+      && said[0] === '# NOTE No script was opened, so TEND is 1 s: set it, in seconds or as TEND = 1890 days.',
+      said.join(' / '));
     check('  and DIFFUSION the column: 6 power-law cells over 10 um, reservoir | neumann -- a Dirichlet end where '
       + 'something reacts is a reservoir, since the cell skbrtm holds there goes on reacting',
       s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'reservoir'
@@ -9957,6 +9965,133 @@ C2O4-2 + UO2+2 => U_site, r = k*[C2O4-2]*[UO2+2], k = 1
   let lowest = Infinity;
   for (const v of last(r)) lowest = Math.min(lowest, v);
   check('  without going negative', lowest >= -1e-20, `lowest concentration ${lowest.toExponential(2)}`);
+}
+{
+  /*
+    Where a name is used (namesOf, nameAt, usesOf), for the line under the
+    model text: read from the text as it stands, as the compiler reads it.
+    The model is ours, written to hold each kind of line once.
+  */
+  const text = [
+    '<SETTINGS>',                                              // 1
+    'MODE = batch',                                            // 2
+    'TEND = 10',                                               // 3
+    '',                                                        // 4
+    '<SPECIES>',                                               // 5
+    'A       1',                                               // 6
+    'B       0',                                               // 7
+    'AB      0',                                               // 8
+    'CO2     1e-3',                                            // 9
+    'CO2-    0',                                               // 10
+    'H2O     55.5   fixed',                                    // 11
+    'H2O2    0',                                               // 12
+    'O2      0',                                               // 13
+    'H+      1e-7',                                            // 14
+    'Cat     1e-6',                                            // 15
+    'Calcite 0.1    mineral   # its phase is below',           // 16
+    '',                                                        // 17
+    '<INITIAL>',                                               // 18
+    'B       all    start_b',                                  // 19
+    '',                                                        // 20
+    '<PARAMETERS>',                                            // 21
+    'start_b all    2*base',                                   // 22
+    'base    all    0.5',                                      // 23
+    'idle_p  all    1',                                        // 24
+    '',                                                        // 25
+    '<TABLE dose>',                                            // 26
+    '0   1',                                                   // 27
+    '10  2',                                                   // 28
+    '',                                                        // 29
+    '<REACTIONS>',                                             // 30
+    'A + B => AB, k = 1                 # A and B used up',    // 31
+    '2H2O => H2O2 + 2 H+, r = k*[H2O]*dose(t), k = 1e-3',      // 32
+    '=> A, r = 1e-9',                                          // 33
+    'AB =>, k = 0.1',                                          // 34
+    'A + Cat => B + Cat, r = k*[A]*[Cat], k = 2',              // 35
+    'CO2 <=> CO2-, kf = 1, kb = 2',                            // 36
+    'O2 <= H2O2, k = 3',                                       // 37
+    'B => AB, r = k*[B]*[CO2]*{H+}*SI(Calcite), k = 1',        // 38
+    '# A, B and Cat in a comment, which is no use',            // 39
+    '',                                                        // 40
+    '<PHASES>',                                                // 41
+    'Calcite <=> Ca+2 + CO3-2, logK = -8.48',                  // 42
+    '',                                                        // 43
+    '<OUTPUT>',                                                // 44
+    'ratio = [A]/[B]',                                         // 45
+    '',                                                        // 46
+    '<DATA>',                                                  // 47
+    'time  A  AB',                                             // 48
+    '0     1  0',                                              // 49
+  ].join('\n');
+  const names = RtmModel.namesOf(text);
+  check('where a name is used: the text\'s names, its species from <SPECIES>, its parameters, its table',
+    [...names.species].join(' ') === 'A B AB CO2 CO2- H2O H2O2 O2 H+ Cat Calcite'
+    && [...names.parameters].join(' ') === 'start_b base idle_p' && [...names.tables].join(' ') === 'dose',
+    `${[...names.species].join(' ')} | ${[...names.parameters].join(' ')} | ${[...names.tables].join(' ')}`);
+  const want = {
+    A: { listed: [6], usedUp: [31, 35], added: [33], read: [35], output: [45], data: [48] },
+    B: { listed: [7], start: [19], usedUp: [31, 38], made: [35], read: [38], output: [45] },
+    AB: { listed: [8], made: [31, 38], removed: [34], data: [48] },
+    Cat: { listed: [15], both: [35], read: [35] },
+    CO2: { listed: [9], twoWay: [36], read: [38] },
+    'CO2-': { listed: [10], twoWay: [36] },
+    H2O: { listed: [11], usedUp: [32], read: [32] },
+    H2O2: { listed: [12], made: [32], usedUp: [37] },
+    O2: { listed: [13], made: [37] },
+    'H+': { listed: [14], made: [32], read: [38] },
+    Calcite: { listed: [16], read: [38], phase: [42] },
+  };
+  const sorted = (o) => JSON.stringify(Object.keys(o).sort().map((k) => [k, o[k]]));
+  for (const [name, roles] of Object.entries(want)) {
+    const u = RtmModel.usesOf(text, name, 'species');
+    check(`  ${name}: ${Object.entries(roles).map(([r, l]) => `${r} ${l.join(', ')}`).join('; ')}`,
+      sorted(u.roles) === sorted(roles), JSON.stringify(u.roles));
+  }
+  // Each place the name itself, whole: CO2 not in CO2-, O2 not in H2O2, H2O behind its coefficient 2.
+  const lines = text.split('\n');
+  const placed = (name) => RtmModel.usesOf(text, name, 'species').places;
+  check('  each place is the name itself, whole: 2H2O\'s H2O after its 2, CO2 not in CO2-, O2 not in H2O2',
+    ['A', 'B', 'CO2', 'H2O', 'O2', 'H+', 'Calcite'].every((n) => placed(n).every((p) => lines[p.line - 1].slice(p.start, p.end) === n))
+    && JSON.stringify(placed('H2O').map((p) => [p.line, p.start])) === '[[11,0],[32,1],[32,28]]'
+    && placed('CO2').length === 3 && placed('O2').length === 2,
+    `H2O at ${JSON.stringify(placed('H2O').map((p) => [p.line, p.start]))}, CO2 ${placed('CO2').length} places, O2 ${placed('O2').length}`);
+  const para = (name) => RtmModel.usesOf(text, name, 'parameter').roles;
+  check('  a parameter set on its <PARAMETERS> line and used where it is read; one used nowhere set only',
+    sorted(para('start_b')) === sorted({ set: [22], used: [19] }) && sorted(para('base')) === sorted({ set: [23], used: [22] })
+    && sorted(para('idle_p')) === sorted({ set: [24] }),
+    `${JSON.stringify(para('start_b'))} ${JSON.stringify(para('base'))} ${JSON.stringify(para('idle_p'))}`);
+  const table = RtmModel.usesOf(text, 'dose', 'table');
+  check('  a table given at its heading and read by the rate that names it',
+    sorted(table.roles) === sorted({ table: [26], used: [32] }), JSON.stringify(table.roles));
+  // The name at the caret, or a selection that is the name exactly.
+  const offset = (line, col) => lines.slice(0, line - 1).reduce((a, l) => a + l.length + 1, 0) + col;
+  const at = (line, col, to = col) => {
+    const r = RtmModel.nameAt(text, offset(line, col), offset(line, to), names);
+    return r ? `${r.kind} ${r.name}` : 'none';
+  };
+  const cases = [
+    ['the caret before A', [31, 0], 'species A'],
+    ['just after it', [31, 1], 'species A'],
+    ['on the space between A and +', [31, 2], 'none'],
+    ['inside AB', [31, 10], 'species AB'],
+    ['AB selected', [31, 9, 11], 'species AB'],
+    ['the A of AB selected, not a name', [31, 9, 10], 'none'],
+    ['on the k of the line\'s own constant', [31, 13], 'none'],
+    ['in the line\'s comment', [31, 40], 'none'],
+    ['on the H of 2H2O', [32, 1], 'species H2O'],
+    ['inside H2O2, not O2', [37, 8], 'species H2O2'],
+    ['on start_b in <INITIAL>', [19, 18], 'parameter start_b'],
+    ['on the table\'s name in its heading', [26, 9], 'table dose'],
+    ['on the heading <REACTIONS>', [30, 3], 'none'],
+  ];
+  for (const [label, [line, col, to], expected] of cases) {
+    check(`  the name at the caret, ${label}: ${expected}`, at(line, col, to) === expected, at(line, col, to));
+  }
+  // The built-in model's UVIO2s+2, which the Help gives as its example.
+  const u = RtmModel.usesOf(RTM_DEFAULT_MODEL, 'UVIO2s+2', 'species');
+  check('  the built-in model\'s UVIO2s+2: listed on line 56, made on 181, 184, 188 and 191, used up and read on 182 and 187',
+    sorted(u.roles) === sorted({ listed: [56], made: [181, 184, 188, 191], usedUp: [182, 187], read: [182, 187] }),
+    JSON.stringify(u.roles));
 }
 
 /* ======================================================================

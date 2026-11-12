@@ -423,7 +423,8 @@
       settings.push(`TEND = ${fmt(script.span[1] - script.span[0])} ${script.unit}`);
     } else {
       settings.push('TEND = 1');
-      warnings.push(script ? 'The script\'s t_span could not be read; TEND is 1 s.' : 'No script was opened, so TEND is 1 s: set it, in seconds.');
+      warnings.push(script ? 'The script\'s t_span could not be read; TEND is 1 s.'
+        : 'No script was opened, so TEND is 1 s: set it, in seconds or as TEND = 1890 days.');
     }
     settings.push('TIME_UNIT = second');
 

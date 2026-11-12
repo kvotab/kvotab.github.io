@@ -643,14 +643,16 @@
   pointer-events: none;
 }
 .rtm-code-box.no-lines .rtm-code-lines { display: none; }
-/* Marked on a tint of the status line's own tone, in the text's colour: the warning's amber is too pale for text. */
-.rtm-code-lines .warn, .rtm-code-lines .error {
+/* Marked on a tint of the status line's own tone, in the text's colour: the warning's amber is too pale for text.
+   A line that names the name the cursor is on, on a grey one: a warning's or an error's tint is the one it keeps. */
+.rtm-code-lines .warn, .rtm-code-lines .error, .rtm-code-lines .use {
   color: var(--text-primary);
   font-weight: 600;
   border-radius: 3px;
   padding: 0 3px;
   margin-right: -3px;
 }
+.rtm-code-lines .use { background: color-mix(in srgb, var(--text-primary) 14%, transparent); }
 .rtm-code-lines .warn { background: color-mix(in srgb, var(--color-kvot-bright) 45%, transparent); }
 .rtm-code-lines .error { background: color-mix(in srgb, var(--accent-fill) 35%, transparent); }
 .rtm-code-box textarea,
@@ -759,6 +761,14 @@
 .rtm-listing tr.rtm-listing-group td { font-weight: 600; padding-top: 6px; }
 .rtm-listing td.rtm-listing-sp { padding-left: 14px; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
+
+/* The name the cursor is on and where it is used, under the text: two lines kept for it, so that the text box stays
+   where it is as the cursor goes from name to name. The cursor's own line, among the links, in bold. */
+.rtm-uses { margin: 8px 0 0; min-height: 3em; }
+.rtm-uses strong { color: var(--text-primary); font-weight: 600; }
+.rtm-uses .rtm-line-link.here { font-weight: 600; }
+/* And the name itself wherever it stands in the coloured copy of the text (rtm-ui.js markUses). */
+::highlight(rtm-use) { background-color: color-mix(in srgb, var(--text-primary) 16%, transparent); }
 
 /* The warnings under the model text, one a line. */
 .rtm-model-note { margin: 11px 0; padding: 0; list-style: none; }
