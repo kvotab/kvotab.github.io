@@ -2021,7 +2021,9 @@ Siderite <=> Fe+2 + CO3-2,             logK = -10.89
 
 
 def main():
-    examples = list(EXAMPLES)
+    # Each text opens with its title, the label the picker gives it, written ## as the panel's Model reads a title. Put
+    # here, where the texts are written out, so that an example made from another's text takes that text untitled.
+    examples = [dict(e, text=f"## {e['label']}\n{e['text']}") for e in EXAMPLES]
 
     body = ',\n'.join(
         '  ' + json.dumps({k: v for k, v in e.items()}, ensure_ascii=False, indent=2).replace('\n', '\n  ')

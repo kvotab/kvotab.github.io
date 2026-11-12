@@ -835,11 +835,12 @@ async def main():
             await page.ev("document.querySelector('#rtmAbout .rtm-about-more').click()")
             rob = await page.ev("""(() => { const a = document.getElementById('rtmAbout');
               return [a.hidden, [...a.children].map((c) => c.tagName).join(' '), a.querySelector('pre').textContent.split('\\n')[0],
-                a.children[0].textContent, document.getElementById('rtmFacts').textContent]; })()""")
-            check('a description with tables in it, folded after its first paragraph: More opens Robertson\'s reactions and '
-                  'its answer kept line for line, the prose in paragraphs; under it, what is solved', [robFolded, rob],
-                  ['P BUTTON', [False, 'P PRE P P PRE P BUTTON', 'A       -> B         k1 = 0.04',
-                   'Robertson\'s problem, the classic test of a stiff solver.',
+                a.children[0].textContent + ' | ' + a.children[1].textContent, document.getElementById('rtmFacts').textContent]; })()""")
+            check('a description with tables in it, its title the example\'s label, folded after its first paragraph: More '
+                  'opens Robertson\'s reactions and its answer kept line for line, the prose in paragraphs; under it, what is '
+                  'solved', [robFolded, rob],
+                  ['P P BUTTON', [False, 'P P PRE P P PRE P BUTTON', 'A       -> B         k1 = 0.04',
+                   'Robertson (1966), stiff kinetics | Robertson\'s problem, the classic test of a stiff solver.',
                    'A batch, one well-mixed water, run for 116 d.3 species and 3 reactions with a rate law.'
                    '3 equations to solve, with 8 non-zeros in their Jacobian.']])
             # A text of one's own: its title written ##; one long paragraph, folded after the sentences that fit in 200
