@@ -9147,6 +9147,25 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     + `${isoRefused.map((x) => `"${x}"`).join(' | ')}`);
 
   /*
+    WHAT THE HELP SAYS OF A RUN AND PHREEQC: a run, a diagram, a fit and the
+    rest are the page's own, PHREEQC never called while a run goes on. So
+    the run's worker loads no PHREEQC among its scripts, and its code calls
+    none.
+  */
+  {
+    const fs = require('fs');
+    const entry = fs.readFileSync(path.join(jsDir, 'rtm-worker-entry.js'), 'utf8');
+    const scripts = (/importScripts\(([\s\S]*?)\);/.exec(entry) || [, ''])[1].match(/'[^']+'/g) || [];
+    const worker = fs.readFileSync(path.join(jsDir, 'rtm-worker.js'), 'utf8');
+    const help = fs.readFileSync(path.join(jsDir, '..', '..', 'rtm.html'), 'utf8');
+    check('what the Help says of a run and PHREEQC stays so: the run\'s worker loads no PHREEQC among its scripts, and its '
+      + 'code calls none',
+    scripts.length >= 5 && scripts.every((x) => !/phreeqc/i.test(x)) && !/RtmPhreeqc|phreeqc\.js/.test(worker)
+      && /PHREEQC is never called while a run goes on\./.test(help),
+    `${scripts.length} scripts: ${scripts.join(', ')}`);
+  }
+
+  /*
     A FIT WEIGHTED by each value's standard deviation, sd(A): the decay
     measured with the same noise, each value given the deviation
     s d ln 10 that makes its residual's, in log10, s -- 0.01 and 0.02 by

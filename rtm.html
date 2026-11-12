@@ -1067,6 +1067,36 @@
             Uncertainty — sets it up in a box, with the button that does it at the box's right; what
             came of it is drawn under the box, with its own bar, once there is something to draw.</p>
 
+          <h3 id="help-page-and-phreeqc">The page and PHREEQC</h3>
+          <p>Everything the page works out, it works out itself from the model text: a run, a diagram, a
+            fit, a sweep and the uncertainty bands come from its own chemistry — the equilibria, the
+            activity coefficients, the minerals, exchangers, surfaces and gases — and its own solver,
+            the flow of the water and the chemistry solved together as one set of equations, whose
+            matrix the Jacobian tab draws. PHREEQC is never called while a run goes on.</p>
+          <p>PHREEQC itself, the U.S. Geological Survey's program, runs in the page too, at two points
+            either side of a run, with the model text between them:</p>
+          <ul>
+            <li>Before a run, <em>From PHREEQC…</em> on the Model tab. A water described in PHREEQC's
+              own input is worked out by PHREEQC with its database, and <em>Write the model</em> copies
+              the result into the model text: each species and its amount, each reaction with the
+              database's constant and how it goes with the temperature, and what the activity
+              coefficients need. The text then holds everything a run needs, and the database is not
+              read again.</li>
+            <li>After a run, the <em>PHREEQC</em> tab. The waters the run stored are given to PHREEQC,
+              which speciates them with its database: a second reckoning of the pH and of the saturation
+              indices, which minerals would precipitate where and when, and inverse models between
+              waters of the run.</li>
+          </ul>
+          <p>The page comes with one database, <code>phreeqc.dat</code>. <em>Database</em>, in the panel
+            and on the PHREEQC tab alike, opens any other from your own files — <code>llnl.dat</code>,
+            <code>wateq4f.dat</code>, <code>minteq.v4.dat</code>, <code>sit.dat</code>,
+            <code>pitzer.dat</code> or a project's own — for the visit. A database matters only at those
+            two points. A model written from <code>llnl.dat</code> carries <code>llnl.dat</code>'s
+            constants in its text, and choosing another database afterwards does not change it: write
+            the model again for that. Read a run through PHREEQC with the database its model was
+            written from; with another, what differs is the databases, not the run. <em>PHREEQC in the
+            page</em>, below, has the whole of it.</p>
+
           <h3 id="help-model-text">The model text</h3>
           <p>Sixteen sections, of which two are needed: <code>&lt;SPECIES&gt;</code> and
             <code>&lt;REACTIONS&gt;</code>, and any number of named tables,
@@ -3244,11 +3274,13 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             <code>matrix_written</code> says so when that happens, and the water is always there.</p>
 
           <h3 id="help-phreeqc">PHREEQC in the page</h3>
-          <p>PHREEQC does what this page does not. It has a thermodynamic database, activity
-            coefficients, ion pairs, minerals and saturation, and it speciates a water from its
-            analysis. This page instead integrates stiff networks of reactions, with transport, in one
-            implicit system. The two are joined both ways here. A water goes from PHREEQC into the
-            model, and a run goes back through PHREEQC to be read. PHREEQC itself runs in the page: the
+          <p>PHREEQC brings what the page does not have of its own: a thermodynamic database — the species,
+            their reactions and constants, the phases — and a water made from its analysis as a
+            laboratory reports it, in mg/L, as an alkalinity, at charge balance. The page integrates the
+            reactions, with transport, in one implicit system, working out its equilibria, activity
+            coefficients, minerals and the rest itself from the model text. The two are joined both ways
+            here. A water goes from PHREEQC into the model, and a run goes back through PHREEQC to be
+            read. PHREEQC itself runs in the page: the
             U.S. Geological Survey's program, compiled to run in the browser. Nothing is uploaded. It is
             fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.</p>
 
