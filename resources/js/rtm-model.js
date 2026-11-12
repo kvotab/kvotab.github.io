@@ -2062,6 +2062,80 @@
     return best ? { name: best.name, kind: best.kind } : null;
   }
 
+  /*
+    WHAT HAS CHANGED in a text since it was opened: its lines against the
+    text as opened, by the shortest edit -- Myers' O(ND) difference, the lines
+    the two begin and end with set aside first, so that a few lines changed in
+    a long text cost a few steps. Past CHANGES_MAX steps the texts are taken
+    to differ throughout the part between, which is then one change.
+  */
+  const CHANGES_MAX = 2000;
+
+  /**
+   * The changes from one text to another, in order: [{ from, was, at, now }], `was` the lines of the first from
+   * its line `from` and `now` those of the second from its line `at` (1-based); a line put in has `was` empty, a
+   * line taken out `now` empty, `at` then the line it would have been.
+   */
+  function lineChanges(before, after) {
+    const a = String(before).split('\n');
+    const b = String(after).split('\n');
+    let head = 0;
+    while (head < a.length && head < b.length && a[head] === b[head]) head += 1;
+    let tail = 0;
+    while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail += 1;
+    const A = a.slice(head, a.length - tail);
+    const B = b.slice(head, b.length - tail);
+    const n = A.length;
+    const m = B.length;
+    if (!n && !m) return [];
+    const whole = [{ from: head + 1, was: A, at: head + 1, now: B }];
+    if (!n || !m) return whole;
+    // Forward: v[k] the furthest x on diagonal k = x - y, each step's v kept (k from -d-1 to d+1) for the way back.
+    const max = Math.min(n + m, CHANGES_MAX);
+    const off = max + 1;
+    const v = new Int32Array(2 * max + 3);
+    const trace = [];
+    let done = false;
+    for (let d = 0; d <= max && !done; d += 1) {
+      trace.push(v.slice(off - d - 1, off + d + 2));
+      for (let k = -d; k <= d; k += 2) {
+        let x = k === -d || (k !== d && v[off + k - 1] < v[off + k + 1]) ? v[off + k + 1] : v[off + k - 1] + 1;
+        let y = x - k;
+        while (x < n && y < m && A[x] === B[y]) { x += 1; y += 1; }
+        v[off + k] = x;
+        if (x >= n && y >= m) { done = true; break; }
+      }
+    }
+    if (!done) return whole;
+    // Back from the end: each step a line taken out or put in, and the lines the two share before it.
+    const ops = [];
+    let x = n;
+    let y = m;
+    for (let d = trace.length - 1; d >= 0; d -= 1) {
+      const t = trace[d];
+      const at = (k) => t[k + d + 1];
+      const k = x - y;
+      const prev = k === -d || (k !== d && at(k - 1) < at(k + 1)) ? k + 1 : k - 1;
+      const px = at(prev);
+      const py = px - prev;
+      while (x > px && y > py) { ops.push('='); x -= 1; y -= 1; }
+      if (d > 0) ops.push(x === px ? '+' : '-');
+      x = px;
+      y = py;
+    }
+    ops.reverse();
+    const out = [];
+    let cur = null;
+    let i = 0;
+    let j = 0;
+    for (const op of ops) {
+      if (op === '=') { cur = null; i += 1; j += 1; continue; }
+      if (!cur) { cur = { from: head + i + 1, was: [], at: head + j + 1, now: [] }; out.push(cur); }
+      if (op === '-') { cur.was.push(A[i]); i += 1; } else { cur.now.push(B[j]); j += 1; }
+    }
+    return out;
+  }
+
   /* ======================================================================
      2a. Activity: the ionic strength, and what it does to the equilibria
      ====================================================================== */
@@ -14815,8 +14889,8 @@
     chargeOf, debyeHuckelAB, ehPerPe, activityModel, activityAt, prState, prAt, logKAt, binaryAt,
     pitzerJ: pzJ, pitzerEtheta: pzEtheta, pitzerParam, molarVolumes, lnKAtP, potentialRow,
     readSections, derivative, symmetricEigen, pca,
-    // Where a name is used, for the line under the model text.
-    namesOf, nameAt, usesOf,
+    // Where a name is used, and what has changed since the text was opened, for the lines under the model text.
+    namesOf, nameAt, usesOf, lineChanges,
     // The vocabulary, for the editor's syntax colouring: what is coloured as
     // meaning something is exactly what means something here.
     SECTIONS, SETTINGS, readTime, elementsOf, formulaMass, ATOMIC_WEIGHTS, readData, withValue, valueIn, tunables, waterViscosity };

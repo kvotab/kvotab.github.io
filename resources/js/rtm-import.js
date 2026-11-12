@@ -59,14 +59,17 @@
     let cur = null;
     let indices = [];
     let seen = {};
-    for (const raw of String(text).split(/\r?\n/)) {
+    const rows = String(text).split(/\r?\n/);
+    for (let n = 0; n < rows.length; n += 1) {
+      const raw = rows[n];
       let line = raw.trim();
       if (line.includes('#')) line = line.split('#')[0].trim();
       if (!line) continue;
       const low = line.toLowerCase();
       const parts = line.split(';').map((x) => x.trim());
       if (KEYS.some((k) => low.startsWith(k))) {
-        cur = { kind: parts[0].toLowerCase(), name: parts[1] || '', values: {}, file };
+        // at: the line of the file each value came from, an attribute's in the order of its values.
+        cur = { kind: parts[0].toLowerCase(), name: parts[1] || '', values: {}, at: {}, file };
         blocks.push(cur);
         seen = {};
         continue;
@@ -89,6 +92,7 @@
           const v = cur.values[a];
           cur.values[a] = (Array.isArray(v) ? v : [v]).concat([value[k]]);
         }
+        (cur.at[a] || (cur.at[a] = [])).push(n + 1);
       });
     }
     return { blocks, dropped };
@@ -304,7 +308,7 @@
       const ex = list(b.values.expression);
       const ar = list(b.values.arguments);
       st.forEach((s, k) => {
-        rxRows.push({ st: s, ex: ex[k] || '', ar: ar[k] || '', file: b.file });
+        rxRows.push({ st: s, ex: ex[k] || '', ar: ar[k] || '', file: b.file, at: (b.at.stoichiometry || [])[k] || null });
         for (const side of sides(s)) for (const m of terms(side)) meet(m[2]);
       });
     }
@@ -313,7 +317,10 @@
       const sp = list(b.values.species);
       const ex = list(b.values.expression);
       const ar = list(b.values.arguments);
-      sp.forEach((s, k) => { meet(s); srcRows.push({ sp: s, ex: ex[k] || '', ar: ar[k] || '', file: b.file }); });
+      sp.forEach((s, k) => {
+        meet(s);
+        srcRows.push({ sp: s, ex: ex[k] || '', ar: ar[k] || '', file: b.file, at: (b.at.species || [])[k] || null });
+      });
     }
     // Whether anything reacts or is made. skbrtm's Dirichlet cell is held against diffusion only, so where
     // something does, the water held at that end changes as it runs: a reservoir here (see the column).
@@ -676,8 +683,10 @@
       };
     }
 
-    // ---- the reactions and the sources ----
+    // ---- the reactions and the sources, each line with the line of its file it came from (or null) ----
     const rxLines = [];
+    const rxFrom = [];
+    const from = (row) => (row && row.at ? { file: row.file, at: row.at } : null);
     for (const row of rxRows) {
       const [l, r] = sides(row.st);
       const lhs = terms(l || '').map((m) => `${m[1] ? `${m[1]} ` : ''}${nameOf(m[2])}`).join(' + ');
@@ -693,17 +702,21 @@
       }
       if ([...net.values()].every((c) => Math.abs(c) < 1e-15)) {
         rxLines.push(`# ${row.st.trim()} ; ${row.ex.trim()} ; ${row.ar.trim()}   (changes nothing; it only lists the species)`);
+        rxFrom.push(from(row));
         continue;
       }
       const L = law(row.ex, row.ar, `"${row.st.trim()}"`);
-      if (L.note) rxLines.push(`# NOTE ${L.note}.`);
+      if (L.note) { rxLines.push(`# NOTE ${L.note}.`); rxFrom.push(null); }
       rxLines.push(`${lhs} => ${rhs}, r = ${L.text}${L.args.length ? `, ${L.args.join(', ')}` : ''}`);
+      rxFrom.push(from(row));
     }
     const srcLines = [];
+    const srcFrom = [];
     for (const row of srcRows) {
       const L = law(row.ex, row.ar, `the source of ${row.sp}`);
-      if (L.note) srcLines.push(`# NOTE ${L.note}.`);
+      if (L.note) { srcLines.push(`# NOTE ${L.note}.`); srcFrom.push(null); }
       srcLines.push(`=> ${nameOf(row.sp)}, r = ${L.text}${L.args.length ? `, ${L.args.join(', ')}` : ''}`);
+      srcFrom.push(from(row));
     }
 
     // ---- the text ----
@@ -785,10 +798,24 @@
     for (const t of tables) plines.push(`${t.name} all ${t.name}(x${lo ? ` + ${lo}` : ''})`);
     for (const [k, v] of extraParams) plines.push(`${k} all ${v}`);
     if (plines.length) out.push('', '<PARAMETERS>', ...plines);
-    out.push('', '<REACTIONS>', ...rxLines);
-    if (srcLines.length) out.push('', '# Sources: skbrtm\'s SOURCETERM blocks', ...srcLines);
+    /*
+      Where each reaction and source came from: the line of the model text,
+      the file and the line of it -- for the page to say, of a line changed,
+      where in skbrtm's own files the same change belongs.
+    */
+    const origins = [];
+    const mark = (lines, froms) => {
+      froms.forEach((f, j) => { if (f) origins.push({ line: out.length + j + 1, file: f.file, at: f.at }); });
+      out.push(...lines);
+    };
+    out.push('', '<REACTIONS>');
+    mark(rxLines, rxFrom);
+    if (srcLines.length) {
+      out.push('', '# Sources: skbrtm\'s SOURCETERM blocks');
+      mark(srcLines, srcFrom);
+    }
     // The unit the script ran in, for the page to show the run in: the model itself is in seconds, as skbrtm counts.
-    return { text: `${out.join('\n')}\n`, notes, warnings, timeUnit: script && script.tend ? script.unit : null };
+    return { text: `${out.join('\n')}\n`, notes, warnings, timeUnit: script && script.tend ? script.unit : null, origins };
   }
 
   return { convert, isDatabase, readBlocks, readScript, pyLiteral };

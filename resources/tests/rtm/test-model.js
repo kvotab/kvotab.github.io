@@ -2592,6 +2592,16 @@ console.log('\n--- opening skbrtm databases ---');
       /^TEND = 1$/m.test(bare.text) && said.length === 1
       && said[0] === '# NOTE No script was opened, so TEND is 1 s: set it, in seconds or as TEND = 1890 days.',
       said.join(' / '));
+    // Each reaction and source with the line of its file it came from -- for the list of what has changed under the
+    // text -- the line that changes nothing, a comment here, too; the NOTE before skbrtm's (kr/kh) from no file.
+    const tl = res.text.split('\n');
+    const og = (file, at) => { const o = res.origins.find((x) => x.file === file && x.at === at); return o ? tl[o.line - 1] : ''; };
+    check('  each reaction and source with the line of its file it came from: reaction.in lines 3 to 6, sourceterm.in line 4',
+      res.origins.length === 5 && og('reaction.in', 3).startsWith('H2O2 + Site => Ox')
+      && og('reaction.in', 4).startsWith('Fe+2 + 0.25 O2 => Fe(OH)3') && og('reaction.in', 5).startsWith('Red => Ox')
+      && og('reaction.in', 6).startsWith('# Tr = Tr') && og('sourceterm.in', 4).startsWith('=> H2O2')
+      && !res.origins.some((o) => tl[o.line - 1].startsWith('# NOTE')),
+      res.origins.map((o) => `${o.file}:${o.at} line ${o.line}`).join(', '));
     check('  and DIFFUSION the column: 6 power-law cells over 10 um, reservoir | neumann -- a Dirichlet end where '
       + 'something reacts is a reservoir, since the cell skbrtm holds there goes on reacting',
       s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'reservoir'
@@ -10092,6 +10102,63 @@ C2O4-2 + UO2+2 => U_site, r = k*[C2O4-2]*[UO2+2], k = 1
   check('  the built-in model\'s UVIO2s+2: listed on line 56, made on 181, 184, 188 and 191, used up and read on 182 and 187',
     sorted(u.roles) === sorted({ listed: [56], made: [181, 184, 188, 191], usedUp: [182, 187], read: [182, 187] }),
     JSON.stringify(u.roles));
+}
+{
+  /*
+    What has changed since the text was opened (lineChanges): the changes
+    from one text to the next, each the lines it was and is and where; the
+    fewest lines changed -- as many kept as the two have in common, in
+    order -- checked against the longest common subsequence worked out the
+    slow way, for random pairs of short texts over a few letters.
+  */
+  const L = (...x) => x.join('\n');
+  const cases = [
+    ['nothing changed', L('a', 'b', 'c'), L('a', 'b', 'c'), []],
+    ['a line changed', L('a', 'b', 'c', 'd'), L('a', 'B', 'c', 'd'), [{ from: 2, was: ['b'], at: 2, now: ['B'] }]],
+    ['a line added', L('a', 'b', 'c'), L('a', 'b', 'x', 'c'), [{ from: 3, was: [], at: 3, now: ['x'] }]],
+    ['a line removed', L('a', 'b', 'c'), L('a', 'c'), [{ from: 2, was: ['b'], at: 2, now: [] }]],
+    ['two apart, the second a line later', L('a', 'b', 'c', 'd', 'e'), L('A', 'b', 'c', 'x', 'd', 'E'),
+      [{ from: 1, was: ['a'], at: 1, now: ['A'] }, { from: 4, was: [], at: 4, now: ['x'] }, { from: 5, was: ['e'], at: 6, now: ['E'] }]],
+  ];
+  for (const [label, a, b, want] of cases) {
+    const got = RtmModel.lineChanges(a, b);
+    check(`what has changed: ${label}`, JSON.stringify(got) === JSON.stringify(want), JSON.stringify(got));
+  }
+  let seed = 11;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed / 2147483648; };
+  const common = (a, b) => {
+    const t = Array.from({ length: a.length + 1 }, () => new Array(b.length + 1).fill(0));
+    for (let i = 1; i <= a.length; i += 1) {
+      for (let j = 1; j <= b.length; j += 1) t[i][j] = a[i - 1] === b[j - 1] ? t[i - 1][j - 1] + 1 : Math.max(t[i - 1][j], t[i][j - 1]);
+    }
+    return t[a.length][b.length];
+  };
+  let wrong = 0;
+  for (let c = 0; c < 1000; c += 1) {
+    const k = 1 + Math.floor(rnd() * 4);
+    const a = Array.from({ length: 1 + Math.floor(rnd() * 12) }, () => 'abcd'[Math.floor(rnd() * k)]);
+    const b = Array.from({ length: 1 + Math.floor(rnd() * 12) }, () => 'abcd'[Math.floor(rnd() * k)]);
+    const hunks = RtmModel.lineChanges(a.join('\n'), b.join('\n'));
+    const out = [];
+    let i = 0;
+    for (const h of hunks) {
+      while (i < h.from - 1) out.push(a[i++]);
+      i += h.was.length;
+      out.push(...h.now);
+      if (h.now.length && b.slice(h.at - 1, h.at - 1 + h.now.length).join() !== h.now.join()) wrong += 1;
+    }
+    while (i < a.length) out.push(a[i++]);
+    const kept = a.length - hunks.reduce((s, h) => s + h.was.length, 0);
+    if (out.join('\n') !== b.join('\n') || kept !== common(a, b)) wrong += 1;
+  }
+  check('  1000 random pairs: the changes make the one text into the other, each where it says, as few lines changed '
+    + 'as can be', wrong === 0, `${wrong} wrong`);
+  const long = Array.from({ length: 3000 }, (_, i) => `line ${i}`);
+  const edited = long.map((l, i) => (i % 500 === 7 ? `${l} changed` : l));
+  const far = RtmModel.lineChanges(long.join('\n'), edited.join('\n'));
+  check('  3000 lines, six changed far apart: six changes, each its own line',
+    far.length === 6 && far.every((h, n) => h.from === 8 + 500 * n && h.at === h.from && h.was.length === 1 && h.now.length === 1),
+    far.map((h) => h.from).join(', '));
 }
 
 /* ======================================================================

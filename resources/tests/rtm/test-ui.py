@@ -4714,6 +4714,56 @@ async def main():
                   'Save… opens the dialog and the file is written; its Cancel saves nothing',
                   [ready, went[0][:1] and [went[0][0][0]], went[1], went[3], stopped[0], stopped[1], stopped[3]],
                   [[True, 'mine.rtm', 0], ['mine.rtm'], [['mine.rtm', True]], False, [], [], False])
+            # --- what has changed since the text was opened ---------------------
+            # The set.zip opened above, its text as opened: no line under the text. Its reaction's 1e-15 typed as 2e-15:
+            # "1 line changed since you opened set.zip", and Show lists it -- the line it is on, a link to it, the line of
+            # reaction.in it came from, what it was and is with the 1 and the 2 marked. Copy the list puts it on the
+            # clipboard as plain text. An example chosen, nothing has changed from it; the set's text brought back, it is
+            # compared again with the set as opened. Typed back as it was, the line goes.
+            CHANGES = """(() => { const c = document.getElementById('rtmChanges');
+              const list = document.getElementById('rtmChangesList');
+              return { shown: !c.hidden, said: document.getElementById('rtmChangesSaid').textContent,
+                open: !list.hidden, heads: [...list.querySelectorAll('.rtm-change-head')].map((p) => p.textContent),
+                links: [...list.querySelectorAll('.rtm-line-link')].map((b) => b.dataset.line),
+                lines: [...list.querySelectorAll('.rtm-change-line')].map((r) => [r.firstElementChild.textContent,
+                  (r.querySelector('.rtm-change-out, .rtm-change-in') || {}).textContent]) }; })()"""
+            before = await page.ev(CHANGES)
+            row = await page.ev("document.getElementById('rtmText').value.split('\\n').findIndex((l) => l.startsWith('A => B')) + 1")
+            as_opened = await page.ev("document.getElementById('rtmText').value")
+            await set_text(page, as_opened.replace('*1e-15', '*2e-15'))
+            await settle(page, "!document.getElementById('rtmChanges').hidden", True, tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmChangesToggle').click()")
+            await asyncio.sleep(0.2)
+            shown = await page.ev(CHANGES)
+            await page.ev("""(() => { window.__copied = null;
+              navigator.clipboard.writeText = async (t) => { window.__copied = t; }; })()""")
+            await page.ev("document.getElementById('rtmChangesCopy').click()")
+            await asyncio.sleep(0.3)
+            copied = await page.ev("window.__copied")
+            check('what has changed: none as opened; a reaction\'s constant changed, the line under the text says so; Show '
+                  'lists it -- the line it is on, a link to it, the line of reaction.in it came from, the 1 and the 2 marked',
+                  [before['shown'], shown['said'], shown['open'], shown['heads'], shown['links'], shown['lines']],
+                  [False, '1 line changed since you opened set.zip.', True, [f'Line {row} · reaction.in, line 3'], [str(row)],
+                   [['was', '1'], ['now', '2']]])
+            check('  Copy the list puts it on the clipboard as plain text, for a note or a report',
+                  [(copied or '').split('\n')[:3], (copied or '').count('  was: '), (copied or '').count('  now: '),
+                   await page.ev("document.getElementById('rtmStatus').textContent")],
+                  [['Changes to the model text from set.zip as opened:', '', f'Line {row} (reaction.in, line 3)'], 1, 1,
+                   'The list of changes is on the clipboard: 1 line changed.'])
+            await page.ev("""(() => { const s = document.getElementById('rtmExample'); s.value = 'ab';
+              s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmChanges').hidden && !document.getElementById('rtmAsideNote').hidden",
+                         True, tries=40, pause=0.25)
+            example = await page.ev(CHANGES)
+            await page.ev("document.getElementById('rtmBringBack').click()")
+            await settle(page, "!document.getElementById('rtmChanges').hidden", True, tries=40, pause=0.25)
+            back = await page.ev(CHANGES)
+            await set_text(page, as_opened)
+            await settle(page, "document.getElementById('rtmChanges').hidden", True, tries=40, pause=0.25)
+            check('  an example chosen, nothing changed from it; the set\'s text brought back, compared with the set as opened '
+                  'again; typed back as it was, the line gone',
+                  [example['shown'], back['said'], await page.ev("document.getElementById('rtmChanges').hidden")],
+                  [False, '1 line changed since you opened set.zip.', True])
             with tempfile.TemporaryDirectory() as tmp:
                 zp = os.path.join(tmp, 'model.zip')
                 with open(zp, 'wb') as f:

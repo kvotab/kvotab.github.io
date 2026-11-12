@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111s';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111t';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -640,6 +640,8 @@
 
   async function compile() {
     saveState();
+    // What has changed since the text was opened, as of this text.
+    showChanges();
     const note = state.textNote ? ` ${state.textNote}` : '';
     state.textNote = null;
     try {
@@ -10606,7 +10608,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
     'pane:model': () => ({
       kicker: 'Tab', title: 'Model',
-      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text. A line a warning or an error names is a link to it: a click goes to that line and selects it. Put the cursor on a name and the line under the text says where it is used: listed, made, used up, read by a rate, each line a link.',
+      lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text. A line a warning or an error names is a link to it: a click goes to that line and selects it. Put the cursor on a name and the line under the text says where it is used: listed, made, used up, read by a rate, each line a link. Once the text has changed, a line under it says how much since it was opened, and Show lists each change, what it was and what it is, with the line of skbrtm’s file it came from for a set of those.',
       facts: [
         ['Examples', `${EXAMPLES.length} in ${new Set(EXAMPLES.map((e) => e.group)).size} groups`],
         ['Open… or a drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
@@ -10839,6 +10841,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     const about = $('rtmExampleAbout');
     if (!e) { about.hidden = true; $('rtmExample').value = ''; return; }
     const kept = putAside(e.text);
+    setOpened({ text: e.text, kind: 'example', name: e.label });
     state.text = e.text;
     state.modelName = `${e.id}.rtm`;
     $('rtmText').value = e.text;
@@ -11308,7 +11311,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function putAside(next) {
     const text = state.text;
     if (text === next || !worthKeeping(text)) return null;
-    const entry = { text, title: asideTitle(text), at: Date.now() };
+    // With what it was opened as, for the list of what has changed when it comes back.
+    const entry = { text, title: asideTitle(text), at: Date.now(), opened };
     aside = [entry, ...aside.filter((x) => x.text !== text)].slice(0, ASIDE_MAX);
     saveAside();
     renderExamples();
@@ -11346,8 +11350,212 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     anotherModel();
     renderBeside();
     showAside(kept, entry);
+    // Compared again with what it was opened as, where that came with it.
+    setOpened(entry.opened || { text: entry.text, kind: 'back', name: entry.title });
     saveState();
     compile();
+  }
+
+  /* ---------------------------------------------------------------------
+     What has changed since the text was opened
+     --------------------------------------------------------------------- */
+  /*
+    THE TEXT AS OPENED -- from a file, as an example, the built-in model, the
+    model PHREEQC wrote -- kept, and a line under the text saying how much
+    has changed since: "1 line changed since you opened set.zip". Show lists
+    each change: the line it is on now, a link to it, what it was and what
+    it is, the part that changed marked. Copy the list puts the list on the
+    clipboard as plain text. For skbrtm's files a change names the file and
+    line it came from (RtmImport's origins), where the same change belongs
+    in the set itself. It is kept between visits under a key of its own, and
+    with a text put aside, so that a text brought back is compared with what
+    it was opened as. The fitted values put in are a change, not a new text.
+  */
+  const OPENED_KEY = 'kvot-rtm-opened-v1';
+  let opened = null;          // { text, kind, name, at, origins }
+  let changesOpen = false;    // the list shown
+  let changesNow = [];        // RtmModel.lineChanges from opened.text to the text
+
+  function loadOpened() {
+    try {
+      const o = JSON.parse(localStorage.getItem(OPENED_KEY) || 'null');
+      if (o && typeof o.text === 'string' && typeof o.kind === 'string') opened = o;
+    } catch (e) { opened = null; }
+  }
+
+  /** The text as opened from now on, kept between visits; the list put away. */
+  function setOpened(o) {
+    opened = { text: o.text, kind: o.kind, name: o.name || '', at: o.at || Date.now(), origins: o.origins || null };
+    changesOpen = false;
+    try { localStorage.setItem(OPENED_KEY, JSON.stringify(opened)); } catch (e) { /* kept for this visit */ }
+  }
+
+  /** What the text is compared with, said two ways: after "1 line changed", and as the copied list's heading. */
+  function openedSaid() {
+    const { kind, name, at } = opened;
+    if (kind === 'file') return [`since you opened ${name}`, `${name} as opened`];
+    if (kind === 'example') return [`since you chose the example “${name}”`, `the example “${name}”`];
+    if (kind === 'reset') return ['since you reset it to the built-in model', 'the built-in model'];
+    if (kind === 'builtin') return ['from the built-in model', 'the built-in model'];
+    if (kind === 'phreeqc') return ['since PHREEQC wrote it', 'the model PHREEQC wrote'];
+    if (kind === 'back') return [`since “${name}” came back`, `“${name}” as it came back`];
+    return [`since the page was opened, ${asideWhen(at)}`, `the text when the page was opened, ${asideWhen(at)}`];
+  }
+
+  /** "1 line changed", "2 lines changed, 1 added and 1 removed". */
+  function changesCount(hunks) {
+    let changed = 0;
+    let added = 0;
+    let removed = 0;
+    for (const h of hunks) {
+      const c = Math.min(h.was.length, h.now.length);
+      changed += c;
+      added += h.now.length - c;
+      removed += h.was.length - c;
+    }
+    const lines = (k) => `${k} line${k === 1 ? '' : 's'}`;
+    const parts = [];
+    if (changed) parts.push(`${lines(changed)} changed`);
+    if (added) parts.push(`${parts.length ? added : lines(added)} added`);
+    if (removed) parts.push(`${parts.length ? removed : lines(removed)} removed`);
+    return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+  }
+
+  /** Where a change stands now: "Line 169", "Lines 12–14", "Line 30, added", "Removed after line 7". */
+  function changeWhere(h) {
+    if (!h.now.length) return h.at > 1 ? ['Removed after line', h.at - 1] : ['Removed at the top', 0];
+    const last = h.at + h.now.length - 1;
+    return [h.now.length === 1 ? `Line ${h.at}` : `Lines ${h.at}–${last}`, h.at, h.was.length ? '' : ', added'];
+  }
+
+  /** Where in skbrtm's files the lines a change replaced came from: "reaction.in, line 119"; '' where none did. */
+  function changeOrigin(h) {
+    if (!opened || !opened.origins || !h.was.length) return '';
+    const byFile = new Map();
+    for (const o of opened.origins) {
+      if (o.line < h.from || o.line >= h.from + h.was.length) continue;
+      if (!byFile.has(o.file)) byFile.set(o.file, []);
+      byFile.get(o.file).push(o.at);
+    }
+    const runs = (ats) => {
+      const out = [];
+      for (const at of ats) {
+        const last = out[out.length - 1];
+        if (last && at === last[1] + 1) last[1] = at; else out.push([at, at]);
+      }
+      return out.map(([a, b]) => (a === b ? String(a) : `${a}–${b}`)).join(', ');
+    };
+    return [...byFile].map(([file, ats]) => `${file}, line${ats.length === 1 ? '' : 's'} ${runs(ats)}`).join('; ');
+  }
+
+  /** A line of a change, the part that changed marked: was the part taken out, now the part put in. */
+  function changeLine(label, text, other) {
+    const row = document.createElement('div');
+    row.className = 'rtm-change-line';
+    const tag = document.createElement('span');
+    tag.className = 'rtm-change-tag';
+    tag.textContent = label;
+    const code = document.createElement('code');
+    if (!text) {
+      code.className = 'rtm-change-empty';
+      code.textContent = '(an empty line)';
+    } else {
+      // The two lines' common start and end, the part between marked; a line with no other, all of it.
+      let p = 0;
+      let s = 0;
+      if (other !== null) {
+        while (p < text.length && p < other.length && text[p] === other[p]) p += 1;
+        while (s < text.length - p && s < other.length - p && text[text.length - 1 - s] === other[other.length - 1 - s]) s += 1;
+      }
+      const mark = document.createElement('span');
+      mark.className = label === 'was' ? 'rtm-change-out' : 'rtm-change-in';
+      mark.textContent = text.slice(p, text.length - s);
+      code.append(text.slice(0, p), mark, text.slice(text.length - s));
+    }
+    row.append(tag, code);
+    return row;
+  }
+
+  function changeEl(h) {
+    const el = document.createElement('div');
+    el.className = 'rtm-change';
+    const head = document.createElement('p');
+    head.className = 'rtm-change-head';
+    const [said, line, more] = changeWhere(h);
+    if (line && !h.now.length) {
+      head.append(`${said} `);
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rtm-line-link';
+      b.dataset.onClick = 'rtm:goLine';
+      b.dataset.line = String(line);
+      b.textContent = String(line);
+      head.append(b);
+    } else if (line) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'rtm-line-link';
+      b.dataset.onClick = 'rtm:goLine';
+      b.dataset.line = String(line);
+      b.textContent = said;
+      head.append(b, more || '');
+    } else head.append(said);
+    const where = changeOrigin(h);
+    if (where) head.append(` · ${where}`);
+    el.append(head);
+    const pairs = Math.min(h.was.length, h.now.length);
+    h.was.forEach((t, i) => el.append(changeLine('was', t, i < pairs ? h.now[i] : null)));
+    h.now.forEach((t, i) => el.append(changeLine('now', t, i < pairs ? h.was[i] : null)));
+    return el;
+  }
+
+  /** The line under the text, and the list where it is shown: hidden where nothing has changed. */
+  function showChanges() {
+    const box = $('rtmChanges');
+    if (!box) return;
+    changesNow = opened ? RtmModel.lineChanges(opened.text, $('rtmText').value) : [];
+    box.hidden = !changesNow.length;
+    if (!changesNow.length) { changesOpen = false; return; }
+    $('rtmChangesSaid').textContent = `${changesCount(changesNow)} ${openedSaid()[0]}.`;
+    const toggle = $('rtmChangesToggle');
+    toggle.textContent = changesOpen ? 'Hide' : 'Show';
+    toggle.setAttribute('aria-expanded', String(changesOpen));
+    $('rtmChangesCopy').hidden = !changesOpen;
+    const list = $('rtmChangesList');
+    list.hidden = !changesOpen;
+    if (changesOpen) list.replaceChildren(...changesNow.map(changeEl));
+  }
+
+  /** The list as plain text on the clipboard, for a note or a report. */
+  async function copyChanges() {
+    if (!changesNow.length) return;
+    const out = [`Changes to the model text from ${openedSaid()[1]}:`, ''];
+    for (const h of changesNow) {
+      const [said, line, more] = changeWhere(h);
+      const where = changeOrigin(h);
+      const at = !h.now.length && line ? `${said} ${line}` : `${said}${more || ''}`;
+      out.push(where ? `${at} (${where})` : at);
+      for (const t of h.was) out.push(`  was: ${t}`);
+      for (const t of h.now) out.push(`  now: ${t}`);
+      out.push('');
+    }
+    const text = out.join('\n');
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = true;
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.append(ta);
+      ta.select();
+      try { copied = document.execCommand('copy'); } catch (err) { copied = false; }
+      ta.remove();
+    }
+    if (copied) setStatus(`The list of changes is on the clipboard: ${changesCount(changesNow)}.`, 'ok');
+    else setStatus('The list of changes could not be put on the clipboard: the browser would not allow it.', 'warn');
   }
 
   /* ---------------------------------------------------------------------
@@ -11540,6 +11748,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     let said = '';
     let ranIn = null;
     let from = '';
+    let origins = null;
     if (skbrtm) {
       let res;
       try {
@@ -11550,6 +11759,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       }
       next = res.text;
       ranIn = res.timeUnit;
+      origins = res.origins || null;
       // Named for what was opened: the .zip or the folder, else the script, else the first database.
       from = origin || (files.find((f) => /\.py$/i.test(f.name)) || files[0]).name;
       const n = files.filter((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text)).length;
@@ -11566,6 +11776,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       from = pick.name;
     }
     const kept = putAside(next);
+    setOpened({ text: next, kind: 'file', name: String(from).replace(/^.*[\\/]/, '') || 'the file', origins });
     state.modelName = `${String(from).replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') || 'model'}.rtm`;
     state.text = next;
     about.textContent = said;
@@ -11625,7 +11836,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111n';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111o';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -12184,6 +12395,7 @@ END
       });
       // As an example is loaded: the text replaced, the one there put aside, and said so below the panel.
       const kept = putAside(reply.text);
+      setOpened({ text: reply.text, kind: 'phreeqc' });
       state.text = reply.text;
       state.modelName = null;
       $('rtmText').value = reply.text;
@@ -12991,6 +13203,7 @@ END
     'rtm:applyModel': () => { state.text = $('rtmText').value; scheduleCompile(0); },
     'rtm:resetModel': () => {
       const kept = putAside(RTM_DEFAULT_MODEL);
+      setOpened({ text: RTM_DEFAULT_MODEL, kind: 'reset' });
       state.text = RTM_DEFAULT_MODEL;
       state.modelName = null;
       $('rtmText').value = state.text;
@@ -13007,6 +13220,8 @@ END
     'rtm:goLine': (ev, el) => goLine(Number(el.dataset.line)),
     'rtm:fixName': (ev, el) => fixName(Number(el.dataset.line), el.dataset.from, el.dataset.to),
     'rtm:goUse': (ev, el) => goUse(Number(el.dataset.line)),
+    'rtm:changesToggle': () => { changesOpen = !changesOpen; showChanges(); },
+    'rtm:changesCopy': () => copyChanges(),
     // Every line of the name's listed, until the caret goes to another name.
     'rtm:usesMore': () => {
       if (usesNow) usesOpen = `${usesNow.kind}|${usesNow.name}`;
@@ -13113,6 +13328,9 @@ END
   loadState();
   loadAside();
   migrateStoredText();
+  // What the text is compared with: kept from the last visit, else the built-in model or the text as it now is.
+  loadOpened();
+  if (!opened) setOpened(state.text === RTM_DEFAULT_MODEL ? { text: state.text, kind: 'builtin' } : { text: state.text, kind: 'loaded' });
   $('rtmText').value = state.text;
   // scroll does not bubble, so it cannot be delegated like the rest.
   $('rtmText').addEventListener('scroll', () => {

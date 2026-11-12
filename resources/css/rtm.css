@@ -770,6 +770,38 @@
 /* And the name itself wherever it stands in the coloured copy of the text (rtm-ui.js markUses). */
 ::highlight(rtm-use) { background-color: color-mix(in srgb, var(--text-primary) 16%, transparent); }
 
+/* What has changed since the text was opened: a line under the text, and the list it shows, each change the line it
+   is on and what it was and is, the part taken out on a tint of the accent and the part put in on a green one. */
+.rtm-changes { margin: 2px 0 0; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
+.rtm-changes[hidden] { display: none; }
+.rtm-changes-head { margin: 0; }
+.rtm-changes .rtm-more { margin: 0 0 0 6px; }
+.rtm-changes .rtm-more[hidden] { display: none; }
+.rtm-changes-list {
+  max-height: 40vh;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--bg-surface);
+}
+.rtm-changes-list[hidden] { display: none; }
+.rtm-change + .rtm-change { margin-top: 8px; }
+.rtm-change-head { margin: 0 0 2px; color: var(--text-primary); }
+.rtm-change-line { display: grid; grid-template-columns: 2.4em minmax(0, 1fr); gap: 0 6px; }
+.rtm-change-tag { color: var(--text-muted); }
+.rtm-change-line code {
+  font: 11px/1.5 var(--font-mono);
+  font-kerning: none;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--text-primary);
+}
+.rtm-change-line code.rtm-change-empty { color: var(--text-muted); font-style: italic; }
+.rtm-change-out { background: color-mix(in srgb, var(--accent-fill) 24%, transparent); border-radius: 2px; }
+.rtm-change-in { background: color-mix(in srgb, var(--accent-success) 30%, transparent); border-radius: 2px; }
+
 /* The warnings under the model text, one a line. */
 .rtm-model-note { margin: 11px 0; padding: 0; list-style: none; }
 .rtm-model-note li + li { margin-top: 2px; }
