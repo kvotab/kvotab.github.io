@@ -1242,6 +1242,98 @@ async def main():
                 await page.ev("(() => { const el = [...document.querySelectorAll('#rtmSeries input')]"
                               ".find((i) => i.value === %s); if (el && !el.checked) el.click(); })()" % json.dumps(key))
 
+            # --- every species in numbers, under Against time ---------------------
+            # A model of our own: A and B turned into each other at the same rate, both settling at a half by
+            # ln(100)/2 = 2.30 s, B first within 1e-4 of its highest at ln(1e4)/2 = 4.61 s; C made at a steady 0.05 a
+            # second, still rising at the end; K held; Z nought throughout. The table under the chart, in the model's own
+            # unit, each row as the run has it, with nothing ticked. A click on C ticks it and draws it; Copy the table
+            # puts it on the clipboard, a table for a document and tab-separated text; Excel has it on a sheet of its
+            # own; turned off, the table goes.
+            EACH = ('<SETTINGS>\nMODE = batch\nTEND = 20\nTIME_UNIT = second\n\n<SPECIES>\nA  1\nB  0\nC  0\nK  1  fixed\nZ  0\n\n'
+                    '<REACTIONS>\nA => B, k = 1\nB => A, k = 1\n=> C, k = 0.05\n')
+            prior = await page.ev("[document.getElementById('rtmText').value,"
+                                  " [...document.querySelectorAll('#rtmSeries input:checked')].map((i) => i.value)]")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmUnitTime'); s.value = '';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await set_text(page, EACH)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 5 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.5)
+            EACH_ROWS = """(() => { const box = document.getElementById('rtmTimeEvery');
+              const rows = [...box.querySelectorAll('tbody tr')];
+              return { shown: !box.hidden, head: [...box.querySelectorAll('thead th')].map((th) => th.textContent),
+                rows: rows.map((tr) => [...tr.cells].map((c) => c.textContent)),
+                settles: rows.map((tr) => (tr.cells[4].dataset.v === undefined ? null : Number(tr.cells[4].dataset.v))),
+                highAt: rows.map((tr) => (tr.cells[3].dataset.t === undefined ? null : Number(tr.cells[3].dataset.t))),
+                on: rows.filter((tr) => tr.classList.contains('on')).map((tr) => tr.cells[0].textContent) }; })()"""
+            each = await page.ev(EACH_ROWS)
+            rows = each['rows'] if isinstance(each, dict) else []
+            settles = each['settles'] if isinstance(each, dict) else []
+            high_at = each['highAt'] if isinstance(each, dict) else []
+            check('every species in numbers: under the chart, nothing ticked, each species where it starts and ends, its highest '
+                  'and when, and when it settles -- A and B by 2.30 s, B highest from 4.61 s, C still rising at the end, K held, '
+                  'Z nought throughout',
+                  [each['shown'] if isinstance(each, dict) else None, each['head'] if isinstance(each, dict) else None,
+                   [r[:4] for r in rows], [r[4][:3] for r in rows[:2]], [r[4] for r in rows[2:]],
+                   [s is not None and 2.30 <= s < 4 for s in settles[:2]], high_at[1] is not None and 4.6 <= high_at[1] < 6.5,
+                   rows[1][3].startswith('0.5 at ') if len(rows) > 1 else None],
+                  [True, ['Every species', 'starts at', 'ends at', 'highest', 'settles'],
+                   [['A', '1', '0.5', '1 at the start'], ['B', '0', '0.5', rows[1][3] if len(rows) > 1 else ''],
+                    ['C', '0', '1', '1 at the end of the run'], ['K', '1', '1', ''], ['Z', '0', '0', '']],
+                   ['by ', 'by '], ['still changing at the end', 'does not change', 'nought throughout'],
+                   [True, True], True, True])
+            await page.ev("document.querySelector('#rtmTimeEvery .rtm-every-name[data-key=\"C\"]').click()")
+            await asyncio.sleep(0.4)
+            ticked = await page.ev("""[[...document.querySelectorAll('#rtmSeries input:checked')].map((i) => i.value),
+              (document.getElementById('rtmChartTime').data || []).some((t) => t.name === 'C')]""")
+            on = (await page.ev(EACH_ROWS))['on']
+            await page.ev("""(() => { window.__copied = null;
+              navigator.clipboard.write = async (items) => {
+                window.__copied = [items[0].types.slice().sort(), await (await items[0].getType('text/plain')).text()]; }; })()""")
+            await page.ev("document.querySelector('#rtmTimeEvery [data-on-click=\"rtm:everyCopy\"]').click()")
+            await asyncio.sleep(0.4)
+            copied = await page.ev("window.__copied")
+            lines = copied[1].split('\n') if isinstance(copied, list) else []
+            check('  a click on C ticks it and draws it, its row marked; Copy the table puts it on the clipboard, as a table and as '
+                  'tab-separated text',
+                  [ticked, on, copied[0] if isinstance(copied, list) else None, lines[:1], (lines[1:2] or [''])[0].startswith(
+                      'A\t1\t0.5\t1 at the start\tby '), len(lines), await page.ev("document.getElementById('rtmStatus').textContent")],
+                  [[['C'], True], ['C'], ['text/html', 'text/plain'], ['Every species\tstarts at\tends at\thighest\tsettles'], True,
+                   6, 'The table is on the clipboard: 5 species.'])
+            await page.ev("""(() => {
+              window.__xlsx = null;
+              window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.xlsx')) window.__xlsx = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((buf) => JSZip.loadAsync(buf)).then((z) => z.file('xl/workbook.xml').async('string'));
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"time\"][data-as=\"xlsx\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            each_sheets = await page.ev("(async () => { const w = await window.__xlsx;"
+                                        " return w ? [...w.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]) : null; })()")
+            await page.ev("document.getElementById('rtmEvery').click()")
+            await asyncio.sleep(0.3)
+            off = await page.ev("[document.getElementById('rtmTimeEvery').hidden, JSON.parse(localStorage.getItem('kvot-rtm-v1')).every]")
+            await page.ev("document.getElementById('rtmEvery').click()")
+            await asyncio.sleep(0.3)
+            check('  saved to Excel with every species on a sheet of its own; turned off, the table goes, and the choice is kept',
+                  [isinstance(each_sheets, list) and 'every species' in each_sheets, off,
+                   await page.ev("!document.getElementById('rtmTimeEvery').hidden")],
+                  [True, [True, False], True])
+            await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
+            await set_text(page, prior[0])
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            for key in prior[1]:
+                await page.ev("(() => { const el = [...document.querySelectorAll('#rtmSeries input')]"
+                              ".find((i) => i.value === %s); if (el && !el.checked) el.click(); })()" % json.dumps(key))
+
             # --- what the water is made of: the Composition tab ---
             before = await page.ev("document.getElementById('rtmText').value")
             await set_text(page, COMP_MODEL)

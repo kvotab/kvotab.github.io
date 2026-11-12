@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111p">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111q">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -293,12 +293,15 @@
             </span>
             <label>Units <select id="rtmUnitTime" data-on-change="rtm:concUnit"></select></label>
             <label id="rtmBtcWrap" hidden><input type="checkbox" id="rtmBtc" data-on-change="rtm:btc"> breakthrough numbers</label>
+            <label><input type="checkbox" id="rtmEvery" checked data-on-change="rtm:every"> every species in numbers</label>
           </div>
           <p class="rtm-muted rtm-note" id="rtmTimeNote"></p>
           <div class="rtm-series" id="rtmSeries"></div>
           <div class="plot" id="rtmChartTime" hidden></div>
           <div class="rtm-fit-result" id="rtmTimeNumbers" hidden></div>
           <p class="rtm-empty" id="rtmTimeEmpty">Run the model, then tick a species to draw it.</p>
+          <!-- Every species in numbers: where it starts and ends, its highest and when, when it settles (rtm-ui.js drawEvery). -->
+          <div class="rtm-fit-result rtm-every" id="rtmTimeEvery" hidden></div>
         </section>
 
         <!-- ---- concentration against distance ---- -->
@@ -2771,6 +2774,17 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             what is there at the end and what reactions made or took — and the share gone out of what
             was there and came in. A run kept beside has rows of its own, and Excel has both tables on
             sheets of their own.</p>
+          <p><em>Every species in numbers</em>, beside them, puts a table under the time chart once the
+            model has run: for each species at the cell shown — the first of <em>Cells</em> where it lists
+            several — where it starts and where it ends, its highest and when it first gets there, and
+            when it settles: from when it stays within 1 % of where it ends, so long as that leaves a
+            tenth of the run at least, or else that it is still changing at the end. One that ends at
+            nought settles once it is below a billionth of its highest. The numbers are read off every
+            stored point, whatever the axes leave out, in the unit <em>Units</em> chooses, at the times
+            <em>Time in</em> shows. A click on a species draws it, or takes it off the chart; <em>Copy the
+            table</em> puts the table on the clipboard, as a table for a document and tab-separated for a
+            spreadsheet; and Excel has it on a sheet of its own, its times in the model's own unit. It is
+            on until it is turned off, and the choice is kept.</p>
           <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
             them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
             is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
@@ -4159,6 +4173,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111i"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zm"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zn"></script>
 </body>
 </html>

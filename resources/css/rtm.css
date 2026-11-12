@@ -750,6 +750,21 @@
 .rtm-fit-result th, .rtm-fit-result td { padding: 2px 10px 2px 0; text-align: left; font-variant-numeric: tabular-nums; }
 .rtm-fit-result th { font-weight: 600; border-bottom: 1px solid var(--border-color); }
 .rtm-fit-result p { margin: 4px 0; }
+/* Every species in numbers, under Against time: each species a button that ticks it, a ticked one in the accent. */
+.rtm-every { margin-top: 10px; }
+.rtm-every .rtm-every-name {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-primary);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rtm-every .rtm-every-name:hover { text-decoration: underline; text-underline-offset: 2px; }
+.rtm-every tr.on .rtm-every-name { color: var(--accent-text); font-weight: 600; }
+.rtm-every p { color: var(--text-secondary); }
+.rtm-every .rtm-more { margin: 0 0 0 4px; }
 /* The water as PHREEQC lists it (Composition): its blocks one under another, the numbers in columns. */
 .rtm-listing { margin: 0 0 12px; font-size: 12px; overflow-x: auto; }
 .rtm-listing h4 { margin: 14px 0 4px; font-size: 13px; }

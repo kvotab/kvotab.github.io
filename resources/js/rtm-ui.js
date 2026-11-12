@@ -58,6 +58,7 @@
     cells: '',
     // Under Against time, where each curve is half-way and what has gone out of the column (breakthrough numbers).
     btc: false,
+    every: true,           // every species in numbers, under Against time
     // The list of what to draw on Against time, as tall as its corner was dragged; 0 for its own height.
     seriesHeight: 0,
     // The composition tab: what it shows, of which element, in what, as what, along the run or the column, where.
@@ -134,7 +135,7 @@
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
         gradSpecies: state.gradSpecies, gradScale: state.gradScale, gradView: state.gradView,
         gradTMin: state.gradTMin, yFrom: state.yFrom, profileYFrom: state.profileYFrom, gradCFrom: state.gradCFrom,
-        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc, seriesHeight: state.seriesHeight,
+        concUnit: state.concUnit, timeIn: state.timeIn, cells: state.cells, btc: state.btc, every: state.every, seriesHeight: state.seriesHeight,
         compView: state.compView, compBeside: state.compBeside, compBudgetOf: state.compBudgetOf, compBudgetBy: state.compBudgetBy, compBudgetAt: state.compBudgetAt, compElement: state.compElement, compIn: state.compIn, compAs: state.compAs,
         compAlong: state.compAlong, compCell: state.compCell, compLayer: state.compLayer, compTimes: state.compTimes,
         compTMin: state.compTMin, compPcaVars: state.compPcaVars, compPcaLog: state.compPcaLog, compAt: state.compAt, compPace: state.compPace,
@@ -179,6 +180,7 @@
       if (s.timeIn === '' || s.timeIn === 'pv' || SHOW_UNITS.some(([sym]) => sym === s.timeIn)) state.timeIn = s.timeIn;
       if (typeof s.cells === 'string') state.cells = s.cells;
       if (typeof s.btc === 'boolean') state.btc = s.btc;
+      if (typeof s.every === 'boolean') state.every = s.every;
       if (Number.isFinite(s.seriesHeight) && s.seriesHeight >= 0) state.seriesHeight = s.seriesHeight;
       if (['where', 'listing', 'budget', 'fronts', 'piper', 'durov', 'schoeller', 'stiff', 'ussl', 'wilcox', 'pca'].includes(s.compView)) state.compView = s.compView;
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
@@ -1894,6 +1896,7 @@
     // Breakthrough numbers are a column's: a batch has none.
     $('rtmBtcWrap').hidden = cells === 1;
     $('rtmBtc').checked = state.btc;
+    $('rtmEvery').checked = state.every;
     renderLayerPickers();
   }
 
@@ -2187,6 +2190,8 @@
     $('rtmCell').disabled = several;
     if (!r || !state.picked.length) {
       drawBtc(null);
+      // Every species in numbers is of the run, whatever is ticked.
+      drawEvery(r);
       Plotly.purge(plot);
       plot.hidden = true;
       empty.hidden = false;
@@ -2327,6 +2332,7 @@
       bk && besideLeft.length ? besideNote(bk, [...new Set(besideLeft)].join('; ')) : '', floorNote(floor, onLeft, u)]
       .filter(Boolean).join('; ');
     drawBtc(r, tc, u, bk);
+    drawEvery(r);
   }
 
   /*
@@ -2464,6 +2470,128 @@
         'made by reactions, net', 'gone out of what was there and came in'],
       rows: out.map((o) => [o.name, o.run, o.start, o.cin, o.gone, o.end, o.made, o.share]) },
     };
+  }
+
+  /*
+    EVERY SPECIES IN NUMBERS, under Against time: of each species at the cell
+    shown -- the first of Cells where it lists several -- where it starts and
+    where it ends, its highest and when it first gets there (within 1e-4 of
+    it, so that a plateau's last wiggle is no time), and when it settles: from
+    when it stays within 1 % of where it ends -- or within a billionth of its
+    highest, for one that ends at nought -- where that leaves a tenth of the
+    run at least; else it is still changing at the end. Read off every stored
+    point, whatever the axes leave out, in the unit chosen, the times as Time
+    in shows them. A click on a species ticks it, or unticks it; Copy the
+    table puts it on the clipboard, and Excel has it on a sheet of its own.
+  */
+  const EVERY_BAND = 0.01;
+  let everyNow = null;
+  /** What a species does over a run: { start, end, high, tHigh, atStart, atEnd, settled } or { start, end, flat } where it does nothing. */
+  function speciesOver(t, y) {
+    const n = y.length;
+    if (!n) return null;
+    let peak = 0;
+    let hi = 0;
+    for (let i = 0; i < n; i++) {
+      if (!Number.isFinite(y[i])) return null;
+      peak = Math.max(peak, Math.abs(y[i]));
+      if (y[i] > y[hi]) hi = i;
+    }
+    const start = y[0];
+    const end = y[n - 1];
+    if (peak === 0) return { start, end, flat: 'nought throughout' };
+    if (!Array.prototype.some.call(y, (v) => Math.abs(v - start) > 1e-12 * peak)) return { start, end, flat: 'does not change' };
+    const top = y[hi];
+    let iTop = hi;
+    for (let i = 0; i <= hi; i++) if (y[i] >= top - 1e-4 * Math.abs(top)) { iTop = i; break; }
+    const band = Math.max(EVERY_BAND * Math.abs(end), 1e-9 * peak);
+    let k = n - 1;
+    while (k > 0 && Math.abs(y[k - 1] - end) <= band) k -= 1;
+    const settled = t[k] <= t[0] + 0.9 * (t[n - 1] - t[0]) ? t[k] : null;
+    return { start, end, high: top, tHigh: t[iTop], atStart: iTop === 0, atEnd: iTop === n - 1, settled, fromStart: k === 0 };
+  }
+
+  function drawEvery(r) {
+    const box = $('rtmTimeEvery');
+    everyNow = null;
+    if (!box) return;
+    if (!state.every || !r) { box.hidden = true; box.innerHTML = ''; return; }
+    const tc = timeCells(r);
+    const cell = tc.at[0];
+    if (isFace(cell)) {
+      box.innerHTML = '<p>Every species in numbers is of a cell: <em>Cell</em> shows what crosses an end.</p>';
+      box.hidden = false;
+      return;
+    }
+    const u = shownUnit(r);
+    const m = r.model;
+    const column = (m.fracture || 1) > 1;
+    const layered = (m.stride || 1) > 1;
+    const where = [column ? `at cell ${cell} (${Number(m.centres[cell].toPrecision(3))} m)` : '',
+      layered ? (state.layer ? `rock ${state.layer}` : 'the fracture') : '',
+      tc.several && tc.at.length > 1 ? 'the first of those listed' : ''].filter(Boolean).join(', ');
+    const left = [];
+    const rows = [];
+    for (const nm of m.species) {
+      const shown = shownAs(r, nm, u);
+      if (shown && shown.why) { left.push([labelOf(nm), shown.why]); continue; }
+      const f = shown ? shown.f : 1;
+      const y = series(nm, cell, state.layer, r);
+      if (!y) continue;
+      const s = speciesOver(r.t, f === 1 ? y : Float64Array.from(y, (v) => v * f));
+      if (s) rows.push({ nm, s });
+    }
+    const num = (v) => (v === 0 ? '0' : fit4(v));
+    const highText = (s) => `${num(s.high)} ${s.atStart ? 'at the start' : s.atEnd ? 'at the end of the run' : `at ${fmtTime(s.tHigh)}`}`;
+    const settleText = (s) => (s.flat ? s.flat : s.settled === null ? 'still changing at the end'
+      : s.fromStart ? 'from the start' : `by ${fmtTime(s.settled)}`);
+    const td = (v, text) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${esc(text)}</td>`;
+    const unitText = u.id && !u.bare ? ` (${u.text})` : u.id ? ` ${u.text}` : '';
+    const html = rows.map(({ nm, s }) => {
+      const on = state.picked.includes(nm);
+      return `<tr${on ? ' class="on"' : ''}><td><button type="button" class="rtm-every-name" data-on-click="rtm:everyPick" `
+        + `data-key="${esc(nm)}" aria-pressed="${on}">${esc(labelOf(nm))}</button></td>${td(s.start, num(s.start))}${td(s.end, num(s.end))}`
+        + `${s.flat ? '<td></td>' : `<td data-v="${s.high}" data-t="${s.tHigh}">${esc(highText(s))}</td>`}`
+        + `${td(s.flat ? null : s.settled, settleText(s))}</tr>`;
+    }).join('');
+    box.innerHTML = `<table><thead><tr><th>Every species${where ? ` ${esc(where)}` : ''}${esc(unitText)}</th><th>starts at</th>`
+      + `<th>ends at</th><th>highest</th><th>settles</th></tr></thead><tbody>${html}</tbody></table>`
+      + `<p>${esc(['Read off every stored point of the run; a species settles from when it stays within 1 % of where it ends, '
+        + 'where that leaves a tenth of the run at least. A click on a species draws it, or takes it off the chart',
+      unitNote(u, left), u.why].filter(Boolean).join('. '))}. <button type="button" class="rtm-more" data-on-click="rtm:everyCopy">`
+      + 'Copy the table</button></p>';
+    box.hidden = false;
+    const sym = timeUnit().symbol;
+    everyNow = {
+      name: 'every species',
+      head: ['species', 'starts at', 'ends at', 'highest', `highest at (${sym})`, `settles by (${sym})`, 'note'],
+      rows: rows.map(({ nm, s }) => [labelOf(nm), s.start, s.end, s.flat ? null : s.high, s.flat ? null : s.tHigh,
+        s.flat ? null : s.settled, s.flat || (s.settled === null ? 'still changing at the end' : '')]),
+      text: [['species', 'starts at', 'ends at', 'highest', 'settles'],
+        ...rows.map(({ nm, s }) => [labelOf(nm), num(s.start), num(s.end), s.flat ? '' : highText(s), settleText(s)])],
+      title: `Every species${where ? ` ${where}` : ''}${unitText}`,
+    };
+  }
+
+  /** The table as it stands, on the clipboard: tab-separated for a sheet, and as a table for a document. */
+  async function copyEvery() {
+    if (!everyNow) return;
+    const rows = everyNow.text;
+    const tsv = [[everyNow.title, ...rows[0].slice(1)], ...rows.slice(1)].map((row) => row.join('\t')).join('\n');
+    const html = `<table><thead><tr>${[everyNow.title, ...rows[0].slice(1)].map((c) => `<th>${esc(c)}</th>`).join('')}</tr></thead>`
+      + `<tbody>${rows.slice(1).map((row) => `<tr>${row.map((c) => `<td>${esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`;
+    let copied = false;
+    try {
+      if (typeof ClipboardItem === 'function' && navigator.clipboard.write) {
+        await navigator.clipboard.write([new ClipboardItem({
+          'text/plain': new Blob([tsv], { type: 'text/plain' }), 'text/html': new Blob([html], { type: 'text/html' }) })]);
+      } else await navigator.clipboard.writeText(tsv);
+      copied = true;
+    } catch (e) {
+      try { await navigator.clipboard.writeText(tsv); copied = true; } catch (err) { copied = false; }
+    }
+    setStatus(copied ? `The table is on the clipboard: ${rows.length - 1} species.`
+      : 'The table could not be put on the clipboard: the browser would not allow it.', copied ? 'ok' : 'warn');
   }
 
   /*
@@ -9157,8 +9285,9 @@
     for (let i = 0; i < r.n; i++) {
       rows.push([...(ax.fixed ? [xr[i]] : []), r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
     }
-    // In Excel, the breakthrough numbers on sheets of their own where they are shown.
-    const extra = state.btc && btcNow ? [btcNow.half, btcNow.out].filter((tb) => tb.rows.length) : [];
+    // In Excel, the breakthrough numbers and every species in numbers on sheets of their own where they are shown.
+    const extra = [...(state.btc && btcNow ? [btcNow.half, btcNow.out] : []), ...(state.every && everyNow ? [everyNow] : [])]
+      .filter((tb) => tb.rows.length);
     return { head, rows, name: face ? `rtm_${state.cell}_end` : `rtm_cell${at.join('_')}`, ...(extra.length ? { extra } : {}) };
   }
 
@@ -10380,6 +10509,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. A time unit chosen is the one the other tabs, and every time written out, show too; rates stay per the model’s own unit, and pore volumes are for these three charts alone. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
+            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. On until turned off.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
@@ -10388,7 +10518,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           ] },
           exportSection([
             '**CSV**: what is ticked, or every species when nothing is, at the cell and layer shown, at each of the Cells, or through the end shown, a row per stored point; in pore volumes a column of them first, then the time.',
-            '**Excel**: the same as a workbook, with the model text on a sheet of its own. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
+            '**Excel**: the same as a workbook, with the model text on a sheet of its own, and every species in numbers and the breakthrough numbers where they are shown. **SVG** and **PNG**: the chart as a figure, at the size it is drawn.',
             SAVE_HTML,
             '**HDF5**: the whole run as an HDF5 file, as a download.',
             '**View in Data Browser**: the same file, opened in the Data Browser in a new tab without touching the disk. The browser has to let the page open a tab.',
@@ -12954,6 +13084,21 @@ END
       saveState();
       drawTime();
     },
+    'rtm:every': (ev, el) => {
+      state.every = !!el.checked;
+      saveState();
+      drawTime();
+    },
+    // A species in the table ticked, or unticked, as in the list.
+    'rtm:everyPick': (ev, el) => {
+      const name = el.dataset.key;
+      if (state.picked.includes(name)) state.picked = state.picked.filter((x) => x !== name);
+      else state.picked.push(name);
+      renderSeriesList();
+      saveState();
+      drawTime();
+    },
+    'rtm:everyCopy': () => copyEvery(),
     // One time axis for Against time, Against distance and Gradient: the three selects as one.
     'rtm:timeIn': (ev, el) => {
       const before = timeAxis();
