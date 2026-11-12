@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111q';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111r';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -664,11 +664,23 @@
           + `(${(100 * m.density).toFixed(2)} % of the matrix). Ready to run.${warn}${note}`, 'ok');
         linkLines($('rtmStatus'));
       }
-      // The warnings one a line, a line of the text one names a link to it.
+      // The warnings one a line, a line of the text one names a link to it; a name thought mistyped, a fix for it.
       $('rtmModelNote').replaceChildren(...m.warnings.map((w) => {
         const li = document.createElement('li');
         li.textContent = w;
         linkLines(li);
+        const fix = (m.fixes || []).find((f) => w.startsWith(`Line ${f.line}: ${f.name} is used up`));
+        for (const to of fix ? fix.meant : []) {
+          const b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'rtm-fix';
+          b.dataset.onClick = 'rtm:fixName';
+          b.dataset.line = String(fix.line);
+          b.dataset.from = fix.name;
+          b.dataset.to = to;
+          b.textContent = `Change to ${to}`;
+          li.append(' ', b);
+        }
         return li;
       }));
       $('rtmModelNote').hidden = !m.warnings.length;
@@ -723,6 +735,53 @@
       frag.append(node.data.slice(last));
       node.replaceWith(frag);
     }
+  }
+
+  /*
+    A FIX OFFERED: a name a warning thinks mistyped changed, on its line, into
+    the one it may have meant -- every place the name stands as a name in the
+    line's equation, nothing else -- as if typed: the browser's own insertText,
+    so that Cmd+Z takes it back as it would a keystroke, and the text compiled
+    again as after any typing.
+  */
+  function fixName(line, from, to) {
+    const ta = $('rtmText');
+    const lines = ta.value.split('\n');
+    const text = lines[line - 1];
+    if (text === undefined) return;
+    // The equation: the line up to its first comma outside brackets.
+    let depth = 0;
+    let end = text.length;
+    for (let k = 0; k < text.length; k += 1) {
+      const ch = text[k];
+      if (ch === '(' || ch === '[' || ch === '{') depth += 1;
+      else if (ch === ')' || ch === ']' || ch === '}') depth -= 1;
+      else if (ch === ',' && depth === 0) { end = k; break; }
+    }
+    const eq = text.slice(0, end);
+    // Each word of it that is the name, a coefficient before it or not: 2Bx, 0.5 Bx.
+    const fixed = eq.replace(/\S+/g, (tok) => {
+      const m = /^((?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)?(.*)$/.exec(tok);
+      return m[2] === from ? `${m[1] || ''}${to}` : tok;
+    });
+    if (fixed === eq) {
+      setStatus(`${from} is not on line ${line} any more: the text has changed since the warning.`, 'warn');
+      return;
+    }
+    if (state.tab !== 'model') showTab('model');
+    let start = 0;
+    for (let i = 0; i < line - 1; i += 1) start += lines[i].length + 1;
+    ta.focus({ preventScroll: true });
+    ta.setSelectionRange(start, start + eq.length);
+    // As typed, for the browser's undo; where it will not, set, and said to the page as typing is.
+    if (!document.execCommand('insertText', false, fixed)) {
+      ta.setRangeText(fixed, start, start + eq.length, 'end');
+      ta.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    // What changed, shown: the equation as it is now, selected, its line in view.
+    ta.setSelectionRange(start, start + fixed.length);
+    const lh = parseFloat(getComputedStyle(ta).lineHeight) || 18;
+    ta.scrollTop = Math.max(0, (line - 1) * lh - ta.clientHeight / 3);
   }
 
   /** Line n of the model text: on the Model tab, scrolled to, selected whole, the keyboard in it. */
@@ -11368,7 +11427,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111l';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111m';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -12748,6 +12807,7 @@ END
     },
     'rtm:bringBack': () => bringBack(0),
     'rtm:goLine': (ev, el) => goLine(Number(el.dataset.line)),
+    'rtm:fixName': (ev, el) => fixName(Number(el.dataset.line), el.dataset.from, el.dataset.to),
     // Ready to save: its Save… a click of its own for the dialog to open out of; Cancel, or Escape, an answer.
     'rtm:saveReadyGo': () => {
       const r = saveReady;

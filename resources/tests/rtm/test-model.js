@@ -613,6 +613,8 @@ A => B, r = ${law}
       + 'it can only go below nought. Is it B, which the rate reads?'])
     && noisy.length === 0 && builtIn.length === 1 && /^Line \d+: the charges do not balance, 0 on the left and \+2 on the right\.$/.test(builtIn[0]),
   `${ours(planted.warnings).join(' | ')}; examples warned: ${noisy.join(', ') || 'none'}; built-in: ${builtIn.join(' | ')}`);
+  check('  the name thought mistyped, and what it may have meant, handed to the page to offer as a fix',
+    JSON.stringify(planted.fixes) === JSON.stringify([{ line: 15, name: 'Bx', meant: ['B'] }]), JSON.stringify(planted.fixes));
 }
 {
   /*

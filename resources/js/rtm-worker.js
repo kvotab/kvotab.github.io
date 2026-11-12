@@ -172,6 +172,7 @@ function rtmSummary(model) {
     timeUnit: model.timeUnit,
     settings: model.settings,
     warnings: model.warnings,
+    fixes: model.fixes || [],
     initial: Array.from(model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState()),
     // What flows in at the left, each species' left= or else its start: the water an inverse model can start from.
     inflow: model.transport ? model.speciesList.map((sp) => (sp.left == null ? sp.initial : sp.left)) : null,

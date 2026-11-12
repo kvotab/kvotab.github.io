@@ -775,6 +775,19 @@
   cursor: pointer;
 }
 
+/* A fix a warning offers: a small button after it, Change to B. */
+.rtm-fix {
+  margin-left: 2px;
+  padding: 0 6px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: inherit;
+  cursor: pointer;
+}
+.rtm-fix:hover { border-color: var(--accent-line); }
+
 /* Ready to save: a small window over the page, in its colours, the file's name and its two buttons. */
 .rtm-save-ready {
   max-width: 26rem;

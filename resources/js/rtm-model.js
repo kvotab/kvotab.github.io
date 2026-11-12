@@ -9623,6 +9623,8 @@
 
     const grid = makeGrid(settings);
     const warnings = [];
+    // A name a warning thinks mistyped, and what it may have meant: { line, name, meant: [names] }, for the page to offer.
+    const fixes = [];
     // Null unless ACTIVITY asks for one (activityModel), or there is an
     // exchanger (exchangeSetup, once the relations are read).
     let act = activityModel(settings, species, warnings, sections.SIT, sections.PITZER, sections.LLNL);
@@ -10045,7 +10047,7 @@
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
     // Each relation by its equation, as the budget by each reaction names it.
     for (const eq of equilibria) eq.eqn = eq.text ? splitTop(eq.text)[0].trim() : '';
-    checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings);
+    checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes);
     atFixedTemperature(equilibria);
     /*
       Under ACTIVITY a pair relaxes to its K in activities, so its backward
@@ -12793,6 +12795,7 @@
       masses,
       nchannels: channels.length,
       warnings,
+      fixes,
       density: nnz / (n * n),
     };
 
@@ -14196,7 +14199,7 @@
     likely a name mistyped -- UVIO2s+ for the UVIO2s+2 the rate reads. The
     names within two letters of it are offered, those the rate reads first.
   */
-  function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings) {
+  function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes = []) {
     const zOf = (name) => {
       const sp = species[index.get(name)];
       return sp && sp.z !== null && sp.z !== undefined ? sp.z : chargeOf(name);
@@ -14234,6 +14237,7 @@
           warnings.push(`Line ${rx.line}: ${nameOf[i]} is used up by the reaction, and nothing starts it, brings it in or `
             + `makes it, nor does the rate read it: it can only go below nought.${meant.length
               ? ` Is it ${meant.join(' or ')}${read.length ? ', which the rate reads' : ''}?` : ''}`);
+          if (meant.length) fixes.push({ line: rx.line, name: nameOf[i], meant });
         }
       }
     }

@@ -4363,6 +4363,28 @@ async def main():
             await asyncio.sleep(0.3)
             check('  and the line an error names, in the status line, a link to it: line 5 selected', await page.ev(AT_LINE),
                   ['model', True, 5, True, True])
+            # A fix offered: a name thought mistyped -- Bx used up by a rate that reads [B], on line 15 -- its warning with a
+            # button Change to B. A click changes the name on that line alone, the rest of the text as it was; the text
+            # compiles without that warning; and the browser's undo takes the change back, as it would typing.
+            TYPO = ('<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nA  1\nB  0\nAB  0\nBx  0\nH+  1e-7\nC  0\n\n'
+                    '<REACTIONS>\nA => B, k = 1\nBx => AB, r = k*[B], k = 1\nA => B + H+, k = 1\n=> C, k = 1\nC =>, k = 1\n'
+                    'B + A => AB, k = 2\n')
+            await set_text(page, TYPO)
+            await settle(page, "document.getElementById('rtmModelNote').textContent.includes('Bx is used up')", True, tries=40, pause=0.25)
+            offered = await page.ev("[...document.querySelectorAll('#rtmModelNote .rtm-fix')].map((b) => b.textContent)")
+            await page.ev("document.querySelector('#rtmModelNote .rtm-fix').click()")
+            await settle(page, "!document.getElementById('rtmModelNote').textContent.includes('Bx is used up')"
+                               " && document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40, pause=0.25)
+            fixed = await page.ev("document.getElementById('rtmText').value")
+            shown = await page.ev("(() => { const ta = document.getElementById('rtmText');"
+                                  " return ta.value.slice(ta.selectionStart, ta.selectionEnd); })()")
+            await page.ev("(() => { const ta = document.getElementById('rtmText'); ta.focus(); document.execCommand('undo'); })()")
+            await settle(page, "document.getElementById('rtmModelNote').textContent.includes('Bx is used up')", True, tries=40, pause=0.25)
+            undone = await page.ev("document.getElementById('rtmText').value")
+            want = TYPO.replace('Bx => AB, r = k*[B]', 'B => AB, r = k*[B]')
+            check('a fix offered for a name thought mistyped: Change to B; a click changes it on its line alone, the equation '
+                  'as it is now selected, and the warning goes; Cmd+Z takes it back',
+                  [offered, fixed == want, shown, undone == TYPO], [['Change to B'], True, 'B => AB', True])
             await page.ev("(() => { const c = document.getElementById('rtmLineNumbers');"
                           " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await asyncio.sleep(0.3)
@@ -4375,7 +4397,9 @@ async def main():
                       JSON.parse(localStorage.getItem('kvot-rtm-v1')).lineNumbers]; })()"""), ['none', 1, 0, 0, False])
             await page.ev("(() => { const c = document.getElementById('rtmLineNumbers');"
                           " c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            # The status emptied first: the text before compiled too, and its "Compiled" is not this one's.
             await page.ev("""((text) => { const ta = document.getElementById('rtmText');
+              document.getElementById('rtmStatus').textContent = '';
               ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); })(%s)""" % json.dumps(was_text))
             await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
             back_on = await page.ev(LINES)
