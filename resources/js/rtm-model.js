@@ -10009,6 +10009,7 @@
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
     // Each relation by its equation, as the budget by each reaction names it.
     for (const eq of equilibria) eq.eqn = eq.text ? splitTop(eq.text)[0].trim() : '';
+    checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings);
     atFixedTemperature(equilibria);
     /*
       Under ACTIVITY a pair relaxes to its K in activities, so its backward
@@ -14134,6 +14135,72 @@
         solidSolutions: grps.filter((G) => G.def.kind === 'ss').length },
       density: nnz / (n * n),
     };
+  }
+
+  /** Levenshtein's distance between two short names: how many letters put in, taken out or changed. */
+  function nameDistance(a, b) {
+    let prev = Array.from({ length: b.length + 1 }, (_, j) => j);
+    for (let i = 1; i <= a.length; i++) {
+      const cur = [i];
+      for (let j = 1; j <= b.length; j++) {
+        cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+      }
+      prev = cur;
+    }
+    return prev[b.length];
+  }
+
+  /*
+    LIKELY MISTAKES IN THE REACTION LINES, said as warnings, nothing refused.
+    A line whose charges do not balance -- a source or a sink, a side with
+    nothing on it, aside -- each species' charge its z=, else its name's. And
+    a species a line uses up that nothing starts, brings in at an end, makes
+    or forms in a relation, which that line's rate does not read, neither its
+    concentration nor its activity: it can only go below nought, and is most
+    likely a name mistyped -- UVIO2s+ for the UVIO2s+2 the rate reads. The
+    names within two letters of it are offered, those the rate reads first.
+  */
+  function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings) {
+    const zOf = (name) => {
+      const sp = species[index.get(name)];
+      return sp && sp.z !== null && sp.z !== undefined ? sp.z : chargeOf(name);
+    };
+    const signed = (z) => `${z > 0 ? '+' : ''}${Number(z.toPrecision(6))}`;
+    for (const rx of reactions) {
+      if (!rx.reactants.length || !rx.products.length) continue;
+      const sum = (side) => side.reduce((acc, [c, name]) => acc + c * zOf(name), 0);
+      const left = sum(rx.reactants);
+      const right = sum(rx.products);
+      if (Math.abs(left - right) > 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))) {
+        warnings.push(`Line ${rx.line}: the charges do not balance, ${signed(left)} on the left and ${signed(right)} on the right.`);
+      }
+    }
+    // What can be there at some time: started, brought in, held, made by a reaction or formed in a relation.
+    const there = Uint8Array.from(species, (sp) => (sp.initial !== 0 || (sp.left !== null && sp.left !== 0)
+      || (sp.right !== null && sp.right !== 0) || sp.fixed || sp.mineral || sp.surface || sp.exchange || sp.exchanger
+      || sp.electron || sp.potential || sp.gas ? 1 : 0));
+    for (const p of patches) if (p.si >= 0) there[p.si] = 1;
+    for (const eq of equilibria) for (const [k] of eq.net) there[k] = 1;
+    for (const ch of channels) for (const [i, c] of ch.net) if (c > 0) there[i] = 1;
+    const told = new Set();
+    for (const rx of reactions) {
+      for (let q = rx.chanFirst; q < rx.chanFirst + rx.chanCount; q++) {
+        const ch = channels[q];
+        const reads = new Set(ch.deps.map((d) => d.si));
+        for (const a of ch.aq) if (aqList[a.q] && aqList[a.q].kind === 'a') reads.add(aqList[a.q].s);
+        for (const [i, c] of ch.net) {
+          if (c >= 0 || there[i] || reads.has(i) || (ch.whole && ch.capOf === i) || told.has(`${rx.line}|${i}`)) continue;
+          told.add(`${rx.line}|${i}`);
+          const near = (pool) => pool.filter((k) => k !== i && nameDistance(nameOf[k], nameOf[i]) <= 2)
+            .sort((a, b) => nameDistance(nameOf[a], nameOf[i]) - nameDistance(nameOf[b], nameOf[i]));
+          const read = near([...reads]);
+          const meant = (read.length ? read : near(nameOf.map((_, k) => k))).slice(0, 3).map((k) => nameOf[k]);
+          warnings.push(`Line ${rx.line}: ${nameOf[i]} is used up by the reaction, and nothing starts it, brings it in or `
+            + `makes it, nor does the rate read it: it can only go below nought.${meant.length
+              ? ` Is it ${meant.join(' or ')}${read.length ? ', which the rate reads' : ''}?` : ''}`);
+        }
+      }
+    }
   }
 
   /**

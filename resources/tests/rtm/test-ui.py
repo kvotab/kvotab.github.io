@@ -3967,12 +3967,16 @@ async def main():
                 " return de.scrollHeight - de.clientHeight; })()"), 0)
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
             await asyncio.sleep(0.4)
-            # The model text takes what the pane has left, so its foot lines up
-            # with the foot of the status box in the panel beside it.
-            check('the model text reaches the foot of the panel beside it', await page.ev(
+            # The model text, and the warnings under it where there are any -- the
+            # built-in model's line 194 -- take what the pane has left, so their
+            # foot lines up with the foot of the status box in the panel beside it.
+            check('the model text, with its warnings under it, reaches the foot of the panel beside it', await page.ev(
                 "(() => { const ta = document.getElementById('rtmText').getBoundingClientRect();"
+                " const note = document.getElementById('rtmModelNote');"
+                " const foot = note.hidden ? ta.bottom"
+                "   : note.getBoundingClientRect().bottom + parseFloat(getComputedStyle(note).marginBottom);"
                 " const st = document.getElementById('rtmStatus').getBoundingClientRect();"
-                " return Math.abs(ta.bottom - st.bottom) <= 2; })()"), True)
+                " return Math.abs(foot - st.bottom) <= 2; })()"), True)
 
             # --- the syntax colouring -----------------------------------------
             # The coloured copy is a second rendering of the same characters

@@ -589,6 +589,33 @@ A => B, r = ${law}
 }
 {
   /*
+    LIKELY MISTAKES IN THE REACTION LINES, as warnings: a line whose
+    charges do not balance, A => B + H+ (0 against +1), and a species a line
+    uses up that nothing starts, brings in, makes or forms, which its rate
+    does not read -- Bx => AB, r = k*[B]: it can only go below nought, and
+    B, which the rate reads, is offered. Nothing said of a source, a sink, a
+    balanced line, or mass action on a species made elsewhere. Every example
+    says nothing; the built-in model one thing, true of skbrtm's own set:
+    UO2CO3 + H2 + E_site => H+ + H+ + E_site, 0 against +2.
+  */
+  const planted = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nA  1\nB  0\nAB  0\nBx  0\nH+  1e-7\nC  0\n\n'
+    + '<REACTIONS>\nA => B, k = 1\nBx => AB, r = k*[B], k = 1\nA => B + H+, k = 1\n=> C, k = 1\nC =>, k = 1\nB + A => AB, k = 2\n');
+  const ours = (w) => w.filter((x) => /charges do not balance|can only go below nought/.test(x));
+  const { RTM_EXAMPLES: lintExamples } = require(path.join(jsDir, 'rtm-examples.js'));
+  const noisy = lintExamples.filter((e) => ours(RtmModel.compile(e.text).warnings).length).map((e) => e.id);
+  const builtIn = ours(RtmModel.compile(RTM_DEFAULT_MODEL).warnings);
+  check('likely mistakes in the reaction lines, warned of: charges that do not balance, and a species used up that nothing '
+    + 'starts or makes and its rate does not read, a name the rate reads offered; nothing said of a source, a sink or a '
+    + 'balanced line, nor by any example; the built-in model\'s one unbalanced line, as skbrtm\'s own set has it',
+  JSON.stringify(ours(planted.warnings)) === JSON.stringify([
+    'Line 16: the charges do not balance, 0 on the left and +1 on the right.',
+    'Line 15: Bx is used up by the reaction, and nothing starts it, brings it in or makes it, nor does the rate read it: '
+      + 'it can only go below nought. Is it B, which the rate reads?'])
+    && noisy.length === 0 && builtIn.length === 1 && /^Line \d+: the charges do not balance, 0 on the left and \+2 on the right\.$/.test(builtIn[0]),
+  `${ours(planted.warnings).join(' | ')}; examples warned: ${noisy.join(', ') || 'none'}; built-in: ${builtIn.join(' | ')}`);
+}
+{
+  /*
     CHECK JACOBIAN WHERE A RATE LAW BENDS NEAR THE STEP: a
     Langmuir-Hinshelwood factor, 8.1e4[H2]/(8.1e4[H2] + 1), at [H2] = 0
     beside a species at 55.56: the check steps H2 by 3.4e-6, a quarter of
@@ -4982,7 +5009,8 @@ ${reactions ? `\n<REACTIONS>\n${reactions}\n` : ''}`);
   const kA = -13.5;
   const k = 1e-3;
   const Ox0 = 5e-5;
-  const held = batch(`Fe+2 1e-4\nFe+3 1e-8\nA 1e-4\nB 1e-8\nOx ${Ox0}\nRed 0\ne- electron`,
+  // Red carries the electron Ox takes, so that the line's charges balance: -1.
+  const held = batch(`Fe+2 1e-4\nFe+3 1e-8\nA 1e-4\nB 1e-8\nOx ${Ox0}\nRed 0 z=-1\ne- electron`,
     `${FE}\nA <=> B + e-, logK = ${kA}`, 'EQUILIBRATE = always',
     `Ox + Fe+2 => Red + Fe+3, r = k*[Ox], k = ${k}`);
   const c0 = held.toConcentrations(held.initialState());
@@ -9886,7 +9914,10 @@ C2O4-2 + UO2+2 => U_site, r = k*[C2O4-2]*[UO2+2], k = 1
   const m = RtmModel.compile(RTM_DEFAULT_MODEL);
   check('the built-in model compiles', m.nspecies === 36 * 20 && m.nreactions === 127,
     `${m.speciesNames.length} species x ${m.cells} cells = ${m.nspecies}, ${m.nreactions} reactions`);
-  check('  with no warnings', m.warnings.length === 0, m.warnings.join('; ') || 'none');
+  // One warning, true of skbrtm's own set the model is converted from: UO2CO3 + H2 + E_site => H+ + H+ + E_site.
+  check('  with one warning, the charges of its line 194 as skbrtm\'s own set has them',
+    m.warnings.length === 1 && m.warnings[0] === 'Line 194: the charges do not balance, 0 on the left and +2 on the right.',
+    m.warnings.join('; ') || 'none');
   const r = run(m, { tend: 1e4, rtol: 1e-6, atol: 1e-22, nonNegative: true });
   check('  and integrates', r.t.length > 1,
     `${r.stats.nsteps} steps, ${r.stats.sparse ? 'sparse' : 'dense'} LU`);
