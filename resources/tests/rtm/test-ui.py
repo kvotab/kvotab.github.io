@@ -14,6 +14,8 @@ Start the server and the browser as in ../rb/README.md (on ports 8765 and
 Exit status is 0 when every check passes.
 """
 import asyncio
+import base64
+import io
 import json
 import math
 import os
@@ -21,6 +23,7 @@ import re
 import sys
 import tempfile
 import urllib.request
+import zipfile
 
 import websockets
 
@@ -3954,6 +3957,69 @@ async def main():
             check('and the status scrolls instead of growing', await page.ev(
                 "(() => { const el = document.getElementById('rtmStatus');"
                 " return el.scrollHeight > el.clientHeight + 20; })()"), True)
+            first_width = await page.ev("Math.round(document.getElementById('rtmSide').getBoundingClientRect().width)")
+            # The run's area grows upwards from its top edge, the status under the buttons taking the height, so that a
+            # long report is read whole. The handle lies over the edge; a drag on it is what the page sees here, by
+            # pointer events of its own making (a drag of the browser's own jams its later clicks). 250 px up: the area
+            # and the status each 250 px taller, the Run button 250 px higher, the foot where it was. Far up, the panel
+            # keeps 120 px above it; back down past where it started, the area is as its contents make it. The arrow keys
+            # move the edge a line of the status at a time, and a double click gives the area back its own height.
+            FOOT = """(() => { const f = document.getElementById('rtmSideFoot').getBoundingClientRect();
+              const st = document.getElementById('rtmStatus').getBoundingClientRect();
+              const run = document.getElementById('rtmRun').getBoundingClientRect();
+              const side = document.getElementById('rtmSide').getBoundingClientRect();
+              let kept = 'unread'; try { kept = JSON.parse(localStorage.getItem('kvot-rtm-v1')).footHeight; } catch (e) { /* none */ }
+              return { foot: Math.round(f.height), status: Math.round(st.height), run: Math.round(run.top), bottom: Math.round(f.bottom),
+                room: Math.round(f.top - side.top), sized: document.getElementById('rtmSideFoot').classList.contains('sized'),
+                kept: kept === undefined ? null : kept }; })()"""
+            FOOT_DRAG = """((dy) => { const h = document.getElementById('rtmFootResize'); const b = h.getBoundingClientRect();
+              const at = (type, y) => h.dispatchEvent(new PointerEvent(type, { clientX: b.left + 60, clientY: y, button: 0, bubbles: true, pointerId: 9 }));
+              at('pointerdown', b.top); at('pointermove', b.top - dy / 2); at('pointermove', b.top - dy); at('pointerup', b.top - dy); })(%d)"""
+            first = await page.ev(FOOT)
+            await page.ev(FOOT_DRAG % 250)
+            await asyncio.sleep(0.3)
+            up = await page.ev(FOOT)
+            check('the run\'s area drags upwards from its top edge: 250 px up, the area and the status each 250 px taller, the '
+                  'Run button 250 px higher, its foot where it was, and the height kept',
+                  [up['foot'] - first['foot'], up['status'] - first['status'], first['run'] - up['run'],
+                   up['bottom'] - first['bottom'], up['sized'], up['kept'], first['sized'], first['kept']],
+                  [250, 250, 250, 0, True, first['foot'] + 250, False, None])
+            check('  the long report read whole in it, where it scrolled', await page.ev(
+                "(() => { const el = document.getElementById('rtmStatus'); return el.scrollHeight <= el.clientHeight; })()"), True)
+            await page.ev(FOOT_DRAG % 2000)
+            await asyncio.sleep(0.3)
+            check('  dragged far up, it stops 120 px short of the top of the panel', (await page.ev(FOOT))['room'], 120)
+            await page.ev(FOOT_DRAG % -3000)
+            await asyncio.sleep(0.3)
+            down = await page.ev(FOOT)
+            check('  and dragged back down past where it started, it is as its contents make it, nothing kept',
+                  [down['foot'], down['run'], down['sized'], down['kept']], [first['foot'], first['run'], False, None])
+            await page.ev("""(() => { const h = document.getElementById('rtmFootResize'); h.focus();
+              for (let i = 0; i < 3; i++) h.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true })); })()""")
+            await asyncio.sleep(0.2)
+            keys_up = await page.ev(FOOT)
+            await page.ev("document.getElementById('rtmFootResize').dispatchEvent("
+                          "new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))")
+            await asyncio.sleep(0.2)
+            key_down = await page.ev(FOOT)
+            await page.ev("document.getElementById('rtmFootResize').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))")
+            await asyncio.sleep(0.2)
+            back = await page.ev(FOOT)
+            check('the arrow keys move the edge a line of the status at a time, and a double click gives the area its own height back',
+                  [keys_up['foot'] - first['foot'], key_down['foot'] - first['foot'], back['foot'], back['sized'], back['kept']],
+                  [54, 36, first['foot'], False, None])
+            # The panel's right edge, dragged wider, and its own width back by a double click on it: the page's actions
+            # are delegated for clicks, changes, input and keys, not double clicks, so the edge listens for its own.
+            WIDTH = "Math.round(document.getElementById('rtmSide').getBoundingClientRect().width)"
+            await page.ev("""(() => { const h = document.getElementById('rtmResize'); const b = h.getBoundingClientRect();
+              const at = (type, x) => h.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: b.top + 100, button: 0, bubbles: true, pointerId: 9 }));
+              at('pointerdown', b.left + 4); at('pointermove', b.left + 104); at('pointerup', b.left + 104); })()""")
+            await asyncio.sleep(0.3)
+            wide = await page.ev(WIDTH)
+            await page.ev("document.getElementById('rtmResize').dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))")
+            await asyncio.sleep(0.3)
+            check('the panel drags wider by its right edge, and a double click on the edge gives it its own width back',
+                  [wide > first_width + 50, await page.ev(WIDTH)], [True, 330])
             await page.ev("document.getElementById('rtmStatus').textContent = 'Ready.'")
 
             # --- the window does not scroll, and the text box fills the pane ---
@@ -4041,14 +4107,11 @@ async def main():
                 "(() => { const st = getComputedStyle(document.getElementById('rtmText'), '::selection');"
                 " const a = /\\/\\s*([0-9.]+)\\)$/.exec(st.backgroundColor);"
                 " return [st.color, a ? Number(a[1]) : null]; })()"), ['rgba(0, 0, 0, 0)', 0.3])
-            # The box keeps the edge every input on the site has. The rule that
-            # sizes the two boxes together paints a transparent border to do
-            # it, and it is the more specific selector, so asking for the real
-            # one by class alone left the model text in the pane with no edge.
+            # The box keeps the edge every input on the site has, round the line
+            # numbers and the text together, coloured or not.
             check('and the box still has its border, in both states', await page.ev(
-                "(() => { const ta = document.getElementById('rtmText');"
-                " const box = document.getElementById('rtmCodeBox');"
-                " const edge = () => { const cs = getComputedStyle(ta);"
+                "(() => { const box = document.getElementById('rtmCodeBox');"
+                " const edge = () => { const cs = getComputedStyle(box);"
                 "   return [cs.borderTopWidth, cs.borderTopStyle, cs.borderTopColor].join(' '); };"
                 " const on = edge(); box.classList.remove('hl'); const off = edge();"
                 " box.classList.add('hl');"
@@ -4083,6 +4146,66 @@ async def main():
             await asyncio.sleep(0.3)
             check('and turning it back on paints it again', await page.ev(
                 "document.getElementById('rtmHighlight').textContent.length > 100"), True)
+
+            # --- the line numbers -----------------------------------------------
+            # A column of their own beside the text, inside the box's edge: one number a line, each level with its line
+            # in the coloured copy, the text scrolled too. The built-in model's warning names its line 194, whose number
+            # is marked; an error marks the line it names. Off, the column goes and the text has the box's width, the
+            # copy still under it; the choice is kept.
+            LINES = """(() => { const col = document.getElementById('rtmLineNos'), inner = col.firstElementChild;
+              const ta = document.getElementById('rtmText'), code = document.querySelector('#rtmHighlight > code');
+              const box = ta.getBoundingClientRect(); const tops = new Map();
+              const walker = document.createTreeWalker(inner, NodeFilter.SHOW_TEXT); let node;
+              while ((node = walker.nextNode())) {
+                for (let i = 0; i < node.data.length; i++) {
+                  if (i > 0 && node.data[i - 1] !== '\\n') continue;
+                  const num = Number((node.data.slice(i).match(/^\\d+/) || [''])[0]); if (!num) continue;
+                  const r = document.createRange(); r.setStart(node, i); r.setEnd(node, i + 1); const b = r.getBoundingClientRect();
+                  if (b.top >= box.top && b.bottom <= box.bottom) tops.set(num, b.top);
+                }
+              }
+              let worst = 0;
+              for (const [num, top] of tops) {
+                const r = document.createRange(); r.selectNodeContents(code.children[num - 1]);
+                worst = Math.max(worst, Math.abs(r.getClientRects()[0].top - top));
+              }
+              return { shown: getComputedStyle(col).display !== 'none', count: inner.textContent.split('\\n').length,
+                lines: ta.value.split('\\n').length, inView: tops.size, worst: Math.round(worst * 100) / 100,
+                marked: [...inner.querySelectorAll('span')].map((x) => [x.textContent, x.className]) }; })()"""
+            await page.ev("document.getElementById('rtmText').scrollTop = 18 * 180")
+            await asyncio.sleep(0.4)
+            ln = await page.ev(LINES)
+            check(f'line numbers: a column beside the text, one number a line, each of the {ln["inView"]} in view level with its '
+                  'line, the text scrolled; line 194, which the built-in model\'s warning names, marked',
+                  [await page.ev("document.getElementById('rtmLineNumbers').checked"), ln['shown'], ln['count'] == ln['lines'],
+                   ln['inView'] > 20, ln['worst'], ln['marked']],
+                  [True, True, True, True, 0, [['194', 'warn']]])
+            was_text = await page.ev("document.getElementById('rtmText').value")
+            await page.ev("""(() => { const ta = document.getElementById('rtmText');
+              ta.value = '<SPECIES>\\nA 1\\n\\n<REACTIONS>\\nA => Q, k = 1\\n'; ta.dispatchEvent(new Event('input', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('The model does not compile')", True, tries=40)
+            err = await page.ev(LINES)
+            check('  an error marks the line it names', [err['count'], err['marked']], [6, [['5', 'error']]])
+            await page.ev("(() => { const c = document.getElementById('rtmLineNumbers');"
+                          " c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            check('  turned off, the column goes and the text has the box\'s width, the copy still under it; the choice kept',
+                  await page.ev("""(() => { const box = document.getElementById('rtmCodeBox').getBoundingClientRect();
+                    const ta = document.getElementById('rtmText').getBoundingClientRect();
+                    const pre = document.getElementById('rtmHighlight').getBoundingClientRect();
+                    return [getComputedStyle(document.getElementById('rtmLineNos')).display, Math.round(ta.left - box.left),
+                      Math.round(ta.width - (box.width - 2)), Math.round(pre.left - ta.left),
+                      JSON.parse(localStorage.getItem('kvot-rtm-v1')).lineNumbers]; })()"""), ['none', 1, 0, 0, False])
+            await page.ev("(() => { const c = document.getElementById('rtmLineNumbers');"
+                          " c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("""((text) => { const ta = document.getElementById('rtmText');
+              ta.value = text; ta.dispatchEvent(new Event('input', { bubbles: true })); })(%s)""" % json.dumps(was_text))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
+            back_on = await page.ev(LINES)
+            check('  and on again, the column back, line 194 marked again once the text compiles',
+                  [back_on['shown'], back_on['count'] == back_on['lines'], back_on['marked'],
+                   await page.ev("JSON.parse(localStorage.getItem('kvot-rtm-v1')).lineNumbers")],
+                  [True, True, [['194', 'warn']], True])
 
             # --- the run as an HDF5 file --------------------------------------
             # The bytes are checked against the real library in test-hdf5.py;
@@ -4164,6 +4287,56 @@ async def main():
                          True, tries=40)
             check('  and it compiles, with the script\'s time span', await page.ev(
                 "document.getElementById('rtmFacts').textContent.includes('run for 10.0 s.')"), True)
+
+            # --- a .zip, dropped or opened --------------------------------------
+            # The skbrtm set above zipped as a Mac zips a folder -- its script run for 20 s -- the files under the
+            # folder's name, and beside them under __MACOSX/ a ._ copy of each one's attributes, named as the file is
+            # (._run.py, ._reaction.in) but holding no text, which is passed over: read, ._run.py would be a fourth
+            # file. Dropped, the .zip opens as its folder would. Open… takes a .zip too: a model text in one opens as
+            # the text. A file called .zip that is none says so.
+            def zipped(files):
+                buf = io.BytesIO()
+                with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
+                    for name, text in files:
+                        z.writestr(name, text)
+                        head, _, base = name.rpartition('/')
+                        z.writestr('__MACOSX/' + (head + '/' if head else '') + '._' + base,
+                                   b'\x00\x05\x16\x07\x00\x02\x00\x00Mac OS X        ' + bytes(60))
+                return buf.getvalue()
+            skb_zip = zipped([('set/' + ('databases/' if n.endswith('.in') else '') + n,
+                               t.replace("t_span = (0, 10, 'seconds')", "t_span = (0, 20, 'seconds')")) for n, t in skb])
+            drop_zip_js = """((name, b64) => {
+              const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+              const dt = new DataTransfer();
+              dt.items.add(new File([bytes], name, { type: 'application/zip' }));
+              document.getElementById('rtmExampleAbout').textContent = '';
+              document.getElementById('rtmStatus').textContent = '';
+              document.querySelector('.rtm-main').dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+            })(%s, %s)"""
+            await page.ev(drop_zip_js % (json.dumps('set.zip'), json.dumps(base64.b64encode(skb_zip).decode())))
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
+            check("a .zip of skbrtm's folder, dropped, opens as the folder would, the notes and a Mac's ._ copies passed over, "
+                  "and compiles with its script's time span",
+                  await page.ev("[document.getElementById('rtmExampleAbout').textContent.startsWith('Opened 3 skbrtm files as one model.'),"
+                                " document.getElementById('rtmFacts').textContent.includes('run for 20.0 s.')]"), [True, True])
+            with tempfile.TemporaryDirectory() as tmp:
+                zp = os.path.join(tmp, 'model.zip')
+                with open(zp, 'wb') as f:
+                    f.write(zipped([('m/model.rtm', model)]))
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                doc = await page.call('DOM.getDocument', {}, session=page.sid)
+                node = await page.call('DOM.querySelector', {'nodeId': doc['result']['root']['nodeId'], 'selector': '#rtmFile'},
+                                       session=page.sid)
+                await page.call('DOM.setFileInputFiles', {'nodeId': node['result']['nodeId'], 'files': [zp]}, session=page.sid)
+                await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
+            check('Open… takes a .zip: a model text in one opens as the text', await page.ev(
+                "document.getElementById('rtmText').value"), model)
+            await page.ev(drop_zip_js % (json.dumps('broken.zip'), json.dumps(base64.b64encode(b'not a zip at all').decode())))
+            await settle(page, "document.getElementById('rtmStatus').className", 'rtm-status error', tries=20)
+            check('a file called .zip that is none says so, the text left as it was', await page.ev(
+                "[document.getElementById('rtmStatus').textContent.startsWith("
+                "'The drop could not be read: broken.zip could not be read as a .zip'),"
+                " document.getElementById('rtmText').value === %s]" % json.dumps(model)), [True, True])
 
             # --- the full window ----------------------------------------------
             # The page without the site's header, menu and footer, by the button

@@ -235,6 +235,32 @@
   overscroll-behavior: contain;
   overflow-wrap: anywhere;
 }
+/*
+  The run's area grows upwards from its top edge: a handle drawn over the edge,
+  as the panel's own is over its right edge, its line shown only under the
+  pointer, while it is dragged or with the keyboard on it. Sized, the area is a
+  column whose status takes what the buttons leave, scrolling where it says
+  more still; its top margin is less by the 6 px of the bar above it, which a
+  column adds where the flow of a block let the two margins overlap.
+*/
+.rtm-foot-resize { flex: 0 0 0; height: 0; position: relative; z-index: 2; outline: none; }
+.rtm-foot-resize::before { content: ''; position: absolute; left: 0; right: 0; top: -4px; height: 8px; cursor: row-resize; }
+.rtm-foot-resize::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -2px;
+  height: 3px;
+  border-radius: 2px;
+  pointer-events: none;
+  transition: background 0.15s;
+}
+.rtm-foot-resize:hover::after, .rtm-foot-resize.active::after, .rtm-foot-resize:focus-visible::after {
+  background: var(--color-kvot-accent);
+}
+.rtm-side-foot.sized { display: flex; flex-direction: column; box-sizing: border-box; max-height: calc(100% - 120px); }
+.rtm-side-foot.sized .rtm-status { flex: 1 1 auto; height: auto; min-height: 4.35em; margin-top: 2px; }
 .rtm-status.ok { border-color: var(--accent-success); }
 .rtm-status.error { border-color: var(--color-kvot-accent); color: var(--text-primary); }
 .rtm-status.warn { border-color: var(--color-kvot-bright); color: var(--text-primary); }
@@ -568,20 +594,68 @@
   metric that decides where a character lands has to be identical in both,
   so they are declared together rather than separately.
 */
+/*
+  The box's edge, and the ring that says the keyboard is in it, go round the
+  line numbers and the text together; the copy and the textarea lie in the
+  area beside the numbers, so that text scrolled sideways never passes under
+  them.
+*/
 .rtm-code-box {
   position: relative;
   flex: 1 1 auto;
   min-height: 160px;
   display: flex;
+  box-sizing: border-box;
+  border: 1px solid var(--input-border);
+  border-radius: 6px;
+  background: var(--input-bg);
+  overflow: hidden;
 }
+.rtm-code-box:focus-within { outline: 1px auto Highlight; outline: 1px auto -webkit-focus-ring-color; }
+.rtm-code-box textarea:focus { outline: none; }
+.rtm-code-area { position: relative; flex: 1 1 auto; min-width: 0; display: flex; }
+/*
+  The line numbers: a column of their own in the text's face and line height,
+  each number level with its line, moved up as the text scrolls by rtm-ui.js.
+  A line a warning names has its number marked in the warning's tone, the
+  line an error names in the error's.
+*/
+.rtm-code-lines {
+  flex: none;
+  overflow: hidden;
+  box-sizing: border-box;
+  padding: 8px 8px 8px 10px;
+  font: 12px/1.5 var(--font-mono);
+  font-kerning: none;
+  font-variant-ligatures: none;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: pre;
+  color: var(--text-muted);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-color);
+  user-select: none;
+  pointer-events: none;
+}
+.rtm-code-box.no-lines .rtm-code-lines { display: none; }
+/* Marked on a tint of the status line's own tone, in the text's colour: the warning's amber is too pale for text. */
+.rtm-code-lines .warn, .rtm-code-lines .error {
+  color: var(--text-primary);
+  font-weight: 600;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-right: -3px;
+}
+.rtm-code-lines .warn { background: color-mix(in srgb, var(--color-kvot-bright) 45%, transparent); }
+.rtm-code-lines .error { background: color-mix(in srgb, var(--accent-fill) 35%, transparent); }
 .rtm-code-box textarea,
 .rtm-code-box .rtm-code-hl {
   box-sizing: border-box;
   width: 100%;
   margin: 0;
   padding: 8px 10px;
-  border: 1px solid transparent;
-  border-radius: 6px;
+  border: 0;
+  border-radius: 0;
   font: 12px/1.5 var(--font-mono);
   font-kerning: none;
   font-variant-ligatures: none;
@@ -599,18 +673,11 @@
   twelfth.
 */
 .rtm-code-box .rtm-code-hl code { font: inherit; font-kerning: none; font-variant-ligatures: none; }
-/*
-  Addressed as `.rtm-code-box textarea` rather than as `.rtm-text`, and not
-  for tidiness: the rule above it is `.rtm-code-box textarea` too, and it
-  paints a transparent border to keep the coloured copy the same size as the
-  box. A class on its own is the weaker selector, so the border it asked for
-  never arrived and the model text sat in the pane with no edge at all.
-*/
+/* Addressed as `.rtm-code-box textarea`, as the rule above it is: a class on its own is the weaker selector. */
 .rtm-code-box textarea {
   flex: 1 1 auto;
   position: relative;
   z-index: 1;
-  border-color: var(--input-border);
   background: var(--input-bg);
   color: var(--text-primary);
   resize: none;
@@ -766,7 +833,7 @@
 */
 .rtm { position: relative; }
 .rtm.dropping::after {
-  content: "Drop to open: a model text (.rtm, .txt), or skbrtm's databases and script, or their folder";
+  content: "Drop to open: a model text (.rtm, .txt), or skbrtm's databases and script, their folder, or a .zip of either";
   position: absolute;
   inset: 6px;
   z-index: 50;

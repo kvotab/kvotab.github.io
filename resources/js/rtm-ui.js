@@ -95,7 +95,9 @@
     unc: { rows: [], n: '100', scheme: 'lhs', seed: '1', cell: 0, useCorr: true, corr: null, show: 'time', key: '', of: 'end' },
     tab: 'time',
     syntax: true,          // colour the model text in the editor
+    lineNumbers: true,     // the line numbers beside the model text
     sideWidth: null,
+    footHeight: null,      // the run's area, as tall as its top edge was dragged; null, as its buttons and status need
     sections: {},
     compiled: null,        // the summary from the worker
     compileError: null,
@@ -123,7 +125,8 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         text: state.text, solver: state.solver, picked: state.picked, cell: state.cell,
-        tab: state.tab, syntax: state.syntax, sideWidth: state.sideWidth, sections: state.sections,
+        tab: state.tab, syntax: state.syntax, lineNumbers: state.lineNumbers, sideWidth: state.sideWidth,
+        footHeight: state.footHeight, sections: state.sections,
         layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
         gradLayer: state.gradLayer,
         profileSpecies: state.profileSpecies, profileTimes: state.profileTimes, profileAt: state.profileAt, profilePace: state.profilePace,
@@ -159,6 +162,7 @@
       if (s.profileAxis === 'matrix' || s.profileAxis === 'fracture') state.profileAxis = s.profileAxis;
       if (typeof s.tab === 'string') state.tab = s.tab;
       if (typeof s.syntax === 'boolean') state.syntax = s.syntax;
+      if (typeof s.lineNumbers === 'boolean') state.lineNumbers = s.lineNumbers;
       if (typeof s.profileSpecies === 'string') state.profileSpecies = s.profileSpecies;
       if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
       if (s.profileAt === null || Number.isFinite(s.profileAt)) state.profileAt = s.profileAt;
@@ -233,6 +237,7 @@
         if (s.unc.corr && Array.isArray(s.unc.corr.whats) && Array.isArray(s.unc.corr.m)) u.corr = s.unc.corr;
       }
       if (Number.isFinite(s.sideWidth)) state.sideWidth = s.sideWidth;
+      if (Number.isFinite(s.footHeight) && s.footHeight > 0) state.footHeight = s.footHeight;
       if (s.sections && typeof s.sections === 'object') state.sections = s.sections;
       state.storedStamp = typeof s.modelStamp === 'string' ? s.modelStamp : null;
       state.storedEdited = typeof s.textEdited === 'boolean' ? s.textEdited : null;
@@ -610,12 +615,14 @@
       }
       $('rtmModelNote').textContent = m.warnings.join('  ');
       $('rtmModelNote').hidden = !m.warnings.length;
+      renderLineNumbers();
       infoRefresh();
       return true;
     } catch (e) {
       state.compiled = null;
       state.compileError = e;
       renderFacts();
+      renderLineNumbers();
       infoRefresh();
       if (!state.running) setStatus(`The model does not compile: ${e.message}${note}`, 'error');
       return false;
@@ -9218,7 +9225,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     handle.addEventListener('pointerdown', (ev) => {
       dragging = true;
       handle.classList.add('active');
-      handle.setPointerCapture(ev.pointerId);
+      // A pointer of the page's own making, as a test's, has nothing to capture.
+      try { handle.setPointerCapture(ev.pointerId); } catch (e) { /* moves still reach the handle */ }
     });
     handle.addEventListener('pointermove', (ev) => {
       if (!dragging) return;
@@ -9237,6 +9245,90 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     };
     handle.addEventListener('pointerup', end);
     handle.addEventListener('pointercancel', end);
+    // A double click gives the panel its own width back. Bound here: the page's
+    // actions are delegated for click, change, input and keys, not dblclick.
+    handle.addEventListener('dblclick', resetWidth);
+  }
+
+  function resetWidth() {
+    state.sideWidth = DEFAULT_WIDTH;
+    document.querySelector('.rtm').style.setProperty('--rtm-side-width', `${DEFAULT_WIDTH}px`);
+    saveState();
+    resize();
+  }
+
+  /*
+    THE RUN'S AREA, Run and the status under it, as tall as its top edge is
+    dragged upwards -- the status taking the height, so that a long report
+    is read without scrolling -- from as tall as its buttons and status need
+    to 120 px short of the panel; and back by dragging it down, a double
+    click on the edge, or the arrow keys with the edge in focus. The height is
+    kept for the next visit, and the panel's own height bounds it as the
+    window changes (rtm.css).
+  */
+  const FOOT_STEP = 18;
+  const FOOT_ROOM = 120;
+
+  function setFootHeight(h) {
+    const foot = $('rtmSideFoot');
+    state.footHeight = Number.isFinite(h) && h > 0 ? Math.round(h) : null;
+    foot.classList.toggle('sized', state.footHeight !== null);
+    foot.style.height = state.footHeight !== null ? `${state.footHeight}px` : '';
+    $('rtmFootResize').setAttribute('aria-valuenow', String(Math.round(foot.getBoundingClientRect().height)));
+  }
+
+  /** As tall as the area's buttons and status need, and as tall as the panel lets it be. */
+  function footBounds() {
+    const foot = $('rtmSideFoot');
+    const was = foot.style.height;
+    const sized = foot.classList.contains('sized');
+    foot.classList.remove('sized');
+    foot.style.height = '';
+    const min = Math.ceil(foot.getBoundingClientRect().height);
+    foot.classList.toggle('sized', sized);
+    foot.style.height = was;
+    return { min, max: Math.max(min, Math.floor($('rtmSide').getBoundingClientRect().height) - FOOT_ROOM) };
+  }
+
+  /** To h, between the bounds: at the least, the area as its contents make it. */
+  function footTo(h, bounds) {
+    const b = bounds || footBounds();
+    const to = Math.max(b.min, Math.min(b.max, h));
+    setFootHeight(to > b.min ? to : null);
+  }
+
+  function initFootResize() {
+    const handle = $('rtmFootResize');
+    const foot = $('rtmSideFoot');
+    if (state.footHeight) setFootHeight(state.footHeight);
+    let drag = null;
+    handle.addEventListener('pointerdown', (ev) => {
+      if (ev.button !== 0) return;
+      drag = { y: ev.clientY, h: foot.getBoundingClientRect().height, bounds: footBounds() };
+      handle.classList.add('active');
+      // A pointer of the page's own making, as a test's, has nothing to capture.
+      try { handle.setPointerCapture(ev.pointerId); } catch (e) { /* moves still reach the handle */ }
+      ev.preventDefault();
+    });
+    handle.addEventListener('pointermove', (ev) => {
+      if (drag) footTo(drag.h + drag.y - ev.clientY, drag.bounds);
+    });
+    const end = () => {
+      if (!drag) return;
+      drag = null;
+      handle.classList.remove('active');
+      saveState();
+    };
+    handle.addEventListener('pointerup', end);
+    handle.addEventListener('pointercancel', end);
+    handle.addEventListener('dblclick', () => { setFootHeight(null); saveState(); });
+    handle.addEventListener('keydown', (ev) => {
+      const by = { ArrowUp: FOOT_STEP, ArrowDown: -FOOT_STEP }[ev.key];
+      if (!by) return;
+      ev.preventDefault();
+      footTo(foot.getBoundingClientRect().height + by);
+      saveState();
+    });
   }
 
   function initSections() {
@@ -10061,16 +10153,17 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       lead: 'The model the page solves, as text. It compiles 0.4 s after the last keystroke; the status line says what it compiled to or where it went wrong, and any warnings are listed under the text.',
       facts: [
         ['Examples', `${EXAMPLES.length} in ${new Set(EXAMPLES.map((e) => e.group)).size} groups`],
-        ['A drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
+        ['Open… or a drop reads', `up to ${DROP_MAX_FILES} files, ${DROP_MAX_BYTES / 1048576} MB`],
         ['The text is kept', 'in this browser, between visits'],
       ],
       sections: [
         { heading: 'The toolbar', list: [
           '**Example**: loads one of the examples. The text is replaced without asking, and a line under the picker says what the model is and where it comes from.',
-          '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model. Dropping files, or their folder, anywhere on the page does the same.',
+          '**Open…**: a model text (`.rtm`, `.txt`), or skbrtm’s database files and the Python script that runs them (`.in`, `.py`), read as one model — or a `.zip` of either, read as its folder would be. Dropping files, their folder or a `.zip` anywhere on the page does the same.',
           '**From PHREEQC…**: opens a panel where PHREEQC speciates a water and the water, as PHREEQC leaves it, becomes the text. Its own (i) says how.',
           '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
           '**colour the syntax**: paints comments, section headings, numbers, functions and the words that mean something where they stand. Turn it off for a very large model. The choice is kept.',
+          '**line numbers**: a number beside each line, as the warnings and errors name them; the lines the warnings under the text name are marked in amber, the line an error names in red. The choice is kept.',
           '**Save**: the text, as `model.rtm`.',
           '**Apply**: compiles the text now.',
         ] },
@@ -10562,11 +10655,71 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     return el;
   }
 
-  /** Repaints the coloured copy and keeps it under the same part of the text. */
+  /*
+    THE LINE NUMBERS, in a column of their own beside the text: one a line,
+    as many as the text has -- an empty last line is a line the caret can
+    stand on -- moved up as far as the text is scrolled. The lines the
+    compile's warnings name (Line 194: ...) are marked in the warning's tone,
+    the line its error names in the error's. Drawn again only when the count
+    or the marks change; until the text compiles again, the marks stay on
+    the lines they were given.
+  */
+  let lineNosDrawn = '';
+  function lineMarks() {
+    const marks = new Map();
+    const m = state.compiled;
+    if (m && Array.isArray(m.warnings)) {
+      for (const w of m.warnings) {
+        const at = /^Line (\d+):/.exec(w);
+        if (at) marks.set(Number(at[1]), 'warn');
+      }
+    }
+    const e = state.compileError;
+    if (e && Number.isInteger(e.line) && e.line > 0) marks.set(e.line, 'error');
+    return marks;
+  }
+
+  function renderLineNumbers() {
+    const col = $('rtmLineNos');
+    const ta = $('rtmText');
+    if (!col || !ta) return;
+    const inner = col.firstElementChild;
+    if (!state.lineNumbers) {
+      if (lineNosDrawn) { inner.textContent = ''; lineNosDrawn = ''; }
+      return;
+    }
+    const text = ta.value;
+    let n = 1;
+    for (let i = text.indexOf('\n'); i >= 0; i = text.indexOf('\n', i + 1)) n += 1;
+    const marks = lineMarks();
+    const key = `${n}|${[...marks].map(([line, kind]) => `${line}${kind[0]}`).join(',')}`;
+    if (key !== lineNosDrawn) {
+      lineNosDrawn = key;
+      const out = new Array(n);
+      for (let i = 1; i <= n; i += 1) {
+        const kind = marks.get(i);
+        out[i - 1] = kind ? `<span class="${kind}">${i}</span>` : String(i);
+      }
+      inner.innerHTML = out.join('\n');
+    }
+    inner.style.transform = `translateY(${-ta.scrollTop}px)`;
+  }
+
+  /** Shows the line numbers or puts them away. */
+  function applyLineNumbers() {
+    const box = $('rtmCodeBox');
+    const check = $('rtmLineNumbers');
+    if (check) check.checked = !!state.lineNumbers;
+    if (box) box.classList.toggle('no-lines', !state.lineNumbers);
+    renderLineNumbers();
+  }
+
+  /** Repaints the coloured copy and keeps it under the same part of the text; the line numbers with it. */
   function renderHighlight() {
     const pre = $('rtmHighlight');
     const ta = $('rtmText');
     if (!pre || !ta) return;
+    renderLineNumbers();
     const code = pre.firstElementChild;
     if (!state.syntax) { code.textContent = ''; hlLines = []; hlSecs = []; return; }
     const lines = ta.value.split('\n');
@@ -10624,36 +10777,85 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     Python script that runs them, which says which of them are read, in what
     order, and for how long. Those are converted to one model text by
     RtmImport, which writes at the top of it everything skbrtm itself would
-    read differently.
+    read differently. A .zip of any of these opens as its folder would.
   */
   async function fileChosen(ev) {
     const picked = Array.from((ev.target.files) || []);
     ev.target.value = '';
     if (!picked.length) return;
-    openFiles(await Promise.all(picked.map(async (f) => ({ name: f.name, text: await f.text() }))));
+    let read;
+    try {
+      read = await readFiles([], picked, true);
+    } catch (e) {
+      setStatus(e.message, 'error');
+      return;
+    }
+    landFiles(read);
   }
 
   /*
-    DROPPED ON THE PAGE. A model text, skbrtm's files, or the folder they are
-    in -- an skbrtm example's own folder, script and databases/ together --
-    opens as Open... would open it. What is read is what either can use; a
-    folder's notes, plots and results are passed over, and a folder is not
-    followed without end.
+    DROPPED ON THE PAGE. A model text, skbrtm's files, the folder they are in
+    -- an skbrtm example's own folder, script and databases/ together -- or a
+    .zip of either, opens as Open... would open it. What is read is what
+    either can use; a folder's or a .zip's notes, plots and results are
+    passed over, and a folder is not followed without end.
   */
   const READABLE = /\.(rtm|txt|in|py)$/i;
+  const ZIPPED = /\.zip$/i;
   const DROP_MAX_FILES = 200;
   const DROP_MAX_BYTES = 20 * 1024 * 1024;
+  const NOTHING_TO_OPEN = 'Nothing here can be opened: a model text (.rtm, .txt), or skbrtm\'s databases and script '
+    + '(.in, .py), the folder they are in, or a .zip of either.';
 
-  /** The files under what was dropped, as {name, text}. */
-  async function readDropped(entries, plain) {
+  /*
+    The files under what was dropped or chosen, as {name, text}: a folder's,
+    and a .zip's, by their paths in it. A file chosen by name with Open… is
+    read whatever it is called; in a folder or a .zip, only what the page can
+    use, and not what a Mac adds to a .zip it makes -- under __MACOSX/, a ._
+    copy of each file's attributes named as the file is, which holds no text.
+    At most DROP_MAX_FILES files and DROP_MAX_BYTES in all, a .zip's entry
+    counted at the size it says it is before it is read out, and at the size
+    it was once it has been.
+  */
+  async function readFiles(entries, plain, chosen) {
     const out = [];
     let bytes = 0;
     let skipped = 0;
+    const add = async (name, size, read) => {
+      if (out.length >= DROP_MAX_FILES || bytes + size > DROP_MAX_BYTES) { skipped++; return; }
+      const text = await read();
+      const used = Math.max(size, text.length);
+      if (bytes + used > DROP_MAX_BYTES) { skipped++; return; }
+      bytes += used;
+      out.push({ name, text });
+    };
+    const unzip = async (file, folder) => {
+      if (typeof JSZip === 'undefined') {
+        throw new Error(`${file.name} is a .zip, and what reads one did not load with the page: unzip it, and open or drop `
+          + 'what it holds.');
+      }
+      let zip;
+      try {
+        zip = await JSZip.loadAsync(file);
+      } catch (e) {
+        throw new Error(`${file.name} could not be read as a .zip: ${e.message}`);
+      }
+      for (const entry of Object.values(zip.files)) {
+        const base = entry.name.split('/').pop();
+        if (entry.dir || /(^|\/)__MACOSX\//.test(entry.name) || base.startsWith('._') || !READABLE.test(base)) continue;
+        // eslint-disable-next-line no-underscore-dangle
+        const said = entry._data && Number.isFinite(entry._data.uncompressedSize) ? entry._data.uncompressedSize : 0;
+        // eslint-disable-next-line no-await-in-loop
+        await add(folder + entry.name, said, () => entry.async('string'));
+      }
+    };
     const take = async (file, name) => {
-      if (!READABLE.test(file.name)) return;
-      if (out.length >= DROP_MAX_FILES || bytes + file.size > DROP_MAX_BYTES) { skipped++; return; }
-      bytes += file.size;
-      out.push({ name, text: await file.text() });
+      if (ZIPPED.test(file.name)) {
+        await unzip(file, name.slice(0, name.length - file.name.length));
+        return;
+      }
+      if (!chosen && !READABLE.test(file.name)) return;
+      await add(name, file.size, () => file.text());
     };
     if (entries.some(Boolean)) {
       const walk = async (entry, prefix, depth) => {
@@ -10711,18 +10913,21 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const entries = Array.from(dt.items || [])
         .map((it) => (it.kind === 'file' && typeof it.webkitGetAsEntry === 'function' ? it.webkitGetAsEntry() : null));
       const plain = Array.from(dt.files || []);
-      readDropped(entries, plain).then(({ files, skipped }) => {
-        if (!files.length) {
-          setStatus('Nothing here can be opened: a model text (.rtm, .txt), or skbrtm\'s databases and '
-            + 'script (.in, .py), or the folder they are in.', 'warn');
-          return;
-        }
-        openFiles(files);
-        if (skipped) setStatus(`${skipped} file${skipped === 1 ? ' was' : 's were'} left out: a drop reads `
-          + `${DROP_MAX_FILES} files and 20 MB at most.`, 'warn');
-      }, (e) => setStatus(`The drop could not be read: ${e.message}`, 'error'));
+      readFiles(entries, plain, false).then(landFiles,
+        (e) => setStatus(`The drop could not be read: ${e.message}`, 'error'));
     });
     window.addEventListener('dragend', done);
+  }
+
+  /** What Open… or a drop read, opened; or what was not. */
+  function landFiles({ files, skipped }) {
+    if (!files.length) {
+      setStatus(NOTHING_TO_OPEN, 'warn');
+      return;
+    }
+    openFiles(files);
+    if (skipped) setStatus(`${skipped} file${skipped === 1 ? ' was' : 's were'} left out: what is opened at once is `
+      + `${DROP_MAX_FILES} files and 20 MB at most.`, 'warn');
   }
 
   /** A model text, or skbrtm's files, however they arrived: [{name, text}]. */
@@ -12148,6 +12353,7 @@ END
       scheduleCompile(400);
     },
     'rtm:syntaxToggle': (ev, el) => { state.syntax = !!el.checked; applySyntaxMode(); saveState(); },
+    'rtm:lineNumbersToggle': (ev, el) => { state.lineNumbers = !!el.checked; applyLineNumbers(); saveState(); },
     'rtm:applyModel': () => { state.text = $('rtmText').value; scheduleCompile(0); },
     'rtm:resetModel': () => {
       state.text = RTM_DEFAULT_MODEL;
@@ -12160,12 +12366,6 @@ END
     'rtm:loadFile': () => $('rtmFile').click(),
     'rtm:fileChosen': (ev) => { fileChosen(ev); },
     'rtm:saveFile': () => saveFile(),
-    'rtm:resetWidth': () => {
-      state.sideWidth = DEFAULT_WIDTH;
-      document.querySelector('.rtm').style.setProperty('--rtm-side-width', `${DEFAULT_WIDTH}px`);
-      saveState();
-      resize();
-    },
     'rtm:pqPanel': () => { pqShowPanel(!pq.open); pqSave(); },
     'rtm:pqWaterEdited': () => { pq.water = $('rtmPqWater').value; pqSave(); },
     'rtm:pqOpenWater': () => $('rtmPqWaterFile').click(),
@@ -12257,14 +12457,18 @@ END
   // scroll does not bubble, so it cannot be delegated like the rest.
   $('rtmText').addEventListener('scroll', () => {
     const pre = $('rtmHighlight');
-    if (pre && state.syntax) { pre.scrollTop = $('rtmText').scrollTop; pre.scrollLeft = $('rtmText').scrollLeft; }
+    const ta = $('rtmText');
+    if (pre && state.syntax) { pre.scrollTop = ta.scrollTop; pre.scrollLeft = ta.scrollLeft; }
+    if (state.lineNumbers) $('rtmLineNos').firstElementChild.style.transform = `translateY(${-ta.scrollTop}px)`;
   }, { passive: true });
   applySyntaxMode();
+  applyLineNumbers();
   renderExamples();
   $('rtmProfileTimes').value = state.profileTimes;
   writeSolverControls();
   updateSolverOptions();
   initSideResize();
+  initFootResize();
   initSeriesResize();
   initSections();
   initDrop();
