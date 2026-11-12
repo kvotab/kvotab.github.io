@@ -2358,7 +2358,53 @@ async def main():
                   [grad_pv, prof_pv[0], back[0], back[1] == prof_pv[1] and len(back[1]) == 20, back[2:]],
                   [['pore volumes', '%{x:.3g} PV', '5e-11 PV', 'distance (m) \\ pore volumes: Ca+2 (mg/kgw)', True],
                    '0.498 PV | 0.999 PV | 2.00 PV | 4.97 PV', '2.77 h | 5.55 h | 11.1 h | 1.15 d', True,
-                   ['10000, 20000, 2 PV, 100000', '1e-6', '1e-6', '||', 'time (s)']])
+                   ['10000, 20000, 2 PV, 100000', '1e-6', '1e-6', 's|s|s', 'time (s)']])
+            # Another time unit, the same curves. The selects offer every unit, the model's said so, and pore volumes where
+            # the water flows. In hours on Against time: every stored time over 3600 s, the from turned with it, what was
+            # measured put on the axis by its own time, the three selects as one; the CSV with the hours before the seconds.
+            # Against distance's Times read in hours, a bare 5 at 5 h and 1 d as typed. Back in the model's own, all as it was.
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.4)
+            opts = await page.ev("[...document.getElementById('rtmTimeInTime').options].map((o) => `${o.value}:${o.textContent}`)")
+            await unit('rtmTimeInTime', 'h')
+            from_fits = await page.ev("(() => { const e = document.getElementById('rtmTMin'); return e.scrollWidth <= e.clientWidth; })()")
+            hrs = await page.ev("""(() => { const p = document.getElementById('rtmChartTime'), d = p.data;
+              return [p.layout.xaxis.title.text, ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join(' '),
+                `${document.getElementById('rtmTMin').value} ${document.getElementById('rtmTMinUnit').textContent}`,
+                Array.from(d.find((t) => t.name === 'Cl-, measured').x), Array.from(d.find((t) => t.name === 'Cl-').x)]; })()""")
+            await page.ev("(() => { window.__saved = []; window.__click = HTMLAnchorElement.prototype.click;"
+                          " HTMLAnchorElement.prototype.click = function () { const rec = { name: this.download };"
+                          " if (this.href.startsWith('blob:')) rec.body = fetch(this.href).then((r) => r.text()); window.__saved.push(rec); }; })()")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv_h = await page.ev("""(async () => { const r = window.__saved[0]; const l = r ? (await r.body).split('\\n') : [''];
+              const row = (l[101] || '').split(',').slice(0, 2).map(Number);
+              return [l[0].split(',').slice(0, 2).join(','), Math.abs(row[0] * 3600 / row[1] - 1) < 1e-12]; })()""")
+            await page.ev("document.querySelector('[data-tab=\"profile\"]').click()")
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '5, 1 d';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.6)
+            prof_h = await page.ev("document.getElementById('rtmChartProfile').data.map((t) => t.name)")
+            await unit('rtmTimeInProfile', 's')
+            back_s = await page.ev("""[document.getElementById('rtmProfileTimes').value, document.getElementById('rtmTMin').value,
+              ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join('|'),
+              document.getElementById('rtmChartTime').layout.xaxis.title.text,
+              Array.from(document.getElementById('rtmChartTime').data.find((t) => t.name === 'Cl-').x)]""")
+            await page.ev("(() => { const t = document.getElementById('rtmProfileTimes'); t.value = '';"
+                          " t.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            near = lambda name, want: bool(re.fullmatch(r'[0-9.]+ h', name)) and abs(float(name.split()[0]) / want - 1) < 0.03
+            check('Time in any time unit: the options every unit, the model\'s said so, and pore volumes where the water flows; '
+                  'in hours each stored time over 3600 s, the from turned, what was measured on the axis by its own time, the three '
+                  'selects as one, the CSV with the hours first; Against distance\'s Times read in hours; back in seconds, as it was',
+                  [opts, hrs[:3], [round(v, 9) for v in hrs[3]], len(hrs[4]) == len(in_s) > 100
+                   and max(abs(x * 3600 / t - 1) for x, t in zip(hrs[4], in_s) if t > 0) < 1e-12, csv_h,
+                   len(prof_h) == 2 and near(prof_h[0], 5) and near(prof_h[1], 24), back_s[:4], back_s[4] == in_s],
+                  [['s:seconds (the model’s)', 'min:minutes', 'h:hours', 'd:days', 'a:years', 'pv:pore volumes'],
+                   ['time (h)', 'h h h', '2.77778e-10 h'], [2.777777778, 12.5, 27.777777778, 111.111111111], True,
+                   ['t (h),t (s)', True], True, ['18000, 1 d', '1e-6', 's|s|s', 'time (s)'], True])
+            check('  the from as wide as what it says, 2.77778e-10 whole', from_fits, True)
             await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
             await asyncio.sleep(0.3)
             # The same water as PHREEQC lists it, on the Composition tab: one cell at one stored point, from the model's own
@@ -4340,6 +4386,22 @@ async def main():
                 await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled')", True, tries=40)
             check('Open… takes a .zip: a model text in one opens as the text', await page.ev(
                 "document.getElementById('rtmText').value"), model)
+            skb_h = [[n, t.replace("t_span = (0, 10, 'seconds')", "t_span = (0, 2, 'hours')")] for n, t in skb]
+            await page.ev(drop_js % json.dumps(skb_h))
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('run for 2.00 h.')", True, tries=40)
+            check("skbrtm's files with a script that ran for 2 hours: the model in seconds, as skbrtm counts, and Time in hours",
+                  await page.ev("[/^TIME_UNIT = second$/m.test(document.getElementById('rtmText').value),"
+                                " document.getElementById('rtmFacts').textContent.includes('run for 2.00 h.'),"
+                                " ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'].map((id) => document.getElementById(id).value).join(' ')]"),
+                  [True, True, 'h h h'])
+            await page.ev("(() => { const s = document.getElementById('rtmTimeInTime'); s.value = 's';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            # The model before back, and its compile done: its status would come after the error below.
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(drop_js % json.dumps([['dropped.rtm', model]]))
+            await settle(page, "document.getElementById('rtmText').value === %s"
+                               " && document.getElementById('rtmStatus').textContent.startsWith('Compiled')" % json.dumps(model), True, tries=40)
             await page.ev(drop_zip_js % (json.dumps('broken.zip'), json.dumps(base64.b64encode(b'not a zip at all').decode())))
             await settle(page, "document.getElementById('rtmStatus').className", 'rtm-status error', tries=20)
             check('a file called .zip that is none says so, the text left as it was', await page.ev(

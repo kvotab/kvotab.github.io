@@ -785,7 +785,8 @@
     if (plines.length) out.push('', '<PARAMETERS>', ...plines);
     out.push('', '<REACTIONS>', ...rxLines);
     if (srcLines.length) out.push('', '# Sources: skbrtm\'s SOURCETERM blocks', ...srcLines);
-    return { text: `${out.join('\n')}\n`, notes, warnings };
+    // The unit the script ran in, for the page to show the run in: the model itself is in seconds, as skbrtm counts.
+    return { text: `${out.join('\n')}\n`, notes, warnings, timeUnit: script && script.tend ? script.unit : null };
   }
 
   return { convert, isDatabase, readBlocks, readScript, pyLiteral };

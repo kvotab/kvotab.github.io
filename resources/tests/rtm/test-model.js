@@ -2551,6 +2551,9 @@ console.log('\n--- opening skbrtm databases ---');
     const at = (name, cell = 0) => m.initialState()[cell * ns + m.speciesNames.indexOf(name)];
     const s = m.settings;
     check('the script gives the time span: 2 days is 172800 s', s.TEND === 172800, String(s.TEND));
+    // The model counts in seconds, as skbrtm does; the page shows the run in the unit the script ran in.
+    check('  the model in seconds, and the unit the script ran in handed to the page to show the run in: days',
+      s.TIME_UNIT === 'second' && res.timeUnit === 'days', `${s.TIME_UNIT}, ${res.timeUnit}`);
     check('  and DIFFUSION the column: 6 power-law cells over 10 um, reservoir | neumann -- a Dirichlet end where '
       + 'something reacts is a reservoir, since the cell skbrtm holds there goes on reacting',
       s.MODE === 'transport' && m.fracture === 6 && s.GRID === 'powerlaw' && s.LEFT === 'reservoir'

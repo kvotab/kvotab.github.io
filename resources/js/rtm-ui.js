@@ -173,7 +173,7 @@
       if (typeof s.gradTMin === 'string') state.gradTMin = s.gradTMin;
       for (const k of ['yFrom', 'profileYFrom', 'gradCFrom']) if (typeof s[k] === 'string') state[k] = s[k];
       if (typeof s.concUnit === 'string' && (s.concUnit === '' || CONC_UNITS[s.concUnit])) state.concUnit = s.concUnit;
-      if (s.timeIn === '' || s.timeIn === 'pv') state.timeIn = s.timeIn;
+      if (s.timeIn === '' || s.timeIn === 'pv' || SHOW_UNITS.some(([sym]) => sym === s.timeIn)) state.timeIn = s.timeIn;
       if (typeof s.cells === 'string') state.cells = s.cells;
       if (typeof s.btc === 'boolean') state.btc = s.btc;
       if (Number.isFinite(s.seriesHeight) && s.seriesHeight >= 0) state.seriesHeight = s.seriesHeight;
@@ -465,10 +465,11 @@
    *
    * A unit is glued to its number first, so that a space between the two does
    * not split them, and a bare list of numbers still separates on spaces.
-   * PV is pore volumes, where the water flows; inPv reads a bare number in
-   * them too, as on a time axis shown in pore volumes (timeAxis).
+   * PV is pore volumes, where the water flows. A bare number is read on the
+   * time axis ax (timeAxis) where there is one -- in the unit Time in shows,
+   * or in pore volumes -- and in the model's own unit where there is none.
    */
-  function parseTimes(text, inPv = false) {
+  function parseTimes(text, ax = null) {
     const glued = String(text).replace(/(\d)\s+(s|min|h|d|a|y|pv)\b/gi, '$1$2');
     const times = [];
     const bad = [];
@@ -478,11 +479,12 @@
       const m = /^([0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)(s|min|h|d|a|y|pv)?$/i.exec(tok);
       if (!m) { bad.push(tok); continue; }
       const unit = m[2] ? m[2].toLowerCase() : '';
-      if (unit === 'pv' || (!unit && inPv)) {
+      if (unit === 'pv') {
         if (tw > 0) times.push(Number(m[1]) * tw);
         else bad.push(tok);
         continue;
       }
+      if (!unit && ax) { times.push(Number(m[1]) / ax.per); continue; }
       // A bare number is in the model's own unit; a suffixed one is converted
       // into it, so "500 a" means the same thing whatever the model counts in.
       times.push((Number(m[1]) * (unit ? TIME_UNITS[unit] : own)) / own);
@@ -502,55 +504,67 @@
   }
 
   /*
-    TIME IN PORE VOLUMES, on Against time, Against distance and Gradient
-    (Time in): the model's own unit, or -- where the water flows -- the pore
+    TIME IN, on Against time, Against distance and Gradient: one choice for
+    the three of how a time is shown -- in the model's own unit, as it comes;
+    in another of seconds to years; or, where the water flows, in the pore
     volumes that have flowed into the column, t/t_w, t_w the time the water
     takes to cross it: TRAVEL_TIME, or LENGTH over the pore-water speed
     |VELOCITY|/POROSITY. The flow is one number for the whole run, so a pore
-    volume is a fixed length of time and the axis is the time axis scaled. A
-    run kept beside counts in its own: two runs at different speeds line up.
+    volume is a fixed length of time, and every axis is the model's time
+    scaled: ax.per, what a time of the model is multiplied by to be on it.
+    The model and its run are as they are; only the showing changes. A run
+    kept beside counts in its own pore volumes: two runs at different speeds
+    line up.
   */
+  const SHOW_UNITS = [['s', 'seconds', 1], ['min', 'minutes', 60], ['h', 'hours', 3600], ['d', 'days', 86400],
+    ['a', 'years', 365.25 * 86400]];
   /** A pore volume of run r -- the time its water takes to cross the column, in its model's unit -- or 0 where it does not flow. */
   function poreTime(r = state.result) {
     const m = r ? r.model : state.compiled;
     return m && m.transport && m.travelTime > 0 ? m.travelTime : 0;
   }
   /**
-   * The time axis run r is shown on: { pv, tw, sym, title, why } -- pv whether in pore volumes, tw a pore volume (0 where
-   * the water does not flow), sym what a number on it is in, why the note's words where pore volumes are chosen and r has none.
+   * The time axis run r is shown on: { pv, fixed, tw, per, sym, title, why } -- pv whether in pore volumes, fixed whether
+   * in a unit chosen (pore volumes or a time unit not the model's), tw a pore volume (0 where the water does not flow),
+   * per what a time of the model is multiplied by to be on the axis, sym what a number on it is in, why the note's words
+   * where pore volumes are chosen and r has none.
    */
   function timeAxis(r = state.result) {
     const tw = poreTime(r);
-    const sym = timeUnit().symbol;
-    if (state.timeIn === 'pv' && tw > 0) return { pv: true, tw, sym: 'PV', title: 'pore volumes', why: '' };
+    const own = timeUnit();
+    if (state.timeIn === 'pv' && tw > 0) return { pv: true, fixed: true, tw, per: 1 / tw, sym: 'PV', title: 'pore volumes', why: '' };
     const m = r ? r.model : state.compiled;
-    return { pv: false, tw, sym, title: `time (${sym})`,
-      why: state.timeIn === 'pv' && m ? `time in ${timeUnit().name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
+    const want = SHOW_UNITS.find(([sym]) => sym === state.timeIn && sym !== own.symbol);
+    const sym = want ? want[0] : own.symbol;
+    return { pv: false, fixed: !!want, tw, per: want ? own.seconds / want[2] : 1, sym, title: `time (${sym})`,
+      why: state.timeIn === 'pv' && m ? `time in ${own.name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
   }
-  /** Run r's stored times on the axis: its own, or its pore volumes, kept with the run. */
+  /** Run r's stored times on the axis: its own, or scaled, kept with the run. */
   function axisTimes(r, ax) {
-    if (!ax.pv) return r.t;
-    if (!r.pvAxis || r.pvAxis.tw !== ax.tw) r.pvAxis = { tw: ax.tw, x: Float64Array.from(r.t, (t) => t / ax.tw) };
-    return r.pvAxis.x;
+    if (ax.per === 1) return r.t;
+    if (!r.axisT || r.axisT.per !== ax.per) r.axisT = { per: ax.per, x: Float64Array.from(r.t, (t) => t * ax.per) };
+    return r.axisT.x;
   }
-  /** A time of the run, in the model's unit, for a person on the axis: 1.25 PV, or as fmtTime writes it. */
-  const fmtOnAxis = (ax, t) => (ax.pv ? `${(t / ax.tw).toPrecision(3)} PV` : fmtTime(t));
+  /** A time of the run, in the model's unit, for a person on the axis: 1.25 PV, 3.50 h, or as fmtTime writes it. */
+  const fmtOnAxis = (ax, t) => (ax.fixed ? `${(t * ax.per).toPrecision(3)} ${ax.sym}` : fmtTime(t));
   /** A number on the axis -- a "from" -- for a person. */
-  const fmtAxisNumber = (ax, v) => (ax.pv ? `${Number(v.toPrecision(3))} PV` : fmtTime(v));
+  const fmtAxisNumber = (ax, v) => (ax.fixed ? `${Number(v.toPrecision(3))} ${ax.sym}` : fmtTime(v));
 
   // The Time in selects, on Against time, Against distance and Gradient, as one: what the run on show can be shown in.
   const TIME_SELECTS = ['rtmTimeInTime', 'rtmTimeInProfile', 'rtmTimeInGrad'];
   function renderTimeIn() {
     const r = state.result || (state.compiled ? { model: state.compiled } : null);
     const flows = poreTime(r) > 0;
-    const html = `<option value="">${esc(timeUnit().name)}s</option>`
-      + `<option value="pv"${flows ? '' : ' disabled'}>pore volumes${flows ? '' : ', where the water flows'}</option>`;
+    // Every time unit, the model's own said so; pore volumes only where the water flows.
+    const own = timeUnit().symbol;
+    const html = SHOW_UNITS.map(([sym, name]) => `<option value="${sym}">${name}${sym === own ? ' (the model’s)' : ''}</option>`).join('')
+      + (flows ? '<option value="pv">pore volumes</option>' : '');
     const ax = timeAxis(r);
     for (const id of TIME_SELECTS) {
       const sel = $(id);
       if (!sel) continue;
       sel.innerHTML = html;
-      sel.value = ax.pv ? 'pv' : '';
+      sel.value = ax.pv ? 'pv' : ax.sym;
     }
     // A "from" is read on the axis.
     $('rtmTMinUnit').textContent = ax.sym;
@@ -563,8 +577,7 @@
   */
   function retypeTimes(from, to) {
     const turn = (v) => {
-      const t = from.pv ? v * from.tw : v;
-      const x = Number((to.pv ? t / to.tw : t).toPrecision(6));
+      const x = Number(((v / from.per) * to.per).toPrecision(6));
       return x !== 0 && (Math.abs(x) < 1e-3 || Math.abs(x) >= 1e6) ? x.toExponential() : String(x);
     };
     for (const id of ['rtmTMin', 'rtmGradTMin']) {
@@ -1417,11 +1430,16 @@
     if (!k.times || k.timesIn !== here) { k.times = Float64Array.from(k.r.t, (t) => (t * own) / here); k.timesIn = here; }
     return k.times;
   }
-  /** The kept run k's stored times on the time axis ax (timeAxis): in this run's unit, or in its own pore volumes; null where it has none. */
+  /** The kept run k's stored times on the time axis ax (timeAxis): in this run's unit, scaled, or in its own pore volumes; null where it has none. */
   function besideAxis(k, ax) {
-    if (!ax.pv) return besideTimes(k);
-    const tw = poreTime(k.r);
-    return tw > 0 ? axisTimes(k.r, { pv: true, tw }) : null;
+    if (ax.pv) {
+      const tw = poreTime(k.r);
+      return tw > 0 ? axisTimes(k.r, { per: 1 / tw }) : null;
+    }
+    const t = besideTimes(k);
+    if (ax.per === 1) return t;
+    if (!k.shown || k.shown.per !== ax.per || k.shown.of !== t) k.shown = { per: ax.per, of: t, x: Float64Array.from(t, (v) => v * ax.per) };
+    return k.shown.x;
   }
   // Why a kept run is not beside a chart in pore volumes.
   const BESIDE_NO_PV = 'its water does not flow: it has no pore volumes';
@@ -1910,7 +1928,7 @@
         if (!face) {
           for (const d of measured('time', nm)) {
             if ((d.tab.cell || 0) !== cell || (d.tab.layer || 0) !== state.layer) continue;
-            traces.push({ name: `${name}, measured`, x: ax.pv ? d.x.map((t) => t / ax.tw) : d.x, y: f === 1 ? d.y : d.y.map((v) => v * f),
+            traces.push({ name: `${name}, measured`, x: ax.per === 1 ? d.x : d.x.map((t) => t * ax.per), y: f === 1 ? d.y : d.y.map((v) => v * f),
               mode: 'markers', type: 'scatter', marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
               ...(onRight ? { yaxis: 'y2' } : {}) });
           }
@@ -2263,7 +2281,7 @@
     // are chosen, and the Times' bare numbers read in them.
     const ax = timeAxis(r);
     const slider = state.profileAt !== null;
-    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax.pv);
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax);
     const picks = [];
     const past = [];
     if (slider) picks.push(nearestIndex(r.t, state.profileAt));
@@ -2429,7 +2447,7 @@
     // The slider's time; or the first of Times, or the end of the run; on the time axis, in pore volumes where they are chosen.
     const ax = timeAxis(r);
     const slider = state.profileAt !== null;
-    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax.pv);
+    const asked = slider ? { times: [], bad: [] } : parseTimes(state.profileTimes, ax);
     const end = r.t[r.n - 1];
     const want = slider ? state.profileAt : asked.times.length ? asked.times[0] : end;
     const past = !slider && want > end * 1.000001;
@@ -8762,10 +8780,10 @@
       if (sh.why) return `${labelOf(n)}${own(n)} ${where}`;
       return `${labelOf(n)}${u.bare ? ` ${u.text}` : ` (${u.text}${per})`} ${where}`;
     };
-    // Each key at each cell, in the order picked; in pore volumes, they come first, then the time.
+    // Each key at each cell, in the order picked; on an axis not the model's own -- pore volumes, another unit -- it comes first, then the time.
     const ax = timeAxis(r);
     const at = face ? [state.cell] : tc.at;
-    const head = [...(ax.pv ? ['pore volumes'] : []), `t (${timeUnit().symbol})`];
+    const head = [...(ax.fixed ? [ax.pv ? 'pore volumes' : `t (${ax.sym})`] : []), `t (${timeUnit().symbol})`];
     const cols = [];
     names.forEach((n, j) => {
       const f = shown[j] && shown[j].f ? shown[j].f : 1;
@@ -8778,7 +8796,7 @@
     const xr = axisTimes(r, ax);
     const rows = [];
     for (let i = 0; i < r.n; i++) {
-      rows.push([...(ax.pv ? [xr[i]] : []), r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
+      rows.push([...(ax.fixed ? [xr[i]] : []), r.t[i], ...cols.map((c) => (c && Number.isFinite(c[i]) ? c[i] : null))]);
     }
     // In Excel, the breakthrough numbers on sheets of their own where they are shown.
     const extra = state.btc && btcNow ? [btcNow.half, btcNow.out].filter((tb) => tb.rows.length) : [];
@@ -9922,10 +9940,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Cell**: which cell of the column, with its centre in metres from the left-hand face; or, after the cells, the **flux through the left end** or **the right end**: what crosses it per m² of the water’s cross-section, positive to the right, which at an outlet is the release. A batch is one cell and has no picker.',
             '**Cells**: what is ticked at several cells at once, breakthrough curves down the column — a list of cell numbers such as `4, 9, 14, end`, `end` the last; six at most. Each keeps its colour, in steps of lightness down the column, faintest at the cell nearest the inlet; the legend and the CSV give each cell’s distance. Empty, the one cell **Cell** chooses.',
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
-            '**Time in**: the model’s own unit, or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
+            '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
-            '**from**, after log time: where a log time axis starts, a plain number in the model’s time unit, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
+            '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
             '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
             '**clear**: unticks everything.',
@@ -9960,7 +9978,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
           '**Times**: a list such as `0, 1 h, 30 d, 500 y`, in s, min, h, d, a or y (both years of 365.25 days), or PV, pore volumes, where the water flows; a bare number is in the model’s own unit, or in pore volumes where they are chosen. Empty draws eight, spread evenly over the stored points, the last at the end of the run. With those ticked against time, the first time alone, and empty the end of the run.',
-          '**Time in**: as on Against time, one choice for the three charts: the model’s own unit, or pore volumes. The legend, the slider and the note name each time in it; a run kept beside is drawn at the stored point nearest the same pore volume of its own. Changing it turns the bare numbers of Times into the other, so that the same curves are drawn.',
+          '**Time in**: as on Against time, one choice for the three charts: the model’s own unit, another time unit, or pore volumes. The legend, the slider and the note name each time in it; a run kept beside is drawn at the stored point nearest the same pore volume of its own. Changing it turns the bare numbers of Times into the other, so that the same curves are drawn.',
           '**log concentration**: a logarithmic axis, for an amount; pH, a saturation index or a share is drawn as it is.',
           '**from**: where the log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. What lies below drops out of view, and the note names any curve wholly below it; the CSV and Excel files have every value still.',
           '**Units**: as on Against time, one choice for every chart. A species or quantity with no such unit is drawn as the model has it, and the note says so; with those ticked against time it is left off.',
@@ -9983,7 +10001,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Show**, and **Layer** with a rock matrix: what is drawn — a species, or a quantity such as pH or a saturation index — along the fracture or along one layer of rock.',
             '**The redox zones**, first in Show in a model with the electron: each cell at each time coloured by the couple that holds its pe, the one with the most poising capacity there, n·Tox·Tred/(Tox + Tred) of what the cell holds in its two states, O₂ and H₂ against the water itself; oxic first and down the ladder, in the Colours chosen at equal steps of lightness. Hover for the couple and the pe; the note gives each zone\'s share. A map only.',
             '**As**: a map, contours of it with their values on them, or a surface in three dimensions, the value up, which the mouse turns.',
-            '**Time in**: as on Against time, the model’s own unit, or pore volumes where the water flows; a run kept beside in its own.',
+            '**Time in**: as on Against time, the model’s own unit, another time unit, or pore volumes where the water flows; a run kept beside in its own.',
             '**log time** and **from**: as on Against time. Without a from time the first femtoseconds take most of a log axis; the note says how many points it left off.',
             '**log concentration**: colours by log₁₀ c. Values at or below zero are left blank rather than put at the bottom of the scale, and the note counts them.',
             '**from**, after log concentration: where the colour scale starts, a plain number such as `1e-10`; empty, the least value there is. What lies below it takes its colour, or on a surface lies below the box; the CSV and Excel files have every value still.',
@@ -11062,6 +11080,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       && files.some((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text));
     let next;
     let said = '';
+    let ranIn = null;
     if (skbrtm) {
       let res;
       try {
@@ -11071,6 +11090,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         return;
       }
       next = res.text;
+      ranIn = res.timeUnit;
       const n = files.filter((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text)).length;
       said = `Opened ${n} skbrtm file${n === 1 ? '' : 's'} as one model.`
         + (res.warnings.length ? ` ${res.warnings.length} thing${res.warnings.length === 1 ? '' : 's'} that `
@@ -11091,6 +11111,15 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     $('rtmText').value = state.text;
     renderHighlight();
     anotherModel();
+    /*
+      skbrtm counts in seconds, and so does the model made of its files; the
+      script's t_span says what it ran for in a unit of its own, and the run
+      is shown in that: ten years in years.
+    */
+    if (ranIn) {
+      const sym = { seconds: 's', minutes: 'min', hours: 'h', days: 'd', years: 'a' }[ranIn];
+      if (sym) state.timeIn = sym === 's' ? '' : sym;
+    }
     showAside(kept);
     showTab('model');
     scheduleCompile(0);
@@ -12252,10 +12281,12 @@ END
     // One time axis for Against time, Against distance and Gradient: the three selects as one.
     'rtm:timeIn': (ev, el) => {
       const before = timeAxis();
-      state.timeIn = el.value === 'pv' ? 'pv' : '';
+      // The model's own unit is no choice of its own: it follows the model.
+      const v = el.value;
+      state.timeIn = v === 'pv' || (SHOW_UNITS.some(([sym]) => sym === v) && v !== timeUnit().symbol) ? v : '';
       const after = timeAxis();
       // The same picture on the other axis: each "from" and the Times' bare numbers put on it.
-      if (before.pv !== after.pv) retypeTimes(before, after);
+      if (before.per !== after.per) retypeTimes(before, after);
       renderTimeIn();
       saveState();
       drawTime();
