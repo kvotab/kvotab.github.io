@@ -428,7 +428,10 @@ async def main():
         # A clean slate: the page keeps the model text in localStorage, so a
         # run left over from a previous pass would be what is tested.
         await page.call('Page.addScriptToEvaluateOnNewDocument',
-                        {'source': "try{localStorage.removeItem('kvot-rtm-v1')}catch(e){}"},
+                        {'source': "try{localStorage.removeItem('kvot-rtm-v1')}catch(e){}"
+                                   # The browser's save dialog off: a file saved is downloaded, and caught as the
+                                   # tests catch it; the checks of asking where put in a dialog of their own.
+                                   "window.showSaveFilePicker=undefined;"},
                         session=page.sid)
         # Nor a full window left on by an interrupted run. rtm.html's head reads
         # that before anything else, so it is cleared first, from a file of the
@@ -4472,6 +4475,80 @@ async def main():
                   "and compiles with its script's time span",
                   await page.ev("[document.getElementById('rtmExampleAbout').textContent.startsWith('Opened 3 skbrtm files as one model.'),"
                                 " document.getElementById('rtmFacts').textContent.includes('run for 20.0 s.')]"), [True, True])
+            # --- saving asks where ------------------------------------------------
+            # A save dialog of the test's own in place of the system's, a click alive or spent as each check wants.
+            # Save… offers the name the text came by -- set.rtm for the set.zip opened above -- as a model text, and
+            # writes it; the name chosen in the dialog is offered next time. An export asks with its own name and
+            # type. A cancel saves nothing and says nothing. Where the click is spent, as after a slow export, the
+            # window Ready to save opens, the name in it, and its Save… opens the dialog; its Cancel saves nothing.
+            await page.ev("""(() => { window.__asked = []; window.__saved = []; window.__saveAnswer = null; window.__saveAs = null;
+              window.showSaveFilePicker = async (opts) => {
+                window.__asked.push([opts.suggestedName, JSON.stringify(opts.types || [])]);
+                if (window.__saveAnswer === 'cancel') throw new DOMException('cancelled', 'AbortError');
+                const name = window.__saveAs || opts.suggestedName;
+                return { name, createWritable: async () => { const parts = [];
+                  return { write: async (b) => { parts.push(b); },
+                    close: async () => { const blob = new Blob(parts); window.__saved.push([name, blob.size, await blob.text()]); } }; } };
+              };
+              Object.defineProperty(navigator, 'userActivation', { value: { isActive: true, hasBeenActive: true }, configurable: true });
+            })()""")
+            SAVED = """[window.__asked.slice(), window.__saved.map((x) => [x[0], x[1] > 0]), document.getElementById('rtmStatus').textContent,
+              document.getElementById('rtmSaveReady').open]"""
+            await page.ev("document.querySelector('[data-on-click=\"rtm:saveFile\"]').click()")
+            await asyncio.sleep(0.5)
+            first = await page.ev(SAVED)
+            same = await page.ev("window.__saved.length === 1 && window.__saved[0][2] === document.getElementById('rtmText').value")
+            await page.ev("window.__saveAs = 'mine.rtm'; window.__asked = []; window.__saved = []")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:saveFile\"]').click()")
+            await asyncio.sleep(0.5)
+            await page.ev("window.__saveAs = null; window.__asked = []; window.__saved = []")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:saveFile\"]').click()")
+            await asyncio.sleep(0.5)
+            again = await page.ev(SAVED)
+            check('Save… asks where, offering the name the text came by -- set.rtm, for set.zip -- as a model text, and writes '
+                  'the text; the name chosen there offered the next time',
+                  [first[0], first[1], first[2], first[3], same, again[0], again[2]],
+                  [[['set.rtm', '[{"description":"Model text","accept":{"text/plain":[".rtm"]}}]']], [['set.rtm', True]],
+                   'Saved as set.rtm.', False, True, [['mine.rtm', '[{"description":"Model text","accept":{"text/plain":[".rtm"]}}]']],
+                   'Saved as mine.rtm.'])
+            await page.ev("window.__asked = []; window.__saved = []; window.__saveAnswer = 'cancel';"
+                          " document.getElementById('rtmStatus').textContent = 'as it was'")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:saveFile\"]').click()")
+            await asyncio.sleep(0.5)
+            cancelled = await page.ev(SAVED)
+            # The set's model run, for Against time to export it.
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("window.__saveAnswer = null; window.__asked = []; window.__saved = [];"
+                          " document.querySelector('[data-tab=\"time\"]').click()")
+            await asyncio.sleep(0.5)
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1.0)
+            csv_asked = await page.ev(SAVED)
+            check('  a cancel saves nothing and says nothing; an export asks with its own name and type, and says where it went',
+                  [cancelled[1], cancelled[2], len(csv_asked[0]), (csv_asked[0] or [['']])[0][0].endswith('.csv'),
+                   (csv_asked[0] or [['', '']])[0][1], csv_asked[2].startswith('Saved as ') and csv_asked[2].endswith('.csv.')],
+                  [[], 'as it was', 1, True, '[{"description":"CSV","accept":{"text/csv":[".csv"]}}]', True])
+            await page.ev("""(() => { window.__asked = []; window.__saved = [];
+              Object.defineProperty(navigator, 'userActivation', { value: { isActive: false, hasBeenActive: true }, configurable: true });
+              document.querySelector('[data-tab="model"]').click();
+              document.querySelector('[data-on-click="rtm:saveFile"]').click(); })()""")
+            await asyncio.sleep(0.5)
+            ready = await page.ev("[document.getElementById('rtmSaveReady').open, document.getElementById('rtmSaveReadyName').textContent,"
+                                  " window.__asked.length]")
+            await page.ev("document.getElementById('rtmSaveReadyGo').click()")
+            await asyncio.sleep(0.5)
+            went = await page.ev(SAVED)
+            await page.ev("window.__asked = []; window.__saved = []; document.querySelector('[data-on-click=\"rtm:saveFile\"]').click()")
+            await asyncio.sleep(0.5)
+            await page.ev("document.querySelector('#rtmSaveReady [data-on-click=\"rtm:saveReadyCancel\"]').click()")
+            await asyncio.sleep(0.5)
+            stopped = await page.ev(SAVED)
+            await page.ev("window.showSaveFilePicker = undefined; delete navigator.userActivation")
+            check('  the click spent, as after a slow export: Ready to save opens, the name in it and nothing asked yet; its '
+                  'Save… opens the dialog and the file is written; its Cancel saves nothing',
+                  [ready, went[0][:1] and [went[0][0][0]], went[1], went[3], stopped[0], stopped[1], stopped[3]],
+                  [[True, 'mine.rtm', 0], ['mine.rtm'], [['mine.rtm', True]], False, [], [], False])
             with tempfile.TemporaryDirectory() as tmp:
                 zp = os.path.join(tmp, 'model.zip')
                 with open(zp, 'wb') as f:
@@ -4715,7 +4792,8 @@ async def main():
         await page.call('Network.setCacheDisabled', {'cacheDisabled': True}, session=page.sid)
         await page.call('Page.addScriptToEvaluateOnNewDocument',
                         {'source': "try{localStorage.removeItem('kvot-rtm-v1')}catch(e){}"
-                                   "try{delete window.Worker}catch(e){window.Worker=undefined}"},
+                                   "try{delete window.Worker}catch(e){window.Worker=undefined}"
+                                   "window.showSaveFilePicker=undefined;"},
                         session=page.sid)
         await page.call('Page.navigate', {'url': URL}, session=page.sid)
         try:

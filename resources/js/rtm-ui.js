@@ -97,6 +97,7 @@
     tab: 'time',
     syntax: true,          // colour the model text in the editor
     lineNumbers: true,     // the line numbers beside the model text
+    modelName: null,       // the name Save… offers: what the text was saved under, or opened from; null, its title's
     sideWidth: null,
     footHeight: null,      // the run's area, as tall as its top edge was dragged; null, as its buttons and status need
     sections: {},
@@ -126,7 +127,7 @@
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
         text: state.text, solver: state.solver, picked: state.picked, cell: state.cell,
-        tab: state.tab, syntax: state.syntax, lineNumbers: state.lineNumbers, sideWidth: state.sideWidth,
+        tab: state.tab, syntax: state.syntax, lineNumbers: state.lineNumbers, modelName: state.modelName, sideWidth: state.sideWidth,
         footHeight: state.footHeight, sections: state.sections,
         layer: state.layer, profileAxis: state.profileAxis, profileLayer: state.profileLayer,
         gradLayer: state.gradLayer,
@@ -164,6 +165,7 @@
       if (typeof s.tab === 'string') state.tab = s.tab;
       if (typeof s.syntax === 'boolean') state.syntax = s.syntax;
       if (typeof s.lineNumbers === 'boolean') state.lineNumbers = s.lineNumbers;
+      if (typeof s.modelName === 'string' && s.modelName) state.modelName = s.modelName;
       if (typeof s.profileSpecies === 'string') state.profileSpecies = s.profileSpecies;
       if (typeof s.profileTimes === 'string') state.profileTimes = s.profileTimes;
       if (s.profileAt === null || Number.isFinite(s.profileAt)) state.profileAt = s.profileAt;
@@ -8849,7 +8851,7 @@
   async function downloadCsv() {
     if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
     const tab = await timeTable();
-    downloadBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`);
+    saidSaved(await saveBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`));
   }
 
   /** A table as CSV: a header, then a row per point, a blank where there is no value. */
@@ -8919,20 +8921,22 @@
       inverse: 'rtmChartPqInv' }[pane]);
     if (as === 'txt') {
       if (!compTextNow) { setStatus('List a water first: Show the water, as PHREEQC lists it.', 'error'); return; }
-      downloadBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`);
+      saidSaved(await saveBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`));
       return;
     }
     if (as === 'html') { await saveChartPage(plot, pane); return; }
     if (as === 'svg' || as === 'png') {
       if (!plot || plot.hidden || !plot.data) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
       const box = plot.getBoundingClientRect();
-      await Plotly.downloadImage(plot, { format: as, filename: `${fileStem()}_${pane}`,
+      // Made by Plotly as it would download it, and saved where asked.
+      const url = await Plotly.toImage(plot, { format: as,
         width: Math.max(400, Math.round(box.width)), height: Math.max(300, Math.round(box.height)) });
+      saidSaved(await saveBlob(await (await fetch(url)).blob(), `${fileStem()}_${pane}.${as}`));
       return;
     }
     const tab = await paneTable(pane);
     if (!tab) { setStatus('Draw something first: the chart is empty.', 'error'); return; }
-    if (as === 'csv') { downloadBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`); return; }
+    if (as === 'csv') { saidSaved(await saveBlob(new Blob([csvOf(tab)], { type: 'text/csv' }), `${tab.name}.csv`)); return; }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') {
       setStatus('The Excel writer did not load; save as CSV instead.', 'error');
       return;
@@ -8942,7 +8946,7 @@
     for (const more of tab.extra || []) xlsx.writeData(more.rows.map((row) => row.map((v) => (v === null ? '' : v))), more.name, { header: more.head });
     const text = (state.ran && state.ran.text) || state.text;
     xlsx.writeData(text.split('\n').map((ln) => [ln]), 'model', { header: ['the model text the run was made with'] });
-    downloadBlob(await xlsx.save(), `${tab.name}.xlsx`);
+    saidSaved(await saveBlob(await xlsx.save(), `${tab.name}.xlsx`));
   }
 
   /*
@@ -9052,13 +9056,88 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 </body>
 </html>
 `;
-    downloadBlob(new Blob([html], { type: 'text/html' }), `${name}.html`);
-    if (lib.text) setStatus(`Saved ${name}.html: the chart as a page of its own, plotly.js in it, to open in any browser.`, 'ok');
+    const saved = await saveBlob(new Blob([html], { type: 'text/html' }), `${name}.html`);
+    if (!saved) return;
+    if (lib.text) setStatus(`Saved ${saved.name}: the chart as a page of its own, plotly.js in it, to open in any browser.`, 'ok');
     else {
-      setStatus(`Saved ${name}.html, linking plotly.js from ${new URL(lib.src).host}: it could not be read to go into the file, `
+      setStatus(`Saved ${saved.name}, linking plotly.js from ${new URL(lib.src).host}: it could not be read to go into the file, `
         + 'so the page needs the internet to open.', 'warn');
     }
   }
+
+  /*
+    SAVING ASKS WHERE. Save… and every export open the operating system's
+    save dialog, the name the file would have had offered, as Kompartment's
+    Save… does: a file dropped into the downloads folder under a fixed name
+    -- model.rtm, then model (1).rtm -- had to be found and renamed. A page
+    may open the dialog only out of a click, which Chrome lets count for five
+    seconds; a file slower to make -- a workbook of a long run, an HDF5 file
+    of 60 MB -- would be refused it, so where the click is spent the window
+    Ready to save says the file is ready, and its Save… is a click of its
+    own. Where the browser has no such dialog (Safari, Firefox), or will not
+    open it, the file is downloaded as before.
+  */
+  const SAVE_TYPES = {
+    rtm: { description: 'Model text', type: 'text/plain', ext: '.rtm' },
+    csv: { description: 'CSV', type: 'text/csv', ext: '.csv' },
+    txt: { description: 'Text', type: 'text/plain', ext: '.txt' },
+    xlsx: { description: 'Excel workbook', type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: '.xlsx' },
+    html: { description: 'Web page', type: 'text/html', ext: '.html' },
+    h5: { description: 'HDF5', type: 'application/x-hdf5', ext: '.h5' },
+    svg: { description: 'SVG picture', type: 'image/svg+xml', ext: '.svg' },
+    png: { description: 'PNG picture', type: 'image/png', ext: '.png' },
+  };
+  // The window Ready to save, while it is open: what the dialog is to be asked, and the promise it answers.
+  let saveReady = null;
+
+  /** The save dialog, as window.showSaveFilePicker opens it -- out of the click, or, where the click is spent, out of the window's own. */
+  function savePicker(options) {
+    if (!navigator.userActivation || navigator.userActivation.isActive !== false) return window.showSaveFilePicker(options);
+    return new Promise((resolve, reject) => {
+      saveReady = { options, resolve, reject, asked: false };
+      $('rtmSaveReadyName').textContent = options.suggestedName;
+      $('rtmSaveReady').showModal();
+      $('rtmSaveReadyGo').focus();
+    });
+  }
+
+  /**
+   * A file, asking where it should go, the name offered; downloaded as before
+   * where the browser cannot ask. { name, asked } of what was saved, or null:
+   * a cancel, which is an answer and is not remarked on, or a write that
+   * failed, which is said.
+   */
+  async function saveBlob(blob, name) {
+    const t = SAVE_TYPES[((/\.([A-Za-z0-9]+)$/.exec(name) || [])[1] || '').toLowerCase()];
+    if (typeof window.showSaveFilePicker === 'function') {
+      let handle = null;
+      try {
+        handle = await savePicker({ suggestedName: name,
+          ...(t ? { types: [{ description: t.description, accept: { [t.type]: [t.ext] } }] } : {}) });
+      } catch (e) {
+        // A cancel is an answer. Refused rather than cancelled -- a frame of another site may not open it -- the
+        // point of pressing Save is a file, so it is downloaded.
+        if (e && e.name === 'AbortError') return null;
+      }
+      if (handle) {
+        try {
+          const to = await handle.createWritable();
+          await to.write(blob);
+          await to.close();
+          return { name: handle.name, asked: true };
+        } catch (e) {
+          setStatus(`${name} could not be written: ${e.message}. The folder may be read-only: try again, and pick another place.`,
+            'error');
+          return null;
+        }
+      }
+    }
+    downloadBlob(blob, name);
+    return { name, asked: false };
+  }
+
+  /** The status line after an export saved where it was asked: where it went. Downloaded, the browser says so. */
+  const saidSaved = (saved) => { if (saved && saved.asked) setStatus(`Saved as ${saved.name}.`, 'ok'); };
 
   function downloadBlob(blob, name) {
     const a = document.createElement('a');
@@ -9165,17 +9244,19 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     }
   }
 
-  /** The same file, as a download. */
-  function downloadHdf5() {
+  /** The same file, saved where asked. */
+  async function downloadHdf5() {
     if (!state.result) { setStatus('Run the model first: there is nothing to save yet.', 'error'); return; }
     const name = `${fileStem()}.h5`;
+    let bytes;
     try {
-      const bytes = buildHdf5();
-      downloadBlob(new Blob([bytes], { type: 'application/x-hdf5' }), name);
-      setStatus(`${name} written (${(bytes.length / 1048576).toFixed(1)} MB).`, 'ok');
+      bytes = buildHdf5();
     } catch (e) {
       setStatus(`The HDF5 file could not be written: ${e.message}`, 'error');
+      return;
     }
+    const saved = await saveBlob(new Blob([bytes], { type: 'application/x-hdf5' }), name);
+    if (saved) setStatus(`${saved.name} written (${(bytes.length / 1048576).toFixed(1)} MB).`, 'ok');
   }
 
   /* ---------------------------------------------------------------------
@@ -10227,7 +10308,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Reset to the built-in model**: water radiolysis and uranium dissolution at a spent-fuel surface, 127 reactions over 36 species. It too replaces the text without asking.',
           '**colour the syntax**: paints comments, section headings, numbers, functions and the words that mean something where they stand. Turn it off for a very large model. The choice is kept.',
           '**line numbers**: a number beside each line, as the warnings and errors name them; the lines the warnings under the text name are marked in amber, the line an error names in red. The choice is kept.',
-          '**Save**: the text, as `model.rtm`.',
+          '**Save…**: the text, where you choose: the system’s save dialog opens, offering the name the text was saved under last, or of the file it came from, or of its title. Where the browser has no such dialog (Safari, Firefox), it is downloaded.',
           '**Apply**: compiles the text now.',
         ] },
         { heading: 'Nothing lost', text: 'Whatever replaces the text — an example, Reset, a file, a water from PHREEQC, the fitted values put in — first puts it aside, if it is one you changed or opened: **Bring it back**, in the line under the toolbar, swaps the two back, and the Example picker keeps the last five between visits. An example or the built-in model as it comes is not kept, as it can be had again. A reload does not bring the built-in model back: the text stays in this browser until something replaces it.' },
@@ -10447,6 +10528,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (!e) { about.hidden = true; $('rtmExample').value = ''; return; }
     const kept = putAside(e.text);
     state.text = e.text;
+    state.modelName = `${e.id}.rtm`;
     $('rtmText').value = e.text;
     renderHighlight();
     about.textContent = e.about + (e.reference ? `  ${e.reference}` : '');
@@ -10938,6 +11020,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     const kept = putAside(entry.text);
     renderExamples();
     state.text = entry.text;
+    state.modelName = null;
     $('rtmText').value = entry.text;
     renderHighlight();
     $('rtmExampleAbout').hidden = true;
@@ -10953,8 +11036,21 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   /* ---------------------------------------------------------------------
      Files
      --------------------------------------------------------------------- */
-  function saveFile() {
-    downloadBlob(new Blob([state.text], { type: 'text/plain' }), 'model.rtm');
+  /** The name Save… offers: the one the text was saved under or opened from, else its title's, else model.rtm. */
+  function modelFileName() {
+    if (state.modelName) return state.modelName;
+    const title = modelAbout(state.text).title;
+    const clean = title ? title.replace(/[\\/:*?"<>|]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 80) : '';
+    return `${clean || 'model'}.rtm`;
+  }
+
+  async function saveFile() {
+    const saved = await saveBlob(new Blob([state.text], { type: 'text/plain' }), modelFileName());
+    if (saved && saved.asked) {
+      state.modelName = saved.name;
+      saveState();
+      setStatus(`Saved as ${saved.name}.`, 'ok');
+    }
   }
 
   /*
@@ -11043,6 +11139,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       if (!chosen && !READABLE.test(file.name)) return;
       await add(name, file.size, () => file.text());
     };
+    // What was chosen or dropped, by name -- a .zip, a folder, a file -- for Save… to offer.
+    const origin = (entries.find(Boolean) || {}).name || (plain[0] && plain[0].name) || '';
     if (entries.some(Boolean)) {
       const walk = async (entry, prefix, depth) => {
         if (entry.isFile) {
@@ -11063,7 +11161,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     } else {
       for (const f of plain) await take(f, f.name);
     }
-    return { files: out, skipped };
+    return { files: out, skipped, origin };
   }
 
   function initDrop() {
@@ -11106,24 +11204,25 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   }
 
   /** What Open… or a drop read, opened; or what was not. */
-  function landFiles({ files, skipped }) {
+  function landFiles({ files, skipped, origin }) {
     if (!files.length) {
       setStatus(NOTHING_TO_OPEN, 'warn');
       return;
     }
-    openFiles(files);
+    openFiles(files, origin);
     if (skipped) setStatus(`${skipped} file${skipped === 1 ? ' was' : 's were'} left out: what is opened at once is `
       + `${DROP_MAX_FILES} files and 20 MB at most.`, 'warn');
   }
 
-  /** A model text, or skbrtm's files, however they arrived: [{name, text}]. */
-  function openFiles(files) {
+  /** A model text, or skbrtm's files, however they arrived: [{name, text}], and what was chosen or dropped. */
+  function openFiles(files, origin = '') {
     const about = $('rtmExampleAbout');
     const skbrtm = typeof RtmImport !== 'undefined'
       && files.some((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text));
     let next;
     let said = '';
     let ranIn = null;
+    let from = '';
     if (skbrtm) {
       let res;
       try {
@@ -11134,6 +11233,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       }
       next = res.text;
       ranIn = res.timeUnit;
+      // Named for what was opened: the .zip or the folder, else the script, else the first database.
+      from = origin || (files.find((f) => /\.py$/i.test(f.name)) || files[0]).name;
       const n = files.filter((f) => /\.py$/i.test(f.name) || RtmImport.isDatabase(f.text)).length;
       said = `Opened ${n} skbrtm file${n === 1 ? '' : 's'} as one model.`
         + (res.warnings.length ? ` ${res.warnings.length} thing${res.warnings.length === 1 ? '' : 's'} that `
@@ -11145,8 +11246,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         setStatus(`One model text at a time: ${pick.name} was opened, the other ${files.length - 1} were not.`, 'warn');
       }
       next = pick.text;
+      from = pick.name;
     }
     const kept = putAside(next);
+    state.modelName = `${String(from).replace(/^.*[\\/]/, '').replace(/\.[^.]*$/, '') || 'model'}.rtm`;
     state.text = next;
     about.textContent = said;
     about.hidden = !said;
@@ -11765,6 +11868,7 @@ END
       // As an example is loaded: the text replaced, the one there put aside, and said so below the panel.
       const kept = putAside(reply.text);
       state.text = reply.text;
+      state.modelName = null;
       $('rtmText').value = reply.text;
       renderHighlight();
       showAside(kept);
@@ -12082,9 +12186,9 @@ END
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
-  function pqCsv() {
+  async function pqCsv() {
     if (!pq.view) { setStatus('Look at a run through PHREEQC first: there is no table yet.', 'warn'); return; }
-    downloadBlob(new Blob([pq.view.csv], { type: 'text/csv' }), `${fileStem()}_phreeqc.csv`);
+    saidSaved(await saveBlob(new Blob([pq.view.csv], { type: 'text/csv' }), `${fileStem()}_phreeqc.csv`));
   }
 
   /* ---- inverse models: PHREEQC's INVERSE_MODELING between two waters of the run ---- */
@@ -12258,7 +12362,7 @@ END
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
-  function pqInvCsv() {
+  async function pqInvCsv() {
     const v = pq.invResult;
     if (!v) { setStatus('Find inverse models first: there is no table yet.', 'warn'); return; }
     const label = (n) => (v.waters.find((w) => w.n === n) || { label: `solution ${n}` }).label;
@@ -12274,7 +12378,7 @@ END
       add('largest fractional adjustment', '', m.maxFraction, null, null);
     });
     const tab = { head: ['model', 'minimal', 'what', 'name', 'value', 'minimum', 'maximum'], rows };
-    downloadBlob(new Blob([`${csvOf(tab)}\n`], { type: 'text/csv' }), `${fileStem()}_inverse.csv`);
+    saidSaved(await saveBlob(new Blob([`${csvOf(tab)}\n`], { type: 'text/csv' }), `${fileStem()}_inverse.csv`));
   }
 
   async function pqWaterChosen(ev) {
@@ -12571,6 +12675,7 @@ END
     'rtm:resetModel': () => {
       const kept = putAside(RTM_DEFAULT_MODEL);
       state.text = RTM_DEFAULT_MODEL;
+      state.modelName = null;
       $('rtmText').value = state.text;
       renderHighlight();
       state.picked = [];
@@ -12582,6 +12687,15 @@ END
       else chooseExample(el.value);
     },
     'rtm:bringBack': () => bringBack(0),
+    // Ready to save: its Save… a click of its own for the dialog to open out of; Cancel, or Escape, an answer.
+    'rtm:saveReadyGo': () => {
+      const r = saveReady;
+      if (!r) return;
+      r.asked = true;
+      $('rtmSaveReady').close();
+      window.showSaveFilePicker(r.options).then(r.resolve, r.reject);
+    },
+    'rtm:saveReadyCancel': () => $('rtmSaveReady').close(),
     'rtm:loadFile': () => $('rtmFile').click(),
     'rtm:fileChosen': (ev) => { fileChosen(ev); },
     'rtm:saveFile': () => saveFile(),
@@ -12690,6 +12804,12 @@ END
   initSideResize();
   initFootResize();
   initSeriesResize();
+  // Ready to save, closed without its Save…: a cancel.
+  $('rtmSaveReady').addEventListener('close', () => {
+    const r = saveReady;
+    saveReady = null;
+    if (r && !r.asked) r.reject(new DOMException('The file was not saved.', 'AbortError'));
+  });
   initSections();
   initDrop();
   fullState();

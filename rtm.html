@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111k">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111l">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -378,7 +378,7 @@
                 data-on-change="rtm:syntaxToggle"> colour the syntax</label>
               <label class="rtm-check inline"><input type="checkbox" id="rtmLineNumbers" checked
                 data-on-change="rtm:lineNumbersToggle"> line numbers</label>
-              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveFile">Save…</button>
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:applyModel">Apply</button>
               <span class="kvot-info-slot" data-info-key="pane:model"></span>
             </span>
@@ -3310,6 +3310,14 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             worked out again from its numbers when a chart first asks for them, and kept with it.</p>
 
           <h3 id="help-export">Taking the run away with you</h3>
+          <p>Every file the page saves — <em>Save…</em> on the Model tab, and each format of
+            <em>Export</em> — is saved where you choose: the system's save dialog opens, offering a
+            name. For the model text it is the name it was saved under last, or of the file or
+            <code>.zip</code> it came from, or of the example, or of its <code>##</code> title. A file
+            that takes longer to make than the few seconds a browser allows between a click and its
+            save dialog — a workbook of a long run, an HDF5 file of many megabytes — brings up a small
+            window, <em>Ready to save</em>, whose <em>Save…</em> opens the dialog. Where the browser
+            has no such dialog (Safari, Firefox), the file is downloaded under the name offered.</p>
           <p><em>Export</em>, the menu at the right end of a tab's bar, saves what the tab shows, in
             the formats that tab has. <em>CSV</em> writes what is ticked in the list, at the cell the chart is showing, a row
             per stored step, quantities and all; <em>Excel</em> writes the same as a workbook, the
@@ -4054,6 +4062,22 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
 
   <footer></footer>
 
+  <!--
+    Ready to save: where making a file took longer than a click lets the page
+    open the save dialog, this window's Save… is a click of its own for it.
+    rtm-ui.js opens it (savePicker).
+  -->
+  <dialog class="rtm-save-ready" id="rtmSaveReady" aria-labelledby="rtmSaveReadyTitle">
+    <h3 id="rtmSaveReadyTitle">Ready to save</h3>
+    <p class="rtm-save-name" id="rtmSaveReadyName"></p>
+    <p class="rtm-muted">Making the file took longer than the few seconds a browser allows between a click and its save
+      dialog, so the dialog needs a click of its own.</p>
+    <div class="rtm-save-foot">
+      <button type="button" class="rtm-btn secondary small" data-on-click="rtm:saveReadyCancel">Cancel</button>
+      <button type="button" class="rtm-btn small" id="rtmSaveReadyGo" data-on-click="rtm:saveReadyGo">Save…</button>
+    </div>
+  </dialog>
+
   <script src="./resources/js/kvot-errors.js?v=20260911"></script>
   <script src="./resources/js/kvot-safe.js?v=20260911"></script>
   <script src="./resources/js/kvot-actions.js?v=20260902"></script>
@@ -4098,6 +4122,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111g"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zg"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zh"></script>
 </body>
 </html>

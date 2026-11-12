@@ -32,8 +32,10 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..')
 URL = f'http://127.0.0.1:{HTTP}/rtm.html'
 FILE_URL = 'file://' + os.path.join(ROOT, 'rtm.html')
 
+# The browser's save dialog off, so that a file saved is downloaded and caught as the tests catch it.
 CLEAN = ("try{localStorage.removeItem('kvot-rtm-v1');localStorage.removeItem('kvot-rtm-phreeqc-v1');"
-         "localStorage.removeItem('kvot.rtm.full');localStorage.removeItem('kvot-rtm-aside-v1')}catch(e){}")
+         "localStorage.removeItem('kvot.rtm.full');localStorage.removeItem('kvot-rtm-aside-v1')}catch(e){}"
+         "window.showSaveFilePicker=undefined;")
 
 failures = []
 checks = 0

@@ -760,6 +760,22 @@
 .rtm-listing td.rtm-listing-sp { padding-left: 14px; }
 .rtm-toolbar input.rtm-dg-num { width: 3.6rem; }
 
+/* Ready to save: a small window over the page, in its colours, the file's name and its two buttons. */
+.rtm-save-ready {
+  max-width: 26rem;
+  padding: 16px 18px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font: 13px/1.5 var(--font-sans);
+}
+.rtm-save-ready::backdrop { background: var(--menu-scrim, rgba(0, 0, 0, 0.45)); }
+.rtm-save-ready h3 { margin: 0 0 6px; font-size: 15px; }
+.rtm-save-ready .rtm-save-name { margin: 0 0 8px; font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.rtm-save-ready .rtm-muted { margin: 0 0 12px; }
+.rtm-save-foot { display: flex; justify-content: flex-end; gap: 8px; }
+
 /* The line that offers back the text just put aside, under the toolbar; its button a link in the line. */
 .rtm-aside-note { margin: 0 0 6px; font-size: 11px; line-height: 1.5; color: var(--text-secondary); }
 .rtm-aside-note[hidden] { display: none; }
