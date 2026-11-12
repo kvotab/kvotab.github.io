@@ -4566,6 +4566,72 @@ function againstFit(engine) {
 }
 
 /* ======================================================================
+   A SORPTION ISOTHERM, against PHREEQC: zinc on ferrihydrite's strong and
+   weak sites without electrostatics (-no_edl), in 10 mM NaCl at pH 6.5,
+   handed off with its activity coefficients. PHREEQC makes the isotherm:
+   at each of eight dissolved zincs, 1e-10 to 1e-3 mol/kgw, its SOLUTION at
+   pH 6.5 with the SURFACE equilibrated with it, the zinc in the system the
+   dissolved and the sorbed together. The page holds its water at pH 6.5
+   with each of those totals of zinc in the cell, a table against sys(Zn):
+   its dissolved zinc and its zinc on each kind of site as PHREEQC's; and
+   with PHREEQC's dissolved zinc as what was measured, both log K moved a
+   unit off and fitted back -- the database's, to 1e-9.
+   ====================================================================== */
+function againstIsotherm(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const sol = (zn) => `SOLUTION 1\n units mol/kgw\n pH 6.5\n Na 0.01\n Cl 0.01\n Zn ${zn}\n`;
+  const sf = 'SURFACE 1\n -equilibrate 1\n -no_edl\n Hfo_sOH 5e-6 600 0.09\n Hfo_wOH 2e-4\n';
+  engine.load(dbText);
+  const res = P.waterToModel({ engine, database, water: { name: 'zinc isotherm', text: `${sol(1e-6)}${sf}END\n` }, activity: true,
+    exact: true, redox: false });
+  const dissolved = [1e-10, 1e-9, 1e-8, 1e-7, 1e-6, 1e-5, 1e-4, 1e-3];
+  // PHREEQC's dissolved zinc, and its zinc on the strong and on the weak sites, mol in its kilogram of water.
+  const pq = dissolved.map((zn) => {
+    engine.load(dbText);
+    const rows = engine.run(`${sol(zn)}${sf}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n`
+      + ' 10 PUNCH TOT("Zn"), MOL("Hfo_sOZn+"), MOL("Hfo_wOZn+")\nEND\n');
+    return rows[rows.length - 1].map(Number);
+  });
+  const totals = pq.map(([d, s, w]) => d + s + w);
+  const model = RtmModel.compile(res.text);
+  const ns = model.speciesNames.length;
+  let g = null;
+  handleRtmMessage({ type: 'diagram', id: 1, text: res.text, at: 'start', cell: 0,
+    axes: [{ kind: 'tot', species: 'Zn', values: totals.map(Math.log10) }], pHAt: 6.5 }, (x) => { if (x.type !== 'progress') g = x; });
+  const qd = g.keys ? g.keys.indexOf('tot(Zn)') : -1;
+  const ks = model.speciesNames.indexOf('Hfo_sOZn+');
+  const kw = model.speciesNames.indexOf('Hfo_wOZn+');
+  let worst = 0;
+  let where = '';
+  if (g.type === 'diagram') {
+    totals.forEach((T, i) => {
+      [g.quant[i * g.nq + qd], g.states[i * ns + ks], g.states[i * ns + kw]].forEach((v, j) => {
+        const d = Math.abs(v / pq[i][j] - 1);
+        if (!(d <= worst)) { worst = d; where = `${['dissolved', 'on the strong sites', 'on the weak sites'][j]} at ${T.toExponential(2)}`; }
+      });
+    });
+  }
+  check('a sorption isotherm against PHREEQC: zinc on ferrihydrite (-no_edl) in 10 mM NaCl at pH 6.5, at each of eight totals '
+    + 'of zinc in the system that PHREEQC\'s SOLUTION and its SURFACE equilibrated with it come to, the page\'s water held at '
+    + 'that total, sys(Zn): its dissolved zinc and its zinc on each kind of site as PHREEQC\'s, to 1e-9',
+  g.type === 'diagram' && g.failed === 0 && worst < 1e-9,
+  g.type === 'diagram' ? `${totals.length} totals, ${totals[0].toExponential(2)} to ${totals[totals.length - 1].toExponential(2)} mol/kgw; `
+    + `the worst ${worst.toExponential(1)} (${where})` : g.error);
+  const lk = ['Hfo_sOZn+', 'Hfo_wOZn+'].map((sp) => RtmModel.tunables(res.text).find((x) => x.kind === 'logK' && x.name.includes(sp)));
+  const withData = `${res.text}\n<DATA>\nsys(Zn)  tot(Zn)  pH = 6.5\n`
+    + `${totals.map((T, i) => `${T.toPrecision(17)} ${pq[i][0].toPrecision(17)}`).join('\n')}\n`;
+  let reply = null;
+  handleRtmMessage({ type: 'fit', id: 2, text: withData, solver: {}, params: lk.map((x, i) => ({ kind: 'logK', name: x.name,
+    start: x.value + (i ? 1 : -1) })) }, (x) => { if (x.type !== 'progress') reply = x; });
+  const off = reply.type === 'fit' ? reply.params.map((p, i) => Math.abs(p.value - lk[i].value)) : [Infinity];
+  check('  and with PHREEQC\'s dissolved zinc as what was measured, a table against sys(Zn) at pH 6.5, the log K of zinc on '
+    + 'the strong sites and on the weak moved a unit off and fitted back: the database\'s, to 1e-9',
+  reply.type === 'fit' && Math.max(...off) < 1e-9,
+  reply.type === 'fit' ? `${reply.params.map((p, i) => `${lk[i].name}: ${p.value.toFixed(12)} for ${lk[i].value}`).join('; ')}, in `
+    + `${reply.runs} speciations, the misfit ${reply.ssr0.toExponential(2)} to ${reply.ssr.toExponential(1)}` : reply.error);
+}
+
+/* ======================================================================
    CONDUCTANCE, against PHREEQC: the specific conductance, the density and
    the viscosity of a handed-off water, worked out by the model from
    <CONDUCTANCE> and <VOLUMES> as PHREEQC works them out (calc_SC,
@@ -5379,6 +5445,8 @@ function againstKineticsHandOff(engine) {
   againstInverse(wasm);
   console.log('\n--- fitting: a log K fitted back to what PHREEQC gives ---');
   againstFit(wasm);
+  console.log('\n--- a sorption isotherm: the water at each total of zinc in the system against PHREEQC\'s SOLUTION and SURFACE ---');
+  againstIsotherm(wasm);
   console.log('\n--- the conductance, the density and the viscosity against PHREEQC ---');
   againstConductance(wasm);
   console.log('\n--- EQUILIBRIUM_PHASES as PHREEQC reads a line: alternative reactions, dissolve_only, precipitate_only, -force_equality ---');

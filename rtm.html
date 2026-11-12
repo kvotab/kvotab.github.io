@@ -833,6 +833,9 @@
                 <option value="match">the run against what was measured, one to one</option>
               </select>
             </label>
+            <label id="rtmFitAgainstWrap" hidden>against
+              <select id="rtmFitAgainst" data-on-change="rtm:fitRedraw"></select>
+            </label>
             <label id="rtmFitLogTWrap"><input type="checkbox" id="rtmFitLogT" data-on-change="rtm:fitRedraw"> log time</label>
             <label id="rtmFitLogYWrap"><input type="checkbox" id="rtmFitLogY" checked data-on-change="rtm:fitRedraw"> log amounts</label>
             <span class="rtm-end">
@@ -1362,6 +1365,17 @@ distance  pH     at = 36000
             without spaces in the number, starts that species there, in the model's water as its text is with
             that one start changed — a second edge at a hundred times the zinc, or one at another ionic strength.
             Diagrams leaves it to the Fit tab, which draws each table as a curve of its own.</p>
+          <pre>sys(Zn)  Zn_sorbed  pH = 6.5
+1e-6     96.5
+1e-4     55.0</pre>
+          <p>A table whose first column is <code>sys(Zn)</code> is of the water with that much of the element in
+            the cell, in mol/kgw — dissolved, sorbed, exchanged and as minerals, as PHREEQC's <code>SYS("Zn")</code>
+            counts it, where <code>tot(Zn)</code> is what is dissolved — a sorption isotherm. The element is set as
+            Diagrams sets a total, through its own dissolved species, the sites staying as many.
+            <code>pH = 6.5</code> on the line of any table of a water holds its pH there, as a batch experiment
+            holds it; against <code>sys()</code> without one, the pH stays where the water has it. Diagrams draws
+            such a table beside the quantity where it varies the log total of the same element in the same cell's
+            water, held at the same pH.</p>
 
           <h4 id="help-time-unit">The time unit</h4>
           <p>A model has one time unit and everything in it is in that unit: the rate constants,
@@ -2925,8 +2939,10 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             saturation while there is any of them. A pH or an activity is held through the
             concentration that gives it, the activity coefficient taken again from the speciation
             until it stops moving; a pe is the electron's own activity, an Eh the pe it is in volts
-            at the water's temperature; a total moves the one
-            conserved total that carries most of the element and leaves the rest as they were.
+            at the water's temperature; a total adds the element, or takes it away, as its own
+            dissolved species — <code>Zn+2</code> or <code>ZnOH+</code>, whichever the water has most of — so that
+            what else holds it keeps its own: a surface's sites stay as many, and the chloride of
+            <code>ZnCl+</code> stays.
             Nothing else is held: what is not varied keeps its total, as PHREEQC's
             <code>SOLUTION</code> keeps what it is given, and there is no charge balance. A total
             varied without the pH holds the pH where the water has it, as a
@@ -3100,6 +3116,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             curve, and a second edge at a loading that fills the strong sites pins the weak one down. Each table's
             water is compiled afresh with the numbers tried, its own starts put in, and each is drawn as a curve of
             its own, named by its water.</p>
+          <p>A sorption isotherm, a table against <code>sys(Zn)</code> at the pH its line holds, is fitted beside
+            the edges: an edge varies the pH at one loading, an isotherm the loading at one pH, and together they
+            tie down what either alone leaves loose. Where the tables are against more than one thing,
+            <em>against</em> chooses which the chart draws — the edges against pH, or the isotherm against the
+            element in the cell, on a log axis; the CSV has every point, with a column for each thing a water was
+            held at.</p>
           <p>The misfit is the sum of the squared residuals: for an amount the log<sub>10</sub> of
             the run's value over the one measured, so that a factor of two counts the same at any
             size and a value at or below zero is left out; for pH, a saturation index and the like
@@ -3962,14 +3984,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111h"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111i"></script>
   <script src="./resources/js/rtm-default.js?v=20260920"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261112d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111k"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261112e"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111l"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111e"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111u"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111v"></script>
 </body>
 </html>

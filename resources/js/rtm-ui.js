@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111l';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111m';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5935,13 +5935,19 @@
       let ownWater = 0;
       if (d.show === 'quantity' && !sats) {
         for (const tab of (state.compiled && state.compiled.data) || []) {
-          const j = tab.kind === 'speciation' && tab.axis === ax.kind && (tab.cell || 0) === dgResult.cell ? tab.columns.indexOf(d.q) : -1;
+          const j = tab.kind === 'speciation' && tab.axis === ax.kind && (ax.kind !== 'tot' || tab.species === ax.species)
+            && (tab.cell || 0) === dgResult.cell ? tab.columns.indexOf(d.q) : -1;
           if (j < 0) continue;
-          // A water of the table's own, Zn+2 = 1e-4, is not the one drawn: its measurements are the Fit's to draw.
-          if (tab.water && tab.water.length) { ownWater++; continue; }
+          // A water of the table's own, Zn+2 = 1e-4, or held at a pH other than the one drawn's, is not the one drawn: its
+          // measurements are the Fit's to draw.
+          const tabPH = tab.pH !== null && tab.pH !== undefined ? tab.pH : null;
+          const drawnPH = dgResult.pHAt !== null && dgResult.pHAt !== undefined ? dgResult.pHAt : null;
+          if ((tab.water && tab.water.length) || tabPH !== drawnPH) { ownWater++; continue; }
           const rows = tab.rows.filter((row) => row[j + 1] !== null);
           measured += rows.length;
-          traces.push({ type: 'scatter', mode: 'markers', name: `${labelOf(d.q)}, measured`, x: rows.map((row) => row[0]),
+          // A total, measured in mol/kgw, where the diagram's axis is its log.
+          traces.push({ type: 'scatter', mode: 'markers', name: `${labelOf(d.q)}, measured`,
+            x: rows.map((row) => (ax.kind === 'tot' ? Math.log10(row[0]) : row[0])),
             y: rows.map((row) => row[j + 1]), marker: { size: 8, symbol: 'circle-open', color: DG_PALETTE[0], line: { width: 1.6 } },
             hovertemplate: `${esc(labelOf(d.q))}, measured: %{y:.4g}<extra></extra>` });
         }
@@ -7532,16 +7538,20 @@
   /** A fitted point's place, for a legend or a hover: the column, and its cell and time or its distance and time. */
   const fitWhere = (p) => {
     const stride = (state.compiled && state.compiled.stride) || 1;
-    // A table's own water, Zn+2 = 1e-4: the species it starts as the table says.
+    // A table's own water, Zn+2 = 1e-4: the species it starts as the table says; and the pH it holds, pH = 6.5.
     if (p.kind === 'speciation') {
-      return `the water of cell ${Math.floor(p.cell / stride)}${p.water && p.water.length
-        ? `, ${p.water.map(([nm, v]) => `${nm} = ${fmtNumber(v)}`).join(', ')}` : ''}`;
+      const own = [...(p.water || []).map(([nm, v]) => `${nm} = ${fmtNumber(v)}`),
+        ...(p.pH !== null && p.pH !== undefined ? [`pH = ${fmtNumber(p.pH)}`] : [])];
+      return `the water of cell ${Math.floor(p.cell / stride)}${own.length ? `, ${own.join(', ')}` : ''}`;
     }
     return p.kind === 'time' ? `cell ${Math.floor(p.cell / stride)}${p.cell % stride ? `, rock layer ${p.cell % stride}` : ''}`
       : `at ${fmtTime(p.t)}`;
   };
-  // Where along its table a point is: a time, a distance, or the pH, pe or Eh its water is held at.
-  const fitAlong = (p) => (p.kind === 'time' ? fmtTime(p.t) : p.kind === 'speciation' ? `${p.axis} ${fmtNumber(p.x)}` : `${fmtNumber(p.x)} m`);
+  // What a table of a water is against, as its first column names it: pH, pe, Eh, or an element in the system, sys(Zn).
+  const fitHeldName = (p) => (p.axis === 'tot' ? `sys(${p.species})` : p.axis);
+  // Where along its table a point is: a time, a distance, or the pH, pe, Eh or total its water is held at.
+  const fitAlong = (p) => (p.kind === 'time' ? fmtTime(p.t) : p.kind === 'speciation' ? `${fitHeldName(p)} ${fmtNumber(p.x)}`
+    : `${fmtNumber(p.x)} m`);
 
   /*
     The Show bar: after a fit, all four; before one, the run against what
@@ -7566,6 +7576,7 @@
     if (!fitEmptyText) fitEmptyText = empty.textContent;
     renderFitShow();
     const show = $('rtmFitShow').value;
+    $('rtmFitAgainstWrap').hidden = true;
     $('rtmFitMatch').hidden = true;
     if (show === 'match' && !$('rtmFitShowBar').hidden) { drawMatch(plot, empty, note); return; }
     if (!fitResult) {
@@ -7579,20 +7590,49 @@
     empty.hidden = true;
     plot.hidden = false;
     const r = fitResult;
-    $('rtmFitLogTWrap').hidden = show !== 'data' || !r.curves.some((c) => c.kind === 'time');
+    /*
+      What the run and the measurements are drawn against: time, distance,
+      or what a water was held at -- pH, pe, Eh, an element in the system --
+      each its own; the first the fit has, in that order, unless another is
+      chosen in against, which is there where the fit has more than one.
+    */
+    const groupOf = (c) => (c.kind === 'speciation' ? `held:${fitHeldName(c)}` : c.kind);
+    const groupRank = (g) => ['time', 'held:pH', 'held:pe', 'held:Eh'].indexOf(g) + 1 || (g === 'distance' ? 9 : 5);
+    const groups = [...new Set(r.curves.map(groupOf))].sort((a, b) => groupRank(a) - groupRank(b));
+    const againstSel = $('rtmFitAgainst');
+    const against = groups.includes(againstSel.value) ? againstSel.value : groups[0];
+    if ([...againstSel.options].map((o) => o.value).join() !== groups.join()) {
+      againstSel.replaceChildren(...groups.map((g) => {
+        const o = document.createElement('option');
+        o.value = g;
+        const c = r.curves.find((cv) => groupOf(cv) === g);
+        o.textContent = g === 'time' ? 'time' : g === 'distance' ? 'distance along the column'
+          : c.axis === 'tot' ? `the ${c.species} in the cell, ${fitHeldName(c)}` : c.axis;
+        return o;
+      }));
+    }
+    againstSel.value = against;
+    $('rtmFitAgainstWrap').hidden = show !== 'data' || groups.length < 2;
+    $('rtmFitLogTWrap').hidden = show !== 'data' || against !== 'time';
     $('rtmFitLogYWrap').hidden = show !== 'data';
     const layout = baseLayout();
     layout.hovermode = 'closest';
     const palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
-    // A column for the pH, pe or Eh a water was held at, where a table is against one.
-    const heldAxes = [...new Set(r.points.filter((p) => p.kind === 'speciation').map((p) => p.axis))];
+    // A column for each thing a water was held at, where a table is against one -- its pH, pe, Eh or total of an element,
+    // sys(Zn) -- and the pH one is held at, pH = 6.5 on its table's line, in the pH's column.
+    const held = r.points.filter((p) => p.kind === 'speciation');
+    const heldRank = (nm) => { const i = ['pH', 'pe', 'Eh'].indexOf(nm); return i < 0 ? 9 : i; };
+    const heldAxes = [...new Set([...held.map(fitHeldName), ...(held.some((p) => p.pH !== null && p.pH !== undefined) ? ['pH'] : [])])]
+      .sort((a, b) => heldRank(a) - heldRank(b));
+    const heldValue = (p, name) => (p.kind !== 'speciation' ? null : fitHeldName(p) === name ? p.x
+      : name === 'pH' && p.pH !== null && p.pH !== undefined ? p.pH : null);
     const pointsTable = () => ({ head: ['column', 'where', 'time', 'distance (m)',
-      ...(heldAxes.length ? [heldAxes.length === 1 ? heldAxes[0] : 'pH, pe or Eh'] : []), 'measured', ...(r.weighted ? ['sd'] : []),
+      ...heldAxes.map((name) => (/^sys\(/.test(name) ? `${name} (mol/kgw)` : name)), 'measured', ...(r.weighted ? ['sd'] : []),
       'the run', 'residual', ...(r.weighted ? ['residual over its sd'] : [])], name: 'rtm_fit',
     rows: r.points.map((p) => {
       const run = p.index ? p.value + p.residual : p.value * 10 ** p.residual;
       return [labelOf(p.key), fitWhere(p), p.t, p.kind === 'speciation' ? null : p.x,
-        ...(heldAxes.length ? [p.kind === 'speciation' ? p.x : null] : []), p.value, ...(r.weighted ? [p.sd] : []), run, p.residual,
+        ...heldAxes.map((name) => heldValue(p, name)), p.value, ...(r.weighted ? [p.sd] : []), run, p.residual,
         ...(r.weighted ? [p.normalized] : [])];
     }) });
     if (show === 'history') {
@@ -7634,10 +7674,10 @@
     // are against one, a sorption edge.
     const logT = $('rtmFitLogT').checked;
     const logY = $('rtmFitLogY').checked;
-    const timeCurves = r.curves.filter((c) => c.kind === 'time');
-    const heldCurves = r.curves.filter((c) => c.kind === 'speciation');
-    const curves = timeCurves.length ? timeCurves : heldCurves.length ? heldCurves : r.curves;
-    const along = timeCurves.length ? 'time' : heldCurves.length ? 'speciation' : 'distance';
+    const curves = r.curves.filter((c) => groupOf(c) === against);
+    const along = against === 'time' || against === 'distance' ? against : 'speciation';
+    // An element in the system over decades: on a log axis.
+    const totAxis = along === 'speciation' && curves[0].axis === 'tot';
     const tableOf = (c) => (along === 'time' ? c.cell : along === 'speciation' ? c.table : c.t);
     const several = new Set(curves.map(tableOf)).size > 1;
     // Only pH, SI, a share and the like: on the left, as they are, and no log axis to choose.
@@ -7647,8 +7687,10 @@
     let right = false;
     curves.forEach((c, q) => {
       const color = palette[q % palette.length];
-      const where = several ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell }
-        : along === 'speciation' ? { kind: 'speciation', cell: c.cell, water: c.water } : { kind: 'distance', t: c.t })}` : '';
+      // A water of its own, or one held at a pH of the table's, is named by it even alone.
+      const ownWater = along === 'speciation' && ((c.water && c.water.length) || (c.pH !== null && c.pH !== undefined));
+      const where = several || ownWater ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell }
+        : along === 'speciation' ? { kind: 'speciation', cell: c.cell, water: c.water, pH: c.pH } : { kind: 'distance', t: c.t })}` : '';
       const name = `${labelOf(c.key)}${where}`;
       const onRight = c.index && !allIndex;
       right = right || onRight;
@@ -7663,9 +7705,12 @@
         ...(r.weighted ? { error_y: { type: 'data', array: pts.map((p) => p.sd), visible: true, color, thickness: 1.2, width: 4 } } : {}),
         ...(onRight ? { yaxis: 'y2' } : {}) });
     });
-    layout.xaxis.type = along === 'time' && logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})` : along === 'speciation' ? dgLabel({ kind: curves[0].axis })
-      : 'distance from the left-hand face (m)', font: { size: 11 } };
+    layout.xaxis.type = (along === 'time' && logT) || totAxis ? 'log' : 'linear';
+    // A total in mol/kgw in powers of ten, as the amounts are: 10⁻⁶, not 1µ.
+    if (totAxis) layout.xaxis.exponentformat = 'power';
+    layout.xaxis.title = { text: along === 'time' ? `time (${timeUnit().symbol})`
+      : totAxis ? `${curves[0].species} in the cell, dissolved, sorbed and as minerals (mol/kgw)`
+        : along === 'speciation' ? dgLabel({ kind: curves[0].axis }) : 'distance from the left-hand face (m)', font: { size: 11 } };
     layout.yaxis.type = logY && !allIndex ? 'log' : 'linear';
     layout.yaxis.title = { text: allIndex ? [...new Set(curves.map((cv) => axisLabelOf(cv.key)))].join(', ')
       : 'concentration, or an amount of <OUTPUT>', font: { size: 11 } };
@@ -7677,8 +7722,9 @@
     }
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     fitTableNow = pointsTable();
-    note.textContent = `${along === 'speciation' ? `the water at the fitted numbers, held at each ${curves[0].axis}` : 'the run at the fitted numbers'}`
-      + `${r.curves.length > curves.length ? `; the tables ${along === 'time' ? 'in distance or against a pH' : 'in distance'} are in the CSV` : ''}`;
+    note.textContent = along !== 'speciation' ? 'the run at the fitted numbers'
+      : totAxis ? `the water at the fitted numbers, with each total of ${curves[0].species} in the cell`
+        : `the water at the fitted numbers, held at each ${curves[0].axis}`;
   }
 
   /*
@@ -9781,6 +9827,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'A table against pH, pe or Eh — a sorption edge, the share of a metal on a surface at each pH — needs no run: its water is held at each value it measured and speciated there, as on the Diagrams tab, and the fit draws it against that value.',
           'A column sd(Ca+2) beside Ca+2 in <DATA> gives each value its standard deviation: the fit is then weighted, each residual over its own deviation, the misfit χ² on the points less the numbers fitted, the standard errors the deviations\' own. Every value fitted needs one, or none does.',
           'A table against pH may have a water of its own — `pH  Zn_sorbed  Zn+2 = 1e-4` — the model with those species started there: edges at several loadings or ionic strengths fitted together, which pins down what one edge leaves loose, a weak site\'s constant beside a strong one\'s. Each is drawn as a curve of its own, named by its water.',
+          'A table against sys(Zn) — `sys(Zn)  Zn_sorbed  pH = 6.5` — is a sorption isotherm: the water with that much zinc in the cell, dissolved, sorbed and as minerals, as PHREEQC\'s SYS("Zn") counts it, at the pH its line holds it at, or where the water has it. Fitted beside the edges, it ties a site\'s constant to how many sites there are. **against** chooses which tables the chart draws, where the fit has tables against more than one thing; an isotherm on a log axis.',
           'A number above zero is fitted in its logarithm, so it stays above zero; a log K and the temperature as they are. Give each a start above zero where it is fitted in its logarithm.',
         ] },
         { heading: 'How', list: [
@@ -10561,7 +10608,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111h';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111i';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

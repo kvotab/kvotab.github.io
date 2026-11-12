@@ -817,6 +817,19 @@ function rtmSolute(model, k) {
     || sp.potential || sp.gas || sp.name === 'H2O');
 }
 
+/**
+ * The species an element's total is set through on a diagram: dissolved, and made of it and H and O alone -- Zn+2 and
+ * ZnOH+, not ZnCl+ nor a surface's Hfo_sOZn+ -- so that what else holds it, a surface's sites or the chloride of ZnCl+,
+ * stays as it is (RtmModel.speciate adds it as the most of them in the water).
+ */
+function rtmElementVia(model, el) {
+  const els = (model.composition && model.composition.elements) || [];
+  const others = new Set();
+  for (const e of els) if (e.el !== el) for (const [k] of e.terms) others.add(k);
+  const own = els.find((e) => e.el === el);
+  return own ? own.terms.filter(([k, , where]) => where === 'water' && !others.has(k)).map(([k]) => k) : [];
+}
+
 /** One axis of a diagram: what it holds, and its values from `from` to `to` in `n` steps. */
 function rtmDiagramAxis(model, ax) {
   const ns = model.speciesNames.length;
@@ -864,7 +877,7 @@ function rtmDiagramAxis(model, ax) {
     if (!comp) throw new Error(`The total of ${ax.species}: no species of the model has any.`);
     const weights = new Float64Array(ns);
     for (const [k, n] of comp.terms) weights[k] = n;
-    return { kind: 'tot', weights, values, name: ax.species };
+    return { kind: 'tot', weights, values, name: ax.species, via: rtmElementVia(model, ax.species) };
   }
   throw new Error(`"${ax.kind}" is no axis of a diagram: pH, pe, Eh, la, ratio or tot.`);
 }
@@ -937,7 +950,7 @@ function rtmDiagramSetup(msg) {
       }
       const si = s.si === undefined || s.si === null || s.si === '' ? 0 : Number(s.si);
       if (!Number.isFinite(si)) throw new Error(`${s.phase}: the saturation index to hold it at is a number.`);
-      return { phase: s.phase, si, q, el, n: makeup[el], weights };
+      return { phase: s.phase, si, q, el, n: makeup[el], weights, via: rtmElementVia(model, el) };
     });
   }
   /*
@@ -988,7 +1001,8 @@ function rtmDiagramSetup(msg) {
         else if (ax.kind === 'ratio') y[b + ax.k] = 10 ** (v - ax.z * (pHAxis >= 0 ? vals[pHAxis] : pHHeld)) * Math.exp(-lnGamma[h]);
       });
       const r = RtmModel.speciate(model, y, { fixed: held, cells: [cell], t,
-        total: total || (totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name } : undefined) });
+        total: total || (totAxis >= 0 ? { weights: axes[totAxis].weights, value: 10 ** vals[totAxis], name: axes[totAxis].name,
+          via: axes[totAxis].via } : undefined) });
       if (!r.cells.length || !r.cells[0].converged) return false;
       y.set(r.y.subarray(b, b + ns), b);
       if (!model.act) return true;
@@ -1053,7 +1067,7 @@ function rtmDiagramSat(S, msg, post) {
       const y = Float64Array.from(y0);
       const g = g0.slice();
       let ok = false;
-      try { ok = settle(y, vals, g, { weights: ph.weights, value: 10 ** L, name: ph.el }); } catch (e) { ok = false; }
+      try { ok = settle(y, vals, g, { weights: ph.weights, value: 10 ** L, name: ph.el, via: ph.via }); } catch (e) { ok = false; }
       if (!ok) return null;
       const f = siOf(y) - ph.si;
       return Number.isFinite(f) ? { y, g, L, f } : null;
@@ -2102,8 +2116,8 @@ function rtmFitPoints(model, columns, tend) {
           points.push({ table: ti, kind: 'time', t: row[0], cell: (tab.cell || 0) * stride + Math.min(tab.layer || 0, stride - 1),
             x: null, key, k, q, index, value, sd });
         } else if (tab.kind === 'speciation') {
-          points.push({ table: ti, kind: 'speciation', axis: tab.axis, t: null, cell: (tab.cell || 0) * stride, x: row[0],
-            key, k, q, index, value, sd });
+          points.push({ table: ti, kind: 'speciation', axis: tab.axis, species: tab.species || null,
+            pH: tab.pH !== undefined ? tab.pH : null, t: null, cell: (tab.cell || 0) * stride, x: row[0], key, k, q, index, value, sd });
         } else {
           points.push({ table: ti, kind: 'distance', t: tab.at !== null ? tab.at : tend, cell: null, layer: Math.min(tab.layer || 0, stride - 1),
             x: row[0], key, k, q, index, value, sd });
@@ -2115,14 +2129,18 @@ function rtmFitPoints(model, columns, tend) {
 }
 
 /*
-  THE WATERS OF A TABLE AGAINST pH, pe OR Eh, as a fit reads them: the
-  water of the table's cell as the model starts it, held at each value and
-  speciated there as the Diagrams tab speciates it, walking up the values
-  from the water and each from the one before; the water itself where one
-  does not settle from the one before. A map from each value to its water,
-  and the model they are of. Throws where a water does not settle at all.
-  A table with a water of its own, Zn+2 = 1e-4 on its line, is of the text
-  with those species started there, compiled afresh (rtmTableText).
+  THE WATERS OF A TABLE AGAINST pH, pe, Eh OR AN ELEMENT IN THE SYSTEM, as
+  a fit reads them: the water of the table's cell as the model starts it,
+  held at each value and speciated there as the Diagrams tab speciates it,
+  walking up the values from the water and each from the one before; the
+  water itself where one does not settle from the one before. Against
+  sys(Zn), each value is the element's total in the cell, set as Diagrams
+  sets a log total, and the pH stays where the water has it unless the
+  table holds it, pH = 6.5 on its line, as any table of a water may. A map
+  from each value to its water, and the model they are of. Throws where a
+  water does not settle at all. A table with a water of its own, Zn+2 =
+  1e-4 on its line, is of the text with those species started there,
+  compiled afresh (rtmTableText).
 */
 function rtmTableText(text, tab) {
   let out = text;
@@ -2130,27 +2148,35 @@ function rtmTableText(text, tab) {
   return out;
 }
 
+/** What a table of a water is against, as its first column names it: pH, pe, Eh or sys(Zn). */
+function rtmTableAxisName(tab) {
+  return tab.axis === 'tot' ? `sys(${tab.species})` : tab.axis;
+}
+
 function rtmSpeciationTable(model, tab, values) {
   const stride = model.stride || 1;
-  const S = rtmDiagramSetup({ model, at: 'start', cell: (tab.cell || 0) * stride, axes: [{ kind: tab.axis, values }] });
+  // A total held in its logarithm, as Diagrams varies one.
+  const held = tab.axis === 'tot' ? values.map((x) => Math.log10(x)) : values;
+  const S = rtmDiagramSetup({ model, at: 'start', cell: (tab.cell || 0) * stride,
+    axes: [{ kind: tab.axis, species: tab.species, values: held }], pHAt: tab.pH !== undefined ? tab.pH : null });
   const waters = new Map();
   let cur = Float64Array.from(S.base);
   let lnGamma = S.holds.map(() => 0);
-  for (const x of S.axes[0].values) {
+  values.forEach((x, i) => {
     let y = Float64Array.from(cur);
     let g = lnGamma.slice();
     let ok = false;
-    try { ok = S.settle(y, [x, 0], g); } catch (e) { ok = false; }
+    try { ok = S.settle(y, [held[i], 0], g); } catch (e) { ok = false; }
     if (!ok) {
       y = Float64Array.from(S.base);
       g = S.holds.map(() => 0);
-      try { ok = S.settle(y, [x, 0], g); } catch (e) { ok = false; }
+      try { ok = S.settle(y, [held[i], 0], g); } catch (e) { ok = false; }
     }
-    if (!ok) throw new Error(`the water of cell ${tab.cell || 0} does not settle at ${tab.axis} ${x}`);
+    if (!ok) throw new Error(`the water of cell ${tab.cell || 0} does not settle at ${rtmTableAxisName(tab)} ${x}`);
     cur = y;
     lnGamma = g;
     waters.set(x, y);
-  }
+  });
   return { waters, t: S.t, model };
 }
 
@@ -2314,8 +2340,8 @@ function rtmFit(msg, post) {
       if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
       conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
     }
-    // Each table against pH, pe or Eh: its water speciated at every value it measured, with these numbers -- a table with a
-    // water of its own, of the text with its species started there.
+    // Each table against pH, pe, Eh or sys(): its water speciated at every value it measured, with these numbers -- a table
+    // with a water of its own, of the text with its species started there.
     const spec = new Map(specTables.map((ti) => [ti, rtmSpeciationTable(tableModel(model, th, ti), model.data[ti], specValues.get(ti))]));
     const r = new Float64Array(n);
     points.forEach((p, i) => {
@@ -2474,10 +2500,15 @@ function rtmFit(msg, post) {
     if (p.kind === 'speciation') {
       if (!specCurve.has(p.table)) {
         const vals = specValues.get(p.table);
-        const lo = vals[0];
-        const hi = vals[vals.length - 1];
+        // A total over decades, in its logarithm: a little either side of the least and the most measured, evenly in log.
+        const inLog = model.data[p.table].axis === 'tot';
+        const lo = inLog ? Math.log10(vals[0]) : vals[0];
+        const hi = inLog ? Math.log10(vals[vals.length - 1]) : vals[vals.length - 1];
         const pad = hi > lo ? 0.05 * (hi - lo) : 0.5;
-        const grid = Array.from({ length: 101 }, (_, i) => lo - pad + ((hi - lo + 2 * pad) * i) / 100);
+        const grid = Array.from({ length: 101 }, (_, i) => {
+          const v = lo - pad + ((hi - lo + 2 * pad) * i) / 100;
+          return inLog ? 10 ** v : v;
+        });
         const tm = tableModel(model, theta, p.table);
         let w;
         try { w = { x: grid, ...rtmSpeciationTable(tm, model.data[p.table], grid) }; } catch (e) {
@@ -2486,8 +2517,8 @@ function rtmFit(msg, post) {
         specCurve.set(p.table, w);
       }
       const w = specCurve.get(p.table);
-      curves.push({ kind: 'speciation', axis: p.axis, table: p.table, cell: p.cell, key: p.key, index: p.index,
-        water: model.data[p.table].water || [], x: w.x.slice(),
+      curves.push({ kind: 'speciation', axis: p.axis, species: p.species, pH: p.pH, table: p.table, cell: p.cell, key: p.key,
+        index: p.index, water: model.data[p.table].water || [], x: w.x.slice(),
         y: w.x.map((x) => rtmValueAt(w.model, w.waters.get(x), w.t, p.cell, p.k, p.q, out1)) });
     } else if (p.kind === 'time') {
       curves.push({ kind: 'time', cell: p.cell, key: p.key, index: p.index, x: Array.from(res.t),
@@ -2509,7 +2540,8 @@ function rtmFit(msg, post) {
       theta: theta[i], se: se ? se[i] : null })),
     corr: cov ? cov.map((row, a) => row.map((v, b) => v / Math.sqrt(cov[a][a] * cov[b][b]))) : null,
     history,
-    points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
+    points: points.map((p, i) => ({ kind: p.kind, axis: p.axis || null, species: p.species || null,
+      pH: p.kind === 'speciation' ? p.pH : null, table: p.table, t: p.t, x: p.x, cell: p.cell, key: p.key,
       water: p.kind === 'speciation' ? model0.data[p.table].water || [] : null,
       index: p.index, value: p.value, residual: best.r[i] * p.sdr, sd: p.sd, normalized: weighted ? best.r[i] : null })),
     curves,

@@ -1902,8 +1902,8 @@ CH2O => CO3-2 + 6 H+ + 4 e-, r = kdoc*[CH2O]
 _after('calcitefit', dict(
     id='zincfit',
     group='Fitting and uncertainty',
-    label='Zinc on ferrihydrite: its sorption edge fitted',
-    about="Zinc and a ferrihydrite surface, as in Zinc on ferrihydrite, with the share of the zinc on the surface measured at eight pHs, and again at a hundred times the zinc -- the second table's own water, Zn+2 = 1e-4 on its line -- each measurement with a standard deviation of 1 %, all made up for the purpose. Run it: the Fit tab moves the log K of the zinc on the strong sites and on the weak ones from phreeqc.dat's 0.99 and -1.99 until both edges go through what <DATA> measured, as PhreePlot fits sorption edges, and draws each edge through its measurements: 1.326 and -1.592, chi-square 8.1 on 14 degrees of freedom. The second edge, its strong sites full, pins the weak sites' constant down to half the standard error one edge leaves it.",
+    label='Zinc on ferrihydrite: its sorption edges and isotherm fitted',
+    about="Zinc and a ferrihydrite surface, as in Zinc on ferrihydrite, with the share of the zinc on the surface measured at eight pHs, again at a hundred times the zinc -- the second table's own water, Zn+2 = 1e-4 on its line -- and at pH 6.5 at eight totals of zinc, an isotherm: a table against sys(Zn), the zinc in the cell, its line holding the pH. Each measurement has a standard deviation of 1 %, all made up for the purpose. Run it: the Fit tab moves the log K of the zinc on the strong sites and on the weak ones from phreeqc.dat's 0.99 and -1.99 until the edges and the isotherm go through what <DATA> measured, as PhreePlot fits sorption data, and draws them through their measurements, the edges against pH and, under against, the isotherm against the zinc in the cell: 1.311 and -1.595, chi-square 12.2 on 22 degrees of freedom. The second edge, its strong sites full, halves the standard error of the weak sites' constant that one edge leaves it, and the isotherm halves it again.",
     text=_retitled(_text('sorptionedge'), '''# Zinc on ferrihydrite, its strong and weak sites as Dzombak and Morel give
 # them, and the share of the zinc on the surface measured at eight pHs, in
 # <DATA>: a table against pH is of the water held at each pH, as the Diagrams
@@ -1912,8 +1912,10 @@ _after('calcitefit', dict(
 # measurement weighed by its standard deviation, sd(Zn_sorbed): the misfit is
 # then chi-square. A second edge at a hundred times the zinc, Zn+2 = 1e-4 on
 # its table's line, fills the strong sites and pins the weak sites' constant
-# down. phreeqc.dat's constants; no double layer; the measurements and their
-# deviations are made up.''') + '''
+# down; an isotherm at pH 6.5, a table against sys(Zn) -- the zinc in the
+# cell, dissolved and sorbed -- pins it down further. phreeqc.dat's
+# constants; no double layer; the measurements and their deviations are made
+# up.''') + '''
 <OUTPUT>
 Zn_sorbed = 100 * ([Hfo_sOZn+] + [Hfo_wOZn+]) / ([Zn+2] + [ZnOH+] + [Zn(OH)2] + [ZnCl+] + [Hfo_sOZn+] + [Hfo_wOZn+]),  unit = %
 
@@ -1937,6 +1939,16 @@ pH    Zn_sorbed   sd(Zn_sorbed)   Zn+2 = 1e-4
 7.0   75.2        1
 7.5   90.6        1
 8.0   95.0        1
+
+sys(Zn)   Zn_sorbed   sd(Zn_sorbed)   pH = 6.5
+1e-7      97.3        1
+3e-7      95.7        1
+1e-6      96.5        1
+3e-6      93.4        1
+1e-5      78.9        1
+3e-5      63.9        1
+1e-4      55.0        1
+3e-4      38.5        1
 ''',
     view={'tab': 'fit', 'fit': {'params': [{'what': 'logK:Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+', 'start': '0.99'},
                                            {'what': 'logK:Hfo_wOH + Zn+2 <=> Hfo_wOZn+ + H+', 'start': '-1.99'}], 'off': []}, 'go': True},

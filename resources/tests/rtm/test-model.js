@@ -9068,11 +9068,83 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && fTwo2.curves.length === 2 && fTwo2.curves[0].water.length === 0 && JSON.stringify(fTwo2.curves[1].water) === '[["Zn+2",0.0001]]'
     && fTwo2.points.slice(8).every((pt) => JSON.stringify(pt.water) === '[["Zn+2",0.0001]]')
     && fTwo2.params[1].se < 0.6 * fOne.params[1].se && Math.abs(fTwo2.corr[0][1]) < 0.6 * Math.abs(fOne.corr[0][1])
-    && /a table against pH, pe or Eh has; one in time or in distance is the run's/.test(ownRefused[0])
+    && /a table against pH, pe, Eh or an element in the system, sys\(Zn\), has; one in time or in distance is the run's/.test(ownRefused[0])
     && /"Cd\+2 = " starts a species the model has not/.test(ownRefused[1]),
   `two edges: ${fTwo2.params ? fTwo2.params.map((pt) => `${pt.value} ± ${pt.se.toFixed(4)}`).join(', ') : fTwo2.error}, correlation `
     + `${fTwo2.corr ? fTwo2.corr[0][1].toFixed(3) : '-'}; one edge: ${fOne.params.map((pt) => `± ${pt.se.toFixed(4)}`).join(', ')}, `
     + `correlation ${fOne.corr[0][1].toFixed(3)}; ${ownRefused.map((x) => `"${x}"`).join(' | ')}`);
+
+  /*
+    A SORPTION ISOTHERM: a table against sys(Zn), the zinc in the cell --
+    dissolved and sorbed, as PHREEQC's SYS("Zn") counts it -- at the pH its
+    line holds, pH = 6.5. One kind of site, zinc as Zn+2 alone, no activity
+    coefficients: at a held pH the share sorbed is Langmuir's, the sites
+    S x / (1 + x) with x = K [Zn+2] / [H+], [Zn+2] the root of a quadratic.
+    Diagrams' log total walked up six decades and down again, on it to
+    1e-12, the sites 1e-5 throughout: the zinc goes in and out as Zn+2, not
+    through a total that counts the sites too. The table fitted from log K
+    0 back to 0.5 to 1e-9 and drawn on 101 totals, evenly in their log, a
+    little either side of those measured, on Langmuir's to 1e-12. Refused:
+    sys() of an element the model has not, a total of nought, pH = on a
+    table against pH, and pH = twice.
+  */
+  const langS = 1e-5;
+  const langText = (lk) => `<SETTINGS>\nMODE = batch\nTEND = 1\nEQUILIBRATE = 1\n\n<SPECIES>\nH+  1e-7\nOH-  1e-7\nZn+2  1e-6\n`
+    + `Hfo_sOH  surface  sites=${langS}\nHfo_sOZn+  surface\n\n<EQUILIBRIUM>\n <=> H+ + OH-,  logK = -14\n`
+    + `Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+,  logK = ${lk}\n\n<OUTPUT>\nZn_sorbed = 100 * [Hfo_sOZn+] / ([Zn+2] + [Hfo_sOZn+]),  unit = %\n`;
+  // The share sorbed of T in all, at pH 6.5: [Zn+2] = z the positive root of a z^2 + (1 + S a - T a) z - T = 0, a = K / [H+].
+  const langmuir = (T, lk) => {
+    const a = 10 ** lk / 10 ** -6.5;
+    const bq = 1 + langS * a - T * a;
+    const root = Math.sqrt(bq * bq + 4 * a * T);
+    const z = bq >= 0 ? (2 * T) / (bq + root) : (root - bq) / (2 * a);
+    return (100 * (T - z)) / T;
+  };
+  const langLogs = [-9, -8, -7, -6, -5, -4, -3, -3.5, -4.5, -5.5, -6.5, -7.5, -8.5];
+  let langGrid = null;
+  handleRtmMessage({ type: 'diagram', id: 24, text: langText(0.5), at: 'start', cell: 0,
+    axes: [{ kind: 'tot', species: 'Zn', values: langLogs }], pHAt: 6.5 }, (m) => { if (m.type !== 'progress') langGrid = m; });
+  const lq = langGrid.keys.indexOf('Zn_sorbed');
+  const lsk = [langGrid.species.indexOf('Hfo_sOH'), langGrid.species.indexOf('Hfo_sOZn+')];
+  let langWorst = 0;
+  let siteWorst = 0;
+  langLogs.forEach((lt, i) => {
+    const want = langmuir(10 ** lt, 0.5);
+    langWorst = Math.max(langWorst, Math.abs(langGrid.quant[i * langGrid.nq + lq] - want) / want);
+    const sites = langGrid.states[i * langGrid.ns + lsk[0]] + langGrid.states[i * langGrid.ns + lsk[1]];
+    siteWorst = Math.max(siteWorst, Math.abs(sites / langS - 1));
+  });
+  const isoTotals = [1e-8, 3e-8, 1e-7, 3e-7, 1e-6, 3e-6, 1e-5, 3e-5, 1e-4, 3e-4];
+  const isoText = `${langText(0)}\n<DATA>\nsys(Zn)  Zn_sorbed  pH = 6.5\n${isoTotals.map((T) => `${T} ${langmuir(T, 0.5).toPrecision(17)}`).join('\n')}\n`;
+  const isoModel = RtmModel.compile(isoText);
+  const fIso = fitOf(isoText, [{ kind: 'logK', name: 'Hfo_sOH + Zn+2 <=> Hfo_sOZn+ + H+', start: 0 }]);
+  let isoCurveWorst = Infinity;
+  if (fIso.type === 'fit') {
+    const c = fIso.curves[0];
+    isoCurveWorst = Math.max(...c.x.map((x, i) => Math.abs(c.y[i] / langmuir(x, fIso.params[0].value) - 1)));
+  }
+  const isoPad = 0.05 * (Math.log10(3e-4) + 8);
+  const isoRefused = [
+    `sys(Cd)  Zn_sorbed\n1e-6 10\n`, `sys(Zn)  Zn_sorbed\n0 10\n`, `pH  Zn_sorbed  pH = 6\n5 10\n`, `sys(Zn)  Zn_sorbed  pH = 6  pH = 7\n1e-6 10\n`,
+  ].map((tab) => { try { RtmModel.compile(`${langText(0)}\n<DATA>\n${tab}`); return ''; } catch (e) { return e.message; } });
+  check('a sorption isotherm: a table against sys(Zn) at pH 6.5, one kind of site, no activity coefficients -- Langmuir\'s: '
+    + 'Diagrams\' log total walked up and down six decades on it to 1e-12, the sites 1e-5 throughout; the table fitted from '
+    + 'log K 0 back to 0.5 to 1e-9, drawn on 101 totals evenly in log a little either side, on Langmuir\'s to 1e-12; sys() of '
+    + 'an element the model has not, a total of nought, pH = on a table against pH, and twice, refused',
+  langGrid.failed === 0 && langWorst < 1e-12 && siteWorst < 1e-12
+    && isoModel.data[0].kind === 'speciation' && isoModel.data[0].axis === 'tot' && isoModel.data[0].species === 'Zn'
+    && isoModel.data[0].pH === 6.5 && isoModel.data[0].water.length === 0
+    && fIso.type === 'fit' && Math.abs(fIso.params[0].value - 0.5) < 1e-9
+    && fIso.points.every((pt) => pt.axis === 'tot' && pt.species === 'Zn' && pt.pH === 6.5)
+    && fIso.curves[0].x.length === 101 && Math.abs(Math.log10(fIso.curves[0].x[0]) - (-8 - isoPad)) < 1e-12
+    && Math.abs(Math.log10(fIso.curves[0].x[100]) - (Math.log10(3e-4) + isoPad)) < 1e-12 && isoCurveWorst < 1e-12
+    && /sys\(Cd\) is the Cd in the cell, and no species of the model has any/.test(isoRefused[0])
+    && /sys\(Zn\) is the Zn in the cell, in mol\/kgw, and above nought/.test(isoRefused[1])
+    && /pH = holds the water at a pH, and this table's pH is what it varies/.test(isoRefused[2])
+    && /pH = is given 2 times/.test(isoRefused[3]),
+  `Diagrams ${langWorst.toExponential(1)} off Langmuir's, the sites ${siteWorst.toExponential(1)} off; log K `
+    + `${fIso.params ? fIso.params[0].value : fIso.error} in ${fIso.runs} speciations, the curve ${isoCurveWorst.toExponential(1)} off; `
+    + `${isoRefused.map((x) => `"${x}"`).join(' | ')}`);
 
   /*
     A FIT WEIGHTED by each value's standard deviation, sd(A): the decay

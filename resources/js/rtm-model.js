@@ -2005,8 +2005,15 @@
    * each value of it, which a fit weighs it by. A table against pH, pe or
    * Eh may start its water with species of its own, Zn+2 = 1e-4 on its line
    * (no spaces in the number): the model with those species started there,
-   * a water of its own -- a sorption edge at another loading.
-   * Returns [{ kind, axis, columns, water: [[name, value]], cell, layer, at, rows, line }].
+   * a water of its own -- a sorption edge at another loading. A table whose
+   * first column is sys(Zn) is of the water with that much of the element
+   * in the cell, dissolved, sorbed, exchanged or a mineral, as PHREEQC's
+   * SYS("Zn") counts it -- a sorption isotherm -- axis 'tot' and species
+   * the element, as the Diagrams tab varies a total; pH = 6.5 on the line
+   * of any table of a water holds that water's pH there, as the Diagrams
+   * tab holds one (without it, against sys(), the pH stays where the water
+   * has it).
+   * Returns [{ kind, axis, species, pH, columns, water: [[name, value]], cell, layer, at, rows, line }].
    */
   function readData(lines) {
     const tables = [];
@@ -2014,7 +2021,9 @@
     for (const { text, line } of lines) {
       const tokens = text.split(/\s+/).filter(Boolean);
       const first = tokens[0].toLowerCase();
-      if (['time', 't', 'distance', 'x', 'ph', 'pe', 'eh'].includes(first)) {
+      // An element in the system, sys(Zn): all of it in the cell, as PHREEQC's SYS("Zn").
+      const sys = /^sys\(([^()\s]+)\)$/i.exec(tokens[0]);
+      if (['time', 't', 'distance', 'x', 'ph', 'pe', 'eh'].includes(first) || sys) {
         const quals = {};
         const water = [];
         const rest = text.slice(text.indexOf(tokens[0]) + tokens[0].length)
@@ -2023,18 +2032,24 @@
           .replace(/(^|\s)([^\s=]+)\s*=\s*(\S+)/g, (_, sp, name, v) => { water.push([name, v]); return ' '; });
         const columns = rest.split(/\s+/).filter(Boolean);
         const kind = first === 'time' || first === 't' ? 'time' : first === 'distance' || first === 'x' ? 'distance' : 'speciation';
-        const axis = kind === 'speciation' ? { ph: 'pH', pe: 'pe', eh: 'Eh' }[first] : null;
+        const axis = kind === 'speciation' ? (sys ? 'tot' : { ph: 'pH', pe: 'pe', eh: 'Eh' }[first]) : null;
         if (!columns.length) {
           throw new RtmError(`"${text}": a table in <DATA> names its columns after ${tokens[0]}: time  Ca+2  pH  cell = 19.`, line);
         }
         if (kind !== 'speciation' && water.length) {
-          throw new RtmError(`"${text}": ${water[0][0]} = sets a water of the table's own, which a table against pH, pe or Eh `
-            + 'has; one in time or in distance is the run\'s, of the model\'s own water.', line);
+          throw new RtmError(`"${text}": ${water[0][0]} = sets a water of the table's own, which a table against pH, pe, Eh `
+            + 'or an element in the system, sys(Zn), has; one in time or in distance is the run\'s, of the model\'s own water.', line);
         }
         if (kind === 'speciation' && (quals.at !== undefined || quals.layer !== undefined)) {
-          throw new RtmError(`"${text}": a table against ${axis} is of the water of a cell held there, cell = 0; `
+          throw new RtmError(`"${text}": a table against ${tokens[0]} is of the water of a cell held there, cell = 0; `
             + 'at = and layer = are for tables in time and in distance.', line);
         }
+        // pH = 6.5: the pH the table's water is held at, not a species started.
+        const held = water.filter(([name]) => name.toLowerCase() === 'ph');
+        if (held.length && axis === 'pH') {
+          throw new RtmError(`"${text}": pH = holds the water at a pH, and this table's pH is what it varies.`, line);
+        }
+        if (held.length > 1) throw new RtmError(`"${text}": pH = is given ${held.length} times; once is enough.`, line);
         const whole = (key) => {
           const v = Number(quals[key]);
           if (!Number.isInteger(v) || v < 0) throw new RtmError(`"${text}": ${key} = is a whole number, from 0.`, line);
@@ -2046,7 +2061,8 @@
         if (kind === 'distance' && quals.cell !== undefined) {
           throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time.`, line);
         }
-        cur = { kind, axis, columns, water: water.map(([name, v]) => [name, constValue(v, line, name)]),
+        cur = { kind, axis, species: sys ? sys[1] : null, pH: held.length ? constValue(held[0][1], line, 'pH') : null, columns,
+          water: water.filter(([name]) => name.toLowerCase() !== 'ph').map(([name, v]) => [name, constValue(v, line, name)]),
           cell: quals.cell !== undefined ? whole('cell') : null,
           layer: quals.layer !== undefined ? whole('layer') : 0,
           at: quals.at !== undefined ? constValue(quals.at, line, 'at') : null, rows: [], line };
@@ -2057,13 +2073,17 @@
         throw new RtmError('<DATA> begins with a line naming the columns of a table: time  Ca+2  pH  cell = 19, '
           + 'distance  Ca+2  at = 3600, or pH  Zn_sorbed  cell = 0 for a water held at each pH.', line);
       }
+      const xName = cur.axis === 'tot' ? `sys(${cur.species})` : cur.axis || cur.kind;
       if (tokens.length !== cur.columns.length + 1) {
         throw new RtmError(`"${text}": the table on line ${cur.line} has ${cur.columns.length + 1} columns, `
-          + `${cur.axis || cur.kind} and ${cur.columns.join(', ')}; a dash for a value not measured.`, line);
+          + `${xName} and ${cur.columns.join(', ')}; a dash for a value not measured.`, line);
       }
       const row = tokens.map((v) => (v === '-' ? null : Number(v)));
       if (row[0] === null || row.some((v) => v !== null && !Number.isFinite(v))) {
-        throw new RtmError(`"${text}": every value is a number, or a dash where nothing was measured; the ${cur.axis || cur.kind} always.`, line);
+        throw new RtmError(`"${text}": every value is a number, or a dash where nothing was measured; the ${xName} always.`, line);
+      }
+      if (cur.axis === 'tot' && !(row[0] > 0)) {
+        throw new RtmError(`"${text}": ${xName} is the ${cur.species} in the cell, in mol/kgw, and above nought.`, line);
       }
       cur.rows.push(row);
     }
@@ -6688,7 +6708,7 @@
    *
    * @param {object} model   from compile()
    * @param {Float64Array} [y]  the state to equilibrate; the initial one by default
-   * @param {object} [opts]  { tol, maxIter, floor, equilibria, fixed, t, cells, total }
+   * @param {object} [opts]  { tol, maxIter, floor, equilibria, fixed, t, cells, total: { weights, value, name, via } }
    * @returns {{y: Float64Array, cells: object[]}}
    */
   function speciate(model, y, opts = {}) {
@@ -6729,18 +6749,25 @@
     // An exchanger, the electron or a potential counts in no total: it is no amount.
     const w = Float64Array.from(part, (si) => (site && site[si] >= 2 ? 0 : 1));
     /*
-      opts.total: { weights, value, name }, an element's total in the cell set
-      to value -- sum(weights[k] C_k), the element's count in each species
-      -- as a diagram sweeps it. The relations conserve the element, so its
-      total is a sum of the totals they hold, sum(alpha_q T_q); the one with
-      the largest alpha is moved and the others are left as they are. The
-      species that hold the element start scaled to the new total, a start
-      nearer the answer than the old one.
+      opts.total: { weights, value, name, via }, an element's total in the
+      cell set to value -- sum(weights[k] C_k), the element's count in each
+      species -- as a diagram sweeps it. The relations conserve the element,
+      so its total is a sum of the totals they hold, sum(alpha_q T_q). It is
+      added, or taken away, as one species of via -- the element's own
+      dissolved species, Zn+2 and ZnOH+, the most of them in the water --
+      every total moving only as that species carries it, so that what else
+      holds the element keeps its own: a surface's sites stay as many with
+      zinc on them or not, and the chloride of ZnCl+ stays. Without via, the
+      total with the largest alpha is moved and the others are left as they
+      are. The species that hold the element start scaled to the new total,
+      a start nearer the answer than the old one.
     */
     let alpha = null;
     let moved = -1;
+    let via = null;
+    let wEl = null;
     if (opts.total) {
-      const wEl = Float64Array.from(part, (si, k) => (w[k] ? opts.total.weights[si] || 0 : 0));
+      wEl = Float64Array.from(part, (si, k) => (w[k] ? opts.total.weights[si] || 0 : 0));
       alpha = leastSquaresRows(sys.U, wEl);
       let worst = 0;
       let size = 0;
@@ -6758,6 +6785,8 @@
           + 'they hold, and cannot be set through them.');
       }
       for (let q = 0; q < nb; q++) if (moved < 0 || Math.abs(alpha[q]) > Math.abs(alpha[moved])) moved = q;
+      // Of the species to add it as, those free to move here.
+      via = (opts.total.via || []).map((si) => part.indexOf(si)).filter((k) => k >= 0 && w[k] > 0 && wEl[k] > 0);
     }
     // opts.cells: these cells only, the rest left as they are -- one water of a column, as a diagram asks.
     // Every cell the state has, a reservoir's included: its water is speciated as a cell's is.
@@ -6773,7 +6802,12 @@
       if (alpha) {
         let now = 0;
         for (let q = 0; q < nb; q++) now += alpha[q] * totals[q];
-        totals[moved] += (opts.total.value - now) / alpha[moved];
+        if (via.length) {
+          let kv = via[0];
+          for (const k of via) if (out[b + part[k]] > out[b + part[kv]]) kv = k;
+          const d = (opts.total.value - now) / wEl[kv];
+          for (let q = 0; q < nb; q++) totals[q] += sys.U[q][kv] * w[kv] * d;
+        } else totals[moved] += (opts.total.value - now) / alpha[moved];
         if (now > 0) {
           const f = opts.total.value / now;
           for (let k = 0; k < na; k++) if (opts.total.weights[part[k]]) out[b + part[k]] *= f;
@@ -12551,6 +12585,14 @@
         throw new RtmError(`<DATA>, the table on line ${tab.line}: "${colName}" is no species and none of the page's `
           + `quantities${qList.length ? ` (${qList.slice(0, 6).map((q) => q.key).join(', ')}${qList.length > 6 ? ' and more' : ''})` : ''}.`,
         tab.line);
+      }
+      if (tab.axis === 'tot' && !composition.elements.some((e) => e.el === tab.species)) {
+        throw new RtmError(`<DATA>, the table on line ${tab.line}: sys(${tab.species}) is the ${tab.species} in the cell, and no `
+          + `species of the model has any${composition.elements.length ? ` (it has ${composition.elements.map((e) => e.el).join(', ')})` : ''}.`,
+        tab.line);
+      }
+      if (tab.pH !== null && tab.pH !== undefined && !index.has('H+')) {
+        throw new RtmError(`<DATA>, the table on line ${tab.line}: pH = ${tab.pH} holds the water's H+, and the model has none.`, tab.line);
       }
       for (const [name, v] of tab.water || []) {
         if (!index.has(name)) {
