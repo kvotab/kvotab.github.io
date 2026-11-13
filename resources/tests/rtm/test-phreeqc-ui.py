@@ -1118,7 +1118,7 @@ async def main():
                 await page.ev(SET_INPUT % (json.dumps(text), json.dumps(rows)))
                 await page.ev("document.getElementById('rtmStatus').textContent = ''")
                 await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
-                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Rows:|^Open a table/.test(s) ? s : null; }})()",
+                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Solids|^Rows:|^Open a table/.test(s) ? s : null; }})()",
                                    tries=120, pause=0.25)
 
             said = await batch(started)
@@ -1173,6 +1173,86 @@ async def main():
                   batch_csv.strip().split('\n')[:2] if isinstance(batch_csv, str) else batch_csv,
                   ['row,pH,Na,Cl,"pH, PHREEQC",mu,refused', batch_csv.strip().split('\n')[1] if isinstance(batch_csv, str)
                    and batch_csv.strip().split('\n')[1].startswith('1,7.5,5,5,7.5,0.005') else '1,7.5,5,5,7.5,0.005...'])
+            # ---- several solids, the lowest kept ----
+            # Three waters of 20 mM calcium: one with carbonate, one with sulfate, one with no number for its pH; Calcite,
+            # Gypsum and a solid the database has not, each in turn as {solid} 0 10. Lowest in calcium, the first total of
+            # an element: Calcite's run in the first water, Gypsum's in the second, every solid refused in the third, and
+            # above them how each solid fared. Lowest in si_Gypsum, which only Gypsum's runs give: Gypsum in both. A list
+            # with no {solid} in the input, and {solid} with no list, are said before anything runs. Saved: the lowest for
+            # each row with the solids refused in it, and every run.
+            await page.ev(FEED % (json.dumps('salts.csv'), json.dumps('pH;C;S\n8;10;0,1\n7;0,01;50\nx;1;1\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('salts.csv: 3 rows and 3 columns')", True, tries=40)
+            SET_SOLIDS = """((v) => { const s = document.getElementById('rtmPqBatchSolids'); s.value = v;
+              s.dispatchEvent(new Event('change', { bubbles: true })); })(%s)"""
+            SOLIDS_IN = ('SOLUTION 1\n units mmol/kgw\n pH {pH}\n Ca 20\n C(4) {C}\n S(6) {S}\nEQUILIBRIUM_PHASES 1\n {solid} 0 10\n'
+                         'SELECTED_OUTPUT 1\n -reset false\n -pH true\n -totals Ca C(4) S(6)\n -saturation_indices {solid}\nEND\n')
+            await page.ev(SET_SOLIDS % json.dumps('Calcite, Gypsum Nosuch'))
+            await asyncio.sleep(0.2)
+            check('several solids: the list read, and the runs it makes said under the table',
+                  await page.ev("document.getElementById('rtmPqBatchTable').textContent"),
+                  'salts.csv: 3 rows; columns pH, C, S. 3 rows to run, each with 3 solids: 9 runs.')
+            no_solid = await batch(SOLIDS_IN.replace('{solid}', 'Calcite'))
+            said = await batch(SOLIDS_IN)
+            SOLID_ROWS = """[...document.querySelectorAll('#rtmPqBatchOut table')].map((tb) => [...tb.querySelectorAll('tbody tr')]
+              .map((tr) => [...tr.cells].map((c) => c.textContent)))"""
+            tables = await page.ev(SOLID_ROWS)
+            PH_ERR = 'ERROR: Concentration data error for ph in solution input.'
+            check('  run: each row with each solid; the lowest calcium Calcite\'s in the carbonate water and Gypsum\'s in the sulfate one, '
+                  'the third refused with every solid; above them how each solid fared',
+                  [no_solid, said.startswith('3 of 3 rows, each with 3 solids, run through PHREEQC') and said.endswith(
+                      '; 5 runs refused by PHREEQC, each with what it said.') if isinstance(said, str) else said, tables,
+                   await page.ev("[...document.querySelectorAll('#rtmPqBatchOut table:last-child thead th')].map((th) => th.textContent)"),
+                   await page.ev("document.querySelector('#rtmPqBatchOut th.rtm-pq-batch-key').textContent"),
+                   await page.ev("document.getElementById('rtmPqBatchLowest').value"),
+                   await page.ev("[document.getElementById('rtmPqBatchLowestWrap').hidden, document.getElementById('rtmPqBatchRunsItem').hidden]"),
+                   await page.ev("document.getElementById('rtmPqBatchNote').textContent")],
+                  ['Solids are listed, but the input has no {solid}: write it where each solid goes, as {solid} 0 10 under EQUILIBRIUM_PHASES.',
+                   True,
+                   [[['Calcite', '1 of 3 rows', '1 of 3 runs', PH_ERR], ['Gypsum', '1 of 3 rows', '1 of 3 runs', PH_ERR],
+                     ['Nosuch', '0 of 3 rows', '3 of 3 runs', 'ERROR: Phase not found in database, Nosuch.']],
+                    [['1', 'Calcite', '6.409', '0.01674', '0.006742', '1.000e-4', '0', '', 'Nosuch'],
+                     ['2', 'Gypsum', '7.009', '0.009062', '1.000e-5', '0.03907', '', '0', 'Nosuch'],
+                     ['3', f'every solid refused: {PH_ERR}', 'Calcite, Gypsum, Nosuch']]],
+                   ['row', 'solid', 'pH', 'Ca(mol/kgw)', 'C(4)(mol/kgw)', 'S(6)(mol/kgw)', 'si_Calcite', 'si_Gypsum', 'refused'],
+                   'Ca(mol/kgw)', 'Ca(mol/kgw)', [False, False],
+                   '3 rows of salts.csv, each with 3 solids: 9 runs; 5 runs refused.'])
+            LOWEST_IN = """((v) => { const s = document.getElementById('rtmPqBatchLowest'); s.value = v;
+              s.dispatchEvent(new Event('change', { bubbles: true })); })(%s)"""
+            await page.ev(LOWEST_IN % json.dumps('si_Gypsum'))
+            await asyncio.sleep(0.2)
+            tables = await page.ev(SOLID_ROWS)
+            check('  Lowest in si_Gypsum, which only Gypsum\'s runs give: Gypsum the lowest in both waters',
+                  [[r[1] for r in tables[1]], [r[1] for r in tables[0]] if tables else tables],
+                  [['Gypsum', 'Gypsum', f'every solid refused: {PH_ERR}'], ['0 of 3 rows', '2 of 3 rows', '0 of 3 rows']])
+            await page.ev(LOWEST_IN % json.dumps('Ca(mol/kgw)'))
+            await asyncio.sleep(0.2)
+
+            async def saved_csv(selector):
+                await page.ev("""(() => {
+                  window.__csv = null;
+                  const make = URL.createObjectURL, click = HTMLAnchorElement.prototype.click;
+                  URL.createObjectURL = (b) => { window.__csv = b; return 'blob:caught'; };
+                  HTMLAnchorElement.prototype.click = function () {};
+                  window.__restore = () => { URL.createObjectURL = make; HTMLAnchorElement.prototype.click = click; };
+                  document.querySelector(%s).click();
+                })()""" % json.dumps(selector))
+                await settle(page, "!!window.__csv", True, tries=40, pause=0.1)
+                await page.ev("window.__restore()")
+                got = await page.ev("window.__csv ? window.__csv.text() : null")
+                return got.strip().split('\n') if isinstance(got, str) else got
+
+            lowest = await saved_csv('#rtmPqBatchCsvItem')
+            runs = await saved_csv('#rtmPqBatchRunsItem')
+            HEAD = 'row,pH,C,S,solid,"pH, PHREEQC",Ca(mol/kgw),C(4)(mol/kgw),S(6)(mol/kgw),si_Calcite,si_Gypsum,refused'
+            check('  saved: the lowest for each row with the solids refused in it, and every run',
+                  [lowest[0], lowest[1].startswith('1,8,10,0.1,Calcite,6.4085') and lowest[1].endswith(
+                      ',0,,"Nosuch: ERROR: Phase not found in database, Nosuch."'), lowest[3], len(runs), runs[0], runs[3]]
+                  if isinstance(lowest, list) and isinstance(runs, list) else [lowest, runs],
+                  [HEAD, True, f'3,x,1,1,,,,,,,,Calcite: {PH_ERR}; Gypsum: {PH_ERR}; Nosuch: {PH_ERR}', 10, HEAD,
+                   '1,8,10,0.1,Nosuch,,,,,,,"ERROR: Phase not found in database, Nosuch."'])
+            await page.ev(SET_SOLIDS % json.dumps(''))
+            check('  {solid} in the input with no solids listed: said before anything runs', await batch(SOLIDS_IN),
+                  'The input asks for {solid}: list under Solids the solids to try, each in turn.')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

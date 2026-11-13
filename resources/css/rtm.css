@@ -1051,6 +1051,14 @@
 .rtm-pq-batch { margin-top: 22px; }
 .rtm-pq-batch-table { margin: 0; }
 .rtm-pq-batch-out td.rtm-pq-batch-error { color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
+/* With solids: the column whose lowest each row shows, and what each solid said first, quieter. */
+.rtm-pq-batch-out th.rtm-pq-batch-key { border-bottom: 2px solid var(--color-kvot-bright); }
+.rtm-pq-batch-solids td.rtm-pq-said { color: var(--text-muted); }
+/* The solids a batch tries, as wide as the list where field-sizing is known. */
+.rtm-toolbar input.rtm-pq-solids { width: 15rem; }
+@supports (field-sizing: content) {
+  .rtm-toolbar input.rtm-pq-solids { field-sizing: content; width: auto; min-width: 15rem; max-width: 36rem; }
+}
 .rtm-pq-models { font-size: 12px; margin: 4px 0 12px; }
 .rtm-pq-models td { vertical-align: top; }
 .rtm-pq-stale {

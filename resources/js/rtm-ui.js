@@ -11463,12 +11463,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       kicker: 'PHREEQC', title: 'A batch over a table of waters',
       lead: 'One PHREEQC input run for every row of a table: each {name} in it the row\'s value in the column of that name, the selected output kept row by row.',
       facts: [['Table', pq.batchTable ? `${pq.batchTable.name}, ${pq.batchTable.rows.length.toLocaleString()} row${pq.batchTable.rows.length === 1 ? '' : 's'}` : 'none opened yet'],
-        ['Last batch', pq.batchResult ? `${pq.batchResult.rows.length.toLocaleString()} row${pq.batchResult.rows.length === 1 ? '' : 's'}, `
-          + `${pq.batchResult.errors.size.toLocaleString()} refused` : 'none run yet']],
+        ['Last batch', pq.batchResult ? batchFact(pq.batchResult) : 'none run yet']],
       sections: [
         { heading: 'The table', list: [
           '**Open a table…**: CSV, or an Excel workbook, a water a row and the columns\' names in the first row with anything in it; **Sheet** chooses among a workbook\'s sheets. Read for this visit, never stored or sent anywhere.',
           '**Rows**: all, or a list such as `1-100, 205` of the table\'s rows, to try a few before the rest.',
+          '**Solids**: none, or a list such as `Calcite, Gypsum`: each row then runs once for each, in turn, `{solid}` in the input the solid -- see Several solids.',
         ] },
         { heading: 'The input', list: [
           'PHREEQC input as PHREEQC takes it, with the database the tab has chosen: a `SOLUTION`, and whatever PHREEQC should do with it -- `EQUILIBRIUM_PHASES`, `REACTION`, `PHASES` and `NAMED_EXPRESSIONS` of its own.',
@@ -11479,7 +11479,14 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'Every row runs on a clean slate (`DELETE -all` first), so nothing one row saved is there for the next; a row PHREEQC refuses keeps the first line of what it said, and the rest go on.',
           'The first 100 rows as a table; **Stop** ends it once the part running is done, keeping every row done.',
         ] },
-        exportSection(['**CSV**, **Excel**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; Excel the input on a sheet of its own.']),
+        { heading: 'Several solids', list: [
+          'With solids listed, `{solid}` in the input is each in turn, as `{solid} 0 10` under `EQUILIBRIUM_PHASES`: each row runs once for each solid; a column of the table named solid is then not used.',
+          '**Lowest in**: for each row, the run with the lowest value in that column of the selected output, and the solid that gave it -- the least that stays dissolved with whichever solid holds it lowest. Unless another is chosen, the first total of an element.',
+          'Above the rows, each solid: in how many rows it was the lowest, how many of its runs PHREEQC refused, and what it said first. A row with a solid refused names it, for the lowest is then of the others.',
+        ] },
+        exportSection(['**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
+          '**CSV, every run**: with solids, each row with each solid.',
+          '**Excel**: the same, a sheet each, and the input on a sheet of its own.']),
       ],
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
     }),
@@ -12571,8 +12578,9 @@ END
     // Inverse models: between which waters, with which phases, to what uncertainty; and what PHREEQC found.
     inv: { from: '', fromAt: 'start', to: '', toAt: 'end', phases: '', u: '0.05', range: true, minimal: true },
     invResult: null,
-    // A batch over a table of waters: the input and the rows asked for (kept); the table and what it found (the visit's).
-    batch: { text: '', rows: '' },
+    // A batch over a table of waters: the input, the rows asked for, the solids tried in turn and the column whose lowest
+    // is kept (kept); the table and what it found (the visit's).
+    batch: { text: '', rows: '', solids: '', lowest: '' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12607,7 +12615,7 @@ END
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
-        for (const k of ['text', 'rows']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
+        for (const k of ['text', 'rows', 'solids', 'lowest']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
       }
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
@@ -13627,8 +13635,12 @@ END
     last row it gives is kept; a row PHREEQC refuses keeps what it said and
     the rest go on. The rows are sent in parts, so that the progress is the
     rows done and Stop keeps every part done. What it found is a table, the
-    first rows shown and every row saved as CSV or Excel. The input and the
-    rows asked for are kept; the table and what it found are the visit's.
+    first rows shown and every row saved as CSV or Excel. With solids listed,
+    each row runs once for each, {solid} the solid, a row's runs in one part,
+    and what is shown is each row's run with the lowest value in a column of
+    the selected output, the solid that gave it, and how each solid fared.
+    The input, the rows asked for, the solids and the column are kept; the
+    table and what it found are the visit's.
   */
   const PQ_XLSX_SRC = 'vendors/js/xlsx-0.20.3.full.min.js';
   const PQ_BATCH_PART = 200;
@@ -13752,17 +13764,52 @@ END
     const n = all[all.length - 1][1];
     return n ? Number(n) : 1;
   }
+  /** What a batch ran, for the (i): its rows, with solids its runs, and how many PHREEQC refused. */
+  function batchFact(v) {
+    const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+    const bad = v.runs.filter((r) => !r.values).length;
+    return v.solids ? `${many(v.runs.length / v.solids.length, 'row')}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}, ${bad.toLocaleString()} refused`
+      : `${many(v.runs.length, 'row')}, ${bad.toLocaleString()} refused`;
+  }
+  /** The solids a batch tries in turn as {solid}: names apart by commas, semicolons or spaces, each once, in the order given. */
+  const batchSolids = (spec) => [...new Set(String(spec || '').split(/[,;\s]+/).filter(Boolean))];
+  /** The column whose lowest a batch with solids keeps: the one chosen, else the first total of an element, else the first in mol/kgw, else the last. */
+  function batchLowestColumn(v) {
+    if (v.head.includes(pq.batch.lowest)) return pq.batch.lowest;
+    return v.head.find((h) => /^[A-Z][a-z]?(\([+-]?\d+\))?\(mol\/kgw\)$/.test(h)) || v.head.find((h) => /\(mol\/kgw\)$/.test(h))
+      || v.head[v.head.length - 1] || '';
+  }
+  /** For each row a batch ran with solids, its runs being together: the run lowest in column col (the first where two are level), the runs refused, how many. */
+  function batchLowest(v, col) {
+    const k = v.head.indexOf(col);
+    const out = [];
+    let cur = null;
+    for (const run of v.runs) {
+      if (!cur || cur.row !== run.row) { cur = { row: run.row, best: null, refused: [], tried: 0 }; out.push(cur); }
+      cur.tried++;
+      if (!run.values) { cur.refused.push(run); continue; }
+      const x = k >= 0 ? run.values[k] : undefined;
+      if (typeof x === 'number' && Number.isFinite(x) && (!cur.best || x < cur.best.values[k])) cur.best = run;
+    }
+    return out;
+  }
 
   function pqBatchRender() {
     const t = pq.batchTable;
     const ta = $('rtmPqBatchText');
     if (ta.value !== pq.batch.text) ta.value = pq.batch.text;
     $('rtmPqBatchRows').value = pq.batch.rows;
+    $('rtmPqBatchSolids').value = pq.batch.solids;
     const shown = 6;
+    const solids = batchSolids(pq.batch.solids);
+    const asked = t && solids.length ? batchRowsAsked(pq.batch.rows, t.rows.length) : null;
+    const s = (n) => (n === 1 ? '' : 's');
     $('rtmPqBatchTable').textContent = !t
       ? 'No table yet: CSV, or a sheet of an Excel workbook, a water a row and the columns\' names in the first.'
-      : `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${t.rows.length === 1 ? '' : 's'}; `
-        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.`;
+      : `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${s(t.rows.length)}; `
+        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.`
+        + `${Array.isArray(asked) && asked.length ? ` ${asked.length.toLocaleString()} row${s(asked.length)} to run, each with `
+          + `${solids.length} solid${s(solids.length)}: ${(asked.length * solids.length).toLocaleString()} runs.` : ''}`;
     $('rtmPqBatchSheetWrap').hidden = !(t && t.sheets && t.sheets.length > 1);
     if (t && t.sheets) {
       $('rtmPqBatchSheet').innerHTML = t.sheets.map((nm) => `<option value="${esc(nm)}"${nm === t.sheet ? ' selected' : ''}>${esc(nm)}</option>`).join('');
@@ -13784,7 +13831,16 @@ END
     const user = batchOutputOf(text);
     if (user === null) { fail('The input has no SELECTED_OUTPUT: say there what to keep of each row\'s run, -totals, -pH and the like, or a USER_PUNCH.'); return; }
     const names = batchNames(text);
-    const unknown = names.filter((n) => !t.columns.includes(n));
+    const solids = batchSolids(pq.batch.solids);
+    if (solids.length && !names.includes('solid')) {
+      fail('Solids are listed, but the input has no {solid}: write it where each solid goes, as {solid} 0 10 under EQUILIBRIUM_PHASES.');
+      return;
+    }
+    if (!solids.length && names.includes('solid') && !t.columns.includes('solid')) {
+      fail('The input asks for {solid}: list under Solids the solids to try, each in turn.');
+      return;
+    }
+    const unknown = names.filter((n) => !(solids.length && n === 'solid') && !t.columns.includes(n));
     if (unknown.length) {
       fail(`The input asks for ${unknown.map((n) => `{${n}}`).join(', ')}, but the table has no column so named; its columns: ${t.columns.join(', ')}.`);
       return;
@@ -13792,26 +13848,35 @@ END
     const asked = batchRowsAsked(pq.batch.rows, t.rows.length);
     if (typeof asked === 'string') { fail(`Rows: ${asked}.`); return; }
     if (!asked.length) { fail('The table has no rows to run.'); return; }
+    // With solids each row runs once for each, {solid} the solid: a column more, and parts of whole rows.
+    const each = solids.length ? solids : [null];
+    const columns = solids.length ? [...t.columns, 'solid'] : t.columns;
+    const perPart = Math.max(1, Math.floor(PQ_BATCH_PART / each.length));
+    const total = asked.length * each.length;
+    const doing = (n) => (solids.length ? `Running ${n.toLocaleString()} of ${total.toLocaleString()} runs, ${each.length} a row,`
+      : `Running row ${n.toLocaleString()} of ${total.toLocaleString()}`);
     pq.batchRunning = true;
     pq.batchStop = false;
-    pqBusy(true, `Running ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} through PHREEQC…`);
+    pqBusy(true, solids.length ? `Running ${total.toLocaleString()} runs through PHREEQC…`
+      : `Running ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} through PHREEQC…`);
     pqBatchRender();
     const started = Date.now();
     const head = [];
     const at = new Map();
-    const rows = [];
-    const errors = [];
+    const runs = [];
     let version = '';
     let database = '';
     let stopped = false;
     try {
-      for (let p = 0; p < asked.length; p += PQ_BATCH_PART) {
+      for (let p = 0; p < asked.length; p += perPart) {
         if (pq.batchStop) { stopped = true; break; }
-        const part = asked.slice(p, p + PQ_BATCH_PART);
-        const reply = await pqRequest({ type: 'batch', database: pqDatabase(), template: text, columns: t.columns,
-          rows: part.map((i) => t.rows[i]), user }, (msg) => {
-          setProgress((p + msg.done) / asked.length);
-          setStatus(`Running row ${(p + msg.done).toLocaleString()} of ${asked.length.toLocaleString()} through PHREEQC…`);
+        const jobs = [];
+        for (const row of asked.slice(p, p + perPart)) for (const solid of each) jobs.push({ row, solid });
+        const before = runs.length;
+        const reply = await pqRequest({ type: 'batch', database: pqDatabase(), template: text, columns,
+          rows: jobs.map((j) => (j.solid === null ? t.rows[j.row] : [...t.rows[j.row], j.solid])), user }, (msg) => {
+          setProgress((before + msg.done) / total);
+          setStatus(`${doing(before + msg.done)} through PHREEQC…`);
         });
         version = reply.version;
         database = reply.database;
@@ -13819,21 +13884,24 @@ END
           if (!at.has(h)) { at.set(h, head.length); head.push(h); }
           return at.get(h);
         });
+        const said = new Map(reply.errors);
         reply.rows.forEach((r, k) => {
-          const vals = [];
-          if (r) r.forEach((v, j) => { vals[map[j]] = v; });
-          rows.push({ row: part[k], values: r ? vals : null });
+          const values = r ? [] : null;
+          if (r) r.forEach((x, j) => { values[map[j]] = x; });
+          runs.push({ row: jobs[k].row, solid: jobs[k].solid, values, said: r ? null : (said.get(k) || 'refused') });
         });
-        for (const [k, why] of reply.errors) errors.push([part[k], why]);
-        setProgress(Math.min(1, (p + part.length) / asked.length));
+        setProgress(Math.min(1, runs.length / total));
       }
       const seconds = (Date.now() - started) / 1000;
-      pq.batchResult = { head, rows, errors: new Map(errors), names, table: t.name, sheet: t.sheet || null, asked: asked.length,
-        stopped, seconds, version, database, text };
-      const bad = errors.length;
-      setStatus(`${rows.length.toLocaleString()} of ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} run through PHREEQC `
+      pq.batchResult = { head, runs, names, table: t.name, sheet: t.sheet || null, asked: asked.length,
+        solids: solids.length ? solids : null, stopped, seconds, version, database, text };
+      const bad = runs.filter((r) => !r.values).length;
+      const done = runs.length / each.length;
+      setStatus(`${done.toLocaleString()} of ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'}`
+        + `${solids.length ? `, each with ${solids.length} solid${solids.length === 1 ? '' : 's'},` : ''} run through PHREEQC `
         + `${version} with ${database} in ${seconds.toFixed(1)} s${stopped ? ', then stopped' : ''}`
-        + `${bad ? `; ${bad.toLocaleString()} refused by PHREEQC, each with what it said` : ''}.`, bad || stopped ? 'warn' : 'ok');
+        + `${bad ? `; ${bad.toLocaleString()}${solids.length ? ` run${bad === 1 ? '' : 's'}` : ''} refused by PHREEQC, each with what it said` : ''}.`,
+      bad || stopped ? 'warn' : 'ok');
     } catch (e) {
       setStatus(`The batch could not be run: ${e.message}`, 'error');
     } finally {
@@ -13845,46 +13913,110 @@ END
     }
   }
 
-  /** What the batch found: a note, and its first rows as a table, a row PHREEQC refused with what it said. */
+  /**
+    What the batch found: a note, and its first rows as a table, a row PHREEQC refused with what it said. With solids:
+    each row's run lowest in the column chosen and the solid that gave it, and above them how each solid fared.
+  */
   function pqBatchDraw() {
     const v = pq.batchResult;
     $('rtmPqBatchShow').hidden = !v;
     const box = $('rtmPqBatchOut');
     box.hidden = !v;
     if (!v) { box.innerHTML = ''; return; }
-    const bad = v.errors.size;
-    $('rtmPqBatchNote').textContent = `${v.rows.length.toLocaleString()} row${v.rows.length === 1 ? '' : 's'} of ${v.table}`
-      + `${v.sheet ? `, sheet ${v.sheet}` : ''}${v.stopped ? `, stopped after ${v.rows.length.toLocaleString()} of ${v.asked.toLocaleString()}` : ''}; `
-      + `${v.head.length} column${v.head.length === 1 ? '' : 's'} of selected output${bad ? `; ${bad.toLocaleString()} refused` : ''}`
-      + `${v.rows.length > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} shown, Export has every row` : ''}.`;
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
-    const body = v.rows.slice(0, PQ_BATCH_SHOWN).map(({ row, values }) => `<tr><td>${row + 1}</td>${values
-      ? v.head.map((_, k) => `<td${typeof values[k] === 'number' ? ` data-v="${values[k]}"` : ''}>${esc(num(values[k]))}</td>`).join('')
-      : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(v.errors.get(row) || 'refused')}</td>`}</tr>`).join('');
-    box.innerHTML = `<table><thead><tr><th>row</th>${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+    const cells = (values) => v.head.map((_, k) => `<td${typeof values[k] === 'number' ? ` data-v="${values[k]}"` : ''}>${esc(num(values[k]))}</td>`).join('');
+    const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+    const bad = v.runs.filter((r) => !r.values).length;
+    const where = `${v.table}${v.sheet ? `, sheet ${v.sheet}` : ''}`;
+    $('rtmPqBatchLowestWrap').hidden = !v.solids;
+    $('rtmPqBatchRunsItem').hidden = !v.solids;
+    $('rtmPqBatchCsvItem').dataset.hint = v.solids ? 'the lowest for each row' : 'every row';
+    if (!v.solids) {
+      const n = v.runs.length;
+      $('rtmPqBatchNote').textContent = `${many(n, 'row')} of ${where}${v.stopped ? `, stopped after ${n.toLocaleString()} of ${v.asked.toLocaleString()}` : ''}; `
+        + `${many(v.head.length, 'column')} of selected output${bad ? `; ${bad.toLocaleString()} refused` : ''}`
+        + `${n > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} shown, Export has every row` : ''}.`;
+      const body = v.runs.slice(0, PQ_BATCH_SHOWN).map(({ row, values, said }) => `<tr><td>${row + 1}</td>${values ? cells(values)
+        : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(said)}</td>`}</tr>`).join('');
+      box.innerHTML = `<table><thead><tr><th>row</th>${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+      return;
+    }
+    const col = batchLowestColumn(v);
+    $('rtmPqBatchLowest').innerHTML = v.head.map((h) => `<option value="${esc(h)}"${h === col ? ' selected' : ''}>${esc(h)}</option>`).join('');
+    const lows = batchLowest(v, col);
+    $('rtmPqBatchNote').textContent = `${many(lows.length, 'row')} of ${where}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}`
+      + `${v.stopped ? `, stopped after ${lows.length.toLocaleString()} of ${v.asked.toLocaleString()} rows` : ''}${bad ? `; ${many(bad, 'run')} refused` : ''}`
+      + `${lows.length > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} rows shown, Export has every row and run` : ''}.`;
+    // Each solid: in how many rows it held the column lowest, how many of its runs PHREEQC refused, and what it said first.
+    const per = new Map(v.solids.map((sd) => [sd, { lowest: 0, refused: 0, runs: 0, said: '' }]));
+    for (const r of v.runs) {
+      const p = per.get(r.solid);
+      p.runs++;
+      if (!r.values) { p.refused++; if (!p.said) p.said = r.said; }
+    }
+    for (const l of lows) if (l.best) per.get(l.best.solid).lowest++;
+    // What PHREEQC said, only where it refused a run.
+    const summary = `<table class="rtm-pq-batch-solids"><thead><tr><th>solid</th><th>lowest in</th><th>refused</th>${bad ? '<th>what PHREEQC said first</th>' : ''}`
+      + '</tr></thead><tbody>' + v.solids.map((sd) => {
+        const p = per.get(sd);
+        return `<tr><td>${esc(sd)}</td><td>${p.lowest.toLocaleString()} of ${many(lows.length, 'row')}</td>`
+          + `<td>${p.refused.toLocaleString()} of ${many(p.runs, 'run')}</td>${bad ? `<td class="rtm-pq-said">${esc(p.said)}</td>` : ''}</tr>`;
+      }).join('') + '</tbody></table>';
+    const anyRefused = lows.some((l) => l.refused.length);
+    const key = v.head.indexOf(col);
+    const body = lows.slice(0, PQ_BATCH_SHOWN).map((l) => {
+      const refused = anyRefused ? `<td>${esc(l.refused.map((r) => r.solid).join(', '))}</td>` : '';
+      if (l.best) return `<tr><td>${l.row + 1}</td><td>${esc(l.best.solid)}</td>${cells(l.best.values)}${refused}</tr>`;
+      const why = l.refused.length === l.tried ? `every solid refused: ${l.refused[0].said}` : `no run gave ${col}`;
+      return `<tr><td>${l.row + 1}</td><td class="rtm-pq-batch-error" colspan="${v.head.length + 1}">${esc(why)}</td>${refused}</tr>`;
+    }).join('');
+    box.innerHTML = `${summary}<table><thead><tr><th>row</th><th>solid</th>`
+      + `${v.head.map((h, k) => `<th${k === key ? ' class="rtm-pq-batch-key"' : ''}>${esc(h)}</th>`).join('')}`
+      + `${anyRefused ? '<th>refused</th>' : ''}</tr></thead><tbody>${body}</tbody></table>`;
   }
 
-  /** Every row the batch ran, each with the table's values the input asked for, what PHREEQC gave and what it said where it refused. */
+  /**
+    Every row the batch ran, each with the table's values the input asked for, what PHREEQC gave and what it said where it
+    refused. With solids: CSV the lowest for each row and the solids refused in it, 'runs' every run, Excel both.
+  */
   async function pqBatchSave(as) {
     const v = pq.batchResult;
     if (!v) { setStatus('Run a batch first: there is nothing to save yet.', 'warn'); return; }
     const t = pq.batchTable;
-    const cols = t && t.name === v.table ? v.names.map((n) => t.columns.indexOf(n)) : [];
+    const asked = v.names.filter((n) => !(v.solids && n === 'solid'));
+    const cols = t && t.name === v.table ? asked.map((n) => t.columns.indexOf(n)) : [];
+    const given = cols.length ? asked : [];
     // A heading of PHREEQC's that a column of the table has too, pH say, said as PHREEQC's.
-    const head = ['row', ...(cols.length ? v.names : []), ...v.head.map((h) => (cols.length && v.names.includes(h) ? `${h}, PHREEQC` : h)), 'refused'];
-    const rows = v.rows.map(({ row, values }) => [row + 1, ...cols.map((k) => {
+    const outHead = v.head.map((h) => (given.includes(h) ? `${h}, PHREEQC` : h));
+    const fromTable = (row) => cols.map((k) => {
       const x = t.rows[row][k];
       return x !== '' && Number.isFinite(Number(x)) ? Number(x) : x;
-    }), ...v.head.map((_, k) => (values && values[k] !== undefined ? values[k] : null)), v.errors.get(row) || null]);
+    });
+    const out = (values) => v.head.map((_, k) => (values && values[k] !== undefined ? values[k] : null));
     const stem = `${fileStem()}_batch`;
-    if (as === 'csv') {
-      saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), `${stem}.csv`));
-      return;
+    const csv = async (head, rows, name) => saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), name));
+    let sheets;
+    let about = `the PHREEQC input each row of ${v.table} was run with`;
+    if (!v.solids) {
+      const head = ['row', ...given, ...outHead, 'refused'];
+      const rows = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...out(r.values), r.said]);
+      if (as === 'csv') { await csv(head, rows, `${stem}.csv`); return; }
+      sheets = [['batch', head, rows]];
+    } else {
+      const col = batchLowestColumn(v);
+      const head = ['row', ...given, 'solid', ...outHead, 'refused'];
+      const lowest = batchLowest(v, col).map((l) => [l.row + 1, ...fromTable(l.row), l.best ? l.best.solid : null,
+        ...out(l.best && l.best.values), l.refused.map((r) => `${r.solid}: ${r.said}`).join('; ') || null]);
+      const runs = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), r.solid, ...out(r.values), r.said]);
+      if (as === 'csv') { await csv(head, lowest, `${stem}_lowest.csv`); return; }
+      if (as === 'runs') { await csv(head, runs, `${stem}_runs.csv`); return; }
+      sheets = [['lowest', head, lowest], ['runs', head, runs]];
+      about += `, {solid} each of ${v.solids.join(', ')} in turn, the lowest kept in ${col}`;
     }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
     const xlsx = new XlsxWriter(`${stem}.xlsx`);
-    xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), 'batch', { header: head });
-    xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [`the PHREEQC input each row of ${v.table} was run with`] });
+    for (const [name, head, rows] of sheets) xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), name, { header: head });
+    xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [about] });
     saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
   }
 
@@ -14292,9 +14424,16 @@ END
     'rtm:pqBatchSettings': () => {
       pq.batch.text = $('rtmPqBatchText').value;
       pq.batch.rows = $('rtmPqBatchRows').value.trim();
+      pq.batch.solids = $('rtmPqBatchSolids').value.trim();
       pqSave();
       pqBatchRender();
       infoRefresh();
+    },
+    // The column whose lowest each row of a batch with solids shows.
+    'rtm:pqBatchLowest': (ev, el) => {
+      pq.batch.lowest = el.value;
+      pqSave();
+      pqBatchDraw();
     },
     'rtm:pqBatchRun': () => { pqBatchRun(); },
     'rtm:pqBatchSave': (ev, el) => { pqBatchSave(el.dataset.as); },
