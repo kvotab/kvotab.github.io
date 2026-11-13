@@ -8288,6 +8288,77 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     `${nModel} points, the longest step ${hModel.toFixed(4)} d; with the panel's 5 d ${nPanel} points, ${hPanel.toFixed(4)} d`);
   }
   /*
+    How far a run holds (rtmCheck): the run solved again under tighter tolerances, read at the run's own stored times,
+    and set against it. A decay, A => B at 0.1, whose answer is e^(-0.1 t): run loosely, at rtol 1e-3, its error
+    through the run is what the check finds A to have moved, to the careful run's own error -- largest where the error
+    is, the careful value there the answer -- and B, which is 1 - A, the same over its highest, 1 - e^(-1). Run at the
+    page's 1e-8, nothing moves by 1e-6. The kept run is not the careful one: its quantities are still to be had by its
+    key. A run the worker has let go is asked for, and sent, the same numbers coming back. A careful run that runs out
+    of steps is compared as far as it got and says why. A column: every cell and species, each the most it moved there.
+  */
+  {
+    const loose = { method: 'ndf', rtol: 1e-3, atol: 1e-20, nonNegative: true, maxPoints: 4000 };
+    const careful = (s, f = 100) => ({ ...s, rtol: s.rtol / f, atol: s.atol / f, maxSteps: 5e6, maxPoints: 1000 });
+    const ask = (msg) => { let got = null; handleRtmMessage(msg, (m) => { if (m.type !== 'progress') got = m; }); return got; };
+    const runOf = (text, solver, id) => ask({ type: 'run', id, text, solver });
+    const exact = (t) => Math.exp(-0.1 * t);
+    const lRun = runOf(decay, loose, 70);
+    const lc = ask({ type: 'check', id: 71, runKey: lRun.runKey, solver: careful(loose), floor: loose.atol / loose.rtol });
+    let trueErr = 0;
+    for (let i = 0; i < lRun.n; i++) trueErr = Math.max(trueErr, Math.abs(lRun.states[i * lRun.width] - exact(lRun.t[i])));
+    const atA = lc.at[0];
+    const errAt = Math.abs(lRun.states[atA * lRun.width] - exact(lRun.t[atA]));
+    const bTop = 1 - exact(10);
+    check('a check of a decay run at rtol 1e-3: A moved by the run\'s own error, to the careful run\'s, most where the error '
+      + 'is most, the careful value there the answer; B, 1 - A, the same over its highest; every stored point compared',
+    lc.type === 'check' && !lc.failed && lc.upTo === lRun.n && lc.cells === 1 && lc.species === 2 && trueErr > 1e-5
+      && Math.abs(lc.moved[0] - trueErr) < 0.02 * trueErr + 2e-5 && Math.abs(errAt - trueErr) < 0.05 * trueErr + 2e-5
+      && Math.abs(lc.there[0] / exact(lRun.t[atA]) - 1) < 1e-4 && Math.abs(lc.moved[1] - trueErr / bTop) < 0.02 * trueErr / bTop + 4e-5,
+    `${lc.type} ${lc.failed || ''} ${lc.upTo} of ${lRun.n}; A moved ${lc.moved && lc.moved[0]} against the error ${trueErr}, `
+      + `${errAt} where it moved most; there ${lc.there && lc.there[0]} against ${exact(lRun.t[atA])}; B ${lc.moved && lc.moved[1]}`);
+    let q = null;
+    handleRtmMessage({ type: 'quantities', id: 72, runKey: lRun.runKey, keys: ['rate(1)'], cells: [0] }, (m) => { q = m; });
+    check('  the kept run is still the run checked: its quantities by its key, not the careful run\'s',
+      !!q && !q.missing && q.n === lRun.n && Math.abs(q.values[lRun.n - 1] - 0.1 * lRun.states[(lRun.n - 1) * lRun.width]) < 1e-15,
+      q ? (q.missing ? 'missing' : `${q.n} points`) : 'no reply');
+    const tRun = runOf(decay, { ...loose, rtol: 1e-8 }, 73);
+    const tc = ask({ type: 'check', id: 74, runKey: tRun.runKey, solver: careful({ ...loose, rtol: 1e-8 }), floor: 1e-20 / 1e-8 });
+    check('  run at the page\'s 1e-8, nothing moves by 1e-6', !tc.failed && tc.moved[0] < 1e-6 && tc.moved[1] < 1e-6,
+      `A ${tc.moved && tc.moved[0]}, B ${tc.moved && tc.moved[1]}`);
+    const gone = ask({ type: 'check', id: 75, runKey: lRun.runKey, solver: careful(loose), floor: loose.atol / loose.rtol });
+    const sent = ask({ type: 'check', id: 76, runKey: lRun.runKey, solver: careful(loose), floor: loose.atol / loose.rtol, text: decay,
+      t: Float64Array.from(lRun.t), states: Float64Array.from(lRun.states), n: lRun.n, width: lRun.width });
+    check('  a run the worker has let go is asked for, and sent, the same numbers coming back',
+      gone.missing === true && !!sent.moved && sent.moved.every((v, j) => v === lc.moved[j]) && sent.at.every((v, j) => v === lc.at[j]),
+      `${JSON.stringify(gone).slice(0, 60)} | ${sent.moved ? Array.from(sent.moved).join(' ') : sent.error}`);
+    const short = ask({ type: 'check', id: 77, runKey: lRun.runKey, solver: { ...careful(loose, 1e9), maxSteps: 100 }, floor: loose.atol / loose.rtol });
+    check('  a careful run that runs out of steps is compared as far as it got, and says why and where',
+      !!short.failed && short.upTo >= 2 && short.upTo < lRun.n && short.failedAt > 0 && short.failedAt < 10 && !!short.moved,
+      `${short.failed} at ${short.failedAt}, ${short.upTo} of ${lRun.n} points`);
+    const column = '<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = 1e-6\n'
+      + 'LEFT = dirichlet\nRIGHT = free\nTEND = 5e5\n\n<SPECIES>\nX 0 D=1e-9 left=1\nY 0 D=1e-9\n\n<REACTIONS>\nX => Y, k = 1e-6\n';
+    const cRun = runOf(column, { ...loose, rtol: 1e-4 }, 78);
+    const cc = ask({ type: 'check', id: 79, runKey: cRun.runKey, solver: careful({ ...loose, rtol: 1e-4 }), floor: 1e-20 / 1e-4 });
+    const okAt = cc.at && Array.from(cc.at).every((i) => i >= -1 && i < cRun.n);
+    // A trace far below the absolute tolerance over the relative is judged against that size, not its own: what it moved
+    // that size's share of what it moved of its own highest; A, above it, the same either way.
+    const traced = '<SETTINGS>\nMODE = batch\nTEND = 10\n\n<SPECIES>\nA 1\nB 0\nT 0\n\n<REACTIONS>\nA => B, k = 0.1\nA => T, k = 1e-30\n';
+    const trRun = runOf(traced, loose, 80);
+    const own = ask({ type: 'check', id: 81, runKey: trRun.runKey, solver: careful(loose), floor: 0 });
+    const judged = ask({ type: 'check', id: 82, runKey: trRun.runKey, solver: careful(loose), floor: loose.atol / loose.rtol });
+    let tPeak = 0;
+    for (let i = 0; i < trRun.n; i++) tPeak = Math.max(tPeak, Math.abs(trRun.states[i * trRun.width + 2]));
+    check('  a trace below the absolute tolerance over the relative, 1e-17, judged against that and not its own highest: what it '
+      + 'moved scaled by its highest over that size; A, above it, the same either way',
+    own.moved[2] > 0 && tPeak < 1e-28 && Math.abs(judged.moved[2] / (own.moved[2] * tPeak / 1e-17) - 1) < 1e-3
+      && judged.moved[2] < 1e-9 && judged.moved[0] === own.moved[0],
+    `T highest ${tPeak}, moved ${own.moved[2]} of it, ${judged.moved[2]} judged; A ${own.moved[0]} and ${judged.moved[0]}`);
+    check('  a column: every cell and species, each the most it moved there, where, and the careful value there',
+      !cc.failed && cc.cells === 10 && cc.species === 2 && cc.moved.length === 20 && okAt
+      && Math.max(...cc.moved) > 0 && Array.from(cc.there).every((v, j) => cc.at[j] < 0 || Number.isFinite(v)),
+    `${cc.failed || ''} ${cc.cells} cells, ${cc.species} species, moved ${cc.moved ? Array.from(cc.moved).map((v) => v.toExponential(1)).join(' ') : ''}`);
+  }
+  /*
     Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
     speciation of its totals: re-speciated from what it shows, each settles at its first evaluation, its relations and
     totals holding there to rounding; the one polishing step moves a trace species by what the point's conditioning

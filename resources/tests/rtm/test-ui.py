@@ -1328,6 +1328,113 @@ async def main():
                   [isinstance(each_sheets, list) and 'every species' in each_sheets, off,
                    await page.ev("!document.getElementById('rtmTimeEvery').hidden")],
                   [True, [True, False], True])
+
+            # --- Check the run, under every species in numbers ------------------------------------------------------
+            # The run solved again a hundred times more carefully and set against itself. At the page's tolerances, 1e-6
+            # and 1e-20, the same model holds: a column of how far each species moved, K held and Z nought at 0, nothing
+            # in bold, the line under the table on the green edge, Check the run gone; Copy the table and Excel have the
+            # column. Run loosely, at rtol 0.5, it does not hold: B moved most, then A, both in bold, the line naming B,
+            # when and what it is in each run, and A after it, on the warning's edge. Run with the careful setting puts
+            # 5e-3 and 1e-22 in the panel and runs again, the new run with no check of its own. A check stopped is not
+            # made, Check the run coming back; and checking again works, the worker started afresh and the run sent to it.
+            CHECKED = """(() => { const box = document.getElementById('rtmTimeEvery'); const line = document.getElementById('rtmCheckLine');
+              return { head: [...box.querySelectorAll('thead th')].slice(5).map((th) => th.textContent),
+                moved: [...box.querySelectorAll('tbody tr')].map((tr) => (tr.cells[5] ? [tr.cells[0].textContent, tr.cells[5].textContent,
+                  tr.cells[5].classList.contains('rtm-moved')] : null)),
+                line: line ? line.textContent : null, edge: line ? line.className : null,
+                check: document.getElementById('rtmCheckRun') ? document.getElementById('rtmCheckRun').textContent : null,
+                use: !!document.getElementById('rtmCheckUse'), run: document.getElementById('rtmRun').disabled }; })()"""
+            tols = await page.ev("[document.getElementById('rtmRtol').value, document.getElementById('rtmAtol').value]")
+
+            async def set_tols(rtol, atol):
+                await page.ev("""(() => { for (const [id, v] of [['rtmRtol', %s], ['rtmAtol', %s]]) {
+                  const el = document.getElementById(id); el.value = v; el.dispatchEvent(new Event('change', { bubbles: true })); } })()"""
+                              % (json.dumps(rtol), json.dumps(atol)))
+
+            async def check_run():
+                await page.ev("document.getElementById('rtmCheckRun').click()")
+                return await settle(page, "/^(Checked|The run could not be checked)/.test(document.getElementById('rtmStatus').textContent)",
+                                    True, tries=240, pause=0.5)
+
+            await set_tols('1e-6', '1e-20')
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            unchecked = await page.ev(CHECKED)
+            await check_run()
+            held = await page.ev(CHECKED)
+            status = await page.ev("document.getElementById('rtmStatus').textContent")
+            hm = held['moved'] if isinstance(held, dict) else []
+            check('Check the run: at the page\'s tolerances the run holds -- a column of how far each species moved, K and Z 0, '
+                  'none in bold; the line on the green edge; Check the run gone',
+                  [unchecked['check'] if isinstance(unchecked, dict) else None, held['head'] if isinstance(held, dict) else None,
+                   [m[0] for m in hm if m], [m[1] for m in hm[3:] if m], [m[2] for m in hm if m],
+                   isinstance(held, dict) and (held['line'] or '').startswith(
+                       'The run holds: solved again a hundred times more carefully, at a relative tolerance of 1e-8 and an absolute '
+                       'one of 1e-22, no species moved by'), held['edge'] if isinstance(held, dict) else None,
+                   held['check'] if isinstance(held, dict) else 'x', held['use'] if isinstance(held, dict) else None,
+                   status.startswith('Checked, solved again a hundred times more carefully in ') and status.endswith(
+                       ': the run holds. The line under the table says more.')],
+                  ['Check the run', ['moved when solved more carefully'], ['A', 'B', 'C', 'K', 'Z'], ['0', '0'], [False] * 5,
+                   True, 'rtm-every-check ok', None, False, True])
+            await page.ev("document.querySelector('#rtmTimeEvery [data-on-click=\"rtm:everyCopy\"]').click()")
+            await asyncio.sleep(0.4)
+            copied = await page.ev("window.__copied")
+            await page.ev("""(() => {
+              window.__xlsx = null;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.xlsx')) window.__xlsx = fetch(this.href).then((r) => r.arrayBuffer())
+                  .then((buf) => JSZip.loadAsync(buf)).then(async (z) => {
+                    const book = await z.file('xl/workbook.xml').async('string');
+                    const names = [...book.matchAll(/<sheet [^>]*name="([^"]+)"/g)].map((m) => m[1]);
+                    const k = names.indexOf('every species') + 1;
+                    const sheet = k ? await z.file(`xl/worksheets/sheet${k}.xml`).async('string') : '';
+                    const shared = z.file('xl/sharedStrings.xml') ? await z.file('xl/sharedStrings.xml').async('string') : '';
+                    return /moved when solved more carefully \\(% of its highest\\)/.test(sheet + shared); });
+              };
+            })()""")
+            await page.ev("document.querySelector('[data-pane=\"time\"][data-as=\"xlsx\"]').click()")
+            await asyncio.sleep(1.5)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            in_excel = await page.ev("(async () => window.__xlsx ? await window.__xlsx : null)()")
+            check('  Copy the table and Excel have the column',
+                  [(copied[1].split('\n')[0] if isinstance(copied, list) else None), in_excel],
+                  ['Every species\tstarts at\tends at\thighest\tsettles\tmoved when solved more carefully', True])
+            await set_tols('0.5', '1e-20')
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await check_run()
+            loose = await page.ev(CHECKED)
+            lm = loose['moved'] if isinstance(loose, dict) else []
+            line = (loose['line'] or '') if isinstance(loose, dict) else ''
+            check('  run at rtol 0.5 it does not hold: B moved most, then A, both in bold; the line names B, when, and what it is in '
+                  'each run, and A after it, on the warning\'s edge, with Run with the careful setting',
+                  [[m[2] for m in lm if m], line.startswith('The run does not hold: solved again a hundred times more carefully, at a '
+                                                            'relative tolerance of 5e-3 and an absolute one of 1e-22, B moved by '),
+                   bool(re.search(r' of its highest: at [0-9.]+ s it is [0-9.]+ in this run and [0-9.]+ in the careful one\. A moved too, '
+                                  r'by [0-9.]+ %\. Run with the careful setting$', line)),
+                   loose['edge'] if isinstance(loose, dict) else None, loose['use'] if isinstance(loose, dict) else None],
+                  [[True, True, False, False, False], True, True, 'rtm-every-check warn', True])
+            await page.ev("document.getElementById('rtmCheckUse').click()")
+            await wait_run(page)
+            used = await page.ev(CHECKED)
+            check('  Run with the careful setting: 5e-3 and 1e-22 in the panel, the model run again, its table with no check of its own',
+                  [await page.ev("[document.getElementById('rtmRtol').value, document.getElementById('rtmAtol').value]"),
+                   await page.ev("document.getElementById('rtmStatus').textContent.startsWith('Done')"),
+                   used['head'] if isinstance(used, dict) else None, used['line'] if isinstance(used, dict) else 'x',
+                   used['check'] if isinstance(used, dict) else None],
+                  [['5e-3', '1e-22'], True, [], None, 'Check the run'])
+            await page.ev("document.getElementById('rtmCheckRun').click(); document.getElementById('rtmStop').click()")
+            await asyncio.sleep(0.5)
+            stopped = await page.ev(CHECKED)
+            st_stop = await page.ev("document.getElementById('rtmStatus').textContent")
+            again = await check_run()
+            after = await page.ev(CHECKED)
+            check('  a check stopped is not made, Check the run back and Run free; checked again, the worker started afresh, it is made',
+                  [st_stop, stopped['check'] if isinstance(stopped, dict) else None, stopped['line'] if isinstance(stopped, dict) else 'x',
+                   stopped['run'] if isinstance(stopped, dict) else None, again,
+                   (after['line'] or '')[:8] if isinstance(after, dict) else None],
+                  ['Stopped.', 'Check the run', None, False, True, 'The run '])
+            await set_tols(tols[0], tols[1])
             await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
             await set_text(page, prior[0])
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)

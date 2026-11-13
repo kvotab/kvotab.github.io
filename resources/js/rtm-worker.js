@@ -2082,6 +2082,103 @@ function rtmEach(msg, post) {
 }
 
 /*
+  HOW FAR A RUN HOLDS: the run on show solved again under the solver
+  settings the page sends -- its own, the tolerances tighter -- and read
+  from the solver itself at the run's own stored times, so that each
+  species in each cell is set against the run point by point. Of each:
+  the largest difference over the run, as a share of the most it reaches
+  there in either run -- or of a millionth of the most it reaches in any
+  cell, or of `floor`, where either is more: the page sends the run's
+  absolute tolerance over its relative one, the size below which a species
+  was held to the one and not the other. So a cell a front barely touches,
+  or a species smaller than the run was asked to resolve, is not judged on
+  its last digits. And the stored point where the difference is largest,
+  and what the careful run has there. The careful run is a
+  model of its own, compiled again: the kept one answers the page's
+  questions about the run on show and stays as it was. One that fails is
+  compared as far as it got, and says why.
+*/
+function rtmCheck(msg, post) {
+  const run = rtmRunFor(msg);
+  if (!run) return { reply: { type: 'check', id: msg.id, missing: true }, transfer: [] };
+  const s = msg.solver || {};
+  const started = Date.now();
+  const model = RtmModel.compile(run.text);
+  const tend = s.tend > 0 ? s.tend : model.settings.TEND;
+  const times = run.t.subarray(0, run.n).filter((x) => x <= tend * (1 + 1e-12));
+  let lastReport = 0;
+  let res = null;
+  let failed = '';
+  try {
+    res = FacsimileODE.runModel(model, { ...rtmSolveOptions(s, tend, (t, nsteps) => {
+      const now = Date.now();
+      if (now - lastReport < 250) return true;
+      lastReport = now;
+      post({ type: 'progress', id: msg.id, t, tend, nsteps, frac: Math.min(1, t / tend) });
+      return true;
+    }, model), outputTimes: times });
+  } catch (e) {
+    failed = rtmErrorMessage(e);
+    res = e && e.partial ? e.partial : null;
+  }
+  const grid = res && res.grid;
+  const m = grid ? Math.min(grid.t.length, times.length) : 0;
+  if (!failed && m < times.length) failed = 'it did not reach every time the run stored';
+  const base = { type: 'check', id: msg.id, failed, upTo: m,
+    failedAt: failed && res && res.t && res.t.length ? res.t[res.t.length - 1] : null,
+    steps: res && res.stats ? res.stats.nsteps : null, seconds: (Date.now() - started) / 1000 };
+  if (m < 2) return { reply: { ...base, upTo: 0 }, transfer: [] };
+  const width = run.width;
+  const careful = rtmConcentrations(model, grid.y, m, width, grid.t);
+  rtmHoldFixed(model, careful, m, width);
+  const ns = model.speciesNames.length;
+  const nc = Math.min(model.cells, Math.floor(width / ns));
+  const states = run.states;
+  // The most each species reaches in each cell, in either run, and in any cell: what a difference is a share of.
+  const peak = new Float64Array(nc * ns);
+  const most = new Float64Array(ns);
+  for (let c = 0; c < nc; c++) {
+    for (let k = 0; k < ns; k++) {
+      const j = c * ns + k;
+      let p = 0;
+      for (let i = 0; i < m; i++) {
+        const a = Math.abs(states[i * width + j]);
+        const b = Math.abs(careful[i * width + j]);
+        if (a > p && a < Infinity) p = a;
+        if (b > p && b < Infinity) p = b;
+      }
+      peak[j] = p;
+      if (p > most[k]) most[k] = p;
+    }
+  }
+  const floor = Number(msg.floor) > 0 ? Number(msg.floor) : 0;
+  const moved = new Float64Array(nc * ns);
+  const at = new Int32Array(nc * ns).fill(-1);
+  const there = new Float64Array(nc * ns).fill(NaN);
+  for (let c = 0; c < nc; c++) {
+    for (let k = 0; k < ns; k++) {
+      const j = c * ns + k;
+      const scale = Math.max(peak[j], 1e-6 * most[k], floor);
+      let d = 0;
+      let iAt = -1;
+      for (let i = 0; i < m; i++) {
+        const a = states[i * width + j];
+        const b = careful[i * width + j];
+        // Where the run itself has no number there is nothing to check; where the careful run has none, it blew
+        // up there, and that is the whole of it.
+        if (!Number.isFinite(a)) continue;
+        const x = Number.isFinite(b) ? Math.abs(a - b) : Infinity;
+        if (x > d) { d = x; iAt = i; }
+      }
+      moved[j] = d === 0 ? 0 : scale > 0 ? d / scale : Infinity;
+      at[j] = iAt;
+      if (iAt >= 0) there[j] = careful[iAt * width + j];
+    }
+  }
+  return { reply: { ...base, cells: nc, species: ns, moved, at, there }, transfer: [moved.buffer, at.buffer, there.buffer] };
+}
+
+/*
   FITTING: the numbers named -- a setting, a parameter, a species' start or
   what flows in, a relation's log K, a reaction's constant -- moved until the
   run is as near as it can be to what <DATA> measured, as PhreePlot's fit and
@@ -2698,6 +2795,15 @@ function handleRtmMessage(msg, post) {
       post(reply, transfer);
     } catch (e) {
       post({ type: 'error', id, stage: 'each', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'check') {
+    try {
+      const { reply, transfer } = rtmCheck(msg, post);
+      post(reply, transfer);
+    } catch (e) {
+      post({ type: 'error', id, stage: 'check', error: rtmErrorMessage(e) });
     }
     return;
   }

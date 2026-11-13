@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111q">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111r">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -2787,6 +2787,26 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             table</em> puts the table on the clipboard, as a table for a document and tab-separated for a
             spreadsheet; and Excel has it on a sheet of its own, its times in the model's own unit. It is
             on until it is turned off, and the choice is kept.</p>
+          <p><em>Check the run</em>, under that table, says how far the run can be trusted. The page
+            solves the equations to the tolerances the solver panel gives, and a run made too loosely
+            can draw a believable curve that is out. The check solves the same model again a hundred
+            times more carefully — both tolerances a hundred times tighter, the method and the other
+            settings as they were, the step budget ten times as large — and reads it at the run's own
+            stored times, so that the two are set against each other point by point, in every cell. The
+            table gains a column, <em>moved when solved more carefully</em>: of each species at the cell
+            shown, the largest difference through the run as a share of the most it reaches there. A
+            species is not judged on digits the run was not asked for: where the most it reaches there is
+            less than a millionth of the most it reaches in any cell, it is judged against that; and where
+            it is less than the absolute tolerance over the relative one — 10<sup>−14</sup> under the
+            page's defaults, the size below which the absolute tolerance is the one that holds it — against
+            that. A line under the table says that the run holds, where no species moved by as much as
+            0.1&nbsp;% of its highest; that it nearly holds, where none moved by 1&nbsp;%; or that it does
+            not. Where it does not quite hold, the line names the species that moved most, where and when,
+            and what it is in each run, and the next most after it, with <em>Run with the careful
+            setting</em>, which puts the tighter tolerances in the panel and runs the model again. A check is of the run it
+            checked, and a new run has none until it is checked in its turn. A careful run that fails is
+            compared as far as it got. The careful relative tolerance goes no lower than 10<sup>−12</sup>:
+            a run already near it is checked fewer times more carefully, or, at it, not at all.</p>
           <p><em>Units</em>, on each chart's bar and on the water's listing, is one choice for all of
             them: the unit a concentration is shown in. Under an <code>ACTIVITY</code> a concentration
             is mol/kgw, and is shown in mmol, µmol or nmol per kgw, or in mg or µg per kgw by its
@@ -4173,11 +4193,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-model.js?v=20261111p"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111n"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111o"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zo"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zp"></script>
 </body>
 </html>

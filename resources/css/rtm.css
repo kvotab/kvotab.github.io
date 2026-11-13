@@ -765,6 +765,12 @@
 .rtm-every tr.on .rtm-every-name { color: var(--accent-text); font-weight: 600; }
 .rtm-every p { color: var(--text-secondary); }
 .rtm-every .rtm-more { margin: 0 0 0 4px; }
+.rtm-every .rtm-more:disabled { color: var(--text-muted); text-decoration: none; cursor: default; }
+/* What a check of the run leaves: a line under the table on a green edge where the run holds, on the warning's where it
+   does not; and in the table, a species that moved by 0.1 % of its highest or more, in the text's own colour, bold. */
+.rtm-every p.rtm-every-check { color: var(--text-primary); border-left: 3px solid var(--accent-success); padding-left: 6px; }
+.rtm-every p.rtm-every-check.warn { border-left-color: var(--color-kvot-bright); }
+.rtm-every td.rtm-moved { color: var(--text-primary); font-weight: 600; }
 /* The water as PHREEQC lists it (Composition): its blocks one under another, the numbers in columns. */
 .rtm-listing { margin: 0 0 12px; font-size: 12px; overflow-x: auto; }
 .rtm-listing h4 { margin: 14px 0 4px; font-size: 13px; }

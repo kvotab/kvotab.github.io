@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111u';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111v';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1375,6 +1375,8 @@
     setProgress(null);
     profileStop();
     compStop();
+    // A check is of the run it checked.
+    checkNow = null;
     state.compiled = reply.model;
     // A look at the run before this one, through PHREEQC, stays on its tab and says which run it is.
     runNumber++;
@@ -1461,6 +1463,10 @@
     dgLadderAsked = null;
     fitBusy = false;
     unBusy = false;
+    // A check stopped is not made: Check the run comes back under the table.
+    const checked = checkBusy;
+    checkBusy = null;
+    if (checked) drawEvery(state.result);
     $('rtmSwGo').disabled = false;
     $('rtmDgGo').disabled = false;
     $('rtmFitGo').disabled = false;
@@ -2553,6 +2559,9 @@
       tc.several && tc.at.length > 1 ? 'the first of those listed' : ''].filter(Boolean).join(', ');
     const left = [];
     const rows = [];
+    // Once the run is checked: how far each species moved at this cell when it was solved more carefully.
+    const ck = checkOf(r);
+    const mc = modelCell(cell, state.layer, r);
     for (const nm of m.species) {
       const shown = shownAs(r, nm, u);
       if (shown && shown.why) { left.push([labelOf(nm), shown.why]); continue; }
@@ -2560,36 +2569,50 @@
       const y = series(nm, cell, state.layer, r);
       if (!y) continue;
       const s = speciesOver(r.t, f === 1 ? y : Float64Array.from(y, (v) => v * f));
-      if (s) rows.push({ nm, s });
+      if (s) rows.push({ nm, s, moved: ck ? ck.moved[mc * m.nspecies + m.species.indexOf(nm)] : null });
     }
     const num = (v) => (v === 0 ? '0' : fit4(v));
     const highText = (s) => `${num(s.high)} ${s.atStart ? 'at the start' : s.atEnd ? 'at the end of the run' : `at ${fmtTime(s.tHigh)}`}`;
     const settleText = (s) => (s.flat ? s.flat : s.settled === null ? 'still changing at the end'
       : s.fromStart ? 'from the start' : `by ${fmtTime(s.settled)}`);
     const td = (v, text) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${esc(text)}</td>`;
+    const movedTd = (v) => `<td data-v="${v}"${v >= CHECK_HOLDS ? ' class="rtm-moved"' : ''}>${esc(movedText(v))}</td>`;
     const unitText = unitSaid(u) && !u.bare ? ` (${u.text})` : u.id ? ` ${u.text}` : '';
-    const html = rows.map(({ nm, s }) => {
+    const html = rows.map(({ nm, s, moved }) => {
       const on = state.picked.includes(nm);
       return `<tr${on ? ' class="on"' : ''}><td><button type="button" class="rtm-every-name" data-on-click="rtm:everyPick" `
         + `data-key="${esc(nm)}" aria-pressed="${on}">${esc(labelOf(nm))}</button></td>${td(s.start, num(s.start))}${td(s.end, num(s.end))}`
         + `${s.flat ? '<td></td>' : `<td data-v="${s.high}" data-t="${s.tHigh}">${esc(highText(s))}</td>`}`
-        + `${td(s.flat ? null : s.settled, settleText(s))}</tr>`;
+        + `${td(s.flat ? null : s.settled, settleText(s))}${ck ? movedTd(moved) : ''}</tr>`;
     }).join('');
+    // Check the run, while the run is one it can check and has not checked; Checking… while it does.
+    const checking = checkBusy && checkBusy === r;
+    const checkBtn = checking ? ' <button type="button" class="rtm-more" disabled>Checking…</button>'
+      : !checkNow || checkNow.r !== r ? (canCheck(r) ? ' <button type="button" class="rtm-more" id="rtmCheckRun" '
+        + 'data-on-click="rtm:checkRun">Check the run</button>' : '') : '';
+    const verdict = checkNow && checkNow.r === r ? checkVerdict(checkNow, r, u) : null;
     box.innerHTML = `<table><thead><tr><th>Every species${where ? ` ${esc(where)}` : ''}${esc(unitText)}</th><th>starts at</th>`
-      + `<th>ends at</th><th>highest</th><th>settles</th></tr></thead><tbody>${html}</tbody></table>`
+      + `<th>ends at</th><th>highest</th><th>settles</th>${ck ? '<th>moved when solved more carefully</th>' : ''}</tr></thead>`
+      + `<tbody>${html}</tbody></table>`
+      + (verdict ? `<p class="rtm-every-check ${verdict.holds ? 'ok' : 'warn'}" id="rtmCheckLine">${verdict.html}</p>` : '')
       + `<p>${esc(['Read off every stored point of the run; a species settles from when it stays within 1 % of where it ends, '
         + 'where that leaves a tenth of the run at least. A click on a species draws it, or takes it off the chart',
+      ck ? 'Moved: the largest difference through the run, as a share of the most the species reaches here' : '',
       unitNote(u, left), u.why].filter(Boolean).join('. '))}. <button type="button" class="rtm-more" data-on-click="rtm:everyCopy">`
-      + 'Copy the table</button></p>';
+      + `Copy the table</button>${checkBtn}</p>`;
     box.hidden = false;
     const sym = timeUnit().symbol;
+    const movedHead = 'moved when solved more carefully';
     everyNow = {
       name: 'every species',
-      head: ['species', 'starts at', 'ends at', 'highest', `highest at (${sym})`, `settles by (${sym})`, 'note'],
-      rows: rows.map(({ nm, s }) => [labelOf(nm), s.start, s.end, s.flat ? null : s.high, s.flat ? null : s.tHigh,
-        s.flat ? null : s.settled, s.flat || (s.settled === null ? 'still changing at the end' : '')]),
-      text: [['species', 'starts at', 'ends at', 'highest', 'settles'],
-        ...rows.map(({ nm, s }) => [labelOf(nm), num(s.start), num(s.end), s.flat ? '' : highText(s), settleText(s)])],
+      head: ['species', 'starts at', 'ends at', 'highest', `highest at (${sym})`, `settles by (${sym})`, 'note',
+        ...(ck ? [`${movedHead} (% of its highest)`] : [])],
+      rows: rows.map(({ nm, s, moved }) => [labelOf(nm), s.start, s.end, s.flat ? null : s.high, s.flat ? null : s.tHigh,
+        s.flat ? null : s.settled, s.flat || (s.settled === null ? 'still changing at the end' : ''),
+        ...(ck ? [Number.isFinite(moved) ? 100 * moved : null] : [])]),
+      text: [['species', 'starts at', 'ends at', 'highest', 'settles', ...(ck ? [movedHead] : [])],
+        ...rows.map(({ nm, s, moved }) => [labelOf(nm), num(s.start), num(s.end), s.flat ? '' : highText(s), settleText(s),
+          ...(ck ? [movedText(moved)] : [])])],
       title: `Every species${where ? ` ${where}` : ''}${unitText}`,
     };
   }
@@ -2613,6 +2636,193 @@
     }
     setStatus(copied ? `The table is on the clipboard: ${rows.length - 1} species.`
       : 'The table could not be put on the clipboard: the browser would not allow it.', copied ? 'ok' : 'warn');
+  }
+
+  /*
+    HOW FAR THE RUN HOLDS: Check the run, under every species in numbers,
+    solves the run on show again a hundred times more carefully -- its
+    tolerances a hundred times tighter, its method and other settings as
+    they were, the step budget ten times as large -- and the worker sets the
+    two against each other at every stored point (rtmCheck): of each species
+    in each cell, the largest difference through the run as a share of the
+    most it reaches there. The table gains a column of it at the cell shown,
+    and a line under the table says that the run holds -- no species moved
+    by 0.1 % of its highest -- nearly holds, none by 1 %, or does not; and
+    where it does not quite hold, names the one that moved most, when and
+    where, what it is in each run, and offers to run with the careful
+    setting. A species smaller than the absolute tolerance over the
+    relative is judged against that size. A check belongs to the run it
+    checked and goes with it.
+  */
+  const CHECK_TIGHTER = 100;
+  const CHECK_RTOL_FLOOR = 1e-12;
+  // Under 0.1 % of its highest every species holds; under 1 % the run nearly holds; past that it does not.
+  const CHECK_HOLDS = 1e-3;
+  const CHECK_NEARLY = 1e-2;
+  let checkNow = null;     // the last check: { r, factor, floor, solver, ...the worker's reply }
+  let checkBusy = null;    // the run being checked
+  /** The check of run r where it compared anything, or null. */
+  const checkOf = (r) => (checkNow && checkNow.r === r && checkNow.moved ? checkNow : null);
+  /** Whether run r can be checked: the run on show, run to its end, whose text and settings are known. */
+  const canCheck = (r) => !!(r && r === state.result && r.type === 'result' && state.ran && r.model && r.model.nspecies);
+  /** A share moved, as the table says it: 0, under 0.0001 %, 0.0021 %, 4.1 %. */
+  const movedText = (v) => (v === 0 ? '0' : !Number.isFinite(v) ? 'no number' : v * 100 < 1e-4 ? 'under 0.0001 %'
+    : `${Number((v * 100).toPrecision(2))} %`);
+  /** A tolerance as the solver panel takes it: 1e-8, 2.5e-9, 5e-3. */
+  const fmtTol = (x) => (Number(x) === 0 ? '0' : Number(Number(x).toPrecision(6)).toExponential());
+  /** How many times more carefully, in words. */
+  const timesWord = (f) => (Math.abs(f - 100) < 1e-6 ? 'a hundred times' : Math.abs(f - 10) < 1e-6 ? 'ten times'
+    : `${Number(f.toPrecision(2))} times`);
+
+  /** The settings run r is checked under: its own, the tolerances tighter; null where none can be tighter. */
+  function carefulSolver(ran) {
+    const s = ran.solver;
+    const rtol = Number(Math.max(s.rtol / CHECK_TIGHTER, CHECK_RTOL_FLOOR).toPrecision(6));
+    const factor = Number((s.rtol / rtol).toPrecision(6));
+    if (!(factor >= 2)) return null;
+    const atol = Number((s.atol / factor).toPrecision(6));
+    // Where the absolute tolerance takes over from the relative one: a species never as large is judged against it.
+    return { factor, floor: s.atol / s.rtol, solver: { ...s, rtol, atol, maxSteps: s.maxSteps * 10, maxPoints: 1000 } };
+  }
+
+  /** Where model cell mc of run r is, in words: '' in a batch. */
+  function cellWords(r, mc) {
+    const m = r.model;
+    const stride = m.stride || 1;
+    if ((m.fracture || 1) <= 1 && stride <= 1) return '';
+    const fc = Math.floor(mc / stride);
+    const layer = mc % stride;
+    const rock = stride > 1 ? (layer ? `, rock ${layer}` : ', the fracture') : '';
+    if (fc < m.fracture) return `at cell ${fc} (${Number(m.centres[fc].toPrecision(3))} m)${rock}`;
+    if (m.extra && fc < m.fracture + m.extra.n) return `past the right-hand end, at ${Number(m.extra.centres[fc - m.fracture].toPrecision(3))} m${rock}`;
+    return 'in a reservoir at an end';
+  }
+
+  /** A value of `nm` in run r as the table shows it, in its unit where it says one; else as the model has it. */
+  function valueWords(r, nm, v, u) {
+    const shown = shownAs(r, nm, u);
+    const num = (x) => (x === 0 ? '0' : fit4(x));
+    if (!Number.isFinite(v)) return 'no number';
+    if (shown && shown.f && !u.bare) return `${num(v * shown.f)}${unitSaid(u) ? ` ${u.text}` : ''}`;
+    const base = concBase(r.model);
+    return `${num(v)}${base ? ` ${base}` : ''}`;
+  }
+
+  /**
+   * The line under the table once run r is checked: { holds, word, html } -- word what the run does, 'holds', 'nearly
+   * holds' or 'does not hold', by the most any species moved: under 0.1 % of its highest, under 1 %, or more.
+   */
+  function checkVerdict(ck, r, u) {
+    const how = `solved again ${timesWord(ck.factor)} more carefully, at a relative tolerance of ${fmtTol(ck.solver.rtol)} `
+      + `and an absolute one of ${fmtTol(ck.solver.atol)}`;
+    if (!ck.moved) {
+      return { holds: false, word: '', html: esc(`The run could not be checked: ${how}, it failed at the start`
+        + `${ck.failed ? `: ${ck.failed}` : ''}.`) };
+    }
+    const m = r.model;
+    const ns = m.nspecies;
+    // The most each species moved, in any cell; and the most of all, where.
+    const most = new Float64Array(ns);
+    let worst = 0;
+    for (let j = 0; j < ck.moved.length; j++) {
+      if (ck.moved[j] > ck.moved[worst]) worst = j;
+      if (ck.moved[j] > most[j % ns]) most[j % ns] = ck.moved[j];
+    }
+    const share = ck.moved[worst];
+    const k = worst % ns;
+    const nm = m.species[k];
+    const where = cellWords(r, Math.floor(worst / ns));
+    const i = ck.at[worst];
+    const holds = share < CHECK_HOLDS;
+    const word = holds ? 'holds' : share < CHECK_NEARLY ? 'nearly holds' : 'does not hold';
+    const upTo = ck.failed ? `The careful run stopped at ${fmtTime(ck.failedAt)} (${ck.failed}); up to there, ` : '';
+    const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+    let say;
+    if (holds) {
+      say = `${upTo ? `${upTo}the run holds` : 'The run holds'}: ${how}, `
+        + (share === 0 ? 'no species moved at all.'
+          : share * 100 < 1e-4 ? 'no species moved by as much as 0.0001 % of its highest.'
+            : `no species moved by more than ${movedText(share)} of its highest; the most was ${labelOf(nm)}`
+            + `${where ? ` ${where}` : ''}${i >= 0 ? `, at ${fmtTime(r.t[i])}` : ''}.`);
+    } else {
+      const was = i >= 0 ? r.states[i * r.width + worst] : NaN;
+      // The others that moved by 0.1 % or more, the most first: named, up to three.
+      const others = Array.from(most, (v, s) => [s, v]).filter(([s, v]) => s !== k && v >= CHECK_HOLDS).sort((a, b) => b[1] - a[1]);
+      const named = others.slice(0, 3);
+      say = `${upTo ? `${upTo}the run ${word}` : `The run ${word}`}: ${how}, ${labelOf(nm)}${where ? ` ${where}` : ''} `
+        + `moved by ${movedText(share)} of its highest`
+        + (i >= 0 ? `: at ${fmtTime(r.t[i])} it is ${valueWords(r, nm, was, u)} in this run and `
+          + `${valueWords(r, nm, ck.there[worst], u)} in the careful one.` : '.')
+        + (!others.length ? '' : others.length <= 3
+          ? ` ${list(named.map(([s]) => labelOf(m.species[s])))} moved too, by ${list(named.map(([, v]) => movedText(v)))}.`
+          : ` ${others.length} more species moved by 0.1 % or more, the most of them ${labelOf(m.species[named[0][0]])}, `
+            + `by ${movedText(named[0][1])}.`);
+    }
+    const use = holds ? '' : ` <button type="button" class="rtm-more" id="rtmCheckUse" data-on-click="rtm:checkUse">Run with the careful setting</button>`;
+    return { holds, word, html: `${esc(say)}${use}` };
+  }
+
+  /** Check the run: the run on show solved again more carefully, and set against it (see above). */
+  async function checkRun() {
+    const r = state.result;
+    if (!canCheck(r) || state.running || checkBusy) return;
+    const careful = carefulSolver(state.ran);
+    if (!careful) {
+      setStatus(`The run's relative tolerance is ${fmtTol(state.ran.solver.rtol)} already: there is none tighter to check it against.`, 'warn');
+      return;
+    }
+    const text = state.ran.text;
+    checkBusy = r;
+    state.running = true;
+    $('rtmRun').disabled = true;
+    $('rtmStop').disabled = false;
+    drawEvery(r);
+    setProgress(0);
+    const doing = `Solving again ${timesWord(careful.factor)} more carefully`;
+    setStatus(`${doing}…${inlineWarning()}`);
+    if (workerKind === 'inline') await repaint();
+    const ask = (withRun) => request({ type: 'check', runKey: r.runKey, solver: careful.solver, floor: careful.floor,
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) }, (p) => {
+      setProgress(p.frac);
+      setStatus(`${doing}: ${fmtTime(p.t)} of ${fmtTime(p.tend)}, ${p.nsteps.toLocaleString()} steps`);
+    });
+    try {
+      let reply = await ask(false);
+      if (reply.missing) reply = await ask(true);
+      if (state.result !== r) return;
+      checkNow = { ...reply, r, factor: careful.factor, floor: careful.floor, solver: careful.solver };
+      setProgress(null);
+      const v = checkVerdict(checkNow, r, shownUnit(r));
+      const took = `${reply.seconds.toFixed(2)} s${reply.steps ? `, ${reply.steps.toLocaleString()} steps` : ''}`;
+      setStatus(!reply.moved ? `The run could not be checked: ${reply.failed || 'the careful run failed at the start'}.`
+        : `Checked, solved again ${timesWord(careful.factor)} more carefully in ${took}: `
+        + `the run ${v.word}${reply.failed ? ` as far as the careful run got, ${fmtTime(reply.failedAt)}` : ''}. `
+        + 'The line under the table says more.', !reply.moved ? 'error' : v.holds && !reply.failed ? 'ok' : 'warn');
+    } catch (e) {
+      setProgress(null);
+      setStatus(`The run could not be checked: ${e.message}`, 'error');
+    } finally {
+      if (checkBusy === r) {
+        checkBusy = null;
+        state.running = false;
+        $('rtmRun').disabled = false;
+        $('rtmStop').disabled = true;
+      }
+      drawEvery(state.result);
+    }
+  }
+
+  /** Run with the careful setting: the tolerances the check solved under, in the panel, and the model run again. */
+  function checkUse() {
+    const ck = checkNow;
+    if (!ck || !ck.solver || state.running) return;
+    $('rtmRtol').value = fmtTol(ck.solver.rtol);
+    $('rtmAtol').value = fmtTol(ck.solver.atol);
+    readSolverControls();
+    updateSolverOptions();
+    saveState();
+    infoRefresh();
+    run();
   }
 
   /*
@@ -10531,7 +10741,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. A time unit chosen is the one the other tabs, and every time written out, show too; rates stay per the model’s own unit, and pore volumes are for these three charts alone. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
-            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. On until turned off.',
+            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. **Check the run**, under it, solves the run again a hundred times more carefully, both tolerances a hundred times tighter, and sets the two against each other at every stored point: a column says how far each species moved at the cell, as a share of the most it reaches there, and a line under the table says that the run holds, no species having moved by 0.1 % of its highest, that it nearly holds, none by 1 %, or that it does not; and where it does not quite hold, which species moved most, when and where, and what it is in each run, with **Run with the careful setting**, which puts the tighter tolerances in the panel and runs again. A species smaller than the absolute tolerance over the relative is judged against that size, not on digits the run was not asked for. On until turned off.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
@@ -13121,6 +13331,9 @@ END
       drawTime();
     },
     'rtm:everyCopy': () => copyEvery(),
+    // The run solved again more carefully and set against itself; and run again with that setting.
+    'rtm:checkRun': () => { checkRun(); },
+    'rtm:checkUse': () => checkUse(),
     // One time axis for Against time, Against distance and Gradient: the three selects as one.
     'rtm:timeIn': (ev, el) => {
       const before = timeAxis();
