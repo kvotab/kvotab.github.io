@@ -2607,10 +2607,12 @@
       : !checkNow || checkNow.r !== r ? (canCheck(r) ? ' <button type="button" class="rtm-more" id="rtmCheckRun" '
         + 'data-on-click="rtm:checkRun">Check the run</button>' : '') : '';
     const verdict = checkNow && checkNow.r === r ? checkVerdict(checkNow, r, u) : null;
+    const gas = gasLine(r, cell, mc);
     box.innerHTML = `<table><thead><tr><th>Every species${where ? ` ${esc(where)}` : ''}${esc(unitText)}</th><th>starts at</th>`
       + `<th>ends at</th><th>highest</th><th>settles</th>${ck ? '<th>moved when solved more carefully</th>' : ''}</tr></thead>`
       + `<tbody>${html}</tbody></table>`
       + (verdict ? `<p class="rtm-every-check ${verdict.holds ? 'ok' : 'warn'}" id="rtmCheckLine">${verdict.html}</p>` : '')
+      + (gas ? `<p class="rtm-every-gas${gas.over ? ' warn' : ''}" id="rtmGasLine">${gas.html}</p>` : '')
       + `<p>${esc(['Read off every stored point of the run; a species settles from when it stays within 1 % of where it ends, '
         + 'where that leaves a tenth of the run at least. A click on a species draws it, or takes it off the chart',
       ck ? 'Moved: the largest difference through the run, as a share of the most the species reaches here' : '',
@@ -2660,6 +2662,110 @@
       if (state.result === r) drawEvery(r);
     })();
     return null;
+  }
+
+  /*
+    THE PRESSURE EACH DISSOLVED GAS WOULD NEED, under the table of every
+    species: of each species the model has that phreeqc.dat dissolves from a
+    gas -- a phase X(g) whose reaction gives that one species, CO2(g) = CO2,
+    O2, H2, N2, CH4, NH3, water's vapour aside -- the pressure of the gas
+    that would hold as much of it in the water as the run has at its highest
+    at the cell shown: that concentration over the phase's K at the
+    temperature there (the analytic expression, else log_k with delta_h),
+    a litre taken as a kilogram of water and the activity coefficient as 1.
+    Of a model that names no unit, only that it needs one. phreeqc.dat is
+    the page's own copy, the PHREEQC tab's, loaded the first time it is
+    wanted and the table drawn again.
+  */
+  const PHREEQC_DAT_SRC = 'vendors/phreeqc/phreeqc-dat.js?v=20261107';
+  let gasPhases = null;
+  /** Of a database's text, its gas phases that dissolve to one species: Map(species -> { phase, logK, dH, analytic }). */
+  function readGasPhases(text) {
+    const out = new Map();
+    let inPhases = false;
+    let cur = null;
+    const done = () => {
+      if (cur && cur.species && cur.phase.endsWith('(g)') && cur.species !== 'H2O' && Number.isFinite(cur.logK)) out.set(cur.species, cur);
+      cur = null;
+    };
+    for (const raw of String(text).split(/\r?\n/)) {
+      const line = raw.replace(/#.*$/, '');
+      if (!line.trim()) continue;
+      if (/^[A-Z][A-Z_]{2,}\s*$/.test(line)) { done(); inPhases = line.trim() === 'PHASES'; continue; }
+      if (!inPhases) continue;
+      if (!/^\s/.test(line)) { done(); cur = { phase: line.trim().split(/\s+/)[0], species: null, reacted: false, logK: NaN, dH: null, analytic: null }; continue; }
+      if (!cur) continue;
+      for (const part of line.split(';').map((x) => x.trim()).filter(Boolean)) {
+        let m;
+        if ((m = /^-?log_?k\s+(\S+)/i.exec(part))) cur.logK = Number(m[1]);
+        else if ((m = /^-?delta_?h\s+(\S+)\s*(\S*)/i.exec(part))) cur.dH = Number(m[1]) * (/kcal/i.test(m[2]) ? 4.184 : 1);
+        else if ((m = /^-?(?:analytic(?:al_expression)?|a_e|ae)\s+(.+)/i.exec(part))) cur.analytic = m[1].trim().split(/\s+/).map(Number);
+        else if (!part.startsWith('-') && !cur.reacted && /=/.test(part)) {
+          cur.reacted = true;
+          const [lhs, rhs] = part.split('=').map((x) => x.trim());
+          // The gas to one species of the same formula: CO2 = CO2; not H2S = H+ + HS-.
+          if (rhs && !/\s\+\s/.test(rhs) && rhs === lhs) cur.species = rhs;
+        }
+      }
+    }
+    done();
+    return out;
+  }
+  /** A gas phase's log K at t °C: its analytic expression, else log_k moved by delta_h (kJ/mol). */
+  function gasLogK(g, t) {
+    const T = t + 273.15;
+    if (g.analytic && g.analytic.some((v) => v)) {
+      const [a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0] = g.analytic;
+      return a1 + a2 * T + a3 / T + a4 * Math.log10(T) + a5 / (T * T) + a6 * T * T;
+    }
+    if (g.dH) return g.logK - (g.dH * 1000 / (8.314462618 * Math.LN10)) * (1 / T - 1 / 298.15);
+    return g.logK;
+  }
+  /** The gas phases, once read; null while phreeqc.dat is on its way, the table drawn again when it comes. */
+  function gasPhasesNow() {
+    if (gasPhases && gasPhases !== 'loading') return gasPhases;
+    if (gasPhases === 'loading') return null;
+    if (self.PHREEQC_DAT) { gasPhases = readGasPhases(self.PHREEQC_DAT); return gasPhases; }
+    gasPhases = 'loading';
+    loadScript(PHREEQC_DAT_SRC).then(() => { gasPhases = readGasPhases(self.PHREEQC_DAT || ''); })
+      .catch((e) => { gasPhases = { error: e.message }; })
+      .finally(() => { if (state.result) drawEvery(state.result); });
+    return null;
+  }
+  /** The line under the table of each dissolved gas's pressure at its highest at model cell mc of run r: { over, html }, or null. */
+  function gasLine(r, cell, mc) {
+    const gases = gasPhasesNow();
+    if (!gases || gases.error) return null;
+    const m = r.model;
+    const found = m.species.map((nm) => [nm, gases.get(nm.replace(/\(aq\)$/, ''))]).filter(([, g]) => g);
+    if (!found.length) return null;
+    const names = found.map(([nm]) => labelOf(nm));
+    const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+    if (!concBase(m)) {
+      return { over: false, html: esc(`Dissolved gases, ${list(names)}: the pressure each would need to stay in the water takes the unit the `
+        + 'concentrations are in, an ACTIVITY\'s mol/kgw or a CONC_UNIT.') };
+    }
+    const fixedT = typeof m.settings.TEMPERATURE === 'number' ? m.settings.TEMPERATURE : 25;
+    const temps = new Set();
+    const parts = [];
+    let over = false;
+    for (const [nm, g] of found) {
+      const y = series(nm, cell, state.layer, r);
+      if (!y) continue;
+      let hi = 0;
+      for (let i = 1; i < y.length; i++) if (y[i] > y[hi]) hi = i;
+      const t = r.temps ? r.temps[hi * m.cells + mc] : fixedT;
+      temps.add(Math.round(t * 10) / 10);
+      const atm = Math.max(0, y[hi]) / 10 ** gasLogK(g, t);
+      const text = `${labelOf(nm)} ${atm >= 1e-3 && atm < 1e5 ? String(Number(atm.toPrecision(3))) : atm.toExponential(2)} atm`;
+      if (atm > 1) over = true;
+      parts.push(atm > 1 ? `<strong>${esc(text)}</strong>` : esc(text));
+    }
+    if (!parts.length) return null;
+    const at = temps.size === 1 ? `at ${[...temps][0]} °C` : 'at the temperature where each is highest';
+    return { over, html: `Dissolved gases, the pressure of each gas that would hold as much in the water as it has at its highest here: `
+      + `${parts.join(', ')}; by phreeqc.dat ${esc(at)}, a litre taken as a kilogram of water. At the surface the most is 1 atm; `
+      + 'underground the water\'s own pressure is higher, about 50 atm at 500 m.' };
   }
 
   /** The table as it stands, on the clipboard: tab-separated for a sheet, and as a table for a document. */
@@ -10942,7 +11048,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. A time unit chosen is the one the other tabs, and every time written out, show too; rates stay per the model’s own unit, and pore volumes are for these three charts alone. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
-            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A species held fixed says what was put in, or taken out, over the run to keep it there: what the reactions took of it, less what they made. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. **Check the run**, under it, solves the run again a hundred times more carefully, both tolerances a hundred times tighter, and sets the two against each other at every stored point: a column says how far each species moved at the cell, as a share of the most it reaches there, and a line under the table says that the run holds, no species having moved by 0.1 % of its highest, that it nearly holds, none by 1 %, or that it does not; and where it does not quite hold, which species moved most, when and where, and what it is in each run, with **Run with the careful setting**, which puts the tighter tolerances in the panel and runs again. A species smaller than the absolute tolerance over the relative is judged against that size, not on digits the run was not asked for. On until turned off.',
+            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A species held fixed says what was put in, or taken out, over the run to keep it there: what the reactions took of it, less what they made. Under the table, the pressure each dissolved gas — CO2, O2, H2, N2, CH4, NH3 — would need to stay in the water at its highest, by phreeqc.dat, one needing more than 1 atm in bold. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. **Check the run**, under it, solves the run again a hundred times more carefully, both tolerances a hundred times tighter, and sets the two against each other at every stored point: a column says how far each species moved at the cell, as a share of the most it reaches there, and a line under the table says that the run holds, no species having moved by 0.1 % of its highest, that it nearly holds, none by 1 %, or that it does not; and where it does not quite hold, which species moved most, when and where, and what it is in each run, with **Run with the careful setting**, which puts the tighter tolerances in the panel and runs again. A species smaller than the absolute tolerance over the relative is judged against that size, not on digits the run was not asked for. On until turned off.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
@@ -12402,7 +12508,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111s';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
-    'vendors/phreeqc/phreeqc-dat.js?v=20261107',
+    PHREEQC_DAT_SRC,
     'resources/js/rtm-phreeqc.js?v=20261110a',
     'resources/js/rtm-phreeqc-engine.js?v=20261110a',
   ];

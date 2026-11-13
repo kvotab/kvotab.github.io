@@ -771,6 +771,9 @@
 .rtm-every p.rtm-every-check { color: var(--text-primary); border-left: 3px solid var(--accent-success); padding-left: 6px; }
 .rtm-every p.rtm-every-check.warn { border-left-color: var(--color-kvot-bright); }
 .rtm-every td.rtm-moved { color: var(--text-primary); font-weight: 600; }
+/* The pressure each dissolved gas would need: on the warning's edge where one needs more than 1 atm, that one in bold. */
+.rtm-every p.rtm-every-gas.warn { color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
+.rtm-every p.rtm-every-gas strong { color: var(--text-primary); font-weight: 600; }
 /* The water as PHREEQC lists it (Composition): its blocks one under another, the numbers in columns. */
 .rtm-listing { margin: 0 0 12px; font-size: 12px; overflow-x: auto; }
 .rtm-listing h4 { margin: 14px 0 4px; font-size: 13px; }

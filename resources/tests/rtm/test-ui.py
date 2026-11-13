@@ -1530,6 +1530,45 @@ async def main():
                   await page.ev("[[...document.getElementById('rtmCompBudgetBy').options].map((o) => o.textContent + (o.disabled ? ' (off)' : '')),"
                                 " document.getElementById('rtmCompBudgetBy').value, document.getElementById('rtmCompLogTWrap').hidden]"),
                   [['where it is held', 'each reaction', 'where it goes, of an element (off)'], 'where', False])
+
+            # --- the pressure each dissolved gas would need --------------------------------------------------------------
+            # CO2, O2 and H2 at a steady 0.017, 0.001 and 0.01 mol/L: under the table of every species, the pressure of each
+            # gas that would hold that much, by phreeqc.dat at 25 °C -- about 0.5, 0.78 and 12.7 atm, H2's in bold on the
+            # warning's edge. At 60 °C the water holds less CO2, so more pressure for as much. Without CONC_UNIT, only that the
+            # pressures need the unit.
+            GAS = ('<SETTINGS>\nMODE = batch\nTEND = 10\nTIME_UNIT = second\nCONC_UNIT = mol/L\n\n<SPECIES>\nCO2  0.017\nO2  1e-3\n'
+                   'H2  0.01\nCl-  1e-3\n\n<REACTIONS>\n')
+
+            async def gas_line(text, compiled):
+                await set_text(page, text)
+                await settle(page, "document.getElementById('rtmStatus').textContent.startsWith(%s)" % json.dumps(compiled), True, tries=40)
+                await page.ev("document.getElementById('rtmRun').click()")
+                await wait_run(page)
+                await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+                await settle(page, "!!document.getElementById('rtmGasLine')", True, tries=40, pause=0.25)
+                return await page.ev("""(() => { const p = document.getElementById('rtmGasLine'); return p ? [p.textContent, p.className,
+                  [...p.querySelectorAll('strong')].map((b) => b.textContent)] : null; })()""")
+
+            at25 = await gas_line(GAS, 'Compiled: 4 species')
+            atm = lambda line, gas: float(re.search(r'\b%s ([0-9.e+-]+) atm' % re.escape(gas), line).group(1)) if line and re.search(
+                r'\b%s ([0-9.e+-]+) atm' % re.escape(gas), line) else None
+            t25 = at25[0] if isinstance(at25, list) else ''
+            check('the pressure each dissolved gas would need: CO2, O2 and H2 at 0.017, 0.001 and 0.01 mol/L need about 0.5, 0.78 and '
+                  '12.7 atm by phreeqc.dat at 25 °C, H2 in bold on the warning\'s edge, Cl- none',
+                  [0.45 < (atm(t25, 'CO2') or 0) < 0.55, 0.7 < (atm(t25, 'O2') or 0) < 0.85, 11 < (atm(t25, 'H2') or 0) < 14,
+                   'by phreeqc.dat at 25 °C, a litre taken as a kilogram of water' in t25, 'Cl-' in t25,
+                   at25[1] if isinstance(at25, list) else None, [b.split(' ')[0] for b in at25[2]] if isinstance(at25, list) else None],
+                  [True, True, True, True, False, 'rtm-every-gas warn', ['H2']])
+            at60 = await gas_line(GAS.replace('CONC_UNIT = mol/L', 'CONC_UNIT = mol/L\nTEMPERATURE = 60'), 'Compiled: 4 species')
+            t60 = at60[0] if isinstance(at60, list) else ''
+            check('  at 60 °C the water holds less CO2: more pressure for as much, and the line says the temperature',
+                  [(atm(t60, 'CO2') or 0) > 1.5 * (atm(t25, 'CO2') or 1), 'by phreeqc.dat at 60 °C' in t60], [True, True])
+            bare = await gas_line(GAS.replace('CONC_UNIT = mol/L\n', ''), 'Compiled: 4 species')
+            check('  without a unit named, only that the pressures need one',
+                  bare[0] if isinstance(bare, list) else bare,
+                  'Dissolved gases, CO2, O2 and H2: the pressure each would need to stay in the water takes the unit the concentrations '
+                  "are in, an ACTIVITY's mol/kgw or a CONC_UNIT.")
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
             await pick('rtmCompBudgetBy', comp_was[2])
             await pick('rtmCompBudgetOf', comp_was[1])
             await pick('rtmCompView', comp_was[0])

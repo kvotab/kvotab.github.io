@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111r">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111s">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -2800,6 +2800,16 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             table</em> puts the table on the clipboard, as a table for a document and tab-separated for a
             spreadsheet; and Excel has it on a sheet of its own, its times in the model's own unit. It is
             on until it is turned off, and the choice is kept.</p>
+          <p>Under the table, of each dissolved gas the model has — a species <code>phreeqc.dat</code>
+            dissolves from a gas, <code>CO2</code> from <code>CO2(g)</code>, and <code>O2</code>,
+            <code>H2</code>, <code>N2</code>, <code>CH4</code> and <code>NH3</code> — the pressure of that
+            gas it would take to hold as much in the water as the run has at its highest, at the cell
+            shown: the concentration over the gas's constant at the temperature there, from the
+            database's analytic expression, a litre taken as a kilogram of water and the activity
+            coefficient as 1. One that needs more than 1 atm is in bold, the line on the warning's edge:
+            at the surface no water holds more, and underground the water's own pressure is about 50 atm
+            at 500 m. The pressures need the unit the concentrations are in, an <code>ACTIVITY</code>'s
+            mol/kgw or a <code>CONC_UNIT</code>; without one the line says so.</p>
           <p><em>Check the run</em>, under that table, says how far the run can be trusted. The page
             solves the equations to the tolerances the solver panel gives, and a run made too loosely
             can draw a believable curve that is out. The check solves the same model again a hundred
@@ -4238,6 +4248,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zs"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zt"></script>
 </body>
 </html>
