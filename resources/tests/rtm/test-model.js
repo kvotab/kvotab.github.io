@@ -8435,6 +8435,66 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + JSON.stringify(x0.held));
   }
   /*
+    Where an element goes (rtmFlows), the same carbonate run: holding put 0.1 into HCO3-, all of it on to CO2 by the
+    first line, and of that the second line lost 0.1/e, the rest built up, 0.1 (1 - 1/e), the ends of the account
+    sources and sinks; a species' budget refused, where it goes being of an element. A column with chlorine coming in
+    at the left and going on to NaCl: each species' flows in what they are out, and what came in, went out and built up
+    the budget's own. A fast pair, HCO3- + H+ => CO2 + H2O and its reverse, moving 1e7 each way where a hundredth stays:
+    one reaction netted at each point, both lines named, CO2's flows in what they are out.
+  */
+  {
+    const ask = (msg) => { let got = null; handleRtmMessage(msg, (m) => { if (m.type !== 'progress') got = m; }); return got; };
+    const solver = { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 };
+    const carb = '<SETTINGS>\nMODE = batch\nTEND = 1000\n\n<SPECIES>\nHCO3- 0.01 fixed\nH+ 1e-3 fixed\nCO2 0\nGone 0\n\n'
+      + '<REACTIONS>\nHCO3- + H+ => CO2, k = 10\nCO2 => Gone, k = 0.001\n';
+    const cRun = ask({ type: 'run', id: 100, text: carb, solver });
+    const fC = ask({ type: 'flows', id: 101, runKey: cRun.runKey, of: { kind: 'element', name: 'C' } });
+    const link = (f, a, b) => f.links.find((x) => x.from === a && x.to === b) || null;
+    const kinds = Object.fromEntries(fC.nodes.map((x) => [x.key, x.kind]));
+    const lostC = link(fC, 'CO2', '#lost');
+    const notOfSpecies = ask({ type: 'flows', id: 102, runKey: cRun.runKey, of: { kind: 'species', name: 'CO2' } });
+    check('where carbon goes, holding HCO3- and turning it into CO2 that is lost at 1e-3 of itself: held 0.1 into HCO3-, 0.1 on to '
+      + 'CO2 by line 12, 0.1/e lost by line 13 and 0.1 (1 - 1/e) built up; the ends of the account sources and sinks; a species\' '
+      + 'budget refused',
+    fC.links.length === 4 && Math.abs(link(fC, '#heldIn', 'HCO3-').value - 0.1) < 1e-12
+      && Math.abs(link(fC, 'HCO3-', 'CO2').value - 0.1) < 1e-12 && link(fC, 'HCO3-', 'CO2').by[0][0] === '12'
+      && !!lostC && Math.abs(lostC.value / (0.1 * Math.exp(-1)) - 1) < 1e-3 && lostC.by[0][0] === '13'
+      && Math.abs(link(fC, 'CO2', '#builtUp').value - 0.1 * (1 - Math.exp(-1))) < 1e-6
+      && kinds['#heldIn'] === 'source' && kinds['#lost'] === 'sink' && kinds['#builtUp'] === 'sink' && kinds.CO2 === 'species'
+      && notOfSpecies.type === 'error' && /follows an element/.test(notOfSpecies.error),
+    fC.type === 'error' ? fC.error : fC.links.map((x) => `${x.from} -> ${x.to} ${x.value} [${x.by.map((b) => b[0]).join(' ')}]`).join(' | '));
+    const col = '<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1\nDIFFUSION = 1\nADVECTION = 1\nVELOCITY = 1e-6\nLEFT = dirichlet\n'
+      + 'RIGHT = free\nTEND = 1e6\n\n<SPECIES>\nNa+ 0 D=1e-9 left=1e-3\nCl- 0 D=1e-9 left=1e-3\nNaCl 0 D=1e-9\n\n<REACTIONS>\n'
+      + 'Na+ + Cl- => NaCl, k = 1\n';
+    const kRun = ask({ type: 'run', id: 103, text: col, solver });
+    const fK = ask({ type: 'flows', id: 104, runKey: kRun.runKey, of: { kind: 'element', name: 'Cl' } });
+    const bK = ask({ type: 'budget', id: 105, runKey: kRun.runKey, of: { kind: 'element', name: 'Cl' } });
+    const kn = kRun.n - 1;
+    const sum = (f, pick) => f.links.filter(pick).reduce((acc, x) => acc + x.value, 0);
+    const balance = (f, nm) => { const into = sum(f, (x) => x.to === nm); const out = sum(f, (x) => x.from === nm); return Math.abs(into - out) / Math.max(into, out); };
+    const cameIn = sum(fK, (x) => x.from === '#inLeft') - sum(fK, (x) => x.to === '#outLeft');
+    const wentOut = sum(fK, (x) => x.to === '#outRight') - sum(fK, (x) => x.from === '#inRight');
+    const builtUp = sum(fK, (x) => x.to === '#builtUp') - sum(fK, (x) => x.from === '#drawn');
+    check('  a column, chlorine coming in at the left and going on to NaCl: each species\' flows in what they are out, to the '
+      + 'summing\'s error, a part in a thousand, and what came in, went out and built up the budget\'s own',
+    fK.type === 'flows' && balance(fK, 'Cl-') < 1e-3 && balance(fK, 'NaCl') < 1e-3 && Math.abs(cameIn / bK.cumIn[kn] - 1) < 1e-12
+      && Math.abs(wentOut / bK.cumOut[kn] - 1) < 1e-12 && Math.abs(builtUp / (bK.total[kn] - bK.total[0]) - 1) < 1e-12
+      && !!link(fK, 'Cl-', 'NaCl') && link(fK, 'Cl-', 'NaCl').by[0][0] === '18',
+    fK.type === 'error' ? fK.error : `Cl- ${balance(fK, 'Cl-')}, NaCl ${balance(fK, 'NaCl')}; in ${cameIn} against ${bK.cumIn[kn]}, out ${wentOut} `
+      + `against ${bK.cumOut[kn]}, built up ${builtUp} against ${bK.total[kn] - bK.total[0]}`);
+    const pair = '<SETTINGS>\nMODE = batch\nTEND = 1000\n\n<SPECIES>\nHCO3- 0.01 fixed\nH+ 1e-3 fixed\nH2O 55.5 fixed\nCO2 0\nGone 0\n\n'
+      + '<REACTIONS>\nHCO3- + H+ => CO2 + H2O, k = 1e9\nCO2 + H2O => HCO3- + H+, k = 1e4\nCO2 => Gone, k = 1e-3\n';
+    const pRun = ask({ type: 'run', id: 106, text: pair, solver });
+    const fP = ask({ type: 'flows', id: 107, runKey: pRun.runKey, of: { kind: 'element', name: 'C' } });
+    const toCO2 = link(fP, 'HCO3-', 'CO2');
+    check('  a fast pair, 1e7 each way where a hundredth stays: one reaction netted at each point, both lines named, CO2\'s flows in '
+      + 'what they are out, to the summing\'s error',
+    !!toCO2 && toCO2.by.length === 1 && toCO2.by[0][0] === '13, 14' && /<=>/.test(toCO2.by[0][1]) && toCO2.back.length === 0
+      && balance(fP, 'CO2') < 1e-3,
+    fP.type === 'error' ? fP.error : fP.links.map((x) => `${x.from} -> ${x.to} ${x.value} [${x.by.map((b) => `${b[0]}: ${b[1]}`).join(' ')}]`).join(' | ')
+      + `; CO2 ${balance(fP, 'CO2')}`);
+  }
+  /*
     Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
     speciation of its totals: re-speciated from what it shows, each settles at its first evaluation, its relations and
     totals holding there to rounding; the one polishing step moves a trace species by what the point's conditioning

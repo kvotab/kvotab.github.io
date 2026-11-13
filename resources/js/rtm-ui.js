@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111x';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111y';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -65,7 +65,7 @@
     compView: 'where',
     compBeside: false,     // the water as PHREEQC lists it, with PHREEQC's own numbers beside
     compBudgetOf: '',      // a budget over the run: 'element:Ca' or 'species:X'
-    compBudgetBy: 'where', // by where it is held, or by each <REACTIONS> line ('lines')
+    compBudgetBy: 'where', // by where it is held, by each <REACTIONS> line ('lines'), or where an element goes ('flows')
     compBudgetAt: 'column', // by each line: over the whole column, or at a cell (its number)
     compElement: '',
     compIn: 'water',
@@ -186,7 +186,7 @@
       if (typeof s.compElement === 'string') state.compElement = s.compElement;
       if (typeof s.compBeside === 'boolean') state.compBeside = s.compBeside;
       if (typeof s.compBudgetOf === 'string') state.compBudgetOf = s.compBudgetOf;
-      if (s.compBudgetBy === 'where' || s.compBudgetBy === 'lines') state.compBudgetBy = s.compBudgetBy;
+      if (['where', 'lines', 'flows'].includes(s.compBudgetBy)) state.compBudgetBy = s.compBudgetBy;
       if (s.compBudgetAt === 'column' || Number.isInteger(s.compBudgetAt)) state.compBudgetAt = s.compBudgetAt;
       if (s.compIn === 'water' || s.compIn === 'all') state.compIn = s.compIn;
       if (s.compAs === 'percent' || s.compAs === 'amount') state.compAs = s.compAs;
@@ -4124,13 +4124,21 @@
         + (sp.length ? `<optgroup label="Species">${sp.map((x) => opt(`species:${x}`, x)).join('')}</optgroup>` : '');
     }
     document.querySelectorAll('[data-comp-hide]').forEach((el) => { el.hidden = el.dataset.compHide === view; });
-    // By each reaction, where the model has <REACTIONS> lines: over the whole column, or at one of its cells.
+    // By each reaction, where the model has <REACTIONS> lines: over the whole column, or at one of its cells. Where it goes,
+    // of an element: from species to species over the run.
     {
       const hasLines = !!(m && (m.quantities || []).some((q) => q.group === 'reactions'));
       const every = state.compBudgetOf === BUDGET_ALL;
-      const byLines = budget && hasLines && state.compBudgetBy === 'lines' && !every;
-      $('rtmCompBudgetBy').value = hasLines ? state.compBudgetBy : 'where';
-      $('rtmCompBudgetByWrap').hidden = !budget || !hasLines || every;
+      const ofElement = state.compBudgetOf.startsWith('element:');
+      const offered = (v) => v === 'where' || (v === 'lines' && hasLines) || (v === 'flows' && ofElement);
+      for (const o of $('rtmCompBudgetBy').options) {
+        o.disabled = !offered(o.value);
+        if (o.value === 'flows') o.textContent = ofElement ? 'where it goes' : 'where it goes, of an element';
+      }
+      const by = offered(state.compBudgetBy) ? state.compBudgetBy : 'where';
+      const byLines = budget && by === 'lines' && !every;
+      $('rtmCompBudgetBy').value = by;
+      $('rtmCompBudgetByWrap').hidden = !budget || every || (!hasLines && !ofElement);
       const nfc = m ? m.fracture : 1;
       if (state.compBudgetAt !== 'column' && !(state.compBudgetAt >= 0 && state.compBudgetAt < nfc)) state.compBudgetAt = 'column';
       $('rtmCompBudgetAt').innerHTML = `<option value="column"${state.compBudgetAt === 'column' ? ' selected' : ''}>the whole column</option>`
@@ -4158,9 +4166,10 @@
     $('rtmCompTimesLabel').textContent = along === 'time' && !listing ? 'Times' : 'At';
     $('rtmCompTimes').placeholder = along === 'time' && !listing ? 'spread over the run' : 'the end of the run';
     $('rtmCompTimes').value = state.compTimes;
-    // Every element at once has no time axis to draw.
+    // Every element at once has no time axis to draw, nor has where an element goes, over the whole run.
     $('rtmCompLogTWrap').hidden = ((along !== 'time' || view === 'schoeller' || view === 'stiff') && !budget) || listing || fronts
-      || (budget && state.compBudgetOf === BUDGET_ALL);
+      || (budget && state.compBudgetOf === BUDGET_ALL)
+      || (budget && state.compBudgetBy === 'flows' && state.compBudgetOf.startsWith('element:'));
     $('rtmCompTMinWrap').hidden = $('rtmCompLogTWrap').hidden;
     $('rtmCompTMin').value = state.compTMin;
     $('rtmCompTMinUnit').textContent = shownTime().sym;
@@ -4821,6 +4830,11 @@
     const kind = chosen.startsWith('species:') ? 'species' : 'element';
     const name = chosen.slice(kind.length + 1);
     const key = `${r.runKey}|${kind}|${name}`;
+    // Where an element goes, from species to species over the run.
+    if (state.compBudgetBy === 'flows' && kind === 'element') {
+      drawBudgetFlows({ r, plot, fail, note }, name);
+      return;
+    }
     // By each reaction: each <REACTIONS> line's part of what the reactions made of it.
     if (state.compBudgetBy === 'lines' && (r.model.quantities || []).some((q) => q.group === 'reactions')) {
       drawBudgetLines({ r, plot, fail, note }, kind, name, key);
@@ -5116,6 +5130,109 @@
             ['made by reactions, net, as the budget has it', null, null, null, made, null, null],
             ...(hold ? [[`put in by holding ${hold.names}`, null, null, null, hold.put[last], null, null]] : [])] : [])] }],
     };
+  }
+
+  /*
+    WHERE AN ELEMENT GOES over the run, over the whole column: a flow
+    diagram of its species and the ends of its account -- what holding put
+    in or took out, what came in and went out at the ends, what reactions
+    made from nowhere or lost, what was drawn from what was there at the
+    start and what built up by the end -- each band as wide as what went
+    from one to the other, net (rtmFlows). Hovering on a band names the
+    lines that carried it, and those that carried some of it back. Under the
+    chart the same as a table, every flow, and the bands under 1e-4 of the
+    largest, which the chart leaves out, said. Asked for once a run and an
+    element, kept with the run itself.
+  */
+  const flowsAsked = new WeakMap();
+  const FLOWS_SHOWN = 1e-4;
+  function flowsOf(r, name) {
+    let byEl = flowsAsked.get(r);
+    if (!byEl) { byEl = new Map(); flowsAsked.set(r, byEl); }
+    if (byEl.has(name)) return byEl.get(name);
+    byEl.set(name, null);
+    const h = holderOf(r);
+    const text = h && h !== current ? h.text : ((state.ran && state.ran.text) || state.text);
+    const ask = (withRun) => request({ type: 'flows', runKey: r.runKey, of: { kind: 'element', name },
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+    (async () => {
+      let got;
+      try {
+        got = await ask(false);
+        if (got.missing) got = await ask(true);
+      } catch (e) { got = { error: e.message }; }
+      byEl.set(name, got);
+      if (state.result === r && state.compView === 'budget') drawComp();
+    })();
+    return null;
+  }
+
+  function drawBudgetFlows({ r, plot, fail, note }, name) {
+    const got = flowsOf(r, name);
+    if (!got) { fail(`Working out where ${name} goes…`); return; }
+    if (got.error) { fail(`Where ${name} goes could not be worked out: ${got.error}`); return; }
+    if (!got.links.length) { fail(`Nothing moves any ${name} over the run: it stays in the species it starts in.`); return; }
+    const m = r.model;
+    const held = got.held.map(labelOf);
+    const heldNames = held.length < 2 ? held.join('') : `${held.slice(0, -1).join(', ')} and ${held[held.length - 1]}`;
+    const ENDS = {
+      '#heldIn': `put in by holding ${heldNames}`, '#heldOut': `taken out by holding ${heldNames}`,
+      '#inLeft': 'came in at the left', '#outLeft': 'went out at the left', '#inRight': 'came in at the right',
+      '#outRight': 'went out at the right', '#made': 'made by reactions', '#lost': 'lost by reactions',
+      '#drawn': 'drawn from what was there at the start', '#builtUp': 'built up over the run',
+    };
+    const label = (key) => ENDS[key] || labelOf(key);
+    const top = got.links[0].value;
+    const shown = got.links.filter((x) => x.value >= FLOWS_SHOWN * top);
+    const keys = [...new Set(shown.flatMap((x) => [x.from, x.to]))];
+    const kindOf = new Map(got.nodes.map((x) => [x.key, x.kind]));
+    const colorOf = (key) => (key === '#lost' ? '#e0663e' : kindOf.get(key) === 'source' ? '#2ca02c'
+      : kindOf.get(key) === 'sink' ? '#7f7f7f' : '#3b82c4');
+    const fmt = (v) => fmtNumber(v);
+    const linesText = (list) => list.slice(0, 3).map(([line, nm, amt]) => (line === null ? `${nm}, ${fmt(amt)}`
+      : `${nm} (line${String(line).includes(',') ? 's' : ''} ${line}), ${fmt(amt)}`)).join('; ') + (list.length > 3 ? `; and ${list.length - 3} more` : '');
+    const hover = (x) => [x.by.length ? `by ${esc(linesText(x.by))}` : '', x.back.length ? `back by ${esc(linesText(x.back))}` : '']
+      .filter(Boolean).join('<br>');
+    const c = themeColors();
+    const layout = baseLayout();
+    layout.height = Math.max(360, 30 * keys.length + 80);
+    layout.margin = { l: 10, r: 10, t: 10, b: 10 };
+    Plotly.react(plot, [{
+      type: 'sankey', orientation: 'h', arrangement: 'snap', valueformat: '.4~g',
+      node: { label: keys.map(label), color: keys.map(colorOf), pad: 16, thickness: 14, line: { width: 0 },
+        hovertemplate: '%{label}<extra></extra>' },
+      link: { source: shown.map((x) => keys.indexOf(x.from)), target: shown.map((x) => keys.indexOf(x.to)), value: shown.map((x) => x.value),
+        color: shown.map((x) => (x.to === '#lost' ? 'rgba(224,102,62,0.45)' : x.from === '#heldIn' ? 'rgba(44,160,44,0.35)'
+          : 'rgba(127,127,127,0.32)')),
+        customdata: shown.map(hover), hovertemplate: '%{source.label} → %{target.label}: %{value}<br>%{customdata}<extra></extra>' },
+    }], { ...layout, font: { ...layout.font, color: c.text } }, PLOT_CONFIG);
+    const per = m.transport ? "concentration × m per m² of the water's cross-section" : 'per kg of water';
+    const lost = got.links.filter((x) => x.to === '#lost').reduce((s, x) => s + x.value, 0);
+    const made = got.links.filter((x) => x.from === '#made').reduce((s, x) => s + x.value, 0);
+    const putIn = got.links.filter((x) => x.from === '#heldIn').reduce((s, x) => s + x.value, 0);
+    const biggest = got.links.find((x) => kindOf.get(x.from) === 'species' && kindOf.get(x.to) === 'species');
+    const hidden = got.links.length - shown.length;
+    note.textContent = [`${name}, all of it, over the run${m.transport ? ' and the whole column' : ''}: ${got.links.length} `
+      + `flow${got.links.length === 1 ? '' : 's'}`,
+    putIn ? `put in by holding ${heldNames}, ${fmt(putIn)}` : '',
+    biggest ? `the most from one species to another, ${labelOf(biggest.from)} to ${labelOf(biggest.to)}, ${fmt(biggest.value)}` : '',
+    lost ? `lost by reactions, ${fmt(lost)}` : '', made ? `made by reactions, ${fmt(made)}` : '',
+    hidden ? `${hidden} under ${FLOWS_SHOWN} of the largest, in the table only` : ''].filter(Boolean).join('; ');
+    const num = (v) => esc(v === 0 ? '0' : fit4(v));
+    const rows = got.links.map((x) => `<tr><td>${esc(label(x.from))}</td><td>${esc(label(x.to))}</td><td data-v="${x.value}">${num(x.value)}</td>`
+      + `<td>${esc(linesText(x.by))}</td><td>${esc(linesText(x.back))}</td></tr>`).join('');
+    const box = $('rtmCompLines');
+    box.innerHTML = `<table><thead><tr><th>Where ${esc(name)} goes, over the run: from</th><th>to</th><th>net</th><th>carried by</th>`
+      + `<th>carried back by</th></tr></thead><tbody>${rows}</tbody></table>`
+      + `<p>Amounts ${esc(per)}, net over the run. What each <code>&lt;REACTIONS&gt;</code> line took of ${esc(name)}'s species is sent to `
+      + 'what it gave, in proportion; what it took and gave nowhere is lost by reactions, and what it gave from nowhere made. Beside them, '
+      + 'what holding put in or took out, what came in or went out at the ends, what the relations moved, together, and what each species '
+      + 'built up by the end or was drawn from what was there at the start. A pair of species both ways is set against itself: a reaction '
+      + 'and its reverse can move far more than ever stays, and the table names both. A line with a coefficient on more than one species '
+      + 'of it is shared out among them in proportion, which is a reading of the line, not something the run itself says.</p>';
+    box.hidden = false;
+    compTableNow = { head: ['from', 'to', 'net', 'carried by', 'carried back by'], name: `${fileStem()}_where_${name}_goes`,
+      rows: got.links.map((x) => [label(x.from), label(x.to), x.value, linesText(x.by), linesText(x.back)]) };
   }
 
   /*
@@ -10913,7 +11030,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
-            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. A species held fixed stays where it is because what the reactions take of it is put back, and what they make of it taken away: what holding put in, dash-dotted, beside what the reactions made, the reactions\' lines counting what they did to it as to any other. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions, put in by holding — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, the summing\'s error left, and what holding put in.', view === 'budget'],
+            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. A species held fixed stays where it is because what the reactions take of it is put back, and what they make of it taken away: what holding put in, dash-dotted, beside what the reactions made, the reactions\' lines counting what they did to it as to any other. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions, put in by holding — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, the summing\'s error left, and what holding put in. **By** where it goes, of an element: a flow diagram over the run of its species and the ends of its account — put in by holding, came in or went out, made or lost by reactions, drawn from what was there or built up — each band what went from one to the other, net, a reaction and its reverse netted as one; hovering on a band names the reactions that carried it; a table of every flow under it.', view === 'budget'],
             ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
@@ -12282,7 +12399,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111r';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111s';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',
@@ -13510,7 +13627,7 @@ END
       state.compPcaLog = $('rtmCompPcaLog').checked;
       state.compBeside = $('rtmCompBeside').checked;
       state.compBudgetOf = $('rtmCompBudgetOf').value;
-      state.compBudgetBy = $('rtmCompBudgetBy').value === 'lines' ? 'lines' : 'where';
+      state.compBudgetBy = ['lines', 'flows'].includes($('rtmCompBudgetBy').value) ? $('rtmCompBudgetBy').value : 'where';
       { const at = $('rtmCompBudgetAt').value; state.compBudgetAt = at === '' || at === 'column' ? 'column' : Number(at); }
       saveState();
       renderComp();

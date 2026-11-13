@@ -1485,6 +1485,51 @@ async def main():
                   [True, True, 'dashdot', True, True,
                    ['A => B', 'every reaction', "the summing's error", 'made by reactions, net, as the budget has it', 'put in by holding A'],
                    [True, True, True, True, True]])
+
+            # --- where an element goes --------------------------------------------------------------------------------
+            # HCO3- and H+ held, turned into CO2 at a steady rate, the CO2 lost at a thousandth of itself a second: on
+            # Composition, a budget of carbon By where it goes is a flow diagram -- held into HCO3-, on to CO2, lost and
+            # built up -- with no time controls, its note and a table of every flow; of a species, where it goes is greyed,
+            # the budget drawn where it is held.
+            CARB = ('<SETTINGS>\nMODE = batch\nTEND = 1000\nTIME_UNIT = second\n\n<SPECIES>\nHCO3- 0.01 fixed\nH+ 1e-3 fixed\n'
+                    'CO2 0\nGone 0\n\n<REACTIONS>\nHCO3- + H+ => CO2, k = 10\nCO2 => Gone, k = 0.001\n')
+            await set_text(page, CARB)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 4 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await pick('rtmCompBudgetOf', 'element:C')
+            await pick('rtmCompBudgetBy', 'flows')
+            await settle(page, "/^C, all of it, over the run/.test(document.getElementById('rtmCompNote').textContent)", True, tries=60, pause=0.25)
+            flows = await page.ev("""(() => { const d = (document.getElementById('rtmChartComp').data || [])[0] || {};
+              const n = d.node ? d.node.label : []; const l = d.link || { source: [], target: [], value: [] };
+              return { type: d.type, links: l.source.map((s, i) => `${n[s]} > ${n[l.target[i]]}`).sort(),
+                values: Object.fromEntries(l.source.map((s, i) => [`${n[s]} > ${n[l.target[i]]}`, l.value[i]])),
+                note: document.getElementById('rtmCompNote').textContent,
+                rows: [...document.querySelectorAll('#rtmCompLines tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent)),
+                timeHidden: document.getElementById('rtmCompLogTWrap').hidden,
+                by: [...document.getElementById('rtmCompBudgetBy').options].map((o) => o.textContent + (o.disabled ? ' (off)' : '')) }; })()""")
+            fv = flows['values'] if isinstance(flows, dict) else {}
+            check('where carbon goes, held and turned into CO2 that is partly lost: a flow diagram of held into HCO3-, on to CO2, lost '
+                  'and built up, by line 12 and 13; no time controls; the note, and a table of every flow',
+                  [flows['type'] if isinstance(flows, dict) else None, flows['links'] if isinstance(flows, dict) else None,
+                   abs(fv.get('put in by holding HCO3- > HCO3-', 0) - 0.1) < 1e-12, abs(fv.get('HCO3- > CO2', 0) - 0.1) < 1e-12,
+                   abs(fv.get('CO2 > built up over the run', 0) - 0.1 * (1 - math.exp(-1))) < 1e-6,
+                   (flows['note'] or '').startswith('C, all of it, over the run: 4 flows; put in by holding HCO3-, 0.1; the most from one '
+                                                    'species to another, HCO3- to CO2, 0.1; lost by reactions, ') if isinstance(flows, dict) else None,
+                   sorted([r[:2] + [r[3].split(' (line')[0]] for r in flows['rows']]) if isinstance(flows, dict) else None,
+                   flows['timeHidden'] if isinstance(flows, dict) else None, flows['by'] if isinstance(flows, dict) else None],
+                  ['sankey', ['CO2 > built up over the run', 'CO2 > lost by reactions', 'HCO3- > CO2', 'put in by holding HCO3- > HCO3-'],
+                   True, True, True, True,
+                   [['CO2', 'built up over the run', ''], ['CO2', 'lost by reactions', 'CO2 => Gone'], ['HCO3-', 'CO2', 'HCO3- + H+ => CO2'],
+                    ['put in by holding HCO3-', 'HCO3-', '']],
+                   True, ['where it is held', 'each reaction', 'where it goes']])
+            await pick('rtmCompBudgetOf', 'species:CO2')
+            await settle(page, "(document.getElementById('rtmChartComp').data || []).some((t) => t.name === 'made by reactions, net')", True,
+                         tries=60, pause=0.25)
+            check('  of a species, where it goes is greyed and the budget drawn where it is held',
+                  await page.ev("[[...document.getElementById('rtmCompBudgetBy').options].map((o) => o.textContent + (o.disabled ? ' (off)' : '')),"
+                                " document.getElementById('rtmCompBudgetBy').value, document.getElementById('rtmCompLogTWrap').hidden]"),
+                  [['where it is held', 'each reaction', 'where it goes, of an element (off)'], 'where', False])
             await pick('rtmCompBudgetBy', comp_was[2])
             await pick('rtmCompBudgetOf', comp_was[1])
             await pick('rtmCompView', comp_was[0])

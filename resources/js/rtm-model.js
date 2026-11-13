@@ -12904,6 +12904,43 @@
       }
       return out;
     }
+    /*
+      WHAT EACH LINE MOVES OF EACH SPECIES in model cell `cell` of the
+      concentrations c at time t, for the species `slot` gives a column --
+      slot[p] its column, -1 for one not asked for -- held or not: every
+      <REACTIONS> line's part of the derivative, line by line and species by
+      species, an amount a unit of the cell's water and of time, as the
+      derivative works it out. Into out, line-major, nk columns a line: what
+      a line takes of a species negative, what it gives positive.
+    */
+    function lineSpeciesAt(c, t, cell, slot, nk, out) {
+      out.fill(0);
+      if (!reactions.length) return out;
+      thermoAt(t);
+      if (ntv) atTheClock(t);
+      const b = cell * ns;
+      if (nq) aqAt(c, b, false);
+      rates(c, b, P, cell * np, lineR, lineD, t, TV, AQ);
+      const sc = reactScale[cell];
+      for (let n = 0; n < reactions.length; n++) {
+        const rx = reactions[n];
+        for (let j = rx.chanFirst; j < rx.chanFirst + rx.chanCount; j++) {
+          const r = lineR[j];
+          if (r === 0) continue;
+          const sp = chanSpecies[j];
+          const coef = chanCoef[j];
+          const whole = chanWhole[j];
+          const cap = chanCap[j];
+          for (let m = 0; m < sp.length; m++) {
+            const p = sp[m];
+            const q = slot[p];
+            if (q < 0) continue;
+            out[n * nk + q] += coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
+          }
+        }
+      }
+      return out;
+    }
     /**
      * A water as PHREEQC lists it, cell `cell` of the concentrations c at
      * time t: each species' ln of its activity coefficient (none without
@@ -13111,6 +13148,7 @@
       quantitiesAt,
       lineTermsAt,
       linesBySpeciesAt,
+      lineSpeciesAt,
       listingAt,
       data,
       // What each species is made of, for the views of where an element is and of the water's major ions.

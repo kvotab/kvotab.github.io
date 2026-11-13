@@ -587,6 +587,7 @@
               <select id="rtmCompBudgetBy" data-on-change="rtm:redrawComp">
                 <option value="where">where it is held</option>
                 <option value="lines">each reaction</option>
+                <option value="flows">where it goes</option>
               </select>
             </label>
             <label id="rtmCompBudgetAtWrap" hidden>Over
@@ -3023,6 +3024,22 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             carbon. A line counts what it does to a species held as to any other — one that turns a
             held <code>HCO3-</code> into <code>CO2</code> makes no carbon — and the table ends with
             what holding put in, the budget's.</p>
+          <p><em>Where it goes</em>, of an element, follows it through its species over the whole run
+            and the whole column, as a flow diagram: its species, and the ends of its account — what
+            holding put in or took out, what came in and went out at the ends, what reactions made from
+            nowhere or lost, what was drawn from what was there at the start and what built up by the
+            end — each band as wide as what went from one to the other, net over the run. Each
+            <code>&lt;REACTIONS&gt;</code> line's part of each species' rate of change is summed over the
+            stored points, a line and one written apart that undoes it as one reaction, netted at each
+            point: a fast pair can move a hundred million million times more each way than ever stays,
+            and summed apart the rounding of each would be most of what stays. What a line took of the
+            element's species is sent to what it gave in proportion, which is a reading of the line, as a
+            line with two species of the element on a side does not say which atom went where; what it
+            took and gave nowhere is lost, and what it gave and took from nowhere made. What the
+            relations moved is shared out the same way, together. A pair of species both ways is set
+            against itself. Hovering on a band names the reactions that carried it, and those that
+            carried some of it back; the table under the chart has every flow, the bands under
+            10<sup>−4</sup> of the largest in it only.</p>
           <p><em>Where the minerals' fronts are</em> follows each mineral's fronts along a column,
             from the inlet, through the run. Of a mineral the column holds at the start, the length of
             column it has been cleared of: each cell counts its width times the share of its first
@@ -4213,14 +4230,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111r"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111s"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111p"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111q"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zr"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zs"></script>
 </body>
 </html>

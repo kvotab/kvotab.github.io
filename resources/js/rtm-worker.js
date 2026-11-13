@@ -554,6 +554,217 @@ function rtmHolding(model, t, states, n, width, w, cells) {
 }
 
 /*
+  WHERE AN ELEMENT GOES, over the run and the whole column: from one of its
+  species to another, and in and out of the column -- each species weighed
+  by its count of the element, by its capacity in its cell and by the
+  cell's water, as rtmBudget weighs them. Each <REACTIONS> line's part of
+  each species' rate of change (model.lineSpeciesAt), held species and
+  all, summed over the stored points -- a line and one written apart that
+  undoes it as one, the two netted at each point before they are summed:
+  a fast pair moves 1e14 each way where 4 stays, and summed apart the
+  rounding of each would be the most of what stays -- what the line took
+  of each species and gave to each, the takings sent to the givings in
+  proportion; what it took and gave nowhere lost, what it gave and took
+  from nowhere made. What the lines did to each species, all of them, is
+  netted at each point too, for the balance below. Of
+  each species besides, what the column holds more or less of it at the
+  end than at the start, and what came in or went out at each end; and
+  what is left of its balance once those and the lines are counted: for a
+  species held somewhere, what holding put in or took out; for one in a
+  relation, what the relations moved, sent from species to species in
+  proportion as a line's takings are, together; for any other, the
+  summing's error, left out. A pair of species both ways is set against
+  itself, the link what moved net; each link keeps the lines that carried
+  it, and those that carried some of it back. Nodes the species and the
+  ends of the account (`kind` source or sink), links { from, to, value,
+  by: [[line, name, amount]], back }.
+*/
+function rtmFlows(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'flows', id: msg.id, missing: true };
+  const { model, t, states, n, width } = run;
+  const names = model.speciesNames;
+  const ns = names.length;
+  const of = msg.of || {};
+  const C = model.composition;
+  const el = C && of.kind !== 'species' ? C.elements.find((x) => x.el === of.name) : null;
+  if (!el) throw new Error(of.kind === 'species' ? 'Where it goes follows an element through its species: choose an element.'
+    : `No species of the model has any ${of.name}.`);
+  const cnt = new Float64Array(ns);
+  for (const [k, c] of el.terms) cnt[k] += c;
+  const ks = [];
+  for (let k = 0; k < ns; k++) if (cnt[k]) ks.push(k);
+  const nk = ks.length;
+  const slot = new Int32Array(ns).fill(-1);
+  ks.forEach((k, q) => { slot[k] = q; });
+  const transport = !!model.transport;
+  const stride = model.stride || 1;
+  const nf = transport ? model.fracture : model.cells;
+  const mx = model.matrix || null;
+  const widthOf = (i) => (transport ? model.grid.width[i] : 1);
+  const cells = [];
+  for (let cell = 0; cell < nf; cell++) {
+    for (let j = 0; j < stride; j++) cells.push([cell * stride + j, j === 0 ? widthOf(cell) : widthOf(cell) * mx.aw * mx.d[j - 1]]);
+  }
+  const rx = model.reactions || [];
+  const nl = rx.length;
+  // The lines, and the pairs: each line that undoes one before it, written apart, joins it (as rtmLines has them).
+  const keyOf = (lineNet, sign) => lineNet.map(([k, c]) => `${k}:${sign * c}`).sort().join(',');
+  const groups = [];
+  const waiting = new Map();
+  rx.forEach((x, l) => {
+    if (x.both || x.whole || !x.net || !x.net.length) { groups.push([l]); return; }
+    const undo = keyOf(x.net, -1);
+    if (waiting.has(undo)) {
+      groups[waiting.get(undo)].push(l);
+      waiting.delete(undo);
+      return;
+    }
+    groups.push([l]);
+    const mine = keyOf(x.net, 1);
+    if (!waiting.has(mine)) waiting.set(mine, groups.length - 1);
+  });
+  const ng = groups.length;
+  const buf = new Float64Array(Math.max(nl * nk, 1));
+  // Each group's rate on each species at a point, then every line's together, the last nk of the row.
+  const width2 = (ng + 1) * nk;
+  let prev = new Float64Array(width2);
+  let cur = new Float64Array(width2);
+  const A = new Float64Array(width2);
+  const first = new Float64Array(nk);
+  const last = new Float64Array(nk);
+  for (let i = 0; i < n; i++) {
+    const c = states.subarray(i * width, (i + 1) * width);
+    cur.fill(0);
+    for (const [cell, scale] of cells) {
+      if (nl) {
+        model.lineSpeciesAt(c, t[i], cell, slot, nk, buf);
+        for (let q = 0; q < nk; q++) {
+          const f = scale * cnt[ks[q]];
+          let all = 0;
+          for (let g = 0; g < ng; g++) {
+            let v = 0;
+            for (const l of groups[g]) v += buf[l * nk + q];
+            cur[g * nk + q] += f * v;
+            all += v;
+          }
+          cur[ng * nk + q] += f * all;
+        }
+      }
+      if (i === 0) ks.forEach((k, q) => { first[q] += scale * model.massOf[cell * ns + k] * cnt[k] * c[cell * ns + k]; });
+      if (i === n - 1) ks.forEach((k, q) => { last[q] += scale * model.massOf[cell * ns + k] * cnt[k] * c[cell * ns + k]; });
+    }
+    if (i > 0) {
+      const dt = t[i] - t[i - 1];
+      for (let x = 0; x < width2; x++) A[x] += 0.5 * (cur[x] + prev[x]) * dt;
+    }
+    [prev, cur] = [cur, prev];
+  }
+  // What crossed each end, positive into the column at the left and out of it at the right.
+  const inLeft = new Float64Array(nk);
+  const outRight = new Float64Array(nk);
+  if (transport && model.faces) {
+    for (const [side, acc] of [['left', inLeft], ['right', outRight]]) {
+      ks.forEach((k, q) => {
+        const f = model.faces[side] && model.faces[side][k];
+        if (!f) return;
+        let before = 0;
+        for (let i = 0; i < n; i++) {
+          let v = f.constant;
+          for (const [idx, wt] of f.terms) v += wt * states[i * width + idx];
+          v *= cnt[k];
+          if (i > 0) acc[q] += 0.5 * (v + before) * (t[i] - t[i - 1]);
+          before = v;
+        }
+      });
+    }
+  }
+  const links = new Map();
+  const add = (a, b, v, by) => {
+    if (!(v > 0)) return;
+    const key = `${a}\u0000${b}`;
+    let x = links.get(key);
+    if (!x) { x = { from: a, to: b, value: 0, by: new Map() }; links.set(key, x); }
+    x.value += v;
+    if (by !== undefined) x.by.set(by, (x.by.get(by) || 0) + v);
+  };
+  // A line's, or the relations', takings sent to its givings in proportion: what it took and gave nowhere lost, what it gave from nowhere made.
+  const share = (moves, by) => {
+    const took = moves.filter(([, v]) => v < 0);
+    const gave = moves.filter(([, v]) => v > 0);
+    const T = took.reduce((s, [, v]) => s - v, 0);
+    const G = gave.reduce((s, [, v]) => s + v, 0);
+    const most = Math.max(T, G);
+    if (!(most > 0)) return;
+    for (const [a, va] of took) {
+      for (const [b, vb] of gave) add(names[ks[a]], names[ks[b]], (-va * vb) / most, by);
+      if (T > G) add(names[ks[a]], '#lost', (-va * (T - G)) / T, by);
+    }
+    if (G > T) for (const [b, vb] of gave) add('#made', names[ks[b]], (vb * (G - T)) / G, by);
+  };
+  const lineNet = A.subarray(ng * nk, (ng + 1) * nk);
+  for (let g = 0; g < ng; g++) {
+    const moves = [];
+    for (let q = 0; q < nk; q++) {
+      const v = A[g * nk + q];
+      if (v !== 0) moves.push([q, v]);
+    }
+    share(moves, g);
+  }
+  const heldSomewhere = (k) => cells.some(([cell]) => model.fixedAt[cell * ns + k]);
+  const inRelation = (k) => (model.equilibria || []).some((eq) => (eq.net || []).some(([s]) => s === k));
+  const relMoves = [];
+  let heldAndRelated = false;
+  for (let q = 0; q < nk; q++) {
+    const k = ks[q];
+    const nm = names[k];
+    const rest = (last[q] - first[q]) - inLeft[q] + outRight[q] - lineNet[q];
+    if (heldSomewhere(k)) {
+      if (inRelation(k)) heldAndRelated = true;
+      if (rest > 0) add('#heldIn', nm, rest);
+      else add(nm, '#heldOut', -rest);
+    } else if (inRelation(k) && rest !== 0) relMoves.push([q, rest]);
+    if (inLeft[q] > 0) add('#inLeft', nm, inLeft[q]);
+    else add(nm, '#outLeft', -inLeft[q]);
+    if (outRight[q] > 0) add(nm, '#outRight', outRight[q]);
+    else add('#inRight', nm, -outRight[q]);
+    const d = last[q] - first[q];
+    if (d > 0) add(nm, '#builtUp', d);
+    else add('#drawn', nm, -d);
+  }
+  share(relMoves, 'relations');
+  // Each pair of species both ways set against itself.
+  const net = [];
+  const seen = new Set();
+  for (const [key, x] of links) {
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const backKey = `${x.to}\u0000${x.from}`;
+    const y = links.get(backKey);
+    if (y) seen.add(backKey);
+    const v = x.value - (y ? y.value : 0);
+    const [fwd, rev] = v >= 0 ? [x, y] : [y, x];
+    const lineOf = (by) => {
+      if (by === 'relations') return [null, 'the relations, together'];
+      const ls = groups[by];
+      const one = rx[ls[0]];
+      return ls.length === 1 ? [String(one.line), one.name || one.text]
+        : [ls.map((l) => rx[l].line).join(', '), (one.eq || one.name).replace('=>', '<=>')];
+    };
+    const list = (z) => (z ? [...z.by].map(([by, amt]) => [...lineOf(by), amt]).sort((a, b) => b[2] - a[2]) : []);
+    net.push({ from: fwd.from, to: fwd.to, value: Math.abs(v), by: list(fwd), back: list(rev) });
+  }
+  const top = net.reduce((m, x) => Math.max(m, x.value), 0);
+  const kept = net.filter((x) => x.value > 1e-12 * top).sort((a, b) => b.value - a.value);
+  const ends = { '#heldIn': 'source', '#inLeft': 'source', '#inRight': 'source', '#made': 'source', '#drawn': 'source',
+    '#heldOut': 'sink', '#outLeft': 'sink', '#outRight': 'sink', '#lost': 'sink', '#builtUp': 'sink' };
+  const used = new Set(kept.flatMap((x) => [x.from, x.to]));
+  const nodes = [...used].map((key) => ({ key, kind: ends[key] || 'species' }));
+  return { type: 'flows', id: msg.id, of: { kind: 'element', name: of.name }, transport, nodes, links: kept, heldAndRelated,
+    held: ks.filter(heldSomewhere).map((k) => names[k]) };
+}
+
+/*
   WHAT HOLDING PUT IN AT ONE CELL, species by species, for the table of
   every species: of each species held in model cell `at`, what the
   <REACTIONS> lines would have moved of it there over the run, made up for
@@ -2981,6 +3192,14 @@ function handleRtmMessage(msg, post) {
         reply.total.buffer, reply.byReactions.buffer, ...reply.bands.map((b) => b.values.buffer)] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'budget', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'flows') {
+    try {
+      post(rtmFlows(msg));
+    } catch (e) {
+      post({ type: 'error', id, stage: 'flows', error: rtmErrorMessage(e) });
     }
     return;
   }
