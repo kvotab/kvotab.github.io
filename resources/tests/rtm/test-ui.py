@@ -52,9 +52,9 @@ HEADING_I_OFF = (
     "}).map((d) => d.querySelector('summary').textContent.trim()).join(' | ')")
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
-# of the Solver section, eleven tab toolbars, and the PHREEQC panel's heading and
-# four settings.
-STATIC_SLOTS = 40
+# of the Solver section, eleven tab toolbars, the PHREEQC panel's heading and
+# four settings, and the PHREEQC tab's boxes, the batch's among them.
+STATIC_SLOTS = 41
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -630,7 +630,8 @@ async def main():
               const pane = document.querySelector('.rtm-pane:not([hidden])');
               const drawn = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== 'hidden';
               const saves = '[data-on-click="rtm:export"], [data-on-click="rtm:downloadCsv"], [data-on-click="rtm:pqCsv"],'
-                + ' [data-on-click="rtm:pqInvCsv"], [data-on-click="rtm:toHdf5"], [data-on-click="rtm:downloadHdf5"]';
+                + ' [data-on-click="rtm:pqInvCsv"], [data-on-click="rtm:pqBatchSave"], [data-on-click="rtm:toHdf5"],'
+                + ' [data-on-click="rtm:downloadHdf5"]';
               const menus = [...pane.querySelectorAll('.rtm-menu-btn')];
               return {
                 hiddenDrawn: [...document.querySelectorAll('.rtm [hidden]')].filter(drawn).map((e) => e.id || e.className || e.tagName),
@@ -650,14 +651,14 @@ async def main():
                 layout[tab] = await page.ev(LAYOUT)
             check('nothing marked hidden is drawn, on any tab',
                   {t: v['hiddenDrawn'] for t, v in layout.items() if v['hiddenDrawn']}, {})
-            check('every format a tab saves in its Export menu, one to a chart, at the right end of its bar',
+            check('every format a tab saves in its Export menu, one to a chart or a table, at the right end of its bar',
                   {t: [v['menus'], v['loose'], v['atEnd']] for t, v in layout.items()},
                   {'model': [0, 0, True], 'time': [1, 0, True], 'profile': [1, 0, True], 'gradient': [1, 0, True],
-                   'composition': [1, 0, True], 'diagram': [1, 0, True], 'phreeqc': [2, 0, True], 'sweep': [1, 0, True],
+                   'composition': [1, 0, True], 'diagram': [1, 0, True], 'phreeqc': [3, 0, True], 'sweep': [1, 0, True],
                    'fit': [1, 0, True], 'uncertainty': [1, 0, True], 'jacobian': [0, 0, True], 'help': [0, 0, True]})
             check('a tab that works something out sets it up in a box, the button that does it at the box\'s right',
                   {t: v['go'] for t, v in layout.items() if v['go']},
-                  {'diagram': [True], 'phreeqc': [True, True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
+                  {'diagram': [True], 'phreeqc': [True, True, True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
             # Export, pressed with the mouse: under its button, right edges
             # together, its first format taking the focus; a click elsewhere
             # shuts it -- on the chart too, where Plotly's cover takes the

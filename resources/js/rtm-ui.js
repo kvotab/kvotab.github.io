@@ -11459,6 +11459,31 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       more: more('Inverse models through PHREEQC', 'help-phreeqc-inverse'),
     }),
 
+    'pq:batch': () => ({
+      kicker: 'PHREEQC', title: 'A batch over a table of waters',
+      lead: 'One PHREEQC input run for every row of a table: each {name} in it the row\'s value in the column of that name, the selected output kept row by row.',
+      facts: [['Table', pq.batchTable ? `${pq.batchTable.name}, ${pq.batchTable.rows.length.toLocaleString()} row${pq.batchTable.rows.length === 1 ? '' : 's'}` : 'none opened yet'],
+        ['Last batch', pq.batchResult ? `${pq.batchResult.rows.length.toLocaleString()} row${pq.batchResult.rows.length === 1 ? '' : 's'}, `
+          + `${pq.batchResult.errors.size.toLocaleString()} refused` : 'none run yet']],
+      sections: [
+        { heading: 'The table', list: [
+          '**Open a table…**: CSV, or an Excel workbook, a water a row and the columns\' names in the first row with anything in it; **Sheet** chooses among a workbook\'s sheets. Read for this visit, never stored or sent anywhere.',
+          '**Rows**: all, or a list such as `1-100, 205` of the table\'s rows, to try a few before the rest.',
+        ] },
+        { heading: 'The input', list: [
+          'PHREEQC input as PHREEQC takes it, with the database the tab has chosen: a `SOLUTION`, and whatever PHREEQC should do with it -- `EQUILIBRIUM_PHASES`, `REACTION`, `PHASES` and `NAMED_EXPRESSIONS` of its own.',
+          '`{name}`: the row\'s value in the column of that name, as the table has it, `{pH}` or `{[Ca]tot (m)}`. A name the table has no column for is said before anything runs; one after a `#`, in a comment, is not asked for.',
+          '`SELECTED_OUTPUT`: what to keep of each row\'s run, its `-totals`, `-pH` and the like, or a `USER_PUNCH`; the last row it gives is kept. A table opened with the box empty starts it: a `SOLUTION` with `pH` where the table has it, every other column below, commented, to take or leave.',
+        ] },
+        { heading: 'What comes back', list: [
+          'Every row runs on a clean slate (`DELETE -all` first), so nothing one row saved is there for the next; a row PHREEQC refuses keeps the first line of what it said, and the rest go on.',
+          'The first 100 rows as a table; **Stop** ends it once the part running is done, keeping every row done.',
+        ] },
+        exportSection(['**CSV**, **Excel**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; Excel the input on a sheet of its own.']),
+      ],
+      more: more('A batch over a table of waters', 'help-phreeqc-batch'),
+    }),
+
     'pane:jacobian': {
       kicker: 'Tab', title: 'Jacobian',
       lead: 'The sparsity pattern of the matrix the solver factorises, and what Check Jacobian found.',
@@ -12505,12 +12530,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111s';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111t';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
     'resources/js/rtm-phreeqc.js?v=20261110a',
-    'resources/js/rtm-phreeqc-engine.js?v=20261110a',
+    'resources/js/rtm-phreeqc-engine.js?v=20261113a',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -12546,6 +12571,13 @@ END
     // Inverse models: between which waters, with which phases, to what uncertainty; and what PHREEQC found.
     inv: { from: '', fromAt: 'start', to: '', toAt: 'end', phases: '', u: '0.05', range: true, minimal: true },
     invResult: null,
+    // A batch over a table of waters: the input and the rows asked for (kept); the table and what it found (the visit's).
+    batch: { text: '', rows: '' },
+    batchTable: null,
+    batchResult: null,
+    batchRunning: false,
+    batchStop: false,
+    batchStarter: null,      // the input the page started for a table, while it is untouched
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -12561,7 +12593,7 @@ END
       localStorage.setItem(PQ_KEY, JSON.stringify({
         water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
-        open: pq.open, inv: pq.inv,
+        open: pq.open, inv: pq.inv, batch: pq.batch,
       }));
     } catch (e) { /* storage unavailable: for this visit only */ }
   }
@@ -12574,6 +12606,9 @@ END
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      if (s.batch && typeof s.batch === 'object') {
+        for (const k of ['text', 'rows']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
+      }
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
         for (const k of ['range', 'minimal']) if (typeof s.inv[k] === 'boolean') pq.inv[k] = s.inv[k];
@@ -12605,6 +12640,7 @@ END
     pqDependents();
     pqRenderDatabases();
     pqShowPanel(pq.open);
+    pqBatchRender();
   }
 
   /** What one setting decides about another being asked at all. */
@@ -12797,6 +12833,8 @@ END
     $('rtmPqWrite').disabled = on;
     $('rtmPqLook').disabled = on;
     $('rtmPqInvGo').disabled = on;
+    // The batch's own button is its Stop while it runs.
+    $('rtmPqBatchGo').disabled = on && !pq.batchRunning;
     if (on && text) {
       const first = pq.kind === 'none' || (pq.kind === 'inline' && !pq.inline)
         ? ' PHREEQC is fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.' : '';
@@ -13579,6 +13617,277 @@ END
     saidSaved(await saveBlob(new Blob([`${csvOf(tab)}\n`], { type: 'text/csv' }), `${fileStem()}_inverse.csv`));
   }
 
+  /*
+    A BATCH OVER A TABLE OF WATERS: one PHREEQC input run for every row of a
+    table -- CSV, or a sheet of an Excel workbook, read by SheetJS the first
+    time one is opened -- each {name} in it the row's value in the column of
+    that name, the names in the table's first row. Every row runs on a clean
+    slate in PHREEQC's worker (RtmPhreeqcEngine's batch), with the database
+    the tab has chosen, and of the selected output the input defines the
+    last row it gives is kept; a row PHREEQC refuses keeps what it said and
+    the rest go on. The rows are sent in parts, so that the progress is the
+    rows done and Stop keeps every part done. What it found is a table, the
+    first rows shown and every row saved as CSV or Excel. The input and the
+    rows asked for are kept; the table and what it found are the visit's.
+  */
+  const PQ_XLSX_SRC = 'vendors/js/xlsx-0.20.3.full.min.js';
+  const PQ_BATCH_PART = 200;
+  const PQ_BATCH_SHOWN = 100;
+  /** A table's rows from CSV or tab-separated text: the delimiter its first line has most of; quoted fields; decimal commas where the delimiter is not a comma. */
+  function batchCsvRows(text) {
+    const first = String(text).split(/\r?\n/).find((l) => l.trim()) || '';
+    const count = (ch) => first.split(ch).length - 1;
+    const sep = ['\t', ';', ','].reduce((b, ch) => (count(ch) > count(b) ? ch : b), ',');
+    const rows = [];
+    let row = [];
+    let cell = '';
+    let quoted = false;
+    const t = String(text);
+    for (let i = 0; i < t.length; i++) {
+      const ch = t[i];
+      if (quoted) {
+        if (ch === '"' && t[i + 1] === '"') { cell += '"'; i++; } else if (ch === '"') quoted = false; else cell += ch;
+      } else if (ch === '"' && !cell) quoted = true;
+      else if (ch === sep) { row.push(cell); cell = ''; }
+      else if (ch === '\n' || ch === '\r') {
+        if (ch === '\r' && t[i + 1] === '\n') i++;
+        row.push(cell); rows.push(row); row = []; cell = '';
+      } else cell += ch;
+    }
+    if (cell || row.length) { row.push(cell); rows.push(row); }
+    const comma = sep !== ',';
+    return rows.map((r) => r.map((v) => {
+      const x = v.trim();
+      return comma && /^[-+]?\d+,\d+([eE][-+]?\d+)?$/.test(x) ? x.replace(',', '.') : x;
+    }));
+  }
+  /** A table from its rows: the first with anything in it its names, the rest those with anything in them; values as text. */
+  function batchTableOf(rows, name, more = {}) {
+    const has = (r) => r.some((v) => v !== null && v !== undefined && String(v).trim() !== '');
+    const text = (v) => (v === null || v === undefined ? '' : typeof v === 'number' ? String(v) : String(v).trim());
+    const at = rows.findIndex(has);
+    if (at < 0) return { name, ...more, columns: [], rows: [] };
+    const seen = new Map();
+    const columns = rows[at].map((v, k) => {
+      let c = text(v) || `column ${k + 1}`;
+      if (seen.has(c)) { seen.set(c, seen.get(c) + 1); c = `${c} (${seen.get(c)})`; } else seen.set(c, 1);
+      return c;
+    });
+    const data = rows.slice(at + 1).filter(has).map((r) => columns.map((_, k) => text(r[k])));
+    return { name, ...more, columns, rows: data };
+  }
+  /** An Excel sheet's rows, as SheetJS reads them: numbers as numbers, to go into PHREEQC's input at full precision. */
+  function batchSheetRows(book, sheet) {
+    return XLSX.utils.sheet_to_json(book.Sheets[sheet], { header: 1, raw: true, defval: null, blankrows: false });
+  }
+  async function pqBatchFileChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    try {
+      if (/\.xlsx?$/i.test(file.name)) {
+        if (typeof XLSX === 'undefined') await loadScript(PQ_XLSX_SRC);
+        const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        const sheet = book.SheetNames[0];
+        pq.batchTable = batchTableOf(batchSheetRows(book, sheet), file.name, { book, sheets: book.SheetNames, sheet });
+      } else {
+        pq.batchTable = batchTableOf(batchCsvRows(await pqFileText(file)), file.name);
+      }
+    } catch (e) {
+      setStatus(`${file.name} could not be read as a table: ${e.message}`, 'error');
+      return;
+    }
+    const t = pq.batchTable;
+    // A start for the input where there is none: a SOLUTION with pH where the table has it, every column below it to take or leave.
+    if (!pq.batch.text.trim() && t.columns.length) { pq.batch.text = batchStarter(t.columns); pq.batchStarter = pq.batch.text; pqSave(); }
+    pqBatchRender();
+    setStatus(t.rows.length ? `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${t.rows.length === 1 ? '' : 's'} and `
+      + `${t.columns.length} column${t.columns.length === 1 ? '' : 's'}, for this visit.` : `${t.name} has no rows under its first.`, t.rows.length ? 'ok' : 'warn');
+  }
+  /** A first input for a table: a SOLUTION, pH where it has a column so named, and each other column, commented, to put in or not. */
+  function batchStarter(columns) {
+    const ph = columns.find((c) => c === 'pH');
+    const others = columns.filter((c) => c !== ph);
+    // The element a column's name plainly is -- Ca, S(6), or Ca of "[Ca]tot (m)" -- and nothing where it is anything else.
+    const isElement = (x) => !!(x && RtmModel.ATOMIC_WEIGHTS[x.replace(/\([+-]?\d+\)$/, '')]);
+    const guess = (c) => {
+      if (/^[A-Z][a-z]?(\([+-]?\d+\))?$/.test(c) && isElement(c)) return c;
+      const m = /^\[([A-Z][a-z]?)\]/.exec(c);
+      return m && isElement(m[1]) ? m[1] : '';
+    };
+    return ['# A water a row: {name} is the row\'s value in the column of that name.', 'SOLUTION 1', ' units mol/kgw',
+      ...(ph ? [` pH {${ph}}`] : []), ...others.map((c) => `# ${guess(c) || ' '} {${c}}`),
+      'SELECTED_OUTPUT 1', ' -reset false', ' -pH true', ' -ionic_strength true', 'END'].join('\n');
+  }
+  /** The rows asked for, 0-based: every one, or a list such as 1-100, 205 of the table's rows counted from 1; a string saying what is wrong. */
+  function batchRowsAsked(spec, n) {
+    const t = String(spec || '').trim();
+    if (!t || /^all$/i.test(t)) return Array.from({ length: n }, (_, i) => i);
+    const out = [];
+    for (const part of t.split(/[,;\s]+/).filter(Boolean)) {
+      const m = /^(\d+)(?:-(\d+))?$/.exec(part);
+      if (!m) return `"${part}" is no row nor range of rows: write them as 1-100, 205`;
+      const a = Number(m[1]);
+      const b = m[2] ? Number(m[2]) : a;
+      if (a < 1 || b < a || b > n) return `the table has rows 1 to ${n.toLocaleString()}: ${part} is not among them`;
+      for (let i = a; i <= b; i++) out.push(i - 1);
+    }
+    return [...new Set(out)];
+  }
+  /** The names an input asks for as {name}, in the order it first does; not in a comment, from a # outside braces to the line's end. */
+  function batchNames(text) {
+    const names = [];
+    for (const line of String(text).split('\n')) {
+      for (const m of line.matchAll(/\{([^{}\n]+)\}|#/g)) {
+        if (m[0] === '#') break;
+        names.push(m[1]);
+      }
+    }
+    return [...new Set(names)];
+  }
+  /** The selected output an input defines, the last of them; 1 where it gives no number; null where it has none. */
+  function batchOutputOf(text) {
+    const all = [...String(text).matchAll(/^\s*SELECTED_OUTPUT\b[ \t]*(\d*)/gim)];
+    if (!all.length) return null;
+    const n = all[all.length - 1][1];
+    return n ? Number(n) : 1;
+  }
+
+  function pqBatchRender() {
+    const t = pq.batchTable;
+    const ta = $('rtmPqBatchText');
+    if (ta.value !== pq.batch.text) ta.value = pq.batch.text;
+    $('rtmPqBatchRows').value = pq.batch.rows;
+    const shown = 6;
+    $('rtmPqBatchTable').textContent = !t
+      ? 'No table yet: CSV, or a sheet of an Excel workbook, a water a row and the columns\' names in the first.'
+      : `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${t.rows.length === 1 ? '' : 's'}; `
+        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.`;
+    $('rtmPqBatchSheetWrap').hidden = !(t && t.sheets && t.sheets.length > 1);
+    if (t && t.sheets) {
+      $('rtmPqBatchSheet').innerHTML = t.sheets.map((nm) => `<option value="${esc(nm)}"${nm === t.sheet ? ' selected' : ''}>${esc(nm)}</option>`).join('');
+    }
+    const go = $('rtmPqBatchGo');
+    go.textContent = pq.batchRunning ? 'Stop' : pq.batch.rows.trim() ? 'Run the rows asked for' : 'Run every row';
+    go.disabled = pq.busy && !pq.batchRunning;
+    pqBatchDraw();
+  }
+
+  async function pqBatchRun() {
+    if (pq.batchRunning) { pq.batchStop = true; setStatus('Stopping once the part running now is done…'); return; }
+    if (pq.busy) return;
+    const t = pq.batchTable;
+    const text = pq.batch.text;
+    const fail = (msg) => setStatus(msg, 'error');
+    if (!t) { fail('Open a table of waters first: CSV, or an Excel workbook.'); return; }
+    if (!text.trim()) { fail('Write the PHREEQC input to run for each row, {name} for its value in the column of that name.'); return; }
+    const user = batchOutputOf(text);
+    if (user === null) { fail('The input has no SELECTED_OUTPUT: say there what to keep of each row\'s run, -totals, -pH and the like, or a USER_PUNCH.'); return; }
+    const names = batchNames(text);
+    const unknown = names.filter((n) => !t.columns.includes(n));
+    if (unknown.length) {
+      fail(`The input asks for ${unknown.map((n) => `{${n}}`).join(', ')}, but the table has no column so named; its columns: ${t.columns.join(', ')}.`);
+      return;
+    }
+    const asked = batchRowsAsked(pq.batch.rows, t.rows.length);
+    if (typeof asked === 'string') { fail(`Rows: ${asked}.`); return; }
+    if (!asked.length) { fail('The table has no rows to run.'); return; }
+    pq.batchRunning = true;
+    pq.batchStop = false;
+    pqBusy(true, `Running ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} through PHREEQC…`);
+    pqBatchRender();
+    const started = Date.now();
+    const head = [];
+    const at = new Map();
+    const rows = [];
+    const errors = [];
+    let version = '';
+    let database = '';
+    let stopped = false;
+    try {
+      for (let p = 0; p < asked.length; p += PQ_BATCH_PART) {
+        if (pq.batchStop) { stopped = true; break; }
+        const part = asked.slice(p, p + PQ_BATCH_PART);
+        const reply = await pqRequest({ type: 'batch', database: pqDatabase(), template: text, columns: t.columns,
+          rows: part.map((i) => t.rows[i]), user }, (msg) => {
+          setProgress((p + msg.done) / asked.length);
+          setStatus(`Running row ${(p + msg.done).toLocaleString()} of ${asked.length.toLocaleString()} through PHREEQC…`);
+        });
+        version = reply.version;
+        database = reply.database;
+        const map = reply.head.map((h) => {
+          if (!at.has(h)) { at.set(h, head.length); head.push(h); }
+          return at.get(h);
+        });
+        reply.rows.forEach((r, k) => {
+          const vals = [];
+          if (r) r.forEach((v, j) => { vals[map[j]] = v; });
+          rows.push({ row: part[k], values: r ? vals : null });
+        });
+        for (const [k, why] of reply.errors) errors.push([part[k], why]);
+        setProgress(Math.min(1, (p + part.length) / asked.length));
+      }
+      const seconds = (Date.now() - started) / 1000;
+      pq.batchResult = { head, rows, errors: new Map(errors), names, table: t.name, sheet: t.sheet || null, asked: asked.length,
+        stopped, seconds, version, database, text };
+      const bad = errors.length;
+      setStatus(`${rows.length.toLocaleString()} of ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} run through PHREEQC `
+        + `${version} with ${database} in ${seconds.toFixed(1)} s${stopped ? ', then stopped' : ''}`
+        + `${bad ? `; ${bad.toLocaleString()} refused by PHREEQC, each with what it said` : ''}.`, bad || stopped ? 'warn' : 'ok');
+    } catch (e) {
+      setStatus(`The batch could not be run: ${e.message}`, 'error');
+    } finally {
+      pq.batchRunning = false;
+      pq.batchStop = false;
+      setProgress(null);
+      pqBusy(false);
+      pqBatchRender();
+    }
+  }
+
+  /** What the batch found: a note, and its first rows as a table, a row PHREEQC refused with what it said. */
+  function pqBatchDraw() {
+    const v = pq.batchResult;
+    $('rtmPqBatchShow').hidden = !v;
+    const box = $('rtmPqBatchOut');
+    box.hidden = !v;
+    if (!v) { box.innerHTML = ''; return; }
+    const bad = v.errors.size;
+    $('rtmPqBatchNote').textContent = `${v.rows.length.toLocaleString()} row${v.rows.length === 1 ? '' : 's'} of ${v.table}`
+      + `${v.sheet ? `, sheet ${v.sheet}` : ''}${v.stopped ? `, stopped after ${v.rows.length.toLocaleString()} of ${v.asked.toLocaleString()}` : ''}; `
+      + `${v.head.length} column${v.head.length === 1 ? '' : 's'} of selected output${bad ? `; ${bad.toLocaleString()} refused` : ''}`
+      + `${v.rows.length > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} shown, Export has every row` : ''}.`;
+    const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
+    const body = v.rows.slice(0, PQ_BATCH_SHOWN).map(({ row, values }) => `<tr><td>${row + 1}</td>${values
+      ? v.head.map((_, k) => `<td${typeof values[k] === 'number' ? ` data-v="${values[k]}"` : ''}>${esc(num(values[k]))}</td>`).join('')
+      : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(v.errors.get(row) || 'refused')}</td>`}</tr>`).join('');
+    box.innerHTML = `<table><thead><tr><th>row</th>${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  /** Every row the batch ran, each with the table's values the input asked for, what PHREEQC gave and what it said where it refused. */
+  async function pqBatchSave(as) {
+    const v = pq.batchResult;
+    if (!v) { setStatus('Run a batch first: there is nothing to save yet.', 'warn'); return; }
+    const t = pq.batchTable;
+    const cols = t && t.name === v.table ? v.names.map((n) => t.columns.indexOf(n)) : [];
+    // A heading of PHREEQC's that a column of the table has too, pH say, said as PHREEQC's.
+    const head = ['row', ...(cols.length ? v.names : []), ...v.head.map((h) => (cols.length && v.names.includes(h) ? `${h}, PHREEQC` : h)), 'refused'];
+    const rows = v.rows.map(({ row, values }) => [row + 1, ...cols.map((k) => {
+      const x = t.rows[row][k];
+      return x !== '' && Number.isFinite(Number(x)) ? Number(x) : x;
+    }), ...v.head.map((_, k) => (values && values[k] !== undefined ? values[k] : null)), v.errors.get(row) || null]);
+    const stem = `${fileStem()}_batch`;
+    if (as === 'csv') {
+      saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), `${stem}.csv`));
+      return;
+    }
+    if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
+    const xlsx = new XlsxWriter(`${stem}.xlsx`);
+    xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), 'batch', { header: head });
+    xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [`the PHREEQC input each row of ${v.table} was run with`] });
+    saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
+  }
+
   async function pqWaterChosen(ev) {
     const file = ev.target.files && ev.target.files[0];
     ev.target.value = '';
@@ -13965,6 +14274,30 @@ END
     'rtm:pqInvSettings': () => { pqInvRead(); pqInvRender(); infoRefresh(); },
     'rtm:pqInverse': () => { pqInverse(); },
     'rtm:pqInvCsv': () => pqInvCsv(),
+    // A batch over a table of waters.
+    'rtm:pqBatchOpen': () => $('rtmPqBatchFile').click(),
+    'rtm:pqBatchFileChosen': (ev) => { pqBatchFileChosen(ev); },
+    'rtm:pqBatchSheet': (ev, el) => {
+      const t = pq.batchTable;
+      if (!t || !t.book) return;
+      pq.batchTable = batchTableOf(batchSheetRows(t.book, el.value), t.name, { book: t.book, sheets: t.sheets, sheet: el.value });
+      // The start the page wrote, not yet touched, follows the sheet.
+      if (pq.batchStarter && pq.batch.text === pq.batchStarter && pq.batchTable.columns.length) {
+        pq.batch.text = batchStarter(pq.batchTable.columns);
+        pq.batchStarter = pq.batch.text;
+        pqSave();
+      }
+      pqBatchRender();
+    },
+    'rtm:pqBatchSettings': () => {
+      pq.batch.text = $('rtmPqBatchText').value;
+      pq.batch.rows = $('rtmPqBatchRows').value.trim();
+      pqSave();
+      pqBatchRender();
+      infoRefresh();
+    },
+    'rtm:pqBatchRun': () => { pqBatchRun(); },
+    'rtm:pqBatchSave': (ev, el) => { pqBatchSave(el.dataset.as); },
   });
 
   /*

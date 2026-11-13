@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111s">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111t">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1061,6 +1061,45 @@
           </div>
           <div class="plot" id="rtmChartPqInv" hidden></div>
           <div class="rtm-pq-summary" id="rtmPqInvOut" hidden></div>
+          <!-- A batch: one PHREEQC input over the rows of a table of waters, {name} for a row's value (rtm-ui.js pqBatchRun). -->
+          <div class="rtm-setup rtm-pq-batch" id="rtmPqBatchBar">
+            <div class="rtm-setup-body">
+          <div class="rtm-toolbar">
+            <span class="rtm-dg-axis">A batch over a table of waters
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchOpen">Open a table…</button>
+              <input type="file" id="rtmPqBatchFile" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden data-on-change="rtm:pqBatchFileChosen">
+            </span>
+            <label id="rtmPqBatchSheetWrap" hidden>Sheet
+              <select id="rtmPqBatchSheet" data-on-change="rtm:pqBatchSheet"></select>
+            </label>
+            <label>Rows
+              <input type="text" id="rtmPqBatchRows" placeholder="all" style="width:84px" data-on-change="rtm:pqBatchSettings">
+            </label>
+          </div>
+          <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchTable"></p>
+          <textarea id="rtmPqBatchText" class="rtm-pq-water" spellcheck="false" wrap="off" rows="9"
+            aria-label="PHREEQC input, {name} for the row's value in the column of that name"
+            placeholder="PHREEQC input, {name} for the row's value in the column of that name:&#10;SOLUTION 1&#10; units mol/kgw&#10; pH {pH}&#10; Na {Na}&#10; Cl {Cl}&#10;SELECTED_OUTPUT 1&#10; -reset false&#10; -pH true&#10; -ionic_strength true"
+            data-on-change="rtm:pqBatchSettings"></textarea>
+            </div>
+            <div class="rtm-setup-go">
+              <button type="button" class="rtm-btn small" id="rtmPqBatchGo" data-on-click="rtm:pqBatchRun">Run every row</button>
+              <span class="kvot-info-slot" data-info-key="pq:batch"></span>
+            </div>
+          </div>
+          <div class="rtm-toolbar" id="rtmPqBatchShow" hidden>
+            <span class="rtm-muted" id="rtmPqBatchNote"></span>
+            <span class="rtm-end">
+              <div class="rtm-export">
+                <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqBatch" aria-haspopup="menu">Export</button>
+                <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="csv" data-hint="every row">CSV</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="xlsx" data-hint="every row, as a workbook">Excel</button>
+                </div>
+              </div>
+            </span>
+          </div>
+          <div class="rtm-fit-result rtm-pq-batch-out" id="rtmPqBatchOut" hidden></div>
         </section>
 
         <section class="rtm-pane" data-pane="jacobian" hidden>
@@ -1105,8 +1144,9 @@
             activity coefficients, the minerals, exchangers, surfaces and gases — and its own solver,
             the flow of the water and the chemistry solved together as one set of equations, whose
             matrix the Jacobian tab draws. PHREEQC is never called while a run goes on.</p>
-          <p>PHREEQC itself, the U.S. Geological Survey's program, runs in the page too, at two points
-            either side of a run, with the model text between them:</p>
+          <p>PHREEQC itself, the U.S. Geological Survey's program, runs in the page too: at two points
+            either side of a run, with the model text between them, and on its own over a table of
+            waters:</p>
           <ul>
             <li>Before a run, <em>From PHREEQC…</em> on the Model tab. A water described in PHREEQC's
               own input is worked out by PHREEQC with its database, and <em>Write the model</em> copies
@@ -1118,12 +1158,14 @@
               which speciates them with its database: a second reckoning of the pH and of the saturation
               indices, which minerals would precipitate where and when, and inverse models between
               waters of the run.</li>
+            <li>Without a run, a batch on the <em>PHREEQC</em> tab: one PHREEQC input of your own run
+              for every row of a table of waters, and what it gives gathered into a table.</li>
           </ul>
           <p>The page comes with one database, <code>phreeqc.dat</code>. <em>Database</em>, in the panel
             and on the PHREEQC tab alike, opens any other from your own files — <code>llnl.dat</code>,
             <code>wateq4f.dat</code>, <code>minteq.v4.dat</code>, <code>sit.dat</code>,
             <code>pitzer.dat</code> or a project's own — for the visit. A database matters only at those
-            two points. A model written from <code>llnl.dat</code> carries <code>llnl.dat</code>'s
+            points. A model written from <code>llnl.dat</code> carries <code>llnl.dat</code>'s
             constants in its text, and choosing another database afterwards does not change it: write
             the model again for that. Read a run through PHREEQC with the database its model was
             written from; with another, what differs is the databases, not the run. <em>PHREEQC in the
@@ -4068,6 +4110,29 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             the host, the ions in the water, CaX2 on the sites and the pH to 3×10<sup>−9</sup>, NaX, a
             trace beside the calcium, to 10<sup>−7</sup>.</p>
 
+          <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
+          <p>The last box on the <em>PHREEQC</em> tab runs one PHREEQC input for every row of a table:
+            a CSV file, or a sheet of an Excel workbook, a water a row and the names of its columns in
+            the first row with anything in it. Each <code>{name}</code> in the input is the row's value
+            in the column of that name — <code>{pH}</code>, or <code>{[Ca]tot (m)}</code> where that is
+            the column's name — and the input is PHREEQC's own: a <code>SOLUTION</code> and whatever
+            PHREEQC should do with it, <code>EQUILIBRIUM_PHASES</code> and <code>REACTION</code>, with
+            <code>PHASES</code>, <code>SOLUTION_SPECIES</code> and <code>NAMED_EXPRESSIONS</code> of its
+            own, run with the database the tab has chosen. Its <code>SELECTED_OUTPUT</code> says what to
+            keep of each row's run, and the last row it gives is kept. A table opened with the box empty
+            starts the input: a <code>SOLUTION</code> with <code>pH</code> where the table has a column so
+            named, and every other column under it, commented, to take or leave: a <code>{name}</code>
+            after a <code>#</code> is in a comment, and not asked for. <em>Rows</em> runs a
+            few, <code>1-100, 205</code>, before the rest.</p>
+          <p>Every row runs on a clean slate — <code>DELETE -all</code> first — so that nothing a row
+            before it saved is there for it. A row PHREEQC refuses keeps the first line of what PHREEQC
+            said, and the rest go on. The rows go to PHREEQC in parts of 200, so that the progress is the
+            rows done and <em>Stop</em> ends it once the part running is done, every row done kept. What
+            comes back is a table, its first 100 rows shown; <em>Export</em> saves every row, as CSV or
+            Excel, each with the table's values the input asked for, what PHREEQC gave, and what it said
+            where it refused, and the workbook has the input on a sheet of its own. The table is read in
+            the page for the visit, and is never stored or sent anywhere.</p>
+
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
             3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,
@@ -4248,6 +4313,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zt"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zv"></script>
 </body>
 </html>

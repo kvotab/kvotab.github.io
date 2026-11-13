@@ -781,6 +781,29 @@ async function asThePage(createPhreeqc, acidText) {
   check('the database as a script is the file, character for character', sandbox.PHREEQC_DAT === dbText,
     `${sandbox.PHREEQC_DAT.length} characters`);
   check('... and is plain ASCII', !/[^\x00-\x7f]/.test(fs.readFileSync(path.join(vendors, 'phreeqc-dat.js'), 'latin1')));
+
+  /*
+    A batch over a table (runBatch): one input, each {name} the row's value in that column, run for every row. Three
+    waters of NaCl, the second's pH no number: the first and third as given, their ionic strength the salt's, the second
+    refused with PHREEQC's own words and the third run none the less. A row on a clean slate: one that uses the solution
+    the row before saved is refused, the solution gone. Selected output 2 read where the input defines it.
+  */
+  const nacl = 'SOLUTION 1\n units mmol/kgw\n pH {pH}\n Na {Na}\n Cl {Cl}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\n -ionic_strength true\n';
+  const b1 = await ask({ id: 5, type: 'batch', database: null, template: nacl, columns: ['pH', 'Na', 'Cl'], user: 1,
+    rows: [['7.0', '10', '10'], ['x', '1', '1'], ['8.5', '1', '1']] });
+  check('a batch over a table: each row\'s pH as given and the salt\'s ionic strength, a row PHREEQC refuses said in its words and '
+    + 'the next run none the less',
+  b1.type === 'done' && b1.head.join() === 'pH,mu' && b1.rows[0][0] === 7 && Math.abs(b1.rows[0][1] / 0.01 - 1) < 1e-4
+    && b1.rows[1] === null && b1.errors.length === 1 && b1.errors[0][0] === 1 && /^ERROR: Concentration data error for ph/.test(b1.errors[0][1])
+    && b1.rows[2][0] === 8.5 && Math.abs(b1.rows[2][1] / 0.001 - 1) < 5e-3,
+  b1.type === 'done' ? JSON.stringify([b1.head, b1.rows, b1.errors]) : b1.error);
+  const b2 = await ask({ id: 6, type: 'batch', database: null, columns: ['n', 'use', 'pH'], user: 2,
+    template: 'SOLUTION {n}\n pH {pH}\nEND\nUSE solution {use}\nREACTION 1\n NaCl 1\n 1e-6 moles\nSELECTED_OUTPUT 2\n -reset false\n -pH true\nEND\n',
+    rows: [['7', '7', '8'], ['3', '7', '9']] });
+  check('  a row on a clean slate: the solution the row before made is gone; selected output 2 read',
+    b2.type === 'done' && !!b2.rows[0] && Math.abs(b2.rows[0][0] - 8) < 0.01 && b2.rows[1] === null
+      && /Solution 7 not found/.test((b2.errors[0] || [])[1] || ''),
+    b2.type === 'done' ? JSON.stringify([b2.rows, b2.errors]) : b2.error);
   // The same handler again, for the listing beside PHREEQC: another engine in this process is one too many for its memory.
   return ask;
 }

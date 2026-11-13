@@ -1085,6 +1085,94 @@ async def main():
                                    " document.getElementById('rtmPqTime').options.length] : null; })()")
             check('against distance: each cell at its centre down the column, at one of the times looked at',
                   across, [[0.005, 0.015, 0.025, 0.035, 0.045], True, True, 4])
+            # ---- a batch over a table of waters ----
+            # A CSV of our own, semicolons and decimal commas, made in the page and handed to the file input: three waters,
+            # the second with no number for its pH. Opened with the box empty, the input starts: a SOLUTION with pH, Na and
+            # Cl under it, commented. Run with them in: each row's pH as given and its ionic strength the salt's, the second
+            # refused with what PHREEQC said; Rows 1, 3 runs those two. A name the table has not, and an input with no
+            # SELECTED_OUTPUT, are said before anything runs. An Excel workbook of two sheets, made by the page's own writer:
+            # the second chosen, its rows run. The CSV saved: the table's values the input asked for, PHREEQC's, what it said.
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            FEED = """(async (name, text, sheets) => { const input = document.getElementById('rtmPqBatchFile');
+              let data = text;
+              if (sheets) { const x = new XlsxWriter(name); for (const [nm, head, rows] of sheets) x.writeData(rows, nm, { header: head });
+                data = await x.save(); }
+              const dt = new DataTransfer(); dt.items.add(new File([data], name)); input.files = dt.files;
+              input.dispatchEvent(new Event('change', { bubbles: true })); })(%s, %s, %s)"""
+            BATCH_STATUS = "document.getElementById('rtmStatus').textContent"
+            await page.ev(FEED % (json.dumps('waters.csv'), json.dumps('pH;Na;Cl\n7,0;10;10\nx;1;1\n8,5;1;2\n'), 'null'))
+            opened = await settle(page, f"{BATCH_STATUS}.startsWith('waters.csv: 3 rows and 3 columns')", True, tries=40)
+            started = await page.ev("document.getElementById('rtmPqBatchText').value")
+            check('a batch over a table: a CSV of three waters opened, semicolons and decimal commas read; the input started from it',
+                  [opened, await page.ev("document.getElementById('rtmPqBatchTable').textContent"),
+                   started.split('\n')[1:6] if isinstance(started, str) else started],
+                  [True, 'waters.csv: 3 rows; columns pH, Na, Cl.', ['SOLUTION 1', ' units mol/kgw', ' pH {pH}', '# Na {Na}', '# Cl {Cl}']])
+            SET_INPUT = """((text, rows) => { const ta = document.getElementById('rtmPqBatchText'); ta.value = text;
+              ta.dispatchEvent(new Event('change', { bubbles: true }));
+              const r = document.getElementById('rtmPqBatchRows'); r.value = rows; r.dispatchEvent(new Event('change', { bubbles: true })); })(%s, %s)"""
+            NACL = ('SOLUTION 1\n units mmol/kgw\n pH {pH}\n Na {Na}\n Cl {Cl}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\n'
+                    ' -ionic_strength true\nEND\n')
+            BATCH_ROWS = """[...document.querySelectorAll('#rtmPqBatchOut tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent))"""
+
+            async def batch(text, rows=''):
+                await page.ev(SET_INPUT % (json.dumps(text), json.dumps(rows)))
+                await page.ev("document.getElementById('rtmStatus').textContent = ''")
+                await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
+                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Rows:|^Open a table/.test(s) ? s : null; }})()",
+                                   tries=120, pause=0.25)
+
+            said = await batch(started)
+            check('  the input as started runs as it is: pure water at each row\'s pH, the row with no number refused',
+                  [said.startswith('3 of 3 rows run through PHREEQC') and said.endswith('; 1 refused by PHREEQC, each with what it said.')
+                   if isinstance(said, str) else said, [r[:2] for r in await page.ev(BATCH_ROWS)]],
+                  [True, [['1', '7'], ['2', 'ERROR: Concentration data error for ph in solution input.'], ['3', '8.5']]])
+            said = await batch(NACL)
+            rows = await page.ev(BATCH_ROWS)
+            check('  run: each row\'s pH as given and its ionic strength the salt\'s; the second refused with what PHREEQC said',
+                  [said, rows, await page.ev("document.getElementById('rtmPqBatchNote').textContent"),
+                   await page.ev("[...document.querySelectorAll('#rtmPqBatchOut thead th')].map((th) => th.textContent)")],
+                  [said if isinstance(said, str) and said.startswith('3 of 3 rows run through PHREEQC') and 'with phreeqc.dat' in said
+                   and said.endswith('; 1 refused by PHREEQC, each with what it said.') else 'a status of 3 rows, 1 refused',
+                   [['1', '7', '0.01'], ['2', 'ERROR: Concentration data error for ph in solution input.'], ['3', '8.5', '0.001502']],
+                   '3 rows of waters.csv; 2 columns of selected output; 1 refused.', ['row', 'pH', 'mu']])
+            said = await batch(NACL, '1, 3')
+            check('  Rows 1, 3: those two run, the button saying so',
+                  [said.startswith('2 of 2 rows run through PHREEQC') if isinstance(said, str) else said,
+                   [r[0] for r in await page.ev(BATCH_ROWS)], await page.ev("document.getElementById('rtmPqBatchGo').textContent")],
+                  [True, ['1', '3'], 'Run the rows asked for'])
+            unknown = await batch(NACL.replace('{Cl}', '{K}'), '')
+            no_output = await batch(NACL.split('SELECTED_OUTPUT')[0], '')
+            check('  a name the table has not, and an input with no SELECTED_OUTPUT, said before anything runs',
+                  [unknown, no_output],
+                  ['The input asks for {K}, but the table has no column so named; its columns: pH, Na, Cl.',
+                   "The input has no SELECTED_OUTPUT: say there what to keep of each row's run, -totals, -pH and the like, or a USER_PUNCH."])
+            await page.ev(FEED % (json.dumps('book.xlsx'), 'null', json.dumps(
+                [['notes', ['about'], [['two waters of salt']]], ['waters', ['pH', 'Na', 'Cl'], [[7.5, 5, 5], [8, 1, 1]]]])))
+            await settle(page, f"{BATCH_STATUS}.startsWith('book.xlsx, sheet notes:')", True, tries=60)
+            await page.ev("(() => { const s = document.getElementById('rtmPqBatchSheet'); s.value = 'waters';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await asyncio.sleep(0.3)
+            described = await page.ev("document.getElementById('rtmPqBatchTable').textContent")
+            said = await batch(NACL, '')
+            check('  an Excel workbook of two sheets: the second chosen, its rows run',
+                  [described, said.startswith('2 of 2 rows run through PHREEQC') if isinstance(said, str) else said,
+                   [r[:2] for r in await page.ev(BATCH_ROWS)]],
+                  ['book.xlsx, sheet waters: 2 rows; columns pH, Na, Cl.', True, [['1', '7.5'], ['2', '8']]])
+            await page.ev("""(() => {
+              window.__csv = null;
+              const make = URL.createObjectURL, click = HTMLAnchorElement.prototype.click;
+              URL.createObjectURL = (b) => { window.__csv = b; return 'blob:caught'; };
+              HTMLAnchorElement.prototype.click = function () {};
+              window.__restore = () => { URL.createObjectURL = make; HTMLAnchorElement.prototype.click = click; };
+              document.querySelector('[data-on-click="rtm:pqBatchSave"][data-as="csv"]').click();
+            })()""")
+            await settle(page, "!!window.__csv", True, tries=40, pause=0.1)
+            await page.ev("window.__restore()")
+            batch_csv = await page.ev("window.__csv ? window.__csv.text() : null")
+            check('  saved as CSV: the table\'s values the input asked for, PHREEQC\'s pH apart from the table\'s, what it said',
+                  batch_csv.strip().split('\n')[:2] if isinstance(batch_csv, str) else batch_csv,
+                  ['row,pH,Na,Cl,"pH, PHREEQC",mu,refused', batch_csv.strip().split('\n')[1] if isinstance(batch_csv, str)
+                   and batch_csv.strip().split('\n')[1].startswith('1,7.5,5,5,7.5,0.005') else '1,7.5,5,5,7.5,0.005...'])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

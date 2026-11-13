@@ -205,6 +205,54 @@
     }
   }
 
+  /*
+    A BATCH: one PHREEQC input over the rows of a table. Each {name} in the
+    input is the row's value in the column of that name. A row runs on a
+    clean slate -- DELETE -all first, so that nothing a row before it saved
+    is there for it -- and of selected output `user` the last row it gives
+    is kept, by its headings, which the rows share as they come. What the
+    input defines PHREEQC keeps from one run to the next -- its SELECTED_OUTPUT
+    among them, which prints from the input's first calculation on once it
+    is there -- so the input is run once with the first row before the rows,
+    and what it gives let go: every row then runs as the rest do. A row
+    PHREEQC refuses keeps the first line of what it said, and the rest go
+    on. -> { head, rows: [values or null], errors: [[index, text]] }
+  */
+  function runBatch(engine, { template, columns, rows, user }, onProgress) {
+    const at = new Map((columns || []).map((c, k) => [c, k]));
+    const head = [];
+    const seen = new Map();
+    const out = [];
+    const errors = [];
+    let last = Date.now();
+    const fill = (row) => String(template).replace(/\{([^{}\n]+)\}/g, (m, name) => (at.has(name) ? String(row[at.get(name)] ?? '') : m));
+    const clean = 'DELETE\n -all\nEND\n';
+    if (rows && rows.length) {
+      try { engine.run(`${clean}${fill(rows[0])}\nEND\n`, user || 1); } catch (e) { /* said when the row itself runs */ }
+    }
+    (rows || []).forEach((row, i) => {
+      const text = fill(row);
+      try {
+        const got = engine.run(`${clean}${text}\nEND\n`, user || 1);
+        if (got.length < 2) throw new Error(`selected output ${user || 1} has no row: the input asks PHREEQC for nothing it prints there`);
+        const rec = [];
+        got[0].forEach((name, k) => {
+          const key = String(name);
+          if (!seen.has(key)) { seen.set(key, head.length); head.push(key); }
+          rec[seen.get(key)] = got[got.length - 1][k];
+        });
+        out.push(rec);
+      } catch (e) {
+        out.push(null);
+        const said = String((e && e.message) || e).split('\n').map((l) => l.trim()).find(Boolean);
+        errors.push([i, said || 'PHREEQC gave no reason']);
+      }
+      const now = Date.now();
+      if (onProgress && now - last > 200) { last = now; onProgress(i + 1, rows.length); }
+    });
+    return { head, rows: out.map((r) => (r ? Array.from({ length: head.length }, (_, k) => (r[k] === undefined ? null : r[k])) : null)), errors };
+  }
+
   /**
    * The page's requests, answered with one engine started on the first and
    * kept. Each loads its database afresh, so nothing one input defines -- a
@@ -221,6 +269,8 @@
    *     -> {type: 'done', inverse, version, database}
    *   {id, type: 'listing', database, water, run, modelText, options: {only: [one water]}}
    *     -> {type: 'done', species, phases, mu, pH, aw, tc, pe, percent, counted, skipped, unmapped, version, database}
+   *   {id, type: 'batch', database, template, columns, rows, user}
+   *     -> {type: 'progress', done, total} ..., then {type: 'done', head, rows, errors, version, database}
    *   anything failing -> {type: 'error', error}
    *
    * `database` null means the built-in one, handed in as defaults.builtin.
@@ -276,6 +326,11 @@
             counted: view.counted, skipped: view.skipped, unmapped: view.unmapped });
           return;
         }
+        if (msg.type === 'batch') {
+          const res = runBatch(engine, msg, (done, total) => post({ id: msg.id, type: 'progress', done, total }));
+          answer({ type: 'done', ...res, version: engine.version, database: database.name });
+          return;
+        }
         if (msg.type === 'inverse') {
           const view = P.viewRun({
             engine, database, run: msg.run, modelText: msg.modelText, water: msg.water, ...(msg.options || {}),
@@ -290,5 +345,5 @@
     };
   }
 
-  return { create, handler, compact };
+  return { create, handler, compact, runBatch };
 }));

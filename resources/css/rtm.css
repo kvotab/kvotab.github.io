@@ -1047,6 +1047,10 @@
 .rtm-pq-summary { margin: 4px 0 12px; }
 /* Inverse models, below the look through PHREEQC. */
 .rtm-pq-inv { margin-top: 22px; }
+/* A batch over a table of waters: a box of its own under the inverse models, what it found under it. */
+.rtm-pq-batch { margin-top: 22px; }
+.rtm-pq-batch-table { margin: 0; }
+.rtm-pq-batch-out td.rtm-pq-batch-error { color: var(--text-primary); border-left: 3px solid var(--color-kvot-bright); padding-left: 6px; }
 .rtm-pq-models { font-size: 12px; margin: 4px 0 12px; }
 .rtm-pq-models td { vertical-align: top; }
 .rtm-pq-stale {
