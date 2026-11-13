@@ -1424,6 +1424,37 @@ async def main():
                    'Draws: a whole number from 1, as 10.'])
             await field('rtmPqBatchUncertain', '')
             await field('rtmPqBatchDraws', '')
+            # ---- several PHREEQCs at once ----
+            # Thirty waters, each drawn twenty times: 600 runs in three parts. The browser saying it has two cores, one
+            # PHREEQC runs the parts one after another; saying eight, three run at once, and the status says so. What
+            # comes back is the same to the last character: every water's twenty draws in turn, each run's sodium the
+            # value it drew.
+            await page.ev(FEED % (json.dumps('thirty.csv'), json.dumps('pH\n' + '7\n' * 30), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('thirty.csv: 30 rows and 1 column')", True, tries=40)
+            await field('rtmPqBatchUncertain', 'dNa uniform 1 2')
+            await field('rtmPqBatchDraws', '20')
+            await field('rtmPqBatchSeed', '3')
+            CORES = "Object.defineProperty(navigator, 'hardwareConcurrency', { value: %d, configurable: true })"
+            await page.ev(CORES % 2)
+            alone = await batch(NA_IN)
+            alone_csv = await saved_csv('#rtmPqBatchCsvItem')
+            await page.ev(CORES % 8)
+            at_once = await batch(NA_IN)
+            at_once_csv = await saved_csv('#rtmPqBatchCsvItem')
+            await page.ev("delete navigator.hardwareConcurrency")
+            lines = [ln.split(',') for ln in at_once_csv[1:]] if isinstance(at_once_csv, list) else []
+            check('several PHREEQCs at once: 600 runs in three parts, one PHREEQC and three at once, the same to the last character',
+                  [alone.startswith('30 of 30 rows, 20 draws each, run through PHREEQC') and ' at a time' not in alone
+                   if isinstance(alone, str) else alone,
+                   at_once.startswith('30 of 30 rows, 20 draws each, run through PHREEQC') and ', 3 at a time, in ' in at_once
+                   if isinstance(at_once, str) else at_once,
+                   alone_csv == at_once_csv, len(lines),
+                   [(int(r[0]), int(r[2])) for r in lines] == [(w, d) for w in range(1, 31) for d in range(1, 21)],
+                   all(abs(float(r[4]) * 1000 / float(r[3]) - 1) < 1e-9 for r in lines) if lines else False],
+                  [True, True, True, 600, True, True])
+            await field('rtmPqBatchUncertain', '')
+            await field('rtmPqBatchDraws', '')
+            await field('rtmPqBatchSeed', '')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

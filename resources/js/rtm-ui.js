@@ -11479,7 +11479,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'What comes back', list: [
           'Every row runs on a clean slate (`DELETE -all` first), so nothing one row saved is there for the next; a row PHREEQC refuses keeps the first line of what it said, and the rest go on.',
-          'The first 100 rows as a table; **Stop** ends it once the part running is done, keeping every row done.',
+          'The first 100 rows as a table; **Stop** ends it once the parts running are done, keeping every part done.',
+          'The parts run on as many copies of PHREEQC at once as the computer has cores to spare, at most eight, the status saying how many; what comes back is the same however many, only sooner.',
         ] },
         { heading: 'Several solids', list: [
           'With solids listed, `{solid}` in the input is each in turn, as `{solid} 0 10` under `EQUILIBRIUM_PHASES`: each row runs once for each solid; a column of the table named solid is then not used.',
@@ -12791,18 +12792,58 @@ END
       pq.kind = 'worker';
       pq.worker.onmessage = (ev) => pqReceive(ev.data);
       pq.worker.onerror = (ev) => {
-        // A worker that could not load its scripts. Whatever was waiting is
-        // told so; from here on PHREEQC runs on the page.
-        const why = (ev && ev.message) || 'its scripts did not load';
+        // A worker that could not load its scripts. Whatever was waiting on it
+        // is told so; from here on PHREEQC runs on the page.
+        const w = pq.worker;
         pq.worker = null;
         pq.kind = 'inline';
-        for (const entry of pq.pending.values()) entry.reject(new Error(`PHREEQC's worker stopped: ${why}`));
-        pq.pending.clear();
+        pqWorkerFailed(w, (ev && ev.message) || 'its scripts did not load');
       };
     } catch (e) {
       pq.worker = null;
       pq.kind = 'inline';
     }
+  }
+
+  /** Each request a worker that stopped had in hand is told so. */
+  function pqWorkerFailed(w, why) {
+    for (const [id, entry] of pq.pending) {
+      if (entry.worker === w) { pq.pending.delete(id); entry.reject(new Error(`PHREEQC's worker stopped: ${why}`)); }
+    }
+  }
+
+  /*
+    MORE PHREEQCS AT ONCE, for a batch: PHREEQC's own worker and copies of it,
+    as many as the cores the browser reports less one for the page, at most
+    eight -- two where it says it has under 4 GB -- and no more than the batch
+    has parts. The copies are started for the batch and ended with it. Each
+    takes the next part when it is done with one, the database sent with every
+    part, so that a part runs as it would alone.
+  */
+  const PQ_LANES_MAX = 8;
+  function pqLanes() {
+    const nav = typeof navigator !== 'undefined' ? navigator : {};
+    const cores = nav.hardwareConcurrency || 2;
+    return Math.max(1, Math.min(nav.deviceMemory && nav.deviceMemory < 4 ? 2 : PQ_LANES_MAX, cores - 1));
+  }
+  /** A copy of PHREEQC's worker, its replies read as the worker's are; null where one cannot be started. */
+  function pqExtraWorker() {
+    try {
+      const w = new Worker(PQ_WORKER_URL);
+      w.onmessage = (ev) => pqReceive(ev.data);
+      w.onerror = (ev) => pqWorkerFailed(w, (ev && ev.message) || 'its scripts did not load');
+      return w;
+    } catch (e) {
+      return null;
+    }
+  }
+  /** A request to the worker given. */
+  function pqRequestOn(worker, message, onProgress) {
+    const id = pq.nextId++;
+    return new Promise((resolve, reject) => {
+      pq.pending.set(id, { resolve, reject, onProgress, worker });
+      worker.postMessage({ ...message, id });
+    });
   }
 
   function pqReceive(msg) {
@@ -12836,9 +12877,10 @@ END
     const id = pq.nextId++;
     const full = { ...message, id };
     if (pq.worker) {
+      const worker = pq.worker;
       return new Promise((resolve, reject) => {
-        pq.pending.set(id, { resolve, reject, onProgress });
-        pq.worker.postMessage(full);
+        pq.pending.set(id, { resolve, reject, onProgress, worker });
+        worker.postMessage(full);
       });
     }
     const handle = await pqInline();
@@ -13647,8 +13689,9 @@ END
     slate in PHREEQC's worker (RtmPhreeqcEngine's batch), with the database
     the tab has chosen, and of the selected output the input defines the
     last row it gives is kept; a row PHREEQC refuses keeps what it said and
-    the rest go on. The rows are sent in parts, so that the progress is the
-    rows done and Stop keeps every part done. What it found is a table, the
+    the rest go on. The rows are sent in parts, run by as many PHREEQCs at
+    once as the cores allow and put back in their order, so that the progress
+    is the runs done and Stop keeps every part done. What it found is a table, the
     first rows shown and every row saved as CSV or Excel. With solids listed,
     each row runs once for each, {solid} the solid, a row's runs in one part,
     and what is shown is each row's run with the lowest value in a column of
@@ -13945,7 +13988,7 @@ END
   }
 
   async function pqBatchRun() {
-    if (pq.batchRunning) { pq.batchStop = true; setStatus('Stopping once the part running now is done…'); return; }
+    if (pq.batchRunning) { pq.batchStop = true; setStatus('Stopping once the parts running now are done…'); return; }
     if (pq.busy) return;
     const t = pq.batchTable;
     const text = pq.batch.text;
@@ -14007,11 +14050,35 @@ END
     let version = '';
     let database = '';
     let stopped = false;
+    // The parts, run by as many PHREEQCs at once as pqLanes allows -- PHREEQC's own worker and copies of it started for
+    // the batch -- or one after another on the page where there are no workers; put back in their order however they end.
+    const parts = [];
+    for (let p = 0; p < units.length; p += perPart) parts.push(units.slice(p, p + perPart));
+    pqStart();
+    const lanes = pq.worker ? [pq.worker] : [null];
+    const extra = [];
+    if (pq.worker) {
+      for (let i = 1; i < Math.min(pqLanes(), parts.length); i++) {
+        const w = pqExtraWorker();
+        if (!w) break;
+        extra.push(w);
+        lanes.push(w);
+      }
+    }
+    const together = lanes.length > 1 ? `, ${lanes.length} at a time` : '';
     try {
-      for (let p = 0; p < units.length; p += perPart) {
-        if (pq.batchStop) { stopped = true; break; }
+      const results = new Array(parts.length);
+      const doneIn = new Array(parts.length).fill(0);
+      let next = 0;
+      let failure = null;
+      const progress = () => {
+        const n = doneIn.reduce((a, x) => a + x, 0);
+        setProgress(Math.min(1, n / total));
+        setStatus(`${doing(n)} through PHREEQC${together}…`);
+      };
+      const runPart = async (i, worker) => {
         const jobs = [];
-        for (const un of units.slice(p, p + perPart)) {
+        for (const un of parts[i]) {
           let values = null;
           if (draws) {
             const rand = batchRandom(seed, un.row, un.draw);
@@ -14019,13 +14086,26 @@ END
           }
           for (const solid of each) jobs.push({ ...un, drawn: values, solid });
         }
-        const before = runs.length;
-        const reply = await pqRequest({ type: 'batch', database: pqDatabase(), template: text, columns,
-          rows: jobs.map((j) => [...t.rows[j.row], ...(j.drawn ? j.drawn.map(String) : []), ...(j.solid === null ? [] : [j.solid])]),
-          user }, (msg) => {
-          setProgress((before + msg.done) / total);
-          setStatus(`${doing(before + msg.done)} through PHREEQC…`);
-        });
+        const message = { type: 'batch', database: pqDatabase(), template: text, columns, user,
+          rows: jobs.map((j) => [...t.rows[j.row], ...(j.drawn ? j.drawn.map(String) : []), ...(j.solid === null ? [] : [j.solid])]) };
+        const onProgress = (msg) => { doneIn[i] = msg.done; progress(); };
+        const reply = worker ? await pqRequestOn(worker, message, onProgress) : await pqRequest(message, onProgress);
+        doneIn[i] = jobs.length;
+        progress();
+        results[i] = { jobs, reply };
+      };
+      // Each lane takes the next part when it is done with one; Stop, or a part that fails, ends them all once their parts are in.
+      const lane = async (worker) => {
+        while (!failure && !pq.batchStop && next < parts.length) {
+          const i = next++;
+          try { await runPart(i, worker); } catch (e) { failure = failure || e; }
+        }
+      };
+      await Promise.all(lanes.map(lane));
+      if (failure) throw failure;
+      stopped = next < parts.length;
+      for (let i = 0; i < next; i++) {
+        const { jobs, reply } = results[i];
         version = reply.version;
         database = reply.database;
         const map = reply.head.map((h) => {
@@ -14039,7 +14119,6 @@ END
           const j = jobs[k];
           runs.push({ row: j.row, draw: j.draw, drawn: j.drawn, solid: j.solid, values, said: r ? null : (said.get(k) || 'refused') });
         });
-        setProgress(Math.min(1, runs.length / total));
       }
       const seconds = (Date.now() - started) / 1000;
       pq.batchResult = { head, runs, names, table: t.name, sheet: t.sheet || null, asked: asked.length,
@@ -14050,12 +14129,13 @@ END
         solids.length ? `each ${draws ? 'draw ' : ''}with ${solids.length} solid${solids.length === 1 ? '' : 's'}` : ''].filter(Boolean);
       setStatus(`${done.toLocaleString()} of ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'}`
         + `${per.map((x) => `, ${x}`).join('')}${per.length ? ',' : ''} run through PHREEQC `
-        + `${version} with ${database} in ${seconds.toFixed(1)} s${stopped ? ', then stopped' : ''}`
+        + `${version} with ${database}${together ? `${together},` : ''} in ${seconds.toFixed(1)} s${stopped ? ', then stopped' : ''}`
         + `${bad ? `; ${bad.toLocaleString()}${several ? ` run${bad === 1 ? '' : 's'}` : ''} refused by PHREEQC, each with what it said` : ''}.`,
       bad || stopped ? 'warn' : 'ok');
     } catch (e) {
       setStatus(`The batch could not be run: ${e.message}`, 'error');
     } finally {
+      for (const w of extra) { pqWorkerFailed(w, 'the batch ended'); w.terminate(); }
       pq.batchRunning = false;
       pq.batchStop = false;
       setProgress(null);

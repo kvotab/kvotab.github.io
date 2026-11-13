@@ -4190,9 +4190,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             their own.</p>
           <p>Every row runs on a clean slate — <code>DELETE -all</code> first — so that nothing a row
             before it saved is there for it. A row PHREEQC refuses keeps the first line of what PHREEQC
-            said, and the rest go on. The rows go to PHREEQC in parts of up to 200 runs, a row with all
-            its solids in one, so that the progress is the runs done and <em>Stop</em> ends it once the
-            part running is done, every row done kept. What
+            said, and the rest go on. The rows go to PHREEQC in parts of up to 200 runs, a draw with all
+            its solids in one, and as many copies of PHREEQC run parts at once as the computer has cores
+            to spare, at most eight, each part as it would run alone and all put back in their order:
+            what comes back is the same however many there are, only sooner. The progress is the runs
+            done, and <em>Stop</em> ends it once the parts running are done, every part done kept. What
             comes back is a table, its first 100 rows shown; <em>Export</em> saves every row, as CSV or
             Excel, each with the table's values the input asked for, what PHREEQC gave, and what it said
             where it refused, and the workbook has the input on a sheet of its own. The table is read in
@@ -4378,6 +4380,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113c"></script>
 </body>
 </html>
