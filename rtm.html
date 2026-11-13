@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111w">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261113a">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1081,6 +1081,20 @@
               <input type="text" id="rtmPqBatchSolids" class="rtm-pq-solids" placeholder="none, or Calcite, Gypsum" data-on-change="rtm:pqBatchSettings">
             </label>
             <span class="rtm-muted">each in turn as {solid} in the input, the lowest kept for each row</span>
+          </div>
+          <div class="rtm-toolbar">
+            <label>Uncertain
+              <input type="text" id="rtmPqBatchUncertain" class="rtm-pq-solids" placeholder="none, or dU normal 0 0.5" data-on-change="rtm:pqBatchSettings">
+            </label>
+            <span class="rtm-pq-draws" id="rtmPqBatchDrawsWrap" hidden>
+              <label>Draws
+                <input type="text" id="rtmPqBatchDraws" placeholder="10" style="width:48px" data-on-change="rtm:pqBatchSettings">
+              </label>
+              <label>Seed
+                <input type="text" id="rtmPqBatchSeed" placeholder="1" style="width:72px" data-on-change="rtm:pqBatchSettings">
+              </label>
+            </span>
+            <span class="rtm-muted">each a {name} in the input, drawn afresh for each draw of a row</span>
           </div>
           <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchTable"></p>
           <textarea id="rtmPqBatchText" class="rtm-pq-water" spellcheck="false" wrap="off" rows="9"
@@ -4152,9 +4166,21 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             how many rows each solid was the lowest, how many of its runs PHREEQC refused, and what it
             said first; a row with a solid refused names it, its lowest being of the others.
             <em>Export</em> saves the lowest for each row, every run, or both in a workbook.</p>
+          <p>The constants of a database are known only so well. To see what that does, write under
+            <em>Uncertain</em> a value to draw at random, a name, how it varies and its numbers:
+            <code>dU normal 0 0.5</code>, a mean and a standard deviation; <code>uniform</code>, the least and
+            the most; <code>triangular</code>, the least, the likeliest and the most; several apart by
+            semicolons. Each is a <code>{name}</code> in the input where the value drawn goes — in a
+            <code>log_k</code>, or a named expression's <code>log_k</code> that <code>-add_logk</code> adds to a
+            phase or species. Each row then runs <em>Draws</em> times, ten unless said, each time with
+            values drawn afresh, and with solids every solid of a draw has the same values, so that the
+            solids are weighed against each other on the same constants. The same <em>Seed</em> draws the
+            same values again, and a row's draws are the same whichever other rows are run. Each draw keeps
+            the values it drew, in the table and in what is saved, and the spread below is over every
+            row's every draw.</p>
           <p>Above the rows, a chart shows how the column chosen spreads over the waters — under
             <em>Lowest in</em>, or <em>Spread of</em> without solids: for each value, the share of the
-            waters at or below it, a step for each water, on a log axis where the values are all above
+            waters at or below it, a step for each water, or each draw of a water, on a log axis where the values are all above
             nought and span a factor of ten or more. The median and the 95th percentile are marked, and
             beside the chart are the number of waters, the smallest, the 5th percentile, the median,
             the 95th percentile and the largest; a percentile lies between the two nearest values, as
@@ -4352,6 +4378,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113b"></script>
 </body>
 </html>

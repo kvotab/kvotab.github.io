@@ -1062,6 +1062,9 @@
 /* The spread of a batch's values over the waters: the chart, and its numbers beside it (under it where narrow). */
 .rtm-pq-batch-spread { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px 28px; margin: 0 0 12px; }
 .rtm-pq-batch-spread[hidden] { display: none; }
+/* How many draws and from what seed, shown once there is something to draw. */
+.rtm-pq-draws { display: inline-flex; align-items: center; gap: 12px; }
+.rtm-pq-draws[hidden] { display: none; }
 .rtm-pq-batch-spread .plot { flex: 1 1 420px; min-width: 0; height: 300px; }
 .rtm-pq-batch-stats { border-collapse: collapse; font-size: 12px; margin-top: 30px; }
 .rtm-pq-batch-stats caption { text-align: left; font-weight: 600; padding-bottom: 4px; }

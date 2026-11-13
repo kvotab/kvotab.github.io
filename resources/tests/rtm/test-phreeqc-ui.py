@@ -1118,7 +1118,7 @@ async def main():
                 await page.ev(SET_INPUT % (json.dumps(text), json.dumps(rows)))
                 await page.ev("document.getElementById('rtmStatus').textContent = ''")
                 await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
-                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Solids|^Rows:|^Open a table/.test(s) ? s : null; }})()",
+                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Solids|^Uncertain|^Draws|^Seed|^Rows:|^Open a table/.test(s) ? s : null; }})()",
                                    tries=120, pause=0.25)
 
             said = await batch(started)
@@ -1312,6 +1312,118 @@ async def main():
                                       ".then((x) => [...x.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]))")
             check('  saved: the chart as SVG, PNG and a page with the input under it; the workbook with the spread on a sheet of its own',
                   [svg, png, html, sheets], ['<svg', ['image/png', True], [True, True], ['batch', 'spread', 'input']])
+            # ---- uncertain values, drawn at random ----
+            # Three waters, their pH from the table and their salt drawn: dNa uniform 1 2 (mmol/kgw), 20 draws each from
+            # seed 7. Each run's sodium is the value it drew, to the last digit; every value between 1 and 2; the spread
+            # over the 60 waters × draws. A row run on its own draws what it drew among the others; another seed draws
+            # other values. A normal and a triangular, 400 draws of one water, read back through PHREEQC's USER_PUNCH:
+            # PHREEQC's numbers the values drawn, the mean and spread of each what its distribution has. With solids,
+            # every solid of a draw on the same values: the lowest calcium Calcite's in both draws of the carbonate water
+            # and Gypsum's in both of the sulfate water. A misspelt distribution, a value the input has not, a value named
+            # as a column, and draws of none, said before anything runs.
+            SET_FIELD = """((id, v) => { const s = document.getElementById(id); s.value = v;
+              s.dispatchEvent(new Event('change', { bubbles: true })); })(%s, %s)"""
+
+            async def field(name, value):
+                await page.ev(SET_FIELD % (json.dumps(name), json.dumps(value)))
+                await asyncio.sleep(0.1)
+
+            await page.ev(FEED % (json.dumps('draws.csv'), json.dumps('pH\n7\n7.5\n8\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('draws.csv: 3 rows and 1 column')", True, tries=40)
+            hidden_before = await page.ev("document.getElementById('rtmPqBatchDrawsWrap').hidden")
+            await field('rtmPqBatchUncertain', 'dNa uniform 1 2')
+            await field('rtmPqBatchDraws', '20')
+            await field('rtmPqBatchSeed', '7')
+            NA_IN = 'SOLUTION 1\n units mmol/kgw\n pH {pH}\n Na {dNa}\n Cl {dNa}\nSELECTED_OUTPUT 1\n -reset false\n -totals Na\nEND\n'
+            described = await page.ev("document.getElementById('rtmPqBatchTable').textContent")
+            said = await batch(NA_IN)
+            head = await page.ev("[...document.querySelectorAll('#rtmPqBatchOut thead th')].map((th) => th.textContent)")
+            note = await page.ev("document.getElementById('rtmPqBatchNote').textContent")
+            stats_first = await page.ev("[...document.querySelectorAll('#rtmPqBatchStats tbody tr')][0].textContent")
+            every = await saved_csv('#rtmPqBatchCsvItem')
+            rows = [ln.split(',') for ln in every[1:]] if isinstance(every, list) else []
+            exact = all(abs(float(r[4]) * 1000 / float(r[3]) - 1) < 1e-9 for r in rows) if rows else False
+            within = all(1 <= float(r[3]) <= 2 for r in rows) if rows else False
+            check('uncertain values: each row run 20 times, its salt drawn afresh; each run\'s sodium the value it drew',
+                  [hidden_before, await page.ev("document.getElementById('rtmPqBatchDrawsWrap').hidden"), described,
+                   said.startswith('3 of 3 rows, 20 draws each, run through PHREEQC') if isinstance(said, str) else said,
+                   head, note, stats_first, every[0] if isinstance(every, list) else every, len(rows),
+                   [r[:3] for r in rows[:2]] + [r[:3] for r in rows[-1:]], exact, within, len({r[3] for r in rows})],
+                  [True, False, 'draws.csv: 3 rows; columns pH. 3 rows to run, 20 draws each: 60 runs.', True,
+                   ['row', 'draw', 'dNa', 'Na(mol/kgw)'], '3 rows of draws.csv, 20 draws each: 60 runs, seed 7.', 'waters × draws60',
+                   'row,pH,draw,dNa,Na(mol/kgw),refused', 60, [['1', '7', '1'], ['1', '7', '2'], ['3', '8', '20']], True, True, 60])
+            row2 = [r[3] for r in rows if r[0] == '2']
+            await field('rtmPqBatchRows', '2')
+            await batch(NA_IN, '2')
+            alone = await saved_csv('#rtmPqBatchCsvItem')
+            await field('rtmPqBatchSeed', '8')
+            await batch(NA_IN, '2')
+            other = await saved_csv('#rtmPqBatchCsvItem')
+            check('  a row run on its own draws what it drew among the others; another seed draws other values',
+                  [[ln.split(',')[3] for ln in alone[1:]] == row2 if isinstance(alone, list) else alone,
+                   len(set(ln.split(',')[3] for ln in other[1:]) & set(row2)) if isinstance(other, list) else other],
+                  [True, 0])
+            await field('rtmPqBatchSeed', '1')
+            await field('rtmPqBatchUncertain', 'z normal 0 1; tri triangular 0 1 4')
+            await field('rtmPqBatchDraws', '400')
+            PUNCH_IN = 'SOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\nUSER_PUNCH 1\n -headings z tri\n 10 PUNCH {z}, {tri}\nEND\n'
+            said = await batch(PUNCH_IN, '1')
+            punched = await saved_csv('#rtmPqBatchCsvItem')
+            got = [ln.split(',') for ln in punched[1:]] if isinstance(punched, list) else []
+
+            def moments(xs):
+                m = sum(xs) / len(xs)
+                return m, (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+
+            zs = [float(r[3]) for r in got]
+            ts = [float(r[4]) for r in got]
+            zm, zsd = moments(zs) if zs else (None, None)
+            tm, tsd = moments(ts) if ts else (None, None)
+            check('  a normal and a triangular, 400 draws read back through USER_PUNCH: PHREEQC\'s numbers the values drawn, '
+                  'their mean and spread their distributions\'',
+                  [said.startswith('1 of 1 row, 400 draws each, run through PHREEQC') if isinstance(said, str) else said,
+                   punched[0] if isinstance(punched, list) else punched, len(got),
+                   all(float(r[3]) == float(r[5]) and float(r[4]) == float(r[6]) for r in got),
+                   abs(zm) < 0.15 if zs else zs, 0.85 < zsd < 1.15 if zs else zs,
+                   all(0 <= t <= 4 for t in ts), abs(tm - 5 / 3) < 0.13 if ts else ts, abs(tsd - (13 / 18) ** 0.5) < 0.1 if ts else ts],
+                  [True, 'row,pH,draw,z,tri,"z, PHREEQC","tri, PHREEQC",refused', 400, True, True, True, True, True, True])
+            await page.ev(FEED % (json.dumps('salts.csv'), json.dumps('pH;C;S\n8;10;0,1\n7;0,01;50\nx;1;1\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('salts.csv: 3 rows and 3 columns')", True, tries=40)
+            await field('rtmPqBatchUncertain', 'dCa uniform 15 25')
+            await field('rtmPqBatchDraws', '2')
+            await page.ev(SET_SOLIDS % json.dumps('Calcite, Gypsum'))
+            await asyncio.sleep(0.1)
+            await page.ev(LOWEST_IN % json.dumps('Ca(mol/kgw)'))
+            said = await batch(SOLIDS_IN.replace(' Ca 20\n', ' Ca {dCa}\n').replace(' -saturation_indices {solid}\n', ''))
+            tables = await page.ev(SOLID_ROWS)
+            check('  with solids, every solid of a draw on the same values: Calcite the lowest in both draws of the carbonate water, '
+                  'Gypsum in both of the sulfate one',
+                  [said.startswith('3 of 3 rows, 2 draws each, each draw with 2 solids, run through PHREEQC') and said.endswith(
+                      '; 4 runs refused by PHREEQC, each with what it said.') if isinstance(said, str) else said,
+                   [r[:3] for r in tables[0]] if tables else tables, [[r[0], r[1], r[3]] for r in tables[1]] if tables else tables,
+                   await page.ev("[...document.querySelectorAll('#rtmPqBatchOut table:last-child thead th')].map((th) => th.textContent)")],
+                  [True, [['Calcite', '2 of 6 draws', '2 of 6 runs'], ['Gypsum', '2 of 6 draws', '2 of 6 runs']],
+                   [['1', '1', 'Calcite'], ['1', '2', 'Calcite'], ['2', '1', 'Gypsum'], ['2', '2', 'Gypsum'],
+                    ['3', '1', f'every solid refused: {PH_ERR}'], ['3', '2', f'every solid refused: {PH_ERR}']],
+                   ['row', 'draw', 'dCa', 'solid', 'pH', 'Ca(mol/kgw)', 'C(4)(mol/kgw)', 'S(6)(mol/kgw)', 'refused']])
+            await page.ev(SET_SOLIDS % json.dumps(''))
+            await field('rtmPqBatchUncertain', 'dU normall 0 1')
+            misspelt = await batch(NA_IN)
+            await field('rtmPqBatchUncertain', 'dX normal 0 1')
+            missing = await batch('SOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND\n')
+            await field('rtmPqBatchUncertain', 'pH normal 7 0.1')
+            column = await batch('SOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND\n')
+            await field('rtmPqBatchUncertain', 'dX normal 0 1')
+            await field('rtmPqBatchDraws', '0')
+            none = await batch('SOLUTION 1\n pH {pH}\n # {dX}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND\n')
+            check('  a misspelt distribution, a value the input has not, one named as a column, and draws of none: said before anything runs',
+                  [misspelt, missing, column, none],
+                  ['Uncertain: "dU normall 0 1": say how it varies, normal, uniform or triangular, as dU normal 0 0.5.',
+                   'The input has no {dX}: write it where the value drawn goes, in a log_k or after -add_logk.',
+                   'Uncertain: pH is a column of the table too; name the value drawn otherwise.',
+                   'Draws: a whole number from 1, as 10.'])
+            await field('rtmPqBatchUncertain', '')
+            await field('rtmPqBatchDraws', '')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

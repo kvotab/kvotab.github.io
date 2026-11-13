@@ -11486,8 +11486,14 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Lowest in**: for each row, the run with the lowest value in that column of the selected output, and the solid that gave it -- the least that stays dissolved with whichever solid holds it lowest. Unless another is chosen, the first total of an element.',
           'Above the rows, each solid: in how many rows it was the lowest, how many of its runs PHREEQC refused, and what it said first. A row with a solid refused names it, for the lowest is then of the others.',
         ] },
+        { heading: 'Uncertain values', list: [
+          '**Uncertain**: none, or values to draw at random, each a name, how it varies and its numbers, apart by semicolons: `dU normal 0 0.5` (a mean and a standard deviation), `dU uniform -1 1` (the least and the most), `dU triangular -1 0 0.5` (the least, the likeliest and the most).',
+          'Each is a `{name}` in the input, where the value drawn goes: in a `log_k`, or a named expression\'s `log_k` that `-add_logk` adds. A name the input has not, or that the table has as a column, is said before anything runs.',
+          '**Draws**: how many times each row runs, 10 unless said, each time with values drawn afresh; with solids, every solid of a draw has the same values. **Seed**: 1 unless said; the same seed draws the same values again, a row\'s the same whichever other rows run.',
+          'Each draw keeps the values it drew, in the table and in what Export saves; the spread is over every row\'s every draw.',
+        ] },
         { heading: 'The spread over the waters', list: [
-          'A chart of the column chosen -- **Lowest in**, or **Spread of** without solids -- a step for each water: for each value, the share of the waters at or below it. On a log axis where the values are all above nought and span a factor of ten or more.',
+          'A chart of the column chosen -- **Lowest in**, or **Spread of** without solids -- a step for each water, or each draw of a water: for each value, the share at or below it. On a log axis where the values are all above nought and span a factor of ten or more.',
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
         ] },
@@ -12586,9 +12592,9 @@ END
     // Inverse models: between which waters, with which phases, to what uncertainty; and what PHREEQC found.
     inv: { from: '', fromAt: 'start', to: '', toAt: 'end', phases: '', u: '0.05', range: true, minimal: true },
     invResult: null,
-    // A batch over a table of waters: the input, the rows asked for, the solids tried in turn and the column whose lowest
-    // is kept (kept); the table and what it found (the visit's).
-    batch: { text: '', rows: '', solids: '', lowest: '' },
+    // A batch over a table of waters: the input, the rows asked for, the solids tried in turn, the column whose lowest
+    // is kept, and the values drawn, how many draws and from what seed (kept); the table and what it found (the visit's).
+    batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12623,7 +12629,7 @@ END
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
-        for (const k of ['text', 'rows', 'solids', 'lowest']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
+        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
       }
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
@@ -13773,21 +13779,45 @@ END
     return n ? Number(n) : 1;
   }
   /**
-    How the values of column col a batch gave spread over the waters: a water a row -- with solids, the row's lowest run
-    -- sorted, with the row (and solid) each is of; the rows that give none, refused or without a number there; and the
-    smallest, 5th percentile, median, 95th percentile and largest, a percentile between the two nearest values as
-    Excel's PERCENTILE.INC and NumPy's percentile put it. Null where no row gives a number.
+    A batch's runs as units -- a water under one draw, or a row where nothing is drawn -- its runs together, one a
+    solid; the run kept, with solids the one lowest in column col (the first where two are level) and without the one
+    run where PHREEQC gave one; the runs refused, and how many were tried.
+  */
+  function batchUnits(v, col) {
+    const k = v.head.indexOf(col);
+    const out = [];
+    let cur = null;
+    for (const run of v.runs) {
+      if (!cur || cur.row !== run.row || cur.draw !== run.draw) {
+        cur = { row: run.row, draw: run.draw, drawn: run.drawn, best: null, refused: [], tried: 0 };
+        out.push(cur);
+      }
+      cur.tried++;
+      if (!run.values) { cur.refused.push(run); continue; }
+      if (!v.solids) { cur.best = run; continue; }
+      const x = k >= 0 ? run.values[k] : undefined;
+      if (typeof x === 'number' && Number.isFinite(x) && (!cur.best || x < cur.best.values[k])) cur.best = run;
+    }
+    return out;
+  }
+  /** What the column's values are of: each row's lowest run, or each draw's, with solids; nothing more without. */
+  const batchLowestOf = (v) => (!v.solids ? '' : v.draws ? ', the lowest of each draw' : ', the lowest of each row');
+  /** What the spread is over: the waters, or the waters each drawn so many times. */
+  const batchOver = (v) => (v.draws ? 'waters × draws' : 'waters');
+  /**
+    How the values of column col a batch gave spread: a value a unit -- with solids, its lowest run -- sorted, with
+    the row, draw and solid each is of; the units that give none, refused or without a number there; and the smallest,
+    5th percentile, median, 95th percentile and largest, a percentile between the two nearest values as Excel's
+    PERCENTILE.INC and NumPy's percentile put it. Null where no unit gives a number.
   */
   function batchSpread(v, col) {
     const k = v.head.indexOf(col);
     const got = [];
     let none = 0;
-    const take = (row, values, solid) => {
-      const x = values && k >= 0 ? values[k] : undefined;
-      if (typeof x === 'number' && Number.isFinite(x)) got.push({ x, row, solid }); else none++;
-    };
-    if (v.solids) for (const l of batchLowest(v, col)) take(l.row, l.best && l.best.values, l.best && l.best.solid);
-    else for (const r of v.runs) take(r.row, r.values, null);
+    for (const u of batchUnits(v, col)) {
+      const x = u.best && k >= 0 ? u.best.values[k] : undefined;
+      if (typeof x === 'number' && Number.isFinite(x)) got.push({ x, row: u.row, draw: u.draw, solid: u.best.solid }); else none++;
+    }
     if (!got.length) return null;
     got.sort((a, b) => a.x - b.x);
     const s = got.map((g) => g.x);
@@ -13796,39 +13826,83 @@ END
       const lo = Math.floor(h);
       return lo + 1 < s.length ? s[lo] + (h - lo) * (s[lo + 1] - s[lo]) : s[lo];
     };
-    return { col, got, none, n: s.length, min: s[0], p5: at(0.05), p50: at(0.5), p95: at(0.95), max: s[s.length - 1] };
+    return { col, got, none, over: batchOver(v), n: s.length, min: s[0], p5: at(0.05), p50: at(0.5), p95: at(0.95), max: s[s.length - 1] };
   }
   /** The spread's numbers as rows of words and values, for the page and the workbook. */
-  const batchSpreadRows = (sp) => [['waters', sp.n], ['smallest', sp.min], ['5th percentile', sp.p5], ['median', sp.p50],
+  const batchSpreadRows = (sp) => [[sp.over, sp.n], ['smallest', sp.min], ['5th percentile', sp.p5], ['median', sp.p50],
     ['95th percentile', sp.p95], ['largest', sp.max], ...(sp.none ? [['left out, refused or with no number', sp.none]] : [])];
-  /** What a batch ran, for the (i): its rows, with solids its runs, and how many PHREEQC refused. */
+  /** What a batch ran, for the (i): its rows, with draws or solids its runs, and how many PHREEQC refused. */
   function batchFact(v) {
     const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
     const bad = v.runs.filter((r) => !r.values).length;
-    return v.solids ? `${many(v.runs.length / v.solids.length, 'row')}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}, ${bad.toLocaleString()} refused`
-      : `${many(v.runs.length, 'row')}, ${bad.toLocaleString()} refused`;
+    const rows = new Set(v.runs.map((r) => r.row)).size;
+    if (!v.solids && !v.draws) return `${many(rows, 'row')}, ${bad.toLocaleString()} refused`;
+    return `${many(rows, 'row')}${v.draws ? `, ${v.draws} draws each` : ''}${v.solids ? `, each ${v.draws ? 'draw ' : ''}with ${many(v.solids.length, 'solid')}` : ''}`
+      + `: ${many(v.runs.length, 'run')}, ${bad.toLocaleString()} refused`;
   }
   /** The solids a batch tries in turn as {solid}: names apart by commas, semicolons or spaces, each once, in the order given. */
   const batchSolids = (spec) => [...new Set(String(spec || '').split(/[,;\s]+/).filter(Boolean))];
+  /**
+    The values a batch draws: each a name, how it varies and its numbers, apart by semicolons -- "dU normal 0 0.5;
+    dSi uniform -0.2 0.2; dK triangular -1 0 0.5" -- the name a {name} of the input. A string saying what is wrong.
+  */
+  function batchUncertain(spec) {
+    const out = [];
+    const takes = { normal: 'a mean and a standard deviation', uniform: 'the least and the most', triangular: 'the least, the likeliest and the most' };
+    for (const part of String(spec || '').split(/[;\n]+/).map((p) => p.trim()).filter(Boolean)) {
+      const [name, how, ...rest] = part.split(/[\s,]+/).filter(Boolean);
+      const dist = String(how || '').toLowerCase();
+      const x = rest.map(Number);
+      const say = (why) => `"${part}": ${why}`;
+      if (!takes[dist]) return say('say how it varies, normal, uniform or triangular, as dU normal 0 0.5');
+      if (/[{}]/.test(name)) return say(`a name without braces, as dU, written {dU} in the input`);
+      if (x.length !== (dist === 'triangular' ? 3 : 2) || x.some((n) => !Number.isFinite(n))) return say(`${dist} takes ${takes[dist]}`);
+      if (dist === 'normal' && x[1] < 0) return say('a standard deviation below nought');
+      if (dist === 'uniform' && x[0] > x[1]) return say('the least above the most');
+      if (dist === 'triangular' && !(x[0] <= x[1] && x[1] <= x[2])) return say('the likeliest not between the least and the most');
+      if (out.some((u) => u.name === name)) return say(`${name} is named twice`);
+      out.push({ name, dist, x });
+    }
+    return out;
+  }
+  /** A whole number from a field, lo or more; dflt where the field is empty; null where it is not one. */
+  function batchWhole(text, lo, dflt) {
+    const t = String(text || '').trim();
+    if (!t) return dflt;
+    return /^\d+$/.test(t) && Number(t) >= lo && Number(t) <= 4294967295 ? Number(t) : null;
+  }
+  /**
+    Numbers in [0, 1) for one draw of one water: mulberry32, started from the seed, the row and the draw mixed by
+    MurmurHash3's finaliser, so that a water's draws are the same whichever other rows are run.
+  */
+  function batchRandom(seed, row, draw) {
+    const mix = (h) => {
+      h = Math.imul(h ^ (h >>> 16), 0x85ebca6b);
+      h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+      return (h ^ (h >>> 16)) >>> 0;
+    };
+    let a = mix(mix(mix((seed + 0x9e3779b9) >>> 0) ^ row) ^ draw);
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  /** One value drawn as u says: Box and Muller's for a normal, the inverse of the distribution for a triangular. */
+  function batchDrawOne(u, rand) {
+    const [a, b, c] = u.x;
+    if (u.dist === 'uniform') return a + (b - a) * rand();
+    if (u.dist === 'normal') return a + b * Math.sqrt(-2 * Math.log(1 - rand())) * Math.cos(2 * Math.PI * rand());
+    if (c === a) return a;
+    const p = rand();
+    return p < (b - a) / (c - a) ? a + Math.sqrt(p * (c - a) * (b - a)) : c - Math.sqrt((1 - p) * (c - a) * (c - b));
+  }
   /** The column whose lowest a batch with solids keeps: the one chosen, else the first total of an element, else the first in mol/kgw, else the last. */
   function batchLowestColumn(v) {
     if (v.head.includes(pq.batch.lowest)) return pq.batch.lowest;
     return v.head.find((h) => /^[A-Z][a-z]?(\([+-]?\d+\))?\(mol\/kgw\)$/.test(h)) || v.head.find((h) => /\(mol\/kgw\)$/.test(h))
       || v.head[v.head.length - 1] || '';
-  }
-  /** For each row a batch ran with solids, its runs being together: the run lowest in column col (the first where two are level), the runs refused, how many. */
-  function batchLowest(v, col) {
-    const k = v.head.indexOf(col);
-    const out = [];
-    let cur = null;
-    for (const run of v.runs) {
-      if (!cur || cur.row !== run.row) { cur = { row: run.row, best: null, refused: [], tried: 0 }; out.push(cur); }
-      cur.tried++;
-      if (!run.values) { cur.refused.push(run); continue; }
-      const x = k >= 0 ? run.values[k] : undefined;
-      if (typeof x === 'number' && Number.isFinite(x) && (!cur.best || x < cur.best.values[k])) cur.best = run;
-    }
-    return out;
   }
 
   function pqBatchRender() {
@@ -13837,16 +13911,29 @@ END
     if (ta.value !== pq.batch.text) ta.value = pq.batch.text;
     $('rtmPqBatchRows').value = pq.batch.rows;
     $('rtmPqBatchSolids').value = pq.batch.solids;
+    $('rtmPqBatchUncertain').value = pq.batch.uncertain;
+    $('rtmPqBatchDraws').value = pq.batch.draws;
+    $('rtmPqBatchSeed').value = pq.batch.seed;
+    // How many draws and from what seed mean something only once there is something to draw.
+    $('rtmPqBatchDrawsWrap').hidden = !pq.batch.uncertain.trim();
     const shown = 6;
     const solids = batchSolids(pq.batch.solids);
-    const asked = t && solids.length ? batchRowsAsked(pq.batch.rows, t.rows.length) : null;
+    const uncertain = batchUncertain(pq.batch.uncertain);
+    const draws = Array.isArray(uncertain) && uncertain.length ? batchWhole(pq.batch.draws, 1, 10) : null;
+    const asked = t && (solids.length || draws) ? batchRowsAsked(pq.batch.rows, t.rows.length) : null;
     const s = (n) => (n === 1 ? '' : 's');
+    let runs = '';
+    if (Array.isArray(asked) && asked.length) {
+      const rows = `${asked.length.toLocaleString()} row${s(asked.length)} to run`;
+      const k = solids.length;
+      if (draws) {
+        runs = ` ${rows}, ${draws} draws each${k ? `, each draw with ${k} solid${s(k)}` : ''}: ${(asked.length * draws * (k || 1)).toLocaleString()} runs.`;
+      } else runs = ` ${rows}, each with ${k} solid${s(k)}: ${(asked.length * k).toLocaleString()} runs.`;
+    }
     $('rtmPqBatchTable').textContent = !t
       ? 'No table yet: CSV, or a sheet of an Excel workbook, a water a row and the columns\' names in the first.'
       : `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${s(t.rows.length)}; `
-        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.`
-        + `${Array.isArray(asked) && asked.length ? ` ${asked.length.toLocaleString()} row${s(asked.length)} to run, each with `
-          + `${solids.length} solid${s(solids.length)}: ${(asked.length * solids.length).toLocaleString()} runs.` : ''}`;
+        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.${runs}`;
     $('rtmPqBatchSheetWrap').hidden = !(t && t.sheets && t.sheets.length > 1);
     if (t && t.sheets) {
       $('rtmPqBatchSheet').innerHTML = t.sheets.map((nm) => `<option value="${esc(nm)}"${nm === t.sheet ? ' selected' : ''}>${esc(nm)}</option>`).join('');
@@ -13869,15 +13956,27 @@ END
     if (user === null) { fail('The input has no SELECTED_OUTPUT: say there what to keep of each row\'s run, -totals, -pH and the like, or a USER_PUNCH.'); return; }
     const names = batchNames(text);
     const solids = batchSolids(pq.batch.solids);
+    const uncertain = batchUncertain(pq.batch.uncertain);
+    if (typeof uncertain === 'string') { fail(`Uncertain: ${uncertain}.`); return; }
+    const drawn = uncertain.map((u) => u.name);
     if (solids.length && !names.includes('solid')) {
       fail('Solids are listed, but the input has no {solid}: write it where each solid goes, as {solid} 0 10 under EQUILIBRIUM_PHASES.');
       return;
     }
-    if (!solids.length && names.includes('solid') && !t.columns.includes('solid')) {
+    if (!solids.length && names.includes('solid') && !t.columns.includes('solid') && !drawn.includes('solid')) {
       fail('The input asks for {solid}: list under Solids the solids to try, each in turn.');
       return;
     }
-    const unknown = names.filter((n) => !(solids.length && n === 'solid') && !t.columns.includes(n));
+    const draws = uncertain.length ? batchWhole(pq.batch.draws, 1, 10) : null;
+    if (uncertain.length && draws === null) { fail('Draws: a whole number from 1, as 10.'); return; }
+    const seed = uncertain.length ? batchWhole(pq.batch.seed, 0, 1) : null;
+    if (uncertain.length && seed === null) { fail('Seed: a whole number from 0, as 1.'); return; }
+    for (const u of uncertain) {
+      if (u.name === 'solid' && solids.length) { fail('Uncertain: solid is the name of the solid tried; name the value drawn otherwise.'); return; }
+      if (t.columns.includes(u.name)) { fail(`Uncertain: ${u.name} is a column of the table too; name the value drawn otherwise.`); return; }
+      if (!names.includes(u.name)) { fail(`The input has no {${u.name}}: write it where the value drawn goes, in a log_k or after -add_logk.`); return; }
+    }
+    const unknown = names.filter((n) => !(solids.length && n === 'solid') && !drawn.includes(n) && !t.columns.includes(n));
     if (unknown.length) {
       fail(`The input asks for ${unknown.map((n) => `{${n}}`).join(', ')}, but the table has no column so named; its columns: ${t.columns.join(', ')}.`);
       return;
@@ -13885,16 +13984,20 @@ END
     const asked = batchRowsAsked(pq.batch.rows, t.rows.length);
     if (typeof asked === 'string') { fail(`Rows: ${asked}.`); return; }
     if (!asked.length) { fail('The table has no rows to run.'); return; }
-    // With solids each row runs once for each, {solid} the solid: a column more, and parts of whole rows.
+    // A unit is a water under one draw, a row where nothing is drawn; it runs once for each solid, {solid} the solid,
+    // its values drawn once for all of them. The values drawn and the solid are columns more; a part is whole units.
     const each = solids.length ? solids : [null];
-    const columns = solids.length ? [...t.columns, 'solid'] : t.columns;
+    const columns = [...t.columns, ...drawn, ...(solids.length ? ['solid'] : [])];
+    const units = [];
+    for (const row of asked) for (let d = 0; d < (draws || 1); d++) units.push({ row, draw: draws ? d : null });
     const perPart = Math.max(1, Math.floor(PQ_BATCH_PART / each.length));
-    const total = asked.length * each.length;
-    const doing = (n) => (solids.length ? `Running ${n.toLocaleString()} of ${total.toLocaleString()} runs, ${each.length} a row,`
+    const total = units.length * each.length;
+    const several = solids.length || draws;
+    const doing = (n) => (several ? `Running ${n.toLocaleString()} of ${total.toLocaleString()} runs`
       : `Running row ${n.toLocaleString()} of ${total.toLocaleString()}`);
     pq.batchRunning = true;
     pq.batchStop = false;
-    pqBusy(true, solids.length ? `Running ${total.toLocaleString()} runs through PHREEQC…`
+    pqBusy(true, several ? `Running ${total.toLocaleString()} runs through PHREEQC…`
       : `Running ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'} through PHREEQC…`);
     pqBatchRender();
     const started = Date.now();
@@ -13905,13 +14008,21 @@ END
     let database = '';
     let stopped = false;
     try {
-      for (let p = 0; p < asked.length; p += perPart) {
+      for (let p = 0; p < units.length; p += perPart) {
         if (pq.batchStop) { stopped = true; break; }
         const jobs = [];
-        for (const row of asked.slice(p, p + perPart)) for (const solid of each) jobs.push({ row, solid });
+        for (const un of units.slice(p, p + perPart)) {
+          let values = null;
+          if (draws) {
+            const rand = batchRandom(seed, un.row, un.draw);
+            values = uncertain.map((u) => batchDrawOne(u, rand));
+          }
+          for (const solid of each) jobs.push({ ...un, drawn: values, solid });
+        }
         const before = runs.length;
         const reply = await pqRequest({ type: 'batch', database: pqDatabase(), template: text, columns,
-          rows: jobs.map((j) => (j.solid === null ? t.rows[j.row] : [...t.rows[j.row], j.solid])), user }, (msg) => {
+          rows: jobs.map((j) => [...t.rows[j.row], ...(j.drawn ? j.drawn.map(String) : []), ...(j.solid === null ? [] : [j.solid])]),
+          user }, (msg) => {
           setProgress((before + msg.done) / total);
           setStatus(`${doing(before + msg.done)} through PHREEQC…`);
         });
@@ -13925,19 +14036,22 @@ END
         reply.rows.forEach((r, k) => {
           const values = r ? [] : null;
           if (r) r.forEach((x, j) => { values[map[j]] = x; });
-          runs.push({ row: jobs[k].row, solid: jobs[k].solid, values, said: r ? null : (said.get(k) || 'refused') });
+          const j = jobs[k];
+          runs.push({ row: j.row, draw: j.draw, drawn: j.drawn, solid: j.solid, values, said: r ? null : (said.get(k) || 'refused') });
         });
         setProgress(Math.min(1, runs.length / total));
       }
       const seconds = (Date.now() - started) / 1000;
       pq.batchResult = { head, runs, names, table: t.name, sheet: t.sheet || null, asked: asked.length,
-        solids: solids.length ? solids : null, stopped, seconds, version, database, text };
+        solids: solids.length ? solids : null, uncertain: draws ? uncertain : null, draws, seed, stopped, seconds, version, database, text };
       const bad = runs.filter((r) => !r.values).length;
-      const done = runs.length / each.length;
+      const done = new Set(runs.map((r) => r.row)).size;
+      const per = [draws ? `${draws} draws each` : '',
+        solids.length ? `each ${draws ? 'draw ' : ''}with ${solids.length} solid${solids.length === 1 ? '' : 's'}` : ''].filter(Boolean);
       setStatus(`${done.toLocaleString()} of ${asked.length.toLocaleString()} row${asked.length === 1 ? '' : 's'}`
-        + `${solids.length ? `, each with ${solids.length} solid${solids.length === 1 ? '' : 's'},` : ''} run through PHREEQC `
+        + `${per.map((x) => `, ${x}`).join('')}${per.length ? ',' : ''} run through PHREEQC `
         + `${version} with ${database} in ${seconds.toFixed(1)} s${stopped ? ', then stopped' : ''}`
-        + `${bad ? `; ${bad.toLocaleString()}${solids.length ? ` run${bad === 1 ? '' : 's'}` : ''} refused by PHREEQC, each with what it said` : ''}.`,
+        + `${bad ? `; ${bad.toLocaleString()}${several ? ` run${bad === 1 ? '' : 's'}` : ''} refused by PHREEQC, each with what it said` : ''}.`,
       bad || stopped ? 'warn' : 'ok');
     } catch (e) {
       setStatus(`The batch could not be run: ${e.message}`, 'error');
@@ -13951,8 +14065,9 @@ END
   }
 
   /**
-    What the batch found: a note, and its first rows as a table, a row PHREEQC refused with what it said. With solids:
-    each row's run lowest in the column chosen and the solid that gave it, and above them how each solid fared.
+    What the batch found: a note, and its first units as a table, a unit PHREEQC refused with what it said. With draws,
+    each draw's number and the values drawn. With solids, each unit's run lowest in the column chosen and the solid that
+    gave it, and above them how each solid fared.
   */
   function pqBatchDraw() {
     const v = pq.batchResult;
@@ -13962,64 +14077,77 @@ END
     pqBatchSpread();
     if (!v) { box.innerHTML = ''; return; }
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
-    const cells = (values) => v.head.map((_, k) => `<td${typeof values[k] === 'number' ? ` data-v="${values[k]}"` : ''}>${esc(num(values[k]))}</td>`).join('');
+    const cell = (x) => `<td${typeof x === 'number' ? ` data-v="${x}"` : ''}>${esc(num(x))}</td>`;
+    const cells = (values) => v.head.map((_, k) => cell(values[k])).join('');
     const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
     const bad = v.runs.filter((r) => !r.values).length;
     const where = `${v.table}${v.sheet ? `, sheet ${v.sheet}` : ''}`;
-    // The column chosen: with solids, the one each row's lowest run is lowest in; the one whose spread is drawn either way.
+    // The column chosen: with solids, the one each unit's lowest run is lowest in; the one whose spread is drawn either way.
     const col = batchLowestColumn(v);
     $('rtmPqBatchLowestWrap').hidden = !v.head.length;
     $('rtmPqBatchLowestLabel').textContent = v.solids ? 'Lowest in' : 'Spread of';
     $('rtmPqBatchLowest').innerHTML = v.head.map((h) => `<option value="${esc(h)}"${h === col ? ' selected' : ''}>${esc(h)}</option>`).join('');
     $('rtmPqBatchRunsItem').hidden = !v.solids;
-    $('rtmPqBatchCsvItem').dataset.hint = v.solids ? 'the lowest for each row' : 'every row';
-    if (!v.solids) {
-      const n = v.runs.length;
+    $('rtmPqBatchCsvItem').dataset.hint = v.solids ? `the lowest for each ${v.draws ? 'draw' : 'row'}` : `every ${v.draws ? 'draw' : 'row'}`;
+    const units = batchUnits(v, col);
+    const rows = new Set(units.map((u) => u.row)).size;
+    const drawHead = v.draws ? ['draw', ...v.uncertain.map((u) => u.name)].map((h) => `<th>${esc(h)}</th>`).join('') : '';
+    const drawCells = (u) => (v.draws ? `<td>${u.draw + 1}</td>${u.drawn.map(cell).join('')}` : '');
+    const shown = units.length > PQ_BATCH_SHOWN;
+    if (!v.solids && !v.draws) {
+      const n = units.length;
       $('rtmPqBatchNote').textContent = `${many(n, 'row')} of ${where}${v.stopped ? `, stopped after ${n.toLocaleString()} of ${v.asked.toLocaleString()}` : ''}; `
         + `${many(v.head.length, 'column')} of selected output${bad ? `; ${bad.toLocaleString()} refused` : ''}`
-        + `${n > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} shown, Export has every row` : ''}.`;
-      const body = v.runs.slice(0, PQ_BATCH_SHOWN).map(({ row, values, said }) => `<tr><td>${row + 1}</td>${values ? cells(values)
-        : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(said)}</td>`}</tr>`).join('');
-      box.innerHTML = `<table><thead><tr><th>row</th>${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
+        + `${shown ? `; the first ${PQ_BATCH_SHOWN} shown, Export has every row` : ''}.`;
+    } else if (!v.draws) {
+      $('rtmPqBatchNote').textContent = `${many(rows, 'row')} of ${where}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}`
+        + `${v.stopped ? `, stopped after ${rows.toLocaleString()} of ${v.asked.toLocaleString()} rows` : ''}${bad ? `; ${many(bad, 'run')} refused` : ''}`
+        + `${shown ? `; the first ${PQ_BATCH_SHOWN} rows shown, Export has every row and run` : ''}.`;
+    } else {
+      $('rtmPqBatchNote').textContent = `${many(rows, 'row')} of ${where}, ${v.draws} draws each`
+        + `${v.solids ? `, each draw with ${many(v.solids.length, 'solid')}` : ''}: ${many(v.runs.length, 'run')}, seed ${v.seed}`
+        + `${v.stopped ? `, stopped after ${rows.toLocaleString()} of ${v.asked.toLocaleString()} rows` : ''}${bad ? `; ${many(bad, 'run')} refused` : ''}`
+        + `${shown ? `; the first ${PQ_BATCH_SHOWN} draws shown, Export has every one${v.solids ? ' and every run' : ''}` : ''}.`;
+    }
+    if (!v.solids) {
+      const body = units.slice(0, PQ_BATCH_SHOWN).map((u) => `<tr><td>${u.row + 1}</td>${drawCells(u)}${u.best ? cells(u.best.values)
+        : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(u.refused[0].said)}</td>`}</tr>`).join('');
+      box.innerHTML = `<table><thead><tr><th>row</th>${drawHead}${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
       return;
     }
-    const lows = batchLowest(v, col);
-    $('rtmPqBatchNote').textContent = `${many(lows.length, 'row')} of ${where}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}`
-      + `${v.stopped ? `, stopped after ${lows.length.toLocaleString()} of ${v.asked.toLocaleString()} rows` : ''}${bad ? `; ${many(bad, 'run')} refused` : ''}`
-      + `${lows.length > PQ_BATCH_SHOWN ? `; the first ${PQ_BATCH_SHOWN} rows shown, Export has every row and run` : ''}.`;
-    // Each solid: in how many rows it held the column lowest, how many of its runs PHREEQC refused, and what it said first.
+    // Each solid: in how many units it held the column lowest, how many of its runs PHREEQC refused, and what it said first.
     const per = new Map(v.solids.map((sd) => [sd, { lowest: 0, refused: 0, runs: 0, said: '' }]));
     for (const r of v.runs) {
       const p = per.get(r.solid);
       p.runs++;
       if (!r.values) { p.refused++; if (!p.said) p.said = r.said; }
     }
-    for (const l of lows) if (l.best) per.get(l.best.solid).lowest++;
+    for (const u of units) if (u.best) per.get(u.best.solid).lowest++;
     // What PHREEQC said, only where it refused a run.
     const summary = `<table class="rtm-pq-batch-solids"><thead><tr><th>solid</th><th>lowest in</th><th>refused</th>${bad ? '<th>what PHREEQC said first</th>' : ''}`
       + '</tr></thead><tbody>' + v.solids.map((sd) => {
         const p = per.get(sd);
-        return `<tr><td>${esc(sd)}</td><td>${p.lowest.toLocaleString()} of ${many(lows.length, 'row')}</td>`
+        return `<tr><td>${esc(sd)}</td><td>${p.lowest.toLocaleString()} of ${many(units.length, v.draws ? 'draw' : 'row')}</td>`
           + `<td>${p.refused.toLocaleString()} of ${many(p.runs, 'run')}</td>${bad ? `<td class="rtm-pq-said">${esc(p.said)}</td>` : ''}</tr>`;
       }).join('') + '</tbody></table>';
-    const anyRefused = lows.some((l) => l.refused.length);
+    const anyRefused = units.some((u) => u.refused.length);
     const key = v.head.indexOf(col);
-    const body = lows.slice(0, PQ_BATCH_SHOWN).map((l) => {
-      const refused = anyRefused ? `<td>${esc(l.refused.map((r) => r.solid).join(', '))}</td>` : '';
-      if (l.best) return `<tr><td>${l.row + 1}</td><td>${esc(l.best.solid)}</td>${cells(l.best.values)}${refused}</tr>`;
-      const why = l.refused.length === l.tried ? `every solid refused: ${l.refused[0].said}` : `no run gave ${col}`;
-      return `<tr><td>${l.row + 1}</td><td class="rtm-pq-batch-error" colspan="${v.head.length + 1}">${esc(why)}</td>${refused}</tr>`;
+    const body = units.slice(0, PQ_BATCH_SHOWN).map((u) => {
+      const refused = anyRefused ? `<td>${esc(u.refused.map((r) => r.solid).join(', '))}</td>` : '';
+      if (u.best) return `<tr><td>${u.row + 1}</td>${drawCells(u)}<td>${esc(u.best.solid)}</td>${cells(u.best.values)}${refused}</tr>`;
+      const why = u.refused.length === u.tried ? `every solid refused: ${u.refused[0].said}` : `no run gave ${col}`;
+      return `<tr><td>${u.row + 1}</td>${drawCells(u)}<td class="rtm-pq-batch-error" colspan="${v.head.length + 1}">${esc(why)}</td>${refused}</tr>`;
     }).join('');
-    box.innerHTML = `${summary}<table><thead><tr><th>row</th><th>solid</th>`
+    box.innerHTML = `${summary}<table><thead><tr><th>row</th>${drawHead}<th>solid</th>`
       + `${v.head.map((h, k) => `<th${k === key ? ' class="rtm-pq-batch-key"' : ''}>${esc(h)}</th>`).join('')}`
       + `${anyRefused ? '<th>refused</th>' : ''}</tr></thead><tbody>${body}</tbody></table>`;
   }
 
   /**
-    How the column chosen spreads over the waters: for each value the share of the waters at or below it, a step a
-    water, on a log axis where the values are all above nought and span a factor of ten or more; the median and the
-    95th percentile marked, each labelled to the side away from the other; the numbers beside it. Drawn only where it
-    is seen -- the PHREEQC tab, which draws it again when it is shown.
+    How the column chosen spreads: for each value the share of the units -- the waters, or the waters each under its
+    draws -- at or below it, a step a unit, on a log axis where the values are all above nought and span a factor of
+    ten or more; the median and the 95th percentile marked, each label on the side of its line that has room; the
+    numbers beside it. Drawn only where it is seen -- the PHREEQC tab, which draws it again when it is shown.
   */
   function pqBatchSpread() {
     const v = pq.batchResult;
@@ -14033,22 +14161,22 @@ END
       return;
     }
     const f = (x) => (x === 0 ? '0' : fit4(x));
-    $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${v.solids ? ', the lowest of each row' : ''}</caption><tbody>`
+    $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${batchLowestOf(v)}</caption><tbody>`
       + batchSpreadRows(sp).map(([what, x], i) => `<tr><th scope="row">${what}</th><td>${i === 0 || what.startsWith('left') ? x.toLocaleString() : esc(f(x))}</td></tr>`).join('')
       + '</tbody>';
     if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
     const c = themeColors();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
     const log = sp.min > 0 && sp.max / sp.min >= 10;
-    // The share at or below: nought up to the smallest, then a step up at each water.
+    // The share at or below: nought up to the smallest, then a step up at each unit.
     const xs = [sp.got[0].x, ...sp.got.map((g) => g.x)];
     const ys = [0, ...sp.got.map((_, i) => ((i + 1) / sp.n) * 100)];
-    const of = [sp.got[0], ...sp.got].map((g) => `row ${g.row + 1}${g.solid ? `, ${g.solid}` : ''}`);
+    const of = [sp.got[0], ...sp.got].map((g) => `row ${g.row + 1}${g.draw !== null ? `, draw ${g.draw + 1}` : ''}${g.solid ? `, ${g.solid}` : ''}`);
     const line = (x) => ({ type: 'scatter', mode: 'lines', x: [x, x], y: [0, 100], line: { color: muted, width: 1, dash: 'dot' },
       hoverinfo: 'skip', showlegend: false });
     const traces = [
       { type: 'scatter', mode: 'lines', x: xs, y: ys, line: { shape: 'hv', width: 2, color: DG_PALETTE[0] }, customdata: of,
-        hovertemplate: '%{x:.4g}: %{y:.1f} % of the waters at or below<br>%{customdata}<extra></extra>', showlegend: false },
+        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} at or below<br>%{customdata}<extra></extra>`, showlegend: false },
       line(sp.p50), line(sp.p95),
     ];
     // The labels above the plot: each to the side of its line that has room, the median's a row higher where they would meet.
@@ -14077,54 +14205,60 @@ END
     layout.annotations = annotations;
     layout.xaxis.type = log ? 'log' : 'linear';
     layout.xaxis.exponentformat = 'power';
-    layout.xaxis.title = { text: `${sp.col}${v.solids ? ', the lowest of each row' : ''}`, font: { size: 11 } };
+    layout.xaxis.title = { text: `${sp.col}${batchLowestOf(v)}`, font: { size: 11 } };
     layout.yaxis.range = [0, 100];
-    layout.yaxis.title = { text: 'waters at or below (%)', font: { size: 11 } };
+    layout.yaxis.title = { text: `${sp.over} at or below (%)`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
   }
 
   /**
-    Every row the batch ran, each with the table's values the input asked for, what PHREEQC gave and what it said where it
-    refused. With solids: CSV the lowest for each row and the solids refused in it, 'runs' every run, Excel both. The
-    workbook has the spread's numbers on a sheet of their own.
+    Every row the batch ran, each with the table's values the input asked for, with draws the draw and the values drawn,
+    what PHREEQC gave and what it said where it refused. With solids: CSV the lowest for each unit and the solids refused
+    in it, 'runs' every run, Excel both. The workbook has the spread's numbers on a sheet of their own.
   */
   async function pqBatchSave(as) {
     const v = pq.batchResult;
     if (!v) { setStatus('Run a batch first: there is nothing to save yet.', 'warn'); return; }
     const t = pq.batchTable;
-    const asked = v.names.filter((n) => !(v.solids && n === 'solid'));
+    const drawnNames = v.draws ? v.uncertain.map((u) => u.name) : [];
+    const asked = v.names.filter((n) => !(v.solids && n === 'solid') && !drawnNames.includes(n));
     const cols = t && t.name === v.table ? asked.map((n) => t.columns.indexOf(n)) : [];
     const given = cols.length ? asked : [];
-    // A heading of PHREEQC's that a column of the table has too, pH say, said as PHREEQC's.
-    const outHead = v.head.map((h) => (given.includes(h) ? `${h}, PHREEQC` : h));
+    // A heading of PHREEQC's that a column of the table or a value drawn has too, pH say, said as PHREEQC's.
+    const outHead = v.head.map((h) => (given.includes(h) || drawnNames.includes(h) ? `${h}, PHREEQC` : h));
     const fromTable = (row) => cols.map((k) => {
       const x = t.rows[row][k];
       return x !== '' && Number.isFinite(Number(x)) ? Number(x) : x;
     });
+    const drawHead = v.draws ? ['draw', ...drawnNames] : [];
+    const drawValues = (u) => (v.draws ? [u.draw + 1, ...u.drawn] : []);
     const out = (values) => v.head.map((_, k) => (values && values[k] !== undefined ? values[k] : null));
     const stem = `${fileStem()}_batch`;
     const csv = async (head, rows, name) => saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), name));
+    const col = batchLowestColumn(v);
     let sheets;
     let about = `the PHREEQC input each row of ${v.table} was run with`;
+    if (v.draws) {
+      about += `, ${v.draws} draws a row of ${v.uncertain.map((u) => `${u.name} ${u.dist} ${u.x.join(' ')}`).join('; ')} from seed ${v.seed}`;
+    }
     if (!v.solids) {
-      const head = ['row', ...given, ...outHead, 'refused'];
-      const rows = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...out(r.values), r.said]);
+      const head = ['row', ...given, ...drawHead, ...outHead, 'refused'];
+      const rows = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), ...out(r.values), r.said]);
       if (as === 'csv') { await csv(head, rows, `${stem}.csv`); return; }
       sheets = [['batch', head, rows]];
     } else {
-      const col = batchLowestColumn(v);
-      const head = ['row', ...given, 'solid', ...outHead, 'refused'];
-      const lowest = batchLowest(v, col).map((l) => [l.row + 1, ...fromTable(l.row), l.best ? l.best.solid : null,
-        ...out(l.best && l.best.values), l.refused.map((r) => `${r.solid}: ${r.said}`).join('; ') || null]);
-      const runs = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), r.solid, ...out(r.values), r.said]);
+      const head = ['row', ...given, ...drawHead, 'solid', ...outHead, 'refused'];
+      const lowest = batchUnits(v, col).map((u) => [u.row + 1, ...fromTable(u.row), ...drawValues(u), u.best ? u.best.solid : null,
+        ...out(u.best && u.best.values), u.refused.map((r) => `${r.solid}: ${r.said}`).join('; ') || null]);
+      const runs = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), r.solid, ...out(r.values), r.said]);
       if (as === 'csv') { await csv(head, lowest, `${stem}_lowest.csv`); return; }
       if (as === 'runs') { await csv(head, runs, `${stem}_runs.csv`); return; }
       sheets = [['lowest', head, lowest], ['runs', head, runs]];
       about += `, {solid} each of ${v.solids.join(', ')} in turn, the lowest kept in ${col}`;
     }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
-    const sp = batchSpread(v, batchLowestColumn(v));
-    if (sp) sheets.push(['spread', ['over the waters', `${sp.col}${v.solids ? ', the lowest of each row' : ''}`], batchSpreadRows(sp)]);
+    const sp = batchSpread(v, col);
+    if (sp) sheets.push(['spread', [`over the ${sp.over}`, `${sp.col}${batchLowestOf(v)}`], batchSpreadRows(sp)]);
     const xlsx = new XlsxWriter(`${stem}.xlsx`);
     for (const [name, head, rows] of sheets) xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), name, { header: head });
     xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [about] });
@@ -14536,6 +14670,9 @@ END
       pq.batch.text = $('rtmPqBatchText').value;
       pq.batch.rows = $('rtmPqBatchRows').value.trim();
       pq.batch.solids = $('rtmPqBatchSolids').value.trim();
+      pq.batch.uncertain = $('rtmPqBatchUncertain').value.trim();
+      pq.batch.draws = $('rtmPqBatchDraws').value.trim();
+      pq.batch.seed = $('rtmPqBatchSeed').value.trim();
       pqSave();
       pqBatchRender();
       infoRefresh();
