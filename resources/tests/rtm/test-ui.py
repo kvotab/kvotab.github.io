@@ -1277,8 +1277,8 @@ async def main():
             settles = each['settles'] if isinstance(each, dict) else []
             high_at = each['highAt'] if isinstance(each, dict) else []
             check('every species in numbers: under the chart, nothing ticked, each species where it starts and ends, its highest '
-                  'and when, and when it settles -- A and B by 2.30 s, B highest from 4.61 s, C still rising at the end, K held, '
-                  'Z nought throughout',
+                  'and when, and when it settles -- A and B by 2.30 s, B highest from 4.61 s, C still rising at the end, K held '
+                  '(nothing taking or making any), Z nought throughout',
                   [each['shown'] if isinstance(each, dict) else None, each['head'] if isinstance(each, dict) else None,
                    [r[:4] for r in rows], [r[4][:3] for r in rows[:2]], [r[4] for r in rows[2:]],
                    [s is not None and 2.30 <= s < 4 for s in settles[:2]], high_at[1] is not None and 4.6 <= high_at[1] < 6.5,
@@ -1286,7 +1286,7 @@ async def main():
                   [True, ['Every species', 'starts at', 'ends at', 'highest', 'settles'],
                    [['A', '1', '0.5', '1 at the start'], ['B', '0', '0.5', rows[1][3] if len(rows) > 1 else ''],
                     ['C', '0', '1', '1 at the end of the run'], ['K', '1', '1', ''], ['Z', '0', '0', '']],
-                   ['by ', 'by '], ['still changing at the end', 'does not change', 'nought throughout'],
+                   ['by ', 'by '], ['still changing at the end', 'held', 'nought throughout'],
                    [True, True], True, True])
             await page.ev("document.querySelector('#rtmTimeEvery .rtm-every-name[data-key=\"C\"]').click()")
             await asyncio.sleep(0.4)
@@ -1435,6 +1435,60 @@ async def main():
                    (after['line'] or '')[:8] if isinstance(after, dict) else None],
                   ['Stopped.', 'Check the run', None, False, True, 'The run '])
             await set_tols(tols[0], tols[1])
+
+            # --- what holding put in -------------------------------------------------------------------------------
+            # A held at 1 and turned into B at 0.1 a second: over 10 s holding put in 1 of A, exactly. Its row says so,
+            # and the line under the table what held means. On Composition, A's budget: put in by holding A, dash-dotted
+            # beside what the reactions made, 1 and -1 by the end; by each reaction, A => B took 1 and the table ends with
+            # what holding put in.
+            HELD = '<SETTINGS>\nMODE = batch\nTEND = 10\nTIME_UNIT = second\n\n<SPECIES>\nA  1  fixed\nB  0\n\n<REACTIONS>\nA => B, k = 0.1\n'
+            await set_text(page, HELD)
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled: 2 species')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            held_row = await settle(page, """(() => { const tr = [...document.querySelectorAll('#rtmTimeEvery tbody tr')]
+              .find((x) => x.cells[0].textContent === 'A'); return tr ? tr.cells[4].textContent : null; })()""",
+                                    'held; 1 put in over the run', tries=40, pause=0.25)
+            held_para = await page.ev("[...document.querySelectorAll('#rtmTimeEvery p')].pop().textContent")
+            comp_was = await page.ev("[document.getElementById('rtmCompView').value, document.getElementById('rtmCompBudgetOf').value,"
+                                     " document.getElementById('rtmCompBudgetBy').value]")
+            await page.ev("document.querySelector('[data-tab=\"composition\"]').click()")
+            await pick('rtmCompView', 'budget')
+            await pick('rtmCompBudgetBy', 'where')
+            await pick('rtmCompBudgetOf', 'species:A')
+            held_note = await settle(page, "/put in by holding A/.test(document.getElementById('rtmCompNote').textContent)", True,
+                                     tries=60, pause=0.25)
+            held_budget = await page.ev("""(() => { const d = document.getElementById('rtmChartComp').data || [];
+              const t = d.find((x) => x.name === 'put in by holding A'); const r = d.find((x) => x.name === 'made by reactions, net');
+              return [document.getElementById('rtmCompNote').textContent, t ? [t.line.dash, t.y[t.y.length - 1]] : null,
+                r ? r.y[r.y.length - 1] : null]; })()""")
+            await pick('rtmCompBudgetBy', 'lines')
+            await settle(page, "[...document.querySelectorAll('#rtmCompLines tbody tr')].some((tr) => tr.children[0].textContent"
+                               " === 'put in by holding A')", True, tries=60, pause=0.25)
+            held_lines = await page.ev("""(() => [...document.querySelectorAll('#rtmCompLines tbody tr')]
+              .map((tr) => [tr.children[0].textContent, tr.children[4].dataset.v === undefined ? null : Number(tr.children[4].dataset.v)]))()""")
+            near = lambda v, w: isinstance(v, (int, float)) and abs(v - w) < 1e-12
+            hb = held_budget if isinstance(held_budget, list) else [None, None, None]
+            check('what holding put in: A held and turned into B at 0.1 a second, 1 of it put in over 10 s; its row says so, and the '
+                  'line under the table what held means',
+                  [held_row, 'Held: kept where it is; what the reactions took of it, less what they made, was put in to keep it there, '
+                   'or taken out where they made more' in (held_para or '')],
+                  ['held; 1 put in over the run', True])
+            check('  A\'s budget: put in by holding A, dash-dotted, 1 by the end, beside what the reactions made, -1; by each reaction '
+                  'A => B took 1, and the table ends with what holding put in',
+                  [held_note, bool(re.search(r'; put in by holding A, 1 by the end; made by reactions, net, -1 by the end$', hb[0] or '')),
+                   hb[1][0] if hb[1] else None, near(hb[1][1], 1) if hb[1] else None, near(hb[2], -1),
+                   [r[0] for r in held_lines] if isinstance(held_lines, list) else held_lines,
+                   [(abs(r[1]) < 1e-12 if w is None else near(r[1], w)) if isinstance(r[1], (int, float)) else None
+                    for r, w in zip(held_lines, [-1, -1, None, -1, 1])] if isinstance(held_lines, list) else None],
+                  [True, True, 'dashdot', True, True,
+                   ['A => B', 'every reaction', "the summing's error", 'made by reactions, net, as the budget has it', 'put in by holding A'],
+                   [True, True, True, True, True]])
+            await pick('rtmCompBudgetBy', comp_was[2])
+            await pick('rtmCompBudgetOf', comp_was[1])
+            await pick('rtmCompView', comp_was[0])
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
             await page.ev("document.querySelector('[data-on-click=\"rtm:clearSeries\"]').click()")
             await set_text(page, prior[0])
             await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40)

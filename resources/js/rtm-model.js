@@ -12826,16 +12826,17 @@
       sum there, worked out as the derivative works it out: each of the
       line's channels' rates from the very code it runs, times their net
       coefficients, times what the cell holds for a rate on the inventory or
-      the porosity in the rock, a species held fixed not moved. An amount a
-      unit of the cell's water and of time: times the cell's water, what the
-      line moves of it there. Into out, one a line. A line that moves the
-      sum's parts into each other -- an element from one of its species to
-      another -- moves none of it, its terms cancelling: to the rounding,
-      none.
+      the porosity in the rock, a species held fixed not moved -- unless
+      `held` asks for what the line would move of it too, which is what the
+      holding makes up for. An amount a unit of the cell's water and of time:
+      times the cell's water, what the line moves of it there. Into out, one a
+      line. A line that moves the sum's parts into each other -- an element
+      from one of its species to another -- moves none of it, its terms
+      cancelling: to the rounding, none.
     */
     const lineR = new Float64Array(Math.max(nchan, 1));
     const lineD = new Float64Array(1);
-    function lineTermsAt(c, t, cell, w, out) {
+    function lineTermsAt(c, t, cell, w, out, held = false) {
       out.fill(0);
       if (!reactions.length) return out;
       thermoAt(t);
@@ -12857,7 +12858,7 @@
           const cap = chanCap[j];
           for (let m = 0; m < sp.length; m++) {
             const p = sp[m];
-            if (!w[p] || fixedAt[b + p]) continue;
+            if (!w[p] || (fixedAt[b + p] && !held)) continue;
             const term = w[p] * coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
             v += term;
             a += Math.abs(term);
@@ -12874,8 +12875,10 @@
       out -- an amount a unit of the cell's water and of time. Into out, one
       a species. What the relations moved of each is what the budget counts
       the reactions as having made less this, summed over the stored points.
+      A species held fixed in the cell is not moved, unless `held` asks for
+      what the lines would move of it: what the holding makes up for.
     */
-    function linesBySpeciesAt(c, t, cell, out) {
+    function linesBySpeciesAt(c, t, cell, out, held = false) {
       out.fill(0);
       if (!reactions.length) return out;
       thermoAt(t);
@@ -12894,7 +12897,7 @@
           const cap = chanCap[j];
           for (let m = 0; m < sp.length; m++) {
             const p = sp[m];
-            if (fixedAt[b + p]) continue;
+            if (fixedAt[b + p] && !held) continue;
             out[p] += coef[m] * r * (whole ? massOf[b + (cap >= 0 ? cap : p)] : sc);
           }
         }

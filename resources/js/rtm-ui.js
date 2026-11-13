@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111v';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111w';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2461,8 +2461,12 @@
         const start = got.total[0];
         const cin = got.cumIn[n - 1];
         const gone = got.cumOut[n - 1];
+        // What holding put in is given to the column as what came in is.
+        const hold = holdingOf(got);
+        const held = hold ? hold.put[n - 1] : null;
+        const given = start + cin + Math.max(held || 0, 0);
         out.push({ name: `${of.kind === 'element' ? `${of.name}, all of it` : labelOf(nm)}`, run: run.label, start, cin, gone,
-          end: got.total[n - 1], made: got.byReactions[n - 1], share: start + cin > 0 ? gone / (start + cin) : null });
+          end: got.total[n - 1], made: got.byReactions[n - 1], held, share: given > 0 ? gone / given : null });
       }
     }
     // Each number to four figures, the whole of it in data-v for whoever reads the page by machine.
@@ -2474,15 +2478,17 @@
         + `${td(h.tHalf, `${num(h.half)} at ${esc(fmtTime(h.tHalf))}`)}${td(pv, pv === null ? '' : esc(pv.toPrecision(3)))}`
         + `${td(R, R === null ? '' : esc(R.toPrecision(3)))}</tr>`
       : `<tr><td>${esc(name)}</td>${td(h.start)}<td colspan="4">does not move</td></tr>`)).join('');
+    const anyHeld = out.some((o) => o.held !== null);
     const outHtml = out.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.run)}</td>${td(o.start)}${td(o.cin)}${td(o.gone)}`
-      + `${td(o.end)}${td(o.made)}${td(o.share, o.share === null ? '' : `${esc((100 * o.share).toPrecision(3))} %`)}</tr>`).join('');
+      + `${td(o.end)}${td(o.made)}${anyHeld ? td(o.held) : ''}${td(o.share, o.share === null ? '' : `${esc((100 * o.share).toPrecision(3))} %`)}</tr>`).join('');
     const unitText = unitSaid(u) && !u.bare ? ` (${u.text})` : '';
     box.innerHTML = (half.length ? `<table><thead><tr><th>Where each curve is half-way${esc(unitText)}</th><th>it starts at</th>`
       + '<th>the farthest it gets</th><th>half-way</th><th>in pore volumes</th><th>retardation</th></tr></thead>'
       + `<tbody>${halfHtml}</tbody></table>` : '')
       + (out.length ? '<table><thead><tr><th>What has come out of the column</th><th>run</th><th>there at the start</th>'
         + '<th>came in at the left</th><th>went out at the right</th><th>there at the end</th><th>made by reactions, net</th>'
-        + `<th>gone out of what was there and came in</th></tr></thead><tbody>${outHtml}</tbody></table>` : '')
+        + `${anyHeld ? '<th>put in by holding</th><th>gone out of what was there, came in and was put in</th>'
+          : '<th>gone out of what was there and came in</th>'}</tr></thead><tbody>${outHtml}</tbody></table>` : '')
       + `<p>${[half.length ? 'Half-way from where a curve starts to the farthest it gets, the first time, between stored points; the '
         + 'retardation the pore volumes then over the share of the column the water has crossed to get there, 1 for what moves '
         + 'with the water, a median that a front spreading much moves a little' : '',
@@ -2494,8 +2500,9 @@
       half: { name: 'half-way', head: ['curve', 'starts at', 'farthest', 'farthest at', 'half-way', 'half-way at', 'in pore volumes', 'retardation'],
         rows: half.map(({ name, h, pv, R }) => (h.moves ? [name, h.start, h.far, h.tFar, h.half, h.tHalf, pv, R] : [name, h.start, null, null, null, null, null, null])) },
       out: { name: 'out of the column', head: ['of', 'run', 'there at the start', 'came in at the left', 'went out at the right', 'there at the end',
-        'made by reactions, net', 'gone out of what was there and came in'],
-      rows: out.map((o) => [o.name, o.run, o.start, o.cin, o.gone, o.end, o.made, o.share]) },
+        'made by reactions, net', ...(anyHeld ? ['put in by holding', 'gone out of what was there, came in and was put in']
+          : ['gone out of what was there and came in'])],
+      rows: out.map((o) => [o.name, o.run, o.start, o.cin, o.gone, o.end, o.made, ...(anyHeld ? [o.held] : []), o.share]) },
     };
   }
 
@@ -2562,6 +2569,9 @@
     // Once the run is checked: how far each species moved at this cell when it was solved more carefully.
     const ck = checkOf(r);
     const mc = modelCell(cell, state.layer, r);
+    // Held here: fixed on its line, or in this cell by <INITIAL>.
+    const heldHere = (nm) => !!((m.fixed && m.fixed[m.species.indexOf(nm)])
+      || (m.held || []).some((h) => h.species === nm && h.cells.includes(mc)));
     for (const nm of m.species) {
       const shown = shownAs(r, nm, u);
       if (shown && shown.why) { left.push([labelOf(nm), shown.why]); continue; }
@@ -2569,21 +2579,27 @@
       const y = series(nm, cell, state.layer, r);
       if (!y) continue;
       const s = speciesOver(r.t, f === 1 ? y : Float64Array.from(y, (v) => v * f));
-      if (s) rows.push({ nm, s, moved: ck ? ck.moved[mc * m.nspecies + m.species.indexOf(nm)] : null });
+      if (s) rows.push({ nm, s, f, held: heldHere(nm), moved: ck ? ck.moved[mc * m.nspecies + m.species.indexOf(nm)] : null });
     }
     const num = (v) => (v === 0 ? '0' : fit4(v));
+    // What holding put in or took out of each species held here, once the worker has said (rtmHeld).
+    const hr = rows.some((x) => x.held) ? heldAt(r, mc) : null;
+    const heldOf = (nm) => (hr && hr.held ? hr.held.find((h) => h.name === nm) || null : null);
+    const putOf = (x) => { const h = x.held ? heldOf(x.nm) : null; return h && h.whole && h.put ? h.put * x.f : null; };
+    const heldText = (x) => { const v = putOf(x); return v === null ? 'held' : `held; ${num(Math.abs(v))} ${v > 0 ? 'put in' : 'taken out'} over the run`; };
     const highText = (s) => `${num(s.high)} ${s.atStart ? 'at the start' : s.atEnd ? 'at the end of the run' : `at ${fmtTime(s.tHigh)}`}`;
-    const settleText = (s) => (s.flat ? s.flat : s.settled === null ? 'still changing at the end'
-      : s.fromStart ? 'from the start' : `by ${fmtTime(s.settled)}`);
+    const settleText = (x) => (x.held ? heldText(x) : x.s.flat ? x.s.flat : x.s.settled === null ? 'still changing at the end'
+      : x.s.fromStart ? 'from the start' : `by ${fmtTime(x.s.settled)}`);
     const td = (v, text) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${esc(text)}</td>`;
     const movedTd = (v) => `<td data-v="${v}"${v >= CHECK_HOLDS ? ' class="rtm-moved"' : ''}>${esc(movedText(v))}</td>`;
     const unitText = unitSaid(u) && !u.bare ? ` (${u.text})` : u.id ? ` ${u.text}` : '';
-    const html = rows.map(({ nm, s, moved }) => {
+    const html = rows.map((x) => {
+      const { nm, s, moved } = x;
       const on = state.picked.includes(nm);
       return `<tr${on ? ' class="on"' : ''}><td><button type="button" class="rtm-every-name" data-on-click="rtm:everyPick" `
         + `data-key="${esc(nm)}" aria-pressed="${on}">${esc(labelOf(nm))}</button></td>${td(s.start, num(s.start))}${td(s.end, num(s.end))}`
         + `${s.flat ? '<td></td>' : `<td data-v="${s.high}" data-t="${s.tHigh}">${esc(highText(s))}</td>`}`
-        + `${td(s.flat ? null : s.settled, settleText(s))}${ck ? movedTd(moved) : ''}</tr>`;
+        + `${td(x.held ? putOf(x) : s.flat ? null : s.settled, settleText(x))}${ck ? movedTd(moved) : ''}</tr>`;
     }).join('');
     // Check the run, while the run is one it can check and has not checked; Checking… while it does.
     const checking = checkBusy && checkBusy === r;
@@ -2598,6 +2614,8 @@
       + `<p>${esc(['Read off every stored point of the run; a species settles from when it stays within 1 % of where it ends, '
         + 'where that leaves a tenth of the run at least. A click on a species draws it, or takes it off the chart',
       ck ? 'Moved: the largest difference through the run, as a share of the most the species reaches here' : '',
+      rows.some((x) => putOf(x) !== null) ? 'Held: kept where it is; what the reactions took of it, less what they made, was put in '
+        + 'to keep it there, or taken out where they made more' : '',
       unitNote(u, left), u.why].filter(Boolean).join('. '))}. <button type="button" class="rtm-more" data-on-click="rtm:everyCopy">`
       + `Copy the table</button>${checkBtn}</p>`;
     box.hidden = false;
@@ -2607,14 +2625,41 @@
       name: 'every species',
       head: ['species', 'starts at', 'ends at', 'highest', `highest at (${sym})`, `settles by (${sym})`, 'note',
         ...(ck ? [`${movedHead} (% of its highest)`] : [])],
-      rows: rows.map(({ nm, s, moved }) => [labelOf(nm), s.start, s.end, s.flat ? null : s.high, s.flat ? null : s.tHigh,
-        s.flat ? null : s.settled, s.flat || (s.settled === null ? 'still changing at the end' : ''),
-        ...(ck ? [Number.isFinite(moved) ? 100 * moved : null] : [])]),
+      rows: rows.map((x) => [labelOf(x.nm), x.s.start, x.s.end, x.s.flat ? null : x.s.high, x.s.flat ? null : x.s.tHigh,
+        x.s.flat ? null : x.s.settled, x.held ? heldText(x) : x.s.flat || (x.s.settled === null ? 'still changing at the end' : ''),
+        ...(ck ? [Number.isFinite(x.moved) ? 100 * x.moved : null] : [])]),
       text: [['species', 'starts at', 'ends at', 'highest', 'settles', ...(ck ? [movedHead] : [])],
-        ...rows.map(({ nm, s, moved }) => [labelOf(nm), num(s.start), num(s.end), s.flat ? '' : highText(s), settleText(s),
-          ...(ck ? [movedText(moved)] : [])])],
+        ...rows.map((x) => [labelOf(x.nm), num(x.s.start), num(x.s.end), x.s.flat ? '' : highText(x.s), settleText(x),
+          ...(ck ? [movedText(x.moved)] : [])])],
       title: `Every species${where ? ` ${where}` : ''}${unitText}`,
     };
+  }
+
+  /*
+    What holding put in or took out, at one cell of a run, of each species
+    held there (rtmHeld): asked for once a cell, kept with the run itself --
+    not by its key, which a worker started again counts from 1 -- and the
+    table drawn again when it comes. Null until then.
+  */
+  const heldAsked = new WeakMap();
+  function heldAt(r, mc) {
+    let byCell = heldAsked.get(r);
+    if (!byCell) { byCell = new Map(); heldAsked.set(r, byCell); }
+    if (byCell.has(mc)) return byCell.get(mc);
+    byCell.set(mc, null);
+    const text = (state.ran && state.ran.text) || state.text;
+    const ask = (withRun) => request({ type: 'held', runKey: r.runKey, at: mc,
+      ...(withRun ? { text, t: Float64Array.from(r.t), states: Float64Array.from(r.states), n: r.n, width: r.width } : {}) });
+    (async () => {
+      let got;
+      try {
+        got = await ask(false);
+        if (got.missing) got = await ask(true);
+      } catch (e) { got = { error: e.message }; }
+      byCell.set(mc, got);
+      if (state.result === r) drawEvery(r);
+    })();
+    return null;
   }
 
   /** The table as it stands, on the clipboard: tab-separated for a sheet, and as a table for a document. */
@@ -4639,6 +4684,17 @@
     closes to the solver's tolerance and the summing over the stored points.
   */
   const budgetCache = new Map();
+  /**
+   * What holding put in, of a budget the worker kept (rtmBudget): { put, names } -- put at each stored point since the
+   * start, names the held species it was of, those it made up for most first; null where it put in nothing.
+   */
+  function holdingOf(got) {
+    if (!got || !got.byHolding || !got.byHolding.some((v) => v !== 0)) return null;
+    const by = got.heldBy || [];
+    const some = by.filter((h) => h.put !== 0);
+    const names = (some.length ? some : by).map((h) => labelOf(h.name));
+    return { put: got.byHolding, names: names.length < 2 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` };
+  }
   async function fetchBudget(r, of, key) {
     if (budgetCache.has(key)) return;
     budgetCache.set(key, null);
@@ -4682,17 +4738,20 @@
     const last = r.n - 1;
     const rows = els.map((el, q) => {
       const g = got[q];
+      // What holding put in, beside what came in: given to the column all the same.
+      const hold = holdingOf(g);
       let scale = 0;
       let off = 0;
       for (let i = 0; i <= last; i++) {
-        scale = Math.max(scale, Math.abs(g.total[i]), Math.abs(g.total[0] + g.cumIn[i]));
+        scale = Math.max(scale, Math.abs(g.total[i]), Math.abs(g.total[0] + g.cumIn[i] + (hold ? hold.put[i] : 0)));
         off = Math.max(off, Math.abs(g.byReactions[i]));
       }
       const rel = scale > 0 ? off / scale : 0;
       return { el, start: g.total[0], cin: g.cumIn[last], gone: g.cumOut[last], end: g.total[last], made: g.byReactions[last], rel,
-        closes: rel < 1e-4, transport: g.transport };
+        held: hold ? hold.put[last] : null, heldBy: hold ? hold.names : '', closes: rel < 1e-4, transport: g.transport };
     });
     const transport = rows.some((x) => x.transport);
+    const anyHeld = rows.some((x) => x.held !== null);
     const c = themeColors();
     const layout = baseLayout();
     layout.hovermode = 'closest';
@@ -4715,25 +4774,32 @@
     const td = (v, text = num(v)) => `<td${v === null || v === undefined || !Number.isFinite(v) ? '' : ` data-v="${v}"`}>${text}</td>`;
     const box = $('rtmCompLines');
     box.innerHTML = `<table><thead><tr><th>Every element</th><th>there at the start</th>${transport ? '<th>came in at the left</th>'
-      + '<th>went out at the right</th>' : ''}<th>there at the end</th><th>made by reactions, net</th><th>off its balance</th><th></th>`
-      + '</tr></thead><tbody>'
+      + '<th>went out at the right</th>' : ''}<th>there at the end</th><th>made by reactions, net</th>${anyHeld ? '<th>put in by holding</th>' : ''}`
+      + '<th>off its balance</th><th></th></tr></thead><tbody>'
       + rows.map((x) => `<tr><td>${esc(x.el)}</td>${td(x.start)}${transport ? `${td(x.cin)}${td(x.gone)}` : ''}${td(x.end)}${td(x.made)}`
+        + `${anyHeld ? td(x.held) : ''}`
         + `${td(x.rel, x.rel > 0 ? esc(x.rel.toExponential(1)) : '0')}<td>${x.closes ? 'closes' : 'made or taken by reactions'}</td></tr>`).join('')
       + '</tbody></table>'
       + `<p>Amounts ${transport ? "per m² of the water's cross-section, concentration × m" : 'per kg of water'}. Off its balance: the most the `
       + 'reactions made or took of it at any stored time, as a share of the most the column held or was given. Below 1e-4 the '
       + 'balance closes, to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points; above, a reaction '
-      + 'makes or takes it — a decay, a source.</p>';
+      + 'makes or takes it — a decay, a source.'
+      + (anyHeld ? ' Put in by holding: what the reactions took of a species held, less what they made of it, made up for to keep it '
+        + 'where it is, the reactions\' own part counted apart.' : '') + '</p>';
     box.hidden = false;
     const made = rows.filter((x) => !x.closes);
     const worst = rows.filter((x) => x.closes).reduce((b, x) => (b === null || x.rel > b.rel ? x : b), null);
+    const heldRows = rows.filter((x) => x.held !== null && x.held !== 0);
     note.textContent = [`${rows.length} element${rows.length === 1 ? '' : 's'}`,
       worst ? `${rows.length - made.length} close, the worst ${worst.el} at ${worst.rel > 0 ? worst.rel.toExponential(1) : '0'}` : '',
-      made.length ? `made or taken by reactions: ${made.map((x) => `${x.el} (${fmtNumber(x.made)})`).join(', ')}` : 'no reaction makes or takes any']
+      made.length ? `made or taken by reactions: ${made.map((x) => `${x.el} (${fmtNumber(x.made)})`).join(', ')}` : 'no reaction makes or takes any',
+      heldRows.length ? `put in by holding: ${heldRows.map((x) => `${x.el} (${fmtNumber(x.held)}, by holding ${x.heldBy})`).join(', ')}` : '']
       .filter(Boolean).join('; ');
     compTableNow = { head: ['element', 'there at the start', ...(transport ? ['came in at the left', 'went out at the right'] : []),
-      'there at the end', 'made by reactions, net', 'off its balance', 'closes'], name: `${fileStem()}_budget_every_element`,
-    rows: rows.map((x) => [x.el, x.start, ...(transport ? [x.cin, x.gone] : []), x.end, x.made, x.rel, x.closes ? 'yes' : 'no']) };
+      'there at the end', 'made by reactions, net', ...(anyHeld ? ['put in by holding'] : []), 'off its balance', 'closes'],
+    name: `${fileStem()}_budget_every_element`,
+    rows: rows.map((x) => [x.el, x.start, ...(transport ? [x.cin, x.gone] : []), x.end, x.made, ...(anyHeld ? [x.held] : []), x.rel,
+      x.closes ? 'yes' : 'no']) };
   }
 
   /** What a budget can be of: every element a species holds, then every species. */
@@ -4786,6 +4852,12 @@
       x: xs, y: idx.map((i) => supplied[i]), line: { color: c.text, dash: 'dash', width: 1.6 } });
     traces.push({ type: 'scatter', mode: 'lines', name: 'made by reactions, net', x: xs, y: idx.map((i) => got.byReactions[i]),
       line: { color: c.text, dash: 'dot', width: 1.6 } });
+    // What holding put in, a species held being kept where it is whatever the reactions take or make of it.
+    const hold = holdingOf(got);
+    if (hold) {
+      traces.push({ type: 'scatter', mode: 'lines', name: `put in by holding ${hold.names}`, x: xs, y: idx.map((i) => hold.put[i]),
+        line: { color: c.text, dash: 'dashdot', width: 1.6 } });
+    }
     const layout = baseLayout();
     layout.xaxis.type = pick.logT ? 'log' : 'linear';
     layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
@@ -4798,21 +4870,24 @@
     const where = got.bands.filter((b) => b.values[last] !== 0)
       .map((b) => `${fmt(b.values[last])} ${b.name}${got.total[last] > 0 ? ` (${(100 * b.values[last] / got.total[last]).toFixed(1)} %)` : ''}`);
     let scale = 0;
-    for (let i = 0; i < n; i++) scale = Math.max(scale, Math.abs(supplied[i]), Math.abs(got.total[i]));
+    for (let i = 0; i < n; i++) scale = Math.max(scale, Math.abs(supplied[i] + (hold ? hold.put[i] : 0)), Math.abs(got.total[i]));
     let off = 0;
     for (let i = 0; i < n; i++) off = Math.max(off, Math.abs(got.byReactions[i]));
     const rel = scale > 0 ? off / scale : 0;
+    const heldPut = hold ? hold.put[last] : 0;
     note.textContent = `${name}${kind === 'species' ? '' : ', all of it'} at the end: ${where.join(', ') || 'none in the column'}`
       + `${got.transport ? `; ${fmt(got.cumIn[last])} came in at the left and ${fmt(got.cumOut[last])} went out at the right` : ''}`
+      + (hold ? `; ${heldPut >= 0 ? 'put in' : 'taken out'} by holding ${hold.names}, ${fmt(Math.abs(heldPut))} by the end` : '')
       + (rel < 1e-4 ? `; no reaction makes or takes any to speak of: what is left over, at most ${off.toExponential(1)}, ${rel.toExponential(1)}`
-        + ' of what was there and came in, is the solver\'s and the summing over the stored points\''
+        + ` of what was there${hold ? ', came in and was put in' : ' and came in'}, is the solver's and the summing over the stored points'`
         : `; made by reactions, net, ${fmt(got.byReactions[last])} by the end`);
     const unit = shownTime().sym;
     compTableNow = { head: [`t (${unit})`, ...got.bands.map((b) => b.name), ...(anyOut ? ['gone out at the right-hand end'] : []),
-      ...(got.transport ? ['come in at the left-hand end'] : []), 'made by reactions, net', 'in the column, all of it'],
+      ...(got.transport ? ['come in at the left-hand end'] : []), 'made by reactions, net',
+      ...(hold ? [`put in by holding ${hold.names}`] : []), 'in the column, all of it'],
     name: `${fileStem()}_budget_${name.replace(/[^\w.-]+/g, '_')}`,
     rows: Array.from({ length: n }, (_, i) => [showT(r.t[i]), ...got.bands.map((b) => b.values[i]), ...(anyOut ? [got.cumOut[i]] : []),
-      ...(got.transport ? [got.cumIn[i]] : []), got.byReactions[i], got.total[i]]) };
+      ...(got.transport ? [got.cumIn[i]] : []), got.byReactions[i], ...(hold ? [hold.put[i]] : []), got.total[i]]) };
   }
 
   /*
@@ -4882,6 +4957,8 @@
     const last = n - 1;
     const fmt = (v) => fmtNumber(v);
     const made = whole ? bud.byReactions[last] : null;
+    // What holding put in of it, over the whole column: the budget's, beside what the reactions made.
+    const hold = whole ? holdingOf(bud) : null;
     const place = whole ? (m.transport ? ' over the whole column' : '')
       : ` at cell ${cellAt}${stride > 1 && layer ? `, rock layer ${layer}` : ''}`;
     const sym = timeUnit().symbol;
@@ -4974,12 +5051,15 @@
       + '<th>taken</th><th>net</th><th>of what was made</th><th>of what was taken</th></tr></thead>'
       + `<tbody>${lineRows}<tr><td>every reaction</td>${blank}${td(sumMade)}${td(sumTaken)}${td(netLines)}${blank}${blank}</tr>`
       + (whole ? relHtml + (together ? netRow('the relations, together, with the summing\'s error', leftover) : netRow('the summing\'s error', error))
-        + netRow('made by reactions, net, as the budget has it', made) : '')
+        + netRow('made by reactions, net, as the budget has it', made)
+        + (hold ? netRow(`put in by holding ${hold.names}`, hold.put[last]) : '') : '')
       + '</tbody></table>'
       + `<p>Each reaction's rate of making it and of taking it summed over the stored points by the trapezoidal rule, ${esc(per)}; `
       + 'a line and one written apart that undoes it are one reaction, both lines given. '
       + (whole ? `${relRows.length ? 'Each relation\'s part is its extent, read off the balance of a species of its own, times what it '
         + 'makes of this. ' : ''}What none of them accounts for is ${restIs}.`
+        + (hold ? ' A species held is kept where it is: what the reactions took of it, less what they made, was put in to keep it there, '
+          + 'and each line counts what it took or made of it all the same.' : '')
         : 'At a cell the water carries it in and out besides, which only the budget of the whole column weighs.') + '</p>';
     box.hidden = false;
     const makers = ranked.filter((x) => x.made > 0);
@@ -4994,7 +5074,8 @@
     topRel ? `the relations ${relSum >= 0 ? 'made' : 'took'} ${fmt(Math.abs(relSum))} net, ${relRows.length} of them, the most by `
       + `${topRel.x.name} (${fmt(topRel.part)})` : '',
     whole ? (together ? `what no line accounts for, ${fmt(leftover)}, is what the relations moved together: they cannot be told apart`
-      : `the summing's error ${fmt(error)}, ${errText} of what was made and taken`) : '']
+      : `the summing's error ${fmt(error)}, ${errText} of what was made and taken`) : '',
+    hold ? `${hold.put[last] >= 0 ? 'put in' : 'taken out'} by holding ${hold.names}, ${fmt(Math.abs(hold.put[last]))}` : '']
       .filter(Boolean).join('; ');
     // Saved: each line's rates and its sum at every stored point, each relation's part; in Excel, the table on a sheet of its own.
     const head = [`t (${shownTime().sym})`];
@@ -5007,6 +5088,7 @@
       for (const { x } of relRows) head.push(`${x.name} (line ${x.line}), net since the start`);
       if (relRows.length) head.push('every relation, net since the start');
       head.push(together ? "the relations, together, with the summing's error" : "the summing's error", 'made by reactions, net, as the budget has it');
+      if (hold) head.push(`put in by holding ${hold.names}`);
     }
     compTableNow = {
       head,
@@ -5021,6 +5103,7 @@
           for (const { x } of relRows) { row.push(x.part[i]); rs += x.part[i]; }
           if (relRows.length) row.push(rs);
           row.push(bud.byReactions[i] - all - rs, bud.byReactions[i]);
+          if (hold) row.push(hold.put[i]);
         }
         return row;
       }),
@@ -5030,7 +5113,8 @@
           ...(whole ? [...relRows.map(({ x, part }) => [x.name, String(x.line), null, null, part, null, null]),
             ...(relRows.length ? [['every relation', null, null, null, relSum, null, null]] : []),
             [together ? "the relations, together, with the summing's error" : "the summing's error", null, null, null, together ? leftover : error, null, null],
-            ['made by reactions, net, as the budget has it', null, null, null, made, null, null]] : [])] }],
+            ['made by reactions, net, as the budget has it', null, null, null, made, null, null],
+            ...(hold ? [[`put in by holding ${hold.names}`, null, null, null, hold.put[last], null, null]] : [])] : [])] }],
     };
   }
 
@@ -10741,7 +10825,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**Layer**: with a rock matrix, the fracture or a layer of rock behind the cell, by the depth of its centre.',
             '**Time in**: the model’s own unit; another of seconds, minutes, hours, days and years, the model’s times scaled; or — where the water flows — pore volumes: the time over the time the water takes to cross the column, `TRAVEL_TIME`, or `LENGTH` over the pore water’s speed |`VELOCITY`|/`POROSITY`. One choice for Against time, Against distance and Gradient; the model and its run are not changed, only the times shown. A time unit chosen is the one the other tabs, and every time written out, show too; rates stay per the model’s own unit, and pore volumes are for these three charts alone. Opening skbrtm’s files with their script chooses the unit its `t_span` names. A run kept beside is drawn in its own pore volumes, so that two runs at different speeds line up; what `<DATA>` measured is put on the axis by its time.',
             '**breakthrough numbers**, in a column: two tables under the chart. Of each curve drawn, where it starts, the farthest it gets from there and when, and when it is first half-way from the one to the other, read off every stored point; where the water flows, that time in pore volumes and the retardation it implies — those pore volumes over the share of the column the water has crossed to get there, 1 for what moves with the water. It is a front’s median, not its mean, and a front that spreads much moves it a little: set a species against a tracer of the same run. Of each species and each element’s total ticked, what has come out of the column, from its budget as the Composition tab keeps it: what was there at the start, what came in at the left, what went out at the right, what is there at the end, what reactions made or took, and the share gone out of what was there and came in. A run kept beside has its own rows; Excel has both tables on sheets of their own.',
-            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. **Check the run**, under it, solves the run again a hundred times more carefully, both tolerances a hundred times tighter, and sets the two against each other at every stored point: a column says how far each species moved at the cell, as a share of the most it reaches there, and a line under the table says that the run holds, no species having moved by 0.1 % of its highest, that it nearly holds, none by 1 %, or that it does not; and where it does not quite hold, which species moved most, when and where, and what it is in each run, with **Run with the careful setting**, which puts the tighter tolerances in the panel and runs again. A species smaller than the absolute tolerance over the relative is judged against that size, not on digits the run was not asked for. On until turned off.',
+            '**every species in numbers**: a table under the chart of each species at the cell shown: where it starts and ends, its highest and when, and when it settles — from when it stays within 1 % of where it ends, for a tenth of the run at least — or that it is still changing at the end. A species held fixed says what was put in, or taken out, over the run to keep it there: what the reactions took of it, less what they made. A click on a species draws it, or takes it off the chart; **Copy the table** puts it on the clipboard. **Check the run**, under it, solves the run again a hundred times more carefully, both tolerances a hundred times tighter, and sets the two against each other at every stored point: a column says how far each species moved at the cell, as a share of the most it reaches there, and a line under the table says that the run holds, no species having moved by 0.1 % of its highest, that it nearly holds, none by 1 %, or that it does not; and where it does not quite hold, which species moved most, when and where, and what it is in each run, with **Run with the careful setting**, which puts the tighter tolerances in the panel and runs again. A species smaller than the absolute tolerance over the relative is judged against that size, not on digits the run was not asked for. On until turned off.',
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
@@ -10829,7 +10913,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           { heading: 'Show', choices: [
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
-            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, and the summing\'s error left.', view === 'budget'],
+            ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. A species held fixed stays where it is because what the reactions take of it is put back, and what they make of it taken away: what holding put in, dash-dotted, beside what the reactions made, the reactions\' lines counting what they did to it as to any other. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions, put in by holding — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, the summing\'s error left, and what holding put in.', view === 'budget'],
             ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
@@ -12198,7 +12282,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111p';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111q';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

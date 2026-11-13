@@ -465,8 +465,128 @@ function rtmBudget(msg) {
     }
     byReactions[i] = total[i] - total[0] - cumIn[i] + cumOut[i];
   }
+  // What holding put in, where a species the sum counts is held in some cell; the reactions then made what is left.
+  const w = new Float64Array(ns);
+  for (const [k, cnt] of terms) w[k] += cnt;
+  const cells = [];
+  for (let cell = 0; cell < nf; cell++) {
+    for (let j = 0; j < stride; j++) cells.push([cell * stride + j, j === 0 ? widthOf(cell) : widthOf(cell) * mx.aw * mx.d[j - 1]]);
+  }
+  const hold = rtmHolding(model, t, states, n, width, w, cells);
+  let byHolding = null;
+  if (hold) {
+    byHolding = new Float64Array(n);
+    for (let i = 0; i < n; i++) {
+      if (hold.complete) {
+        byHolding[i] = hold.direct[i];
+        byReactions[i] -= hold.direct[i];
+      } else {
+        byHolding[i] = byReactions[i] - hold.lines[i];
+        byReactions[i] = hold.lines[i];
+      }
+    }
+  }
   return { type: 'budget', id: msg.id, of: { kind: of.kind === 'species' ? 'species' : 'element', name: of.name }, transport,
-    bands: bandNames.map((name, q) => ({ name, values: bands[q] })), fluxIn, fluxOut, cumIn, cumOut, total, byReactions };
+    bands: bandNames.map((name, q) => ({ name, values: bands[q] })), fluxIn, fluxOut, cumIn, cumOut, total, byReactions,
+    byHolding, heldBy: hold ? hold.by : [] };
+}
+
+/*
+  WHAT HOLDING PUT IN. A species held fixed stays at its value because
+  whatever the reactions, the relations or the moving water would do to it
+  is made up for. Of a budget's sum -- each species weighed by w, its count
+  of an element, or 1 for the one species a budget is of -- over `cells`,
+  each [model cell, its water]: what the <REACTIONS> lines made of it, held
+  species and all (model.lineTermsAt with `held`), summed over the stored
+  points, `lines`; and what the lines would have moved of each held species
+  the sum counts, where it is held, which the holding made up for -- the
+  sum of them since the start `direct`, and each species' over the run in
+  `by`, [{ name, put }], the most first.
+  Where every held species the sum counts is held everywhere and takes
+  part in no relation (`complete`), nothing but the lines moves any of
+  them -- the water carries no species held everywhere -- and `direct` is
+  all that was made up for, the reactions having made the balance less it,
+  the summing's error with them as it always was (rtmBudget). Else what
+  holding put in is the balance less `lines`: the relations move an element
+  only from one of its species to another and the water only from cell to
+  cell, so for an element that is all of it, and for a species all of it
+  where the species takes part in no relation. Null where no species the
+  sum counts is held in any of the cells.
+*/
+function rtmHolding(model, t, states, n, width, w, cells) {
+  const ns = model.speciesNames.length;
+  const heldK = [];
+  for (let k = 0; k < ns; k++) {
+    if (!w[k]) continue;
+    if (cells.some(([cell]) => model.fixedAt[cell * ns + k])) heldK.push(k);
+  }
+  if (!heldK.length) return null;
+  const nl = (model.reactions || []).length;
+  const out = new Float64Array(Math.max(nl, 1));
+  const bySp = new Float64Array(ns);
+  const rate = new Float64Array(n);
+  const direct = heldK.map(() => new Float64Array(n));
+  if (nl) {
+    for (let i = 0; i < n; i++) {
+      const c = states.subarray(i * width, (i + 1) * width);
+      for (const [cell, scale] of cells) {
+        model.lineTermsAt(c, t[i], cell, w, out, true);
+        let v = 0;
+        for (let l = 0; l < nl; l++) v += out[l];
+        rate[i] += scale * v;
+        model.linesBySpeciesAt(c, t[i], cell, bySp, true);
+        heldK.forEach((k, q) => { if (model.fixedAt[cell * ns + k]) direct[q][i] -= scale * w[k] * bySp[k]; });
+      }
+    }
+  }
+  const summed = (r) => {
+    const s = new Float64Array(n);
+    for (let i = 1; i < n; i++) s[i] = s[i - 1] + 0.5 * (r[i] + r[i - 1]) * (t[i] - t[i - 1]);
+    return s;
+  };
+  const each = direct.map(summed);
+  const all = new Float64Array(n);
+  for (const s of each) for (let i = 0; i < n; i++) all[i] += s[i];
+  const inRelation = (k) => (model.equilibria || []).some((eq) => (eq.net || []).some(([s]) => s === k));
+  const by = heldK.map((k, q) => ({ name: model.speciesNames[k], put: each[q][n - 1] }))
+    .sort((a, b) => Math.abs(b.put) - Math.abs(a.put));
+  return { lines: summed(rate), direct: all, complete: heldK.every((k) => model.fixed[k] && !inRelation(k)), by };
+}
+
+/*
+  WHAT HOLDING PUT IN AT ONE CELL, species by species, for the table of
+  every species: of each species held in model cell `at`, what the
+  <REACTIONS> lines would have moved of it there over the run, made up for
+  by the holding -- put, positive where they took more of it than they
+  made. All of what was made up for (`whole`) where nothing else moves it:
+  no relation it takes part in, and no water carrying it in or out, as
+  none does a species held everywhere.
+*/
+function rtmHeld(msg) {
+  const run = rtmRunFor(msg);
+  if (!run) return { type: 'held', id: msg.id, missing: true };
+  const { model, t, states, n, width } = run;
+  const ns = model.speciesNames.length;
+  const cell = Number(msg.at);
+  if (!(Number.isInteger(cell) && cell >= 0 && cell < model.cells)) throw new Error(`The model has no cell ${msg.at}.`);
+  const ks = [];
+  for (let k = 0; k < ns; k++) if (model.fixedAt[cell * ns + k]) ks.push(k);
+  const inRelation = (k) => (model.equilibria || []).some((eq) => (eq.net || []).some(([s]) => s === k));
+  const rate = ks.map(() => new Float64Array(n));
+  const bySp = new Float64Array(ns);
+  if (ks.length && (model.reactions || []).length) {
+    for (let i = 0; i < n; i++) {
+      model.linesBySpeciesAt(states.subarray(i * width, (i + 1) * width), t[i], cell, bySp, true);
+      ks.forEach((k, q) => { rate[q][i] = -bySp[k]; });
+    }
+  }
+  const held = ks.map((k, q) => {
+    let put = 0;
+    for (let i = 1; i < n; i++) put += 0.5 * (rate[q][i] + rate[q][i - 1]) * (t[i] - t[i - 1]);
+    const moves = model.transport && model.mobile && model.mobile[k] && !model.fixed[k];
+    return { name: model.speciesNames[k], put, whole: !inRelation(k) && !moves };
+  });
+  return { type: 'held', id: msg.id, at: cell, held };
 }
 
 /*
@@ -547,7 +667,8 @@ function rtmLines(msg) {
   for (let i = 0; i < n; i++) {
     const c = states.subarray(i * width, (i + 1) * width);
     for (const [cell, scale] of cells) {
-      model.lineTermsAt(c, t[i], cell, w, out);
+      // Held species and all: what a line takes of one, the holding makes up for, and the line moves it none the less.
+      model.lineTermsAt(c, t[i], cell, w, out, true);
       for (let g = 0; g < ng; g++) {
         const ls = groups[g];
         const v = scale * (ls.length === 1 ? out[ls[0]] : out[ls[0]] + out[ls[1]]);
@@ -2860,6 +2981,14 @@ function handleRtmMessage(msg, post) {
         reply.total.buffer, reply.byReactions.buffer, ...reply.bands.map((b) => b.values.buffer)] : []);
     } catch (e) {
       post({ type: 'error', id, stage: 'budget', error: rtmErrorMessage(e) });
+    }
+    return;
+  }
+  if (msg.type === 'held') {
+    try {
+      post(rtmHeld(msg));
+    } catch (e) {
+      post({ type: 'error', id, stage: 'held', error: rtmErrorMessage(e) });
     }
     return;
   }

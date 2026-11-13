@@ -8359,6 +8359,57 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     `${cc.failed || ''} ${cc.cells} cells, ${cc.species} species, moved ${cc.moved ? Array.from(cc.moved).map((v) => v.toExponential(1)).join(' ') : ''}`);
   }
   /*
+    What holding put in (rtmBudget's byHolding, rtmHeld). HCO3- and H+ held, turned into CO2 at a steady 1e-4 a second, the
+    CO2 lost at 1e-3 of itself a second to something that holds no carbon: over 1000 s holding put in 0.1 of carbon, a
+    steady rate summed, exactly; the column gained 0.1 (1 - 1/e) of it, and the reactions took the rest, the second line's
+    loss, which is all the lines do to carbon -- the first moves it from HCO3- to CO2, held or not, and makes none. HCO3-'s
+    own budget: 0.1 put in, 0.1 taken by the reactions; CO2's no holding. At the cell: HCO3- and H+ 0.1 each, all of what
+    was made up for. A tracer held in the first cell of a closed column and carried into the rest: what holding put in is
+    all the column gained, the reactions none, the water's part with it; at that cell, not all of it.
+  */
+  {
+    const ask = (msg) => { let got = null; handleRtmMessage(msg, (m) => { if (m.type !== 'progress') got = m; }); return got; };
+    const carb = '<SETTINGS>\nMODE = batch\nTEND = 1000\n\n<SPECIES>\nHCO3- 0.01 fixed\nH+ 1e-3 fixed\nCO2 0\nGone 0\n\n'
+      + '<REACTIONS>\nHCO3- + H+ => CO2, k = 10\nCO2 => Gone, k = 0.001\n';
+    const hRun = ask({ type: 'run', id: 90, text: carb, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 } });
+    const hn = hRun.n - 1;
+    const budgetOf = (of, id) => ask({ type: 'budget', id, runKey: hRun.runKey, of });
+    const bC = budgetOf({ kind: 'element', name: 'C' }, 91);
+    const bH = budgetOf({ kind: 'species', name: 'HCO3-' }, 92);
+    const bD = budgetOf({ kind: 'species', name: 'CO2' }, 93);
+    const lC = ask({ type: 'lines', id: 94, runKey: hRun.runKey, of: { kind: 'element', name: 'C' } });
+    const at0 = ask({ type: 'held', id: 95, runKey: hRun.runKey, at: 0 });
+    const gain = bC.total[hn] - bC.total[0];
+    const lost = lC.lines.length === 1 ? lC.lines[0].madeCum[hn] + lC.lines[0].takenCum[hn] : NaN;
+    check('what holding put in: HCO3- and H+ held, turned into CO2 at 1e-4 a second, CO2 lost at 1e-3 of itself; over 1000 s '
+      + 'holding put in 0.1 of carbon, exactly, the column gained 0.1 (1 - 1/e), the reactions the balance less what holding put '
+      + 'in, and of the lines only the loss moved any carbon, what the reactions made to the summing\'s error, a part in a thousand',
+    Math.abs(bC.byHolding[hn] - 0.1) < 1e-12 && bC.heldBy.map((h) => h.name).join() === 'HCO3-'
+      && Math.abs(gain - 0.1 * (1 - Math.exp(-1))) < 1e-6 && Math.abs(bC.byReactions[hn] - (gain - 0.1)) < 1e-15
+      && lC.lines.length === 1 && lC.lines[0].lines.join() === '13' && Math.abs(lost / bC.byReactions[hn] - 1) < 1e-3,
+    `put in ${bC.byHolding && bC.byHolding[hn]} by ${JSON.stringify(bC.heldBy)}; gained ${gain}; made ${bC.byReactions[hn]}; `
+      + `${lC.lines.length} line(s) ${lC.lines.map((l) => l.lines.join('+')).join(' ')}, net ${lost}`);
+    check('  HCO3-\'s own budget: 0.1 put in by holding it, 0.1 taken by the reactions; CO2\'s no holding, what the reactions made of it its gain',
+      Math.abs(bH.byHolding[hn] - 0.1) < 1e-12 && Math.abs(bH.byReactions[hn] + 0.1) < 1e-12 && bD.byHolding === null
+        && Math.abs(bD.byReactions[hn] - (bD.total[hn] - bD.total[0])) < 1e-15,
+      `${bH.byHolding && bH.byHolding[hn]}, ${bH.byReactions[hn]}; CO2 ${bD.byHolding} ${bD.byReactions[hn]}`);
+    check('  at the cell: HCO3- and H+ 0.1 each put in, all of what was made up for',
+      at0.held.length === 2 && at0.held.every((h) => Math.abs(h.put - 0.1) < 1e-12 && h.whole)
+        && at0.held.map((h) => h.name).join() === 'HCO3-,H+', JSON.stringify(at0.held));
+    const tracer = '<SETTINGS>\nMODE = transport\nCELLS = 10\nLENGTH = 1e-2\nLEFT = neumann\nRIGHT = neumann\nTEND = 1e5\n\n'
+      + '<SPECIES>\nX 0 D=1e-9\n\n<INITIAL>\nX 0 1 fixed\n\n<REACTIONS>\n';
+    const xRun = ask({ type: 'run', id: 96, text: tracer, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true, maxPoints: 4000 } });
+    const xn = xRun.n - 1;
+    const bX = ask({ type: 'budget', id: 97, runKey: xRun.runKey, of: { kind: 'species', name: 'X' } });
+    const x0 = ask({ type: 'held', id: 98, runKey: xRun.runKey, at: 0 });
+    check('  a tracer held in the first cell of a closed column: what holding put in all the column gained, the reactions none; '
+      + 'at that cell not all of what was made up for, the water carrying it on',
+    bX.byHolding[xn] > 1e-4 && Math.abs(bX.byHolding[xn] - (bX.total[xn] - bX.total[0])) < 1e-15 && bX.byReactions.every((v) => v === 0)
+      && x0.held.length === 1 && x0.held[0].name === 'X' && x0.held[0].put === 0 && x0.held[0].whole === false,
+    `put in ${bX.byHolding && bX.byHolding[xn]}, gained ${bX.total[xn] - bX.total[0]}, made ${Math.max(...bX.byReactions.map(Math.abs))}; `
+      + JSON.stringify(x0.held));
+  }
+  /*
     Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
     speciation of its totals: re-speciated from what it shows, each settles at its first evaluation, its relations and
     totals holding there to rounding; the one polishing step moves a trace species by what the point's conditioning

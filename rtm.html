@@ -2781,7 +2781,10 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             several — where it starts and where it ends, its highest and when it first gets there, and
             when it settles: from when it stays within 1 % of where it ends, so long as that leaves a
             tenth of the run at least, or else that it is still changing at the end. One that ends at
-            nought settles once it is below a billionth of its highest. The numbers are read off every
+            nought settles once it is below a billionth of its highest. A species held fixed there says
+            instead what was put in, or taken out, over the run to keep it where it is — what the
+            reactions took of it, less what they made — or only that it is held, where a relation or
+            the water moves it too and holding makes up for those as well. The numbers are read off every
             stored point, whatever the axes leave out, in the unit <em>Units</em> chooses, at the times
             <em>Time in</em> shows. A click on a species draws it, or takes it off the chart; <em>Copy the
             table</em> puts the table on the clipboard, as a table for a document and tab-separated for a
@@ -2972,12 +2975,21 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             What the reactions made of it is the gap between the two, drawn dotted: none for an
             element chemistry only moves about, where the gap is the solver's tolerance and the
             summing's, which the note gives; a nuclide's decay, or a source among the reactions,
-            where they make or take it. <em>Every element</em>, first in <em>Of</em>, sets the balance
+            where they make or take it. A species held fixed — <code>fixed</code> on its line, or
+            in some cells by <code>&lt;INITIAL&gt;</code> — stays where it is because whatever the
+            reactions take of it is put back, and whatever they make of it taken away: what holding
+            put in is drawn dash-dotted beside what the reactions made, and the note says of which
+            held species. It is what the <code>&lt;REACTIONS&gt;</code> lines took of the species
+            held, less what they made of it, summed over the stored points. Where a species held is
+            also moved by a relation, or held in some cells only and carried by the water, holding
+            makes up for those too, and the budget of an element counts them with it — a relation
+            and the water only move an element about — as whatever the column's balance leaves once
+            the lines' own part is counted. <em>Every element</em>, first in <em>Of</em>, sets the balance
             of each element side by side: what was there at the start, came in, went out, is there at
-            the end and what the reactions made, and how far it is off its balance, the most the
-            reactions made or took of it at any stored time as a share of the most the column held or
-            was given. Below 10<sup>−4</sup> it closes; above, a reaction makes or takes it — the
-            check that a run kept what it should, at a glance.</p>
+            the end, what the reactions made and what holding put in, and how far it is off its
+            balance, the most the reactions made or took of it at any stored time as a share of the
+            most the column held or was given. Below 10<sup>−4</sup> it closes; above, a reaction makes
+            or takes it — the check that a run kept what it should, at a glance.</p>
           <p><em>By each reaction</em>, where the model has <code>&lt;REACTIONS&gt;</code>, it splits
             what the reactions made line by line. Each line's rate of making it and of taking it is
             worked out at each stored point as the solver's derivative works it out: the line's rates
@@ -2999,7 +3011,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             relations moved together instead. A relation moves an element between its species and
             makes none of it, and so does a line that moves it from one species to another: the
             organic carbon's oxidation turns one species of carbon into another and makes no
-            carbon.</p>
+            carbon. A line counts what it does to a species held as to any other — one that turns a
+            held <code>HCO3-</code> into <code>CO2</code> makes no carbon — and the table ends with
+            what holding put in, the budget's.</p>
           <p><em>Where the minerals' fronts are</em> follows each mineral's fronts along a column,
             from the inlet, through the run. Of a mineral the column holds at the start, the length of
             column it has been cleared of: each cell counts its width times the share of its first
@@ -4190,14 +4204,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111p"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111q"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111o"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261111p"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zp"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zq"></script>
 </body>
 </html>
