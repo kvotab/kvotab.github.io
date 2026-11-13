@@ -1226,6 +1226,15 @@ async def main():
                   [['Gypsum', 'Gypsum', f'every solid refused: {PH_ERR}'], ['0 of 3 rows', '2 of 3 rows', '0 of 3 rows']])
             await page.ev(LOWEST_IN % json.dumps('Ca(mol/kgw)'))
             await asyncio.sleep(0.2)
+            STATS = """[document.querySelector('#rtmPqBatchStats caption').textContent,
+              [...document.querySelectorAll('#rtmPqBatchStats tbody tr')].map((tr) => [tr.cells[0].textContent, tr.cells[1].textContent])]"""
+            check('  the spread over the waters of each row\'s lowest calcium: two waters, the third left out',
+                  [await page.ev(STATS), await page.ev("document.getElementById('rtmChartPqBatch').layout.xaxis.type"),
+                   await page.ev("document.getElementById('rtmPqBatchLowestLabel').textContent")],
+                  [['Ca(mol/kgw), the lowest of each row',
+                    [['waters', '2'], ['smallest', '0.009062'], ['5th percentile', '0.009446'], ['median', '0.0129'],
+                     ['95th percentile', '0.01636'], ['largest', '0.01674'], ['left out, refused or with no number', '1']]],
+                   'linear', 'Lowest in'])
 
             async def saved_csv(selector):
                 await page.ev("""(() => {
@@ -1253,6 +1262,56 @@ async def main():
             await page.ev(SET_SOLIDS % json.dumps(''))
             check('  {solid} in the input with no solids listed: said before anything runs', await batch(SOLIDS_IN),
                   'The input asks for {solid}: list under Solids the solids to try, each in turn.')
+            # ---- the spread over the waters ----
+            # Twenty waters of NaCl, 1 to 20 mmol/kgw, and one with no number among them, without solids: Spread of the
+            # sodium, the first total of an element. Twenty waters, the 5th percentile 0.00195, the median 0.0105 and the
+            # 95th 0.01905, between the nearest values as Excel's PERCENTILE.INC has them; the water with no number left
+            # out and counted. The chart: a step a water from nought to 100 %, on a log axis (0.001 to 0.02), the median
+            # and the 95th percentile marked and labelled. Saved: the chart as SVG, PNG and a page with the input under
+            # it, and the workbook with the spread on a sheet of its own.
+            waters = 'Na\n' + '\n'.join(['1', '2', '3', '4', '5', '6', '7', 'x'] + [str(i) for i in range(8, 21)]) + '\n'
+            await page.ev(FEED % (json.dumps('spread.csv'), json.dumps(waters), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('spread.csv: 21 rows and 1 column')", True, tries=40)
+            said = await batch('SOLUTION 1\n units mmol/kgw\n pH 7\n Na {Na}\n Cl {Na}\nSELECTED_OUTPUT 1\n -reset false\n -totals Na\nEND\n')
+            chart = await page.ev("""(() => { const p = document.getElementById('rtmChartPqBatch'); if (!p.data) return null;
+              const [s, m, q] = p.data; const log = p.layout.xaxis.type === 'log';
+              return [s.x.length, s.y[0], s.y[s.y.length - 1], p.layout.xaxis.type,
+              Number(m.x[0].toPrecision(6)), Number(q.x[0].toPrecision(6)), p.layout.annotations.map((a) => a.text),
+              p.layout.annotations.map((a) => Number((log ? 10 ** a.x : a.x).toPrecision(6))),
+              p.layout.yaxis.title.text, p.layout.xaxis.title.text]; })()""")
+            check('the spread over the waters, without solids: Spread of the sodium, its numbers beside the chart, the water '
+                  'with no number left out',
+                  [said.startswith('21 of 21 rows run through PHREEQC') if isinstance(said, str) else said,
+                   await page.ev(STATS), await page.ev("document.getElementById('rtmPqBatchLowestLabel').textContent"),
+                   await page.ev("document.getElementById('rtmPqBatchLowestWrap').hidden"), chart],
+                  [True, ['Na(mol/kgw)', [['waters', '20'], ['smallest', '0.001'], ['5th percentile', '0.00195'], ['median', '0.0105'],
+                                          ['95th percentile', '0.01905'], ['largest', '0.02'], ['left out, refused or with no number', '1']]],
+                   'Spread of', False,
+                   [21, 0, 100, 'log', 0.0105, 0.01905, ['median 0.0105', '95 %: 0.01905'], [0.0105, 0.01905],
+                    'waters at or below (%)', 'Na(mol/kgw)']])
+
+            # Caught at the link the page clicks, not at URL.createObjectURL, which Plotly itself uses to make a PNG of its SVG.
+            async def saved_blob(selector, how):
+                await page.ev("""(() => {
+                  window.__blob = null;
+                  const click = HTMLAnchorElement.prototype.click;
+                  HTMLAnchorElement.prototype.click = function () { window.__blob = fetch(this.href).then((r) => r.blob()); };
+                  window.__restore = () => { HTMLAnchorElement.prototype.click = click; };
+                  document.querySelector(%s).click();
+                })()""" % json.dumps(selector))
+                await settle(page, "!!window.__blob", True, tries=80, pause=0.1)
+                await page.ev("window.__restore()")
+                return await page.ev("window.__blob ? window.__blob.then((b) => (%s)(b)) : null" % how)
+
+            svg = await saved_blob('[data-pane="batch"][data-as="svg"]', '(b) => b.text().then((t) => t.slice(0, 4))')
+            png = await saved_blob('[data-pane="batch"][data-as="png"]', '(b) => [b.type, b.size > 2000]')
+            html = await saved_blob('[data-pane="batch"][data-as="html"]',
+                                    "(b) => b.text().then((t) => [t.includes('The PHREEQC input each row was run with'), t.includes(' Na {Na}')])")
+            sheets = await saved_blob('[data-on-click="rtm:pqBatchSave"][data-as="xlsx"]',
+                                      "(b) => JSZip.loadAsync(b).then((z) => z.file('xl/workbook.xml').async('string'))"
+                                      ".then((x) => [...x.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]))")
+            check('  saved: the chart as SVG, PNG and a page with the input under it; the workbook with the spread on a sheet of its own',
+                  [svg, png, html, sheets], ['<svg', ['image/png', True], [True, True], ['batch', 'spread', 'input']])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

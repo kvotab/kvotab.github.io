@@ -9900,7 +9900,7 @@
     }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
       diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn', phreeqc: 'rtmChartPq',
-      inverse: 'rtmChartPqInv' }[pane]);
+      inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch' }[pane]);
     if (as === 'txt') {
       if (!compTextNow) { setStatus('List a water first: Show the water, as PHREEQC lists it.', 'error'); return; }
       saidSaved(await saveBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`));
@@ -9946,10 +9946,10 @@
   */
   const CHART_NOTES = { time: 'rtmTimeNote', profile: 'rtmProfileNote', gradient: 'rtmGradNote', composition: 'rtmCompNote',
     diagram: 'rtmDgNote', sweep: 'rtmSwNote', fit: 'rtmFitNote', uncertainty: 'rtmUnNote', phreeqc: 'rtmPqSummary',
-    inverse: 'rtmPqInvNote' };
+    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote' };
   const CHART_NAMES = { time: 'against time', profile: 'against distance', gradient: 'gradient', composition: 'composition',
     diagram: 'diagram', sweep: 'sweeps', fit: 'fit', uncertainty: 'uncertainty', phreeqc: 'through PHREEQC',
-    inverse: 'inverse models through PHREEQC' };
+    inverse: 'inverse models through PHREEQC', batch: 'a batch over a table of waters, its spread' };
   // plotly.js as this page loads it, once read: { src, integrity, text }.
   let plotlyRead = null;
 
@@ -9997,7 +9997,9 @@
     const note = noteEl ? noteEl.textContent.trim() : '';
     const name = `${fileStem()}_${pane}`;
     const title = `${fileStem()}: ${CHART_NAMES[pane] || pane}`;
-    const text = (state.ran && state.ran.text) || state.text;
+    // A batch's chart is of PHREEQC's runs over a table, not of the model's run: under it, the input each row was run with.
+    const batch = pane === 'batch' && pq.batchResult;
+    const text = batch ? pq.batchResult.text : (state.ran && state.ran.text) || state.text;
     const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
     const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
     const day = new Date().toISOString().slice(0, 10);
@@ -10027,7 +10029,7 @@
 <main>
 <h1>${esc(title)}</h1>
 ${note ? `<p class="note">${esc(note)}</p>\n` : ''}<div id="chart"></div>
-<details><summary>The model text the run was made with</summary><pre>${esc(text)}</pre></details>
+<details><summary>${batch ? 'The PHREEQC input each row was run with' : 'The model text the run was made with'}</summary><pre>${esc(text)}</pre></details>
 <p class="made">Saved from rtm.html, kvotab.github.io/rtm.html, on ${day}. Drawn by plotly.js ${esc(version)} (MIT licence)${
   lib.text ? ', which is in this file' : `, which this page loads from ${esc(new URL(lib.src).host)}`}.</p>
 </main>
@@ -10273,7 +10275,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
-    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
@@ -10336,7 +10338,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function resize() {
     if (typeof Plotly === 'undefined') return;
     ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
-      'rtmChartPq']
+      'rtmChartPq', 'rtmChartPqBatch']
       .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
@@ -11484,9 +11486,15 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Lowest in**: for each row, the run with the lowest value in that column of the selected output, and the solid that gave it -- the least that stays dissolved with whichever solid holds it lowest. Unless another is chosen, the first total of an element.',
           'Above the rows, each solid: in how many rows it was the lowest, how many of its runs PHREEQC refused, and what it said first. A row with a solid refused names it, for the lowest is then of the others.',
         ] },
+        { heading: 'The spread over the waters', list: [
+          'A chart of the column chosen -- **Lowest in**, or **Spread of** without solids -- a step for each water: for each value, the share of the waters at or below it. On a log axis where the values are all above nought and span a factor of ten or more.',
+          'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
+          'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
+        ] },
         exportSection(['**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
           '**CSV, every run**: with solids, each row with each solid.',
-          '**Excel**: the same, a sheet each, and the input on a sheet of its own.']),
+          '**Excel**: the same, a sheet each, the spread\'s numbers on one, and the input on a sheet of its own.',
+          '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.']),
       ],
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
     }),
@@ -13764,6 +13772,35 @@ END
     const n = all[all.length - 1][1];
     return n ? Number(n) : 1;
   }
+  /**
+    How the values of column col a batch gave spread over the waters: a water a row -- with solids, the row's lowest run
+    -- sorted, with the row (and solid) each is of; the rows that give none, refused or without a number there; and the
+    smallest, 5th percentile, median, 95th percentile and largest, a percentile between the two nearest values as
+    Excel's PERCENTILE.INC and NumPy's percentile put it. Null where no row gives a number.
+  */
+  function batchSpread(v, col) {
+    const k = v.head.indexOf(col);
+    const got = [];
+    let none = 0;
+    const take = (row, values, solid) => {
+      const x = values && k >= 0 ? values[k] : undefined;
+      if (typeof x === 'number' && Number.isFinite(x)) got.push({ x, row, solid }); else none++;
+    };
+    if (v.solids) for (const l of batchLowest(v, col)) take(l.row, l.best && l.best.values, l.best && l.best.solid);
+    else for (const r of v.runs) take(r.row, r.values, null);
+    if (!got.length) return null;
+    got.sort((a, b) => a.x - b.x);
+    const s = got.map((g) => g.x);
+    const at = (q) => {
+      const h = (s.length - 1) * q;
+      const lo = Math.floor(h);
+      return lo + 1 < s.length ? s[lo] + (h - lo) * (s[lo + 1] - s[lo]) : s[lo];
+    };
+    return { col, got, none, n: s.length, min: s[0], p5: at(0.05), p50: at(0.5), p95: at(0.95), max: s[s.length - 1] };
+  }
+  /** The spread's numbers as rows of words and values, for the page and the workbook. */
+  const batchSpreadRows = (sp) => [['waters', sp.n], ['smallest', sp.min], ['5th percentile', sp.p5], ['median', sp.p50],
+    ['95th percentile', sp.p95], ['largest', sp.max], ...(sp.none ? [['left out, refused or with no number', sp.none]] : [])];
   /** What a batch ran, for the (i): its rows, with solids its runs, and how many PHREEQC refused. */
   function batchFact(v) {
     const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
@@ -13922,13 +13959,18 @@ END
     $('rtmPqBatchShow').hidden = !v;
     const box = $('rtmPqBatchOut');
     box.hidden = !v;
+    pqBatchSpread();
     if (!v) { box.innerHTML = ''; return; }
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
     const cells = (values) => v.head.map((_, k) => `<td${typeof values[k] === 'number' ? ` data-v="${values[k]}"` : ''}>${esc(num(values[k]))}</td>`).join('');
     const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
     const bad = v.runs.filter((r) => !r.values).length;
     const where = `${v.table}${v.sheet ? `, sheet ${v.sheet}` : ''}`;
-    $('rtmPqBatchLowestWrap').hidden = !v.solids;
+    // The column chosen: with solids, the one each row's lowest run is lowest in; the one whose spread is drawn either way.
+    const col = batchLowestColumn(v);
+    $('rtmPqBatchLowestWrap').hidden = !v.head.length;
+    $('rtmPqBatchLowestLabel').textContent = v.solids ? 'Lowest in' : 'Spread of';
+    $('rtmPqBatchLowest').innerHTML = v.head.map((h) => `<option value="${esc(h)}"${h === col ? ' selected' : ''}>${esc(h)}</option>`).join('');
     $('rtmPqBatchRunsItem').hidden = !v.solids;
     $('rtmPqBatchCsvItem').dataset.hint = v.solids ? 'the lowest for each row' : 'every row';
     if (!v.solids) {
@@ -13941,8 +13983,6 @@ END
       box.innerHTML = `<table><thead><tr><th>row</th>${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
       return;
     }
-    const col = batchLowestColumn(v);
-    $('rtmPqBatchLowest').innerHTML = v.head.map((h) => `<option value="${esc(h)}"${h === col ? ' selected' : ''}>${esc(h)}</option>`).join('');
     const lows = batchLowest(v, col);
     $('rtmPqBatchNote').textContent = `${many(lows.length, 'row')} of ${where}, each with ${many(v.solids.length, 'solid')}: ${many(v.runs.length, 'run')}`
       + `${v.stopped ? `, stopped after ${lows.length.toLocaleString()} of ${v.asked.toLocaleString()} rows` : ''}${bad ? `; ${many(bad, 'run')} refused` : ''}`
@@ -13976,8 +14016,77 @@ END
   }
 
   /**
+    How the column chosen spreads over the waters: for each value the share of the waters at or below it, a step a
+    water, on a log axis where the values are all above nought and span a factor of ten or more; the median and the
+    95th percentile marked, each labelled to the side away from the other; the numbers beside it. Drawn only where it
+    is seen -- the PHREEQC tab, which draws it again when it is shown.
+  */
+  function pqBatchSpread() {
+    const v = pq.batchResult;
+    const box = $('rtmPqBatchSpread');
+    const plot = $('rtmChartPqBatch');
+    const sp = v ? batchSpread(v, batchLowestColumn(v)) : null;
+    box.hidden = !sp;
+    if (!sp) {
+      if (typeof Plotly !== 'undefined') Plotly.purge(plot);
+      $('rtmPqBatchStats').innerHTML = '';
+      return;
+    }
+    const f = (x) => (x === 0 ? '0' : fit4(x));
+    $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${v.solids ? ', the lowest of each row' : ''}</caption><tbody>`
+      + batchSpreadRows(sp).map(([what, x], i) => `<tr><th scope="row">${what}</th><td>${i === 0 || what.startsWith('left') ? x.toLocaleString() : esc(f(x))}</td></tr>`).join('')
+      + '</tbody>';
+    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    const c = themeColors();
+    const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
+    const log = sp.min > 0 && sp.max / sp.min >= 10;
+    // The share at or below: nought up to the smallest, then a step up at each water.
+    const xs = [sp.got[0].x, ...sp.got.map((g) => g.x)];
+    const ys = [0, ...sp.got.map((_, i) => ((i + 1) / sp.n) * 100)];
+    const of = [sp.got[0], ...sp.got].map((g) => `row ${g.row + 1}${g.solid ? `, ${g.solid}` : ''}`);
+    const line = (x) => ({ type: 'scatter', mode: 'lines', x: [x, x], y: [0, 100], line: { color: muted, width: 1, dash: 'dot' },
+      hoverinfo: 'skip', showlegend: false });
+    const traces = [
+      { type: 'scatter', mode: 'lines', x: xs, y: ys, line: { shape: 'hv', width: 2, color: DG_PALETTE[0] }, customdata: of,
+        hovertemplate: '%{x:.4g}: %{y:.1f} % of the waters at or below<br>%{customdata}<extra></extra>', showlegend: false },
+      line(sp.p50), line(sp.p95),
+    ];
+    // The labels above the plot: each to the side of its line that has room, the median's a row higher where they would meet.
+    const margin = { l: 70, r: 30, t: 30, b: 48 };
+    const T = (x) => (log ? Math.log10(x) : x);
+    const span = T(sp.max) - T(sp.min) || 1;
+    const at = (x) => (T(x) - T(sp.min)) / span;
+    const wide = Math.max(200, plot.clientWidth - margin.l - margin.r);
+    const width = (text) => (text.length * 6 + 6) / wide;
+    const marks = [{ x: sp.p50, text: `median ${f(sp.p50)}` }, { x: sp.p95, text: `95 %: ${f(sp.p95)}` }].map((m) => {
+      const w = width(m.text);
+      return { ...m, w, right: at(m.x) + w <= 1.03 };
+    });
+    if (at(marks[0].x) - marks[0].w >= -0.03) marks[0].right = false;
+    const ends = (m) => (m.right ? [at(m.x), at(m.x) + m.w] : [at(m.x) - m.w, at(m.x)]);
+    const [a0, a1] = ends(marks[0]);
+    const [b0, b1] = ends(marks[1]);
+    const meet = a0 < b1 && b0 < a1;
+    if (meet) margin.t = 44;
+    const annotations = marks.map((m, i) => ({ x: T(m.x), y: 1, xref: 'x', yref: 'paper', yanchor: 'bottom', showarrow: false,
+      xanchor: m.right ? 'left' : 'right', xshift: m.right ? 3 : -3, yshift: meet && i === 0 ? 14 : 0, text: m.text,
+      font: { size: 10, color: c.text } }));
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.margin = margin;
+    layout.annotations = annotations;
+    layout.xaxis.type = log ? 'log' : 'linear';
+    layout.xaxis.exponentformat = 'power';
+    layout.xaxis.title = { text: `${sp.col}${v.solids ? ', the lowest of each row' : ''}`, font: { size: 11 } };
+    layout.yaxis.range = [0, 100];
+    layout.yaxis.title = { text: 'waters at or below (%)', font: { size: 11 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  /**
     Every row the batch ran, each with the table's values the input asked for, what PHREEQC gave and what it said where it
-    refused. With solids: CSV the lowest for each row and the solids refused in it, 'runs' every run, Excel both.
+    refused. With solids: CSV the lowest for each row and the solids refused in it, 'runs' every run, Excel both. The
+    workbook has the spread's numbers on a sheet of their own.
   */
   async function pqBatchSave(as) {
     const v = pq.batchResult;
@@ -14014,6 +14123,8 @@ END
       about += `, {solid} each of ${v.solids.join(', ')} in turn, the lowest kept in ${col}`;
     }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
+    const sp = batchSpread(v, batchLowestColumn(v));
+    if (sp) sheets.push(['spread', ['over the waters', `${sp.col}${v.solids ? ', the lowest of each row' : ''}`], batchSpreadRows(sp)]);
     const xlsx = new XlsxWriter(`${stem}.xlsx`);
     for (const [name, head, rows] of sheets) xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), name, { header: head });
     xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [about] });

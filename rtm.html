@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111v">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261111w">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1094,7 +1094,7 @@
             </div>
           </div>
           <div class="rtm-toolbar" id="rtmPqBatchShow" hidden>
-            <label id="rtmPqBatchLowestWrap" hidden>Lowest in
+            <label id="rtmPqBatchLowestWrap" hidden><span id="rtmPqBatchLowestLabel">Lowest in</span>
               <select id="rtmPqBatchLowest" data-on-change="rtm:pqBatchLowest"></select>
             </label>
             <span class="rtm-muted" id="rtmPqBatchNote"></span>
@@ -1104,10 +1104,18 @@
                 <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchCsvItem" data-on-click="rtm:pqBatchSave" data-as="csv" data-hint="every row">CSV</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchRunsItem" data-on-click="rtm:pqBatchSave" data-as="runs" data-hint="each row with each solid" hidden>CSV, every run</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="xlsx" data-hint="every row, as a workbook">Excel</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="xlsx" data-hint="every row and the spread, as a workbook">Excel</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="the spread's chart">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="png" data-hint="the spread's chart">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="html" data-hint="the chart, live, as a page">HTML</button>
                 </div>
               </div>
             </span>
+          </div>
+          <!-- How the column chosen spreads over the waters: the share at or below each value, and its numbers (rtm-ui.js pqBatchSpread). -->
+          <div class="rtm-pq-batch-spread" id="rtmPqBatchSpread" hidden>
+            <div class="plot" id="rtmChartPqBatch"></div>
+            <table class="rtm-pq-batch-stats" id="rtmPqBatchStats"></table>
           </div>
           <div class="rtm-fit-result rtm-pq-batch-out" id="rtmPqBatchOut" hidden></div>
         </section>
@@ -4144,6 +4152,16 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             how many rows each solid was the lowest, how many of its runs PHREEQC refused, and what it
             said first; a row with a solid refused names it, its lowest being of the others.
             <em>Export</em> saves the lowest for each row, every run, or both in a workbook.</p>
+          <p>Above the rows, a chart shows how the column chosen spreads over the waters — under
+            <em>Lowest in</em>, or <em>Spread of</em> without solids: for each value, the share of the
+            waters at or below it, a step for each water, on a log axis where the values are all above
+            nought and span a factor of ten or more. The median and the 95th percentile are marked, and
+            beside the chart are the number of waters, the smallest, the 5th percentile, the median,
+            the 95th percentile and the largest; a percentile lies between the two nearest values, as
+            Excel's <code>PERCENTILE.INC</code> and NumPy's <code>percentile</code> put it. A row PHREEQC
+            refused, or whose run gives no number there, is left out and counted. <em>Export</em> saves
+            the chart as SVG, PNG or a page of its own, and the workbook has these numbers on a sheet of
+            their own.</p>
           <p>Every row runs on a clean slate — <code>DELETE -all</code> first — so that nothing a row
             before it saved is there for it. A row PHREEQC refuses keeps the first line of what PHREEQC
             said, and the rest go on. The rows go to PHREEQC in parts of up to 200 runs, a row with all
@@ -4334,6 +4352,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zx"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113a"></script>
 </body>
 </html>
