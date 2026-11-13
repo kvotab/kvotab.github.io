@@ -14516,7 +14516,19 @@
   /*
     LIKELY MISTAKES IN THE REACTION LINES, said as warnings, nothing refused.
     A line whose charges do not balance -- a source or a sink, a side with
-    nothing on it, aside -- each species' charge its z=, else its name's. And
+    nothing on it, aside -- each species' charge its z=, else its name's. A
+    line whose elements do not balance: a reaction moves atoms from one
+    species to another and makes none, and one that takes an element and
+    gives it back nowhere -- UO2CO3 + H2 + E_site => H+ + H+ + E_site, its
+    uranium, oxygen and carbon -- has most likely lost a product. Counted by
+    the names that are formulas of the elements (elementsOf); a line is left
+    alone where it moves one that is not -- a name with a symbol that is no
+    element (Hr, OHr, X, E_site), a lone symbol with no count and no charge
+    (B for a species B, as the textbook models write them), or a nuclide,
+    which a decay turns into another element on purpose -- unless that name
+    is on both sides as much, a catalyst; the electron carries no atom. A
+    line short only of water, two H to each O, is let be: a model that does
+    not count its water writes its lines so. And
     a species a line uses up that nothing starts, brings in at an end, makes
     or forms in a relation, which that line's rate does not read, neither its
     concentration nor its activity: it can only go below nought, and is most
@@ -14524,6 +14536,51 @@
     names within two letters of it are offered, those the rate reads first.
   */
   function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes = []) {
+    // What a line takes of each element on its left and gives on its right, where they differ, in words: '' where they do not,
+    // or where the line cannot be judged (see above).
+    const elementsOff = (rx) => {
+      const net = new Map();
+      for (const [c, name] of rx.reactants) net.set(name, (net.get(name) || 0) - c);
+      for (const [c, name] of rx.products) net.set(name, (net.get(name) || 0) + c);
+      const moves = [...net.values()].filter((c) => Math.abs(c) > 1e-12);
+      if (!moves.some((c) => c < 0) || !moves.some((c) => c > 0)) return '';
+      const formula = new Map();
+      for (const name of net.keys()) {
+        const sp = species[index.get(name)];
+        if (sp && sp.electron) { formula.set(name, new Map()); continue; }
+        const els = /^[A-Z][a-z]?$/.test(String(name).replace(/\(g\)$/, '')) || nuclideOf(name) ? null : elementsOf(name);
+        if (els && [...els.keys()].every((el) => ATOMIC_WEIGHTS[el])) formula.set(name, els);
+        else if (Math.abs(net.get(name)) > 1e-12) return '';
+      }
+      const order = [];
+      const count = (side) => {
+        const out = new Map();
+        for (const [c, name] of side) {
+          for (const [el, n] of formula.get(name) || []) {
+            if (!order.includes(el)) order.push(el);
+            out.set(el, (out.get(el) || 0) + c * n);
+          }
+        }
+        return out;
+      };
+      const take = count(rx.reactants);
+      const give = count(rx.products);
+      const off = order.filter((el) => {
+        const a = take.get(el) || 0;
+        const b = give.get(el) || 0;
+        return Math.abs(a - b) > 1e-9 * Math.max(1, a, b);
+      });
+      if (!off.length) return '';
+      // Short only of water, two H to each O, as a model that does not count its water writes a line: let be.
+      const by = (el) => (take.get(el) || 0) - (give.get(el) || 0);
+      if (off.every((el) => el === 'H' || el === 'O') && Math.abs(by('H') - 2 * by('O')) <= 1e-9 * Math.max(1, Math.abs(by('H')))) return '';
+      const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+      const says = (side) => {
+        const xs = off.filter((el) => side.get(el)).map((el) => `${Number(side.get(el).toPrecision(6))} ${el}`);
+        return xs.length ? list(xs) : 'none';
+      };
+      return `${says(take)} on the left, against ${says(give)} on the right`;
+    };
     const zOf = (name) => {
       const sp = species[index.get(name)];
       return sp && sp.z !== null && sp.z !== undefined ? sp.z : chargeOf(name);
@@ -14537,6 +14594,8 @@
       if (Math.abs(left - right) > 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))) {
         warnings.push(`Line ${rx.line}: the charges do not balance, ${signed(left)} on the left and ${signed(right)} on the right.`);
       }
+      const off = elementsOff(rx);
+      if (off) warnings.push(`Line ${rx.line}: the elements do not balance, ${off}.`);
     }
     // What can be there at some time: started, brought in, held, made by a reaction or formed in a relation.
     const there = Uint8Array.from(species, (sp) => (sp.initial !== 0 || (sp.left !== null && sp.left !== 0)

@@ -615,6 +615,31 @@ A => B, r = ${law}
   `${ours(planted.warnings).join(' | ')}; examples warned: ${noisy.join(', ') || 'none'}; built-in: ${builtIn.join(' | ')}`);
   check('  the name thought mistyped, and what it may have meant, handed to the page to offer as a fix',
     JSON.stringify(planted.fixes) === JSON.stringify([{ line: 15, name: 'Bx', meant: ['B'] }]), JSON.stringify(planted.fixes));
+  /*
+    A line whose elements do not balance: UO2CO3 + H2 + E_site => H+ + H+ + E_site gives its uranium, oxygen and
+    carbon back nowhere, E_site on both sides set aside; H2O2 => H2O loses an O. Nothing said of a line short only
+    of water, HCO3- + H+ => CO2, as a model that does not count its water writes it, nor of the same with its water,
+    a lone symbol (B => C, the textbook's B and C), a nuclide's decay, a name with a symbol that is no element
+    (OHr + Hr), the electron, a source, or coefficients two and a half. No example is warned -- the redox plume's
+    organic carbon is oxidised less its water -- and the built-in model of its line 194, as skbrtm's own set has it.
+  */
+  const elemental = RtmModel.compile('<SETTINGS>\nMODE = batch\nTEND = 1\n\n<SPECIES>\nUO2CO3 1e-3\nH2 1e-3\nE_site 1\n'
+    + 'H+ 1e-7\nHCO3- 1e-3\nCO2 0\nH2O 55.5 fixed\nB 1\nC 0\nU238 1\nTh234 0\nOHr 0\nHr 0\nFe+3 1e-3\nFe+2 0\ne- 0\n'
+    + 'H2O2 0\nO2 0\n\n<REACTIONS>\nUO2CO3 + H2 + E_site => H+ + H+ + E_site, k = 1\nHCO3- + H+ => CO2, k = 1\n'
+    + 'HCO3- + H+ => CO2 + H2O, k = 1\nB => C, k = 1\nU238 => Th234, k = 1\nOHr + Hr => H2O, k = 1\nFe+3 + e- => Fe+2, k = 1\n'
+    + '=> H2O2, k = 1\n2 H2O2 => 2 H2O + O2, k = 1\nH2O2 => H2O + 0.5 O2, k = 1\nH2O2 => H2O, k = 1\n');
+  const els = (w) => w.filter((x) => /elements do not balance/.test(x));
+  const elNoisy = lintExamples.filter((e) => els(RtmModel.compile(e.text).warnings).length).map((e) => e.id);
+  const elBuiltIn = els(RtmModel.compile(RTM_DEFAULT_MODEL).warnings);
+  check('a line whose elements do not balance, warned of: a product lost, an O lost; nothing said of a line short only of '
+    + 'water, a balanced line, a lone symbol, a decay, a name that is no formula, the electron, a source or coefficients of two '
+    + 'and a half; no example warned, the built-in model of its line 194',
+  JSON.stringify(els(elemental.warnings)) === JSON.stringify([
+    'Line 26: the elements do not balance, 1 U, 5 O and 1 C on the left, against none on the right.',
+    'Line 36: the elements do not balance, 2 O on the left, against 1 O on the right.'])
+    && elNoisy.length === 0 && JSON.stringify(elBuiltIn)
+      === JSON.stringify(['Line 194: the elements do not balance, 1 U, 5 O and 1 C on the left, against none on the right.']),
+  `${els(elemental.warnings).join(' | ')}; examples warned: ${elNoisy.join(', ') || 'none'}; built-in: ${elBuiltIn.join(' | ')}`);
 }
 {
   /*
@@ -10123,9 +10148,10 @@ C2O4-2 + UO2+2 => U_site, r = k*[C2O4-2]*[UO2+2], k = 1
   const m = RtmModel.compile(RTM_DEFAULT_MODEL);
   check('the built-in model compiles', m.nspecies === 36 * 20 && m.nreactions === 127,
     `${m.speciesNames.length} species x ${m.cells} cells = ${m.nspecies}, ${m.nreactions} reactions`);
-  // One warning, true of skbrtm's own set the model is converted from: UO2CO3 + H2 + E_site => H+ + H+ + E_site.
-  check('  with one warning, the charges of its line 194 as skbrtm\'s own set has them',
-    m.warnings.length === 1 && m.warnings[0] === 'Line 194: the charges do not balance, 0 on the left and +2 on the right.',
+  // Two warnings, true of skbrtm's own set the model is converted from: UO2CO3 + H2 + E_site => H+ + H+ + E_site.
+  check('  with two warnings, the charges and the elements of its line 194, as skbrtm\'s own set has them',
+    JSON.stringify(m.warnings) === JSON.stringify(['Line 194: the charges do not balance, 0 on the left and +2 on the right.',
+      'Line 194: the elements do not balance, 1 U, 5 O and 1 C on the left, against none on the right.']),
     m.warnings.join('; ') || 'none');
   const r = run(m, { tend: 1e4, rtol: 1e-6, atol: 1e-22, nonNegative: true });
   check('  and integrates', r.t.length > 1,

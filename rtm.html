@@ -1329,10 +1329,19 @@ A => B, r = k25*exp(-Ea/8.314*(1/TK - 1/298.15))*[A], k25 = 1e-5, Ea = 6e4   # T
             Each of these reads every ion of the cell through the ionic strength, and the Jacobian
             follows it there. A law that should stop when the mineral is gone says so, as
             <code>(m/m0)^(2/3)</code> does in PHREEQC's examples.</p>
-          <p>As the model compiles, each line is looked over for two likely mistakes, said in the warnings
+          <p>As the model compiles, each line is looked over for three likely mistakes, said in the warnings
             under the text and nothing refused. A line whose charges do not balance, each species' charge
             its <code>z=</code> or else its name's — <code>H+</code> +1, <code>CO3-2</code> −2,
-            <code>e-</code> −1 — a source or a sink aside. And a species a line uses up that nothing starts,
+            <code>e-</code> −1 — a source or a sink aside. A line whose elements do not balance: a reaction
+            moves atoms from one species to another and makes none, and one that takes an element and gives
+            it back nowhere has most likely lost a product — <code>UO2CO3 + H2 + E_site =&gt; H+ + H+ +
+            E_site</code> takes 1 U, 5 O and 1 C and gives none of them back. The atoms are counted by the
+            names that are formulas, and a line is left alone where it moves a name that is not one: a
+            symbol that is no element, <code>Hr</code> or <code>E_site</code>; a lone symbol with no count
+            and no charge, <code>B</code>, as textbook models name their species; or a nuclide, which a
+            decay turns into another element on purpose. A name on both sides as much, a catalyst, is set
+            aside, and the electron carries no atom. A line short only of water, two H to each O, is let
+            be, as a model that does not count its water writes its lines. And a species a line uses up that nothing starts,
             brings in at an end, makes or forms in a relation, and that the line's rate does not read: it can
             only go below nought, and is most likely a name mistyped. The names within two letters of it are
             offered, those the rate reads first: <code>UVIO2s+</code> used up by a rate that reads
@@ -4204,7 +4213,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111q"></script>
+  <script src="./resources/js/rtm-model.js?v=20261111r"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
   <script src="./resources/js/rtm-worker.js?v=20261111p"></script>
@@ -4212,6 +4221,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261111zq"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261111zr"></script>
 </body>
 </html>
