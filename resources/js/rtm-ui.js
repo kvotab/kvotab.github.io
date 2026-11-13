@@ -11476,6 +11476,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'PHREEQC input as PHREEQC takes it, with the database the tab has chosen: a `SOLUTION`, and whatever PHREEQC should do with it -- `EQUILIBRIUM_PHASES`, `REACTION`, `PHASES` and `NAMED_EXPRESSIONS` of its own.',
           '`{name}`: the row\'s value in the column of that name, as the table has it, `{pH}` or `{[Ca]tot (m)}`. A name the table has no column for is said before anything runs; one after a `#`, in a comment, is not asked for.',
           '`SELECTED_OUTPUT`: what to keep of each row\'s run, its `-totals`, `-pH` and the like, or a `USER_PUNCH`; the last row it gives is kept. A table opened with the box empty starts it: a `SOLUTION` with `pH` where the table has it, every other column below, commented, to take or leave.',
+          '**Open an input…**, **Save the input…**: the input as a file, its settings above it as comments -- `# Solids: Calcite, Gypsum`, `# Draws: 100` -- so that it is PHREEQC input still. Opened, they fill their fields, any it does not give left empty; the table and the database it was saved with are said where they are not the ones open.',
         ] },
         { heading: 'What comes back', list: [
           'Every row runs on a clean slate (`DELETE -all` first), so nothing one row saved is there for the next; a row PHREEQC refuses keeps the first line of what it said, and the rest go on.',
@@ -14345,6 +14346,86 @@ END
     saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
   }
 
+  /*
+    A BATCH'S INPUT AS A FILE: the PHREEQC input, its settings above it as
+    comments -- "# Solids: Calcite, Gypsum" -- so that the file is PHREEQC input
+    still. Opened, the settings fill their fields, each the file does not give
+    left empty, and leave the text; the table and the database it was saved
+    with, which the page cannot open for it, are said where they are not the
+    ones open. Saved, the settings are written afresh from the fields, any
+    pasted into the text dropped, so that a file saved twice has them once.
+  */
+  const BATCH_HEAD = '# rtm.html batch settings:';
+  const BATCH_KEYS = [['Table', null], ['Database', null], ['Rows', 'rows'], ['Solids', 'solids'], ['Uncertain', 'uncertain'],
+    ['Draws', 'draws'], ['Seed', 'seed'], ['Lowest in', 'lowest']];
+  /** The settings a batch input starts with, "# Key: value" among its first comments ("Spread of" read as "Lowest in"), and its text without them. */
+  function batchSettingsOf(text) {
+    const settings = {};
+    const keep = [];
+    let head = true;
+    for (const line of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+      if (head && !/^\s*(#|$)/.test(line)) head = false;
+      if (head) {
+        if (line.trim() === BATCH_HEAD) continue;
+        const m = /^\s*#\s*(Table|Database|Rows|Solids|Uncertain|Draws|Seed|Lowest in|Spread of)\s*:\s*(.*?)\s*$/i.exec(line);
+        if (m) {
+          const said = m[1].toLowerCase() === 'spread of' ? 'lowest in' : m[1].toLowerCase();
+          settings[BATCH_KEYS.find(([k]) => k.toLowerCase() === said)[0]] = m[2];
+          continue;
+        }
+      }
+      keep.push(line);
+    }
+    // The blank lines the settings stood among, at the top, go with them.
+    while (keep.length && !keep[0].trim()) keep.shift();
+    return { settings, text: keep.join('\n') };
+  }
+  /** The database the batch runs with, by name. */
+  const batchDatabaseName = () => (pqDatabase() || { name: 'phreeqc.dat' }).name;
+  /** The table open, as a batch input's settings name it. */
+  const batchTableName = (t) => (t ? `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}` : '');
+
+  async function pqBatchInputChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    let read;
+    try {
+      read = batchSettingsOf(await pqFileText(file));
+    } catch (e) {
+      setStatus(`${file.name} could not be read: ${e.message}`, 'error');
+      return;
+    }
+    const { settings, text } = read;
+    pq.batch.text = text;
+    pq.batchStarter = null;
+    for (const [key, field] of BATCH_KEYS) if (field) pq.batch[field] = settings[key] || '';
+    pqSave();
+    pqBatchRender();
+    infoRefresh();
+    // The column's name as the result's bar has it: Lowest in with solids, Spread of without.
+    const said = (k) => (k === 'Lowest in' && !pq.batch.solids.trim() ? 'Spread of' : k);
+    const given = BATCH_KEYS.filter(([k, f]) => f && settings[k]).map(([k]) => said(k));
+    const other = [];
+    if (settings.Table && settings.Table !== batchTableName(pq.batchTable)) other.push(`the table ${settings.Table}`);
+    if (settings.Database && settings.Database !== batchDatabaseName()) other.push(`the database ${settings.Database}`);
+    setStatus(`${file.name} opened: the input${given.length ? ` and its ${given.join(', ')}` : ''}.`
+      + `${other.length ? ` It was saved for ${other.join(' and ')}; have ${other.length > 1 ? 'them' : 'it'} open before running.` : ''}`,
+    other.length ? 'warn' : 'ok');
+  }
+
+  async function pqBatchSaveInput() {
+    const text = batchSettingsOf(pq.batch.text).text.replace(/\s+$/, '');
+    if (!text.trim()) { setStatus('Write or open an input first: there is nothing to save yet.', 'warn'); return; }
+    const t = pq.batchTable;
+    const values = { Table: batchTableName(t), Database: batchDatabaseName() };
+    for (const [key, field] of BATCH_KEYS) if (field) values[key] = pq.batch[field];
+    const said = (k) => (k === 'Lowest in' && !pq.batch.solids.trim() ? 'Spread of' : k);
+    const head = [BATCH_HEAD, ...BATCH_KEYS.filter(([k]) => values[k]).map(([k]) => `# ${said(k)}: ${values[k]}`)];
+    const stem = t ? t.name.replace(/\.[^.]+$/, '') : 'batch';
+    saidSaved(await saveBlob(new Blob([`${head.join('\n')}\n\n${text}\n`], { type: 'text/plain' }), `${stem}_batch_input.txt`));
+  }
+
   async function pqWaterChosen(ev) {
     const file = ev.target.files && ev.target.files[0];
     ev.target.value = '';
@@ -14763,6 +14844,9 @@ END
       pqSave();
       pqBatchDraw();
     },
+    'rtm:pqBatchOpenInput': () => $('rtmPqBatchInputFile').click(),
+    'rtm:pqBatchInputChosen': (ev) => { pqBatchInputChosen(ev); },
+    'rtm:pqBatchSaveInput': () => { pqBatchSaveInput(); },
     'rtm:pqBatchRun': () => { pqBatchRun(); },
     'rtm:pqBatchSave': (ev, el) => { pqBatchSave(el.dataset.as); },
   });

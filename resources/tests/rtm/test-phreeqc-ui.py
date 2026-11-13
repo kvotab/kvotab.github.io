@@ -1455,6 +1455,46 @@ async def main():
             await field('rtmPqBatchUncertain', '')
             await field('rtmPqBatchDraws', '')
             await field('rtmPqBatchSeed', '')
+            # ---- a batch's input as a file ----
+            # A file with its settings above it as comments, saved for another table: opened, the box has the input
+            # without them, its own comment kept; Rows, Solids, Uncertain, Draws and Seed are filled, and the status
+            # says which table it was saved for. Saved again, the settings are written afresh above the text, once,
+            # with the table open. A plain input opened empties every setting.
+            FEED_INPUT = """(async (name, text) => { const input = document.getElementById('rtmPqBatchInputFile');
+              const dt = new DataTransfer(); dt.items.add(new File([text], name)); input.files = dt.files;
+              input.dispatchEvent(new Event('change', { bubbles: true })); })(%s, %s)"""
+            BODY = '# my own comment\nSOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND'
+            SETTINGS = ('# Rows: 1-2\n# Solids: Calcite, Gypsum\n# Uncertain: dK normal 0 0.3\n# Draws: 5\n# Seed: 9\n'
+                        '# Lowest in: Ca(mol/kgw)\n')
+            await page.ev(FEED_INPUT % (json.dumps('saved.txt'), json.dumps(
+                '# rtm.html batch settings:\n# Table: other.csv\n# Database: phreeqc.dat\n' + SETTINGS + '\n' + BODY + '\n')))
+            opened = await settle(page, f"{BATCH_STATUS}.startsWith('saved.txt opened')", True, tries=40)
+            FIELDS = "['rtmPqBatchText', 'rtmPqBatchRows', 'rtmPqBatchSolids', 'rtmPqBatchUncertain', 'rtmPqBatchDraws', 'rtmPqBatchSeed'].map((id) => document.getElementById(id).value)"
+            got = await page.ev(FIELDS)
+            said = await page.ev(BATCH_STATUS)
+            again = await saved_blob('[data-on-click="rtm:pqBatchSaveInput"]', '(b) => b.text()')
+            check('a batch\'s input as a file: opened, its settings in their fields and out of the text; the table it was saved for said',
+                  [opened, got, said],
+                  [True, [BODY + '\n', '1-2', 'Calcite, Gypsum', 'dK normal 0 0.3', '5', '9'],
+                   'saved.txt opened: the input and its Rows, Solids, Uncertain, Draws, Seed, Lowest in. It was saved for the table '
+                   'other.csv; have it open before running.'])
+            check('  saved again: the settings written afresh above the text, once, with the table open',
+                  again, '# rtm.html batch settings:\n# Table: thirty.csv\n# Database: phreeqc.dat\n' + SETTINGS + '\n' + BODY + '\n')
+            # Without solids the column is Spread of, in the status and in the file saved.
+            await page.ev(FEED_INPUT % (json.dumps('spread.txt'), json.dumps('# Spread of: pH\n' + BODY)))
+            await settle(page, f"{BATCH_STATUS}.startsWith('spread.txt opened')", True, tries=40)
+            spread_said = await page.ev(BATCH_STATUS)
+            spread_saved = await saved_blob('[data-on-click="rtm:pqBatchSaveInput"]', '(b) => b.text()')
+            check('  without solids the column is Spread of, opened and saved',
+                  [spread_said, spread_saved.split('\n')[:4] if isinstance(spread_saved, str) else spread_saved],
+                  ['spread.txt opened: the input and its Spread of.',
+                   ['# rtm.html batch settings:', '# Table: thirty.csv', '# Database: phreeqc.dat', '# Spread of: pH']])
+            await page.ev(FEED_INPUT % (json.dumps('plain.txt'), json.dumps('SOLUTION 1\n pH 7\nEND\n')))
+            await settle(page, f"{BATCH_STATUS}.startsWith('plain.txt opened')", True, tries=40)
+            check('  a plain input opened: every setting left empty',
+                  [await page.ev(FIELDS), await page.ev(BATCH_STATUS),
+                   await page.ev("document.getElementById('rtmPqBatchDrawsWrap').hidden")],
+                  [['SOLUTION 1\n pH 7\nEND\n', '', '', '', '', ''], 'plain.txt opened: the input.', True])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

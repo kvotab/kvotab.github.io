@@ -1101,6 +1101,11 @@
             aria-label="PHREEQC input, {name} for the row's value in the column of that name"
             placeholder="PHREEQC input, {name} for the row's value in the column of that name:&#10;SOLUTION 1&#10; units mol/kgw&#10; pH {pH}&#10; Na {Na}&#10; Cl {Cl}&#10;SELECTED_OUTPUT 1&#10; -reset false&#10; -pH true&#10; -ionic_strength true"
             data-on-change="rtm:pqBatchSettings"></textarea>
+          <div class="rtm-pq-row">
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchOpenInput">Open an input…</button>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchSaveInput">Save the input…</button>
+            <input type="file" id="rtmPqBatchInputFile" accept=".pqi,.phr,.txt,.in" hidden data-on-change="rtm:pqBatchInputChosen">
+          </div>
             </div>
             <div class="rtm-setup-go">
               <button type="button" class="rtm-btn small" id="rtmPqBatchGo" data-on-click="rtm:pqBatchRun">Run every row</button>
@@ -4156,6 +4161,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             named, and every other column under it, commented, to take or leave: a <code>{name}</code>
             after a <code>#</code> is in a comment, and not asked for. <em>Rows</em> runs a
             few, <code>1-100, 205</code>, before the rest.</p>
+          <p><em>Open an input…</em> reads an input from a file and <em>Save the input…</em> writes one,
+            with the batch's settings above it as comments — <code># Rows: 1-200</code>,
+            <code># Solids: Calcite, Gypsum</code>, <code># Uncertain: dK normal 0 0.3</code>,
+            <code># Draws: 100</code>, <code># Seed: 1</code>, <code># Lowest in: Ca(mol/kgw)</code> — so
+            that the file is still PHREEQC input. Opened, those lines fill their fields, and a field the
+            file does not give is left empty. The file also names the table and the database it was saved
+            with, which the page cannot open by itself: where they are not the ones open, it says so.</p>
           <p>With solids listed under <em>Solids</em>, <code>Calcite, Gypsum</code> say, and
             <code>{solid}</code> in the input where each goes, as <code>{solid} 0 10</code> under
             <code>EQUILIBRIUM_PHASES</code>, each row runs once for each solid in turn. What comes back
@@ -4380,6 +4392,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113e"></script>
 </body>
 </html>
