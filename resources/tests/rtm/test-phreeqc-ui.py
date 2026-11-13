@@ -1495,6 +1495,60 @@ async def main():
                   [await page.ev(FIELDS), await page.ev(BATCH_STATUS),
                    await page.ev("document.getElementById('rtmPqBatchDrawsWrap').hidden")],
                   [['SOLUTION 1\n pH 7\nEND\n', '', '', '', '', ''], 'plain.txt opened: the input.', True])
+            # ---- several elements at once ----
+            # Two waters with barium and strontium, one rich in sulfate and one in carbonate, the solids listed under
+            # each element. Barium lowest with barite in the sulfate water and witherite in the carbonate one, strontium
+            # with celestite and strontianite; above, element by element, each solid the lowest in one of two rows.
+            # Barium with witherite alone: its lowest is witherite's, though the strontium solids leave barium lower,
+            # where it was. An element whose total the input does not give is said after the run; a solid under no
+            # element, and a name that is no element, before it. Saved: each element's lowest and its solid.
+            BASR = 'name,pH,Ba,Sr,SO4,CO3\nsulfate water,7,0.1,1,10,0.1\ncarbonate water,9,0.1,1,0.01,10\n'
+            await page.ev(FEED % (json.dumps('basr.csv'), json.dumps(BASR), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('basr.csv: 2 rows and 6 columns')", True, tries=40)
+            BASR_IN = ('SOLUTION 1 {name}\n units mmol/kgw\n pH {pH}\n Ba {Ba}\n Sr {Sr}\n S(6) {SO4}\n C(4) {CO3}\n Na 20\n Cl 20\n'
+                       'EQUILIBRIUM_PHASES 1\n {solid} 0 10\nSELECTED_OUTPUT 1\n -reset false\n -pH true\n -totals Ba Sr\nEND\n')
+            await page.ev(SET_SOLIDS % json.dumps('Ba: Barite, Witherite; Sr: Celestite, Strontianite'))
+            await asyncio.sleep(0.1)
+            said = await batch(BASR_IN)
+            tables = await page.ev(SOLID_ROWS)
+            check('several elements at once: each element\'s lowest among its own solids, every solid run once for each row',
+                  [said.startswith('2 of 2 rows, each with 4 solids for Ba and Sr, run through PHREEQC') and said.endswith(' s.')
+                   if isinstance(said, str) else said, tables,
+                   await page.ev("[...document.querySelectorAll('#rtmPqBatchOut table:last-child thead th')].map((th) => th.textContent)"),
+                   await page.ev("[...document.getElementById('rtmPqBatchLowest').options].map((o) => o.value)"),
+                   await page.ev("document.getElementById('rtmPqBatchLowestLabel').textContent"),
+                   await page.ev("document.querySelector('#rtmPqBatchStats caption').textContent"),
+                   await page.ev("document.getElementById('rtmPqBatchNote').textContent")],
+                  [True, [[['Ba', 'Barite', '1 of 2 rows', '0 of 2 runs'], ['Ba', 'Witherite', '1 of 2 rows', '0 of 2 runs'],
+                           ['Sr', 'Celestite', '1 of 2 rows', '0 of 2 runs'], ['Sr', 'Strontianite', '1 of 2 rows', '0 of 2 runs']],
+                          [['1', 'Barite', '1.418e-7', 'Celestite', '1.500e-4'], ['2', 'Witherite', '1.775e-5', 'Strontianite', '4.071e-5']]],
+                   ['row', 'Ba: solid', 'Ba(mol/kgw)', 'Sr: solid', 'Sr(mol/kgw)'], ['Ba(mol/kgw)', 'Sr(mol/kgw)'], 'Spread of',
+                   'Ba(mol/kgw), the lowest of each row', '2 rows of basr.csv, each with 4 solids for Ba and Sr: 8 runs.'])
+            lowest = await saved_csv('#rtmPqBatchCsvItem')
+            check('  saved: each element\'s lowest and the solid that gave it',
+                  lowest[:2] if isinstance(lowest, list) else lowest,
+                  ['row,name,pH,Ba,Sr,SO4,CO3,Ba: solid,Ba(mol/kgw),Sr: solid,Sr(mol/kgw),refused',
+                   lowest[1] if isinstance(lowest, list) and lowest[1].startswith('1,sulfate water,7,0.1,1,10,0.1,Barite,1.418')
+                   and ',Celestite,' in lowest[1] else 'the sulfate water: Barite, then Celestite'])
+            await page.ev(SET_SOLIDS % json.dumps('Ba: Witherite; Sr: Celestite, Strontianite'))
+            await asyncio.sleep(0.1)
+            await batch(BASR_IN)
+            tables = await page.ev(SOLID_ROWS)
+            check('  barium with witherite alone: its lowest is witherite\'s, not where the strontium solids leave it',
+                  tables[1][0] if tables else tables, ['1', 'Witherite', '2.769e-4', 'Celestite', '1.500e-4'])
+            await page.ev(SET_SOLIDS % json.dumps('Ba: Barite; Sr: Celestite'))
+            await asyncio.sleep(0.1)
+            missing = await batch(BASR_IN.replace(' -totals Ba Sr\n', ' -totals Ba\n'))
+            await page.ev(SET_SOLIDS % json.dumps('Ba: Barite; Celestite'))
+            loose = await batch(BASR_IN)
+            await page.ev(SET_SOLIDS % json.dumps('Xx: Barite'))
+            not_one = await batch(BASR_IN)
+            check('  a total the input does not give said after the run; a solid under no element and a name that is no element, before',
+                  [missing.endswith('; the selected output has no Sr(mol/kgw): add Sr to its -totals.') if isinstance(missing, str) else missing,
+                   loose, not_one],
+                  [True, 'Solids: "Celestite" is under no element: with solids listed for an element, list each under its own, as Ba: Barite, '
+                         'Witherite; Sr: Celestite.', 'Solids: "Xx: Barite": Xx is no element.'])
+            await page.ev(SET_SOLIDS % json.dumps(''))
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

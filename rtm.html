@@ -4178,6 +4178,14 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             how many rows each solid was the lowest, how many of its runs PHREEQC refused, and what it
             said first; a row with a solid refused names it, its lowest being of the others.
             <em>Export</em> saves the lowest for each row, every run, or both in a workbook.</p>
+          <p>For several elements at once, list the solids under each:
+            <code>Ba: Barite, Witherite; Sr: Celestite, Strontianite</code>. Every solid still runs once
+            for each row, and each element's lowest is kept in its total — <code>Ba(mol/kgw)</code> —
+            among its own solids only, since a solid of another element leaves it where it was, which
+            may well be lower. The input's <code>SELECTED_OUTPUT</code> must give every element's total,
+            <code>-totals Ba Sr</code>; an element it does not give is said. The table then has, for each
+            row, every element's lowest and the solid that gave it; the table above, element by element,
+            how each solid fared; and <em>Spread of</em> chooses whose spread the chart draws.</p>
           <p>The constants of a database are known only so well. To see what that does, write under
             <em>Uncertain</em> a value to draw at random, a name, how it varies and its numbers:
             <code>dU normal 0 0.5</code>, a mean and a standard deviation; <code>uniform</code>, the least and
@@ -4392,6 +4400,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113f"></script>
 </body>
 </html>
