@@ -148,6 +148,15 @@
       of: ['s', 'sec', 'second', 'seconds', 'min', 'minute', 'minutes',
         'h', 'hour', 'hours', 'd', 'day', 'days', 'a', 'y', 'yr', 'year', 'years'] },
     /*
+      The unit the concentrations are in, for the page to say: mol/L (also
+      mol/dm3, molar) or mol/kgw (also mol/kg, molal). It converts nothing,
+      as TIME_UNIT converts nothing: it names what the text's numbers are.
+      Under ACTIVITY the concentrations are molalities, mol/kgw, and mol/L is
+      refused. Left out, they are as the model has them.
+    */
+    CONC_UNIT: { def: '', kind: 'word', of: ['mol/l', 'mol/dm3', 'molar', 'mol/kgw', 'mol/kg', 'molal'],
+      said: 'mol/L (or mol/dm3, molar) or mol/kgw (or mol/kg, molal)' },
+    /*
       1 (or start) puts the starting state on the <EQUILIBRIUM> relations;
       always also holds those relations exactly while the run goes on, as
       algebraic equations (see holdEquilibria). A relation given a kf is a
@@ -375,10 +384,11 @@
       if (spec.kind === 'word') {
         const word = raw.toLowerCase();
         if (!spec.of.includes(word)) {
-          throw new RtmError(`${name} must be one of ${spec.of.join(', ')}, not "${raw}".`, line);
+          throw new RtmError(`${name} must be ${spec.said || `one of ${spec.of.join(', ')}`}, not "${raw}".`, line);
         }
         out[name] = { cauchy: 'robin', outflow: 'free', 'debye-hückel': 'debye-huckel' }[word] || word;
         if (name === 'TIME_UNIT') out[name] = TIME_UNITS[out[name]].name;
+        if (name === 'CONC_UNIT') out[name] = /kg|molal/.test(word) ? 'mol/kgw' : 'mol/L';
       } else if (spec.kind === 'flag') {
         const word = raw.toLowerCase();
         if (spec.words && Object.prototype.hasOwnProperty.call(spec.words, word)) {
@@ -9919,6 +9929,12 @@
     if (!FacsimileModel) throw new RtmError('facsimile-model.js is not loaded; it provides the expression parser.');
     const sections = readSections(text);
     const settings = readSettings(sections.SETTINGS);
+    // An activity model's concentrations are molalities: a CONC_UNIT of mol/L says otherwise.
+    if (settings.CONC_UNIT === 'mol/L' && settings.ACTIVITY !== 'none') {
+      const at = sections.SETTINGS.find((l) => /^CONC_UNIT\s*=/i.test(l.text));
+      throw new RtmError(`CONC_UNIT = mol/L, but under ACTIVITY = ${settings.ACTIVITY} the concentrations are molalities, `
+        + 'mol/kgw: leave CONC_UNIT out, or write mol/kgw.', at ? at.line : undefined);
+    }
     const species = readSpecies(sections.SPECIES);
     const reactions = sections.REACTIONS.map(({ text: t, line }) => parseReaction(t, line));
 
@@ -12463,7 +12479,10 @@
       addQ('Eh', 'Eh', 'water', 'V', 'index', (c, b, cell) => (c[b + electron] > 0
         ? ehPerPe(tkOf(cell)) * -Math.log10(c[b + electron]) : NaN));
     }
-    if (qIons.length) addQ('I', 'ionic strength', 'water', 'mol/kgw', 'conc', () => qW.I);
+    // The unit the totals are in: mol/kgw under ACTIVITY, else the model's CONC_UNIT, else mol/kgw as they always were.
+    const qConc = act && act.kind !== 'none' ? 'mol/kgw' : settings.CONC_UNIT || 'mol/kgw';
+    const qEq = qConc.replace(/^mol/, 'eq');
+    if (qIons.length) addQ('I', 'ionic strength', 'water', qConc, 'conc', () => qW.I);
     if (act && act.kind !== 'none') addQ('a(H2O)', 'a(H2O)', 'water', '', 'index', () => Math.exp(qW.lnAw));
     if (qIons.length) {
       // PHREEQC's percent error: what the ions' charges come to over all of them.
@@ -12488,7 +12507,7 @@
     }
     // Only an element in two species or more: in one, its total is that species, already in the list.
     for (const [el, terms] of [...qElements].filter(([, t]) => t.length > 1).sort(([a], [b2]) => a.localeCompare(b2))) {
-      addQ(`tot(${el})`, `${el}, dissolved`, 'totals', 'mol/kgw', 'conc', (c, b) => {
+      addQ(`tot(${el})`, `${el}, dissolved`, 'totals', qConc, 'conc', (c, b) => {
         let s = 0;
         for (const [k, n] of terms) s += n * c[b + k];
         return s;
@@ -12502,10 +12521,10 @@
       return s;
     };
     if (composition.carbonate.length) {
-      addQ('alk(CO3)', 'carbonate alkalinity', 'totals', 'eq/kgw', 'conc', sumOf(composition.carbonate));
+      addQ('alk(CO3)', 'carbonate alkalinity', 'totals', qEq, 'conc', sumOf(composition.carbonate));
     }
     if (composition.sulfate.length && composition.sulfate.length < (qElements.get('S') || []).length) {
-      addQ('tot(SO4)', 'sulfate, dissolved', 'totals', 'mol/kgw', 'conc', sumOf(composition.sulfate));
+      addQ('tot(SO4)', 'sulfate, dissolved', 'totals', qConc, 'conc', sumOf(composition.sulfate));
     }
     /*
       An element's total in each of its valence states, PHREEQC's TOT("Fe(2)"),
@@ -12523,7 +12542,7 @@
       if (states.length < 2) continue;
       for (const v of states) {
         const name = `${e.el}(${Number(v.toFixed(3))})`;
-        addQ(`tot(${name})`, `${name}, dissolved`, 'totals', 'mol/kgw', 'conc',
+        addQ(`tot(${name})`, `${name}, dissolved`, 'totals', qConc, 'conc',
           sumOf(water.filter((tm) => tm[3] === v).map(([k, n]) => [k, n])));
       }
     }
@@ -12766,7 +12785,8 @@
         return Rq;
       };
       const sym = (TIME_UNITS[settings.TIME_UNIT] || TIME_UNITS.second).symbol;
-      const mol = !!(act && act.kind !== 'none');
+      // In the unit of the concentrations where the model has one: mol/kgw under ACTIVITY, or its CONC_UNIT.
+      const molUnit = act && act.kind !== 'none' ? 'mol/kgw' : settings.CONC_UNIT || '';
       const eqs = reactions.map((rx) => splitTop(rx.text)[0].trim());
       reactions.forEach((rx, n) => {
         const j = rx.chanFirst;
@@ -12777,12 +12797,12 @@
         const name = eqs.indexOf(eqs[n]) !== eqs.lastIndexOf(eqs[n]) ? `${eqs[n]} (line ${rx.line})` : eqs[n];
         rx.name = name;
         rx.eq = eqs[n];
-        addQ(`rate(${n + 1})`, `${name}, rate`, 'reactions', mol ? `mol/kgw/${sym}` : `/${sym}`, 'index', (c, b, cell, t) => {
+        addQ(`rate(${n + 1})`, `${name}, rate`, 'reactions', molUnit ? `${molUnit}/${sym}` : `/${sym}`, 'index', (c, b, cell, t) => {
           const R = chanRatesAt(c, b, cell, t);
           const net = R[j] - (jb >= 0 ? R[jb] : 0);
           return net * (ch.whole ? (cap >= 0 ? massOf[b + cap] : 1) : reactScale[cell]);
         });
-        addQ(`extent(${n + 1})`, `${name}, extent`, 'reactions', mol ? 'mol/kgw' : '', 'conc', () => NaN);
+        addQ(`extent(${n + 1})`, `${name}, extent`, 'reactions', molUnit, 'conc', () => NaN);
         qList[qList.length - 1].of = `rate(${n + 1})`;
       });
     }

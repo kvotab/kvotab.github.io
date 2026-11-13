@@ -434,6 +434,11 @@
         : 'No script was opened, so TEND is 1 s: set it, in seconds or as TEND = 1890 days.');
     }
     settings.push('TIME_UNIT = second');
+    // The unit the concentrations are in, named for the page: mol/L, the one skbrtm takes, where every solution that says says
+    // it; another is noted above as skbrtm refusing it, and is not named.
+    const unitsSaid = [...new Set(of('solution').flatMap((b) => list(b.values.units))
+      .map((u) => String(u).trim().toLowerCase()).filter(Boolean))];
+    if (unitsSaid.length === 1 && unitsSaid[0] === 'mol/l') settings.push('CONC_UNIT = mol/L');
 
     // ---- the starting state, SOLUTION by SOLUTION; each sets every species in its cells ----
     const start = new Map(order.map((k) => [k, Array.from({ length: cells }, () => ({ v: '0', held: false }))]));

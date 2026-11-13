@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111t';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111u';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -2058,34 +2058,50 @@
     kgw, or mg or µg per kgw by the formula mass: a species by its own
     (formulaMassesOf in rtm-model.js), a mineral by what its relation makes
     it, an element's total or a valence state's by the element's atomic
-    weight, the sulfate's as SO4. Without ACTIVITY a concentration is in
-    whatever unit the text means: shown times 10^3, 10^6 or 10^9, and never
-    weighed. pH, pe, an SI and the like are shown as they are. What has no
+    weight, the sulfate's as SO4. A model without ACTIVITY that names its
+    unit, CONC_UNIT = mol/L (or mol/kgw), is shown the same way in that unit
+    -- mmol/L, mg/L -- and says it on its axes in its own unit too. One that
+    names none is in whatever unit the text means: shown times 10^3, 10^6 or
+    10^9, and never weighed. pH, pe, an SI and the like are shown as they are. What has no
     such unit -- a pressure, an alkalinity in mg, a species with no formula
     in mg -- is left off a chart of several, which the note says, and a
     chart of one draws it as the model has it.
   */
   const CONC_UNITS = {
-    mmol: { scale: 1e3, text: 'mmol/kgw', bare: '× 10³' },
-    umol: { scale: 1e6, text: 'µmol/kgw', bare: '× 10⁶' },
-    nmol: { scale: 1e9, text: 'nmol/kgw', bare: '× 10⁹' },
-    mg: { scale: 1e3, mass: true, text: 'mg/kgw' },
-    ug: { scale: 1e6, mass: true, text: 'µg/kgw' },
+    mmol: { scale: 1e3, unit: 'mmol', bare: '× 10³' },
+    umol: { scale: 1e6, unit: 'µmol', bare: '× 10⁶' },
+    nmol: { scale: 1e9, unit: 'nmol', bare: '× 10⁹' },
+    mg: { scale: 1e3, mass: true, unit: 'mg' },
+    ug: { scale: 1e6, mass: true, unit: 'µg' },
   };
   /**
-   * The unit chosen, as run r can show it: { id, scale, mass, text, bare, why } -- id '' the model's own; text what an
-   * axis says, '× 10³' without ACTIVITY (bare); why the note's words where a mass is the model's own for want of ACTIVITY.
+   * The unit a model's concentrations are in: mol/kgw under ACTIVITY, else its CONC_UNIT -- mol/L or mol/kgw -- else ''
+   * as the model has them; and whether the model names it itself (CONC_UNIT), for the axes to say it in its own unit too.
+   */
+  const concBase = (m) => (m && m.activity ? 'mol/kgw' : (m && m.settings && m.settings.CONC_UNIT) || '');
+  const concNamed = (m) => !!(m && m.settings && m.settings.CONC_UNIT);
+  /** A unit of the table over a model's: mmol/L, mg/kgw. */
+  const unitOver = (x, base) => `${x.unit}/${base.split('/')[1]}`;
+  /**
+   * The unit chosen, as run r can show it: { id, scale, mass, text, bare, named, why } -- id '' the model's own; text
+   * what an axis says, '× 10³' where the model names no unit (bare); named, the model's own said too, as CONC_UNIT
+   * names it; why the note's words where a mass is the model's own for want of a unit to weigh.
    */
   function shownUnit(r = state.result) {
-    const act = !!(r && r.model && r.model.activity);
+    const m = r && r.model;
+    const base = concBase(m);
     const u = CONC_UNITS[state.concUnit];
-    const own = { id: '', scale: 1, mass: false, text: act ? 'mol/kgw' : '', bare: !act, why: '' };
+    const own = { id: '', scale: 1, mass: false, text: base, bare: !base, named: concNamed(m), why: '' };
     if (!u) return own;
-    if (u.mass && !act) return { ...own, why: `in the model's own unit: ${u.text} needs ACTIVITY, whose concentrations are mol/kgw` };
-    return { id: state.concUnit, scale: u.scale, mass: !!u.mass, text: act ? u.text : u.bare, bare: !act, why: '' };
+    if (u.mass && !base) {
+      return { ...own, why: `in the model's own unit: ${u.unit} needs the unit the concentrations are in, ACTIVITY's mol/kgw or a CONC_UNIT` };
+    }
+    return { id: state.concUnit, scale: u.scale, mass: !!u.mass, text: base ? unitOver(u, base) : u.bare, bare: !base, named: true, why: '' };
   }
-  /** A title in the unit shown: 'concentration (mg/kgw)', 'concentration × 10³' without ACTIVITY; in the model's own as it is. */
-  const inUnit = (title, u) => (!u.id ? title : u.bare ? `${title} ${u.text}` : `${title} (${u.text})`);
+  /** Whether a label says the unit: one chosen, or the model's own where it names it. */
+  const unitSaid = (u) => !!(u && (u.id || u.named));
+  /** A title in the unit shown: 'concentration (mg/kgw)', 'concentration × 10³' where the model names no unit. */
+  const inUnit = (title, u) => (!unitSaid(u) ? title : u.bare ? `${title} ${u.text}` : `${title} (${u.text})`);
   /**
    * How run r shows `key` in the unit u (shownUnit): { f }, its values times f; { why }, why it cannot be -- a pressure,
    * a species with no formula in mg; or null, no concentration (pH, an SI and the like), shown as it is.
@@ -2096,7 +2112,8 @@
     const q = k < 0 ? (m.quantities || []).find((x) => x.key === key) : null;
     if (k < 0 && (!q || q.axis === 'index')) return null;
     if (!u.id) return { f: 1 };
-    if (u.mass && !m.activity) return { why: 'no ACTIVITY' };
+    const base = concBase(m);
+    if (u.mass && !base) return { why: 'no unit named' };
     if (k >= 0) {
       // The electron's state is its activity, a potential's exp(-F psi/RT): neither an amount.
       if ((m.redox && m.redox.name === key) || (m.surface && (m.surface.potentials || []).some((p) => p.name === key))) {
@@ -2106,8 +2123,11 @@
       const M = m.masses ? m.masses[k] : null;
       return M > 0 ? { f: u.scale * M } : { why: 'no formula mass' };
     }
-    if (q.unit === 'eq/kgw' && !u.mass) return { f: u.scale };
-    if (q.unit !== 'mol/kgw') return { why: q.unit === 'eq/kgw' ? 'in equivalents' : `in ${q.unit || 'a unit of its own'}` };
+    // The model's totals are in its unit, or in mol/kgw where it names none, as they always were.
+    const qBase = base || 'mol/kgw';
+    const qEq = qBase.replace(/^mol/, 'eq');
+    if (q.unit === qEq && !u.mass) return { f: u.scale };
+    if (q.unit !== qBase) return { why: q.unit === qEq ? 'in equivalents' : `in ${q.unit || 'a unit of its own'}` };
     if (!u.mass) return { f: u.scale };
     const M = q.group === 'totals' ? totalMass(key) : null;
     return M > 0 ? { f: u.scale * M } : { why: 'no formula mass' };
@@ -2137,9 +2157,10 @@
   const UNIT_SELECTS = ['rtmUnitTime', 'rtmUnitProfile', 'rtmUnitGrad', 'rtmUnitComp'];
   function renderUnits() {
     const r = state.result || (state.compiled ? { model: state.compiled } : null);
-    const act = !!(r && r.model.activity);
-    const opts = [['', act ? 'mol/kgw' : 'as the model has them', false],
-      ...Object.entries(CONC_UNITS).map(([id, x]) => [id, act ? x.text : x.mass ? `${x.text}, under ACTIVITY` : x.bare, !act && !!x.mass])];
+    const base = concBase(r && r.model);
+    const opts = [['', base || 'as the model has them', false],
+      ...Object.entries(CONC_UNITS).map(([id, x]) => [id, base ? unitOver(x, base) : x.mass ? `${x.unit}, with ACTIVITY or a CONC_UNIT` : x.bare,
+        !base && !!x.mass])];
     const html = opts.map(([id, label, off]) => `<option value="${id}"${off ? ' disabled' : ''}>${esc(label)}</option>`).join('');
     const now = shownUnit(r).id;
     for (const id of UNIT_SELECTS) {
@@ -2175,7 +2196,7 @@
     if (f.bad) return `could not read "${f.bad}" as where the log axis starts`;
     if (f.lo === null) return '';
     const under = curves.filter((cv) => !Array.from(cv.y || []).some((v) => v >= f.at)).map((cv) => cv.name);
-    return `the log axis from ${f.at.toExponential()}${u && u.id && !u.bare ? ` ${u.text}` : ''}`
+    return `the log axis from ${f.at.toExponential()}${unitSaid(u) && !u.bare ? ` ${u.text}` : ''}`
       + `${under.length ? `, below it all through: ${under.join(', ')}` : ''}`;
   }
 
@@ -2309,7 +2330,7 @@
     const onLeft = traces.filter((t) => !t.yaxis);
     if (floor.lo !== null) layout.yaxis.range = floorRange(floor.lo, onLeft.map((t) => t.y));
     // An end's flux is per m2 of the water's cross-section, positive to the right.
-    const flux = u.id && !u.bare ? `${u.text} · m/${timeUnit().symbol}` : `concentration · m/${timeUnit().symbol}`;
+    const flux = unitSaid(u) && !u.bare ? `${u.text} · m/${timeUnit().symbol}` : `concentration · m/${timeUnit().symbol}`;
     layout.yaxis.title = { text: face
       ? `flux through the ${state.cell} end (${flux})${u.id && u.bare ? ` ${u.text}` : ''}` : inUnit('concentration', u), font: { size: 11 } };
     if (right.length) {
@@ -2449,7 +2470,7 @@
       : `<tr><td>${esc(name)}</td>${td(h.start)}<td colspan="4">does not move</td></tr>`)).join('');
     const outHtml = out.map((o) => `<tr><td>${esc(o.name)}</td><td>${esc(o.run)}</td>${td(o.start)}${td(o.cin)}${td(o.gone)}`
       + `${td(o.end)}${td(o.made)}${td(o.share, o.share === null ? '' : `${esc((100 * o.share).toPrecision(3))} %`)}</tr>`).join('');
-    const unitText = u.id && !u.bare ? ` (${u.text})` : '';
+    const unitText = unitSaid(u) && !u.bare ? ` (${u.text})` : '';
     box.innerHTML = (half.length ? `<table><thead><tr><th>Where each curve is half-way${esc(unitText)}</th><th>it starts at</th>`
       + '<th>the farthest it gets</th><th>half-way</th><th>in pore volumes</th><th>retardation</th></tr></thead>'
       + `<tbody>${halfHtml}</tbody></table>` : '')
@@ -2546,7 +2567,7 @@
     const settleText = (s) => (s.flat ? s.flat : s.settled === null ? 'still changing at the end'
       : s.fromStart ? 'from the start' : `by ${fmtTime(s.settled)}`);
     const td = (v, text) => `<td${v === null || v === undefined ? '' : ` data-v="${v}"`}>${esc(text)}</td>`;
-    const unitText = u.id && !u.bare ? ` (${u.text})` : u.id ? ` ${u.text}` : '';
+    const unitText = unitSaid(u) && !u.bare ? ` (${u.text})` : u.id ? ` ${u.text}` : '';
     const html = rows.map(({ nm, s }) => {
       const on = state.picked.includes(nm);
       return `<tr${on ? ' class="on"' : ''}><td><button type="button" class="rtm-every-name" data-on-click="rtm:everyPick" `
@@ -2754,7 +2775,7 @@
     const shown = shownAs(r, name, u);
     const own = !!(shown && shown.why);
     const f = shown && shown.f ? shown.f : 1;
-    const suffix = u.id && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
+    const suffix = unitSaid(u) && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
     const meta = suffix ? { meta: { unitSuffix: suffix } } : {};
     const valueAt = (i, k) => {
       const v = quantity ? (quantitySeries(name, cellAt(k)) || [])[i] : r.states[i * r.width + stateIndex(k)];
@@ -2960,7 +2981,7 @@
       const shown = shownAs(r, key, u);
       if (shown && shown.why) { unitLeft.push([labelOf(key), shown.why]); continue; }
       const f = shown ? shown.f : 1;
-      const meta = u.id && shown ? { meta: { unitSuffix: u.bare ? ` ${u.text}` : ` (${u.text})` } } : {};
+      const meta = unitSaid(u) && shown ? { meta: { unitSuffix: u.bare ? ` ${u.text}` : ` (${u.text})` } } : {};
       // Every value as it is, none at all on a log axis too: Plotly leaves it out there, and what is saved keeps it.
       const keep = (v) => (Number.isFinite(v) ? v * f : null);
       const quantity = runQuantity(r, key);
@@ -3428,7 +3449,7 @@
     const shown = shownAs(r, name, u);
     const own = !!(shown && shown.why);
     const f = shown && shown.f ? shown.f : 1;
-    const suffix = u.id && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
+    const suffix = unitSaid(u) && shown && !own ? (u.bare ? ` ${u.text}` : ` (${u.text})`) : '';
     const valueAt = (i, c) => (quantity ? (quantitySeries(name, c * stride + gl) || [])[i]
       : r.states[i * r.width + (c * stride + gl) * ns + si]) * f;
 
@@ -9252,18 +9273,19 @@
       : `@ cell ${c}${rock}${tc.several ? ` (${Number(r.model.centres[c].toPrecision(6))} m)` : ''}`);
     const unitOf = (k) => { const q = isQuantity(k) ? quantityOf(k) : null; return q && q.unit && !q.label.includes(q.unit) ? ` (${q.unit})` : ''; };
     /*
-      In the unit shown, each concentration's header saying it; one that has
-      none in it -- no formula to weigh, a pressure -- as the model has it,
-      its header saying in what: mol/kgw under ACTIVITY.
+      In the unit shown, each concentration's header saying it -- the
+      model's own too, where its CONC_UNIT names it; one that has none in
+      it -- no formula to weigh, a pressure -- as the model has it, its header
+      saying in what: mol/kgw under ACTIVITY, or the CONC_UNIT.
     */
     const u = shownUnit(r);
     const shown = names.map((n) => shownAs(r, n, u));
     // At an end what crosses it, per m2 of the water's cross-section: the unit times m per the time unit.
     const per = face ? ` · m/${timeUnit().symbol}` : '';
-    const own = (n) => (unitOf(n) || (r.model.activity && !isQuantity(n) ? ` (mol/kgw${per})` : ''));
+    const own = (n) => (unitOf(n) || (concBase(r.model) && !isQuantity(n) ? ` (${concBase(r.model)}${per})` : ''));
     const headOf = (n, j, where) => {
       const sh = shown[j];
-      if (!u.id || !sh) return `${labelOf(n)}${unitOf(n)} ${where}`;
+      if (!unitSaid(u) || !sh) return `${labelOf(n)}${unitOf(n)} ${where}`;
       if (sh.why) return `${labelOf(n)}${own(n)} ${where}`;
       return `${labelOf(n)}${u.bare ? ` ${u.text}` : ` (${u.text}${per})`} ${where}`;
     };
@@ -10513,7 +10535,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             '**log time**, **log concentration**: logarithmic axes. A log axis cannot show zero, so t = 0, and values at or below zero, are left off.',
             '**from**, after log time: where a log time axis starts, a plain number in the unit **Time in** shows, or in pore volumes where they are chosen; changing **Time in** turns it into the other. A stiff run’s first steps are femtoseconds long, and without it the chart opens on fifteen empty decades. A linear axis starts at 0 whatever it says.',
             '**from**, after log concentration: where a log concentration axis starts, a plain number such as `1e-10`; empty, it reaches the least drawn. A redox run’s species can span 150 decades, and a floor keeps the ones that matter readable. A curve below it drops out of view, and the note names any that lie wholly below; the CSV and Excel files have every value still. pH, pe and the like on the right are drawn as they are.',
-            '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
+            '**Units**: the unit the concentrations are shown in, one choice for every chart and the water’s listing. Under an `ACTIVITY`, mol/kgw, mmol, µmol or nmol per kgw, or mg or µg per kgw by the formula mass — a species by its name, a nuclide by its mass number, a mineral by its relation, an element’s total by its atomic weight; without one, the same per L or per kgw where the model names its unit, `CONC_UNIT = mol/L`, and else the model’s own unit times 10³, 10⁶ or 10⁹. pH, pe and the like stay as they are; what has no such unit — a pressure, a species whose name is no formula in mg — is left off, and the note says which. The measured points, the run kept beside, the **from** of the log axis, the axis title and the CSV and Excel files are in it too.',
             '**clear**: unticks everything.',
           ] },
           exportSection([
@@ -11966,7 +11988,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111o';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111p';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     'vendors/phreeqc/phreeqc-dat.js?v=20261107',

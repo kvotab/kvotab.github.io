@@ -2065,6 +2065,36 @@ A => , k = 0.3
       .timeUnit.name === 'second');
 }
 {
+  /*
+    CONC_UNIT names the unit the concentrations are in, for the page to say,
+    and converts nothing: mol/L by any of its spellings, mol/kgw by its; the
+    totals, a reaction's rate and its extent in it; mol/L refused under an
+    ACTIVITY, whose concentrations are molalities; and a model that names
+    none as it always was, its totals in mol/kgw and its rates per second.
+  */
+  const mk = (extra) => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 10\n${extra}\n\n<SPECIES>\nCO2  1e-3\nHCO3-  1e-3\n`
+    + 'H+  1e-7\n\n<REACTIONS>\nCO2 => HCO3- + H+, k = 1\n');
+  const units = (m) => ['tot(C)', 'rate(1)', 'extent(1)'].map((k) => (m.quantities.find((q) => q.key === k) || {}).unit);
+  const said = [['CONC_UNIT = mol/L', 'mol/L'], ['CONC_UNIT = mol/l', 'mol/L'], ['CONC_UNIT = mol/dm3', 'mol/L'],
+    ['CONC_UNIT = Molar', 'mol/L'], ['CONC_UNIT = mol/kgw', 'mol/kgw'], ['CONC_UNIT = mol/kg', 'mol/kgw'], ['CONC_UNIT = molal', 'mol/kgw']]
+    .map(([line, want]) => mk(line).settings.CONC_UNIT === want);
+  check('CONC_UNIT: mol/L by any of its spellings, mol/kgw by its', said.every(Boolean), JSON.stringify(said));
+  check('  the totals, a reaction\'s rate and its extent in it; none named, the totals in mol/kgw and the rate per second, '
+    + 'as they always were',
+    JSON.stringify([units(mk('CONC_UNIT = mol/L')), units(mk(''))]) === JSON.stringify([['mol/L', 'mol/L/s', 'mol/L'], ['mol/kgw', '/s', '']]),
+    JSON.stringify([units(mk('CONC_UNIT = mol/L')), units(mk(''))]));
+  const a = last(run(mk('CONC_UNIT = mol/L'), { tend: 10 }));
+  const b = last(run(mk(''), { tend: 10 }));
+  check('  it converts nothing: the run the same to the last digit', a.every((v, i) => v === b[i]), `${a[0]} and ${b[0]}`);
+  const refused = ['CONC_UNIT = ppm', 'CONC_UNIT = mol/L\nACTIVITY = davies'].map((line) => {
+    try { mk(line); return '(no error)'; } catch (e) { return `${e.line}: ${e.message}`; }
+  });
+  check('  a unit it does not know refused, and mol/L under an ACTIVITY, on the line that says it',
+    /^4: .*CONC_UNIT must be mol\/L \(or mol\/dm3, molar\) or mol\/kgw/.test(refused[0])
+    && /^4: .*CONC_UNIT = mol\/L, but under ACTIVITY = davies the concentrations are molalities/.test(refused[1]),
+    refused.join(' | '));
+}
+{
   // Numerical dispersion against the real thing, which is the other thing a
   // grid can be too coarse for.
   const mk = (cells, D, extra) => RtmModel.compile(`
@@ -2584,6 +2614,12 @@ console.log('\n--- opening skbrtm databases ---');
     // The model counts in seconds, as skbrtm does; the page shows the run in the unit the script ran in.
     check('  the model in seconds, and the unit the script ran in handed to the page to show the run in: days',
       s.TIME_UNIT === 'second' && res.timeUnit === 'days', `${s.TIME_UNIT}, ${res.timeUnit}`);
+    // The unit the solutions give their concentrations in, named: mol/L, the one that says it with a colon read as none.
+    check('  the concentrations named as the solutions give them: CONC_UNIT = mol/L', /^CONC_UNIT = mol\/L$/m.test(res.text)
+      && s.CONC_UNIT === 'mol/L', (res.text.match(/^CONC_UNIT = .*$/m) || ['none'])[0]);
+    const mM = RtmImport.convert(files.map((f) => (f.name === 'solutions.in' ? { ...f, text: f.text.replace(/units; mol\/L/g, 'units; mM') } : f)));
+    check('  solutions in another unit, which skbrtm refuses and the note says: no CONC_UNIT',
+      !/^CONC_UNIT/m.test(mM.text) && /is in mm; skbrtm refuses anything but mol\/L/.test(mM.text), (mM.text.match(/^#.*mm.*$/m) || ['none'])[0]);
     // Without the script, TEND is a second and the note at the top says how to set it -- on one line, so that the
     // lines under it keep the numbers they had.
     const bare = RtmImport.convert(files.filter((f) => f.name !== 'run.py'));

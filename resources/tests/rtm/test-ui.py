@@ -438,7 +438,10 @@ async def main():
         # same origin that runs no script.
         await page.call('Page.navigate', {'url': f'http://127.0.0.1:{HTTP}/resources/css/rtm.css'}, session=page.sid)
         await settle(page, 'document.readyState', 'complete', tries=40, pause=0.25)
-        await page.ev("localStorage.removeItem('kvot.rtm.full'); localStorage.removeItem('kvot-rtm-aside-v1')")
+        # The texts put aside, the text as opened and the PHREEQC panel too: a suite run before this one, test-phreeqc-ui.py
+        # most of all, leaves the panel open over the text.
+        await page.ev("localStorage.removeItem('kvot.rtm.full'); localStorage.removeItem('kvot-rtm-aside-v1');"
+                      " localStorage.removeItem('kvot-rtm-opened-v1'); localStorage.removeItem('kvot-rtm-phreeqc-v1')")
         await page.call('Page.navigate', {'url': URL}, session=page.sid)
         try:
             await asyncio.sleep(5)
@@ -2829,7 +2832,8 @@ async def main():
                   f'{pvs[2] if isinstance(pvs, list) else ""} apart at most)',
                   [ok_hours, ok_pv, isinstance(pvs, list) and pvs[2] < 1e-4, isinstance(pvs, list) and pvs[3]],
                   [True, True, True, f'at cells 4, 12, 24, faintest nearest the inlet; a pore volume 2.08 d; in the model\'s own unit: '
-                   f'mg/kgw needs ACTIVITY, whose concentrations are mol/kgw; dashed, the run {klabel} in its own pore volumes, 4.17 d each'])
+                   f'mg needs the unit the concentrations are in, ACTIVITY\'s mol/kgw or a CONC_UNIT; dashed, the run {klabel} in its own '
+                   'pore volumes, 4.17 d each'])
             # As the next model finds them: in seconds, at one cell, nothing beside, the log boxes as they were.
             await unit('rtmTimeInTime', '')
             await cells('')
@@ -2859,9 +2863,44 @@ async def main():
             check('a model without ACTIVITY, mg/kgw chosen before: drawn as its text has it, the note saying why; mg and µg on the '
                   'menu, not to be chosen; times 10^3 a thousand times, the title saying so',
                   [bare[:4], bare[4], bare2[0], isinstance(bare2[1], (int, float)) and bare2[1] == bare[4] * 1000],
-                  [['as the model has them | × 10³ | × 10⁶ | × 10⁹ | mg/kgw, under ACTIVITY (off) | µg/kgw, under ACTIVITY (off)', '',
-                    'concentration', "in the model's own unit: mg/kgw needs ACTIVITY, whose concentrations are mol/kgw"],
+                  [['as the model has them | × 10³ | × 10⁶ | × 10⁹ | mg, with ACTIVITY or a CONC_UNIT (off) | µg, with ACTIVITY or a '
+                    'CONC_UNIT (off)', '', 'concentration',
+                    "in the model's own unit: mg needs the unit the concentrations are in, ACTIVITY's mol/kgw or a CONC_UNIT"],
                    0.002, 'concentration × 10³', True])
+            # The same kind of model naming its unit, CONC_UNIT = mol/L: the menu in it -- mmol, µmol and nmol per L, and mg and
+            # µg per L by the formula masses, none off -- the axis saying mol/L in the model's own unit; in mg/L the calcium
+            # 40078 times its mol/L, and the axis, the table under the chart and the CSV's header saying mg/L.
+            await unit('rtmUnitTime', '')
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 10\nCONC_UNIT = mol/L\n\n<SPECIES>\nCa+2  1e-3\nCl-  2e-3\n\n'
+                                 '<REACTIONS>\n=> Ca+2, k = 1e-5\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=40, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="Ca+2"]');
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await settle(page, "(document.getElementById('rtmChartTime').data || []).some((t) => t.name === 'Ca+2')", True, tries=40, pause=0.25)
+            ca_js = "document.getElementById('rtmChartTime').data.find((t) => t.name === 'Ca+2').y[0]"
+            named = await page.ev("""[[...document.getElementById('rtmUnitTime').options].map((o) => o.textContent + (o.disabled ? ' (off)' : ''))
+              .join(' | '), document.getElementById('rtmChartTime').layout.yaxis.title.text, %s]""" % ca_js)
+            await unit('rtmUnitTime', 'mg')
+            in_mg = await page.ev("""[document.getElementById('rtmChartTime').layout.yaxis.title.text, %s,
+              document.querySelector('#rtmTimeEvery thead th').textContent]""" % ca_js)
+            await page.ev("""(() => { window.__csv = null; window.__click = HTMLAnchorElement.prototype.click;
+              HTMLAnchorElement.prototype.click = function () {
+                if (this.download.endsWith('.csv')) window.__csv = fetch(this.href).then((r) => r.text()); }; })()""")
+            await page.ev("document.querySelector('[data-on-click=\"rtm:downloadCsv\"]').click()")
+            await asyncio.sleep(1.0)
+            await page.ev("HTMLAnchorElement.prototype.click = window.__click")
+            csv_head = await page.ev("(async () => { const t = await window.__csv; return t ? t.split('\\n')[0].split(',') : null; })()")
+            await unit('rtmUnitTime', '')
+            check('a model naming its unit, CONC_UNIT = mol/L: the menu in it, mg and µg per L by the formula masses and none off; '
+                  'the axis saying mol/L in its own unit; in mg/L the calcium 40078 times as much, the axis, the table and the CSV '
+                  'saying mg/L',
+                  [named[0], named[1], in_mg[0], isinstance(in_mg[1], (int, float)) and abs(in_mg[1] / (named[2] * 40078) - 1) < 1e-9,
+                   in_mg[2], isinstance(csv_head, list) and 'Ca+2 (mg/L) @ cell 0' in csv_head],
+                  ['mol/L | mmol/L | µmol/L | nmol/L | mg/L | µg/L', 'concentration (mol/L)', 'concentration (mg/L)', True,
+                   'Every species (mg/L)', True])
             # The Danckwerts example opens on Against time in pore volumes, its tracer at four cells a quarter of the column
             # apart, as its description says: at a Péclet number of 5 the front spreading as it goes, half-way up at 0.29 pore
             # volumes a quarter of the way along and at 0.86 at the outlet.
