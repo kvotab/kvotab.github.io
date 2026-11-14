@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114g">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114h">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1129,6 +1129,10 @@
             <div class="rtm-export">
               <button type="button" class="rtm-btn secondary small rtm-menu-btn" id="rtmPqBatchSfBtn" popovertarget="rtmPqBatchSfMenu" aria-haspopup="menu">Simple Functions</button>
               <div class="rtm-menu" id="rtmPqBatchSfMenu" popover role="menu" aria-label="Simple Functions">
+                <div class="rtm-menu-head" role="presentation">As the Simple Functions do, where ticked</div>
+                <button type="button" class="rtm-menu-item rtm-menu-check" role="menuitemcheckbox" aria-checked="false" id="rtmPqBatchSfPh" data-on-click="rtm:pqBatchSfAs" data-as="ph" data-hint="−log[H+], not the activity">The pH as a concentration</button>
+                <button type="button" class="rtm-menu-item rtm-menu-check" role="menuitemcheckbox" aria-checked="false" id="rtmPqBatchSfKept" data-on-click="rtm:pqBatchSfAs" data-as="kept" data-hint="no solid dissolving into it">The water kept as it is</button>
+                <div class="rtm-menu-sep" role="separator"></div>
                 <div class="rtm-menu-head" role="presentation">Version B: goethite and magnetite</div>
                 <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="no" data-hint="each water once">The constants as they are</button>
                 <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="yes" data-hint="a realisation a water, as SR-Site">The constants drawn</button>
@@ -4518,6 +4522,26 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             is. A run whose pH could not be held gives no totals, so that it is never taken for the
             lowest; PHREEQC refuses some solids that dissolve away, as elemental selenium, and in Version
             B the cement pore water, at pH 12.5 with no acid in it to take out.</p>
+          <p>Two of the Simple Functions' own ways can be ticked at the top of the menu. <em>The pH as a
+            concentration</em> reads the pH as they read it, [H<sup>+</sup>] = 10<sup>−pH</sup>; PHREEQC
+            reads it as a pH meter does, as the activity of H<sup>+</sup>, and in a saline water the two
+            are a tenth of a pH unit apart, so that nickel, whose solid dissolves with [H<sup>+</sup>]
+            squared, comes out some 0.2 log units lower ticked. The concentration is held through a
+            marker with H<sup>+</sup>'s activity coefficient, <code>Markh</code>, and the pseudo-phase
+            <code>Fix_mH+</code>, for the kilogram of water the water starts with. <em>The water kept as
+            it is</em> lets no solid dissolve, as the Simple Functions keep the water as it is: a trace
+            of the solid, 10<sup>−12</sup> mol, goes into the water, conditioned in Version B, and a
+            solid's limit is the total that would saturate the water with it, its element's total times
+            10<sup>−SI/n</sup>, SI the solid's saturation index and n the atoms of the element in its
+            formula. Unticked, a solid
+            dissolving brings its own sulphate or carbonate into the water, which holds back what more
+            dissolves: strontium comes out 0.1 to 0.5 log units lower than kept, and radium where the
+            water has almost no sulphate. Kept, a limit can be of any size, as theirs can, and the share
+            above 0.01 is theirs. With both ticked, every element's median over the reference waters is
+            within 0.06 log units of SimpleFunctions.html's, in both versions; what is left in Version
+            B is the conditioning's iron and acid in a water of low pH, which raise its ionic strength,
+            where the Simple Functions keep the table's. A tick writes the batch's input again at once
+            while it is as the menu set it up; otherwise it holds from the menu's next use.</p>
           <p>For the transport calculations, <em>Export</em>, <em>MATLAB (CSOL)</em> saves the realisations
             as SR-Site and the PSAR kept them, each element's lowest in a struct array
             <code>CSOL(1×N)</code>; <em>as SR-Site's</em> adds the elements they gave no limit, at 1e17.</p>
@@ -4702,6 +4726,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114k"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114l"></script>
 </body>
 </html>

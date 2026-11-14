@@ -10291,7 +10291,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     under its button, right edges together, or above it where the window has
     no room below; the first format takes the focus and the arrow keys move
     through the rest; a format chosen shuts it, and so does the page
-    scrolling under it, which would leave it behind.
+    scrolling under it, which would leave it behind. A way ticked (the
+    Simple Functions' menu) leaves it open.
   */
   function setupMenus() {
     const menus = [...document.querySelectorAll('.rtm-menu[popover]')];
@@ -10316,7 +10317,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         const first = items(menu)[0];
         if (first) first.focus({ preventScroll: true });
       });
-      menu.addEventListener('click', (ev) => { if (ev.target.closest('.rtm-menu-item')) menu.hidePopover(); });
+      // A format chosen shuts the menu; a way ticked (menuitemcheckbox) leaves it open, to tick the next or choose.
+      menu.addEventListener('click', (ev) => {
+        const item = ev.target.closest('.rtm-menu-item');
+        if (item && item.getAttribute('role') !== 'menuitemcheckbox') menu.hidePopover();
+      });
       menu.addEventListener('keydown', (ev) => {
         const list = items(menu);
         const at = list.indexOf(document.activeElement);
@@ -11562,7 +11567,9 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       kicker: 'Batch', title: 'The Simple Functions on PHREEQC',
       lead: 'SKB\'s Simple Functions -- the solubility limits of 20 elements that SimpleFunctions.html calculates -- run through PHREEQC from that page\'s own data: the menu sets the whole batch up, and Run runs it.',
       facts: [['Database', `${SF_DB_NAME}${pq.opened.has(SF_DB_NAME) ? ', opened' : ', made when first asked for'}`],
-        ['Data', 'SR-Site: 158 species and 48 solids of 20 elements']],
+        ['Data', 'SR-Site: 158 species and 48 solids of 20 elements'],
+        ['Ticked', batchAnd([sfChoices().pHm && 'the pH as a concentration', sfChoices().kept && 'the water kept as it is'].filter(Boolean))
+          || 'neither: PHREEQC\'s own ways']],
       sections: [
         { heading: 'What the menu sets up', list: [
           '**The database**: phreeqc.dat with the Simple Functions\' species and solids put in, every constant theirs to the last digit; chosen for the batch, the PHREEQC tab and the panel alike, and made again on the next visit.',
@@ -11577,6 +11584,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'As the Simple Functions take it', list: [
           'No methane and no sulfide; calcite and siderite never form; the free HCO3- the table gives held, not the total. Mg and K go in as themselves where the table has them; the Simple Functions add Mg to Ca.',
           'Each solid offered as 0.02 mol to a kilogram of water, twice the Simple Functions\' line between a solubility limit and none (0.01 mol/kgw): a solid that dissolves completely gives its element 0.02 mol/kgw for each atom of it in its formula, above the line, so that Every element\'s share above 0.01 is the share not solubility limited.',
+        ] },
+        { heading: 'As the Simple Functions do, where ticked', list: [
+          '**The pH as a concentration**: [H+] = 10^-pH, as the Simple Functions read the pH; PHREEQC reads it as a pH meter does, as the activity of H+, a tenth of a unit apart in a saline water. Nickel, whose solid dissolves with [H+] squared, comes out some 0.2 log units lower ticked.',
+          '**The water kept as it is**: no solid dissolves; a trace of the solid (1e-12 mol) goes into the water, and its limit is the total that would saturate the water with it, from its saturation index. Unticked, a dissolving solid brings its own sulphate or carbonate into the water: strontium 0.1 to 0.5 log units lower.',
+          'With both, every element\'s median within 0.06 log units of SimpleFunctions.html on the reference waters; left in Version B, the conditioning\'s iron and acid at a low pH. A tick writes the batch\'s input again at once while it is as the menu set it up.',
         ] },
         { heading: 'Where PHREEQC differs', list: [
           'Its activity model and its own species of the major ions, and every mass balance: a dissolving solid changes the water it dissolves in. On the reference waters the two agree within 0.3 log units in 156 of 159 results, apart from the three most saline, for which neither activity model is made.',
@@ -12679,7 +12691,9 @@ END
     // A batch over a table of waters: the input, the rows asked for, the solids tried in turn, the column whose lowest
     // is kept, and the values drawn, how many draws and from what seed (kept); the table and what it found (the visit's).
     batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '', against: '', mapX: '', mapY: '',
-      waters: 'each', realisations: '', limit: '', view: 'cdf', fit: '', sensTop: '15' },
+      waters: 'each', realisations: '', limit: '', view: 'cdf', fit: '', sensTop: '15',
+      // The Simple Functions' ways ticked in their menu ('conc', 'kept'), and the version the menu last set up.
+      sfPh: '', sfWater: '', sfVersion: '', sfDrawn: '' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12718,7 +12732,7 @@ END
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
         for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY', 'realisations', 'limit',
-          'view', 'fit', 'sensTop']) {
+          'view', 'fit', 'sensTop', 'sfPh', 'sfWater', 'sfVersion', 'sfDrawn']) {
           if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
         }
         if (s.batch.waters === 'random' || s.batch.waters === 'each') pq.batch.waters = s.batch.waters;
@@ -14230,6 +14244,7 @@ END
     const go = $('rtmPqBatchGo');
     go.textContent = pq.batchRunning ? 'Stop' : random ? 'Run the realisations' : pq.batch.rows.trim() ? 'Run the rows asked for' : 'Run every row';
     go.disabled = pq.busy && !pq.batchRunning;
+    pqSfMenuRender();
     pqBatchDraw();
   }
 
@@ -15843,7 +15858,7 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
   */
   const SF_DB_NAME = 'phreeqc.dat with Simple Functions (SR-Site)';
   const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20261114a'],
-    ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114b']];
+    ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114c']];
   const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
   /** SimpleFunctions.html's file writer, for a batch's CSOL file. */
   const SF_IO_SRC = 'resources/js/sf-io.js?v=20261114a';
@@ -15886,6 +15901,56 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
       i = j;
     }
     return out.join(', ');
+  }
+
+  /** The Simple Functions' ways ticked in their menu: the pH read as a concentration, the water kept as it is. */
+  function sfChoices() {
+    return { pHm: pq.batch.sfPh === 'conc', kept: pq.batch.sfWater === 'kept' };
+  }
+
+  /** The menu's ticks as the choices are. */
+  function pqSfMenuRender() {
+    const as = sfChoices();
+    $('rtmPqBatchSfPh').setAttribute('aria-checked', String(as.pHm));
+    $('rtmPqBatchSfKept').setAttribute('aria-checked', String(as.kept));
+  }
+
+  /**
+    One of the Simple Functions' ways ticked or not. Where the batch is still what the menu set up -- its input as the
+    menu wrote it, for the table open -- the input is written again at once with the way as now ticked; otherwise the
+    menu sets the batch up so from its next use.
+  */
+  async function pqBatchSfAs(which) {
+    if (pq.busy) return;
+    const was = sfChoices();
+    let built = null, cols = null;
+    if (pq.batch.sfVersion && pq.batch.text.trim()) {
+      try {
+        built = await pqSfReady();
+        const t = pq.batchTable || batchTableOf(self.RtmSfPhreeqc.referenceRows(self.SFData.TR1061_WATERS), SF_TABLE);
+        cols = self.RtmSfPhreeqc.columnsOf(self.SFModel, t.columns).cols;
+      } catch (e) { built = null; }
+    }
+    const opts = (as) => ({ version: pq.batch.sfVersion, drawn: pq.batch.sfDrawn === 'yes', cols, ...as });
+    const same = built && cols && self.RtmSfPhreeqc.input(built, opts(was)) === pq.batch.text;
+    if (which === 'ph') pq.batch.sfPh = was.pHm ? '' : 'conc';
+    else pq.batch.sfWater = was.kept ? '' : 'kept';
+    const now = sfChoices();
+    const said = which === 'ph'
+      ? (now.pHm ? 'reads the pH as the Simple Functions read it, [H+] = 10^-pH' : 'reads the pH as PHREEQC reads it, as the activity of H+')
+      : (now.kept ? 'keeps the water as it is, each solid\'s limit from its saturation index, no solid dissolving into it'
+        : 'lets each solid dissolve into the water, which it changes');
+    if (same) {
+      pq.batch.text = self.RtmSfPhreeqc.input(built, opts(now));
+      pqSave();
+      pqBatchRender();
+      setStatus(`The batch now ${said}: its input is written again, as the menu set it up, Version ${pq.batch.sfVersion}.`, 'ok');
+    } else {
+      pqSave();
+      pqSfMenuRender();
+      setStatus(`When the Simple Functions menu next sets the batch up, the batch ${said}.`, 'ok');
+    }
+    infoRefresh();
   }
 
   /** The Simple Functions' reference waters as the batch's table. */
@@ -15934,7 +15999,10 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
         + 'needs: name the columns as the Simple Functions read them, pH, Eh (mV), [HCO3-] (m), [Ca]tot (m) and the like.', 'error');
       return;
     }
-    pq.batch.text = P.input(built, { version, drawn, cols });
+    const as = sfChoices();
+    pq.batch.text = P.input(built, { version, drawn, cols, ...as });
+    pq.batch.sfVersion = version;
+    pq.batch.sfDrawn = drawn ? 'yes' : '';
     pq.batchStarter = null;
     pq.batch.solids = P.solidsSpec(built);
     pq.batch.uncertain = drawn ? P.uncertainSpec(built) : '';
@@ -15956,8 +16024,10 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     const nSolids = built.elements.reduce((a, e) => a + e.solids.length, 0);
     const units = !Array.isArray(asked) ? 0 : drawn ? batchWhole(pq.batch.realisations, 1, asked.length) || asked.length : asked.length;
     const runs = units * nSolids;
+    const ways = [as.pHm && 'the pH read as a concentration', as.kept && 'the water kept as it is'].filter(Boolean);
     setStatus(`The batch is set up as the Simple Functions' Version ${version}: the database ${SF_DB_NAME}; `
-      + `${nSolids} solids for the ${built.elements.length} elements, each element's lowest kept; `
+      + `${nSolids} solids for the ${built.elements.length} elements, each element's lowest kept`
+      + `${ways.length ? `, ${batchAnd(ways)}, as the Simple Functions take them` : ''}; `
       + `${drawn ? `the ${P.uncertainSpec(built).split(';').length} constants drawn by Latin hypercube, ${units.toLocaleString()} realisations, `
         + 'each a water drawn at random' : 'the constants as they are'}; `
       + `${batchTableName(t)}${fresh ? ', there being no table open' : ''}, ${runs.toLocaleString()} runs.${rowsSaid}`, 'ok');
@@ -16418,6 +16488,7 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     },
     'rtm:pqBatchSf': (ev, el) => { pqBatchSf(el.dataset.version, el.dataset.drawn === 'yes'); },
     'rtm:pqBatchSfWaters': () => { pqBatchSfWaters(); },
+    'rtm:pqBatchSfAs': (ev, el) => { pqBatchSfAs(el.dataset.as); },
     'rtm:pqBatchLimit': (ev, el) => { pq.batch.limit = el.value.trim(); pqSave(); pqBatchAll(); },
     'rtm:pqBatchAllPick': (ev, el) => {
       // An element of the summary picked: its spread drawn, and shown.

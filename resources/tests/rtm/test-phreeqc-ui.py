@@ -1995,6 +1995,79 @@ async def main():
                    ran.startswith('6 of 6 realisations, each a water drawn at random from 3 rows (3 drawn), each with 47 solids for Sr')
                    if isinstance(ran, str) else ran],
                   [True, 'random', 206, True, True])
+            # ---- the Simple Functions' ways, ticked ----
+            # The drawn Version B just set up is the menu's: the pH as a concentration ticked writes its input again at
+            # once, the menu left open, [H+] held through the marker; the water kept as it is too: a trace of the solid,
+            # none offered to dissolve, each limit from its saturation index. An input edited is no longer the menu's: a tick then
+            # holds from the menu's next use. Version B as they are with both, Forsmark run: uranium, strontium and nickel
+            # what test-sf-phreeqc.js's input gives (3.0525e-9, 1.2017e-3, 9.5268e-4 mol/kgw).
+            TEXT = "document.getElementById('rtmPqBatchText').value"
+            TICKS = ("[document.getElementById('rtmPqBatchSfPh').getAttribute('aria-checked'), "
+                     "document.getElementById('rtmPqBatchSfKept').getAttribute('aria-checked')]")
+            ticks0 = await page.ev(TICKS)
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfBtn'))
+            await asyncio.sleep(0.3)
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfPh'))
+            ph_said = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith('The batch now') ? s : null; }})()", tries=80, pause=0.25)
+            ph_got = await page.ev(f"""(() => {{ const t = {TEXT};
+              return [{TICKS}, document.getElementById('rtmPqBatchSfMenu').matches(':popover-open'), t.includes(' Fix_mH+ {{pH}} HCl 10'),
+                t.includes(' Markh 1 umol/kgw'), t.includes('NAMED_EXPRESSIONS'), t.includes(' {{solid}} 0 0.01')]; }})()""")
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfKept'))
+            kept_said = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith('The batch now') ? s : null; }})()", tries=80, pause=0.25)
+            kept_got = await page.ev(f"""(() => {{ const t = {TEXT};
+              return [{TICKS}, t.includes(' {{solid}} 1\\n 1e-12 moles'), t.includes(' {{solid}} 0 0.01'), t.includes(' IF s$ = "Coffinite" THEN v(13) = TOT("U") * 10^(-SI(s$))'),
+                t.includes(' Fix_mH+ {{pH}} HCl 10')]; }})()""")
+            await page.ev("document.getElementById('rtmPqBatchSfMenu').hidePopover()")
+            check("the Simple Functions' ways: none ticked at first; the pH as a concentration ticked, the batch the menu set up "
+                  "written again at once, the menu left open; the water kept as it is ticked too",
+                  [ticks0, ph_said, ph_got, kept_said, kept_got],
+                  [['false', 'false'],
+                   'The batch now reads the pH as the Simple Functions read it, [H+] = 10^-pH: its input is written again, as the menu set it up, Version B.',
+                   [['true', 'false'], True, True, True, True, True],
+                   "The batch now keeps the water as it is, each solid's limit from its saturation index, no solid dissolving into it: "
+                   'its input is written again, as the menu set it up, Version B.',
+                   [['true', 'true'], True, False, True, True]])
+            mine = (await page.ev(TEXT)) + '\n# mine'
+            await field('rtmPqBatchText', mine)
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfKept'))
+            edited_said = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith('When the') ? s : null; }})()", tries=80, pause=0.25)
+            edited_got = [await page.ev(TICKS), (await page.ev(TEXT)) == mine]
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfKept'))
+            check('  an input edited is no longer the menu\'s: a tick holds from its next use, the input as it is',
+                  [edited_said, edited_got],
+                  ['When the Simple Functions menu next sets the batch up, the batch lets each solid dissolve into the water, which it changes.',
+                   [['true', 'false'], True]])
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="B"][data-drawn="no"]'))
+            set_both = await until(page, SF_STATUS, tries=120, pause=0.25)
+            await field('rtmPqBatchRows', '1')
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
+            ran = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run/.test(s) ? s : null; }})()",
+                              tries=240, pause=0.25)
+            both = await page.ev("""(() => { const t = document.querySelector('#rtmPqBatchOut table:not(.rtm-pq-batch-solids)');
+              const h = [...t.querySelectorAll('thead th')].map((th) => th.textContent);
+              const r = [...t.querySelectorAll('tbody tr')][0];
+              return ['U(mol/kgw)', 'Sr(mol/kgw)', 'Ni(mol/kgw)'].map((c) => [Number(r.cells[h.indexOf(c)].textContent), r.cells[h.indexOf(c) - 1].textContent]); })()""")
+            want = [[3.0525e-9, 'UO2:2H2O(am)'], [1.2017e-3, 'Celestite'], [9.5268e-4, 'Ni(OH)2(s)']]
+            check('  Version B with both ticked: said so; Forsmark run, uranium, strontium and nickel as the input gives them',
+                  [set_both.startswith("The batch is set up as the Simple Functions' Version B: the database phreeqc.dat with Simple Functions (SR-Site); "
+                                       "47 solids for the 20 elements, each element's lowest kept, the pH read as a concentration and the water "
+                                       "kept as it is, as the Simple Functions take them; the constants as they are;") if isinstance(set_both, str) else set_both,
+                   ran.startswith('1 of 1 row, each with 47 solids') if isinstance(ran, str) else ran,
+                   [[abs(v / w[0] - 1) < 2e-3, s] for (v, s), w in zip(both, want)] if isinstance(both, list) else both],
+                  [True, True, [[True, 'UO2:2H2O(am)'], [True, 'Celestite'], [True, 'Ni(OH)2(s)']]])
+            # Both unticked again: the batch the menu set up written as PHREEQC's own.
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfPh'))
+            await asyncio.sleep(0.3)
+            await page.ev(CLICK % json.dumps('#rtmPqBatchSfKept'))
+            await asyncio.sleep(0.3)
+            check('  both unticked: the input the menu writes without them',
+                  [await page.ev(TICKS), await page.ev(f"{TEXT}.includes(' Fix_H+ -{{pH}} HCl 10') && {TEXT}.includes(' {{solid}} 0 0.01')")],
+                  [['false', 'false'], True])
             await field('rtmPqBatchRealisations', '')
             await field('rtmPqBatchWaters', 'each')
             check('no console errors', page.errors[:3], [])

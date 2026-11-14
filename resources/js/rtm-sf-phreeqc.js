@@ -31,13 +31,17 @@
        redefined, Magnetite new), the redox buffer of Version B;
      - methane and sulfide suppressed (log_k -100): the Simple Functions have
        neither;
-     - three pseudo-phases that hold a property of the water: Fix_H+ the pH;
-       Fix_Eh the Eh in mV, its saturation index 59.16 pe; and Fix_HCO3- the
+     - four pseudo-phases that hold a property of the water: Fix_H+ the pH;
+       Fix_Eh the Eh in mV, its saturation index 59.16 pe; Fix_HCO3- the
        free HCO3-, which the Simple Functions take as given, through Mark, a
        marker anion with HCO3-'s activity coefficient: with Mark at a
        millionth of the free HCO3- wanted and Fix_HCO3- at -6, HCO3- is at
        exactly that molality -- for the kilogram of water the water starts
-       with, Mark being so many moles, where conditioning makes some water.
+       with, Mark being so many moles, where conditioning makes some water;
+       and Fix_mH+ the pH as the Simple Functions read it, -log[H+] and not
+       -log a(H+), through Markh, a marker cation with H+'s activity
+       coefficient, at a millionth of a mole: Fix_mH+ (Markh + H+ = Markh+,
+       log K -6) at the pH puts [H+] at 10^-pH, for that same kilogram.
 
    THE INPUT holds the pH with hydrochloric acid, added or taken out. Each
    solid is offered as 0.02 mol, twice the Simple Functions' line for an
@@ -54,6 +58,23 @@
    The major ions keep phreeqc.dat's species and constants, and its activity
    model is used throughout: this is the Simple Functions' chemistry on
    PHREEQC, not a copy of their arithmetic.
+
+   Two of the Simple Functions' ways can be asked for. pHm: the pH read as
+   they read it, [H+] = 10^-pH, held with Fix_mH+; PHREEQC, as a pH meter,
+   takes the pH as the activity's, and in a saline water the two are a tenth
+   of a unit apart. kept: the water kept as it is while each solid is tried,
+   as they keep it, where in PHREEQC a solid dissolving brings its own
+   sulphate, carbonate or hydroxide into the water. No solid dissolves: the
+   water conditioned (Version B) or as it is (A), a trace of the solid
+   (TRACE mol) goes into it, goethite and magnetite or the Eh, and the pH,
+   held as before, and a solid's limit is its element's total times
+   10^(-SI/n), n the atoms of the element in the solid's formula -- the total
+   that would saturate the water with the solid, the water unchanged. That
+   is exact where every species of the element holds one atom of it, as all
+   of the Simple Functions' do but three of uranium(VI)'s, dimers and
+   trimers, which count as at a trace. (Twenty elements at a trace in the
+   water instead, every solid's saturation read at once, give the same to
+   1e-7 and take three times as long: every run speciates them all.)
 
    It runs in the browser beside sf-data.js and sf-model.js (SFData,
    SFModel), and under Node for resources/tests/rtm/test-sf-phreeqc.js.
@@ -82,6 +103,10 @@
   const PH_HELD = 0.001;
   /** The marker anion that holds the free HCO3-, a millionth of it. */
   const MARK = 'Mark';
+  /** The marker cation that holds [H+] where the pH is read as the Simple Functions read it, a millionth of a mole. */
+  const MARK_H = 'Markh';
+  /** How much of a solid a water kept as it is is given, mol: a trace, the solid's saturation read from it. */
+  const TRACE = 1e-12;
   const PHASE_TAG = /\((aq|g|s|cr|c|am|l|sol|am,\s*fresh|am,\s*aged|beta|alpha|nat|cer)\)\s*$/i;
 
   /** A formula as PHREEQC writes it: no phase tag, a colon for the hydrate dot, H4SiO4 for Si(OH)4. */
@@ -216,6 +241,8 @@
     };
     const gammaHCO3 = (known.species.get('HCO3-') || {}).gamma;
     if (!gammaHCO3) throw new Error('the database has no -gamma for HCO3-, which the marker of free HCO3- copies');
+    const gammaH = (known.species.get('H+') || {}).gamma;
+    if (!gammaH) throw new Error('the database has no -gamma for H+, which the marker of [H+] copies');
     for (const E of data.elements) {
       const master = phreeqcFormula(E.master);
       const has = known.masters.get(E.el);
@@ -268,7 +295,7 @@
         phaseBlocks.push([`# ${E.el} ${so.id}: ${so.rx}, log K ${so.logK}, ± ${so.dlogK}${c ? `; O2(g) taken out, ${round(LOGK_O2 * c, 6)}` : ''}`,
           name, `    ${eq}`, `    log_k ${fmtK(logK)}`, `    -add_logk ${dk} 1`].join('\n'));
         out.solids.push({ el: E.el, id: so.id, name, formula, rx: so.rx, eq, logK: so.logK, dlogK: so.dlogK || 0, logKPhreeqc: round(logK, 10),
-          c, dk, use: so.use !== false });
+          c, dk, use: so.use !== false, n: SF.compileSolid(so, E.master).m });
       }
       out.elements.push({ el: E.el, master, solids: out.solids.filter((s) => s.el === E.el && s.use).map((s) => s.name) });
     }
@@ -309,10 +336,12 @@
       'SOLUTION_MASTER_SPECIES',
       ...masterLines,
       `${MARK.padEnd(8)}${`${MARK}-`.padEnd(12)}0   ${MARK.padEnd(6)}1`,
+      `${MARK_H.padEnd(8)}${`${MARK_H}+`.padEnd(12)}0   ${MARK_H.padEnd(6)}1`,
       '',
       'SOLUTION_SPECIES',
       speciesBlocks.join('\n'),
       `# The marker of free HCO3-: no complexes, HCO3-'s activity coefficient\n${MARK}- = ${MARK}-\n    log_k 0\n    -gamma ${gammaHCO3}`,
+      `# The marker of [H+]: no complexes, H+'s activity coefficient\n${MARK_H}+ = ${MARK_H}+\n    log_k 0\n    -gamma ${gammaH}`,
       '',
       'NAMED_EXPRESSIONS',
       out.named.map((n) => `${n}\n    log_k 0`).join('\n'),
@@ -320,11 +349,13 @@
       'PHASES',
       phaseBlocks.join('\n'),
       '# Holding a property of the water, with a reagent under EQUILIBRIUM_PHASES',
-      '# or in SOLUTION: the pH (-pH), the Eh in mV (59.16 pe), and the free',
-      `# HCO3- (-6, with ${MARK} at a millionth of the free HCO3- wanted)`,
+      '# or in SOLUTION: the pH (-pH), the Eh in mV (59.16 pe), the free HCO3-',
+      `# (-6, with ${MARK} at a millionth of the free HCO3- wanted), and -log[H+]`,
+      `# (the pH, with ${MARK_H} at a millionth of a mole)`,
       'Fix_H+\n    H+ = H+\n    log_k 0',
       'Fix_Eh\n    H2O + 59.16 e- = H2O\n    -no_check\n    log_k 0',
       `Fix_HCO3-\n    ${MARK} + HCO3- = ${MARK}-\n    -no_check\n    log_k 0`,
+      `Fix_mH+\n    ${MARK_H} + H+ = ${MARK_H}+\n    -no_check\n    log_k -6`,
       '',
     ].join('\n');
     out.text = text;
@@ -367,26 +398,39 @@
   /**
     The batch's input. version 'B': each water conditioned by goethite and magnetite at its own pH and its free HCO3-,
     then each solid in turn with them, pH held; 'A': the water at its own Eh and iron, then each solid in turn, pH
-    and Eh held. drawn: each constant set to its draw, dK_<name> as {dK_<name>}. cols: the table's columns.
+    and Eh held. drawn: each constant set to its draw, dK_<name> as {dK_<name>}. cols: the table's columns. pHm: the
+    pH read as the Simple Functions read it, [H+] = 10^-pH. kept: the water kept as it is, each solid's limit from its
+    saturation index at a trace of it, no solid dissolving.
   */
-  function input(built, { version = 'B', drawn = false, cols, amount = AMOUNT }) {
+  function input(built, { version = 'B', drawn = false, cols, amount = AMOUNT, pHm = false, kept = false }) {
     const c = (k) => `{${cols[k]}}`;
     const els = built.elements.map((e) => e.el);
     const lines = [];
-    if (version === 'A') {
+    if (version === 'A' && kept) {
+      lines.push("# The Simple Functions on PHREEQC, Version A: each water at its own pH and Eh, its iron",
+        "# from the table, then each solid's limit in it, the water kept as it is: the total that",
+        '# would saturate it with the solid, from its saturation index at a trace of it. The',
+        '# lowest of each element is kept.');
+    } else if (version === 'A') {
       lines.push("# The Simple Functions on PHREEQC, Version A: each water at its own pH and Eh, its iron",
         '# from the table, then each solid in turn, pH and Eh held. The lowest of each element is kept.');
+    } else if (kept) {
+      lines.push('# The Simple Functions on PHREEQC, Version B: each water conditioned by goethite and',
+        "# magnetite at its own pH, then each solid's limit in it, the water kept as it is: the",
+        '# total that would saturate it with the solid, from its saturation index at a trace of',
+        '# it. The lowest of each element is kept.');
     } else {
       lines.push('# The Simple Functions on PHREEQC, Version B: each water conditioned by goethite and',
         '# magnetite at its own pH, then each solid in turn with them, pH held. The lowest of each',
         '# element is kept.');
     }
+    if (pHm) lines.push("# The pH read as the Simple Functions read it: [H+] = 10^-pH, not its activity.");
     if (drawn) {
       const draws = [...built.species, ...built.solids].filter((s) => s.dlogK > 0);
       lines.push("# Each constant as drawn for this run, added to the Simple Functions' own:", 'NAMED_EXPRESSIONS',
         ...draws.flatMap((s) => [s.dk, `    log_k {${s.dk}}`]));
     }
-    const water = [' units mol/kgw', ` pH ${c('pH')}`];
+    const water = [' units mol/kgw', pHm ? ` pH ${c('pH')} Fix_mH+ ${c('pH')}    # [H+] at 10^-pH` : ` pH ${c('pH')}`];
     if (version === 'A') water.push(` pe 0 Fix_Eh ${c('Eh')}    # the pe of the Eh in mV`);
     water.push(` Ca ${c('Ca')}`);
     if (cols.Mg) water.push(` Mg ${c('Mg')}`);
@@ -396,15 +440,45 @@
     if (version === 'A') water.push(` Fe ${c('Fe')}`);
     water.push(` C(4) ${c('HCO3')} Fix_HCO3- -6    # carbon to give the free HCO3- of the table,`,
       ` ${MARK} ${c('HCO3')} umol/kgw    # a million times this marker`);
-    const hold = [` Fix_H+ -${c('pH')} HCl 10    # the pH held, with acid added or taken out`];
+    if (pHm) water.push(` ${MARK_H} 1 umol/kgw    # the marker that holds [H+]`);
+    const hold = pHm ? [` Fix_mH+ ${c('pH')} HCl 10    # [H+] held at 10^-pH, with acid added or taken out`]
+      : [` Fix_H+ -${c('pH')} HCl 10    # the pH held, with acid added or taken out`];
+    const guard = pHm ? ` 10 IF ABS(SI("Fix_mH+") - ${c('pH')}) > ${PH_HELD} THEN END    # [H+] not held: no ${kept ? 'limits' : 'totals'}`
+      : ` 10 IF ABS(-LA("H+") - ${c('pH')}) > ${PH_HELD} THEN END    # the pH not held: no ${kept ? 'limits' : 'totals'}`;
+    const out = ['SELECTED_OUTPUT 1', ' -reset false', ' -pH true', ' -pe true', ' -ionic_strength true', ' -totals Fe', 'USER_PUNCH 1',
+      ` -headings ${els.map((el) => `${el}(mol/kgw)`).join(' ')}`, guard];
+    if (kept) {
+      // The solid of the run: its element's limit, its total times 10^(-SI/n); every other element nought.
+      out.push(` 20 DIM v(${els.length})`, ' 30 s$ = "{solid}"    # the solid tried');
+      let line = 100;
+      for (const so of built.solids) {
+        if (!so.use) continue;
+        const k = els.indexOf(so.el) + 1;
+        out.push(` ${line} IF s$ = "${so.name}" THEN v(${k}) = TOT("${so.el}") * 10^(-SI(s$)${so.n > 1 ? ` / ${so.n}` : ''})`);
+        line += 1;
+      }
+      out.push(` ${Math.max(line, 900)} PUNCH ${els.map((el, i) => `v(${i + 1})`).join(', ')}`);
+    } else {
+      // Each element's total, as -totals heads it; none where the pH is not held, so that the run is not taken for the lowest.
+      out.push(` 20 PUNCH ${els.map((el) => `TOT("${el}")`).join(', ')}`);
+    }
+    if (kept) {
+      const trace = ['# A trace of the solid, nothing dissolving: its saturation index read from it.', 'USE solution 1', 'REACTION 1',
+        ' {solid} 1', ` ${TRACE} moles`];
+      if (version === 'A') {
+        lines.push('SOLUTION 1', ...water, 'SAVE solution 1', 'END', ...trace,
+          'EQUILIBRIUM_PHASES 2', ...hold, ` Fix_Eh ${c('Eh')} H2 10    # the Eh held, with hydrogen`, ...out, 'END');
+      } else {
+        lines.push('SOLUTION 1', ...water,
+          'EQUILIBRIUM_PHASES 1', ' Goethite 0 10', ' Magnetite 0 10', ...hold, ' Fix_HCO3- -6 CO2 10    # the free HCO3- held, with CO2',
+          'SAVE solution 1', 'END', ...trace,
+          'EQUILIBRIUM_PHASES 2', ' Goethite 0 10', ' Magnetite 0 10', ...hold, ...out, 'END');
+      }
+      return lines.join('\n');
+    }
     const half = round(amount / 2, 12);
     const halves = [`# Each solid in two halves of ${half} mol, the first with the pH${version === 'A' ? ' and Eh' : ''} free, the second with`,
       `# ${version === 'A' ? 'them' : 'it'} held: PHREEQC finds the held pH more surely from near it.`];
-    // Each element's total, as -totals heads it; none where the pH is not held, so that the run is not taken for the lowest.
-    const out = ['SELECTED_OUTPUT 1', ' -reset false', ' -pH true', ' -pe true', ' -ionic_strength true', ' -totals Fe',
-      'USER_PUNCH 1', ` -headings ${els.map((el) => `${el}(mol/kgw)`).join(' ')}`,
-      ` 10 IF ABS(-LA("H+") - ${c('pH')}) > ${PH_HELD} THEN END    # the pH not held: no totals`,
-      ` 20 PUNCH ${els.map((el) => `TOT("${el}")`).join(', ')}`];
     if (version === 'A') {
       lines.push('SOLUTION 1', ...water, 'SAVE solution 1', 'END', ...halves, 'USE solution 1', 'EQUILIBRIUM_PHASES 2', ` {solid} 0 ${half}`,
         'SAVE solution 2', 'END',
@@ -433,6 +507,6 @@
     return [head, ...waters.map((w) => keys.map((k) => (k === 'id' ? w.id : Number.isFinite(w[k]) ? w[k] : null)))];
   }
 
-  return { LOGK_O2, DATABASE_NAME, MARK, AMOUNT, PH_HELD, phreeqcFormula, phaseName, readBase, build, database, columnsOf, solidsSpec, uncertainSpec, input,
+  return { LOGK_O2, DATABASE_NAME, MARK, MARK_H, TRACE, AMOUNT, PH_HELD, phreeqcFormula, phaseName, readBase, build, database, columnsOf, solidsSpec, uncertainSpec, input,
     referenceRows };
 }));
