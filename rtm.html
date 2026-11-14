@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114d">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114f">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1080,6 +1080,15 @@
             <label>Rows
               <input type="text" id="rtmPqBatchRows" placeholder="all" style="width:84px" data-on-change="rtm:pqBatchSettings">
             </label>
+            <label>Waters
+              <select id="rtmPqBatchWaters" data-on-change="rtm:pqBatchSettings">
+                <option value="each">each in turn</option>
+                <option value="random">drawn at random</option>
+              </select>
+            </label>
+            <label id="rtmPqBatchRealisationsWrap" hidden>Realisations
+              <input type="text" id="rtmPqBatchRealisations" style="width:72px" data-on-change="rtm:pqBatchSettings">
+            </label>
           </div>
           <div class="rtm-toolbar">
             <label>Database
@@ -1098,7 +1107,7 @@
               <input type="text" id="rtmPqBatchUncertain" class="rtm-pq-solids" placeholder="none, or dU normal 0 0.5" data-on-change="rtm:pqBatchSettings">
             </label>
             <span class="rtm-pq-draws" id="rtmPqBatchDrawsWrap" hidden>
-              <label>Draws
+              <label id="rtmPqBatchDrawsLabel">Draws
                 <input type="text" id="rtmPqBatchDraws" placeholder="10" style="width:48px" data-on-change="rtm:pqBatchSettings">
               </label>
               <label>Seed
@@ -1122,11 +1131,11 @@
               <div class="rtm-menu" id="rtmPqBatchSfMenu" popover role="menu" aria-label="Simple Functions">
                 <div class="rtm-menu-head" role="presentation">Version B: goethite and magnetite</div>
                 <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="no" data-hint="each water once">The constants as they are</button>
-                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="yes" data-hint="10 draws a water">The constants drawn</button>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="yes" data-hint="a realisation a water, as SR-Site">The constants drawn</button>
                 <div class="rtm-menu-sep" role="separator"></div>
                 <div class="rtm-menu-head" role="presentation">Version A: Eh and iron from the table</div>
                 <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="A" data-drawn="no" data-hint="each water once">The constants as they are</button>
-                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="A" data-drawn="yes" data-hint="10 draws a water">The constants drawn</button>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="A" data-drawn="yes" data-hint="a realisation a water, as SR-Site">The constants drawn</button>
                 <div class="rtm-menu-sep" role="separator"></div>
                 <div class="rtm-menu-head" role="presentation">The waters</div>
                 <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSfWaters" data-hint="TR-10-61, table A-1">Their reference waters</button>
@@ -1160,6 +1169,11 @@
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchCsvItem" data-on-click="rtm:pqBatchSave" data-as="csv" data-hint="every row">CSV</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchRunsItem" data-on-click="rtm:pqBatchSave" data-as="runs" data-hint="each row with each solid" hidden>CSV, every run</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="xlsx" data-hint="every row and the spread, as a workbook">Excel</button>
+                  <div class="rtm-menu-sep" role="separator" data-batch-all hidden></div>
+                  <div class="rtm-menu-head" role="presentation" data-batch-all hidden>Every element</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchall" data-as="svg" data-hint="as a drawing" data-batch-all hidden>SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchall" data-as="png" data-hint="as a picture" data-batch-all hidden>PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchall" data-as="html" data-hint="live, as a page" data-batch-all hidden>HTML</button>
                   <div class="rtm-menu-sep" role="separator"></div>
                   <div class="rtm-menu-head" role="presentation">The spread</div>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="as a drawing">SVG</button>
@@ -1182,6 +1196,18 @@
           <!-- The batch kept, which the next ones are drawn beside (rtm-ui.js pqBatchKeptDraw). -->
           <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchKept" hidden><span id="rtmPqBatchKeptText"></span>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchForget">Forget it</button></p>
+          <!-- Every element at a glance: a box plot of each one's lowest, and a table of its numbers (rtm-ui.js pqBatchAll). -->
+          <div class="rtm-pq-batch-all" id="rtmPqBatchAll" hidden>
+            <div class="rtm-toolbar rtm-how">
+              <span class="rtm-dg-axis">Every element</span>
+              <label>share above
+                <input type="text" id="rtmPqBatchLimit" placeholder="0.01" style="width:64px" data-on-change="rtm:pqBatchLimit"> mol/kgw
+              </label>
+              <span class="rtm-muted" id="rtmPqBatchAllNote"></span>
+            </div>
+            <div class="plot" id="rtmChartPqBatchAll"></div>
+            <table class="rtm-pq-batch-elements" id="rtmPqBatchAllTable"></table>
+          </div>
           <!-- How the column chosen spreads over the waters: the share at or below each value, and its numbers (rtm-ui.js pqBatchSpread). -->
           <div class="rtm-pq-batch-spread" id="rtmPqBatchSpread" hidden>
             <div class="plot" id="rtmChartPqBatch"></div>
@@ -4269,12 +4295,31 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             the most; <code>triangular</code>, the least, the likeliest and the most; several apart by
             semicolons. Each is a <code>{name}</code> in the input where the value drawn goes — in a
             <code>log_k</code>, or a named expression's <code>log_k</code> that <code>-add_logk</code> adds to a
-            phase or species. Each row then runs <em>Draws</em> times, ten unless said, each time with
-            values drawn afresh, and with solids every solid of a draw has the same values, so that the
-            solids are weighed against each other on the same constants. The same <em>Seed</em> draws the
+            phase or species. With the waters each in turn, each row then runs <em>Draws</em> times, ten
+            unless said, each time with values drawn afresh, and with solids every solid of a draw has the
+            same values, so that the solids are weighed against each other on the same constants. The same <em>Seed</em> draws the
             same values again, and a row's draws are the same whichever other rows are run. Each draw keeps
             the values it drew, in the table and in what is saved, and the spread below is over every
             row's every draw.</p>
+          <p><em>Waters</em>, drawn at random, runs the batch as the Simple Functions ran SR-Site and the
+            PSAR: <em>Realisations</em>, as many as the rows asked for unless said, each taking a water at
+            random from those rows, with replacement, and drawing its values afresh. Both the water and each
+            value are drawn by a Latin hypercube over the realisations, as @Risk drew them: the shares from
+            0 to 1 are cut into as many strata as there are realisations, every stratum is taken once, in an
+            order of its own for the water and for each value, and a point is taken at random in it. With as
+            many realisations as rows every water is therefore taken once, each with values of its own; with
+            more, each about as often. The same <em>Seed</em> draws the same waters and values again, and a
+            realisation's are the same whichever others run. The table then has each realisation, the row
+            it took and its values, and the spread below is over the realisations.</p>
+          <p>With solids listed for two elements or more, <em>Every element</em> comes first: each element's
+            lowest of every row, draw or realisation in one box plot, on a log axis — the box from the 25th
+            to the 75th percentile with the median in it, the whiskers from the 5th to the 95th, the
+            smallest and the largest marked, and the batch kept grey beside it — and under it a table of the
+            same numbers, the solids that held each element lowest and in what share, and the share above a
+            line, <em>share above</em>, 0.01 mol/kgw unless said: the Simple Functions' line for an element
+            its solubility does not limit, drawn across the plot. A box or a row clicked draws that
+            element's spread below. <em>Export</em> saves the plot as SVG, PNG or a page of its own, under
+            <em>Every element</em>, and the workbook has the table on a sheet of its own.</p>
           <p>Above the rows, a chart shows how the column chosen spreads over the waters — under
             <em>Lowest in</em>, or <em>Spread of</em> without solids: for each value, the share of the
             waters at or below it, a step for each water, or each draw of a water, on a log axis where the values are all above
@@ -4344,9 +4389,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             SR-Site set of 158 aqueous species and 48 candidate solids, each constant with its
             uncertainty. It chooses the database, writes the input, lists each element's solids under
             <em>Solids</em>, and with the constants drawn lists every constant under <em>Uncertain</em>;
-            <em>Run</em> then runs it, and what comes back is the batch's own: for each water each
-            element's lowest and the solid that gave it, the spread over the waters, the chart against a
-            column and the map.</p>
+            <em>Run</em> then runs it, and what comes back is the batch's own: every element at a glance,
+            for each water each element's lowest and the solid that gave it, the spread over the waters,
+            the chart against a column and the map.</p>
           <p>The database is <code>phreeqc.dat</code> with the Simple Functions' definitions put in
             before its <code>END</code>, named <em>phreeqc.dat with Simple Functions (SR-Site)</em>. The
             Simple Functions write a change of oxidation state with O<sub>2</sub>(g), PHREEQC with the
@@ -4364,7 +4409,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             20 elements has a named expression added to its constant, <code>dK_</code> and its name —
             <code>dK_UO2:2H2O(am)</code> — nought unless an input sets it, which is how the constants are
             drawn: normal about the value, its ± two standard deviations, as the Simple Functions draw
-            them, ten draws a water unless <em>Draws</em> says otherwise. The database is one of the
+            them, in realisations, each a water drawn at random with its constants, a realisation a water
+            unless <em>Realisations</em> says otherwise, all by Latin hypercube, as SR-Site and the PSAR
+            drew them. The database is one of the
             visit's, chosen for the batch, the PHREEQC tab and the panel alike, and made again on the
             next visit where it was the one chosen.</p>
           <p>Version B, the setting of SR-Site and the PSAR, conditions each water first: goethite and
@@ -4374,11 +4421,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             the conditioning making a little water, at most about one per cent at the lowest pH. Each solid then meets that water with goethite
             and magnetite still there and the pH held. Version A takes the water's own Eh, in mV, and its
             iron from the table, and holds the pH and the Eh while each solid dissolves. In both, as in
-            the Simple Functions, calcite and siderite never form. Each solid is offered as 0.01 mol to a
-            kilogram of water, the Simple Functions' line between a solubility limit and none, in two
+            the Simple Functions, calcite and siderite never form. Each solid is offered as 0.02 mol to a
+            kilogram of water, twice the Simple Functions' line between a solubility limit and none, in two
             halves, the first with the pH free and the second with it held, from which PHREEQC finds the
-            held pH more surely: a solid that dissolves completely gives its element 0.01 mol/kgw for
-            each atom of it in its formula, and so no limit.</p>
+            held pH more surely: a solubility up to twice the line is found as it is, and a solid that
+            dissolves completely gives its element 0.02 mol/kgw for each atom of it in its formula, above
+            the line, so that <em>Every element</em>'s share above 0.01 is the share the Simple Functions
+            call not solubility limited.</p>
           <p>The table is the one open, where it has the columns the version needs, named as the Simple
             Functions read them — <code>pH</code>, <code>Eh (mV)</code>, <code>[HCO3-] (m)</code>,
             <code>[SO4-2]tot (m)</code>, <code>[Cl]tot (m)</code>, <code>[Ca]tot (m)</code>,
@@ -4580,6 +4629,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114h"></script>
 </body>
 </html>

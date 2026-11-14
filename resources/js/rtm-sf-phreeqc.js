@@ -40,8 +40,9 @@
        with, Mark being so many moles, where conditioning makes some water.
 
    THE INPUT holds the pH with hydrochloric acid, added or taken out. Each
-   solid is offered in two halves, the first with the pH free and the second
-   with it held: from the water the solid itself has made PHREEQC finds the
+   solid is offered as 0.02 mol, twice the Simple Functions' line for an
+   element not solubility limited, in two halves, the first with the pH free
+   and the second with it held: from the water the solid itself has made PHREEQC finds the
    held pH far more surely than in one step, where now and then it ends,
    without saying so, with all the chloride taken out and the pH far off.
    Taking acid out ends where the water has no chloride left, and a solid
@@ -71,10 +72,12 @@
   /** The name the database goes by on the page. */
   const DATABASE_NAME = 'phreeqc.dat with Simple Functions (SR-Site)';
   /**
-    How much of each solid a water is offered, mol: the Simple Functions' line between an element whose solubility
-    limits it and one it does not, so that a solid that dissolves completely gives its element that much.
+    How much of each solid a water is offered, mol: twice the Simple Functions' line between an element whose
+    solubility limits it and one it does not (0.01 mol/kgw), so that a solubility up to twice the line is found as it is
+    and a solid that dissolves completely gives its element twice the line for each atom of it, above the line: the
+    share of the realisations above the line is the Simple Functions' share not solubility limited.
   */
-  const AMOUNT = 0.01;
+  const AMOUNT = 0.02;
   /** How near its pH a run must end for its totals to count. */
   const PH_HELD = 0.001;
   /** The marker anion that holds the free HCO3-, a millionth of it. */

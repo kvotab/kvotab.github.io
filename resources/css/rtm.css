@@ -1067,6 +1067,18 @@
 /* How many draws and from what seed, shown once there is something to draw. */
 .rtm-pq-draws { display: inline-flex; align-items: center; gap: 12px; }
 .rtm-pq-draws[hidden] { display: none; }
+/* Every element of a batch at a glance: a box plot of each one's lowest, and a table of the numbers, a row clicked for its spread. */
+.rtm-pq-batch-all { margin: 0 0 14px; }
+.rtm-pq-batch-all[hidden] { display: none; }
+.rtm-pq-batch-all .plot { height: 360px; }
+.rtm-pq-batch-elements { border-collapse: collapse; font-size: 12px; margin: 4px 0 0; }
+.rtm-pq-batch-elements th { text-align: right; font-weight: 600; padding: 2px 0 2px 14px; border-bottom: 1px solid var(--border-color); }
+.rtm-pq-batch-elements td { text-align: right; font-variant-numeric: tabular-nums; padding: 2px 0 2px 14px; white-space: nowrap; }
+.rtm-pq-batch-elements th:nth-child(-n+2), .rtm-pq-batch-elements td:nth-child(-n+2) { text-align: left; }
+.rtm-pq-batch-elements th:first-child, .rtm-pq-batch-elements td:first-child { padding-left: 0; }
+.rtm-pq-batch-elements td.rtm-pq-held { color: var(--text-secondary); max-width: 26rem; white-space: normal; }
+.rtm-pq-batch-elements tr.rtm-pq-batch-pick { cursor: pointer; }
+.rtm-pq-batch-elements tr.rtm-pq-batch-pick:hover td { background: var(--bg-surface); }
 /* A batch's result against a column, under the spread. */
 .rtm-pq-batch-against { margin: 0 0 12px; }
 .rtm-pq-batch-against[hidden] { display: none; }

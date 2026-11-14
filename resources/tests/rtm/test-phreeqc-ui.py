@@ -1126,7 +1126,7 @@ async def main():
                 await page.ev(SET_INPUT % (json.dumps(text), json.dumps(rows)))
                 await page.ev("document.getElementById('rtmStatus').textContent = ''")
                 await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
-                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Solids|^Uncertain|^Draws|^Seed|^Rows:|^Open a table/.test(s) ? s : null; }})()",
+                return await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run|^The input|^Solids|^Uncertain|^Draws|^Seed|^Rows:|^Realisations:|^Open a table/.test(s) ? s : null; }})()",
                                    tries=120, pause=0.25)
 
             said = await batch(started)
@@ -1532,6 +1532,37 @@ async def main():
                           [['1', 'Barite', '1.418e-7', 'Celestite', '1.500e-4'], ['2', 'Witherite', '1.775e-5', 'Strontianite', '4.071e-5']]],
                    ['row', 'Ba: solid', 'Ba(mol/kgw)', 'Sr: solid', 'Sr(mol/kgw)'], ['Ba(mol/kgw)', 'Sr(mol/kgw)'], 'Spread of',
                    'Ba(mol/kgw), the lowest of each row', '2 rows of basr.csv, each with 4 solids for Ba and Sr: 8 runs.'])
+            # Every element at a glance: the box plot of both elements' lowest -- box from the 25th to the 75th percentile,
+            # whiskers from the 5th to the 95th, as the two rows give them -- the line of the share above across it, and
+            # the table: each element's solids, half the rows each, its numbers, and the share above 1e-4 mol/kgw, said.
+            # A row clicked draws that element's spread; the plot's export offered under a heading of its own.
+            ALL = """(() => { const p = document.getElementById('rtmChartPqBatchAll'), b = p.data && p.data.find((t) => t.type === 'box');
+              return [document.getElementById('rtmPqBatchAll').hidden, b ? [b.x, b.q1, b.median, b.q3, b.lowerfence, b.upperfence] : null,
+                p.layout ? p.layout.yaxis.type : null, p.data ? p.data.filter((t) => t.mode === 'lines').map((t) => [t.name, t.y]) : null,
+                [...document.querySelectorAll('#rtmPqBatchAllTable tr')].map((tr) => [...tr.cells].map((c) => c.textContent)),
+                [...document.querySelectorAll('#rtmExportPqBatch .rtm-menu-head')].filter((h) => !h.hidden).map((h) => h.textContent)]; })()"""
+            await field('rtmPqBatchLimit', '1e-4')
+            got = await page.ev(ALL)
+            pct = lambda xs, q: xs[0] + (xs[1] - xs[0]) * q
+            ba, sr = [1.418e-7, 1.775e-5], [4.071e-5, 1.500e-4]
+            want_box = [[pct(ba, q), pct(sr, q)] for q in (0.25, 0.5, 0.75, 0.05, 0.95)]
+            near = got[1] is not None and got[1][0] == ['Ba', 'Sr'] and all(
+                all(abs(a / b - 1) < 2e-3 for a, b in zip(row, want)) for row, want in zip(got[1][1:], want_box))
+            check('  every element at a glance: a box each, its percentiles the rows\', on a log axis, the line of the share above across it; '
+                  'the table with each element\'s solids, numbers and share above 1e-4 mol/kgw; Export offers the plot',
+                  [got[0], near, got[2], got[3], [r[:2] + r[-2:] for r in got[4]], got[5]],
+                  [False, True, 'log', [['0.0001 mol/kgw', [1e-4, 1e-4]]],
+                   [['element', 'held lowest by', 'largest', 'above 0.0001 mol/kgw'],
+                    ['Ba', 'Barite 50 %, Witherite 50 %', '1.775e-5', '0 %'], ['Sr', 'Celestite 50 %, Strontianite 50 %', '1.500e-4', '50 %']],
+                   ['All of it', 'The numbers', 'Every element', 'The spread', 'Against a column']])
+            await page.ev(CLICK % json.dumps('#rtmPqBatchAllTable tbody tr:nth-child(2)'))
+            await asyncio.sleep(0.4)
+            check('  a row clicked: that element\'s spread drawn below',
+                  [await page.ev("document.getElementById('rtmPqBatchLowest').value"),
+                   await page.ev("document.querySelector('#rtmPqBatchStats caption').textContent")],
+                  ['Sr(mol/kgw)', 'Sr(mol/kgw), the lowest of each row'])
+            await page.ev(LOWEST_IN % json.dumps('Ba(mol/kgw)'))
+            await field('rtmPqBatchLimit', '')
             lowest = await saved_csv('#rtmPqBatchCsvItem')
             check('  saved: each element\'s lowest and the solid that gave it',
                   lowest[:2] if isinstance(lowest, list) else lowest,
@@ -1746,6 +1777,67 @@ async def main():
                    ' Na {dNa}' in report, 'id="rtmPqBatchStats"' in report, 'data-on-click' not in report,
                    'The map over X(km) and Y(km)' in report, 'against dNa' in report] if isinstance(report, str) else report,
                   [3, True, True, True, True, True, True, True, True, True])
+            # ---- realisations, as the Simple Functions draw them ----
+            # Four waters, Waters drawn at random, eight realisations of a sodium drawn uniform between 1 and 2 mmol/kgw,
+            # seed 7: each water taken twice and every eighth of the sodium's range once -- a Latin hypercube over the
+            # realisations -- PHREEQC's sodium the value drawn; the table headed realisation, the note saying so. The same
+            # seed draws the same, another others. As many realisations as rows unless said: each water once. Without
+            # values drawn, the waters alone, each pH the table's. Realisations of none said before anything runs.
+            await page.ev(FEED % (json.dumps('four.csv'), json.dumps('pH\n7\n7.5\n8\n8.5\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('four.csv: 4 rows and 1 column')", True, tries=40)
+            await page.ev(SET_SOLIDS % json.dumps(''))
+            hidden_before = await page.ev("document.getElementById('rtmPqBatchRealisationsWrap').hidden")
+            await field('rtmPqBatchWaters', 'random')
+            await field('rtmPqBatchRealisations', '8')
+            await field('rtmPqBatchUncertain', 'dNa uniform 1 2')
+            await field('rtmPqBatchSeed', '7')
+            shown = [hidden_before, await page.ev("document.getElementById('rtmPqBatchRealisationsWrap').hidden"),
+                     await page.ev("document.getElementById('rtmPqBatchDrawsLabel').hidden"),
+                     await page.ev("document.getElementById('rtmPqBatchGo').textContent")]
+            REAL = """(() => { const t = document.querySelector('#rtmPqBatchOut table');
+              return [[...t.querySelectorAll('thead th')].map((th) => th.textContent),
+                [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.cells].map((c) => (c.dataset.v !== undefined ? Number(c.dataset.v) : c.textContent)))]; })()"""
+            said = await batch(NA_IN)
+            got = await page.ev(REAL)
+            rows_taken = sorted(r[0] for r in got[1])
+            na = [r[2] for r in got[1]]
+            check('realisations: Waters drawn at random, eight of four waters, each water twice and every eighth of the value\'s range once, '
+                  'PHREEQC\'s sodium the value drawn; the table and the note say realisation',
+                  [shown, said.startswith('8 of 8 realisations, each a water drawn at random from 4 rows (4 drawn), run through PHREEQC')
+                   if isinstance(said, str) else said, got[0], [r[1] for r in got[1]], rows_taken,
+                   sorted(int((x - 1) * 8) for x in na), all(abs(r[3] * 1000 / r[2] - 1) < 1e-6 for r in got[1]),
+                   await page.ev("document.getElementById('rtmPqBatchNote').textContent")],
+                  [[True, False, True, 'Run the realisations'], True, ['row', 'realisation', 'dNa', 'Na(mol/kgw)'],
+                   ['1', '2', '3', '4', '5', '6', '7', '8'], ['1', '1', '2', '2', '3', '3', '4', '4'], list(range(8)), True,
+                   '8 realisations, each a water drawn at random from 4 rows of four.csv (4 drawn): 8 runs, seed 7.'])
+            await batch(NA_IN)
+            again = await page.ev(REAL)
+            await field('rtmPqBatchSeed', '8')
+            await batch(NA_IN)
+            other = await page.ev(REAL)
+            await field('rtmPqBatchSeed', '7')
+            await field('rtmPqBatchRealisations', '')
+            await batch(NA_IN)
+            once = await page.ev(REAL)
+            check('  the same seed draws the same, another others; as many realisations as rows unless said, each water once',
+                  [again == got, [r[2] for r in other[1]] != na, sorted(r[0] for r in once[1]),
+                   await page.ev("document.getElementById('rtmPqBatchRealisations').placeholder")],
+                  [True, True, ['1', '2', '3', '4'], '4'])
+            await field('rtmPqBatchUncertain', '')
+            await field('rtmPqBatchRealisations', '6')
+            said = await batch('SOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND\n')
+            alone = await page.ev(REAL)
+            counts = [sum(1 for r in alone[1] if r[0] == k) for k in ('1', '2', '3', '4')]
+            await field('rtmPqBatchRealisations', '0')
+            none = await batch('SOLUTION 1\n pH {pH}\nSELECTED_OUTPUT 1\n -reset false\n -pH true\nEND\n')
+            check('  the waters alone, each realisation\'s pH its water\'s; realisations of none said before anything runs',
+                  [said.startswith('6 of 6 realisations') if isinstance(said, str) else said, alone[0], sorted(counts),
+                   all(abs(r[2] - [7, 7.5, 8, 8.5][int(r[0]) - 1]) < 1e-9 for r in alone[1]), none],
+                  [True, ['row', 'realisation', 'pH'], [1, 1, 2, 2], True,
+                   'Realisations: a whole number from 1 to 100,000; as many as the rows asked for, 4, unless said.'])
+            await field('rtmPqBatchRealisations', '')
+            await field('rtmPqBatchWaters', 'each')
+            await field('rtmPqBatchSeed', '')
             # ---- the Simple Functions on PHREEQC ----
             # The menu: the reference waters as the table; Version B with the constants as they are -- the database made,
             # read into PHREEQC and chosen everywhere, the input conditioning each water, 47 solids for the 20 elements,
@@ -1760,9 +1852,10 @@ async def main():
             set_b = await until(page, SF_STATUS, tries=120, pause=0.25)
             got = await page.ev("""(() => { const t = document.getElementById('rtmPqBatchText').value;
               return [['rtmPqDb', 'rtmPqViewDb', 'rtmPqBatchDb'].map((id) => document.getElementById(id).value),
-                t.includes(' Goethite 0 10') && t.includes('Fix_HCO3- -6 CO2 10') && t.includes(' {solid} 0 0.005') && !t.includes('NAMED_EXPRESSIONS'),
+                t.includes(' Goethite 0 10') && t.includes('Fix_HCO3- -6 CO2 10') && t.includes(' {solid} 0 0.01') && !t.includes('NAMED_EXPRESSIONS'),
                 document.getElementById('rtmPqBatchSolids').value.slice(0, 48), document.getElementById('rtmPqBatchSolids').value.split(/[,;]/).length,
-                document.getElementById('rtmPqBatchUncertain').value, document.getElementById('rtmPqBatchRows').value]; })()""")
+                document.getElementById('rtmPqBatchUncertain').value, document.getElementById('rtmPqBatchRows').value,
+                document.getElementById('rtmPqBatchWaters').value]; })()""")
             check('the Simple Functions: their waters the table; Version B set up, the database chosen everywhere, the input, '
                   'each element\'s solids, nothing drawn',
                   [waters.startswith("Simple Functions' reference waters (TR-10-61): 12 waters") if isinstance(waters, str) else waters,
@@ -1770,7 +1863,7 @@ async def main():
                   [True, "The batch is set up as the Simple Functions' Version B: the database phreeqc.dat with Simple Functions "
                    "(SR-Site); 47 solids for the 20 elements, each element's lowest kept; the constants as they are; "
                    "Simple Functions' reference waters (TR-10-61), 564 runs.",
-                   [['phreeqc.dat with Simple Functions (SR-Site)'] * 3, True, 'Sr: Strontianite, Celestite; Ra: RaCO3(s), RaSO4', 47, '', '']])
+                   [['phreeqc.dat with Simple Functions (SR-Site)'] * 3, True, 'Sr: Strontianite, Celestite; Ra: RaCO3(s), RaSO4', 47, '', '', 'each']])
             await field('rtmPqBatchRows', '1-2')
             await page.ev("document.getElementById('rtmStatus').textContent = ''")
             await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
@@ -1796,20 +1889,24 @@ async def main():
             await page.ev("document.getElementById('rtmStatus').textContent = ''")
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="B"][data-drawn="yes"]'))
             set_d = await until(page, SF_STATUS, tries=120, pause=0.25)
-            await field('rtmPqBatchRows', '1')
-            await field('rtmPqBatchDraws', '2')
+            waters_d = await page.ev("document.getElementById('rtmPqBatchWaters').value")
+            await field('rtmPqBatchRows', '1-3')
+            await field('rtmPqBatchRealisations', '6')
             await page.ev("document.getElementById('rtmStatus').textContent = ''")
             await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
             ran = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run/.test(s) ? s : null; }})()",
                               tries=240, pause=0.25)
-            check('  Version B drawn: the 206 constants under Uncertain, the input setting them; one water, two draws, run',
-                  [set_d.endswith('the 206 constants drawn, 10 draws a water; Simple Functions\' reference waters (TR-10-61), 5,640 runs.')
-                   if isinstance(set_d, str) else set_d,
-                   await page.ev("document.getElementById('rtmPqBatchUncertain').value.split(';').length"),
+            check('  Version B drawn: the 206 constants under Uncertain, the input setting them, the waters drawn at random, a realisation '
+                  'a water unless said; three waters, six realisations, run',
+                  [set_d.endswith('the 206 constants drawn by Latin hypercube, 12 realisations, each a water drawn at random; '
+                                  'Simple Functions\' reference waters (TR-10-61), 564 runs.') if isinstance(set_d, str) else set_d,
+                   waters_d, await page.ev("document.getElementById('rtmPqBatchUncertain').value.split(';').length"),
                    await page.ev("document.getElementById('rtmPqBatchText').value.includes('dK_UO2:2H2O(am)\\n    log_k {dK_UO2:2H2O(am)}')"),
-                   ran.startswith('1 of 1 row, 2 draws each, each draw with 47 solids for Sr') if isinstance(ran, str) else ran],
-                  [True, 206, True, True])
-            await field('rtmPqBatchDraws', '')
+                   ran.startswith('6 of 6 realisations, each a water drawn at random from 3 rows (3 drawn), each with 47 solids for Sr')
+                   if isinstance(ran, str) else ran],
+                  [True, 'random', 206, True, True])
+            await field('rtmPqBatchRealisations', '')
+            await field('rtmPqBatchWaters', 'each')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})
