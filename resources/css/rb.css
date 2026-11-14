@@ -364,6 +364,22 @@
     #driveDialog:not(.rb-drive-launch) .rb-drive-launch-only {
       display: none;
     }
+    /* The Close put on Google's picker when its face does not show
+       (watchDrivePicker): at the corner of Google's box, over its frame; at
+       the window's corner when the box is not found. */
+    .rb-drive-picker-close {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      z-index: 1;
+      font-family: var(--font-sans);
+    }
+    .rb-drive-picker-close-loose {
+      position: fixed;
+      top: 16px;
+      right: 16px;
+      z-index: 1002;
+    }
 
     /* URL dialog overlay & modal */
     .url-dialog-overlay {

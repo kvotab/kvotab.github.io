@@ -60,9 +60,15 @@ Checked:
     instead; a file Drive will not show the page is said and the rest still
     open; with no account named the reader chooses one; Cancel lets Drive's
     files go;
+  - a picker whose face never shows (an error in its frame, or Google's
+    sign-in, as in a browser that blocks third-party cookies) has the page's
+    way out: Esc, a click on the dimmed page around it, or the Close put on
+    its box after a few seconds; the access is let go, the dialog says what
+    to do, and choosing files again asks Google afresh; a picker that has
+    loaded is Google's alone: a click beside it, Esc or waiting does nothing;
   - the dialog makes no offer to add the Data Browser to Drive's Open with
-    menu: a grant of drive.install asked for by the page installs nothing
-    (tried); installing it from the Google Workspace Marketplace does.
+    menu (taken out on 2026-11-11): installing it from the Google Workspace
+    Marketplace adds it.
 
 Start the server and the browser as in README.md (RB_TEST_HTTP and
 RB_TEST_CDP choose other ports), then
@@ -140,8 +146,11 @@ SIGN_IN_JS = r"""
 })();
 """
 
-# Google's loader and picker. Each picker built is recorded; shown, it first
-# says it has loaded (as Google's does) and then answers __driveTest.nextPick.
+# Google's loader and picker. Each picker built is recorded; shown, it puts
+# the dimmed page and its box in the page, as Google's does, then says it has
+# loaded and answers __driveTest.nextPick: 'stuck' for one whose face never
+# shows (it never answers), 'loaded' for one that loads and waits for
+# __driveTest.answer(...).
 PICKER_JS = r"""
 (function () {
   const T = window.__driveTest = window.__driveTest || {};
@@ -168,16 +177,28 @@ PICKER_JS = r"""
         setCallback(f) { this.f = f; return this; }
         build() {
           const r = this.r, f = this.f;
+          let parts = [];
           T.pickers.push(r);
           return {
             setVisible(v) {
               if (!v) return this;
               r.shown++;
+              const bg = document.createElement('div');
+              bg.className = 'picker picker-dialog-bg';
+              bg.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;z-index:1000;background:#fff;opacity:.5';
+              const box = document.createElement('div');
+              box.className = 'picker picker-dialog';
+              box.style.cssText = 'position:absolute;left:300px;top:150px;width:800px;height:600px;z-index:1001;background:#fff';
+              document.body.append(bg, box);
+              parts = [bg, box];
               const answer = T.nextPick || { action: 'cancel' };
-              setTimeout(() => { f({ action: 'loaded' }); f(answer); T.answered++; }, 20);
+              T.answer = (a) => { f(a); T.answered++; };
+              if (answer !== 'stuck') {
+                setTimeout(() => { f({ action: 'loaded' }); if (answer !== 'loaded') T.answer(answer); }, 20);
+              }
               return this;
             },
-            dispose() { r.disposed = true; }
+            dispose() { r.disposed = true; parts.forEach(e => e.remove()); parts = []; }
           };
         }
       }
@@ -187,7 +208,7 @@ PICKER_JS = r"""
         ViewId: { DOCS: 'all', FOLDERS: 'folders' },
         DocsViewMode: { GRID: 'grid', LIST: 'list' },
         Feature: { MULTISELECT_ENABLED: 'multiselectEnabled', NAV_HIDDEN: 'navHidden' },
-        Action: { PICKED: 'picked', CANCEL: 'cancel', ERROR: 'error' },
+        Action: { PICKED: 'picked', CANCEL: 'cancel', ERROR: 'error', LOADED: 'loaded' },
         Response: { ACTION: 'action', DOCUMENTS: 'docs' },
         Document: { ID: 'id', NAME: 'name', MIME_TYPE: 'mimeType' }
       };
@@ -421,6 +442,12 @@ class Page:
         for kind in ('mousePressed', 'mouseReleased'):
             await self.call('Input.dispatchMouseEvent', {'type': kind, 'x': x, 'y': y,
                                                          'button': 'left', 'clickCount': 1})
+
+    async def press(self, key, vk):
+        """A real key press, to whatever has the keyboard."""
+        for kind in ('rawKeyDown', 'keyUp'):
+            await self.call('Input.dispatchKeyEvent', {'type': kind, 'key': key, 'code': key,
+                                                       'windowsVirtualKeyCode': vk})
 
     async def load(self, n, config, state=None):
         """The page, afresh; with `state`, as Drive's Open with opens it (a
@@ -902,8 +929,64 @@ async def main():
                    await page.ev('Object.keys(loadedFiles).length')],
                   [[{'overrides': {}, 'active': True}], 1, 0])
 
-            # No offer to add the page to Drive's Open with menu: a grant of
-            # drive.install asked for by the page installs nothing (tried).
+            # A picker whose face never shows has no close of its own: all of
+            # Google's picker but the dimmed page is a page from docs.google.com
+            # in a frame, and an error there, or Google's sign-in (as in a
+            # browser that blocks third-party cookies), has none.
+            PARTS = "document.querySelectorAll('.picker-dialog, .picker-dialog-bg').length"
+            CLOSE = '.picker-dialog .rb-drive-picker-close'
+            CLOSES = "document.querySelectorAll('.rb-drive-picker-close').length"
+            STUCK_SAID = (f"{DIALOG_SHOWN} && {DIALOG_ERROR}.startsWith('Google’s file picker did not show your files."
+                          " If it asked you to sign in, the browser is blocking third-party cookies')")
+            await page.load(14, CONFIG_JS)
+            errors_before = len(page.errors)
+            await page.ev(f'{T}.nextPick = "stuck"; true')
+            await page.click(BUTTON)
+            await settle(page, f"!{CHOOSE}.disabled")
+            await page.click('#driveChooseBtn')
+            check('a picker that never says it has loaded stays up, with no Close on it at first',
+                  [await settle(page, PARTS, 2), await page.ev(CLOSES)], [2, 0])
+            check('after a few seconds a Close is put on its box, and has the keyboard',
+                  await settle(page, f"(() => {{ const b = document.querySelector('{CLOSE}');"
+                                     " return !!b && document.activeElement === b && b.textContent; })()",
+                               'Close', tries=100), 'Close')
+            await page.click(CLOSE)
+            check('Close puts the picker away, and itself with it',
+                  [await page.ev(f'{T}.pickers[0].disposed'), await page.ev(PARTS), await page.ev(CLOSES)],
+                  [True, 0, 0])
+            check('lets the access go', await page.ev('driveToken'), None)
+            check('and opens the dialog, saying what to do', await settle(page, STUCK_SAID))
+            await page.ev(f'{T}.nextPick = "stuck"; true')
+            await page.click('#driveChooseBtn')
+            await settle(page, PARTS, 2)
+            check('choosing files again asks Google afresh', await page.ev(f'{T}.tokenRequests.length'), 2)
+            await page.press('Escape', 27)
+            check('Esc closes a picker that has not loaded, before any Close is put on it, and says why',
+                  [await page.ev(f'{T}.pickers[1].disposed'), await page.ev(PARTS), await page.ev(STUCK_SAID)],
+                  [True, 0, True])
+            await page.click('#driveChooseBtn')
+            await settle(page, PARTS, 2)
+            await page.click_at(40, 500)
+            check('and so does a click on the dimmed page around it',
+                  [await page.ev(f'{T}.pickers[2].disposed'), await page.ev(PARTS), await page.ev(STUCK_SAID)],
+                  [True, 0, True])
+            # Once it has loaded, the picker is Google's alone, with its own ways out.
+            await page.ev(f'{T}.nextPick = "loaded"; true')
+            await page.click('#driveChooseBtn')
+            await settle(page, PARTS, 2)
+            await asyncio.sleep(0.3)
+            await page.click_at(40, 500)
+            await page.press('Escape', 27)
+            await asyncio.sleep(4.5)
+            check('a picker that has loaded stays up on a click beside it, Esc and waiting, and gets no Close',
+                  [await page.ev(f'{T}.pickers[3].disposed'), await page.ev(PARTS), await page.ev(CLOSES)],
+                  [False, 2, 0])
+            await page.ev(f'{T}.answer({{ action: "cancel" }}); true')
+            check('and goes when it answers', [await page.ev(f'{T}.pickers[3].disposed'), await page.ev(PARTS)], [True, 0])
+            check('and nothing of it went to the console', new_errors(page, errors_before), '')
+
+            # No offer to add the page to Drive's Open with menu (taken out on
+            # 2026-11-11): installing it from the Marketplace adds it.
             await page.load(13, CONFIG_JS)
             await page.click(BUTTON)
             await settle(page, f"!{CHOOSE}.disabled")

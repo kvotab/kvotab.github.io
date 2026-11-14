@@ -21,7 +21,11 @@
         scripts are loaded by the time of that click, so the window opens
         within it and no pop-up blocker stands in the way.
      4. Google's picker: My Drive, what is shared with the reader, shared
-        drives, several files at once.
+        drives, several files at once. All of it but the dimmed page around
+        it is a page from docs.google.com in a frame, its close and Cancel
+        among it; when that page is an error, or asks the reader to sign in
+        (as it does in a browser that blocks third-party cookies), nothing on
+        it closes it, so the page gives a way out until it has loaded.
      5. Each file picked is fetched from the Drive API and opened by
         ingestFileBuffer, as a file from disk is. A large HDF5 file -- at the
         size from which one from disk is read as it is looked at -- is read
@@ -36,7 +40,8 @@
    of file the Cloud project's Drive UI integration names, once the reader
    has installed the Data Browser from the Google Workspace Marketplace,
    which grants drive.install (it reaches no file). A grant of drive.install
-   asked for by the page itself installs nothing: tried, 2026-11-11. Drive
+   through this page's own sign-in installs it too: Drive's record of the app
+   said "installed" for an account that had given one (2026-11-14). Drive
    then opens this page at the integration's address with `state`, JSON
    naming the files by ID, their resource keys and the reader's Google
    account. The page takes it out of the address and opens the dialog by
@@ -66,6 +71,8 @@ const DRIVE_FILES_API = 'https://www.googleapis.com/drive/v3/files/';
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,200}$/;
 /** The most files one "Open with" in Drive opens. */
 const DRIVE_LAUNCH_MAX = 50;
+/** How long Google's picker has to say it has loaded before a Close is put on it, in ms. */
+const DRIVE_PICKER_PATIENCE = 4000;
 
 let driveToken = null;          // { value, expires }, expires in ms since the epoch
 let driveTokenClient = null;    // Google's token client, once its script is loaded
@@ -74,6 +81,7 @@ let driveAskingFor = 'pick';    // what the access asked for is for: 'pick' or '
 let driveLaunch = null;        // the files Drive's Open with asked to open, until opened or let go
 let driveLoading = null;        // the promise of Google's scripts, once asked for
 let drivePicker = null;         // the picker on show, to be disposed of
+let drivePickerWatch = null;    // the way out of the picker on show, until it has loaded
 let driveQueue = Promise.resolve();  // one pick's files opened after another's
 /** Files read a piece at a time, by their number in the worker: given new headers with a new token. */
 const driveLazyFiles = new Map();
@@ -464,6 +472,7 @@ function onDriveTokenError(err) {
 function showDrivePicker() {
   const config = driveConfig();
   const P = window.google.picker;
+  unwatchDrivePicker();
   if (drivePicker) {
     try { drivePicker.dispose(); } catch (_) { ignoreFailure('showDrivePicker', _); }
     drivePicker = null;
@@ -486,23 +495,111 @@ function showDrivePicker() {
     .setCallback(onDrivePicked)
     .build();
   drivePicker.setVisible(true);
+  watchDrivePicker();
 }
 
 /**
- * The picker's answer: the files picked are opened after any picked before
- * them; a cancel does nothing.
+ * A way out of a picker whose face never shows. Until the picker says it has
+ * loaded, Esc or a click on the dimmed page around it closes it, and after
+ * DRIVE_PICKER_PATIENCE a Close is put on its box. Once it has loaded, the
+ * picker is Google's alone again, with its own close and Cancel: a click
+ * beside it does nothing, as Google has it.
+ */
+function watchDrivePicker() {
+  unwatchDrivePicker();
+  const watch = { timer: 0, button: null };
+  watch.onKey = (event) => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeStuckDrivePicker();
+  };
+  watch.onClick = (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.classList.contains('picker-dialog-bg')) return;
+    event.stopPropagation();
+    closeStuckDrivePicker();
+  };
+  document.addEventListener('keydown', watch.onKey, true);
+  document.addEventListener('click', watch.onClick, true);
+  watch.timer = setTimeout(() => putDrivePickerClose(watch), DRIVE_PICKER_PATIENCE);
+  drivePickerWatch = watch;
+}
+
+/**
+ * The Close put on a picker that has not loaded in time: on Google's box,
+ * at its corner, when the box is found, and at the window's corner if not.
+ *
+ * @param {object} watch - The way out it is for; a later picker's wins
+ */
+function putDrivePickerClose(watch) {
+  if (watch !== drivePickerWatch) return;
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = 'url-btn url-btn-load rb-drive-picker-close';
+  button.textContent = 'Close';
+  button.addEventListener('click', () => closeStuckDrivePicker());
+  const box = document.querySelector('.picker-dialog');
+  if (box) {
+    box.appendChild(button);
+  } else {
+    button.classList.add('rb-drive-picker-close-loose');
+    document.body.appendChild(button);
+  }
+  watch.button = button;
+  button.focus();
+}
+
+/** The way out goes: the picker has loaded, answered, or been closed. */
+function unwatchDrivePicker() {
+  const watch = drivePickerWatch;
+  if (!watch) return;
+  drivePickerWatch = null;
+  clearTimeout(watch.timer);
+  document.removeEventListener('keydown', watch.onKey, true);
+  document.removeEventListener('click', watch.onClick, true);
+  if (watch.button) watch.button.remove();
+}
+
+/**
+ * Close a picker that never loaded. The access it was given is let go, as it
+ * may be what failed (withdrawn in the Google Account, say), so that the
+ * next try asks Google afresh; and the dialog says what else to do.
+ */
+function closeStuckDrivePicker() {
+  unwatchDrivePicker();
+  if (drivePicker) {
+    try { drivePicker.dispose(); } catch (_) { ignoreFailure('closeStuckDrivePicker', _); }
+    drivePicker = null;
+  }
+  driveToken = null;
+  openDriveDialog('Google’s file picker did not show your files. If it asked you to sign in, the browser '
+    + `is blocking third-party cookies, which the picker needs: allow them for ${window.location.hostname} `
+    + 'in the browser’s settings, then choose files again. If it showed an error, choose files again.');
+}
+
+/**
+ * The picker's answer. Loaded, it needs the page's way out no more; the
+ * files picked are opened after any picked before them; a cancel does
+ * nothing; an error is said, and the access let go.
  *
  * @param {object} data - Google's response object
  */
 function onDrivePicked(data) {
   const P = window.google.picker;
   const action = data && (data[P.Response.ACTION] || data.action);
+  if (action === (P.Action.LOADED || 'loaded')) {
+    unwatchDrivePicker();   // Google's face is up, with its own ways out
+    return;
+  }
   if (action !== P.Action.PICKED && action !== P.Action.CANCEL && action !== P.Action.ERROR) return;
+  unwatchDrivePicker();
   if (drivePicker) {
     try { drivePicker.dispose(); } catch (_) { ignoreFailure('onDrivePicked', _); }
     drivePicker = null;
   }
   if (action === P.Action.ERROR) {
+    driveToken = null;   // it may be the access that failed: the next try asks Google afresh
     reportFailure('googleDrive:picker', new Error('the picker reported an error'),
                   { userMessage: 'Google’s file picker did not open.' });
     return;
