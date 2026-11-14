@@ -278,7 +278,10 @@
    *   {id, type: 'load', database}
    *     -> {type: 'done', version, database, species, phases}
    *   {id, type: 'toModel', database, water, options}
-   *     -> {type: 'done', text, report, warnings, check, version}
+   *     -> {type: 'done', text, report, warnings, check, version, beside}
+   *     options.beside: PHREEQC's own TRANSPORT of the water too, its cells
+   *     under <DATA> at the text's end; beside {tables, columns, rows, cells,
+   *     times, seconds}, else null
    *   {id, type: 'view', database, water, run, modelText, options}
    *     -> {type: 'progress', done, total} ..., then
    *        {type: 'done', report, phases, table, csv, version}
@@ -315,8 +318,16 @@
         }
         if (msg.type === 'toModel') {
           const res = P.waterToModel({ engine, database, water: msg.water, ...(msg.options || {}) });
-          answer({ type: 'done', text: res.text, report: res.report, warnings: engine.warnings(),
-            check: checkModel(res), version: engine.version, database: database.name });
+          // With options.beside, PHREEQC's own TRANSPORT of the input too, its cells under <DATA> at the model's end.
+          let beside = null;
+          if (msg.options && msg.options.beside && res.report && res.report.transport) {
+            const warnings = engine.warnings();
+            beside = P.transportBeside({ engine, database, water: msg.water, res });
+            res.text = beside.modelText;
+            beside = { ...beside, text: undefined, modelText: undefined, warnings };
+          }
+          answer({ type: 'done', text: res.text, report: res.report, warnings: beside ? beside.warnings : engine.warnings(),
+            check: checkModel(res), version: engine.version, database: database.name, beside });
           return;
         }
         if (msg.type === 'view') {

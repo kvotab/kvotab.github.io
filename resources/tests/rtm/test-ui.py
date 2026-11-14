@@ -792,7 +792,7 @@ async def main():
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"]):not([value^=\"aside:\"])').length"
                 " + ':' + [...s.querySelectorAll('optgroup')].filter((g) => g.label !== 'Your earlier texts').length; })()"),
-                '38:12')
+                '39:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")

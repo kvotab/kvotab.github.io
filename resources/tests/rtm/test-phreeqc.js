@@ -4758,6 +4758,145 @@ function againstConductance(engine) {
    at its bound; and a hundred days with pure water held at both ends, which
    PHREEQC's rule as it is written stalls an implicit solver on.
    ====================================================================== */
+/* ======================================================================
+   PHREEQC's own column beside the model written from its input: the
+   input's TRANSPORT run as it is, its cells set out as <DATA> tables, and
+   the page's run of the model measured against them as the Fit tab does,
+   the Nash-Sutcliffe efficiency among it; one punched cell, a table in
+   time; stagnant cells, under layer = 1; what is refused.
+   ====================================================================== */
+// The input of the built-in example 'besidecolumn', ours: a fresh water through a salty column with calcite.
+const BESIDE_INPUT = `SOLUTION 0  a fresh water, flowing in
+ units mmol/kgw
+ pH 8.4
+ Na 0.2
+ Ca 0.3
+ C(4) 0.6
+ Cl 0.2 charge
+END
+USE solution 0
+EQUILIBRIUM_PHASES 100
+ Calcite 0 1
+SAVE solution 0
+END
+SOLUTION 1-40  a salty water, in the column
+ units mmol/kgw
+ pH 7.8
+ Na 60
+ Ca 2
+ C(4) 1.5
+ Cl 60 charge
+EQUILIBRIUM_PHASES 1-40
+ Calcite 0 1
+END
+TRANSPORT
+ -cells 40
+ -lengths 0.05
+ -shifts 80
+ -time_step 1577880
+ -flow_direction forward
+ -boundary_conditions flux flux
+ -diffusion_coefficient 1e-9
+ -dispersivities 0.01
+ -punch_cells 1-40
+ -punch_frequency 8
+END
+`;
+function againstTransportBeside(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const write = (text, name = 'The water') => {
+    engine.load(dbText);
+    const water = { name, text };
+    const res = P.waterToModel({ engine, database, water, activity: true, exact: true, phases: true, redox: false });
+    return { res, water };
+  };
+  const { res, water } = write(BESIDE_INPUT);
+  const b = P.transportBeside({ engine, database, water, res });
+  const dt = 1577880;
+  check('PHREEQC\'s own column beside the model: the punched shifts as ten tables in distance, each cell at its centre half a '
+    + 'time step after the shift, its pH, its element totals and its calcite; the run taken to the last of them',
+  b.tables === 10 && b.cells === 40 && b.rows === 400 && b.columns.join() === 'pH,tot(C),tot(Ca),tot(Cl),tot(Na),Calcite'
+    && b.times.every((t, j) => Math.abs(t - (8 * (j + 1) + 0.5) * dt) < 1) && /^distance {2}pH {2}tot\(C\).*at = 13411980$/m.test(b.text)
+    && /^0\.025 {2}8\.\d+/m.test(b.text) && /^1\.975 {2}/m.test(b.text)
+    && /^TEND = 127019340$/m.test(b.modelText) && b.end === 80.5 * dt && /^# The run goes on to TEND = 127019340, half a time step/m.test(b.text),
+  `${b.tables} tables, ${b.cells} cells, ${b.rows} rows, ${b.columns.join(' ')}, at ${b.times.slice(0, 2).join(', ')} s`);
+  // The page's run of the model against them, each column as the Fit tab measures it.
+  const m = RtmModel.compile(b.modelText);
+  const tables = m.data.filter((d) => d.kind === 'distance');
+  const times = tables.map((d) => d.at);
+  const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-7, atol: 1e-20, nonNegative: true,
+    outputTimes: times });
+  const ns = m.speciesNames.length;
+  const iH = m.speciesNames.indexOf('H+');
+  const lnG = new Float64Array(ns);
+  const els = new Map(m.speciesNames.map((n, i) => [i, RtmModel.elementsOf(n)]));
+  const stats = new Map();
+  tables.forEach((d, k) => {
+    const c = m.toConcentrations(run.grid.y[k]);
+    for (const row of d.rows) {
+      const cell = Math.round(row[0] / 0.05 - 0.5);
+      const b0 = cell * (m.stride || 1) * ns;
+      RtmModel.activityAt(m.act, c, b0, lnG, new Float64Array(ns));
+      d.columns.forEach((col, j) => {
+        let v;
+        if (col === 'pH') v = -(Math.log(c[b0 + iH]) + lnG[iH]) / Math.LN10;
+        else if (col.startsWith('tot(')) {
+          const el = col.slice(4, -1);
+          v = 0;
+          els.forEach((e, i) => { if (!(m.mineral && m.mineral[i]) && e && e.has(el)) v += e.get(el) * c[b0 + i]; });
+        } else v = c[b0 + m.speciesNames.indexOf(col)];
+        const meas = row[j + 1];
+        if (!stats.has(col)) stats.set(col, { sse: 0, m1: 0, m2: 0, n: 0 });
+        const s = stats.get(col);
+        s.sse += (v - meas) ** 2; s.m1 += meas; s.m2 += meas * meas; s.n++;
+      });
+    }
+  });
+  const nse = (col) => { const s = stats.get(col); return 1 - s.sse / (s.m2 - (s.m1 * s.m1) / s.n); };
+  const totals = ['tot(C)', 'tot(Ca)', 'tot(Cl)', 'tot(Na)'];
+  check('the page\'s run of it against PHREEQC\'s cells: the Nash-Sutcliffe efficiency 0.998 or more for the pH and every total '
+    + 'on 40 cells; the calcite, hardly changing, far less however close',
+  nse('pH') > 0.999 && totals.every((col) => nse(col) > 0.998) && nse('Calcite') < 0.9,
+  `pH ${nse('pH').toFixed(5)}, ${totals.map((col) => `${col} ${nse(col).toFixed(5)}`).join(', ')}, Calcite ${nse('Calcite').toFixed(3)}`);
+  // The built-in example is this input's model with these tables.
+  const { RTM_EXAMPLES } = require(path.join(jsDir, 'rtm-examples.js'));
+  const ex = RTM_EXAMPLES.find((e) => e.id === 'besidecolumn');
+  const exData = ex ? ex.text.slice(ex.text.search(/^<DATA>$/m)).trim().split('\n') : [];
+  const mine = b.text.trim().split('\n');
+  const same = exData.length === mine.length && exData.every((ln, i) => {
+    const a = ln.trim().split(/\s+/);
+    const c = mine[i].trim().split(/\s+/);
+    return a.length === c.length && a.every((w, j) => w === c[j] || Math.abs(Number(w) - Number(c[j])) <= 1e-6 * Math.abs(Number(c[j])));
+  });
+  check('the built-in example \'besidecolumn\' carries the same tables', !!ex && same, ex ? `${exData.length} lines against ${mine.length}` : 'no example');
+  // One cell punched: an effluent, its water in a table in time.
+  const eff = BESIDE_INPUT.replace(' -punch_cells 1-40', ' -punch_cells 40').replace(' -punch_frequency 8', ' -punch_frequency 1');
+  const w2 = write(eff);
+  const b2 = P.transportBeside({ engine, database, water: w2.water, res: w2.res });
+  const m2 = RtmModel.compile(b2.modelText);
+  check('one cell punched: its water against time, at the cell of the same number, half a time step after each shift',
+    b2.tables === 1 && b2.rows === 80 && /^time {2}pH.* cell = 39$/m.test(b2.text) && m2.data.length === 1 && m2.data[0].kind === 'time'
+    && m2.data[0].cell === 39 && Math.abs(m2.data[0].rows[0][0] - 1.5 * dt) < 1 && Math.abs(m2.data[0].rows[79][0] - 80.5 * dt) < 1,
+    `${b2.tables} table, ${b2.rows} rows`);
+  // Stagnant cells of one layer, punched: their own tables, under layer = 1.
+  const stag = BESIDE_INPUT.replace('SOLUTION 1-40', 'SOLUTION 1-81').replace('EQUILIBRIUM_PHASES 1-40', 'EQUILIBRIUM_PHASES 1-81')
+    .replace(' -punch_cells 1-40', ' -punch_cells 1-81\n -stagnant 1 1e-7 0.3 0.1').replace(' -shifts 80', ' -shifts 16');
+  const w3 = write(stag);
+  const b3 = P.transportBeside({ engine, database, water: w3.water, res: w3.res });
+  const m3 = RtmModel.compile(b3.modelText);
+  check('stagnant cells of one layer, punched: a table of their own beside each, layer = 1',
+    b3.tables === 4 && b3.times.length === 2 && (b3.text.match(/ layer = 1$/gm) || []).length === 2
+    && m3.data.filter((d) => d.layer === 1).length === 2, `${b3.tables} tables at ${b3.times.length} times`);
+  // Refused: water flowing backward, and an input without a TRANSPORT.
+  const back = BESIDE_INPUT.replace('-flow_direction forward', '-flow_direction back');
+  let said = '';
+  try { P.transportBeside({ engine, database, water: { name: 'back', text: back }, res }); } catch (e) { said = e.message; }
+  let said2 = '';
+  try { P.transportBeside({ engine, database, water: { name: 'x', text: 'SOLUTION 1\nEND\n' }, res: write('SOLUTION 1\nEND\n').res }); } catch (e) { said2 = e.message; }
+  check('refused, each with its reason: the water flowing backward; an input without a TRANSPORT',
+    /flows backward/.test(said) && /no TRANSPORT block/.test(said2), `${said} | ${said2}`);
+}
+
 function againstMultiD(engine) {
   // PHREEQC keeps a TRANSPORT's options for the next one in the same instance: each input here says -implicit and -stagnant.
   const database = { name: 'phreeqc.dat', text: dbText };
@@ -5447,6 +5586,8 @@ function againstKineticsHandOff(engine) {
   againstExchangeMineral(wasm);
   console.log('\n--- a column from PHREEQC\'s TRANSPORT: Example 11, calcite, calcite at a rate, the options, the refusals ---');
   againstTransportHandOff(wasm);
+  console.log('\n--- PHREEQC\'s own column beside the model: its cells as <DATA>, the run against them, Nash-Sutcliffe ---');
+  againstTransportBeside(wasm);
   console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
   againstMultiD(wasm);
   console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');

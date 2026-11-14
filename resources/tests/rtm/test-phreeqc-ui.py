@@ -484,6 +484,56 @@ async def main():
             ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('  and the page runs it', ran, 'Done')
 
+            # --- PHREEQC's own column beside the run: the tick there only for an input with a TRANSPORT; ticked, PHREEQC
+            # runs the input's column too and its cells go under <DATA>, a table in distance for each of the five shifts.
+            # The built-in example of it, run: the Fit tab's table of the run against them, each column's Nash-Sutcliffe
+            # efficiency 0.998 or more but the calcite's, which hardly changes.
+            hidden_plain = await page.ev("(() => { const w = document.getElementById('rtmPqWater'); w.value = 'SOLUTION 1\\n  pH 7\\nEND\\n';"
+                                         " w.dispatchEvent(new Event('input', { bubbles: true }));"
+                                         " return document.getElementById('rtmPqBesideWrap').hidden; })()")
+            hidden_col = await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                                       f" w.value = '{column_input}';"
+                                       " w.dispatchEvent(new Event('input', { bubbles: true }));"
+                                       " return document.getElementById('rtmPqBesideWrap').hidden; })()")
+            await page.ev("(() => { const b = document.getElementById('rtmPqBesideT'); b.checked = true;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            bes = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') ? t : ''; }})()", tries=240)
+            bes_text = await page.ev("document.getElementById('rtmText').value")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check("PHREEQC's own column: the tick only for an input with a TRANSPORT; ticked, PHREEQC runs the column too, its cells "
+                  'under <DATA>, five tables in distance, and the report says so',
+                  [hidden_plain, hidden_col, isinstance(bes, str) and "PHREEQC's own TRANSPORT of the input, run beside it" in bes
+                   and 'in 5 tables in distance' in bes, isinstance(bes_text, str) and len(re.findall(r'^distance {2}pH {2}', bes_text, re.M))],
+                  [True, False, True, 5])
+            await page.ev("(() => { const b = document.getElementById('rtmPqBesideT'); b.checked = false;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("(() => { const s = document.getElementById('rtmExample');"
+                          " s.value = 'besidecolumn'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_ex = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="fit"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmFitShow'); s.value = 'match';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length >= 6", True, tries=80, pause=0.25)
+            nse = await page.ev("""(() => { const head = [...document.querySelectorAll('#rtmFitMatch thead th')].map((th) => th.textContent);
+              const at = head.indexOf('Nash–Sutcliffe');
+              return [at, Object.fromEntries([...document.querySelectorAll('#rtmFitMatch tbody tr')].filter((tr) => tr.children[1].textContent === 'this run')
+                .map((tr) => [tr.children[0].textContent, tr.children[at] ? tr.children[at].textContent : null]))]; })()""")
+            nums = nse[1] if isinstance(nse, list) else {}
+            # The totals as the table labels them: 'Ca, dissolved'.
+            solutes = ['pH'] + [k for k in nums if k.endswith(', dissolved')]
+            check("  the built-in example of it, run: the Fit tab's table of the run against PHREEQC's cells, each column's "
+                  'Nash-Sutcliffe efficiency 0.998 or more but the calcite\'s, which hardly changes; none for all of them together',
+                  [ran_ex, isinstance(nse, list) and nse[0] > 0, len(solutes),
+                   all(nums.get(k) and float(nums[k]) >= 0.998 for k in solutes),
+                   bool(nums.get('Calcite')) and float(nums['Calcite']) < 0.9, nums.get('all together, as the Fit sums them')],
+                  ['Done', True, 5, True, True, ''])
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column whose cells start apart: zones, the second in <INITIAL> ---
             zoned_input = column_input.replace(
                 'SOLUTION 1-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\n',

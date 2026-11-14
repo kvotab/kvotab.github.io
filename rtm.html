@@ -463,6 +463,10 @@
                     <input id="rtmPqD" type="text" value="2e-9" data-on-change="rtm:pqSettings">
                   </div>
                 </div>
+                <!-- Shown where the input has a TRANSPORT block: PHREEQC runs that too, its cells under <DATA>. -->
+                <div class="rtm-pq-field" id="rtmPqBesideWrap" hidden>
+                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqBesideT" data-on-change="rtm:pqSettings"> PHREEQC's own column, to set beside the run</label><span class="kvot-info-slot" data-info-key="pq:besideT"></span></div>
+                </div>
                 <button type="button" class="rtm-btn small" id="rtmPqWrite" data-on-click="rtm:pqWrite">Write the model</button>
                 <input type="file" id="rtmPqDbFile" accept=".dat,.txt" hidden data-on-change="rtm:pqDbFileChosen">
               </div>
@@ -3594,8 +3598,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             twice and half dashed, pH, a saturation index and the like on axes of their own. Under
             it a table says, column by column, how far off the run is: the bias, the mean residual,
             which for an amount is shown as the factor the run is of what was measured on the whole;
-            the spread, the residuals' root mean square; the sum of their squares; and the worst
-            point. Then all the columns together, whose sum of squares is the fit's misfit. After a
+            the spread, the residuals' root mean square; the sum of their squares; the Nash–Sutcliffe
+            efficiency, of the values themselves, one less the sum of the squares of the run less what
+            was measured over the sum of the squares of what was measured less its mean — one where
+            the two are the same, nought where the run does no better than that mean, below nought where
+            it does worse, and none for a column whose values do not vary; and the worst point. Then
+            all the columns together, whose sum of squares is the fit's misfit. After a
             fit the fitted run is there too, as diamonds, at the times measured, beside the run as
             it was; a run kept beside is set against the same measurements, hollow, so that two
             models are judged by the same numbers.</p>
@@ -4139,6 +4147,21 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             0.25&nbsp;%, and the front has cleared the same cells to within one. They are different
             schemes that meet as the cells are refined. On 40 cells PHREEQC takes half a second and this
             page three; on 80, three and ten, PHREEQC's mixing steps growing as the cells shrink.</p>
+          <p>For a column of your own, the panel's <em>PHREEQC's own column, to set beside the run</em>,
+            there where the input has a <code>TRANSPORT</code> block: <em>Write the model</em> then
+            has PHREEQC run that column too, in the page, and puts its cells into the text under
+            <code>&lt;DATA&gt;</code> — each cell's pH, its element totals (<code>tot(Ca)</code>, or
+            the species where an element has one only) and its minerals, a table in distance for each
+            of up to twelve of the shifts the input punches, the first and the last always; or, where
+            it punches one cell, that cell's water in a table in time. A cell of PHREEQC's after shift
+            k is read as the model's cell of the same number half a time step later, at its centre, as
+            above, and the run goes on half a time step past the last shift, <code>TEND</code> moved
+            there, so that PHREEQC's last cells are read too. <em>Run</em> draws them beside the run —
+            Against distance a table at a time shown in that line's colour, the others faint — and the
+            Fit tab's <em>the run against what was measured, one to one</em> sets each column against
+            it, with its Nash–Sutcliffe efficiency. A mineral in excess, whose amount hardly changes, has a small efficiency
+            however close the two are: its values do not vary. PHREEQC takes as long as the input
+            takes it, some 20 seconds for 160 cells over 192 shifts.</p>
           <p>And an exchanger, PHREEQC's own Example 11. A column of 0.08&nbsp;m holds a water of 1
             mmol/kgw NaNO<sub>3</sub> and 0.2 of KNO<sub>3</sub>, and an exchanger of 1.1&nbsp;mmol/kgw
             loaded from it. It is flushed with 0.6 mmol/kgw of CaCl<sub>2</sub> for three pore volumes
@@ -4720,12 +4743,12 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
   <script src="./resources/js/rtm-model.js?v=20261111s"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261112f"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261114d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261111q"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114l"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114m"></script>
 </body>
 </html>

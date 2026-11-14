@@ -3230,15 +3230,20 @@
       }
     }
     // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says;
-    // on the slider faint but at the stored time nearest its own.
+    // on the slider faint but at the stored time nearest its own. With Times, a table at a time shown in that line's
+    // colour, and one at a time not shown faint and out of the legend -- PHREEQC's own column beside the run has ten.
     if (!across) {
       for (const d of measured('distance', name)) {
         const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
         const ys = f === 1 ? d.y : d.y.map((v) => v * f);
         if (slider) spans.push(spanOf(ys));
+        const near = nearestIndex(r.t, at);
+        const q = slider ? -1 : picks.indexOf(near);
+        const faint = slider ? near !== picks[0] : q < 0 && picks.length > 0;
         traces.push({ name: `measured, ${fmtOnAxis(ax, at)}`, x: d.x, y: ys, mode: 'markers', type: 'scatter',
-          marker: { size: 8, symbol: 'circle-open', color: themeColors().text, line: { width: 1.6 },
-            opacity: slider && nearestIndex(r.t, at) !== picks[0] ? 0.3 : 1 }, ...meta });
+          marker: { size: 8, symbol: 'circle-open', color: q >= 0 ? palette[q % palette.length] : themeColors().text,
+            line: { width: 1.6 }, opacity: faint ? (slider ? 0.3 : 0.25) : 1 },
+          ...(faint && !slider ? { showlegend: false } : {}), ...meta });
       }
     }
     const layout = baseLayout();
@@ -9070,7 +9075,8 @@
   }
   /** How far off a run is, column by column and all together: points, mean residual, root mean square, sum of squares, the worst. */
   function matchStats(points, rows) {
-    const blank = () => ({ n: 0, sum: 0, ss: 0, worst: null });
+    // sse, m1, m2: for the Nash-Sutcliffe efficiency of a column, on the values themselves rather than the residuals.
+    const blank = () => ({ n: 0, sum: 0, ss: 0, worst: null, sse: 0, m1: 0, m2: 0 });
     const by = new Map();
     const all = blank();
     rows.forEach((row, j) => {
@@ -9082,10 +9088,23 @@
         s.sum += row.res;
         s.ss += row.res * row.res;
         if (!s.worst || Math.abs(row.res) > Math.abs(s.worst.res)) s.worst = { res: row.res, p };
+        s.sse += (row.v - p.value) ** 2;
+        s.m1 += p.value;
+        s.m2 += p.value * p.value;
       }
     });
-    const done = (s) => ({ ...s, bias: s.n ? s.sum / s.n : NaN, rms: s.n ? Math.sqrt(s.ss / s.n) : NaN });
-    return { by: new Map([...by].map(([k, s]) => [k, done(s)])), all: done(all) };
+    /*
+      NSE = 1 - sum (run - measured)^2 / sum (measured - their mean)^2: one where
+      the run is what was measured, nought where it does no better than their
+      mean. Of a column alone, its values all of one kind; none where they do
+      not vary.
+    */
+    const nseOf = (s) => {
+      const spread = s.m2 - (s.m1 * s.m1) / s.n;
+      return s.n > 1 && spread > 1e-300 * Math.max(1, s.m2) ? 1 - s.sse / spread : NaN;
+    };
+    const done = (s) => ({ ...s, bias: s.n ? s.sum / s.n : NaN, rms: s.n ? Math.sqrt(s.ss / s.n) : NaN, nse: nseOf(s) });
+    return { by: new Map([...by].map(([k, s]) => [k, done(s)])), all: { ...done(all), nse: NaN } };
   }
   // A point's place for a person: its cell and time, or its distance and time.
   function matchWhere(p, r) {
@@ -9207,11 +9226,12 @@
       const worst = s.worst ? `${matchRes(s.worst.res, s.worst.p.index)}, ${kind === 'all' ? `${labelOf(s.worst.p.key)}, ` : ''}`
         + `${matchWhere(s.worst.p, r)}` : '';
       const spread = !s.n ? '' : kind === 'amount' ? `${s.rms.toFixed(3)} (× ${fit4(10 ** s.rms)})` : fit4(s.rms);
-      rows.push([col, run.label, s.n, kind === 'all' ? null : s.bias, s.rms, s.ss, s.worst ? s.worst.res : null,
-        s.worst ? `${labelOf(s.worst.p.key)}, ${matchWhere(s.worst.p, r)}` : '']);
+      rows.push([col, run.label, s.n, kind === 'all' ? null : s.bias, s.rms, s.ss, Number.isFinite(s.nse) ? s.nse : null,
+        s.worst ? s.worst.res : null, s.worst ? `${labelOf(s.worst.p.key)}, ${matchWhere(s.worst.p, r)}` : '']);
       html.push(`<tr><td>${esc(col)}</td><td>${esc(run.label)}</td><td>${s.n}</td>`
         + `<td>${kind === 'all' || !s.n ? '' : esc(matchRes(s.bias, kind === 'index'))}</td><td>${esc(spread)}</td>`
-        + `<td>${s.n ? esc(fit4(s.ss)) : ''}</td><td>${esc(worst)}</td></tr>`);
+        + `<td>${s.n ? esc(fit4(s.ss)) : ''}</td><td>${Number.isFinite(s.nse) ? esc(s.nse.toFixed(4)) : ''}</td>`
+        + `<td>${esc(worst)}</td></tr>`);
     };
     for (const key of keys) {
       const kind = points.find((p) => p.key === key).index ? 'index' : 'amount';
@@ -9219,17 +9239,20 @@
     }
     runs.forEach((run, q) => line('all together, as the Fit sums them', run, stats[q].all, 'all'));
     box.innerHTML = '<table><thead><tr><th>Column</th><th>Run</th><th>points</th><th>bias, the mean residual</th>'
-      + '<th>spread, its root mean square</th><th>sum of squares</th><th>the worst</th></tr></thead>'
+      + '<th>spread, its root mean square</th><th>sum of squares</th><th>Nash–Sutcliffe</th><th>the worst</th></tr></thead>'
       + `<tbody>${html.join('')}</tbody></table>`
       + '<p>A residual is log₁₀ of the run over what was measured for an amount, shown as the factor the run is of it, '
-      + 'and the run less what was measured for pH, SI and the like.</p>';
+      + 'and the run less what was measured for pH, SI and the like. The Nash–Sutcliffe efficiency is of the values '
+      + 'themselves: 1 less the sum of the squares of the run less what was measured over the sum of the squares of what was '
+      + 'measured less its mean — one where they are the same, nought where the run does no better than that mean, below '
+      + 'nought where it does worse; of a column alone, none where its values do not vary.</p>';
     box.hidden = false;
     fitTableNow = { head: ['column', 'where', `time (${shownTime().sym})`, 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
       name: 'rtm_against_measured',
       rows: points.map((p, j) => [labelOf(p.key), p.kind === 'time' ? `cell ${p.cell}` : 'along the column',
         showT(p.t === null ? r.t[r.n - 1] : p.t), p.x, p.value, ...runs.flatMap((run) => (run.rows[j] ? [run.rows[j].v, run.rows[j].res] : [null, null]))]),
       extra: [{ name: 'how far off', head: ['column', 'run', 'points', 'bias', 'spread (root mean square)', 'sum of squares',
-        'worst residual', 'where'], rows }] };
+        'Nash-Sutcliffe efficiency', 'worst residual', 'where'], rows }] };
     const kept = bk ? runs.find((run) => run.r === bk.r) : null;
     const left = [skipped ? `${skipped} amount${skipped === 1 ? '' : 's'} at or below zero left out` : '',
       mine.after ? `${mine.after} after the run's end` : '', mine.lacks.size ? `this run has ${[...mine.lacks].join(', ')}` : '',
@@ -11261,7 +11284,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'Then', list: [
           '**Show** the run at the fitted numbers with the measurements, the residuals, or the misfit as it fell.',
-          '**the run against what was measured, one to one**, last in Show, with a fit or without one: each value measured set against the run’s at the same place and time — the run on show read between its stored points and its cells, linearly — on equal axes with the line of one to one, amounts on log axes with twice and half dashed, pH, SI and the like on their own. Under it, for each column: its points, the bias (the mean residual, for an amount shown as the factor the run is of what was measured), the spread (their root mean square), the sum of squares and the worst point; then all the columns together, as the Fit sums them. After a fit the fitted run is there as diamonds, at the times measured; a run kept beside, hollow.',
+          '**the run against what was measured, one to one**, last in Show, with a fit or without one: each value measured set against the run’s at the same place and time — the run on show read between its stored points and its cells, linearly — on equal axes with the line of one to one, amounts on log axes with twice and half dashed, pH, SI and the like on their own. Under it, for each column: its points, the bias (the mean residual, for an amount shown as the factor the run is of what was measured), the spread (their root mean square), the sum of squares, the Nash–Sutcliffe efficiency of the values themselves (1 the same, 0 no better than their mean) and the worst point; then all the columns together, as the Fit sums them. After a fit the fitted run is there as diamonds, at the times measured; a run kept beside, hollow.',
           '**Put the fitted values in the model**: each written into the text where it came from, to six figures.',
         ] },
         exportSection(['**CSV**, **Excel**: each point measured, the run there and its residual. **SVG**, **PNG**: the picture.', SAVE_HTML], true),
@@ -11420,6 +11443,26 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ['each species its own', 'The tracer diffusion coefficient the database gives each species (`-dw`); a species without one gets none.', pq.diff === 'dw'],
       ] }, { heading: 'Keep in mind', text: 'With each species its own coefficient the text also says `DIFFUSION = nernst-planck`: the ions are coupled so that no current flows, and the water stays neutral as they spread. With one coefficient for every species there is nothing to couple. A column from an input\'s `TRANSPORT` takes its coefficients from there: its `-diffusion_coefficient`, or under `-multi_D` each species\' `-dw` times the porosity to the n, coupled, and down the activities.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
+    }),
+
+    'pq:besideT': () => ({
+      kicker: 'PHREEQC', title: 'PHREEQC\'s own column, to set beside the run',
+      lead: 'For an input with a `TRANSPORT` block: PHREEQC runs that column too, in the page, and its cells go into the model as what was measured, so that the run is drawn and measured against PHREEQC\'s own.',
+      facts: [['Now', pq.besideT ? 'ticked: Write the model runs PHREEQC\'s column as well' : 'not ticked']],
+      sections: [
+        { heading: 'What goes in', list: [
+          'Each cell\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only — and its **minerals**, under `<DATA>` at the end of the text, a table in distance for each time.',
+          'The shifts the input punches (`-punch_frequency`), up to **12** of them evenly through, the first and the last always; up to 100 cells a table. Where the input punches one cell only, its water in a table in time, as an effluent is drawn.',
+          'A cell of PHREEQC\'s after shift k is read as the model\'s cell of the same number half a time step later, at its centre — the two schemes meet there as the cells are refined. With no flow, at k times the time step. The run goes on half a time step past the last shift (`TEND` moved), so that PHREEQC\'s last cells are read too.',
+          'Stagnant cells of one layer, where punched, under `layer = 1`.',
+        ] },
+        { heading: 'Then', list: [
+          '**Run**: the points are drawn beside the run, Against distance and Against time; Against distance a table at a time shown under Times in that line\'s colour, the others faint.',
+          '**Fit, Show: the run against what was measured, one to one**: each column\'s bias, spread and **Nash–Sutcliffe efficiency**, which is 1 where the two are the same. A mineral whose amount hardly changes — calcite in excess — has a small one however close: its values do not vary.',
+          'It takes PHREEQC as long as the input takes it: about 20 s for 160 cells over 192 shifts.',
+        ] },
+      ],
+      more: more('Against PHREEQC\'s own transport', 'help-phreeqc-transport'),
     }),
 
     'pane:phreeqc': () => ({
@@ -12647,12 +12690,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261110a',
-    'resources/js/rtm-phreeqc-engine.js?v=20261114a',
+    'resources/js/rtm-phreeqc.js?v=20261114b',
+    'resources/js/rtm-phreeqc-engine.js?v=20261114b',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -12680,7 +12723,7 @@ END
   /** Whether their activity coefficients follow the ionic strength: see pq:activity. */
   const PQ_ACTS = ['follow', 'fixed'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, redox: true, relax: '1e3', diff: 'none', D: '2e-9',
+    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, redox: true, besideT: false, relax: '1e3', diff: 'none', D: '2e-9',
     times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0, mode: 'time', at: -1,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
@@ -12715,7 +12758,8 @@ END
   function pqSave() {
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
-        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, relax: pq.relax, diff: pq.diff,
+        water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, besideT: pq.besideT,
+        relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open, inv: pq.inv, batch: pq.batch,
       }));
@@ -12729,7 +12773,7 @@ END
       for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
-      for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      for (const k of ['fill', 'logT', 'open', 'minerals', 'redox', 'besideT']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
         for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY', 'realisations', 'limit',
           'view', 'fit', 'sensTop', 'sfPh', 'sfWater', 'sfVersion', 'sfDrawn']) {
@@ -12757,6 +12801,7 @@ END
     $('rtmPqHold').value = pq.eq;
     $('rtmPqMinerals').checked = pq.minerals;
     $('rtmPqRedox').checked = pq.redox;
+    $('rtmPqBesideT').checked = pq.besideT;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
     $('rtmPqD').value = pq.D;
@@ -12779,6 +12824,13 @@ END
     // so is the electron.
     $('rtmPqMinerals').disabled = pq.eq !== 'exact';
     $('rtmPqRedox').disabled = pq.eq !== 'exact';
+    // PHREEQC's own column means something only for an input with a column to run.
+    $('rtmPqBesideWrap').hidden = !pqHasTransport();
+  }
+
+  /** Whether the water in the panel has a TRANSPORT block: PHREEQC's own column can then be set beside the run. */
+  function pqHasTransport() {
+    return /^[ \t]*TRANSPORT\b/im.test(pq.water || '');
   }
 
   function pqReadControls() {
@@ -12788,6 +12840,7 @@ END
     pq.eq = PQ_HOLDS.includes($('rtmPqHold').value) ? $('rtmPqHold').value : 'exact';
     pq.minerals = $('rtmPqMinerals').checked;
     pq.redox = $('rtmPqRedox').checked;
+    pq.besideT = $('rtmPqBesideT').checked;
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
     pq.D = $('rtmPqD').value.trim();
@@ -13065,6 +13118,20 @@ END
             + `${apart.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} in <code>&lt;INITIAL&gt;</code> (<code>matrix</code>)`
             + `${apart.length < st.zones.length ? ' and elsewhere as the water above' : ''}.` : 'It starts as the water above.'}</p>`);
       }
+      // PHREEQC's own TRANSPORT of the input, run beside: its cells under <DATA>, for the run to be set against.
+      if (reply.beside) {
+        const b = reply.beside;
+        const yr = 3.15576e7;
+        const when = b.times.length ? b.times.map((t) => pqNum(t >= yr ? t / yr : t)).join(', ') + (b.times[0] >= yr ? ' years' : ' s') : '';
+        out.push(`<p>PHREEQC's own <code>TRANSPORT</code> of the input, run beside it in ${pqNum(b.seconds)} s: `
+          + (b.times.length ? `its ${pqNum(b.cells)} cells${b.tables > b.times.length ? ' and the stagnant ones behind them' : ''} `
+            + `in ${b.tables} table${b.tables === 1 ? '' : 's'} in distance, at ${when}, `
+            : 'the cell it punches in a table in time, ')
+          + `${b.rows} rows of ${b.columns.map((col) => `<code>${esc(col)}</code>`).join(', ')}, under <code>&lt;DATA&gt;</code> `
+          + 'at the end of the text. Run draws them beside the run as points; the Fit tab\'s <em>the run against what was '
+          + 'measured</em> sets each against it, with the Nash–Sutcliffe efficiency. A cell of PHREEQC\'s after a shift is read '
+          + 'as the model\'s half a time step later.</p>');
+      }
       if (c.elsewhere && c.elsewhere.length) {
         out.push(`<p>Cell 1's water has none of ${c.elsewhere.map((sp) => `<code>${esc(sp)}</code>`).join(', ')}, which `
           + 'another water of the column brings: written at the trace cell 1 takes of that water, with the database\'s '
@@ -13261,13 +13328,15 @@ END
         + 'point is the decimal mark, and 1e-20 is written as here.</p>');
       return;
     }
-    pqBusy(true, 'Writing the model through PHREEQC…');
+    const beside = pq.besideT && pqHasTransport();
+    pqBusy(true, beside ? 'Writing the model through PHREEQC, and running its own TRANSPORT of the input beside it…'
+      : 'Writing the model through PHREEQC…');
     try {
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
         options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact',
           phases: pq.minerals && pq.eq === 'exact', redox: pq.redox && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
-          date: new Date().toISOString().slice(0, 10) },
+          date: new Date().toISOString().slice(0, 10), beside },
       });
       // As an example is loaded: the text replaced, the one there put aside, and said so below the panel.
       const kept = putAside(reply.text);
@@ -16382,7 +16451,7 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     'rtm:fileChosen': (ev) => { fileChosen(ev); },
     'rtm:saveFile': () => saveFile(),
     'rtm:pqPanel': () => { pqShowPanel(!pq.open); pqSave(); },
-    'rtm:pqWaterEdited': () => { pq.water = $('rtmPqWater').value; pqSave(); },
+    'rtm:pqWaterEdited': () => { pq.water = $('rtmPqWater').value; pqSave(); pqDependents(); },
     'rtm:pqOpenWater': () => $('rtmPqWaterFile').click(),
     'rtm:pqWaterChosen': (ev) => { pqWaterChosen(ev); },
     'rtm:pqExample': () => {

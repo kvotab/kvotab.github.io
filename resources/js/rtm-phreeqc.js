@@ -4774,6 +4774,150 @@
     };
   }
 
+  /*
+    PHREEQC'S OWN COLUMN, BESIDE THE MODEL WRITTEN FROM IT. The input run as
+    it is, its TRANSPORT and all, with a selected output of its own in front
+    of the TRANSPORT -- each punched cell's pH, its element totals and its
+    minerals -- and what that gives set out as <DATA> tables for the model's
+    run to be drawn and measured against: tables in distance, one a time,
+    where the input punches several cells; one in time where it punches one.
+    A cell of PHREEQC's after shift k is the model's cell of the same number,
+    at its centre, half a time step later, as the two schemes meet (the
+    tests' long-standing reading; with no flow, at k dt). An element with a
+    total the model works out goes under tot(El); one with a single species,
+    under the species; a mineral of the cells under the name the model gives
+    it. The shifts punched, up to maxTables of them evenly through, the first
+    and the last always; up to maxRows cells a table, every so many through
+    the column, the first and the last always. The water flowing forward, or
+    not at all. The model's own text comes back with the tables at its end
+    and its run taken to the last of them, TEND half a time step past
+    PHREEQC's last shift, where its last cells are read. o: { engine,
+    database, water, res (waterToModel's), maxTables, maxRows } -> { text
+    (the <DATA>), modelText, end, tables, columns, rows, cells, times,
+    seconds }
+  */
+  function transportBeside(o) {
+    const started = Date.now();
+    const text = String(o.water.text);
+    const t = readTransport(text);
+    if (!t || t.kind !== 'TRANSPORT') throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
+    if (t.dir < 0) throw new Error('the water flows backward (-flow_direction back): PHREEQC\'s own column is set beside '
+      + 'the model for water flowing forward, or not at all');
+    const Rtm = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel);
+    if (!Rtm) throw new Error('the model compiler is not loaded');
+    const m = Rtm.compile(o.res.text);
+    const keys = new Set((m.quantities || []).map((q) => q.key));
+    // The model's dissolved species, each with its elements: where an element is in one of them only, that one.
+    const solutes = m.speciesNames.filter((n, i) => (m.mobile ? m.mobile[i] : true) && !(m.mineral && m.mineral[i]));
+    const carriers = new Map();
+    for (const n of solutes) {
+      let els;
+      try { els = Rtm.elementsOf(n); } catch (e) { continue; }
+      for (const el of (els ? [...els.keys()] : [])) {
+        if (el === 'H' || el === 'O') continue;
+        if (!carriers.has(el)) carriers.set(el, []);
+        carriers.get(el).push(n);
+      }
+    }
+    const minerals = ((o.res.report && o.res.report.minerals) || []).filter((mn) => m.speciesNames.includes(mn.as));
+    const cols = [{ head: 'pH', punch: '-LA("H+")' }];
+    for (const [el, ns] of [...carriers].sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (keys.has(`tot(${el})`)) cols.push({ head: `tot(${el})`, punch: `TOT("${el}")` });
+      else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")` });
+    }
+    for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")` });
+    // The input as it is, the selected output put in front of its TRANSPORT.
+    const at = text.search(/^[ \t]*TRANSPORT\b/im);
+    if (at < 0) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
+    const n = cols.length;
+    const head = ['cell_', 'time_', ...cols.map((c, i) => `v${i}_`)];
+    const punch = `SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings ${head.join(' ')}\n -start\n`
+      + `10 PUNCH CELL_NO, TOTAL_TIME, ${cols.map((c) => c.punch).join(', ')}\n -end\n`;
+    o.engine.load(o.database.text);
+    const rows = o.engine.run(`${text.slice(0, at)}${punch}${text.slice(at)}`, 98);
+    const hd = rows[0].map((h) => String(h).trim());
+    const ic = hd.indexOf('cell_');
+    const it = hd.indexOf('time_');
+    const iv = cols.map((c, i) => hd.indexOf(`v${i}_`));
+    const dt = t.dt;
+    const nc = t.cells;
+    // The model's cell centres, from PHREEQC's lengths.
+    const centre = [];
+    let x0 = 0;
+    for (let i = 0; i < nc; i++) { centre.push(x0 + t.lengths[i] / 2); x0 += t.lengths[i]; }
+    const lag = t.dir === 0 ? 0 : 0.5;
+    // Shift by shift: the mobile cells' rows, and the stagnant layer's where it is one and punched.
+    const byShift = new Map();
+    for (const r of rows.slice(1)) {
+      const time = Number(r[it]);
+      const cell = Math.round(Number(r[ic]));
+      if (!(time > 0) || !(dt > 0)) continue;
+      const k = Math.round(time / dt);
+      if (!byShift.has(k)) byShift.set(k, { mobile: new Map(), stagnant: new Map() });
+      const vals = iv.map((j) => Number(r[j]));
+      if (cell >= 1 && cell <= nc) byShift.get(k).mobile.set(cell, vals);
+      else if (t.stag && cell >= nc + 2 && cell <= 2 * nc + 1) byShift.get(k).stagnant.set(cell - nc - 1, vals);
+    }
+    const shifts = [...byShift.keys()].sort((a, b) => a - b);
+    if (!shifts.length) throw new Error('PHREEQC\'s TRANSPORT punched no cell after a shift: give it -punch_cells and -punch_frequency');
+    // A value to seven figures; a time or a distance, which says where the run is read, to twelve.
+    const g = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(7))) : '-');
+    const gt = (v) => String(Number(v.toPrecision(12)));
+    const spread = (list, most) => {
+      if (list.length <= most) return list;
+      const out = [];
+      for (let j = 0; j < most; j++) out.push(list[Math.round(j * (list.length - 1) / (most - 1))]);
+      return [...new Set(out)];
+    };
+    const cellsPunched = [...new Set(shifts.flatMap((k) => [...byShift.get(k).mobile.keys()]))].sort((a, b) => a - b);
+    const lines = ['<DATA>',
+      `# PHREEQC's own TRANSPORT of the input this model was written from, run in the page: a cell of PHREEQC's`,
+      `# after shift k as this model's cell half a time step later, at its centre${t.dir === 0 ? ' (no flow: at k dt)' : ''}.`];
+    const last = shifts[shifts.length - 1];
+    const end = (last + lag) * dt;
+    const tend = t.shifts * dt;
+    if (end > tend * (1 + 1e-12)) lines.push(`# The run goes on to TEND = ${gt(end)}, half a time step past the last shift, where its last cells are read.`);
+    let tables = 0;
+    let points = 0;
+    const times = [];
+    if (cellsPunched.length === 1) {
+      // One cell punched: its water against time, as an effluent is drawn.
+      const cell = cellsPunched[0];
+      lines.push(`time  ${cols.map((c) => c.head).join('  ')}  cell = ${cell - 1}`);
+      for (const k of spread(shifts, o.maxRows || 400)) {
+        const v = byShift.get(k).mobile.get(cell);
+        if (!v) continue;
+        lines.push(`${gt((k + lag) * dt)}  ${v.map(g).join('  ')}`);
+        points++;
+      }
+      tables = 1;
+    } else {
+      for (const k of spread(shifts, o.maxTables || 12)) {
+        const { mobile, stagnant } = byShift.get(k);
+        const when = gt((k + lag) * dt);
+        times.push(Number(when));
+        for (const [layer, set] of [[0, mobile], [1, stagnant]]) {
+          // Every so many cells, the same step through the column, and the last.
+          const all = [...set.keys()].sort((a, b) => a - b);
+          const step = Math.ceil(all.length / (o.maxRows || 100));
+          const cells = all.filter((c, j) => j % step === 0 || j === all.length - 1);
+          if (!cells.length) continue;
+          lines.push(`distance  ${cols.map((c) => c.head).join('  ')}  at = ${when}${layer ? '  layer = 1' : ''}`);
+          for (const cell of cells) {
+            lines.push(`${gt(centre[cell - 1])}  ${set.get(cell).map(g).join('  ')}`);
+            points++;
+          }
+          tables++;
+        }
+      }
+    }
+    const data = lines.join('\n');
+    let model = o.res.text.replace(/\s*$/, '');
+    if (end > tend * (1 + 1e-12)) model = model.replace(/^TEND = .*$/m, `TEND = ${gt(end)}`);
+    return { text: data, modelText: `${model}\n\n${data}\n`, end, tables, columns: cols.map((c) => c.head), rows: points,
+      cells: cellsPunched.length, times, seconds: (Date.now() - started) / 1000 };
+  }
+
   /* ======================================================================
      A run back out
      ====================================================================== */
@@ -5823,6 +5967,6 @@
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
     readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
-    rateLaw, readTransport, readInverse, inversePhases,
+    rateLaw, readTransport, readInverse, inversePhases, transportBeside,
   };
 }));
