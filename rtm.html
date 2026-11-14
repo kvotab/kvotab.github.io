@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114a">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114b">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1121,6 +1121,7 @@
             </label>
             <span class="rtm-muted" id="rtmPqBatchNote"></span>
             <span class="rtm-end">
+              <button type="button" class="rtm-btn secondary small" id="rtmPqBatchKeep" data-on-click="rtm:pqBatchKeep">Keep this batch</button>
               <div class="rtm-export">
                 <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqBatch" aria-haspopup="menu">Export</button>
                 <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
@@ -1137,6 +1138,9 @@
               </div>
             </span>
           </div>
+          <!-- The batch kept, which the next ones are drawn beside (rtm-ui.js pqBatchKeptDraw). -->
+          <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchKept" hidden><span id="rtmPqBatchKeptText"></span>
+            <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchForget">Forget it</button></p>
           <!-- How the column chosen spreads over the waters: the share at or below each value, and its numbers (rtm-ui.js pqBatchSpread). -->
           <div class="rtm-pq-batch-spread" id="rtmPqBatchSpread" hidden>
             <div class="plot" id="rtmChartPqBatch"></div>
@@ -4241,6 +4245,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             chosen, it is a value drawn, else the table's pH, else its first column.
             <em>Export</em> saves it as SVG, PNG or a page of its own, each marked
             <em>against</em>.</p>
+          <p><em>Keep this batch</em> keeps the one shown for the visit, and the next batch you run is
+            drawn beside it: the kept spread's curve grey behind the new one, its numbers in a column of
+            their own beside the new ones, and its points faint behind the new ones in the chart against a
+            column — where it has a result in the same column, and something to draw it against. That
+            answers what a change does: another database, a log K drawn or not, a reaction held back. The
+            line under the bar says what is kept, and <em>Forget it</em> lets it go; the workbook has the
+            kept batch's table, input and spread too.</p>
           <p>A row of the table, or a point of either chart, clicked, runs that one water again —
             the input as the batch filled it, the same draw, and with solids the solid that gave the
             lowest — and shows what PHREEQC prints of it: the species of the water with their molalities
@@ -4441,6 +4452,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114c"></script>
 </body>
 </html>

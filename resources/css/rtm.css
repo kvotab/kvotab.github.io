@@ -1079,7 +1079,7 @@
 .rtm-pq-batch-stats { border-collapse: collapse; font-size: 12px; margin-top: 30px; }
 .rtm-pq-batch-stats caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
 .rtm-pq-batch-stats th { text-align: left; font-weight: 400; color: var(--text-secondary); padding: 2px 14px 2px 0; }
-.rtm-pq-batch-stats td { text-align: right; font-variant-numeric: tabular-nums; padding: 2px 0; }
+.rtm-pq-batch-stats td { text-align: right; font-variant-numeric: tabular-nums; padding: 2px 0 2px 14px; }
 .rtm-pq-models { font-size: 12px; margin: 4px 0 12px; }
 .rtm-pq-models td { vertical-align: top; }
 .rtm-pq-stale {

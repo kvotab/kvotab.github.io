@@ -1646,6 +1646,45 @@ async def main():
                   ["PHREEQC's output for row 1, Calcite", True, "PHREEQC's output for row 3, Calcite", True, True, True])
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchLookClose"]'))
             await page.ev(SET_SOLIDS % json.dumps(''))
+            # ---- a batch kept beside ----
+            # Twenty waters of NaCl run and kept; the same with a millimole of NaCl more by a REACTION run beside it. The
+            # spread: the kept curve behind, the legend shown, the numbers in two columns -- the new median 0.0115 beside
+            # the kept 0.0105. Against the table's Na, the kept points behind. The line under the bar says what is kept;
+            # the workbook has the kept batch's table and input; Forget it, one curve again.
+            await page.ev(FEED % (json.dumps('spread.csv'), json.dumps(
+                'Na\n' + '\n'.join(['1', '2', '3', '4', '5', '6', '7', 'x'] + [str(i) for i in range(8, 21)]) + '\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('spread.csv: 21 rows and 1 column')", True, tries=40)
+            NA1 = 'SOLUTION 1\n units mmol/kgw\n pH 7\n Na {Na}\n Cl {Na}\nSELECTED_OUTPUT 1\n -reset false\n -totals Na\nEND\n'
+            await batch(NA1)
+            await page.ev(CLICK % json.dumps('#rtmPqBatchKeep'))
+            KEPT = """[document.getElementById('rtmPqBatchKeep').textContent, document.getElementById('rtmPqBatchKeep').disabled,
+              document.getElementById('rtmPqBatchKept').hidden, document.getElementById('rtmPqBatchKeptText').textContent]"""
+            kept_now = await page.ev(KEPT)
+            await batch(NA1.replace('SELECTED_OUTPUT', 'REACTION 1\n NaCl 1\n 0.001 moles\nSELECTED_OUTPUT'))
+            beside = await page.ev(KEPT)
+            SPREADS = """(() => { const p = document.getElementById('rtmChartPqBatch'); const q = document.getElementById('rtmChartPqBatchX');
+              return [p.data.slice(0, 2).map((t) => [t.name || '', t.showlegend !== false]), p.layout.showlegend, q.data.map((t) => t.name), q.layout.showlegend,
+                [...document.querySelectorAll('#rtmPqBatchStats tbody tr')].map((tr) => [...tr.children].map((c) => c.textContent))]; })()"""
+            got = await page.ev(SPREADS)
+            sheets = await saved_blob('[data-on-click="rtm:pqBatchSave"][data-as="xlsx"]',
+                                      "(b) => JSZip.loadAsync(b).then((z) => z.file('xl/workbook.xml').async('string'))"
+                                      ".then((x) => [...x.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]))")
+            check('a batch kept beside: kept, then the next drawn beside it, its spread and points, its numbers in a column',
+                  [kept_now, beside, got[0], got[1], got[2], got[3], got[4], sheets],
+                  [['Kept', True, False, 'This batch is kept: the next one you run is drawn beside it.'],
+                   ['Keep this batch', False, False, 'Beside it, the batch kept: 21 rows of spread.csv, with phreeqc.dat.'],
+                   [['kept', True], ['this batch', True]], True, ['kept', 'this batch'], True,
+                   [['waters', '20', '20'], ['smallest', '0.002', '0.001'], ['5th percentile', '0.00295', '0.00195'],
+                    ['median', '0.0115', '0.0105'], ['95th percentile', '0.02005', '0.01905'], ['largest', '0.021', '0.02'],
+                    ['left out, refused or with no number', '1', '1']],
+                   ['batch', 'spread', 'input', 'kept', 'kept input']])
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchForget"]'))
+            await asyncio.sleep(0.2)
+            forgot = await page.ev(KEPT)
+            check('  forgot: the line gone, one curve and one column again',
+                  [forgot[2], await page.ev("document.getElementById('rtmChartPqBatch').data.length"),
+                   await page.ev("document.querySelector('#rtmPqBatchStats tbody tr').children.length")],
+                  [True, 3, 2])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

@@ -11501,6 +11501,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
         ] },
+        { heading: 'A batch kept beside', list: [
+          '**Keep this batch**: kept for the visit, and the next batch you run drawn beside it -- the kept spread\'s curve grey behind the new one, its numbers in a column of their own, its points faint behind in the chart against a column -- where it has a result in the same column.',
+          'The line under the bar says what is kept; **Forget it** lets it go. The workbook has the kept batch\'s table, input and spread too.',
+        ] },
         { heading: 'One water in full', list: [
           'A row of the table, or a point of either chart, clicked: that water is run again -- the input as the batch filled it, the same draw, with solids the solid that gave the lowest -- and PHREEQC\'s whole output for it shown: its species with their molalities and activities, its saturation indices, what each phase did.',
           'Where every run of it was refused, the first, and what PHREEQC said with the input as filled. **Save as text…** keeps it; **Close** puts it away. Only with the database the batch ran with.',
@@ -12615,6 +12619,7 @@ END
     batchStop: false,
     batchStarter: null,      // the input the page started for a table, while it is untouched
     batchLook: null,         // one water of the batch run again, what PHREEQC printed of it
+    batchKept: null,         // a batch kept, to draw the next ones beside (the visit's)
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -14225,6 +14230,7 @@ END
     pqBatchSpread();
     pqBatchAgainst();
     pqBatchLookDraw(false);
+    pqBatchKeptDraw();
     if (!v) { box.innerHTML = ''; return; }
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
     const cell = (x) => `<td${typeof x === 'number' ? ` data-v="${x}"` : ''}>${esc(num(x))}</td>`;
@@ -14351,13 +14357,23 @@ END
       return;
     }
     const f = (x) => (x === 0 ? '0' : fit4(x));
-    $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${batchLowestOf(v)}</caption><tbody>`
-      + batchSpreadRows(sp).map(([what, x], i) => `<tr><th scope="row">${what}</th><td>${i === 0 || what.startsWith('left') ? x.toLocaleString() : esc(f(x))}</td></tr>`).join('')
+    // The batch kept, beside this one, where it has a result in the same column.
+    const kept = batchKeptBeside();
+    const ksp = kept && batchHas(kept, sp.col) ? batchSpread(kept, sp.col) : null;
+    const shown = (x, i) => (i === 0 || i === 6 ? x.toLocaleString() : esc(f(x)));
+    const names = batchSpreadRows({ ...sp, none: Math.max(sp.none, ksp ? ksp.none : 0) }).map(([what]) => what);
+    $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${batchLowestOf(v)}</caption>`
+      + `${ksp ? '<thead><tr><th></th><td>this batch</td><td>kept</td></tr></thead>' : ''}<tbody>`
+      + names.map((what, i) => `<tr><th scope="row">${what}</th><td>${shown(batchSpreadValues(sp)[i], i)}</td>`
+        + `${ksp ? `<td>${shown(batchSpreadValues(ksp)[i], i)}</td>` : ''}</tr>`).join('')
       + '</tbody>';
     if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
     const c = themeColors();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
-    const log = sp.min > 0 && sp.max / sp.min >= 10;
+    // The axis holds this batch and the kept one: logarithmic where all of both are above nought and span a factor of ten.
+    const lo = ksp ? Math.min(sp.min, ksp.min) : sp.min;
+    const hi = ksp ? Math.max(sp.max, ksp.max) : sp.max;
+    const log = lo > 0 && hi / lo >= 10;
     // The share at or below: nought up to the smallest, then a step up at each unit.
     const xs = [sp.got[0].x, ...sp.got.map((g) => g.x)];
     const ys = [0, ...sp.got.map((_, i) => ((i + 1) / sp.n) * 100)];
@@ -14370,11 +14386,19 @@ END
         hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} at or below<br>%{customdata[0]}<extra></extra>`, showlegend: false },
       line(sp.p50), line(sp.p95),
     ];
+    if (ksp) {
+      // The kept batch's curve, grey, behind this one's; its points not to be clicked, its waters not this batch's.
+      traces[0].name = 'this batch';
+      traces[0].showlegend = true;
+      traces.unshift({ type: 'scatter', mode: 'lines', name: 'kept', x: [ksp.got[0].x, ...ksp.got.map((g) => g.x)],
+        y: [0, ...ksp.got.map((_, i) => ((i + 1) / ksp.n) * 100)], line: { shape: 'hv', width: 2, color: muted },
+        hovertemplate: `%{x:.4g}: %{y:.1f} % of the kept batch's ${ksp.over} at or below<extra></extra>` });
+    }
     // The labels above the plot: each to the side of its line that has room, the median's a row higher where they would meet.
     const margin = { l: 70, r: 30, t: 30, b: 48 };
     const T = (x) => (log ? Math.log10(x) : x);
-    const span = T(sp.max) - T(sp.min) || 1;
-    const at = (x) => (T(x) - T(sp.min)) / span;
+    const span = T(hi) - T(lo) || 1;
+    const at = (x) => (T(x) - T(lo)) / span;
     const wide = Math.max(200, plot.clientWidth - margin.l - margin.r);
     const width = (text) => (text.length * 6 + 6) / wide;
     const marks = [{ x: sp.p50, text: `median ${f(sp.p50)}` }, { x: sp.p95, text: `95 %: ${f(sp.p95)}` }].map((m) => {
@@ -14392,6 +14416,10 @@ END
       font: { size: 10, color: c.text } }));
     const layout = baseLayout();
     layout.hovermode = 'closest';
+    if (ksp) {
+      layout.showlegend = true;
+      margin.b = 64;
+    }
     layout.margin = margin;
     layout.annotations = annotations;
     layout.xaxis.type = log ? 'log' : 'linear';
@@ -14400,6 +14428,8 @@ END
     layout.yaxis.range = [0, 100];
     layout.yaxis.title = { text: `${sp.over} at or below (%)`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    // The numbers beside it, a column more with a batch kept, narrow its box: the chart is fitted to it again.
+    Plotly.Plots.resize(plot);
     batchClickable(plot);
   }
 
@@ -14410,8 +14440,8 @@ END
   */
   function batchAgainstOptions(v) {
     const out = [];
-    const t = pq.batchTable;
-    if (t && t.name === v.table && (t.sheet || null) === v.sheet) {
+    const t = v.source;
+    if (t) {
       const num = (x) => (x === '' || x === null || x === undefined ? NaN : Number(x));
       t.columns.forEach((c, k) => {
         if (t.rows.some((r) => Number.isFinite(num(r[k])))) out.push({ key: `table:${c}`, label: c, group: 'the table', of: (u) => num(t.rows[u.row][k]) });
@@ -14479,17 +14509,59 @@ END
         customdata: mine.map(named), marker: { size: many ? 4 : 7, opacity: many ? 0.6 : 0.85, color: DG_PALETTE[i % DG_PALETTE.length] },
         hovertemplate: `${esc(pick.label)} %{x:.4g}<br>${esc(col)} %{y:.4g}<br>%{customdata[0]}${sd ? `, ${esc(sd)}` : ''}<extra></extra>` };
     }).filter((tr) => tr.x.length);
+    // The batch kept, beside it: its points grey and faint behind, where it has the result and the same thing to draw it against.
+    const kept = batchKeptBeside();
+    const keptPoints = [];
+    const kPick = kept && batchHas(kept, col) ? batchAgainstOptions(kept).find((o) => o.key === pick.key) : null;
+    if (kPick) {
+      const kk = kept.head.indexOf(col);
+      for (const u of batchUnits(kept, col)) {
+        const y = u.best && kk >= 0 ? u.best.values[kk] : undefined;
+        const x = kPick.of(u);
+        if (typeof y === 'number' && Number.isFinite(y) && typeof x === 'number' && Number.isFinite(x)) keptPoints.push({ x, y });
+      }
+    }
+    if (keptPoints.length) {
+      const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || themeColors().grid;
+      if (traces.length === 1 && !v.solids) traces[0].name = 'this batch';
+      traces.unshift({ type: keptPoints.length > 2000 ? 'scattergl' : 'scatter', mode: 'markers', name: 'kept',
+        x: keptPoints.map((p) => p.x), y: keptPoints.map((p) => p.y),
+        marker: { size: keptPoints.length > 2000 ? 3 : 6, opacity: 0.45, color: muted },
+        hovertemplate: `the batch kept: ${esc(pick.label)} %{x:.4g}<br>${esc(col)} %{y:.4g}<extra></extra>` });
+    }
+    const all = [...points, ...keptPoints];
     const layout = baseLayout();
     layout.hovermode = 'closest';
     layout.showlegend = traces.length > 1;
     layout.margin = { l: 70, r: 30, t: 14, b: traces.length > 1 ? 64 : 48 };
-    layout.xaxis.type = logOf(points.map((p) => p.x)) ? 'log' : 'linear';
+    layout.xaxis.type = logOf(all.map((p) => p.x)) ? 'log' : 'linear';
     layout.xaxis.exponentformat = 'power';
     layout.xaxis.title = { text: `${pick.label}${pick.group === 'drawn' ? ', drawn' : ''}`, font: { size: 11 } };
-    layout.yaxis.type = logOf(points.map((p) => p.y)) ? 'log' : 'linear';
+    layout.yaxis.type = logOf(all.map((p) => p.y)) ? 'log' : 'linear';
     layout.yaxis.title = { text: `${col}${batchLowestOf(v)}`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
     batchClickable(plot);
+  }
+
+  /**
+    The batch kept: the button that keeps the one shown, and the line saying what is kept -- this batch, which the next
+    one will be drawn beside, or another, drawn beside this one where it has a result in the same column.
+  */
+  function pqBatchKeptDraw() {
+    const v = pq.batchResult;
+    const kept = pq.batchKept;
+    const keep = $('rtmPqBatchKeep');
+    keep.disabled = !v || kept === v;
+    keep.textContent = v && kept === v ? 'Kept' : 'Keep this batch';
+    $('rtmPqBatchKept').hidden = !kept || !v;
+    if (!kept || !v) return;
+    const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+    const col = batchLowestColumn(v);
+    $('rtmPqBatchKeptText').textContent = kept === v ? 'This batch is kept: the next one you run is drawn beside it.'
+      : `Beside it, the batch kept: ${many(new Set(kept.runs.map((r) => r.row)).size, 'row')} of ${kept.table}`
+        + `${kept.sheet ? `, sheet ${kept.sheet}` : ''}${kept.draws ? `, ${kept.draws} draws each` : ''}`
+        + `${kept.solids ? `, ${many(kept.solids.length, 'solid')}` : ''}, with ${kept.database}`
+        + `${batchHas(kept, col) ? '' : `; it has no ${col}, so it is not drawn`}.`;
   }
 
   /** A row of the batch's table, to click for its water's whole output. */
@@ -14564,13 +14636,15 @@ END
     what PHREEQC gave and what it said where it refused. With solids: CSV the lowest for each unit and the solids refused
     in it, 'runs' every run, Excel both. The workbook has the spread's numbers on a sheet of their own.
   */
-  async function pqBatchSave(as) {
-    const v = pq.batchResult;
-    if (!v) { setStatus('Run a batch first: there is nothing to save yet.', 'warn'); return; }
-    const t = pq.batchTable;
+  /**
+    A batch's tables as Export saves them, its table's values from its own table: 'main' -- every row, or with solids
+    each unit's lowest -- 'runs' with solids, every run; and what its input sheet says of it.
+  */
+  function batchTables(v) {
+    const t = v.source;
     const drawnNames = v.draws ? v.uncertain.map((u) => u.name) : [];
     const asked = v.names.filter((n) => !(v.solids && n === 'solid') && !drawnNames.includes(n));
-    const cols = t && t.name === v.table ? asked.map((n) => t.columns.indexOf(n)) : [];
+    const cols = t ? asked.map((n) => t.columns.indexOf(n)) : [];
     const given = cols.length ? asked : [];
     // A heading of PHREEQC's that a column of the table or a value drawn has too, pH say, said as PHREEQC's.
     const outHead = v.head.map((h) => (given.includes(h) || drawnNames.includes(h) ? `${h}, PHREEQC` : h));
@@ -14581,48 +14655,71 @@ END
     const drawHead = v.draws ? ['draw', ...drawnNames] : [];
     const drawValues = (u) => (v.draws ? [u.draw + 1, ...u.drawn] : []);
     const out = (values) => v.head.map((_, k) => (values && values[k] !== undefined ? values[k] : null));
-    const stem = `${fileStem()}_batch`;
-    const csv = async (head, rows, name) => saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), name));
     const col = batchLowestColumn(v);
-    let sheets;
-    let about = `the PHREEQC input each row of ${v.table} was run with`;
-    if (v.draws) {
-      about += `, ${v.draws} draws a row of ${v.uncertain.map((u) => `${u.name} ${u.dist} ${u.x.join(' ')}`).join('; ')} from seed ${v.seed}`;
-    }
+    let about = `the PHREEQC input each row of ${v.table} was run with, with ${v.database}`;
+    if (v.draws) about += `, ${v.draws} draws a row of ${v.uncertain.map((u) => `${u.name} ${u.dist} ${u.x.join(' ')}`).join('; ')} from seed ${v.seed}`;
     if (!v.solids) {
       const head = ['row', ...given, ...drawHead, ...outHead, 'refused'];
-      const rows = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), ...out(r.values), r.said]);
-      if (as === 'csv') { await csv(head, rows, `${stem}.csv`); return; }
-      sheets = [['batch', head, rows]];
-    } else {
-      const head = ['row', ...given, ...drawHead, 'solid', ...outHead, 'refused'];
-      const units = batchUnits(v, col);
-      const refusedIn = (u) => u.refused.map((r) => `${r.solid}: ${r.said}`).join('; ') || null;
-      // With solids for each element, a unit's lowest of every element and the solid that gave it.
-      const lowHead = v.groups ? ['row', ...given, ...drawHead, ...v.groups.flatMap((g) => [`${g.el}: solid`, g.col]), 'refused'] : head;
-      const lowest = units.map((u) => [u.row + 1, ...fromTable(u.row), ...drawValues(u),
-        ...(v.groups ? v.groups.flatMap((g, gi) => (u.bests[gi] ? [u.bests[gi].solid, u.bests[gi].values[v.head.indexOf(g.col)]] : [null, null]))
-          : [u.best ? u.best.solid : null, ...out(u.best && u.best.values)]), refusedIn(u)]);
-      const runs = v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), r.solid, ...out(r.values), r.said]);
-      if (as === 'csv') { await csv(lowHead, lowest, `${stem}_lowest.csv`); return; }
-      if (as === 'runs') { await csv(head, runs, `${stem}_runs.csv`); return; }
-      sheets = [['lowest', lowHead, lowest], ['runs', head, runs]];
-      about += v.groups ? `, {solid} each of ${v.groups.map((g) => `${g.el}: ${g.solids.join(', ')}`).join('; ')} in turn, each element's lowest kept in its total`
-        : `, {solid} each of ${v.solids.join(', ')} in turn, the lowest kept in ${col}`;
+      return { main: { head, rows: v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), ...out(r.values), r.said]) }, runs: null, about };
     }
+    const head = ['row', ...given, ...drawHead, 'solid', ...outHead, 'refused'];
+    const refusedIn = (u) => u.refused.map((r) => `${r.solid}: ${r.said}`).join('; ') || null;
+    // With solids for each element, a unit's lowest of every element and the solid that gave it.
+    const lowHead = v.groups ? ['row', ...given, ...drawHead, ...v.groups.flatMap((g) => [`${g.el}: solid`, g.col]), 'refused'] : head;
+    const lowest = batchUnits(v, col).map((u) => [u.row + 1, ...fromTable(u.row), ...drawValues(u),
+      ...(v.groups ? v.groups.flatMap((g, gi) => (u.bests[gi] ? [u.bests[gi].solid, u.bests[gi].values[v.head.indexOf(g.col)]] : [null, null]))
+        : [u.best ? u.best.solid : null, ...out(u.best && u.best.values)]), refusedIn(u)]);
+    about += v.groups ? `, {solid} each of ${v.groups.map((g) => `${g.el}: ${g.solids.join(', ')}`).join('; ')} in turn, each element's lowest kept in its total`
+      : `, {solid} each of ${v.solids.join(', ')} in turn, the lowest kept in ${col}`;
+    return { main: { head: lowHead, rows: lowest },
+      runs: { head, rows: v.runs.map((r) => [r.row + 1, ...fromTable(r.row), ...drawValues(r), r.solid, ...out(r.values), r.said]) }, about };
+  }
+  /** The batch kept, where there is one and it is not the one shown. */
+  const batchKeptBeside = () => (pq.batchKept && pq.batchKept !== pq.batchResult ? pq.batchKept : null);
+  /** Whether a batch has a result in column col: an element's total among its groups, or a column of its selected output. */
+  const batchHas = (v, col) => (v.groups ? v.groups.some((g) => g.col === col) : v.head.includes(col));
+  /** A spread's numbers in the order of batchSpreadRows: waters, smallest, the percentiles, largest, left out. */
+  const batchSpreadValues = (x) => [x.n, x.min, x.p5, x.p50, x.p95, x.max, x.none];
+
+  /**
+    Every row the batch ran, each with the table's values the input asked for, with draws the draw and the values drawn,
+    what PHREEQC gave and what it said where it refused. With solids: CSV the lowest for each unit and the solids refused
+    in it, 'runs' every run, Excel both. The workbook has the spread's numbers on a sheet of their own, and where a batch
+    is kept beside it, the kept one's table, input and spread too.
+  */
+  async function pqBatchSave(as) {
+    const v = pq.batchResult;
+    if (!v) { setStatus('Run a batch first: there is nothing to save yet.', 'warn'); return; }
+    const tables = batchTables(v);
+    const stem = `${fileStem()}_batch`;
+    const csv = async (head, rows, name) => saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), name));
+    if (as === 'csv') { await csv(tables.main.head, tables.main.rows, v.solids ? `${stem}_lowest.csv` : `${stem}.csv`); return; }
+    if (as === 'runs') { if (tables.runs) await csv(tables.runs.head, tables.runs.rows, `${stem}_runs.csv`); return; }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
-    // The spread of the column chosen; with solids for each element, of every element's lowest, a column each.
-    const spreads = (v.groups ? v.groups.map((g) => g.col) : [col]).map((c) => batchSpread(v, c)).filter(Boolean);
+    const sheets = [[v.solids ? 'lowest' : 'batch', tables.main.head, tables.main.rows]];
+    if (tables.runs) sheets.push(['runs', tables.runs.head, tables.runs.rows]);
+    // The spread of the column chosen; with solids for each element, of every element's lowest, a column each; the kept
+    // batch's beside them, where it has them.
+    const col = batchLowestColumn(v);
+    const kept = batchKeptBeside();
+    const cols = v.groups ? v.groups.map((g) => g.col) : [col];
+    const spreads = [
+      ...cols.map((c) => [`${c}${batchLowestOf(v)}`, batchSpread(v, c)]),
+      ...(kept ? cols.filter((c) => batchHas(kept, c)).map((c) => [`${c}, the batch kept`, batchSpread(kept, c)]) : []),
+    ].filter(([, x]) => x);
     if (spreads.length) {
-      const names = batchSpreadRows({ ...spreads[0], none: Math.max(...spreads.map((x) => x.none)) || 0 }).map(([what]) => what);
-      const value = (x, what) => ({ smallest: x.min, '5th percentile': x.p5, median: x.p50, '95th percentile': x.p95, largest: x.max })[what]
-        ?? (what === x.over ? x.n : x.none);
-      sheets.push(['spread', [`over the ${spreads[0].over}`, ...spreads.map((x) => `${x.col}${batchLowestOf(v)}`)],
-        names.map((what) => [what, ...spreads.map((x) => value(x, what))])]);
+      const names = batchSpreadRows({ ...spreads[0][1], none: Math.max(...spreads.map(([, x]) => x.none)) || 0 }).map(([what]) => what);
+      sheets.push(['spread', [`over the ${spreads[0][1].over}`, ...spreads.map(([h]) => h)],
+        names.map((what, i) => [what, ...spreads.map(([, x]) => batchSpreadValues(x)[i])])]);
     }
     const xlsx = new XlsxWriter(`${stem}.xlsx`);
     for (const [name, head, rows] of sheets) xlsx.writeData(rows.map((r) => r.map((x) => (x === null ? '' : x))), name, { header: head });
-    xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [about] });
+    xlsx.writeData(v.text.split('\n').map((ln) => [ln]), 'input', { header: [tables.about] });
+    if (kept) {
+      const k = batchTables(kept);
+      xlsx.writeData(k.main.rows.map((r) => r.map((x) => (x === null ? '' : x))), 'kept', { header: k.main.head });
+      xlsx.writeData(kept.text.split('\n').map((ln) => [ln]), 'kept input', { header: [k.about] });
+    }
     saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
   }
 
@@ -15118,6 +15215,14 @@ END
       pqBatchRender();
       infoRefresh();
     },
+    // A batch kept, for the next ones to be drawn beside; let go.
+    'rtm:pqBatchKeep': () => {
+      if (!pq.batchResult) return;
+      pq.batchKept = pq.batchResult;
+      pqBatchDraw();
+      setStatus('This batch is kept: the next one you run is drawn beside it.', 'ok');
+    },
+    'rtm:pqBatchForget': () => { pq.batchKept = null; pqBatchDraw(); },
     // One water of the batch in full, from a row of its table; saved; put away.
     'rtm:pqBatchLook': (ev, el) => { pqBatchLook(Number(el.dataset.row), el.dataset.draw === '' ? null : Number(el.dataset.draw)); },
     'rtm:pqBatchLookSave': () => { pqBatchLookSave(); },
