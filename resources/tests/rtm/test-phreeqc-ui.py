@@ -1549,6 +1549,61 @@ async def main():
                   [True, 'Solids: "Celestite" is under no element: with solids listed for an element, list each under its own, as Ba: Barite, '
                          'Witherite; Sr: Celestite.', 'Solids: "Xx: Barite": Xx is no element.'])
             await page.ev(SET_SOLIDS % json.dumps(''))
+            # ---- the result against a column ----
+            # Barium and strontium with their solids: against the table's pH unless another is chosen, a series a solid
+            # with a legend, barite's point at pH 7 and witherite's at 9. Against PHREEQC's own pH, of the run kept; the
+            # choice saved with the input. Twenty waters of NaCl without solids: against the table's Na, every point's
+            # result its Na over 1000, the water with no number left out and counted. With draws: against the value drawn.
+            AGAINST = """(() => { const p = document.getElementById('rtmChartPqBatchX'); const s = document.getElementById('rtmPqBatchX');
+              return [s.value, [...s.querySelectorAll('optgroup')].map((g) => g.label), document.getElementById('rtmPqBatchAgainst').hidden,
+                p.data ? p.data.map((t) => [t.name, t.x, t.y.map((y) => Number(y.toPrecision(4)))]) : null,
+                p.layout ? [p.layout.showlegend, p.layout.xaxis.type, p.layout.yaxis.type, p.layout.xaxis.title.text] : null,
+                document.getElementById('rtmPqBatchAgainstNote').hidden ? '' : document.getElementById('rtmPqBatchAgainstNote').textContent]; })()"""
+            await page.ev(FEED % (json.dumps('basr.csv'), json.dumps(BASR), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('basr.csv: 2 rows and 6 columns')", True, tries=40)
+            await page.ev(SET_SOLIDS % json.dumps('Ba: Barite, Witherite; Sr: Celestite, Strontianite'))
+            await page.ev(LOWEST_IN % json.dumps('Ba(mol/kgw)'))
+            await page.ev("""((v) => { const s = document.getElementById('rtmPqBatchX'); const o = document.createElement('option');
+              o.value = v; s.appendChild(o); s.value = v; s.dispatchEvent(new Event('change', { bubbles: true })); })('')""")
+            await batch(BASR_IN)
+            got = await page.ev(AGAINST)
+            check('the result against a column: against the table\'s pH unless chosen, a series a solid with its legend',
+                  got, ['table:pH', ['the table', 'PHREEQC'], False,
+                        [['Barite', [7], [1.418e-7]], ['Witherite', [9], [1.775e-5]]],
+                        [True, 'linear', 'log', 'pH'], ''])
+            await page.ev(LOWEST_IN.replace('rtmPqBatchLowest', 'rtmPqBatchX') % json.dumps('out:pH'))
+            await asyncio.sleep(0.3)
+            got = await page.ev(AGAINST)
+            saved = await saved_blob('[data-on-click="rtm:pqBatchSaveInput"]', '(b) => b.text()')
+            svg = await saved_blob('[data-pane="batchx"][data-as="svg"]', '(b) => b.text().then((t) => t.slice(0, 4))')
+            check('  against PHREEQC\'s own pH, of the run kept; the choice saved with the input; saved as SVG',
+                  [got[0], [[t[0], [round(x, 3) for x in t[1]]] for t in got[3]] if got[3] else got[3],
+                   '# Against: out:pH' in saved if isinstance(saved, str) else saved, svg],
+                  ['out:pH', [['Barite', [7.0]], ['Witherite', [8.957]]], True, '<svg'])
+            await page.ev(SET_SOLIDS % json.dumps(''))
+            waters = 'Na\n' + '\n'.join(['1', '2', '3', '4', '5', '6', '7', 'x'] + [str(i) for i in range(8, 21)]) + '\n'
+            await page.ev(FEED % (json.dumps('spread.csv'), json.dumps(waters), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('spread.csv: 21 rows and 1 column')", True, tries=40)
+            await batch('SOLUTION 1\n units mmol/kgw\n pH 7\n Na {Na}\n Cl {Na}\nSELECTED_OUTPUT 1\n -reset false\n -totals Na\nEND\n')
+            got = await page.ev(AGAINST)
+            pts = list(zip(got[3][0][1], got[3][0][2])) if got[3] else []
+            check('  without solids: against the table\'s Na, each result its Na over 1000; the water with no number counted',
+                  [got[0], len(pts), all(abs(y * 1000 / x - 1) < 1e-3 for x, y in pts), got[4], got[5]],
+                  ['table:Na', 20, True, [False, 'log', 'log', 'Na'], '1 of 21 rows left out: no number for Na or Na(mol/kgw).'])
+            await page.ev(FEED % (json.dumps('draws.csv'), json.dumps('pH\n7\n7.5\n8\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('draws.csv: 3 rows and 1 column')", True, tries=40)
+            await field('rtmPqBatchUncertain', 'dNa uniform 1 2')
+            await field('rtmPqBatchDraws', '20')
+            await field('rtmPqBatchSeed', '7')
+            await batch(NA_IN)
+            got = await page.ev(AGAINST)
+            pts = list(zip(got[3][0][1], got[3][0][2])) if got[3] else []
+            check('  with draws: against the value drawn, each run\'s sodium the value it drew',
+                  [got[0], got[1], len(pts), all(abs(y * 1000 / x - 1) < 1e-3 for x, y in pts), got[4][3] if got[4] else got[4]],
+                  ['drawn:dNa', ['the table', 'drawn', 'PHREEQC'], 60, True, 'dNa, drawn'])
+            await field('rtmPqBatchUncertain', '')
+            await field('rtmPqBatchDraws', '')
+            await field('rtmPqBatchSeed', '')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

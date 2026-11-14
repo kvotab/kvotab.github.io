@@ -9900,7 +9900,7 @@
     }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
       diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn', phreeqc: 'rtmChartPq',
-      inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch' }[pane]);
+      inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch', batchx: 'rtmChartPqBatchX' }[pane]);
     if (as === 'txt') {
       if (!compTextNow) { setStatus('List a water first: Show the water, as PHREEQC lists it.', 'error'); return; }
       saidSaved(await saveBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`));
@@ -9946,10 +9946,11 @@
   */
   const CHART_NOTES = { time: 'rtmTimeNote', profile: 'rtmProfileNote', gradient: 'rtmGradNote', composition: 'rtmCompNote',
     diagram: 'rtmDgNote', sweep: 'rtmSwNote', fit: 'rtmFitNote', uncertainty: 'rtmUnNote', phreeqc: 'rtmPqSummary',
-    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote' };
+    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote', batchx: 'rtmPqBatchNote' };
   const CHART_NAMES = { time: 'against time', profile: 'against distance', gradient: 'gradient', composition: 'composition',
     diagram: 'diagram', sweep: 'sweeps', fit: 'fit', uncertainty: 'uncertainty', phreeqc: 'through PHREEQC',
-    inverse: 'inverse models through PHREEQC', batch: 'a batch over a table of waters, its spread' };
+    inverse: 'inverse models through PHREEQC', batch: 'a batch over a table of waters, its spread',
+    batchx: 'a batch over a table of waters, against a column' };
   // plotly.js as this page loads it, once read: { src, integrity, text }.
   let plotlyRead = null;
 
@@ -9998,7 +9999,7 @@
     const name = `${fileStem()}_${pane}`;
     const title = `${fileStem()}: ${CHART_NAMES[pane] || pane}`;
     // A batch's chart is of PHREEQC's runs over a table, not of the model's run: under it, the input each row was run with.
-    const batch = pane === 'batch' && pq.batchResult;
+    const batch = (pane === 'batch' || pane === 'batchx') && pq.batchResult;
     const text = batch ? pq.batchResult.text : (state.ran && state.ran.text) || state.text;
     const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
     const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
@@ -10275,7 +10276,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
-    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); pqBatchAgainst(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
@@ -10338,7 +10339,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function resize() {
     if (typeof Plotly === 'undefined') return;
     ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
-      'rtmChartPq', 'rtmChartPqBatch']
+      'rtmChartPq', 'rtmChartPqBatch', 'rtmChartPqBatchX']
       .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
@@ -11500,10 +11501,16 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
         ] },
+        { heading: 'Against a column', list: [
+          'Under the spread, the same result against something else, a point for each water or draw: **against** a column of the table with numbers in it, a value drawn, or another of PHREEQC\'s columns, of the run kept.',
+          'With solids, a colour for each solid, in the order they are listed, the legend naming them. Each axis is logarithmic where its values are all above nought and span a factor of ten or more.',
+          'Unless another is chosen, a value drawn, else the table\'s pH, else its first column. A point with no number for either is left out, and the note under the chart counts them.',
+        ] },
         exportSection(['**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
           '**CSV, every run**: with solids, each row with each solid.',
           '**Excel**: the same, a sheet each, the spread\'s numbers on one, and the input on a sheet of its own.',
-          '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.']),
+          '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.',
+          '**SVG, against**, **PNG, against**, **HTML, against**: the same of the chart against a column.']),
       ],
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
     }),
@@ -12597,7 +12604,7 @@ END
     invResult: null,
     // A batch over a table of waters: the input, the rows asked for, the solids tried in turn, the column whose lowest
     // is kept, and the values drawn, how many draws and from what seed (kept); the table and what it found (the visit's).
-    batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '' },
+    batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '', against: '' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12632,7 +12639,7 @@ END
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
-        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
+        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
       }
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
@@ -14209,6 +14216,7 @@ END
     const box = $('rtmPqBatchOut');
     box.hidden = !v;
     pqBatchSpread();
+    pqBatchAgainst();
     if (!v) { box.innerHTML = ''; return; }
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
     const cell = (x) => `<td${typeof x === 'number' ? ` data-v="${x}"` : ''}>${esc(num(x))}</td>`;
@@ -14386,6 +14394,94 @@ END
   }
 
   /**
+    What a batch's result can be drawn against: the table's columns with numbers in them, while it is the table the
+    batch ran (its rows the same), the values drawn, and PHREEQC's columns -- of the run kept for each unit, the one
+    lowest with solids. Each with its key, the group it is listed under, and its value for a unit.
+  */
+  function batchAgainstOptions(v) {
+    const out = [];
+    const t = pq.batchTable;
+    if (t && t.name === v.table && (t.sheet || null) === v.sheet) {
+      const num = (x) => (x === '' || x === null || x === undefined ? NaN : Number(x));
+      t.columns.forEach((c, k) => {
+        if (t.rows.some((r) => Number.isFinite(num(r[k])))) out.push({ key: `table:${c}`, label: c, group: 'the table', of: (u) => num(t.rows[u.row][k]) });
+      });
+    }
+    if (v.draws) v.uncertain.forEach((d, i) => out.push({ key: `drawn:${d.name}`, label: d.name, group: 'drawn', of: (u) => u.drawn[i] }));
+    v.head.forEach((h, k) => out.push({ key: `out:${h}`, label: h, group: 'PHREEQC', of: (u) => (u.best ? u.best.values[k] : undefined) }));
+    return out;
+  }
+  /** The one to draw against: the one chosen, else the first value drawn, else the table's pH, else its first column, else PHREEQC's first other than the result. */
+  function batchAgainstPick(options, col) {
+    const chosen = options.find((o) => o.key === pq.batch.against || o.label === pq.batch.against);
+    return chosen || options.find((o) => o.group === 'drawn') || options.find((o) => o.key === 'table:pH')
+      || options.find((o) => o.group === 'the table') || options.find((o) => o.label !== col) || options[0] || null;
+  }
+
+  /**
+    A batch's result against a column: a point a unit -- a water, or a water under one draw -- its result (the column
+    under Lowest in or Spread of) up the side and what it is drawn against along the bottom, each axis logarithmic where
+    its values are all above nought and span a factor of ten or more; with solids a colour a solid, in the order they
+    are listed, a legend naming them. Units with no number for either are left out and counted. Drawn only where it is
+    seen -- the PHREEQC tab, which draws it again when it is shown.
+  */
+  function pqBatchAgainst() {
+    const v = pq.batchResult;
+    const box = $('rtmPqBatchAgainst');
+    const plot = $('rtmChartPqBatchX');
+    const wrap = $('rtmPqBatchXWrap');
+    const options = v ? batchAgainstOptions(v) : [];
+    const col = v ? batchLowestColumn(v) : '';
+    const pick = v ? batchAgainstPick(options, col) : null;
+    wrap.hidden = !pick;
+    if (pick) {
+      const groups = [...new Set(options.map((o) => o.group))];
+      $('rtmPqBatchX').innerHTML = groups.map((g) => `<optgroup label="${esc(g)}">${options.filter((o) => o.group === g)
+        .map((o) => `<option value="${esc(o.key)}"${o === pick ? ' selected' : ''}>${esc(o.label)}</option>`).join('')}</optgroup>`).join('');
+    }
+    const units = pick ? batchUnits(v, col) : [];
+    const k = v ? v.head.indexOf(col) : -1;
+    const points = [];
+    for (const u of units) {
+      const y = u.best && k >= 0 ? u.best.values[k] : undefined;
+      const x = pick.of(u);
+      if (typeof y === 'number' && Number.isFinite(y) && typeof x === 'number' && Number.isFinite(x)) points.push({ x, y, u });
+    }
+    box.hidden = !points.length;
+    if (!points.length) {
+      if (typeof Plotly !== 'undefined') Plotly.purge(plot);
+      return;
+    }
+    const left = units.length - points.length;
+    const note = $('rtmPqBatchAgainstNote');
+    note.hidden = !left;
+    note.textContent = left ? `${left.toLocaleString()} of ${units.length.toLocaleString()} ${v.draws ? 'draws' : 'rows'} left out: `
+      + `no number for ${pick.label} or ${col}.` : '';
+    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    const logOf = (xs) => { const lo = Math.min(...xs); return lo > 0 && Math.max(...xs) / lo >= 10; };
+    const many = points.length > 2000;
+    const named = (p) => `row ${p.u.row + 1}${p.u.draw !== null ? `, draw ${p.u.draw + 1}` : ''}`;
+    // A series a solid, in the order the solids are listed, so that a colour is always the same solid.
+    const order = v.solids ? (v.groups ? v.groups[Math.max(0, v.groups.findIndex((g) => g.col === col))].solids : v.solids) : [null];
+    const traces = order.map((sd, i) => {
+      const mine = points.filter((p) => (sd === null ? true : p.u.best.solid === sd));
+      return { type: many ? 'scattergl' : 'scatter', mode: 'markers', name: sd || col, x: mine.map((p) => p.x), y: mine.map((p) => p.y),
+        customdata: mine.map(named), marker: { size: many ? 4 : 7, opacity: many ? 0.6 : 0.85, color: DG_PALETTE[i % DG_PALETTE.length] },
+        hovertemplate: `${esc(pick.label)} %{x:.4g}<br>${esc(col)} %{y:.4g}<br>%{customdata}${sd ? `, ${esc(sd)}` : ''}<extra></extra>` };
+    }).filter((tr) => tr.x.length);
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.showlegend = traces.length > 1;
+    layout.margin = { l: 70, r: 30, t: 14, b: traces.length > 1 ? 64 : 48 };
+    layout.xaxis.type = logOf(points.map((p) => p.x)) ? 'log' : 'linear';
+    layout.xaxis.exponentformat = 'power';
+    layout.xaxis.title = { text: `${pick.label}${pick.group === 'drawn' ? ', drawn' : ''}`, font: { size: 11 } };
+    layout.yaxis.type = logOf(points.map((p) => p.y)) ? 'log' : 'linear';
+    layout.yaxis.title = { text: `${col}${batchLowestOf(v)}`, font: { size: 11 } };
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+  }
+
+  /**
     Every row the batch ran, each with the table's values the input asked for, with draws the draw and the values drawn,
     what PHREEQC gave and what it said where it refused. With solids: CSV the lowest for each unit and the solids refused
     in it, 'runs' every run, Excel both. The workbook has the spread's numbers on a sheet of their own.
@@ -14463,7 +14559,7 @@ END
   */
   const BATCH_HEAD = '# rtm.html batch settings:';
   const BATCH_KEYS = [['Table', null], ['Database', null], ['Rows', 'rows'], ['Solids', 'solids'], ['Uncertain', 'uncertain'],
-    ['Draws', 'draws'], ['Seed', 'seed'], ['Lowest in', 'lowest']];
+    ['Draws', 'draws'], ['Seed', 'seed'], ['Lowest in', 'lowest'], ['Against', 'against']];
   /** The settings a batch input starts with, "# Key: value" among its first comments ("Spread of" read as "Lowest in"), and its text without them. */
   function batchSettingsOf(text) {
     const settings = {};
@@ -14473,7 +14569,7 @@ END
       if (head && !/^\s*(#|$)/.test(line)) head = false;
       if (head) {
         if (line.trim() === BATCH_HEAD) continue;
-        const m = /^\s*#\s*(Table|Database|Rows|Solids|Uncertain|Draws|Seed|Lowest in|Spread of)\s*:\s*(.*?)\s*$/i.exec(line);
+        const m = /^\s*#\s*(Table|Database|Rows|Solids|Uncertain|Draws|Seed|Lowest in|Spread of|Against)\s*:\s*(.*?)\s*$/i.exec(line);
         if (m) {
           const said = m[1].toLowerCase() === 'spread of' ? 'lowest in' : m[1].toLowerCase();
           settings[BATCH_KEYS.find(([k]) => k.toLowerCase() === said)[0]] = m[2];
@@ -14943,6 +15039,12 @@ END
       pqSave();
       pqBatchRender();
       infoRefresh();
+    },
+    // What the second chart draws the result against.
+    'rtm:pqBatchX': (ev, el) => {
+      pq.batch.against = el.value;
+      pqSave();
+      pqBatchAgainst();
     },
     // The column whose lowest each row of a batch with solids shows.
     'rtm:pqBatchLowest': (ev, el) => {

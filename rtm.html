@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261113a">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261113b">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1116,6 +1116,9 @@
             <label id="rtmPqBatchLowestWrap" hidden><span id="rtmPqBatchLowestLabel">Lowest in</span>
               <select id="rtmPqBatchLowest" data-on-change="rtm:pqBatchLowest"></select>
             </label>
+            <label id="rtmPqBatchXWrap" hidden>against
+              <select id="rtmPqBatchX" data-on-change="rtm:pqBatchX"></select>
+            </label>
             <span class="rtm-muted" id="rtmPqBatchNote"></span>
             <span class="rtm-end">
               <div class="rtm-export">
@@ -1127,6 +1130,9 @@
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="the spread's chart">SVG</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="png" data-hint="the spread's chart">PNG</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="html" data-hint="the chart, live, as a page">HTML</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="svg" data-hint="the chart against a column">SVG, against</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="png" data-hint="the chart against a column">PNG, against</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="html" data-hint="that chart, live, as a page">HTML, against</button>
                 </div>
               </div>
             </span>
@@ -1135,6 +1141,11 @@
           <div class="rtm-pq-batch-spread" id="rtmPqBatchSpread" hidden>
             <div class="plot" id="rtmChartPqBatch"></div>
             <table class="rtm-pq-batch-stats" id="rtmPqBatchStats"></table>
+          </div>
+          <!-- The result against a column of the table, a value drawn or another of PHREEQC's (rtm-ui.js pqBatchAgainst). -->
+          <div class="rtm-pq-batch-against" id="rtmPqBatchAgainst" hidden>
+            <div class="plot" id="rtmChartPqBatchX"></div>
+            <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchAgainstNote" hidden></p>
           </div>
           <div class="rtm-fit-result rtm-pq-batch-out" id="rtmPqBatchOut" hidden></div>
         </section>
@@ -4208,6 +4219,16 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             refused, or whose run gives no number there, is left out and counted. <em>Export</em> saves
             the chart as SVG, PNG or a page of its own, and the workbook has these numbers on a sheet of
             their own.</p>
+          <p>Under the spread, a second chart shows the same result <em>against</em> something else, a
+            point for each water or draw: a column of the table with numbers in it — pH, chloride, depth
+            — a value drawn, or another of PHREEQC's columns of the run kept, such as <code>pe</code>.
+            With solids, each solid has a colour of its own, in the order the solids are listed, and the
+            legend names them, so that it shows which solid holds the result where. Each axis is
+            logarithmic where its values are all above nought and span a factor of ten or more; a
+            point with no number for either is left out, and counted under the chart. Unless another is
+            chosen, it is a value drawn, else the table's pH, else its first column.
+            <em>Export</em> saves it as SVG, PNG or a page of its own, each marked
+            <em>against</em>.</p>
           <p>Every row runs on a clean slate — <code>DELETE -all</code> first — so that nothing a row
             before it saved is there for it. A row PHREEQC refuses keeps the first line of what PHREEQC
             said, and the rest go on. The rows go to PHREEQC in parts of up to 200 runs, a draw with all
@@ -4400,6 +4421,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261113g"></script>
 </body>
 </html>

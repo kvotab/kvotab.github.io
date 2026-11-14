@@ -1065,6 +1065,10 @@
 /* How many draws and from what seed, shown once there is something to draw. */
 .rtm-pq-draws { display: inline-flex; align-items: center; gap: 12px; }
 .rtm-pq-draws[hidden] { display: none; }
+/* A batch's result against a column, under the spread. */
+.rtm-pq-batch-against { margin: 0 0 12px; }
+.rtm-pq-batch-against[hidden] { display: none; }
+.rtm-pq-batch-against .plot { height: 320px; }
 .rtm-pq-batch-spread .plot { flex: 1 1 420px; min-width: 0; height: 300px; }
 .rtm-pq-batch-stats { border-collapse: collapse; font-size: 12px; margin-top: 30px; }
 .rtm-pq-batch-stats caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
