@@ -1563,6 +1563,25 @@ async def main():
                   ['Sr(mol/kgw)', 'Sr(mol/kgw), the lowest of each row'])
             await page.ev(LOWEST_IN % json.dumps('Ba(mol/kgw)'))
             await field('rtmPqBatchLimit', '')
+            # Saved as a CSOL file, read back by SimpleFunctions.html's own reader: a struct array CSOL(1×2), a row each,
+            # a field each element with its lowest, the header naming rtm.html; as SR-Site's, the eleven elements those
+            # files gave no limit after them, at 1e17.
+            READ_CSOL = ("(b) => b.arrayBuffer().then((ab) => { const u = new Uint8Array(ab); return SFIO.readMat(u).then((vars) => {"
+                         " const c = vars.CSOL; return [String.fromCharCode(...u.slice(0, 116)).trim().endsWith('by rtm.html'), c.cls,"
+                         " c.fields, c.elements.length, c.fields.map((f) => c.elements.map((o) => o[f].data[0]))]; }); })")
+            csol = await saved_blob('[data-on-click="rtm:pqBatchSave"][data-as="csol"]', READ_CSOL)
+            csol17 = await saved_blob('[data-on-click="rtm:pqBatchSave"][data-as="csol17"]', READ_CSOL)
+            near = lambda got, want: all(abs(a / b - 1) < 1e-3 for a, b in zip(got, want))
+            check('  saved as a CSOL file: CSOL(1×2), a field each element with its lowest, read back as SimpleFunctions.html reads '
+                  'SR-Site\'s; as SR-Site\'s, the elements without a limit after them at 1e17',
+                  [csol[:4] if isinstance(csol, list) else csol,
+                   near(csol[4][0], [1.418e-7, 1.775e-5]) and near(csol[4][1], [1.500e-4, 4.071e-5]) if isinstance(csol, list) else csol,
+                   csol17[2] if isinstance(csol17, list) else csol17,
+                   all(x == 1e17 for col in csol17[4][2:] for x in col) if isinstance(csol17, list) else csol17,
+                   (await page.ev(BATCH_STATUS)).split(' saved: ', 1)[-1]],
+                  [[True, 'struct', ['Ba', 'Sr'], 2], True,
+                   ['Ba', 'Sr', 'Ac', 'C', 'Ca', 'Cd', 'Cl', 'Cs', 'Eu', 'H', 'I', 'Mo', 'Rn'], True,
+                   'CSOL(1×2), a row each, 13 fields in mol/kgw, 11 of them without a limit, 1e17.'])
             lowest = await saved_csv('#rtmPqBatchCsvItem')
             check('  saved: each element\'s lowest and the solid that gave it',
                   lowest[:2] if isinstance(lowest, list) else lowest,

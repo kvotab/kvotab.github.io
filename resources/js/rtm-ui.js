@@ -10073,6 +10073,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     h5: { description: 'HDF5', type: 'application/x-hdf5', ext: '.h5' },
     svg: { description: 'SVG picture', type: 'image/svg+xml', ext: '.svg' },
     png: { description: 'PNG picture', type: 'image/png', ext: '.png' },
+    mat: { description: 'MATLAB data', type: 'application/x-matlab-data', ext: '.mat' },
   };
   // The window Ready to save, while it is open: what the dialog is to be asked, and the promise it answers.
   let saveReady = null;
@@ -11510,7 +11511,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'Every element at a glance', list: [
           'With solids listed for two elements or more, above the spread: each element\'s lowest of every row, draw or realisation in one box plot, on a log axis -- the box from the 25th to the 75th percentile, the median in it, the whiskers from the 5th to the 95th, the smallest and the largest marked -- the batch kept grey beside.',
           'Under it a table of the same numbers, the solids that held each element lowest and in what share, and the share above a line: **share above**, 0.01 mol/kgw unless said, the Simple Functions\' line for an element its solubility does not limit, drawn across the plot.',
-          'A box or a row clicked draws that element\'s spread below. Export has the plot as SVG, PNG or a page under Every element; the workbook has the table on a sheet of its own.',
+          'A box or a row clicked draws that element\'s spread below. Export has the plot as SVG, PNG or a page under Every element; the workbook has the table on a sheet of its own; MATLAB (CSOL) every element\'s lowest of every unit, as SR-Site\'s and the PSAR\'s files.',
         ] },
         { heading: 'The spread over the waters', list: [
           'A chart of the column chosen -- **Lowest in**, or **Spread of** without solids -- a step for each water, or each draw of a water: for each value, the share at or below it. On a log axis where the values are all above nought and span a factor of ten or more.',
@@ -11538,6 +11539,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
           '**CSV, every run**: with solids, each row with each solid.',
           '**Excel**: the same, a sheet each, the spread\'s numbers on one, and the input on a sheet of its own.',
+          '**MATLAB (CSOL)**, with solids listed for each element: the file SR-Site and the PSAR kept their solubility limits in -- a struct array CSOL(1×N), a row, draw or realisation each, one field per element, its lowest in mol/kgw; NaN where it has no number, the status line counting them. **as SR-Site\'s**: the elements those files gave no limit too, Ac, C, Ca, Cd, Cl, Cs, Eu, H, I, Mo and Rn, at 1e17. SimpleFunctions.html\'s Compare tab reads it.',
           '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.',
           'The chart against a column and the map, each the same, under headings of their own.']),
       ],
@@ -11567,6 +11569,9 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         { heading: 'Where PHREEQC differs', list: [
           'Its activity model and its own species of the major ions, and every mass balance: a dissolving solid changes the water it dissolves in. On the reference waters the two agree within 0.3 log units in 156 of 159 results, apart from the three most saline, for which neither activity model is made.',
           'The pH is held with hydrochloric acid, added or taken out. A run whose pH could not be held gives no totals, so that it is never the lowest; PHREEQC refuses some solids that dissolve away, as elemental selenium, and in Version B the cement pore water, at pH 12.5 with no acid in it to take out.',
+        ] },
+        { heading: 'For the transport calculations', list: [
+          '**Export, MATLAB (CSOL)**: the realisations as SR-Site and the PSAR kept them, a struct array CSOL(1×N) with each element\'s lowest in mol/kgw; **as SR-Site\'s** adds the elements they gave no limit, at 1e17. SimpleFunctions.html\'s Compare tab reads the file, element by element against its own run, with the Kolmogorov–Smirnov distance.',
         ] },
       ],
       more: more('The Simple Functions on PHREEQC', 'help-phreeqc-sf'),
@@ -14427,6 +14432,7 @@ END
     $('rtmPqBatchLowest').innerHTML = (v.groups ? v.groups.map((g) => g.col) : v.head)
       .map((h) => `<option value="${esc(h)}"${h === col ? ' selected' : ''}>${esc(h)}</option>`).join('');
     $('rtmPqBatchRunsItem').hidden = !v.solids;
+    for (const el of document.querySelectorAll('[data-batch-csol]')) el.hidden = !v.groups;
     $('rtmPqBatchCsvItem').dataset.hint = v.solids ? `the lowest for each ${v.draws ? batchDrawWord(v) : 'row'}` : `every ${v.draws ? batchDrawWord(v) : 'row'}`;
     const units = batchUnits(v, col);
     const rows = new Set(units.map((u) => u.row)).size;
@@ -15113,6 +15119,7 @@ END
     const csv = async (head, rows, name) => saidSaved(await saveBlob(new Blob([`${csvOf({ head, rows })}\n`], { type: 'text/csv' }), name));
     if (as === 'csv') { await csv(tables.main.head, tables.main.rows, v.solids ? `${stem}_lowest.csv` : `${stem}.csv`); return; }
     if (as === 'runs') { if (tables.runs) await csv(tables.runs.head, tables.runs.rows, `${stem}_runs.csv`); return; }
+    if (as === 'csol' || as === 'csol17') { await pqBatchCsol(v, as === 'csol17'); return; }
     if (typeof XlsxWriter === 'undefined' || typeof JSZip === 'undefined') { setStatus('The Excel writer did not load; save as CSV instead.', 'error'); return; }
     const sheets = [[v.solids ? 'lowest' : 'batch', tables.main.head, tables.main.rows]];
     if (tables.runs) sheets.push(['runs', tables.runs.head, tables.runs.rows]);
@@ -15145,6 +15152,56 @@ END
       xlsx.writeData(kept.text.split('\n').map((ln) => [ln]), 'kept input', { header: [k.about] });
     }
     saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
+  }
+
+  /*
+    A BATCH AS A CSOL FILE: with solids for each element, the MATLAB file
+    SR-Site and the PSAR kept their solubility limits in, for the transport
+    calculations to read -- a struct array CSOL(1×N), N the rows, draws or
+    realisations, each with one scalar field per element, its lowest, in
+    mol/kgw; written by SimpleFunctions.html's own writer (sf-io.js). A unit
+    with no number for an element -- every solid refused, or the pH not
+    held -- has NaN there, and the status line counts them. With the rest,
+    also the elements those files gave no limit, 1e17 throughout.
+  */
+  async function pqBatchCsol(v, rest) {
+    if (!v.groups) {
+      setStatus('A CSOL file has a field for each element: list the solids under each element first, as U: UO2:2H2O(am), Coffinite.', 'warn');
+      return;
+    }
+    try {
+      if (!self.SFIO) await loadScript(SF_IO_SRC);
+    } catch (e) {
+      setStatus(`The MATLAB writer did not load: ${e.message}`, 'error');
+      return;
+    }
+    const units = batchUnits(v, v.groups[0].col);
+    const n = units.length;
+    // A field's name as MATLAB takes it: an element's symbol as it is, a valence state's, S(6), as S_6.
+    const fields = v.groups.map((g) => g.el.replace(/[^A-Za-z0-9_]+/g, '_').replace(/_+$/, ''));
+    const columns = v.groups.map((g, gi) => {
+      const k = v.head.indexOf(g.col);
+      return Float64Array.from(units, (u) => {
+        const x = u.bests[gi] && k >= 0 ? u.bests[gi].values[k] : NaN;
+        return typeof x === 'number' && Number.isFinite(x) ? x : NaN;
+      });
+    });
+    const gaps = v.groups.map((g, gi) => [g.el, columns[gi].filter((x) => Number.isNaN(x)).length]).filter(([, k]) => k);
+    if (rest) {
+      for (const el of CSOL_UNLIMITED) {
+        if (fields.includes(el)) continue;
+        fields.push(el);
+        columns.push(new Float64Array(n).fill(1e17));
+      }
+    }
+    const bytes = self.SFIO.writeMatStructArray('CSOL', fields, columns, n, 'rtm.html');
+    const saved = await saveBlob(new Blob([bytes], { type: 'application/x-matlab-data' }), `${fileStem()}_batch_CSOL.mat`);
+    if (!saved) return;
+    const word = v.draws ? batchDrawWord(v) : 'row';
+    setStatus(`${saved.asked ? `Saved as ${saved.name}` : `${saved.name} saved`}: CSOL(1×${n}), a ${word} each, ${fields.length} fields in mol/kgw`
+      + `${rest ? `, ${CSOL_UNLIMITED.filter((el) => !v.groups.some((g) => g.el === el)).length} of them without a limit, 1e17` : ''}`
+      + `${gaps.length ? `; NaN where a ${word} has no number: ${gaps.map(([el, k]) => `${el} ${k.toLocaleString()}`).join(', ')}` : ''}.`,
+    gaps.length ? 'warn' : 'ok');
   }
 
   /*
@@ -15375,6 +15432,10 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
   const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20260925'],
     ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114b']];
   const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
+  /** SimpleFunctions.html's file writer, for a batch's CSOL file. */
+  const SF_IO_SRC = 'resources/js/sf-io.js?v=20261114a';
+  /** The elements SR-Site's and the PSAR's CSOL files gave no solubility limit, 1e17 in every realisation. */
+  const CSOL_UNLIMITED = ['Ac', 'C', 'Ca', 'Cd', 'Cl', 'Cs', 'Eu', 'H', 'I', 'Mo', 'Rn'];
   /** What each column the Simple Functions read holds, in words. */
   const SF_COLUMN = { pH: 'pH', Ca: 'calcium', Na: 'sodium', Cl: 'chloride', SO4: 'sulphate', Si: 'silicon', HCO3: 'free HCO3-',
     Eh: 'Eh (mV)', Fe: 'iron' };

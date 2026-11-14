@@ -494,9 +494,10 @@
   /**
    * A MATLAB level 5 file holding one struct array CSOL(1×n) with one scalar
    * double per element and realisation — the layout SR-Site and the PSAR
-   * used, so the transport tools can read it unchanged. Uncompressed.
+   * used, so the transport tools can read it unchanged. Uncompressed. `by`
+   * names the page that wrote it in the file's header.
    */
-  function writeMatStructArray(varName, fields, columns, n) {
+  function writeMatStructArray(varName, fields, columns, n, by = 'SimpleFunctions.html') {
     const parts = [];
     const pad8 = (len) => (8 - (len % 8)) % 8;
     const elem = (type, bytes) => {
@@ -530,7 +531,7 @@
       ...cells,
     ]);
     const header = new Uint8Array(128);
-    const text = `MATLAB 5.0 MAT-file, Platform: web, Created on: ${new Date().toUTCString()} by SimpleFunctions.html`;
+    const text = `MATLAB 5.0 MAT-file, Platform: web, Created on: ${new Date().toUTCString()} by ${by}`;
     header.set(ascii(text.padEnd(116, ' ').slice(0, 116)), 0);
     const hdv = new DataView(header.buffer);
     hdv.setUint16(124, 0x0100, true);
