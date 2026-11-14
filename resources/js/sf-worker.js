@@ -9,7 +9,7 @@
    ========================================================================== */
 'use strict';
 
-self.importScripts('./sf-model.js?v=20260925');
+self.importScripts('./sf-model.js?v=20261114a');
 
 self.onmessage = (ev) => {
   const { id, data, options, waters, runCfg } = ev.data || {};

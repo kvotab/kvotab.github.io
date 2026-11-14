@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114f">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114g">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1159,6 +1159,8 @@
             <span class="rtm-muted" id="rtmPqBatchNote"></span>
             <span class="rtm-end">
               <button type="button" class="rtm-btn secondary small" id="rtmPqBatchKeep" data-on-click="rtm:pqBatchKeep">Keep this batch</button>
+              <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchRefOpen">Open a reference…</button>
+              <input type="file" id="rtmPqBatchRefFile" accept=".mat,.csv,.tsv,.txt,.xlsx,.xls,.h5,.hdf5" hidden data-on-change="rtm:pqBatchRefChosen">
               <div class="rtm-export">
                 <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqBatch" aria-haspopup="menu">Export</button>
                 <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
@@ -1181,6 +1183,11 @@
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="as a drawing">SVG</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="png" data-hint="as a picture">PNG</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="html" data-hint="live, as a page">HTML</button>
+                  <div class="rtm-menu-sep" role="separator" data-batch-sens hidden></div>
+                  <div class="rtm-menu-head" role="presentation" data-batch-sens hidden>What carries the spread</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchsens" data-as="svg" data-hint="as a drawing" data-batch-sens hidden>SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchsens" data-as="png" data-hint="as a picture" data-batch-sens hidden>PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchsens" data-as="html" data-hint="live, as a page" data-batch-sens hidden>HTML</button>
                   <div class="rtm-menu-sep" role="separator"></div>
                   <div class="rtm-menu-head" role="presentation">Against a column</div>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="svg" data-hint="as a drawing">SVG</button>
@@ -1210,10 +1217,37 @@
             <div class="plot" id="rtmChartPqBatchAll"></div>
             <table class="rtm-pq-batch-elements" id="rtmPqBatchAllTable"></table>
           </div>
-          <!-- How the column chosen spreads over the waters: the share at or below each value, and its numbers (rtm-ui.js pqBatchSpread). -->
+          <!-- How the column chosen spreads over the waters: the share at or below each value, above it, or a histogram, fitted or not, and its numbers (rtm-ui.js pqBatchSpread). -->
+          <div class="rtm-toolbar rtm-how" id="rtmPqBatchSpreadBar" hidden>
+            <label>Show
+              <select id="rtmPqBatchView" data-on-change="rtm:pqBatchView">
+                <option value="cdf">the share at or below</option>
+                <option value="exceed">the share above</option>
+                <option value="hist">a histogram</option>
+              </select>
+            </label>
+            <label><input type="checkbox" id="rtmPqBatchFit" data-on-change="rtm:pqBatchFit"> fitted, normal and skew-normal</label>
+          </div>
           <div class="rtm-pq-batch-spread" id="rtmPqBatchSpread" hidden>
             <div class="plot" id="rtmChartPqBatch"></div>
             <table class="rtm-pq-batch-stats" id="rtmPqBatchStats"></table>
+          </div>
+          <!-- What carries the spread: each value drawn and each column of the table, its rank correlation with the column (rtm-ui.js pqBatchSens). -->
+          <div class="rtm-pq-batch-sens" id="rtmPqBatchSens" hidden>
+            <div class="rtm-toolbar rtm-how">
+              <span class="rtm-dg-axis" id="rtmPqBatchSensTitle">What carries the spread</span>
+              <label>the
+                <select id="rtmPqBatchSensTop" data-on-change="rtm:pqBatchSensTop">
+                  <option value="10">10</option>
+                  <option value="15">15</option>
+                  <option value="30">30</option>
+                  <option value="all">all</option>
+                </select>
+                largest
+              </label>
+              <span class="rtm-muted" id="rtmPqBatchSensNote"></span>
+            </div>
+            <div class="plot" id="rtmChartPqBatchSens"></div>
           </div>
           <!-- The result against a column of the table, a value drawn or another of PHREEQC's (rtm-ui.js pqBatchAgainst). -->
           <div class="rtm-pq-batch-against" id="rtmPqBatchAgainst" hidden>
@@ -4341,6 +4375,31 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             refused, or whose run gives no number there, is left out and counted. <em>Export</em> saves
             the chart as SVG, PNG or a page of its own, and the workbook has these numbers on a sheet of
             their own.</p>
+          <p><em>Show</em> draws the same as the share above each value — an exceedance curve — or as a
+            histogram of the values' logarithms, a tenth of a decade a bar, a bar a solid stacked where
+            there are solids. <em>Fitted, normal and skew-normal</em> fits the two distributions of the
+            logarithms to the values by maximum likelihood, as SimpleFunctions.html fits them, draws them
+            dashed and dotted over the chart, and adds their numbers to the table — the normal's mean and
+            standard deviation, the skew-normal's ξ, ω and α — with the better of the two by Akaike's
+            criterion.</p>
+          <p><em>Open a reference…</em> sets a file of values beside the batch, as a batch kept is set
+            beside it: a MATLAB file (a struct array as SR-Site's and the PSAR's <code>CSOL</code>, a
+            struct of vectors, or vectors), CSV or Excel (a column each, named as an element or as a column
+            of the batch, as a batch saved as CSV has them), or HDF5 (a dataset an element). It is drawn
+            grey, its numbers in a column of their own, in place of a batch kept, for the visit;
+            <em>Forget it</em> lets it go. With a batch kept or a reference beside, the two-sample
+            Kolmogorov–Smirnov distance D between the two and its p-value are under the spread's numbers,
+            and for each element in <em>Every element</em>: two samples of one distribution, 7,000 a side,
+            give D below about 0.02.</p>
+          <p>Under the spread, <em>What carries the spread</em> ranks what the column's value goes with:
+            Spearman's rank correlation of each value drawn, and of each column of the table that varies —
+            a property of the water — with it over the rows, draws or realisations, the largest in size as
+            bars, a value drawn in one colour and a column of the table in another, with the band within
+            which chance alone puts them, ±2/√n, dotted. Run the realisations of one water — <em>Rows</em>
+            that row, <em>Waters</em> drawn at random — and the values drawn alone show what carries the
+            spread for that water. <em>Export</em> saves the bars as SVG, PNG or a page under <em>What
+            carries the spread</em>, and the workbook has every input's ρ with every element on a sheet of
+            its own.</p>
           <p>Under the spread, a second chart shows the same result <em>against</em> something else, a
             point for each water or draw: a column of the table with numbers in it — pH, chloride, depth
             — a value drawn, or another of PHREEQC's columns of the run kept, such as <code>pe</code>.
@@ -4643,6 +4702,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114i"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114k"></script>
 </body>
 </html>

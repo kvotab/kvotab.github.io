@@ -18,7 +18,7 @@
   const STORAGE_KEY = 'kvot-sf-v1';
   const DEFAULT_WIDTH = 330;
   const BUILD = '2026-09-25';
-  const WORKER_URL = './resources/js/sf-worker.js?v=20260925';
+  const WORKER_URL = './resources/js/sf-worker.js?v=20261114a';
   const PALETTE = ['#bb6c5d', '#4e79a7', '#e0a458', '#59a14f', '#8e6c8a', '#76b7b2', '#d37295', '#9c755f'];
   const LOG_KSIDERITE = -10.89;   // FeCO3(s) = Fe+2 + CO3-2; a diagnostic, not part of the tool
   const MAX_N = 1000000;

@@ -1000,13 +1000,16 @@
     }
     const en = Math.sqrt(n * m / (n + m));
     const lam = (en + 0.12 + 0.11 / en) * D;
+    // The series falls off too slowly to add up where the distance is tiny, two samples alike: there p is 1, as
+    // Numerical Recipes' probks has it, not the partial sum, which may be anything from 0 to 2.
     let p = 0;
+    let summed = false;
     for (let k = 1; k <= 100; k++) {
       const t = 2 * Math.pow(-1, k - 1) * Math.exp(-2 * k * k * lam * lam);
       p += t;
-      if (Math.abs(t) < 1e-12) break;
+      if (Math.abs(t) < 1e-12) { summed = true; break; }
     }
-    return { D, p: Math.max(0, Math.min(1, p)) };
+    return { D, p: summed ? Math.max(0, Math.min(1, p)) : 1 };
   }
 
   /** Ranks with ties averaged. */

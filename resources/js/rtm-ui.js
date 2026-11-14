@@ -9901,7 +9901,7 @@
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
       diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn', phreeqc: 'rtmChartPq',
       inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch', batchx: 'rtmChartPqBatchX', batchmap: 'rtmChartPqBatchMap',
-      batchall: 'rtmChartPqBatchAll' }[pane]);
+      batchall: 'rtmChartPqBatchAll', batchsens: 'rtmChartPqBatchSens' }[pane]);
     if (as === 'txt') {
       if (!compTextNow) { setStatus('List a water first: Show the water, as PHREEQC lists it.', 'error'); return; }
       saidSaved(await saveBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`));
@@ -9947,12 +9947,13 @@
   */
   const CHART_NOTES = { time: 'rtmTimeNote', profile: 'rtmProfileNote', gradient: 'rtmGradNote', composition: 'rtmCompNote',
     diagram: 'rtmDgNote', sweep: 'rtmSwNote', fit: 'rtmFitNote', uncertainty: 'rtmUnNote', phreeqc: 'rtmPqSummary',
-    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote', batchx: 'rtmPqBatchNote', batchmap: 'rtmPqBatchNote', batchall: 'rtmPqBatchNote' };
+    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote', batchx: 'rtmPqBatchNote', batchmap: 'rtmPqBatchNote', batchall: 'rtmPqBatchNote',
+    batchsens: 'rtmPqBatchSensNote' };
   const CHART_NAMES = { time: 'against time', profile: 'against distance', gradient: 'gradient', composition: 'composition',
     diagram: 'diagram', sweep: 'sweeps', fit: 'fit', uncertainty: 'uncertainty', phreeqc: 'through PHREEQC',
     inverse: 'inverse models through PHREEQC', batch: 'a batch over a table of waters, its spread',
     batchx: 'a batch over a table of waters, against a column', batchmap: 'a batch over a table of waters, its map',
-    batchall: 'a batch over a table of waters, every element' };
+    batchall: 'a batch over a table of waters, every element', batchsens: 'a batch over a table of waters, what carries the spread' };
   // plotly.js as this page loads it, once read: { src, integrity, text }.
   let plotlyRead = null;
 
@@ -10001,7 +10002,7 @@
     const name = `${fileStem()}_${pane}`;
     const title = `${fileStem()}: ${CHART_NAMES[pane] || pane}`;
     // A batch's chart is of PHREEQC's runs over a table, not of the model's run: under it, the input each row was run with.
-    const batch = ['batch', 'batchx', 'batchmap', 'batchall'].includes(pane) && pq.batchResult;
+    const batch = ['batch', 'batchx', 'batchmap', 'batchall', 'batchsens'].includes(pane) && pq.batchResult;
     const text = batch ? pq.batchResult.text : (state.ran && state.ran.text) || state.text;
     const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
     const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
@@ -10280,7 +10281,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
     if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); resize(); }
-    if (name === 'batch') { pqBatchAll(); pqBatchSpread(); pqBatchAgainst(); pqBatchMap(); resize(); }
+    if (name === 'batch') { pqBatchAll(); pqBatchSpread(); pqBatchSens(); pqBatchAgainst(); pqBatchMap(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
@@ -10345,7 +10346,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function resize() {
     if (typeof Plotly === 'undefined') return;
     ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
-      'rtmChartPq', 'rtmChartPqBatch', 'rtmChartPqBatchX', 'rtmChartPqBatchMap', 'rtmChartPqBatchAll']
+      'rtmChartPq', 'rtmChartPqBatch', 'rtmChartPqBatchX', 'rtmChartPqBatchMap', 'rtmChartPqBatchAll', 'rtmChartPqBatchSens']
       .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
@@ -11517,6 +11518,17 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'A chart of the column chosen -- **Lowest in**, or **Spread of** without solids -- a step for each water, or each draw of a water: for each value, the share at or below it. On a log axis where the values are all above nought and span a factor of ten or more.',
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
+          '**Show**: the share at or below each value, the share above it (an exceedance curve), or a histogram of the values\' logarithms, a tenth of a decade a bar -- with solids, a bar a solid, stacked.',
+          '**fitted, normal and skew-normal**: the two distributions of the logarithms that fit the values best, by maximum likelihood as SimpleFunctions.html fits them, dashed and dotted over the chart; under the numbers, the normal\'s mean and standard deviation, the skew-normal\'s ξ, ω and α, and the better of the two by Akaike\'s criterion.',
+        ] },
+        { heading: 'Beside a reference', list: [
+          '**Open a reference…**: a file of values set beside the batch as a batch kept is, grey -- MATLAB (a struct array as SR-Site\'s and the PSAR\'s CSOL, a struct of vectors, or vectors), CSV or Excel (a column each, named as an element or as a column of the batch, as a batch saved as CSV has them), or HDF5 (a dataset an element). For the visit, in place of a batch kept; **Forget it** lets it go.',
+          'With a batch kept or a reference beside, the two-sample Kolmogorov–Smirnov distance D between them and its p-value: under the spread\'s numbers, and for each element in Every element. Two samples of one distribution, 7,000 a side, give D below about 0.02.',
+        ] },
+        { heading: 'What carries the spread', list: [
+          'Under the spread, for its column: Spearman\'s rank correlation of each value drawn, and of each column of the table that varies -- a property of the water -- with it over the rows, draws or realisations, the largest in size as bars, **the** 10, 15, 30 or all; a value drawn in one colour, a column of the table in another. Within ±2/√n, dotted, is what chance alone gives.',
+          'With the realisations of one water -- **Rows** that row, **Waters** drawn at random -- the values drawn alone: what carries the spread for that water.',
+          'Export has the bars under What carries the spread; the workbook every input\'s ρ with every element, on a sheet of its own.',
         ] },
         { heading: 'A map', list: [
           'Where the table has columns of places, each water at its place -- **Map over** two of the table\'s columns, those named X and Y unless others are chosen, — for none -- coloured by its result on one hue, light to dark (dark to light on the dark page), the key beside it, logarithmic where the values span a factor of ten or more.',
@@ -12667,7 +12679,7 @@ END
     // A batch over a table of waters: the input, the rows asked for, the solids tried in turn, the column whose lowest
     // is kept, and the values drawn, how many draws and from what seed (kept); the table and what it found (the visit's).
     batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '', against: '', mapX: '', mapY: '',
-      waters: 'each', realisations: '', limit: '' },
+      waters: 'each', realisations: '', limit: '', view: 'cdf', fit: '', sensTop: '15' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12675,6 +12687,7 @@ END
     batchStarter: null,      // the input the page started for a table, while it is untouched
     batchLook: null,         // one water of the batch run again, what PHREEQC printed of it
     batchKept: null,         // a batch kept, to draw the next ones beside (the visit's)
+    batchRef: null,          // or a reference opened, beside in its place: { name, format, data: {name: values} } (the visit's)
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -12704,7 +12717,8 @@ END
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
-        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY', 'realisations', 'limit']) {
+        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY', 'realisations', 'limit',
+          'view', 'fit', 'sensTop']) {
           if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
         }
         if (s.batch.waters === 'random' || s.batch.waters === 'each') pq.batch.waters = s.batch.waters;
@@ -14413,6 +14427,7 @@ END
     box.hidden = !v;
     pqBatchAll();
     pqBatchSpread();
+    pqBatchSens();
     pqBatchAgainst();
     pqBatchMap();
     pqBatchLookDraw(false);
@@ -14538,56 +14553,224 @@ END
     ten or more; the median and the 95th percentile marked, each label on the side of its line that has room; the
     numbers beside it. Drawn only where it is seen -- the Batch tab, which draws it again when it is shown.
   */
+  /*
+    THE SPREAD AS A DISTRIBUTION, AND BESIDE ANOTHER. Show: the share at or
+    below each value, the share above it (an exceedance curve), or a
+    histogram of the values' logarithms, stacked by the solid that gave the
+    lowest where there are solids. Fitted: a normal and a skew-normal
+    distribution of the logarithms by maximum likelihood, as
+    SimpleFunctions.html fits them, the better by Akaike's criterion, their
+    curves and numbers. Beside it the batch kept or a reference opened -- a
+    file of values per element or column: a CSOL file of SR-Site's or the
+    PSAR's, a batch saved as CSV -- grey, its numbers in a column of their
+    own, and the Kolmogorov–Smirnov distance between the two with its
+    p-value. The statistics are SimpleFunctions.html's own (sf-model.js),
+    read the first time they are needed.
+  */
+  /** SimpleFunctions' statistics: loaded the first time they are needed, the batch drawn again then; null until then. */
+  function batchStats() {
+    if (self.SFModel) return self.SFModel;
+    if (!pq.statsLoading) {
+      const src = SF_SCRIPTS.find(([name]) => name === 'SFModel')[1];
+      pq.statsLoading = loadScript(src).then(() => { if (pq.batchResult) pqBatchDraw(); }, () => { /* without them, no fits nor distances */ });
+    }
+    return null;
+  }
+  /** A reference's values for a column of the batch: under the column's own name, or its element's, U for U(mol/kgw). */
+  function batchRefValues(ref, col) {
+    const a = ref.data[col] || ref.data[String(col).replace(/\(mol\/kgw\)$/, '')];
+    return a ? Array.from(a).filter((x) => typeof x === 'number' && Number.isFinite(x)) : null;
+  }
+  /** A spread of plain values, as batchSpread gives one of a batch's units. */
+  function batchValuesSpread(col, values, none, over) {
+    if (!values || !values.length) return null;
+    const s = values.slice().sort((a, b) => a - b);
+    const at = (q) => {
+      const h = (s.length - 1) * q;
+      const lo = Math.floor(h);
+      return lo + 1 < s.length ? s[lo] + (h - lo) * (s[lo + 1] - s[lo]) : s[lo];
+    };
+    return { col, got: s.map((x) => ({ x, row: null, draw: null, solid: null })), none, over, n: s.length, min: s[0], p5: at(0.05),
+      p25: at(0.25), p50: at(0.5), p75: at(0.75), p95: at(0.95), max: s[s.length - 1] };
+  }
+  /**
+    What the batch shown is set beside: the batch kept, or a reference opened -- what to call it, and its spread in a
+    column of the batch, null where it has none there. Null with neither.
+  */
+  function batchBeside() {
+    const kept = batchKeptBeside();
+    if (kept) return { kind: 'kept', name: 'kept', spread: (col) => (batchHas(kept, col) ? batchSpread(kept, col) : null) };
+    const ref = pq.batchRef;
+    if (!ref || !pq.batchResult) return null;
+    return { kind: 'reference', name: ref.name, spread: (col) => batchValuesSpread(col, batchRefValues(ref, col), 0, 'values') };
+  }
+  /** The two-sample Kolmogorov–Smirnov distance between two spreads and its p-value; null without the statistics. */
+  function batchKs(a, b) {
+    const S = batchStats();
+    return S && a && b ? S.ks2(a.got.map((g) => g.x), b.got.map((g) => g.x)) : null;
+  }
+  /** The normal and skew-normal fits of a spread's logarithms, where its values are all above nought. */
+  function batchFits(sp) {
+    const S = batchStats();
+    return S && sp && sp.min > 0 && sp.n >= 5 ? S.fitDistribution(sp.got.map((g) => g.x)) : null;
+  }
+  /** A fit's share at or below each of the logarithms xs, in order: the normal's from its distribution, the skew-normal's added up from its density. */
+  function batchFitCdf(fit, kind, xs) {
+    const S = self.SFModel;
+    if (kind === 'normal') return xs.map((x) => S.normCdf((x - fit.normal.mu) / fit.normal.sigma));
+    const { xi, omega, alpha } = fit.skew;
+    const pdf = (x) => S.skewNormalPdf(x, xi, omega, alpha);
+    // From ten widths below its centre, where there is none of it left, in steps of a fiftieth of a width.
+    const h = omega / 50;
+    let x0 = Math.min(xi - 10 * omega, xs[0]);
+    let acc = 0;
+    let p0 = pdf(x0);
+    return xs.map((x) => {
+      while (x0 + h <= x) {
+        const p1 = pdf(x0 + h);
+        acc += 0.5 * (p0 + p1) * h;
+        p0 = p1;
+        x0 += h;
+      }
+      return Math.min(1, acc + 0.5 * (p0 + pdf(x)) * (x - x0));
+    });
+  }
+  /** A fit's numbers as the table shows them. */
+  const BATCH_FIT_ROWS = [
+    ['normal of the log, mean ± sd', (x) => `${x.normal.mu.toFixed(3)} ± ${x.normal.sigma.toFixed(3)}`],
+    ['skew-normal of the log, ξ, ω, α', (x) => `${x.skew.xi.toFixed(3)}, ${x.skew.omega.toFixed(3)}, ${x.skew.alpha.toFixed(2)}`],
+    ['the better fit, by Akaike', (x) => x.best],
+  ];
+
   function pqBatchSpread() {
     const v = pq.batchResult;
     const box = $('rtmPqBatchSpread');
     const plot = $('rtmChartPqBatch');
     const sp = v ? batchSpread(v, batchLowestColumn(v)) : null;
     box.hidden = !sp;
+    $('rtmPqBatchSpreadBar').hidden = !sp;
     if (!sp) {
       if (typeof Plotly !== 'undefined') Plotly.purge(plot);
       $('rtmPqBatchStats').innerHTML = '';
       return;
     }
+    const view = ['cdf', 'exceed', 'hist'].includes(pq.batch.view) ? pq.batch.view : 'cdf';
+    $('rtmPqBatchView').value = view;
+    $('rtmPqBatchFit').checked = pq.batch.fit === 'yes';
     const f = (x) => (x === 0 ? '0' : fit4(x));
-    // The batch kept, beside this one, where it has a result in the same column.
-    const kept = batchKeptBeside();
-    const ksp = kept && batchHas(kept, sp.col) ? batchSpread(kept, sp.col) : null;
+    // The batch kept or the reference opened, beside this one, where it has a result in the same column.
+    const beside = batchBeside();
+    const ksp = beside ? beside.spread(sp.col) : null;
+    const ks = ksp ? batchKs(sp, ksp) : null;
+    const fits = pq.batch.fit === 'yes' ? batchFits(sp) : null;
+    const kfits = fits && ksp ? batchFits(ksp) : null;
     const shown = (x, i) => (i === 0 || i === 6 ? x.toLocaleString() : esc(f(x)));
     const names = batchSpreadRows({ ...sp, none: Math.max(sp.none, ksp ? ksp.none : 0) }).map(([what]) => what);
     $('rtmPqBatchStats').innerHTML = `<caption>${esc(sp.col)}${batchLowestOf(v)}</caption>`
-      + `${ksp ? '<thead><tr><th></th><td>this batch</td><td>kept</td></tr></thead>' : ''}<tbody>`
+      + `${ksp ? `<thead><tr><th></th><td>this batch</td><td>${beside.kind === 'kept' ? 'kept' : 'reference'}</td></tr></thead>` : ''}<tbody>`
       + names.map((what, i) => `<tr><th scope="row">${what}</th><td>${shown(batchSpreadValues(sp)[i], i)}</td>`
         + `${ksp ? `<td>${shown(batchSpreadValues(ksp)[i], i)}</td>` : ''}</tr>`).join('')
+      + (fits ? BATCH_FIT_ROWS.map(([what, val]) => `<tr><th scope="row">${what}</th><td>${esc(val(fits))}</td>`
+        + `${ksp ? `<td>${kfits ? esc(val(kfits)) : ''}</td>` : ''}</tr>`).join('') : '')
+      + (ks ? `<tr><th scope="row">Kolmogorov–Smirnov D, p</th><td colspan="2">${ks.D.toFixed(4)}, p ${ks.p < 0.001 ? '< 0.001' : ks.p.toFixed(3)}</td></tr>` : '')
       + '</tbody>';
     if (typeof Plotly === 'undefined' || state.tab !== 'batch') return;
     const c = themeColors();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
-    // The axis holds this batch and the kept one: logarithmic where all of both are above nought and span a factor of ten.
+    // The axis holds this batch and the one beside: logarithmic where all of both are above nought and span a factor of ten.
     const lo = ksp ? Math.min(sp.min, ksp.min) : sp.min;
     const hi = ksp ? Math.max(sp.max, ksp.max) : sp.max;
     const log = lo > 0 && hi / lo >= 10;
-    // The share at or below: nought up to the smallest, then a step up at each unit.
+    const besideName = ksp ? (beside.kind === 'kept' ? 'kept' : beside.name) : '';
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    const margin = { l: 70, r: 30, t: 30, b: 48 };
+    const traces = [];
+    if (view === 'hist') {
+      // Bars a tenth of a decade wide on the logarithm; thirty across the range on a linear axis.
+      const T = (x) => (log ? Math.log10(x) : x);
+      const a = T(lo);
+      const width = log ? 0.1 : (T(hi) - a) / 30 || 1;
+      const start = Math.floor(a / width + 1e-9) * width;
+      const nb = Math.max(1, Math.ceil((T(hi) - start) / width - 1e-9) + 1);
+      const edges = Array.from({ length: nb + 1 }, (_, k) => start + k * width);
+      const mids = edges.slice(0, -1).map((x) => x + width / 2);
+      const binOf = (x) => Math.min(nb - 1, Math.max(0, Math.floor((T(x) - start) / width + 1e-9)));
+      // With solids, a bar a solid, stacked, in the order they are listed.
+      const g = v.groups ? v.groups.find((x) => x.col === sp.col) : null;
+      const solids = g ? g.solids : v.solids || [null];
+      solids.forEach((sd, k) => {
+        const counts = new Array(nb).fill(0);
+        for (const u of sp.got) if (sd === null || u.solid === sd) counts[binOf(u.x)]++;
+        if (!counts.some(Boolean)) return;
+        traces.push({ type: 'bar', x: mids, y: counts.map((n) => (100 * n) / sp.n), width: width * 0.98, name: sd || 'this batch',
+          marker: { color: DG_PALETTE[k % DG_PALETTE.length] }, hovertemplate: `${sd ? `${sd}: ` : ''}%{y:.2f} % of the ${sp.over}<extra></extra>` });
+      });
+      if (ksp) {
+        // Beside: its bars' outline, grey, as a share of its own values.
+        const counts = new Array(nb).fill(0);
+        for (const u of ksp.got) counts[binOf(u.x)]++;
+        const ys = counts.map((n) => (100 * n) / ksp.n);
+        traces.unshift({ type: 'scatter', mode: 'lines', name: besideName, x: edges, y: [...ys, ys[ys.length - 1]], line: { shape: 'hv', width: 1.5, color: muted },
+          hovertemplate: `%{y:.2f} % of the ${besideName === 'kept' ? 'kept batch\'s' : 'reference\'s'} values<extra></extra>` });
+      }
+      if (fits && log) {
+        // Each fit's density, as the share in a bar.
+        const xs = Array.from({ length: 241 }, (_, k) => edges[0] + (k / 240) * (edges[nb] - edges[0]));
+        const S = self.SFModel;
+        traces.push({ type: 'scatter', mode: 'lines', name: 'normal fit', x: xs,
+          y: xs.map((x) => 100 * width * Math.exp(-0.5 * ((x - fits.normal.mu) / fits.normal.sigma) ** 2) / (fits.normal.sigma * Math.sqrt(2 * Math.PI))),
+          line: { color: c.text, width: 1.5, dash: 'dash' }, hoverinfo: 'skip' });
+        traces.push({ type: 'scatter', mode: 'lines', name: 'skew-normal fit', x: xs,
+          y: xs.map((x) => 100 * width * S.skewNormalPdf(x, fits.skew.xi, fits.skew.omega, fits.skew.alpha)),
+          line: { color: c.text, width: 1.5, dash: 'dot' }, hoverinfo: 'skip' });
+      }
+      layout.barmode = 'stack';
+      layout.bargap = 0;
+      layout.showlegend = traces.length > 1;
+      // The legend under the axis's title, clear of it.
+      if (layout.showlegend) { margin.b = 86; layout.legend = { ...layout.legend, y: -0.32 }; }
+      layout.xaxis.title = { text: `${log ? 'log10 of ' : ''}${sp.col}${batchLowestOf(v)}`, font: { size: 11 } };
+      layout.yaxis.title = { text: `${sp.over} in each bar (%)`, font: { size: 11 } };
+      layout.margin = margin;
+      Plotly.react(plot, traces, layout, PLOT_CONFIG);
+      Plotly.Plots.resize(plot);
+      return;
+    }
+    // The share at or below each value, or above it: nought up to the smallest, then a step at each unit.
+    const above = view === 'exceed';
+    const share = (i, n) => (above ? 100 - ((i + 1) / n) * 100 : ((i + 1) / n) * 100);
     const xs = [sp.got[0].x, ...sp.got.map((g) => g.x)];
-    const ys = [0, ...sp.got.map((_, i) => ((i + 1) / sp.n) * 100)];
+    const ys = [above ? 100 : 0, ...sp.got.map((_, i) => share(i, sp.n))];
     const of = [sp.got[0], ...sp.got].map((g) => [`${batchUnitName(v, g.row, g.draw)}${g.solid ? `, ${g.solid}` : ''}`, g.row, g.draw]);
     const line = (x) => ({ type: 'scatter', mode: 'lines', x: [x, x], y: [0, 100], line: { color: muted, width: 1, dash: 'dot' },
       hoverinfo: 'skip', showlegend: false });
-    const traces = [
+    const word = above ? 'above' : 'at or below';
+    traces.push(
       { type: 'scatter', mode: 'lines', x: xs, y: ys, line: { shape: 'hv', width: 2, color: DG_PALETTE[0] }, customdata: of,
-        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} at or below<br>%{customdata[0]}<extra></extra>`, showlegend: false },
+        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} ${word}<br>%{customdata[0]}<extra></extra>`, showlegend: false },
       line(sp.p50), line(sp.p95),
-    ];
+    );
     if (ksp) {
-      // The kept batch's curve, grey, behind this one's; its points not to be clicked, its waters not this batch's.
+      // Beside: its curve, grey, behind this one's; its points not to be clicked, its waters not this batch's.
       traces[0].name = 'this batch';
       traces[0].showlegend = true;
-      traces.unshift({ type: 'scatter', mode: 'lines', name: 'kept', x: [ksp.got[0].x, ...ksp.got.map((g) => g.x)],
-        y: [0, ...ksp.got.map((_, i) => ((i + 1) / ksp.n) * 100)], line: { shape: 'hv', width: 2, color: muted },
-        hovertemplate: `%{x:.4g}: %{y:.1f} % of the kept batch's ${ksp.over} at or below<extra></extra>` });
+      traces.unshift({ type: 'scatter', mode: 'lines', name: besideName, x: [ksp.got[0].x, ...ksp.got.map((g) => g.x)],
+        y: [above ? 100 : 0, ...ksp.got.map((_, i) => share(i, ksp.n))], line: { shape: 'hv', width: 2, color: muted },
+        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${besideName === 'kept' ? 'kept batch\'s' : 'reference\'s'} ${ksp.over} ${word}<extra></extra>` });
+    }
+    if (fits) {
+      // Each fit's share, on the logarithm, across the values.
+      const g0 = Math.log10(sp.min);
+      const g1 = Math.log10(sp.max);
+      const gs = Array.from({ length: 201 }, (_, k) => g0 + (k / 200) * (g1 - g0 || 1));
+      for (const [kind, name, dash] of [['normal', 'normal fit', 'dash'], ['skew', 'skew-normal fit', 'dot']]) {
+        const cdf = batchFitCdf(fits, kind, gs);
+        traces.push({ type: 'scatter', mode: 'lines', name, x: gs.map((x) => 10 ** x), y: cdf.map((p) => 100 * (above ? 1 - p : p)),
+          line: { color: c.text, width: 1.5, dash }, hoverinfo: 'skip' });
+      }
     }
     // The labels above the plot: each to the side of its line that has room, the median's a row higher where they would meet.
-    const margin = { l: 70, r: 30, t: 30, b: 48 };
     const T = (x) => (log ? Math.log10(x) : x);
     const span = T(hi) - T(lo) || 1;
     const at = (x) => (T(x) - T(lo)) / span;
@@ -14606,11 +14789,11 @@ END
     const annotations = marks.map((m, i) => ({ x: T(m.x), y: 1, xref: 'x', yref: 'paper', yanchor: 'bottom', showarrow: false,
       xanchor: m.right ? 'left' : 'right', xshift: m.right ? 3 : -3, yshift: meet && i === 0 ? 14 : 0, text: m.text,
       font: { size: 10, color: c.text } }));
-    const layout = baseLayout();
-    layout.hovermode = 'closest';
-    if (ksp) {
+    if (ksp || fits) {
+      // The legend under the axis's title, clear of it.
       layout.showlegend = true;
-      margin.b = 64;
+      margin.b = 86;
+      layout.legend = { ...layout.legend, y: -0.32 };
     }
     layout.margin = margin;
     layout.annotations = annotations;
@@ -14618,12 +14801,13 @@ END
     layout.xaxis.exponentformat = 'power';
     layout.xaxis.title = { text: `${sp.col}${batchLowestOf(v)}`, font: { size: 11 } };
     layout.yaxis.range = [0, 100];
-    layout.yaxis.title = { text: `${sp.over} at or below (%)`, font: { size: 11 } };
+    layout.yaxis.title = { text: `${sp.over} ${word} (%)`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
-    // The numbers beside it, a column more with a batch kept, narrow its box: the chart is fitted to it again.
+    // The numbers beside it, a column more with a batch beside, narrow its box: the chart is fitted to it again.
     Plotly.Plots.resize(plot);
     batchClickable(plot);
   }
+
 
   /*
     EVERY ELEMENT AT A GLANCE: with solids listed for two elements or more,
@@ -14669,13 +14853,31 @@ END
         p95: at(0.95), max: xs[xs.length - 1], held: [...held].filter(([, n]) => n).sort((a, b) => b[1] - a[1]) };
     });
   }
-  /** The summary as a table of words and numbers, for the page, the workbook and the report. */
-  function batchAllTable(all, lim) {
-    const head = ['element', 'held lowest by', 'smallest', '5th', '25th', 'median', '75th', '95th', 'largest', `above ${lim} mol/kgw`, 'left out'];
+  /** The elements of a summary as the batch kept or the reference has them, those it has, in the same order. */
+  function batchAllBeside(all, beside) {
+    return all.map((e) => {
+      const sp = beside.spread(e.col);
+      return sp ? { el: e.el, col: e.col, n: sp.n, none: sp.none, xs: sp.got.map((g) => g.x), min: sp.min, p5: sp.p5, p25: sp.p25,
+        p50: sp.p50, p75: sp.p75, p95: sp.p95, max: sp.max } : null;
+    }).filter((e) => e && e.n);
+  }
+  /**
+    The summary as a table of words and numbers, for the page, the workbook and the report; with the batch kept or a
+    reference beside, each element's Kolmogorov–Smirnov distance to it and its p-value.
+  */
+  function batchAllTable(all, lim, twin) {
+    const S = twin && twin.length ? batchStats() : null;
+    const head = ['element', 'held lowest by', 'smallest', '5th', '25th', 'median', '75th', '95th', 'largest', `above ${lim} mol/kgw`, 'left out',
+      ...(S ? ['KS D', 'p'] : [])];
     const share = (k, n) => (n ? `${(Math.round((1000 * k) / n) / 10).toLocaleString()} %` : '');
-    const rows = all.map((e) => [e.el, e.held.map(([sd, k]) => `${sd} ${share(k, e.n)}`).join(', '),
-      ...(e.n ? [e.min, e.p5, e.p25, e.p50, e.p75, e.p95, e.max] : [null, null, null, null, null, null, null]),
-      e.n ? share(e.xs.filter((x) => x > lim).length, e.n) : '', e.none]);
+    const rows = all.map((e) => {
+      const b = S ? twin.find((x) => x.el === e.el) : null;
+      const ks = b && e.n ? S.ks2(e.xs, b.xs) : null;
+      return [e.el, e.held.map(([sd, k]) => `${sd} ${share(k, e.n)}`).join(', '),
+        ...(e.n ? [e.min, e.p5, e.p25, e.p50, e.p75, e.p95, e.max] : [null, null, null, null, null, null, null]),
+        e.n ? share(e.xs.filter((x) => x > lim).length, e.n) : '', e.none,
+        ...(S ? [ks ? Number(ks.D.toFixed(4)) : null, ks ? (ks.p < 0.001 ? '< 0.001' : Number(ks.p.toFixed(3))) : null] : [])];
+    });
     return { head, rows };
   }
   function pqBatchAll() {
@@ -14696,7 +14898,10 @@ END
     const units = all[0].n + all[0].none;
     const word = v.draws ? batchDrawWord(v) : 'row';
     $('rtmPqBatchAllNote').textContent = `${all.length} elements, each its lowest of each ${word}, over ${units.toLocaleString()} ${word}s.`;
-    const { head, rows } = batchAllTable(all, lim);
+    // The batch kept or the reference opened, grey beside, for the elements it has.
+    const beside = batchBeside();
+    const twin = beside ? batchAllBeside(all, beside) : [];
+    const { head, rows } = batchAllTable(all, lim, twin);
     const anyNone = all.some((e) => e.none);
     const cols = head.map((h, k) => k).filter((k) => k !== 10 || anyNone);
     $('rtmPqBatchAllTable').innerHTML = `<thead><tr>${cols.map((k) => `<th>${esc(head[k])}</th>`).join('')}</tr></thead><tbody>`
@@ -14718,13 +14923,10 @@ END
     const ends = { type: 'scatter', mode: 'markers', name: 'smallest and largest', x: [...els, ...els], y: [...pick(shown, 'min'), ...pick(shown, 'max')],
       marker: { symbol: 'line-ew-open', size: 12, color: muted }, offsetgroup: 'this', hovertemplate: '%{x}: %{y:.4g}<extra></extra>' };
     traces.push(ends);
-    // The batch kept, grey beside, where it has the same elements.
-    const kept = batchKeptBeside();
-    const kall = kept ? batchAll(kept) : null;
-    const twin = kall ? kall.filter((e) => e.n && els.includes(e.el)) : [];
-    if (twin.length) {
+    const greys = twin.filter((e) => els.includes(e.el));
+    if (greys.length) {
       traces[0].name = 'this batch';
-      traces.unshift(boxOf(twin, 'kept', muted, 'rgba(128,128,128,0.15)', 'kept'));
+      traces.unshift(boxOf(greys, beside.kind === 'kept' ? 'kept' : beside.name, muted, 'rgba(128,128,128,0.15)', 'kept'));
       ends.showlegend = false;
     }
     // The line the share above counts from, across every element.
@@ -14734,8 +14936,8 @@ END
     layout.hovermode = 'closest';
     layout.showlegend = true;
     layout.margin = { l: 70, r: 20, t: 14, b: 70 };
-    if (twin.length) layout.boxmode = 'group';
-    const lo = Math.min(...pick(shown, 'min'), ...(twin.length ? pick(twin, 'min') : []), lim);
+    if (greys.length) layout.boxmode = 'group';
+    const lo = Math.min(...pick(shown, 'min'), ...(greys.length ? pick(greys, 'min') : []), lim);
     layout.yaxis.type = lo > 0 ? 'log' : 'linear';
     layout.yaxis.title = { text: `mol/kgw, the lowest of each ${word}`, font: { size: 11 } };
     layout.xaxis.type = 'category';
@@ -14752,6 +14954,101 @@ END
       pqSave();
       pqBatchDraw();
     });
+  }
+
+  /*
+    WHAT CARRIES THE SPREAD: for the column whose spread is drawn, Spearman's
+    rank correlation of every value drawn and of every column of the table
+    with numbers that vary -- a property of the water -- with the column's
+    value over the units, as SimpleFunctions.html measures its sensitivity:
+    the largest in size as bars, a value drawn in one colour and a column of
+    the table in another, the band within which chance alone puts them,
+    ±2/√n, dotted. With the realisations of one water, the values drawn
+    alone: what carries the spread for that water. Drawn only where it is
+    seen.
+  */
+  const batchSensCache = new WeakMap();
+  /** Every input's ρ with column col over the units that give it a number, most first in size; null with nothing that varies or without the statistics. */
+  function batchSensitivity(v, col) {
+    const S = batchStats();
+    if (!S || !v) return null;
+    let byCol = batchSensCache.get(v);
+    if (!byCol) { byCol = new Map(); batchSensCache.set(v, byCol); }
+    if (byCol.has(col)) return byCol.get(col);
+    const k = v.head.indexOf(col);
+    const units = batchUnits(v, col).filter((u) => u.best && k >= 0 && typeof u.best.values[k] === 'number' && Number.isFinite(u.best.values[k]));
+    let out = null;
+    if (units.length >= 10) {
+      const inputs = [];
+      if (v.draws && v.uncertain && v.uncertain.length) {
+        v.uncertain.forEach((d, i) => inputs.push({ name: d.name, kind: 'drawn', values: units.map((u) => u.drawn[i]) }));
+      }
+      const t = v.source;
+      if (t) {
+        t.columns.forEach((c, j) => {
+          const xs = units.map((u) => (t.rows[u.row][j] === '' ? NaN : Number(t.rows[u.row][j])));
+          if (xs.every(Number.isFinite) && Math.min(...xs) < Math.max(...xs)) inputs.push({ name: c, kind: 'table', values: xs });
+        });
+      }
+      const varied = inputs.filter((x) => Math.min(...x.values) < Math.max(...x.values));
+      if (varied.length) {
+        const rho = S.spearman(varied.map((x) => x.values), units.map((u) => u.best.values[k]));
+        out = { col, n: units.length, rows: varied.map((x, i) => ({ name: x.name, kind: x.kind, rho: rho[i] }))
+          .filter((x) => Number.isFinite(x.rho)).sort((a, b) => Math.abs(b.rho) - Math.abs(a.rho)) };
+      }
+    }
+    byCol.set(col, out);
+    return out;
+  }
+  function pqBatchSens() {
+    const v = pq.batchResult;
+    const box = $('rtmPqBatchSens');
+    const plot = $('rtmChartPqBatchSens');
+    const col = v ? batchLowestColumn(v) : '';
+    const sens = v ? batchSensitivity(v, col) : null;
+    box.hidden = !sens;
+    for (const el of document.querySelectorAll('[data-batch-sens]')) el.hidden = !sens;
+    if (!sens) {
+      if (typeof Plotly !== 'undefined') Plotly.purge(plot);
+      return;
+    }
+    const top = pq.batch.sensTop === 'all' ? sens.rows.length : Math.max(1, Number(pq.batch.sensTop) || 15);
+    $('rtmPqBatchSensTop').value = ['10', '15', '30', 'all'].includes(pq.batch.sensTop) ? pq.batch.sensTop : '15';
+    const rows = sens.rows.slice(0, top);
+    const band = 2 / Math.sqrt(sens.n);
+    const word = v.draws ? `${batchDrawWord(v)}s` : 'rows';
+    $('rtmPqBatchSensTitle').textContent = `What carries the spread of ${col}`;
+    $('rtmPqBatchSensNote').textContent = `Spearman's rank correlation with it over ${sens.n.toLocaleString()} ${word}, `
+      + `${rows.length < sens.rows.length ? `the ${rows.length} largest in size of ${sens.rows.length}` : `all ${sens.rows.length}`}; `
+      + `within ±${band.toFixed(3)}, dotted, is what chance alone gives.`;
+    if (typeof Plotly === 'undefined' || state.tab !== 'batch') return;
+    const c = themeColors();
+    const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
+    const shown = rows.slice().reverse();
+    const traces = [['drawn', 'a value drawn', DG_PALETTE[1]], ['table', 'a column of the table', DG_PALETTE[0]]].map(([kind, name, color]) => {
+      const mine = shown.filter((r) => r.kind === kind);
+      return { type: 'bar', orientation: 'h', name, y: mine.map((r) => r.name), x: mine.map((r) => r.rho), marker: { color },
+        hovertemplate: '%{y}: ρ %{x:.3f}<extra></extra>' };
+    }).filter((t) => t.y.length);
+    const names = shown.map((r) => r.name);
+    for (const x of [-band, band]) {
+      traces.push({ type: 'scatter', mode: 'lines', x: [x, x], y: [names[0], names[names.length - 1]], line: { color: muted, width: 1, dash: 'dot' },
+        hoverinfo: 'skip', showlegend: false });
+    }
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.showlegend = traces.filter((t) => t.type === 'bar').length > 1;
+    layout.margin = { l: 20, r: 20, t: 10, b: layout.showlegend ? 64 : 48 };
+    layout.xaxis.range = [-1, 1];
+    layout.xaxis.title = { text: `Spearman's ρ with ${col}`, font: { size: 11 } };
+    layout.yaxis.type = 'category';
+    layout.yaxis.categoryorder = 'array';
+    layout.yaxis.categoryarray = names;
+    layout.yaxis.automargin = true;
+    layout.barmode = 'overlay';
+    plot.style.height = `${Math.max(220, 22 * names.length + 90)}px`;
+    Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    Plotly.Plots.resize(plot);
   }
 
   /**
@@ -14970,13 +15267,21 @@ END
   function pqBatchKeptDraw() {
     const v = pq.batchResult;
     const kept = pq.batchKept;
+    const ref = pq.batchRef;
     const keep = $('rtmPqBatchKeep');
     keep.disabled = !v || kept === v;
     keep.textContent = v && kept === v ? 'Kept' : 'Keep this batch';
-    $('rtmPqBatchKept').hidden = !kept || !v;
-    if (!kept || !v) return;
+    $('rtmPqBatchKept').hidden = !(kept || ref) || !v;
+    if (!v) return;
     const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
     const col = batchLowestColumn(v);
+    if (ref && !kept) {
+      const has = batchRefValues(ref, col);
+      $('rtmPqBatchKeptText').textContent = `Beside it, the reference ${ref.name}, ${ref.format}: ${many(Object.keys(ref.data).length, 'column')} of `
+        + `values${has ? `, ${has.length.toLocaleString()} for ${col}` : `; it has none for ${col}, so it is not drawn`}.`;
+      return;
+    }
+    if (!kept) return;
     $('rtmPqBatchKeptText').textContent = kept === v ? 'This batch is kept: the next one you run is drawn beside it.'
       : `Beside it, the batch kept: ${many(new Set(kept.runs.map((r) => r.row)).size, 'row')} of ${kept.table}`
         + `${kept.sheet ? `, sheet ${kept.sheet}` : ''}${kept.random ? `, ${kept.draws.toLocaleString()} realisations` : kept.draws ? `, ${kept.draws} draws each` : ''}`
@@ -15127,20 +15432,46 @@ END
     // batch's beside them, where it has them.
     const col = batchLowestColumn(v);
     const kept = batchKeptBeside();
+    const beside = batchBeside();
     const cols = v.groups ? v.groups.map((g) => g.col) : [col];
-    const spreads = [
-      ...cols.map((c) => [`${c}${batchLowestOf(v)}`, batchSpread(v, c)]),
-      ...(kept ? cols.filter((c) => batchHas(kept, c)).map((c) => [`${c}, the batch kept`, batchSpread(kept, c)]) : []),
-    ].filter(([, x]) => x);
+    // The statistics for the fits, the distances and the sensitivity, read first where they are not yet.
+    if (!self.SFModel) { batchStats(); try { await pq.statsLoading; } catch (e) { /* without them */ } }
+    const mine = cols.map((c) => [`${c}${batchLowestOf(v)}`, batchSpread(v, c), c]).filter(([, x]) => x);
+    const theirs = beside ? cols.map((c) => [`${c}, ${beside.kind === 'kept' ? 'the batch kept' : `the reference ${beside.name}`}`, beside.spread(c), c])
+      .filter(([, x]) => x) : [];
+    const spreads = [...mine, ...theirs];
     if (spreads.length) {
       const names = batchSpreadRows({ ...spreads[0][1], none: Math.max(...spreads.map(([, x]) => x.none)) || 0 }).map(([what]) => what);
-      sheets.push(['spread', [`over the ${spreads[0][1].over}`, ...spreads.map(([h]) => h)],
-        names.map((what, i) => [what, ...spreads.map(([, x]) => batchSpreadValues(x)[i])])]);
+      const rows = names.map((what, i) => [what, ...spreads.map(([, x]) => batchSpreadValues(x)[i])]);
+      // Each spread's fits; this batch's distance to the one beside, where it has the column.
+      const fits = spreads.map(([, x]) => batchFits(x));
+      if (fits.some(Boolean)) {
+        for (const [what, get] of [['normal fit of the log, mean', (x) => x.normal.mu], ['normal fit of the log, sd', (x) => x.normal.sigma],
+          ['skew-normal fit of the log, ξ', (x) => x.skew.xi], ['skew-normal fit of the log, ω', (x) => x.skew.omega],
+          ['skew-normal fit of the log, α', (x) => x.skew.alpha], ['the better fit, by Akaike', (x) => x.best]]) {
+          rows.push([what, ...fits.map((x) => (x ? get(x) : null))]);
+        }
+      }
+      if (theirs.length && self.SFModel) {
+        const ks = mine.map(([, x, c]) => { const b = theirs.find(([, , d]) => d === c); return b ? batchKs(x, b[1]) : null; });
+        rows.push(['Kolmogorov–Smirnov D to the one beside', ...ks.map((x) => (x ? x.D : null)), ...theirs.map(() => null)]);
+        rows.push(['Kolmogorov–Smirnov p', ...ks.map((x) => (x ? x.p : null)), ...theirs.map(() => null)]);
+      }
+      sheets.push(['spread', [`over the ${spreads[0][1].over}`, ...spreads.map(([h]) => h)], rows]);
+    }
+    // What carries each column's spread: every input's ρ with each.
+    const sens = cols.map((c) => batchSensitivity(v, c));
+    if (sens.some(Boolean)) {
+      const order = [];
+      for (const x of sens) if (x) for (const r of x.rows) if (!order.some((o) => o.name === r.name)) order.push(r);
+      sheets.push(['sensitivity', ['input', 'what it is', ...cols.map((c) => `ρ with ${c}`)],
+        order.map((r) => [r.name, r.kind === 'drawn' ? 'a value drawn' : 'a column of the table',
+          ...sens.map((x) => { const got = x && x.rows.find((q) => q.name === r.name); return got ? got.rho : null; })])]);
     }
     const all = batchAll(v);
     if (all) {
-      const lim = batchLimit();
-      const t = batchAllTable(all, lim);
+      const beside = batchBeside();
+      const t = batchAllTable(all, batchLimit(), beside ? batchAllBeside(all, beside) : null);
       sheets.push(['elements', t.head, t.rows]);
     }
     const xlsx = new XlsxWriter(`${stem}.xlsx`);
@@ -15152,6 +15483,85 @@ END
       xlsx.writeData(kept.text.split('\n').map((ln) => [ln]), 'kept input', { header: [k.about] });
     }
     saidSaved(await saveBlob(await xlsx.save(), `${stem}.xlsx`));
+  }
+
+  /*
+    A REFERENCE BESIDE THE BATCH: a file of values -- MATLAB (a struct array
+    such as SR-Site's and the PSAR's CSOL, a struct of vectors, or vectors),
+    CSV or Excel (a column each, named as an element or as a column of the
+    batch, as a batch saved as CSV has them), or HDF5 (a dataset an element,
+    read as SimpleFunctions.html reads one) -- set beside the batch as a batch
+    kept is: its curve grey, its numbers beside, the Kolmogorov–Smirnov
+    distance. For the visit; one at a time, in place of a batch kept.
+  */
+  /** A MAT file's numbers by name: each field of a struct array its values across the array, of a struct its vector; a vector by its name. */
+  function batchMatValues(vars) {
+    const out = {};
+    for (const x of Object.values(vars)) {
+      if (x.cls === 'struct' && x.elements.length > 1) {
+        for (const f of x.fields) {
+          if (out[f]) continue;
+          const a = x.elements.map((o) => (o[f] && o[f].cls === 'numeric' && o[f].data.length ? Number(o[f].data[0]) : NaN));
+          if (a.some(Number.isFinite)) out[f] = Float64Array.from(a);
+        }
+      } else if (x.cls === 'struct' && x.elements.length === 1) {
+        for (const f of x.fields) {
+          const m = x.elements[0][f];
+          if (!out[f] && m && m.cls === 'numeric' && m.data.length) out[f] = Float64Array.from(m.data, Number);
+        }
+      } else if (x.cls === 'numeric' && x.name && !out[x.name] && x.data.length) out[x.name] = Float64Array.from(x.data, Number);
+    }
+    return out;
+  }
+  /** A table's columns of numbers by name: those with a number in most of their rows. */
+  function batchColumnValues(t) {
+    const out = {};
+    t.columns.forEach((c, k) => {
+      const xs = t.rows.map((r) => (r[k] === '' ? NaN : Number(r[k]))).filter(Number.isFinite);
+      if (xs.length && xs.length >= t.rows.length / 2) out[c] = Float64Array.from(xs);
+    });
+    return out;
+  }
+  async function pqBatchRefChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    let data = {};
+    let format = '';
+    try {
+      if (/\.mat$/i.test(file.name)) {
+        if (!self.SFIO) await loadScript(SF_IO_SRC);
+        data = batchMatValues(await self.SFIO.readMat(new Uint8Array(await file.arrayBuffer())));
+        format = 'a MATLAB file';
+      } else if (/\.(h5|hdf5|hdf)$/i.test(file.name)) {
+        if (!self.SFIO) await loadScript(SF_IO_SRC);
+        data = (await self.SFIO.readReference(file)).data;
+        format = 'an HDF5 file';
+      } else if (/\.xlsx?$/i.test(file.name)) {
+        if (typeof XLSX === 'undefined') await loadScript(PQ_XLSX_SRC);
+        const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        // The first sheet with columns of numbers.
+        for (const sheet of book.SheetNames) {
+          const d = batchColumnValues(batchTableOf(batchSheetRows(book, sheet), file.name));
+          if (Object.keys(d).length) { data = d; format = `Excel, sheet ${sheet}`; break; }
+        }
+      } else {
+        data = batchColumnValues(batchTableOf(batchCsvRows(await pqFileText(file)), file.name));
+        format = 'a table';
+      }
+      if (!Object.keys(data).length) throw new Error('it has no column or field of numbers');
+    } catch (e) {
+      setStatus(`${file.name} could not be read as a reference: ${e.message}`, 'error');
+      return;
+    }
+    pq.batchRef = { name: file.name, format, data };
+    pq.batchKept = null;
+    pqBatchDraw();
+    const v = pq.batchResult;
+    const cols = v ? (v.groups ? v.groups.map((g) => g.col) : v.head) : [];
+    const matched = cols.filter((c) => batchRefValues(pq.batchRef, c));
+    setStatus(`${file.name}, ${format}, is beside the batch for this visit${matched.length ? `: values for ${batchAnd(matched)}`
+      : v ? ', though it has values for none of the batch\'s columns' : ': run a batch to see it beside'}.`, matched.length || !v ? 'ok' : 'warn');
   }
 
   /*
@@ -15237,6 +15647,8 @@ END
     const charts = [
       [`Every element, the lowest of each ${v.draws ? batchDrawWord(v) : 'row'}`, 'rtmChartPqBatchAll', 380, allTable],
       [`The spread of ${col}${batchLowestOf(v)}`, 'rtmChartPqBatch', 340, stats],
+      [$('rtmPqBatchSensTitle').textContent, 'rtmChartPqBatchSens', Math.round($('rtmChartPqBatchSens').getBoundingClientRect().height) || 360,
+        `<p class="note">${esc($('rtmPqBatchSensNote').textContent)}</p>`],
       [`${col} against ${chosen('rtmPqBatchX')}`, 'rtmChartPqBatchX', 360, ''],
       [`The map over ${chosen('rtmPqBatchMapX')} and ${chosen('rtmPqBatchMapY')}`, 'rtmChartPqBatchMap', 480, ''],
     ].map(([title, id, tall, after]) => {
@@ -15307,6 +15719,7 @@ END
 <details><summary>The PHREEQC input each row was run with</summary><pre>${esc(v.text)}</pre></details>
 ${kept ? `<p>${esc($('rtmPqBatchKeptText').textContent)}</p>
 <details><summary>The kept batch's input</summary><pre>${esc(kept.text)}</pre></details>
+` : pq.batchRef ? `<p>${esc($('rtmPqBatchKeptText').textContent)}</p>
 ` : ''}<h2>What came back</h2>
 ${charts.map((ch, i) => `<h3>${esc(ch.title)}</h3>\n<div class="chart" id="chart${i}" style="height:${ch.tall}px"></div>${ch.after ? `\n${ch.after}` : ''}`).join('\n')}
 ${!charts.length ? `${allTable}${stats}` : ''}
@@ -15429,7 +15842,7 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     needs, Rows asks for the others.
   */
   const SF_DB_NAME = 'phreeqc.dat with Simple Functions (SR-Site)';
-  const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20260925'],
+  const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20261114a'],
     ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114b']];
   const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
   /** SimpleFunctions.html's file writer, for a batch's CSOL file. */
@@ -15970,10 +16383,16 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     'rtm:pqBatchKeep': () => {
       if (!pq.batchResult) return;
       pq.batchKept = pq.batchResult;
+      pq.batchRef = null;
       pqBatchDraw();
       setStatus('This batch is kept: the next one you run is drawn beside it.', 'ok');
     },
-    'rtm:pqBatchForget': () => { pq.batchKept = null; pqBatchDraw(); },
+    'rtm:pqBatchForget': () => { pq.batchKept = null; pq.batchRef = null; pqBatchDraw(); },
+    'rtm:pqBatchRefOpen': () => $('rtmPqBatchRefFile').click(),
+    'rtm:pqBatchRefChosen': (ev) => { pqBatchRefChosen(ev); },
+    'rtm:pqBatchView': (ev, el) => { pq.batch.view = el.value; pqSave(); pqBatchSpread(); },
+    'rtm:pqBatchFit': (ev, el) => { pq.batch.fit = el.checked ? 'yes' : ''; pqSave(); pqBatchSpread(); },
+    'rtm:pqBatchSensTop': (ev, el) => { pq.batch.sensTop = el.value; pqSave(); pqBatchSens(); },
     // One water of the batch in full, from a row of its table; saved; put away.
     'rtm:pqBatchLook': (ev, el) => { pqBatchLook(Number(el.dataset.row), el.dataset.draw === '' ? null : Number(el.dataset.draw)); },
     'rtm:pqBatchLookSave': () => { pqBatchLookSave(); },

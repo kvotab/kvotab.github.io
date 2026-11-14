@@ -18,6 +18,7 @@ Exit status is 0 when every check passes.
 """
 import asyncio
 import json
+import math
 import os
 import re
 import sys
@@ -1319,7 +1320,7 @@ async def main():
                                       "(b) => JSZip.loadAsync(b).then((z) => z.file('xl/workbook.xml').async('string'))"
                                       ".then((x) => [...x.matchAll(/<sheet [^>]*name=\"([^\"]+)\"/g)].map((m) => m[1]))")
             check('  saved: the chart as SVG, PNG and a page with the input under it; the workbook with the spread on a sheet of its own',
-                  [svg, png, html, sheets], ['<svg', ['image/png', True], [True, True], ['batch', 'spread', 'input']])
+                  [svg, png, html, sheets], ['<svg', ['image/png', True], [True, True], ['batch', 'spread', 'sensitivity', 'input']])
             # ---- uncertain values, drawn at random ----
             # Three waters, their pH from the table and their salt drawn: dNa uniform 1 2 (mmol/kgw), 20 draws each from
             # seed 7. Each run's sodium is the value it drew, to the last digit; every value between 1 and 2; the spread
@@ -1360,6 +1361,41 @@ async def main():
                   [True, False, 'draws.csv: 3 rows; columns pH. 3 rows to run, 20 draws each: 60 runs.', True,
                    ['row', 'draw', 'dNa', 'Na(mol/kgw)'], '3 rows of draws.csv, 20 draws each: 60 runs, seed 7.', 'waters × draws60',
                    'row,pH,draw,dNa,Na(mol/kgw),refused', 60, [['1', '7', '1'], ['1', '7', '2'], ['3', '8', '20']], True, True, 60])
+            # The spread shown otherwise: above each value, the curve from 100 % down to nought; a histogram, its bars a
+            # share of the 60 adding up to 100 %. Fitted: the normal of the log's mean and standard deviation those of the
+            # 60 logarithms, the skew-normal's numbers and the better of the two, both curves drawn. What carries the
+            # spread: the sodium drawn, rho 1 to the last digit, the table's pH far below it; the band 2/sqrt(60).
+            logs = [math.log10(float(r[4])) for r in rows]
+            mu = sum(logs) / len(logs)
+            sd = (sum((x - mu) ** 2 for x in logs) / len(logs)) ** 0.5
+            await field('rtmPqBatchView', 'exceed')
+            exceed = await page.ev("""(() => { const p = document.getElementById('rtmChartPqBatch'); const t = p.data.find((d) => d.line && d.line.shape === 'hv');
+              return [t.y[0], t.y[t.y.length - 1], p.layout.yaxis.title.text]; })()""")
+            await field('rtmPqBatchView', 'hist')
+            hist = await page.ev("""(() => { const d = document.getElementById('rtmChartPqBatch').data.filter((t) => t.type === 'bar');
+              return [d.length, Math.round(d.reduce((a, t) => a + t.y.reduce((b, y) => b + y, 0), 0) * 1e6) / 1e6]; })()""")
+            await field('rtmPqBatchView', 'cdf')
+            await page.ev("(() => { const c = document.getElementById('rtmPqBatchFit'); c.checked = true; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            fitted = await settle(page, "[...document.querySelectorAll('#rtmPqBatchStats tbody tr')].some((tr) => tr.textContent.startsWith('normal of the log'))",
+                                  True, tries=40)
+            frows = await page.ev("[...document.querySelectorAll('#rtmPqBatchStats tbody tr')].map((tr) => [...tr.children].map((c) => c.textContent)).slice(-3)")
+            curves = await page.ev("document.getElementById('rtmChartPqBatch').data.map((t) => t.name).filter(Boolean)")
+            shown_sens = await settle(page, "!document.getElementById('rtmPqBatchSens').hidden", True, tries=40)
+            bars = await page.ev("""document.getElementById('rtmChartPqBatchSens').data.filter((t) => t.type === 'bar')
+              .map((t) => [t.name, t.y, t.x.map((x) => Math.round(x * 1e9) / 1e9)])""")
+            fit_ms = frows[0][1].split(' ± ') if frows else ['nan', 'nan']
+            check('  shown as the share above and as a histogram; fitted, normal and skew-normal, the normal\'s mean and sd those of '
+                  'the logarithms; what carries the spread, the sodium drawn at rho 1 and the table\'s pH far below',
+                  [exceed, hist, fitted, frows[0][0] if frows else frows, abs(float(fit_ms[0]) - mu) < 1e-3, abs(float(fit_ms[1]) - sd) < 1e-3,
+                   [r[0] for r in frows[1:]] if frows else frows, frows[2][1] in ('normal', 'skew-normal') if frows else frows,
+                   [n for n in curves if 'fit' in n], shown_sens, bars[0] if bars else bars,
+                   (bars[1][0], bars[1][1], abs(bars[1][2][0]) < 0.3) if len(bars) > 1 else bars,
+                   await page.ev("document.getElementById('rtmPqBatchSensNote').textContent")],
+                  [[100, 0, 'waters × draws above (%)'], [1, 100], True, 'normal of the log, mean ± sd', True, True,
+                   ['skew-normal of the log, ξ, ω, α', 'the better fit, by Akaike'], True, ['normal fit', 'skew-normal fit'], True,
+                   ['a value drawn', ['dNa'], [1]], ('a column of the table', ['pH'], True),
+                   "Spearman's rank correlation with it over 60 draws, all 2; within ±0.258, dotted, is what chance alone gives."])
+            await page.ev("(() => { const c = document.getElementById('rtmPqBatchFit'); c.checked = false; c.dispatchEvent(new Event('change', { bubbles: true })); })()")
             row2 = [r[3] for r in rows if r[0] == '2']
             await field('rtmPqBatchRows', '2')
             await batch(NA_IN, '2')
@@ -1563,6 +1599,15 @@ async def main():
                   ['Sr(mol/kgw)', 'Sr(mol/kgw), the lowest of each row'])
             await page.ev(LOWEST_IN % json.dumps('Ba(mol/kgw)'))
             await field('rtmPqBatchLimit', '')
+            # Beside the same batch kept: each element's Kolmogorov–Smirnov distance in the table, nought, p 1.
+            await page.ev(CLICK % json.dumps('#rtmPqBatchKeep'))
+            await batch(BASR_IN)
+            await settle(page, "[...document.querySelectorAll('#rtmPqBatchAllTable thead th')].some((th) => th.textContent === 'KS D')", True, tries=40)
+            ks_rows = await page.ev("[...document.querySelectorAll('#rtmPqBatchAllTable tr')].map((tr) => [...tr.cells].slice(-2).map((c) => c.textContent))")
+            boxes = await page.ev("document.getElementById('rtmChartPqBatchAll').data.filter((t) => t.type === 'box').map((t) => t.name)")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchForget"]'))
+            check('  beside the same batch kept: grey boxes beside, each element\'s Kolmogorov–Smirnov distance nought, p 1',
+                  [boxes, ks_rows], [['kept', 'this batch'], [['KS D', 'p'], ['0', '1'], ['0', '1']]])
             # Saved as a CSOL file, read back by SimpleFunctions.html's own reader: a struct array CSOL(1×2), a row each,
             # a field each element with its lowest, the header naming rtm.html; as SR-Site's, the eleven elements those
             # files gave no limit after them, at 1e17.
@@ -1719,6 +1764,7 @@ async def main():
               document.getElementById('rtmPqBatchKept').hidden, document.getElementById('rtmPqBatchKeptText').textContent]"""
             kept_now = await page.ev(KEPT)
             await batch(NA1.replace('SELECTED_OUTPUT', 'REACTION 1\n NaCl 1\n 0.001 moles\nSELECTED_OUTPUT'))
+            await settle(page, "[...document.querySelectorAll('#rtmPqBatchStats tbody tr')].some((tr) => tr.textContent.startsWith('Kolmogorov'))", True, tries=40)
             beside = await page.ev(KEPT)
             SPREADS = """(() => { const p = document.getElementById('rtmChartPqBatch'); const q = document.getElementById('rtmChartPqBatchX');
               return [p.data.slice(0, 2).map((t) => [t.name || '', t.showlegend !== false]), p.layout.showlegend, q.data.map((t) => t.name), q.layout.showlegend,
@@ -1734,8 +1780,8 @@ async def main():
                    [['kept', True], ['this batch', True]], True, ['kept', 'this batch'], True,
                    [['waters', '20', '20'], ['smallest', '0.002', '0.001'], ['5th percentile', '0.00295', '0.00195'],
                     ['median', '0.0115', '0.0105'], ['95th percentile', '0.02005', '0.01905'], ['largest', '0.021', '0.02'],
-                    ['left out, refused or with no number', '1', '1']],
-                   ['batch', 'spread', 'input', 'kept', 'kept input']])
+                    ['left out, refused or with no number', '1', '1'], ['Kolmogorov–Smirnov D, p', '0.1000, p 1.000']],
+                   ['batch', 'spread', 'sensitivity', 'input', 'kept', 'kept input']])
             await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchForget"]'))
             await asyncio.sleep(0.2)
             forgot = await page.ev(KEPT)
@@ -1743,6 +1789,30 @@ async def main():
                   [forgot[2], await page.ev("document.getElementById('rtmChartPqBatch').data.length"),
                    await page.ev("document.querySelector('#rtmPqBatchStats tbody tr').children.length")],
                   [True, 3, 2])
+            # ---- a reference beside ----
+            # A CSV of twenty values under the batch's column, Na(mol/kgw), a millimole and a half to twenty and a half:
+            # beside the batch as a kept one is, the line saying what it is, its numbers in a column, the distance D a
+            # twentieth; Keep this batch puts the batch kept in its place; Forget it, gone.
+            REF = ('Na(mol/kgw)\n' + '\n'.join(str((i + 0.5) / 1000) for i in range(1, 21)) + '\n')
+            await page.ev("""((name, text) => { const input = document.getElementById('rtmPqBatchRefFile');
+              const dt = new DataTransfer(); dt.items.add(new File([text], name)); input.files = dt.files;
+              input.dispatchEvent(new Event('change', { bubbles: true })); })(%s, %s)""" % (json.dumps('ref.csv'), json.dumps(REF)))
+            refd = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith('ref.csv') ? s : null; }})()", tries=40, pause=0.25)
+            await settle(page, "[...document.querySelectorAll('#rtmPqBatchStats tbody tr')].some((tr) => tr.textContent.startsWith('Kolmogorov'))", True, tries=40)
+            ref_rows = await page.ev("[...document.querySelectorAll('#rtmPqBatchStats tr')].map((tr) => [...tr.children].map((c) => c.textContent))")
+            ref_line = await page.ev(KEPT)
+            ref_names = await page.ev("document.getElementById('rtmChartPqBatch').data.slice(0, 2).map((t) => t.name)")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchKeep'))
+            await asyncio.sleep(0.2)
+            replaced = await page.ev(KEPT)
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchForget"]'))
+            await asyncio.sleep(0.2)
+            check('a reference beside: a CSV of values under the batch\'s column, drawn and counted beside the batch, the distance '
+                  'D a twentieth; Keep this batch in its place; forgotten',
+                  [refd, ref_line[2:], ref_names, ref_rows[0], ref_rows[-1], replaced[0], (await page.ev(KEPT))[2]],
+                  ['ref.csv, a table, is beside the batch for this visit: values for Na(mol/kgw).',
+                   [False, 'Beside it, the reference ref.csv, a table: 1 column of values, 20 for Na(mol/kgw).'],
+                   ['ref.csv', 'this batch'], ['', 'this batch', 'reference'], ['Kolmogorov–Smirnov D, p', '0.0500, p 1.000'], 'Kept', True])
             # ---- the map ----
             # Nine waters on a three by three grid of X(km) and Y(km), their sodium doubling from 1 to 256 mmol/kgw:
             # mapped over X(km) and Y(km) unaided, the same scale both ways, each water at its place with its sodium,
@@ -1789,13 +1859,14 @@ async def main():
             # values drawn, the draws and seed, the database, the input in full; the spread's numbers and the rows; its
             # three charts live, the spread, against the value drawn and the map; nothing of the page's click handles.
             report = await saved_blob('[data-on-click="rtm:pqBatchReport"]', '(b) => b.text()')
-            check('the batch as one page: what was run, the numbers and the rows, its three charts live',
+            check('the batch as one page: what was run, the numbers and the rows, its four charts live, what carries the spread among them',
                   [report.count("Plotly.newPlot('chart") if isinstance(report, str) else report,
                    '<title>A batch over grid.csv</title>' in report, '<dt>Uncertain</dt><dd>dNa uniform 1 2</dd>' in report,
                    '<dt>Draws</dt><dd>5 a row, from seed 3</dd>' in report, '<dt>Database</dt><dd>phreeqc.dat</dd>' in report,
                    ' Na {dNa}' in report, 'id="rtmPqBatchStats"' in report, 'data-on-click' not in report,
-                   'The map over X(km) and Y(km)' in report, 'against dNa' in report] if isinstance(report, str) else report,
-                  [3, True, True, True, True, True, True, True, True, True])
+                   'The map over X(km) and Y(km)' in report, 'against dNa' in report, 'What carries the spread of Na(mol/kgw)' in report]
+                  if isinstance(report, str) else report,
+                  [4, True, True, True, True, True, True, True, True, True, True])
             # ---- realisations, as the Simple Functions draw them ----
             # Four waters, Waters drawn at random, eight realisations of a sodium drawn uniform between 1 and 2 mmol/kgw,
             # seed 7: each water taken twice and every eighth of the sodium's range once -- a Latin hypercube over the

@@ -1079,6 +1079,10 @@
 .rtm-pq-batch-elements td.rtm-pq-held { color: var(--text-secondary); max-width: 26rem; white-space: normal; }
 .rtm-pq-batch-elements tr.rtm-pq-batch-pick { cursor: pointer; }
 .rtm-pq-batch-elements tr.rtm-pq-batch-pick:hover td { background: var(--bg-surface); }
+/* What carries a batch's spread: the inputs' rank correlations as bars, as tall as they need. */
+.rtm-pq-batch-sens { margin: 0 0 12px; }
+.rtm-pq-batch-sens[hidden] { display: none; }
+.rtm-pq-batch-sens .plot { height: 360px; }
 /* A batch's result against a column, under the spread. */
 .rtm-pq-batch-against { margin: 0 0 12px; }
 .rtm-pq-batch-against[hidden] { display: none; }
