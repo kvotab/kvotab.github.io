@@ -1116,6 +1116,23 @@
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchOpenInput">Open an input…</button>
             <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchSaveInput">Save the input…</button>
             <input type="file" id="rtmPqBatchInputFile" accept=".pqi,.phr,.txt,.in" hidden data-on-change="rtm:pqBatchInputChosen">
+            <!-- The batch set up as SKB's Simple Functions, from SimpleFunctions.html's own data (rtm-sf-phreeqc.js). -->
+            <div class="rtm-export">
+              <button type="button" class="rtm-btn secondary small rtm-menu-btn" id="rtmPqBatchSfBtn" popovertarget="rtmPqBatchSfMenu" aria-haspopup="menu">Simple Functions</button>
+              <div class="rtm-menu" id="rtmPqBatchSfMenu" popover role="menu" aria-label="Simple Functions">
+                <div class="rtm-menu-head" role="presentation">Version B: goethite and magnetite</div>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="no" data-hint="each water once">The constants as they are</button>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="B" data-drawn="yes" data-hint="10 draws a water">The constants drawn</button>
+                <div class="rtm-menu-sep" role="separator"></div>
+                <div class="rtm-menu-head" role="presentation">Version A: Eh and iron from the table</div>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="A" data-drawn="no" data-hint="each water once">The constants as they are</button>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSf" data-version="A" data-drawn="yes" data-hint="10 draws a water">The constants drawn</button>
+                <div class="rtm-menu-sep" role="separator"></div>
+                <div class="rtm-menu-head" role="presentation">The waters</div>
+                <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSfWaters" data-hint="TR-10-61, table A-1">Their reference waters</button>
+              </div>
+            </div>
+            <span class="kvot-info-slot" data-info-key="pq:batchSf"></span>
           </div>
             </div>
             <div class="rtm-setup-go">
@@ -4319,6 +4336,70 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             where it refused, and the workbook has the input on a sheet of its own. The table is read in
             the page for the visit, and is never stored or sent anywhere.</p>
 
+          <h4 id="help-phreeqc-sf">The Simple Functions on PHREEQC</h4>
+          <p>The <em>Simple Functions</em> menu on the Batch tab sets the batch up to calculate what
+            <a href="SimpleFunctions.html">SimpleFunctions.html</a> calculates — SKB's Simple Functions,
+            the solubility limits of 20 elements in a groundwater: Sr, Ra, Zr, Nb, Tc, Ni, Pd, Ag, Sn, Se,
+            Th, Pa, U, Np, Pu, Am, Cm, Sm, Ho and Pb — through PHREEQC, from that page's own data, the
+            SR-Site set of 158 aqueous species and 48 candidate solids, each constant with its
+            uncertainty. It chooses the database, writes the input, lists each element's solids under
+            <em>Solids</em>, and with the constants drawn lists every constant under <em>Uncertain</em>;
+            <em>Run</em> then runs it, and what comes back is the batch's own: for each water each
+            element's lowest and the solid that gave it, the spread over the waters, the chart against a
+            column and the map.</p>
+          <p>The database is <code>phreeqc.dat</code> with the Simple Functions' definitions put in
+            before its <code>END</code>, named <em>phreeqc.dat with Simple Functions (SR-Site)</em>. The
+            Simple Functions write a change of oxidation state with O<sub>2</sub>(g), PHREEQC with the
+            electron, and O<sub>2</sub>(g) is taken out of every reaction with
+            O<sub>2</sub>(g) + 4 H<sup>+</sup> + 4 e<sup>−</sup> = 2 H<sub>2</sub>O, log K 83.1, the
+            constant the Simple Functions use: a constant changes by 83.1 times the reaction's net
+            O<sub>2</sub>(g), and in no other way, so that PHREEQC gives every one of the Simple
+            Functions' constants back to fourteen digits. The 18 elements <code>phreeqc.dat</code> lacks
+            get the Simple Functions' master species; of its own species of strontium and lead, those
+            the Simple Functions have take their constants and the rest are left out
+            (<code>log_k -100</code>), so that every element has their species and no others. Goethite
+            and magnetite take their constants too, and methane and sulfide are left out, as the Simple
+            Functions have neither. The major ions keep <code>phreeqc.dat</code>'s species and
+            constants, and PHREEQC's activity model is used throughout. Every species and solid of the
+            20 elements has a named expression added to its constant, <code>dK_</code> and its name —
+            <code>dK_UO2:2H2O(am)</code> — nought unless an input sets it, which is how the constants are
+            drawn: normal about the value, its ± two standard deviations, as the Simple Functions draw
+            them, ten draws a water unless <em>Draws</em> says otherwise. The database is one of the
+            visit's, chosen for the batch, the PHREEQC tab and the panel alike, and made again on the
+            next visit where it was the one chosen.</p>
+          <p>Version B, the setting of SR-Site and the PSAR, conditions each water first: goethite and
+            magnetite at the water's own pH, held with hydrochloric acid, and its free
+            HCO<sub>3</sub><sup>−</sup> held at the table's, since the Simple Functions take the free
+            HCO<sub>3</sub><sup>−</sup> and not the total — for the kilogram of water it starts with,
+            the conditioning making a little water, at most about one per cent at the lowest pH. Each solid then meets that water with goethite
+            and magnetite still there and the pH held. Version A takes the water's own Eh, in mV, and its
+            iron from the table, and holds the pH and the Eh while each solid dissolves. In both, as in
+            the Simple Functions, calcite and siderite never form. Each solid is offered as 0.01 mol to a
+            kilogram of water, the Simple Functions' line between a solubility limit and none, in two
+            halves, the first with the pH free and the second with it held, from which PHREEQC finds the
+            held pH more surely: a solid that dissolves completely gives its element 0.01 mol/kgw for
+            each atom of it in its formula, and so no limit.</p>
+          <p>The table is the one open, where it has the columns the version needs, named as the Simple
+            Functions read them — <code>pH</code>, <code>Eh (mV)</code>, <code>[HCO3-] (m)</code>,
+            <code>[SO4-2]tot (m)</code>, <code>[Cl]tot (m)</code>, <code>[Ca]tot (m)</code>,
+            <code>[Na]tot (m)</code>, <code>[Si]tot (m)</code>, <code>[Fe]tot (m)</code> and the like;
+            Mg and K go in as themselves where the table has them, where the Simple Functions add Mg to
+            Ca. With no table open, and from <em>Their reference waters</em>, it is the twelve waters of
+            table A-1 of TR-10-61, of which Version A runs the nine with an Eh. Where some rows lack a
+            value the version needs, <em>Rows</em> asks for the others.</p>
+          <p>The answers are PHREEQC's, not a copy of the Simple Functions' arithmetic: its activity
+            model, its own species of the major ions, and every mass balance, so that a solid dissolving
+            changes the water it dissolves in. In Version B the conditioning dissolves iron, the more the
+            lower the pH: below pH 7 tenths of a mole, with the acid that holds the pH, and an ionic
+            strength of 1 or more, which the Simple Functions do not count. Against SimpleFunctions.html
+            with every term from the reactions and its dimers counted twice, as PHREEQC has them, Version
+            B on the reference waters agrees within 0.3 log units in 156 of 159 results, leaving out the
+            three most saline waters, for which neither activity model is made; the largest difference is
+            radium in Gideå's water, where radium sulphate dissolving raises what little sulphate there
+            is. A run whose pH could not be held gives no totals, so that it is never taken for the
+            lowest; PHREEQC refuses some solids that dissolve away, as elemental selenium, and in Version
+            B the cement pore water, at pH 12.5 with no acid in it to take out.</p>
+
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
             3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,
@@ -4499,6 +4580,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114g"></script>
 </body>
 </html>

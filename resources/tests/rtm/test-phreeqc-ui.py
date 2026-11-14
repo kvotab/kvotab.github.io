@@ -1746,7 +1746,85 @@ async def main():
                    ' Na {dNa}' in report, 'id="rtmPqBatchStats"' in report, 'data-on-click' not in report,
                    'The map over X(km) and Y(km)' in report, 'against dNa' in report] if isinstance(report, str) else report,
                   [3, True, True, True, True, True, True, True, True, True])
+            # ---- the Simple Functions on PHREEQC ----
+            # The menu: the reference waters as the table; Version B with the constants as they are -- the database made,
+            # read into PHREEQC and chosen everywhere, the input conditioning each water, 47 solids for the 20 elements,
+            # nothing drawn. Forsmark and Laxemar run: every element's lowest, uranium in Forsmark's water the 3.053e-9
+            # mol/kgw of uraninite that test-sf-phreeqc.js finds. Version A: Rows the nine waters with an Eh. Version B
+            # drawn: the 206 constants under Uncertain, the input setting them; one water, two draws, runs.
+            SF_STATUS = f"(() => {{ const s = {BATCH_STATUS}; return /^The batch is set up|has no column|could not/.test(s) ? s : null; }})()"
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSfWaters"]'))
+            waters = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith(\"Simple Functions' reference waters\") ? s : null; }})()", tries=80, pause=0.25)
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="B"][data-drawn="no"]'))
+            set_b = await until(page, SF_STATUS, tries=120, pause=0.25)
+            got = await page.ev("""(() => { const t = document.getElementById('rtmPqBatchText').value;
+              return [['rtmPqDb', 'rtmPqViewDb', 'rtmPqBatchDb'].map((id) => document.getElementById(id).value),
+                t.includes(' Goethite 0 10') && t.includes('Fix_HCO3- -6 CO2 10') && t.includes(' {solid} 0 0.005') && !t.includes('NAMED_EXPRESSIONS'),
+                document.getElementById('rtmPqBatchSolids').value.slice(0, 48), document.getElementById('rtmPqBatchSolids').value.split(/[,;]/).length,
+                document.getElementById('rtmPqBatchUncertain').value, document.getElementById('rtmPqBatchRows').value]; })()""")
+            check('the Simple Functions: their waters the table; Version B set up, the database chosen everywhere, the input, '
+                  'each element\'s solids, nothing drawn',
+                  [waters.startswith("Simple Functions' reference waters (TR-10-61): 12 waters") if isinstance(waters, str) else waters,
+                   set_b, got],
+                  [True, "The batch is set up as the Simple Functions' Version B: the database phreeqc.dat with Simple Functions "
+                   "(SR-Site); 47 solids for the 20 elements, each element's lowest kept; the constants as they are; "
+                   "Simple Functions' reference waters (TR-10-61), 564 runs.",
+                   [['phreeqc.dat with Simple Functions (SR-Site)'] * 3, True, 'Sr: Strontianite, Celestite; Ra: RaCO3(s), RaSO4', 47, '', '']])
+            await field('rtmPqBatchRows', '1-2')
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
+            ran = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run/.test(s) ? s : null; }})()",
+                              tries=240, pause=0.25)
+            table = await page.ev("""(() => { const t = document.querySelector('#rtmPqBatchOut table:not(.rtm-pq-batch-solids)');
+              const h = [...t.querySelectorAll('thead th')].map((th) => th.textContent);
+              const r = [...t.querySelectorAll('tbody tr')].map((tr) => [...tr.cells].map((c) => c.textContent));
+              const u = h.indexOf('U(mol/kgw)');
+              return [document.getElementById('rtmPqBatchLowest').options.length, r.length, u >= 0 && r[0] ? [r[0][u], r[0][u - 1]] : h]; })()""")
+            check('  Forsmark and Laxemar run, 94 runs: every element\'s lowest; uranium in Forsmark\'s water UO2:2H2O(am)\'s 3.053e-9',
+                  [ran.startswith('2 of 2 rows, each with 47 solids for Sr, Ra, Zr') and 'with phreeqc.dat with Simple Functions (SR-Site)' in ran
+                   if isinstance(ran, str) else ran, table],
+                  [True, [20, 2, ['3.053e-9', 'UO2:2H2O(am)']]])
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="A"][data-drawn="no"]'))
+            set_a = await until(page, SF_STATUS, tries=120, pause=0.25)
+            check('  Version A: Rows the nine waters with an Eh, the input holding the Eh',
+                  [set_a.endswith('Rows: the 9 of 12 with an Eh, iron and every value the version needs.') if isinstance(set_a, str) else set_a,
+                   await page.ev("document.getElementById('rtmPqBatchRows').value"),
+                   await page.ev("document.getElementById('rtmPqBatchText').value.includes(' Fix_Eh {Eh (mV)} H2 10')")],
+                  [True, '1-8, 12', True])
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="B"][data-drawn="yes"]'))
+            set_d = await until(page, SF_STATUS, tries=120, pause=0.25)
+            await field('rtmPqBatchRows', '1')
+            await field('rtmPqBatchDraws', '2')
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmPqBatchGo'))
+            ran = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return / run through PHREEQC|could not be run/.test(s) ? s : null; }})()",
+                              tries=240, pause=0.25)
+            check('  Version B drawn: the 206 constants under Uncertain, the input setting them; one water, two draws, run',
+                  [set_d.endswith('the 206 constants drawn, 10 draws a water; Simple Functions\' reference waters (TR-10-61), 5,640 runs.')
+                   if isinstance(set_d, str) else set_d,
+                   await page.ev("document.getElementById('rtmPqBatchUncertain').value.split(';').length"),
+                   await page.ev("document.getElementById('rtmPqBatchText').value.includes('dK_UO2:2H2O(am)\\n    log_k {dK_UO2:2H2O(am)}')"),
+                   ran.startswith('1 of 1 row, 2 draws each, each draw with 47 solids for Sr') if isinstance(ran, str) else ran],
+                  [True, 206, True, True])
+            await field('rtmPqBatchDraws', '')
             check('no console errors', page.errors[:3], [])
+        finally:
+            await page.call('Target.closeTarget', {'targetId': tid})
+
+        # ================= the Simple Functions' database, the next visit =================
+        # Chosen when the page was left, it is made again: chosen everywhere, and no word of a database to open again.
+        page.errors = []
+        tid = await page.open(URL, "window.showSaveFilePicker=undefined;")
+        try:
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            again = await settle(page, "document.getElementById('rtmPqBatchDb').value", 'phreeqc.dat with Simple Functions (SR-Site)', tries=80)
+            check('the Simple Functions\' database, chosen last time, made again on the next visit',
+                  [again, await page.ev(f"{REPORT}.includes('was the database last time')")],
+                  ['phreeqc.dat with Simple Functions (SR-Site)', False])
+            check('no console errors on the next visit', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})
 

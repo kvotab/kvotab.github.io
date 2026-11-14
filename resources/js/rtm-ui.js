@@ -10307,6 +10307,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         if (m.bottom > window.innerHeight - 4) {
           menu.style.top = `${Math.max(4, Math.round(button.getBoundingClientRect().top - 4 - m.height))}px`;
         }
+        // A menu wider than the room left of its button's right edge starts at the window's edge instead.
+        if (m.left < 4) menu.style.right = `${Math.max(4, Math.round(document.documentElement.clientWidth - 4 - m.width))}px`;
         const first = items(menu)[0];
         if (first) first.focus({ preventScroll: true });
       });
@@ -11527,6 +11529,34 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'The chart against a column and the map, each the same, under headings of their own.']),
       ],
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
+    }),
+
+    'pq:batchSf': () => ({
+      kicker: 'Batch', title: 'The Simple Functions on PHREEQC',
+      lead: 'SKB\'s Simple Functions -- the solubility limits of 20 elements that SimpleFunctions.html calculates -- run through PHREEQC from that page\'s own data: the menu sets the whole batch up, and Run runs it.',
+      facts: [['Database', `${SF_DB_NAME}${pq.opened.has(SF_DB_NAME) ? ', opened' : ', made when first asked for'}`],
+        ['Data', 'SR-Site: 158 species and 48 solids of 20 elements']],
+      sections: [
+        { heading: 'What the menu sets up', list: [
+          '**The database**: phreeqc.dat with the Simple Functions\' species and solids put in, every constant theirs to the last digit; chosen for the batch, the PHREEQC tab and the panel alike, and made again on the next visit.',
+          '**The input**, Version B or A, below. **Solids**: each element\'s candidates, its lowest kept, as the Simple Functions keep it.',
+          '**Uncertain**, with the constants drawn: every constant of the 20 elements drawn normal about its value, its ± two standard deviations, as the Simple Functions draw them; 10 draws a water unless **Draws** says otherwise. The major ions keep phreeqc.dat\'s constants, undrawn.',
+          '**The table**: the one open, where it has the columns, named as the Simple Functions read them -- pH, Eh (mV), [HCO3-] (m), [Ca]tot (m) and the like; with none open, their reference waters, which **Their reference waters** opens too. **Rows** then asks for those with every value the version needs.',
+        ] },
+        { heading: 'Version B and Version A', list: [
+          '**Version B**: each water first conditioned with goethite and magnetite at its own pH, its free HCO3- held at the table\'s; then each solid in turn with them, the pH held. Conditioning dissolves iron, the more the lower the pH: below pH 7 tenths of a mole, the ionic strength 1 or more, which the Simple Functions do not count.',
+          '**Version A**: each water at its own pH and Eh, with the table\'s iron; then each solid in turn, the pH and the Eh held.',
+        ] },
+        { heading: 'As the Simple Functions take it', list: [
+          'No methane and no sulfide; calcite and siderite never form; the free HCO3- the table gives held, not the total. Mg and K go in as themselves where the table has them; the Simple Functions add Mg to Ca.',
+          'Each solid offered as 0.01 mol to a kilogram of water, the Simple Functions\' line between a solubility limit and none: a solid that dissolves completely gives its element 0.01 mol/kgw for each atom of it in its formula, and so no limit.',
+        ] },
+        { heading: 'Where PHREEQC differs', list: [
+          'Its activity model and its own species of the major ions, and every mass balance: a dissolving solid changes the water it dissolves in. On the reference waters the two agree within 0.3 log units in 156 of 159 results, apart from the three most saline, for which neither activity model is made.',
+          'The pH is held with hydrochloric acid, added or taken out. A run whose pH could not be held gives no totals, so that it is never the lowest; PHREEQC refuses some solids that dissolve away, as elemental selenium, and in Version B the cement pore water, at pH 12.5 with no acid in it to take out.',
+        ] },
+      ],
+      more: more('The Simple Functions on PHREEQC', 'help-phreeqc-sf'),
     }),
 
     'pane:jacobian': {
@@ -14994,6 +15024,11 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
       return;
     }
     const { settings, text } = read;
+    // An input saved with the Simple Functions' database: made again, the page having all it takes.
+    if (settings.Database === SF_DB_NAME && pq.db !== SF_DB_NAME && !pq.busy) {
+      pqBusy(true, "Making the Simple Functions' database for PHREEQC…");
+      try { await pqSfDatabase(); } catch (e) { /* said below, the database not being the one open */ } finally { pqBusy(false); }
+    }
     pq.batch.text = text;
     pq.batchStarter = null;
     for (const [key, field] of BATCH_KEYS) if (field) pq.batch[field] = settings[key] || '';
@@ -15021,6 +15056,133 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     const head = [BATCH_HEAD, ...BATCH_KEYS.filter(([k]) => values[k]).map(([k]) => `# ${said(k)}: ${values[k]}`)];
     const stem = t ? t.name.replace(/\.[^.]+$/, '') : 'batch';
     saidSaved(await saveBlob(new Blob([`${head.join('\n')}\n\n${text}\n`], { type: 'text/plain' }), `${stem}_batch_input.txt`));
+  }
+
+  /*
+    THE SIMPLE FUNCTIONS ON PHREEQC: the batch set up to run SKB's Simple
+    Functions -- the solubility limits of 20 elements that SimpleFunctions.html
+    calculates -- through PHREEQC, from that page's own data (sf-data.js,
+    sf-model.js) by rtm-sf-phreeqc.js, all read the first time: the database,
+    phreeqc.dat with the Simple Functions' species and solids put in, opened
+    as one of the visit's and chosen, and made again on the next visit where
+    it was the one chosen; the input for Version A or B; each element's
+    solids; and, drawn, the constants to draw. The table open is used where
+    it has the columns the version needs, with none open the Simple
+    Functions' reference waters; where some rows lack a value the version
+    needs, Rows asks for the others.
+  */
+  const SF_DB_NAME = 'phreeqc.dat with Simple Functions (SR-Site)';
+  const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20260925'],
+    ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114a']];
+  const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
+  /** What each column the Simple Functions read holds, in words. */
+  const SF_COLUMN = { pH: 'pH', Ca: 'calcium', Na: 'sodium', Cl: 'chloride', SO4: 'sulphate', Si: 'silicon', HCO3: 'free HCO3-',
+    Eh: 'Eh (mV)', Fe: 'iron' };
+
+  /** The Simple Functions' data, the converter and phreeqc.dat's text, loaded the first time; the definitions made once. */
+  async function pqSfReady() {
+    if (!self.PHREEQC_DAT) await loadScript(PHREEQC_DAT_SRC);
+    for (const [name, src] of SF_SCRIPTS) if (!self[name]) await loadScript(src);
+    if (!pq.sfBuilt) pq.sfBuilt = self.RtmSfPhreeqc.build(self.SFData.SRSITE, self.SFModel, self.PHREEQC_DAT, RtmModel.ATOMIC_WEIGHTS);
+    return pq.sfBuilt;
+  }
+
+  /** The database: made and read into PHREEQC once a visit, one of the visit's databases, and chosen. */
+  async function pqSfDatabase() {
+    const built = await pqSfReady();
+    if (!pq.opened.has(SF_DB_NAME)) {
+      const text = self.RtmSfPhreeqc.database(self.PHREEQC_DAT, built);
+      await pqRequest({ type: 'load', database: { name: SF_DB_NAME, text } });
+      pq.opened.set(SF_DB_NAME, text);
+    }
+    pq.db = SF_DB_NAME;
+    pq.missingDb = null;
+    pqRenderDatabases();
+    pqSave();
+    return built;
+  }
+
+  /** Rows counted from 1 as Rows writes them: 1-8, 12. */
+  function batchRowsText(rows) {
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      let j = i;
+      while (j + 1 < rows.length && rows[j + 1] === rows[j] + 1) j++;
+      out.push(j > i ? `${rows[i] + 1}-${rows[j] + 1}` : `${rows[i] + 1}`);
+      i = j;
+    }
+    return out.join(', ');
+  }
+
+  /** The Simple Functions' reference waters as the batch's table. */
+  async function pqBatchSfWaters() {
+    if (pq.busy) return;
+    try {
+      await pqSfReady();
+    } catch (e) {
+      setStatus(`The Simple Functions' waters could not be read: ${e.message}`, 'error');
+      return;
+    }
+    pq.batchTable = batchTableOf(self.RtmSfPhreeqc.referenceRows(self.SFData.TR1061_WATERS), SF_TABLE);
+    pq.batchStarter = null;
+    pq.batch.rows = '';
+    pqSave();
+    pqBatchRender();
+    infoRefresh();
+    setStatus(`${SF_TABLE}: ${pq.batchTable.rows.length} waters, table A-1, for this visit. Version A runs those with an Eh.`, 'ok');
+  }
+
+  /**
+    The batch set up as the Simple Functions, Version A or B, the constants as they are or drawn: the database chosen,
+    the input, the solids and what to draw; the table open, or the reference waters where none is.
+  */
+  async function pqBatchSf(version, drawn) {
+    if (pq.busy) return;
+    pqBusy(true, "Making the Simple Functions' database for PHREEQC…");
+    let built;
+    try {
+      built = await pqSfDatabase();
+    } catch (e) {
+      setStatus(`The Simple Functions could not be set up: ${e.message}`, 'error');
+      return;
+    } finally {
+      pqBusy(false);
+    }
+    const P = self.RtmSfPhreeqc;
+    const fresh = !pq.batchTable;
+    if (fresh) pq.batchTable = batchTableOf(P.referenceRows(self.SFData.TR1061_WATERS), SF_TABLE);
+    const t = pq.batchTable;
+    const { cols, missingA, missingB } = P.columnsOf(self.SFModel, t.columns);
+    const missing = version === 'A' ? missingA : missingB;
+    if (missing.length) {
+      pqBatchRender();
+      setStatus(`${batchTableName(t)} has no column for ${batchAnd(missing.map((k) => SF_COLUMN[k] || k))}, which Version ${version} `
+        + 'needs: name the columns as the Simple Functions read them, pH, Eh (mV), [HCO3-] (m), [Ca]tot (m) and the like.', 'error');
+      return;
+    }
+    pq.batch.text = P.input(built, { version, drawn, cols });
+    pq.batchStarter = null;
+    pq.batch.solids = P.solidsSpec(built);
+    pq.batch.uncertain = drawn ? P.uncertainSpec(built) : '';
+    // The rows with every value the version needs; where that is not all of them, Rows asks for those.
+    const need = ['pH', 'Ca', 'Na', 'Cl', 'SO4', 'Si', 'HCO3', ...(version === 'A' ? ['Eh', 'Fe'] : [])].map((k) => t.columns.indexOf(cols[k]));
+    const whole = t.rows.map((r, i) => (need.every((c) => r[c] !== '' && Number.isFinite(Number(r[c]))) ? i : -1)).filter((i) => i >= 0);
+    let rowsSaid = '';
+    if (whole.length < t.rows.length) {
+      pq.batch.rows = batchRowsText(whole);
+      rowsSaid = ` Rows: the ${whole.length} of ${t.rows.length} with ${version === 'A' ? 'an Eh, iron and ' : ''}every value the version needs.`;
+    } else if (t.name === SF_TABLE || typeof batchRowsAsked(pq.batch.rows, t.rows.length) === 'string') pq.batch.rows = '';
+    pqSave();
+    pqBatchRender();
+    infoRefresh();
+    const asked = batchRowsAsked(pq.batch.rows, t.rows.length);
+    const nSolids = built.elements.reduce((a, e) => a + e.solids.length, 0);
+    const draws = drawn ? batchWhole(pq.batch.draws, 1, 10) || 10 : 1;
+    const runs = Array.isArray(asked) ? asked.length * draws * nSolids : 0;
+    setStatus(`The batch is set up as the Simple Functions' Version ${version}: the database ${SF_DB_NAME}; `
+      + `${nSolids} solids for the ${built.elements.length} elements, each element's lowest kept; `
+      + `${drawn ? `the ${P.uncertainSpec(built).split(';').length} constants drawn, ${draws} draws a water` : 'the constants as they are'}; `
+      + `${batchTableName(t)}${fresh ? ', there being no table open' : ''}, ${runs.toLocaleString()} runs.${rowsSaid}`, 'ok');
   }
 
   async function pqWaterChosen(ev) {
@@ -15468,6 +15630,8 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
       pqSave();
       pqBatchDraw();
     },
+    'rtm:pqBatchSf': (ev, el) => { pqBatchSf(el.dataset.version, el.dataset.drawn === 'yes'); },
+    'rtm:pqBatchSfWaters': () => { pqBatchSfWaters(); },
     'rtm:pqBatchOpenInput': () => $('rtmPqBatchInputFile').click(),
     'rtm:pqBatchInputChosen': (ev) => { pqBatchInputChosen(ev); },
     'rtm:pqBatchSaveInput': () => { pqBatchSaveInput(); },
@@ -15576,6 +15740,11 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
   setupMenus();
   pqLoad();
   pqWriteControls();
+  // The Simple Functions' database, chosen last time, is made again: the page has all it takes.
+  if (pq.missingDb === SF_DB_NAME) {
+    pq.missingDb = null;
+    pqSfDatabase().catch((e) => setStatus(`${SF_DB_NAME} could not be made again, so phreeqc.dat is in use: ${e.message}`, 'warn'));
+  }
   if (pq.missingDb) {
     pqReport(`<p class="warn">${esc(pq.missingDb)} was the database last time. A database you open is not kept `
       + 'between visits, so phreeqc.dat is in use until it is opened again.</p>');

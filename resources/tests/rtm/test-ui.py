@@ -53,8 +53,9 @@ HEADING_I_OFF = (
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
 # of the Solver section, eleven tab toolbars, the PHREEQC panel's heading and
-# four settings, the PHREEQC tab's boxes, and the Batch tab's.
-STATIC_SLOTS = 41
+# four settings, the PHREEQC tab's boxes, and the Batch tab's box and its
+# Simple Functions.
+STATIC_SLOTS = 42
 
 PAINTED = """(() => {
   const c = document.getElementById('rtmJacCanvas');
@@ -632,10 +633,12 @@ async def main():
               const saves = '[data-on-click="rtm:export"], [data-on-click="rtm:downloadCsv"], [data-on-click="rtm:pqCsv"],'
                 + ' [data-on-click="rtm:pqInvCsv"], [data-on-click="rtm:pqBatchSave"], [data-on-click="rtm:toHdf5"],'
                 + ' [data-on-click="rtm:downloadHdf5"]';
-              const menus = [...pane.querySelectorAll('.rtm-menu-btn')];
+              // Export menus; a menu inside a setup box sets the work up, and is counted apart.
+              const menus = [...pane.querySelectorAll('.rtm-menu-btn')].filter((b) => !b.closest('.rtm-setup'));
               return {
                 hiddenDrawn: [...document.querySelectorAll('.rtm [hidden]')].filter(drawn).map((e) => e.id || e.className || e.tagName),
                 menus: menus.length,
+                setupMenus: pane.querySelectorAll('.rtm-setup .rtm-menu-btn').length,
                 loose: [...pane.querySelectorAll(saves)].filter((b) => !b.closest('.rtm-menu')).length,
                 atEnd: menus.filter(drawn).every((b) => b.closest('.rtm-toolbar').getBoundingClientRect().right
                   - b.closest('.rtm-end').getBoundingClientRect().right < 1),
@@ -659,6 +662,8 @@ async def main():
             check('a tab that works something out sets it up in a box, the button that does it at the box\'s right',
                   {t: v['go'] for t, v in layout.items() if v['go']},
                   {'diagram': [True], 'phreeqc': [True, True], 'batch': [True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
+            check('  a menu in a box sets the work up: the Batch tab\'s Simple Functions, and no other',
+                  {t: v['setupMenus'] for t, v in layout.items() if v['setupMenus']}, {'batch': 1})
             # Export, pressed with the mouse: under its button, right edges
             # together, its first format taking the focus; a click elsewhere
             # shuts it -- on the chart too, where Plotly's cover takes the
