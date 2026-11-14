@@ -9900,7 +9900,7 @@
     }
     const plot = $({ time: 'rtmChartTime', profile: 'rtmChartProfile', gradient: 'rtmChartGradient', composition: 'rtmChartComp',
       diagram: 'rtmChartDg', sweep: 'rtmChartSw', fit: 'rtmChartFit', uncertainty: 'rtmChartUn', phreeqc: 'rtmChartPq',
-      inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch', batchx: 'rtmChartPqBatchX' }[pane]);
+      inverse: 'rtmChartPqInv', batch: 'rtmChartPqBatch', batchx: 'rtmChartPqBatchX', batchmap: 'rtmChartPqBatchMap' }[pane]);
     if (as === 'txt') {
       if (!compTextNow) { setStatus('List a water first: Show the water, as PHREEQC lists it.', 'error'); return; }
       saidSaved(await saveBlob(new Blob([compTextNow], { type: 'text/plain' }), `${compTableNow.name}.txt`));
@@ -9946,11 +9946,11 @@
   */
   const CHART_NOTES = { time: 'rtmTimeNote', profile: 'rtmProfileNote', gradient: 'rtmGradNote', composition: 'rtmCompNote',
     diagram: 'rtmDgNote', sweep: 'rtmSwNote', fit: 'rtmFitNote', uncertainty: 'rtmUnNote', phreeqc: 'rtmPqSummary',
-    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote', batchx: 'rtmPqBatchNote' };
+    inverse: 'rtmPqInvNote', batch: 'rtmPqBatchNote', batchx: 'rtmPqBatchNote', batchmap: 'rtmPqBatchNote' };
   const CHART_NAMES = { time: 'against time', profile: 'against distance', gradient: 'gradient', composition: 'composition',
     diagram: 'diagram', sweep: 'sweeps', fit: 'fit', uncertainty: 'uncertainty', phreeqc: 'through PHREEQC',
     inverse: 'inverse models through PHREEQC', batch: 'a batch over a table of waters, its spread',
-    batchx: 'a batch over a table of waters, against a column' };
+    batchx: 'a batch over a table of waters, against a column', batchmap: 'a batch over a table of waters, its map' };
   // plotly.js as this page loads it, once read: { src, integrity, text }.
   let plotlyRead = null;
 
@@ -9999,7 +9999,7 @@
     const name = `${fileStem()}_${pane}`;
     const title = `${fileStem()}: ${CHART_NAMES[pane] || pane}`;
     // A batch's chart is of PHREEQC's runs over a table, not of the model's run: under it, the input each row was run with.
-    const batch = (pane === 'batch' || pane === 'batchx') && pq.batchResult;
+    const batch = (pane === 'batch' || pane === 'batchx' || pane === 'batchmap') && pq.batchResult;
     const text = batch ? pq.batchResult.text : (state.ran && state.ran.text) || state.text;
     const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
     const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
@@ -10276,7 +10276,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
-    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); pqBatchAgainst(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); pqBatchAgainst(); pqBatchMap(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
@@ -10339,7 +10339,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
   function resize() {
     if (typeof Plotly === 'undefined') return;
     ['rtmChartTime', 'rtmChartProfile', 'rtmChartGradient', 'rtmChartComp', 'rtmChartDg', 'rtmChartSw', 'rtmChartFit', 'rtmChartUn',
-      'rtmChartPq', 'rtmChartPqBatch', 'rtmChartPqBatchX']
+      'rtmChartPq', 'rtmChartPqBatch', 'rtmChartPqBatchX', 'rtmChartPqBatchMap']
       .forEach((id) => {
       const el = $(id);
       if (el && !el.hidden) Plotly.Plots.resize(el);
@@ -11501,6 +11501,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
         ] },
+        { heading: 'A map', list: [
+          'Where the table has columns of places, each water at its place -- **Map over** two of the table\'s columns, those named X and Y unless others are chosen, — for none -- coloured by its result on one hue, light to dark (dark to light on the dark page), the key beside it, logarithmic where the values span a factor of ten or more.',
+          'With draws, each water\'s colour is the median of its draws, and a click looks at the draw nearest it. Two columns named as places keep the same scale both ways. Saved as SVG, PNG or a page: **SVG, map**, **PNG, map**, **HTML, map**.',
+        ] },
         { heading: 'A batch kept beside', list: [
           '**Keep this batch**: kept for the visit, and the next batch you run drawn beside it -- the kept spread\'s curve grey behind the new one, its numbers in a column of their own, its points faint behind in the chart against a column -- where it has a result in the same column.',
           'The line under the bar says what is kept; **Forget it** lets it go. The workbook has the kept batch\'s table, input and spread too.',
@@ -12612,7 +12616,7 @@ END
     invResult: null,
     // A batch over a table of waters: the input, the rows asked for, the solids tried in turn, the column whose lowest
     // is kept, and the values drawn, how many draws and from what seed (kept); the table and what it found (the visit's).
-    batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '', against: '' },
+    batch: { text: '', rows: '', solids: '', lowest: '', uncertain: '', draws: '', seed: '', against: '', mapX: '', mapY: '' },
     batchTable: null,
     batchResult: null,
     batchRunning: false,
@@ -12649,7 +12653,7 @@ END
       }
       for (const k of ['fill', 'logT', 'open', 'minerals', 'redox']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
-        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
+        for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY']) if (typeof s.batch[k] === 'string') pq.batch[k] = s.batch[k];
       }
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
@@ -14229,6 +14233,7 @@ END
     box.hidden = !v;
     pqBatchSpread();
     pqBatchAgainst();
+    pqBatchMap();
     pqBatchLookDraw(false);
     pqBatchKeptDraw();
     if (!v) { box.innerHTML = ''; return; }
@@ -14540,6 +14545,102 @@ END
     layout.yaxis.type = logOf(all.map((p) => p.y)) ? 'log' : 'linear';
     layout.yaxis.title = { text: `${col}${batchLowestOf(v)}`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    batchClickable(plot);
+  }
+
+  /*
+    THE RESULT OVER THE WATERS' PLACES: each water at its place, two columns of
+    the batch's table as the axes -- those named X and Y unless others are
+    chosen, '-' for none -- and coloured by its result, light to dark on one
+    hue (dark to light on the dark page, so that a high value always stands
+    out), on a logarithmic key where the values are all above nought and span
+    a factor of ten or more. With draws, a water's colour is the median of its
+    draws, and a click on it looks at the draw nearest that median. Two
+    columns named as places keep the map's scale the same both ways.
+  */
+  function batchMapColumns(v) {
+    const t = v && v.source;
+    if (!t) return [];
+    const num = (x) => (x === '' || x === null || x === undefined ? NaN : Number(x));
+    return t.columns.map((c, k) => ({ c, k })).filter(({ k }) => t.rows.some((r) => Number.isFinite(num(r[k]))));
+  }
+
+  function pqBatchMap() {
+    const v = pq.batchResult;
+    const box = $('rtmPqBatchMap');
+    const plot = $('rtmChartPqBatchMap');
+    const cols = batchMapColumns(v);
+    box.hidden = cols.length < 2;
+    const off = () => { plot.hidden = true; if (typeof Plotly !== 'undefined') Plotly.purge(plot); };
+    if (box.hidden) { off(); return; }
+    const place = /^[xy](\s|\(|_|$)/i;
+    const pick = (saved, letter) => (saved === '-' ? '' : cols.some((o) => o.c === saved) ? saved
+      : (cols.find((o) => o.c.toLowerCase()[0] === letter && place.test(o.c)) || {}).c || '');
+    const cx = pick(pq.batch.mapX, 'x');
+    const cy = pick(pq.batch.mapY, 'y');
+    const fill = (id, chosen) => {
+      $(id).innerHTML = `<option value="-"${chosen ? '' : ' selected'}>—</option>`
+        + cols.map((o) => `<option value="${esc(o.c)}"${o.c === chosen ? ' selected' : ''}>${esc(o.c)}</option>`).join('');
+    };
+    fill('rtmPqBatchMapX', cx);
+    fill('rtmPqBatchMapY', cy);
+    if (!cx || !cy || cx === cy) { off(); return; }
+    const col = batchLowestColumn(v);
+    const k = v.head.indexOf(col);
+    const kx = v.source.columns.indexOf(cx);
+    const ky = v.source.columns.indexOf(cy);
+    // Each water's value: its one run's, or with draws the median of its draws and the draw nearest it.
+    const byRow = new Map();
+    for (const u of batchUnits(v, col)) {
+      const y = u.best && k >= 0 ? u.best.values[k] : undefined;
+      if (typeof y !== 'number' || !Number.isFinite(y)) continue;
+      if (!byRow.has(u.row)) byRow.set(u.row, []);
+      byRow.get(u.row).push({ y, draw: u.draw });
+    }
+    const points = [];
+    for (const [row, list] of byRow) {
+      const x = Number(v.source.rows[row][kx]);
+      const yy = Number(v.source.rows[row][ky]);
+      if (!Number.isFinite(x) || !Number.isFinite(yy) || v.source.rows[row][kx] === '' || v.source.rows[row][ky] === '') continue;
+      const s = list.map((d) => d.y).sort((a, b) => a - b);
+      const h = (s.length - 1) / 2;
+      const value = s.length % 2 ? s[h] : (s[Math.floor(h)] + s[Math.ceil(h)]) / 2;
+      const near = list.reduce((a, d) => (Math.abs(d.y - value) < Math.abs(a.y - value) ? d : a), list[0]);
+      points.push({ x, y: yy, value, row, draw: near.draw });
+    }
+    plot.hidden = !points.length;
+    if (!points.length) { off(); return; }
+    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    const lo = Math.min(...points.map((p) => p.value));
+    const hi = Math.max(...points.map((p) => p.value));
+    const log = lo > 0 && hi / lo >= 10;
+    const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+    // One hue, light to dark; on the dark page dark to light: the high values the ones that stand out.
+    const ramp = ['#c6dbef', '#6baed6', '#2171b5', '#08306b'];
+    const scale = (dark ? [...ramp].reverse() : ramp).map((c, i, a) => [i / (a.length - 1), c]);
+    // The key's decades: a value a hair off one (1.0000000000003e-3) still ticked there, the key's range reaching it.
+    const ticks = [];
+    if (log) for (let e = Math.ceil(Math.log10(lo) - 1e-6); e <= Math.floor(Math.log10(hi) + 1e-6); e++) ticks.push(e);
+    const range = log && ticks.length ? { cmin: Math.min(Math.log10(lo), ticks[0]), cmax: Math.max(Math.log10(hi), ticks[ticks.length - 1]) } : {};
+    const many = points.length > 2000;
+    const what = `${col}${batchLowestOf(v)}${v.draws ? ', the median of its draws' : ''}`;
+    const trace = { type: many ? 'scattergl' : 'scatter', mode: 'markers', x: points.map((p) => p.x), y: points.map((p) => p.y),
+      customdata: points.map((p) => [`row ${p.row + 1}${p.draw !== null ? `, draw ${p.draw + 1} nearest its median` : ''}`, p.row, p.draw, p.value]),
+      marker: { size: many ? 5 : 8, color: points.map((p) => (log ? Math.log10(p.value) : p.value)), colorscale: scale, ...range,
+        colorbar: { title: { text: what, side: 'right', font: { size: 11 } }, thickness: 12, outlinewidth: 0,
+          ...(log ? { tickvals: ticks, ticktext: ticks.map((e) => `10<sup>${e}</sup>`) } : { exponentformat: 'power' }) } },
+      hovertemplate: `${esc(cx)} %{x:.4g}, ${esc(cy)} %{y:.4g}<br>${esc(col)} %{customdata[3]:.4g}<br>%{customdata[0]}<extra></extra>` };
+    const layout = baseLayout();
+    layout.hovermode = 'closest';
+    layout.margin = { l: 70, r: 20, t: 14, b: 48 };
+    layout.xaxis.title = { text: cx, font: { size: 11 } };
+    layout.yaxis.title = { text: cy, font: { size: 11 } };
+    layout.xaxis.exponentformat = 'none';
+    layout.yaxis.exponentformat = 'none';
+    // Two columns named as places: the same scale both ways.
+    if (place.test(cx) && place.test(cy)) { layout.yaxis.scaleanchor = 'x'; layout.yaxis.scaleratio = 1; }
+    Plotly.react(plot, [trace], layout, PLOT_CONFIG);
+    Plotly.Plots.resize(plot);
     batchClickable(plot);
   }
 
@@ -15227,6 +15328,13 @@ END
     'rtm:pqBatchLook': (ev, el) => { pqBatchLook(Number(el.dataset.row), el.dataset.draw === '' ? null : Number(el.dataset.draw)); },
     'rtm:pqBatchLookSave': () => { pqBatchLookSave(); },
     'rtm:pqBatchLookClose': () => { pq.batchLook = null; pqBatchLookDraw(false); },
+    // The two columns the map is drawn over; '-' for none.
+    'rtm:pqBatchMapAxes': () => {
+      pq.batch.mapX = $('rtmPqBatchMapX').value;
+      pq.batch.mapY = $('rtmPqBatchMapY').value;
+      pqSave();
+      pqBatchMap();
+    },
     // What the second chart draws the result against.
     'rtm:pqBatchX': (ev, el) => {
       pq.batch.against = el.value;

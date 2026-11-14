@@ -1069,6 +1069,10 @@
 .rtm-pq-batch-against { margin: 0 0 12px; }
 .rtm-pq-batch-against[hidden] { display: none; }
 .rtm-pq-batch-against .plot { height: 320px; }
+/* A batch's result over the waters' places. */
+.rtm-pq-batch-map { margin: 0 0 12px; }
+.rtm-pq-batch-map[hidden] { display: none; }
+.rtm-pq-batch-map .plot { height: 440px; }
 /* One water of a batch in full: PHREEQC's output, in a box of its own that scrolls; the rows that open it. */
 .rtm-pq-batch-look { margin: 0 0 12px; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 10px 8px; }
 .rtm-pq-batch-look[hidden] { display: none; }

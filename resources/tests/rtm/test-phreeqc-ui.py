@@ -1685,6 +1685,47 @@ async def main():
                   [forgot[2], await page.ev("document.getElementById('rtmChartPqBatch').data.length"),
                    await page.ev("document.querySelector('#rtmPqBatchStats tbody tr').children.length")],
                   [True, 3, 2])
+            # ---- the map ----
+            # Nine waters on a three by three grid of X(km) and Y(km), their sodium doubling from 1 to 256 mmol/kgw:
+            # mapped over X(km) and Y(km) unaided, the same scale both ways, each water at its place with its sodium,
+            # the key logarithmic, ticked at 1e-3, 1e-2 and 1e-1. No column for Y: no map. With draws, one point a
+            # water, its colour the median of its draws, a click looking at the draw nearest it.
+            GRID = 'X(km),Y(km),Na\n' + ''.join(f'{i % 3},{i // 3},{2 ** i}\n' for i in range(9))
+            await page.ev(FEED % (json.dumps('grid.csv'), json.dumps(GRID), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('grid.csv: 9 rows and 3 columns')", True, tries=40)
+            await batch(NA1)
+            MAP = """(() => { const p = document.getElementById('rtmChartPqBatchMap');
+              return [document.getElementById('rtmPqBatchMap').hidden, p.hidden, document.getElementById('rtmPqBatchMapX').value,
+                document.getElementById('rtmPqBatchMapY').value, p.data ? [p.data[0].x, p.data[0].y,
+                p.data[0].customdata.map((c) => Number(c[3].toPrecision(4))), p.data[0].marker.colorbar.tickvals,
+                p.data[0].marker.colorbar.title.text, p.layout.yaxis.scaleanchor] : null]; })()"""
+            got = await page.ev(MAP)
+            check('the map: each water at its place over X(km) and Y(km), coloured by its sodium on a logarithmic key',
+                  got, [False, False, 'X(km)', 'Y(km)',
+                        [[0, 1, 2, 0, 1, 2, 0, 1, 2], [0, 0, 0, 1, 1, 1, 2, 2, 2],
+                         [0.001, 0.002, 0.004, 0.008, 0.016, 0.032, 0.064, 0.128, 0.256], [-3, -2, -1], 'Na(mol/kgw)', 'x']])
+            await page.ev("""(() => { const s = document.getElementById('rtmPqBatchMapY'); s.value = '-';
+              s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await asyncio.sleep(0.2)
+            none = await page.ev(MAP)
+            await page.ev("""(() => { const s = document.getElementById('rtmPqBatchMapY'); s.value = 'Y(km)';
+              s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await field('rtmPqBatchUncertain', 'dNa uniform 1 2')
+            await field('rtmPqBatchDraws', '5')
+            await field('rtmPqBatchSeed', '3')
+            await batch(NA_IN.replace(' pH {pH}\n', ' pH 7\n'))
+            drawn = await page.ev(MAP)
+            await page.ev("document.getElementById('rtmChartPqBatchMap').emit('plotly_click', { points: [{ customdata: document.getElementById('rtmChartPqBatchMap').data[0].customdata[4] }] })")
+            await settle(page, "document.getElementById('rtmPqBatchLookTitle').textContent.includes('row 5, draw')", True, tries=60)
+            looked = await page.ev("document.getElementById('rtmPqBatchLookTitle').textContent")
+            check('  no column for Y, no map; with draws, a point a water, its colour the median of its draws, a click its nearest draw',
+                  [none[1], none[3], drawn[1], len(drawn[4][0]) if drawn[4] else drawn[4], drawn[4][4] if drawn[4] else drawn[4],
+                   all(1e-3 <= x <= 2e-3 for x in drawn[4][2]) if drawn[4] else drawn[4], looked.startswith("PHREEQC's output for row 5, draw ")],
+                  [True, '-', False, 9, 'Na(mol/kgw), the median of its draws', True, True])
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchLookClose"]'))
+            await field('rtmPqBatchUncertain', '')
+            await field('rtmPqBatchDraws', '')
+            await field('rtmPqBatchSeed', '')
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})
