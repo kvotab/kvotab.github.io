@@ -1604,6 +1604,48 @@ async def main():
             await field('rtmPqBatchUncertain', '')
             await field('rtmPqBatchDraws', '')
             await field('rtmPqBatchSeed', '')
+            # ---- one water in full ----
+            # The draws just run: the first row of the table clicked, that water's first draw run again with what PHREEQC
+            # prints of it, its species and the sodium it drew; a point of the chart against a column clicked, the second
+            # water's fifth draw. Saved as text; closed, the hint back. With solids, the solid that gave the lowest is the
+            # one run again; a water every solid of which was refused shows what PHREEQC said and the input as filled.
+            LOOK = """[document.getElementById('rtmPqBatchLook').hidden, document.getElementById('rtmPqBatchLookTitle').textContent,
+              document.getElementById('rtmPqBatchLookText').textContent, document.getElementById('rtmPqBatchLookHint').hidden]"""
+            hint = await page.ev("document.getElementById('rtmPqBatchLookHint').hidden")
+            await page.ev("document.querySelector('#rtmPqBatchOut table:last-child tbody tr').querySelector('td').click()")
+            await settle(page, "document.getElementById('rtmPqBatchLookTitle').textContent.includes('row 1, draw 1')", True, tries=60)
+            first = await page.ev(LOOK)
+            drew = await page.ev("document.querySelector('#rtmPqBatchOut table:last-child tbody tr').cells[2].dataset.v")
+            check('one water in full: a row clicked, its draw run again, with what PHREEQC prints of it',
+                  [hint, first[0], first[1], 'Distribution of species' in first[2], f' Na {drew}' in first[2], first[3]],
+                  [False, False, "PHREEQC's output for row 1, draw 1", True, True, True])
+            await page.ev("document.getElementById('rtmChartPqBatchX').emit('plotly_click', { points: [{ customdata: ['row 2, draw 5', 1, 4] }] })")
+            await settle(page, "document.getElementById('rtmPqBatchLookTitle').textContent.includes('row 2, draw 5')", True, tries=60)
+            saved = await saved_blob('[data-on-click="rtm:pqBatchLookSave"]', '(b) => b.text()')
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchLookClose"]'))
+            closed = await page.ev(LOOK)
+            check('  a point of a chart clicked, its water instead; saved as text; closed, the hint back',
+                  [(await page.ev("document.getElementById('rtmPqBatchLookTitle').textContent")),
+                   'Distribution of species' in saved if isinstance(saved, str) else saved, closed[0], closed[3]],
+                  ["PHREEQC's output for row 2, draw 5", True, True, False])
+            await page.ev(FEED % (json.dumps('salts.csv'), json.dumps('pH;C;S\n8;10;0,1\n7;0,01;50\nx;1;1\n'), 'null'))
+            await settle(page, f"{BATCH_STATUS}.startsWith('salts.csv: 3 rows and 3 columns')", True, tries=40)
+            await page.ev(SET_SOLIDS % json.dumps('Calcite, Gypsum'))
+            await asyncio.sleep(0.1)
+            await batch(SOLIDS_IN)
+            await page.ev("document.querySelector('#rtmPqBatchOut table:last-child tbody tr').querySelector('td').click()")
+            await settle(page, "document.getElementById('rtmPqBatchLookTitle').textContent.includes('row 1, Calcite')", True, tries=60)
+            calcite = await page.ev(LOOK)
+            await page.ev("document.querySelectorAll('#rtmPqBatchOut table:last-child tbody tr')[2].querySelector('td').click()")
+            await settle(page, "document.getElementById('rtmPqBatchLookTitle').textContent.includes('row 3')", True, tries=60)
+            refused = await page.ev(LOOK)
+            check('  with solids, the solid that gave the lowest run again; a water every run of which was refused, what PHREEQC said',
+                  [calcite[1], 'Phase assemblage' in calcite[2] and 'Calcite' in calcite[2],
+                   refused[1], refused[2].startswith('PHREEQC refused this run, and said:'),
+                   'Concentration data error for ph' in refused[2], ' pH x' in refused[2]],
+                  ["PHREEQC's output for row 1, Calcite", True, "PHREEQC's output for row 3, Calcite", True, True, True])
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchLookClose"]'))
+            await page.ev(SET_SOLIDS % json.dumps(''))
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

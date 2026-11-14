@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261113b">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114a">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -1146,6 +1146,18 @@
           <div class="rtm-pq-batch-against" id="rtmPqBatchAgainst" hidden>
             <div class="plot" id="rtmChartPqBatchX"></div>
             <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchAgainstNote" hidden></p>
+          </div>
+          <!-- One water of the batch run again, with what PHREEQC prints of it (rtm-ui.js pqBatchLook). -->
+          <p class="rtm-muted rtm-pq-batch-table" id="rtmPqBatchLookHint" hidden>Click a row below, or a point of a chart, for PHREEQC's whole output for that water.</p>
+          <div class="rtm-pq-batch-look" id="rtmPqBatchLook" hidden>
+            <div class="rtm-toolbar">
+              <span class="rtm-dg-axis" id="rtmPqBatchLookTitle"></span>
+              <span class="rtm-end">
+                <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchLookSave">Save as text…</button>
+                <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchLookClose">Close</button>
+              </span>
+            </div>
+            <pre class="rtm-pq-batch-printed" id="rtmPqBatchLookText"></pre>
           </div>
           <div class="rtm-fit-result rtm-pq-batch-out" id="rtmPqBatchOut" hidden></div>
         </section>
@@ -4229,6 +4241,14 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             chosen, it is a value drawn, else the table's pH, else its first column.
             <em>Export</em> saves it as SVG, PNG or a page of its own, each marked
             <em>against</em>.</p>
+          <p>A row of the table, or a point of either chart, clicked, runs that one water again —
+            the input as the batch filled it, the same draw, and with solids the solid that gave the
+            lowest — and shows what PHREEQC prints of it: the species of the water with their molalities
+            and activities, its saturation indices, and what each phase did. That shows, say, which
+            species carry an element that is high in one water, and lets a single result be checked
+            against PHREEQC run by hand. Where every run of the water was refused, it shows the first,
+            what PHREEQC said and the input as filled. <em>Save as text…</em> keeps the output. It is run
+            with the database the batch ran with, and asks for that one again if another is chosen.</p>
           <p>Every row runs on a clean slate — <code>DELETE -all</code> first — so that nothing a row
             before it saved is there for it. A row PHREEQC refuses keeps the first line of what PHREEQC
             said, and the rest go on. The rows go to PHREEQC in parts of up to 200 runs, a draw with all
@@ -4421,6 +4441,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261113g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114a"></script>
 </body>
 </html>

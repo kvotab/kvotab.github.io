@@ -11501,6 +11501,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'The median and the 95th percentile marked; beside the chart, the number of waters, the smallest, the 5th percentile, the median, the 95th percentile and the largest. A percentile lies between the two nearest values, as Excel\'s PERCENTILE.INC and NumPy\'s percentile put it.',
           'A row PHREEQC refused, or whose run gives no number there, is left out, and counted.',
         ] },
+        { heading: 'One water in full', list: [
+          'A row of the table, or a point of either chart, clicked: that water is run again -- the input as the batch filled it, the same draw, with solids the solid that gave the lowest -- and PHREEQC\'s whole output for it shown: its species with their molalities and activities, its saturation indices, what each phase did.',
+          'Where every run of it was refused, the first, and what PHREEQC said with the input as filled. **Save as text…** keeps it; **Close** puts it away. Only with the database the batch ran with.',
+        ] },
         { heading: 'Against a column', list: [
           'Under the spread, the same result against something else, a point for each water or draw: **against** a column of the table with numbers in it, a value drawn, or another of PHREEQC\'s columns, of the run kept.',
           'With solids, a colour for each solid, in the order they are listed, the legend naming them. Each axis is logarithmic where its values are all above nought and span a factor of ten or more.',
@@ -12561,12 +12565,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261111t';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
     'resources/js/rtm-phreeqc.js?v=20261110a',
-    'resources/js/rtm-phreeqc-engine.js?v=20261113a',
+    'resources/js/rtm-phreeqc-engine.js?v=20261114a',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -12610,6 +12614,7 @@ END
     batchRunning: false,
     batchStop: false,
     batchStarter: null,      // the input the page started for a table, while it is untouched
+    batchLook: null,         // one water of the batch run again, what PHREEQC printed of it
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -14179,7 +14184,9 @@ END
       }
       const seconds = (Date.now() - started) / 1000;
       pq.batchResult = { head, runs, names, table: t.name, sheet: t.sheet || null, asked: asked.length,
-        solids: solids.length ? solids : null, groups, uncertain: draws ? uncertain : null, draws, seed, stopped, seconds, version, database, text };
+        solids: solids.length ? solids : null, groups, uncertain: draws ? uncertain : null, draws, seed, stopped, seconds, version, database, text,
+        source: t };
+      pq.batchLook = null;
       const bad = runs.filter((r) => !r.values).length;
       const done = new Set(runs.map((r) => r.row)).size;
       const per = [draws ? `${draws} draws each` : '',
@@ -14217,6 +14224,7 @@ END
     box.hidden = !v;
     pqBatchSpread();
     pqBatchAgainst();
+    pqBatchLookDraw(false);
     if (!v) { box.innerHTML = ''; return; }
     const num = (x) => (x === null || x === undefined ? '' : typeof x === 'number' ? (x === 0 ? '0' : fit4(x)) : String(x));
     const cell = (x) => `<td${typeof x === 'number' ? ` data-v="${x}"` : ''}>${esc(num(x))}</td>`;
@@ -14255,7 +14263,7 @@ END
         + `${shown ? `; the first ${PQ_BATCH_SHOWN} draws shown, Export has every one${v.solids ? ' and every run' : ''}` : ''}.`;
     }
     if (!v.solids) {
-      const body = units.slice(0, PQ_BATCH_SHOWN).map((u) => `<tr><td>${u.row + 1}</td>${drawCells(u)}${u.best ? cells(u.best.values)
+      const body = units.slice(0, PQ_BATCH_SHOWN).map((u) => `<tr${batchPick(u)}><td>${u.row + 1}</td>${drawCells(u)}${u.best ? cells(u.best.values)
         : `<td class="rtm-pq-batch-error" colspan="${Math.max(1, v.head.length)}">${esc(u.refused[0].said)}</td>`}</tr>`).join('');
       box.innerHTML = `<table><thead><tr><th>row</th>${drawHead}${v.head.map((h) => `<th>${esc(h)}</th>`).join('')}</tr></thead><tbody>${body}</tbody></table>`;
       return;
@@ -14280,9 +14288,9 @@ END
     const key = v.head.indexOf(col);
     const body = units.slice(0, PQ_BATCH_SHOWN).map((u) => {
       const refused = anyRefused ? `<td>${esc(u.refused.map((r) => r.solid).join(', '))}</td>` : '';
-      if (u.best) return `<tr><td>${u.row + 1}</td>${drawCells(u)}<td>${esc(u.best.solid)}</td>${cells(u.best.values)}${refused}</tr>`;
+      if (u.best) return `<tr${batchPick(u)}><td>${u.row + 1}</td>${drawCells(u)}<td>${esc(u.best.solid)}</td>${cells(u.best.values)}${refused}</tr>`;
       const why = u.refused.length === u.tried ? `every solid refused: ${u.refused[0].said}` : `no run gave ${col}`;
-      return `<tr><td>${u.row + 1}</td>${drawCells(u)}<td class="rtm-pq-batch-error" colspan="${v.head.length + 1}">${esc(why)}</td>${refused}</tr>`;
+      return `<tr${batchPick(u)}><td>${u.row + 1}</td>${drawCells(u)}<td class="rtm-pq-batch-error" colspan="${v.head.length + 1}">${esc(why)}</td>${refused}</tr>`;
     }).join('');
     box.innerHTML = `${summary}<table><thead><tr><th>row</th>${drawHead}<th>solid</th>`
       + `${v.head.map((h, k) => `<th${k === key ? ' class="rtm-pq-batch-key"' : ''}>${esc(h)}</th>`).join('')}`
@@ -14320,7 +14328,7 @@ END
         const why = mine.length && mine.every((r) => !r.values) ? `every solid refused: ${mine[0].said}` : `no run gave ${g.col}`;
         return `<td class="rtm-pq-batch-error" colspan="2">${esc(why)}</td>`;
       }).join('');
-      return `<tr><td>${u.row + 1}</td>${drawCells(u)}${each}${anyRefused ? `<td>${esc(u.refused.map((r) => r.solid).join(', '))}</td>` : ''}</tr>`;
+      return `<tr${batchPick(u)}><td>${u.row + 1}</td>${drawCells(u)}${each}${anyRefused ? `<td>${esc(u.refused.map((r) => r.solid).join(', '))}</td>` : ''}</tr>`;
     }).join('');
     return `${summary}<table><thead><tr><th>row</th>${drawHead}${head}${anyRefused ? '<th>refused</th>' : ''}</tr></thead><tbody>${body}</tbody></table>`;
   }
@@ -14353,12 +14361,13 @@ END
     // The share at or below: nought up to the smallest, then a step up at each unit.
     const xs = [sp.got[0].x, ...sp.got.map((g) => g.x)];
     const ys = [0, ...sp.got.map((_, i) => ((i + 1) / sp.n) * 100)];
-    const of = [sp.got[0], ...sp.got].map((g) => `row ${g.row + 1}${g.draw !== null ? `, draw ${g.draw + 1}` : ''}${g.solid ? `, ${g.solid}` : ''}`);
+    const of = [sp.got[0], ...sp.got].map((g) => [`row ${g.row + 1}${g.draw !== null ? `, draw ${g.draw + 1}` : ''}${g.solid ? `, ${g.solid}` : ''}`,
+      g.row, g.draw]);
     const line = (x) => ({ type: 'scatter', mode: 'lines', x: [x, x], y: [0, 100], line: { color: muted, width: 1, dash: 'dot' },
       hoverinfo: 'skip', showlegend: false });
     const traces = [
       { type: 'scatter', mode: 'lines', x: xs, y: ys, line: { shape: 'hv', width: 2, color: DG_PALETTE[0] }, customdata: of,
-        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} at or below<br>%{customdata}<extra></extra>`, showlegend: false },
+        hovertemplate: `%{x:.4g}: %{y:.1f} % of the ${sp.over} at or below<br>%{customdata[0]}<extra></extra>`, showlegend: false },
       line(sp.p50), line(sp.p95),
     ];
     // The labels above the plot: each to the side of its line that has room, the median's a row higher where they would meet.
@@ -14391,6 +14400,7 @@ END
     layout.yaxis.range = [0, 100];
     layout.yaxis.title = { text: `${sp.over} at or below (%)`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    batchClickable(plot);
   }
 
   /**
@@ -14460,14 +14470,14 @@ END
     if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
     const logOf = (xs) => { const lo = Math.min(...xs); return lo > 0 && Math.max(...xs) / lo >= 10; };
     const many = points.length > 2000;
-    const named = (p) => `row ${p.u.row + 1}${p.u.draw !== null ? `, draw ${p.u.draw + 1}` : ''}`;
+    const named = (p) => [`row ${p.u.row + 1}${p.u.draw !== null ? `, draw ${p.u.draw + 1}` : ''}`, p.u.row, p.u.draw];
     // A series a solid, in the order the solids are listed, so that a colour is always the same solid.
     const order = v.solids ? (v.groups ? v.groups[Math.max(0, v.groups.findIndex((g) => g.col === col))].solids : v.solids) : [null];
     const traces = order.map((sd, i) => {
       const mine = points.filter((p) => (sd === null ? true : p.u.best.solid === sd));
       return { type: many ? 'scattergl' : 'scatter', mode: 'markers', name: sd || col, x: mine.map((p) => p.x), y: mine.map((p) => p.y),
         customdata: mine.map(named), marker: { size: many ? 4 : 7, opacity: many ? 0.6 : 0.85, color: DG_PALETTE[i % DG_PALETTE.length] },
-        hovertemplate: `${esc(pick.label)} %{x:.4g}<br>${esc(col)} %{y:.4g}<br>%{customdata}${sd ? `, ${esc(sd)}` : ''}<extra></extra>` };
+        hovertemplate: `${esc(pick.label)} %{x:.4g}<br>${esc(col)} %{y:.4g}<br>%{customdata[0]}${sd ? `, ${esc(sd)}` : ''}<extra></extra>` };
     }).filter((tr) => tr.x.length);
     const layout = baseLayout();
     layout.hovermode = 'closest';
@@ -14479,6 +14489,74 @@ END
     layout.yaxis.type = logOf(points.map((p) => p.y)) ? 'log' : 'linear';
     layout.yaxis.title = { text: `${col}${batchLowestOf(v)}`, font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
+    batchClickable(plot);
+  }
+
+  /** A row of the batch's table, to click for its water's whole output. */
+  const batchPick = (u) => ` class="rtm-pq-batch-pick" data-on-click="rtm:pqBatchLook" data-row="${u.row}" data-draw="${u.draw === null ? '' : u.draw}"`;
+  /** A batch chart's points, to click for their water's whole output: each point's row and draw are in its customdata. */
+  function batchClickable(plot) {
+    if (typeof plot.removeAllListeners === 'function') plot.removeAllListeners('plotly_click');
+    plot.on('plotly_click', (ev) => {
+      const at = ev && ev.points && ev.points[0] && ev.points[0].customdata;
+      if (Array.isArray(at) && Number.isInteger(at[1])) pqBatchLook(at[1], at[2] === undefined ? null : at[2]);
+    });
+  }
+
+  /*
+    ONE WATER OF A BATCH IN FULL: a row of the table or a point of a chart
+    clicked, that water is run again -- the input as the batch filled it, the
+    same draw, with solids the solid that gave the lowest, or where every run
+    was refused the first -- with what PHREEQC prints of it: its species, its
+    saturation indices, what each phase did. Only with the database the batch
+    ran with, from the batch's own table, which it keeps.
+  */
+  async function pqBatchLook(row, draw) {
+    const v = pq.batchResult;
+    if (!v) return;
+    if (pq.busy) { setStatus('PHREEQC is busy: look at the water once it is done.', 'warn'); return; }
+    if (v.database !== batchDatabaseName()) {
+      setStatus(`The batch ran with ${v.database}: choose it again to look at one of its waters.`, 'warn');
+      return;
+    }
+    const u = batchUnits(v, batchLowestColumn(v)).find((x) => x.row === row && x.draw === draw);
+    if (!u) return;
+    const run = u.best || u.refused[0] || u.runs[0];
+    const drawnNames = v.draws ? v.uncertain.map((d) => d.name) : [];
+    const columns = [...v.source.columns, ...drawnNames, ...(v.solids ? ['solid'] : [])];
+    const values = [...v.source.rows[row], ...(run.drawn ? run.drawn.map(String) : []), ...(v.solids ? [run.solid] : [])];
+    const what = `row ${row + 1}${draw !== null ? `, draw ${draw + 1}` : ''}${run.solid ? `, ${run.solid}` : ''}`;
+    pqBusy(true, `Running ${what} again, for what PHREEQC prints of it…`);
+    try {
+      const reply = await pqRequest({ type: 'batchOne', database: pqDatabase(), template: v.text, columns, row: values,
+        user: batchOutputOf(v.text) });
+      pq.batchLook = { row, draw, what, refused: !!reply.refused,
+        text: reply.refused ? `PHREEQC refused this run, and said:\n\n${reply.refused}\n\nThe input, as the batch filled it:\n\n${reply.input}\n` : reply.text };
+      setStatus(`PHREEQC's output for ${what}${reply.refused ? ': it refused the run, and said why.' : '.'}`, reply.refused ? 'warn' : 'ok');
+    } catch (e) {
+      setStatus(`The water could not be run again: ${e.message}`, 'error');
+    } finally {
+      pqBusy(false);
+    }
+    pqBatchLookDraw(true);
+  }
+
+  function pqBatchLookDraw(scroll) {
+    const look = pq.batchLook;
+    const box = $('rtmPqBatchLook');
+    box.hidden = !look;
+    $('rtmPqBatchLookHint').hidden = !pq.batchResult || !!look;
+    if (!look) return;
+    $('rtmPqBatchLookTitle').textContent = `PHREEQC's output for ${look.what}`;
+    $('rtmPqBatchLookText').textContent = look.text;
+    if (scroll) box.scrollIntoView({ block: 'nearest' });
+  }
+
+  async function pqBatchLookSave() {
+    const look = pq.batchLook;
+    if (!look) return;
+    const name = `${fileStem()}_batch_row${look.row + 1}${look.draw !== null ? `_draw${look.draw + 1}` : ''}.txt`;
+    saidSaved(await saveBlob(new Blob([look.text], { type: 'text/plain' }), name));
   }
 
   /**
@@ -15040,6 +15118,10 @@ END
       pqBatchRender();
       infoRefresh();
     },
+    // One water of the batch in full, from a row of its table; saved; put away.
+    'rtm:pqBatchLook': (ev, el) => { pqBatchLook(Number(el.dataset.row), el.dataset.draw === '' ? null : Number(el.dataset.draw)); },
+    'rtm:pqBatchLookSave': () => { pqBatchLookSave(); },
+    'rtm:pqBatchLookClose': () => { pq.batchLook = null; pqBatchLookDraw(false); },
     // What the second chart draws the result against.
     'rtm:pqBatchX': (ev, el) => {
       pq.batch.against = el.value;

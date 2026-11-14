@@ -1069,6 +1069,12 @@
 .rtm-pq-batch-against { margin: 0 0 12px; }
 .rtm-pq-batch-against[hidden] { display: none; }
 .rtm-pq-batch-against .plot { height: 320px; }
+/* One water of a batch in full: PHREEQC's output, in a box of its own that scrolls; the rows that open it. */
+.rtm-pq-batch-look { margin: 0 0 12px; border: 1px solid var(--border-color); border-radius: 6px; padding: 6px 10px 8px; }
+.rtm-pq-batch-look[hidden] { display: none; }
+.rtm-pq-batch-printed { max-height: 420px; overflow: auto; margin: 6px 0 0; font: 12px/1.35 var(--font-mono); white-space: pre; color: var(--text-primary); }
+.rtm-pq-batch-out tr.rtm-pq-batch-pick { cursor: pointer; }
+.rtm-pq-batch-out tr.rtm-pq-batch-pick:hover td { background: var(--bg-surface); }
 .rtm-pq-batch-spread .plot { flex: 1 1 420px; min-width: 0; height: 300px; }
 .rtm-pq-batch-stats { border-collapse: collapse; font-size: 12px; margin-top: 30px; }
 .rtm-pq-batch-stats caption { text-align: left; font-weight: 600; padding-bottom: 4px; }

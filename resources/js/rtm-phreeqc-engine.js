@@ -218,6 +218,23 @@
     PHREEQC refuses keeps the first line of what it said, and the rest go
     on. -> { head, rows: [values or null], errors: [[index, text]] }
   */
+  /**
+    One run of a batch again, with what PHREEQC prints of it: the input filled from the row given, on a clean slate and
+    after the same warm-up as runBatch's, so that it runs as it did among the others; PHREEQC's output text, or what it
+    said where it refused.
+  */
+  function runBatchOne(engine, { template, columns, row, user }) {
+    const at = new Map((columns || []).map((c, k) => [c, k]));
+    const input = String(template).replace(/\{([^{}\n]+)\}/g, (m, name) => (at.has(name) ? String(row[at.get(name)] ?? '') : m));
+    const clean = 'DELETE\n -all\nEND\n';
+    try { engine.run(`${clean}${input}\nEND\n`, user || 1); } catch (e) { /* said below, where it fails again */ }
+    try {
+      return { text: engine.printed(`${clean}${input}\nEND\n`), refused: null, input };
+    } catch (e) {
+      return { text: '', refused: String((e && e.message) || e), input };
+    }
+  }
+
   function runBatch(engine, { template, columns, rows, user }, onProgress) {
     const at = new Map((columns || []).map((c, k) => [c, k]));
     const head = [];
@@ -271,6 +288,8 @@
    *     -> {type: 'done', species, phases, mu, pH, aw, tc, pe, percent, counted, skipped, unmapped, version, database}
    *   {id, type: 'batch', database, template, columns, rows, user}
    *     -> {type: 'progress', done, total} ..., then {type: 'done', head, rows, errors, version, database}
+   *   {id, type: 'batchOne', database, template, columns, row, user}
+   *     -> {type: 'done', text, refused, input, version, database}
    *   anything failing -> {type: 'error', error}
    *
    * `database` null means the built-in one, handed in as defaults.builtin.
@@ -331,6 +350,10 @@
           answer({ type: 'done', ...res, version: engine.version, database: database.name });
           return;
         }
+        if (msg.type === 'batchOne') {
+          answer({ type: 'done', ...runBatchOne(engine, msg), version: engine.version, database: database.name });
+          return;
+        }
         if (msg.type === 'inverse') {
           const view = P.viewRun({
             engine, database, run: msg.run, modelText: msg.modelText, water: msg.water, ...(msg.options || {}),
@@ -345,5 +368,5 @@
     };
   }
 
-  return { create, handler, compact, runBatch };
+  return { create, handler, compact, runBatch, runBatchOne };
 }));

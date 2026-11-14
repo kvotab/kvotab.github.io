@@ -804,6 +804,15 @@ async function asThePage(createPhreeqc, acidText) {
     b2.type === 'done' && !!b2.rows[0] && Math.abs(b2.rows[0][0] - 8) < 0.01 && b2.rows[1] === null
       && /Solution 7 not found/.test((b2.errors[0] || [])[1] || ''),
     b2.type === 'done' ? JSON.stringify([b2.rows, b2.errors]) : b2.error);
+  // One row again, with what PHREEQC prints of it: the first water's whole output -- its species and saturation indices,
+  // the input as filled -- and for the water with no number for its pH, what PHREEQC said, the run refused.
+  const one = await ask({ id: 7, type: 'batchOne', database: null, template: nacl, columns: ['pH', 'Na', 'Cl'], user: 1, row: ['7.0', '10', '10'] });
+  const oneBad = await ask({ id: 8, type: 'batchOne', database: null, template: nacl, columns: ['pH', 'Na', 'Cl'], user: 1, row: ['x', '1', '1'] });
+  check('one row of a batch again, with what PHREEQC prints of it; a row PHREEQC refuses, with what it said',
+    one.type === 'done' && one.refused === null && /Distribution of species/.test(one.text) && /Saturation indices/.test(one.text)
+      && /Halite/.test(one.text) && /^ pH 7\.0$/m.test(one.input) && oneBad.type === 'done' && oneBad.text === ''
+      && /Concentration data error for ph/.test(oneBad.refused || ''),
+    one.type === 'done' ? `${one.text.length} characters; ${String(oneBad.refused).split('\n')[0]}` : one.error);
   // The same handler again, for the listing beside PHREEQC: another engine in this process is one too many for its memory.
   return ask;
 }
