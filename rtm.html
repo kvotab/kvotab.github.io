@@ -31,7 +31,7 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/kvot-info.css?v=20261031">
-  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114c">
+  <link rel="stylesheet" href="./resources/css/rtm.css?v=20261114d">
   <link rel="icon" href="./resources/images/rtm-icon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="./resources/images/rtm-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="./resources/images/rtm-icon-180.png">
@@ -225,8 +225,8 @@
           <a class="rtm-homelink rtm-fullonly" href="./index.html" title="kvot ab: the home page"><img src="./resources/images/kvot-logotype.svg" alt="kvot ab: the home page" width="20" height="20"></a>
           <!-- The tabs in the order of the work, a short line between groups (rtm-tabgroup on each group's first): the
                model the run is made from; the run, against time, along the column, both at once and what its water is
-               made of; the waters' chemistry, in diagrams and through PHREEQC; many runs, swept, fitted and drawn from
-               distributions; the solver's own check, and the help. -->
+               made of; the waters' chemistry, in diagrams, through PHREEQC and a batch of waters through it; many runs,
+               swept, fitted and drawn from distributions; the solver's own check, and the help. -->
           <div class="rtm-tabs" role="tablist">
             <button type="button" data-tab="model" data-on-click="rtm:tab">Model</button>
             <button type="button" class="active rtm-tabgroup" data-tab="time" data-on-click="rtm:tab">Against time</button>
@@ -235,6 +235,7 @@
             <button type="button" data-tab="composition" data-on-click="rtm:tab">Composition</button>
             <button type="button" class="rtm-tabgroup" data-tab="diagram" data-on-click="rtm:tab">Diagrams</button>
             <button type="button" data-tab="phreeqc" data-on-click="rtm:tab">PHREEQC</button>
+            <button type="button" data-tab="batch" data-on-click="rtm:tab">Batch</button>
             <button type="button" class="rtm-tabgroup" data-tab="sweep" data-on-click="rtm:tab">Sweeps</button>
             <button type="button" data-tab="fit" data-on-click="rtm:tab">Fit</button>
             <button type="button" data-tab="uncertainty" data-on-click="rtm:tab">Uncertainty</button>
@@ -1061,6 +1062,10 @@
           </div>
           <div class="plot" id="rtmChartPqInv" hidden></div>
           <div class="rtm-pq-summary" id="rtmPqInvOut" hidden></div>
+        </section>
+
+        <!-- A batch over a table of waters, a tab of its own: one PHREEQC input over the rows of a table. -->
+        <section class="rtm-pane" data-pane="batch" hidden>
           <!-- A batch: one PHREEQC input over the rows of a table of waters, {name} for a row's value (rtm-ui.js pqBatchRun). -->
           <div class="rtm-setup rtm-pq-batch" id="rtmPqBatchBar">
             <div class="rtm-setup-body">
@@ -1075,6 +1080,12 @@
             <label>Rows
               <input type="text" id="rtmPqBatchRows" placeholder="all" style="width:84px" data-on-change="rtm:pqBatchSettings">
             </label>
+          </div>
+          <div class="rtm-toolbar">
+            <label>Database
+              <select id="rtmPqBatchDb" data-on-change="rtm:pqDbChosen"></select>
+            </label>
+            <span class="rtm-muted">one choice with the PHREEQC tab and the panel</span>
           </div>
           <div class="rtm-toolbar">
             <label>Solids
@@ -1125,18 +1136,25 @@
               <div class="rtm-export">
                 <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqBatch" aria-haspopup="menu">Export</button>
                 <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
+                  <div class="rtm-menu-head" role="presentation">The numbers</div>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchCsvItem" data-on-click="rtm:pqBatchSave" data-as="csv" data-hint="every row">CSV</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchRunsItem" data-on-click="rtm:pqBatchSave" data-as="runs" data-hint="each row with each solid" hidden>CSV, every run</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchSave" data-as="xlsx" data-hint="every row and the spread, as a workbook">Excel</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="the spread's chart">SVG</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="png" data-hint="the spread's chart">PNG</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="html" data-hint="the chart, live, as a page">HTML</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="svg" data-hint="the chart against a column">SVG, against</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="png" data-hint="the chart against a column">PNG, against</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="html" data-hint="that chart, live, as a page">HTML, against</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="svg" data-hint="the map">SVG, map</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="png" data-hint="the map">PNG, map</button>
-                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="html" data-hint="the map, live, as a page">HTML, map</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <div class="rtm-menu-head" role="presentation">The spread</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="svg" data-hint="as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="png" data-hint="as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batch" data-as="html" data-hint="live, as a page">HTML</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
+                  <div class="rtm-menu-head" role="presentation">Against a column</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="svg" data-hint="as a drawing">SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="png" data-hint="as a picture">PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchx" data-as="html" data-hint="live, as a page">HTML</button>
+                  <div class="rtm-menu-sep" role="separator" data-batch-map hidden></div>
+                  <div class="rtm-menu-head" role="presentation" data-batch-map hidden>The map</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="svg" data-hint="as a drawing" data-batch-map hidden>SVG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="png" data-hint="as a picture" data-batch-map hidden>PNG</button>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:export" data-pane="batchmap" data-as="html" data-hint="live, as a page" data-batch-map hidden>HTML</button>
                 </div>
               </div>
             </span>
@@ -1233,11 +1251,11 @@
               which speciates them with its database: a second reckoning of the pH and of the saturation
               indices, which minerals would precipitate where and when, and inverse models between
               waters of the run.</li>
-            <li>Without a run, a batch on the <em>PHREEQC</em> tab: one PHREEQC input of your own run
+            <li>Without a run, the <em>Batch</em> tab: one PHREEQC input of your own run
               for every row of a table of waters, and what it gives gathered into a table.</li>
           </ul>
           <p>The page comes with one database, <code>phreeqc.dat</code>. <em>Database</em>, in the panel
-            and on the PHREEQC tab alike, opens any other from your own files — <code>llnl.dat</code>,
+            and on the PHREEQC and Batch tabs alike, opens any other from your own files — <code>llnl.dat</code>,
             <code>wateq4f.dat</code>, <code>minteq.v4.dat</code>, <code>sit.dat</code>,
             <code>pitzer.dat</code> or a project's own — for the visit. A database matters only at those
             points. A model written from <code>llnl.dat</code> carries <code>llnl.dat</code>'s
@@ -4186,14 +4204,15 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             trace beside the calcium, to 10<sup>−7</sup>.</p>
 
           <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
-          <p>The last box on the <em>PHREEQC</em> tab runs one PHREEQC input for every row of a table:
+          <p>The <em>Batch</em> tab runs one PHREEQC input for every row of a table:
             a CSV file, or a sheet of an Excel workbook, a water a row and the names of its columns in
             the first row with anything in it. Each <code>{name}</code> in the input is the row's value
             in the column of that name — <code>{pH}</code>, or <code>{[Ca]tot (m)}</code> where that is
             the column's name — and the input is PHREEQC's own: a <code>SOLUTION</code> and whatever
             PHREEQC should do with it, <code>EQUILIBRIUM_PHASES</code> and <code>REACTION</code>, with
             <code>PHASES</code>, <code>SOLUTION_SPECIES</code> and <code>NAMED_EXPRESSIONS</code> of its
-            own, run with the database the tab has chosen. Its <code>SELECTED_OUTPUT</code> says what to
+            own, run with the database chosen on the tab, one choice with the PHREEQC tab and the panel.
+            Its <code>SELECTED_OUTPUT</code> says what to
             keep of each row's run, and the last row it gives is kept. A table opened with the box empty
             starts the input: a <code>SOLUTION</code> with <code>pH</code> where the table has a column so
             named, and every other column under it, commented, to take or leave: a <code>{name}</code>
@@ -4254,8 +4273,8 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             logarithmic where its values are all above nought and span a factor of ten or more; a
             point with no number for either is left out, and counted under the chart. Unless another is
             chosen, it is a value drawn, else the table's pH, else its first column.
-            <em>Export</em> saves it as SVG, PNG or a page of its own, each marked
-            <em>against</em>.</p>
+            <em>Export</em> saves it as SVG, PNG or a page of its own, under <em>Against a
+            column</em>.</p>
           <p>Where the table gives the waters' places, a map shows each water at its place, coloured by
             its result: <em>Map over</em> two of the table's columns — those named X and Y, as
             <code>X(km)</code> and <code>Y(km)</code>, unless others are chosen, or — for none. The colour
@@ -4263,8 +4282,8 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             always stands out), the key beside it logarithmic where the values span a factor of ten or
             more, and two columns named as places keep the same scale both ways. With draws, a water's
             colour is the median of its draws, and a click on it looks at the draw nearest that median.
-            <em>Export</em> saves the map as SVG, PNG or a page of its own, each marked
-            <em>map</em>.</p>
+            <em>Export</em> saves the map as SVG, PNG or a page of its own, under <em>The
+            map</em>.</p>
           <p><em>Keep this batch</em> keeps the one shown for the visit, and the next batch you run is
             drawn beside it: the kept spread's curve grey behind the new one, its numbers in a column of
             their own beside the new ones, and its points faint behind the new ones in the chart against a
@@ -4472,6 +4491,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114e"></script>
 </body>
 </html>

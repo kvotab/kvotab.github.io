@@ -159,9 +159,9 @@ async def main():
         try:
             status = await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
             check('the page compiles its built-in model', status, 'Compiled:')
-            check('a PHREEQC tab beside the others', await page.ev(
+            check('a PHREEQC tab beside the others, and the Batch tab after it', await page.ev(
                 "[...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')"),
-                'model time profile gradient composition diagram phreeqc sweep fit uncertainty jacobian help')
+                'model time profile gradient composition diagram phreeqc batch sweep fit uncertainty jacobian help')
             check('PHREEQC is not fetched until it is used', await page.ev(
                 "performance.getEntriesByType('resource').some((r) => /phreeqc/.test(r.name))"), False)
 
@@ -1092,7 +1092,15 @@ async def main():
             # refused with what PHREEQC said; Rows 1, 3 runs those two. A name the table has not, and an input with no
             # SELECTED_OUTPUT, are said before anything runs. An Excel workbook of two sheets, made by the page's own writer:
             # the second chosen, its rows run. The CSV saved: the table's values the input asked for, PHREEQC's, what it said.
-            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await page.ev(CLICK % json.dumps('[data-tab="batch"]'))
+            await asyncio.sleep(0.3)
+            check('the batch, a tab of its own: its database one choice with the PHREEQC tab, Open a database… among them; '
+                  'its Export menu in groups, the map\'s hidden until there is a map',
+                  await page.ev("""(() => { const b = document.getElementById('rtmPqBatchDb'), v = document.getElementById('rtmPqViewDb');
+                    return [b.value === v.value, [...b.options].slice(-1)[0].value, !!document.querySelector('.rtm-pane[data-pane="batch"] #rtmPqBatchBar'),
+                      !document.querySelector('.rtm-pane[data-pane="phreeqc"] #rtmPqBatchBar'),
+                      [...document.querySelectorAll('#rtmExportPqBatch .rtm-menu-head')].filter((h) => !h.hidden).map((h) => h.textContent)]; })()"""),
+                  [True, '__open', True, True, ['The numbers', 'The spread', 'Against a column']])
             FEED = """(async (name, text, sheets) => { const input = document.getElementById('rtmPqBatchFile');
               let data = text;
               if (sheets) { const x = new XlsxWriter(name); for (const [nm, head, rows] of sheets) x.writeData(rows, nm, { header: head });

@@ -53,7 +53,7 @@ HEADING_I_OFF = (
 
 # The (i) slots written into rtm.html: two section headings, twenty settings
 # of the Solver section, eleven tab toolbars, the PHREEQC panel's heading and
-# four settings, and the PHREEQC tab's boxes, the batch's among them.
+# four settings, the PHREEQC tab's boxes, and the Batch tab's.
 STATIC_SLOTS = 41
 
 PAINTED = """(() => {
@@ -644,7 +644,7 @@ async def main():
               };
             })()"""
             layout = {}
-            for tab in ['model', 'time', 'profile', 'gradient', 'composition', 'diagram', 'phreeqc', 'sweep', 'fit',
+            for tab in ['model', 'time', 'profile', 'gradient', 'composition', 'diagram', 'phreeqc', 'batch', 'sweep', 'fit',
                         'uncertainty', 'jacobian', 'help']:
                 await page.ev("document.querySelector('.rtm-tabs [data-tab=\"%s\"]').click()" % tab)
                 await asyncio.sleep(0.8)
@@ -654,11 +654,11 @@ async def main():
             check('every format a tab saves in its Export menu, one to a chart or a table, at the right end of its bar',
                   {t: [v['menus'], v['loose'], v['atEnd']] for t, v in layout.items()},
                   {'model': [0, 0, True], 'time': [1, 0, True], 'profile': [1, 0, True], 'gradient': [1, 0, True],
-                   'composition': [1, 0, True], 'diagram': [1, 0, True], 'phreeqc': [3, 0, True], 'sweep': [1, 0, True],
+                   'composition': [1, 0, True], 'diagram': [1, 0, True], 'phreeqc': [2, 0, True], 'batch': [1, 0, True], 'sweep': [1, 0, True],
                    'fit': [1, 0, True], 'uncertainty': [1, 0, True], 'jacobian': [0, 0, True], 'help': [0, 0, True]})
             check('a tab that works something out sets it up in a box, the button that does it at the box\'s right',
                   {t: v['go'] for t, v in layout.items() if v['go']},
-                  {'diagram': [True], 'phreeqc': [True, True, True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
+                  {'diagram': [True], 'phreeqc': [True, True], 'batch': [True], 'sweep': [True], 'fit': [True], 'uncertainty': [True]})
             # Export, pressed with the mouse: under its button, right edges
             # together, its first format taking the focus; a click elsewhere
             # shuts it -- on the chart too, where Plotly's cover takes the
@@ -5213,7 +5213,7 @@ async def main():
                   await page.ev("""(() => { const b = [...document.querySelectorAll('.rtm-tabs button')];
                     return b.map((x, i) => (i && x.getBoundingClientRect().left - b[i - 1].getBoundingClientRect().right > 8
                       && getComputedStyle(x, '::before').width === '1px' ? '| ' : '') + x.dataset.tab).join(' '); })()"""),
-                  'model | time profile gradient composition | diagram phreeqc | sweep fit uncertainty | jacobian help')
+                  'model | time profile gradient composition | diagram phreeqc batch | sweep fit uncertainty | jacobian help')
             # The line under the tabs is the bar's background, which the open
             # tab covers by reaching the bar's foot in its pane's colour.
             check('the open tab stands on the line under the tabs, in the colour of its pane', await page.ev(
@@ -5248,7 +5248,7 @@ async def main():
                 "[!document.querySelector('.rtm-pane[data-pane=\"gradient\"]').hidden,"
                 " [...document.querySelectorAll('.rtm-tabbar button.active')].map((b) => b.dataset.tab),"
                 " [...document.querySelector('[role=tablist]').children].map((b) => b.dataset.tab).join(' ')]"),
-                [True, ['gradient'], 'model time profile gradient composition diagram phreeqc sweep fit uncertainty jacobian help'])
+                [True, ['gradient'], 'model time profile gradient composition diagram phreeqc batch sweep fit uncertainty jacobian help'])
             await page.ev("document.querySelector('[data-info=\"set:rtol\"]').click()")
             check('  an (i) opens its panel from the top of the window to the bottom', await page.ev(
                 "(() => { const p = document.getElementById('kvot-info-panel').getBoundingClientRect();"

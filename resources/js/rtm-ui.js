@@ -10276,7 +10276,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (name === 'sweep') { renderSw(); renderSwShow(); drawSw(); resize(); }
     if (name === 'fit') { renderFit(); renderFitResult(); drawFit(); resize(); }
     if (name === 'uncertainty') { renderUn(); renderUnShow(); drawUn(); resize(); }
-    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); pqBatchSpread(); pqBatchAgainst(); pqBatchMap(); resize(); }
+    if (name === 'phreeqc') { pqRenderView(); if (afresh.some((p) => p.id === 'rtmChartPqInv')) pqInvDraw(); resize(); }
+    if (name === 'batch') { pqBatchSpread(); pqBatchAgainst(); pqBatchMap(); resize(); }
     if (name === 'jacobian') drawJacobianPattern();
   }
 
@@ -11334,7 +11335,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       sections: [
         { text: '**phreeqc.dat** is the database that comes with PHREEQC 3.8.6, unchanged.' },
         { text: '**Open a database…** reads another, such as `llnl.dat`, `wateq4f.dat`, `minteq.v4.dat` or a project’s own, and PHREEQC reads it at once and says whether it can. It is used for this visit only: a database is never stored in the browser, and one opened last time is named until it is opened again.' },
-        { text: 'The choice is shared by the panel on the Model tab and the PHREEQC tab: one database for both directions.' },
+        { text: 'The choice is shared by the panel on the Model tab, the PHREEQC tab and the Batch tab: one database for all of them.' },
       ],
       more: more('PHREEQC in the page', 'help-phreeqc'),
     }),
@@ -11474,7 +11475,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**Solids**: none, or a list such as `Calcite, Gypsum`: each row then runs once for each, in turn, `{solid}` in the input the solid -- see Several solids.',
         ] },
         { heading: 'The input', list: [
-          'PHREEQC input as PHREEQC takes it, with the database the tab has chosen: a `SOLUTION`, and whatever PHREEQC should do with it -- `EQUILIBRIUM_PHASES`, `REACTION`, `PHASES` and `NAMED_EXPRESSIONS` of its own.',
+          'PHREEQC input as PHREEQC takes it, with the database chosen -- one choice with the PHREEQC tab and the panel: a `SOLUTION`, and whatever PHREEQC should do with it -- `EQUILIBRIUM_PHASES`, `REACTION`, `PHASES` and `NAMED_EXPRESSIONS` of its own.',
           '`{name}`: the row\'s value in the column of that name, as the table has it, `{pH}` or `{[Ca]tot (m)}`. A name the table has no column for is said before anything runs; one after a `#`, in a comment, is not asked for.',
           '`SELECTED_OUTPUT`: what to keep of each row\'s run, its `-totals`, `-pH` and the like, or a `USER_PUNCH`; the last row it gives is kept. A table opened with the box empty starts it: a `SOLUTION` with `pH` where the table has it, every other column below, commented, to take or leave.',
           '**Open an input…**, **Save the input…**: the input as a file, its settings above it as comments -- `# Solids: Calcite, Gypsum`, `# Draws: 100` -- so that it is PHREEQC input still. Opened, they fill their fields, any it does not give left empty; the table and the database it was saved with are said where they are not the ones open.',
@@ -11503,7 +11504,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         ] },
         { heading: 'A map', list: [
           'Where the table has columns of places, each water at its place -- **Map over** two of the table\'s columns, those named X and Y unless others are chosen, — for none -- coloured by its result on one hue, light to dark (dark to light on the dark page), the key beside it, logarithmic where the values span a factor of ten or more.',
-          'With draws, each water\'s colour is the median of its draws, and a click looks at the draw nearest it. Two columns named as places keep the same scale both ways. Saved as SVG, PNG or a page: **SVG, map**, **PNG, map**, **HTML, map**.',
+          'With draws, each water\'s colour is the median of its draws, and a click looks at the draw nearest it. Two columns named as places keep the same scale both ways. Export has it as SVG, PNG or a page, under The map.',
         ] },
         { heading: 'A batch kept beside', list: [
           '**Keep this batch**: kept for the visit, and the next batch you run drawn beside it -- the kept spread\'s curve grey behind the new one, its numbers in a column of their own, its points faint behind in the chart against a column -- where it has a result in the same column.',
@@ -11522,7 +11523,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           '**CSV, every run**: with solids, each row with each solid.',
           '**Excel**: the same, a sheet each, the spread\'s numbers on one, and the input on a sheet of its own.',
           '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.',
-          '**SVG, against**, **PNG, against**, **HTML, against**: the same of the chart against a column.']),
+          'The chart against a column and the map, each the same, under headings of their own.']),
       ],
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
     }),
@@ -12761,7 +12762,7 @@ END
       .concat([...pq.opened.keys()].map((n) => `<option value="${esc(n)}">${esc(n)}</option>`))
       .concat('<option value="__open">Open a database…</option>')
       .join('');
-    for (const id of ['rtmPqDb', 'rtmPqViewDb']) {
+    for (const id of ['rtmPqDb', 'rtmPqViewDb', 'rtmPqBatchDb']) {
       const sel = $(id);
       sel.innerHTML = html;
       sel.value = pq.opened.has(pq.db) ? pq.db : 'builtin';
@@ -14348,7 +14349,7 @@ END
     How the column chosen spreads: for each value the share of the units -- the waters, or the waters each under its
     draws -- at or below it, a step a unit, on a log axis where the values are all above nought and span a factor of
     ten or more; the median and the 95th percentile marked, each label on the side of its line that has room; the
-    numbers beside it. Drawn only where it is seen -- the PHREEQC tab, which draws it again when it is shown.
+    numbers beside it. Drawn only where it is seen -- the Batch tab, which draws it again when it is shown.
   */
   function pqBatchSpread() {
     const v = pq.batchResult;
@@ -14372,7 +14373,7 @@ END
       + names.map((what, i) => `<tr><th scope="row">${what}</th><td>${shown(batchSpreadValues(sp)[i], i)}</td>`
         + `${ksp ? `<td>${shown(batchSpreadValues(ksp)[i], i)}</td>` : ''}</tr>`).join('')
       + '</tbody>';
-    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    if (typeof Plotly === 'undefined' || state.tab !== 'batch') return;
     const c = themeColors();
     const muted = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || c.grid;
     // The axis holds this batch and the kept one: logarithmic where all of both are above nought and span a factor of ten.
@@ -14468,7 +14469,7 @@ END
     under Lowest in or Spread of) up the side and what it is drawn against along the bottom, each axis logarithmic where
     its values are all above nought and span a factor of ten or more; with solids a colour a solid, in the order they
     are listed, a legend naming them. Units with no number for either are left out and counted. Drawn only where it is
-    seen -- the PHREEQC tab, which draws it again when it is shown.
+    seen -- the Batch tab, which draws it again when it is shown.
   */
   function pqBatchAgainst() {
     const v = pq.batchResult;
@@ -14502,7 +14503,7 @@ END
     note.hidden = !left;
     note.textContent = left ? `${left.toLocaleString()} of ${units.length.toLocaleString()} ${v.draws ? 'draws' : 'rows'} left out: `
       + `no number for ${pick.label} or ${col}.` : '';
-    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    if (typeof Plotly === 'undefined' || state.tab !== 'batch') return;
     const logOf = (xs) => { const lo = Math.min(...xs); return lo > 0 && Math.max(...xs) / lo >= 10; };
     const many = points.length > 2000;
     const named = (p) => [`row ${p.u.row + 1}${p.u.draw !== null ? `, draw ${p.u.draw + 1}` : ''}`, p.u.row, p.u.draw];
@@ -14571,7 +14572,9 @@ END
     const plot = $('rtmChartPqBatchMap');
     const cols = batchMapColumns(v);
     box.hidden = cols.length < 2;
-    const off = () => { plot.hidden = true; if (typeof Plotly !== 'undefined') Plotly.purge(plot); };
+    // The map's formats in the Export menu, with the map.
+    const offer = (on) => { for (const el of document.querySelectorAll('[data-batch-map]')) el.hidden = !on; };
+    const off = () => { plot.hidden = true; offer(false); if (typeof Plotly !== 'undefined') Plotly.purge(plot); };
     if (box.hidden) { off(); return; }
     const place = /^[xy](\s|\(|_|$)/i;
     const pick = (saved, letter) => (saved === '-' ? '' : cols.some((o) => o.c === saved) ? saved
@@ -14610,7 +14613,8 @@ END
     }
     plot.hidden = !points.length;
     if (!points.length) { off(); return; }
-    if (typeof Plotly === 'undefined' || state.tab !== 'phreeqc') return;
+    offer(true);
+    if (typeof Plotly === 'undefined' || state.tab !== 'batch') return;
     const lo = Math.min(...points.map((p) => p.value));
     const hi = Math.max(...points.map((p) => p.value));
     const log = lo > 0 && hi / lo >= 10;
