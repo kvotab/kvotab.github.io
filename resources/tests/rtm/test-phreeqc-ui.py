@@ -1100,7 +1100,7 @@ async def main():
                     return [b.value === v.value, [...b.options].slice(-1)[0].value, !!document.querySelector('.rtm-pane[data-pane="batch"] #rtmPqBatchBar'),
                       !document.querySelector('.rtm-pane[data-pane="phreeqc"] #rtmPqBatchBar'),
                       [...document.querySelectorAll('#rtmExportPqBatch .rtm-menu-head')].filter((h) => !h.hidden).map((h) => h.textContent)]; })()"""),
-                  [True, '__open', True, True, ['The numbers', 'The spread', 'Against a column']])
+                  [True, '__open', True, True, ['All of it', 'The numbers', 'The spread', 'Against a column']])
             FEED = """(async (name, text, sheets) => { const input = document.getElementById('rtmPqBatchFile');
               let data = text;
               if (sheets) { const x = new XlsxWriter(name); for (const [nm, head, rows] of sheets) x.writeData(rows, nm, { header: head });
@@ -1734,6 +1734,18 @@ async def main():
             await field('rtmPqBatchUncertain', '')
             await field('rtmPqBatchDraws', '')
             await field('rtmPqBatchSeed', '')
+            # ---- the batch as one page ----
+            # The draws batch over the grid just run, saved as a report: its title the table's; what was run -- the
+            # values drawn, the draws and seed, the database, the input in full; the spread's numbers and the rows; its
+            # three charts live, the spread, against the value drawn and the map; nothing of the page's click handles.
+            report = await saved_blob('[data-on-click="rtm:pqBatchReport"]', '(b) => b.text()')
+            check('the batch as one page: what was run, the numbers and the rows, its three charts live',
+                  [report.count("Plotly.newPlot('chart") if isinstance(report, str) else report,
+                   '<title>A batch over grid.csv</title>' in report, '<dt>Uncertain</dt><dd>dNa uniform 1 2</dd>' in report,
+                   '<dt>Draws</dt><dd>5 a row, from seed 3</dd>' in report, '<dt>Database</dt><dd>phreeqc.dat</dd>' in report,
+                   ' Na {dNa}' in report, 'id="rtmPqBatchStats"' in report, 'data-on-click' not in report,
+                   'The map over X(km) and Y(km)' in report, 'against dNa' in report] if isinstance(report, str) else report,
+                  [3, True, True, True, True, True, True, True, True, True])
             check('no console errors', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

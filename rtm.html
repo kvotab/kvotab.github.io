@@ -1136,6 +1136,9 @@
               <div class="rtm-export">
                 <button type="button" class="rtm-btn secondary small rtm-menu-btn" popovertarget="rtmExportPqBatch" aria-haspopup="menu">Export</button>
                 <div class="rtm-menu" id="rtmExportPqBatch" popover role="menu" aria-label="Export">
+                  <div class="rtm-menu-head" role="presentation">All of it</div>
+                  <button type="button" class="rtm-menu-item" role="menuitem" data-on-click="rtm:pqBatchReport" data-hint="what was run, the numbers and the charts, as one page">Report</button>
+                  <div class="rtm-menu-sep" role="separator"></div>
                   <div class="rtm-menu-head" role="presentation">The numbers</div>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchCsvItem" data-on-click="rtm:pqBatchSave" data-as="csv" data-hint="every row">CSV</button>
                   <button type="button" class="rtm-menu-item" role="menuitem" id="rtmPqBatchRunsItem" data-on-click="rtm:pqBatchSave" data-as="runs" data-hint="each row with each solid" hidden>CSV, every run</button>
@@ -4284,6 +4287,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             colour is the median of its draws, and a click on it looks at the draw nearest that median.
             <em>Export</em> saves the map as SVG, PNG or a page of its own, under <em>The
             map</em>.</p>
+          <p><em>Export</em>, <em>Report</em> saves the batch as one page, to keep or to send, that opens
+            in any browser: what was run — the table and its rows, the database and PHREEQC's version, the
+            solids, the values drawn with their draws and seed, the input in full, and the batch kept beside
+            it — and what came back: the note, the spread's numbers, the solids and the rows as the tab
+            shows them, and the charts as drawn, live, plotly.js in the file as in a chart's own page.</p>
           <p><em>Keep this batch</em> keeps the one shown for the visit, and the next batch you run is
             drawn beside it: the kept spread's curve grey behind the new one, its numbers in a column of
             their own beside the new ones, and its points faint behind the new ones in the chart against a
@@ -4491,6 +4499,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114f"></script>
 </body>
 </html>

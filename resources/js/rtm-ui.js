@@ -11519,7 +11519,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'With solids, a colour for each solid, in the order they are listed, the legend naming them. Each axis is logarithmic where its values are all above nought and span a factor of ten or more.',
           'Unless another is chosen, a value drawn, else the table\'s pH, else its first column. A point with no number for either is left out, and the note under the chart counts them.',
         ] },
-        exportSection(['**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
+        exportSection(['**Report**: the batch as one page that opens in any browser -- what was run (the table, rows, database, PHREEQC\'s version, solids, values drawn, the input in full, the batch kept), the spread\'s numbers, the solids and the rows, and the charts, live.',
+          '**CSV**: every row, with the table\'s values the input asked for, what PHREEQC gave, and what it said where it refused; with solids, each row\'s lowest and the solid that gave it.',
           '**CSV, every run**: with solids, each row with each solid.',
           '**Excel**: the same, a sheet each, the spread\'s numbers on one, and the input on a sheet of its own.',
           '**SVG**, **PNG**: the spread\'s chart as it is drawn; **HTML**: the chart, live, as a page of its own, the input under it.',
@@ -14195,7 +14196,7 @@ END
       const seconds = (Date.now() - started) / 1000;
       pq.batchResult = { head, runs, names, table: t.name, sheet: t.sheet || null, asked: asked.length,
         solids: solids.length ? solids : null, groups, uncertain: draws ? uncertain : null, draws, seed, stopped, seconds, version, database, text,
-        source: t };
+        source: t, rowsSpec: pq.batch.rows };
       pq.batchLook = null;
       const bad = runs.filter((r) => !r.values).length;
       const done = new Set(runs.map((r) => r.row)).size;
@@ -14829,6 +14830,120 @@ END
   }
 
   /*
+    A BATCH AS ONE PAGE, to keep or send: what was run -- the table, the rows,
+    the database, PHREEQC's version, the solids, the values drawn, the input in
+    full, and the batch kept beside it -- what came back -- the note, the
+    spread's numbers, the solids and the rows as the tab shows them, its click
+    handles left out -- and its charts as drawn, live, plotly.js in the file
+    where it can be read, as a chart's own page has it. What is the batch's is
+    escaped: the text as HTML, the charts as JSON written for a script.
+  */
+  async function pqBatchReport() {
+    const v = pq.batchResult;
+    if (!v) { setStatus('Run a batch first: there is nothing to report yet.', 'warn'); return; }
+    const lib = await plotlyForPage();
+    const c = themeColors();
+    const many = (n, word) => `${n.toLocaleString()} ${word}${n === 1 ? '' : 's'}`;
+    const col = batchLowestColumn(v);
+    const kept = batchKeptBeside();
+    const chosen = (id) => { const sel = $(id); return sel && sel.selectedOptions[0] ? sel.selectedOptions[0].textContent : ''; };
+    // The charts as the tab draws them, those it shows.
+    const charts = [
+      [`The spread of ${col}${batchLowestOf(v)}`, 'rtmChartPqBatch', 340],
+      [`${col} against ${chosen('rtmPqBatchX')}`, 'rtmChartPqBatchX', 360],
+      [`The map over ${chosen('rtmPqBatchMapX')} and ${chosen('rtmPqBatchMapY')}`, 'rtmChartPqBatchMap', 480],
+    ].map(([title, id, tall]) => {
+      const plot = $(id);
+      if (!plot || plot.hidden || plot.closest('[hidden]') || !plot.data || !plot.data.length) return null;
+      const { width, height, ...rest } = plot.layout || {};
+      return { title, tall, data: scriptJson(plot.data), layout: scriptJson({ ...rest, autosize: true }) };
+    }).filter(Boolean);
+    const bad = v.runs.filter((r) => !r.values).length;
+    const rowsRun = new Set(v.runs.map((r) => r.row)).size;
+    const settings = [
+      ['Table', `${v.table}${v.sheet ? `, sheet ${v.sheet}` : ''}, ${many(v.source.rows.length, 'row')}`],
+      ['Rows', `${v.rowsSpec || 'all'}: ${many(rowsRun, 'row')} run${v.stopped ? ', then stopped' : ''}`],
+      ['Database', v.database],
+      ['PHREEQC', v.version],
+      ['Solids', v.groups ? v.groups.map((g) => `${g.el}: ${g.solids.join(', ')}`).join('; ') : v.solids ? v.solids.join(', ') : 'none'],
+      ...(v.draws ? [['Uncertain', v.uncertain.map((u) => `${u.name} ${u.dist} ${u.x.join(' ')}`).join('; ')],
+        ['Draws', `${v.draws} a row, from seed ${v.seed}`]] : []),
+      [v.solids && !v.groups ? 'Lowest in' : 'Spread of', col],
+      ['Runs', `${many(v.runs.length, 'run')} in ${v.seconds.toFixed(1)} s, ${bad.toLocaleString()} refused`],
+    ];
+    // The tables as the tab shows them, without what makes their rows clickable there.
+    const out = $('rtmPqBatchOut').cloneNode(true);
+    for (const tr of out.querySelectorAll('[data-on-click]')) {
+      for (const a of ['data-on-click', 'data-row', 'data-draw']) tr.removeAttribute(a);
+      tr.classList.remove('rtm-pq-batch-pick');
+    }
+    const stats = $('rtmPqBatchSpread').hidden ? '' : $('rtmPqBatchStats').outerHTML;
+    const name = `${v.table.replace(/\.[^.]+$/, '').replace(/[^\w.-]+/g, '_')}_batch_report`;
+    const title = `A batch over ${v.table}${v.sheet ? `, sheet ${v.sheet}` : ''}`;
+    const day = new Date().toISOString().slice(0, 10);
+    const version = (typeof Plotly !== 'undefined' && Plotly.version) || '';
+    const config = scriptJson({ ...PLOT_CONFIG, toImageButtonOptions: { filename: name } });
+    const library = !charts.length ? '' : lib && lib.text ? `<script>\n${lib.text}\n</script>`
+      : lib ? `<script src="${esc(lib.src)}"${lib.integrity ? ` integrity="${esc(lib.integrity)}" crossorigin="anonymous"` : ''}></script>` : '';
+    const html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${esc(title)}</title>
+<style>
+  html, body { margin: 0; background: ${esc(c.surface)}; color: ${esc(c.text)}; }
+  body { font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1200px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  h2 { font-size: 15px; font-weight: 600; margin: 24px 0 6px; }
+  h3 { font-size: 13px; font-weight: 600; margin: 16px 0 4px; }
+  p { margin: 0 0 8px; }
+  .note { opacity: 0.8; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 3px 18px; margin: 0 0 10px; }
+  dt { opacity: 0.75; }
+  dd { margin: 0; }
+  table { border-collapse: collapse; font-size: 12px; margin: 6px 0 12px; }
+  th, td { padding: 2px 12px 2px 0; text-align: left; font-variant-numeric: tabular-nums; }
+  thead th, thead td { border-bottom: 1px solid ${esc(c.grid)}; font-weight: 600; }
+  td.rtm-pq-batch-error { border-left: 3px solid #e0731d; padding-left: 6px; }
+  caption { text-align: left; font-weight: 600; padding-bottom: 4px; }
+  .chart { width: 100%; }
+  details { margin: 6px 0 10px; }
+  summary { cursor: pointer; }
+  pre { white-space: pre; overflow: auto; max-height: 420px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+  .made { margin-top: 18px; font-size: 12px; opacity: 0.7; }
+</style>
+</head>
+<body>
+<main>
+<h1>${esc(title)}</h1>
+<p class="note">${esc($('rtmPqBatchNote').textContent)}</p>
+<h2>What was run</h2>
+<dl>${settings.map(([k, x]) => `<dt>${esc(k)}</dt><dd>${esc(x)}</dd>`).join('')}</dl>
+<details><summary>The PHREEQC input each row was run with</summary><pre>${esc(v.text)}</pre></details>
+${kept ? `<p>${esc($('rtmPqBatchKeptText').textContent)}</p>
+<details><summary>The kept batch's input</summary><pre>${esc(kept.text)}</pre></details>
+` : ''}<h2>What came back</h2>
+${charts.map((ch, i) => `<h3>${esc(ch.title)}</h3>\n<div class="chart" id="chart${i}" style="height:${ch.tall}px"></div>${i === 0 ? `\n${stats}` : ''}`).join('\n')}
+${!charts.length && stats ? stats : ''}
+<h3>The rows${v.solids ? ', each with the solid that gave the lowest' : ''}</h3>
+${out.innerHTML}
+<p class="made">Saved from rtm.html, kvotab.github.io/rtm.html, on ${day}: PHREEQC ${esc(v.version)} with ${esc(v.database)}${
+  charts.length ? `; the charts drawn by plotly.js ${esc(version)} (MIT licence)${lib && lib.text ? ', which is in this file' : lib ? `, which this page loads from ${esc(new URL(lib.src).host)}` : ''}` : ''}.</p>
+</main>
+${library}
+${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}', ${ch.data}, ${ch.layout}, ${config});`).join('\n')}\n</script>` : ''}
+</body>
+</html>
+`;
+    const saved = await saveBlob(new Blob([html], { type: 'text/html' }), `${name}.html`);
+    if (!saved) return;
+    if (!charts.length || (lib && lib.text)) setStatus(`Saved ${saved.name}: the batch as one page, to open in any browser.`, 'ok');
+    else setStatus(`Saved ${saved.name}, linking plotly.js: it could not be read to go into the file, so the page needs the internet to draw its charts.`, 'warn');
+  }
+
+  /*
     A BATCH'S INPUT AS A FILE: the PHREEQC input, its settings above it as
     comments -- "# Solids: Calcite, Gypsum" -- so that the file is PHREEQC input
     still. Opened, the settings fill their fields, each the file does not give
@@ -15320,6 +15435,8 @@ END
       pqBatchRender();
       infoRefresh();
     },
+    // The batch as one page: what was run, what came back, its charts.
+    'rtm:pqBatchReport': () => { pqBatchReport(); },
     // A batch kept, for the next ones to be drawn beside; let go.
     'rtm:pqBatchKeep': () => {
       if (!pq.batchResult) return;
