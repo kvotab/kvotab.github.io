@@ -534,6 +534,36 @@ async def main():
                   ['Done', True, 5, True, True, ''])
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # An exchanger in a column beside PHREEQC's own: PHREEQC's last cell in time, the outlet in pore volumes.
+            await page.ev("(() => { const s = document.getElementById('rtmExample');"
+                          " s.value = 'exchangebeside'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_xb = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await asyncio.sleep(1.2)
+            xb_view = await page.ev("""(() => { const c = document.getElementById('rtmChartTime'); const d = c.data || [];
+              const pts = d.filter((tr) => tr.mode === 'markers');
+              const last = pts.length ? pts[0].x[pts[0].x.length - 1] : null;
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, c.layout.xaxis.title.text, pts.length,
+                pts.map((tr) => tr.x.length).join(' '), last === null ? null : Math.round(last * 100) / 100]; })()""")
+            check("  an exchanger's column beside PHREEQC's own, the built-in example run: it opens Against time at the outlet in "
+                  "pore volumes, PHREEQC's water there the points beside each of its five lines, to 3.01 pore volumes",
+                  [ran_xb] + (xb_view if isinstance(xb_view, list) else [xb_view]),
+                  ['Done', 'time', 'pore volumes', 5, '150 150 150 150 150', 3.01])
+            await page.ev(CLICK % json.dumps('[data-tab="fit"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmFitShow'); s.value = 'match';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length >= 7", True, tries=80, pause=0.25)
+            xb_nse = await page.ev("""(() => { const head = [...document.querySelectorAll('#rtmFitMatch thead th')].map((th) => th.textContent);
+              const at = head.indexOf('Nash–Sutcliffe');
+              return Object.fromEntries([...document.querySelectorAll('#rtmFitMatch tbody tr')].filter((tr) => tr.children[1].textContent === 'this run')
+                .map((tr) => [tr.children[0].textContent, tr.children[at] ? tr.children[at].textContent : null])); })()""")
+            xb_cols = {k: v for k, v in (xb_nse or {}).items() if not k.startswith('all together')} if isinstance(xb_nse, dict) else {}
+            check("  and the Fit tab's table of the run against PHREEQC's outlet: seven columns, each at a Nash-Sutcliffe efficiency of "
+                  '0.998 or more', [len(xb_cols), all(v and float(v) >= 0.998 for v in xb_cols.values())] if xb_cols else xb_nse,
+                  [7, True])
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column whose cells start apart: zones, the second in <INITIAL> ---
             zoned_input = column_input.replace(
                 'SOLUTION 1-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\n',

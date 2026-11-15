@@ -4897,6 +4897,108 @@ function againstTransportBeside(engine) {
     /flows backward/.test(said) && /no TRANSPORT block/.test(said2), `${said} | ${said2}`);
 }
 
+// A column with an exchanger beside PHREEQC's own: the built-in example 'exchangebeside', our own numbers.
+const EXCHANGE_BESIDE_INPUT = `SOLUTION 0  A calcium-magnesium water, flowing in
+ units mmol/kgw
+ pH 7.2
+ Ca 0.5
+ Mg 0.25
+ Br 0.1
+ Cl 1.4 charge
+SOLUTION 1-50  A sodium-potassium water, the column's
+ units mmol/kgw
+ pH 7.2
+ Na 1.2
+ K 0.3
+ Cl 1.5 charge
+EXCHANGE 1-50
+ -equilibrate 1
+ X 0.0015
+END
+TRANSPORT
+ -cells 50
+ -lengths 0.002
+ -shifts 150
+ -time_step 600
+ -flow_direction forward
+ -boundary_conditions flux flux
+ -diffusion_coefficient 1e-9
+ -dispersivities 0.002
+ -punch_cells 50
+ -punch_frequency 1
+END
+`;
+
+/*
+  An exchanger in a column, beside PHREEQC's own: a calcium-magnesium water pushing a sodium-potassium one through 50
+  cells whose exchanger holds the column's ions, PHREEQC punching its last cell at every shift. Its water as a table in
+  time at cell 49, half a time step after each shift; sodium and potassium as their one species each, the rest as
+  element totals, which are what is dissolved -- the page's tot() leaves the exchanger out, as PHREEQC's TOT does. The
+  page's run against it, every column at a Nash-Sutcliffe efficiency of 0.998 or more over the points the Fit tab
+  compares -- an amount where it is above nought, so the calcium and the magnesium once they arrive -- the magnesium's
+  the least (0.9980; over all 150 points 0.9991); the potassium let off at nearly five times what the column held, its peak the page's within 1 % of PHREEQC's;
+  the magnesium above what flows in as the calcium takes its place, a sharp overshoot the two schemes smooth a little
+  differently, within 5 % (the page's 3.6 % above on these 50 cells, 2.4 % on 100, both rising as the cells are
+  refined). The built-in example carries the same table.
+*/
+function againstExchangeBeside(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  engine.load(dbText);
+  const water = { name: 'exchange', text: EXCHANGE_BESIDE_INPUT };
+  const res = P.waterToModel({ engine, database, water, activity: true, exact: true, phases: true, redox: false });
+  const b = P.transportBeside({ engine, database, water, res });
+  const m = RtmModel.compile(b.modelText);
+  const tab = m.data[0];
+  check('an exchanger in a column, beside PHREEQC\'s own: its last cell at every shift as one table in time at cell 49, '
+    + 'half a time step after each shift; sodium and potassium as their species, the rest as totals',
+  b.tables === 1 && b.rows === 150 && b.columns.join() === 'pH,Br-,tot(Ca),tot(Cl),K+,tot(Mg),Na+' && m.data.length === 1
+    && tab.kind === 'time' && tab.cell === 49 && Math.abs(tab.rows[0][0] - 900) < 1e-6 && Math.abs(tab.rows[149][0] - 90300) < 1e-6
+    && /^TEND = 90300$/m.test(b.modelText),
+  `${b.tables} table, ${b.rows} rows, ${b.columns.join(' ')}`);
+  const times = tab.rows.map((r) => r[0]);
+  const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: m.settings.TEND, rtol: 1e-6, atol: 1e-12, nonNegative: true,
+    outputTimes: times });
+  const keys = m.quantities.map((q) => q.key);
+  const which = Int32Array.from(keys.map((_, i) => i));
+  const q = new Float64Array(keys.length);
+  const ns = m.speciesNames.length;
+  const runOf = (key) => times.map((t, k) => {
+    const c = m.toConcentrations(run.grid.y[k]);
+    if (keys.includes(key)) { m.quantitiesAt(c, t, tab.cell, which, q); return q[keys.indexOf(key)]; }
+    return c[tab.cell * ns + m.speciesNames.indexOf(key)];
+  });
+  const nses = tab.columns.map((key, j) => {
+    const v = runOf(key);
+    // As the Fit tab compares them: the pH everywhere, an amount where it is above nought.
+    const pairs = tab.rows.map((r, i) => [v[i], r[j + 1]]).filter(([, x]) => key === 'pH' || x > 0);
+    const mean = pairs.reduce((a, [, x]) => a + x, 0) / pairs.length;
+    return 1 - pairs.reduce((a, [y, x]) => a + (y - x) ** 2, 0) / pairs.reduce((a, [, x]) => a + (x - mean) ** 2, 0);
+  });
+  const peak = (key) => [Math.max(...runOf(key)), Math.max(...tab.rows.map((r) => r[tab.columns.indexOf(key) + 1]))];
+  const [kPage, kPq] = peak('K+');
+  const [mgPage, mgPq] = peak('tot(Mg)');
+  // Totals of the exchanger's ions are of the water alone: calcium starts at nothing in the column's water, though the
+  // exchanger holds a trace of it.
+  check('  the page\'s run against it: every column at a Nash-Sutcliffe efficiency of 0.998 or more, as the Fit tab compares '
+    + 'them; the potassium let off at '
+    + 'nearly five times the column\'s, its peak within 1 % of PHREEQC\'s; the magnesium above what flows in, within 5 %',
+  nses.every((x) => x >= 0.998) && kPq > 4.5 * 3e-4 && mgPq > 1.4 * 2.5e-4 && Math.abs(kPage / kPq - 1) < 0.01
+    && Math.abs(mgPage / mgPq - 1) < 0.05 && runOf('tot(Ca)')[0] < 1e-12,
+  `${tab.columns.map((key, j) => `${key} ${nses[j].toFixed(5)}`).join(', ')}; K+ ${kPage.toExponential(3)} for ${kPq.toExponential(3)}, `
+    + `Mg ${mgPage.toExponential(3)} for ${mgPq.toExponential(3)}`);
+  const { RTM_EXAMPLES } = require(path.join(jsDir, 'rtm-examples.js'));
+  const ex = RTM_EXAMPLES.find((e) => e.id === 'exchangebeside');
+  const exData = ex ? ex.text.slice(ex.text.search(/^<DATA>$/m)).trim().split('\n') : [];
+  const mine = b.text.trim().split('\n');
+  const same = exData.length === mine.length && exData.every((ln, i) => {
+    const a = ln.trim().split(/\s+/);
+    const c = mine[i].trim().split(/\s+/);
+    return a.length === c.length && a.every((w, j) => w === c[j] || Math.abs(Number(w) - Number(c[j])) <= 1e-6 * Math.abs(Number(c[j])));
+  });
+  check('  the built-in example \'exchangebeside\' carries the same table', !!ex && same,
+    ex ? `${exData.length} lines against ${mine.length}` : 'no example');
+}
+
 function againstMultiD(engine) {
   // PHREEQC keeps a TRANSPORT's options for the next one in the same instance: each input here says -implicit and -stagnant.
   const database = { name: 'phreeqc.dat', text: dbText };
@@ -5588,6 +5690,8 @@ function againstKineticsHandOff(engine) {
   againstTransportHandOff(wasm);
   console.log('\n--- PHREEQC\'s own column beside the model: its cells as <DATA>, the run against them, Nash-Sutcliffe ---');
   againstTransportBeside(wasm);
+  console.log('\n--- an exchanger in a column beside PHREEQC\'s own: its last cell in time, the run against it ---');
+  againstExchangeBeside(wasm);
   console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
   againstMultiD(wasm);
   console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');
