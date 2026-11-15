@@ -2245,7 +2245,11 @@ CO2 + H2O &lt;=&gt; H+ + HCO3-, logK = -6.352, dH = 9.109   # log K going with t
             to the NDF, and the other methods decline it. Each held species is solved for as
             ln&nbsp;C, and an error of <code>rtol</code> in ln&nbsp;C is a relative error of
             <code>rtol</code> in C, so the tolerance means for these species what it means for the
-            others.</p>
+            others. The totals they are worked out from are held as closely as the species in them: a
+            total with a minus sign in it — the chloride less the sodium, say, nought where the water
+            carries the two alike — is held to <code>rtol</code> of those species, each counted as large
+            as it is, and not to the absolute tolerance alone, which there would ask for less than their
+            rounding.</p>
 
           <h4 id="help-activity">Activity</h4>
           <pre>ACTIVITY = debye-huckel
@@ -4874,7 +4878,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261115c"></script>
+  <script src="./resources/js/rtm-model.js?v=20261115d"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261115a"></script>
@@ -4882,6 +4886,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261115f"></script>
 </body>
 </html>

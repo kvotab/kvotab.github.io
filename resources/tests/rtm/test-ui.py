@@ -3597,7 +3597,8 @@ async def main():
                   [True, True])
             # Redox zones: organic carbon at a hundredth of a millimole a day through a groundwater's oxidants, each drawn as its
             # element's total in a valence state, a day at most between points (MAX_STEP). Each oxidant lasts as long as its
-            # electrons: the oxygen's 0.25 mM to day 25, the nitrate's 0.15 to N2 another 18.75 days, the pyrolusite's 0.1 mmol
+            # electrons: the oxygen's 0.25 mM to day 25 (what is left then tails off, below 1e-9 by 25.13 in a run at rtol 1e-10,
+            # so that a point a day after that may be the first under it), the nitrate's 0.15 to N2 another 18.75 days, the pyrolusite's 0.1 mmol
             # 5 and the ferrihydrite's 0.2 another 5, the sulfate's 0.3 mM 60; then half the carbon goes to methane.
             ok = await example('redoxzones', "document.querySelector('.rtm-tabs button.active').dataset.tab === 'time'"
                                              " && (document.getElementById('rtmChartTime').data || []).length === 7")
@@ -3609,11 +3610,11 @@ async def main():
               const ch4 = of('C(-4), dissolved');
               return [d.map((t) => t.name).join(' | '), document.getElementById('rtmChartTime').layout.xaxis.title.text,
                 of('O2').x.length > 160 && Math.max(...of('O2').x.slice(1).map((x, i) => x - of('O2').x[i])) <= 1.000001,
-                near(when(of('O2'), (v) => v < 1e-9), 25), near(when(of('N(5), dissolved'), (v) => v < 1e-9), 43.75),
+                near(when(of('O2'), (v) => v < 1e-9), 25.13), near(when(of('N(5), dissolved'), (v) => v < 1e-9), 43.75),
                 near(when(of('Mn+2'), (v) => v > 0.9999e-4), 48.75), near(when(of('Fe(2), dissolved'), (v) => v > 1.9999e-4), 53.75),
                 Math.abs(ch4.y[ch4.y.length - 1] / ((160 - 113.75) * 1e-5 / 2) - 1) < 0.01]; })()""")
             check('the redox zones example opens on the time chart: oxygen, nitrate, manganese(2), iron(2), sulfate, sulfide and '
-                  'methane, a day at most between points; each oxidant gone when its electrons are -- the oxygen at day 25, the '
+                  'methane, a day at most between points; each oxidant gone when its electrons are -- the oxygen at day 25 (below 1e-9 by 25.13), the '
                   'nitrate at 43.75, the pyrolusite\'s manganese all dissolved at 48.75, the ferrihydrite\'s iron at 53.75, to the '
                   'day -- and methane half the carbon after the sulfate\'s, to 1 %', [ok, zones],
                   [True, ['O2 | N(5), dissolved | Mn+2 | Fe(2), dissolved | S(6), dissolved | S(-2), dissolved | C(-4), dissolved',
@@ -3841,10 +3842,10 @@ async def main():
                   [['The redox zones: the couple holding the pe', 'heatmap',
                     'O2/H2O | NO3-/N2 | Pyrolusite/Mn+2 | Fe+3/Fe+2 | SO4-2/HS- | CO3-2/CH4',
                     'SO4-2/HS- > CO3-2/CH4 > Fe+3/Fe+2 > Pyrolusite/Mn+2 > NO3-/N2 > O2/H2O',
-                    'the redox zones by the couple holding the pe, oxidised first: O2/H2O 57.4 %, NO3-/N2 4.1 %, Pyrolusite/Mn+2 '
-                    '14.2 %, Fe+3/Fe+2 12.6 %, SO4-2/HS- 2.7 %, CO3-2/CH4 9.0 % of the waters; never holding it: NO3-/NO2-; '
+                    'the redox zones by the couple holding the pe, oxidised first: O2/H2O 57.5 %, NO3-/N2 4.1 %, Pyrolusite/Mn+2 '
+                    '14.2 %, Fe+3/Fe+2 12.4 %, SO4-2/HS- 2.7 %, CO3-2/CH4 9.1 % of the waters; never holding it: NO3-/NO2-; '
                     'drawn as a map: zones are no amount to draw contours of or raise into a surface', True, True],
-                   'rtm_gradient__zones.csv', 3021, True, ['O2/H2O', 'NO3-/N2', 'Pyrolusite/Mn+2', 'Fe+3/Fe+2']])
+                   'rtm_gradient__zones.csv', 2844, True, ['O2/H2O', 'NO3-/N2', 'Pyrolusite/Mn+2', 'Fe+3/Fe+2']])
             await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '0';"
                           " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")

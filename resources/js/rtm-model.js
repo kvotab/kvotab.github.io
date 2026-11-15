@@ -14791,9 +14791,58 @@
       oxygen has arrived, whose logarithms follow the electron's eight times
       over and more -- stalled the Newton iteration where a redox front
       passes, at every step size.
+
+      Either way, a total with a minus sign in it is held to rtol of the
+      species in it, each counted as large as it is, as well as of itself. A
+      total is then a difference, and one that cancels -- chloride less
+      sodium in a water that carries the two alike, nought but for rounding
+      -- is otherwise held to the absolute tolerance alone, 1e-20 by
+      default, far under the rounding of the 0.1 mol of each it is the
+      difference of. That rounding, times the step, is then in every Newton
+      correction of the total, and the step is cut, failure after failure,
+      until it fits: a halite column dissolving into fresh water took 52,531
+      steps over its 2e5 s, where 515 do. Weighed so, a total is held as
+      closely as the species in it are, which is what rtol asks of them. A
+      total with no minus sign is the species in it already, and is weighed
+      as it was.
     */
+    const signed = U.map((u) => u.some((v) => v < 0));
+    const anySigned = signed.some(Boolean);
+    // Of each held species, the signed totals it is in and with what weight: pairs (j, |u|).
+    const partsOf = active.map((s, k) => {
+      const out = [];
+      for (let j = 0; j < nb; j++) if (signed[j] && U[j][k]) out.push(j, Math.abs(U[j][k]));
+      return out;
+    });
+    const partY = new Float64Array(nb);
+    const partNew = new Float64Array(nb);
     function weightScale(y, ynew, inv) {
-      for (let c = 0; c < nc; c++) for (let k = 0; k < na; k++) inv[c * ns + active[k]] = 0;
+      for (let c = 0; c < nc; c++) {
+        const b = c * ns;
+        if (anySigned) {
+          partY.fill(0);
+          partNew.fill(0);
+          for (let k = 0; k < na; k++) {
+            const js = partsOf[k];
+            const at = b + active[k];
+            const m = massOf[at];
+            if (!js.length || !(m > 0)) continue;
+            const p = m * (lin[at] ? Math.abs(y[at]) : Math.exp(y[at]));
+            const q = m * (lin[at] ? Math.abs(ynew[at]) : Math.exp(ynew[at]));
+            for (let i = 0; i < js.length; i += 2) {
+              partY[js[i]] += js[i + 1] * p;
+              partNew[js[i]] += js[i + 1] * q;
+            }
+          }
+          for (let j = 0; j < nb; j++) {
+            if (!signed[j]) continue;
+            const big = Math.max(partY[j], partNew[j]);
+            const i = tIndex(c, j);
+            if (big * inv[i] > 1) inv[i] = 1 / big;
+          }
+        }
+        if (projected) for (let k = 0; k < na; k++) inv[b + active[k]] = 0;
+      }
     }
 
     return {
@@ -14819,7 +14868,7 @@
       consistentInitial,
       nonNegativeMask,
       absoluteMask,
-      ...(projected ? { weightScale } : {}),
+      ...(projected || anySigned ? { weightScale } : {}),
       // A species held is ln C, and an error of rtol in it is an error of rtol
       // in C, relative, which is what rtol asks of every species: so its atol
       // is rtol and the solver weighs it against that alone (absoluteMask),

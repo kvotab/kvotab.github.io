@@ -4225,6 +4225,79 @@ ${EQ}${FE}`);
 }
 
 /* ======================================================================
+   2z''. Totals that cancel
+
+   A total with a minus sign in it is held to rtol of the species in it as
+   well as of itself. Chloride less sodium, in a water that carries the two
+   alike, is nought but for rounding; weighed against itself alone it was
+   held to the absolute tolerance, under the rounding of the 0.1 mol of each
+   it is the difference of, and every Newton correction of it was that
+   rounding times the step, the step cut until the two fitted. A halite
+   column dissolving into fresh water at the page's settings, against itself
+   at a tolerance 1e5 times tighter.
+   ====================================================================== */
+console.log('\n--- totals that cancel ---');
+{
+  const halite = (amount) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 1
+VELOCITY = 1e-5
+ADVECTION = 1
+DIFFUSION = 1
+LEFT = robin
+RIGHT = free
+TEND = 2e5
+EQUILIBRATE = always
+
+<SPECIES>
+Na+      0.1     D=1e-9   left=0
+Cl-      0.1     D=1e-9   left=0
+Halite   ${amount}     mineral
+
+<EQUILIBRIUM>
+Halite <=> Na+ + Cl-, logK = -2
+`);
+  const m = halite('0.8');
+  // Which of the two totals is the difference, and where each cell's is in the state.
+  const jDiff = m.conservation.findIndex((row) => Object.values(row).some((v) => v < 0));
+  const totalAt = (j, c) => m.species.indexOf(`total ${j + 1}@${c}`);
+  const y0 = m.initialState();
+  // The weights as the solver sets them, 1 / max(|y|, atol / rtol), before the model lowers any.
+  const inv = Float64Array.from(y0, (v) => 1 / Math.max(Math.abs(v), 1e-20 / 1e-6));
+  const was = Float64Array.from(inv);
+  if (typeof m.weightScale === 'function') m.weightScale(y0, y0, inv);
+  const cells = Array.from({ length: 20 }, (_, c) => c);
+  check('a total with a minus sign, chloride less sodium, weighed against the 0.2 mol of the two in it and not against '
+    + 'itself, nought; the other, sodium and halite, as it was',
+  jDiff >= 0 && typeof m.weightScale === 'function'
+    && cells.every((c) => Math.abs(inv[totalAt(jDiff, c)] * 0.2 - 1) < 1e-12
+      && inv[totalAt(1 - jDiff, c)] === was[totalAt(1 - jDiff, c)]),
+  `1/weight of the difference ${(1 / was[totalAt(jDiff, 0)]).toExponential(1)} -> ${(1 / inv[totalAt(jDiff, 0)]).toExponential(3)}`);
+  const page = { solver: 'ndf', tend: 2e5, rtol: 1e-6, atol: 1e-20, nonNegative: true, kappa: 1e-3, maxJacAge: 20,
+    stagnationTol: 0.5, belowTolRun: 5, maxPoints: 4000, outputTimes: [1e5, 2e5] };
+  const r = FacsimileODE.runModel(m, page);
+  const ref = FacsimileODE.runModel(halite('0.8'), { ...page, rtol: 1e-11 });
+  let off = 0;
+  for (let g = 0; g < 2; g++) {
+    const a = m.toConcentrations(r.grid.y[g]);
+    const b = m.toConcentrations(ref.grid.y[g]);
+    for (const c of cells) off = Math.max(off, Math.abs(a[c * 3] - b[c * 3]) / 0.1, Math.abs(a[c * 3 + 2] - b[c * 3 + 2]) / 0.8);
+  }
+  let diff = 0;
+  for (const y of r.y) for (const c of cells) diff = Math.max(diff, Math.abs(y[totalAt(jDiff, c)]));
+  const instants = r.events.length === 4 && ref.events.length === 4
+    && r.events.every((e, i) => Math.abs(e.t - ref.events[i].t) < 1e-2);
+  check('  halite dissolving into fresh water at the page\'s settings: 2e5 s in fewer than 2,000 steps, the halite gone from '
+    + 'four cells at the instants of a run 1e5 times tighter, sodium and halite at 1e5 s and at the end within 1e-6 of it, '
+    + 'and chloride less sodium nought but for rounding all through',
+  r.stats.nsteps < 2000 && instants && off < 1e-6 && diff < 1e-15,
+  `${r.stats.nsteps} steps (${ref.stats.nsteps} at rtol 1e-11); the halite gone at ${r.events.map((e) => e.t.toFixed(3)).join(', ')} s `
+    + `(${ref.events.map((e) => e.t.toFixed(3)).join(', ')}); ${off.toExponential(1)} off; chloride less sodium at most ${diff.toExponential(1)}`);
+}
+
+/* ======================================================================
    2w. Limited advection (ADVECTION_SCHEME = limited)
 
    A front at a Peclet number of 400 against van Genuchten and Alves's
@@ -8869,7 +8942,8 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     Redox zones along a plume, the redoxplume example, run by the worker as the page runs it. Every point shown is the
     speciation of its totals: re-speciated from what it shows, each settles at its first evaluation, its relations and
     totals holding there to rounding; the one polishing step moves a trace species by what the point's conditioning
-    lets it, 7e-7 of nitrate at 1e-25 where a front is passing, far from what a point not settled moved. A mineral
+    lets it, 1.2e-10 of FeS at 7e-10 (1.4e-6 of nitrate at 1e-26 where a front passed, while a total that cancels was
+    weighed against itself alone), far from what a point not settled moved. A mineral
     the run holds at none is read back as none: FeS(ppt) in the oxic water ahead of the plume is 1e-33 or so in the state,
     the arithmetic's, and read as some it was held at saturation where it cannot be -- the speciation did not settle, and
     the point was shown as the solver left it. And the zones from the inlet, by the pe: methane below -2.5, iron below 3,
@@ -8925,7 +8999,7 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
       + 're-speciated from what it shows settling at its first evaluation -- a mineral the run holds at none, FeS in the oxic '
       + 'water, read back as none and not as the arithmetic\'s 1e-33 of it -- and the zones from the inlet by the pe, methane, '
       + 'iron, manganese, nitrate, the oxygen, each moving downstream from day 20 to 30 to 40',
-    ran && unsettled === 0 && late === 0 && atShown < 1e-12 && moved < 1e-4 && read > 300 && inOrder && downstream,
+    ran && unsettled === 0 && late === 0 && atShown < 1e-12 && moved < 1e-4 && read > 250 && inOrder && downstream,
     ran ? `${got.n} points, ${read} read: ${unsettled} unsettled, ${late} cells past their first evaluation, the relations and `
       + `totals holding at the points shown to ${atShown.toExponential(1)}, the polishing step moving them by ${moved.toExponential(1)}; `
       + zones.map((zz) => `day ${zz.day}: ${zz.order} to ${zz.ends.join(', ')} m`).join('; ')

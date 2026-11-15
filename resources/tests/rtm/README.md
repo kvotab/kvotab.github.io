@@ -466,6 +466,24 @@ at pH 7.90 at rtol 1e-6, 8.38 at 1e-9, against 7.89). Each event is now watched
 past the bound by 64 roundings of the cell's largest total and past saturation
 by 1e-12 in ln (heldEvent, SAT_ROUND); every event check above holds as before.
 
+**Totals that cancel.** A total with a minus sign in it is held to rtol of the
+species in it, each counted as large as it is, as well as of itself. Halite
+dissolving into fresh water, 20 cells over 1 m for 2e5 s (the column of the
+fronts check in test-ui.py): its totals are chloride less sodium and sodium
+and halite, and the first is nought but for rounding. Its weight, 1 over the
+largest of itself and atol/rtol, 1e14 at the page's settings, is lowered to
+1/0.2, the chloride and sodium in it; the other total's is left as it was. At
+the page's settings the column runs in 515 steps, the halite gone from four
+cells at the instants of a run at rtol 1e-11 (to 1e-3 s), sodium and halite at
+1e5 s and at the end within 3e-7 of that run (of 0.1 and 0.8), and chloride
+less sodium at most 4e-18 all through. Weighed against itself alone, held to
+1e-20 under the rounding of the 0.1 mol of each it is the difference of, every
+Newton correction of it was that rounding times the step, and the step was cut
+until the two fitted: 52,531 steps and 71,744 failed tries besides, nearly
+all from 80,000 s on, and 7.9e-6 off. The examples that hold their equilibria end within
+3e-5 of where they ended before, half of them to the digit, the plume in 2,830
+steps where it took 3,019.
+
 **Activities and saturation in rate laws** (`{X}`, `I`, `SI()`, `SR()`,
 `<PHASES>`). Each against the same quantity worked out apart: `{H+}{Ca+2}` the
 coefficients times the concentrations, `I` the ionic strength (a parameter
@@ -560,10 +578,12 @@ ferrihydrite gone by 55, FeS holding the iron and the sulfate reduced by
 worker, no step longer than a day and 193 points; the panel's Maximum
 step, 5 days, in its place where it is given.
 Redox zones along a plume (since 2026-11-10), the example run by the
-worker as the page runs it, 3021 points: every tenth point shown is its
+worker as the page runs it, 2831 points: every tenth point shown is its
 own speciation, re-speciated from what it shows settling at its first
-evaluation, its relations and totals holding there to 1.5e-13 (the
-polishing step moving nitrate at 1e-25 by 7e-7 where a front passes). A
+evaluation, its relations and totals holding there to 1.3e-13 (the
+polishing step moving FeS(ppt) at 7e-10 by 1.2e-10; nitrate at 1e-26 by
+1.4e-6 where a front passed, 3020 points, while a total that cancels was
+weighed against itself alone). A
 mineral the run holds at none is read back as none: FeS(ppt)
 in the oxic water ahead of the plume is 1e-33 or so in the state, the
 arithmetic's, and read as some it was held at saturation where it cannot
@@ -1339,7 +1359,7 @@ The Diagrams tab (since 2026-11-09), on a carbonate water without activities: wi
 
 The redox couples as lines (since 2026-11-10), on a water with two couples and no complexes or activities, over pH 2 to 8 and pe -4 to 14: iron(3) over iron(2) flat at pe 13.02, the relation's log K, and sulfate over sulfide along pe = (33.65 - 9 pH)/8, each to 1e-9, from the map's left edge; the note saying two turn over. The couples example opens on its pe-pH diagram over pH 4 to 10: the six couples as lines, nitrate to nitrite falling a pe for each pH to 1e-5 and on its log K's (28.57 - 2 pH)/2 to 1e-4, its two species of one charge and the water's activity in its relation between (9e-7 and 3.2e-5), and ferric to ferrous through the ladder's 4.468 at pH 7; the water's limits dashed, the water itself marked.
 
-The redox zones example (since 2026-11-10) opens on the time chart: oxygen, nitrate, manganese(2), iron(2), sulfate, sulfide and methane, a day at most between points (`MAX_STEP = 1`); each oxidant gone when its electrons are, at a hundredth of a millimole of carbon a day -- the oxygen at day 25, the nitrate at 43.75, the pyrolusite's manganese all dissolved at 48.75, the ferrihydrite's iron at 53.75, each to the day -- and methane half the carbon left after the sulfate's 60 days, to 1 %. The ticks are cleared after it.
+The redox zones example (since 2026-11-10) opens on the time chart: oxygen, nitrate, manganese(2), iron(2), sulfate, sulfide and methane, a day at most between points (`MAX_STEP = 1`); each oxidant gone when its electrons are, at a hundredth of a millimole of carbon a day -- the oxygen at day 25 (what is left then tails off, below 1e-9 by 25.13 in a run at rtol 1e-10, and the first point under it may be a day after that), the nitrate at 43.75, the pyrolusite's manganese all dissolved at 48.75, the ferrihydrite's iron at 53.75, each to the day -- and methane half the carbon left after the sulfate's 60 days, to 1 %. The ticks are cleared after it.
 
 The redox zones along a plume example (since 2026-11-10), 30 cells over 40 days, run in the page in about ten seconds: it opens on Gradient, the pe as contours over the 40 days, time not on a log axis, the 30 cells up; at the end, from the inlet by the pe, methane, iron, manganese, nitrate and the oxygen ahead of them. Against distance, Show at its first choice, what is ticked against time together at one time: the nine ticked, at the end of the run, on a log axis from 1e-10, the pe on its own axis on the right; methane and siderite from the inlet, ferrihydrite none there and part gone in the iron zone, manganese(2) beyond it, the oxygen at the far end; its legend under the axis' title, though the chart was drawn while its tab was hidden. The same for Against time and Composition (since 2026-11-11): each cleared and drawn again by one of its own settings while Against distance is open is drawn at 700 px, Plotly's own width, and when its tab opens it must be drawn afresh at its box's width, the legend under the x axis's title. Before, Against time kept the place its legend had at 700 px, 25 px over the title; `showTab` now clears a chart whose width is not its box's and draws it again. With Times `20, 30` the first alone, day 20, the note saying so: methane at the inlet, the iron zone still at 5.5 m. Saved as CSV, `rtm_profile_ticked.csv`: the distance and a column for each of the nine, a row for each cell, with what the log axis cannot show -- the oxygen at the inlet under 1e-60, below the floor, and the ferrihydrite there at 0.
 
@@ -1365,7 +1385,7 @@ The Composition tab one time at a time (since 2026-11-11), on the same run: alon
 
 The same run in mg/kgw (since 2026-11-10), as the freshening example gives it: the four Units selects at mg, the menu mol, mmol, µmol and nmol per kgw and mg and µg per kgw. Against time at the outlet the calcium, magnesium, sodium and chloride dissolved, the title concentration (mg/kgw), calcium's curve 40078 times its mol/kgw to 1e-12 and what was measured of it 40.078, 2.80546, 22.44368 and 92.1794 mg/kgw; mmol/kgw chosen on Against distance's bar sets all four, a thousand times the model's; in the model's own the title as it was. CaX2 ticked in mg: left off, the note naming it, no formula mass; the CSV `t (s)`, each in mg/kgw and CaX2 in mol/kgw. Kept and run again: beside it, dashed, the kept run in mg/kgw, the same to the last digit. Against distance CaX2 alone as the model has it, the note saying why, and Ca+2 in mg/kgw, every header of the CSV after the distance ending ` (mg/kgw)`; on Gradient Ca+2 (mg/kgw). The water's listing then has a column in mg/kgw after PHREEQC's own: in the Text, calcium's total its molality times 40078 to the four figures printed, and last in the CSV. A model without ACTIVITY with mg/kgw still chosen: drawn as its text has it, the note saying mg/kgw needs ACTIVITY; mg and µg on the menu, not to be chosen; times 10³ a thousand times, the title concentration × 10³.
 
-The redox zones on Gradient (since 2026-11-10), on the plume example's run: first in Show where the model has the electron, and not offered for the freshening run, which has none. Each cell at each stored time by the couple holding its pe, the most poising capacity n Tox Tred/(Tox + Tred), the water's O2 at 2 Tox against the water itself. The zones in the order the couples turn over, O2/H2O, NO3-/N2, Pyrolusite/Mn+2, Fe+3/Fe+2, SO4-2/HS-, CO3-2/CH4, the nitrite never holding the pe; at the end of the run from the inlet sulfate, methane, iron, manganese, nitrate and the oxygen ahead; the note giving each zone's share of the waters; drawn as a map though the example's As is contours, log concentration and smooth not to be had. Cell 15 at each of its 3021 stored times, the couple holding the pe worked out by hand from every species' concentration there -- the time chart's CSV, nothing ticked -- with each couple's species written out in the test, is the zone the map's CSV gives by name: oxic, then nitrate, manganese and iron as the plume reaches it.
+The redox zones on Gradient (since 2026-11-10), on the plume example's run: first in Show where the model has the electron, and not offered for the freshening run, which has none. Each cell at each stored time by the couple holding its pe, the most poising capacity n Tox Tred/(Tox + Tred), the water's O2 at 2 Tox against the water itself. The zones in the order the couples turn over, O2/H2O, NO3-/N2, Pyrolusite/Mn+2, Fe+3/Fe+2, SO4-2/HS-, CO3-2/CH4, the nitrite never holding the pe; at the end of the run from the inlet sulfate, methane, iron, manganese, nitrate and the oxygen ahead; the note giving each zone's share of the waters; drawn as a map though the example's As is contours, log concentration and smooth not to be had. Cell 15 at each of its 2844 stored times, the couple holding the pe worked out by hand from every species' concentration there -- the time chart's CSV, nothing ticked -- with each couple's species written out in the test, is the zone the map's CSV gives by name: oxic, then nitrate, manganese and iron as the plume reaches it.
 
 Against distance one time at a time (since 2026-11-10), on the same run, Ca+2 in mg/kgw: under the Times the slider at the end of its 514 stored points, the eight curves, Back to Times not to be pressed; moved to point 100, one curve at 1.31 h, the note saying it is the slider's and the axis the whole run's, and the axis the same at point 300; that curve the very one the Times draw when given point 300's stored time, which brings the Times back. Play, the run in 5 s, from point 300: the slider moving on, the button pause and the axis still; at the end of the run it stops at 6.94 d, the button play again; Back to Times the eight curves again. Those ticked against time on the slider: the four at 18.4 min and at 2.04 d, their axis the same.
 
