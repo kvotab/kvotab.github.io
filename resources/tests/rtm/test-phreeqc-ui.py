@@ -2180,6 +2180,45 @@ async def main():
             check('  both unticked: the input the menu writes without them',
                   [await page.ev(TICKS), await page.ev(f"{TEXT}.includes(' Fix_H+ -{{pH}} HCl 10') && {TEXT}.includes(' {{solid}} 0 0.01')")],
                   [['false', 'false'], True])
+            # ---- the waters rebuilt from reference waters ----
+            # The panel shut at first; opened, the example: three made-up reference waters and twelve waters mixed from them as
+            # the batch's table, what the shares are fitted on unless said; rebuilt with phreeqc.dat, the shares found again
+            # exactly, the batch on the rebuilt waters; the table as opened a click away; the Simple Functions' Version A
+            # taking the rebuilt waters as they are.
+            mix_shut = await page.ev("document.getElementById('rtmMix').hidden")
+            await page.ev(CLICK % json.dumps('#rtmMixOpener'))
+            await settle(page, "!document.getElementById('rtmMix').hidden && !!window.RtmMix", True, tries=80, pause=0.25)
+            await page.ev("[...document.querySelectorAll('#rtmMix .rtm-pq-row button')].find((b) => b.textContent === 'An example').click()")
+            ex = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return s.startsWith('An example') ? s : null; }})()", tries=40, pause=0.25)
+            await field('rtmPqBatchDb', 'builtin')
+            fit_default = await page.ev("document.getElementById('rtmMixFit').placeholder")
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('#rtmMixGo'))
+            rebuilt = await until(page, f"(() => {{ const s = {BATCH_STATUS}; return /rebuilt from 3 reference waters|could not be rebuilt/.test(s) ? s : null; }})()",
+                                  tries=200, pause=0.25)
+            line = await page.ev("document.getElementById('rtmPqBatchTable').textContent")
+            report = await page.ev("document.getElementById('rtmMixReport').textContent")
+            check('the waters rebuilt from reference waters: the panel shut at first; the example; what the shares are fitted on '
+                  'unless said; rebuilt with phreeqc.dat, the batch on the rebuilt waters, the shares found again exactly',
+                  [mix_shut, ex.startswith('An example: three made-up reference waters') if isinstance(ex, str) else ex, fit_default,
+                   rebuilt.startswith('12 of 12 waters rebuilt from 3 reference waters through PHREEQC') if isinstance(rebuilt, str) else rebuilt,
+                   'Rebuilt from 3 reference waters. Use the table as opened' in line if isinstance(line, str) else line,
+                   'on what it is fitted on, 0.000 (0.000 to 0.000)' in report if isinstance(report, str) else report,
+                   'Brine 0.10 (0.00 to 0.50); Sea 0.30 (0.00 to 0.75); Fresh 0.60 (0.05 to 0.97)' in report if isinstance(report, str) else report],
+                  [True, True, 'Cl, Na, Ca, SO4, HCO3 0.3', True, True, True, True])
+            BUTTON = "[...document.querySelectorAll('#rtmPqBatchTable button')].find((b) => b.textContent === %s).click()"
+            await page.ev(BUTTON % json.dumps('Use the table as opened'))
+            back = await page.ev("document.getElementById('rtmPqBatchTable').textContent")
+            await page.ev(BUTTON % json.dumps('Use the rebuilt waters'))
+            again = await page.ev("document.getElementById('rtmPqBatchTable').textContent")
+            check('  the table as opened a click away, and the rebuilt waters again',
+                  [back.startswith('twelve made-up waters: 12 rows') and back.endswith('Use the rebuilt waters') if isinstance(back, str) else back,
+                   again.startswith('twelve made-up waters, rebuilt: 12 rows') if isinstance(again, str) else again], [True, True])
+            await page.ev("document.getElementById('rtmStatus').textContent = ''")
+            await page.ev(CLICK % json.dumps('[data-on-click="rtm:pqBatchSf"][data-version="A"][data-drawn="no"]'))
+            set_mix = await until(page, SF_STATUS, tries=120, pause=0.25)
+            check("  the Simple Functions' Version A takes the rebuilt waters as they are",
+                  set_mix.startswith("The batch is set up as the Simple Functions' Version A") if isinstance(set_mix, str) else set_mix, True)
             await field('rtmPqBatchRealisations', '')
             await field('rtmPqBatchWaters', 'each')
             check('no console errors', page.errors[:3], [])

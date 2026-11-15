@@ -5119,6 +5119,118 @@ function againstSulphideBeside(engine) {
     ex ? `${exData.length} lines against ${mine.length}` : 'no example');
 }
 
+/*
+  Waters rebuilt from reference waters (rtm-mix.js): the reference table read, and refused where it cannot be; what
+  the shares are fitted on, as said and unless said; the shares of twelve made-up waters mixed from three made-up
+  reference waters found again to 1e-12; with noise on the waters, the least-squares shares, none below nought and
+  summing to one, against an independent solver (projected gradient, to 1e-6 in the misfit); then the batch's input
+  run as the Batch tab runs it, each mixture brought to calcite at 25 C: chloride the mixture's to 1e-4 (PHREEQC's
+  kilogram of water moving with the carbonate as calcite settles it, 8e-6 here), calcite at saturation, and a table the
+  Simple Functions read whole, Version A's Eh and iron with it.
+*/
+function againstMix(engine) {
+  const X = require(path.join(jsDir, 'rtm-mix.js'));
+  const SF = require(path.join(jsDir, 'sf-model.js'));
+  const SFP = require(path.join(jsDir, 'rtm-sf-phreeqc.js'));
+  const ref = X.readReference(...X.csvTable(X.EXAMPLE_REFERENCE));
+  check('the reference waters read: three, their names, pH, pe and temp, and twelve constituents as PHREEQC names them',
+    !ref.error && ref.waters.map((w) => w.name).join() === 'Brine,Sea,Fresh' && ref.waters[1].pH === 7.9 && ref.waters[2].pe === -4.5
+    && ref.waters[0].temp === 15 && ref.labels.join() === 'Na,K,Ca,Mg,Sr,Cl,Br,S(6),S(-2),C(4),Si,Fe(2)' && !ref.unread.length,
+  `${ref.error} ${ref.labels.join(' ')}`);
+  const refuse = (text) => X.readReference(...X.csvTable(text)).error || '';
+  const nine = ['name, pH, Cl', ...Array.from({ length: 9 }, (_, i) => `w${i}, 7, 0.${i + 1}`)].join('\n');
+  const bad = [
+    ['one water', 'name, pH, Cl\nA, 7, 0.1', /two reference waters at least/],
+    ['nine', nine, /8 reference waters at most/],
+    ['one without a pH', 'name, pH, Cl\nA, 7, 0.1\nB, , 0.2', /the reference water B has no pH/],
+    ['two of one name', 'name, pH, Cl\nA, 7, 0.1\nA, 8, 0.2', /two reference waters are named A/],
+    ['nothing to read', 'name, pH, Density\nA, 7, 1\nB, 8, 1', /no column of the reference waters is a constituent/],
+  ];
+  const wrong = bad.filter(([, t, re]) => !re.test(refuse(t)));
+  check(`  and refused, each with its reason: ${bad.map((b) => b[0]).join(', ')}`, !wrong.length, wrong.map(([w, t]) => `${w}: ${refuse(t)}`).join(' | '));
+  const tab = X.exampleTable();
+  const spec = X.defaultFit(tab.columns, ref.labels);
+  const fit = X.readFit(spec, tab.columns, ref.labels);
+  const fitBad = [
+    ['nothing', '', /say what to fit the shares on/],
+    ['what the reference waters lack', 'Cl, Zn', /Zn: the reference waters have no column for it/],
+    ['what the table lacks', 'Cl, Mg', /Mg: the table has no column for it/],
+    ['a weight of nought', 'Cl, Na 0', /the weight is a number above nought/],
+    ['one twice', 'Cl, SO4, S(6)', /S\(6\) is said twice/],
+  ];
+  const fitWrong = fitBad.filter(([, t, re]) => !re.test(X.readFit(t, tab.columns, ref.labels).error || ''));
+  check('what the shares are fitted on unless said, of what both tables have; SO4 the table\'s [SO4-2]tot (m) and the reference '
+    + 'waters\' S(6), HCO3 their C(4); and refused: ' + fitBad.map((b) => b[0]).join(', '),
+  spec === 'Cl, Na, Ca, SO4, HCO3 0.3' && !fit.error && fit.terms.map((t) => `${t.label}@${t.column}`).join()
+    === 'Cl@[Cl]tot (m),Na@[Na]tot (m),Ca@[Ca]tot (m),S(6)@[SO4-2]tot (m),C(4)@[HCO3-] (m)' && !fitWrong.length,
+  `${spec} | ${fitWrong.map(([w, t]) => `${w}: ${X.readFit(t, tab.columns, ref.labels).error}`).join(' | ')}`);
+  const fits = X.fitAll(ref.waters, fit.terms, tab.columns, tab.rows);
+  const off = Math.max(...fits.map((f, k) => Math.max(...f.f.map((x, i) => Math.abs(x - X.EXAMPLE_SHARES[k][i])))));
+  check('  the twelve made-up waters\' shares found again to 1e-12, the misfit nought', off < 1e-12 && fits.every((f) => f.misfit < 1e-12),
+    `${off.toExponential(2)}`);
+  // Noise on the waters: the least squares against projected gradient on the simplex, a misfit no lower anywhere.
+  let seed = 7;
+  const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+  const noisy = tab.rows.map((r) => r.map((v, j) => (j < 2 ? v : v * 10 ** (0.08 * (rnd() - 0.5)))));
+  const nf = X.fitAll(ref.waters, fit.terms, tab.columns, noisy);
+  const R = ref.waters.map((w) => fit.terms.map((t) => w.comps.find(([lb]) => lb === t.label)[1]));
+  const obj = (f, row) => fit.terms.reduce((a, t, r) => {
+    const o = row[tab.columns.indexOf(t.column)];
+    return a + (t.weight * (R.reduce((s2, ref2, i) => s2 + f[i] * ref2[r], 0) / o - 1)) ** 2;
+  }, 0);
+  const project = (v) => {      // Euclidean projection onto the simplex
+    const u = [...v].sort((a, b) => b - a);
+    let css = 0;
+    let rho = 0;
+    let th = 0;
+    u.forEach((x, j) => { css += x; const t2 = (css - 1) / (j + 1); if (x - t2 > 0) { rho = j; th = t2; } });
+    return v.map((x) => Math.max(0, x - th));
+  };
+  let worse = 0;
+  noisy.forEach((row, k) => {
+    // Projected gradient with a backtracking step (Armijo along the projection arc), from the middle of the simplex.
+    let f = [1 / 3, 1 / 3, 1 / 3];
+    for (let it = 0; it < 3000; it++) {
+      const f0 = obj(f, row);
+      const g = f.map((_, i) => { const h = [...f]; h[i] += 1e-9; return (obj(h, row) - f0) / 1e-9; });
+      let t = 1;
+      let c = f;
+      while (t > 1e-14) {
+        c = project(f.map((x, i) => x - t * g[i]));
+        const dec = g.reduce((a, gi, i) => a + gi * (f[i] - c[i]), 0);
+        if (obj(c, row) <= f0 - 1e-4 * dec) break;
+        t /= 2;
+      }
+      if (c.every((x, i) => Math.abs(x - f[i]) < 1e-15)) break;
+      f = c;
+    }
+    worse = Math.max(worse, obj(nf[k].f, row) - obj(f, row));
+  });
+  check('  with noise on the waters, the shares none below nought, summing to one, and no mixture nearer: projected gradient on the '
+    + 'same misfit finds none lower by 1e-6',
+  nf.every((x) => x.f.every((v) => v >= 0) && Math.abs(x.f.reduce((a, v) => a + v, 0) - 1) < 1e-12 && x.misfit > 0) && worse < 1e-6,
+  `the most the gradient did better by: ${worse.toExponential(2)}`);
+  // The batch's input, run as the Batch tab runs it.
+  const ph = X.readPhases('Calcite');
+  const tm = X.template(ref.waters, ref.labels, { phases: ph.phases, temp: 25 });
+  engine.load(dbText);
+  const columns = [...tab.columns, ...tm.shareColumns];
+  const rows = tab.rows.map((r, k) => [...r, ...fits[k].f.map(String)]);
+  const run = E.runBatch(engine, { template: tm.text, columns, rows, user: 1 });
+  const out = X.rebuiltTable(tab, ref.waters, ref.labels, fits, tm, run, ph.phases);
+  const at = (c) => out.columns.indexOf(c);
+  const clOff = Math.max(...out.rows.map((r, k) => Math.abs(r[at('[Cl]tot (m)')] / tab.rows[k][tab.columns.indexOf('[Cl]tot (m)')] - 1)));
+  const cols = SFP.columnsOf(SF, out.columns);
+  check('  the waters rebuilt through PHREEQC as the Batch tab runs them, brought to calcite at 25 C: the table\'s own name first, '
+    + 'the Simple Functions\' columns, the rest, the shares and the misfit; chloride the mixture\'s to 1e-4, calcite at saturation, '
+    + 'Version A\'s columns all read, the shares as fitted',
+  !run.errors.length && out.columns.slice(0, 4).join() === 'water,pH,Eh (mV),I (m)' && at('[S(-2)]tot (m)') > 0 && at('share Sea') > 0
+    && at('misfit (log)') > 0 && at('SI Calcite') === out.columns.length - 1 && clOff < 1e-4
+    && out.rows.every((r) => Math.abs(r[at('SI Calcite')]) < 1e-9) && !cols.missingA.length && cols.cols.Eh === 'Eh (mV)'
+    && out.rows.every((r, k) => Math.abs(r[at('share Brine')] - X.EXAMPLE_SHARES[k][0]) < 1e-9),
+  `${out.columns.join(' | ')}; Cl ${clOff.toExponential(1)}; ${run.errors.slice(0, 1).join(' ')}`);
+}
+
 function againstMultiD(engine) {
   // PHREEQC keeps a TRANSPORT's options for the next one in the same instance: each input here says -implicit and -stagnant.
   const database = { name: 'phreeqc.dat', text: dbText };
@@ -5814,6 +5926,8 @@ function againstKineticsHandOff(engine) {
   againstExchangeBeside(wasm);
   console.log('\n--- sulphide made at a rate along a column beside PHREEQC\'s own: the redox carried, the valence states, the faces ---');
   againstSulphideBeside(wasm);
+  console.log('\n--- waters rebuilt from reference waters: the shares fitted, the mixtures made, the table ---');
+  againstMix(wasm);
   console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
   againstMultiD(wasm);
   console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');

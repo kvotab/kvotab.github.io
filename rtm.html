@@ -1070,6 +1070,48 @@
 
         <!-- A batch over a table of waters, a tab of its own: one PHREEQC input over the rows of a table. -->
         <section class="rtm-pane" data-pane="batch" hidden>
+          <!--
+            The waters rebuilt from reference waters (rtm-mix.js; rtm-ui.js mixRun): each row of the batch's table a
+            mixture of the reference waters, its shares fitted, the mixture made and brought to the phases in PHREEQC,
+            and the table the batch runs on then the rebuilt waters.
+          -->
+          <div class="rtm-pq rtm-mix" id="rtmMix" hidden>
+            <div class="rtm-pq-head">
+              <strong>The waters rebuilt from reference waters</strong>
+              <span class="kvot-info-slot" data-info-key="pq:mix"></span>
+              <button type="button" class="rtm-pq-close" data-on-click="rtm:mixPanel"
+                aria-label="Close the panel of reference waters" title="Close">&#215;</button>
+            </div>
+            <div class="rtm-pq-body">
+              <div class="rtm-pq-input">
+                <label for="rtmMixRefs">The reference waters: a row each, its name, pH, pe and temp, then what it has, in mol/kgw, as PHREEQC names it</label>
+                <textarea id="rtmMixRefs" class="rtm-pq-water" spellcheck="false" wrap="off" rows="7" data-on-change="rtm:mixSettings"
+                  placeholder="name, pH, pe, temp, Na, Ca, Cl, S(6), C(4)&#10;Brine, 7.5, -4, 15, 0.5, 0.3, 1.1, 2e-4, 1e-4&#10;Sea, 7.9, -3, 15, 0.15, 0.004, 0.18, 0.009, 1.5e-3&#10;Fresh, 8.5, -4.5, 15, 2e-3, 6e-4, 5e-4, 2e-4, 3e-3"></textarea>
+                <div class="rtm-pq-row">
+                  <button type="button" class="rtm-btn secondary small" data-on-click="rtm:mixOpen">Open…</button>
+                  <button type="button" class="rtm-btn secondary small" data-on-click="rtm:mixExample">An example</button>
+                  <input type="file" id="rtmMixFile" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden data-on-change="rtm:mixFileChosen">
+                </div>
+              </div>
+              <div class="rtm-pq-settings">
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmMixFit">Fit the shares on<span class="rtm-name">each with its weight, 1 unless given</span></label><span class="kvot-info-slot" data-info-key="pq:mixFit"></span></div>
+                  <input id="rtmMixFit" type="text" data-on-change="rtm:mixSettings">
+                </div>
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmMixPhases">Then bring each mixture to<span class="rtm-name">each at saturation, or its SI given</span></label><span class="kvot-info-slot" data-info-key="pq:mixPhases"></span></div>
+                  <input id="rtmMixPhases" type="text" placeholder="nothing" data-on-change="rtm:mixSettings">
+                </div>
+                <div class="rtm-pq-field">
+                  <div class="kvot-info-line"><label for="rtmMixTemp">at<span class="rtm-name">°C; nothing for the mixture's own</span></label></div>
+                  <input id="rtmMixTemp" type="text" data-on-change="rtm:mixSettings">
+                </div>
+                <p class="rtm-muted rtm-mix-db" id="rtmMixDb"></p>
+                <button type="button" class="rtm-btn small" id="rtmMixGo" data-on-click="rtm:mixRun">Rebuild the waters</button>
+              </div>
+            </div>
+            <div class="rtm-pq-report" id="rtmMixReport" hidden></div>
+          </div>
           <!-- A batch: one PHREEQC input over the rows of a table of waters, {name} for a row's value (rtm-ui.js pqBatchRun). -->
           <div class="rtm-setup rtm-pq-batch" id="rtmPqBatchBar">
             <div class="rtm-setup-body">
@@ -1077,6 +1119,7 @@
             <span class="rtm-dg-axis">A batch over a table of waters
               <button type="button" class="rtm-btn secondary small" data-on-click="rtm:pqBatchOpen">Open a table…</button>
               <input type="file" id="rtmPqBatchFile" accept=".csv,.tsv,.txt,.xlsx,.xls" hidden data-on-change="rtm:pqBatchFileChosen">
+              <button type="button" class="rtm-btn secondary small" id="rtmMixOpener" data-on-click="rtm:mixPanel" aria-expanded="false" aria-controls="rtmMix">From reference waters…</button>
             </span>
             <label id="rtmPqBatchSheetWrap" hidden>Sheet
               <select id="rtmPqBatchSheet" data-on-change="rtm:pqBatchSheet"></select>
@@ -4603,6 +4646,40 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             as SR-Site and the PSAR kept them, each element's lowest in a struct array
             <code>CSOL(1×N)</code>; <em>as SR-Site's</em> adds the elements they gave no limit, at 1e17.</p>
 
+          <h4 id="help-phreeqc-mix">The waters rebuilt from reference waters</h4>
+          <p>A table of groundwaters often gives each water a few numbers — its chloride, sodium, calcium,
+            sulphate, carbonate and pH — where a handful of reference waters, the end-members it is
+            thought to be mixed from, each have all a water has: magnesium, potassium, iron, sulphide,
+            bromide, a pe of their own. <em>From reference waters…</em>, on the batch's line, opens a panel
+            that rebuilds each water of the batch's table as a mixture of them. The reference waters go in
+            the box, a row each, the names in the first: its <code>name</code>, <code>pH</code>,
+            <code>pe</code> and <code>temp</code> (°C, 25 unless given), then what it has in mol/kgw, each
+            column named as PHREEQC names it in a <code>SOLUTION</code> — <code>Ca</code>,
+            <code>S(6)</code>, <code>C(4)</code> — or as the Simple Functions' columns are; CSV or tab
+            between, or opened from a CSV file or an Excel workbook's first sheet. Two at least, eight at
+            most. <em>An example</em> gives three made-up reference waters and twelve waters mixed from
+            them as the batch's table.</p>
+          <p>Each row's shares of the reference waters are fitted in the page: none below nought, all summing
+            to one, the mixture nearest the row in the weighted relative misfit of what <em>Fit the shares
+            on</em> names — Cl, Na, Ca, SO4 and HCO3 at a third of the weight unless said, of those both
+            tables have. Every subset of the reference waters is tried free and the best of those whose
+            shares are all at least nought kept, which is the least-squares mixture exactly. Then, on the
+            batch's lanes and with the batch's database, PHREEQC mixes the reference waters in those shares
+            and brings each mixture to the phases of <em>Then bring each mixture to</em> — Calcite unless
+            said, each at saturation or at the SI given after its name, 10 mol of it there — at the
+            temperature given. A constituent the database names otherwise (<code>C(+4)</code> in some,
+            <code>C(4)</code> in others) is refused, and the report says so.</p>
+          <p>What comes out is a table the batch then runs on: the table's own columns that are no
+            constituent, a place or a name; the Simple Functions' columns, <code>pH</code>,
+            <code>Eh (mV)</code>, <code>[HCO3-] (m)</code>, <code>[Ca]tot (m)</code> and on, of what the
+            reference waters have; every other element's total and each valence state's; the pe; the
+            shares, the misfit and each phase's saturation index. The Simple Functions' menu takes it as it
+            is, Version A each water at its own Eh and iron. The report under the panel says how well each
+            water is a mixture of the reference waters, the shares, how near the rebuilt water comes to the
+            table's own on what was fitted and the pH, and its Eh. <em>Use the table as opened</em> puts the
+            batch back on the table, and <em>Use the rebuilt waters</em> on them again; <em>Save the rebuilt
+            waters…</em> keeps them as CSV.</p>
+
           <h4 id="help-phreeqc-db">The database, and where PHREEQC comes from</h4>
           <p>The page comes with <code>phreeqc.dat</code>, the database distributed with PHREEQC
             3.8.6. <em>Open a database…</em> reads any other, such as <code>llnl.dat</code>,
@@ -4783,6 +4860,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261115b"></script>
 </body>
 </html>

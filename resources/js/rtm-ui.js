@@ -11631,6 +11631,71 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       more: more('A batch over a table of waters', 'help-phreeqc-batch'),
     }),
 
+    'pq:mix': () => {
+      const X = self.RtmMix;
+      const ref = X && pq.mix.refs.trim() ? X.readReference(...mixReferenceTable(pq.mix.refs)) : null;
+      const b = pq.batchRebuilt;
+      return {
+        kicker: 'Batch', title: 'The waters rebuilt from reference waters',
+        lead: 'Each water of the batch\'s table taken as a mixture of a few reference waters, each with all it has: its shares fitted to what both tables have, the reference waters mixed in those shares in PHREEQC, each mixture brought to the phases asked for -- and the batch then runs on whole waters.',
+        facts: [['Reference waters', ref ? (ref.error ? ref.error : ref.waters.map((w) => w.name).join(', ')) : 'none given yet'],
+          ['Fitted on', pq.mix.fit || 'what both tables have, unless said'],
+          ['Then', `${pq.mix.phases || 'nothing'}${pq.mix.temp ? ` at ${pq.mix.temp} °C` : ''}`],
+          ['The batch on', b ? (pq.batchTable === b.rebuilt ? 'the rebuilt waters' : 'the table as opened') : 'the table as opened']],
+        sections: [
+          { heading: 'The reference waters', list: [
+            'A row each, the names in the first: its **name**, **pH**, **pe** and **temp** (°C, 25 unless given), then what it has in mol/kgw, each column named as PHREEQC names it in a SOLUTION -- Ca, Cl, S(6), S(-2), C(4), Fe(2) -- or as the Simple Functions\' columns are, [Ca]tot (m). Written in the box, CSV or tab between, or opened from a CSV file or an Excel workbook\'s first sheet. Two at least, eight at most.',
+            'They go into PHREEQC as written, each a SOLUTION of its own: a constituent the database names otherwise -- C(+4) in some, C(4) in others -- is refused there, and the report says so.',
+          ] },
+          { heading: 'The shares', list: [
+            'For each row, a share of each reference water, none below nought, all summing to one: the mixture nearest the row on what the shares are fitted on, in the weighted relative misfit -- every subset of the reference waters tried free, the best of those whose shares are all at least nought, which is the least-squares mixture exactly.',
+            '**Fit the shares on** says what with: Cl, Na, Ca, SO4 and HCO3 at a third of the weight unless said, of those both tables have; a table\'s column is found by what it is of, [SO4-2]tot (m) for SO4. Carbonate is weighted less: reactions move it, and a table may give the free HCO3- where the reference waters give the total.',
+            'A row with nothing of any of them has no shares, and is left as it is.',
+          ] },
+          { heading: 'The mixture', list: [
+            'In PHREEQC, with the batch\'s database: the reference waters, their MIX in the row\'s shares, then, at the temperature given, each phase brought to saturation (or to the SI given after its name) with 10 mol of it there to dissolve or form -- Calcite unless said. The batch\'s lanes run it, as many PHREEQCs at once as the batch uses.',
+          ] },
+          { heading: 'What comes out', list: [
+            'A table, which the batch then runs on: the table\'s own columns that are no constituent (a place, a name), then the Simple Functions\' -- pH, Eh (mV), I (m), [HCO3-] (m), [SO4-2]tot (m), [Cl]tot (m), [Ca]tot (m), [Mg]tot (m), [Na]tot (m), [K]tot (m), [Fe]tot (m), [Si]tot (m), of those the reference waters have -- then every other element\'s total and each valence state\'s, the pe, the shares, the misfit and each phase\'s saturation index.',
+            'The Simple Functions\' menu takes it as it is: Version A reads each water\'s own Eh and iron. **Use the table as opened** puts the batch back on the table, **Use the rebuilt waters** on the rebuilt one again; **Save the rebuilt waters…** keeps them as CSV.',
+            'The report says how well each water is a mixture of them, the shares, how near the rebuilt water is to the table\'s own on what was fitted and the pH, and its Eh.',
+          ] },
+        ],
+        more: more('The waters rebuilt from reference waters', 'help-phreeqc-mix'),
+      };
+    },
+
+    'pq:mixFit': () => ({
+      kicker: 'Batch', title: 'Fit the shares on',
+      lead: 'What each row\'s shares of the reference waters are fitted to: constituents both tables have, each with its weight, 1 unless given.',
+      facts: [['Now', pq.mix.fit || 'unless said, what both tables have']],
+      sections: [
+        { heading: 'Written as', list: [
+          '"Cl, Na, Ca, SO4, HCO3 0.3": a constituent and its weight, commas between. A constituent is named as PHREEQC names it (Cl, S(6), C(4)) or as SO4 for sulphate and HCO3 for carbonate.',
+          'Each is found in the reference waters by its name, and in the batch\'s table by what a column is of: Cl in [Cl]tot (m), SO4 in [SO4-2]tot (m).',
+          'Unless said: Cl, Br, Na, K, Ca, Mg, SO4 and HCO3 at 0.3, of those both tables have.',
+        ] },
+        { heading: 'What to fit on', list: [
+          'What mixing alone moves -- chloride, bromide -- fixes the shares best; sodium, calcium and sulphate, which exchange, calcite and sulphate reduction move a little, next; carbonate least.',
+          'With fewer constituents than reference waters less one, the shares are not fixed by them: one way among many is taken.',
+        ] },
+      ],
+      more: more('The waters rebuilt from reference waters', 'help-phreeqc-mix'),
+    }),
+
+    'pq:mixPhases': () => ({
+      kicker: 'Batch', title: 'Then bring each mixture to',
+      lead: 'The phases each mixture is brought to after mixing, at the temperature given: a mixture of waters each at saturation need not be.',
+      facts: [['Now', `${pq.mix.phases || 'nothing'}${pq.mix.temp ? ` at ${pq.mix.temp} °C` : ''}`]],
+      sections: [
+        { heading: 'Written as', list: [
+          '"Calcite, Quartz -0.2": a phase as the database names it, and the saturation index to bring it to, 0 unless given. Each has 10 mol there, to dissolve or form; nothing for the mixture as it is.',
+          '**at**: the temperature the mixture is brought to them at, °C; nothing for its own, the reference waters\' mixed.',
+        ] },
+      ],
+      more: more('The waters rebuilt from reference waters', 'help-phreeqc-mix'),
+    }),
+
     'pq:batchSf': () => ({
       kicker: 'Batch', title: 'The Simple Functions on PHREEQC',
       lead: 'SKB\'s Simple Functions -- the solubility limits of 20 elements that SimpleFunctions.html calculates -- run through PHREEQC from that page\'s own data: the menu sets the whole batch up, and Run runs it.',
@@ -12777,6 +12842,13 @@ END
     batchLook: null,         // one water of the batch run again, what PHREEQC printed of it
     batchKept: null,         // a batch kept, to draw the next ones beside (the visit's)
     batchRef: null,          // or a reference opened, beside in its place: { name, format, data: {name: values} } (the visit's)
+    // The waters rebuilt from reference waters (rtm-mix.js): the reference waters as written, what the shares are fitted
+    // on, the phases and the temperature (kept); the panel open; the table as opened and the rebuilt one (the visit's).
+    mix: { refs: '', fit: '', phases: 'Calcite', temp: '25' },
+    mixOpen: false,
+    mixRunning: false,
+    mixStop: false,
+    batchRebuilt: null,
     busy: false,
     worker: null,
     kind: 'none',            // 'worker' | 'inline' once started
@@ -12793,7 +12865,7 @@ END
         water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, besideT: pq.besideT,
         relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
-        open: pq.open, inv: pq.inv, batch: pq.batch,
+        open: pq.open, inv: pq.inv, batch: pq.batch, mix: pq.mix, mixOpen: pq.mixOpen,
       }));
     } catch (e) { /* storage unavailable: for this visit only */ }
   }
@@ -12813,6 +12885,10 @@ END
         }
         if (s.batch.waters === 'random' || s.batch.waters === 'each') pq.batch.waters = s.batch.waters;
       }
+      if (s.mix && typeof s.mix === 'object') {
+        for (const k of ['refs', 'fit', 'phases', 'temp']) if (typeof s.mix[k] === 'string') pq.mix[k] = s.mix[k];
+      }
+      if (typeof s.mixOpen === 'boolean') pq.mixOpen = s.mixOpen;
       if (s.inv && typeof s.inv === 'object') {
         for (const k of ['from', 'fromAt', 'to', 'toAt', 'phases', 'u']) if (typeof s.inv[k] === 'string') pq.inv[k] = s.inv[k];
         for (const k of ['range', 'minimal']) if (typeof s.inv[k] === 'boolean') pq.inv[k] = s.inv[k];
@@ -13087,8 +13163,9 @@ END
     $('rtmPqWrite').disabled = on;
     $('rtmPqLook').disabled = on;
     $('rtmPqInvGo').disabled = on;
-    // The batch's own button is its Stop while it runs.
+    // The batch's own button is its Stop while it runs; the rebuild's likewise.
     $('rtmPqBatchGo').disabled = on && !pq.batchRunning;
+    if ($('rtmMixGo')) $('rtmMixGo').disabled = on && !pq.mixRunning;
     if (on && text) {
       const first = pq.kind === 'none' || (pq.kind === 'inline' && !pq.inline)
         ? ' PHREEQC is fetched the first time it is used: 2.4 MB, 0.8 MB as it travels.' : '';
@@ -13976,6 +14053,8 @@ END
       setStatus(`${file.name} could not be read as a table: ${e.message}`, 'error');
       return;
     }
+    pq.batchRebuilt = null;
+    mixReport(null);
     const t = pq.batchTable;
     // A start for the input where there is none: a SOLUTION with pH where the table has it, every column below it to take or leave.
     if (!pq.batch.text.trim() && t.columns.length) { pq.batch.text = batchStarter(t.columns); pq.batchStarter = pq.batch.text; pqSave(); }
@@ -14338,10 +14417,15 @@ END
         runs = ` ${rows}, ${draws} draws each${k ? `, each draw with ${k} solid${s(k)}` : ''}: ${(asked.length * draws * (k || 1)).toLocaleString()} runs.`;
       } else runs = ` ${rows}, each with ${k} solid${s(k)}: ${(asked.length * k).toLocaleString()} runs.`;
     }
-    $('rtmPqBatchTable').textContent = !t
+    const rb = pq.batchRebuilt;
+    const onRebuilt = !!(rb && t === rb.rebuilt);
+    $('rtmPqBatchTable').innerHTML = !t
       ? 'No table yet: CSV, or a sheet of an Excel workbook, a water a row and the columns\' names in the first.'
-      : `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${s(t.rows.length)}; `
-        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.${runs}`;
+      : esc(`${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}: ${t.rows.length.toLocaleString()} row${s(t.rows.length)}; `
+        + `columns ${t.columns.slice(0, shown).join(', ')}${t.columns.length > shown ? ` and ${t.columns.length - shown} more` : ''}.${runs}`)
+        + (onRebuilt ? ` Rebuilt from ${rb.refs.length} reference waters. <button type="button" class="rtm-more" data-on-click="rtm:mixUse" `
+          + 'data-use="original">Use the table as opened</button>'
+          : rb ? ' <button type="button" class="rtm-more" data-on-click="rtm:mixUse" data-use="rebuilt">Use the rebuilt waters</button>' : '');
     $('rtmPqBatchSheetWrap').hidden = !(t && t.sheets && t.sheets.length > 1);
     if (t && t.sheets) {
       $('rtmPqBatchSheet').innerHTML = t.sheets.map((nm) => `<option value="${esc(nm)}"${nm === t.sheet ? ' selected' : ''}>${esc(nm)}</option>`).join('');
@@ -14351,6 +14435,7 @@ END
     go.disabled = pq.busy && !pq.batchRunning;
     pqSfMenuRender();
     pqBatchDraw();
+    mixRender();
   }
 
   async function pqBatchRun() {
@@ -14533,6 +14618,327 @@ END
       pqBusy(false);
       pqBatchRender();
     }
+  }
+
+  /*
+    THE WATERS REBUILT FROM REFERENCE WATERS (rtm-mix.js, loaded the first time the panel is opened). Each row of the
+    batch's table, as opened, a mixture of the reference waters: its shares fitted in the page, the mixture made in
+    PHREEQC on the batch's lanes and brought to the phases asked for, and the table the batch runs on then the
+    rebuilt waters, the table as opened a click away. The reference waters, what the shares are fitted on, the phases
+    and the temperature are kept; the rebuilt table is the visit's.
+  */
+  const MIX_SRC = 'resources/js/rtm-mix.js?v=20261115a';
+  async function mixReady() {
+    if (!self.RtmMix) await loadScript(MIX_SRC);
+    return self.RtmMix;
+  }
+  /** The reference waters as written: CSV or tab-separated, as the batch reads a table. */
+  function mixReferenceTable(text) {
+    const rows = batchCsvRows(text).filter((r) => r.some((v) => String(v).trim() !== ''));
+    return rows.length ? [rows[0], rows.slice(1)] : [[], []];
+  }
+  /** The table the waters are rebuilt from: the batch's as opened, whichever of the two the batch is on. */
+  const mixSource = () => (pq.batchRebuilt ? pq.batchRebuilt.original : pq.batchTable);
+
+  function mixRender() {
+    const panel = $('rtmMix');
+    if (!panel) return;
+    panel.hidden = !pq.mixOpen;
+    // Open from an earlier visit: what rebuilds waters loaded, and the panel drawn again then.
+    if (pq.mixOpen && !self.RtmMix && !pq.mixLoading) {
+      pq.mixLoading = mixReady().then(() => mixRender(), () => { /* said when it is used */ });
+    }
+    $('rtmMixOpener').setAttribute('aria-expanded', String(pq.mixOpen));
+    const ta = $('rtmMixRefs');
+    if (ta.value !== pq.mix.refs) ta.value = pq.mix.refs;
+    $('rtmMixFit').value = pq.mix.fit;
+    $('rtmMixPhases').value = pq.mix.phases;
+    $('rtmMixTemp').value = pq.mix.temp;
+    // What the shares are fitted on unless said: what both tables have, worked out once the reference waters read.
+    const X = self.RtmMix;
+    const t = mixSource();
+    let fitDefault = 'Cl, Na, Ca, SO4, HCO3 0.3';
+    if (X && t && pq.mix.refs.trim()) {
+      const ref = X.readReference(...mixReferenceTable(pq.mix.refs));
+      if (!ref.error) fitDefault = X.defaultFit(t.columns, ref.labels) || fitDefault;
+    }
+    $('rtmMixFit').placeholder = fitDefault;
+    $('rtmMixDb').textContent = `With the batch's database, ${pqDatabaseLabel()}; the batch's table ${t ? `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}, `
+      + `${t.rows.length.toLocaleString()} row${t.rows.length === 1 ? '' : 's'}` : 'not yet opened'}.`;
+    const go = $('rtmMixGo');
+    go.textContent = pq.mixRunning ? 'Stop' : 'Rebuild the waters';
+    go.disabled = pq.busy && !pq.mixRunning;
+  }
+  /** The database the batch runs with, as its select names it. */
+  function pqDatabaseLabel() {
+    const sel = $('rtmPqBatchDb');
+    const opt = sel && sel.selectedOptions && sel.selectedOptions[0];
+    return opt ? opt.textContent : 'phreeqc.dat';
+  }
+  async function mixPanel() {
+    pq.mixOpen = !pq.mixOpen;
+    pqSave();
+    if (pq.mixOpen) { try { await mixReady(); } catch (e) { setStatus(`The page could not load what rebuilds waters: ${e.message}`, 'error'); } }
+    mixRender();
+    if (pq.mixOpen) $('rtmMixRefs').focus();
+  }
+  function mixSettings() {
+    pq.mix.refs = $('rtmMixRefs').value;
+    pq.mix.fit = $('rtmMixFit').value.trim();
+    pq.mix.phases = $('rtmMixPhases').value.trim();
+    pq.mix.temp = $('rtmMixTemp').value.trim();
+    pqSave();
+    mixRender();
+  }
+  async function mixFileChosen(ev) {
+    const file = ev.target.files && ev.target.files[0];
+    ev.target.value = '';
+    if (!file) return;
+    try {
+      let rows;
+      if (/\.xlsx?$/i.test(file.name)) {
+        if (typeof XLSX === 'undefined') await loadScript(PQ_XLSX_SRC);
+        const book = XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        rows = batchSheetRows(book, book.SheetNames[0]);
+      } else rows = batchCsvRows(await pqFileText(file));
+      // As text in the box, a row a line, tab between: to read, and to change.
+      pq.mix.refs = rows.filter((r) => r.some((v) => v !== null && String(v).trim() !== ''))
+        .map((r) => r.map((v) => (v === null || v === undefined ? '' : String(v).trim())).join('\t')).join('\n');
+      pqSave();
+      mixRender();
+      setStatus(`${file.name}: the reference waters, in the panel to read and change.`, 'ok');
+    } catch (e) {
+      setStatus(`${file.name} could not be read as a table: ${e.message}`, 'error');
+    }
+  }
+  /** The example: three made-up reference waters, and twelve waters mixed from them as the batch's table. */
+  async function mixExample() {
+    const X = await mixReady();
+    pq.mix.refs = X.EXAMPLE_REFERENCE;
+    pq.mix.fit = '';
+    pq.mix.phases = 'Calcite';
+    pq.mix.temp = '25';
+    const ex = X.exampleTable();
+    pq.batchTable = { name: 'twelve made-up waters', columns: ex.columns, rows: ex.rows };
+    pq.batchRebuilt = null;
+    pq.batchResult = null;
+    if (!pq.batch.text.trim()) { pq.batch.text = batchStarter(ex.columns); pq.batchStarter = pq.batch.text; }
+    pqSave();
+    pqBatchRender();
+    mixRender();
+    setStatus('An example: three made-up reference waters, and twelve waters mixed from them as the batch\'s table. '
+      + 'Rebuild the waters, and the shares come back.', 'ok');
+  }
+
+  /**
+    Rows through PHREEQC on as many lanes as the batch uses: the input filled from each row on a clean slate
+    (RtmPhreeqcEngine's batch), parts of PQ_BATCH_PART, put back in their order; Stop keeps the parts done.
+    -> { head, rows: [values or null], errors: [[row, said]], version, database, seconds, stopped }
+  */
+  async function pqRunRows(template, columns, rows, user, doing, stopped) {
+    const parts = [];
+    for (let p = 0; p < rows.length; p += PQ_BATCH_PART) parts.push([p, rows.slice(p, p + PQ_BATCH_PART)]);
+    pqStart();
+    const lanes = pq.worker ? [pq.worker] : [null];
+    const extra = [];
+    if (pq.worker) {
+      for (let i = 1; i < Math.min(pqLanes(), parts.length); i++) {
+        const w = pqExtraWorker();
+        if (!w) break;
+        extra.push(w);
+        lanes.push(w);
+      }
+    }
+    const together = lanes.length > 1 ? `, ${lanes.length} at a time` : '';
+    const started = Date.now();
+    const results = new Array(parts.length);
+    const doneIn = new Array(parts.length).fill(0);
+    let next = 0;
+    let failure = null;
+    const progress = () => {
+      const n = doneIn.reduce((a, x) => a + x, 0);
+      setProgress(Math.min(1, n / rows.length));
+      setStatus(`${doing} ${n.toLocaleString()} of ${rows.length.toLocaleString()} through PHREEQC${together}…`);
+    };
+    try {
+      const lane = async (worker) => {
+        while (!failure && !stopped() && next < parts.length) {
+          const i = next++;
+          const message = { type: 'batch', database: pqDatabase(), template, columns, user, rows: parts[i][1] };
+          const onProgress = (msg) => { doneIn[i] = msg.done; progress(); };
+          try {
+            results[i] = worker ? await pqRequestOn(worker, message, onProgress) : await pqRequest(message, onProgress);
+            doneIn[i] = parts[i][1].length;
+            progress();
+          } catch (e) { failure = failure || e; }
+        }
+      };
+      await Promise.all(lanes.map(lane));
+      if (failure) throw failure;
+    } finally {
+      for (const w of extra) { pqWorkerFailed(w, 'the rows were run'); w.terminate(); }
+    }
+    const head = [];
+    const at = new Map();
+    const out = new Array(rows.length).fill(null);
+    const errors = [];
+    let version = '';
+    let database = '';
+    results.forEach((reply, i) => {
+      if (!reply) return;
+      version = reply.version;
+      database = reply.database;
+      const map = reply.head.map((h) => {
+        if (!at.has(h)) { at.set(h, head.length); head.push(h); }
+        return at.get(h);
+      });
+      reply.rows.forEach((r, k) => {
+        if (!r) return;
+        const v = [];
+        r.forEach((x, j) => { v[map[j]] = x; });
+        out[parts[i][0] + k] = v;
+      });
+      for (const [k, said] of reply.errors) errors.push([parts[i][0] + k, said]);
+    });
+    return { head, rows: out.map((r) => (r ? head.map((_, k) => (r[k] === undefined ? null : r[k])) : null)), errors, version, database,
+      seconds: (Date.now() - started) / 1000, stopped: next < parts.length, together };
+  }
+
+  async function mixRun() {
+    if (pq.mixRunning) { pq.mixStop = true; setStatus('Stopping once the parts running now are done…'); return; }
+    if (pq.busy) return;
+    let X;
+    try { X = await mixReady(); } catch (e) { setStatus(`The page could not load what rebuilds waters: ${e.message}`, 'error'); return; }
+    const t = mixSource();
+    const fail = (msg) => { setStatus(msg, 'error'); mixReport(null); };
+    if (!t) { fail('Open a table of waters first, on the batch\'s line below: CSV, or an Excel workbook, a water a row.'); return; }
+    if (!pq.mix.refs.trim()) { fail('Give the reference waters: a row each, its name, pH, pe and temp, then what it has in mol/kgw, as PHREEQC names it.'); return; }
+    const ref = X.readReference(...mixReferenceTable(pq.mix.refs));
+    if (ref.error) { fail(`The reference waters: ${ref.error}.`); return; }
+    const spec = pq.mix.fit || X.defaultFit(t.columns, ref.labels);
+    const fit = X.readFit(spec, t.columns, ref.labels);
+    if (fit.error) { fail(`Fit the shares on: ${fit.error}.`); return; }
+    const ph = X.readPhases(pq.mix.phases);
+    if (ph.error) { fail(`Then bring each mixture to: ${ph.error}.`); return; }
+    const temp = pq.mix.temp === '' ? null : Number(pq.mix.temp);
+    if (temp !== null && !Number.isFinite(temp)) { fail('at: a temperature in °C, as 25, or nothing for the mixture\'s own.'); return; }
+    const fits = X.fitAll(ref.waters, fit.terms, t.columns, t.rows);
+    const tm = X.template(ref.waters, ref.labels, { phases: ph.phases, temp });
+    const ok = fits.map((f, k) => (f ? k : -1)).filter((k) => k >= 0);
+    if (!ok.length) { fail(`No row has anything of ${fit.terms.map((x) => x.name).join(', ')} to fit its shares on.`); return; }
+    const columns = [...t.columns, ...tm.shareColumns];
+    const rows = ok.map((k) => [...t.rows[k], ...fits[k].f.map(String)]);
+    pq.mixRunning = true;
+    pq.mixStop = false;
+    pqBusy(true, `Rebuilding ${rows.length.toLocaleString()} waters through PHREEQC…`);
+    mixRender();
+    try {
+      const run = await pqRunRows(tm.text, columns, rows, 1, 'Rebuilding water', () => pq.mixStop);
+      const full = { head: run.head, rows: t.rows.map(() => null) };
+      ok.forEach((k, j) => { full.rows[k] = run.rows[j]; });
+      const out = X.rebuiltTable(t, ref.waters, ref.labels, fits, tm, full, ph.phases);
+      const rebuilt = { name: `${t.name}${t.sheet ? `, sheet ${t.sheet}` : ''}, rebuilt`, columns: out.columns,
+        rows: out.rows.map((r) => r.map((v) => (v === null || v === undefined ? '' : v))) };
+      const refused = run.errors.map(([j, said]) => [ok[j], said]);
+      pq.batchRebuilt = { original: t, rebuilt, refs: ref.waters.map((w) => w.name), terms: fit.terms, spec, phases: ph.phases, temp,
+        database: run.database, version: run.version, seconds: run.seconds, refused, unfit: t.rows.length - ok.length,
+        made: full.rows.filter(Boolean).length, stopped: run.stopped, together: run.together, fits, out, unread: ref.unread };
+      pq.batchTable = rebuilt;
+      pq.batchResult = null;
+      const b = pq.batchRebuilt;
+      setStatus(`${b.made.toLocaleString()} of ${t.rows.length.toLocaleString()} water${t.rows.length === 1 ? '' : 's'} rebuilt from `
+        + `${ref.waters.length} reference waters through PHREEQC ${run.version} with ${run.database}${run.together} in ${run.seconds.toFixed(1)} s`
+        + `${run.stopped ? ', then stopped' : ''}${refused.length ? `; ${refused.length.toLocaleString()} refused by PHREEQC` : ''}`
+        + `${b.unfit ? `; ${b.unfit.toLocaleString()} with nothing to fit on` : ''}. The batch now runs on the rebuilt waters.`,
+      refused.length || b.unfit || run.stopped ? 'warn' : 'ok');
+    } catch (e) {
+      fail(`The waters could not be rebuilt: ${e.message}`);
+    } finally {
+      pq.mixRunning = false;
+      pq.mixStop = false;
+      setProgress(null);
+      pqBusy(false);
+      pqBatchRender();
+      mixRender();
+      mixReport(pq.batchRebuilt);
+    }
+  }
+
+  /** What the rebuild did and how near its waters are the table's: under the panel. */
+  function mixReport(b) {
+    const box = $('rtmMixReport');
+    if (!box) return;
+    if (!b) { box.hidden = true; box.innerHTML = ''; return; }
+    const X = self.RtmMix;
+    const t = b.original;
+    const q = (a, p) => { const s = [...a].sort((x, y) => x - y); return s.length ? s[Math.min(s.length - 1, Math.floor(p * s.length))] : NaN; };
+    const spread = (a, f) => `${f(q(a, 0.5))} (${f(q(a, 0.05))} to ${f(q(a, 0.95))})`;
+    const d3 = (x) => {
+      if (!Number.isFinite(x)) return '—';
+      const r = Math.round(x * 1000) / 1000;
+      return r === 0 ? '0.000' : `${r > 0 ? '+' : '−'}${Math.abs(r).toFixed(3)}`;
+    };
+    const f2 = (x) => (Number.isFinite(x) ? x.toFixed(2) : '—');
+    const out = [];
+    out.push(`<p>${b.made.toLocaleString()} of ${t.rows.length.toLocaleString()} rebuilt from ${b.refs.map((n) => `<strong>${esc(n)}</strong>`).join(', ')}: `
+      + `each a mixture of them, its shares fitted on ${esc(b.terms.map((x) => (x.weight === 1 ? x.name : `${x.name} ${x.weight}`)).join(', '))}, `
+      + `then ${b.phases.length ? esc(b.phases.map((p) => (p.si ? `${p.name} at SI ${p.si}` : p.name)).join(', ')) : 'nothing more'}`
+      + `${b.temp !== null ? ` at ${b.temp} °C` : ''}; PHREEQC ${esc(b.version)}, ${esc(b.database)}, ${b.seconds.toFixed(1)} s${b.stopped ? ', stopped' : ''}.`
+      + `${b.unread.length ? ` Not read of the reference waters: ${esc(b.unread.join(', '))}.` : ''}</p>`);
+    const fits = b.fits.filter(Boolean);
+    out.push(`<p>How well each water is a mixture of them: the misfit, the root mean square of log10 of the mixture over the water on what it is `
+      + `fitted on, ${spread(fits.map((x) => x.misfit), (x) => x.toFixed(3))}, the median and the 5th and 95th percentiles. `
+      + `The shares: ${b.refs.map((n, i) => `${esc(n)} ${spread(fits.map((x) => x.f[i]), f2)}`).join('; ')}.</p>`);
+    // The rebuilt water against the table's own, on what was fitted on and the pH, where the table has it.
+    const cols = b.rebuilt.columns;
+    const near = [];
+    for (const term of b.terms) {
+      const iT = t.columns.indexOf(term.column);
+      const lb = term.label;
+      const name = /^S(\(\+?6\))?$/.test(lb) ? '[SO4-2]tot (m)' : /^C(\(\+?4\))?$/.test(lb) ? '[C]tot (m)' : `[${X ? lb.replace(/\(.*\)$/, '') : lb}]tot (m)`;
+      const iR = cols.indexOf(name);
+      if (iT < 0 || iR < 0) continue;
+      const d = t.rows.map((r, k) => Math.log10(Number(b.rebuilt.rows[k][iR]) / Number(r[iT]))).filter(Number.isFinite);
+      if (d.length) near.push(`${esc(term.name)} ${spread(d, d3)}`);
+    }
+    const iPH = t.columns.findIndex((c) => /^ph$/i.test(String(c).trim()));
+    if (iPH >= 0) {
+      const iR = cols.indexOf('pH');
+      const d = t.rows.map((r, k) => Number(b.rebuilt.rows[k][iR]) - Number(r[iPH])).filter(Number.isFinite);
+      if (d.length) near.push(`the pH, rebuilt less the table's, ${spread(d, d3)}`);
+    }
+    if (near.length) out.push(`<p>Against the table's own, log10 of the rebuilt over the table's: ${near.join('; ')}.</p>`);
+    const iEh = cols.indexOf('Eh (mV)');
+    const eh = b.rebuilt.rows.map((r) => Number(r[iEh])).filter((x) => Number.isFinite(x) && x !== 0);
+    const mv = (x) => { const r = Math.round(x); return `${r < 0 ? '−' : ''}${Math.abs(r)} mV`; };
+    if (eh.length) out.push(`<p>Their own Eh, of the couples the reference waters give: ${spread(eh, mv)}.</p>`);
+    if (b.refused.length) {
+      out.push(`<p class="warn">PHREEQC refused ${b.refused.length.toLocaleString()}: row ${b.refused[0][0] + 1} first, `
+        + `${esc(b.refused[0][1])}. A constituent PHREEQC does not know is named as the database names it: C(+4) in some, C(4) in others.</p>`);
+    }
+    out.push(`<p>The batch's table is now the rebuilt waters, ${cols.length} columns: the table's own, then those the Simple Functions read — `
+      + 'pH, Eh (mV), [HCO3-] (m), [Ca]tot (m) and on — the rest of each water, the shares and the misfit. '
+      + '<button type="button" class="rtm-more" data-on-click="rtm:mixUse" data-use="original">Use the table as opened</button> '
+      + '<button type="button" class="rtm-more" data-on-click="rtm:mixSave">Save the rebuilt waters…</button></p>');
+    box.innerHTML = out.join('');
+    box.hidden = false;
+  }
+  /** The batch on the table as opened, or back on the rebuilt waters. */
+  function mixUse(which) {
+    const b = pq.batchRebuilt;
+    if (!b) return;
+    pq.batchTable = which === 'original' ? b.original : b.rebuilt;
+    pq.batchResult = null;
+    pqBatchRender();
+    mixRender();
+    setStatus(which === 'original' ? `The batch runs on ${b.original.name} as opened again.` : 'The batch runs on the rebuilt waters again.', 'ok');
+  }
+  /** The rebuilt waters as a CSV file, to open again on another visit. */
+  async function mixSave() {
+    const b = pq.batchRebuilt;
+    if (!b) return;
+    const name = `${String(b.original.name).replace(/\.[^.]*$/, '')}_rebuilt.csv`;
+    saidSaved(await saveBlob(new Blob([`${csvOf({ head: b.rebuilt.columns, rows: b.rebuilt.rows })}\n`], { type: 'text/csv' }), name));
   }
 
   /**
@@ -16526,11 +16932,21 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
     'rtm:pqInvCsv': () => pqInvCsv(),
     // A batch over a table of waters.
     'rtm:pqBatchOpen': () => $('rtmPqBatchFile').click(),
+    'rtm:mixPanel': () => { mixPanel(); },
+    'rtm:mixOpen': () => $('rtmMixFile').click(),
+    'rtm:mixFileChosen': (ev) => { mixFileChosen(ev); },
+    'rtm:mixExample': () => { mixExample(); },
+    'rtm:mixSettings': () => mixSettings(),
+    'rtm:mixRun': () => { mixRun(); },
+    'rtm:mixUse': (ev, el) => mixUse(el.dataset.use),
+    'rtm:mixSave': () => { mixSave(); },
     'rtm:pqBatchFileChosen': (ev) => { pqBatchFileChosen(ev); },
     'rtm:pqBatchSheet': (ev, el) => {
       const t = pq.batchTable;
       if (!t || !t.book) return;
       pq.batchTable = batchTableOf(batchSheetRows(t.book, el.value), t.name, { book: t.book, sheets: t.sheets, sheet: el.value });
+      pq.batchRebuilt = null;
+      mixReport(null);
       // The start the page wrote, not yet touched, follows the sheet.
       if (pq.batchStarter && pq.batch.text === pq.batchStarter && pq.batchTable.columns.length) {
         pq.batch.text = batchStarter(pq.batchTable.columns);
