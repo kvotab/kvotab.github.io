@@ -2497,14 +2497,14 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             the water becomes supersaturated again the run stops there and the mineral precipitates.
             The status after a run names the first and the last of these, where and when.</p>
           <pre>MINERALS = complementarity</pre>
-          <p>Where a mineral forms and dissolves again and again in tiny amounts — cells behind a
-            mixing front, their water saturated with none of it, a little precipitating and dissolving
-            at every step — the run stops at every one of those instants, and can reach its limit of
-            10,000 of them having got almost nowhere. <code>MINERALS = complementarity</code> holds such
-            a mineral by one equation in every cell instead, whether there is any of it or not: either
-            there is none and the water may be undersaturated, or there is some and the water is
-            saturated. The equation is smoothed (Fischer and Burmeister's function) so that the solver
-            can step from the one to the other, and the run never stops for it. Where the mineral comes
+          <p>Where a mineral comes and goes in many cells — cells behind a mixing front, their water
+            saturated with little or none of it — the run stops at every one of those instants and
+            starts again from it. <code>MINERALS = complementarity</code> holds such a mineral by one
+            equation in every cell instead, whether there is any of it or not: either there is none and
+            the water may be undersaturated, or there is some and the water is saturated. The equation
+            is smoothed (Fischer and Burmeister's function) so that the solver can step from the one to
+            the other, and the run never stops for it; where the instants are many, that is the faster
+            way. Where the mineral comes
             and goes its water is short of saturation by at most a thousandth in ln of its saturation
             ratio, and holds a trace of the mineral where the exact answer has none. Every point shown
             is still the exact speciation of its cell's totals: saturated where there is some, none at
@@ -4874,7 +4874,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261115b"></script>
+  <script src="./resources/js/rtm-model.js?v=20261115c"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261115a"></script>
@@ -4882,6 +4882,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261115e"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261115b';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261115c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -5363,9 +5363,13 @@
     start: the zone it has formed in, its edges the first and the last cell
     from the inlet holding any -- more than a millionth of its most -- at
     their centres. Each front's speed is the slope of its place against time
-    over the second half of the run, by least squares; set against the
+    over the second half of the run, by least squares at 200 even times, its
+    place read between the stored points either side; set against the
     water's own speed, the column's length over the time it takes the water
-    to cross it.
+    to cross it. Even times, not the stored points: the solver stores where
+    it steps, and a run that crept through its last fifth stored nine tenths
+    of its points there, the slope of that fifth alone -- a halite front at
+    0.104 of the water's speed where it moves at 0.111.
   */
   function drawFronts({ r, plot, layer, fail, note }) {
     const m = r.model;
@@ -5420,13 +5424,23 @@
       }
     }
     if (!lines.length) { fail('No mineral moved: none dissolved where it was, and none formed where it was not.'); return; }
-    // Each front's speed over the second half of the run, and the water's.
+    // Each front's speed over the second half of the run, at even times, and the water's.
     const half = r.t[n - 1] / 2;
     const speed = (pos) => {
       let cnt = 0; let sx = 0; let sy = 0; let sxx = 0; let sxy = 0;
-      for (let i = 0; i < n; i++) {
-        if (!(r.t[i] >= half) || !Number.isFinite(pos[i])) continue;
-        cnt++; sx += r.t[i]; sy += pos[i]; sxx += r.t[i] * r.t[i]; sxy += r.t[i] * pos[i];
+      const K = 200;
+      let i = 0;
+      for (let q = 0; q <= K; q++) {
+        const t = half + (q / K) * (r.t[n - 1] - half);
+        while (i < n - 2 && r.t[i + 1] < t) i++;
+        // Its place at t, between the stored points either side; where either has none, no place.
+        const t0 = r.t[i];
+        const t1 = r.t[Math.min(i + 1, n - 1)];
+        const p0 = pos[i];
+        const p1 = pos[Math.min(i + 1, n - 1)];
+        if (!Number.isFinite(p0) || !Number.isFinite(p1)) continue;
+        const y = t1 > t0 ? p0 + ((Math.min(Math.max(t, t0), t1) - t0) / (t1 - t0)) * (p1 - p0) : p1;
+        cnt++; sx += t; sy += y; sxx += t * t; sxy += t * y;
       }
       const d = cnt * sxx - sx * sx;
       return cnt > 1 && d > 0 ? (cnt * sxy - sx * sy) / d : null;
@@ -5456,7 +5470,7 @@
       + (events.length ? `<table><thead><tr><th>When</th><th>t (${esc(tShown.sym)})</th></tr></thead><tbody>${events.sort((a, b) => a[1] - b[1])
         .map(([what, t]) => `<tr><td>${esc(what)}</td>${td(t * tShown.per)}</tr>`).join('')}</tbody></table>` : '')
       + `<p>A mineral the column holds at the start: the length of column cleared of it, each cell its width times the share of `
-      + `its first amount gone. One it holds none of: the first and the last cell holding any. A speed is over the second half `
+      + `its first amount gone. One it holds none of: the first and the last cell holding any. A speed is over the second half, at even times, `
       + `of the run${water ? `; the water's, ${fmtNumber(water)} m/${esc(sym)}, the column's length over the time it takes the water to cross it` : ''}.</p>`;
     box.hidden = false;
     const lead = rows.filter((x) => x.v !== null).sort((a, b) => Math.abs(b.v) - Math.abs(a.v))[0];
@@ -11202,7 +11216,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
             ['where an element is', 'Each species with any of the element, as its share of all of it, stacked to 100 %, or as its amount: in the water, or in the whole cell, on an exchanger or a surface, in a mineral and a gas too. A species that never comes to 1 % is drawn with the others like it, as one band.', view === 'where'],
             ['the water, as PHREEQC lists it', 'One water — a **Cell**, **At** a stored time, the end of the run unless given — set out as PHREEQC prints a solution, from the model\'s own speciation: its composition; its description, pH, pe, Eh, temperature, ionic strength, the water\'s activity and the percent error; the distribution of species, each element in each of its valence states, every species with its molality, activity and log gamma; the saturation indices with log IAP and log K; the minerals; an exchanger\'s or a surface\'s species and their shares; a gas\'s pressure. **beside PHREEQC**: the same water given to PHREEQC, through the database the PHREEQC tab has chosen, as that tab gives it a run\'s — its element totals, the pH walked onto its [H+], its pe — and PHREEQC\'s molality and log gamma beside each species, its SI beside each phase, its pH, ionic strength, activity of water and percent error beside the water\'s; what PHREEQC finds that the model has not, apart; the note how far apart the two are at most, and what PHREEQC was not given. **Units**, other than the model\'s own: a column in that unit after PHREEQC\'s own, in the composition, each element by its atomic weight, and in the distribution, each species by its formula mass.', view === 'listing'],
             ['a budget over the run', 'Of an element, or of one species (**Of**): what the column holds of it at each stored time — in the water, on an exchanger or a surface, in each mineral, in the rock — stacked, with what has gone out at the right-hand end on top; dashed, what was there at the start with what has come in at the left; the gap between them, what the reactions made of it, dotted on its own. Per m² of the water\'s cross-section in a column, per kg of water in a batch. What no reaction makes or takes closes to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points, and the note says how far; a nuclide\'s decay, or a source among the reactions, shows as what the reactions made. A species held fixed stays where it is because what the reactions take of it is put back, and what they make of it taken away: what holding put in, dash-dotted, beside what the reactions made, the reactions\' lines counting what they did to it as to any other. **every element**, first in **Of**: each element\'s balance side by side — start, in, out, end, made by reactions, put in by holding — and how far it is off, a bar each on a log axis; below 1e-4 it closes, above a reaction makes or takes it. **By** each reaction, where the model has `<REACTIONS>`: what each line makes of it and takes, a rate worked out as the solver\'s derivative works it out, a line and one written apart that undoes it as one reaction; stacked over the whole column or at a cell (**Over**), made above nought and taken below, the eight reactions that move most named; under the chart what each made and took over the run, and over the whole column what each relation moved, its extent read off the balance of a species of its own, the summing\'s error left, and what holding put in. **By** where it goes, of an element: a flow diagram over the run of its species and the ends of its account — put in by holding, came in or went out, made or lost by reactions, drawn from what was there or built up — each band what went from one to the other, net, a reaction and its reverse netted as one; hovering on a band names the reactions that carried it; a table of every flow under it.', view === 'budget'],
-            ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
+            ['where the minerals\' fronts are', 'In a column, each mineral\'s fronts from the inlet through the run: of one the column holds at the start, the length of column cleared of it — each cell its width times the share of its first amount gone, a sharp front\'s place inside its cell; of one that forms, the first and the last cell holding any. A table of each front at the end and its speed over the second half of the run, fitted at even times, against the water\'s own speed, and when each mineral was gone or first formed. A dissolution front moves at v S/(S + M), S the water\'s at saturation and M the mineral\'s.', view === 'fronts'],
             ['a Piper diagram', 'The cations\' shares in the triangle on the left, the anions\' on the right, and the two together in the diamond: a path through the run at one cell, coloured by time, or along the column at one time, coloured by distance.', view === 'piper'],
             ['a Durov diagram', 'The cations\' shares in a triangle on the left of a square, the anions\' in one on top, and the water in the square where the two meet: HCO₃ + SO₄/2 across, Ca + Mg/2 up, Na–Cl at the foot on the left, Ca–HCO₃ at the head on the right. Under the square its pH, to the right its total dissolved solids in mg/kgw, from each species\' formula, where the model has them.', view === 'durov'],
             ['a Schoeller diagram', 'Each water a line through its six major ions, in equivalents on a log axis: the same shape is the same water diluted.', view === 'schoeller'],
@@ -12790,7 +12804,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,

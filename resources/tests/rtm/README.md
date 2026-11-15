@@ -414,12 +414,12 @@ column above held by the smoothed Fischer-Burmeister equation in place of
 events: no event where the ten of the event run were, its calcite within 1e-10
 mol of theirs (of 2e-4) and its calcium within 6e-8 of itself at six times, and
 each cell's calcite read back as none within 0.2 s of its event. Then a column
-that stalls the events, made with the same four relations: a water saturated
-with calcite (speciated in one cell with calcite to spare) flowing into another
-saturated one with none, so that the cells the inflow reaches sit at
-saturation, a little calcite forming and dissolving at every step. The event
-run spends 200 events by 56,000 s of the 4e6; held by complementarity the run
-goes through (1,038 steps), every stored point is read back saturated where
+made with the same four relations: a water saturated with calcite (speciated in
+one cell with calcite to spare) flowing into another saturated one with none,
+so that the cells the inflow reaches sit at saturation with little or none of
+it. Held by complementarity the run goes through with no event (1,038 steps);
+held by events, with 8 at rtol 1e-6 and at 1e-8, the same column, pH within 2e-5
+and calcite within 2e-10 mol of 1.7e-4. Every stored point of the first is read back saturated where
 there is calcite (to 2e-15) and with none and not supersaturated where there is
 not, no cell unsettled and nothing below none; and rtol 1e-6 and 1e-8 agree to
 8e-12 mol of calcite (of 1.7e-4). The Jacobian is checked at the start, half
@@ -431,10 +431,8 @@ no event, its pH within 4e-7 of rtol 1e-9's and within 9e-7 of the column
 without them held in place, read back as cleanly, and the projected form's
 Jacobian checked at the end; and the redox plume example, five minerals under
 Davies, run both ways to 20 days, its minerals within 4e-9 mol and what is
-dissolved within 2e-5 of itself. (Held by events, that column comes out
-differently at each tolerance -- cell 10 at pH 7.90 at rtol 1e-6, with a cell at
-pH 4.1 beside it, and 8.38 at 1e-9, against 7.89 held by complementarity at
-either and by the column without the iron; not checked here.) It does nothing,
+dissolved within 2e-5 of itself. Held by events, the column with the iron is
+the same at rtol 1e-6 and 1e-9 (8 events), pH within 2e-5. It does nothing,
 and says so, where nothing is held all through the run; a mineral given
 dissolve_only still comes and goes at events, and so does every mineral of a
 model with the electron whose cells are worked out the full way (here because of
@@ -452,6 +450,21 @@ saturated with none of the mineral, which no shorter step mends: the run stopped
 at t = 0 at a step of 1e-319 s. The bend is 1e-3 now, the amount is measured
 against what the water can take up of it, and the start is polished onto the
 smoothed rows cell by cell.
+
+And a fault of the events these columns showed. A mineral that has just
+precipitated has the little the totals leave over its saturated water, which can
+come out a rounding error below none (-9e-19 of calcite), and a mineral that has
+just dissolved away leaves its water saturated to a rounding error either side;
+the solver sees a crossing only where an event's sign changes, so watched
+against none and saturation themselves the next event could start already
+crossed. Held in place, it fired again at once: the column of two saturated
+waters spent 200 events by 56,000 s of the 4e6, and a reader's calcite column
+2,000 in 1.6 of its 120 years. Projected, it never fired: the run held a
+calcite that was gone, its amount ran to -6.7e-4 mol, the cell's totals drained
+to a pH of 4.1, and the column came out differently at each tolerance (cell 10
+at pH 7.90 at rtol 1e-6, 8.38 at 1e-9, against 7.89). Each event is now watched
+past the bound by 64 roundings of the cell's largest total and past saturation
+by 1e-12 in ln (heldEvent, SAT_ROUND); every event check above holds as before.
 
 **Activities and saturation in rate laws** (`{X}`, `I`, `SI()`, `SR()`,
 `<PHASES>`). Each against the same quantity worked out apart: `{H+}{Ca+2}` the
@@ -1482,7 +1495,7 @@ What each reaction does (since 2026-11-11). On the plume example, at cell 5, whe
 
 The budget by each reaction (since 2026-11-11). On the built-in model, its H2O2 over the whole column: the radiolysis that makes it first, line 73, nine tenths of what is made; the two equilibria written as two lines each one reaction, `H+ + HO2- <=> H2O2 [135, 149]` and `HO2- + H2O <=> OH- + H2O2 [138, 150]`; the eight that move most named and the rest together, made above nought and taken below; every reaction's net and the summing's error together what the reactions made, to 1e-12, the error under 1e-6 of what they made and took, the model having no relations. At the fuel surface, cell 0, the radiolysis over 95 % of what is made, no leftover row, and the CSV `rtm_budget_H2O2_by_reaction_cell0.csv` each reaction's rates and sum at every stored point. On the plume: of CO3-2 the organic carbon's oxidation all that makes it and nothing taking it, and the relations, relation by relation, taking over nine tenths of it on, the most into siderite, the summing's error under 1e-6 of what was made; HCO3-, which no line makes, the chart saying so and the table its own relation all that made it, the summing's error nought; carbon, all of it, made by no line, the leftover the summing's; and of CH2O at cell 5, in the CSV, what the line took at every stored point the rate Against time draws there and its sum the extent, to the last digit.
 
-Where the minerals' fronts are (since 2026-11-11), on the Composition tab, halite into fresh water in a column of the test's own: the length of column cleared of it, `Halite, cleared to`, moving at v S/(S + M), a fifth of the water's speed, to 2 %, 0.4 m from the inlet by the end to within a cell, and the halite gone at the inlet; with twice the halite, a ninth of the water's speed; the CSV a row per stored time, `t (s),"Halite, cleared to (m)"`.
+Where the minerals' fronts are (since 2026-11-11), on the Composition tab, halite into fresh water in a column of the test's own: the length of column cleared of it, `Halite, cleared to`, moving at v S/(S + M), a fifth of the water's speed, to 2 %, 0.4 m from the inlet by the end to within a cell, and the halite gone at the inlet; with twice the halite, a ninth of the water's speed; the CSV a row per stored time, `t (s),"Halite, cleared to (m)"`. The speed is fitted at 200 even times, read between the stored points: fitted to the stored points themselves it followed where the solver stepped, and once a mineral's next event was watched past rounding the run with twice the halite crept through its last fifth only, stored nine tenths of its points there, and gave 0.104 for 0.111 (0.1106 at even times, and the same from the run before).
 
 The run's balance, every element at once (since 2026-11-11), first in the budget's Of: on the redox plume, which no reaction makes an element in, each of its ten, C Ca Cl Fe K Mg Mn N Na S, closes to 1e-6 and better -- the most the reactions made or took of it at any stored time as a share of the most the column held or was given -- the reactions' choice not offered, a bar each; on the U-238 chain example every element, Pb Po Ra Th U, made or taken by reactions, a decay or the uranium's source.
 

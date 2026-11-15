@@ -13631,16 +13631,32 @@
     const atBound = (c, r) => { const p = present[c * ne + r]; return p === 0 || p === 4; };
     // Within `tiny` of a bound, at it.
     const modeOf = (c, r, M, tiny = 0) => (M >= hiAt(c, r) - tiny ? 4 : M > loAt(c, r) + tiny ? 1 : 0);
-    // Held, an event watches its amount against its bounds, the lower where it is used up, and which it nears.
+    /*
+      Held, an event watches its amount against its bounds, the lower where
+      it is used up, and which it nears -- past them by more than rounding.
+      A mineral that has just precipitated has, at that instant, the little
+      that the totals leave over the saturated water, which can come out a
+      rounding error below none, -9e-19 of calcite: watched against none
+      itself, its event would start already crossed, the solver sees a
+      crossing only where the sign changes, and it would never fire -- the
+      run held a mineral that was gone at saturation, its amount ran to
+      -6.7e-4 mol and drained its cell to pH 4.1. So 64 roundings of the
+      cell's largest total (roundM) past the bound, and the saturation the
+      same way (SAT_ROUND).
+    */
     const nearHi = new Uint8Array(nc * ne);
+    const roundM = (c) => 64 * Number.EPSILON * (amountScale[c] > 0 ? amountScale[c] : 1);
     const heldEvent = (c, r, M) => {
       const lo = loAt(c, r);
       const a = (lo === -Infinity ? -Infinity : Math.max(lo, usedUp[c * ne + r])) - M;
       const d = M - hiAt(c, r);
       nearHi[c * ne + r] = d > a ? 1 : 0;
-      const v = Math.max(a, d);
+      const v = Math.max(a, d) - roundM(c);
       return Number.isFinite(v) ? v : -1;
     };
+    // A mineral there is none of, or as much as it may have: its water's saturation past nought by more than rounding
+    // (ln, a relation of ln K 30 or 50 rounds to a few times 1e-15), for the same reason.
+    const SAT_ROUND = 1e-12;
     eqs.forEach((eq, r) => {
       if (eq.carry && eq.mineral >= 0) for (let c = 0; c < nc; c++) usedUp[c * ne + r] = 1e-4 * start[c * ns + eq.mineral];
     });
@@ -14626,7 +14642,7 @@
             }
             if (act && eq.water) g += eq.water * water.lnAw;
             // At its lower bound the water's saturation, crossing as it is supersaturated; at its upper the other way.
-            out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eq.mineralNu < 0 ? 1 : -1) * g;
+            out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eq.mineralNu < 0 ? 1 : -1) * g - SAT_ROUND;
           }
           grps.forEach((bub, g) => {
             const at = nc * nmin + c * ngrp + g;
@@ -14651,7 +14667,8 @@
           if (isComp[r]) { out[c * nmin + q] = -1; continue; }
           if (present[c * ne + r] === 1) { out[c * nmin + q] = heldEvent(c, r, y[b + m]); continue; }
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
-          out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
+          out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water)
+            - SAT_ROUND;
         }
         grps.forEach((bub, g) => {
           const at = nc * nmin + c * ngrp + g;

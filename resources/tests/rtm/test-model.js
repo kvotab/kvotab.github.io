@@ -4015,20 +4015,44 @@ ${minerals ? `MINERALS = ${minerals}` : ''}
 ${names.map((n) => `${n.padEnd(7)} ${inCol[n]}  D=1e-9  left=${inFlow[n]}`).join('\n')}
 Calcite 0  mineral
 ${EQ}`);
-  let stopped = null;
-  try {
-    FacsimileODE.runModel(stall(''), { solver: 'ndf', tend: 4e6, rtol: 1e-6, atol: 1e-20, nonNegative: true, maxEvents: 200 });
-  } catch (e) {
-    stopped = e;
-  }
   const ends = [1e6, 2e6, 4e6];
   const ms = stall('complementarity');
   const r6 = FacsimileODE.runModel(ms, { solver: 'ndf', tend: 4e6, rtol: 1e-6, atol: 1e-20, nonNegative: true, outputTimes: ends });
   const r8 = FacsimileODE.runModel(stall('complementarity'), { solver: 'ndf', tend: 4e6, rtol: 1e-8, atol: 1e-20,
     nonNegative: true, outputTimes: ends });
-  check('two saturated waters: the events stall where the inflow reaches the column, complementarity runs the 4e6 s',
-    !!stopped && stopped.code === 'events' && stopped.t < 1e5 && r6.events.length === 0 && r6.t[r6.t.length - 1] === 4e6,
-    `the events stopped ${stopped ? `at ${stopped.t.toFixed(0)} s` : 'never'}; ${r6.stats.nsteps} steps held`);
+  /*
+    Held by events the same column: a mineral that has just precipitated is
+    a rounding error from none, either side, and its next event is watched
+    past that (heldEvent, SAT_ROUND). Watched against none itself, it either
+    started crossed and never fired -- the run held a mineral that was gone
+    -- or fired again at once: this column spent 200 events by 56,000 s.
+  */
+  const pHAndCalcite = (m, r) => ends.map((t, k) => {
+    const c = m.toConcentrations(r.grid.y[k]);
+    return Array.from({ length: 20 }, (_, q) => [-Math.log10(c[q * 9]), c[q * 9 + 8]]);
+  });
+  const evRuns = [1e-6, 1e-8].map((rtol) => {
+    const m = stall('');
+    return { m, r: FacsimileODE.runModel(m, { solver: 'ndf', tend: 4e6, rtol, atol: 1e-20, nonNegative: true, maxEvents: 200,
+      outputTimes: ends }) };
+  });
+  const held = pHAndCalcite(ms, r6);
+  let dpHev = 0;
+  let dCalev = 0;
+  for (const { m, r } of evRuns) {
+    const e = pHAndCalcite(m, r);
+    for (let k = 0; k < 3; k++) {
+      for (let q = 0; q < 20; q++) {
+        dpHev = Math.max(dpHev, Math.abs(e[k][q][0] - held[k][q][0]));
+        dCalev = Math.max(dCalev, Math.abs(e[k][q][1] - held[k][q][1]));
+      }
+    }
+  }
+  check('two saturated waters, the cells the inflow reaches at saturation with none: held by complementarity with no '
+    + 'event, and by a few events at rtol 1e-6 and 1e-8, the same column', r6.events.length === 0 && r6.t[r6.t.length - 1] === 4e6
+    && evRuns.every(({ r }) => r.events.length > 0 && r.events.length <= 20) && dpHev < 1e-4 && dCalev < 1e-9,
+  `${r6.stats.nsteps} steps held; ${evRuns.map(({ r }) => r.events.length).join(' and ')} events; pH within `
+    + `${dpHev.toExponential(1)}, calcite within ${dCalev.toExponential(1)} mol of 1.7e-4`);
   let offSat = 0;
   let overSat = -Infinity;
   let crumbs = 0;
@@ -4072,7 +4096,7 @@ ${EQ}`);
   };
   const feCol = saturatedFe({ ...wCol, 'Fe+2': 1e-5, 'Fe+3': 1e-7 });
   const feFlow = saturatedFe({ ...wFlow, 'Fe+2': 1e-6, 'Fe+3': 1e-6 });
-  const feStall = () => RtmModel.compile(`
+  const feStall = (minerals = 'complementarity') => RtmModel.compile(`
 <SETTINGS>
 MODE = transport
 CELLS = 20
@@ -4084,7 +4108,7 @@ LEFT = robin
 RIGHT = free
 TEND = 4e6
 EQUILIBRATE = always
-MINERALS = complementarity
+${minerals ? `MINERALS = ${minerals}` : ''}
 
 <SPECIES>
 ${feNames.map((n) => `${n.padEnd(7)} ${feCol[n]}  D=1e-9  left=${feFlow[n]}`).join('\n')}
@@ -4133,6 +4157,19 @@ ${EQ}${FE}`);
   check('  read back saturated where there is calcite and none where not, and the Jacobian of the projected form at the end',
     feOff < 1e-12 && feOver < 1e-9 && feCrumbs === 0 && vf.discrepancies.length === 0,
     `|SI| ${feOff.toExponential(1)}, SI with none at most ${feOver.toExponential(1)}, ${feCrumbs} crumbs; ${vf.checked} entries`);
+  // Held by events, projected: where the event a mineral just precipitated was watched against none, it never fired,
+  // the calcite ran below none and drained its cell -- one at pH 4.1 at rtol 1e-6, the column another at each rtol.
+  let dpFeEv = 0;
+  const feEv = [1e-6, 1e-9].map((rtol) => {
+    const m = feStall('');
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 4e6, rtol, atol: 1e-20, nonNegative: true, maxEvents: 200,
+      outputTimes: ends });
+    const p = pHs(m, r);
+    for (let k = 0; k < 3; k++) for (let q = 0; q < 20; q++) dpFeEv = Math.max(dpFeEv, Math.abs(p[k][q] - pf6[k][q]));
+    return r.events.length;
+  });
+  check('  held by events at rtol 1e-6 and 1e-9, the same column as held by complementarity',
+    feEv.every((nev) => nev > 0 && nev <= 20) && dpFeEv < 1e-4, `${feEv.join(' and ')} events; pH within ${dpFeEv.toExponential(1)}`);
   // The redox plume example, five minerals, Davies activities, to half its time: the two ways the same.
   const plume = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxplume').text;
   const plumes = [plume, plume.replace(/^EQUILIBRATE = always$/m, 'EQUILIBRATE = always\nMINERALS = complementarity')]
