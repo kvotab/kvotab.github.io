@@ -564,6 +564,38 @@ async def main():
                   [7, True])
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # Sulphide made at a rate along a column beside PHREEQC's own: tables in distance at the cells' faces.
+            await page.ev("(() => { const s = document.getElementById('rtmExample');"
+                          " s.value = 'sulphidebeside'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_sb = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await asyncio.sleep(1.2)
+            sb_view = await page.ev("""(() => { const c = document.getElementById('rtmChartProfile'); const d = c.data || [];
+              const pts = d.filter((tr) => tr.mode === 'markers');
+              const shown = pts.filter((tr) => tr.showlegend !== false);
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab, document.getElementById('rtmProfileSpecies').value,
+                document.getElementById('rtmProfileTimes').value, pts.length, shown.length,
+                pts.length ? [pts[0].x[0], pts[0].x[pts[0].x.length - 1]].join(' ') : null]; })()""")
+            check("  sulphide made at a rate, beside PHREEQC's own column, the built-in example run: it opens Against distance on the "
+                  "sulphide at four times in pore volumes, PHREEQC's ten tables the points, the four shown in the legend, each from "
+                  "the first cell's downstream face to the outlet",
+                  [ran_sb] + (sb_view if isinstance(sb_view, list) else [sb_view]),
+                  ['Done', 'profile', 'tot(S(-2))', '0.3, 0.6, 1.2, 3', 10, 4, '0.05 1'])
+            await page.ev(CLICK % json.dumps('[data-tab="fit"]'))
+            await page.ev("(() => { const s = document.getElementById('rtmFitShow'); s.value = 'match';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length >= 5", True, tries=80, pause=0.25)
+            sb_nse = await page.ev("""(() => { const head = [...document.querySelectorAll('#rtmFitMatch thead th')].map((th) => th.textContent);
+              const at = head.indexOf('Nash–Sutcliffe');
+              return Object.fromEntries([...document.querySelectorAll('#rtmFitMatch tbody tr')].filter((tr) => tr.children[1].textContent === 'this run')
+                .map((tr) => [tr.children[0].textContent, tr.children[at] ? tr.children[at].textContent : null])); })()""")
+            sb_cols = {k: v for k, v in (sb_nse or {}).items() if not k.startswith('all together')} if isinstance(sb_nse, dict) else {}
+            check("  and the Fit tab's table of the run against PHREEQC's cells: the pH and the totals of the four valence states, "
+                  'each at a Nash-Sutcliffe efficiency of 0.999 or more',
+                  [len(sb_cols), all(v and float(v) >= 0.999 for v in sb_cols.values())] if sb_cols else sb_nse, [5, True])
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- a column whose cells start apart: zones, the second in <INITIAL> ---
             zoned_input = column_input.replace(
                 'SOLUTION 1-5\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\n',

@@ -11475,9 +11475,10 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       facts: [['Now', pq.besideT ? 'ticked: Write the model runs PHREEQC\'s column as well' : 'not ticked']],
       sections: [
         { heading: 'What goes in', list: [
-          'Each cell\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only — and its **minerals**, under `<DATA>` at the end of the text, a table in distance for each time.',
+          'Each cell\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only; with the redox carried, its valence states\' totals, `tot(S(6))` — and its **minerals**, under `<DATA>` at the end of the text, a table in distance for each time. A total PHREEQC\'s cells hold at one value is left out.',
           'The shifts the input punches (`-punch_frequency`), up to **12** of them evenly through, the first and the last always; up to 100 cells a table. Where the input punches one cell only, its water in a table in time, as an effluent is drawn.',
           'A cell of PHREEQC\'s after shift k is read as the model\'s cell of the same number half a time step later, at its centre — the two schemes meet there as the cells are refined. With no flow, at k times the time step. The run goes on half a time step past the last shift (`TEND` moved), so that PHREEQC\'s last cells are read too.',
+          'With **KINETICS** in the input, the water of a table in distance is set at the cell\'s downstream face at the shift instead, the run read there between its cells: PHREEQC has carried it as many cells as it has reacted time steps, half a time step longer than the cell\'s own water, and what a rate makes on the way is measured against as much of it. Its minerals, which stay in the cell, in tables of their own at the centre.',
           'Stagnant cells of one layer, where punched, under `layer = 1`.',
         ] },
         { heading: 'Then', list: [
@@ -12721,11 +12722,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261114b',
+    'resources/js/rtm-phreeqc.js?v=20261115a',
     'resources/js/rtm-phreeqc-engine.js?v=20261114b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13161,7 +13162,11 @@ END
           + `${b.rows} rows of ${b.columns.map((col) => `<code>${esc(col)}</code>`).join(', ')}, under <code>&lt;DATA&gt;</code> `
           + 'at the end of the text. Run draws them beside the run as points; the Fit tab\'s <em>the run against what was '
           + 'measured</em> sets each against it, with the Nash–Sutcliffe efficiency. A cell of PHREEQC\'s after a shift is read '
-          + 'as the model\'s half a time step later.</p>');
+          + `as the model's half a time step later${b.faces ? '; with KINETICS, its water at the cell\'s downstream face at the '
+            + 'shift, reacted as long, its minerals in tables of their own' : ''}.`
+          + (b.held && b.held.length ? ` Left out, PHREEQC's cells holding each at one value: `
+            + `${b.held.map((col) => `<code>${esc(col)}</code>`).join(', ')}.` : '')
+          + '</p>');
       }
       if (c.elsewhere && c.elsewhere.length) {
         out.push(`<p>Cell 1's water has none of ${c.elsewhere.map((sp) => `<code>${esc(sp)}</code>`).join(', ')}, which `

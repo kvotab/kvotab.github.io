@@ -2926,8 +2926,11 @@
     const carryRedox = !!o.exact && o.redox !== false;
     // With the floor at 0, every species' log K: one PHREEQC finds none of is written too (see atNone).
     const everything = carryRedox && floor === 0;
+    // With a kinetic reaction to run, every species of a redox element's: one PHREEQC finds none of may be needed (atNone).
+    const kineticRedox = carryRedox && !everything && !!kinBlock && kinBlock.comps.length > 0;
+    const ofRedox = (n) => { try { return [...db.expand(n).keys()].some((lb) => /\(/.test(lb)); } catch (e) { return false; } };
     const lkSpecies = carryRedox ? [...db.reaction.keys()].filter((sp) => sp !== 'e-' && sp !== 'H2O'
-      && (everything || db.isRedox(sp))) : [];
+      && (everything || db.isRedox(sp) || (kineticRedox && ofRedox(sp)))) : [];
     // A column: what another water brings, for one cell 1 has none of (elsewhere, below).
     if (column) {
       for (const sp of column.keep) if (db.reaction.has(sp) && sp !== 'e-' && sp !== 'H2O' && !lkSpecies.includes(sp)) lkSpecies.push(sp);
@@ -3096,9 +3099,17 @@
       as and become, and the start puts each where the water's pe has it.
     */
     const atNone = new Set();
-    if (everything) {
+    /*
+      The same, with the redox carried and a kinetic reaction to run, for
+      the valence states a reaction may push the water into: each species
+      of a redox element PHREEQC lists at none -- the sulphide of a sulphate
+      water that organic carbon is to reduce -- so that the electrons a
+      reaction brings or takes have a couple to go to, as in PHREEQC's own
+      next step.
+    */
+    if (everything || kineticRedox) {
       const zero = [...w.species].filter(([n, [m]]) => !(m > 0) && !NOT_A_SPECIES.has(n) && db.reaction.has(n)
-        && Number.isFinite(lkOf.get(n)) && Number.isFinite(lg.get(n)));
+        && Number.isFinite(lkOf.get(n)) && Number.isFinite(lg.get(n)) && (everything || ofRedox(n)));
       for (let grew = true; grew;) {
         grew = false;
         for (const [n] of zero) {
@@ -3420,6 +3431,20 @@
         for (const [n] of rx) {
           if (n === 'e-' || n === 'H+') continue;
           try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(key(lb)); } catch (e) { /* no terms */ }
+        }
+        /*
+          Electrons it brings or takes go to whatever couple takes them at
+          the one pe: with the redox carried, every valence state of the
+          water's redox elements, whatever the floor -- the sulphide of a
+          sulphate water that organic carbon reduces, though the water starts
+          with none, and without which no couple would hold the electron.
+        */
+        if (carryRedox && rx.some(([n]) => n === 'e-')) {
+          for (const sp of molal.keys()) {
+            let ex;
+            try { ex = db.expand(sp); } catch (e) { continue; }
+            for (const [lb] of ex) if (/\(/.test(lb)) els.add(elementOf(lb));
+          }
         }
         for (const sp of molal.keys()) {
           if (kept.has(sp)) continue;
@@ -4783,18 +4808,22 @@
     where the input punches several cells; one in time where it punches one.
     A cell of PHREEQC's after shift k is the model's cell of the same number,
     at its centre, half a time step later, as the two schemes meet (the
-    tests' long-standing reading; with no flow, at k dt). An element with a
-    total the model works out goes under tot(El); one with a single species,
-    under the species; a mineral of the cells under the name the model gives
-    it. The shifts punched, up to maxTables of them evenly through, the first
+    tests' long-standing reading; with no flow, at k dt) -- with KINETICS,
+    the water of a table in distance at the cell's downstream face at the
+    shift, as long reacted, its minerals at the centre in tables of their
+    own. An element with a total the model works out goes
+    under tot(El) -- with the redox carried, its valence states, tot(S(6))
+    -- one with a single species, under the species; a mineral of the
+    cells under the name the model gives it. A total PHREEQC's cells hold
+    at one value is left out (held). The shifts punched, up to maxTables of them evenly through, the first
     and the last always; up to maxRows cells a table, every so many through
     the column, the first and the last always. The water flowing forward, or
     not at all. The model's own text comes back with the tables at its end
     and its run taken to the last of them, TEND half a time step past
-    PHREEQC's last shift, where its last cells are read. o: { engine,
-    database, water, res (waterToModel's), maxTables, maxRows } -> { text
-    (the <DATA>), modelText, end, tables, columns, rows, cells, times,
-    seconds }
+    PHREEQC's last shift where a table is read then. o: { engine, database,
+    water, res (waterToModel's),
+    maxTables, maxRows } -> { text (the <DATA>), modelText, end, tables,
+    columns, held, faces, rows, cells, times, seconds }
   */
   function transportBeside(o) {
     const started = Date.now();
@@ -4822,10 +4851,13 @@
     const minerals = ((o.res.report && o.res.report.minerals) || []).filter((mn) => m.speciesNames.includes(mn.as));
     const cols = [{ head: 'pH', punch: '-LA("H+")' }];
     for (const [el, ns] of [...carriers].sort((a, b) => a[0].localeCompare(b[0]))) {
-      if (keys.has(`tot(${el})`)) cols.push({ head: `tot(${el})`, punch: `TOT("${el}")` });
-      else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")` });
+      // With the redox carried, an element's valence states, which move as it does, where its total may not.
+      const states = [...keys].filter((k) => k.startsWith(`tot(${el}(`) && k.endsWith(')'));
+      if (states.length) for (const k of states) cols.push({ head: k, punch: `TOT("${k.slice(4, -1)}")`, total: true });
+      else if (keys.has(`tot(${el})`)) cols.push({ head: `tot(${el})`, punch: `TOT("${el}")`, total: true });
+      else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")`, total: true });
     }
-    for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")` });
+    for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")`, mineral: true });
     // The input as it is, the selected output put in front of its TRANSPORT.
     const at = text.search(/^[ \t]*TRANSPORT\b/im);
     if (at < 0) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
@@ -4860,6 +4892,31 @@
     }
     const shifts = [...byShift.keys()].sort((a, b) => a - b);
     if (!shifts.length) throw new Error('PHREEQC\'s TRANSPORT punched no cell after a shift: give it -punch_cells and -punch_frequency');
+    /*
+      An element's total that PHREEQC's cells hold at one value -- within a
+      ten-thousandth of it, as a reaction moving the water's mass leaves a
+      total the same water flows in and starts with -- is left out: there is
+      nothing to set the run against, and an efficiency would measure only
+      that ten-thousandth. A mineral is kept: what forms or goes is small
+      beside what is there, and is the point.
+    */
+    const span = cols.map(() => [Infinity, -Infinity, 0]);
+    for (const k of shifts) {
+      for (const set of [byShift.get(k).mobile, byShift.get(k).stagnant]) {
+        for (const v of set.values()) {
+          v.forEach((x, i) => {
+            if (!Number.isFinite(x)) return;
+            span[i][0] = Math.min(span[i][0], x);
+            span[i][1] = Math.max(span[i][1], x);
+            span[i][2] = Math.max(span[i][2], Math.abs(x));
+          });
+        }
+      }
+    }
+    const flat = cols.map((c, i) => !!c.total && !(span[i][1] - span[i][0] > 1e-4 * span[i][2]));
+    const use = cols.map((c, i) => i).filter((i) => !flat[i]);
+    const heads = use.map((i) => cols[i].head).join('  ');
+    const held = cols.filter((c, i) => flat[i]).map((c) => c.head);
     // A value to seven figures; a time or a distance, which says where the run is read, to twelve.
     const g = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(7))) : '-');
     const gt = (v) => String(Number(v.toPrecision(12)));
@@ -4870,24 +4927,47 @@
       return [...new Set(out)];
     };
     const cellsPunched = [...new Set(shifts.flatMap((k) => [...byShift.get(k).mobile.keys()]))].sort((a, b) => a - b);
+    const alone = cellsPunched.length === 1;
+    const stagPunched = shifts.some((k) => byShift.get(k).stagnant.size > 0);
+    /*
+      Where a cell of PHREEQC's is set beside the run: after shift k, the
+      model's cell of the same number at its centre half a time step later,
+      where the two schemes' fronts meet (with no flow, at k dt). With
+      KINETICS, the water of a table in distance at the cell's downstream
+      face at the shift instead, the run read there between its cells:
+      PHREEQC has carried it i cells and reacted it for i time steps, as long
+      as the water at the face has reacted and half a time step longer than
+      the cell's own, and what a rate makes on the way is measured against
+      as much of it. Its minerals, which stay in the cell, in tables of their
+      own at the cell's centre half a time step later.
+    */
+    const atFaces = !alone && t.dir !== 0 && readKinetics(text).size > 0;
+    const water = use.filter((i) => !cols[i].mineral);
+    const solid = atFaces ? use.filter((i) => cols[i].mineral) : [];
     const lines = ['<DATA>',
       `# PHREEQC's own TRANSPORT of the input this model was written from, run in the page: a cell of PHREEQC's`,
       `# after shift k as this model's cell half a time step later, at its centre${t.dir === 0 ? ' (no flow: at k dt)' : ''}.`];
+    if (atFaces) {
+      lines.push('# With KINETICS, its water at the cell\'s downstream face at the shift instead, carried as many cells as it',
+        `# has reacted time steps, as the water there has; the run is read there between its cells' centres.`
+        + `${solid.length ? ' Its minerals in tables of their own.' : ''}`);
+    }
     const last = shifts[shifts.length - 1];
-    const end = (last + lag) * dt;
+    const end = (last + (atFaces && !solid.length && !stagPunched ? 0 : lag)) * dt;
     const tend = t.shifts * dt;
     if (end > tend * (1 + 1e-12)) lines.push(`# The run goes on to TEND = ${gt(end)}, half a time step past the last shift, where its last cells are read.`);
+    if (held.length) lines.push(`# Left out, PHREEQC's cells holding each at one value: ${held.join(', ')}.`);
     let tables = 0;
     let points = 0;
     const times = [];
-    if (cellsPunched.length === 1) {
+    if (alone) {
       // One cell punched: its water against time, as an effluent is drawn.
       const cell = cellsPunched[0];
-      lines.push(`time  ${cols.map((c) => c.head).join('  ')}  cell = ${cell - 1}`);
+      lines.push(`time  ${heads}  cell = ${cell - 1}`);
       for (const k of spread(shifts, o.maxRows || 400)) {
         const v = byShift.get(k).mobile.get(cell);
         if (!v) continue;
-        lines.push(`${gt((k + lag) * dt)}  ${v.map(g).join('  ')}`);
+        lines.push(`${gt((k + lag) * dt)}  ${use.map((i) => g(v[i])).join('  ')}`);
         points++;
       }
       tables = 1;
@@ -4895,26 +4975,31 @@
       for (const k of spread(shifts, o.maxTables || 12)) {
         const { mobile, stagnant } = byShift.get(k);
         const when = gt((k + lag) * dt);
-        times.push(Number(when));
+        times.push(Number(atFaces ? gt(k * dt) : when));
         for (const [layer, set] of [[0, mobile], [1, stagnant]]) {
           // Every so many cells, the same step through the column, and the last.
           const all = [...set.keys()].sort((a, b) => a - b);
           const step = Math.ceil(all.length / (o.maxRows || 100));
           const cells = all.filter((c, j) => j % step === 0 || j === all.length - 1);
           if (!cells.length) continue;
-          lines.push(`distance  ${cols.map((c) => c.head).join('  ')}  at = ${when}${layer ? '  layer = 1' : ''}`);
-          for (const cell of cells) {
-            lines.push(`${gt(centre[cell - 1])}  ${set.get(cell).map(g).join('  ')}`);
-            points++;
+          const groups = layer || !atFaces ? [[use, when, false]]
+            : [[water, gt(k * dt), true], ...(solid.length ? [[solid, when, false]] : [])];
+          for (const [idx, at, face] of groups) {
+            lines.push(`distance  ${idx.map((i) => cols[i].head).join('  ')}  at = ${at}${layer ? '  layer = 1' : ''}`);
+            for (const cell of cells) {
+              const x = face ? centre[cell - 1] + t.lengths[cell - 1] / 2 : centre[cell - 1];
+              lines.push(`${gt(x)}  ${idx.map((i) => g(set.get(cell)[i])).join('  ')}`);
+              points++;
+            }
+            tables++;
           }
-          tables++;
         }
       }
     }
     const data = lines.join('\n');
     let model = o.res.text.replace(/\s*$/, '');
     if (end > tend * (1 + 1e-12)) model = model.replace(/^TEND = .*$/m, `TEND = ${gt(end)}`);
-    return { text: data, modelText: `${model}\n\n${data}\n`, end, tables, columns: cols.map((c) => c.head), rows: points,
+    return { text: data, modelText: `${model}\n\n${data}\n`, end, tables, columns: use.map((i) => cols[i].head), held, faces: atFaces, rows: points,
       cells: cellsPunched.length, times, seconds: (Date.now() - started) / 1000 };
   }
 

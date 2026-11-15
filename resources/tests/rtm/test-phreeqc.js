@@ -4999,6 +4999,126 @@ function againstExchangeBeside(engine) {
     ex ? `${exData.length} lines against ${mine.length}` : 'no example');
 }
 
+// Sulphate reduced at a rate in a column, beside PHREEQC's own: the built-in example 'sulphidebeside', our own numbers.
+const SULPHIDE_BESIDE_INPUT = `RATES
+Sulphate_reduction
+# Sulphate reduced by organic carbon in the rock, at a Monod rate in the sulphate:
+# k [S(6)] / (Ks + [S(6)]), k = PARM(1) mol/kgw/s, Ks = PARM(2) mol/kgw.
+-start
+10 s = TOT("S(6)")
+20 rate = PARM(1) * s / (PARM(2) + s)
+30 SAVE rate * TIME
+-end
+SOLUTION 0  A sulphate water, flowing in
+ units mmol/kgw
+ pH 7.4
+ Na 25
+ Ca 1
+ Cl 22 charge
+ S(6) 2.5
+ C(4) 3
+SOLUTION 1-20  The same water, in the column
+ units mmol/kgw
+ pH 7.4
+ Na 25
+ Ca 1
+ Cl 22 charge
+ S(6) 2.5
+ C(4) 3
+KINETICS 1-20
+Sulphate_reduction
+ -formula CH2O 2
+ -m 1
+ -parms 1e-10 1e-4
+END
+TRANSPORT
+ -cells 20
+ -lengths 0.05
+ -shifts 60
+ -time_step 788940
+ -flow_direction forward
+ -boundary_conditions flux flux
+ -diffusion_coefficient 1e-9
+ -dispersivities 0.005
+ -punch_cells 1-20
+ -punch_frequency 6
+END
+`;
+
+/*
+  Sulphide made at a rate along a column, the redox carried: a sulphate water through 20 cells whose rock gives organic
+  carbon at k [S(6)]/(Ks + [S(6)]), RATES of our own. The water has no sulphide, and PHREEQC lists none of its
+  species; the hand-off writes them at none, with the database's log K -- HS-, H2S, S-2 and methane -- so that the
+  electrons the carbon brings have couples to go to, where before the electron was refused as in no relation.
+  PHREEQC's column beside it: the totals of the valence states, tot(S(6)) and tot(S(-2)), which move, in place of
+  sulphur's, which does not; sodium, chloride and calcium, which PHREEQC's cells hold at one value, left out. Each
+  cell at its downstream face at the shift: the page's run there at a Nash-Sutcliffe efficiency of 0.999 or more for
+  the pH and every total, where at the cell's centre half a time step later -- carried as far, but reacted half a
+  time step less -- the totals are at 0.995 at best. The built-in example carries the same tables.
+*/
+function againstSulphideBeside(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  engine.load(dbText);
+  const water = { name: 'sulphide', text: SULPHIDE_BESIDE_INPUT };
+  const res = P.waterToModel({ engine, database, water, activity: true, exact: true, phases: true, redox: true });
+  const sp = (res.text.match(/^<SPECIES>\n([\s\S]*?)\n</m) || ['', ''])[1].split('\n').map((l) => l.trim().split(/\s+/)[0]);
+  const eq = (res.text.match(/^<EQUILIBRIUM>\n([\s\S]*?)\n\n/m) || ['', ''])[1];
+  check('organic carbon given at a rate to a sulphate water, the redox carried: the sulphide\'s species and methane written at '
+    + 'none, with the database\'s log K, the electron tied to sulphate by HS-; the rate written as a rate law',
+  ['HS-', 'H2S', 'S-2', 'CH4'].every((n) => sp.includes(n)) && /^SO4-2 \+ 9 H\+ \+ 8 e- <=> HS- \+ 4 H2O/m.test(eq)
+    && /^Sulphate_reduction => 2 CO3-2 \+ 12 H\+ \+ 8 e-, r = rate/m.test(res.text) && /Written at none, PHREEQC finding less/.test(res.text),
+  `${sp.filter((n) => /S|CH4/.test(n)).join(' ')}`);
+  const b = P.transportBeside({ engine, database, water, res });
+  check('  PHREEQC\'s own column beside it: the pH and the totals of the valence states, the totals PHREEQC holds at one '
+    + 'value left out and said so, ten tables in distance at the cells\' downstream faces, the last at the input\'s end',
+  b.columns.join() === 'pH,tot(C(4)),tot(C(-4)),tot(S(6)),tot(S(-2))' && b.held.join() === 'tot(Ca),tot(Cl),tot(Na)'
+    && /^# Left out, PHREEQC's cells holding each at one value: tot\(Ca\), tot\(Cl\), tot\(Na\)\.$/m.test(b.text)
+    && b.tables === 10 && /^0\.05 {2}/m.test(b.text) && /^1 {2}/m.test(b.text) && b.end === 60 * 788940,
+  `${b.columns.join(' ')}; held ${b.held.join(' ')}; ${b.tables} tables`);
+  const m = RtmModel.compile(b.modelText);
+  const tables = m.data.filter((d) => d.kind === 'distance');
+  const dt = 788940;
+  const times = [...new Set(tables.flatMap((d) => [d.at, d.at + dt / 2]))].sort((a, c) => a - c);
+  const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-7, atol: 1e-14, nonNegative: true,
+    outputTimes: times });
+  const keys = m.quantities.map((q) => q.key);
+  const which = Int32Array.from(keys.map((_, i) => i));
+  const q = new Float64Array(keys.length);
+  const at = (t, x, key) => {
+    const c = m.toConcentrations(run.grid.y[times.indexOf(t)]);
+    const one = (cell) => { m.quantitiesAt(c, t, cell, which, q); return q[keys.indexOf(key)]; };
+    const f = Math.min(Math.max(x / 0.05 - 0.5, 0), 19);
+    const i0 = Math.min(Math.floor(f), 18);
+    return one(i0) * (1 + i0 - f) + one(i0 + 1) * (f - i0);
+  };
+  const nse = (pairs) => {
+    const mean = pairs.reduce((a, [, e]) => a + e, 0) / pairs.length;
+    return 1 - pairs.reduce((a, [v, e]) => a + (v - e) ** 2, 0) / pairs.reduce((a, [, e]) => a + (e - mean) ** 2, 0);
+  };
+  const face = {};
+  const centre = {};
+  tables[0].columns.forEach((key, j) => {
+    face[key] = nse(tables.flatMap((d) => d.rows.map((r) => [at(d.at, r[0], key), r[j + 1]])));
+    centre[key] = nse(tables.flatMap((d) => d.rows.map((r) => [at(d.at + dt / 2, r[0] - 0.025, key), r[j + 1]])));
+  });
+  const totals = ['tot(C(4))', 'tot(C(-4))', 'tot(S(6))', 'tot(S(-2))'];
+  check('  the page\'s run against them: 0.999 or more for the pH and every total at the faces; at the cells\' centres half a time '
+    + 'step later, reacted half a time step less, the totals 0.995 at best',
+  face.pH >= 0.999 && totals.every((k) => face[k] >= 0.9995) && totals.every((k) => centre[k] <= 0.995),
+  `faces ${Object.entries(face).map(([k, v]) => `${k} ${v.toFixed(5)}`).join(', ')}; centres ${totals.map((k) => centre[k].toFixed(4)).join(', ')}`);
+  const { RTM_EXAMPLES } = require(path.join(jsDir, 'rtm-examples.js'));
+  const ex = RTM_EXAMPLES.find((e) => e.id === 'sulphidebeside');
+  const exData = ex ? ex.text.slice(ex.text.search(/^<DATA>$/m)).trim().split('\n') : [];
+  const mine = b.text.trim().split('\n');
+  const same = exData.length === mine.length && exData.every((ln, i) => {
+    const a = ln.trim().split(/\s+/);
+    const c = mine[i].trim().split(/\s+/);
+    return a.length === c.length && a.every((w, j) => w === c[j] || Math.abs(Number(w) - Number(c[j])) <= 1e-6 * Math.abs(Number(c[j])));
+  });
+  check('  the built-in example \'sulphidebeside\' carries the same tables', !!ex && same,
+    ex ? `${exData.length} lines against ${mine.length}` : 'no example');
+}
+
 function againstMultiD(engine) {
   // PHREEQC keeps a TRANSPORT's options for the next one in the same instance: each input here says -implicit and -stagnant.
   const database = { name: 'phreeqc.dat', text: dbText };
@@ -5692,6 +5812,8 @@ function againstKineticsHandOff(engine) {
   againstTransportBeside(wasm);
   console.log('\n--- an exchanger in a column beside PHREEQC\'s own: its last cell in time, the run against it ---');
   againstExchangeBeside(wasm);
+  console.log('\n--- sulphide made at a rate along a column beside PHREEQC\'s own: the redox carried, the valence states, the faces ---');
+  againstSulphideBeside(wasm);
   console.log('\n--- multicomponent diffusion: -multi_D against TRANSPORT made finer in time, -implicit, a flowing column, a tracer across salt ---');
   againstMultiD(wasm);
   console.log('\n--- what a run can be read as: a water\'s quantities against PHREEQC ---');
