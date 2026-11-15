@@ -424,12 +424,24 @@ there is calcite (to 2e-15) and with none and not supersaturated where there is
 not, no cell unsettled and nothing below none; and rtol 1e-6 and 1e-8 agree to
 8e-12 mol of calcite (of 1.7e-4). The Jacobian is checked at the start, half
 way and the end of the one and at the end of the other, cells on the bend among
-them. It does nothing, and says so, where nothing is held all through the run;
-a mineral given dissolve_only, and every mineral of a model with the electron,
-still comes and goes at events, and the warning says which and why; MINERALS
-takes events or complementarity. The model counts the minerals it holds so (1
-of 1, and 0 under events), and in test-ui.py what is solved says the calcite
-of a batch is held by complementarity with no events.
+them. With the electron, where each cell's species are the speciation of its
+totals, the row is in that speciation in the cell's components (reducedResidual):
+the same column with an iron couple and the electron in both waters runs with
+no event, its pH within 4e-7 of rtol 1e-9's and within 9e-7 of the column
+without them held in place, read back as cleanly, and the projected form's
+Jacobian checked at the end; and the redox plume example, five minerals under
+Davies, run both ways to 20 days, its minerals within 4e-9 mol and what is
+dissolved within 2e-5 of itself. (Held by events, that column comes out
+differently at each tolerance -- cell 10 at pH 7.90 at rtol 1e-6, with a cell at
+pH 4.1 beside it, and 8.38 at 1e-9, against 7.89 held by complementarity at
+either and by the column without the iron; not checked here.) It does nothing,
+and says so, where nothing is held all through the run; a mineral given
+dissolve_only still comes and goes at events, and so does every mineral of a
+model with the electron whose cells are worked out the full way (here because of
+such a mineral), the warning saying which and why; MINERALS takes events or
+complementarity. The model counts the minerals it holds so (1 of 1, and 0 under
+events), and in test-ui.py what is solved says the calcite of a batch is held by
+complementarity with no events.
 
 Two faults the column showed while it was made. A bend of 1e-8 against rtol
 1e-7 was narrower than the Newton iteration's own last corrections, and crossed

@@ -8142,6 +8142,28 @@
    * rhs each relation's lnK less its water and fixed species. Null where the
    * system is not of that shape: the full one is used.
    */
+  /*
+    The row of a mineral held by complementarity (MINERALS, holdEquilibria):
+    the smoothed Fischer-Burmeister function of its amount a, over a scale
+    of its own, and its water's undersaturation d, in ln,
+      phi = a + d - sqrt(a^2 + d^2 + 2 eps^2),
+    nought where a and d are both above nought and a d = eps^2. Not as
+    written: far from the bend a + d and the root are nearly equal -- a
+    water short by 18 in ln has phi = 18 - 18.0000000555 -- and the row
+    would be rounding. Over a + d + R, with (a + d)^2 - R^2 = 2 a d -
+    2 eps^2, nothing cancels; its slopes 1 - a / R and 1 - d / R the same way.
+  */
+  function fbRow(a, d, eps) {
+    const e2 = 2 * eps * eps;
+    const R = Math.sqrt(a * a + d * d + e2);
+    const sum = a + d;
+    return {
+      phi: sum > 0 ? (2 * a * d - e2) / (sum + R) : sum - R,
+      da: a > 0 ? (d * d + e2) / (R * (R + a)) : 1 - a / R,
+      dd: d > 0 ? (a * a + e2) / (R * (R + d)) : 1 - d / R,
+    };
+  }
+
   function reducedSystem(sys, prefer) {
     const { eqs, ne, nb, na, at, lin, minOf, isMin, act } = sys;
     // A real gas in a fixed volume reads every gas of its phase, and under Pitzer a coefficient every solute:
@@ -8610,7 +8632,9 @@
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
-      if (!present[mn.j]) {
+      // Held by complementarity (rs.comp, holdEquilibria): its row whatever there is of it, as in reducedResidual.
+      const ms = rs.comp && rs.comp.on[mn.j] ? rs.comp.ms[cell * rs.comp.ne + mn.j] : 0;
+      if (!present[mn.j] && !ms) {
         F[row] = z[nK + p];
         if (J) J[row][nK + p] = 1;
         norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
@@ -8650,8 +8674,16 @@
         if (grad) addG(row, mn.nu[i], Ga[i]);
       }
       if (J && useL) J[row][iL] += mn.water;
-      F[row] = r;
-      norm = Math.max(norm, Math.abs(r));
+      if (ms) {
+        // Held by complementarity: fbRow, the relation's slopes -- over the unknowns and the outside species -- times
+        // d phi/d d, and d phi/d a over the scale on its amount.
+        const sgn = mn.eq.mineralNu < 0 ? -1 : 1;
+        const fb = fbRow(z[nK + p] / ms, sgn * r, rs.comp.eps);
+        F[row] = fb.phi;
+        if (J) { const Jr = J[row]; for (let c = 0; c < nz; c++) if (Jr[c]) Jr[c] *= sgn * fb.dd; Jr[nK + p] += fb.da / ms; }
+        if (B) { const Br = B[row]; for (let o = 0; o < Br.length; o++) if (Br[o]) Br[o] *= sgn * fb.dd; }
+      } else F[row] = r;
+      norm = Math.max(norm, Math.abs(F[row]));
     }
     for (const Gb of rs.groups) {
       if (!present[mins[Gb.ps[0]].j]) continue;
@@ -8911,7 +8943,9 @@
     for (let p = 0; p < nm; p++) {
       const row = nb + p;
       const mn = mins[p];
-      if (!present[mn.j]) {
+      // Held by complementarity (rs.comp, holdEquilibria): its row whatever there is of it, fbRow of its amount and d.
+      const ms = rs.comp && rs.comp.on[mn.j] ? rs.comp.ms[cell * rs.comp.ne + mn.j] : 0;
+      if (!present[mn.j] && !ms) {
         F[row] = z[nK + p];
         if (J) J[row][nK + p] = 1;
         norm = Math.max(norm, Math.abs(z[nK + p]) / Math.max(big, 1e-300));
@@ -8924,10 +8958,12 @@
       // A member of a group that is there: its share of the water, and its gradient, for bubbleRows.
       const G = rs.groupOfMin[p] >= 0 ? rs.groups[rs.groupOfMin[p]] : null;
       const qb = G ? rs.qOfMin[p] : -1;
+      const sgn = mn.eq.mineralNu < 0 ? -1 : 1;
+      const fb = ms ? fbRow(z[nK + p] / ms, sgn * r, rs.comp.eps) : null;
       if (qb >= 0) G.lnE[qb] = -r / G.nu[qb];
       else {
-        F[row] = r;
-        norm = Math.max(norm, Math.abs(r));
+        F[row] = fb ? fb.phi : r;
+        norm = Math.max(norm, Math.abs(F[row]));
       }
       if (!J) continue;
       const Jr = qb >= 0 ? G.rows[qb] : J[row];
@@ -8947,6 +8983,12 @@
       if (useI && !low) Jr[iI] += gI;
       if (useL) Jr[iL] += mn.water;
       if (qb >= 0) { const f = -1 / G.nu[qb]; for (let c = 0; c < nz; c++) if (Jr[c]) Jr[c] *= f; }
+      // Held by complementarity: the relation's slopes times d phi/d d, and d phi/d a over the scale on its amount.
+      if (fb) {
+        const f = sgn * fb.dd;
+        for (let c = 0; c < nz; c++) if (Jr[c]) Jr[c] *= f;
+        Jr[nK + p] += fb.da / ms;
+      }
     }
     for (const G of rs.groups) {
       if (!present[mins[G.ps[0]].j]) continue;
@@ -9037,7 +9079,9 @@
       const c = C[off + s];
       z[j] = (c > 0 ? Math.log(c) : Math.log(Math.max(1e-12 * big, 1e-300))) + lnG[s];
     }
-    for (let p = 0; p < nm; p++) z[nK + p] = present[mins[p].j] ? C[off + part[mins[p].k]] : 0;
+    // A mineral held by complementarity (rs.comp) starts at what there is of it, whatever its mode.
+    const held = (p) => present[mins[p].j] || (rs.comp && rs.comp.on[mins[p].j]);
+    for (let p = 0; p < nm; p++) z[nK + p] = held(p) ? C[off + part[mins[p].k]] : 0;
     if (useI) z[iI] = I0;
     if (useL) z[iL] = lnAw;
     for (let p = 0; p < np; p++) z[iP + p] = Math.log(Math.max(C[off + sys.pots[p].si], 1e-300));
@@ -9120,7 +9164,7 @@
       // The ionic strength stays above a tenth of what it was.
       if (useI && step[iI] > 0 && z[iI] - damp * step[iI] < 0.1 * z[iI]) damp = (0.9 * z[iI]) / step[iI];
       for (let c = 0; c < nz; c++) z[c] -= damp * step[c];
-      for (let p = 0; p < nm; p++) if (!present[mins[p].j]) z[nK + p] = 0;
+      for (let p = 0; p < nm; p++) if (!held(p)) z[nK + p] = 0;
       if (converged) break;
     }
     if (!converged) return { converged: false, iterations, residual, x: null, why: '' };
@@ -13561,30 +13605,10 @@
     */
     const compEps = 1e-3;
     const compMs = new Float64Array(nc * ne);
-    /*
-      The water's undersaturation and the amount, the row they make in cell
-      c, and its slopes in each (relationAt wants C and the activities).
-      Not as written above: far from the bend a + d and R are nearly equal
-      -- a water short by 18 in ln has phi = 18 - 18.0000000555 -- and the
-      row would be rounding where it matters least and, with much of a
-      mineral against a small scale, where it matters. Over a + d + R, with
-      (a + d)^2 - R^2 = 2 a d - 2 eps^2, nothing cancels; 1 - a / R and
-      1 - d / R the same way.
-    */
-    const compParts = (c, r, y, water) => {
-      const d = (eqs[r].mineralNu < 0 ? -1 : 1) * relationAt(c * ns, r, y, water);
-      const a = y[c * ns + eqs[r].mineral] / compMs[c * ne + r];
-      const e2 = 2 * compEps * compEps;
-      const R = Math.sqrt(a * a + d * d + e2);
-      const sum = a + d;
-      return {
-        a,
-        d,
-        phi: sum > 0 ? (2 * a * d - e2) / (sum + R) : sum - R,
-        da: a > 0 ? (d * d + e2) / (R * (R + a)) : 1 - a / R,
-        dd: d > 0 ? (a * a + e2) / (R * (R + d)) : 1 - d / R,
-      };
-    };
+    // The water's undersaturation and the amount, the row they make in cell c, and its slopes in each (fbRow);
+    // relationAt wants C and the activities. Projected, the same row is in each cell's speciation (reducedResidual).
+    const compParts = (c, r, y, water) => fbRow(y[c * ns + eqs[r].mineral] / compMs[c * ne + r],
+      (eqs[r].mineralNu < 0 ? -1 : 1) * relationAt(c * ns, r, y, water), compEps);
     /*
       A mineral that carries a surface's sites (per=) is taken as used up at
       1e-4 of what its cell starts with: its sites go with it, and the
@@ -13672,29 +13696,19 @@
       and no total, and the speciation of each cell is where it is solved.
     */
     const projected = base.electron >= 0 || npot > 0;
-    // MINERALS = complementarity (above), in the form that holds the relations in place.
-    const compOn = !!base.settings && base.settings.MINERALS === 'complementarity' && !projected;
-    const isComp = eqs.map((eq) => compOn && eq.mineral >= 0 && !eq.grp && !eq.bounds && !eq.carry);
+    /*
+      MINERALS = complementarity (above). Held in place, the row is the
+      cell's own; projected, it is in each cell's speciation in its
+      components (reducedResidual), and so only where there is one: whether
+      there is is known once the reduced system is made (rsys, below), and
+      compOn, isComp and allComp are set again there.
+    */
+    const compWanted = !!base.settings && base.settings.MINERALS === 'complementarity';
+    const plainMineral = (eq) => eq.mineral >= 0 && !eq.grp && !eq.bounds && !eq.carry;
+    let compOn = compWanted && !projected;
+    let isComp = eqs.map((eq) => compOn && plainMineral(eq));
     // Every mineral so held, and no group: a start, or one after an event of another kind, finds which are there.
-    const allComp = compOn && mins.length > 0 && mins.every((r) => isComp[r]) && !grps.length;
-    // The minerals the setting cannot hold so, and why: they come and go at events as before.
-    if (base.settings && base.settings.MINERALS === 'complementarity' && Array.isArray(base.warnings)) {
-      const nameOf = (r) => base.speciesNames[eqs[r].mineral];
-      if (projected && mins.length) {
-        base.warnings.push(`MINERALS = complementarity holds a mineral by one equation where the relations are held as `
-          + `they stand, and here ${base.electron >= 0 ? 'the electron' : 'a surface\'s potential'} has each cell's `
-          + `speciation worked out from its totals instead: ${mins.map(nameOf).join(', ')} `
-          + `${mins.length > 1 ? 'come and go' : 'comes and goes'} at events, as with MINERALS = events.`);
-      } else {
-        const why = (r) => (eqs[r].bounds ? 'is given dissolve_only or force_equality' : 'carries sites (per=)');
-        const left = mins.filter((r) => !isComp[r]);
-        if (left.length) {
-          base.warnings.push(`MINERALS = complementarity holds a mineral with no bounds and no sites by one equation; `
-            + `${left.map((r) => `${nameOf(r)} ${why(r)}`).join(', ')}, and ${left.length > 1 ? 'they come' : 'it comes'} `
-            + 'and goes at events, as with MINERALS = events.');
-        }
-      }
-    }
+    let allComp = compOn && mins.length > 0 && mins.every((r) => isComp[r]) && !grps.length;
     // What else the relations read: each ion and solute not held, through I and a(H2O).
     const outside = projected && act
       ? [...Array(ns).keys()].filter((k) => pos[k] < 0 && (act.z[k] !== 0 || act.solute[k])) : [];
@@ -14179,6 +14193,32 @@
       rsys = reducedSystem(sys, prefer);
       if (rsys) rsys.outside = outside;
     }
+    if (projected && compWanted && rsys) {
+      compOn = true;
+      isComp = eqs.map((eq) => plainMineral(eq));
+      allComp = mins.length > 0 && mins.every((r) => isComp[r]) && !grps.length;
+    }
+    // The reduced speciation's rows read which minerals are held so, their scales (compMs, filled below) and the bend.
+    if (rsys && compOn) rsys.comp = { on: Uint8Array.from(isComp, (v) => (v ? 1 : 0)), ms: compMs, ne, eps: compEps };
+    // The minerals the setting cannot hold so, and why: they come and go at events as before.
+    if (compWanted && Array.isArray(base.warnings)) {
+      const nameOf = (r) => base.speciesNames[eqs[r].mineral];
+      if (projected && !rsys && mins.length) {
+        base.warnings.push(`MINERALS = complementarity holds a mineral by one equation in each cell's speciation in its `
+          + `components, and here ${base.electron >= 0 ? 'the electron' : 'a surface\'s potential'} has each cell `
+          + 'worked out the full way instead (as under Pitzer, a real gas phase, molar volumes, CD-MUSIC, sites that go '
+          + `with a mineral, or a mineral with bounds): ${mins.map(nameOf).join(', ')} `
+          + `${mins.length > 1 ? 'come and go' : 'comes and goes'} at events, as with MINERALS = events.`);
+      } else {
+        const why = (r) => (eqs[r].bounds ? 'is given dissolve_only or force_equality' : 'carries sites (per=)');
+        const left = mins.filter((r) => !isComp[r]);
+        if (left.length) {
+          base.warnings.push(`MINERALS = complementarity holds a mineral with no bounds and no sites by one equation; `
+            + `${left.map((r) => `${nameOf(r)} ${why(r)}`).join(', ')}, and ${left.length > 1 ? 'they come' : 'it comes'} `
+            + 'and goes at events, as with MINERALS = events.');
+        }
+      }
+    }
     const zOf = projected ? Array.from({ length: nc }, () => null) : null;
     function project(c, y) {
       const b = c * ns;
@@ -14221,6 +14261,19 @@
       bend's width away, and Newton's steps go there.
     */
     function polishComp(t, y) {
+      // Projected, each held species' row is it less the projection of its cell's totals: the polish is the projection.
+      if (projected) {
+        if (!projectAll(y)) return { ok: false, moved: 0, why: 'the minerals held by complementarity did not settle' };
+        let shift = 0;
+        for (let c = 0; c < nc; c++) {
+          for (let k = 0; k < na; k++) {
+            const s = c * ns + active[k];
+            shift = Math.max(shift, Math.abs(xs[c][k] - y[s]) / (lin[s] ? Math.max(Math.abs(y[s]), compScaleOf(c, active[k])) : 1));
+            y[s] = xs[c][k];
+          }
+        }
+        return { ok: true, moved: shift, why: '' };
+      }
       const fv = new Float64Array(n);
       const Vp = new Float64Array(nnz);
       const A = Array.from({ length: na }, () => new Float64Array(na));
@@ -14561,6 +14614,7 @@
           for (let q = 0; q < nmin; q++) {
             const r = mins[q];
             const m = eqs[r].mineral;
+            if (isComp[r]) { out[c * nmin + q] = -1; continue; }
             if (!xs[c]) { out[c * nmin + q] = present[c * ne + r] === 1 ? heldEvent(c, r, y[b + m]) : -1; continue; }
             if (present[c * ne + r] === 1) { out[c * nmin + q] = heldEvent(c, r, Cstar[b + m]); continue; }
             const eq = eqs[r];

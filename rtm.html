@@ -2510,9 +2510,13 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             is still the exact speciation of its cell's totals: saturated where there is some, none at
             all where there is not. The steps go through each such place rather than stopping at it,
             which takes more of them; it wants a relative tolerance of 1e-5 or tighter, and the page's
-            1e-6 is. It holds a mineral with no bounds and no sites (<code>per=</code>), in a model
-            without the electron or a surface's potential; any other comes and goes at the instants
-            above, as with <code>MINERALS = events</code>, and a warning says which.</p>
+            1e-6 is. It holds a mineral with no bounds and no sites (<code>per=</code>). With the
+            electron or a surface's potential, where each cell's species are worked out from its totals
+            at every step, the equation is part of that working out, done in the cell's components;
+            where a cell has to be worked out the full way instead — under Pitzer, with a real gas
+            phase, molar volumes, CD-MUSIC, sites that go with a mineral or a mineral with bounds —
+            every mineral comes and goes at the instants above, as with <code>MINERALS = events</code>,
+            and a warning says which.</p>
           <p>A mineral counts in the totals as anything else does. Calcite holds calcium and carbon,
             so what dissolves is in the water, and in a column the water carries it on. Under
             <code>ACTIVITY</code> its saturation reads every ion of its cell, as any relation
@@ -4870,7 +4874,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261115a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261115b"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261115a"></script>
@@ -4878,6 +4882,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261115d"></script>
 </body>
 </html>

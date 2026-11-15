@@ -3993,9 +3993,10 @@ ${EQ}`);
     const c = m.initialState();
     return Object.fromEntries(names.map((n) => [n, c[m.speciesNames.indexOf(n)]]));
   };
-  const inCol = saturated({ 'H+': 3e-8, 'OH-': 3e-7, CO2: 1e-4, 'HCO3-': 3e-3, 'CO3-2': 2e-5, 'Ca+2': 3e-3, 'Na+': 0.1, 'Cl-': 0.1 });
-  const inFlow = saturated({ 'H+': 3e-10, 'OH-': 3e-5, CO2: 1e-7, 'HCO3-': 2e-4, 'CO3-2': 1e-4, 'Ca+2': 1e-4, 'Na+': 1e-4,
-    'Cl-': 1e-4 });
+  const wCol = { 'H+': 3e-8, 'OH-': 3e-7, CO2: 1e-4, 'HCO3-': 3e-3, 'CO3-2': 2e-5, 'Ca+2': 3e-3, 'Na+': 0.1, 'Cl-': 0.1 };
+  const wFlow = { 'H+': 3e-10, 'OH-': 3e-5, CO2: 1e-7, 'HCO3-': 2e-4, 'CO3-2': 1e-4, 'Ca+2': 1e-4, 'Na+': 1e-4, 'Cl-': 1e-4 };
+  const inCol = saturated(wCol);
+  const inFlow = saturated(wFlow);
   const stall = (minerals) => RtmModel.compile(`
 <SETTINGS>
 MODE = transport
@@ -4058,6 +4059,107 @@ ${EQ}`);
   const vs = RtmModel.verifyJacobian(ms, 4e6, r6.y[r6.y.length - 1]);
   check('  the Jacobian at the end, cells on the bend among them', vs.discrepancies.length === 0, `${vs.checked} entries`);
 
+  // --- projected: the electron, each cell's speciation in its components ---
+  // The same column with an iron couple and the electron in it, a little iron in each water: each cell's species are
+  // the speciation of its totals, the minerals' rows in it (reducedResidual), and its pH that of the column without.
+  const FE = 'Fe+2 <=> Fe+3 + e-, logK = -13\n';
+  const feNames = [...names, 'Fe+2', 'Fe+3'];
+  const saturatedFe = (w) => {
+    const m = RtmModel.compile(`<SETTINGS>\nEQUILIBRATE = start\n<SPECIES>\n${feNames.map((n) => `${n} ${w[n]}`).join('\n')}\n`
+      + `e- electron\nCalcite 1e-2 mineral\n${EQ}${FE}`);
+    const c = m.initialState();
+    return Object.fromEntries(feNames.map((n) => [n, c[m.speciesNames.indexOf(n)]]));
+  };
+  const feCol = saturatedFe({ ...wCol, 'Fe+2': 1e-5, 'Fe+3': 1e-7 });
+  const feFlow = saturatedFe({ ...wFlow, 'Fe+2': 1e-6, 'Fe+3': 1e-6 });
+  const feStall = () => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.5
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1e-7
+LEFT = robin
+RIGHT = free
+TEND = 4e6
+EQUILIBRATE = always
+MINERALS = complementarity
+
+<SPECIES>
+${feNames.map((n) => `${n.padEnd(7)} ${feCol[n]}  D=1e-9  left=${feFlow[n]}`).join('\n')}
+e-      electron
+Calcite 0  mineral
+${EQ}${FE}`);
+  const mf = feStall();
+  const rf6 = FacsimileODE.runModel(mf, { solver: 'ndf', tend: 4e6, rtol: 1e-6, atol: 1e-20, nonNegative: true, outputTimes: ends });
+  const rf9 = FacsimileODE.runModel(feStall(), { solver: 'ndf', tend: 4e6, rtol: 1e-9, atol: 1e-20, nonNegative: true,
+    outputTimes: ends });
+  const pHs = (m, r) => ends.map((t, k) => {
+    const c = m.toConcentrations(r.grid.y[k]);
+    const nsm = m.speciesNames.length;
+    return Array.from({ length: 20 }, (_, q) => -Math.log10(c[q * nsm + m.speciesNames.indexOf('H+')]));
+  });
+  const [pf6, pf9, pn6] = [pHs(mf, rf6), pHs(mf, rf9), pHs(ms, r6)];
+  let dpTol = 0;
+  let dpForm = 0;
+  for (let k = 0; k < 3; k++) {
+    for (let q = 0; q < 20; q++) {
+      dpTol = Math.max(dpTol, Math.abs(pf6[k][q] - pf9[k][q]));
+      dpForm = Math.max(dpForm, Math.abs(pf6[k][q] - pn6[k][q]));
+    }
+  }
+  check('with the electron, each cell speciated in its components: no event, its pH that of rtol 1e-9 and of the column '
+    + 'without the iron, held in place, to 1e-5', mf.heldEquilibria.complementarity === 1 && rf6.events.length === 0
+    && !mf.warnings.some((w) => /MINERALS/.test(w)) && dpTol < 1e-5 && dpForm < 1e-5,
+  `${rf6.stats.nsteps} steps; pH within ${dpTol.toExponential(1)} of rtol 1e-9's, ${dpForm.toExponential(1)} of the other form's`);
+  let feOff = 0;
+  let feOver = -Infinity;
+  let feCrumbs = 0;
+  const nsf = mf.speciesNames.length;
+  const iCaF = mf.speciesNames.indexOf('Ca+2');
+  const iCO3F = mf.speciesNames.indexOf('CO3-2');
+  const iCalF = mf.speciesNames.indexOf('Calcite');
+  for (const y of rf6.y) {
+    const c = mf.toConcentrations(y);
+    for (let k = 0; k < 20; k++) {
+      const b = k * nsf;
+      const si = Math.log10(c[b + iCaF] * c[b + iCO3F]) + 8.48;
+      if (c[b + iCalF] > 0) feOff = Math.max(feOff, Math.abs(si)); else feOver = Math.max(feOver, si);
+      if (c[b + iCalF] < 0 || (c[b + iCalF] > 0 && c[b + iCalF] < 1e-12)) feCrumbs++;
+    }
+  }
+  const vf = RtmModel.verifyJacobian(mf, 4e6, rf6.y[rf6.y.length - 1]);
+  check('  read back saturated where there is calcite and none where not, and the Jacobian of the projected form at the end',
+    feOff < 1e-12 && feOver < 1e-9 && feCrumbs === 0 && vf.discrepancies.length === 0,
+    `|SI| ${feOff.toExponential(1)}, SI with none at most ${feOver.toExponential(1)}, ${feCrumbs} crumbs; ${vf.checked} entries`);
+  // The redox plume example, five minerals, Davies activities, to half its time: the two ways the same.
+  const plume = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'redoxplume').text;
+  const plumes = [plume, plume.replace(/^EQUILIBRATE = always$/m, 'EQUILIBRATE = always\nMINERALS = complementarity')]
+    .map((text) => {
+      const m = RtmModel.compile(text);
+      const half = m.settings.TEND / 2;
+      const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: half, rtol: 1e-6, atol: 1e-20, nonNegative: true,
+        outputTimes: [half / 2, half] });
+      return { m, r };
+    });
+  let dMin = 0;
+  let mostMin = 0;
+  let dAq = 0;
+  const nsp = plumes[0].m.speciesNames.length;
+  for (let k = 0; k < 2; k++) {
+    const ce = plumes[0].m.toConcentrations(plumes[0].r.grid.y[k]);
+    const cq = plumes[1].m.toConcentrations(plumes[1].r.grid.y[k]);
+    for (let i = 0; i < ce.length; i++) {
+      if (plumes[0].m.mineral[i % nsp]) { dMin = Math.max(dMin, Math.abs(ce[i] - cq[i])); mostMin = Math.max(mostMin, ce[i]); } else if (Math.max(ce[i], cq[i]) > 1e-10) dAq = Math.max(dAq, Math.abs(ce[i] - cq[i]) / Math.max(ce[i], cq[i]));
+    }
+  }
+  check('  the redox plume example both ways to 20 days: its five minerals within 1e-8 mol, what is dissolved within 1e-4',
+    plumes[0].r.events.length > 0 && plumes[1].r.events.length === 0 && plumes[1].m.heldEquilibria.complementarity === 5
+      && dMin < 1e-8 && dAq < 1e-4,
+    `${plumes[0].r.events.length} and ${plumes[1].r.events.length} events; minerals within ${dMin.toExponential(1)} of at most `
+    + `${mostMin.toExponential(1)}, dissolved within ${dAq.toExponential(1)} of itself`);
+
   // --- where it does nothing, and where it cannot hold a mineral ---
   const batch = (settings, more = '', rel = '') => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 10\n${settings}\n`
     + `<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCO2 1e-4\nHCO3- 2e-3\nCO3-2 1e-5\nCa+2 1e-3\nCalcite 5e-4 mineral${more}\n${EQ}${rel}`);
@@ -4071,9 +4173,15 @@ ${EQ}`);
     bounded.warnings.join(' | '));
   const redox = batch('EQUILIBRATE = always\nMINERALS = complementarity', '\nFe+2 1e-4\nFe+3 1e-6\ne- electron',
     'Fe+2 <=> Fe+3 + e-, logK = -13\n');
-  check('  with the electron, each cell speciated from its totals: events, and the warning says why',
-    redox.nevents === 1 && redox.warnings.some((w) => /here the electron has each cell's speciation worked out from its totals instead: Calcite comes and goes at events/.test(w)),
-    redox.warnings.join(' | '));
+  check('  with the electron, each cell speciated in its components: held so, and nothing to warn of',
+    redox.heldEquilibria.complementarity === 1 && !redox.warnings.some((w) => /MINERALS/.test(w)), redox.warnings.join(' | '));
+  const fullWay = batch('EQUILIBRATE = always\nMINERALS = complementarity',
+    '\nFe+2 1e-4\nFe+3 1e-6\ne- electron\nSiderite 1e-4 mineral dissolve_only',
+    'Fe+2 <=> Fe+3 + e-, logK = -13\nSiderite <=> Fe+2 + CO3-2, logK = -10.89\n');
+  check('  with the electron and a mineral with bounds, each cell worked out the full way: both at events, and the warning says why',
+    fullWay.heldEquilibria.complementarity === 0
+      && fullWay.warnings.some((w) => /each cell worked out the full way instead .*: Calcite, Siderite come and go at events/.test(w)),
+    fullWay.warnings.join(' | '));
   let refused = '';
   try { batch('EQUILIBRATE = always\nMINERALS = sometimes'); } catch (e) { refused = e.message; }
   check('  MINERALS takes events or complementarity', /events/.test(refused) && /complementarity/.test(refused), refused);
