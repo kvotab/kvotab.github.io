@@ -3898,6 +3898,188 @@ Calcite <=> Ca+2 + CO3-2, logK = -8.48
 }
 
 /* ======================================================================
+   2z'. Minerals held by complementarity (MINERALS = complementarity)
+
+   A plain mineral held in every cell by one smooth equation of its amount
+   and its water's undersaturation, in place of an event wherever it forms
+   or is used up. The acid column of 2z the two ways, against each other;
+   then a column that stalls the events -- a water saturated with calcite
+   flowing into another saturated one, the cells behind the front at
+   saturation with none of it, a little forming and dissolving at every
+   step -- run through, read back exactly, the same at two tolerances.
+   ====================================================================== */
+console.log('\n--- minerals held by complementarity ---');
+{
+  const EQ = `
+<EQUILIBRIUM>
+ <=> H+ + OH-,          logK = -14
+CO2 <=> H+ + HCO3-,     logK = -6.35
+HCO3- <=> H+ + CO3-2,   logK = -10.33
+Calcite <=> Ca+2 + CO3-2, logK = -8.48
+`;
+  const acid = (minerals) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 10
+LENGTH = 0.1
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1e-6
+PECLET = 20
+LEFT = robin
+RIGHT = free
+TEND = 3e5
+EQUILIBRATE = always
+${minerals ? `MINERALS = ${minerals}` : ''}
+
+<SPECIES>
+H+      1e-7    D=1e-9  left=3e-3
+OH-     1e-7    D=1e-9
+CO2     1e-4    D=1e-9
+HCO3-   2e-3    D=1e-9
+CO3-2   1e-5    D=1e-9
+Ca+2    1e-3    D=1e-9
+Cl-     1e-4    D=1e-9  left=3.1e-3
+Calcite 2e-4    mineral
+${EQ}`);
+  const times = [5e4, 1e5, 1.5e5, 2e5, 2.5e5, 3e5];
+  const opts = { solver: 'ndf', tend: 3e5, rtol: 1e-6, atol: 1e-20, nonNegative: true, outputTimes: times };
+  const me = acid('');
+  const mq = acid('complementarity');
+  const re = FacsimileODE.runModel(me, opts);
+  const rq = FacsimileODE.runModel(mq, opts);
+  let dCal = 0;
+  let dCa = 0;
+  times.forEach((t, k) => {
+    const ce = me.toConcentrations(re.grid.y[k]);
+    const cq = mq.toConcentrations(rq.grid.y[k]);
+    for (let c = 0; c < 10; c++) {
+      dCal = Math.max(dCal, Math.abs(ce[c * 8 + 7] - cq[c * 8 + 7]));
+      dCa = Math.max(dCa, Math.abs(ce[c * 8 + 5] / cq[c * 8 + 5] - 1));
+    }
+  });
+  check('the acid column held by complementarity: no event, and the calcite and Ca of the ten events\' run',
+    re.events.length === 10 && rq.events.length === 0 && mq.nevents === 10 && dCal < 1e-9 && dCa < 1e-6
+      && mq.heldEquilibria.complementarity === 1 && me.heldEquilibria.complementarity === 0,
+    `${re.events.length} and ${rq.events.length} events; calcite within ${dCal.toExponential(1)} mol of 2e-4, Ca within `
+    + `${dCa.toExponential(1)} of itself`);
+  // Where each cell's calcite has gone, read back, beside where the event said it went.
+  let byT = 0;
+  re.events.forEach((ev, k) => {
+    let before = -Infinity;
+    let after = Infinity;
+    rq.t.forEach((t, i) => {
+      const left = mq.toConcentrations(rq.y[i])[k * 8 + 7];
+      if (left > 0 && t > before) before = t;
+      if (left === 0 && t < after) after = t;
+    });
+    byT = Math.max(byT, Math.abs(ev.t - before), Math.abs(after - ev.t));
+  });
+  check('  each cell\'s calcite read back as none within a second of its event, of 942 to 73,680 s', byT < 1,
+    `${byT.toFixed(3)} s`);
+  const v0 = RtmModel.verifyJacobian(mq, 0, mq.initialState());
+  const v1 = RtmModel.verifyJacobian(mq, 1.5e5, rq.y[Math.floor(rq.y.length / 2)]);
+  const v2 = RtmModel.verifyJacobian(mq, 3e5, rq.y[rq.y.length - 1]);
+  check('  the Jacobian at the start, half way and at the end',
+    v0.discrepancies.length === 0 && v1.discrepancies.length === 0 && v2.discrepancies.length === 0,
+    `${v0.checked}, ${v1.checked} and ${v2.checked} entries`);
+
+  // --- a column that stalls the events ---
+  const names = ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2', 'Ca+2', 'Na+', 'Cl-'];
+  // A water brought to saturation with calcite as one cell speciates it: its species, the calcite left out.
+  const saturated = (w) => {
+    const m = RtmModel.compile(`<SETTINGS>\nEQUILIBRATE = start\n<SPECIES>\n${names.map((n) => `${n} ${w[n]}`).join('\n')}\n`
+      + `Calcite 1e-2 mineral\n${EQ}`);
+    const c = m.initialState();
+    return Object.fromEntries(names.map((n) => [n, c[m.speciesNames.indexOf(n)]]));
+  };
+  const inCol = saturated({ 'H+': 3e-8, 'OH-': 3e-7, CO2: 1e-4, 'HCO3-': 3e-3, 'CO3-2': 2e-5, 'Ca+2': 3e-3, 'Na+': 0.1, 'Cl-': 0.1 });
+  const inFlow = saturated({ 'H+': 3e-10, 'OH-': 3e-5, CO2: 1e-7, 'HCO3-': 2e-4, 'CO3-2': 1e-4, 'Ca+2': 1e-4, 'Na+': 1e-4,
+    'Cl-': 1e-4 });
+  const stall = (minerals) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 20
+LENGTH = 0.5
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1e-7
+LEFT = robin
+RIGHT = free
+TEND = 4e6
+EQUILIBRATE = always
+${minerals ? `MINERALS = ${minerals}` : ''}
+
+<SPECIES>
+${names.map((n) => `${n.padEnd(7)} ${inCol[n]}  D=1e-9  left=${inFlow[n]}`).join('\n')}
+Calcite 0  mineral
+${EQ}`);
+  let stopped = null;
+  try {
+    FacsimileODE.runModel(stall(''), { solver: 'ndf', tend: 4e6, rtol: 1e-6, atol: 1e-20, nonNegative: true, maxEvents: 200 });
+  } catch (e) {
+    stopped = e;
+  }
+  const ends = [1e6, 2e6, 4e6];
+  const ms = stall('complementarity');
+  const r6 = FacsimileODE.runModel(ms, { solver: 'ndf', tend: 4e6, rtol: 1e-6, atol: 1e-20, nonNegative: true, outputTimes: ends });
+  const r8 = FacsimileODE.runModel(stall('complementarity'), { solver: 'ndf', tend: 4e6, rtol: 1e-8, atol: 1e-20,
+    nonNegative: true, outputTimes: ends });
+  check('two saturated waters: the events stall where the inflow reaches the column, complementarity runs the 4e6 s',
+    !!stopped && stopped.code === 'events' && stopped.t < 1e5 && r6.events.length === 0 && r6.t[r6.t.length - 1] === 4e6,
+    `the events stopped ${stopped ? `at ${stopped.t.toFixed(0)} s` : 'never'}; ${r6.stats.nsteps} steps held`);
+  let offSat = 0;
+  let overSat = -Infinity;
+  let crumbs = 0;
+  let unsettled = 0;
+  for (const y of r6.y) {
+    if (!ms.consistentInitial(0, Float64Array.from(y), { rtol: 1e-12, fromState: true }).solved) unsettled++;
+    const c = ms.toConcentrations(y);
+    for (let k = 0; k < 20; k++) {
+      const b = k * 9;
+      const si = Math.log10(c[b + 5] * c[b + 4]) + 8.48;
+      if (c[b + 8] > 0) offSat = Math.max(offSat, Math.abs(si)); else overSat = Math.max(overSat, si);
+      if (c[b + 8] < 0 || (c[b + 8] > 0 && c[b + 8] < 1e-12)) crumbs++;
+    }
+  }
+  check('  every stored point read back: saturated where there is calcite, none and not supersaturated where not',
+    offSat < 1e-12 && overSat < 1e-9 && crumbs === 0 && unsettled === 0,
+    `|SI| ${offSat.toExponential(1)}, SI with none at most ${overSat.toExponential(1)}; ${crumbs} crumbs, ${unsettled} unsettled `
+    + `of ${r6.y.length}`);
+  let dTol = 0;
+  let most = 0;
+  ends.forEach((t, k) => {
+    const a = ms.toConcentrations(r6.grid.y[k]);
+    const b = ms.toConcentrations(r8.grid.y[k]);
+    for (let q = 0; q < 20; q++) { dTol = Math.max(dTol, Math.abs(a[q * 9 + 8] - b[q * 9 + 8])); most = Math.max(most, b[q * 9 + 8]); }
+  });
+  check('  the calcite at rtol 1e-6 that of rtol 1e-8, at 1e6, 2e6 and 4e6 s', most > 1e-4 && dTol < 1e-9,
+    `within ${dTol.toExponential(1)} mol of at most ${most.toExponential(2)}`);
+  const vs = RtmModel.verifyJacobian(ms, 4e6, r6.y[r6.y.length - 1]);
+  check('  the Jacobian at the end, cells on the bend among them', vs.discrepancies.length === 0, `${vs.checked} entries`);
+
+  // --- where it does nothing, and where it cannot hold a mineral ---
+  const batch = (settings, more = '', rel = '') => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 10\n${settings}\n`
+    + `<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCO2 1e-4\nHCO3- 2e-3\nCO3-2 1e-5\nCa+2 1e-3\nCalcite 5e-4 mineral${more}\n${EQ}${rel}`);
+  const startOnly = batch('EQUILIBRATE = start\nMINERALS = complementarity');
+  check('MINERALS = complementarity with nothing held all through the run: a warning that it does nothing',
+    startOnly.warnings.some((w) => /^MINERALS = complementarity .* no mineral is held here: it does nothing\.$/.test(w)),
+    startOnly.warnings.join(' | '));
+  const bounded = batch('EQUILIBRATE = always\nMINERALS = complementarity', ' dissolve_only');
+  check('  a mineral given dissolve_only comes and goes at events, and the warning names it',
+    bounded.nevents === 1 && bounded.warnings.some((w) => /Calcite is given dissolve_only or force_equality, and it comes and goes at events/.test(w)),
+    bounded.warnings.join(' | '));
+  const redox = batch('EQUILIBRATE = always\nMINERALS = complementarity', '\nFe+2 1e-4\nFe+3 1e-6\ne- electron',
+    'Fe+2 <=> Fe+3 + e-, logK = -13\n');
+  check('  with the electron, each cell speciated from its totals: events, and the warning says why',
+    redox.nevents === 1 && redox.warnings.some((w) => /here the electron has each cell's speciation worked out from its totals instead: Calcite comes and goes at events/.test(w)),
+    redox.warnings.join(' | '));
+  let refused = '';
+  try { batch('EQUILIBRATE = always\nMINERALS = sometimes'); } catch (e) { refused = e.message; }
+  check('  MINERALS takes events or complementarity', /events/.test(refused) && /complementarity/.test(refused), refused);
+}
+
+/* ======================================================================
    2w. Limited advection (ADVECTION_SCHEME = limited)
 
    A front at a Peclet number of 400 against van Genuchten and Alves's

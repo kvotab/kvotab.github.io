@@ -3366,6 +3366,12 @@ function handleRtmMessage(msg, post) {
     post(payload, temps ? [res.t.buffer, states.buffer, temps.buffer] : [res.t.buffer, states.buffer]);
   } catch (e) {
     const out = { type: 'error', id, stage: 'run', error: rtmErrorMessage(e) };
+    // Minerals coming and going at events, the limit reached: complementarity holds them without any.
+    if (e && e.code === 'events' && model.heldEquilibria && model.heldEquilibria.minerals > 0
+      && !(model.settings && model.settings.MINERALS === 'complementarity')) {
+      out.error += ' Where the events are a mineral forming and dissolving again and again in tiny amounts, cell '
+        + 'after cell, MINERALS = complementarity in <SETTINGS> holds it at saturation with no events.';
+    }
     // Hand back whatever was integrated before the failure, as facsimile does:
     // the part that did run is usually where the trouble can be seen.
     if (e.partial && e.partial.t && e.partial.t.length > 1) {

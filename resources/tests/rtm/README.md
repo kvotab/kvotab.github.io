@@ -409,6 +409,38 @@ set under rounding (1e-16 against relations of size 30), leaving every later
 cell as the solver had it. The amount is now set to zero, the tolerance is not
 below 1e-13, and every cell is settled whatever another does.
 
+**Minerals held by complementarity** (`MINERALS = complementarity`). The acid
+column above held by the smoothed Fischer-Burmeister equation in place of
+events: no event where the ten of the event run were, its calcite within 1e-10
+mol of theirs (of 2e-4) and its calcium within 6e-8 of itself at six times, and
+each cell's calcite read back as none within 0.2 s of its event. Then a column
+that stalls the events, made with the same four relations: a water saturated
+with calcite (speciated in one cell with calcite to spare) flowing into another
+saturated one with none, so that the cells the inflow reaches sit at
+saturation, a little calcite forming and dissolving at every step. The event
+run spends 200 events by 56,000 s of the 4e6; held by complementarity the run
+goes through (1,038 steps), every stored point is read back saturated where
+there is calcite (to 2e-15) and with none and not supersaturated where there is
+not, no cell unsettled and nothing below none; and rtol 1e-6 and 1e-8 agree to
+8e-12 mol of calcite (of 1.7e-4). The Jacobian is checked at the start, half
+way and the end of the one and at the end of the other, cells on the bend among
+them. It does nothing, and says so, where nothing is held all through the run;
+a mineral given dissolve_only, and every mineral of a model with the electron,
+still comes and goes at events, and the warning says which and why; MINERALS
+takes events or complementarity. The model counts the minerals it holds so (1
+of 1, and 0 under events), and in test-ui.py what is solved says the calcite
+of a batch is held by complementarity with no events.
+
+Two faults the column showed while it was made. A bend of 1e-8 against rtol
+1e-7 was narrower than the Newton iteration's own last corrections, and crossed
+at every one of them: where two saturated waters met in a column, a cell that
+had hovered at saturation for a year had its calcite flung to 1e5 mol. And the start, put on
+the relations exactly, is off the smoothed row by eps root 2 wherever a water is
+saturated with none of the mineral, which no shorter step mends: the run stopped
+at t = 0 at a step of 1e-319 s. The bend is 1e-3 now, the amount is measured
+against what the water can take up of it, and the start is polished onto the
+smoothed rows cell by cell.
+
 **Activities and saturation in rate laws** (`{X}`, `I`, `SI()`, `SR()`,
 `<PHASES>`). Each against the same quantity worked out apart: `{H+}{Ca+2}` the
 coefficients times the concentrations, `I` the ionic strength (a parameter

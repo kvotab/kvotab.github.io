@@ -1001,6 +1001,15 @@ async def main():
                   'characters, More opening all 335; a short one whole, with no More', [own, ownOpen, short],
                   [['P:A model of my own', 'P:The first sentence says what it is. The second sentence says a little more about it.',
                     'BUTTON:More'], 335, ['P:A model of my own', 'P:Short, and whole.']])
+            # A mineral held by complementarity (MINERALS): what is solved says so.
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 10\nEQUILIBRATE = always\nMINERALS = complementarity\n\n'
+                                 '<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCO2 1e-4\nHCO3- 2e-3\nCO3-2 1e-5\nCa+2 1e-3\nCalcite 5e-4 mineral\n\n'
+                                 '<EQUILIBRIUM>\n <=> H+ + OH-, logK = -14\nCO2 <=> H+ + HCO3-, logK = -6.35\n'
+                                 'HCO3- <=> H+ + CO3-2, logK = -10.33\nCalcite <=> Ca+2 + CO3-2, logK = -8.48\n')
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('complementarity')", True, tries=40)
+            check('MINERALS = complementarity: what is solved says the mineral is held so, with no events',
+                  await page.ev("/1 mineral at saturation while there is any, held by complementarity with no events\\./"
+                                ".test(document.getElementById('rtmFacts').textContent)"), True)
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'farfield'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
             await settle(page, "document.getElementById('rtmFacts').textContent"

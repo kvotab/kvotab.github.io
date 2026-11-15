@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261114a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261115a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1178,7 +1178,10 @@
       if (h) {
         say.push(`${h.relations === n ? (n === 1 ? 'It is' : 'All are') : `${h.relations} are`} held exactly at every step of `
           + `the run: ${count(h.species, 'species', 'species')} worked out from the totals in every cell`
-          + `${h.minerals ? `, ${count(h.minerals, 'mineral')} at saturation while there is any` : ''}.`);
+          + `${h.minerals ? `, ${count(h.minerals, 'mineral')} at saturation while there is any` : ''}`
+          // MINERALS = complementarity: all of them, or some, held by one equation with no events.
+          + `${h.complementarity ? (h.complementarity === h.minerals ? `, held by complementarity with no events`
+            : `, ${h.complementarity} of them held by complementarity with no events`) : ''}.`);
       }
       if (a) {
         const name = { davies: 'Davies', sit: 'SIT', pitzer: 'Pitzer', llnl: 'LLNL’s B-dot' }[a.kind] || 'Debye–Hückel';
@@ -12787,7 +12790,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115a';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115b';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,

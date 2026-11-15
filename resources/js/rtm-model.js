@@ -164,6 +164,15 @@
     */
     EQUILIBRATE: { def: 0, kind: 'flag', words: { start: 1, always: 2 } },
     /*
+      How a mineral held at saturation comes and goes (EQUILIBRATE = always):
+      events, the run stopping where one forms or is used up and going on
+      from there; or complementarity, a plain mineral -- no bounds, no sites
+      it carries -- held by one smooth equation in every cell whatever there
+      is of it, so that one forming and going again in tiny amounts, cell
+      after cell at a mixing front, never stops the run (holdEquilibria).
+    */
+    MINERALS: { def: 'events', kind: 'word', of: ['events', 'complementarity'] },
+    /*
       ACTIVITY: the relations of <EQUILIBRIUM> hold between activities, each
       species' concentration times its activity coefficient, and those follow
       the ionic strength of the cell as the run goes on: davies, or
@@ -13352,6 +13361,12 @@
       model.speciated = done.cells.slice(0, ncCol);
     }
 
+    // MINERALS is how a mineral held at saturation comes and goes: with none held, it says nothing.
+    if (settings.MINERALS === 'complementarity'
+      && !(settings.EQUILIBRATE === 2 && equilibria.some((eq) => eq.kf === null && eq.mineral >= 0))) {
+      warnings.push('MINERALS = complementarity is how a mineral held at saturation comes and goes, under '
+        + 'EQUILIBRATE = always, and no mineral is held here: it does nothing.');
+    }
     if (settings.EQUILIBRATE === 2 && equilibria.length) {
       const heldEqs = equilibria.filter((eq) => eq.kf === null);
       if (heldEqs.length) return holdEquilibria(model, heldEqs);
@@ -13525,6 +13540,52 @@
     const present = new Uint8Array(nc * ne).fill(1);
     const minAt = eqs.map((eq) => eq.net.findIndex(([sp]) => sp === eq.mineral));
     /*
+      MINERALS = complementarity: a plain mineral -- no bounds, no sites it
+      carries, not a group's, the relations held in place (not projected) --
+      has the same row in every cell however much of it there is: the
+      smoothed Fischer-Burmeister function of its amount a, over a scale of
+      its own (compMs), and the water's undersaturation d (in ln):
+        phi = a + d - sqrt(a^2 + d^2 + 2 eps^2),
+      nought where a >= 0, d >= 0 and a d = eps^2 -- some of it and the water
+      saturated, or none and the water undersaturated -- and no event.
+
+      The bend is eps wide, and Newton's iteration has to see it whole: its
+      last corrections are a few tenths of rtol in ln C and in a, and a bend
+      narrower than that is crossed at every one of them and never settles
+      (eps 1e-8 against rtol 1e-7 did just that on a mixing front, a cell
+      that had hovered at saturation for a year flung its calcite to 1e5
+      mol). So eps is 1e-3, a thousand times the page's rtol: the water short
+      of saturation by at most that in ln where the mineral comes and goes,
+      and by eps^2 over a where there is some of it. One width for every run
+      of the model, the start settled to it before the run says its rtol.
+    */
+    const compEps = 1e-3;
+    const compMs = new Float64Array(nc * ne);
+    /*
+      The water's undersaturation and the amount, the row they make in cell
+      c, and its slopes in each (relationAt wants C and the activities).
+      Not as written above: far from the bend a + d and R are nearly equal
+      -- a water short by 18 in ln has phi = 18 - 18.0000000555 -- and the
+      row would be rounding where it matters least and, with much of a
+      mineral against a small scale, where it matters. Over a + d + R, with
+      (a + d)^2 - R^2 = 2 a d - 2 eps^2, nothing cancels; 1 - a / R and
+      1 - d / R the same way.
+    */
+    const compParts = (c, r, y, water) => {
+      const d = (eqs[r].mineralNu < 0 ? -1 : 1) * relationAt(c * ns, r, y, water);
+      const a = y[c * ns + eqs[r].mineral] / compMs[c * ne + r];
+      const e2 = 2 * compEps * compEps;
+      const R = Math.sqrt(a * a + d * d + e2);
+      const sum = a + d;
+      return {
+        a,
+        d,
+        phi: sum > 0 ? (2 * a * d - e2) / (sum + R) : sum - R,
+        da: a > 0 ? (d * d + e2) / (R * (R + a)) : 1 - a / R,
+        dd: d > 0 ? (a * a + e2) / (R * (R + d)) : 1 - d / R,
+      };
+    };
+    /*
       A mineral that carries a surface's sites (per=) is taken as used up at
       1e-4 of what its cell starts with: its sites go with it, and the
       species on them, held as ln C, cannot follow them to none -- the run
@@ -13611,6 +13672,29 @@
       and no total, and the speciation of each cell is where it is solved.
     */
     const projected = base.electron >= 0 || npot > 0;
+    // MINERALS = complementarity (above), in the form that holds the relations in place.
+    const compOn = !!base.settings && base.settings.MINERALS === 'complementarity' && !projected;
+    const isComp = eqs.map((eq) => compOn && eq.mineral >= 0 && !eq.grp && !eq.bounds && !eq.carry);
+    // Every mineral so held, and no group: a start, or one after an event of another kind, finds which are there.
+    const allComp = compOn && mins.length > 0 && mins.every((r) => isComp[r]) && !grps.length;
+    // The minerals the setting cannot hold so, and why: they come and go at events as before.
+    if (base.settings && base.settings.MINERALS === 'complementarity' && Array.isArray(base.warnings)) {
+      const nameOf = (r) => base.speciesNames[eqs[r].mineral];
+      if (projected && mins.length) {
+        base.warnings.push(`MINERALS = complementarity holds a mineral by one equation where the relations are held as `
+          + `they stand, and here ${base.electron >= 0 ? 'the electron' : 'a surface\'s potential'} has each cell's `
+          + `speciation worked out from its totals instead: ${mins.map(nameOf).join(', ')} `
+          + `${mins.length > 1 ? 'come and go' : 'comes and goes'} at events, as with MINERALS = events.`);
+      } else {
+        const why = (r) => (eqs[r].bounds ? 'is given dissolve_only or force_equality' : 'carries sites (per=)');
+        const left = mins.filter((r) => !isComp[r]);
+        if (left.length) {
+          base.warnings.push(`MINERALS = complementarity holds a mineral with no bounds and no sites by one equation; `
+            + `${left.map((r) => `${nameOf(r)} ${why(r)}`).join(', ')}, and ${left.length > 1 ? 'they come' : 'it comes'} `
+            + 'and goes at events, as with MINERALS = events.');
+        }
+      }
+    }
     // What else the relations read: each ion and solute not held, through I and a(H2O).
     const outside = projected && act
       ? [...Array(ns).keys()].filter((k) => pos[k] < 0 && (act.z[k] !== 0 || act.solute[k])) : [];
@@ -13868,6 +13952,7 @@
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
+          if (isComp[r]) { out[b + relRow[r]] = compParts(c, r, y, water).phi; continue; }
           // None of the mineral, or as much as its bounds let it have (eq.bounds): its amount is that, and the relation waits.
           const m = eqs[r].mineral;
           out[b + relRow[r]] = m >= 0 && atBound(c, r) ? y[b + m] - boundAt(c, r) : relationAt(b, r, y, water);
@@ -13981,7 +14066,14 @@
         }
         const water = act ? activityAt(act, C, b, lnG, dG) : null;
         for (let r = 0; r < ne; r++) {
-          if (eqs[r].mineral >= 0 && atBound(c, r)) {
+          // Complementarity: d phi/d a over the scale in the amount's column, and the relation's own derivatives times
+          // d phi/d d, d being the relation's residual turned to undersaturation.
+          let sc2 = 1;
+          if (isComp[r]) {
+            const p = compParts(c, r, y, water);
+            V[relC[c][r][minAt[r]]] += p.da / compMs[c * ne + r];
+            sc2 = (eqs[r].mineralNu < 0 ? -1 : 1) * p.dd;
+          } else if (eqs[r].mineral >= 0 && atBound(c, r)) {
             V[relC[c][r][minAt[r]]] += 1;
             continue;
           }
@@ -13989,7 +14081,7 @@
           if (grpOf[r]) continue;
           eqs[r].net.forEach(([s, nu], m) => {
             if (isMin[s]) return;
-            V[relC[c][r][m]] += held[b + s] ? nu : nu / C[b + s];
+            V[relC[c][r][m]] += sc2 * (held[b + s] ? nu : nu / C[b + s]);
           });
           if (!act) continue;
           // The coefficients through the ionic strength, and the water: in
@@ -14002,7 +14094,7 @@
             let d = G * 0.5 * act.z[k] * act.z[k];
             if (w) d += w * awOf(act, water, k);
             if (sd) d += sd[k];
-            if (d) V[relA[c][r][q]] += held[b + k] ? d * C[b + k] : d;
+            if (d) V[relA[c][r][q]] += sc2 * (held[b + k] ? d * C[b + k] : d);
           });
           if (sd) sitDone(act, eqs[r].net);
         }
@@ -14117,6 +14209,64 @@
     }
     // The cell of the event just applied, and the mineral it brought in (or -1), for consistentInitial.
     let lastEvent = null;
+    /*
+      Held by complementarity, a start -- the run's, or one after an event of
+      another kind -- has to be on the rows the run holds, and the speciation
+      puts each mineral at none or its water at saturation, exactly: where
+      it is both, a water saturated with none of it, the row is off by eps
+      root 2, which no shorter step mends -- a start that is off is no
+      step's error -- and the run stopped at t = 0 at a step of 1e-319 s. So
+      a few Newton steps on each cell's own rows and unknowns follow, the
+      totals as they are: from the exact speciation the bend is less than a
+      bend's width away, and Newton's steps go there.
+    */
+    function polishComp(t, y) {
+      const fv = new Float64Array(n);
+      const Vp = new Float64Array(nnz);
+      const A = Array.from({ length: na }, () => new Float64Array(na));
+      const x = new Float64Array(na);
+      const lo = new Int32Array(nc).fill(1);
+      let moved = 0;
+      for (let it = 0; it < 30; it++) {
+        rhs(t, y, fv);
+        jac(t, y, Vp);
+        let open = 0;
+        for (let c = 0; c < nc; c++) {
+          if (!lo[c]) continue;
+          const b = c * ns;
+          for (const row of A) row.fill(0);
+          for (let q = 0; q < na; q++) {
+            const j = b + active[q];
+            for (let k = colPtr[j]; k < colPtr[j + 1]; k++) {
+              const i = rowIdx[k] - b;
+              if (i >= 0 && i < ns && pos[i] >= 0) A[pos[i]][q] = Vp[k];
+            }
+            x[q] = -fv[j];
+          }
+          if (!solveInPlace(A, x, na)) return { ok: false, moved, why: `the minerals held by complementarity do not determine the speciation in cell ${c}` };
+          let small = true;
+          for (let q = 0; q < na; q++) {
+            const k = b + active[q];
+            // A logarithm by no more than 2 at a time; an amount as it comes.
+            const dx = lin[k] ? x[q] : Math.max(-2, Math.min(2, x[q]));
+            if (!Number.isFinite(dx)) return { ok: false, moved, why: `the minerals held by complementarity did not settle in cell ${c}` };
+            const sc = lin[k] ? Math.max(Math.abs(y[k]), compScaleOf(c, active[q])) : 1;
+            if (Math.abs(dx) > 1e-12 * sc) small = false;
+            moved = Math.max(moved, Math.abs(dx) / sc);
+            y[k] += dx;
+          }
+          if (small) lo[c] = 0; else open++;
+        }
+        if (!open) return { ok: true, moved, why: '' };
+      }
+      return { ok: false, moved, why: 'the minerals held by complementarity did not settle' };
+    }
+    // The scale of a mineral's amount in a cell: its own where complementarity holds it, the cell's largest total else.
+    const compScaleOf = (c, s) => {
+      const r = eqs.findIndex((eq, q) => isComp[q] && eq.mineral === s);
+      return r >= 0 ? compMs[c * ne + r] : (amountScale[c] > 0 ? amountScale[c] : 1);
+    };
+
     function consistentInitial(t, y, opts = {}) {
       thermoAt(t);
       // Not below 1e-13: a relation is ln K of 30 or 50 in size, and rounding
@@ -14154,6 +14304,8 @@
           ? Uint8Array.from(eqs, (eq, r) => (grpOf[r] ? groupMode(grpOf[r], (q) => y[b + grpOf[r].mem[q]], c, tiny)
             : (eq.mineral < 0 ? 1 : modeOf(c, r, y[b + eq.mineral], tiny))))
           : present.subarray(c * ne, (c + 1) * ne);
+        // Held by complementarity, a mineral has no mode the run keeps: what there is of it says, past the bend.
+        if (compOn && !opts.fromState) for (const r of mins) if (isComp[r]) pres[r] = modeOf(c, r, y[b + eqs[r].mineral], compEps * compMs[c * ne + r]);
         /*
           Projected, the held species in the state carry no weight and may
           stand far from what their totals make them: the cell is started
@@ -14174,7 +14326,7 @@
         const evHere = !!lastEvent && lastEvent.c === c && !opts.fromState;
         const kept = evHere ? C.slice(b, b + ns) : null;
         let res = speciateCell(sys, C, b, totalsCell, wCell, pres,
-          { tol, roundOff: true, activeSet: !!opts.fromState, cell: c });
+          { tol, roundOff: true, activeSet: !!opts.fromState || allComp, cell: c });
         if (evHere && !res.converged) {
           // Gypsum where anhydrite comes in: the one it cannot be beside goes (speciateCell).
           C.set(kept, b);
@@ -14184,6 +14336,23 @@
           const gone = mins.filter((r) => before[r] && !pres[r]).map((r) => base.speciesNames[eqs[r].mineral]);
           if (res.converged && gone.length) {
             events[lastEvent.which].shown += `, and ${gone.join(' and ')} ${gone.length > 1 ? 'have' : 'has'} dissolved away`;
+          }
+        }
+        /*
+          Held by complementarity, a cell on the bend has a little of the
+          mineral, 1e-8 mol, and its water just short of saturation; read
+          back exactly, the water is saturated with none of it, and held there
+          the mineral comes out a rounding error either side of none, -4e-19
+          or 1e-19. Within 64 roundings of the cell's largest total of none,
+          or below it by any amount, it is none: the cell again, without it.
+        */
+        if (compOn && opts.fromState && res.converged) {
+          let again = false;
+          for (const r of mins) {
+            if (isComp[r] && pres[r] === 1 && res.x[pos[eqs[r].mineral]] < 64 * tiny) { pres[r] = 0; again = true; }
+          }
+          if (again) {
+            res = speciateCell(sys, C, b, totalsCell, wCell, pres, { tol, roundOff: true, activeSet: true, cell: c });
           }
         }
         iterations = Math.max(iterations, res.iterations);
@@ -14200,6 +14369,11 @@
         }
       }
       lastEvent = null;
+      if (compOn && !opts.fromState && !why) {
+        const p = polishComp(t, y);
+        moved = Math.max(moved, p.moved);
+        if (!p.ok) why = p.why;
+      }
       return { solved: !why, iterations, residual: worstRes, moved, why };
     }
 
@@ -14420,6 +14594,7 @@
         for (let q = 0; q < nmin; q++) {
           const r = mins[q];
           const m = eqs[r].mineral;
+          if (isComp[r]) { out[c * nmin + q] = -1; continue; }
           if (present[c * ne + r] === 1) { out[c * nmin + q] = heldEvent(c, r, y[b + m]); continue; }
           if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
           out[c * nmin + q] = (present[c * ne + r] === 4 ? -1 : 1) * (eqs[r].mineralNu < 0 ? 1 : -1) * relationAt(b, r, y, water);
@@ -14514,6 +14689,28 @@
     // The scale an amount is measured against: the largest total its cell starts with.
     const amountScale = new Float64Array(nc);
     for (let c = 0; c < nc; c++) for (let j = 0; j < nb; j++) amountScale[c] = Math.max(amountScale[c], Math.abs(initial[tIndex(c, j)]));
+    /*
+      Held by complementarity, a mineral's amount is measured against what
+      the water can take up of it before its saturation moves by one in ln,
+      ion by ion as the start has them: 1 / sum nu^2 / C over its relation,
+      calcite in a sea water 1.4e-5 mol by its carbonate ion -- not the
+      cell's largest total, chloride's 0.115, against which the iteration
+      can no more see how much of it there is than which side of the bend
+      it is on. Complexes and buffers only make the water take up more, so
+      the scale is never larger than the water's own; a part in 1e12 of the
+      cell's largest total at least, at most all of it.
+    */
+    if (compOn) {
+      for (let c = 0; c < nc; c++) {
+        const top = amountScale[c] > 0 ? amountScale[c] : 1;
+        for (const r of mins) {
+          if (!isComp[r]) continue;
+          let inv = 0;
+          for (const [sp, nu] of eqs[r].net) if (!isMin[sp]) inv += (nu * nu) / Math.max(start[c * ns + sp], 1e-300);
+          compMs[c * ne + r] = Math.min(top, Math.max(1e-12 * top, inv > 0 ? 1 / inv : top));
+        }
+      }
+    }
 
     /*
       Projected, a held species is what its cell's totals make it, and its
@@ -14558,13 +14755,17 @@
       // whatever rtol and atol say of C and however large |ln C| is.
       // A mineral's amount is held to rtol of the totals of its cell, which is
       // what it is made of, rather than of itself: it is on its way to zero.
+      // Held by complementarity, a mineral to rtol of its own scale (compMs).
       atolFor(atol, rtol) {
         const out = new Float64Array(n);
         const r = rtol > 0 ? rtol : 1e-6;
         for (let k = 0; k < n; k++) {
           const given = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
-          if (k < nBase && held[k]) out[k] = lin[k] ? Math.max(given, r * amountScale[Math.floor(k / ns)]) : r;
-          else out[k] = given;
+          if (k < nBase && held[k]) {
+            const c = Math.floor(k / ns);
+            const q = compOn && lin[k] ? eqs.findIndex((eq, rr) => isComp[rr] && eq.mineral === k - c * ns) : -1;
+            out[k] = !lin[k] ? r : Math.max(given, r * (q >= 0 ? compMs[c * ne + q] : amountScale[c]));
+          } else out[k] = given;
         }
         return out;
       },
@@ -14572,6 +14773,8 @@
       toConcentrations,
       fromConcentrations,
       heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin,
+        // Of those minerals, the ones MINERALS = complementarity holds with no events.
+        complementarity: mins.filter((r) => isComp[r]).length,
         bubble: grps.filter((G) => G.def.kind === 'gas').reduce((acc, G) => acc + G.rel.length, 0),
         solidSolutions: grps.filter((G) => G.def.kind === 'ss').length },
       density: nnz / (n * n),

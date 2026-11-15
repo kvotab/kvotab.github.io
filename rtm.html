@@ -1480,6 +1480,7 @@
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below. <code>TEND</code>, <code>MAX_STEP</code> and <code>TRAVEL_TIME</code> may each carry a unit of their own, which converts that one number.</td></tr>
               <tr><td><code>CONC_UNIT</code></td><td>The unit the concentrations are in, for the page to say: <em>mol/L</em> (also mol/dm3, molar) or <em>mol/kgw</em> (also mol/kg, molal). Like <code>TIME_UNIT</code> it <strong>converts nothing</strong>: it names what the text's numbers are, so that the axes, the tables and what is saved say it, and <em>Units</em> offers mmol/L, µmol/L, nmol/L and, by the formula masses, mg/L and µg/L. Left out, the concentrations are as the model has them; under an <code>ACTIVITY</code> they are mol/kgw, and mol/L is refused. Opening skbrtm's files writes it from the units its solutions give, <em>mol/L</em>.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
+              <tr><td><code>MINERALS</code></td><td><em>events</em> (the default) or <em>complementarity</em>: how a mineral held at saturation under <code>EQUILIBRATE = always</code> comes and goes — the run stopping at each instant one forms or is used up, or one equation in every cell that never stops it. See <em>Minerals</em> below.</td></tr>
               <tr><td><code>ACTIVITY</code></td><td><em>none</em> (the default), <em>davies</em>, <em>debye-huckel</em>, <em>sit</em>, <em>pitzer</em> or <em>llnl</em>: whether the <code>&lt;EQUILIBRIUM&gt;</code> relations hold between concentrations or between activities, with activity coefficients that follow the ionic strength, under <em>sit</em> the species paired in <code>&lt;SIT&gt;</code> as well, under <em>pitzer</em> the species of <code>&lt;PITZER&gt;</code>, and under <em>llnl</em> the tables of <code>&lt;LLNL&gt;</code>. See <em>Activity</em>, <em>SIT</em>, <em>Pitzer</em> and <em>LLNL</em> below.</td></tr>
               <tr><td><code>TEMPERATURE</code></td><td>In °C, 25 unless given: a number; the name of a parameter, for a temperature that differs from cell to cell; a table read at the clock, <code>heat(t)</code>, for one that goes with time; or arithmetic on these. Each cell's sets the log K of every relation given <code>dH</code> or <code>analytic</code>, the Debye–Hückel <em>A</em> and <em>B</em>, a gas phase's <em>R T</em>, a double layer's constants and a binary solid solution's <em>a</em><sub>0</sub> and <em>a</em><sub>1</sub>, and a rate law reads it as <code>TK</code> and <code>TC</code>. A <code>logK</code> alone, and a rate constant, are taken as written. See <em>The temperature</em> below.</td></tr>
               <tr><td><code>GAS_VOLUME</code>, <code>GAS_PRESSURE</code></td><td>A gas phase, for the species given <code>gas</code>: held in a fixed volume, litres to each kilogram of water, or at a fixed total pressure in atm, as a bubble that comes and goes. One or the other; see <em>A gas phase</em> below.</td></tr>
@@ -2495,6 +2496,23 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             relation is let go, the amount held at zero, and the water may go undersaturated; where
             the water becomes supersaturated again the run stops there and the mineral precipitates.
             The status after a run names the first and the last of these, where and when.</p>
+          <pre>MINERALS = complementarity</pre>
+          <p>Where a mineral forms and dissolves again and again in tiny amounts — cells behind a
+            mixing front, their water saturated with none of it, a little precipitating and dissolving
+            at every step — the run stops at every one of those instants, and can reach its limit of
+            10,000 of them having got almost nowhere. <code>MINERALS = complementarity</code> holds such
+            a mineral by one equation in every cell instead, whether there is any of it or not: either
+            there is none and the water may be undersaturated, or there is some and the water is
+            saturated. The equation is smoothed (Fischer and Burmeister's function) so that the solver
+            can step from the one to the other, and the run never stops for it. Where the mineral comes
+            and goes its water is short of saturation by at most a thousandth in ln of its saturation
+            ratio, and holds a trace of the mineral where the exact answer has none. Every point shown
+            is still the exact speciation of its cell's totals: saturated where there is some, none at
+            all where there is not. The steps go through each such place rather than stopping at it,
+            which takes more of them; it wants a relative tolerance of 1e-5 or tighter, and the page's
+            1e-6 is. It holds a mineral with no bounds and no sites (<code>per=</code>), in a model
+            without the electron or a surface's potential; any other comes and goes at the instants
+            above, as with <code>MINERALS = events</code>, and a warning says which.</p>
           <p>A mineral counts in the totals as anything else does. Calcite holds calcium and carbon,
             so what dissolves is in the water, and in a column the water carries it on. Under
             <code>ACTIVITY</code> its saturation reads every ion of its cell, as any relation
@@ -4852,14 +4870,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261114a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261115a"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261114a"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261115a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261115c"></script>
 </body>
 </html>
