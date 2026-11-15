@@ -1700,6 +1700,16 @@ distance  pH     at = 36000
             an error, so that a misspelt one is not silently left off. A column <code>sd(Ca+2)</code> beside
             <code>Ca+2</code> gives the standard deviation of each of its values, in its units, above zero or a
             dash; <em>Fit</em> weighs the values by it.</p>
+          <pre>depth  tot(Ca)   pH    cell = 0  at = 6.3e7
+0      2.0e-4    9.4
+0.05   6.1e-4    8.6</pre>
+          <p>A table whose first column is <code>depth</code> is into the rock behind a cell, where the model has a
+            rock matrix (see <em>A rock matrix: dual porosity</em>): <code>cell =</code> the cell, the first unless
+            said, <code>at =</code> the time, the end of the run unless said, and each depth in metres from the
+            fracture's wall, nought the fracture's own water — a profile of the rock's pore water, as a drill core
+            gives one or another code works one out. The run is read between the fracture's water and each
+            layer's centre, as a straight line; it is drawn on <em>Against distance</em> across the rock behind that
+            cell, set against the run on the Fit tab, and fitted to.</p>
           <pre>pH    Zn_sorbed  cell = 0
 4.5   0.5
 6.0   36.1</pre>
@@ -1900,7 +1910,9 @@ Cs  0  left=1  De=1E-4  Kd=0.01    # De in m2/a, Kd in m3/kg
                   to <em>e</em><sup>−25</sup>), or at a species' own decay where that is faster.
                   One grid for every species, so the shallowest decides. A species' decay is read
                   off its first-order <code>on = inventory</code> reactions. With no flow and no
-                  decay to size it by, the first layer is the reference one.</td></tr>
+                  decay to size it by, the first layer is the reference one, but never thinner than
+                  a millionth of the depth: growing by <em>e</em>, fifteen layers or more would put it
+                  below that.</td></tr>
               <tr><td><code>reference</code></td>
                 <td>FARFCOMP's layers: a first layer that makes them grow by <em>e</em>, nodes at
                   their centres, the thicknesses bit for bit those of SKB's own implementation. At
@@ -1908,12 +1920,22 @@ Cs  0  left=1  De=1E-4  Kd=0.01    # De in m2/a, Kd in m3/kg
                   5.8 %.</td></tr>
             </tbody>
           </table>
-          <p><code>MATRIX_FIRST</code> sets the first layer instead, whichever the grid. The far
+          <p><code>MATRIX_FIRST</code> sets the first layer instead, whichever the grid. A first
+            layer thinner than a billionth of the depth is refused, whichever gave it — the
+            reference layers at twenty-two or more, say: a run cannot carry layers that thin beside
+            ones of tenths of a metre, and goes wrong. A metre of rock in twenty-five layers from
+            10<sup>−10</sup>&nbsp;m ran to concentrations of 3 where the fracture held 1; from
+            10<sup>−4</sup>&nbsp;m its profiles are the exact ones to a Nash–Sutcliffe efficiency of
+            0.99999. The far
             face of the last layer is closed: the depth is a depth, not a boundary. Layers that grow
             by more than 2.5 are coarse at depth, and the page then says how many would keep the
             growth to 2. On the U-238 chain among the examples, Po-210's half-life of 0.38 years
             sizes the first layer at 5 µm: twelve layers to 4.5 m grow by 3.4 and put the releases
-            4 % out, twenty grow by 2.0 and are within 0.2 %.</p>
+            4 % out, twenty grow by 2.0 and are within 0.2 %. Where nothing flows or decays, give
+            <code>MATRIX_FIRST</code> yourself, some fortieth of how far a solute has got into the
+            rock by the first time that matters: the example <em>Diffusion into the rock, against the
+            exact solution</em> starts its thirty layers at 1&nbsp;mm and meets the exact profiles to
+            0.99998, where a first layer of a millionth of the depth meets them to 0.9987.</p>
           <p><strong>Concentrations are per unit pore water everywhere, and so are the rate
             laws.</strong> A cubic metre of rock holds only <em>ε</em><sub>m</sub> of water, so a rate
             <em>r</em> per unit water changes the rock's inventory by <em>ε</em><sub>m</sub><em>r</em>,
@@ -4741,14 +4763,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261111s"></script>
+  <script src="./resources/js/rtm-model.js?v=20261114a"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
-  <script src="./resources/js/rtm-examples.js?v=20261114d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261111q"></script>
+  <script src="./resources/js/rtm-examples.js?v=20261114i"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261114a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261114m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261114n"></script>
 </body>
 </html>

@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261111y';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261114a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1865,7 +1865,7 @@
     return cell * stride + Math.min(layer, stride - 1);
   };
 
-  /** What <DATA> measured of `key` in tables of `kind` ('time' or 'distance'). */
+  /** What <DATA> measured of `key` in tables of `kind` ('time', 'distance' or 'depth'). */
   function measured(kind, key) {
     const data = (state.compiled && state.compiled.data) || [];
     return data.filter((tab) => tab.kind === kind && tab.columns.includes(key)).map((tab) => {
@@ -3229,11 +3229,13 @@
         }
       }
     }
-    // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says;
-    // on the slider faint but at the stored time nearest its own. With Times, a table at a time shown in that line's
-    // colour, and one at a time not shown faint and out of the legend -- PHREEQC's own column beside the run has ten.
-    if (!across) {
-      for (const d of measured('distance', name)) {
+    // What <DATA> measured of it along the column -- into the rock, behind the cell shown, where the chart is across it:
+    // points, at the time each table says, the end of the run unless it says; on the slider faint but at the stored time
+    // nearest its own. With Times, a table at a time shown in that line's colour, and one at a time not shown faint and
+    // out of the legend -- PHREEQC's own column beside the run has ten.
+    {
+      const tables = across ? measured('depth', name).filter((d) => (d.tab.cell || 0) === atCell) : measured('distance', name);
+      for (const d of tables) {
         const at = d.tab.at !== null ? d.tab.at : r.t[r.n - 1];
         const ys = f === 1 ? d.y : d.y.map((v) => v * f);
         if (slider) spans.push(spanOf(ys));
@@ -3392,9 +3394,11 @@
           }
         }
       }
-      // What <DATA> measured of it along the column: points, at the time each table says, the end of the run unless it says.
-      if (!across) {
-        for (const d of measured('distance', key)) {
+      // What <DATA> measured of it along the column, or into the rock behind the cell shown: points, at the time each table
+      // says, the end of the run unless it says.
+      {
+        const tables = across ? measured('depth', key).filter((d) => (d.tab.cell || 0) === g.atCell) : measured('distance', key);
+        for (const d of tables) {
           const at = d.tab.at !== null ? d.tab.at : end;
           const ys = f === 1 ? d.y : d.y.map((v) => v * f);
           if (slider) (onRight ? spansR : spansL).push(spanOf(ys));
@@ -8751,6 +8755,7 @@
         ...(p.pH !== null && p.pH !== undefined ? [`pH = ${fmtNumber(p.pH)}`] : [])];
       return `the water of cell ${Math.floor(p.cell / stride)}${own.length ? `, ${own.join(', ')}` : ''}`;
     }
+    if (p.kind === 'depth') return `the rock behind cell ${Math.floor(p.cell / stride)} at ${fmtTime(p.t)}`;
     return p.kind === 'time' ? `cell ${Math.floor(p.cell / stride)}${p.cell % stride ? `, rock layer ${p.cell % stride}` : ''}`
       : `at ${fmtTime(p.t)}`;
   };
@@ -8758,7 +8763,7 @@
   const fitHeldName = (p) => (p.axis === 'tot' ? `sys(${p.species})` : p.axis);
   // Where along its table a point is: a time, a distance, or the pH, pe, Eh or total its water is held at.
   const fitAlong = (p) => (p.kind === 'time' ? fmtTime(p.t) : p.kind === 'speciation' ? `${fitHeldName(p)} ${fmtNumber(p.x)}`
-    : `${fmtNumber(p.x)} m`);
+    : p.kind === 'depth' ? `${fmtNumber(p.x)} m into the rock` : `${fmtNumber(p.x)} m`);
 
   /*
     The Show bar: after a fit, all four; before one, the run against what
@@ -8804,7 +8809,7 @@
       chosen in against, which is there where the fit has more than one.
     */
     const groupOf = (c) => (c.kind === 'speciation' ? `held:${fitHeldName(c)}` : c.kind);
-    const groupRank = (g) => ['time', 'held:pH', 'held:pe', 'held:Eh'].indexOf(g) + 1 || (g === 'distance' ? 9 : 5);
+    const groupRank = (g) => ['time', 'held:pH', 'held:pe', 'held:Eh'].indexOf(g) + 1 || (g === 'distance' ? 9 : g === 'depth' ? 10 : 5);
     const groups = [...new Set(r.curves.map(groupOf))].sort((a, b) => groupRank(a) - groupRank(b));
     const againstSel = $('rtmFitAgainst');
     const against = groups.includes(againstSel.value) ? againstSel.value : groups[0];
@@ -8813,7 +8818,7 @@
         const o = document.createElement('option');
         o.value = g;
         const c = r.curves.find((cv) => groupOf(cv) === g);
-        o.textContent = g === 'time' ? 'time' : g === 'distance' ? 'distance along the column'
+        o.textContent = g === 'time' ? 'time' : g === 'distance' ? 'distance along the column' : g === 'depth' ? 'depth into the rock'
           : c.axis === 'tot' ? `the ${c.species} in the cell, ${fitHeldName(c)}` : c.axis;
         return o;
       }));
@@ -8836,10 +8841,11 @@
     // The band, about 95 % for the run, at each point measured; every curve with its band on a sheet of its own.
     const bandAt = r.points.some((p) => p.band);
     const curveWhere = (c) => fitWhere(c.kind === 'speciation' ? c : c.kind === 'time' ? { kind: 'time', cell: c.cell }
-      : { kind: 'distance', t: c.t });
+      : c.kind === 'depth' ? { kind: 'depth', cell: c.cell, t: c.t } : { kind: 'distance', t: c.t });
     const curveAlong = (c) => (c.kind === 'time' ? `time (${shownTime().sym})` : c.kind === 'distance' ? 'distance (m)'
-      : c.axis === 'tot' ? `${fitHeldName(c)} (mol/kgw)` : fitHeldName(c));
-    const pointsTable = () => ({ head: ['column', 'where', `time (${shownTime().sym})`, 'distance (m)',
+      : c.kind === 'depth' ? 'depth into the rock (m)' : c.axis === 'tot' ? `${fitHeldName(c)} (mol/kgw)` : fitHeldName(c));
+    const anyDepth = r.points.some((p) => p.kind === 'depth');
+    const pointsTable = () => ({ head: ['column', 'where', `time (${shownTime().sym})`, anyDepth ? 'distance, or depth into the rock (m)' : 'distance (m)',
       ...heldAxes.map((name) => (/^sys\(/.test(name) ? `${name} (mol/kgw)` : name)), 'measured', ...(r.weighted ? ['sd'] : []),
       'the run', ...(bandAt ? ['about 95 % from', 'about 95 % to'] : []), 'residual', ...(r.weighted ? ['residual over its sd'] : [])],
     name: 'rtm_fit',
@@ -8892,10 +8898,10 @@
     const logT = $('rtmFitLogT').checked;
     const logY = $('rtmFitLogY').checked;
     const curves = r.curves.filter((c) => groupOf(c) === against);
-    const along = against === 'time' || against === 'distance' ? against : 'speciation';
+    const along = against === 'time' || against === 'distance' || against === 'depth' ? against : 'speciation';
     // An element in the system over decades: on a log axis.
     const totAxis = along === 'speciation' && curves[0].axis === 'tot';
-    const tableOf = (c) => (along === 'time' ? c.cell : along === 'speciation' ? c.table : c.t);
+    const tableOf = (c) => (along === 'time' ? c.cell : along === 'speciation' ? c.table : along === 'depth' ? `${c.cell}|${c.t}` : c.t);
     const several = new Set(curves.map(tableOf)).size > 1;
     // Only pH, SI, a share and the like: on the left, as they are, and no log axis to choose.
     const allIndex = curves.every((c) => c.index);
@@ -8913,7 +8919,8 @@
       // A water of its own, or one held at a pH of the table's, is named by it even alone.
       const ownWater = along === 'speciation' && ((c.water && c.water.length) || (c.pH !== null && c.pH !== undefined));
       const where = several || ownWater ? `, ${fitWhere(along === 'time' ? { kind: 'time', cell: c.cell }
-        : along === 'speciation' ? { kind: 'speciation', cell: c.cell, water: c.water, pH: c.pH } : { kind: 'distance', t: c.t })}` : '';
+        : along === 'speciation' ? { kind: 'speciation', cell: c.cell, water: c.water, pH: c.pH }
+          : along === 'depth' ? { kind: 'depth', cell: c.cell, t: c.t } : { kind: 'distance', t: c.t })}` : '';
       const name = `${labelOf(c.key)}${where}`;
       const onRight = c.index && !allIndex;
       right = right || onRight;
@@ -8934,7 +8941,7 @@
         y: c.y.filter((_, i) => keep[i]),
         line: { color, width: 1.8 }, ...(onRight ? { yaxis: 'y2' } : {}) });
       const pts = r.points.filter((p) => p.kind === along && p.key === c.key && (along === 'time' ? p.cell === c.cell
-        : along === 'speciation' ? p.table === c.table : p.t === c.t));
+        : along === 'speciation' ? p.table === c.table : along === 'depth' ? p.cell === c.cell && p.t === c.t : p.t === c.t));
       traces.push({ type: 'scatter', mode: 'markers', name: `${name}, measured`, x: pts.map((p) => (along === 'time' ? showT(p.t) : p.x)),
         y: pts.map((p) => p.value), marker: { size: 8, symbol: 'circle-open', color, line: { width: 1.6 } },
         ...(r.weighted ? { error_y: { type: 'data', array: pts.map((p) => p.sd), visible: true, color, thickness: 1.2, width: 4 } } : {}),
@@ -8945,7 +8952,8 @@
     if (totAxis) layout.xaxis.exponentformat = 'power';
     layout.xaxis.title = { text: along === 'time' ? `time (${shownTime().sym})`
       : totAxis ? `${curves[0].species} in the cell, dissolved, sorbed and as minerals (mol/kgw)`
-        : along === 'speciation' ? dgLabel({ kind: curves[0].axis }) : 'distance from the left-hand face (m)', font: { size: 11 } };
+        : along === 'speciation' ? dgLabel({ kind: curves[0].axis }) : along === 'depth' ? 'depth into the rock (m)'
+          : 'distance from the left-hand face (m)', font: { size: 11 } };
     layout.yaxis.type = logY && !allIndex ? 'log' : 'linear';
     layout.yaxis.title = { text: allIndex ? [...new Set(curves.map((cv) => axisLabelOf(cv.key)))].join(', ')
       : 'concentration, or an amount of <OUTPUT>', font: { size: 11 } };
@@ -8992,7 +9000,8 @@
         const layer = Math.min(tab.layer || 0, stride - 1);
         points.push(tab.kind === 'time'
           ? { table, key, index, value, kind: 'time', t: row[0], x: null, cell: tab.cell || 0, layer }
-          : { table, key, index, value, kind: 'distance', t: tab.at, x: row[0], cell: null, layer });
+          : tab.kind === 'depth' ? { table, key, index, value, kind: 'depth', t: tab.at, x: row[0], cell: tab.cell || 0, layer: 0 }
+            : { table, key, index, value, kind: 'distance', t: tab.at, x: row[0], cell: null, layer });
       }
     }));
     return { points, skipped };
@@ -9055,7 +9064,21 @@
       };
       let v;
       if (p.kind === 'time') v = at(p.cell * stride + p.layer);
-      else {
+      else if (p.kind === 'depth') {
+        // Into the rock behind the cell: its fracture water at nought, each layer at its centre, a straight line between.
+        const ys = (m.matrix && m.matrix.depth) || [];
+        const base = p.cell * stride;
+        if (!(p.cell < nf)) { lacks.add(`no cell ${p.cell}`); return null; }
+        if (!ys.length || p.x <= 0) v = at(base);
+        else if (p.x >= ys[ys.length - 1]) v = at(base + ys.length);
+        else {
+          let j = 0;
+          let lo = 0;
+          while (j < ys.length && ys[j] < p.x) { lo = ys[j]; j++; }
+          const f = (p.x - lo) / (ys[j] - lo);
+          v = at(base + j) * (1 - f) + at(base + j + 1) * f;
+        }
+      } else {
         // Along the fracture: between the two cells either side, as a straight line; past the ends, the end cell.
         const xs = m.centres;
         if (nf === 1 || p.x <= xs[0]) v = at(p.layer);
@@ -9110,6 +9133,7 @@
   function matchWhere(p, r) {
     const stride = (state.compiled && state.compiled.stride) || 1;
     if (p.kind === 'time') return `cell ${p.cell}${p.layer && stride > 1 ? `, rock layer ${p.layer}` : ''}, ${fmtTime(p.t)}`;
+    if (p.kind === 'depth') return `${fmtNumber(p.x)} m into the rock behind cell ${p.cell} at ${fmtTime(p.t === null ? r.t[r.n - 1] : p.t)}`;
     return `${fmtNumber(p.x)} m at ${fmtTime(p.t === null ? r.t[r.n - 1] : p.t)}`;
   }
   // A residual for a person: an amount's as the factor the run is of what was measured, pH and the like as the difference.
@@ -11118,7 +11142,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       lead: 'One species, or one quantity, across the column at several times, a curve for each; or those ticked on Against time, together at one time. It needs a run in transport mode: a batch has no distance.',
       sections: [
         { heading: 'The toolbar', list: [
-          '**Show**: its own choice, apart from the ticks on Against time: a species, or a quantity of the water — pH, a total, a saturation index, a share of an exchanger, an `<OUTPUT>`. What `<DATA>` measured of it along the column is drawn as points.',
+          '**Show**: its own choice, apart from the ticks on Against time: a species, or a quantity of the water — pH, a total, a saturation index, a share of an exchanger, an `<OUTPUT>`. What `<DATA>` measured of it along the column is drawn as points; across the rock behind a cell, its tables in `depth` behind that cell.',
           '**Those ticked against time, at one time**, first in Show: each species and quantity ticked on Against time, a curve each in its colour there, at one time — a plume’s zones side by side. pH, pe, a saturation index and the like go on an axis of their own on the right, as they are.',
           '**Across**: with a rock matrix, along the fracture at one layer, or into the rock behind one cell, with the fracture at depth 0.',
           '**Layer**, or **At cell** into the rock: which layer the curve runs along, or which cell the rock is behind.',
@@ -11754,11 +11778,19 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     state.cells = v && typeof v.cells === 'string' ? v.cells : '';
     $('rtmCells').value = state.cells;
     renderTimeIn();
-    // Against distance at the Times, or at the example's one time on the slider; the Composition tab at At.
+    // Against distance along the fracture, or across the rock behind the example's cell where it asks; at the Times, or at
+    // the example's one time on the slider; the Composition tab at At.
+    state.profileAxis = v && v.profile && v.profile.axis === 'matrix' ? 'matrix' : 'fracture';
+    state.profileLayer = v && v.profile && Number.isInteger(v.profile.layer) ? v.profile.layer : 0;
     profileStop();
     state.profileAt = v && v.profile && Number.isFinite(v.profile.at) ? v.profile.at : null;
     compStop();
     state.compAt = null;
+    // Its Times on Against distance and on Composition, or none: another example's are of its own run, in its own unit.
+    state.profileTimes = v && v.profile && typeof v.profile.times === 'string' ? v.profile.times : '';
+    $('rtmProfileTimes').value = state.profileTimes;
+    state.compTimes = v && v.comp && typeof v.comp.times === 'string' ? v.comp.times : '';
+    $('rtmCompTimes').value = state.compTimes;
     if (!v) return;
     if (v.picked) state.picked = v.picked.slice();
     if (Number.isInteger(v.cell)) state.cell = v.cell;
@@ -11766,7 +11798,6 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     if (typeof v.logY === 'boolean') $('rtmLogY').checked = v.logY;
     if (v.profile) {
       if (v.profile.species) state.profileSpecies = v.profile.species;
-      if (typeof v.profile.times === 'string') { state.profileTimes = v.profile.times; $('rtmProfileTimes').value = v.profile.times; }
       if (typeof v.profile.log === 'boolean') $('rtmProfileLog').checked = v.profile.log;
     }
     if (v.grad) {
@@ -12690,7 +12721,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261114c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,

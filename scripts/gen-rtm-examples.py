@@ -1176,6 +1176,96 @@ def _after(eid, *new):
     EXAMPLES[i + 1:i + 1] = list(new)
 
 
+# ---------------------------------------------------------------------------
+# Diffusion into the rock against the exact solution: the profile into a slab
+# held at C0 on one face and closed on the other, under <DATA> in depth.
+# ---------------------------------------------------------------------------
+def _slab(y, t, dp, d):
+    """C/C0 at depth y and time t in a slab of depth d, held at C0 at y = 0 and closed at y = d, by the method of
+    images (Crank 1975, chapter 4): a sum of erfc terms, which keeps its precision where the profile is small, where
+    1 - (the trigonometric series) is all cancellation."""
+    import math
+    s2 = 2 * math.sqrt(dp * t)
+    c = 0.0
+    for n in range(400):
+        term = math.erfc((2 * n * d + y) / s2) + math.erfc((2 * (n + 1) * d - y) / s2)
+        c += -term if n % 2 else term
+        if term == 0 or (n > 2 and term < 1e-17 * c):
+            break
+    return c
+
+
+def _slab_data():
+    de, eps, d = 3.15576e-5, 0.005, 0.5        # m2/a (1e-12 m2/s), the porosity, m
+    depths = [0, 0.005, 0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.08, 0.1, 0.12, 0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5]
+    out = []
+    for t in (0.25, 1, 4):
+        out.append(f'depth  X  cell = 0  at = {t}')
+        # To where the profile falls below a hundredth of the fracture's water.
+        out.extend(f'{y:<6g} {c:.6g}' for y, c in ((y, _slab(y, t, de / eps, d)) for y in depths) if c >= 0.01)
+    return '\n'.join(out)
+
+
+_after('matrixtracer', dict(
+    id='rockdiffusion',
+    group='Dual porosity',
+    label='Diffusion into the rock, against the exact solution',
+    about='A tracer diffusing from a fracture whose water is held at 1 into half a metre of rock, closed at its far face, against the exact profile into such a slab, under <DATA> as tables in depth behind cell 0 at a quarter of a year, one and four, to where it falls below a hundredth. Run it: Against distance draws the rock behind cell 0 with the exact points, and the Fit tab\'s the run against what was measured, one to one, gives the Nash–Sutcliffe efficiency, 0.99998 on these 30 layers from a first of 1 mm.',
+    text='''\
+# A tracer diffusing into the rock from a fracture whose water is held at 1:
+# half a metre of rock, closed at its far face, its effective diffusivity
+# De = 1e-12 m2/s (3.15576e-5 m2/a here, the time in years) and its porosity
+# 0.005, so that the tracer moves through its pore water at De/0.005. The
+# exact profile into such a slab, by the method of images,
+#     C/C0 = sum over n of (-1)^n [erfc((2nd + y)/(2 sqrt(Dp t)))
+#                                  + erfc((2(n+1)d - y)/(2 sqrt(Dp t)))]
+# (Crank 1975, chapter 4; Dp = De/porosity, d the depth), is under <DATA> as
+# tables in depth behind cell 0, at a quarter of a year, one and four. Run it:
+# Against distance draws the rock behind cell 0 with the exact points beside
+# the run, and the Fit tab's the run against what was measured, one to one,
+# gives the Nash-Sutcliffe efficiency.
+#
+# The tables stop where the profile falls below a hundredth of the fracture's
+# water. Further in, the layers are centimetres thick beside a tail that falls
+# tenfold in a few centimetres, and the run's tail lies above the exact one:
+# at a quarter of a year, twice it where it is a ten-thousandth (tick log
+# concentration to see it).
+#
+# MATRIX_FIRST sets the first layer at 1 mm: with no flow and no decay, nothing
+# in the model sizes it, and left alone it would start at a millionth of the
+# depth, finer than the profile needs and coarser further in (0.9987 against
+# the exact points; 0.99998 with the millimetre). The 30 layers grow from it
+# to the far face. Fewer, or a first layer much thinner or thicker than a
+# fortieth of how far the tracer has got by the first table (some 4 cm), and
+# the run falls further from the exact profile.
+
+<SETTINGS>
+MODE = transport
+CELLS = 2
+LENGTH = 2
+ADVECTION = 0
+DIFFUSION = 0
+MATRIX_CELLS = 30
+MATRIX_DEPTH = 0.5
+MATRIX_FIRST = 0.001
+MATRIX_POROSITY = 0.005
+APERTURE = 0.0001
+TEND = 4
+TIME_UNIT = year
+
+<SPECIES>
+X  0  De=3.15576e-5     # m2/a: 1e-12 m2/s
+
+<INITIAL>
+X  all  1  fixed        # the fracture's water held at 1; the rock starts at 0
+
+<REACTIONS>
+
+<DATA>
+''' + _slab_data() + '\n',
+    view={'tab': 'profile', 'profile': {'species': 'X', 'times': '0.25, 1, 4', 'axis': 'matrix', 'layer': 0, 'log': False}},
+))
+
 _after('silicates', dict(
     id='gibbsite',
     group='Equilibrium diagrams',

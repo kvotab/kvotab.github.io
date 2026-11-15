@@ -792,7 +792,7 @@ async def main():
                 "(() => { const s = document.getElementById('rtmExample');"
                 " return s.querySelectorAll('option[value]:not([value=\"\"]):not([value^=\"aside:\"])').length"
                 " + ':' + [...s.querySelectorAll('optgroup')].filter((g) => g.label !== 'Your earlier texts').length; })()"),
-                '39:12')
+                '40:12')
             # Robertson: a batch model in seconds with a published answer.
             await page.ev("""(() => { const s = document.getElementById('rtmExample');
               s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
@@ -915,6 +915,42 @@ async def main():
             check('the gradient draws a rock layer along the fracture', await page.ev(
                 "(() => { const d = document.getElementById('rtmChartGradient').data[0];"
                 " return d.z.length + ':' + document.getElementById('rtmGradNote').textContent.includes('rock layer 2'); })()"), '5:true')
+            # Into the rock against what was measured there: the rock example's tables in depth, three times behind cell 0,
+            # drawn as points across the rock where its view opens, each in its time's colour; the Fit tab's one to one.
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'rockdiffusion'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('Compiled:')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            ran_rock = await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 4)", 'Done', tries=200)
+            await asyncio.sleep(1.2)
+            rock_view = await page.ev("""(() => { const d = document.getElementById('rtmChartProfile').data || [];
+              const pts = d.filter((tr) => tr.mode === 'markers');
+              const lines = d.filter((tr) => tr.mode !== 'markers');
+              return [document.querySelector('.rtm-tabs button.active').dataset.tab,
+                document.getElementById('rtmChartProfile').layout.xaxis.title.text, pts.map((tr) => tr.name).join(' | '),
+                pts.map((tr) => tr.x.length).join(' '), lines.length, pts.every((tr, i) => tr.marker.color === lines[i].line.color),
+                lines.length ? lines[0].x[0] : null]; })()""")
+            check('the rock example, run: it opens across the rock behind cell 0, its three tables in depth points at their '
+                  'times, each in the colour of the run\'s line then, the fracture\'s water at depth nought',
+                  [ran_rock] + (rock_view if isinstance(rock_view, list) else [rock_view]),
+                  ['Done', 'profile', 'depth into the rock behind cell 0 (m)', 'measured, 0.250 a | measured, 1.00 a | measured, 4.00 a',
+                   '11 14 19', 3, True, 0])
+            await page.ev("document.querySelector('[data-tab=\"fit\"]').click()")
+            await page.ev("(() => { const s = document.getElementById('rtmFitShow'); s.value = 'match';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await settle(page, "document.querySelectorAll('#rtmFitMatch tbody tr').length >= 1", True, tries=80)
+            rock_fit = await page.ev("""(() => { const head = [...document.querySelectorAll('#rtmFitMatch thead th')].map((th) => th.textContent);
+              const at = head.indexOf('Nash–Sutcliffe');
+              const row = [...document.querySelectorAll('#rtmFitMatch tbody tr')].find((tr) => tr.children[0].textContent === 'X'
+                && tr.children[1].textContent === 'this run');
+              return row ? row.children[at].textContent : null; })()""")
+            check('  the Fit tab\'s run against what was measured, one to one: X at a Nash-Sutcliffe efficiency of 0.9999 or more',
+                  rock_fit if not (isinstance(rock_fit, str) and float(rock_fit) >= 0.9999) else True, True)
+            # The next example its own Times or none, on Against distance and on Composition: the rock's years are not its.
+            await page.ev("""(() => { const s = document.getElementById('rtmExample');
+              s.value = 'robertson'; s.dispatchEvent(new Event('change', { bubbles: true })); })()""")
+            check('  the next example chosen, one with no Times of its own: none on Against distance or on Composition',
+                  await page.ev("document.getElementById('rtmProfileTimes').value + '|' + document.getElementById('rtmCompTimes').value"), '|')
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
 
             # --- a far-field path as Kompartment starts one ------------------

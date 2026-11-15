@@ -1752,6 +1752,30 @@ function farf31Transfer(p, s) {
     ref.matrix.h === null && Math.abs(ref.matrix.q - Math.E) < 1e-12 && ref.matrix.rule === 'e', `${ref.matrix.q}`);
   const given = RtmModel.compile(pathText(KDEF).replace('MATRIX_DEPTH', 'MATRIX_FIRST = 1e-3\nMATRIX_DEPTH'));
   check('MATRIX_FIRST is the first layer whichever the grid', given.matrix.d[0] === 1e-3 && given.matrix.rule === 'given');
+  {
+    // Nothing flows and nothing decays: FARFCOMP's first layer, growing by e, but never below a millionth of the depth --
+    // 25 layers of it would start at 1.7e-11 of it, which a run cannot carry beside layers of tenths of a metre. On the
+    // reference grid, where nothing is floored, that is refused, as is a MATRIX_FIRST of a ten-billionth.
+    const still = (more) => '<SETTINGS>\nMODE = transport\nCELLS = 2\nLENGTH = 2\nADVECTION = 0\nDIFFUSION = 0\n'
+      + `MATRIX_DEPTH = 1\nMATRIX_POROSITY = 0.005\nAPERTURE = 0.0001\nTEND = 1\n${more}\n<SPECIES>\nX  0  De=1e-5\n\n<INITIAL>\nX  all  1  fixed\n`;
+    const ten = RtmModel.compile(still('MATRIX_CELLS = 10'));
+    const many = RtmModel.compile(still('MATRIX_CELLS = 25'));
+    const refuseGrid = (more) => { try { RtmModel.compile(still(more)); return ''; } catch (e) { return e.message; } };
+    const tooThin = refuseGrid('MATRIX_CELLS = 25\nMATRIX_GRID = reference');
+    const givenThin = refuseGrid('MATRIX_CELLS = 25\nMATRIX_FIRST = 1e-10');
+    const stillCol = RtmModel.compile('<SETTINGS>\nMODE = transport\nCELLS = 2\nLENGTH = 2\nADVECTION = 0\nDIFFUSION = 0\nTEND = 1\n'
+      + '\n<SPECIES>\nX  0\n');
+    const moves = (m) => !m.warnings.some((w) => /nothing moves/.test(w));
+    check('the first layer where nothing flows or decays: FARFCOMP\'s for 10 layers; for 25 a millionth of the depth, not '
+      + 'FARFCOMP\'s 1.7e-11 of it; on the reference grid, and from a MATRIX_FIRST of 1e-10, refused, with what to give; '
+      + 'diffusing into the rock is moving, where a column with no rock that moves nothing is told so',
+    moves(ten) && moves(many) && !moves(stillCol) && ten.matrix.rule === 'e' && ten.matrix.d[0] > 1e-6 && many.matrix.rule === 'floor' && Math.abs(many.matrix.d[0] / 1e-6 - 1) < 1e-12
+      && Math.abs(many.matrix.d.reduce((a, b) => a + b, 0) - 1) < 1e-12
+      && /times thinner than MATRIX_DEPTH.*MATRIX_FIRST of 1\.0e-6 m or more.*MATRIX_GRID = matched/.test(tooThin)
+      && /The first of the 25 matrix layers is 1\.00e-10 m/.test(givenThin) && !/MATRIX_GRID = matched/.test(givenThin),
+    `10: ${ten.matrix.rule} ${ten.matrix.d[0].toExponential(2)}; 25: ${many.matrix.rule} ${many.matrix.d[0].toExponential(2)}; `
+      + `${tooThin.slice(0, 80)} | ${givenThin.slice(0, 80)}`);
+  }
   const still = RtmModel.compile(`
 <SETTINGS>
 MODE = transport
@@ -7978,6 +8002,26 @@ kx    = k * [A] + t
   check(`  and refused, each with its reason: ${badData.map((x) => x[0]).join(', ')}`, !wrongData.length,
     wrongData.map(([w, d]) => `${w}: "${refuseData(d)}"`).join(' | '));
 
+  // Tables in depth: into the rock behind a cell, at a time; the rock's, so refused without one.
+  const rockData = (d, rock = true) => '<SETTINGS>\nMODE = transport\nCELLS = 4\nLENGTH = 1\nTEND = 10\n'
+    + `${rock ? 'MATRIX_CELLS = 5\nMATRIX_DEPTH = 0.1\nMATRIX_POROSITY = 0.01\nAPERTURE = 0.001\n' : ''}\n<SPECIES>\n`
+    + `A  1  D=1e-9${rock ? '  De=1e-11' : ''}\n\n<DATA>\n${d}\n`;
+  const rd = RtmModel.compile(rockData('depth  A  cell = 1  at = 5\n0  1\n0.01  0.5\n0.05  -\ndepth  A\n0.02  0.3'));
+  check('<DATA>: a table in depth, into the rock behind cell 1 at a time, a dash for a value not measured; one that says '
+    + 'neither, behind the first cell at the end of the run',
+  rd.data.length === 2 && rd.data[0].kind === 'depth' && rd.data[0].cell === 1 && rd.data[0].at === 5
+    && JSON.stringify(rd.data[0].rows) === '[[0,1],[0.01,0.5],[0.05,null]]' && rd.data[1].kind === 'depth' && rd.data[1].cell === null
+    && rd.data[1].at === null, JSON.stringify(rd.data));
+  const refuseRock = (d, rock) => { try { RtmModel.compile(rockData(d, rock)); return ''; } catch (e) { return e.message; } };
+  const badRock = [
+    ['a table in depth with a layer', 'depth  A  layer = 2\n0  1', true, /a table in depth runs through the rock's layers.*layer = is for one in time or in distance/],
+    ['one behind a cell past the column', 'depth  A  cell = 9\n0  1', true, /cell = 9, where the column has 4/],
+    ['one in a model with no rock', 'depth  A\n0  1', false, /a table in depth is of the rock behind a cell, and the model has no rock matrix/],
+  ];
+  const wrongRock = badRock.filter(([, d, rock, re]) => !re.test(refuseRock(d, rock)));
+  check(`  and refused, each with its reason: ${badRock.map((x) => x[0]).join(', ')}`, !wrongRock.length,
+    wrongRock.map(([w, d, rock]) => `${w}: "${refuseRock(d, rock)}"`).join(' | '));
+
   // COMPOSITION: what each species is made of, a mineral's from its relation, held or kinetic; the sulfate's sulfur and
   // the carbonate's equivalents, and the two quantities they make.
   const cm = RtmModel.compile(`
@@ -9317,6 +9361,70 @@ HCO3- <=> H+ + CO3-2,   logK = -10.329
     && Math.abs(fTwo.params[0].value / 0.3 - 1) < 1e-7 && Math.abs(fTwo.params[1].value / 2 - 1) < 1e-7,
   `kk ${fExact.params[0].value} in ${fExact.runs} runs; noisy ${fNoisy.params[0].value} for ${kHat}, se ${fNoisy.params[0].se} for `
     + `${seHat}; two ${fTwo.params.map((p) => p.value.toPrecision(9)).join(', ')}`);
+  /*
+    INTO THE ROCK: the built-in example, a tracer diffusing from a fracture held at 1 into half a metre of rock closed at
+    its far face, against the exact profile into such a slab (Crank 1975, chapter 4), under <DATA> in depth at three
+    times to where it falls below a hundredth: the run read as the page reads a table in depth -- the fracture's water
+    at nought, each layer's at its centre, in between along a straight line -- at a Nash-Sutcliffe efficiency of
+    0.99998, and no point off by a tenth. Then the porosity fitted from the exact
+    profiles where they are above 0.05, from 0.002: 0.005 to 2 % on the example's 30 layers, and closing in at second
+    order as the layers are halved, 60 to 0.5 % and 120 to 0.15 %, the curves drawn into the rock from the wall.
+  */
+  {
+    const rockEx = require(path.join(jsDir, 'rtm-examples.js')).RTM_EXAMPLES.find((e) => e.id === 'rockdiffusion');
+    const slab = (y, t, dp, d) => {
+      let sum = 0;
+      for (let n = 0; n < 4000; n++) {
+        const k = 2 * n + 1;
+        const term = (4 / (k * Math.PI)) * Math.sin((k * Math.PI * y) / (2 * d)) * Math.exp(-(k * k * Math.PI * Math.PI * dp * t) / (4 * d * d));
+        sum += term;
+        if (Math.abs(term) < 1e-17 && n > 10) break;
+      }
+      return 1 - sum;
+    };
+    const rm = RtmModel.compile(rockEx.text);
+    const tabs = rm.data.filter((tab) => tab.kind === 'depth');
+    const rTimes = tabs.map((tab) => tab.at);
+    const rr = run(rm, { tend: rm.settings.TEND, rtol: 1e-8, atol: 1e-20, nonNegative: true, outputTimes: rTimes });
+    const ys = Array.from(rm.matrix.centre);
+    const atDepth = (y, x) => {
+      if (x <= 0) return y[0];
+      if (x >= ys[ys.length - 1]) return y[ys.length];
+      let j = 0;
+      let lo = 0;
+      while (j < ys.length && ys[j] < x) { lo = ys[j]; j++; }
+      const f = (x - lo) / (ys[j] - lo);
+      return y[j] * (1 - f) + y[j + 1] * f;
+    };
+    const pairs = tabs.flatMap((tab, k) => tab.rows.map((row) => [atDepth(rr.grid.y[k], row[0]), row[1]]));
+    const mean = pairs.reduce((a, [, e]) => a + e, 0) / pairs.length;
+    const nse = 1 - pairs.reduce((a, [v, e]) => a + (v - e) ** 2, 0) / pairs.reduce((a, [, e]) => a + (e - mean) ** 2, 0);
+    const dp = 3.15576e-5 / 0.005;
+    const exactOff = Math.max(...tabs.flatMap((tab) => tab.rows.map((row) => Math.abs(row[1] - slab(row[0], tab.at, dp, 0.5)))));
+    const offWorst = Math.max(...pairs.map(([v, e]) => Math.abs(Math.log10(v / e))));
+    check('the rock example: three tables in depth behind cell 0, every value above a hundredth, the exact slab\'s to 1e-6; '
+      + 'the run read there as the page reads a table in depth at a Nash-Sutcliffe efficiency of 0.99995 or more, and no '
+      + 'point off by a tenth',
+    tabs.length === 3 && rTimes.join(' ') === '0.25 1 4' && tabs.every((tab) => tab.cell === 0 && tab.rows.every((row) => row[1] >= 0.01))
+      && exactOff < 1e-6 && nse >= 0.99995 && offWorst < Math.log10(1.1),
+    `${pairs.length} points, NSE ${nse.toFixed(6)}, the worst x ${(10 ** offWorst).toFixed(3)}; the tables off the series by ${exactOff.toExponential(1)}`);
+    const depths = [0, 0.0025, 0.005, 0.01, 0.015, 0.02, 0.03, 0.04, 0.05, 0.07, 0.1, 0.13, 0.16, 0.2, 0.25, 0.3, 0.4, 0.5];
+    const exactData = [0.25, 1, 4].map((t) => `depth  X  cell = 0  at = ${t}\n${depths.map((y) => [y, slab(y, t, dp, 0.5)])
+      .filter(([, c]) => c > 0.05).map(([y, c]) => `${y} ${c}`).join('\n')}`).join('\n');
+    const porosityFit = (layers, first) => fitOf(rockEx.text.replace(/^MATRIX_CELLS = .*$/m, `MATRIX_CELLS = ${layers}`)
+      .replace(/^MATRIX_FIRST = .*$/m, `MATRIX_FIRST = ${first}`).replace(/^<DATA>$[\s\S]*$/m, `<DATA>\n${exactData}\n`),
+    [{ kind: 'setting', name: 'MATRIX_POROSITY', start: 0.002 }]);
+    const fits = [[30, 0.001], [60, 0.0005], [120, 0.00025]].map(([layers, first]) => porosityFit(layers, first));
+    const offs = fits.map((f) => (f.type === 'fit' ? Math.abs(f.params[0].value / 0.005 - 1) : Infinity));
+    const c0 = fits[0].curves || [];
+    check('  the porosity fitted from the exact profiles: 0.005 to 2 % on 30 layers, 0.5 % on 60, 0.15 % on 120, closing in at '
+      + 'second order; the curves into the rock from the wall, one at each table\'s time',
+    offs[0] < 0.02 && offs[1] < 0.005 && offs[2] < 0.0015 && offs[0] / offs[1] > 3 && offs[1] / offs[2] > 3
+      && c0.length === 3 && c0.every((c) => c.kind === 'depth' && c.x[0] === 0 && c.x.length === 31)
+      && c0.map((c) => c.t).join(' ') === '0.25 1 4',
+    `${fits.map((f, i) => (f.type === 'fit' ? `${f.params[0].value.toPrecision(6)} (${(100 * offs[i]).toFixed(3)} %)` : f.error)).join(', ')}; `
+      + `curves ${c0.map((c) => `${c.kind} t=${c.t} ${c.x.length}`).join(', ')}`);
+  }
   /*
     THE BAND about each fitted curve, about 95 %: for the decay measured
     with noise, log10 A = -kk t / ln 10, so in theta = log10 kk the curve's

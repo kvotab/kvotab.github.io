@@ -236,6 +236,10 @@
 
   /** How many matrix layers a rock matrix has when the text does not say: Kompartment's far-field default. */
   const DEFAULT_MATRIX_CELLS = 12;
+  /** The thinnest first layer the matched grid makes, as a share of MATRIX_DEPTH, where nothing else sizes it. */
+  const FIRST_FLOOR = 1e-6;
+  /** The thinnest first layer a run is given at all, as a share of MATRIX_DEPTH: thinner, the run goes wrong. */
+  const MIN_FIRST = 1e-9;
 
   /** The settings that describe a rock matrix: any of them, and there is one. */
   const MATRIX_KEYS = ['MATRIX_DEPTH', 'MATRIX_FIRST', 'MATRIX_GRID', 'MATRIX_POROSITY', 'MATRIX_DENSITY'];
@@ -1393,7 +1397,16 @@
    *              daughter grows in cell by cell from its parent and the two
    *              must share the cells -- with the nodes interlaced. Where
    *              nothing gives a time scale (no flow and no decay, or
-   *              nothing entering the rock) the first layer is FARFCOMP's.
+   *              nothing entering the rock) the first layer is FARFCOMP's,
+   *              but never thinner than FIRST_FLOOR of the depth: growing by
+   *              e, fifteen layers or more put it below a millionth of it,
+   *              and twenty-five below a hundred-billionth, which a run
+   *              cannot carry beside layers of tenths of a metre.
+   *
+   * Either way, a first layer thinner than MIN_FIRST of the depth is
+   * refused: a 1 m rock of 25 layers from 1e-10 m ran to concentrations
+   * of 3 where the fracture held 1, and from 1e-9 m to 0.998 of the exact
+   * slab's Nash-Sutcliffe efficiency.
    *
    * `nucs` are the species that enter the rock, with what penetrationScale
    * reads of them -- de, rm, lam, rf and their own Peclet number -- and `tw`
@@ -1422,6 +1435,10 @@
         } else {
           d0 = nm === 1 ? depth : eRatioFirst(depth, nm, aw);
           matrix.rule = 'e';
+          if (nm > 1 && d0 < FIRST_FLOOR * depth) {
+            d0 = FIRST_FLOOR * depth;
+            matrix.rule = 'floor';
+          }
         }
       }
       const g = matchedGrid(depth, nm, d0);
@@ -1430,6 +1447,12 @@
     }
     matrix.first = matrix.d[0];
     matrix.q = nm > 1 ? matrix.d[1] / matrix.d[0] : 1;
+    if (matrix.first < MIN_FIRST * depth) {
+      throw new RtmError(`The first of the ${nm} matrix layers is ${matrix.first.toExponential(2)} m, `
+        + `${(depth / matrix.first).toExponential(1)} times thinner than MATRIX_DEPTH: a run cannot carry layers that thin beside `
+        + `ones that thick, and goes wrong. Give MATRIX_FIRST of ${(FIRST_FLOOR * depth).toExponential(1)} m or more, fewer `
+        + `layers${matrix.grid === 'reference' ? ', or MATRIX_GRID = matched, which keeps the first above a millionth of the depth' : ''}.`);
+    }
     matrix.centre = new Float64Array(nm);
     let x = 0;
     for (let j = 0; j < nm; j++) { matrix.centre[j] = x + matrix.d[j] / 2; x += matrix.d[j]; }
@@ -2343,7 +2366,11 @@
    * table belongs on the same line: cell = 19 for one in time (the column's
    * cell, from 0; the first unless said), layer = 2 for the rock behind it,
    * at = 3600 for one in distance (in the model's time unit; the end of the
-   * run unless said). A table whose first column is pH, pe or Eh is of a
+   * run unless said). A table whose first column is depth is into the rock
+   * behind a cell, cell = 0 the first, at a time, at = 3600, the end of the
+   * run unless said, its depths in metres from the fracture's wall, nought
+   * the fracture's own water: a profile of the rock's pore water, measured
+   * in a drill core or worked out by another code. A table whose first column is pH, pe or Eh is of a
    * water held there rather than of a run -- a sorption edge -- the water
    * of cell = 0 unless said, as the model starts it, speciated at each value
    * as the Diagrams tab speciates it: kind 'speciation', its axis that
@@ -2360,7 +2387,8 @@
    * of any table of a water holds that water's pH there, as the Diagrams
    * tab holds one (without it, against sys(), the pH stays where the water
    * has it).
-   * Returns [{ kind, axis, species, pH, columns, water: [[name, value]], cell, layer, at, rows, line }].
+   * Returns [{ kind ('time', 'distance', 'depth' or 'speciation'), axis, species, pH, columns, water: [[name, value]],
+   * cell, layer, at, rows, line }].
    */
   function readData(lines) {
     const tables = [];
@@ -2370,7 +2398,7 @@
       const first = tokens[0].toLowerCase();
       // An element in the system, sys(Zn): all of it in the cell, as PHREEQC's SYS("Zn").
       const sys = /^sys\(([^()\s]+)\)$/i.exec(tokens[0]);
-      if (['time', 't', 'distance', 'x', 'ph', 'pe', 'eh'].includes(first) || sys) {
+      if (['time', 't', 'distance', 'x', 'depth', 'ph', 'pe', 'eh'].includes(first) || sys) {
         const quals = {};
         const water = [];
         const rest = text.slice(text.indexOf(tokens[0]) + tokens[0].length)
@@ -2378,7 +2406,8 @@
           // Any other name = number: a species started there in the table's own water.
           .replace(/(^|\s)([^\s=]+)\s*=\s*(\S+)/g, (_, sp, name, v) => { water.push([name, v]); return ' '; });
         const columns = rest.split(/\s+/).filter(Boolean);
-        const kind = first === 'time' || first === 't' ? 'time' : first === 'distance' || first === 'x' ? 'distance' : 'speciation';
+        const kind = first === 'time' || first === 't' ? 'time' : first === 'distance' || first === 'x' ? 'distance'
+          : first === 'depth' ? 'depth' : 'speciation';
         const axis = kind === 'speciation' ? (sys ? 'tot' : { ph: 'pH', pe: 'pe', eh: 'Eh' }[first]) : null;
         if (!columns.length) {
           throw new RtmError(`"${text}": a table in <DATA> names its columns after ${tokens[0]}: time  Ca+2  pH  cell = 19.`, line);
@@ -2406,7 +2435,11 @@
           throw new RtmError(`"${text}": a table in time is at a cell, cell = 19; at = is for one in distance.`, line);
         }
         if (kind === 'distance' && quals.cell !== undefined) {
-          throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time.`, line);
+          throw new RtmError(`"${text}": a table in distance is at a time, at = 3600; cell = is for one in time, or in depth.`, line);
+        }
+        if (kind === 'depth' && quals.layer !== undefined) {
+          throw new RtmError(`"${text}": a table in depth runs through the rock's layers, behind a cell, cell = 0, at a time, `
+            + 'at = 3600; layer = is for one in time or in distance.', line);
         }
         cur = { kind, axis, species: sys ? sys[1] : null, pH: held.length ? constValue(held[0][1], line, 'pH') : null, columns,
           water: water.filter(([name]) => name.toLowerCase() !== 'ph').map(([name, v]) => [name, constValue(v, line, name)]),
@@ -2418,7 +2451,8 @@
       }
       if (!cur) {
         throw new RtmError('<DATA> begins with a line naming the columns of a table: time  Ca+2  pH  cell = 19, '
-          + 'distance  Ca+2  at = 3600, or pH  Zn_sorbed  cell = 0 for a water held at each pH.', line);
+          + 'distance  Ca+2  at = 3600, depth  Ca+2  cell = 0  at = 3600 into the rock, or pH  Zn_sorbed  cell = 0 for a water '
+          + 'held at each pH.', line);
       }
       const xName = cur.axis === 'tot' ? `sys(${cur.species})` : cur.axis || cur.kind;
       if (tokens.length !== cur.columns.length + 1) {
@@ -10878,7 +10912,8 @@
     /* ---- the grid and what moves --------------------------------------- */
     const ncCol = ncol * stride;    // every cell of the column, matrix layers and extra cells included
     const nc = ncCol + resSides.length;   // and the reservoirs after them: see THE RESERVOIRS
-    if (transport && !mobile.some(Boolean)) {
+    // Diffusion into the rock is movement too: a fracture held fixed with the rock behind it moves nothing along the column.
+    if (transport && !mobile.some(Boolean) && !enters.some(Boolean)) {
       warnings.push('Transport is on but nothing moves: give a species D = ... , or set a VELOCITY.');
     }
     if (matrix && !enters.some(Boolean)) {
@@ -12250,10 +12285,11 @@
       const inEq = new Set(equilibriumSpecies(equilibria));
       const bad = heldSomewhere.filter((h) => inEq.has(h.si));
       if (bad.length) {
-        throw new RtmError(`${bad.map((h) => h.species).join(', ')} ${bad.length > 1 ? 'are' : 'is'} held in `
-          + `some cells only and takes part in an <EQUILIBRIUM>; EQUILIBRATE = ${settings.EQUILIBRATE === 2 ? 'always' : 1} `
+        const many = bad.length > 1;
+        throw new RtmError(`${bad.map((h) => h.species).join(', ')} ${many ? 'are' : 'is'} held in `
+          + `some cells only and ${many ? 'take' : 'takes'} part in an <EQUILIBRIUM>; EQUILIBRATE = ${settings.EQUILIBRATE === 2 ? 'always' : 1} `
           + 'cannot speciate that. '
-          + 'Hold it everywhere (fixed on its species line) or equilibrate without it.');
+          + `Hold ${many ? 'them' : 'it'} everywhere (fixed on ${many ? 'their' : 'its'} species line${many ? 's' : ''}) or equilibrate without ${many ? 'them' : 'it'}.`);
       }
     }
 
@@ -13003,9 +13039,13 @@
             tab.line);
         }
       }
-      if ((tab.kind === 'time' || tab.kind === 'speciation') && tab.cell !== null && tab.cell >= nf) {
+      if ((tab.kind === 'time' || tab.kind === 'speciation' || tab.kind === 'depth') && tab.cell !== null && tab.cell >= nf) {
         throw new RtmError(`<DATA>, the table on line ${tab.line}: cell = ${tab.cell}, where the column has ${nf} (0 to ${nf - 1}).`,
           tab.line);
+      }
+      if (tab.kind === 'depth' && !matrix) {
+        throw new RtmError(`<DATA>, the table on line ${tab.line}: a table in depth is of the rock behind a cell, and the model has `
+          + 'no rock matrix: give it MATRIX_DEPTH and MATRIX_POROSITY, and its species De=.', tab.line);
       }
     }
 

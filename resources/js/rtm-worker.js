@@ -2548,6 +2548,10 @@ function rtmFitPoints(model, columns, tend) {
         } else if (tab.kind === 'speciation') {
           points.push({ table: ti, kind: 'speciation', axis: tab.axis, species: tab.species || null,
             pH: tab.pH !== undefined ? tab.pH : null, t: null, cell: (tab.cell || 0) * stride, x: row[0], key, k, q, index, value, sd });
+        } else if (tab.kind === 'depth') {
+          // Into the rock behind a cell: cell is the model cell of its fracture water, x the depth from the wall.
+          points.push({ table: ti, kind: 'depth', t: tab.at !== null ? tab.at : tend, cell: (tab.cell || 0) * stride, layer: 0,
+            x: row[0], key, k, q, index, value, sd });
         } else {
           points.push({ table: ti, kind: 'distance', t: tab.at !== null ? tab.at : tend, cell: null, layer: Math.min(tab.layer || 0, stride - 1),
             x: row[0], key, k, q, index, value, sd });
@@ -2629,6 +2633,22 @@ function rtmValueAlong(model, c, t, layer, x, k, q, out) {
   while (i < nf - 2 && xs[i + 1] < x) i++;
   const f = (x - xs[i]) / (xs[i + 1] - xs[i]);
   return at(i) * (1 - f) + at(i + 1) * f;
+}
+
+/**
+  Into the rock behind the cell whose fracture water is model cell `base`, at depth x from the wall: the fracture's water
+  at nought, each layer at its centre, a straight line between; past the last layer's centre, the last layer.
+*/
+function rtmValueDepth(model, c, t, base, x, k, q, out) {
+  const ys = model.matrix ? model.matrix.centre : [];
+  const at = (j) => rtmValueAt(model, c, t, base + j, k, q, out);
+  if (!ys.length || x <= 0) return at(0);
+  if (x >= ys[ys.length - 1]) return at(ys.length);
+  let j = 0;
+  let lo = 0;
+  while (j < ys.length && ys[j] < x) { lo = ys[j]; j++; }
+  const f = (x - lo) / (ys[j] - lo);
+  return at(j) * (1 - f) + at(j + 1) * f;
 }
 
 /*
@@ -2782,7 +2802,8 @@ function rtmFit(msg, post) {
       } else {
         const c = conc[times.indexOf(p.t)];
         v = p.kind === 'time' ? rtmValueAt(model, c, p.t, p.cell, p.k, p.q, out1)
-          : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
+          : p.kind === 'depth' ? rtmValueDepth(model, c, p.t, p.cell, p.x, p.k, p.q, out1)
+            : rtmValueAlong(model, c, p.t, p.layer, p.x, p.k, p.q, out1);
       }
       r[i] = (p.index ? v - p.value : Math.log10(Math.max(v, 1e-300) / p.value)) / p.sdr;
     });
@@ -2924,7 +2945,8 @@ function rtmFit(msg, post) {
   const seen = new Set();
   const specCurve = new Map();
   for (const p of points) {
-    const id = p.kind === 'time' ? `t|${p.cell}|${p.key}` : p.kind === 'speciation' ? `s|${p.table}|${p.key}` : `x|${p.t}|${p.layer}|${p.key}`;
+    const id = p.kind === 'time' ? `t|${p.cell}|${p.key}` : p.kind === 'speciation' ? `s|${p.table}|${p.key}`
+      : p.kind === 'depth' ? `d|${p.t}|${p.cell}|${p.key}` : `x|${p.t}|${p.layer}|${p.key}`;
     if (seen.has(id)) continue;
     seen.add(id);
     if (p.kind === 'speciation') {
@@ -2953,6 +2975,12 @@ function rtmFit(msg, post) {
     } else if (p.kind === 'time') {
       curves.push({ kind: 'time', cell: p.cell, key: p.key, k: p.k, q: p.q, index: p.index, x: Array.from(res.t),
         y: conc.map((c, i) => rtmValueAt(model, c, res.t[i], p.cell, p.k, p.q, out1)) });
+    } else if (p.kind === 'depth') {
+      // Into the rock: the fracture's water at nought, then each layer at its centre.
+      const c = best.conc[times.indexOf(p.t)];
+      const ys = [0, ...Array.from(model.matrix.centre)];
+      curves.push({ kind: 'depth', t: p.t, cell: p.cell, key: p.key, k: p.k, q: p.q, index: p.index, x: ys,
+        y: ys.map((_, j) => rtmValueAt(model, c, p.t, p.cell + j, p.k, p.q, out1)) });
     } else {
       const c = best.conc[times.indexOf(p.t)];
       const stride = model.stride || 1;
@@ -2990,7 +3018,8 @@ function rtmFit(msg, post) {
     const curvesAt = (th) => {
       const m = RtmModel.compile(textAt(th));
       const at = new Map();
-      const runTimes = [...new Set(curves.flatMap((c) => (c.kind === 'time' ? c.x : c.kind === 'distance' ? [c.t] : [])))]
+      const runTimes = [...new Set(curves.flatMap((c) => (c.kind === 'time' ? c.x : c.kind === 'distance' || c.kind === 'depth'
+        ? [c.t] : [])))]
         .sort((a, b) => a - b);
       if (runTimes.length) {
         const tend = s.tend > 0 ? s.tend : m.settings.TEND;
@@ -3003,6 +3032,7 @@ function rtmFit(msg, post) {
       return curves.map((c) => {
         if (c.kind === 'time') return c.x.map((t) => rtmValueAt(m, at.get(t), t, c.cell, c.k, c.q, out1));
         if (c.kind === 'distance') return c.x.map((_, i) => rtmValueAt(m, at.get(c.t), c.t, i * stride + c.layer, c.k, c.q, out1));
+        if (c.kind === 'depth') return c.x.map((_, j) => rtmValueAt(m, at.get(c.t), c.t, c.cell + j, c.k, c.q, out1));
         if (!spec.has(c.table)) spec.set(c.table, rtmSpeciationTable(tableModel(m, th, c.table), m.data[c.table], c.x));
         const w = spec.get(c.table);
         return c.x.map((x) => rtmValueAt(w.model, w.waters.get(x), w.t, c.cell, c.k, c.q, out1));
