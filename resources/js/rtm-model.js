@@ -13633,19 +13633,28 @@
     const modeOf = (c, r, M, tiny = 0) => (M >= hiAt(c, r) - tiny ? 4 : M > loAt(c, r) + tiny ? 1 : 0);
     /*
       Held, an event watches its amount against its bounds, the lower where
-      it is used up, and which it nears -- past them by more than rounding.
-      A mineral that has just precipitated has, at that instant, the little
-      that the totals leave over the saturated water, which can come out a
-      rounding error below none, -9e-19 of calcite: watched against none
-      itself, its event would start already crossed, the solver sees a
-      crossing only where the sign changes, and it would never fire -- the
-      run held a mineral that was gone at saturation, its amount ran to
-      -6.7e-4 mol and drained its cell to pH 4.1. So 64 roundings of the
-      cell's largest total (roundM) past the bound, and the saturation the
-      same way (SAT_ROUND).
+      it is used up, and which it nears; and, where there is none of it or as
+      much as it may have, its water's saturation -- each past the bound by
+      more than a run can start at. The solver sees a crossing only where an
+      event's sign changes, so an event that starts on the far side never
+      fires. Two ways one did:
+        a mineral that had just precipitated had, at that instant, the little
+        the totals leave over the saturated water, which can come out a
+        rounding error below none, -9e-19 of calcite: its "dissolves away"
+        never fired, the run held a mineral that was gone at saturation, its
+        amount ran to -6.7e-4 mol and drained its cell to pH 4.1;
+        a water PHREEQC leaves saturated with calcite and none of it is
+        saturated to PHREEQC's own tolerance, 7e-12 over in ln: watched past
+        saturation by 1e-12, its "precipitates" started crossed, and where
+        two such waters mixed no calcite formed in the whole run.
+      The start (speciateCell's active set) leaves a mineral as it is unless
+      its water is supersaturated by more than 1e-9 in ln, or it is less than
+      none by more than 1e-12 of the cell's largest total, and a bubble or a
+      solid solution the same way: every event is watched past twice that
+      (roundM, SAT_ROUND), so that none the start leaves begins crossed.
     */
     const nearHi = new Uint8Array(nc * ne);
-    const roundM = (c) => 64 * Number.EPSILON * (amountScale[c] > 0 ? amountScale[c] : 1);
+    const roundM = (c) => 2e-12 * (amountScale[c] > 0 ? amountScale[c] : 1);
     const heldEvent = (c, r, M) => {
       const lo = loAt(c, r);
       const a = (lo === -Infinity ? -Infinity : Math.max(lo, usedUp[c * ne + r])) - M;
@@ -13654,9 +13663,9 @@
       const v = Math.max(a, d) - roundM(c);
       return Number.isFinite(v) ? v : -1;
     };
-    // A mineral there is none of, or as much as it may have: its water's saturation past nought by more than rounding
-    // (ln, a relation of ln K 30 or 50 rounds to a few times 1e-15), for the same reason.
-    const SAT_ROUND = 1e-12;
+    // A mineral there is none of, or as much as it may have, and a bubble or a solid solution that is not there:
+    // its water's saturation, in ln, past nought by twice what the start leaves (above).
+    const SAT_ROUND = 2e-9;
     eqs.forEach((eq, r) => {
       if (eq.carry && eq.mineral >= 0) for (let c = 0; c < nc; c++) usedUp[c * ne + r] = 1e-4 * start[c * ns + eq.mineral];
     });
@@ -14646,9 +14655,9 @@
           }
           grps.forEach((bub, g) => {
             const at = nc * nmin + c * ngrp + g;
-            if (!xs[c]) out[at] = present[c * ne + bub.rel[0]] ? -groupN(bub, y, b) : -1;
-            else if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, Cstar, b);
-            else { out[at] = bubbleExcessAt(bub, Cstar, b, water); formAt[c * ngrp + g] = bub.formMode; }
+            if (!xs[c]) out[at] = present[c * ne + bub.rel[0]] ? -groupN(bub, y, b) - roundM(c) : -1;
+            else if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, Cstar, b) - roundM(c);
+            else { out[at] = bubbleExcessAt(bub, Cstar, b, water) - SAT_ROUND; formAt[c * ngrp + g] = bub.formMode; }
           });
           bins.forEach((G, i) => {
             out[gapStart + c * nbin + i] = xs[c] ? gapValue(G, i, c, Cstar, b, water, (q) => Cstar[b + G.mem[q]]) : -1;
@@ -14672,10 +14681,10 @@
         }
         grps.forEach((bub, g) => {
           const at = nc * nmin + c * ngrp + g;
-          if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, y, b);
+          if (present[c * ne + bub.rel[0]]) out[at] = -groupN(bub, y, b) - roundM(c);
           else {
             if (!ready) { water = activityAt(act, C, b, lnG, dG); ready = true; }
-            out[at] = bubbleExcessAt(bub, C, b, water);
+            out[at] = bubbleExcessAt(bub, C, b, water) - SAT_ROUND;
             formAt[c * ngrp + g] = bub.formMode;
           }
         });

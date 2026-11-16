@@ -3895,6 +3895,31 @@ Calcite <=> Ca+2 + CO3-2, logK = -8.48
   }
   check('with ACTIVITY the saturation is in activities, the mineral at 1',
     siAct < 1e-12 && RtmModel.verifyJacobian(ma, 0, ma.initialState()).discrepancies.length === 0, siAct.toExponential(1));
+
+  // --- a water at saturation with none of the mineral, as PHREEQC leaves one: a few parts in 1e10 over, which the
+  // start leaves at none (it precipitates only past 1e-9 in ln). Its "precipitates" has to start below nought, the
+  // solver seeing a crossing only where the sign changes, so that calcium added in the run precipitates calcite. ---
+  const sat = RtmModel.compile(water({ eq: 1 })).initialState();
+  const spNames = ['H+', 'OH-', 'CO2', 'HCO3-', 'CO3-2', 'Ca+2', 'Cl-'];
+  const justOver = water({ calcite: '0', rx: '=> Ca+2, k = 1e-11' })
+    .replace(/^(H\+|OH-|CO2|HCO3-|CO3-2|Ca\+2|Cl-)(\s+)([0-9][0-9.eE+-]*)\s*$/gm,
+      (line, name, gap) => `${name}${gap}${sat[spNames.indexOf(name)] * (name === 'Ca+2' ? 1 + 4e-10 : 1)}`);
+  const mj = RtmModel.compile(justOver);
+  const yj = mj.initialState();
+  const cj = mj.toConcentrations(yj);
+  const lnOver = si(cj) * Math.LN10;
+  const evj = new Float64Array(mj.nevents);
+  mj.eventValues(0, yj, evj);
+  const rj = FacsimileODE.runModel(mj, { solver: 'ndf', tend: 2e5, rtol: 1e-8, atol: 1e-20, nonNegative: true });
+  const endJ = rj.y[rj.y.length - 1];
+  const endJc = mj.toConcentrations(endJ);
+  check('a water at saturation with none of the mineral, a few parts in 1e10 over: the start leaves it none, its '
+    + '"precipitates" starts below nought, and calcium added in the run precipitates calcite, held at saturation',
+  cj[iCal] === 0 && lnOver > 1e-12 && lnOver < 1e-9 && evj[0] < 0 && rj.events.length === 1
+    && rj.events[0].expr === 'Calcite precipitates' && endJ[iCal] > 1e-7 && Math.abs(si(endJc)) < 1e-10,
+  `the start ${lnOver.toExponential(2)} over in ln, its event ${evj[0].toExponential(2)}; `
+    + `${rj.events.map((e) => `${e.expr} at ${e.t.toFixed(1)} s`).join(', ') || 'no event'}; the run holding `
+    + `${endJ[iCal].toExponential(2)} mol of calcite at the end, SI ${si(endJc).toExponential(1)}`);
 }
 
 /* ======================================================================
@@ -6708,8 +6733,9 @@ console.log('\n--- solid solutions ---');
     const m = ssModel({ a: 1e-4, b: 1e-5, x: 1e-3, ma: 0, mb: 0, prm, tend: 30, more: '\n<REACTIONS>\n=> X, k = 1e-3\n' });
     const r = run(m, { tend: 30 });
     const e = r.events[0] || { t: NaN, expr: '' };
-    // A/K_A = B/K_B, so x = 1/2 and lambda the same for both: 200 X/lambda = 1.
-    const want = (lambda / 200 - 1e-3) / 1e-3;
+    // A/K_A = B/K_B, so x = 1/2 and lambda the same for both: 200 X/lambda = 1 -- and the event fires where the water is
+    // past that by the 2e-9 in ln it is watched past (SAT_ROUND, twice what the start leaves as it is), 1e-8 later here.
+    const want = ((lambda / 200) * Math.exp(2e-9) - 1e-3) / 1e-3;
     let worst = 0;
     for (let k = 0; k < r.t.length; k++) {
       if (r.t[k] <= e.t) continue;

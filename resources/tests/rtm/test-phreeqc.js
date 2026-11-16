@@ -961,6 +961,120 @@ function againstTransport(engine) {
 }
 
 /* ======================================================================
+   4b. Calcite formed where two saturated waters mix, against PHREEQC's
+   TRANSPORT
+
+   A sodium bicarbonate water flowing into a calcium chloride one, each at
+   saturation with calcite and with none of it. Mixed, the two are
+   supersaturated, and calcite forms where they meet: most where the
+   inflow first meets the column, and more there as the column's calcium
+   disperses back to it. PHREEQC leaves each water saturated to its own
+   tolerance, a few parts in 1e12 over, and the page's start leaves a
+   mineral at none unless its water is over by more than 1e-9: the run's
+   "precipitates" is watched past twice that, so that it fires and the run
+   itself holds the calcite -- watched past 1e-12, it started crossed, no
+   calcite formed in the run, and what was shown was each water's calcite
+   read back. The page runs the hand-off's model of the column's water,
+   the inflow at its left face, on 40 and on 80 cells, against PHREEQC's
+   TRANSPORT on the same: the calcite in the column, and within 2.5 mm of
+   the inlet, where the two schemes differ most -- PHREEQC's first cell
+   takes the inflow whole at every shift, the page's mixes it in -- and
+   meet as the cells are refined (measured once on 160: 1.7 % apart there,
+   the column the same to 0.1 %).
+   ====================================================================== */
+function mixingColumn(engine) {
+  const L = 0.1;
+  const alpha = L / 40;
+  const v = 1e-6;
+  const columnRaw = 'SOLUTION 101\n temp 25\n units mmol/kgw\n pH 7.0\n Ca 10\n Na 1\n Cl 21 charge\n C(4) 0.5\n'
+    + 'EQUILIBRIUM_PHASES 101\n Calcite 0 10\nSAVE solution 101\nEND\n';
+  const inflowRaw = 'SOLUTION 100\n temp 25\n units mmol/kgw\n pH 8.3\n Na 11\n Cl 1\n C(4) 10 charge\n'
+    + 'EQUILIBRIUM_PHASES 100\n Calcite 0 10\nSAVE solution 100\nEND\n';
+  // Each water as PHREEQC settles it with calcite, written out as a SOLUTION.
+  const settle = (raw) => {
+    engine.load(dbText);
+    const rows = engine.run('SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings pH Ca Na Cl C\n -start\n'
+      + '10 PUNCH -LA("H+"), TOT("Ca")*1e3, TOT("Na")*1e3, TOT("Cl")*1e3, TOT("C(4)")*1e3\n -end\n' + raw, 98);
+    const [pH, Ca, Na, Cl, C] = rows[rows.length - 1].map(Number);
+    return { pH, Ca, Na, Cl, C };
+  };
+  const col = settle(columnRaw);
+  const inf = settle(inflowRaw);
+  const sol = (n, w) => `SOLUTION ${n}\n temp 25\n units mmol/kgw\n pH ${w.pH}\n Ca ${w.Ca}\n Na ${w.Na}\n Cl ${w.Cl}\n C(4) ${w.C}\n`;
+  const runs = [40, 80].map((N) => {
+    const dx = L / N;
+    const dt = dx / v;
+    const S = N;
+    engine.load(dbText);
+    const started = Date.now();
+    const rows = engine.run(`${sol(`1-${N}`, col)}END\nEQUILIBRIUM_PHASES 1-${N}\n Calcite 0 0\nEND\n`
+      + `RUN_CELLS\n -cells 1-${N}\nEND\n${sol(0, inf)}END\n`
+      + 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time cal\n -start\n'
+      + '10 PUNCH CELL_NO, TOTAL_TIME, EQUI("Calcite")\n -end\n'
+      + `TRANSPORT\n -cells ${N}\n -shifts ${S}\n -time_step ${dt}\n -lengths ${dx}\n -dispersivities ${alpha}\n`
+      + ` -diffusion_coefficient 0\n -flow_direction forward\n -boundary_conditions flux flux\n -punch_cells 1-${N}\n`
+      + ` -punch_frequency 1\n -print_frequency ${10 * S}\nEND\n`);
+    const pqMs = Date.now() - started;
+    const head = rows[0].map((h) => String(h).trim());
+    const pq = new Map();
+    for (const r of rows.slice(1)) {
+      const t = Number(r[head.indexOf('time')]);
+      if (t > 0) pq.set(`${Number(r[head.indexOf('cell')])}/${Math.round(t / dt)}`, Number(r[head.indexOf('cal')]));
+    }
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'column', text: `${sol(1, col)}EQUILIBRIUM_PHASES 1\n Calcite 0 0\nEND\n` },
+      activity: true, exact: true, phases: true });
+    const inflow = P.parseRows(engine.run(`${P.punchBlock()}${sol(0, inf)}END\n`)).pop();
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    const text = res.text
+      .replace('MODE = batch', `MODE = transport\nCELLS = ${N}\nLENGTH = ${L}\nDIFFUSION = 1\nADVECTION = 1\n`
+        + `ADVECTION_SCHEME = limited\nVELOCITY = ${v}\nPECLET = ${L / alpha}\nLEFT = robin\nRIGHT = free`)
+      .replace('TEND = 1\n', `TEND = ${(S + 0.5) * dt}\n`)
+      .replace(SPECIES_LINE, (line, name, gap, value, rest) => {
+        if (/mineral/.test(rest) || !back.has(name)) return line;
+        const sp = inflow.species.get(back.get(name));
+        return `${line}  left=${sp ? sp[0] : 0}`;
+      });
+    const m = RtmModel.compile(text);
+    const ns = m.speciesNames.length;
+    const iCal = m.speciesNames.indexOf('Calcite');
+    const y0 = m.initialState();
+    const ev0 = new Float64Array(m.nevents);
+    m.eventValues(0, y0, ev0);
+    const t0 = Date.now();
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: (S + 0.5) * dt, rtol: 1e-7, atol: 1e-20, nonNegative: true,
+      outputTimes: Array.from({ length: S + 1 }, (_, k) => (k + 0.5) * dt) });
+    const ms = Date.now() - t0;
+    // The page at shift s: between its points (s - 0.5) dt and (s + 0.5) dt; per metre of column, as PHREEQC's cells add up.
+    const pageAt = (s) => {
+      const a = m.toConcentrations(r.grid.y[s - 1]);
+      const b = m.toConcentrations(r.grid.y[s]);
+      return Array.from({ length: N }, (_, c) => (a[c * ns + iCal] + b[c * ns + iCal]) / 2);
+    };
+    const pqAt = (s) => Array.from({ length: N }, (_, c) => pq.get(`${c + 1}/${s}`));
+    const upTo = (x, len) => x.reduce((acc, q, c) => acc + q * Math.max(0, Math.min((c + 1) * dx, len) - c * dx), 0);
+    const column = [S / 4, S / 2, S].map((s) => upTo(pageAt(s), L) / upTo(pqAt(s), L) - 1);
+    const inlet = upTo(pageAt(S), 2.5e-3) / upTo(pqAt(S), 2.5e-3) - 1;
+    // What the run itself holds, not what a point read back would precipitate: the state's calcite, the first cell.
+    const held = r.y[r.y.length - 1][iCal];
+    return { N, column, inlet, held, events: r.events.length, ev0: Math.max(...ev0), pqMs, ms,
+      total: upTo(pageAt(S), L) };
+  });
+  const [r40, r80] = runs;
+  check('calcite formed where two saturated waters mix, against PHREEQC\'s TRANSPORT: each water at saturation to PHREEQC\'s '
+    + 'tolerance with none of it, every cell\'s "precipitates" below nought at the start and firing in the run, the run '
+    + 'itself holding the calcite; the column\'s calcite at a quarter, half and all of a pore volume within 3 % of PHREEQC\'s '
+    + 'on 40 cells and 1 % on 80; within 2.5 mm of the inlet within 15 % on 80 cells, nearer than on 40',
+  runs.every((x) => x.ev0 < 0 && x.events >= x.N && x.held > 1e-6
+    && x.column.every((d) => Math.abs(d) < (x.N === 40 ? 0.03 : 0.01)))
+    && Math.abs(r80.inlet) < 0.15 && Math.abs(r80.inlet) < Math.abs(r40.inlet),
+  runs.map((x) => `${x.N} cells: the start's largest event ${x.ev0.toExponential(1)}, ${x.events} events, the first cell `
+    + `holding ${x.held.toExponential(2)} mol; the column ${x.column.map((d) => `${(d * 100).toFixed(2)} %`).join(', ')} `
+    + `(${x.total.toExponential(3)} mol/kgw m at the end); within 2.5 mm ${(x.inlet * 100).toFixed(1)} %; PHREEQC ${x.pqMs} ms, `
+    + `the page ${x.ms} ms`).join('; '));
+}
+
+/* ======================================================================
    5. A mineral dissolving at a rate, against PHREEQC's KINETICS
 
    Calcite dissolving into an undersaturated water at k (1 - SR), in PHREEQC
@@ -5888,6 +6002,8 @@ function againstKineticsHandOff(engine) {
   await besideListing(pageAsk);
   console.log('\n--- a reactive column against PHREEQC\'s TRANSPORT ---');
   againstTransport(wasm);
+  console.log('\n--- calcite formed where two saturated waters mix, against PHREEQC\'s TRANSPORT ---');
+  mixingColumn(wasm);
   console.log('\n--- a mineral dissolving at a rate against PHREEQC\'s KINETICS ---');
   againstKinetics(wasm);
   console.log('\n--- an exchanger: the hand-off, PHREEQC\'s TRANSPORT and the PHREEQC tab ---');

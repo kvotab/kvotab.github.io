@@ -33,6 +33,7 @@ The hand-off is `resources/js/rtm-phreeqc.js`, with PHREEQC passed in as an engi
 - **Phases kept at saturation**: a phase's reaction is read from the database's PHASES, and the input's EQUILIBRIUM_PHASES with their SI. Phases are refused unless the relations are held exactly. Calcite and a CO2(g) pressure become minerals and pyrite is not carried (it dissolves with electrons); the start, the amounts included, lands on what PHREEQC left (1.4e-9). With acid in, every species and the calcite left end within 1e-4 of PHREEQC with the same phases (2e-5 measured: PHREEQC leaves CO2(g) about 3e-5 off its SI, which the model then holds). The PHREEQC tab finds the water at saturation with calcite and at that CO2 pressure wherever there is any. Comparisons with PHREEQC alone leave out every species of an element kept in more than one valence state, and the redox species, since PHREEQC alone moves electrons between them.
 - **The water held exactly** (`EQUILIBRATE = always`, no `kf`): its start, read from the logarithms and totals the solver keeps, lands on PHREEQC's molalities as closely (2.4e-10). With the same acid it ends 7e-5 in pH from PHREEQC alone, where the fast pairs end 3.3e-4 from it. Exactly and as pairs at once is refused.
 - **A reactive column against PHREEQC's own TRANSPORT**: acid entering a water at saturation with calcite, 40 cells at a Peclet number of 40 for two pore volumes. PHREEQC runs TRANSPORT; the page runs the model it writes (activities following, relations held, calcite kept at saturation, limited advection). Read PHREEQC's way (its cell is the downstream face half a shift later), the effluent agrees to 0.009 in pH and 0.026 mM in calcium over the whole run, the calcite left to 0.45 %, and the front to a cell (on 80 cells, measured once: 0.002, 0.008 mM and 0.25 %). The engine is loaded afresh first: TRANSPORT applies every reactant numbered as a cell, and a REACTION 1 left from a test above had put acid into cell 1 at every shift.
+- **Calcite formed where two saturated waters mix, against PHREEQC's TRANSPORT** (4b): a sodium bicarbonate water flowing into a calcium chloride one, each settled with calcite in PHREEQC and with none of it, one pore volume over 0.1 m at a dispersivity of 2.5 mm, on 40 and on 80 cells. Mixed, the two are supersaturated; calcite forms where they meet, most where the inflow first meets the column and more there as the column's calcium disperses back to it. Every cell's "precipitates" starts at -2e-9 and fires in the run (62 events on 40 cells, 80 on 80), and the run itself holds the calcite, 6.7e-3 mol/kgw in the first cell on 80 cells. The column's calcite is within 2.2 % of PHREEQC's at a quarter, half and all of the pore volume on 40 cells and within 0.35 % on 80; within 2.5 mm of the inlet the page has 80 % more on 40 cells and 8 % more on 80 (1.7 % on 160, measured once, the column the same to 0.1 %): PHREEQC's first cell takes the inflow whole at every shift and the page's mixes it in, and the two meet as the cells are refined, the page from above and PHREEQC from below, the page nearer at each. With the events watched past saturation by 1e-12, PHREEQC's waters, a few parts in 1e12 over, started every "precipitates" crossed: no event, no calcite in the run, the column 31 % short at the end and none within 2.5 mm, what was shown being each water's calcite read back. `MINERALS = complementarity` gives the same numbers as the events, to the digits shown.
 - **A mineral dissolving at a rate against PHREEQC's KINETICS**: calcite into an undersaturated water at k(1 − SR), PHREEQC with a RATES block, the page with `SR(Calcite)` from `<PHASES>` (log K PHREEQC gives at the temperature). The way to saturation agrees at 100 s to 10,000 s, calcium to 1.3e-5 and pH to 2.3e-6.
 - **An exchanger**: Example 11's column water with an `EXCHANGE` of 1.1 mmol/kgw loaded from it. The hand-off writes `X- exchanger` and the species PHREEQC put on it, with the database's `-gamma` when the activity coefficients follow (none when conditional), and the page's start is PHREEQC's exchanger to 6.7e-16. Not held exactly, the exchanger is not carried and the report says so. Then Example 11 itself: CaCl2 through 40 cells for three pore volumes, PHREEQC's TRANSPORT against the page's model of the water (limited advection), read as in the calcite column. The effluent agrees to 0.022 mM in Na, 0.033 in K (peaking at 1.115), 0.017 in Ca and 0.005 in Cl (on 80 cells, measured once: 0.016, 0.017, 0.007, 0.001). The PHREEQC tab loads PHREEQC's exchanger from each water of a run at the run's capacity, and the run's fractions are within 6.8e-9 of it over 150 waters.
 
@@ -397,7 +398,12 @@ the acid added by then, speciated afresh, is just saturated with none of it
 (SI 9e-11). A point stored before the event is read back with its calcite; a
 Ca source precipitates calcite at an event; a column's acid front dissolves it
 cell by cell, ten events in order; and under `ACTIVITY` the saturation is in
-activities. The Jacobian is checked with the mineral there and with none.
+activities. The Jacobian is checked with the mineral there and with none. And a
+water at saturation with none of the mineral, as PHREEQC leaves one, 4e-10 over
+in ln: the start leaves it at none, its "precipitates" starts at -1.6e-9, and
+calcium added at 1e-11 mol/s precipitates calcite 0.2 s in, the run holding
+it (watched past saturation by 1e-12, the event started at +4e-10 and never
+fired: no calcite in the run, the water read back at saturation all the same).
 
 A held column's stored points are read back cell by cell (the run's own
 modes found again from each state): at saturation wherever there is calcite,
@@ -462,9 +468,18 @@ waters spent 200 events by 56,000 s of the 4e6, and a reader's calcite column
 2,000 in 1.6 of its 120 years. Projected, it never fired: the run held a
 calcite that was gone, its amount ran to -6.7e-4 mol, the cell's totals drained
 to a pH of 4.1, and the column came out differently at each tolerance (cell 10
-at pH 7.90 at rtol 1e-6, 8.38 at 1e-9, against 7.89). Each event is now watched
-past the bound by 64 roundings of the cell's largest total and past saturation
-by 1e-12 in ln (heldEvent, SAT_ROUND); every event check above holds as before.
+at pH 7.90 at rtol 1e-6, 8.38 at 1e-9, against 7.89). And a water PHREEQC
+leaves saturated with calcite and none of it is over by PHREEQC's own
+tolerance, a few parts in 1e12, which the start leaves at none (it
+precipitates a mineral only past 1e-9 in ln): watched past saturation by
+1e-12, its "precipitates" started crossed, and where two such waters mixed no
+calcite formed in the whole run -- what was shown was each water's calcite
+read back, which falls as the water comes back to the inflow's, so that the
+calcite looked to dissolve behind the front and travel with it (test-phreeqc.js,
+4b). Each event is now watched past twice what the start leaves as it is: past
+the bound by 2e-12 of the cell's largest total, and past saturation by 2e-9 in
+ln (heldEvent, roundM, SAT_ROUND), a bubble or a solid solution the same way;
+every event check above holds as before.
 
 **Totals that cancel.** A total with a minus sign in it is held to rtol of the
 species in it, each counted as large as it is, as well as of itself. Halite
@@ -959,7 +974,8 @@ a1 = -1.82: the two compositions with the members' activities the same (2.9e-10;
 PHREEQC's solve_misc stops at 1e-6), the spinodal between them where d2G/dx2 = 0, and
 for a1 = 0 the regular solution's ln((1 - x)/x) = a0 (1 - 2x) (1e-8), none at a0 = 1.9
 and one at 2.05 (PHREEQC's critical a0 is 2). Forming as X comes in, at the time the
-closed form gives, ideal and with a0 = 1.5 (7e-11). Through the gap as B comes in: the
+closed form gives for the water 2e-9 past saturation in ln, as far as an event is
+watched past it, ideal and with a0 = 1.5 (7e-11). Through the gap as B comes in: the
 run stops where x_B comes to the gap's lower edge and where it leaves at the upper
 (1e-8 at each), every relation held (2.2e-10). Dissolving away as X is taken out: both
 members at none after it, no composition supersaturated. Under none, Davies and SIT,
@@ -1385,7 +1401,7 @@ The Composition tab one time at a time (since 2026-11-11), on the same run: alon
 
 The same run in mg/kgw (since 2026-11-10), as the freshening example gives it: the four Units selects at mg, the menu mol, mmol, µmol and nmol per kgw and mg and µg per kgw. Against time at the outlet the calcium, magnesium, sodium and chloride dissolved, the title concentration (mg/kgw), calcium's curve 40078 times its mol/kgw to 1e-12 and what was measured of it 40.078, 2.80546, 22.44368 and 92.1794 mg/kgw; mmol/kgw chosen on Against distance's bar sets all four, a thousand times the model's; in the model's own the title as it was. CaX2 ticked in mg: left off, the note naming it, no formula mass; the CSV `t (s)`, each in mg/kgw and CaX2 in mol/kgw. Kept and run again: beside it, dashed, the kept run in mg/kgw, the same to the last digit. Against distance CaX2 alone as the model has it, the note saying why, and Ca+2 in mg/kgw, every header of the CSV after the distance ending ` (mg/kgw)`; on Gradient Ca+2 (mg/kgw). The water's listing then has a column in mg/kgw after PHREEQC's own: in the Text, calcium's total its molality times 40078 to the four figures printed, and last in the CSV. A model without ACTIVITY with mg/kgw still chosen: drawn as its text has it, the note saying mg/kgw needs ACTIVITY; mg and µg on the menu, not to be chosen; times 10³ a thousand times, the title concentration × 10³.
 
-The redox zones on Gradient (since 2026-11-10), on the plume example's run: first in Show where the model has the electron, and not offered for the freshening run, which has none. Each cell at each stored time by the couple holding its pe, the most poising capacity n Tox Tred/(Tox + Tred), the water's O2 at 2 Tox against the water itself. The zones in the order the couples turn over, O2/H2O, NO3-/N2, Pyrolusite/Mn+2, Fe+3/Fe+2, SO4-2/HS-, CO3-2/CH4, the nitrite never holding the pe; at the end of the run from the inlet sulfate, methane, iron, manganese, nitrate and the oxygen ahead; the note giving each zone's share of the waters; drawn as a map though the example's As is contours, log concentration and smooth not to be had. Cell 15 at each of its 2844 stored times, the couple holding the pe worked out by hand from every species' concentration there -- the time chart's CSV, nothing ticked -- with each couple's species written out in the test, is the zone the map's CSV gives by name: oxic, then nitrate, manganese and iron as the plume reaches it.
+The redox zones on Gradient (since 2026-11-10), on the plume example's run: first in Show where the model has the electron, and not offered for the freshening run, which has none. Each cell at each stored time by the couple holding its pe, the most poising capacity n Tox Tred/(Tox + Tred), the water's O2 at 2 Tox against the water itself. The zones in the order the couples turn over, O2/H2O, NO3-/N2, Pyrolusite/Mn+2, Fe+3/Fe+2, SO4-2/HS-, CO3-2/CH4, the nitrite never holding the pe; at the end of the run from the inlet sulfate, methane, iron, manganese, nitrate and the oxygen ahead; the note giving each zone's share of the waters; drawn as a map though the example's As is contours, log concentration and smooth not to be had. Cell 15 at each of its 2836 stored times, the couple holding the pe worked out by hand from every species' concentration there -- the time chart's CSV, nothing ticked -- with each couple's species written out in the test, is the zone the map's CSV gives by name: oxic, then nitrate, manganese and iron as the plume reaches it.
 
 Against distance one time at a time (since 2026-11-10), on the same run, Ca+2 in mg/kgw: under the Times the slider at the end of its 514 stored points, the eight curves, Back to Times not to be pressed; moved to point 100, one curve at 1.31 h, the note saying it is the slider's and the axis the whole run's, and the axis the same at point 300; that curve the very one the Times draw when given point 300's stored time, which brings the Times back. Play, the run in 5 s, from point 300: the slider moving on, the button pause and the axis still; at the end of the run it stops at 6.94 d, the button play again; Back to Times the eight curves again. Those ticked against time on the slider: the four at 18.4 min and at 2.04 d, their axis the same.
 

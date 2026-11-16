@@ -3842,10 +3842,10 @@ async def main():
                   [['The redox zones: the couple holding the pe', 'heatmap',
                     'O2/H2O | NO3-/N2 | Pyrolusite/Mn+2 | Fe+3/Fe+2 | SO4-2/HS- | CO3-2/CH4',
                     'SO4-2/HS- > CO3-2/CH4 > Fe+3/Fe+2 > Pyrolusite/Mn+2 > NO3-/N2 > O2/H2O',
-                    'the redox zones by the couple holding the pe, oxidised first: O2/H2O 57.5 %, NO3-/N2 4.1 %, Pyrolusite/Mn+2 '
+                    'the redox zones by the couple holding the pe, oxidised first: O2/H2O 57.4 %, NO3-/N2 4.1 %, Pyrolusite/Mn+2 '
                     '14.2 %, Fe+3/Fe+2 12.4 %, SO4-2/HS- 2.7 %, CO3-2/CH4 9.1 % of the waters; never holding it: NO3-/NO2-; '
                     'drawn as a map: zones are no amount to draw contours of or raise into a surface', True, True],
-                   'rtm_gradient__zones.csv', 2844, True, ['O2/H2O', 'NO3-/N2', 'Pyrolusite/Mn+2', 'Fe+3/Fe+2']])
+                   'rtm_gradient__zones.csv', 2836, True, ['O2/H2O', 'NO3-/N2', 'Pyrolusite/Mn+2', 'Fe+3/Fe+2']])
             await page.ev("(() => { const c = document.getElementById('rtmCell'); c.value = '0';"
                           " c.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await page.ev("document.querySelector('[data-tab=\"gradient\"]').click()")
