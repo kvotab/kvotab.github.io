@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261116a';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261116b';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1473,6 +1473,38 @@
       + `${span} from ${fmtTime(x.from)} on, at ${x.off.toLocaleString()} of the stored waters.`
       + (others.length ? ` ${list(others)} ${others.length > 1 ? 'part' : 'parts'} from what the run held too.` : '')
       + (x.kind === 'mineral' && !x.comp ? ' MINERALS = complementarity in <SETTINGS> holds a mineral with no events.' : '');
+  }
+
+  /*
+    WHAT THE RUNS A TAB MAKES HELD, AGAINST WHAT IS SHOWN of them -- a
+    sweep's, the uncertainty's draws, each constant's, a fit's, the careful
+    run that checks a run (unheld, from the worker): where in any of them an
+    amount the run held as it is parts from what is shown of it by more than
+    the run's own arithmetic, how many of the runs, and of the one furthest
+    past what it was allowed which run it is (runName), the amount, when
+    and where, what is shown and what the run held. '' for none. In the
+    unit the table shows, the model's as compiled.
+  */
+  function unheldNote(x, { off = 1, of = 1, runName = '', lead = '', among = '' } = {}) {
+    const r = { model: state.compiled || (state.result && state.result.model) };
+    if (!x || !r.model) return '';
+    const u = shownUnit(r);
+    const amount = (v) => (Math.abs(v) <= 1e-12 * x.peak ? 'none' : valueWords(r, x.name, v, u));
+    const p = x.place;
+    const where = !p ? '' : ` at cell ${p.cell}${p.x != null ? ` (${Number(p.x.toPrecision(3))} m)` : ''}`
+      + `${p.stride > 1 ? (p.layer ? `, rock ${p.layer}` : ', the fracture') : ''}`;
+    const which = lead || (off === of ? `In all ${of.toLocaleString()} runs`
+      : `In ${off.toLocaleString()} of the ${of.toLocaleString()} runs`);
+    return ` ${which} what is shown of ${labelOf(x.name)} is not what the run held${among}: `
+      + `${runName ? `the most in ${runName}, ` : ''}at ${fmtTime(x.at)}${where} the water settled on its own holds `
+      + `${amount(x.shown)} of it where the run held ${amount(x.held)}.`;
+  }
+  /** Of a reply's runs, those whose amounts part from what is shown, and the one furthest: { off, of, worst, at }. */
+  function unheldRuns(runs) {
+    const ok = runs.filter((r) => r.ok);
+    let at = -1;
+    runs.forEach((r, i) => { if (r.ok && r.unheld && (at < 0 || r.unheld.worst > runs[at].unheld.worst)) at = i; });
+    return { off: ok.filter((r) => r.unheld).length, of: ok.length, worst: at >= 0 ? runs[at] : null, at };
   }
 
   /**
@@ -2984,10 +3016,12 @@
       setProgress(null);
       const v = checkVerdict(checkNow, r, shownUnit(r));
       const took = `${reply.seconds.toFixed(2)} s${reply.steps ? `, ${reply.steps.toLocaleString()} steps` : ''}`;
+      // The careful run's own amounts against what is shown of it, as of any run.
+      const unheld = reply.moved ? unheldNote(reply.unheld, { lead: 'In the careful run' }) : '';
       setStatus(!reply.moved ? `The run could not be checked: ${reply.failed || 'the careful run failed at the start'}.`
         : `Checked, solved again ${timesWord(careful.factor)} more carefully in ${took}: `
         + `the run ${v.word}${reply.failed ? ` as far as the careful run got, ${fmtTime(reply.failedAt)}` : ''}. `
-        + 'The line under the table says more.', !reply.moved ? 'error' : v.holds && !reply.failed ? 'ok' : 'warn');
+        + `The line under the table says more.${unheld}`, !reply.moved ? 'error' : v.holds && !reply.failed && !unheld ? 'ok' : 'warn');
     } catch (e) {
       setProgress(null);
       setStatus(`The run could not be checked: ${e.message}`, 'error');
@@ -8137,9 +8171,12 @@
       });
       swResult = { reply, vary, lists, text };
       const failed = reply.runs.filter((r) => !r.ok);
+      const uh = unheldRuns(reply.runs);
+      const unheld = uh.worst ? unheldNote(uh.worst.unheld, { off: uh.off, of: uh.of, runName: swRunName(uh.worst) }) : '';
       setProgress(null);
       setStatus(`${reply.runs.length - failed.length} of ${reply.runs.length} runs done in ${reply.seconds.toFixed(2)} s`
-        + `${failed.length ? `; ${swRunName(failed[0])} failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+        + `${failed.length ? `; ${swRunName(failed[0])} failed: ${failed[0].error}` : '.'}${unheld}`,
+      failed.length || unheld ? 'warn' : 'ok');
       renderSwShow();
       drawSw();
     } catch (e) {
@@ -8284,9 +8321,12 @@
       swResult = { kind: 'each', what, reply, targets, left, text };
       w.show = 'ranked';
       const failed = reply.runs.filter((r) => !r.ok);
+      const uh = unheldRuns(reply.runs);
+      const unheld = uh.worst ? unheldNote(uh.worst.unheld, { off: uh.off, of: uh.of, runName: eachRunName(uh.worst) }) : '';
       setProgress(null);
       setStatus(`${reply.runs.length - failed.length} of ${reply.runs.length} runs done in ${reply.seconds.toFixed(2)} s`
-        + `${failed.length ? `; ${eachRunName(failed[0])} failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+        + `${failed.length ? `; ${eachRunName(failed[0])} failed: ${failed[0].error}` : '.'}${unheld}`,
+      failed.length || unheld ? 'warn' : 'ok');
       renderSwShow();
       drawSw();
     } catch (e) {
@@ -8726,8 +8766,15 @@
       renderFitShow();
       $('rtmFitShow').value = 'data';
       setProgress(null);
+      // The fit's runs whose amounts part from what is shown: the one furthest by the numbers it was run at.
+      const uh = reply.unheld;
+      const unheld = uh ? unheldNote(uh.worst, { off: uh.off, of: uh.of, among: uh.fitted ? ', the fitted run among them' : '',
+        lead: uh.off === uh.of ? `In all ${uh.of.toLocaleString()} runs the fit made`
+          : `In ${uh.off.toLocaleString()} of the ${uh.of.toLocaleString()} runs the fit made`,
+        runName: `the run at ${reply.params.map((p, i) => `${swVaryLabel(p)} = ${fmtNumber(uh.worst.values[i])}`).join(', ')}` })
+        : '';
       setStatus(`Fitted in ${reply.seconds.toFixed(2)} s, ${reply.runs} runs: ${reply.why}. The misfit went from `
-        + `${reply.ssr0.toPrecision(4)} to ${reply.ssr.toPrecision(4)}.`, 'ok');
+        + `${reply.ssr0.toPrecision(4)} to ${reply.ssr.toPrecision(4)}.${unheld}`, unheld ? 'warn' : 'ok');
       renderFitResult();
       drawFit();
       renderUn();
@@ -9584,9 +9631,13 @@
         corr: u.useCorr && unCorrApplies() && u.rows.length > 1 };
       const runs = reply.runs.slice(withBase ? 1 : 0);
       const failed = runs.filter((r) => !r.ok);
+      // A run of the uncertainty by its name: the model as written, or its draw.
+      const uh = unheldRuns(reply.runs);
+      const unheld = uh.worst ? unheldNote(uh.worst.unheld, { off: uh.off, of: uh.of,
+        runName: withBase && uh.at === 0 ? 'the model as written' : `draw ${uh.at + (withBase ? 0 : 1)}` }) : '';
       setProgress(null);
       setStatus(`${runs.length - failed.length} of ${runs.length} runs done in ${reply.seconds.toFixed(2)} s`
-        + `${failed.length ? `; the first that failed: ${failed[0].error}` : '.'}`, failed.length ? 'warn' : 'ok');
+        + `${failed.length ? `; the first that failed: ${failed[0].error}` : '.'}${unheld}`, failed.length || unheld ? 'warn' : 'ok');
       renderUnShow();
       drawUn();
     } catch (e) {

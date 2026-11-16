@@ -4022,6 +4022,70 @@ Calcite <=> Ca+2 + CO3-2, logK = -8.48
         && !!noMineral && noMineral.asHeld === null,
     withCal ? `${withCal.asHeld.map((x) => `${x.name} ${x.worst.toExponential(1)}, ${x.off} off`).join('; ')}`
       + `, ${withCal.events.length} event; ${noMineral ? `no mineral: ${noMineral.asHeld}` : 'the second did not run'}` : 'no run');
+
+    /*
+      THE RUNS THE TABS MAKE, set against what is shown of them the same way
+      (rtmUnheld): the calcium source swept over TEND, run as the
+      uncertainty's draws read at times, each constant in turn, its rate
+      fitted to what its own run measured, and a run checked by a careful
+      one -- every run as held. Then all of it again with the model's
+      read-back made to show 1e-4 more calcite than the run held after
+      1000 s, as a run that missed it precipitating would be shown: every
+      run of each says so, Calcite named and 1e-4 between what is shown and
+      what it held, in a batch no place; the fit how many of its runs, all
+      of them, the fitted one among them, at the numbers it ran.
+    */
+    const cal = water({ co3: '1e-6', ca: '1e-5', cl: '2e-5', calcite: '0', rx: '=> Ca+2 + Cl- + Cl-, k = 1e-8' });
+    const solver = { method: 'ndf', rtol: 1e-6, atol: 1e-20, nonNegative: true, maxPoints: 4000, stagnationTol: 0.5 };
+    const ask = (msg) => {
+      let got = null;
+      handleRtmMessage({ id: 90, ...msg }, (m) => { if (m.type !== 'progress') got = m; });
+      return got;
+    };
+    const rate = RtmModel.tunables(cal).filter((x) => x.kind === 'rate').map((x) => ({ vary: { kind: 'rate', name: x.name }, base: x.value }));
+    // What the run measured: its own calcium at eight times.
+    const mf = RtmModel.compile(cal);
+    const fT = [2e4, 4e4, 6e4, 8e4, 1e5, 1.2e5, 1.4e5, 1.6e5];
+    const rf = FacsimileODE.runModel(mf, { solver: 'ndf', tend: 2e5, rtol: 1e-8, atol: 1e-20, nonNegative: true, outputTimes: fT, maxPoints: 4 });
+    const fitText = `${cal}\n<DATA>\ntime  Ca+2  cell = 0\n${fT.map((t, i) => `${t} ${mf.toConcentrations(rf.grid.y[i], t)[5]}`).join('\n')}\n`;
+    const jobs = () => {
+      const run = ask({ type: 'run', text: cal, solver });
+      return {
+        sweep: ask({ type: 'sweep', text: cal, solver, vary: [{ kind: 'setting', name: 'TEND' }], values: [[1.5e5, 2e5]], cell: 0 }),
+        draws: ask({ type: 'sweep', text: cal, solver, vary: [rate[0].vary], combos: [[1e-8], [1.2e-8]], times: [1e4, 5e4, 1e5, 1.5e5],
+          cell: 0 }),
+        each: ask({ type: 'each', text: cal, solver, targets: rate, delta: 0.01, cell: 0 }),
+        fit: ask({ type: 'fit', text: fitText, solver, params: [{ ...rate[0].vary, start: 1.5e-8 }] }),
+        check: ask({ type: 'check', runKey: run.runKey, solver: { ...solver, rtol: 1e-8, atol: 1e-22, maxPoints: 1000 }, floor: 1e-14 }),
+      };
+    };
+    const asRun = jobs();
+    const compileAs = RtmModel.compile;
+    let withMore = null;
+    RtmModel.compile = function compileShowingMore(text, ...rest) {
+      const m = compileAs.call(this, text, ...rest);
+      const k = m.speciesNames.indexOf('Calcite');
+      if (m.toConcentrations && k >= 0) {
+        const tc = m.toConcentrations;
+        m.toConcentrations = (y, t = 0) => { const out = tc(y, t); if (t > 1000) out[k] += 1e-4; return out; };
+      }
+      return m;
+    };
+    try { withMore = jobs(); } finally { RtmModel.compile = compileAs; }
+    const runsOf = (j) => [...j.sweep.runs, ...j.draws.runs, ...j.each.runs];
+    // The 1e-4 put in, to what the run's own read-back may differ by (2e-7 allowed here).
+    const named = (u) => !!u && u.name === 'Calcite' && u.place === null && Math.abs(u.shown - u.held - 1e-4) < 1e-6 && u.at > 1000;
+    check('  the runs the tabs make, as held: a sweep, the uncertainty\'s draws, each constant in turn, a fit and a careful '
+      + 'check; with the read-back showing 1e-4 more calcite than held, every run of each names Calcite, the fit all its runs',
+    runsOf(asRun).length === 7 && runsOf(asRun).every((r) => r.ok && r.unheld === null) && asRun.fit.unheld === null
+      && asRun.check.unheld === null && asRun.check.moved
+      && runsOf(withMore).every((r) => r.ok && named(r.unheld)) && named(withMore.check.unheld)
+      && !!withMore.fit.unheld && withMore.fit.unheld.off === withMore.fit.unheld.of && withMore.fit.unheld.of >= withMore.fit.runs
+      && withMore.fit.unheld.fitted === true && named(withMore.fit.unheld.worst) && withMore.fit.unheld.worst.values.length === 1,
+    `${runsOf(asRun).length} runs and a fit of ${asRun.fit.runs} and a check as held; read back with more: `
+      + `${runsOf(withMore).filter((r) => named(r.unheld)).length} of ${runsOf(withMore).length} runs named, the fit `
+      + `${withMore.fit.unheld ? `${withMore.fit.unheld.off} of ${withMore.fit.unheld.of}, at k = ${withMore.fit.unheld.worst.values[0]}` : 'none'}, `
+      + `the check ${withMore.check.unheld ? withMore.check.unheld.name : 'none'}`);
   }
 }
 

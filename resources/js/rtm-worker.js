@@ -283,6 +283,34 @@ function rtmConcentrations(model, ys, n, width, ts) {
   return states;
 }
 
+/*
+  WHAT A RUN HELD, SET AGAINST WHAT IS SHOWN of it (model.asHeld), for the
+  runs the tabs make besides Run's own -- a sweep's, the uncertainty's
+  draws, each constant's, a fit's, a careful one: the amount furthest past
+  what it was allowed, where its cell is along the column, and the names of
+  any others past it; or null where every amount is as the run held it, or
+  the model holds none as it is. `shown`, the run read back at the same
+  points: flat, or a point at a time.
+*/
+function rtmUnheld(model, ys, shown, n, ts, s, events) {
+  if (!model.asHeld || !n) return null;
+  const width = model.stateWidth || model.nspecies;
+  let flat = shown;
+  if (Array.isArray(shown)) {
+    flat = new Float64Array(n * width);
+    for (let i = 0; i < n; i++) flat.set(shown[i].subarray(0, width), i * width);
+  }
+  const off = model.asHeld(ys, flat, n, width, ts, s.rtol, s.atol, (events || []).map((e) => e.t))
+    .filter((x) => x.off > 0).sort((a, b) => b.worst - a.worst);
+  if (!off.length) return null;
+  const x = off[0];
+  const stride = model.stride || 1;
+  const fc = Math.floor(x.cell / stride);
+  const place = model.cells <= 1 ? null
+    : { cell: fc, layer: x.cell % stride, stride, x: fc < model.fracture ? model.grid.centres[fc] : null };
+  return { ...x, place, others: off.slice(1).map((o) => o.name) };
+}
+
 /** Which solvers this worker can actually run; asked for as it starts. */
 function rtmSolvers() {
   // The NDF runs the plain BDFs with its BDF formulas switch, and QNDF runs
@@ -2288,7 +2316,8 @@ function rtmSweep(msg, post) {
         endQuant.set(qOut, k * nq);
       }
       runs.push({ values: combo, ok: true, m, t, cellStates, cellQuant, nf, centres: Float64Array.from(model.grid.centres.slice(0, nf)),
-        endStates, endQuant, tend: at.t[n - 1], steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
+        endStates, endQuant, tend: at.t[n - 1], steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000,
+        unheld: rtmUnheld(model, at.y, states, n, at.t, s, res.events) });
     } catch (e) {
       runs.push({ values: combo, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
     }
@@ -2400,7 +2429,8 @@ function rtmEach(msg, post) {
         seriesTimes = seriesTimes || Array.from(gt);
       }
       runs.push({ target: job.target, factor: job.factor, ok: true, end, max, min, tend: res.t[n - 1], ...(series ? { series } : {}),
-        steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000 });
+        steps: res.stats ? res.stats.nsteps : null, seconds: (Date.now() - t0) / 1000,
+        unheld: rtmUnheld(model, res.y, states, n, res.t, s, res.events) });
     } catch (e) {
       runs.push({ target: job.target, factor: job.factor, ok: false, error: rtmErrorMessage(e), seconds: (Date.now() - t0) / 1000 });
     }
@@ -2462,6 +2492,8 @@ function rtmCheck(msg, post) {
   if (m < 2) return { reply: { ...base, upTo: 0 }, transfer: [] };
   const width = run.width;
   const careful = rtmConcentrations(model, grid.y, m, width, grid.t);
+  // The careful run's own amounts against what is read back of it, as of any run.
+  const unheld = rtmUnheld(model, grid.y, careful, m, grid.t, s, res && res.events);
   rtmHoldFixed(model, careful, m, width);
   const ns = model.speciesNames.length;
   const nc = Math.min(model.cells, Math.floor(width / ns));
@@ -2507,7 +2539,7 @@ function rtmCheck(msg, post) {
       if (iAt >= 0) there[j] = careful[iAt * width + j];
     }
   }
-  return { reply: { ...base, cells: nc, species: ns, moved, at, there }, transfer: [moved.buffer, at.buffer, there.buffer] };
+  return { reply: { ...base, cells: nc, species: ns, moved, at, there, unheld }, transfer: [moved.buffer, at.buffer, there.buffer] };
 }
 
 /*
@@ -2773,6 +2805,15 @@ function rtmFit(msg, post) {
     [...new Set(points.filter((p) => p.table === ti).map((p) => p.x))].sort((a, b) => a - b)]));
   const out1 = new Float64Array(1);
   let runs = 0;
+  // What each run the fit makes held, against what is shown of it (rtmUnheld): how many of them part, of how many, and
+  // the one furthest past what it was allowed, with the numbers it was run at.
+  const unheld = { off: 0, of: 0, worst: null };
+  const tallyUnheld = (u, th) => {
+    unheld.of++;
+    if (!u) return;
+    unheld.off++;
+    if (!unheld.worst || u.worst > unheld.worst.worst) unheld.worst = { ...u, values: params.map((_, i) => fromTheta(th[i], i)) };
+  };
   const maxRuns = msg.maxRuns || 60 * (np + 2);
   let lastReport = 0;
   const history = [];
@@ -2789,6 +2830,7 @@ function rtmFit(msg, post) {
         maxPoints: keep ? 400 : 4 });
       if (!res.grid || res.grid.t.length < times.length) throw new Error('the run did not reach every time measured');
       conc = res.grid.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.grid.t[i]) : y));
+      tallyUnheld(rtmUnheld(model, res.grid.y, conc, res.grid.t.length, res.grid.t, s, res.events), th);
     }
     // Each table against pH, pe, Eh or sys(): its water speciated at every value it measured, with these numbers -- a table
     // with a water of its own, of the text with its species started there.
@@ -2941,6 +2983,15 @@ function rtmFit(msg, post) {
   // the most, or at those measured alone where the water does not settle that far out.
   const { model, res } = best;
   const conc = res ? res.y.map((y, i) => (model.toConcentrations ? model.toConcentrations(y, res.t[i]) : y)) : null;
+  // The fitted run at every point it stored, whose curves are drawn: one of the runs already counted, at more points.
+  const fittedUnheld = res ? rtmUnheld(model, res.y, conc, res.t.length, res.t, s, res.events) : null;
+  if (fittedUnheld) {
+    unheld.fitted = true;
+    if (!unheld.off) unheld.off = 1;
+    if (!unheld.worst || fittedUnheld.worst > unheld.worst.worst) {
+      unheld.worst = { ...fittedUnheld, values: params.map((_, i) => fromTheta(theta[i], i)) };
+    }
+  }
   const curves = [];
   const seen = new Set();
   const specCurve = new Map();
@@ -3026,6 +3077,7 @@ function rtmFit(msg, post) {
         const r = FacsimileODE.runModel(m, { ...rtmSolveOptions(s, tend, () => true, m), outputTimes: runTimes, maxPoints: 4 });
         if (!r.grid || r.grid.t.length < runTimes.length) throw new Error('the run did not reach every time of the curves');
         runTimes.forEach((t, i) => at.set(t, m.toConcentrations ? m.toConcentrations(r.grid.y[i], r.grid.t[i]) : r.grid.y[i]));
+        tallyUnheld(rtmUnheld(m, r.grid.y, runTimes.map((t) => at.get(t)), runTimes.length, r.grid.t, s, r.events), th);
       }
       const stride = m.stride || 1;
       const spec = new Map();
@@ -3063,6 +3115,7 @@ function rtmFit(msg, post) {
   for (const c of curves) { delete c.k; delete c.q; }
   return {
     type: 'fit', id: msg.id, why, runs, seconds: (Date.now() - started) / 1000, n, np, skipped, ssr0, ssr: best.ssr, sd, weighted,
+    unheld: unheld.off ? unheld : null,
     // Weighted: the misfit is chi-square on n - np degrees of freedom, and the chance of one at least as large by the deviations alone.
     chi2: weighted ? best.ssr : null, dof: n - np,
     pChi2: weighted && n > np ? rtmChiSquareTail(best.ssr, n - np) : null,

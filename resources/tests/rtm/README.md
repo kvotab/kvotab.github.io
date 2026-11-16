@@ -438,7 +438,16 @@ column whose events were watched past only 1e-12 (the margins before
 2026-11-16), where two waters PHREEQC left saturated mixed, the check named
 calcite in all 20 cells from 12 s, 465 times what is allowed; over the model
 and PHREEQC suites' 300-odd held runs the most any amount came to was 0.074 of
-it (the bend), the most at events or in a group 0.0016.
+it (the bend), the most at events or in a group 0.0016. The runs the tabs make
+are set against what is shown the same way (`rtmUnheld`): the calcium source
+swept over TEND, run as the uncertainty's draws read at times, each constant in
+turn, its rate fitted to what its own run measured, and a run checked by a
+careful one, every run as held; with the model's read-back made to show 1e-4
+more calcite than held after 1000 s, every run of each names Calcite, 1e-4
+apart, and the fit all 11 of its runs, the fitted one among them. On the page
+with no worker (test-ui), the same read-back puts the warning in the status of
+a run, of the careful run that checks it, and of a sweep of TEND naming the run
+where the two part most.
 
 **Minerals held by complementarity** (`MINERALS = complementarity`). The acid
 column above held by the smoothed Fischer-Burmeister equation in place of

@@ -5505,7 +5505,6 @@ async def main():
             await page.ev("document.getElementById('rtmRun').click()")
             run = await wait_run(page)
             tone = await page.ev("document.getElementById('rtmStatus').className")
-            await page.ev("RtmModel.compile = window.rtmCompileKept")
             check(f'shown otherwise than the run held it, the line says so and is marked ({str(run)[-170:]})',
                   isinstance(run, str) and run.startswith('Done')
                   and 'What is shown of Calcite is not what the run held: at ' in run
@@ -5513,6 +5512,32 @@ async def main():
                   and ' of the stored waters.' in run
                   and run.endswith('MINERALS = complementarity in <SETTINGS> holds a mineral with no events.')
                   and tone == 'rtm-status warn', True)
+            # The runs the tabs make, read back the same way: the careful run that checks the run says so, and a
+            # sweep of TEND of each of its runs, naming the one where the two part most.
+            await page.ev("document.getElementById('rtmCheckRun').click()")
+            await settle(page, "/^(Checked|The run could not be checked)/.test(document.getElementById('rtmStatus').textContent)",
+                         True, tries=240, pause=0.5)
+            said = await page.ev("[document.getElementById('rtmStatus').textContent, document.getElementById('rtmStatus').className]")
+            check(f'  and the careful run that checks it, its line marked ({str(said[0])[-150:]})',
+                  isinstance(said, list) and said[0].startswith('Checked, solved again')
+                  and ' In the careful run what is shown of Calcite is not what the run held: at ' in said[0]
+                  and ' the water settled on its own holds ' in said[0] and said[1] == 'rtm-status warn', True)
+            await page.ev("document.querySelector('[data-tab=\"sweep\"]').click()")
+            await asyncio.sleep(0.4)
+            await page.ev("(() => { const w = document.getElementById('rtmSwWhat'); w.value = 'setting:TEND';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("(() => { const v = document.getElementById('rtmSwValues'); v.value = '1.5e5, 2e5';"
+                          " v.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev("document.getElementById('rtmSwGo').click()")
+            await settle(page, "document.getElementById('rtmStatus').textContent.startsWith('2 of 2 runs done')", True,
+                         tries=60, pause=0.5)
+            said = await page.ev("[document.getElementById('rtmStatus').textContent, document.getElementById('rtmStatus').className]")
+            check(f'  and a sweep of TEND, of all its runs, naming the one where they part most ({str(said[0])[-150:]})',
+                  isinstance(said, list) and said[0].startswith('2 of 2 runs done in ')
+                  and '. In all 2 runs what is shown of Calcite is not what the run held: the most in TEND = ' in said[0]
+                  and ' the water settled on its own holds ' in said[0] and said[1] == 'rtm-status warn', True)
+            await page.ev("RtmModel.compile = window.rtmCompileKept")
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
             check('no console errors with no worker', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid2})
