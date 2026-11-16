@@ -5467,6 +5467,52 @@ async def main():
                               ".data[0].y; return y[y.length - 1]; })()")
             check(f'and gets the right answer ({v} against exp(-5))',
                   isinstance(v, (int, float)) and abs(v - 0.006737947) < 1e-5, True)
+            # What the run held against what is shown: a calcium source into a water, calcite precipitating
+            # once, shown as the run held it -- the line says nothing more and is not marked. Then the same run
+            # with the model's read-back made to show 1e-4 more calcite than the run held after 1000 s, as a
+            # run that missed it precipitating would be shown: the line says so, and is marked as a warning.
+            await page.ev("""(() => {
+              const m = document.getElementById('rtmMethod');
+              m.value = 'ndf'; m.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            await set_text(page, '<SETTINGS>\nMODE = batch\nTEND = 2e5\nEQUILIBRATE = always\n\n<SPECIES>\n'
+                                 'H+ 1e-7\nOH- 1e-7\nCO2 1e-4\nHCO3- 2e-3\nCO3-2 1e-6\nCa+2 1e-5\nCl- 2e-5\n'
+                                 'Calcite 0 mineral\n\n<EQUILIBRIUM>\n <=> H+ + OH-, logK = -14\n'
+                                 'CO2 <=> H+ + HCO3-, logK = -6.35\nHCO3- <=> H+ + CO3-2, logK = -10.33\n'
+                                 'Calcite <=> Ca+2 + CO3-2, logK = -8.48\n\n<REACTIONS>\n'
+                                 '=> Ca+2 + Cl- + Cl-, k = 1e-8\n')
+            await settle(page, "document.getElementById('rtmStatus')"
+                               ".textContent.startsWith('Compiled:')", True, tries=40)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            tone = await page.ev("document.getElementById('rtmStatus').className")
+            check(f'a mineral shown as the run held it: the line says no more and is not marked ({str(run)[-60:]})',
+                  isinstance(run, str) and run.startswith('Done') and 'Calcite precipitates' in run
+                  and 'not what the run held' not in run and tone == 'rtm-status ok', True)
+            await page.ev("""(() => {
+              const orig = RtmModel.compile;
+              window.rtmCompileKept = orig;
+              RtmModel.compile = function (text, ...rest) {
+                const m = orig.call(this, text, ...rest);
+                const k = m.speciesNames.indexOf('Calcite');
+                if (m.toConcentrations && k >= 0) {
+                  const tc = m.toConcentrations;
+                  m.toConcentrations = (y, t = 0) => { const out = tc(y, t); if (t > 1000) out[k] += 1e-4; return out; };
+                }
+                return m;
+              };
+            })()""")
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            tone = await page.ev("document.getElementById('rtmStatus').className")
+            await page.ev("RtmModel.compile = window.rtmCompileKept")
+            check(f'shown otherwise than the run held it, the line says so and is marked ({str(run)[-170:]})',
+                  isinstance(run, str) and run.startswith('Done')
+                  and 'What is shown of Calcite is not what the run held: at ' in run
+                  and ' the water settled on its own holds ' in run and ' where the run held ' in run
+                  and ' of the stored waters.' in run
+                  and run.endswith('MINERALS = complementarity in <SETTINGS> holds a mineral with no events.')
+                  and tone == 'rtm-status warn', True)
             check('no console errors with no worker', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid2})

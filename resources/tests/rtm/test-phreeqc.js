@@ -1057,19 +1057,28 @@ function mixingColumn(engine) {
     const inlet = upTo(pageAt(S), 2.5e-3) / upTo(pqAt(S), 2.5e-3) - 1;
     // What the run itself holds, not what a point read back would precipitate: the state's calcite, the first cell.
     const held = r.y[r.y.length - 1][iCal];
+    // And the calcite the run held against what is shown, at every stored point and every shift (asHeld).
+    const w = m.stateWidth;
+    const asHeld = [[r.y, r.t], [r.grid.y, r.grid.t]].map(([ys, ts]) => {
+      const shown = new Float64Array(ts.length * w);
+      ys.forEach((y, i) => shown.set(m.toConcentrations(y, ts[i]), i * w));
+      return m.asHeld(ys, shown, ts.length, w, ts, 1e-7, 1e-20, r.events.map((e) => e.t))[0];
+    });
     return { N, column, inlet, held, events: r.events.length, ev0: Math.max(...ev0), pqMs, ms,
-      total: upTo(pageAt(S), L) };
+      total: upTo(pageAt(S), L), asHeld };
   });
   const [r40, r80] = runs;
   check('calcite formed where two saturated waters mix, against PHREEQC\'s TRANSPORT: each water at saturation to PHREEQC\'s '
     + 'tolerance with none of it, every cell\'s "precipitates" below nought at the start and firing in the run, the run '
-    + 'itself holding the calcite; the column\'s calcite at a quarter, half and all of a pore volume within 3 % of PHREEQC\'s '
-    + 'on 40 cells and 1 % on 80; within 2.5 mm of the inlet within 15 % on 80 cells, nearer than on 40',
-  runs.every((x) => x.ev0 < 0 && x.events >= x.N && x.held > 1e-6
+    + 'itself holding the calcite, shown as it held it at every stored point and shift; the column\'s calcite at a quarter, '
+    + 'half and all of a pore volume within 3 % of PHREEQC\'s on 40 cells and 1 % on 80; within 2.5 mm of the inlet within '
+    + '15 % on 80 cells, nearer than on 40',
+  runs.every((x) => x.ev0 < 0 && x.events >= x.N && x.held > 1e-6 && x.asHeld.every((a) => a.off === 0 && a.worst < 0.05)
     && x.column.every((d) => Math.abs(d) < (x.N === 40 ? 0.03 : 0.01)))
     && Math.abs(r80.inlet) < 0.15 && Math.abs(r80.inlet) < Math.abs(r40.inlet),
   runs.map((x) => `${x.N} cells: the start's largest event ${x.ev0.toExponential(1)}, ${x.events} events, the first cell `
-    + `holding ${x.held.toExponential(2)} mol; the column ${x.column.map((d) => `${(d * 100).toFixed(2)} %`).join(', ')} `
+    + `holding ${x.held.toExponential(2)} mol, shown as held to ${x.asHeld.map((a) => a.worst.toExponential(1)).join(' and ')} `
+    + `of what it is allowed; the column ${x.column.map((d) => `${(d * 100).toFixed(2)} %`).join(', ')} `
     + `(${x.total.toExponential(3)} mol/kgw m at the end); within 2.5 mm ${(x.inlet * 100).toFixed(1)} %; PHREEQC ${x.pqMs} ms, `
     + `the page ${x.ms} ms`).join('; '));
 }

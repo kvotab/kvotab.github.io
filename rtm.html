@@ -2521,6 +2521,18 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,   logK = -8.48</pre>
             phase, molar volumes, CD-MUSIC, sites that go with a mineral or a mineral with bounds —
             every mineral comes and goes at the instants above, as with <code>MINERALS = events</code>,
             and a warning says which.</p>
+          <p>Each point shown is its cell's water settled on its own: the speciation of the totals the run
+            has there, from the minerals the run has there, with whatever that water would still form or
+            take up formed or taken up. Where the run held its minerals as it should, that is the run
+            itself. So after every run the page sets the amount of each mineral the run held — and of each
+            gas of a bubble and member of a solid solution — against the amount shown, at every stored
+            point in every cell but those at the instants above, each the state the instant before its
+            change. The two may part by the run's own arithmetic: a hundred times the relative tolerance
+            of the cell's largest total, and held by complementarity by the trace it keeps as well. Past
+            that the status adds a warning: which mineral, where and when the two part most, what the run
+            held there and what is shown, and the cells and the time from which they part. What is shown
+            there is then a water the run never had — a mineral it did not form where it should have, or
+            kept where the water would have taken it up — however believable it looks.</p>
           <p>A mineral counts in the totals as anything else does. Calcite holds calcium and carbon,
             so what dissolves is in the water, and in a column the water carries it on. Under
             <code>ACTIVITY</code> its saturation reads every ion of its cell, as any relation
@@ -4878,14 +4890,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261115e"></script>
+  <script src="./resources/js/rtm-model.js?v=20261116a"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261115a"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261116a"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261115g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261116a"></script>
 </body>
 </html>

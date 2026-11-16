@@ -13,7 +13,7 @@
 
   const $ = (id) => document.getElementById(id);
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261115e';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261116a';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1434,9 +1434,45 @@
     const minerals = !ev.length ? ''
       : ev.length === 1 ? ` ${said(ev[0])}.`
         : ` ${ev.length.toLocaleString()} mineral changes, from “${said(ev[0])}” to “${said(ev[ev.length - 1])}”.`;
+    // A mineral shown as the run did not hold it: said, and the line marked.
+    const unheld = asHeldWords(reply);
     setStatus(`Done in ${(ms / 1000).toFixed(2)} s — ${(st.nsteps || 0).toLocaleString()} steps `
       + `(${(st.nfailed || 0).toLocaleString()} rejected)${methods ? `: ${methods}` : ''}${restarts}, ${reply.n.toLocaleString()} points kept, `
-      + `${matrix}.${minerals}${drift}`, drift ? 'warn' : 'ok');
+      + `${matrix}.${minerals}${drift}${unheld ? ` ${unheld}` : ''}`, drift || unheld ? 'warn' : 'ok');
+  }
+
+  /*
+    WHAT THE RUN HELD AND WHAT IS SHOWN (asHeld, from the worker). Each
+    point shown is its cell's water settled on its own, from the minerals
+    the run has there. Where an amount the run held as it is -- a mineral,
+    a gas of a bubble, a member of a solid solution -- parts from what is
+    shown of it by more than the run's own arithmetic, the water shown is
+    not one the run had: the one furthest past what it was allowed is named,
+    with where and when the two part most, what the run held there and what
+    is shown, and the cells and the time from which they part, and how many
+    of the stored waters; any others by name. Nothing is said where every
+    one is as the run held it.
+  */
+  function asHeldWords(r) {
+    const off = (r.asHeld || []).filter((x) => x.off > 0).sort((a, b) => b.worst - a.worst);
+    if (!off.length) return '';
+    const x = off[0];
+    const u = shownUnit(r);
+    // A rounding error about none is none.
+    const amount = (v) => (Math.abs(v) <= 1e-12 * x.peak ? 'none' : valueWords(r, x.name, v, u));
+    const what = x.kind === 'gas' ? ', a gas of the bubble,' : x.kind === 'member' ? ', a member of a solid solution,' : '';
+    const m = r.model;
+    const stride = m.stride || 1;
+    const where = cellWords(r, x.cell);
+    const [lo, hi] = x.cells.map((c) => Math.floor(c / stride));
+    const span = (m.fracture || 1) <= 1 ? '' : lo === hi ? ` at cell ${lo}` : ` in cells ${lo} to ${hi}`;
+    const others = off.slice(1).map((o) => labelOf(o.name));
+    const list = (xs) => (xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+    return `What is shown of ${labelOf(x.name)}${what} is not what the run held: at ${fmtTime(x.at)}${where ? ` ${where}` : ''} `
+      + `the water settled on its own holds ${amount(x.shown)} of it where the run held ${amount(x.held)}, and the two part`
+      + `${span} from ${fmtTime(x.from)} on, at ${x.off.toLocaleString()} of the stored waters.`
+      + (others.length ? ` ${list(others)} ${others.length > 1 ? 'part' : 'parts'} from what the run held too.` : '')
+      + (x.kind === 'mineral' && !x.comp ? ' MINERALS = complementarity in <SETTINGS> holds a mineral with no events.' : '');
   }
 
   /**
@@ -12804,7 +12840,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261115f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261116a';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,

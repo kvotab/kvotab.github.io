@@ -415,6 +415,31 @@ set under rounding (1e-16 against relations of size 30), leaving every later
 cell as the solver had it. The amount is now set to zero, the tolerance is not
 below 1e-13, and every cell is settled whatever another does.
 
+**What the run held against what is shown** (`asHeld`, since 2026-11-16). A
+stored point is shown as its cell's water settled on its own, so a run that
+missed a mineral coming in still shows it: the read-back forms it. After every
+run the worker sets each amount the run held as it is (a mineral, a gas of a
+bubble, a member of a solid solution) against what is shown, at every stored
+point in every cell but those at events, where the state is the instant before
+the change. They may part by a hundred times rtol of the cell's largest total
+(at the start, or then if more), and held by complementarity by the bend as well
+(4 eps times the root of the mineral's own scale and that total). The acid
+column's calcite is as held to 4e-5 of what it is allowed; taken out of cells 5
+to 9 from the run's middle on with its totals left, as a missed event leaves
+them, the read-back forms it again and the check names cells 7 to 9 (5 and 6
+are dissolved by then), that point, none held and 2.2e-4 shown, 950 times what
+is allowed. One point's calcite moved by half what it is allowed passes and by
+twice it does not (0.500 and 2.000). The worker sends it with a run, and none
+for a model with no mineral. The stall column holds within the bend by
+complementarity (3.4e-2) and as held at events; P1 going over to P2 is as held
+but at its event, where counted both are named, the whole amount on the other
+side. Every example the page offers that holds a mineral is as held. On a
+column whose events were watched past only 1e-12 (the margins before
+2026-11-16), where two waters PHREEQC left saturated mixed, the check named
+calcite in all 20 cells from 12 s, 465 times what is allowed; over the model
+and PHREEQC suites' 300-odd held runs the most any amount came to was 0.074 of
+it (the bend), the most at events or in a group 0.0016.
+
 **Minerals held by complementarity** (`MINERALS = complementarity`). The acid
 column above held by the smoothed Fischer-Burmeister equation in place of
 events: no event where the ten of the event run were, its calcite within 1e-10

@@ -3341,6 +3341,10 @@ function handleRtmMessage(msg, post) {
     const n = res.t.length;
     const width = model.stateWidth || model.nspecies;
     const states = rtmConcentrations(model, res.y, n, width, res.t);
+    // Each amount the run held as it is -- a mineral, a gas of a bubble, a member of a solid solution -- set against
+    // what is shown of it, each cell settled on its own: where the two part, the run did not hold what is shown.
+    const asHeld = model.asHeld
+      ? model.asHeld(res.y, states, n, width, res.t, s.rtol, s.atol, (res.events || []).map((e) => e.t)) : null;
     const heldDrift = rtmHoldFixed(model, states, n, width);
     // Each stored point's cells' temperatures, where they go with the cell or the time: the PHREEQC tab reads them.
     const temps = rtmTemperatures(model, res.t, n);
@@ -3359,6 +3363,7 @@ function handleRtmMessage(msg, post) {
       model: rtmSummary(model),
       stats: res.stats,
       heldDrift,
+      asHeld,
       // A mineral dissolving away or precipitating, where and when.
       events: (res.events || []).map((e) => ({ t: e.t, what: e.expr })),
       seconds: (Date.now() - started) / 1000,

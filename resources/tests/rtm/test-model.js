@@ -3147,15 +3147,32 @@ console.log('\n--- the examples ---');
   const byId = (id) => RTM_EXAMPLES.find((e) => e.id === id);
   let broke = 0;
   let worstWarn = '';
+  // What the ones that hold minerals held, against every stored point read back (asHeld).
+  let heldIn = 0;
+  let heldN = 0;
+  let heldWorst = { worst: 0, at: '' };
+  const heldOff = [];
   for (const e of RTM_EXAMPLES) {
     try {
       const m = RtmModel.compile(e.text);
       if (!m.speciesNames.length) throw new RtmModel.RtmError('no species');
       // Every field the picker shows.
       if (!e.id || !e.label || !e.group || !e.about) throw new RtmModel.RtmError('a field is missing');
-      FacsimileODE.runModel(m, { solver: 'ndf', rtol: 1e-6, atol: 1e-24, tend: m.settings.TEND,
-        nonNegative: true, maxSteps: 4e5, maxPoints: 4, stagnationTol: 0.5 });
+      const res = FacsimileODE.runModel(m, { solver: 'ndf', rtol: 1e-6, atol: 1e-24, tend: m.settings.TEND,
+        nonNegative: true, maxSteps: 4e5, maxPoints: m.asHeld ? 400 : 4, stagnationTol: 0.5 });
       if (m.warnings.length && !worstWarn) worstWarn = `${e.id}: ${m.warnings[0].slice(0, 50)}`;
+      if (m.asHeld) {
+        const n = res.t.length;
+        const w = m.stateWidth;
+        const shown = new Float64Array(n * w);
+        res.y.forEach((y, i) => shown.set(m.toConcentrations(y, res.t[i]), i * w));
+        heldIn++;
+        for (const x of m.asHeld(res.y, shown, n, w, res.t, 1e-6, 1e-24, res.events.map((ev) => ev.t))) {
+          heldN++;
+          if (x.worst > heldWorst.worst) heldWorst = { worst: x.worst, at: `${e.id}'s ${x.name}` };
+          if (x.off) heldOff.push(`${e.id}'s ${x.name}, ${x.worst.toExponential(1)} times`);
+        }
+      }
     } catch (err) {
       broke++;
       console.log(`      ${e.id} failed: ${String(err.message).slice(0, 90)}`);
@@ -3163,6 +3180,10 @@ console.log('\n--- the examples ---');
   }
   check(`all ${RTM_EXAMPLES.length} examples compile and run`, broke === 0, `${broke} failed`);
   check('  and none of them raises a warning', worstWarn === '', worstWarn);
+  check('  and every mineral the ones that hold them held is shown as held, at every stored point but their events\'',
+    heldIn >= 10 && heldOff.length === 0, heldOff.join('; ')
+      || `${heldN} minerals in ${heldIn} examples, at most ${heldWorst.worst.toExponential(1)} of what each is allowed `
+      + `(${heldWorst.at})`);
 
   // Robertson: the point everyone quotes, and the invariant.
   const rob = RtmModel.compile(byId('robertson').text);
@@ -3920,6 +3941,88 @@ Calcite <=> Ca+2 + CO3-2, logK = -8.48
   `the start ${lnOver.toExponential(2)} over in ln, its event ${evj[0].toExponential(2)}; `
     + `${rj.events.map((e) => `${e.expr} at ${e.t.toFixed(1)} s`).join(', ') || 'no event'}; the run holding `
     + `${endJ[iCal].toExponential(2)} mol of calcite at the end, SI ${si(endJc).toExponential(1)}`);
+
+  /*
+    WHAT THE RUN HELD, SET AGAINST WHAT IS SHOWN (asHeld). Each stored point
+    is shown as its cell's water settled on its own; where the run held its
+    minerals as it should, that is the run itself. The acid column: the
+    calcite the run held against every stored point read back, within what
+    it is allowed everywhere -- a hundred times rtol of its cell's largest
+    total -- the points at its ten events left out, each the state at the
+    instant before one. Then the column as a run that missed calcite where
+    it was held leaves it: from the middle of the run on, the calcite taken
+    out of cells 5 to 9, its calcium and carbonate left in their totals.
+    Read back, each cell settled on its own forms it again, and the check
+    names Calcite, the cells, that point, none held and what is shown. One
+    stored point's calcite moved by half what it is allowed there and by
+    twice it: the one passes and the other does not. And the worker sends
+    it with a run: a calcium source into a water, calcite precipitating
+    once; none from a model with no mineral.
+  */
+  {
+    const n = rc.t.length;
+    const width = col.stateWidth;
+    const evT = rc.events.map((e) => e.t);
+    const readBack = (ys) => {
+      const out = new Float64Array(n * width);
+      ys.forEach((y, i) => out.set(col.toConcentrations(y, rc.t[i]), i * width));
+      return out;
+    };
+    const shownC = readBack(rc.y);
+    const [ok] = col.asHeld(rc.y, shownC, n, width, rc.t, 1e-6, 1e-20, evT);
+    let i0 = Math.floor(n / 2);
+    while (evT.includes(rc.t[i0])) i0++;
+    const missed = rc.y.map((y, i) => {
+      const z = Float64Array.from(y);
+      if (i >= i0) for (let c = 5; c < 10; c++) z[c * 8 + 7] = 0;
+      return z;
+    });
+    const [bad] = col.asHeld(missed, readBack(missed), n, width, rc.t, 1e-6, 1e-20, evT);
+    check('what the run held against what is shown: the acid column\'s calcite read back as the run held it at every '
+      + 'stored point but its events\'; and taken out of cells 5 to 9 from the run\'s middle, its totals left, '
+      + 'read back formed again, the check naming the cells, that point, none held and what is shown',
+    ok.name === 'Calcite' && ok.kind === 'mineral' && !ok.comp && ok.off === 0 && ok.worst < 0.05
+      && bad.off > 0 && bad.cells[0] >= 5 && bad.cells[1] === 9 && bad.from === rc.t[i0] && bad.held === 0
+      && bad.shown > 1e-5 && bad.worst > 100,
+    `as run, at most ${ok.worst.toExponential(1)} of what it is allowed over ${n - evT.length} points; taken out, `
+      + `${bad.off} stored waters past it in cells ${bad.cells} from ${bad.from.toFixed(0)} s (the ${i0}th point), `
+      + `${bad.held} held where ${bad.shown.toExponential(2)} is shown, ${bad.worst.toExponential(1)} times`);
+    // One stored point, in the last cell while it has calcite, moved by half and by twice what it is allowed there:
+    // a hundred times rtol of the cell's largest total, at the start or then.
+    const nb = col.heldEquilibria.totals;
+    const y0 = col.initialState();
+    let i1 = Math.floor(n / 3);
+    while (evT.includes(rc.t[i1]) || !(rc.y[i1][9 * 8 + 7] > 0)) i1++;
+    let big = 0;
+    for (let j = 0; j < nb; j++) big = Math.max(big, Math.abs(y0[width + 9 * nb + j]), Math.abs(rc.y[i1][width + 9 * nb + j]));
+    const moved = (f) => {
+      const ys = rc.y.map((y) => Float64Array.from(y));
+      ys[i1][9 * 8 + 7] += f * 100 * 1e-6 * big;
+      return col.asHeld(ys, shownC, n, width, rc.t, 1e-6, 1e-20, evT)[0];
+    };
+    const half = moved(0.5);
+    const twice = moved(2);
+    check('  one stored point\'s calcite moved by half what it is allowed passes, by twice it does not, named there',
+      half.off === 0 && Math.abs(half.worst - 0.5) < 0.06 && twice.off === 1 && Math.abs(twice.worst - 2) < 0.06
+        && twice.cell === 9 && twice.at === rc.t[i1] && twice.cells[0] === 9 && twice.cells[1] === 9,
+      `${half.worst.toFixed(3)} and ${twice.worst.toFixed(3)} of it, the second at cell ${twice.cell}, point ${i1}`);
+    const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
+    const sent = (text) => {
+      let reply = null;
+      handleRtmMessage({ type: 'run', id: 70, text, solver: { method: 'ndf', rtol: 1e-6, atol: 1e-20, nonNegative: true,
+        maxPoints: 4000, stagnationTol: 0.5 } }, (msg) => { if (msg.type === 'result') reply = msg; });
+      return reply;
+    };
+    const withCal = sent(water({ co3: '1e-6', ca: '1e-5', cl: '2e-5', calcite: '0', rx: '=> Ca+2 + Cl- + Cl-, k = 1e-8' }));
+    // The same water held with no mineral: its line and its relation gone.
+    const noMineral = sent(water({ relation: '# no mineral' }).replace(/^Calcite .*$/m, ''));
+    check('  sent with a run: a calcium source into a water, its calcite precipitating once, as held; none without a mineral',
+      !!withCal && withCal.events.length === 1 && Array.isArray(withCal.asHeld) && withCal.asHeld.length === 1
+        && withCal.asHeld[0].name === 'Calcite' && withCal.asHeld[0].off === 0 && withCal.asHeld[0].peak > 0
+        && !!noMineral && noMineral.asHeld === null,
+    withCal ? `${withCal.asHeld.map((x) => `${x.name} ${x.worst.toExponential(1)}, ${x.off} off`).join('; ')}`
+      + `, ${withCal.events.length} event; ${noMineral ? `no mineral: ${noMineral.asHeld}` : 'the second did not run'}` : 'no run');
+  }
 }
 
 /* ======================================================================
@@ -4096,6 +4199,28 @@ ${EQ}`);
     offSat < 1e-12 && overSat < 1e-9 && crumbs === 0 && unsettled === 0,
     `|SI| ${offSat.toExponential(1)}, SI with none at most ${overSat.toExponential(1)}; ${crumbs} crumbs, ${unsettled} unsettled `
     + `of ${r6.y.length}`);
+  /*
+    What the run held against what is shown (asHeld): held by complementarity
+    the run keeps a trace of calcite with its water a trace short of
+    saturation, where the speciation shown has the one or the other, and
+    that is within the bend it is allowed; held at events the calcite is as
+    the run held it, the stored points at the events themselves left out.
+  */
+  const asHeldOf = (m, r, rtol) => {
+    const n = r.t.length;
+    const w = m.stateWidth;
+    const shown = new Float64Array(n * w);
+    r.y.forEach((y, i) => shown.set(m.toConcentrations(y, r.t[i]), i * w));
+    return m.asHeld(r.y, shown, n, w, r.t, rtol, 1e-20, r.events.map((e) => e.t))[0];
+  };
+  const heldComp = asHeldOf(ms, r6, 1e-6);
+  const heldEv = evRuns.map(({ m, r }, k) => asHeldOf(m, r, [1e-6, 1e-8][k]));
+  check('  what the run held against what is shown: by complementarity within its bend everywhere, at events as the run '
+    + 'held it but at the events themselves',
+  heldComp.comp && heldComp.off === 0 && heldComp.worst < 0.2 && heldComp.peak > 1e-4
+    && heldEv.every((x) => !x.comp && x.off === 0 && x.worst < 0.05),
+  `by complementarity ${heldComp.worst.toExponential(1)} of what it is allowed; at events `
+    + `${heldEv.map((x) => x.worst.toExponential(1)).join(' and ')}`);
   let dTol = 0;
   let most = 0;
   ends.forEach((t, k) => {
@@ -6541,6 +6666,28 @@ console.log('\n--- the temperature ---');
     && Math.abs(yEnd[0] / Math.sqrt(10 ** vh(-2, 5, 348.15)) - 1) < 1e-12 && yEnd[3] === 0
     && Math.abs(yb[3] - y0[3]) < 1e-14 && yb[2] === 0,
   `at t = ${ev.t} for ${tCross.toFixed(10)} (${(25 + 50 * tCross).toFixed(4)} C): "${ev.expr}"; both given, P1 goes over to P2`);
+  /*
+    What the run held against what is shown (asHeld): the stored point at
+    the event is the state the instant before it, P2 still held with its
+    water already past saturation in P1 by the event's margin; settled on
+    its own it is P1's already, the whole amount the other side. So the
+    points at events are left out, and with them out P1 and P2 are as the
+    run held them; counted, each is named there and nowhere else.
+  */
+  {
+    const n = rp.t.length;
+    const w = mp.stateWidth;
+    const shown = new Float64Array(n * w);
+    rp.y.forEach((y, i) => shown.set(mp.toConcentrations(y, rp.t[i]), i * w));
+    const out = mp.asHeld(rp.y, shown, n, w, rp.t, 1e-10, 1e-18, rp.events.map((e) => e.t));
+    const counted = mp.asHeld(rp.y, shown, n, w, rp.t, 1e-10, 1e-18, []);
+    check('  what the run held against what is shown: P1 and P2 as held but at the event, where the stored point is the '
+      + 'instant before it, and settled on its own is P1\'s already',
+    out.length === 2 && out.every((x) => x.off === 0 && x.worst < 0.05)
+      && counted.every((x) => x.off === 1 && x.at === ev.t && x.peak > 0.39),
+    `${out.map((x) => `${x.name} ${x.worst.toExponential(1)}`).join(', ')}; at the event too: `
+      + `${counted.map((x) => `${x.name} ${x.held.toExponential(3)} held, ${x.shown.toExponential(3)} shown`).join(', ')}`);
+  }
 
   // Rate laws: Arrhenius on TK cell by cell, TC along the clock, and a phase's saturation with its dH.
   const col3 = (more, sp, body) => RtmModel.compile(`<SETTINGS>\n${column.replace('CELLS = 4', 'CELLS = 3')}\nTEND = 1\n`

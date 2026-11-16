@@ -14854,6 +14854,139 @@
       }
     }
 
+    // A species held is ln C, and an error of rtol in it is an error of rtol
+    // in C, relative, which is what rtol asks of every species: so its atol
+    // is rtol and the solver weighs it against that alone (absoluteMask),
+    // whatever rtol and atol say of C and however large |ln C| is.
+    // A mineral's amount is held to rtol of the totals of its cell, which is
+    // what it is made of, rather than of itself: it is on its way to zero.
+    // Held by complementarity, a mineral to rtol of its own scale (compMs).
+    function atolFor(atol, rtol) {
+      const out = new Float64Array(n);
+      const r = rtol > 0 ? rtol : 1e-6;
+      for (let k = 0; k < n; k++) {
+        const given = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
+        if (k < nBase && held[k]) {
+          const c = Math.floor(k / ns);
+          const q = compOn && lin[k] ? eqs.findIndex((eq, rr) => isComp[rr] && eq.mineral === k - c * ns) : -1;
+          out[k] = !lin[k] ? r : Math.max(given, r * (q >= 0 ? compMs[c * ne + q] : amountScale[c]));
+        } else out[k] = given;
+      }
+      return out;
+    }
+
+    /*
+      WHAT THE RUN HELD, SET AGAINST WHAT IS SHOWN. A stored point is shown
+      as the speciation of its totals, each cell settled on its own from the
+      minerals the state has (toConcentrations): where the run kept its
+      minerals as it should, that is the run, polished. Where it did not -- a
+      mineral that should have come in and never did, or one kept where its
+      water would take it up -- the cell settled on its own forms or takes up
+      what the run did not, and the page shows a water the run never had, as
+      believable as any: where two saturated waters mixed in a column, calcite
+      was shown along it that the run had never formed. So each amount the
+      run holds as it is -- a mineral, a gas of a bubble, a member of a solid
+      solution -- is set against what is shown of it, at every stored point
+      in every cell. A difference is the run's own arithmetic while it is
+      within ASHELD_TIMES times what the solver held that amount to: rtol of
+      the cell's largest total (atolFor), or of its largest total there and
+      then where that has grown since the start, since what an amount is
+      worked out from, the totals, is held to rtol of themselves. Held by
+      complementarity, within the bend as well: there the run holds a little
+      of a mineral with its water a little short of saturation, a d = eps^2
+      in the mineral's own scale (compMs), where the speciation shown has the
+      one or the other exactly; the most that can part them is eps times the
+      root of that scale and what it takes of the mineral to move the water's
+      saturation by one in ln, which counts the water's buffers -- about
+      4e-4 mol of calcite in a mixed water whose carbonate ion was 2e-6 --
+      and is no more than the cell's largest total. A stored point at an
+      event is left out: it is the state the instant before the event,
+      already past the event's margin -- a mineral a little below none that
+      is about to go, a water past saturation in one mineral while another of
+      its composition is held -- and settled on its own it is what the event
+      makes of it, the whole amount over to the other mineral (eventTimes,
+      the times of the run's events). Of each amount: the largest difference
+      as a share of what it was allowed (worst), where and when, what the run
+      held and what is shown there, and how much of it there is anywhere
+      (peak); and where it is past what it was allowed, how often, in which
+      cells and from which stored point.
+    */
+    const ASHELD_TIMES = 100;
+    const ASHELD_BEND = 4;
+    const solids = active.filter((s) => isMin[s]);
+    const solidRel = solids.map((s) => eqs.findIndex((eq) => eq.mineral === s));
+    function asHeld(ys, shown, npts, width, ts, rtol, atol, eventTimes = []) {
+      const tol = atolFor(atol, rtol);
+      const r0 = rtol > 0 ? rtol : 1e-6;
+      // The stored points at an event: its time, to rounding.
+      const evT = Float64Array.from(eventTimes).sort();
+      const atEvent = new Uint8Array(npts);
+      for (let i = 0, e = 0; i < npts; i++) {
+        while (e < evT.length && evT[e] < ts[i] - 1e-12 * Math.abs(ts[i])) e++;
+        if (e < evT.length && Math.abs(evT[e] - ts[i]) <= 1e-12 * Math.abs(ts[i])) atEvent[i] = 1;
+      }
+      // Each cell's largest total at each stored point, or at the start where that is more.
+      const big = new Float64Array(npts * nc);
+      for (let i = 0; i < npts; i++) {
+        for (let c = 0; c < nc; c++) {
+          let v = amountScale[c];
+          for (let j = 0; j < nb; j++) v = Math.max(v, Math.abs(ys[i][tIndex(c, j)]));
+          big[i * nc + c] = v > 0 && v < Infinity ? v : 1;
+        }
+      }
+      return solids.map((s, q) => {
+        const r = solidRel[q];
+        const G = r >= 0 ? grpOf[r] : null;
+        const comp = !!(compOn && r >= 0 && isComp[r]);
+        const inert = inertOf.find((x) => x.k === s);
+        const heldAt = (i, c) => ys[i][c * ns + s] + (inert ? inert.amounts[c] : 0);
+        let peak = 0;
+        let worst = 0;
+        let wi = -1;
+        let wc = -1;
+        let off = 0;
+        let lo = -1;
+        let hi = -1;
+        let from = -1;
+        for (let i = 0; i < npts; i++) {
+          for (let c = 0; c < nc; c++) {
+            const at = c * ns + s;
+            const h = heldAt(i, c);
+            const v = shown[i * width + at];
+            const d = Math.abs(v - h);
+            if (!Number.isFinite(d)) continue;
+            peak = Math.max(peak, Math.abs(h), Math.abs(v));
+            if (atEvent[i]) continue;
+            const B = big[i * nc + c];
+            const allowed = ASHELD_TIMES * Math.max(tol[at], r0 * B)
+              + (comp ? ASHELD_BEND * compEps * Math.sqrt(compMs[c * ne + r] * B) : 0);
+            const ratio = d / allowed;
+            if (ratio > worst) { worst = ratio; wi = i; wc = c; }
+            if (ratio > 1) {
+              off++;
+              if (from < 0) from = i;
+              if (lo < 0 || c < lo) lo = c;
+              if (c > hi) hi = c;
+            }
+          }
+        }
+        return {
+          name: base.speciesNames[s],
+          kind: !G ? 'mineral' : G.def.kind === 'gas' ? 'gas' : 'member',
+          comp,
+          worst,
+          at: wi >= 0 ? ts[wi] : null,
+          cell: wc,
+          held: wi >= 0 ? heldAt(wi, wc) : null,
+          shown: wi >= 0 ? shown[wi * width + wc * ns + s] : null,
+          peak,
+          off,
+          cells: off ? [lo, hi] : null,
+          from: from >= 0 ? ts[from] : null,
+        };
+      });
+    }
+
     return {
       ...base,
       nspecies: n,
@@ -14878,29 +15011,12 @@
       nonNegativeMask,
       absoluteMask,
       ...(projected || anySigned ? { weightScale } : {}),
-      // A species held is ln C, and an error of rtol in it is an error of rtol
-      // in C, relative, which is what rtol asks of every species: so its atol
-      // is rtol and the solver weighs it against that alone (absoluteMask),
-      // whatever rtol and atol say of C and however large |ln C| is.
-      // A mineral's amount is held to rtol of the totals of its cell, which is
-      // what it is made of, rather than of itself: it is on its way to zero.
-      // Held by complementarity, a mineral to rtol of its own scale (compMs).
-      atolFor(atol, rtol) {
-        const out = new Float64Array(n);
-        const r = rtol > 0 ? rtol : 1e-6;
-        for (let k = 0; k < n; k++) {
-          const given = typeof atol === 'number' ? atol : (atol && k < atol.length ? atol[k] : 1e-20);
-          if (k < nBase && held[k]) {
-            const c = Math.floor(k / ns);
-            const q = compOn && lin[k] ? eqs.findIndex((eq, rr) => isComp[rr] && eq.mineral === k - c * ns) : -1;
-            out[k] = !lin[k] ? r : Math.max(given, r * (q >= 0 ? compMs[c * ne + q] : amountScale[c]));
-          } else out[k] = given;
-        }
-        return out;
-      },
+      atolFor,
       stateWidth: nBase,
       toConcentrations,
       fromConcentrations,
+      // Each amount the run holds as it is, set against what is shown of it (asHeld).
+      ...(solids.length ? { asHeld } : {}),
       heldEquilibria: { relations: ne, totals: nb, species: na, minerals: nmin,
         // Of those minerals, the ones MINERALS = complementarity holds with no events.
         complementarity: mins.filter((r) => isComp[r]).length,
