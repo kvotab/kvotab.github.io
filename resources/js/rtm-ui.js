@@ -11597,12 +11597,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
 
     'pq:besideP': () => ({
       kicker: 'PHREEQC', title: 'PHREEQC\'s own steps along the path, to set beside the run',
-      lead: 'For an input whose last calculation adds a `REACTION` in steps: PHREEQC runs that path too, in the page, and its steps go into the model as what was measured, so that the run is drawn and measured against PHREEQC\'s own.',
+      lead: 'For an input whose last calculation adds a `REACTION` in steps, or heats or cools the water along a `REACTION_TEMPERATURE`: PHREEQC runs that path too, in the page, and its steps go into the model as what was measured, so that the run is drawn and measured against PHREEQC\'s own.',
       facts: [['Now', pq.besideP ? 'ticked: Write the model runs PHREEQC\'s path as well' : 'not ticked']],
       sections: [
         { heading: 'What goes in', list: [
           'Each step\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only; with the redox carried, its valence states\' totals, `tot(S(6))` — its **minerals**, the **gases** of a gas phase and the **members** of a solid solution, under `<DATA>` at the end of the text, a table in time.',
-          'Each step at the clock the run has when it has added as much: the run adds the reactants at a mole, a millimole or a micromole of reaction a second, as the input writes its steps, so the clock counts what has gone in.',
+          'Each step at the clock the run has when it has added as much: the run adds the reactants at a mole, a millimole or a micromole of reaction a second, as the input writes its steps, so the clock counts what has gone in. Along a temperature, the run heats or cools the water a degree a second from the first step\'s, so the clock counts the degrees.',
           'The totals as PHREEQC has them, per kilogram of its water, which a reaction may change a little; the minerals, gases and members per kilogram of the water the path starts with. A total PHREEQC\'s steps hold at one value is left out. Up to 200 steps, evenly through.',
         ] },
         { heading: 'Then', list: [
@@ -12910,11 +12910,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117f';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117g';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117f',
+    'resources/js/rtm-phreeqc.js?v=20261117g',
     'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13069,11 +13069,12 @@ END
 
   /**
    * Whether the water in the panel may end on a path, a REACTION added in
-   * steps (or one it USEs): PHREEQC's own steps can then be set beside the
-   * run. The hand-off says whether the calculation the water is from has one.
+   * steps or a REACTION_TEMPERATURE (or one it USEs): PHREEQC's own steps can
+   * then be set beside the run. The hand-off says whether the calculation the
+   * water is from has one.
    */
   function pqHasPath() {
-    return /^[ \t]*(?:REACTION|USE[ \t]+REACTION)(?![\w])/im.test(pq.water || '');
+    return /^[ \t]*(?:USE[ \t]+)?REACTION(?:_TEMPERATURE)?(?![\w])/im.test(pq.water || '');
   }
 
   function pqReadControls() {
@@ -13529,7 +13530,16 @@ END
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
       // The path the run is: PHREEQC's REACTION, its reactants at a steady rate, the clock counting what has gone in.
-      if (r.path) {
+      if (r.path && r.path.kind === 'temperature') {
+        // A path in temperature: the water at the first step's, heated or cooled a degree a second.
+        const pth = r.path;
+        const up = pth.to > pth.from;
+        out.push(`<p>A path, PHREEQC's <code>REACTION_TEMPERATURE ${pth.block}</code>: ${pth.steps.length} steps from `
+          + `${pqNum(pth.from)} to ${pqNum(pth.to)} °C. The model is of the water at ${pqNum(pth.from)} °C, and the run is the `
+          + `path: the water ${up ? 'heated' : 'cooled'} a degree a second, <code>TEMPERATURE = ${pqNum(pth.from)} `
+          + `${up ? '+' : '-'} t</code>, so that the clock, in seconds, counts the degrees. <code>TEND</code> is `
+          + `${pqNum(pth.tend)}; PHREEQC's steps are equilibria the run passes through.</p>`);
+      } else if (r.path) {
         const pth = r.path;
         const u = esc(pth.unit);
         out.push(`<p>A path, PHREEQC's <code>REACTION ${pth.reaction}</code>: ${pth.steps.length} steps up to `
@@ -13540,6 +13550,9 @@ END
           + `, and the run is the path: the reactants come in at a steady rate, a ${u} of reaction a second, so that the `
           + `clock, in seconds, counts the ${u} of reaction added. <code>TEND</code> is the last step's ${pqNum(pth.tend)}; `
           + 'PHREEQC\'s steps are equilibria the run passes through.</p>');
+      }
+      if (r.path) {
+        const pth = r.path;
         if (pth.atmMoved) {
           out.push(`<p class="warn">PHREEQC's gas phase, in a fixed volume, takes the water from ${pqNum(pth.atmMoved.from)} to `
             + `${pqNum(pth.atmMoved.to)} atm along the path, where the run holds it at the first: the log K, A and B that go `
@@ -13549,7 +13562,8 @@ END
           const b = reply.besidePath;
           out.push(`<p>PHREEQC's own steps along the path, run beside it in ${pqNum(b.seconds)} s: ${b.rows} rows of `
             + `${b.columns.map((col) => `<code>${esc(col)}</code>`).join(', ')}, under <code>&lt;DATA&gt;</code> at the end of `
-            + `the text, each at the clock the run has when it has added as much. Run draws them beside the run as points; `
+            + `the text, each at the clock the run has ${pth.kind === 'temperature' ? 'at its temperature'
+            : 'when it has added as much'}. Run draws them beside the run as points; `
             + 'the Fit tab\'s <em>the run against what was measured</em> sets each against it.'
             + (b.held && b.held.length ? ` Left out, PHREEQC's steps holding each at one value: `
               + `${b.held.map((col) => `<code>${esc(col)}</code>`).join(', ')}.` : '') + '</p>');

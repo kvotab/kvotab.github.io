@@ -589,6 +589,28 @@ async def main():
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # A path in temperature: the tick there too; written, the model is of the water at the first step's
+            # temperature and the run heats it a degree a second, TEMPERATURE = 25 + t, the report saying so.
+            warm_input = ('SOLUTION 1\\n units mmol/kgw\\n pH 7.5 charge\\n Ca 10\\n S(6) 10\\n C(4) 1\\n Na 1\\n Cl 1\\n'
+                          'EQUILIBRIUM_PHASES 1\\n Calcite 0 0.01\\n Gypsum 0 0.02\\n Anhydrite 0 0\\n'
+                          'REACTION_TEMPERATURE 1\\n 25 85 in 13 steps\\nEND\\n')
+            hidden_warm = await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                                        f" w.value = '{warm_input}';"
+                                        " w.dispatchEvent(new Event('input', { bubbles: true }));"
+                                        " document.getElementById('rtmPqReport').innerHTML = '';"
+                                        " const hidden = document.getElementById('rtmPqBesidePWrap').hidden;"
+                                        " document.getElementById('rtmPqWrite').click(); return hidden; })()")
+            wrep = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()", tries=240)
+            wtext = await page.ev("document.getElementById('rtmText').value")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check('a path in temperature: the tick there too; written, the model of the water at 25 C, the run heating it a '
+                  'degree a second to TEND 60, and the report says so',
+                  [hidden_warm, isinstance(wrep, str) and "A path, PHREEQC's REACTION_TEMPERATURE 1: 13 steps from 25 to 85 °C" in wrep,
+                   isinstance(wtext, str) and re.search(r'^TEMPERATURE = 25 \+ t$', wtext, re.M) is not None
+                   and re.search(r'^TEND = 60$', wtext, re.M) is not None],
+                  [False, True, True])
+
             # An exchanger in a column beside PHREEQC's own: PHREEQC's last cell in time, the outlet in pore volumes.
             await page.ev("(() => { const s = document.getElementById('rtmExample');"
                           " s.value = 'exchangebeside'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")

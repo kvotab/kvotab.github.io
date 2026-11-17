@@ -6446,11 +6446,15 @@ async function againstPathHandOff(engine, createPhreeqc) {
     const ns = m.speciesNames.length;
     const lnG = new Float64Array(ns);
     const iH = m.speciesNames.indexOf('H+');
-    const out = { res, m, pq, run, pH: 0, tot: 0, held: 0, kgw: 0, totWhere: '', heldWhere: '' };
+    const out = { res, m, pq, run, pH: 0, tot: 0, held: 0, kgw: 0, totWhere: '', heldWhere: '', pHs: [] };
     pq.forEach((r, i) => {
-      const c = m.toConcentrations(run.grid.y[i]);
+      // The run's state speciated at its time's temperature, which a path in temperature moves.
+      const t = run.grid.t[i];
+      if (m.thermoAt) m.thermoAt(t);
+      const c = m.toConcentrations(run.grid.y[i], t);
       RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns));
-      out.pH = Math.max(out.pH, Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - col(r, 'pH_')));
+      out.pHs.push(Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - col(r, 'pH_')));
+      out.pH = Math.max(out.pH, out.pHs[i]);
       const kgw = col(r, 'kgw_');
       out.kgw = Math.max(out.kgw, Math.abs(kgw / pth.kgw - 1));
       for (const e of els) {
@@ -6513,7 +6517,9 @@ async function againstPathHandOff(engine, createPhreeqc) {
   const why = (input, opts) => { const r = along(input, opts).res; return { r, w: r.report.pathSkipped ? r.report.pathSkipped.why : '' }; };
   const evap = why('SOLUTION 1\n units mmol/kgw\n Na 10\n Cl 10\nREACTION 1\n H2O -1\n 10 20 30 moles\nEND\n');
   const heat = why('SOLUTION 1\n units mmol/kgw\n Ca 5\n S(6) 5\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.1\n'
-    + 'REACTION_TEMPERATURE 1\n 25 75 in 6 steps\nEND\n');
+    + 'REACTION_TEMPERATURE 1\n 25 60 40\nEND\n');
+  const both = why('SOLUTION 1\n units mmol/kgw\n Ca 5\n S(6) 5\nREACTION 1\n NaCl 1\n 0.001 0.002 0.003\n'
+    + 'REACTION_TEMPERATURE 1\n 25 35 45\nEND\n');
   const mb = why('SURFACE_MASTER_SPECIES\n Lin Lin\nSURFACE_SPECIES\n Lin = Lin\n Lin + Cd+2 = LinCd+2\n -log_k 2\n'
     + ' -mole_balance LinCdCl2\nSURFACE 1\n Lin 1e-3 1 1\n -no_edl\nSOLUTION 1\n units mmol/kgw\n pH 6\n Ca 1\n Cl 2\n'
     + 'REACTION 1\n CdCl2 1\n 1e-6 in 5\nEND\n');
@@ -6521,13 +6527,42 @@ async function againstPathHandOff(engine, createPhreeqc) {
   const one = why('SOLUTION 1\n units mmol/kgw\n Na 1\n Cl 1\nREACTION 1\n NaCl 1\n 0.002 moles\nEND\n');
   const notHeld = why(salt, { exact: false, phases: false });
   check('  not carried, the model of the water at the path\'s end and the report saying why: water taken away (H2O), a '
-    + 'path in temperature, a sorbed species PHREEQC counts as another formula (-mole_balance), an exchanger left out '
-    + 'that would take up what the path brings, the relations not held; a REACTION of one step is no path',
-  /H2O/.test(evap.w) && /temperature goes from 25 to 75/.test(heat.w) && /LinCd\+2 as LinCdCl2/.test(mb.w)
+    + 'temperature that goes up and down, the amounts and the temperature both changing, a sorbed species PHREEQC counts '
+    + 'as another formula (-mole_balance), an exchanger left out that would take up what the path brings, the relations '
+    + 'not held; a REACTION of one step is no path',
+  /H2O/.test(evap.w) && /goes up and down/.test(heat.w) && /both change/.test(both.w) && /LinCd\+2 as LinCdCl2/.test(mb.w)
     && /CdX2.*would take up what it brings/.test(loose.w) && /not held exactly/.test(notHeld.w)
     && !one.r.report.path && !one.r.report.pathSkipped && !evap.r.report.path
     && /^# Not carried: the path of the calculation the water is from, as it takes water away/m.test(evap.r.text),
-  [evap.w, heat.w, mb.w, loose.w, notHeld.w].join(' | '));
+  [evap.w, heat.w, both.w, mb.w, loose.w, notHeld.w].join(' | '));
+
+  // A path in temperature: a water at saturation with calcite and gypsum heated past where anhydrite takes over, and
+  // the same cooled; the water at the first step's temperature, a degree a second from there.
+  const warm = (temps) => 'SOLUTION 1\n units mmol/kgw\n pH 7.5 charge\n Ca 10\n S(6) 10\n C(4) 1\n Na 1\n Cl 1\n'
+    + `EQUILIBRIUM_PHASES 1\n Calcite 0 0.01\n Gypsum 0 0.02\n Anhydrite 0 0\nREACTION_TEMPERATURE 1\n ${temps}\nEND\n`;
+  const h = along(warm('25 85 in 13 steps'));
+  const hp = h.res.report.path;
+  const anh = h.pq.length ? Number(h.pq[h.pq.length - 1][h.pq[0].length - 1]) : 0;
+  // While there is gypsum PHREEQC's kilogram of water hardly moves; once anhydrite takes over, by the gypsum's water.
+  const gypsumPH = Math.max(0, ...h.pHs.filter((d, i) => Number(h.pq[i][h.pq[0].length - 1]) === 0));
+  check('  heated along REACTION_TEMPERATURE, 25 to 85 C: the water at 25 C, TEMPERATURE = 25 + t to TEND 60, the clock '
+    + 'counting the degrees; at each of PHREEQC\'s steps the pH, the totals and the minerals PHREEQC\'s, the gypsum gone '
+    + 'over to anhydrite on the way -- while there is gypsum to 2e-5 in pH, after it to what PHREEQC\'s kilogram of water '
+    + 'moves as the gypsum gives up its water',
+  !!hp && hp.kind === 'temperature' && hp.from === 25 && hp.to === 85 && hp.tend === 60 && hp.steps.length === 13
+    && /^TEMPERATURE = 25 \+ t$/m.test(h.res.text) && /^TEND = 60$/m.test(h.res.text) && /^MAX_STEP = 0\.6$/m.test(h.res.text)
+    && h.pq.length === 13 && gypsumPH < 2e-5 && h.pH < 5e-4 && h.tot < 1e-3 && h.held < 1e-4 && anh > 0.01,
+  hp ? `pH within ${gypsumPH.toExponential(1)} while there is gypsum, ${h.pH.toExponential(1)} after; totals in moles `
+    + `${h.tot.toExponential(1)} (${h.totWhere}), minerals ${h.held.toExponential(1)} mol (${h.heldWhere}); anhydrite `
+    + `${(anh * 1e3).toFixed(2)} mmol at 85 C; PHREEQC's kilogram moving by ${h.kgw.toExponential(1)}`
+    : JSON.stringify(h.res.report.pathSkipped));
+  const k = along(warm('60 10 in 6'));
+  const kp = k.res.report.path;
+  check('  ... and cooled, 60 to 10 C: TEMPERATURE = 60 - t, the calcite and the anhydrite going as PHREEQC has them',
+    !!kp && kp.from === 60 && kp.to === 10 && /^TEMPERATURE = 60 - t$/m.test(k.res.text) && k.pq.length === 6
+      && k.pH < 5e-4 && k.tot < 1e-3 && k.held < 1e-4,
+    kp ? `pH within ${k.pH.toExponential(1)}, totals ${k.tot.toExponential(1)} (${k.totWhere}), minerals `
+      + `${k.held.toExponential(1)} mol (${k.heldWhere})` : JSON.stringify(k.res.report.pathSkipped));
 
   // 6. PHREEQC's own steps beside the run, as the page asks for them.
   const handle = E.handler(createPhreeqc, { builtin: dbText });
@@ -6569,6 +6604,14 @@ async function againstPathHandOff(engine, createPhreeqc) {
     && /^80  /m.test(reply.text) && fit < 1e-3,
   reply.type === 'done' && bp ? `${bp.rows} rows of ${bp.columns.join(', ')}; the run within ${fit.toExponential(1)} (${fitWhere})`
     : reply.error || 'no steps beside');
+  const hot = await ask({ id: 2, type: 'toModel', database: null, water: { name: 'warm', text: warm('25 85 in 13 steps') },
+    options: { floor: 1e-20, activity: true, exact: true, phases: true, redox: true, besidePath: true } });
+  const hb = hot.besidePath;
+  const times = hot.type === 'done' ? [...hot.text.matchAll(/^([0-9.]+) {2}[0-9]/gm)].map((x) => Number(x[1])) : [];
+  check('  ... and along a temperature: the steps at the degrees from 25 C, 0 to 60',
+    hot.type === 'done' && !!hb && hb.rows === 13 && /REACTION_TEMPERATURE 1 run in the page/.test(hot.text)
+      && times.length === 13 && times[0] === 0 && times[12] === 60,
+    hot.type === 'done' && hb ? `${hb.rows} rows, at ${times.join(' ')}` : hot.error || 'no steps beside');
 }
 
 (async () => {

@@ -3852,9 +3852,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
               that each valence state keeps its own total and electrons move only through the reactions
               you write.</li>
           </ul>
-          <p>Where that calculation is a path, a <code>REACTION</code> adding its reactants in steps, the
-            model is of the water before it and the run is the path: see <em>Along PHREEQC's path</em>
-            below.</p>
+          <p>Where that calculation is a path, a <code>REACTION</code> adding its reactants in steps or a
+            <code>REACTION_TEMPERATURE</code> heating or cooling the water, the model is of the water where
+            the path starts and the run is the path: see <em>Along PHREEQC's path</em> below.</p>
           <p>Held at one pe, the water is the one PHREEQC's next step makes. PHREEQC keeps the valence
             states a <code>SOLUTION</code> is given, whatever its pe says — sulfate given, there is no
             sulfide in it, however reducing — and any reaction then puts every couple on one pe, the
@@ -4486,9 +4486,19 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             floor, on an exchanger and a surface too, so that cadmium added to a water with none sorbs from
             the first step; and with a reactant that moves electrons, oxygen into pyrite, each valence
             state the water's redox elements could go to.</p>
+          <p>A <code>REACTION_TEMPERATURE</code> that heats or cools the water through steps —
+            <code>25 75 in 51 steps</code>, or a list — is carried the same way: the model is of the water at
+            the first step's temperature, and the run heats or cools it a degree a second,
+            <code>TEMPERATURE = 25 + t</code>, so that the clock counts the degrees, <code>TEND</code> the
+            last step's from the first. The relations' log K follow the temperature as the database's do
+            (see <em>The temperature</em> above), and the minerals form and go as they become stable: gypsum
+            going over to anhydrite as a water is heated past where PHREEQC's saturation index of anhydrite
+            crosses nought. A <code>REACTION</code> of one amount at every step goes into the water the path
+            starts from.</p>
           <p>Not carried, the model then of the water at the path's end as PHREEQC leaves it and the panel
-            saying why: a path in temperature (<code>REACTION_TEMPERATURE</code>) or in pressure
-            (<code>REACTION_PRESSURE</code>); one that takes water away or adds it, <code>H2O</code> among
+            saying why: a temperature that goes up and down, or outside 0 to 350&nbsp;°C; a
+            <code>REACTION</code> whose amounts change along a temperature's steps as well; a path in
+            pressure (<code>REACTION_PRESSURE</code>); one that takes water away or adds it, <code>H2O</code> among
             its reactants — evaporation — for the page holds a kilogram of water; one beside
             <code>KINETICS</code>; one whose amounts do not grow from step to step; one where the relations
             are not held exactly; a reactant that moves electrons where the valence states are not held at
@@ -4501,12 +4511,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             the pressure it starts at, where PHREEQC's rises with the gas; the panel says how far
             PHREEQC's goes along the path.</p>
           <p>For a path of your own, the panel's <em>PHREEQC's own steps along the path, to set beside the
-            run</em>, there where the input has a <code>REACTION</code>: <em>Write the model</em> then has
-            PHREEQC run the input to the <code>END</code> of the path's part, and its steps go into the
-            text under <code>&lt;DATA&gt;</code> as a table in time — each step's pH, its element totals,
-            its minerals, the gases of a gas phase and the members of a solid solution, at the clock the run
-            has when it has added as much — for Run to draw beside the run and the Fit tab to set against
-            it. The totals are PHREEQC's, per kilogram of its water; the amounts per kilogram of the water
+            run</em>, there where the input has a <code>REACTION</code> or a
+            <code>REACTION_TEMPERATURE</code>: <em>Write the model</em> then has PHREEQC run the input to the
+            <code>END</code> of the path's part, and its steps go into the text under
+            <code>&lt;DATA&gt;</code> as a table in time — each step's pH, its element totals, its minerals,
+            the gases of a gas phase and the members of a solid solution, at the clock the run has when it
+            has added as much, or at its temperature — for Run to draw beside the run and the Fit tab to set
+            against it. The totals are PHREEQC's, per kilogram of its water; the amounts per kilogram of the water
             the path starts with.</p>
           <p>Against PHREEQC, with the tests' own waters. Sodium sulphate and salt added to a water at
             calcite saturation, 80&nbsp;mmol in six steps, gypsum forming on the way: at every step the pH
@@ -4516,10 +4527,20 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             calcite, 2&nbsp;mmol: the pH within 1.3×10<sup>−5</sup>, the totals 4×10<sup>−5</sup> and the
             minerals 4×10<sup>−9</sup>&nbsp;mol. Cadmium into a water with an exchanger and none of it,
             0.2&nbsp;mmol in ten steps: the pH within 7×10<sup>−7</sup>, the cadmium in the water within
-            4×10<sup>−8</sup> and on the exchanger 2×10<sup>−12</sup>&nbsp;mol. Of PHREEQC's own examples,
-            the paths of 5 (oxygen into pyrite) and 10 (strontianite into a solid solution) are carried and
-            follow PHREEQC as closely; 22's too, until its gas phase, in a fixed volume, takes PHREEQC's
-            water to more than a thousand atmospheres; 7, 19 and 19B are not, for their nitrogen, their
+            4×10<sup>−8</sup> and on the exchanger 2×10<sup>−12</sup>&nbsp;mol. A water at saturation with
+            calcite and gypsum heated along a <code>REACTION_TEMPERATURE</code> from 25 to 85&nbsp;°C in 13
+            steps: while there is gypsum the pH within 6×10<sup>−6</sup>; the gypsum goes over to anhydrite
+            between PHREEQC's steps at 50 and 55&nbsp;°C, and after it the pH is within 2×10<sup>−4</sup>
+            and the totals within 6×10<sup>−4</sup> in moles, PHREEQC's kilogram of water growing by
+            5×10<sup>−4</sup> with the gypsum's water; cooled from 60 to 10&nbsp;°C, the pH within
+            2×10<sup>−4</sup>. Of PHREEQC's own examples, the paths of 5 (oxygen into pyrite) and 10
+            (strontianite into a solid solution) are carried and follow PHREEQC as closely, and so do 2
+            (gypsum and anhydrite heated from 25 to 75&nbsp;°C: the calcium within 2×10<sup>−9</sup> and the
+            gypsum 2×10<sup>−7</sup>&nbsp;mol, the anhydrite 10<sup>−3</sup>&nbsp;mol where PHREEQC's
+            kilogram grows by 7&nbsp;% with the gypsum's water) and 2B's last part (anhydrite heated from 50
+            to 170&nbsp;°C at 987&nbsp;atm: the pH within 2×10<sup>−9</sup>, the calcium
+            2×10<sup>−8</sup>); 22's too, until its gas phase, in a fixed volume, takes PHREEQC's water to
+            more than a thousand atmospheres; 7, 19 and 19B are not, for their nitrogen, their
             <code>-mole_balance</code> and their Donnan layer.</p>
 
           <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
@@ -4993,6 +5014,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117f"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117g"></script>
 </body>
 </html>

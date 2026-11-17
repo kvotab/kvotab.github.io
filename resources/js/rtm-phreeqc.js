@@ -1912,15 +1912,17 @@
   }
 
   /**
-   * The input a path starts from: to the END of its simulation, without its
-   * REACTION -- the simulation's REACTION blocks, and its USE of one -- and,
-   * with `trace`, a REACTION of the same reactants, 1e-20 mol of each to the
-   * mole of reaction: a trace of what they bring, which a total at none
-   * would not have to grow from.
+   * The input a path starts from: to the END of its simulation, without what
+   * changes along it -- its REACTION, or (`kind` temperature) its
+   * REACTION_TEMPERATURE, the simulation's blocks of it and its USE of one --
+   * and, for a REACTION with `trace`, one of the same reactants, 1e-20 mol of
+   * each to the mole of reaction: a trace of what they bring, which a total
+   * at none would not have to grow from; for a temperature, the first step's.
    */
-  function pathStart(p, trace) {
+  function pathStart(p, trace, kind = 'reaction') {
     const first = (ln) => ln.trim().split(/\s+/)[0] || '';
     const isKey = (ln) => { const w = first(ln); return !!w && !w.startsWith('-') && KEYWORDS.has(w.toUpperCase()); };
+    const block = kind === 'temperature' ? 'REACTION_TEMPERATURE' : 'REACTION';
     const out = [];
     let drop = false;
     for (let i = 0; i < Math.min(p.to, p.lines.length); i++) {
@@ -1929,12 +1931,13 @@
         const tokens = ln.trim().split(/\s+/);
         const word = first(ln).toUpperCase();
         if (i >= p.from && word === 'USE' && tokens[1]
-          && (KEYWORD_NAMES.get(tokens[1].toUpperCase()) || tokens[1].toUpperCase()) === 'REACTION') continue;
-        drop = i >= p.from && word === 'REACTION';
+          && (KEYWORD_NAMES.get(tokens[1].toUpperCase()) || tokens[1].toUpperCase()) === block) continue;
+        drop = i >= p.from && word === block;
       }
       if (!drop) out.push(ln);
     }
-    if (trace) {
+    if (kind === 'temperature') out.push(`REACTION_TEMPERATURE ${p.temperature.n}`, ` ${p.steps[0].tc}`);
+    else if (trace) {
       out.push(`REACTION ${p.reaction.n}`, ...p.reaction.reactants.map(([nm, c]) => ` ${nm}  ${Math.abs(c)}`), ' 1e-20 moles');
     }
     out.push('END');
@@ -3372,12 +3375,19 @@
         return { name: nm, coef, terms, why };
       }) : [];
       let why = null;
+      // A temperature that only rises, or only falls: the clock counts the degrees from the first step's.
+      const rising = tcs.every((t, i) => i === 0 || t >= tcs[i - 1]);
+      const falling = tcs.every((t, i) => i === 0 || t <= tcs[i - 1]);
       if (byP) {
         why = `the pressure goes from ${fmtG(atms[0], 6)} to ${fmtG(atms[atms.length - 1], 6)} atm along it `
           + '(REACTION_PRESSURE), and PRESSURE is one number';
+      } else if (byT && byAmount) {
+        why = 'the amounts of its REACTION and the temperature both change along it';
       } else if (byT) {
-        why = `the temperature goes from ${fmtG(tcs[0], 6)} to ${fmtG(tcs[tcs.length - 1], 6)} C along it `
-          + '(REACTION_TEMPERATURE), which is not carried';
+        if (carryKin) why = 'the input\'s KINETICS are carried, and a path beside them is not';
+        else if (!o.exact) why = 'it is a series of equilibria, and the relations are not held exactly';
+        else if (!rising && !falling) why = 'its temperature goes up and down';
+        else if (Math.min(...tcs) < 0 || Math.max(...tcs) > 350) why = 'its temperature goes outside 0 to 350 C, where the page works';
       } else if (byAmount) {
         const water = reactants.find((r) => r.name === 'H2O');
         const bad = reactants.find((r) => r.why);
@@ -3391,15 +3401,20 @@
       }
       if (why && (byAmount || byT || byP)) {
         pathSkipped = { why, reaction: p.reaction ? p.reaction.n : null, steps: p.steps.length };
+      } else if (byT) {
+        // The water at the first step's temperature, heated or cooled a degree a second from there.
+        path = { p, kind: 'temperature', reactants: [], traced: false, els: new Set(), from: tcs[0], to: tcs[tcs.length - 1],
+          sign: rising ? 1 : -1, clock: tcs.map((t) => Math.abs(t - tcs[0])) };
+        waterText = pathStart(p, false, 'temperature');
       } else if (byAmount) {
-        path = { p, reactants, traced: false, els: new Set() };
+        path = { p, kind: 'reaction', reactants, traced: false, els: new Set(), clock: p.steps.map((st) => st.x) };
         waterText = pathStart(p, false);
       }
     }
     // A path's reactant that moves electrons wants them as a kinetic reaction does (below).
     const pathRedox = !!path && path.reactants.some((r) => Math.abs(r.terms.get('e-') || 0) > 1e-12);
-    // Where the path ends, in the unit of its steps: the run's TEND.
-    const pathEnd = path ? path.p.steps[path.p.steps.length - 1].x : 0;
+    // Where the path ends on the clock -- the reaction's amount in the unit of its steps, or the degrees: the run's TEND.
+    const pathEnd = path ? path.clock[path.clock.length - 1] : 0;
     /*
       With a kinetic reaction to run that moves electrons, every species of
       a redox element's: one PHREEQC finds none of may be needed (atNone).
@@ -4760,7 +4775,14 @@
       }
       if (line.length > 1) out.push(line);
     };
-    if (path) {
+    if (path && path.kind === 'temperature') {
+      const rt = path.p.temperature;
+      const heat = path.sign > 0 ? 'heats' : 'cools';
+      say(`The path, PHREEQC's REACTION_TEMPERATURE ${rt.n}: ${path.p.steps.length} steps from ${fmtG(path.from, 6)} to `
+        + `${fmtG(path.to, 6)} C. This water is the one at the first, and the run ${heat} it a degree a second, `
+        + `TEMPERATURE = ${fmtG(path.from, 10)} ${path.sign > 0 ? '+' : '-'} t, to TEND: the clock, in seconds, counts the degrees `
+        + `it has been ${path.sign > 0 ? 'heated' : 'cooled'}, and PHREEQC's steps are equilibria the run passes through.`);
+    } else if (path) {
       const rp = path.p.reaction;
       say(`The path, PHREEQC's REACTION ${rp.n}: ${path.p.steps.length} steps, each ${path.p.incremental
         ? 'added to the step before (INCREMENTAL_REACTIONS)' : 'added to the water as it was before the first'}, `
@@ -5040,9 +5062,12 @@
       || solids.some((ss) => !!ss.energy || ss.comps.some((c) => withT(db.logKTerms('p', c.phase))))
       || gases.some((g) => withT(db.logKTerms('p', g.phase))) || onEx.some((e) => withT(db.logKTerms('x', e.species)))
       || onSf.some((e) => !e.master && withT(db.logKTerms('f', e.species)));
-    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel'}`, `TEMPERATURE = ${fmtG(tc, 10)}`);
-    // A double layer reads it too, without ACTIVITY, and a gas phase (R T).
-    else if (potentials.length || gases.length || anyT) out.push(`TEMPERATURE = ${fmtG(tc, 10)}`);
+    // A path in temperature: the first step's, a degree a second from there.
+    const tempLine = path && path.kind === 'temperature'
+      ? `TEMPERATURE = ${fmtG(path.from, 10)} ${path.sign > 0 ? '+' : '-'} t` : `TEMPERATURE = ${fmtG(tc, 10)}`;
+    if (follow) out.push(`ACTIVITY = ${sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel'}`, tempLine);
+    // A double layer reads it too, without ACTIVITY, and a gas phase (R T); and a path in temperature.
+    else if (potentials.length || gases.length || anyT || (path && path.kind === 'temperature')) out.push(tempLine);
     if (gases.length) {
       out.push(gasFixed.fixed === 'pressure' ? `GAS_PRESSURE = ${fmtG(gasFixed.pressure, 12)}`
         : `GAS_VOLUME = ${fmtG(gasFixed.volume, 12)}`);
@@ -5422,7 +5447,7 @@
       }
     }
     out.push('', '<REACTIONS>');
-    if (!kinetics.length && !path) out.push('# Your kinetic reactions here, in the same species and units.');
+    if (!kinetics.length && !(path && path.kind === 'reaction')) out.push('# Your kinetic reactions here, in the same species and units.');
     /*
       The path: each reactant at its steady rate, mol/kgw a second, a source
       of what it brings and a sink of what it takes. A reactant whose
@@ -5432,7 +5457,7 @@
       master species with H+ and the electrons (reactionOf), the water
       left out.
     */
-    if (path) {
+    if (path && path.kind === 'reaction') {
       const rp = path.p.reaction;
       const unit = rp.unit;
       out.push(`# The path: PHREEQC's REACTION ${rp.n}, its reactants coming in at a steady rate, a ${unit} of reaction a second`,
@@ -5545,10 +5570,17 @@
           in it, the run's clock at that step; or, where there is a path not
           carried, why.
         */
-        path: path ? { reaction: path.p.reaction.n, use: path.p.reaction.use, sim: path.p.sim,
+        path: path ? { kind: path.kind, sim: path.p.sim, incremental: path.p.incremental,
+          // Its block: the REACTION, or the REACTION_TEMPERATURE, and whether brought in by USE.
+          block: (path.kind === 'reaction' ? path.p.reaction : path.p.temperature).n,
+          use: (path.kind === 'reaction' ? path.p.reaction : path.p.temperature).use,
+          reaction: path.kind === 'reaction' ? path.p.reaction.n : null,
           reactants: path.reactants.map((r) => ({ name: r.name, coef: r.coef, rate: r.rate, line: r.line })),
-          unit: path.p.reaction.unit, factor: path.p.reaction.factor, incremental: path.p.incremental,
-          steps: path.p.steps.map((st) => st.x), tend: pathEnd, kgw: path.W, trace: path.traced ? 1e-20 : 0,
+          unit: path.kind === 'reaction' ? path.p.reaction.unit : null,
+          factor: path.kind === 'reaction' ? path.p.reaction.factor : null,
+          // The clock at each of PHREEQC's steps: the reaction's amount, or the degrees from the first step's.
+          steps: path.clock, tend: pathEnd, kgw: path.W, trace: path.traced ? 1e-20 : 0,
+          from: path.kind === 'temperature' ? path.from : null, to: path.kind === 'temperature' ? path.to : null,
           temperature: path.p.steps[0].tc, pressure: path.p.steps[0].atm,
           // PHREEQC's pressure at the path's end, where a gas phase in a fixed volume moves it and the run does not.
           atmMoved: pathAtmMoved ? { from: atm, to: path.p.atmEnd } : null } : null,
@@ -5813,7 +5845,7 @@
     const path = o.res.report && o.res.report.path;
     if (!path) throw new Error('the model was written with no path for PHREEQC\'s own to be set beside');
     const p = readPath(text, path.sim);
-    if (!p || !p.reaction) throw new Error('the input has no path where the model was written with one');
+    if (!p) throw new Error('the input has no path where the model was written with one');
     const Rtm = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel);
     if (!Rtm) throw new Error('the model compiler is not loaded');
     const m = Rtm.compile(o.res.text);
@@ -5862,10 +5894,12 @@
     const most = o.maxRows || 200;
     const shown = steps.length <= most ? steps
       : [...new Set(Array.from({ length: most }, (_, j) => steps[Math.round((j * (steps.length - 1)) / (most - 1))]))];
-    const lines = ['<DATA>',
-      `# PHREEQC's own steps along the path, its REACTION ${path.reaction} run in the page: each step at the clock the run has`,
-      `# when it has added as much, the ${path.unit} of reaction; the totals as PHREEQC has them, the amounts per kilogram`,
-      '# of the water the path starts with.'];
+    const lines = ['<DATA>', path.kind === 'temperature'
+      ? `# PHREEQC's own steps along the path, its REACTION_TEMPERATURE ${path.block} run in the page: each step at the clock the run`
+        + `\n# has at its temperature, the degrees from ${fmtG(path.from, 6)} C; the totals as PHREEQC has them, the amounts per kilogram`
+      : `# PHREEQC's own steps along the path, its REACTION ${path.block} run in the page: each step at the clock the run has`
+        + `\n# when it has added as much, the ${path.unit} of reaction; the totals as PHREEQC has them, the amounts per kilogram`,
+    '# of the water the path starts with.'];
     if (held.length) lines.push(`# Left out, PHREEQC's steps holding each at one value: ${held.join(', ')}.`);
     lines.push(`time  ${use.map((i) => cols[i].head).join('  ')}`);
     for (const k of shown) lines.push(`${gt(path.steps[k - 1])}  ${use.map((i) => g(byStep.get(k)[i])).join('  ')}`);
