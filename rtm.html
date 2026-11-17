@@ -3863,7 +3863,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             report says how far its pe moved. With the floor at 0 every species PHREEQC lists is
             written, even one it finds none of — PHREEQC counts nothing below 10<sup>−30</sup> — at
             none and with the database's log K: oxygen in a reducing water, ferric iron's complexes. A
-            water that oxygen will enter needs them.</p>
+            water that oxygen will enter needs them. A species that a relation written needs, or that a
+            reactant brings or takes, and that PHREEQC counts below 10<sup>−30</sup> is written at
+            PHREEQC's own log molality, which it still has: the nitrate of a reducing water, which
+            ammonium and N<sub>2</sub> are written against, at 10<sup>−84</sup>&nbsp;mol/kgw, so that both
+            are tied to it and so to the one pe, where they would otherwise each keep a total of their
+            own. The text and the report name each so written.</p>
           <p>PHREEQC's relations hold between activities. <em>Activity coefficients</em> says how the
             model's do. <em>Following the ionic strength</em>, the default, writes
             <code>ACTIVITY = debye-huckel</code> at the water's <code>TEMPERATURE</code>, each
@@ -4504,8 +4509,8 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             its reactants — evaporation — for the page holds a kilogram of water; one beside
             <code>KINETICS</code>; one whose amounts do not grow from step to step; one where the relations
             are not held exactly; a reactant that moves electrons where the valence states are not held at
-            one pe, or whose element would come in as a species the water has none of — organic matter's
-            nitrogen as nitrate, where PHREEQC finds none; a species of what it brings that PHREEQC counts
+            one pe, or whose element would come in as a species PHREEQC has none of at all; a species of
+            what it brings that PHREEQC counts
             in its mole balances as another formula (<code>-mole_balance</code>, cadmium on a site counted
             as CdCl<sub>2</sub>); and a surface, an exchanger or a phase that would take up what it brings
             and is not carried. A reaction of one step, or of one amount at every step, is no path: the
@@ -4541,9 +4546,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             gypsum 2×10<sup>−7</sup>&nbsp;mol, the anhydrite 10<sup>−3</sup>&nbsp;mol where PHREEQC's
             kilogram grows by 7&nbsp;% with the gypsum's water) and 2B's last part (anhydrite heated from 50
             to 170&nbsp;°C at 987&nbsp;atm: the pH within 2×10<sup>−9</sup>, the calcium
-            2×10<sup>−8</sup>); 22's too, until its gas phase, in a fixed volume, takes PHREEQC's water to
-            more than a thousand atmospheres; 7, 19 and 19B are not, for their nitrogen, their
-            <code>-mole_balance</code> and their Donnan layer.</p>
+            2×10<sup>−8</sup>), and 7 (organic matter into a gas phase in a fixed volume, its nitrogen
+            in as nitrate at PHREEQC's 10<sup>−84</sup>: the pH within 10<sup>−4</sup> and the CO<sub>2</sub>,
+            CH<sub>4</sub> and N<sub>2</sub> of the gas within 3×10<sup>−4</sup> of PHREEQC's to
+            1000&nbsp;mmol); 22's too, until its gas phase, in a fixed volume, takes PHREEQC's water to more
+            than a thousand atmospheres; 19 and 19B are not, for their <code>-mole_balance</code> and their
+            Donnan layer.</p>
 
           <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
           <p>The <em>Batch</em> tab runs one PHREEQC input for every row of a table:
@@ -5016,6 +5024,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117i"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117j"></script>
 </body>
 </html>

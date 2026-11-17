@@ -6481,7 +6481,8 @@ async function againstPathHandOff(engine, createPhreeqc) {
     const els = [...new Set(m.speciesNames.flatMap((n, j) => (ofWater(j) ? [...(RtmModel.elementsOf(n) || new Map()).keys()] : [])))]
       .filter((e) => e !== 'H' && e !== 'O');
     const held = (res.report.minerals || []).map((mn) => [`EQUI("${mn.phase}")`, mn.as])
-      .concat(((res.report.exchange && res.report.exchange.species) || []).map((x) => [`MOL("${x.species}")*TOT("water")`, x.as]));
+      .concat(((res.report.exchange && res.report.exchange.species) || []).map((x) => [`MOL("${x.species}")*TOT("water")`, x.as]))
+      .concat(((res.report.gas && res.report.gas.species) || []).map((g) => [`GAS("${g.phase}")`, g.as]));
     engine.load(dbText);
     const punch = `SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings sim_ step_ pH_ kgw_ ${els.map((e) => `t_${e}`).join(' ')} `
       + `${held.map((x, i) => `h${i}_`).join(' ')}\n -start\n10 PUNCH SIM_NO, STEP_NO, -LA("H+"), TOT("water")`
@@ -6612,6 +6613,23 @@ async function againstPathHandOff(engine, createPhreeqc) {
       && k.pH < 5e-4 && k.tot < 1e-3 && k.held < 1e-4,
     kp ? `pH within ${k.pH.toExponential(1)}, totals ${k.tot.toExponential(1)} (${k.totWhere}), minerals `
       + `${k.held.toExponential(1)} mol (${k.heldWhere})` : JSON.stringify(k.res.report.pathSkipped));
+
+  // Organic matter with nitrogen into a water at calcite saturation, a gas phase at one atmosphere: its nitrogen comes in
+  // as nitrate, which PHREEQC has below the 1e-30 it lists, at its log molality, NH4+ and N2 tied to it and so to the pe.
+  const orgN = 'SOLUTION 1\n units mmol/kgw\n pH 7 charge\n Na 2\n Cl 2\n C(4) 3\n Ca 1\nEQUILIBRIUM_PHASES 1\n Calcite 0 0.01\n'
+    + 'SAVE solution 1\nEND\nUSE solution 1\nGAS_PHASE 1\n -fixed_pressure\n -pressure 1.0\n CO2(g) 0\n CH4(g) 0\n N2(g) 0\n'
+    + 'REACTION 1\n CH2O(NH3)0.1 1.0\n 1 2 5 10 20 50 100 mmol\nEND\n';
+  const on = along(orgN);
+  const faintNo3 = (on.res.report.faint || []).find((x) => x.species === 'NO3-');
+  check('  organic matter with nitrogen into a water at calcite saturation under a gas phase at one atmosphere: its nitrogen '
+    + 'comes in as nitrate, written at PHREEQC\'s log molality below the 1e-30 it lists, NH4+ and N2 tied to it and so to '
+    + 'the pe; the bubble forming between PHREEQC\'s steps, its CO2, CH4 and N2, the pH and the totals as PHREEQC has them',
+  !!on.res.report.path && !!faintNo3 && faintNo3.molality > 0 && faintNo3.molality < 1e-30 && !on.res.report.skipped.length
+    && /^NO3- \+ 10 H\+ \+ 8 e- <=> NH4\+ \+ 3 H2O,/m.test(on.res.text) && on.pq.length === 7 && on.pH < 1e-4
+    && on.tot < 1e-3 && on.held < 1e-6,
+  on.res.report.path ? `NO3- at ${faintNo3 ? faintNo3.molality.toExponential(2) : 'none'}; pH within ${on.pH.toExponential(1)}, `
+    + `totals ${on.tot.toExponential(1)} (${on.totWhere}), the gases ${on.held.toExponential(1)} mol (${on.heldWhere})`
+    : JSON.stringify(on.res.report.pathSkipped));
 
   // 6. PHREEQC's own steps beside the run, as the page asks for them.
   const handle = E.handler(createPhreeqc, { builtin: dbText });

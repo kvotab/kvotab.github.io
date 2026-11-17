@@ -12951,11 +12951,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117i';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117j';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117i',
+    'resources/js/rtm-phreeqc.js?v=20261117j',
     'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13638,6 +13638,10 @@ END
         + `${pqNum(r.droppedTopValue)} mol/kgw.`);
     }
     if (r.pulled) items.push(`${r.pulled} below the floor kept, because a relation kept needs them.`);
+    if (r.faint && r.faint.length) {
+      items.push(`Written at PHREEQC's own log molality, below the 10⁻³⁰ it lists, as a relation kept or a reaction needs `
+        + `${r.faint.length > 1 ? 'them' : 'it'}: ${r.faint.map((x) => `${esc(x.as)} (${pqNum(x.molality)} mol/kgw)`).join(', ')}.`);
+    }
     if (r.redox.length) {
       items.push(`No redox relation for ${esc(someOf(r.redox, 8))}: each valence state keeps its own total, `
         + 'and electrons move only through the reactions you write.');

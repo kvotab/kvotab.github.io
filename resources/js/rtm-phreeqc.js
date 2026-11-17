@@ -1363,7 +1363,7 @@
    * cannot go in a BASIC string -- PHREEQC splits lines on it -- hence ','
    * and '|'.
    */
-  function punchBlock(extra, held) {
+  function punchBlock(extra, held, lm) {
     const more = extra || [];
     const lines = [
       `SELECTED_OUTPUT ${SEL}`, '  -reset false', '  -solution true', '  -state true',
@@ -1377,7 +1377,9 @@
       '  20 s$ = ""',
       '  25 IF n < 1 THEN GOTO 60',
       '  30 FOR i = 1 TO n',
-      '  40   s$ = s$ + nm$(i) + "," + STR_E$(MOL(nm$(i)), 23, 15) + "," + STR_E$(LG(nm$(i)), 23, 15) + "|"',
+      // With `lm`, each species' log molality too, which PHREEQC has where MOL gives nought, below 1e-30.
+      `  40   s$ = s$ + nm$(i) + "," + STR_E$(MOL(nm$(i)), 23, 15) + "," + STR_E$(LG(nm$(i)), 23, 15)${lm
+        ? ' + "," + STR_E$(LM(nm$(i)), 23, 15)' : ''} + "|"`,
       '  50 NEXT i',
       '  60 PUNCH s$',
       '  70 t = SYS("phases", n2, pn$, pt$, pv)',
@@ -1453,7 +1455,8 @@
     const xs = head.map((h, i) => (/^x[0-9]+$/.test(h) ? i : -1)).filter((i) => i >= 0);
     return rows.slice(1).map((r) => {
       const species = new Map();
-      for (const [n, m, g] of pairs(r[at('aq')])) species.set(n, [m, g]);
+      // Each species' molality and log gamma, and its log molality where the punch has it (punchBlock's lm).
+      for (const [n, m, g, lm] of pairs(r[at('aq')])) species.set(n, lm === undefined ? [m, g] : [m, g, lm]);
       const phases = new Map();
       for (const [n, si] of pairs(r[at('phases')])) phases.set(n, si);
       const elements = new Map();
@@ -3484,7 +3487,7 @@
     const pathAt = path ? extras.length : -1;
     if (path) extras.push('TOT("water")');
     // With what the calculation holds, PHREEQC's lists of it.
-    const punch = punchBlock(extras, true);
+    const punch = punchBlock(extras, true, true);
     const takeWater = (text) => {
       let rows = runRows(o.engine, `${punch}${text}\nEND\n`);
       if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
@@ -3614,10 +3617,25 @@
 
     const molal = new Map();
     const lg = new Map();
-    for (const [n, [m, g]] of w.species) {
+    /*
+      FAINT: what PHREEQC lists at none -- MOL gives nought below 1e-30 --
+      but still has, at its log molality: the nitrate of a reducing water,
+      NH4+ and N2 written against it by the database. Where a relation kept
+      needs one, or a reactant brings or takes one, it is written at that
+      (fromFaint), so that the relation holds: without it, NH4+ and N2 would
+      have no relation, each its own total, not tied to the electron.
+    */
+    const faint = new Map();
+    for (const [n, [m, g, lmol]] of w.species) {
       lg.set(n, g);
       if (m > 0 && !NOT_A_SPECIES.has(n)) molal.set(n, m);
+      else if (!NOT_A_SPECIES.has(n) && Number.isFinite(lmol) && lmol > -300) faint.set(n, 10 ** lmol);
     }
+    const faintUsed = new Set();
+    const fromFaint = (n) => {
+      if (!molal.has(n) && faint.has(n)) { molal.set(n, faint.get(n)); faintUsed.add(n); }
+      return molal.has(n);
+    };
     const logAw = log10(w.aw);
     /*
       THE PRESSURE. PHREEQC's water is at the pressure given, or at the
@@ -4004,7 +4022,7 @@
           skip('it reacts with electrons, and the valence states are not held at one pe');
           continue;
         }
-        const missing = rx.filter(([n]) => n !== 'e-' && !molal.has(n)).map(([n]) => n);
+        const missing = rx.filter(([n]) => n !== 'e-' && !fromFaint(n)).map(([n]) => n);
         if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
         // Its rate, what the program reads in the model's words.
         const heldRead = new Map();
@@ -4069,7 +4087,7 @@
       path.W = kgw > 0 && Math.abs(kgw - 1) > 1e-9 ? kgw : 1;
       for (const r of path.reactants) {
         const rx = [...r.terms].filter(([n, c]) => n !== 'H2O' && Math.abs(c) > 1e-12);
-        const missing = rx.filter(([n]) => n !== 'e-' && !molal.has(n)).map(([n]) => n);
+        const missing = rx.filter(([n]) => n !== 'e-' && !fromFaint(n)).map(([n]) => n);
         if (missing.length) {
           // As which species, of which element: organic matter's nitrogen as nitrate, where the water has none.
           const ofEl = (n) => { try { return [...new Set([...db.expand(n).keys()].map(elementOf).filter((e) => e !== 'H' && e !== 'O'))]; } catch (e) { return []; } };
@@ -4318,7 +4336,7 @@
         if (db.isRedox(n) && !carryRedox) { redox.add(n); continue; }
         for (const { n: x } of [...r.left, ...r.right.slice(1)]) {
           if (NOT_A_SPECIES.has(x) || kept.has(x)) continue;
-          if (molal.has(x)) { kept.add(x); pulled.add(x); changed = true; }
+          if (molal.has(x) || fromFaint(x)) { kept.add(x); pulled.add(x); changed = true; }
         }
       }
     }
@@ -4910,6 +4928,11 @@
       out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
         unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
       out.push('# the rule above.');
+    }
+    if (faintUsed.size) {
+      const list = [...faintUsed].map((sp) => `${name.get(sp) || sp} (${fmtG(molal.get(sp), 3)})`);
+      out.push(`# At what PHREEQC has of them below the 1e-30 it lists, its log molality, as a relation kept or a reaction`);
+      out.push(`# needs them: ${list.join(', ')} mol/kgw.`);
     }
     if (renamed.length) {
       out.push('# Renamed, since rtm.html cannot write the name as PHREEQC does:');
@@ -5520,6 +5543,8 @@
         pH: w.pH, chargeBalance: w.cb,
         dropped: dropped.length, droppedTop: top, droppedTopValue: top ? molal.get(top) : null,
         pulled: pulled.size, redox: [...redox].sort(), unknown: [...unknown].sort(), skipped, renamed,
+        // Written at PHREEQC's log molality, below the 1e-30 it lists, as a relation kept or a reaction needs them (FAINT).
+        faint: [...faintUsed].map((sp) => ({ species: sp, as: name.get(sp) || sp, molality: molal.get(sp) })),
         // The electron, when the couples are tied to it: its pe here, and the species tied.
         electron: eUsed ? { name: 'e-', pe: w.pe, tied: tied.map((e) => name.get(e.species) || e.species),
           minerals: minerals.filter((mn) => withE(mn.reac) || withE(mn.prod)).map((mn) => mn.name),
