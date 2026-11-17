@@ -5072,6 +5072,39 @@ function againstTransportBeside(engine) {
     && otherI === 'EQUILIBRIUM_PHASES CO2(g)' && worstI < 1e-8
     && /^# Not carried, as none of the column's cells holds them: EQUILIBRIUM_PHASES CO2\(g\)\.$/m.test(wi.res.text),
   `holds ${wi.res.report.minerals.map((x) => x.as).join(', ')}; not carried: ${otherI}; cell 1 within ${worstI.toExponential(1)}`);
+  /*
+    What the column's own part does after the shifts, as PHREEQC does it: a
+    COPY of the column's salty water to SOLUTION 0, the next part's inflow,
+    written after the TRANSPORT or before it in the same part, and a DELETE
+    of SOLUTION 0. PHREEQC's shifts take in the fresh water all the same --
+    its tables are the input's without them -- and the model's inflow, left=,
+    is that water, where it was the salty one, or no water at all.
+  */
+  const lefts = (text) => new Map([...text.matchAll(/^(\S+) +\S+ .*\bleft=(\S+)/gm)].map((x) => [x[1], Number(x[2])]));
+  const plainLeft = lefts(res.text);
+  const afterShifts = [
+    ['COPY after', BESIDE_INPUT.replace(' -punch_frequency 8\nEND\n', ' -punch_frequency 8\nCOPY solution 1 0\nEND\n')],
+    ['COPY before', BESIDE_INPUT.replace('TRANSPORT\n -cells 40\n', 'COPY solution 1 0\nTRANSPORT\n -cells 40\n')],
+    ['DELETE', BESIDE_INPUT.replace(' -punch_frequency 8\nEND\n', ' -punch_frequency 8\nDELETE\n -solution 0\nEND\n')],
+  ].map(([label, text]) => {
+    try {
+      const w = write(text);
+      const bx = P.transportBeside({ engine, database, water: w.water, res: w.res });
+      const l = lefts(w.res.text);
+      let worst = l.size === plainLeft.size ? 0 : Infinity;
+      for (const [k, v] of plainLeft) {
+        worst = Math.max(worst, l.has(k) ? Math.abs(l.get(k) - v) / Math.max(Math.abs(v), 1e-30) : Infinity);
+      }
+      return { label, changed: text !== BESIDE_INPUT, worst, na: l.get('Na+'), same: bx.text === b.text };
+    } catch (e) { return { label, error: e.message }; }
+  });
+  check('what the column\'s own part does after the shifts, done after them as PHREEQC does: a COPY of the column\'s salty water '
+    + 'to SOLUTION 0, written after the TRANSPORT or before it, and a DELETE of SOLUTION 0 -- PHREEQC\'s tables the same as '
+    + 'without them, and the model\'s inflow the fresh water its shifts take in',
+  afterShifts.every((x) => !x.error && x.changed && x.same && x.worst < 1e-9),
+  afterShifts.map((x) => (x.error ? `${x.label}: ${x.error}` : `${x.label}: inflow within ${x.worst.toExponential(1)}, Na+ `
+    + `${x.na.toExponential(4)} (${plainLeft.get('Na+').toExponential(4)}), PHREEQC's tables ${x.same ? 'the same' : 'not the same'}`))
+    .join('; '));
   check('an input that goes on after its column, the column\'s own water flowing back in: the model carries the column, and '
     + 'PHREEQC\'s tables beside it are of that column alone, the same as without what follows',
   wp.res.report.transport.after === true && bp.tables === b.tables && bp.rows === b.rows && bp.text === b.text,

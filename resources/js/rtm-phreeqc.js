@@ -75,9 +75,21 @@
     'EXCHANGE_RAW', 'SURFACE_RAW', 'KINETICS_RAW', 'GAS_PHASE_RAW', 'SOLID_SOLUTIONS_RAW',
     'REACTION_RAW', 'MIX_RAW', 'REACTION_TEMPERATURE_RAW', 'REACTION_PRESSURE_RAW',
     'INCLUDE$', 'SOLUTION_MIX', 'EXCHANGE_MIX', 'GAS_PHASE_MIX', 'KINETICS_MIX',
-    'PPASSEMBLAGE_MIX', 'SSASSEMBLAGE_MIX', 'SURFACE_MIX', 'POLYMER', 'RATE_PARAMETERS_PK',
+    'EQUILIBRIUM_PHASES_MIX', 'EQUILIBRIUM_PHASE_MIX', 'SOLID_SOLUTIONS_MIX', 'SOLID_SOLUTION_MIX', 'SURFACE_MIX',
+    'MIX_SOLUTION', 'MIX_EXCHANGE', 'MIX_GAS_PHASE', 'MIX_KINETICS', 'MIX_EQUILIBRIUM_PHASES', 'MIX_EQUILIBRIUM_PHASE',
+    'MIX_SOLID_SOLUTIONS', 'MIX_SOLID_SOLUTION', 'MIX_SURFACE', 'POLYMER', 'RATE_PARAMETERS_PK',
     'RATE_PARAMETERS_SVD', 'RATE_PARAMETERS_HERMANSKA',
   ]);
+  /*
+    What PHREEQC does in a simulation after its TRANSPORT's shifts, under
+    each name it reads: IPhreeqc runs a simulation's transport, then its
+    RUN_CELLS, its _MIX blocks (do_mixes), COPY, DUMP and DELETE, wherever
+    in the simulation they are written.
+  */
+  const AFTER_SHIFTS = new Set(['RUN_CELLS', 'COPY', 'DUMP', 'DELETE', 'SOLUTION_MIX', 'EXCHANGE_MIX', 'GAS_PHASE_MIX',
+    'KINETICS_MIX', 'EQUILIBRIUM_PHASES_MIX', 'EQUILIBRIUM_PHASE_MIX', 'SOLID_SOLUTIONS_MIX', 'SOLID_SOLUTION_MIX',
+    'SURFACE_MIX', 'MIX_SOLUTION', 'MIX_EXCHANGE', 'MIX_GAS_PHASE', 'MIX_KINETICS', 'MIX_EQUILIBRIUM_PHASES',
+    'MIX_EQUILIBRIUM_PHASE', 'MIX_SOLID_SOLUTIONS', 'MIX_SOLID_SOLUTION', 'MIX_SURFACE']);
 
   /** Never a species of the water: water itself, and PHREEQC's electron. */
   const NOT_A_SPECIES = new Set(['H2O', 'e-']);
@@ -1704,10 +1716,28 @@
     while (stop < lines.length && !isKey(lines[stop])) stop++;
     let end = stop;
     while (end < lines.length && !(isKey(lines[end]) && first(lines[end]).toUpperCase() === 'END')) end++;
+    /*
+      What the column starts from is what PHREEQC has as the shifts begin:
+      the blocks of the TRANSPORT's own simulation, before or after it, but
+      those PHREEQC does after the shifts (AFTER_SHIFTS) -- a COPY that makes
+      the column's water the next part's inflow changes nothing that flows
+      in here.
+    */
+    let sim = at;
+    while (sim > 0 && !(isKey(lines[sim - 1]) && first(lines[sim - 1]).toUpperCase() === 'END')) sim--;
+    const beforeShifts = (from, to) => {
+      const out = [];
+      let after = false;
+      for (let i = from; i < to; i++) {
+        if (isKey(lines[i])) after = AFTER_SHIFTS.has(first(lines[i]).toUpperCase());
+        if (!after) out.push(lines[i]);
+      }
+      return out;
+    };
     const quiet = /^(END|PRINT|SELECTED_OUTPUT|USER_PUNCH|USER_GRAPH|USER_PRINT|TITLE|KNOBS)$/i;
     const t = { kind, cells: 1, shifts: 1, dt: 0, dir: 1, bc: [3, 3], lengths: [], disp: [], correctDisp: false,
       diffc: 0.3e-9, heat: false, others: [], stag: null, mcd: null, por: [], implicit: false,
-      before: `${[...lines.slice(0, at), ...lines.slice(stop, end)].join('\n')}\nEND\n`,
+      before: `${[...lines.slice(0, sim), ...beforeShifts(sim, at), ...beforeShifts(stop, end)].join('\n')}\nEND\n`,
       after: lines.slice(end + 1).some((ln) => isKey(ln) && !quiet.test(first(ln))) };
     const opts = kind === 'TRANSPORT' ? TRANSPORT_OPTS : ADVECTION_OPTS;
     // A list: numbers, a repeat written n*x.

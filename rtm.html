@@ -4051,7 +4051,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             electrons have couples to go to, as in PHREEQC's own next step.</p>
           <p>An input with a <code>TRANSPORT</code> becomes a column, its first one, or where there is
             none its first <code>ADVECTION</code>. Everything the input does before it is done as
-            written. Then each cell, and the water at each end, is put on what is numbered as it, as
+            written; what the <code>TRANSPORT</code>'s own part of the input does after the shifts is
+            not. PHREEQC does that part's <code>RUN_CELLS</code>, its <code>_MIX</code> blocks,
+            <code>COPY</code>, <code>DUMP</code> and <code>DELETE</code> after the <code>TRANSPORT</code>,
+            wherever in the part they are written, so a <code>COPY</code> that makes the column's water the
+            next part's inflow leaves the water coming in here as it is. Then each cell, and the water at
+            each end, is put on what is numbered as it, as
             PHREEQC's <code>TRANSPORT</code> does before its first shift, and the column starts each cell as
             it comes out of that. Cells that come out alike — each element's total, its acid included,
             within a part in a million, each valence state's within a part in 10<sup>4</sup> (PHREEQC's
@@ -4919,6 +4924,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117a"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117b"></script>
 </body>
 </html>
