@@ -5422,6 +5422,32 @@ async def main():
                   [kept['listed'], kept['note'], await page.ev(TEXT) == '## Third\n' + robertson],
                   [['Fourth', 'Sixth', 'Fifth', 'Third', 'A dropped model'], None, True])
 
+            # A clock that is no time: CLOCK = reaction added (mmol), the run adding A at 1e-3 to each 1 on it to 80. Against
+            # time is titled with the clock's words, a number on it written in its unit, Time in offers nothing else (greyed),
+            # and the panel's Simulated time asks for mmol on the model's clock.
+            await set_text(page, '## A clock that is no time\n<SETTINGS>\nTEND = 80\nCLOCK = reaction added (mmol)\n\n'
+                                 '<SPECIES>\nA 0\n\n<REACTIONS>\n=> A, r = 1e-3\n')
+            await settle(page, "document.getElementById('rtmStatus').textContent.slice(0, 9)", 'Compiled:', tries=60, pause=0.25)
+            await page.ev("document.getElementById('rtmRun').click()")
+            clock_ran = await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="A"]');
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await asyncio.sleep(1.0)
+            clock = await page.ev("""(() => { const p = document.getElementById('rtmChartTime'); const s = document.getElementById('rtmTimeInTime');
+              const a = (p.data || []).find((t) => t.name === 'A');
+              return [p.layout && p.layout.xaxis.title.text, s.disabled, [...s.options].map((o) => o.textContent).join('|'),
+                document.getElementById('rtmTMinUnit').textContent, document.getElementById('rtmTendUnit').textContent,
+                a ? Math.round(a.x[a.x.length - 1]) : null, a ? Number(a.y[a.y.length - 1].toPrecision(6)) : null]; })()""")
+            check('a clock that is no time (CLOCK = reaction added (mmol)): Against time titled with its words, Time in greyed '
+                  'with nothing else, a number on it in mmol, and the panel asking for mmol on the model\'s clock; the run 80 on '
+                  'it, A at 0.08', [clock_ran.startswith('Done')] + (clock if isinstance(clock, list) else [clock]),
+                  [True, 'reaction added (mmol)', True, 'reaction added (mmol)', 'mmol',
+                   "mmol, on the model's clock; blank uses TEND from the text", 80, 0.08])
+            await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="A"]');
+              if (el && el.checked) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""")
+            await asyncio.sleep(0.8)
+
             check('no console errors throughout', page.errors[:3], [])
         finally:
             await page.call('Target.closeTarget', {'targetId': tid})

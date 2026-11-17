@@ -170,6 +170,8 @@ function rtmSummary(model) {
     density: model.density,
     blocks: rtmPatternBlocks(model),
     timeUnit: model.timeUnit,
+    // What the clock counts where it is no time (CLOCK): the page titles its time axes with it.
+    clock: model.clock || null,
     settings: model.settings,
     warnings: model.warnings,
     fixes: model.fixes || [],

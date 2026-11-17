@@ -576,10 +576,11 @@ async def main():
               const pts = d.filter((tr) => tr.mode === 'markers');
               const lines = d.filter((tr) => tr.mode === 'lines');
               return [pts.length, pts.map((tr) => tr.x.length).join(' '),
-                lines.length ? Math.round(Math.max(...lines.map((tr) => tr.x[tr.x.length - 1]))) : null]; })()""")
-            check('  run, the path ends at 80 s, the 80 mmol of reaction added; Against time, calcite and gypsum ticked, draws '
-                  'PHREEQC\'s six steps of each beside the run as points',
-                  [ran_p] + (p_view if isinstance(p_view, list) else [p_view]), ['Done', 2, '6 6', 80])
+                lines.length ? Math.round(Math.max(...lines.map((tr) => tr.x[tr.x.length - 1]))) : null,
+                c.layout.xaxis.title.text]; })()""")
+            check('  run, the path ends at 80 on its clock, the 80 mmol of reaction added, the axis titled so (CLOCK); Against '
+                  'time, calcite and gypsum ticked, draws PHREEQC\'s six steps of each beside the run as points',
+                  [ran_p] + (p_view if isinstance(p_view, list) else [p_view]), ['Done', 2, '6 6', 80, 'reaction added (mmol)'])
             # Both unticked at once: the chart drawn with one and then cleared, the clearing waiting for the drawing to
             # finish -- before, Plotly was left to finish on a chart already purged (a TypeError in the console).
             errors_before = len(page.errors)

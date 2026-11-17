@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261116c';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117k';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -457,7 +457,19 @@
     model that says nothing means.
   */
   function timeUnit() {
-    return (state.compiled && state.compiled.timeUnit) || { name: 'second', symbol: 's', seconds: 1 };
+    const m = state.compiled;
+    /*
+      A clock that is no time (CLOCK = reaction added (mmol)): its unit, one
+      to each of the model's own, its words what an axis is titled, and no
+      ladder of times to climb. `plural` is how the unit is said after "a
+      number of".
+    */
+    if (m && m.clock) {
+      return { name: m.clock.unit || 'unit', symbol: m.clock.unit, seconds: 1, clock: m.clock.label,
+        plural: m.clock.unit || 'units on its clock' };
+    }
+    const u = (m && m.timeUnit) || { name: 'second', symbol: 's', seconds: 1 };
+    return { ...u, plural: `${u.name}s` };
   }
 
   /**
@@ -476,6 +488,9 @@
   };
 
   const fmtTime = (t) => {
+    const clock = timeUnit();
+    // A clock that is no time: the number in its own unit, never scaled up a ladder of times.
+    if (clock.clock) return `${fmtTimeNumber(t)}${clock.symbol ? ` ${clock.symbol}` : ''}`;
     const st = shownTime();
     if (st.fixed) return `${fmtTimeNumber(t * st.per)} ${st.sym}`;
     const u = timeUnit();
@@ -581,9 +596,13 @@
    */
   function shownTime() {
     const own = timeUnit();
+    // A clock that is no time is shown in its own unit alone.
+    if (own.clock) return { fixed: false, per: 1, sym: own.symbol };
     const want = SHOW_UNITS.find(([sym]) => sym === state.timeIn && sym !== own.symbol);
     return want ? { fixed: true, per: own.seconds / want[2], sym: want[0] } : { fixed: false, per: 1, sym: own.symbol };
   }
+  /** What an axis of times is titled: time in the unit shown, or what a clock that is no time counts (CLOCK). */
+  const timeTitle = () => timeUnit().clock || `time (${shownTime().sym})`;
   /** A time of the model as it is shown; anything not a number as it is. */
   const showT = (t) => (Number.isFinite(t) ? t * shownTime().per : t);
   /** Composition's "from", typed in the unit shown, in the model's unit. */
@@ -610,11 +629,14 @@
    */
   function timeAxis(r = state.result) {
     const tw = poreTime(r);
+    // A clock that is no time: titled with what it counts, as the model's CLOCK says it.
+    const own = timeUnit();
+    if (own.clock) return { pv: false, fixed: false, tw, per: 1, sym: own.symbol, title: own.clock, why: '' };
     if (state.timeIn === 'pv' && tw > 0) return { pv: true, fixed: true, tw, per: 1 / tw, sym: 'PV', title: 'pore volumes', why: '' };
     const m = r ? r.model : state.compiled;
     const st = shownTime();
     return { pv: false, fixed: st.fixed, tw, per: st.per, sym: st.sym, title: `time (${st.sym})`,
-      why: state.timeIn === 'pv' && m ? `time in ${timeUnit().name}s: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
+      why: state.timeIn === 'pv' && m ? `time in ${timeUnit().plural}: ${m.transport ? 'the water does not flow' : 'a batch has no pore volumes'}` : '' };
   }
   /** Run r's stored times on the axis: its own, or scaled, kept with the run. */
   function axisTimes(r, ax) {
@@ -633,15 +655,19 @@
     const r = state.result || (state.compiled ? { model: state.compiled } : null);
     const flows = poreTime(r) > 0;
     // Every time unit, the model's own said so; pore volumes only where the water flows.
-    const own = timeUnit().symbol;
-    const html = SHOW_UNITS.map(([sym, name]) => `<option value="${sym}">${name}${sym === own ? ' (the model’s)' : ''}</option>`).join('')
-      + (flows ? '<option value="pv">pore volumes</option>' : '');
+    const u = timeUnit();
+    const own = u.symbol;
+    // A clock that is no time is shown in nothing else: the one choice, its words.
+    const html = u.clock ? `<option value="">${esc(u.clock)}</option>`
+      : SHOW_UNITS.map(([sym, name]) => `<option value="${sym}">${name}${sym === own ? ' (the model’s)' : ''}</option>`).join('')
+        + (flows ? '<option value="pv">pore volumes</option>' : '');
     const ax = timeAxis(r);
     for (const id of TIME_SELECTS) {
       const sel = $(id);
       if (!sel) continue;
       sel.innerHTML = html;
-      sel.value = ax.pv ? 'pv' : ax.sym;
+      sel.value = u.clock ? '' : ax.pv ? 'pv' : ax.sym;
+      sel.disabled = !!u.clock;
     }
     // A "from" is read on the axis.
     $('rtmTMinUnit').textContent = ax.sym;
@@ -1284,9 +1310,10 @@
     // The unit labels follow the model: a run in years should not be asked
     // for a "from" time in seconds.
     const u = timeUnit();
-    $('rtmTendUnit').textContent = `${u.name}s, or with a unit; blank uses TEND from the text`;
-    $('rtmHmaxUnit').textContent = `${u.name}s; 0: a tenth of the run for the NDF, no limit for the ports`;
-    $('rtmH0Unit').textContent = `${u.name}s; 0: chosen from the derivative at the start`;
+    $('rtmTendUnit').textContent = u.clock ? `${u.plural}, on the model's clock; blank uses TEND from the text`
+      : `${u.plural}, or with a unit; blank uses TEND from the text`;
+    $('rtmHmaxUnit').textContent = `${u.plural}; 0: a tenth of the run for the NDF, no limit for the ports`;
+    $('rtmH0Unit').textContent = `${u.plural}; 0: chosen from the derivative at the start`;
     // The charts' time: in the model's unit, or in pore volumes where the water flows; each "from" in it.
     renderTimeIn();
     if (m.nparameters) say.push(`${count(m.nparameters, 'parameter')}: ${m.parameters.join(', ')}.`);
@@ -1337,8 +1364,8 @@
       // ceiling is a fixed order at the ceiling.
       minOrder: Math.min(maxOrder, Math.round(num(s.minOrder, 'The minimum order must be 1 to 5',
         (x) => x >= 1 && x <= 5))),
-      hmax: num(s.hmax || 0, `The maximum step must be a non-negative number of ${timeUnit().name}s`, (x) => x >= 0),
-      h0: num(s.h0 || 0, `The first step must be a non-negative number of ${timeUnit().name}s`, (x) => x >= 0),
+      hmax: num(s.hmax || 0, `The maximum step must be a non-negative number of ${timeUnit().plural}`, (x) => x >= 0),
+      h0: num(s.h0 || 0, `The first step must be a non-negative number of ${timeUnit().plural}`, (x) => x >= 0),
       normControl: !!s.normControl,
       jacobianMode: s.jacobianMode === 'numeric' ? 'numeric' : 'analytic',
       kappa: num(s.kappa, 'The Newton tolerance must be a number between 0 and 1', (x) => x > 0 && x < 1),
@@ -1358,7 +1385,8 @@
       let t = NaN;
       try { t = RtmModel.readTime(s.tend, timeUnit().name, 'The simulated time'); } catch (e) { t = NaN; }
       if (!(t > 0)) {
-        throw new Error(`The simulated time must be a positive number of ${timeUnit().name}s, or one with its unit: 1890 days`);
+        throw new Error(timeUnit().clock ? `The simulated time must be a positive number of ${timeUnit().plural}, on the model's clock`
+          : `The simulated time must be a positive number of ${timeUnit().plural}, or one with its unit: 1890 days`);
       }
       out.tend = t;
     }
@@ -5103,7 +5131,7 @@
     }
     const layout = baseLayout();
     layout.xaxis.type = pick.logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
+    layout.xaxis.title = { text: timeTitle(), font: { size: 11 } };
     layout.yaxis.title = { text: got.transport ? "amount, concentration × m per m² of the water's cross-section" : 'amount per kg of water',
       font: { size: 11 } };
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -5254,7 +5282,7 @@
         line: { color: c.text, dash: 'dot', width: 1.6 } });
       const layout = baseLayout();
       layout.xaxis.type = pick.logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
+      layout.xaxis.title = { text: timeTitle(), font: { size: 11 } };
       layout.yaxis.title = { text: `made (+) and taken (−) per ${sym}<br>${per}`, font: { size: 11 } };
       layout.margin.l = 86;
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -5568,7 +5596,7 @@
     const traces = rows.map((x) => ({ type: 'scatter', mode: 'lines', name: x.label, x: xs, y: Array.from(x.pos, (v) => (Number.isFinite(v) ? v : null)),
       line: { color: colourOf.get(x.name), width: 1.8, dash: x.dash }, connectgaps: false }));
     const layout = baseLayout();
-    layout.xaxis.title = { text: `time (${tShown.sym})`, font: { size: 11 } };
+    layout.xaxis.title = { text: timeTitle(), font: { size: 11 } };
     layout.yaxis.title = { text: `distance from the inlet (m)${stride > 1 && layer ? `, rock layer ${layer}` : ''}`, font: { size: 11 } };
     layout.yaxis.range = [0, L];
     Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -5696,7 +5724,7 @@
     const layout = baseLayout();
     const where = state.compIn === 'water' ? 'dissolved' : 'in the cell';
     layout.xaxis.type = along === 'time' && $('rtmCompLogT').checked ? 'log' : 'linear';
-    layout.xaxis.title = { text: along === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)',
+    layout.xaxis.title = { text: along === 'time' ? timeTitle() : 'distance from the left-hand face (m)',
       font: { size: 11 } };
     layout.yaxis.title = { text: percent ? `share of the ${E.el} ${where} (%)` : `${E.el} ${where} (concentration × count)`,
       font: { size: 11 } };
@@ -5792,7 +5820,7 @@
           waters.push({ w: waterAt(r, terms, unit.scale, i, mc), t: r.t[i], cell, label: fmtTime(r.t[i]),
             color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), i, mc });
         }
-        colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
+        colorTitle = logT ? `log₁₀ ${timeTitle()}` : timeTitle();
       } else {
         // The times asked for, or six spread over the run.
         const picks = asked.times.length ? [...new Set(asked.times.map((tt) => nearestIndex(r.t, tt)))]
@@ -6023,7 +6051,7 @@
           pts.push({ sc: sc[i], sar: sar[i], color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), label: fmtTime(r.t[i]), t: r.t[i], cell });
         }
       }
-      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
+      colorTitle = logT ? `log₁₀ ${timeTitle()}` : timeTitle();
     } else {
       cells.forEach((mc, k) => {
         const sc = quantitySeries('SC', mc);
@@ -6256,7 +6284,7 @@
         const pt = waterAt(i, mc);
         if (pt) pts.push({ ...pt, color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]), label: fmtTime(r.t[i]), t: r.t[i], cell });
       }
-      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
+      colorTitle = logT ? `log₁₀ ${timeTitle()}` : timeTitle();
     } else {
       for (let k = 0; k < r.model.fracture; k++) {
         const pt = waterAt(atIndex, k * stride + layer);
@@ -6428,7 +6456,7 @@
         waters.push({ row: keys.map((k) => valueOf(k, i, mc)), t: r.t[i], cell, label: fmtTime(r.t[i]),
           color: logT ? Math.log10(showT(r.t[i])) : showT(r.t[i]) });
       }
-      colorTitle = logT ? `log₁₀ time (${shownTime().sym})` : `time (${shownTime().sym})`;
+      colorTitle = logT ? `log₁₀ ${timeTitle()}` : timeTitle();
     } else {
       cells.forEach((mc, k) => waters.push({ row: keys.map((key) => valueOf(key, atIndex, mc)), t: r.t[atIndex], cell: k,
         x: r.model.centres[k], label: `cell ${k}`, color: r.model.centres[k] }));
@@ -8518,7 +8546,7 @@
     const keep = ts.map((x) => !logT || x > 0);
     const layout = baseLayout();
     layout.xaxis.type = logT ? 'log' : 'linear';
-    layout.xaxis.title = { text: `time (${shownTime().sym})`, font: { size: 11 } };
+    layout.xaxis.title = { text: timeTitle(), font: { size: 11 } };
     const nkK = swResult.targets.filter((t) => t.k).length;
     const ncC = swResult.targets.length - nkK;
     const ofEach = `for 1 % more of each${!ncC ? ' K' : nkK ? ' constant or K' : ''}`;
@@ -8647,7 +8675,7 @@
           line: { color: swColour(runs.indexOf(run), runs.length), width: 1.6 } };
       });
       layout.xaxis.type = w.show === 'time' && w.logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: w.show === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.xaxis.title = { text: w.show === 'time' ? timeTitle() : 'distance from the left-hand face (m)', font: { size: 11 } };
       layout.yaxis.type = logY ? 'log' : 'linear';
       layout.yaxis.title = { text: yTitle, font: { size: 11 } };
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -8983,10 +9011,10 @@
     const bandAt = r.points.some((p) => p.band);
     const curveWhere = (c) => fitWhere(c.kind === 'speciation' ? c : c.kind === 'time' ? { kind: 'time', cell: c.cell }
       : c.kind === 'depth' ? { kind: 'depth', cell: c.cell, t: c.t } : { kind: 'distance', t: c.t });
-    const curveAlong = (c) => (c.kind === 'time' ? `time (${shownTime().sym})` : c.kind === 'distance' ? 'distance (m)'
+    const curveAlong = (c) => (c.kind === 'time' ? timeTitle() : c.kind === 'distance' ? 'distance (m)'
       : c.kind === 'depth' ? 'depth into the rock (m)' : c.axis === 'tot' ? `${fitHeldName(c)} (mol/kgw)` : fitHeldName(c));
     const anyDepth = r.points.some((p) => p.kind === 'depth');
-    const pointsTable = () => ({ head: ['column', 'where', `time (${shownTime().sym})`, anyDepth ? 'distance, or depth into the rock (m)' : 'distance (m)',
+    const pointsTable = () => ({ head: ['column', 'where', timeTitle(), anyDepth ? 'distance, or depth into the rock (m)' : 'distance (m)',
       ...heldAxes.map((name) => (/^sys\(/.test(name) ? `${name} (mol/kgw)` : name)), 'measured', ...(r.weighted ? ['sd'] : []),
       'the run', ...(bandAt ? ['about 95 % from', 'about 95 % to'] : []), 'residual', ...(r.weighted ? ['residual over its sd'] : [])],
     name: 'rtm_fit',
@@ -9091,7 +9119,7 @@
     layout.xaxis.type = (along === 'time' && logT) || totAxis ? 'log' : 'linear';
     // A total in mol/kgw in powers of ten, as the amounts are: 10⁻⁶, not 1µ.
     if (totAxis) layout.xaxis.exponentformat = 'power';
-    layout.xaxis.title = { text: along === 'time' ? `time (${shownTime().sym})`
+    layout.xaxis.title = { text: along === 'time' ? timeTitle()
       : totAxis ? `${curves[0].species} in the cell, dissolved, sorbed and as minerals (mol/kgw)`
         : along === 'speciation' ? dgLabel({ kind: curves[0].axis }) : along === 'depth' ? 'depth into the rock (m)'
           : 'distance from the left-hand face (m)', font: { size: 11 } };
@@ -9412,7 +9440,7 @@
       + 'measured less its mean — one where they are the same, nought where the run does no better than that mean, below '
       + 'nought where it does worse; of a column alone, none where its values do not vary.</p>';
     box.hidden = false;
-    fitTableNow = { head: ['column', 'where', `time (${shownTime().sym})`, 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
+    fitTableNow = { head: ['column', 'where', timeTitle(), 'distance (m)', 'measured', ...runs.flatMap((run) => [run.label, `residual, ${run.label}`])],
       name: 'rtm_against_measured',
       rows: points.map((p, j) => [labelOf(p.key), p.kind === 'time' ? `cell ${p.cell}` : 'along the column',
         showT(p.t === null ? r.t[r.n - 1] : p.t), p.x, p.value, ...runs.flatMap((run) => (run.rows[j] ? [run.rows[j].v, run.rows[j].res] : [null, null]))]),
@@ -9858,7 +9886,7 @@
         }
       }
       layout.xaxis.type = logT ? 'log' : 'linear';
-      layout.xaxis.title = { text: u.show === 'time' ? `time (${shownTime().sym})` : 'distance from the left-hand face (m)', font: { size: 11 } };
+      layout.xaxis.title = { text: u.show === 'time' ? timeTitle() : 'distance from the left-hand face (m)', font: { size: 11 } };
       layout.yaxis.type = logY ? 'log' : 'linear';
       layout.yaxis.title = { text: yTitle, font: { size: 11 } };
       Plotly.react(plot, traces, layout, PLOT_CONFIG);
@@ -10001,7 +10029,7 @@
     // Each key at each cell, in the order picked; on an axis not the model's own -- pore volumes, another unit -- it comes first, then the time.
     const ax = timeAxis(r);
     const at = face ? [state.cell] : tc.at;
-    const head = [...(ax.fixed ? [ax.pv ? 'pore volumes' : `t (${ax.sym})`] : []), `t (${timeUnit().symbol})`];
+    const head = [...(ax.fixed ? [ax.pv ? 'pore volumes' : `t (${ax.sym})`] : []), timeUnit().clock || `t (${timeUnit().symbol})`];
     const cols = [];
     names.forEach((n, j) => {
       const f = shown[j] && shown[j].f ? shown[j].f : 1;
@@ -10971,7 +10999,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
         : `${tend} ${u.symbol}${fmtTime(tend).endsWith(` ${u.symbol}`) ? '' : ` (${fmtTime(tend)})`}`;
       return {
         kicker: 'Solver', title: 'Simulated time',
-        lead: `How long to run, in the model’s own time unit, ${u.name}s, or with a unit of its own after the number — \`1890 days\`, \`5 a\` — put into the model’s. Blank runs to the TEND the model text gives.`,
+        lead: u.clock ? `How long to run, on the model’s clock, which counts ${u.clock}: a number of ${u.plural}. Blank runs to the TEND the model text gives.`
+          : `How long to run, in the model’s own time unit, ${u.plural}, or with a unit of its own after the number — \`1890 days\`, \`5 a\` — put into the model’s. Blank runs to the TEND the model text gives.`,
         facts: [['TEND', said], ['Unless the text gives one', `1 ${u.symbol}`], ['Allowed', 'a number above 0, or blank']],
         sections: [
           { text: 'A plain number: the box takes no unit, because the model has one. `TIME_UNIT` in the text converts nothing; it says which unit every rate constant, diffusivity and velocity is already written in, so 10 here is ten of those.' },
@@ -11049,7 +11078,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const tend = runTend();
       return {
         kicker: 'Solver', title: 'Maximum step',
-        lead: `The longest step the solver may take, in ${u.name}s. Set it where the model changes faster than its solution shows, and the solver steps over the change.`,
+        lead: `The longest step the solver may take, in ${u.plural}. Set it where the model changes faster than its solution shows, and the solver steps over the change.`,
         facts: [
           ['Default', SOLVER_DEFAULTS.hmax],
           ['0, where the model gives MAX_STEP', 'that, in its time unit'],
@@ -11067,7 +11096,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       const u = timeUnit();
       return {
         kicker: 'Solver', title: 'First step',
-        lead: `The first step to try, in ${u.name}s. 0 lets the solver choose it from the derivative at the start, which is almost always better than a guess.`,
+        lead: `The first step to try, in ${u.plural}. 0 lets the solver choose it from the derivative at the start, which is almost always better than a guess.`,
         facts: [['Default', SOLVER_DEFAULTS.h0], ['Allowed', '0 or more'], ['Read by', readers('h0')]],
         sections: [
           { text: 'For a start the derivative there does not describe: a rate that is zero at the first instant and jumps a moment later, or a front about to reach a boundary. A first step that is too long is rejected and cut like any other, so a poor guess costs steps rather than accuracy.' },
@@ -11643,7 +11672,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       sections: [
         { heading: 'What goes in', list: [
           'Each step\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only; with the redox carried, its valence states\' totals, `tot(S(6))` — its **minerals**, the **gases** of a gas phase and the **members** of a solid solution, under `<DATA>` at the end of the text, a table in time.',
-          'Each step at the clock the run has when it has added as much: the run adds the reactants at a mole, a millimole or a micromole of reaction a second, as the input writes its steps, so the clock counts what has gone in. Along a temperature, the run heats or cools the water a degree a second from the first step\'s, so the clock counts the degrees.',
+          'Each step at the clock the run has when it has added as much: the run adds the reactants at a mole, a millimole or a micromole of reaction to each 1 on its clock, as the input writes its steps, so the clock counts what has gone in, and the charts say so (`CLOCK`). Along a temperature, the run heats or cools the water a degree to each 1 on its clock from the first step\'s, so the clock counts the degrees.',
           'The totals as PHREEQC has them, per kilogram of its water, which a reaction may change a little; the minerals, gases and members per kilogram of the water the path starts with. A total PHREEQC\'s steps hold at one value is left out. Up to 200 steps, evenly through.',
         ] },
         { heading: 'Then', list: [
@@ -12951,11 +12980,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117j';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117k';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117j',
+    'resources/js/rtm-phreeqc.js?v=20261117k',
     'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13577,8 +13606,8 @@ END
         const up = pth.to > pth.from;
         out.push(`<p>A path, PHREEQC's <code>REACTION_TEMPERATURE ${pth.block}</code>: ${pth.steps.length} steps from `
           + `${pqNum(pth.from)} to ${pqNum(pth.to)} °C. The model is of the water at ${pqNum(pth.from)} °C, and the run is the `
-          + `path: the water ${up ? 'heated' : 'cooled'} a degree a second, <code>TEMPERATURE = ${pqNum(pth.from)} `
-          + `${up ? '+' : '-'} t</code>, so that the clock, in seconds, counts the degrees. <code>TEND</code> is `
+          + `path: the water ${up ? 'heated' : 'cooled'} a degree to each 1 on its clock, <code>TEMPERATURE = ${pqNum(pth.from)} `
+          + `${up ? '+' : '-'} t</code>, the clock counting the degrees, as the charts say (<code>CLOCK</code>). <code>TEND</code> is `
           + `${pqNum(pth.tend)}; PHREEQC's steps are equilibria the run passes through.</p>`);
       } else if (r.path) {
         const pth = r.path;
@@ -13588,8 +13617,8 @@ END
           + 'model is of the water before it'
           + (pth.trace ? `, with ${pqNum(pth.trace)} mol of the reaction in it, so that what its reactants bring that it had `
             + 'none of is there to grow' : '')
-          + `, and the run is the path: the reactants come in at a steady rate, a ${u} of reaction a second, so that the `
-          + `clock, in seconds, counts the ${u} of reaction added. <code>TEND</code> is the last step's ${pqNum(pth.tend)}; `
+          + `, and the run is the path: the reactants come in at a steady rate, a ${u} of reaction to each 1 on its clock, `
+          + `which counts the ${u} of reaction added, as the charts say (<code>CLOCK</code>). <code>TEND</code> is the last step's ${pqNum(pth.tend)}; `
           + 'PHREEQC\'s steps are equilibria the run passes through.</p>');
       }
       if (r.path) {
@@ -13996,7 +14025,7 @@ END
     const layout = baseLayout();
     const c = themeColors();
     layout.xaxis = { ...layout.xaxis, type: logT ? 'log' : 'linear', anchor: 'y2',
-      title: { text: distance ? `distance (m), at ${at > 0 ? fmtTime(at) : 'the start'}` : `time (${shownTime().sym})`,
+      title: { text: distance ? `distance (m), at ${at > 0 ? fmtTime(at) : 'the start'}` : timeTitle(),
         font: { size: 11 } } };
     layout.yaxis = { ...layout.yaxis, domain: [0.62, 1], exponentformat: 'none',
       title: { text: 'pH', font: { size: 11 } } };

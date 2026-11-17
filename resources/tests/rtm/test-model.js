@@ -666,6 +666,20 @@ A => B, r = ${law}
   close('  the unit converts TEND alone: A => B at k = 1e-3 /s to TEND = 1 h is exp(-3.6)', last(rh)[0], Math.exp(-3.6), 1e-6);
   check('  and the page\'s Simulated time reads a unit the same way', RtmModel.readTime('1890 days', 'second') === 163296000
     && RtmModel.readTime('2 h', 'minute') === 120 && RtmModel.readTime('7', 'day') === 7, '');
+  /*
+    A CLOCK THAT IS NO TIME: CLOCK = reaction added (mmol) says what the
+    clock counts, its unit in the brackets at the end, for the page to title
+    the axes with and write a number on the clock in; it converts nothing,
+    and a model without it has no clock of its own.
+  */
+  const clocked = (s) => RtmModel.compile(`<SETTINGS>\nTEND = 80\n${s}\n\n<SPECIES>\nA 0\n\n<REACTIONS>\n=> A, r = 1e-3\n`);
+  const ck = [clocked('CLOCK = reaction added (mmol)'), clocked('CLOCK = heated (°C above 25 °C)'), clocked('CLOCK = steps'), clocked('')];
+  const rc = run(ck[0], { tend: 80 });
+  check('a clock that is no time: CLOCK = reaction added (mmol) its words and the unit in its brackets, heated (°C above '
+    + '25 °C) too, words with no brackets no unit; none without it; and it converts nothing, 1e-3 to each 1 on it to 80 is 0.08',
+  JSON.stringify(ck.map((m) => m.clock)) === JSON.stringify([{ label: 'reaction added (mmol)', unit: 'mmol' },
+    { label: 'heated (°C above 25 °C)', unit: '°C above 25 °C' }, { label: 'steps', unit: '' }, null])
+    && Math.abs(last(rc)[0] - 0.08) < 1e-12, JSON.stringify(ck.map((m) => m.clock)));
 }
 {
   /*

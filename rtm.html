@@ -1482,6 +1482,7 @@
               <tr><td><code>TEND</code></td><td>How long to integrate, in the unit below, unless the panel says otherwise; or with a unit of its own after the number, <code>TEND = 1890 days</code>, put into the model's.</td></tr>
               <tr><td><code>MAX_STEP</code></td><td>The longest step the solver takes, in the model's time unit, where the panel's <em>Maximum step</em> is 0. A chart draws the steps a run takes, and a run whose answer goes straight between the turns of its chemistry — a reactant added at a steady rate, each oxidant used up in its turn — is otherwise drawn from steps a tenth of the run long, across its turns. 0, the default, leaves it to the solver.</td></tr>
               <tr><td><code>TIME_UNIT</code></td><td><em>second</em> (the default), <em>minute</em>, <em>hour</em>, <em>day</em> or <em>year</em> — and the short forms s, min, h, d, a, yr. It <strong>converts nothing</strong>: see <em>The time unit</em> below. <code>TEND</code>, <code>MAX_STEP</code> and <code>TRAVEL_TIME</code> may each carry a unit of their own, which converts that one number.</td></tr>
+              <tr><td><code>CLOCK</code></td><td>What the clock counts where it is no time, in words with its unit in brackets at the end: <code>CLOCK = reaction added (mmol)</code>. The axes are titled with it and a number on the clock is written in that unit, where they would say seconds; it too converts nothing. <em>From PHREEQC…</em> writes it for a path. See <em>The time unit</em> below.</td></tr>
               <tr><td><code>CONC_UNIT</code></td><td>The unit the concentrations are in, for the page to say: <em>mol/L</em> (also mol/dm3, molar) or <em>mol/kgw</em> (also mol/kg, molal). Like <code>TIME_UNIT</code> it <strong>converts nothing</strong>: it names what the text's numbers are, so that the axes, the tables and what is saved say it, and <em>Units</em> offers mmol/L, µmol/L, nmol/L and, by the formula masses, mg/L and µg/L. Left out, the concentrations are as the model has them; under an <code>ACTIVITY</code> they are mol/kgw, and mol/L is refused. Opening skbrtm's files writes it from the units its solutions give, <em>mol/L</em>.</td></tr>
               <tr><td><code>EQUILIBRATE</code></td><td>1 (or <em>start</em>) puts the starting concentrations on the <code>&lt;EQUILIBRIUM&gt;</code> relations before the run begins; <em>always</em> does that and then holds the relations given no <code>kf</code> exactly all through the run. 0, the default, starts from the concentrations as written. See <em>&lt;EQUILIBRIUM&gt;</em> below.</td></tr>
               <tr><td><code>MINERALS</code></td><td><em>events</em> (the default) or <em>complementarity</em>: how a mineral held at saturation under <code>EQUILIBRATE = always</code> comes and goes — the run stopping at each instant one forms or is used up, or one equation in every cell that never stops it. See <em>Minerals</em> below.</td></tr>
@@ -1804,6 +1805,12 @@ distance  pH     at = 36000
             is not the same as <code>TEND = 1890</code> with <code>TIME_UNIT = day</code>, which would read
             every rate constant as per day. <em>Simulated time</em>, in the panel, takes a unit the same
             way. <em>Time in</em> then shows the run in whatever unit is wanted.</p>
+          <p>A run's clock need not be time. Along a path from PHREEQC the run adds a reaction at a mole of it
+            to each 1 on the clock, or heats the water a degree to each, and the clock counts what has gone
+            in: <code>CLOCK = reaction added (mmol)</code>, or <code>CLOCK = heated (°C above 25 °C)</code>,
+            says so. The charts' time axes are then titled with those words, a number on the clock is
+            written in the unit in the brackets — <code>40 mmol</code>, not <code>40 s</code> — and
+            <em>Time in</em> offers nothing else, there being no seconds to show it in.</p>
 
           <h4>The two ends of the column</h4>
           <p>Four kinds of face, under the names the transport literature gives them, and two more.
@@ -4479,9 +4486,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             <code>INCREMENTAL_REACTIONS true</code>, to the step before. Where the calculation the water is
             from, the input's last, is such a path, its own or one it brings in with <code>USE</code>,
             the model is of the water before it, and the run is the path. Each reactant comes in at a
-            steady rate, so many moles of it to each mole of the reaction, a mole of reaction a second —
-            a millimole or a micromole where the input writes its steps in those — to each kilogram of
-            water, so that the clock, in seconds, counts what has gone in, and <code>TEND</code> is the
+            steady rate, so many moles of it to each mole of the reaction, a mole of reaction to each 1 on
+            the clock — a millimole or a micromole where the input writes its steps in those — to each kilogram of
+            water, so that the clock counts what has gone in — <code>CLOCK = reaction added (mmol)</code>
+            titles the charts' axes with it — and <code>TEND</code> is the
             last step's amount, <code>MAX_STEP</code> a hundredth of it. A reactant whose formula is a
             species the model has comes in as that species, <code>=&gt; CO2</code>, <code>=&gt; O2</code>;
             any other as a phase's dissolution or its elements' master species, as a kinetic reactant's
@@ -4495,8 +4503,9 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             state the water's redox elements could go to.</p>
           <p>A <code>REACTION_TEMPERATURE</code> that heats or cools the water through steps —
             <code>25 75 in 51 steps</code>, or a list — is carried the same way: the model is of the water at
-            the first step's temperature, and the run heats or cools it a degree a second,
-            <code>TEMPERATURE = 25 + t</code>, so that the clock counts the degrees, <code>TEND</code> the
+            the first step's temperature, and the run heats or cools it a degree to each 1 on the clock,
+            <code>TEMPERATURE = 25 + t</code>, so that the clock counts the degrees —
+            <code>CLOCK = heated (°C above 25 °C)</code> — <code>TEND</code> the
             last step's from the first. The relations' log K follow the temperature as the database's do
             (see <em>The temperature</em> above), and the minerals form and go as they become stable: gypsum
             going over to anhydrite as a water is heated past where PHREEQC's saturation index of anhydrite
@@ -5016,14 +5025,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261116b"></script>
+  <script src="./resources/js/rtm-model.js?v=20261117k"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261116b"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261117k"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117j"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117k"></script>
 </body>
 </html>

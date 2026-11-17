@@ -6530,11 +6530,11 @@ async function againstPathHandOff(engine, createPhreeqc) {
   const ap = a.res.report.path;
   const gypsum = a.pq.length ? Number(a.pq[a.pq.length - 1][a.pq[0].length - 1]) : 0;
   check('  salt and sulphate into a water at calcite saturation (REACTION, mmol): the water before the path, its '
-    + 'reactants at a steady rate, a mmol of reaction a second, TEND the last step; at each of PHREEQC\'s steps the pH, '
+    + 'reactants at a steady rate, a mmol of reaction to each 1 on the clock (CLOCK = reaction added (mmol)), TEND the last step; at each of PHREEQC\'s steps the pH, '
     + 'the totals and the minerals PHREEQC\'s, gypsum forming on the way, to what PHREEQC\'s kilogram of water moves '
     + 'as the gypsum takes its water and the page\'s stays a kilogram',
   !!ap && ap.unit === 'mmol' && ap.tend === 80 && ap.steps.join(' ') === '0 5 10 20 40 80' && ap.trace === 1e-20
-    && /^TEND = 80$/m.test(a.res.text) && /^MAX_STEP = 0\.8$/m.test(a.res.text)
+    && /^TEND = 80$/m.test(a.res.text) && /^MAX_STEP = 0\.8$/m.test(a.res.text) && /^CLOCK = reaction added \(mmol\)$/m.test(a.res.text)
     && /^=> 2 Na\+ \+ SO4-2, r = 0\.00100/m.test(a.res.text) && /^=> Na\+ \+ Cl-, r = 0\.000500/m.test(a.res.text)
     && a.pq.length === 6 && a.pH < 1e-4 && a.tot < 5e-4 && a.held < 1e-5 && gypsum > 1e-3 && a.kgw > 1e-4,
   ap ? `pH within ${a.pH.toExponential(1)}, totals in moles ${a.tot.toExponential(1)} (${a.totWhere}), minerals `
@@ -6601,6 +6601,7 @@ async function againstPathHandOff(engine, createPhreeqc) {
     + 'moves as the gypsum gives up its water',
   !!hp && hp.kind === 'temperature' && hp.from === 25 && hp.to === 85 && hp.tend === 60 && hp.steps.length === 13
     && /^TEMPERATURE = 25 \+ t$/m.test(h.res.text) && /^TEND = 60$/m.test(h.res.text) && /^MAX_STEP = 0\.6$/m.test(h.res.text)
+    && /^CLOCK = heated \(°C above 25 °C\)$/m.test(h.res.text)
     && h.pq.length === 13 && gypsumPH < 2e-5 && h.pH < 5e-4 && h.tot < 1e-3 && h.held < 1e-4 && anh > 0.01,
   hp ? `pH within ${gypsumPH.toExponential(1)} while there is gypsum, ${h.pH.toExponential(1)} after; totals in moles `
     + `${h.tot.toExponential(1)} (${h.totWhere}), minerals ${h.held.toExponential(1)} mol (${h.heldWhere}); anhydrite `
@@ -6610,6 +6611,7 @@ async function againstPathHandOff(engine, createPhreeqc) {
   const kp = k.res.report.path;
   check('  ... and cooled, 60 to 10 C: TEMPERATURE = 60 - t, the calcite and the anhydrite going as PHREEQC has them',
     !!kp && kp.from === 60 && kp.to === 10 && /^TEMPERATURE = 60 - t$/m.test(k.res.text) && k.pq.length === 6
+      && /^CLOCK = cooled \(°C below 60 °C\)$/m.test(k.res.text)
       && k.pH < 5e-4 && k.tot < 1e-3 && k.held < 1e-4,
     kp ? `pH within ${k.pH.toExponential(1)}, totals ${k.tot.toExponential(1)} (${k.totWhere}), minerals `
       + `${k.held.toExponential(1)} mol (${k.heldWhere})` : JSON.stringify(k.res.report.pathSkipped));

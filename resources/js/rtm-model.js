@@ -148,6 +148,15 @@
       of: ['s', 'sec', 'second', 'seconds', 'min', 'minute', 'minutes',
         'h', 'hour', 'hours', 'd', 'day', 'days', 'a', 'y', 'yr', 'year', 'years'] },
     /*
+      What the clock counts where it is no time -- a run along a path, a
+      reaction added at a mole a second, a water heated a degree a second --
+      as the page is to say it: CLOCK = reaction added (mmol), the unit in
+      the brackets at its end. It converts nothing either: the axes are
+      titled with it and a number on the clock is written in its unit,
+      where they would say seconds. Left out, the clock is time.
+    */
+    CLOCK: { def: '', kind: 'text' },
+    /*
       The unit the concentrations are in, for the page to say: mol/L (also
       mol/dm3, molar) or mol/kgw (also mol/kg, molal). It converts nothing,
       as TIME_UNIT converts nothing: it names what the text's numbers are.
@@ -13152,6 +13161,8 @@
       // The unit, resolved: what to print and how many seconds one is. The
       // model's own numbers are in it; nothing here is scaled by it.
       timeUnit: TIME_UNITS[settings.TIME_UNIT],
+      // What the clock counts where it is no time (CLOCK): its words, and its unit, the brackets at their end.
+      clock: settings.CLOCK ? { label: settings.CLOCK, unit: (/\(([^()]*)\)\s*$/.exec(settings.CLOCK) || [])[1] || '' } : null,
       grid,
       transport,
       cells: ncCol,            // every cell of the column, matrix layers and extra cells included

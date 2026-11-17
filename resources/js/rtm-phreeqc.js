@@ -4804,9 +4804,9 @@
       const rt = path.p.temperature;
       const heat = path.sign > 0 ? 'heats' : 'cools';
       say(`The path, PHREEQC's REACTION_TEMPERATURE ${rt.n}: ${path.p.steps.length} steps from ${fmtG(path.from, 6)} to `
-        + `${fmtG(path.to, 6)} C. This water is the one at the first, and the run ${heat} it a degree a second, `
-        + `TEMPERATURE = ${fmtG(path.from, 10)} ${path.sign > 0 ? '+' : '-'} t, to TEND: the clock, in seconds, counts the degrees `
-        + `it has been ${path.sign > 0 ? 'heated' : 'cooled'}, and PHREEQC's steps are equilibria the run passes through.`);
+        + `${fmtG(path.to, 6)} C. This water is the one at the first, and the run ${heat} it a degree to each 1 on its `
+        + `clock, TEMPERATURE = ${fmtG(path.from, 10)} ${path.sign > 0 ? '+' : '-'} t, to TEND: the clock counts the degrees it has `
+        + `been ${path.sign > 0 ? 'heated' : 'cooled'} (CLOCK), and PHREEQC's steps are equilibria the run passes through.`);
     } else if (path) {
       const rp = path.p.reaction;
       say(`The path, PHREEQC's REACTION ${rp.n}: ${path.p.steps.length} steps, each ${path.p.incremental
@@ -4814,8 +4814,8 @@
         + `up to ${fmtG(pathEnd, 6)} ${rp.unit} of reaction. This water is the one before it${path.traced
           ? ', with 1e-20 mol of the reaction in it, so that what its reactants bring that it had none of is there to grow,'
           : ','} and the run adds the reactants at a steady rate (<REACTIONS>), ${path.reactants.map((r) => r.name).join(', ')}, `
-        + `a ${rp.unit} of reaction a second, to TEND: the clock, in seconds, counts the ${rp.unit} of reaction added, and `
-        + 'PHREEQC\'s steps are equilibria the run passes through.');
+        + `a ${rp.unit} of reaction to each 1 on its clock, to TEND: the clock counts the ${rp.unit} of reaction added `
+        + '(CLOCK), and PHREEQC\'s steps are equilibria the run passes through.');
       if (pathAtmMoved) {
         say(`PHREEQC's gas phase, in a fixed volume, takes the water from ${fmtG(atm, 6)} to ${fmtG(path.p.atmEnd, 6)} atm along `
           + 'the path, where the run holds it at the first (PRESSURE): the log K, A and B that go with the pressure stay '
@@ -5085,6 +5085,9 @@
     const tend = column ? column.t.shifts * column.t.dt : path ? pathEnd : kinTime;
     out.push('', '<SETTINGS>', ...(colSettings || ['MODE = batch']), `TEND = ${tend > 0 ? fmtG(tend, 15) : 1}`,
       ...(path ? [`MAX_STEP = ${fmtG(pathEnd / 100, 6)}`] : []),
+      // What the clock of a path counts, which the charts are titled with: the reaction added, or the degrees.
+      ...(path ? [`CLOCK = ${path.kind === 'temperature' ? `${path.sign > 0 ? 'heated' : 'cooled'} (°C ${path.sign > 0 ? 'above'
+        : 'below'} ${fmtG(path.from, 6)} °C)` : `reaction added (${path.p.reaction.unit})`}`] : []),
       'TIME_UNIT = second', `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
@@ -5490,9 +5493,9 @@
     if (path && path.kind === 'reaction') {
       const rp = path.p.reaction;
       const unit = rp.unit;
-      out.push(`# The path: PHREEQC's REACTION ${rp.n}, its reactants coming in at a steady rate, a ${unit} of reaction a second`,
-        `# to ${path.W === 1 ? 'each kilogram of water' : `PHREEQC's ${fmtG(path.W, 6)} kg of water`}: the clock, in seconds, `
-        + `counts the ${unit} of reaction added (r in mol/kgw a second).`);
+      out.push(`# The path: PHREEQC's REACTION ${rp.n}, its reactants coming in at a steady rate, a ${unit} of reaction to each 1`,
+        `# on the clock, to ${path.W === 1 ? 'each kilogram of water' : `PHREEQC's ${fmtG(path.W, 6)} kg of water`}: the clock `
+        + `counts the ${unit} of reaction added (CLOCK), and r is in mol/kgw to each 1 on it.`);
       for (const r of path.reactants) {
         const own = name.has(r.name) && db.reaction.has(r.name) && !phaseKey.has(r.name.toLowerCase());
         const terms = own ? [[r.name, 1]] : r.rx;
