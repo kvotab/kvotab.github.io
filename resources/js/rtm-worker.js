@@ -153,6 +153,9 @@ function rtmSummary(model) {
     // The tables the rate laws read at the clock, and where the run restarts.
     clockTables: model.clockTables || [],
     breaks: typeof model.breaks === 'function' ? model.breaks(0, model.settings.TEND).length : 0,
+    // Of those, the times <INFLOW> changes the water at the left end at.
+    inflowBreaks: model.inflowWaters
+      ? model.inflowWaters.filter((w) => w.from > 0 && w.from < model.settings.TEND).length : 0,
     nreactions: model.nreactions,
     nchannels: model.nchannels,
     nequilibria: model.nequilibria,
@@ -176,8 +179,11 @@ function rtmSummary(model) {
     warnings: model.warnings,
     fixes: model.fixes || [],
     initial: Array.from(model.toConcentrations ? model.toConcentrations(model.initialState()) : model.initialState()),
-    // What flows in at the left, each species' left= or else its start: the water an inverse model can start from.
-    inflow: model.transport ? model.speciesList.map((sp) => (sp.left == null ? sp.initial : sp.left)) : null,
+    // What flows in at the left, each species' left= or else its start -- from the start, where <INFLOW> changes it --
+    // the water an inverse model can start from; and the water from each time <INFLOW> changes it on, {from, water}.
+    inflow: model.transport ? (model.inflowWaters ? model.inflowWaters[0].water
+      : model.speciesList.map((sp) => (sp.left == null ? sp.initial : sp.left))) : null,
+    inflowWaters: model.inflowWaters || null,
     // Equilibria held throughout the run (EQUILIBRATE = always): how many
     // relations, conserved totals and species, and the species' share of the state.
     heldEquilibria: model.heldEquilibria || null,
@@ -412,6 +418,27 @@ function rtmQuantities(msg) {
   none for what chemistry only moves, the decay for a nuclide, and in it
   the summing's error, which is the stored points'.
 */
+/*
+  A FACE'S CONSTANT AT A TIME, where <INFLOW> changes the water at the left
+  end: the stretch the time is in -- after as many of the face's times as are
+  before it, or at or before 0 (the model's stretchAt) -- else its one
+  constant; and that constant over [a, b], exactly, a stretch at a time.
+*/
+function rtmFaceConstant(f, time) {
+  if (!f.at) return f.constant;
+  let p = 0;
+  while (p < f.at.length && (f.at[p] < time || f.at[p] <= 0)) p++;
+  return f.constants[p];
+}
+function rtmFaceOver(f, a, b) {
+  if (!f || !(b > a)) return 0;
+  if (!f.at) return f.constant * (b - a);
+  const cuts = [a, ...f.at.filter((x) => x > a && x < b), b];
+  let sum = 0;
+  for (let j = 1; j < cuts.length; j++) sum += rtmFaceConstant(f, 0.5 * (cuts[j - 1] + cuts[j])) * (cuts[j] - cuts[j - 1]);
+  return sum;
+}
+
 function rtmBudget(msg) {
   const run = rtmRunFor(msg);
   if (!run) return { type: 'budget', id: msg.id, missing: true };
@@ -463,8 +490,8 @@ function rtmBudget(msg) {
       }
     }
   }
-  // What crosses each end, positive to the right: in at the left, out at the right.
-  const fluxAt = (side) => {
+  // What crosses each end, positive to the right: in at the left, out at the right; `bare` without the faces' constants.
+  const fluxAt = (side, bare = false) => {
     const out = new Float64Array(n);
     if (!transport || !model.faces) return out;
     for (let i = 0; i < n; i++) {
@@ -472,7 +499,7 @@ function rtmBudget(msg) {
       for (const [k, cnt] of terms) {
         const f = model.faces[side][k];
         if (!f) continue;
-        let fv = f.constant;
+        let fv = bare ? 0 : rtmFaceConstant(f, t[i]);
         for (const [idx, wt] of f.terms) fv += wt * states[i * width + idx];
         v += cnt * fv;
       }
@@ -482,6 +509,14 @@ function rtmBudget(msg) {
   };
   const fluxIn = fluxAt('left');
   const fluxOut = fluxAt('right');
+  /*
+    Where <INFLOW> changes the water at the left end, what came in between
+    two stored points is the faces' constants over the stretches between
+    them, exactly, and a trapezoid of the rest: the step not spread over the
+    interval it falls in.
+  */
+  const stepsIn = !!(transport && model.faces && terms.some(([k]) => model.faces.left[k] && model.faces.left[k].at));
+  const restIn = stepsIn ? fluxAt('left', true) : null;
   const cumIn = new Float64Array(n);
   const cumOut = new Float64Array(n);
   const total = new Float64Array(n);
@@ -490,7 +525,10 @@ function rtmBudget(msg) {
     for (const b of bands) total[i] += b[i];
     if (i > 0) {
       const dt = t[i] - t[i - 1];
-      cumIn[i] = cumIn[i - 1] + 0.5 * (fluxIn[i] + fluxIn[i - 1]) * dt;
+      cumIn[i] = cumIn[i - 1] + (stepsIn
+        ? 0.5 * (restIn[i] + restIn[i - 1]) * dt
+          + terms.reduce((acc, [k, cnt]) => acc + cnt * rtmFaceOver(model.faces.left[k], t[i - 1], t[i]), 0)
+        : 0.5 * (fluxIn[i] + fluxIn[i - 1]) * dt);
       cumOut[i] = cumOut[i - 1] + 0.5 * (fluxOut[i] + fluxOut[i - 1]) * dt;
     }
     byReactions[i] = total[i] - total[0] - cumIn[i] + cumOut[i];
@@ -699,11 +737,12 @@ function rtmFlows(msg) {
         const f = model.faces[side] && model.faces[side][k];
         if (!f) return;
         let before = 0;
+        // A constant that <INFLOW> steps is taken over each interval exactly, the rest by the trapezoid (rtmBudget).
         for (let i = 0; i < n; i++) {
-          let v = f.constant;
+          let v = f.at ? 0 : f.constant;
           for (const [idx, wt] of f.terms) v += wt * states[i * width + idx];
           v *= cnt[k];
-          if (i > 0) acc[q] += 0.5 * (v + before) * (t[i] - t[i - 1]);
+          if (i > 0) acc[q] += 0.5 * (v + before) * (t[i] - t[i - 1]) + (f.at ? cnt[k] * rtmFaceOver(f, t[i - 1], t[i]) : 0);
           before = v;
         }
       });
@@ -985,13 +1024,15 @@ function rtmRelationsSolve(run) {
   const fout = new Float64Array(n * ns);
   const byLines = new Float64Array(n * ns);
   const buf = new Float64Array(ns);
+  // A constant that <INFLOW> steps is left out here and taken over each interval exactly below (rtmBudget).
   const faceFlux = (side, i, k) => {
     const f = transport && model.faces ? model.faces[side][k] : null;
     if (!f) return 0;
-    let v = f.constant;
+    let v = f.at ? 0 : f.constant;
     for (const [idx, wt] of f.terms) v += wt * states[i * width + idx];
     return v;
   };
+  const leftFace = (k) => (transport && model.faces ? model.faces.left[k] : null);
   for (let i = 0; i < n; i++) {
     const c = states.subarray(i * width, (i + 1) * width);
     for (const [cell, scale] of cells) {
@@ -1018,6 +1059,8 @@ function rtmRelationsSolve(run) {
         const a = i * ns + k;
         const z = a - ns;
         cumIn[k] += 0.5 * (fin[a] + fin[z]) * dt;
+        const lf = leftFace(k);
+        if (lf && lf.at) cumIn[k] += rtmFaceOver(lf, t[i - 1], t[i]);
         cumOut[k] += 0.5 * (fout[a] + fout[z]) * dt;
         cumLines[k] += 0.5 * (byLines[a] + byLines[z]) * dt;
       }

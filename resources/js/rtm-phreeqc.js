@@ -2034,110 +2034,128 @@
       return w.startsWith('co') ? 1 : w.startsWith('cl') ? 2 : w.startsWith('f') ? 3 : NaN;
     };
     const yes = (s) => s === undefined || !/^f/i.test(s);
-    let list = null;
-    for (const raw of lines.slice(at + 1, stop)) {
-      const tokens = raw.trim().split(/\s+/).filter(Boolean);
-      if (!tokens.length) continue;
-      const w = tokens[0].toLowerCase();
-      let opt = null;
-      if (/^-[a-z]/.test(w)) opt = opts.find((x) => x.startsWith(w.slice(1))) || `?${tokens[0]}`;
-      else if (opts.includes(w)) opt = w;
-      const args = opt ? tokens.slice(1) : tokens;
-      if (!opt) {
-        if (list === 'lengths') t.lengths.push(...values(args));
-        else if (list === 'disp') t.disp.push(...values(args));
-        else if (list === 'por') t.por.push(...values(args));
-        continue;
+    /*
+      The options of the block on lines [a, b) read onto t. `afresh`, for a
+      later TRANSPORT read onto the one before: a list it gives -- lengths,
+      dispersivities, porosities -- replaces the one before from its first
+      line on, and the rest stays as it was.
+    */
+    const readOptions = (t, a, b, afresh) => {
+      let list = null;
+      const given = new Set();
+      const listOf = (name) => {
+        if (afresh && !given.has(name)) t[name] = [];
+        given.add(name);
+        return t[name];
+      };
+      for (const raw of lines.slice(a, b)) {
+        const tokens = raw.trim().split(/\s+/).filter(Boolean);
+        if (!tokens.length) continue;
+        const w = tokens[0].toLowerCase();
+        let opt = null;
+        if (/^-[a-z]/.test(w)) opt = opts.find((x) => x.startsWith(w.slice(1))) || `?${tokens[0]}`;
+        else if (opts.includes(w)) opt = w;
+        const args = opt ? tokens.slice(1) : tokens;
+        if (!opt) {
+          if (list === 'lengths') listOf('lengths').push(...values(args));
+          else if (list === 'disp') listOf('disp').push(...values(args));
+          else if (list === 'por') listOf('por').push(...values(args));
+          continue;
+        }
+        list = null;
+        switch (opt) {
+          case 'cells': t.cells = parseInt(args[0], 10); break;
+          case 'shifts':
+            t.shifts = parseInt(args[0], 10);
+            // An old form: the direction after the shifts, 1, -1 or 0.
+            if (/^-?[01]$/.test(args[1] || '')) t.dir = Number(args[1]);
+            break;
+          case 'timest': case 'time_step':
+            t.dt = Number(args[0]) * (/^[a-z]/i.test(args[1] || '') ? secondsIn(args[1]) : 1);
+            break;
+          case 'bcond': case 'bc': case 'boundary_conditions': t.bc = [bcOf(args[0]), bcOf(args[1])]; break;
+          case 'diffc': case 'diffusion_coefficient': t.diffc = Number(args[0]); break;
+          case 'length': case 'lengths': listOf('lengths').push(...values(args)); list = 'lengths'; break;
+          case 'disp': case 'dispersivity': case 'dispersivities': listOf('disp').push(...values(args)); list = 'disp'; break;
+          case 'direction': case 'flow_direction': case 'flow': {
+            const d = (args[0] || '').toLowerCase()[0];
+            t.dir = d === 'f' ? 1 : d === 'b' ? -1 : d === 'd' || d === 'n' ? 0 : NaN;
+            break;
+          }
+          case 'correct_disp': t.correctDisp = yes(args[0]); break;
+          case 'stagnant': {
+            /*
+              Stagnant cells: one layer exchanging with each cell at a first
+              order, -stagnant 1 alpha theta_m theta_im, is carried (columnSetup);
+              more layers, or one without its exchange factor, PHREEQC mixes as
+              the input's MIX blocks say, which the page does not read.
+            */
+            const k = parseInt(args[0], 10);
+            t.stag = null;
+            t.stagOther = null;
+            if (!(k > 0)) break;
+            const [a, m, im] = args.slice(1, 4).map(Number);
+            if (k > 1) t.stagOther = `stagnant cells in ${k} layers (-stagnant ${k}), which PHREEQC mixes as the input's MIX blocks say`;
+            else if (args[1] === undefined) t.stagOther = 'stagnant cells mixed as the input\'s MIX blocks say (-stagnant 1 with no exchange factor)';
+            else if (!(a > 0) || !(m > 0) || !(im > 0)) {
+              t.stagOther = 'stagnant cells whose -stagnant does not give an exchange factor and the mobile and immobile '
+                + 'porosities, each above zero';
+            } else t.stag = { alpha: a, thm: m, thim: im };
+            break;
+          }
+          case 'multi_d': {
+            /*
+              Multicomponent diffusion, -multi_D true [Dw porosity limit n
+              correct], each value back at PHREEQC's default unless given (1e-9
+              m2/s for a species without -dw, 0.3, 0, 1, false): each species at
+              its own Dw times the porosity to the n, the ions coupled so that no
+              current flows, down their activities (transport.cpp, find_J). Dw's
+              corrected as specific conductance has them are not carried.
+            */
+            const w0 = (args[0] || '').toLowerCase();
+            t.mcd = null;
+            t.mcdOther = null;
+            if (w0.startsWith('f')) break;
+            if (!w0.startsWith('t')) { t.mcdOther = 'a -multi_D that says neither true nor false'; break; }
+            const num = (i, def) => (args[i] === undefined ? def : Number(args[i]));
+            const m = { dw: num(1, 1e-9), por: num(2, 0.3), lim: num(3, 0), n: num(4, 1) };
+            if (![m.dw, m.por, m.lim, m.n].every(Number.isFinite)) t.mcdOther = 'a -multi_D whose values are not numbers';
+            else if (/^t/i.test(args[5] || '')) {
+              t.mcdOther = 'diffusion coefficients corrected for the ionic strength as specific conductance has them '
+                + '(-multi_D\'s sixth value, true)';
+            } else t.mcd = m;
+            break;
+          }
+          case 'porosities': case 'porosity': listOf('por').push(...values(args)); list = 'por'; break;
+          // PHREEQC's implicit scheme for -multi_D, which takes each species down its concentration (diffuse_implicit).
+          case 'implicit': t.implicit = /^t/i.test(args[0] || ''); break;
+          case 'interlayer_d': if (yes(args[0])) t.others.push('interlayer diffusion (-interlayer_D)'); break;
+          case 'fix_current': case 'current': t.others.push('a fixed current (-fix_current)'); break;
+          case 'tempr': case 'temp_retardation_factor': case 'temperature_retardation_factor': case 'thermal_diffusion':
+            t.heat = true;
+            break;
+          default:
+            // Printing, punching, dumping, warnings, the time it starts at.
+            if (opt.startsWith('?')) t.others.push(`an option PHREEQC does not have, ${opt.slice(1)}`);
+            else if (['print', 'print_cells', 'punch', 'punch_cells', 'selected_cells'].includes(opt)) list = 'cells';
+        }
       }
-      list = null;
-      switch (opt) {
-        case 'cells': t.cells = parseInt(args[0], 10); break;
-        case 'shifts':
-          t.shifts = parseInt(args[0], 10);
-          // An old form: the direction after the shifts, 1, -1 or 0.
-          if (/^-?[01]$/.test(args[1] || '')) t.dir = Number(args[1]);
-          break;
-        case 'timest': case 'time_step':
-          t.dt = Number(args[0]) * (/^[a-z]/i.test(args[1] || '') ? secondsIn(args[1]) : 1);
-          break;
-        case 'bcond': case 'bc': case 'boundary_conditions': t.bc = [bcOf(args[0]), bcOf(args[1])]; break;
-        case 'diffc': case 'diffusion_coefficient': t.diffc = Number(args[0]); break;
-        case 'length': case 'lengths': t.lengths.push(...values(args)); list = 'lengths'; break;
-        case 'disp': case 'dispersivity': case 'dispersivities': t.disp.push(...values(args)); list = 'disp'; break;
-        case 'direction': case 'flow_direction': case 'flow': {
-          const d = (args[0] || '').toLowerCase()[0];
-          t.dir = d === 'f' ? 1 : d === 'b' ? -1 : d === 'd' || d === 'n' ? 0 : NaN;
-          break;
-        }
-        case 'correct_disp': t.correctDisp = yes(args[0]); break;
-        case 'stagnant': {
-          /*
-            Stagnant cells: one layer exchanging with each cell at a first
-            order, -stagnant 1 alpha theta_m theta_im, is carried (columnSetup);
-            more layers, or one without its exchange factor, PHREEQC mixes as
-            the input's MIX blocks say, which the page does not read.
-          */
-          const k = parseInt(args[0], 10);
-          t.stag = null;
-          t.stagOther = null;
-          if (!(k > 0)) break;
-          const [a, m, im] = args.slice(1, 4).map(Number);
-          if (k > 1) t.stagOther = `stagnant cells in ${k} layers (-stagnant ${k}), which PHREEQC mixes as the input's MIX blocks say`;
-          else if (args[1] === undefined) t.stagOther = 'stagnant cells mixed as the input\'s MIX blocks say (-stagnant 1 with no exchange factor)';
-          else if (!(a > 0) || !(m > 0) || !(im > 0)) {
-            t.stagOther = 'stagnant cells whose -stagnant does not give an exchange factor and the mobile and immobile '
-              + 'porosities, each above zero';
-          } else t.stag = { alpha: a, thm: m, thim: im };
-          break;
-        }
-        case 'multi_d': {
-          /*
-            Multicomponent diffusion, -multi_D true [Dw porosity limit n
-            correct], each value back at PHREEQC's default unless given (1e-9
-            m2/s for a species without -dw, 0.3, 0, 1, false): each species at
-            its own Dw times the porosity to the n, the ions coupled so that no
-            current flows, down their activities (transport.cpp, find_J). Dw's
-            corrected as specific conductance has them are not carried.
-          */
-          const w0 = (args[0] || '').toLowerCase();
-          t.mcd = null;
-          t.mcdOther = null;
-          if (w0.startsWith('f')) break;
-          if (!w0.startsWith('t')) { t.mcdOther = 'a -multi_D that says neither true nor false'; break; }
-          const num = (i, def) => (args[i] === undefined ? def : Number(args[i]));
-          const m = { dw: num(1, 1e-9), por: num(2, 0.3), lim: num(3, 0), n: num(4, 1) };
-          if (![m.dw, m.por, m.lim, m.n].every(Number.isFinite)) t.mcdOther = 'a -multi_D whose values are not numbers';
-          else if (/^t/i.test(args[5] || '')) {
-            t.mcdOther = 'diffusion coefficients corrected for the ionic strength as specific conductance has them '
-              + '(-multi_D\'s sixth value, true)';
-          } else t.mcd = m;
-          break;
-        }
-        case 'porosities': case 'porosity': t.por.push(...values(args)); list = 'por'; break;
-        // PHREEQC's implicit scheme for -multi_D, which takes each species down its concentration (diffuse_implicit).
-        case 'implicit': t.implicit = /^t/i.test(args[0] || ''); break;
-        case 'interlayer_d': if (yes(args[0])) t.others.push('interlayer diffusion (-interlayer_D)'); break;
-        case 'fix_current': case 'current': t.others.push('a fixed current (-fix_current)'); break;
-        case 'tempr': case 'temp_retardation_factor': case 'temperature_retardation_factor': case 'thermal_diffusion':
-          t.heat = true;
-          break;
-        default:
-          // Printing, punching, dumping, warnings, the time it starts at.
-          if (opt.startsWith('?')) t.others.push(`an option PHREEQC does not have, ${opt.slice(1)}`);
-          else if (['print', 'print_cells', 'punch', 'punch_cells', 'selected_cells'].includes(opt)) list = 'cells';
-      }
-    }
-    const fill = (given, def) => Array.from({ length: Math.max(t.cells, 0) }, (_, i) => (given.length
-      ? given[Math.min(i, given.length - 1)] : def));
-    t.lengths = fill(t.lengths, 1);
-    t.disp = fill(t.disp, 0);
-    if (kind === 'ADVECTION') t.diffc = 0;
-    if (t.stagOther) t.others.push(t.stagOther);
-    delete t.stagOther;
-    if (t.mcdOther) t.others.push(t.mcdOther);
-    delete t.mcdOther;
-    // -porosities, one a cell, the last going on (readtr.cpp); none read, null.
-    t.por = t.por.length ? fill(t.por, 0) : null;
+    };
+    // Each list one a cell, the last value going on (readtr.cpp); -porosities none read, null.
+    const settle = (t) => {
+      const fill = (given, def) => Array.from({ length: Math.max(t.cells, 0) }, (_, i) => (given.length
+        ? given[Math.min(i, given.length - 1)] : def));
+      t.lengths = fill(t.lengths, 1);
+      t.disp = fill(t.disp, 0);
+      if (kind === 'ADVECTION') t.diffc = 0;
+      if (t.stagOther) t.others.push(t.stagOther);
+      delete t.stagOther;
+      if (t.mcdOther) t.others.push(t.mcdOther);
+      delete t.mcdOther;
+      t.por = t.por && t.por.length ? fill(t.por, 0) : null;
+    };
+    readOptions(t, at + 1, stop, false);
+    settle(t);
     // A REACTION numbered as a cell, which PHREEQC adds to it at every shift -- a stagnant cell's too.
     t.reactions = [];
     const n = t.cells;
@@ -2150,6 +2168,131 @@
         t.reactions.push(lo === hi ? `${lo}` : `${lo}-${hi}`);
       }
     }
+    /*
+      A PULSE: the column going on through the input's later TRANSPORT
+      blocks, as PHREEQC goes on with its cells where the last left them,
+      while what changes between one and the next is the water flowing in
+      at the left -- a SOLUTION 0 given again, or a COPY of another water
+      into 0 -- and the number of shifts: a pulse of one water and then
+      another (Examples 13A and 15). What PHREEQC does between two of them:
+      the blocks the first one's simulation does after its shifts
+      (AFTER_SHIFTS), the simulations between, and the blocks the next one's
+      does before its shifts. Anything else there -- a cell given another
+      water or phases, a MIX, a REACTION, another kind of block -- or a
+      TRANSPORT that changes anything but the shifts, and the column ends
+      with the part before it, the reason in notCarried. Each part: {shifts,
+      inflow (the water flowing in is another from it on), gap (the input
+      between it and the part before, to replay: those blocks, each run of
+      them ended, without printing and punching)}.
+    */
+    t.parts = [{ shifts: t.shifts, inflow: false, gap: '' }];
+    t.notCarried = null;
+    let lastEnd = end;
+    if (kind === 'TRANSPORT') {
+      const leftIn = (t.dir > 0 && t.bc[0] === 3) || t.bc[0] === 1;
+      const rightIn = (t.dir < 0 && t.bc[1] === 3) || t.bc[1] === 1;
+      // The numbers of the column's waters: its cells, the stagnant ones behind them, and the end that comes in at the right.
+      const ofColumn = (lo, hi) => (lo <= n && hi >= 1) || (!!t.stag && lo <= 2 * n + 1 && hi >= n + 2)
+        || (rightIn && lo <= n + 1 && hi >= n + 1);
+      const range = (tok) => {
+        const m = /^(-?[0-9]+)(?:-([0-9]+))?$/.exec(tok || '');
+        return m ? [Number(m[1]), m[2] !== undefined ? Number(m[2]) : Number(m[1])] : null;
+      };
+      // The blocks on lines [a, b) but the TRANSPORT at `skip`: which = 'after' those after the shifts, 'before' the rest.
+      const blocksOf = (a, b, which, skip) => {
+        const out = [];
+        for (let i = a; i < b; i++) {
+          if (!isKey(lines[i])) { if (out.length && out[out.length - 1].keep) out[out.length - 1].lines.push(lines[i]); continue; }
+          const word = first(lines[i]).toUpperCase();
+          const keep = i !== skip && (which === 'all' || (which === 'after') === AFTER_SHIFTS.has(word));
+          out.push({ word, lines: [lines[i]], keep });
+        }
+        return out.filter((bk) => bk.keep && bk.word !== 'END');
+      };
+      const QUIET_GAP = /^(PRINT|SELECTED_OUTPUT|USER_PUNCH|USER_GRAPH|USER_PRINT|TITLE)$/;
+      // Why a block between two TRANSPORT blocks ends the column, or null; and whether it gives the water flowing in.
+      const judge = (bk) => {
+        const tok = bk.lines[0].trim().split(/\s+/);
+        if (QUIET_GAP.test(bk.word) || bk.word === 'KNOBS' || bk.word === 'DUMP') return { why: null, inflow: false };
+        if (bk.word === 'SOLUTION') {
+          // No number, and PHREEQC takes it for SOLUTION 1, the words after it its title.
+          const r = range(tok[1]) || [1, 1];
+          if (ofColumn(r[0], r[1])) {
+            return { why: `SOLUTION ${r[0] === r[1] ? r[0] : `${r[0]}-${r[1]}`} between its TRANSPORT blocks gives ${r[0] === n + 1 && r[1] === n + 1
+              ? 'the water at its right end' : 'cells of the column'} another water`, inflow: false };
+          }
+          return { why: null, inflow: leftIn && r[0] <= 0 && r[1] >= 0 };
+        }
+        if (bk.word === 'COPY') {
+          const what = (tok[1] || '').toLowerCase();
+          const from = range(tok[2]);
+          const to = range(tok[3]);
+          if (!from || !to) return { why: `a COPY that is not of one number to another (${bk.lines[0].trim()})`, inflow: false };
+          if (!'solution'.startsWith(what) || what.length < 3) {
+            if (ofColumn(to[0], to[1])) return { why: `COPY ${tok[1]} ${tok[2]} ${tok[3]} between its TRANSPORT blocks, into the column`, inflow: false };
+            if (to[0] <= 0 && to[1] >= 0) {
+              return { why: `COPY ${tok[1]} ${tok[2]} ${tok[3]} between its TRANSPORT blocks, which gives the left end more than a water`,
+                inflow: false };
+            }
+            return { why: null, inflow: false };
+          }
+          if (ofColumn(to[0], to[1])) return { why: `COPY solution ${tok[2]} ${tok[3]} between its TRANSPORT blocks, into the column`, inflow: false };
+          const into0 = to[0] <= 0 && to[1] >= 0;
+          if (into0 && ofColumn(from[0], from[1])) {
+            return { why: `COPY solution ${tok[2]} 0, which makes the water flowing in a cell's as the column leaves it`, inflow: false };
+          }
+          return { why: null, inflow: leftIn && into0 };
+        }
+        return { why: `${bk.word} between its TRANSPORT blocks`, inflow: false };
+      };
+      let prev = { at, stop, sim, end };
+      let before = t;
+      for (;;) {
+        const nextAt = lines.findIndex((ln, i) => i > lastEnd && isKey(ln) && first(ln).toUpperCase() === 'TRANSPORT');
+        if (nextAt < 0) break;
+        let nStop = nextAt + 1;
+        while (nStop < lines.length && !isKey(lines[nStop])) nStop++;
+        let nEnd = nStop;
+        while (nEnd < lines.length && !(isKey(lines[nEnd]) && first(lines[nEnd]).toUpperCase() === 'END')) nEnd++;
+        let nSim = nextAt;
+        while (nSim > 0 && !(isKey(lines[nSim - 1]) && first(lines[nSim - 1]).toUpperCase() === 'END')) nSim--;
+        // In PHREEQC's order: after the last part's shifts, the simulations between, this one's before its shifts.
+        const runs = [blocksOf(prev.sim, prev.end, 'after', prev.at), ...(() => {
+          const sims = [];
+          let a = lastEnd + 1;
+          for (let i = a; i < nSim; i++) {
+            if (isKey(lines[i]) && first(lines[i]).toUpperCase() === 'END') { sims.push(blocksOf(a, i, 'all', -1)); a = i + 1; }
+          }
+          if (a < nSim) sims.push(blocksOf(a, nSim, 'all', -1));
+          return sims;
+        })(), blocksOf(nSim, nEnd, 'before', nextAt)];
+        const verdicts = runs.flat().map(judge);
+        const stopped = verdicts.find((v) => v.why);
+        if (stopped) { t.notCarried = stopped.why; break; }
+        // The next TRANSPORT read onto the last: nothing but its shifts may change.
+        const nt = { ...before, lengths: [...before.lengths], disp: [...before.disp], por: before.por ? [...before.por] : [],
+          bc: [...before.bc], others: [] };
+        readOptions(nt, nextAt + 1, nStop, true);
+        settle(nt);
+        const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+        const changed = [['cells', '-cells'], ['dt', '-time_step'], ['dir', '-flow_direction'], ['bc', '-boundary_conditions'],
+          ['lengths', '-lengths'], ['disp', '-dispersivities'], ['correctDisp', '-correct_disp'],
+          ['diffc', '-diffusion_coefficient'], ['heat', 'the heat (-thermal_diffusion)'], ['stag', '-stagnant'],
+          ['mcd', '-multi_D'], ['por', '-porosities'], ['implicit', '-implicit']].find(([k]) => !same(nt[k], before[k]));
+        if (changed) { t.notCarried = `its next TRANSPORT changes ${changed[1]}`; break; }
+        if (nt.others.length) { t.notCarried = `its next TRANSPORT has ${nt.others.join(' and ')}`; break; }
+        if (!(nt.shifts >= 1)) { t.notCarried = 'its next TRANSPORT has no shifts'; break; }
+        // The blocks to replay, without printing, punching and dumping, each run of them ended.
+        const gap = runs.map((bks) => bks.filter((bk) => !QUIET_GAP.test(bk.word) && bk.word !== 'DUMP'))
+          .filter((bks) => bks.length).map((bks) => `${bks.flatMap((bk) => bk.lines).join('\n')}\nEND\n`).join('');
+        t.parts.push({ shifts: nt.shifts, inflow: verdicts.some((v) => v.inflow), gap });
+        before = nt;
+        prev = { at: nextAt, stop: nStop, sim: nSim, end: nEnd };
+        lastEnd = nEnd;
+      }
+    }
+    // Whether the input calculates anything after the last part carried.
+    t.after = lines.slice(lastEnd + 1).some((ln) => isKey(ln) && !quiet.test(first(ln)));
     return t;
   }
 
@@ -2404,6 +2547,52 @@
       }
     }
     /*
+      A PULSE (readTransport's parts): the water flowing in at the left for
+      each part, as PHREEQC makes it -- the input between the TRANSPORT
+      before and the part's own replayed after the cells are equilibrated,
+      SOLUTION 0 then equilibrated with what is numbered 0 as TRANSPORT does
+      as it starts -- each kept under a number of its own, KEPT and on, the
+      first as the column starts too. A water that comes in at another
+      temperature than the column's ends the column with the part before.
+    */
+    const KEPT = 9999981;
+    let setup = equil;
+    let inflowSols = leftSol >= 0 ? t.parts.map(() => leftSol) : [];
+    const pulse = () => {
+      setup = `${equil}COPY solution 0 ${KEPT}\nEND\n`;
+      inflowSols = [KEPT];
+      t.parts.slice(1).forEach((p, j) => {
+        setup += p.gap;
+        if (!p.inflow) { inflowSols.push(inflowSols[inflowSols.length - 1]); return; }
+        setup += `RUN_CELLS\n -cells 0\n -time_step 0\nEND\nCOPY solution 0 ${KEPT + j + 1}\nEND\n`;
+        inflowSols.push(KEPT + j + 1);
+      });
+    };
+    if (leftSol === 0 && t.parts.some((p) => p.inflow)) {
+      pulse();
+      const kept = [...new Set(inflowSols)];
+      let rowsK;
+      try {
+        rowsK = runRows(o.engine, `${punchBlock()}${setup}RUN_CELLS\n -cells ${kept.join(' ')}\n -time_step 0\nEND\n`);
+      } catch (e) {
+        no(`PHREEQC could not make the waters flowing in after its first TRANSPORT: ${String(e.message || e).split('\n')[0]}`);
+      }
+      for (const r of rowsK) last.set(Number(r.soln), r);
+      const warm = inflowSols.findIndex((s) => last.has(s) && Math.abs(last.get(s).tc - one.tc) > 1e-9);
+      if (warm > 0) {
+        t.notCarried = `the water flowing in from its TRANSPORT number ${warm + 1} on is at ${fmtG(last.get(inflowSols[warm]).tc, 6)} C `
+          + `and the column at ${fmtG(one.tc, 6)} C: PHREEQC carries the heat as well, which the page does not`;
+        t.parts = t.parts.slice(0, warm);
+        t.after = true;
+        if (t.parts.some((p) => p.inflow)) pulse();
+        else { setup = equil; inflowSols = t.parts.map(() => leftSol); }
+      }
+      for (const s of new Set(inflowSols)) if (!last.has(s)) no(`PHREEQC has no water flowing in for one of its TRANSPORT blocks (${s})`);
+    }
+    // Each end's water: the first flowing in at the left, each later one, and the right's.
+    const leftEnds = [...new Set(inflowSols)];
+    const endWaters = [...leftEnds, ...(rightSol >= 0 ? [rightSol] : [])];
+    /*
       Each water takes a trace of every other -- the ends', each zone's and
       each stagnant zone's -- so that what only one of them has is a total
       that can be held everywhere. PHREEQC keeps a MIX from one run to the
@@ -2415,24 +2604,31 @@
     const mixed = (parts) => `MIX ${MIXED}\n${parts}`;
     const gone = `DELETE\n -mix ${MIXED}\nEND\n`;
     const behind = szones.filter((z) => !z.same);
-    const waters = [...zones.map((z) => z.rep), ...behind.map((z) => z.rep), ...ends];
+    const waters = [...zones.map((z) => z.rep), ...behind.map((z) => z.rep), ...endWaters];
     const traced = (s) => `${mixed(` ${s} 1\n${waters.filter((x) => x !== s).map((x) => ` ${x} ${TRACE}\n`).join('')}`)}`;
     const side = (s) => {
       if (s < 0) return null;
-      const r = runRows(o.engine, `${punchBlock()}${equil}${traced(s)}END\n${gone}`).pop();
+      const r = runRows(o.engine, `${punchBlock()}${setup}${traced(s)}END\n${gone}`).pop();
       return new Map([...r.species].map(([k, [m]]) => [k, m]));
     };
-    const left = side(leftSol);
+    const left = side(leftEnds.length ? leftEnds[0] : -1);
     const right = side(rightSol);
+    // Each later water flowing in: from the time its TRANSPORT starts, after the shifts of those before.
+    const inflows = [];
+    let shiftsBefore = 0;
+    t.parts.forEach((p, j) => {
+      if (j > 0 && inflowSols[j] !== inflowSols[j - 1]) inflows.push({ part: j + 1, shift: shiftsBefore, at: shiftsBefore * t.dt, water: side(inflowSols[j]) });
+      shiftsBefore += p.shifts;
+    });
     // A cell's water with its traces, put on what the cell holds.
     const inCell = (c, parts) => `${mixed(parts)}SAVE solution ${c}\nEND\n${gone}RUN_CELLS\n -cells ${c}\n -time_step 0\nEND\n`;
     const others = waters.length > 1;
-    const cellInput = `${equil}${others ? inCell(1, traced(1).slice(`MIX ${MIXED}\n`.length)) : 'RUN_CELLS\n -cells 1\n'
+    const cellInput = `${setup}${others ? inCell(1, traced(1).slice(`MIX ${MIXED}\n`.length)) : 'RUN_CELLS\n -cells 1\n'
       + ' -time_step 0\nEND\n'}`;
     // Each other zone's first cell as it starts, and each stagnant zone's, its phases', reactants' and water's amounts too.
     const zx = [...extras, 'TOT("water")'];
     for (const z of [...zones.slice(1), ...behind]) {
-      z.row = runRows(o.engine, `${punchBlock(zx)}${equil}${inCell(z.rep, traced(z.rep).slice(`MIX ${MIXED}\n`.length))}`).pop();
+      z.row = runRows(o.engine, `${punchBlock(zx)}${setup}${inCell(z.rep, traced(z.rep).slice(`MIX ${MIXED}\n`.length))}`).pop();
       z.extras = zx;
     }
     /*
@@ -2457,17 +2653,17 @@
     };
     // A stagnant cell sees what comes in only through its cell, and in the end the same water.
     for (const z of [...zones.slice(1), ...behind]) take(z.row);
-    for (const s of ends) {
+    for (const s of endWaters) {
       take(last.get(s));
       for (const z of [...zones, ...behind]) {
         for (const mix of [` ${s} 1\n`, ` ${z.rep} 0.5\n ${s} 0.5\n`]) {
-          take(runRows(o.engine, `${punchBlock()}${equil}${inCell(z.rep, mix)}`).pop());
+          take(runRows(o.engine, `${punchBlock()}${setup}${inCell(z.rep, mix)}`).pop());
         }
       }
     }
     const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
     return { t, cellInput, left, right, leftSol, rightSol, keep, keepAt, keepOn, corr, tc: one.tc, trace: TRACE, zones,
-      stag: stag ? { ...stag, zones: szones } : null, mcd, held: cellsHeld };
+      stag: stag ? { ...stag, zones: szones } : null, mcd, held: cellsHeld, inflows };
   }
 
   /*
@@ -4963,6 +5159,8 @@
     let mcdOf = null;
     let leftAt = null;
     let rightAt = null;
+    let shiftsAll = 0;
+    let inflowRows = [];
     if (column) {
       const { t, corr, mcd } = column;
       const L = t.lengths.reduce((a, b) => a + b, 0);
@@ -4997,6 +5195,9 @@
           return d * mcd.factor;
         };
       }
+      // Every TRANSPORT block of the input carried (columnSetup's parts): its shifts, and where the water flowing in changes.
+      shiftsAll = t.parts.reduce((a, p) => a + p.shifts, 0);
+      inflowRows = t.dir || colD > 0 || mcd ? column.inflows : [];
       const face = (b, isIn) => (b === 1 ? 'dirichlet' : b === 2 ? 'neumann' : isIn ? 'robin' : t.dir ? 'free' : 'neumann');
       const leftKind = face(t.bc[0], t.dir > 0);
       const rightKind = face(t.bc[1], t.dir < 0);
@@ -5013,13 +5214,17 @@
         `LEFT = ${leftKind}`, `RIGHT = ${rightKind}`,
         ...(column.stag ? ['MATRIX_CELLS = 1', 'MATRIX_DEPTH = 1', 'MATRIX_FIRST = 1',
           `MATRIX_POROSITY = ${fmtG(column.stag.thim, 15)}`, `WETTED_SURFACE = ${fmtG(1 / column.stag.thm, 15)}`] : [])];
-      colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: t.shifts,
+      colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: shiftsAll,
         timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
         multiD: mcd ? { porosity: mcd.porosity, n: mcd.n, factor: mcd.factor, defaultDw: mcd.dw,
           gradient: follow && !t.implicit ? 'activity' : 'concentration', implicit: t.implicit,
           withoutDw: order.filter((sp) => !db.dw.get(sp)) } : null,
         left: leftKind, right: rightKind, leftSolution: leftAt ? column.leftSol : null,
-        rightSolution: rightAt ? column.rightSol : null, tend: t.shifts * t.dt, after: t.after,
+        rightSolution: rightAt ? column.rightSol : null, tend: shiftsAll * t.dt, after: t.after,
+        // The input's TRANSPORT blocks carried, each one's shifts; the water flowing in from each later one that changes
+        // it (<INFLOW>); and why the input's next TRANSPORT is not carried, where it has one.
+        parts: t.parts.map((p) => p.shifts), inflows: inflowRows.map((x) => ({ part: x.part, shift: x.shift, at: x.at })),
+        notCarried: t.notCarried,
         zones: column.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep })),
         stagnant: column.stag ? { alpha: column.stag.alpha, thm: column.stag.thm, thim: column.stag.thim,
           zones: column.stag.zones.map((z) => ({ cells: [z.lo, z.hi], as: z.rep, same: z.same })) } : null,
@@ -5030,8 +5235,8 @@
           : kind === 'free' ? `the water leaves at the ${where}` : `the ${where} end is closed`);
       out.push(`# The column of the input's ${t.kind}: ${t.cells} cells${even ? ` of ${fmtG(t.lengths[0], 6)} m`
         : `, ${fmtG(L, 6)} m in all`}, ${t.dir ? `the water moving a cell in each time step of ${fmtG(t.dt, 6)} s, `
-        + `${fmtG(Math.abs(v), 6)} m/s ${t.dir > 0 ? 'to the right' : 'to the left'}, for ${t.shifts} shifts`
-        : `diffusing for ${t.shifts} periods of ${fmtG(t.dt, 6)} s`}, ${fmtG(t.shifts * t.dt, 6)} s;`);
+        + `${fmtG(Math.abs(v), 6)} m/s ${t.dir > 0 ? 'to the right' : 'to the left'}, for ${shiftsAll} shifts`
+        : `diffusing for ${shiftsAll} periods of ${fmtG(t.dt, 6)} s`}, ${fmtG(shiftsAll * t.dt, 6)} s;`);
       out.push(`# dispersivity ${fmtG(t.dir ? t.disp[0] : 0, 6)} m${corr !== 1 ? ` (times ${fmtG(corr, 6)}, -correct_disp)` : ''}, `
         + (mcd ? 'multicomponent diffusion (below). '
           : `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `)
@@ -5048,11 +5253,16 @@
       out.push(column.zones.length > 1 ? `# The cells start as PHREEQC equilibrates them before the first shift, in ${column.zones.length} zones: `
         + `${column.zones.map((z) => `${z.lo}-${z.hi}`).join(', ')}, the first as written here and the rest in <INITIAL>,`
         : '# Every cell starts from the water of cell 1 as PHREEQC equilibrates it before the first shift,');
-      const endSols = [column.leftSol, column.rightSol].filter((s) => s >= 0).map(sol).join(' and ');
+      // With a pulse, each water that flows in at the left, the later ones too.
+      const endSols = inflowRows.length
+        ? `each water that flows in at the left${column.rightSol >= 0 ? ` and ${sol(column.rightSol)}` : ''}`
+        : [column.leftSol, column.rightSol].filter((s) => s >= 0).map(sol).join(' and ');
       out.push(column.zones.length > 1 ? `# each with ${fmtG(column.trace, 3)} of every other zone's water${endSols ? ` and of ${endSols}` : ''}, `
         + 'which have as much of each: what only one has is then a total everywhere.'
-        : `# with ${fmtG(column.trace, 3)} of ${endSols || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: `
-          + 'what only one has is then a total everywhere.');
+        : inflowRows.length ? `# with ${fmtG(column.trace, 3)} of ${endSols} mixed into it, each of them with ${fmtG(column.trace, 3)} of `
+          + 'the column\'s: what only one has is then a total everywhere.'
+          : `# with ${fmtG(column.trace, 3)} of ${endSols || 'nothing'} in it, which each have ${fmtG(column.trace, 3)} of the column's: `
+            + 'what only one has is then a total everywhere.');
       if (elsewhere.size) {
         out.push(`# Cell 1's water has none of ${[...elsewhere].map((sp) => name.get(sp) || sp).join(', ')}, which another water `
           + 'brings, its trace of it gone elsewhere in');
@@ -5069,6 +5279,15 @@
           + `cell ${z.rep}`).join(', ')} in <INITIAL>${apart.length < st.zones.length ? ', the rest as cell 1' : ''}.`
           : '# The stagnant cells start as cell 1, as PHREEQC equilibrates them.');
       }
+      if (t.parts.length > 1) {
+        out.push(`# Its ${t.parts.length} TRANSPORT blocks one after another, ${t.parts.map((p) => p.shifts).join(' + ')} shifts, `
+          + 'the cells going on where the last left them, as in PHREEQC;');
+        out.push(inflowRows.length ? `# the water flowing in at the left another from ${inflowRows.map((x) => `${fmtG(x.at, 6)} s (shift ${x.shift + 1})`)
+          .join(', ')} on, as the input makes it before`
+          : '# the same water flowing in all through.');
+        if (inflowRows.length) out.push('# that TRANSPORT and PHREEQC equilibrates it then: <INFLOW>, with the same traces.');
+      }
+      if (t.notCarried) out.push(`# Not carried: what the input does from its next TRANSPORT on (${t.notCarried}).`);
       if (t.dir) {
         out.push('# PHREEQC shifts each cell\'s water whole and then reacts it; here the water moves through the cells as');
         out.push('# it reacts: a cell of PHREEQC\'s after shift k is this one half a time step later, and the two meet');
@@ -5082,7 +5301,7 @@
       drawn along it.
     */
     const kinTime = kinetics.length ? kinBlock.steps.reduce((a, b) => a + b, 0) : 0;
-    const tend = column ? column.t.shifts * column.t.dt : path ? pathEnd : kinTime;
+    const tend = column ? shiftsAll * column.t.dt : path ? pathEnd : kinTime;
     out.push('', '<SETTINGS>', ...(colSettings || ['MODE = batch']), `TEND = ${tend > 0 ? fmtG(tend, 15) : 1}`,
       ...(path ? [`MAX_STEP = ${fmtG(pathEnd / 100, 6)}`] : []),
       // What the clock of a path counts, which the charts are titled with: the reaction added, or the degrees.
@@ -5257,6 +5476,16 @@
       };
       for (const z of column.zones.slice(1)) zoneLines(z, false);
       for (const z of stagApart) zoneLines(z, true);
+    }
+    /*
+      A PULSE (columnSetup's inflows): the water flowing in at the left from
+      each time a later TRANSPORT of the input brings another on, species by
+      species, as PHREEQC makes it then, with the same traces as the rest.
+    */
+    if (inflowRows.length) {
+      const cols = (vals) => vals.map((v) => fmtG(v, 15).padEnd(24)).join('').trimEnd();
+      out.push('', '<INFLOW>', `${'t'.padEnd(width)}${cols(inflowRows.map((x) => x.at))}`);
+      for (const sp of order) out.push(`${name.get(sp).padEnd(width)}${cols(inflowRows.map((x) => x.water.get(sp) || 0))}`);
     }
     out.push('', '<EQUILIBRIUM>');
     /*
@@ -5707,15 +5936,17 @@
     const cols = besideColumns(o.res, m, Rtm);
     /*
       The input as it is, the selected output put in front of its TRANSPORT,
-      to the END of the TRANSPORT's own simulation: what the input does after
-      that the model does not carry -- a pulse of another water, the first
-      water back after it -- and PHREEQC's tables are of the column the
-      model is.
+      to the END of the simulation of the last TRANSPORT the model carries
+      (readTransport's parts, a pulse of another water and the first water
+      back after it among them): what the input does after that the model
+      does not carry, and PHREEQC's tables are of the column the model is.
     */
-    const at = text.search(/^[ \t]*TRANSPORT\b/im);
-    if (at < 0) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
-    const close = /^[ \t]*(?:END|EOF)\b[^\n]*(?:\n|$)/im.exec(text.slice(at));
-    const upTo = close ? at + close.index + close[0].length : text.length;
+    const starts = [...text.matchAll(/^[ \t]*TRANSPORT\b/gim)].map((m) => m.index);
+    if (!starts.length) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
+    const at = starts[0];
+    const lastAt = starts[Math.min(t.parts.length, starts.length) - 1];
+    const close = /^[ \t]*(?:END|EOF)\b[^\n]*(?:\n|$)/im.exec(text.slice(lastAt));
+    const upTo = close ? lastAt + close.index + close[0].length : text.length;
     const n = cols.length;
     const head = ['cell_', 'time_', ...cols.map((c, i) => `v${i}_`)];
     const punch = `SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings ${head.join(' ')}\n -start\n`
@@ -5809,7 +6040,7 @@
     }
     const last = shifts[shifts.length - 1];
     const end = (last + (atFaces && !solid.length && !stagPunched ? 0 : lag)) * dt;
-    const tend = t.shifts * dt;
+    const tend = t.parts.reduce((a, p) => a + p.shifts, 0) * dt;
     if (end > tend * (1 + 1e-12)) lines.push(`# The run goes on to TEND = ${gt(end)}, half a time step past the last shift, where its last cells are read.`);
     if (held.length) lines.push(`# Left out, PHREEQC's cells holding each at one value: ${held.join(', ')}.`);
     let tables = 0;

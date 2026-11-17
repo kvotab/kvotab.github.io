@@ -484,6 +484,39 @@ async def main():
             ran = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
             check('  and the page runs it', ran, 'Done')
 
+            # --- a pulse: a second TRANSPORT after SOLUTION 0 is given again, carried as <INFLOW> ---
+            pulse_input = (column_input + 'SOLUTION 0\\n  units mmol/kgw\\n  pH 7 charge\\n  K 1\\n  Br 1\\nEND\\n'
+                           'TRANSPORT\\n  -shifts 4\\nEND\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{pulse_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            pul = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') || /TRANSPORT block, and/.test(t) ? t : ''; }})()")
+            pul_text = await page.ev("document.getElementById('rtmText').value")
+            check('a pulse: two TRANSPORT blocks one after another, SOLUTION 0 given again between them -- the report says so, '
+                  'the text has the water flowing in from 18000 s (5 h) on in <INFLOW>, and the run goes on to the end of the second',
+                  isinstance(pul, str) and 'Its 2 TRANSPORT blocks one after another, 5 + 4 shifts' in pul
+                  and 'the water flowing in another from 5.00 h on, as the input makes it, in <INFLOW>' in pul
+                  and isinstance(pul_text, str) and re.search(r'^<INFLOW>\nt +18000$', pul_text, re.M) is not None
+                  and re.search(r'^TEND = 32400$', pul_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_pul = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="phreeqc"]'))
+            await asyncio.sleep(0.3)
+            pul_froms = await page.ev("Array.from(document.getElementById('rtmPqInvFrom').options).map((o) => o.textContent)")
+            pul_at = await page.ev("(() => { const s = document.getElementById('rtmPqInvFrom'); s.value = 'inflow:1';"
+                                   " s.dispatchEvent(new Event('change', { bubbles: true }));"
+                                   " return document.getElementById('rtmPqInvFromAtWrap').hidden; })()")
+            check('  it runs, and inverse models offer each water flowing in, the later one from the time it starts, '
+                  'with no time to read it at', [ran_pul, isinstance(pul_froms, list) and pul_froms[:2], pul_at],
+                  ['Done', ['the water flowing in at the start', 'the water flowing in from 5.00 h'], True])
+            await page.ev("(() => { const s = document.getElementById('rtmPqInvFrom'); s.value = 'inflow';"
+                          " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # --- PHREEQC's own column beside the run: the tick there only for an input with a TRANSPORT; ticked, PHREEQC
             # runs the input's column too and its cells go under <DATA>, a table in distance for each of the five shifts.
             # The built-in example of it, run: the Fit tab's table of the run against them, each column's Nash-Sutcliffe

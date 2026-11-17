@@ -1076,6 +1076,41 @@ async def main():
                   isinstance(top, (int, float)) and 0.4 < top < 0.6, True)
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
 
+            # --- the water at the left end as it changes: a pulse in <INFLOW> -------
+            await set_text(page, '<SETTINGS>\nMODE = transport\nCELLS = 30\nLENGTH = 1\nDIFFUSION = 1\nADVECTION = 1\n'
+                                 'VELOCITY = 1e-5\nLEFT = robin\nRIGHT = free\nTEND = 1.2e5\n\n<SPECIES>\n'
+                                 'Na+  0  D=1e-9  left=1e-3\nCl-  0  D=1e-9  left=1e-3\n\n<INFLOW>\nt    36000\nNa+  0\nCl-  0\n')
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('(<INFLOW>)')", True, tries=40)
+            check('a pulse: the panel says where the water at the left end changes, and that the run is started again there',
+                  await page.ev("/The water at the left end changes at [^()]+ \\(<INFLOW>\\), the run started again there\\./"
+                                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            check('  it runs, and the status line says it was started again where the water changes',
+                  isinstance(run, str) and run.startswith('Done')
+                  and 'started again at 1 time where the water at the left end changes' in run, True)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            # On a linear axis: a log one leaves out the zeros once the salt has stopped coming in.
+            log_y = await page.ev("document.getElementById('rtmLogY').checked")
+            await page.ev("""(() => {
+              for (const el of document.querySelectorAll('#rtmSeries input')) {
+                const want = el.value === 'Na+';
+                if (el.checked !== want) { el.checked = want; el.dispatchEvent(new Event('change', { bubbles: true })); }
+              }
+              const b = document.getElementById('rtmLogY');
+              b.checked = false; b.dispatchEvent(new Event('change', { bubbles: true }));
+              const s = document.getElementById('rtmCell');
+              s.value = 'left'; s.dispatchEvent(new Event('change', { bubbles: true }));
+            })()""")
+            await asyncio.sleep(1.2)
+            flux = await page.ev("(() => { const t = document.getElementById('rtmChartTime').data.find((d) => d.name === 'Na+');"
+                                 " return t ? [Math.max(...t.y), t.y[t.y.length - 1]] : null; })()")
+            check(f'  what crosses the left end: the flow times the salt while it comes in, and none once the water has '
+                  f'changed ({flux})', flux, [1e-8, 0])
+            await page.ev("(() => { const b = document.getElementById('rtmLogY'); b.checked = %s;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()" % ('true' if log_y else 'false'))
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+
             # Back to the built-in model, which the checks below are about.
             await page.ev("(() => { const t = document.getElementById('rtmText');"
                           " t.value = RTM_DEFAULT_MODEL;"

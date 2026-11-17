@@ -1878,6 +1878,15 @@ distance  pH     at = 36000
             outlet already lets the flow leave. They are separate words because they say different
             things and are wrong in different ways, and the page can only tell you which is wrong
             if it knows which you meant.</p>
+          <p>The water at the left end can change as the run goes on: a pulse of salt and then the water
+            before it, or a well whose water changes on a list of dates. <code>&lt;INFLOW&gt;</code> gives
+            each species' concentration from each time on, over its <code>left=</code>, at a
+            <code>dirichlet</code> or <code>robin</code> left end. The run is started again at each of
+            its times, and what crosses the left end, with the budget of what came in, follows the
+            water there then, the change taken whole and not spread over a step. A column's pulse is
+            then the step less the same step started later, as a column with nothing reacting is, to
+            10<sup>−9</sup> of the pulse at a <code>dirichlet</code> face, a <code>robin</code> one and
+            under Nernst and Planck.</p>
           <p>How many cells a semi-infinite end needs past it is a matter of how far upstream the
             dispersion reaches. It dies away by <em>D</em>/(<em>D</em>&nbsp;+&nbsp;<em>u</em>Δ<em>x</em>)
             per cell, which for a Peclet number and no <code>D</code> of a species' own is
@@ -2145,6 +2154,22 @@ Red     left  1e-3   fixed        # the reservoir at the left end, with LEFT = r
             with, over the species' <code>left=</code> or <code>right=</code>, and <code>fixed</code> to
             hold it there. An expression is read as the cell beside the reservoir, its <code>x</code>,
             its <code>w</code> and its parameters. See <em>The two ends of the column</em>.</p>
+
+          <h4 id="help-inflow-section">&lt;INFLOW&gt;</h4>
+          <pre>t      18000     # in the model's own unit
+Na+    0                 # from then on: no salt
+Cl-    0
+K+     8e-4              # and the column's own water</pre>
+          <p>The water at the left end as it changes: what flows in there with <code>LEFT = robin</code>,
+            or what a <code>dirichlet</code> face is held at. The first line gives the times it changes
+            at; each line after it a species and its concentration from each of them on, until the next.
+            Before the first time, and all through for a species it does not name, each species'
+            <code>left=</code>. So a pulse is a species line's <code>left=</code> and one time here — salt
+            for five hours and then none, as above — and the water at a well changes as often as a list of
+            times says. A time of 0 is the water from the start. The run is started again at each
+            time, as at a table's corners, so that no step is taken across a change, and
+            <em>flux through the left end</em> is the water flowing in then. Only with transport, at a
+            <code>dirichlet</code> or <code>robin</code> left end, and for species that move.</p>
 
           <h4>&lt;PARAMETERS&gt;</h4>
           <pre>DOSE  all  0.64                  # the same everywhere
@@ -4117,6 +4142,23 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             shifts each cell's water whole and then reacts it, where here the water moves through the
             cells as it reacts: a cell of PHREEQC's after shift <em>k</em> is the page's half a time step
             later, and the two meet as the cells are refined.</p>
+          <p>Where the input goes on with more <code>TRANSPORT</code> blocks, the column goes on through
+            them, as PHREEQC goes on with its cells where the last left them, as long as nothing changes
+            between one and the next but the water flowing in at the left and the number of shifts: a
+            <code>SOLUTION 0</code> given again, or a <code>COPY</code> of a water kept for it into 0 — a
+            pulse of one water and then another, as PHREEQC's Examples 13A and 15 have it. Each later water
+            is made as PHREEQC makes it, the input between the two done after the cells are put on what is
+            numbered as them, and the water then put on what is numbered 0, as each
+            <code>TRANSPORT</code> does as it starts. It is one of the waters that take
+            10<sup>−12</sup> of every other, it flows in from the time its <code>TRANSPORT</code> starts,
+            after the shifts of those before, in <code>&lt;INFLOW&gt;</code>, and <code>TEND</code> is
+            all their shifts. Anything else between them — cells given another water or phases, a
+            <code>MIX</code>, a <code>REACTION</code>, a <code>COPY</code> into the column, a block of another
+            kind — a <code>TRANSPORT</code> that changes more than its shifts, or a water flowing in at
+            another temperature, and the column ends with the one before, the report and the text saying
+            why. Salt through a column of potassium nitrate with an exchanger, and then the column's own
+            water again: the chloride at the outlet within 0.21, 0.065 and 0.014&nbsp;mmol/kgw of
+            PHREEQC's on 12, 24 and 48 cells, the gap a third or less each time the cells halve.</p>
           <p>Stagnant cells, <code>-stagnant 1</code> <em>α θ<sub>m</sub> θ<sub>im</sub></em>, are
             PHREEQC's first-order exchange between each cell's water and the stagnant water behind it:
             θ<sub>m</sub> d<em>C</em>/d<em>t</em> = −α (<em>C</em> − <em>C</em><sub>im</sub>), and the
@@ -4302,10 +4344,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             page three; on 80, three and ten, PHREEQC's mixing steps growing as the cells shrink.</p>
           <p>For a column of your own, the panel's <em>PHREEQC's own column, to set beside the run</em>,
             there where the input has a <code>TRANSPORT</code> block: <em>Write the model</em> then
-            has PHREEQC run that column too, in the page, to the <code>END</code> of the
-            <code>TRANSPORT</code>'s own part of the input, so that what the input does after it, which
-            the model does not carry — a pulse of another water, the first water back after it — is not in
-            it either. Its cells go into the text under <code>&lt;DATA&gt;</code> — each cell's pH, its
+            has PHREEQC run that column too, in the page, to the <code>END</code> of the part of the
+            input of the last <code>TRANSPORT</code> the model carries — a pulse of another water and the
+            first water back after it among them — so that what the input does after that, which the
+            model does not carry, is not in it either. Its cells go into the text under <code>&lt;DATA&gt;</code> — each cell's pH, its
             element totals (<code>tot(Ca)</code>, or the species where an element has one only; with the redox carried, the totals of its
             valence states, <code>tot(S(6))</code> and <code>tot(S(-2))</code>) and its minerals, a
             table in distance for each of up to twelve of the shifts the input punches, the first and
@@ -5027,14 +5069,14 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261117l"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261117l"></script>
+  <script src="./resources/js/rtm-model.js?v=20261117m"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
-  <script src="./resources/js/rtm-worker.js?v=20261117k"></script>
+  <script src="./resources/js/rtm-worker.js?v=20261117m"></script>
   <script src="./resources/js/kvot-hdf5-write.js?v=20260917"></script>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117l"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117m"></script>
 </body>
 </html>

@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117l';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117m';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1321,8 +1321,14 @@
     // A release history, or anything else a rate law reads at the clock, and
     // the corners the run is started again at so that none is stepped over.
     if (m.clockTables && m.clockTables.length) {
+      const corners = m.breaks - (m.inflowBreaks || 0);
       say.push(`Read at the clock: ${listed(m.clockTables.map((c) => c.name))}`
-        + (m.breaks ? `, the run started again at ${count(m.breaks, 'corner')} up to TEND` : '') + '.');
+        + (corners > 0 ? `, the run started again at ${count(corners, 'corner')} up to TEND` : '') + '.');
+    }
+    // The water at the left end as <INFLOW> changes it: where, and that the run is started again there.
+    if (m.inflowWaters && m.inflowWaters.length > 1) {
+      const at = m.inflowWaters.slice(1).map((w) => fmtTime(w.from));
+      say.push(`The water at the left end changes at ${listed(at)} (<INFLOW>), the run started again there.`);
     }
     // A species held in some cells only; one held everywhere is in its line.
     for (const h of m.held || []) {
@@ -1495,7 +1501,13 @@
       : st.lu === 'refactor' ? 'sparse LU keeping its pivots' : st.sparse ? 'sparse LU' : 'dense LU';
     // Started again at the corners of a table read at the clock: said, since
     // it is what a run with a release history spends its first steps on.
-    const restarts = st.breaks ? `, started again at ${st.breaks.toLocaleString()} table corner${st.breaks === 1 ? '' : 's'}` : '';
+    // Where <INFLOW> changes the water at the left end, there too.
+    const inflowChanges = reply.model && reply.model.inflowWaters ? reply.model.inflowWaters.length - 1 : 0;
+    const anyTables = !!(reply.model && reply.model.clockTables && reply.model.clockTables.length);
+    const restarts = !st.breaks ? ''
+      : !inflowChanges ? `, started again at ${st.breaks.toLocaleString()} table corner${st.breaks === 1 ? '' : 's'}`
+        : `, started again at ${st.breaks.toLocaleString()} time${st.breaks === 1 ? '' : 's'} where ${anyTables
+          ? 'a table turns or ' : ''}the water at the left end changes`;
     // Minerals held at saturation: when one dissolved away or precipitated,
     // the run stopped there and went on; the first and the last are named.
     const ev = reply.events || [];
@@ -2173,6 +2185,18 @@
    * end of the column, what crosses it: the model's own sum over the states
    * beside that end, worked out at each stored point.
    */
+  /**
+   * A face's constant at a time: where <INFLOW> changes the water at the
+   * left end, the stretch the time is in -- after as many of the face's
+   * times as are before it, or at or before 0 -- as the model has it.
+   */
+  function faceConstantAt(f, time) {
+    if (!f.at) return f.constant;
+    let p = 0;
+    while (p < f.at.length && (f.at[p] < time || f.at[p] <= 0)) p++;
+    return f.constants[p];
+  }
+
   function series(name, cell, layer = state.layer, r = state.result) {
     // A quantity: as the worker worked it out, or null until it has (fetchQuantities). An end has none.
     if (runQuantity(r, name)) return isFace(cell) ? null : quantitySeries(name, modelCell(cell, layer, r), r);
@@ -2184,7 +2208,7 @@
       if (!f) return null;
       const flux = new Float64Array(r.n);
       for (let i = 0; i < r.n; i++) {
-        let v = f.constant;
+        let v = faceConstantAt(f, r.t[i]);
         for (const [idx, w] of f.terms) v += w * r.states[i * r.width + idx];
         flux[i] = v;
       }
@@ -12138,6 +12162,8 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas',
       'drummond']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
+    // The first line's word: the times the water at the left end changes at.
+    INFLOW: new Set(['t']),
     PARAMETERS: new Set(['all', 'matrix', 'fracture']),
     REACTIONS: new Set(['water', 'inventory']),
   };
@@ -12980,11 +13006,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117l';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117m';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117k',
+    'resources/js/rtm-phreeqc.js?v=20261117m',
     'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13407,6 +13433,11 @@ END
         + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, `
         + `${c.multiD ? 'each species diffusing at its own coefficient' : `diffusion coefficient ${pqNum(c.diffusion)} m²/s`}; `
         + `${end(c.left, c.leftSolution, 'left')}, ${end(c.right, c.rightSolution, 'right')}. `
+        // A pulse: the input's TRANSPORT blocks one after another, and where the water flowing in changes (<INFLOW>).
+        + (c.parts && c.parts.length > 1 ? `Its ${c.parts.length} <code>TRANSPORT</code> blocks one after another, `
+          + `${c.parts.join(' + ')} shifts, the cells going on where the last left them; `
+          + (c.inflows && c.inflows.length ? `the water flowing in another from ${c.inflows.map((x) => fmtTime(x.at)).join(', ')} `
+            + 'on, as the input makes it, in <code>&lt;INFLOW&gt;</code>. ' : 'the same water flowing in all through. ') : '')
         + (c.zones && c.zones.length > 1 ? `Its cells start as PHREEQC equilibrates them before the first shift, in `
           + `${c.zones.length} zones — ${c.zones.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} — the first as the `
           + 'water above, the others in <code>&lt;INITIAL&gt;</code>.</p>'
@@ -13458,7 +13489,8 @@ END
           + 'log K.</p>');
       }
       if (c.after) {
-        out.push(`<p class="warn">The input goes on after this column; what it does then is not carried${reply.beside
+        out.push(`<p class="warn">The input goes on after this column; what it does then is not carried${c.notCarried
+          ? ` (${esc(c.notCarried)})` : ''}${reply.beside
           ? ', and PHREEQC\'s own column beside it stops there too' : ''}.</p>`);
       }
     }
@@ -14049,7 +14081,10 @@ END
     const m = r && r.model;
     if (!m) return [];
     const n = m.fracture || 1;
-    return [...(m.inflow ? [{ value: 'inflow', label: 'the water flowing in' }] : []),
+    // Where <INFLOW> changes it, each water that flows in: from the start, and from each of its times on.
+    const later = m.inflowWaters && m.inflowWaters.length > 1 ? m.inflowWaters.slice(1) : [];
+    return [...(m.inflow ? [{ value: 'inflow', label: later.length ? 'the water flowing in at the start' : 'the water flowing in' }] : []),
+      ...later.map((w, k) => ({ value: `inflow:${k + 1}`, label: `the water flowing in from ${fmtTime(w.from)}` })),
       ...Array.from({ length: n }, (_, i) => ({ value: String(i), label: n > 1 ? `cell ${i}` : 'the water' }))];
   }
 
@@ -14065,8 +14100,9 @@ END
     $('rtmPqInvTo').innerHTML = options(pq.inv.to);
     $('rtmPqInvFromAt').value = pq.inv.fromAt;
     $('rtmPqInvToAt').value = pq.inv.toAt;
-    $('rtmPqInvFromAtWrap').hidden = pq.inv.from === 'inflow';
-    $('rtmPqInvToAtWrap').hidden = pq.inv.to === 'inflow';
+    // A water flowing in has no time to be read at.
+    $('rtmPqInvFromAtWrap').hidden = /^inflow/.test(pq.inv.from);
+    $('rtmPqInvToAtWrap').hidden = /^inflow/.test(pq.inv.to);
     $('rtmPqInvPhases').value = pq.inv.phases;
     $('rtmPqInvU').value = pq.inv.u;
     $('rtmPqInvRange').checked = pq.inv.range;
@@ -14090,7 +14126,14 @@ END
   function pqInvPick(which, at, r) {
     if (which === 'inflow') {
       if (!r.model.inflow) return { error: 'The run has no water flowing in: choose a cell.' };
-      return { pick: { state: Array.from(r.model.inflow), label: 'the water flowing in' } };
+      const later = r.model.inflowWaters && r.model.inflowWaters.length > 1;
+      return { pick: { state: Array.from(r.model.inflow), label: later ? 'the water flowing in at the start' : 'the water flowing in' } };
+    }
+    const changed = /^inflow:([0-9]+)$/.exec(which);
+    if (changed) {
+      const w = r.model.inflowWaters && r.model.inflowWaters[Number(changed[1])];
+      if (!w) return { error: 'The run has no such water flowing in: choose another.' };
+      return { pick: { state: Array.from(w.water), label: `the water flowing in from ${fmtTime(w.from)}` } };
     }
     const n = r.model.fracture || 1;
     const cell = Number(which);

@@ -3824,6 +3824,191 @@ function againstTransportHandOff(engine) {
 }
 
 /* ======================================================================
+   A PULSE: the input's TRANSPORT blocks one after another, the water
+   flowing in changing between them -- SOLUTION 0 given again, or a COPY
+   of a water kept for it -- as <INFLOW>; against PHREEQC's TRANSPORT of
+   the whole on three grids, the two meeting as the cells halve; and where
+   the column ends instead, each reason said. Inputs of the tests' own.
+   ====================================================================== */
+function againstPulseHandOff(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const handOff = (text) => {
+    engine.load(dbText);
+    return P.waterToModel({ engine, database, water: { name: 'pulse', text }, activity: true, exact: true, phases: true,
+      redox: false, floor: 1e-20 });
+  };
+  // Salt through a column of potassium nitrate with an exchanger, then the column's own water again: f times the cells.
+  const salt = (f) => `SOLUTION 0  salt, flowing in first
+ units mmol/kgw
+ pH 7.0
+ Na 1.2
+ Cl 1.2
+SOLUTION 1-${12 * f}  the column's own water
+ units mmol/kgw
+ pH 7.0
+ K 0.8
+ N(5) 0.8
+EXCHANGE 1-${12 * f}
+ -equilibrate 1
+ X 0.002
+END
+TRANSPORT
+ -cells ${12 * f}
+ -shifts ${4 * f}
+ -time_step ${1800 / f}
+ -lengths ${12 * f}*${0.05 / f}
+ -dispersivities ${12 * f}*0.01
+ -diffusion_coefficient 0
+ -flow_direction forward
+ -boundary_conditions flux flux
+END
+SOLUTION 0  the column's own water flowing in again
+ units mmol/kgw
+ pH 7.0
+ K 0.8
+ N(5) 0.8
+END
+TRANSPORT
+ -shifts ${14 * f}
+END
+`;
+  const one = handOff(salt(1));
+  const rp = one.report.transport;
+  const iW = one.text.indexOf('\n<INFLOW>\n');
+  const block = iW >= 0 ? one.text.slice(iW, one.text.indexOf('\n\n', iW)) : '';
+  const at = (sp) => { const m = new RegExp(`^${sp.replace('+', '\\+')}\\s+(\\S+)$`, 'm').exec(block); return m ? Number(m[1]) : NaN; };
+  check('a pulse: two TRANSPORT blocks, 4 and 14 shifts, the cells going on, SOLUTION 0 given again between them -- '
+    + 'the run to the end of the second, TEND 32400 s, the water flowing in from 7200 s on in <INFLOW>, as PHREEQC makes '
+    + 'it, with the traces of the rest',
+  !!rp && rp.parts.join(' ') === '4 14' && rp.shifts === 18 && rp.inflows.length === 1 && rp.inflows[0].at === 7200
+    && rp.inflows[0].shift === 4 && !rp.notCarried && !rp.after && /^TEND = 32400$/m.test(one.text)
+    && /^t\s+7200$/m.test(block) && Math.abs(at('K+') - 8e-4) < 1e-9 && at('Na+') > 1e-16 && at('Na+') < 1e-14
+    && /^# Its 2 TRANSPORT blocks one after another, 4 \+ 14 shifts/m.test(one.text),
+  rp ? `${JSON.stringify({ parts: rp.parts, inflows: rp.inflows, notCarried: rp.notCarried })}; K+ ${at('K+')}, Na+ ${at('Na+')}`
+    : 'no column');
+
+  /*
+    Against PHREEQC's TRANSPORT of the whole input, at the outlet after each
+    of the first grid's shifts, a cell of PHREEQC's after shift k the page's
+    half a time step later: the chloride's pulse on 12, 24 and 48 cells.
+    PHREEQC shifts the water whole and the page's flows through its cells,
+    and the two meet as the cells halve -- the pulse's front and tail are
+    where they are apart.
+  */
+  const gaps = [1, 2, 4].map((f) => {
+    const text = salt(f);
+    const res = f === 1 ? one : handOff(text);
+    const N = 12 * f;
+    const dt = 1800 / f;
+    const where = text.search(/^TRANSPORT\b/m);
+    engine.load(dbText);
+    const rows = engine.run(`${text.slice(0, where)}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings cell time cl\n`
+      + ` -start\n10 PUNCH CELL_NO, TOTAL_TIME, TOT("Cl")\n -end\n${text.slice(where)}`);
+    const pq = new Map();
+    for (const r of rows.slice(1)) if (Number(r[1]) > 0) pq.set(`${Number(r[0])}/${Math.round(Number(r[1]) / dt)}`, Number(r[2]));
+    const m = RtmModel.compile(res.text);
+    const ks = Array.from({ length: 18 }, (_, j) => (j + 1) * f);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: (18 * f + 0.5) * dt, rtol: 1e-8, atol: 1e-20, nonNegative: true,
+      outputTimes: ks.map((k) => (k + 0.5) * dt) });
+    const ns = m.speciesNames.length;
+    const iCl = m.speciesNames.indexOf('Cl-');
+    let worst = 0;
+    let out = 0;
+    let outPq = 0;
+    ks.forEach((k, j) => {
+      const page = m.toConcentrations(run.grid.y[j])[(N - 1) * ns + iCl];
+      worst = Math.max(worst, Math.abs(page - pq.get(`${N}/${k}`)));
+      out += page;
+      outPq += pq.get(`${N}/${k}`);
+    });
+    return { worst, out, outPq, restarts: run.stats.breaks };
+  });
+  check('  against PHREEQC\'s TRANSPORT of the whole: the chloride at the outlet within 0.21, 0.065 and 0.014 mmol/kgw on '
+    + '12, 24 and 48 cells, the gap a third or less each time the cells halve, as much come out to 0.3 %; the run started '
+    + 'again where the water flowing in changes',
+  gaps[0].worst < 0.22e-3 && gaps[1].worst < 0.07e-3 && gaps[2].worst < 0.016e-3 && gaps[1].worst < gaps[0].worst / 3
+    && gaps[2].worst < gaps[1].worst / 3 && Math.abs(gaps[2].out / gaps[2].outPq - 1) < 3e-3
+    && gaps.every((g) => g.restarts === 1),
+  gaps.map((g, i) => `${12 * 2 ** i} cells ${(g.worst * 1e3).toFixed(4)} mmol/kgw, out ${(g.out / g.outPq).toFixed(4)} of `
+    + 'PHREEQC\'s').join('; '));
+
+  // PHREEQC's own column beside the model: run to the end of the second TRANSPORT, the tables through the pulse.
+  engine.load(dbText);
+  const bs = P.transportBeside({ engine, database, water: { name: 'pulse', text: salt(1) }, res: one, maxTables: 6, maxRows: 40 });
+  check('  PHREEQC\'s own column beside it run to the end of the second TRANSPORT, its last table half a time step past '
+    + 'shift 18', bs.tables === 6 && bs.times[bs.times.length - 1] === 33300 && bs.end === 33300,
+  `${bs.tables} tables at ${bs.times.join(', ')}; the run to ${bs.end}`);
+
+  /*
+    A water kept and COPYed into 0 after the first TRANSPORT's shifts, as
+    Example 15 has it: a bromide pulse, then the background water. The
+    column ends where a COPY resets its cells; what PHREEQC's next
+    TRANSPORT does is not carried, and the report says why.
+  */
+  const copied = `SOLUTION 0  a pulse with bromide
+ units mmol/kgw
+ pH 7.0
+ Na 1.0
+ Br 1.0
+SOLUTION 1-10  the background water
+ units mmol/kgw
+ pH 7.0
+ Na 1.0
+ Cl 1.0
+COPY solution 1 50
+END
+TRANSPORT
+ -cells 10
+ -shifts 3
+ -time_step 600
+ -lengths 10*0.02
+ -dispersivities 10*0.005
+ -diffusion_coefficient 1e-9
+COPY solution 50 0
+END
+TRANSPORT
+ -shifts 9
+COPY cell 50 1-20
+END
+TRANSPORT
+ -cells 20
+ -shifts 4
+END
+`;
+  const cp = handOff(copied);
+  const rc = cp.report.transport;
+  const iC = cp.text.indexOf('\n<INFLOW>\n');
+  const blockC = iC >= 0 ? cp.text.slice(iC, cp.text.indexOf('\n\n', iC)) : '';
+  const atC = (sp) => { const m = new RegExp(`^${sp.replace('+', '\\+')}\\s+(\\S+)$`, 'm').exec(blockC); return m ? Number(m[1]) : NaN; };
+  check('  a water kept and COPYed into 0 after the first TRANSPORT\'s shifts: the background flowing in from 1800 s '
+    + 'on, the bromide gone from it; the column ending where a COPY gives its cells another water, the report saying so',
+  !!rc && rc.parts.join(' ') === '3 9' && rc.inflows.length === 1 && rc.inflows[0].at === 1800 && /^TEND = 7200$/m.test(cp.text)
+    && Math.abs(atC('Cl-') - 1e-3) < 1e-9 && atC('Br-') < 1e-14 && rc.after
+    && rc.notCarried === 'COPY cell 50 1-20 between its TRANSPORT blocks, into the column'
+    && /^# Not carried: what the input does from its next TRANSPORT on \(COPY cell 50 1-20/m.test(cp.text),
+  rc ? `${JSON.stringify({ parts: rc.parts, inflows: rc.inflows, notCarried: rc.notCarried })}; Cl- ${atC('Cl-')}, Br- ${atC('Br-')}`
+    : 'no column');
+
+  // Where the column ends with its first TRANSPORT, and why: the run as long as that one's shifts.
+  const ends = [
+    ['a later -time_step', salt(1).replace(' -shifts 14\n', ' -shifts 14\n -time_step 900\n'), /^its next TRANSPORT changes -time_step$/],
+    ['cells given another water', salt(1).replace('SOLUTION 0  the column\'s own water flowing in again', 'SOLUTION 3-4  a stain'),
+      /^SOLUTION 3-4 between its TRANSPORT blocks gives cells of the column another water$/],
+    ['a MIX', salt(1).replace('TRANSPORT\n -shifts 14', 'MIX 2\n 2 1\nEND\nTRANSPORT\n -shifts 14'), /^MIX between its TRANSPORT blocks$/],
+    ['a warmer water', salt(1).replace(' K 0.8\n N(5) 0.8\nEND\nTRANSPORT\n -shifts 14', ' temp 40\n K 0.8\n N(5) 0.8\nEND\n'
+      + 'TRANSPORT\n -shifts 14'), /at 40 C and the column at 25 C: PHREEQC carries the heat as well/],
+  ].map(([what, text, why]) => {
+    const r = handOff(text);
+    const c = r.report.transport;
+    return { what, ok: !!c && why.test(c.notCarried || '') && c.parts.join(' ') === '4' && c.after && !c.inflows.length
+      && /^TEND = 7200$/m.test(r.text) && !/<INFLOW>/.test(r.text), said: c ? c.notCarried : 'no column' };
+  });
+  check('  the column ending with its first TRANSPORT, as long as its shifts, each reason said: a later TRANSPORT changing '
+    + '-time_step, cells given another water, a MIX, a water flowing in at another temperature',
+  ends.every((e) => e.ok), ends.map((e) => `${e.what}: ${e.said}`).join(' | '));
+}
+
+/* ======================================================================
    WHAT A RUN CAN BE READ AS, against PHREEQC: the quantities of a water
    handed off -- pH, I, a(H2O), the totals, SI(Calcite), what is on an
    exchanger and on a surface, a gas's partial pressure -- worked out by the
@@ -5089,7 +5274,7 @@ function againstTransportBeside(engine) {
     b2.tables === 1 && b2.rows === 80 && /^time {2}pH.* cell = 39$/m.test(b2.text) && m2.data.length === 1 && m2.data[0].kind === 'time'
     && m2.data[0].cell === 39 && Math.abs(m2.data[0].rows[0][0] - 1.5 * dt) < 1 && Math.abs(m2.data[0].rows[79][0] - 80.5 * dt) < 1,
     `${b2.tables} table, ${b2.rows} rows`);
-  // An input that goes on after its column, the column's own water flowing back in: what PHREEQC's tables are of.
+  // The input going on with a second TRANSPORT, the column's own water flowing back in: a pulse, carried.
   const pulse = `${BESIDE_INPUT}SOLUTION 0\n units mmol/kgw\n pH 7.8\n Na 60\n Ca 2\n C(4) 1.5\n Cl 60 charge\nEND\n`
     + 'TRANSPORT\n -shifts 40\nEND\n';
   const wp = write(pulse);
@@ -5145,11 +5330,20 @@ function againstTransportBeside(engine) {
   afterShifts.map((x) => (x.error ? `${x.label}: ${x.error}` : `${x.label}: inflow within ${x.worst.toExponential(1)}, Na+ `
     + `${x.na.toExponential(4)} (${plainLeft.get('Na+').toExponential(4)}), PHREEQC's tables ${x.same ? 'the same' : 'not the same'}`))
     .join('; '));
-  check('an input that goes on after its column, the column\'s own water flowing back in: the model carries the column, and '
-    + 'PHREEQC\'s tables beside it are of that column alone, the same as without what follows',
-  wp.res.report.transport.after === true && bp.tables === b.tables && bp.rows === b.rows && bp.text === b.text,
-  `${bp.tables} tables, the last at ${bp.times[bp.times.length - 1]} s, ${bp.rows} rows; the input goes on: `
-    + `${wp.res.report.transport.after}`);
+  // Each table in distance of a <DATA>, by the time it is at.
+  const tablesOf = (text) => new Map([...text.matchAll(/^distance .* at = (\S+)\n((?:[0-9.e+-]+ .*\n)+)/gm)].map((x) => [Number(x[1]), x[2]]));
+  const pulseTables = tablesOf(bp.text);
+  const firstAt = (8 + 0.5) * dt;
+  const pt = wp.res.report.transport;
+  check('the input going on with a second TRANSPORT, the column\'s own water flowing back in: the model carries both, 80 + 40 '
+    + 'shifts, the salty water flowing in from shift 81 on in <INFLOW>, and PHREEQC\'s tables beside it run through the two '
+    + 'to half a time step past shift 120, the first of them as the column\'s alone has it',
+  pt.after === false && pt.parts.join(' ') === '80 40' && pt.inflows.length === 1 && pt.inflows[0].at === 80 * dt
+    && /^<INFLOW>\nt +126230400$/m.test(wp.res.text) && bp.tables === 12 && bp.times[bp.times.length - 1] === 120.5 * dt
+    && pulseTables.has(firstAt) && pulseTables.get(firstAt) === tablesOf(b.text).get(firstAt),
+  `${bp.tables} tables, the last at ${bp.times[bp.times.length - 1]} s, ${bp.rows} rows; parts ${pt.parts.join(' + ')}, the water `
+    + `flowing in changing at ${pt.inflows.map((x) => x.at).join(', ')} s; the first table ${pulseTables.get(firstAt)
+      === tablesOf(b.text).get(firstAt) ? 'the same' : 'not the same'} as the column's alone`);
   // Stagnant cells of one layer, punched: their own tables, under layer = 1.
   const stag = BESIDE_INPUT.replace('SOLUTION 1-40', 'SOLUTION 1-81').replace('EQUILIBRIUM_PHASES 1-40', 'EQUILIBRIUM_PHASES 1-81')
     .replace(' -punch_cells 1-40', ' -punch_cells 1-81\n -stagnant 1 1e-7 0.3 0.1').replace(' -shifts 80', ' -shifts 16');
@@ -6766,6 +6960,8 @@ async function againstPathHandOff(engine, createPhreeqc) {
   againstExchangeMineral(wasm);
   console.log('\n--- a column from PHREEQC\'s TRANSPORT: Example 11, calcite, calcite at a rate, the options, the refusals ---');
   againstTransportHandOff(wasm);
+  console.log('\n--- a pulse: the input\'s TRANSPORT blocks one after another, the water flowing in changing between them ---');
+  againstPulseHandOff(wasm);
   console.log('\n--- PHREEQC\'s own column beside the model: its cells as <DATA>, the run against them, Nash-Sutcliffe ---');
   againstTransportBeside(wasm);
   console.log('\n--- an exchanger in a column beside PHREEQC\'s own: its last cell in time, the run against it ---');

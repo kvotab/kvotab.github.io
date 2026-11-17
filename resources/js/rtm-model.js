@@ -59,7 +59,7 @@
      1. The model text
      ====================================================================== */
 
-  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
+  const SECTIONS = ['SETTINGS', 'SPECIES', 'REACTIONS', 'INITIAL', 'INFLOW', 'PARAMETERS', 'EQUILIBRIUM', 'PHASES', 'SIT',
     'GAS_PAIRS', 'SOLID_SOLUTIONS', 'PITZER', 'LLNL', 'VOLUMES', 'CONDUCTANCE', 'OUTPUT', 'DATA'];
 
   /** Settings, their defaults and how each is read. */
@@ -2487,6 +2487,56 @@
       cur.rows.push(row);
     }
     return tables;
+  }
+
+  /**
+   * <INFLOW>: the water at the left end of a column as it changes -- what
+   * flows in there, or what a dirichlet face is held at -- from each of a
+   * few times on, as PHREEQC's SOLUTION 0 changes between one TRANSPORT and
+   * the next: a pulse of one water and then another. The first line gives
+   * the times, in the model's own unit, t 18000 54000; each line after it a
+   * species and its concentration from each of them on, Na+ 0 1e-3. Before
+   * the first time, and all through for a species it does not name, each
+   * species' left=. Returns null without the section, else {times, rows:
+   * [{s, name, values, line}], line}; compile says whether the model can
+   * take it.
+   */
+  function readInflow(lines, species) {
+    if (!lines.length) return null;
+    const [head, ...rest] = lines;
+    const tokens = head.text.split(/\s+/).filter(Boolean);
+    if (tokens[0] !== 't' || tokens.length < 2) {
+      throw new RtmError(`"${head.text}": <INFLOW> starts with the times the water at the left end changes at, `
+        + 't  18000  54000, and then a line for each species that changes, its concentration from each: Na+  0  1e-3.',
+      head.line);
+    }
+    const times = tokens.slice(1).map((x) => constValue(x, head.line, 'A time in <INFLOW>'));
+    times.forEach((x, k) => {
+      if (!(x >= 0)) throw new RtmError(`"${head.text}": a time in <INFLOW> is from 0 on, in the model's own unit.`, head.line);
+      if (k && !(x > times[k - 1])) {
+        throw new RtmError(`"${head.text}": the times in <INFLOW> go up, each later than the one before.`, head.line);
+      }
+    });
+    const index = new Map(species.map((sp, k) => [sp.name, k]));
+    const rows = [];
+    for (const { text, line } of rest) {
+      const tk = text.split(/\s+/).filter(Boolean);
+      const s = index.get(tk[0]);
+      if (s === undefined) throw new RtmError(`<INFLOW>: "${tk[0]}" is no species of <SPECIES>.`, line);
+      if (rows.some((r) => r.s === s)) throw new RtmError(`<INFLOW>: ${tk[0]} is on two lines; one is enough.`, line);
+      if (tk.length - 1 !== times.length) {
+        throw new RtmError(`<INFLOW>: ${tk[0]} has ${tk.length - 1} concentration${tk.length === 2 ? '' : 's'} and the `
+          + `first line ${times.length} time${times.length === 1 ? '' : 's'}: one for each.`, line);
+      }
+      const values = tk.slice(1).map((x) => constValue(x, line, `${tk[0]} in <INFLOW>`));
+      if (values.some((v) => !(v >= 0))) throw new RtmError(`<INFLOW>: ${tk[0]}'s concentrations are from 0 up.`, line);
+      rows.push({ s, name: tk[0], values, line });
+    }
+    if (!rows.length) {
+      throw new RtmError('<INFLOW> gives the times and no species: a line for each species that changes, '
+        + 'its concentration from each time on, Na+  0  1e-3.', head.line);
+    }
+    return { times, rows, line: head.line };
   }
 
   /** A relation's or a reaction's equation as a sweep or a fit names it: what comes before its first comma, spaces collapsed. */
@@ -10065,6 +10115,50 @@
     const mobile = species.map((s) => (transport && !s.fixed && !s.immobile
       && ((settings.DIFFUSION && (s.D > 0 || peclet > 0))
         || (settings.ADVECTION && settings.VELOCITY !== 0))));
+    /*
+      <INFLOW>: the water at the left end as it changes (readInflow), which a
+      dirichlet face is held at and a robin face takes in. Each of its times
+      is a step in the boundary terms (boundPeriods) and the faces' records,
+      and the run is started again there (`breaks`).
+    */
+    const inflow = readInflow(sections.INFLOW, species);
+    if (inflow) {
+      if (!transport) {
+        throw new RtmError('<INFLOW> changes the water at the left end of a column: it needs MODE = transport.', inflow.line);
+      }
+      if (settings.LEFT !== 'dirichlet' && settings.LEFT !== 'robin') {
+        throw new RtmError(`<INFLOW> changes the water at the left end, which LEFT = ${settings.LEFT} takes nothing from: it `
+          + 'goes with LEFT = dirichlet, a face held at that water, or robin, the water flowing in'
+          + `${settings.LEFT === 'reservoir' ? ' (a reservoir\'s water changes by its own reactions)' : ''}.`, inflow.line);
+      }
+      for (const r of inflow.rows) {
+        if (!mobile[r.s]) {
+          throw new RtmError(`<INFLOW>: ${r.name} does not move in this column -- it is held, immobile, or neither flows `
+            + 'nor diffuses -- so none of it comes in.', r.line);
+        }
+      }
+    }
+    /*
+      The stretches between its times, 0 before the first and k after the
+      k-th, and the water at the left end in each (leftWaters). A time
+      belongs to the stretch before it -- the run is started again there, and
+      the step that ends on it is the water's before -- unless it is 0 or
+      less, the start.
+    */
+    const nInflow = inflow ? inflow.times.length : 0;
+    const inflowTimes = inflow ? Float64Array.from(inflow.times) : null;
+    const leftConc = (s, p) => {
+      const r = p > 0 ? inflow.rows.find((x) => x.s === s) : null;
+      if (r) return r.values[p - 1];
+      return species[s].left == null ? species[s].initial : species[s].left;
+    };
+    const stretchAt = (t) => {
+      let p = 0;
+      while (p < nInflow && (inflowTimes[p] < t || inflowTimes[p] <= 0)) p++;
+      return p;
+    };
+    const leftWaters = inflow ? Array.from({ length: nInflow + 1 }, (_, p) => Float64Array.from(species, (sp, s) => leftConc(s, p)))
+      : null;
     // Which species cross into the rock: those with a matrix diffusivity.
     const enters = species.map((s) => !!matrix && !s.fixed && !s.immobile && s.Dm > 0);
     // The ions Nernst-Planck couples: mobile, charged, and diffusing.
@@ -10461,7 +10555,7 @@
     const equilibria = readEquilibria(sections.EQUILIBRIUM, index);
     // Each relation by its equation, as the budget by each reaction names it.
     for (const eq of equilibria) eq.eqn = eq.text ? splitTop(eq.text)[0].trim() : '';
-    checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes);
+    checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes, inflow);
     atFixedTemperature(equilibria);
     /*
       Under ACTIVITY a pair relaxes to its K in activities, so its backward
@@ -11453,7 +11547,7 @@
             const d = col.centres[0] - 0;
             const g = D / (d * w);
             const cb = species[s].left == null ? species[s].initial : species[s].left;
-            if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb }); }
+            if (g) { flowIn.push({ row, col: row, value: -g }); boundary.push({ row, value: g * cb, coef: g, s }); }
           } else if (resCell.left >= 0) {
             // A reservoir is a dirichlet face whose water is in the state: the
             // same coefficient, on the reservoir's concentration, and nothing in
@@ -11486,7 +11580,7 @@
               else if (resCell.left >= 0) flowIn.push({ row, col: resCell.left * ns + s, value: a });
               else if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') {
                 const cb = species[s].left == null ? species[s].initial : species[s].left;
-                boundary.push({ row, value: a * cb });
+                boundary.push({ row, value: a * cb, coef: a, s });
               }
               flowIn.push({ row, col: row, value: -a });
             } else {
@@ -11591,17 +11685,29 @@
         // A reservoir's water is a state, so what crosses beside it is a term on that state, not a constant.
         const resL = resCell.left >= 0 ? resCell.left * ns + s : -1;
         const resR = resCell.right >= 0 ? resCell.right * ns + s : -1;
-        // The left face, x = 0.
+        // The left face, x = 0; its constant's coefficients on the water there kept for <INFLOW>.
+        const onLeft = [];
         if (v > 0) {
           if (resL >= 0) left.terms.push([resL, u]);
-          else if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') left.constant += u * cbLeft;
+          else if (settings.LEFT === 'dirichlet' || settings.LEFT === 'robin') { left.constant += u * cbLeft; onLeft.push(u); }
         } else if (v < 0) left.terms.push([at(0, s), u]);
         if (settings.LEFT === 'dirichlet') {
           const g = dispersionAt(s, 0) / col.centres[0];
-          if (g) { left.terms.push([at(0, s), -g]); left.constant += g * cbLeft; }
+          if (g) { left.terms.push([at(0, s), -g]); left.constant += g * cbLeft; onLeft.push(g); }
         } else if (resL >= 0) {
           const g = dispersionAt(s, 0) / col.centres[0];
           if (g) left.terms.push([at(0, s), -g], [resL, g]);
+        }
+        /*
+          Where <INFLOW> changes the species, the constant in each of its
+          stretches: `at` its times, constants[p] the stretch p's, 0 before
+          the first time -- the same sum, so that stretch 0 is `constant` to
+          the bit. A reader takes stretch p where p of the times are before
+          its time, or at or before 0 (stretchAt).
+        */
+        if (onLeft.length && inflow && inflow.rows.some((r) => r.s === s)) {
+          left.at = Array.from(inflow.times);
+          left.constants = leftWaters.map((cw) => onLeft.reduce((acc, k) => acc + k * cw[s], 0));
         }
         // The right face, x = LENGTH.
         if (v > 0) right.terms.push([at(N, s), u]);
@@ -11662,6 +11768,21 @@
     const nbound = boundary.length;
     const boundRow = Int32Array.from(boundary, (f) => f.row);
     const boundValue = Float64Array.from(boundary, (f) => f.value);
+    /*
+      The left face's terms again for each stretch of <INFLOW>, at the water
+      there then (leftWaters), and that water as the end of a Nernst-Planck
+      face: the derivative and the Jacobian take the stretch their time is in.
+    */
+    const boundPeriods = inflow ? leftWaters.map((cw) => Float64Array.from(boundary,
+      (f) => (f.coef === undefined ? f.value : f.coef * cw[f.s]))) : null;
+    // The Nernst-Planck face at a dirichlet left end, once those faces are made (npFaces).
+    let npLeft = null;
+    let boundNow = boundValue;
+    const leftEndAt = (t) => {
+      const p = stretchAt(t);
+      boundNow = boundPeriods[p];
+      if (npLeft) npLeft.bA = leftWaters[p];
+    };
     const heldStates = [];
     for (let k = 0; k < fixedAt.length; k++) if (fixedAt[k]) heldStates.push(k);
     const heldList = Int32Array.from(heldStates);
@@ -11704,6 +11825,7 @@
         const at = (i) => cellOf(i, 0) * ns + s2;
         let scale = Math.abs(species[s2].initial);
         for (const bc of [species[s2].left, species[s2].right]) if (bc != null) scale = Math.max(scale, Math.abs(bc));
+        if (inflow) for (const r of inflow.rows) if (r.s === s2) for (const x of r.values) scale = Math.max(scale, x);
         for (const pt of patches) if (pt.si === s2 && pt.value != null) scale = Math.max(scale, Math.abs(pt.value));
         if (!(scale > 0)) scale = 1e-30;
         for (let k = 1; k < last; k++) {
@@ -11808,6 +11930,7 @@
       });
       return { ...f, slots, aslots };
     });
+    if (inflow) npLeft = npFaces.find((f) => f.A === -1 && f.bA) || null;
     // Each column cell's ln gamma, and each end's water's, read afresh with every call.
     const lnGcol = actGrad ? new Float64Array(ncol * ns) : null;
     const lnGend = actGrad ? npFaces.map((f) => (f.bA || f.bB || f.res ? new Float64Array(ns) : null)) : null;
@@ -11987,13 +12110,14 @@
       for (let k = 0; k < ntv; k++) TV[k] = tableAt(reads[k].tab, readArg[k](t), reads[k].col);
       tvAt = t;
     };
-    // Where each read turns, in time: (x - b)/a for every row x of its table.
+    // Where each read turns, in time: (x - b)/a for every row x of its table; and where the water at the left end changes.
     const turns = [];
     for (const rd of reads) {
       const ln = lineInTime(rd.arg);
       if (!ln || !(ln.a !== 0) || !Number.isFinite(ln.a)) continue;
       for (const x of rd.tab.corners) turns.push((x - ln.b) / ln.a);
     }
+    if (inflow) for (const x of inflow.times) if (x > 0) turns.push(x);
     turns.sort((a, b2) => a - b2);
 
     /*
@@ -12197,7 +12321,8 @@
         for (let k = flowStart[q], end = flowStart[q + 1]; k < end; k++) acc += flowValue[k] * y[flowCol[k]];
         out[row] = acc;
       }
-      for (let k = 0; k < nbound; k++) out[boundRow[k]] += boundValue[k];
+      if (nInflow) leftEndAt(t);
+      for (let k = 0; k < nbound; k++) out[boundRow[k]] += boundNow[k];
       if (nlim) limitedFlux(y, out, null);
       if (npFaces.length) npFlux(y, out, null);
       for (let k = 0; k < heldList.length; k++) out[heldList[k]] = 0;
@@ -12211,6 +12336,7 @@
       V.fill(0);
       if (thermo.clock) thermoAt(t);
       if (ntv) atTheClock(t);
+      if (nInflow) leftEndAt(t);
       for (let i = 0; i < nc; i++) {
         const b = i * ns;
         if (nq) aqAt(y, b, true);
@@ -13137,8 +13263,9 @@
       jacobianConstant: !jacobianMoves && !pairInfo.length && !nlim && !npFaces.length,
       /**
        * The times in (t0, t1) at which a table a rate law reads at the clock
-       * turns, ascending, near-duplicates merged: where the run is started
-       * again. See runModel in facsimile-solver.js.
+       * turns, or the water at the left end changes (<INFLOW>), ascending,
+       * near-duplicates merged: where the run is started again. See runModel
+       * in facsimile-solver.js.
        */
       breaks(t0, t1) {
         const out = [];
@@ -13151,6 +13278,10 @@
       // The tables read at the clock, by name, and how many rows each has.
       clockTables: [...new Set(reads.map((rd) => rd.tab.name))]
         .map((name) => ({ name, rows: tables.get(name).corners.length })),
+      // The water at the left end from each time <INFLOW> changes it on -- {from, water: a concentration a species},
+      // the first from the start -- or null without it.
+      inflowWaters: inflow ? leftWaters.map((w, p) => ({ from: p ? Math.max(inflow.times[p - 1], 0) : 0, water: Array.from(w) }))
+        .filter((x, p) => p > 0 || !(inflow.times[0] <= 0)) : null,
       nevents: 0,
       events: [],
       eventValues: () => {},
@@ -15106,13 +15237,14 @@
     is on both sides as much, a catalyst; the electron carries no atom. A
     line short only of water, two H to each O, is let be: a model that does
     not count its water writes its lines so. And
-    a species a line uses up that nothing starts, brings in at an end, makes
-    or forms in a relation, which that line's rate does not read, neither its
+    a species a line uses up that nothing starts, brings in at an end (its
+    left= or right=, or <INFLOW>), makes or forms in a relation, which that line's rate does not read, neither its
     concentration nor its activity: it can only go below nought, and is most
     likely a name mistyped -- UVIO2s+ for the UVIO2s+2 the rate reads. The
     names within two letters of it are offered, those the rate reads first.
   */
-  function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes = []) {
+  function checkReactionLines(species, index, nameOf, reactions, channels, aqList, equilibria, patches, warnings, fixes = [],
+    inflow = null) {
     // What a line takes of each element on its left and gives on its right, where they differ, in words: '' where they do not,
     // or where the line cannot be judged (see above).
     const elementsOff = (rx) => {
@@ -15179,6 +15311,7 @@
       || (sp.right !== null && sp.right !== 0) || sp.fixed || sp.mineral || sp.surface || sp.exchange || sp.exchanger
       || sp.electron || sp.potential || sp.gas ? 1 : 0));
     for (const p of patches) if (p.si >= 0) there[p.si] = 1;
+    if (inflow) for (const r of inflow.rows) if (r.values.some((x) => x !== 0)) there[r.s] = 1;
     for (const eq of equilibria) for (const [k] of eq.net) there[k] = 1;
     for (const ch of channels) for (const [i, c] of ch.net) if (c > 0) there[i] = 1;
     const told = new Set();

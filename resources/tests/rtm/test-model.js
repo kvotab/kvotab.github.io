@@ -2808,6 +2808,158 @@ console.log('\n--- opening skbrtm databases ---');
   }
 }
 
+/* ======================================================================
+   2i'. The water at the left end as it changes (<INFLOW>)
+
+   A pulse: salt comes in for a while, and then the water before it. With
+   nothing reacting the column is linear, so the pulse is the step less the
+   same step started T later: at a dirichlet face, whose dispersion and flow
+   both carry the water held there; at a robin face, the flow alone; and
+   under Nernst-Planck a binary salt, whose one ambipolar D keeps it linear,
+   the face's water the left end of its coupling. What came in, the worker's
+   budget, is the pulse's to round-off, and the run is started again where
+   the water changes. Then what <INFLOW> refuses.
+   ====================================================================== */
+console.log('\n--- the water at the left end as it changes ---');
+{
+  const T = 3e4;
+  const c0 = 1e-3;
+  const col = ({ left, v = 0, np = false, b = 0, pulse }) => RtmModel.compile(`
+<SETTINGS>
+MODE = transport
+CELLS = 60
+LENGTH = 1
+DIFFUSION = ${np ? 'nernst-planck' : 1}
+${v ? `ADVECTION = 1\nVELOCITY = ${v}` : ''}
+LEFT = ${left}
+RIGHT = ${v ? 'free' : 'neumann'}
+TEND = 1.2e5
+
+<SPECIES>
+Na+  ${b}  D=1.3e-8  left=${b + c0}
+Cl-  ${b}  D=2.0e-8  left=${b + c0}
+${pulse ? `
+<INFLOW>
+t    ${T}
+Na+  ${b}
+Cl-  ${b}
+` : ''}`);
+  const later = [4e4, 7e4, 1.2e5];
+  const opts = { tend: 1.2e5, rtol: 1e-10, atol: 1e-20, nonNegative: true };
+  const apart = (cfg) => {
+    const pm = col({ ...cfg, pulse: true });
+    const sm = col({ ...cfg, pulse: false });
+    const p = run(pm, { ...opts, outputTimes: later });
+    const times = [...new Set([...later.map((t) => t - T), ...later])].sort((x, z) => x - z);
+    const s = run(sm, { ...opts, outputTimes: times });
+    const at = (t) => s.grid.y[times.indexOf(t)];
+    const b = cfg.b || 0;
+    let worst = 0;
+    later.forEach((t, k) => {
+      const yp = p.grid.y[k];
+      const ys0 = at(t - T);
+      const ys1 = at(t);
+      for (let i = 0; i < yp.length; i++) worst = Math.max(worst, Math.abs(yp[i] - (ys1[i] - ys0[i] + b)) / c0);
+    });
+    return { worst, breaks: p.stats.breaks, at: pm.breaks(0, 1.2e5), m: pm };
+  };
+  const dir = apart({ left: 'dirichlet', v: 1e-5 });
+  const rob = apart({ left: 'robin', v: 1e-5 });
+  const np = apart({ left: 'dirichlet', np: true, b: 1e-4 });
+  check('a pulse of salt is the step less the step started T later: at a dirichlet face with the flow, at a robin face, '
+    + 'and under Nernst-Planck at a dirichlet face; the run started again where the water changes',
+  dir.worst < 1e-6 && rob.worst < 1e-6 && np.worst < 1e-6 && [dir, rob, np].every((x) => x.breaks === 1
+    && x.at.length === 1 && x.at[0] === T),
+  `dirichlet ${dir.worst.toExponential(1)}, robin ${rob.worst.toExponential(1)}, Nernst-Planck ${np.worst.toExponential(1)} `
+    + `of the pulse; restarts ${[dir, rob, np].map((x) => x.breaks).join(', ')}`);
+  const f = rob.m.faces.left[0];
+  const w = rob.m.inflowWaters;
+  check('  the left face\'s constant in each stretch, and the waters that flow in from each time on',
+    f.at.length === 1 && f.at[0] === T && f.constants[0] === 1e-5 * c0 && f.constants[1] === 0 && f.constant === 1e-5 * c0
+      && w.length === 2 && w[0].from === 0 && w[0].water[0] === c0 && w[1].from === T && w[1].water[1] === 0,
+    JSON.stringify({ at: f.at, constants: f.constants, waters: w.map((x) => [x.from, ...x.water]) }));
+
+  /*
+    What came in, as the page's budget has it: the flow times the pulse, the
+    step taken whole, not spread over the interval it falls in. What the
+    account leaves open is its trapezoid of what leaves at the outlet, 1e-6 of
+    the pulse at rtol 1e-8, as at the reservoir below.
+  */
+  global.RtmModel = RtmModel;
+  global.FacsimileODE = FacsimileODE;
+  const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
+  const textOf = (cfg) => `
+<SETTINGS>
+MODE = transport
+CELLS = 60
+LENGTH = 1
+DIFFUSION = 1
+ADVECTION = 1
+VELOCITY = 1e-5
+LEFT = ${cfg.left}
+RIGHT = free
+TEND = 1.2e5
+
+<SPECIES>
+Na+  0  D=1.3e-8  left=${c0}
+Cl-  0  D=2.0e-8  left=${c0}
+
+<INFLOW>
+t    ${T}
+Na+  0
+Cl-  0
+`;
+  const budgetOf = (text) => {
+    let ran = null;
+    handleRtmMessage({ type: 'run', id: 81, text, solver: { method: 'ndf', rtol: 1e-8, atol: 1e-20, nonNegative: true,
+      maxPoints: 4000 } }, (msg) => { if (msg.type === 'result') ran = msg; });
+    let bud = null;
+    handleRtmMessage({ type: 'budget', id: 82, runKey: ran.runKey, of: { kind: 'species', name: 'Na+' } }, (msg) => { bud = msg; });
+    return { ran, bud };
+  };
+  const { ran, bud } = budgetOf(textOf({ left: 'robin' }));
+  const nIn = bud.cumIn[bud.cumIn.length - 1];
+  let open = 0;
+  for (let i = 0; i < bud.total.length; i++) open = Math.max(open, Math.abs(bud.byReactions[i]));
+  const stepAt = ran.t.findIndex((x) => x > T);
+  check('  what came in, as the budget has it, the flow times the pulse, and the column\'s account closed; the flux '
+    + 'through the left end the pulse\'s before the change and none after; the model\'s facts name the change',
+  Math.abs(nIn / (1e-5 * c0 * T) - 1) < 1e-12 && open < 1e-5 * 1e-5 * c0 * T && bud.fluxIn[stepAt - 1] === 1e-5 * c0
+    && bud.fluxIn[stepAt] === 0 && ran.model.inflowBreaks === 1 && ran.model.inflowWaters.length === 2
+    && ran.model.inflow[0] === c0,
+  `in ${nIn.toExponential(6)} of ${(1e-5 * c0 * T).toExponential(6)}; the account open by ${open.toExponential(1)}; `
+    + `the flux ${bud.fluxIn[stepAt - 1]} at ${ran.t[stepAt - 1]}, ${bud.fluxIn[stepAt]} at ${ran.t[stepAt]}`);
+
+  // A first time at 0: the water from the start; what flows in before it never does.
+  const fromStart = RtmModel.compile(textOf({ left: 'robin' }).replace(`t    ${T}`, 't    0').replace(/^Na\+ {2}0$/m, 'Na+  2e-3'));
+  check('  a first time of 0 is the water from the start',
+    fromStart.inflowWaters.length === 1 && fromStart.inflowWaters[0].from === 0 && fromStart.inflowWaters[0].water[0] === 2e-3
+      && fromStart.breaks(0, 1.2e5).length === 0 && fromStart.faces.left[0].constants[1] === 1e-5 * 2e-3,
+    JSON.stringify(fromStart.inflowWaters));
+
+  // What <INFLOW> refuses, each with its reason.
+  const refused = (text) => { try { RtmModel.compile(text); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = textOf({ left: 'robin' });
+  const why = {
+    batch: refused(base.replace('MODE = transport', 'MODE = batch')),
+    wall: refused(base.replace('LEFT = robin', 'LEFT = neumann')),
+    mineral: refused(`${base.replace('Cl-  0  D=2.0e-8', 'Halite  0  mineral\nCl-  0  D=2.0e-8')}Halite  1\n`),
+    order: refused(base.replace(`t    ${T}`, `t    ${T}  ${T / 2}`).replace(/^Na\+ {2}0$/m, 'Na+  0  0').replace(/^Cl- {2}0$/m, 'Cl-  0  0')),
+    count: refused(base.replace(/^Na\+ {2}0$/m, 'Na+  0  0')),
+    unknown: refused(`${base}K+  1\n`),
+    twice: refused(`${base}Na+  1\n`),
+    head: refused(base.replace(`t    ${T}`, `time  ${T}`)),
+    none: refused(base.replace(/^Na\+ {2}0\nCl- {2}0\n/m, '')),
+  };
+  check('  refused, each saying why: in a batch, at a wall, a mineral, times that do not go up, a count that does not '
+    + 'match, a name that is no species, a species twice, a first line without t, no species',
+  /needs MODE = transport/.test(why.batch) && /LEFT = neumann takes nothing from/.test(why.wall)
+    && /Halite does not move in this column/.test(why.mineral) && /go up/.test(why.order) && /one for each/.test(why.count)
+    && /"K\+" is no species/.test(why.unknown) && /on two lines/.test(why.twice) && /starts with the times/.test(why.head)
+    && /no species/.test(why.none),
+  Object.entries(why).map(([k, v]) => `${k}: ${v.slice(0, 70)}`).join(' | '));
+}
+
 console.log('\n--- a reservoir at an end ---');
 {
   /*
