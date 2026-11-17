@@ -3929,7 +3929,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             species, and that is solved for k<sub>f</sub>. The <code>kf</code> are per second, so change
             <code>TIME_UNIT</code> and they have to change with it.</p>
           <p><em>Keep the phases at saturation</em>, with the relations held exactly, carries the
-            input's <code>EQUILIBRIUM_PHASES</code> into the model. Each phase becomes a mineral (see
+            <code>EQUILIBRIUM_PHASES</code> that PHREEQC's last calculation holds into the model. In an
+            input of several calculations, what the others hold made the water and is not carried, a phase,
+            a <code>GAS_PHASE</code> or a <code>SOLID_SOLUTIONS</code>: PHREEQC itself lists what the
+            last one holds, and the report names what is left so. Each phase becomes a mineral (see
             <em>Minerals</em> above) at the amount PHREEQC left of it, per kilogram of water. Its
             relation is the phase's reaction from the database, with its log K at the water's
             temperature plus the saturation index it is held at, so a gas such as
@@ -4911,6 +4914,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261116c"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261116d"></script>
 </body>
 </html>

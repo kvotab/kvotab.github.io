@@ -919,15 +919,27 @@
    */
   function readAssemblage(text) {
     const out = new Map();
-    let inBlock = false;
+    for (const b of readAssemblageBlocks(text)) for (const a of b.comps) out.set(a.name, a);
+    return [...out.values()];
+  }
+
+  /** The EQUILIBRIUM_PHASES blocks of an input in order, each its phases as readAssemblage reads them. */
+  function readAssemblageBlocks(text) {
+    const blocks = [];
+    let cur = null;
     let last = null;
     const num = (x) => x !== undefined && Number.isFinite(Number(x));
     for (const line of logicalLines(text)) {
       const tokens = line.trim().split(/\s+/).filter(Boolean);
       if (!tokens.length) continue;
       const word = tokens[0].toUpperCase();
-      if (KEYWORDS.has(word)) { inBlock = word === 'EQUILIBRIUM_PHASES'; last = null; continue; }
-      if (!inBlock) continue;
+      if (KEYWORDS.has(word)) {
+        cur = word === 'EQUILIBRIUM_PHASES' ? { label: tokens[1] || '1', phases: new Map() } : null;
+        if (cur) blocks.push(cur);
+        last = null;
+        continue;
+      }
+      if (!cur) continue;
       if (tokens[0].startsWith('-')) {
         if (/^-f/i.test(tokens[0]) && last) last.forced = !/^f/i.test(tokens[1] || '');
         continue;
@@ -939,10 +951,21 @@
       if (num(tokens[i])) i++;
       if (tokens[i] !== undefined && /^[dp]/i.test(tokens[i])) a.only = /^d/i.test(tokens[i++]) ? 'dissolve' : 'precipitate';
       a.extra = tokens.slice(i).join(' ');
-      out.set(tokens[0], a);
+      cur.phases.set(tokens[0], a);
       last = a;
     }
-    return [...out.values()];
+    return blocks.map((b) => ({ label: b.label, comps: [...b.phases.values()] }));
+  }
+
+  /** The last of `blocks` whose names (namesOf) are `held`'s, in any order and case; else the last that has them all. */
+  function blockHeld(blocks, namesOf, held) {
+    if (!held.length) return null;
+    const want = new Set(held.map((n) => n.toLowerCase()));
+    const has = (b) => new Set(namesOf(b).map((n) => n.toLowerCase()));
+    const same = blocks.filter((b) => { const h = has(b); return h.size === want.size && [...want].every((n) => h.has(n)); });
+    if (same.length) return same[same.length - 1];
+    const all = blocks.filter((b) => { const h = has(b); return [...want].every((n) => h.has(n)); });
+    return all.length ? all[all.length - 1] : null;
   }
 
   /**
@@ -1290,12 +1313,12 @@
    * cannot go in a BASIC string -- PHREEQC splits lines on it -- hence ','
    * and '|'.
    */
-  function punchBlock(extra) {
+  function punchBlock(extra, held) {
     const more = extra || [];
     const lines = [
       `SELECTED_OUTPUT ${SEL}`, '  -reset false', '  -solution true', '  -state true',
       `USER_PUNCH ${SEL}`,
-      `  -headings aq phases elements mu pH mH cb aw tc pe ex sf${more.map((_, i) => ` x${i}`).join('')}`,
+      `  -headings aq phases elements mu pH mH cb aw tc pe ex sf${more.map((_, i) => ` x${i}`).join('')}${held ? ' ue ug us' : ''}`,
       '  -start',
       '  10 t = SYS("aq", n, nm$, ty$, mo)',
       '  20 s$ = ""',
@@ -1339,6 +1362,23 @@
       '  196 PUNCH f$',
     ];
     more.forEach((expr, i) => lines.push(`  ${200 + 10 * i} PUNCH ${expr}`));
+    /*
+      With `held`, what the calculation holds, as PHREEQC's SYS lists it: the
+      phases of its EQUILIBRIUM_PHASES, the gases of its GAS_PHASE and the
+      members of its SOLID_SOLUTIONS, of the blocks it uses -- which in an
+      input of several calculations need be neither the last of their kind
+      nor every block that names a phase. Each a list of names; a FOR over
+      none jumped, as above.
+    */
+    if (held) {
+      const base = 200 + 10 * more.length;
+      [['equi', 'z1'], ['gas', 'z2'], ['s_s', 'z3']].forEach(([kind, v], k) => {
+        const at = base + 10 * k;
+        lines.push(`  ${at} t = SYS("${kind}", ${v}, ${v}n$, ${v}t$, ${v}m)`, `  ${at + 1} ${v}s$ = ""`,
+          `  ${at + 2} IF ${v} < 1 THEN GOTO ${at + 6}`, `  ${at + 3} FOR i = 1 TO ${v}`,
+          `  ${at + 4}   ${v}s$ = ${v}s$ + ${v}n$(i) + "|"`, `  ${at + 5} NEXT i`, `  ${at + 6} PUNCH ${v}s$`);
+      });
+    }
     lines.push('  -end');
     return `${lines.join('\n')}\n`;
   }
@@ -1371,7 +1411,10 @@
       const surface = new Map();
       if (at('sf') >= 0) for (const [n, m, la, g] of pairs(r[at('sf')])) surface.set(n, { m, la, lg: g });
       const num = (name) => Number(r[at(name)]);
+      const names = (col) => String(r[at(col)] || '').split('|').map((x) => x.trim()).filter(Boolean);
       return {
+        // What the calculation holds, where the punch lists it (punchBlock's held).
+        held: at('ue') >= 0 ? { equi: names('ue'), gas: names('ug'), ss: names('us') } : null,
         soln: at('soln') >= 0 ? r[at('soln')] : null,
         state: at('state') >= 0 ? String(r[at('state')]).trim() : '',
         species, phases, elements, exchange, surface,
@@ -2839,29 +2882,44 @@
         + 'this page does not have: its activity coefficients cannot follow the ionic strength here. Keep '
         + 'them fixed at this water instead.');
     }
+    /*
+      THE BLOCKS. An input of several calculations may name phases, gases and
+      solid solutions in each, and the model carries those of the calculation
+      the water is from: PHREEQC's amounts of every phase, gas and member a
+      block names are read off the water, with PHREEQC's own lists of what
+      its calculation holds (punchBlock's `held`), and those of the blocks it
+      holds kept (below).
+    */
+    const eqBlocks = o.phases ? readAssemblageBlocks(o.water.text) : [];
+    const gasBlocks = [...readGasPhases(o.water.text).values()];
+    const ssBlocks = [...readSolidSolutions(o.water.text).values()];
+    const lc = (n) => n.toLowerCase();
+    const uniq = (names) => { const seen = new Set(); return names.filter((n) => !seen.has(lc(n)) && !!seen.add(lc(n))); };
+    const indexIn = (list, name) => list.findIndex((n) => lc(n) === lc(name));
+    const phasesAll = o.phases ? readAssemblage(o.water.text) : [];
+    const gasNames = uniq(gasBlocks.flatMap((b) => b.comps.map((c) => c.name)));
+    const ssNames = uniq(ssBlocks.flatMap((b) => b.flatMap((ss) => ss.comps.map((c) => c.name))));
     // EQUILIBRIUM_PHASES carried as minerals: held at saturation while there
     // is any, which is the relations held exactly. PHREEQC says how much of
     // each it left, per kilogram of water, and its log K at this temperature.
-    const assemblage = o.phases ? readAssemblage(o.water.text) : [];
-    if (assemblage.length && !o.exact) {
+    if (phasesAll.length && !o.exact) {
       throw new Error('The phases are carried as minerals held at saturation while there is any of them, which '
         + 'needs the relations held exactly.');
     }
     const extras = [];
-    for (const a of assemblage) extras.push(`EQUI("${a.name}")`, `LK_PHASE("${a.name}")`, `SI("${a.name}")`);
-    const waterAt = assemblage.length ? extras.length : -1;
-    if (assemblage.length) extras.push('TOT("water")');
+    for (const a of phasesAll) extras.push(`EQUI("${a.name}")`, `LK_PHASE("${a.name}")`, `SI("${a.name}")`);
+    const waterAt = phasesAll.length ? extras.length : -1;
+    if (phasesAll.length) extras.push('TOT("water")');
     /*
       A GAS_PHASE carried as a gas phase, held as PHREEQC held it: each gas's
       moles in it, its log K at this temperature and pressure, and the
       pressure the water holds it at (10^SI); the phase's pressure, and the
       water's kilograms, which the amounts are per.
     */
-    const gasBlock = (() => { const g = readGasPhases(o.water.text); return g.size ? [...g.values()].pop() : null; })();
-    const carryGas = !!gasBlock && o.gas !== false && !!o.exact;
+    const gasMaybe = gasNames.length > 0 && o.gas !== false && !!o.exact;
     const gasAt = extras.length;
-    if (carryGas) {
-      for (const c of gasBlock.comps) extras.push(`GAS("${c.name}")`, `LK_PHASE("${c.name}")`, `SI("${c.name}")`);
+    if (gasMaybe) {
+      for (const n of gasNames) extras.push(`GAS("${n}")`, `LK_PHASE("${n}")`, `SI("${n}")`);
       extras.push('GAS_P', 'TOT("water")');
     }
     /*
@@ -2869,11 +2927,10 @@
       solution, S_S (none while the solid solution is not there), and its log
       K at this water, and the water's kilograms the amounts are per.
     */
-    const ssBlock = (() => { const g = readSolidSolutions(o.water.text); return g.size ? [...g.values()].pop() : null; })();
-    const carrySs = !!ssBlock && ssBlock.length > 0 && o.solids !== false && !!o.exact;
+    const ssMaybe = ssNames.length > 0 && o.solids !== false && !!o.exact;
     const ssAt = extras.length;
-    if (carrySs) {
-      for (const ss of ssBlock) for (const c of ss.comps) extras.push(`S_S("${c.name}")`, `LK_PHASE("${c.name}")`);
+    if (ssMaybe) {
+      for (const n of ssNames) extras.push(`S_S("${n}")`, `LK_PHASE("${n}")`);
       extras.push('TOT("water")');
     }
     /*
@@ -2985,7 +3042,8 @@
     // Under -multi_D, pure water's viscosity at the water's temperature, and the water's: each species' Dw there (fill_spec).
     const viscAt = column && column.mcd ? extras.length : -1;
     if (viscAt >= 0) extras.push('VISCOS_0', 'VISCOS');
-    const punch = punchBlock(extras);
+    // With what the calculation holds, PHREEQC's lists of it.
+    const punch = punchBlock(extras, true);
     const takeWater = (text) => {
       let rows = runRows(o.engine, `${punch}${text}\nEND\n`);
       if (o.solution != null) rows = rows.filter((r) => Number(r.soln) === Number(o.solution));
@@ -3026,6 +3084,54 @@
         traced = true;
       }
     }
+    /*
+      What the water's calculation holds, as PHREEQC lists it: the block of
+      each kind whose names those are -- or where no block is (an
+      EQUILIBRIUM_PHASES_MODIFY), each phase's last line -- is carried, and
+      what the input's other calculations hold is named, and not. In a
+      column every cell holds the blocks numbered as it is, and all are
+      carried, as columnSetup reads them.
+    */
+    const held = column ? null : (w.held || { equi: [], gas: [], ss: [] });
+    const otherCalcs = [];
+    const notHeld = (block, names, keep) => {
+      const seen = new Set(keep);
+      const out = [];
+      for (const n of names) if (!seen.has(lc(n))) { seen.add(lc(n)); out.push(n); }
+      if (out.length) otherCalcs.push({ block, names: out });
+    };
+    const phaseNames = phasesAll.map((a) => a.name);
+    let assemblage = phasesAll.map((a, i) => ({ ...a, at: i }));
+    let heldUnread = [];
+    if (held && eqBlocks.length) {
+      const want = new Set(held.equi.map(lc));
+      const b = blockHeld(eqBlocks, (x) => x.comps.map((a) => a.name), held.equi);
+      const latest = new Map();
+      for (const x of eqBlocks) for (const a of x.comps) latest.set(lc(a.name), a);
+      const chosen = b ? b.comps.filter((a) => want.has(lc(a.name))) : held.equi.map((n) => latest.get(lc(n))).filter(Boolean);
+      assemblage = chosen.map((a) => ({ ...a, at: indexIn(phaseNames, a.name) })).filter((a) => a.at >= 0);
+      heldUnread = held.equi.filter((n) => !assemblage.some((a) => lc(a.name) === lc(n)));
+      notHeld('EQUILIBRIUM_PHASES', eqBlocks.flatMap((x) => x.comps.map((a) => a.name)), [...want]);
+    }
+    let gasBlock = gasBlocks.length ? gasBlocks[gasBlocks.length - 1] : null;
+    let gasUnread = false;
+    if (held && gasBlocks.length) {
+      const want = new Set(held.gas.map(lc));
+      const b = blockHeld(gasBlocks, (x) => x.comps.map((c) => c.name), held.gas);
+      gasBlock = b ? { ...b, comps: b.comps.filter((c) => want.has(lc(c.name))) } : null;
+      gasUnread = !b && held.gas.length > 0;
+      if (!gasUnread) notHeld('GAS_PHASE', gasBlocks.flatMap((x) => x.comps.map((c) => c.name)), [...want]);
+    }
+    const carryGas = gasMaybe && !!gasBlock;
+    let ssBlock = ssBlocks.length ? ssBlocks[ssBlocks.length - 1] : null;
+    let ssUnread = false;
+    if (held && ssBlocks.length) {
+      const members = (x) => x.flatMap((ss) => ss.comps.map((c) => c.name));
+      ssBlock = blockHeld(ssBlocks, members, held.ss);
+      ssUnread = !ssBlock && held.ss.length > 0;
+      if (!ssUnread) notHeld('SOLID_SOLUTIONS', ssBlocks.flatMap(members), held.ss.map(lc));
+    }
+    const carrySs = ssMaybe && !!ssBlock && ssBlock.length > 0;
     /*
       ONE PE. PHREEQC keeps the valence states an initial solution is given,
       whatever its pe says: sulfate given, there is no sulfide in it, however
@@ -3158,14 +3264,17 @@
     // what else it takes, and what it dissolves to.
     const minerals = [];
     const phasesSkipped = [];
+    // Held by the calculation, and given by no EQUILIBRIUM_PHASES line this page reads (_RAW, _MODIFY's new phase).
+    for (const n of heldUnread) phasesSkipped.push({ name: n, why: 'no EQUILIBRIUM_PHASES line of the input gives it' });
     const waterKg = waterAt >= 0 ? Number(w.x[waterAt]) : 1;
-    assemblage.forEach((a, i) => {
+    // Each phase's amount, log K and SI where the punch has them: a.at among every phase the blocks name.
+    assemblage.forEach((a) => {
       const r = db.phaseReaction.get(a.name);
-      const moles = Number(w.x[3 * i]);
-      const lk = Number(w.x[3 * i + 1]);
+      const moles = Number(w.x[3 * a.at]);
+      const lk = Number(w.x[3 * a.at + 1]);
       // Held where PHREEQC left it: at its target while there is any of it,
       // to PHREEQC's own tolerance, which is the water the model starts from.
-      const siLeft = Number(w.x[3 * i + 2]);
+      const siLeft = Number(w.x[3 * a.at + 2]);
       const skip = (why) => phasesSkipped.push({ name: a.name, why });
       if (!r || !r.left.length) { skip('the database has no reaction for it'); return; }
       if (a.extra) { skip(`its line says more than this page carries (${a.extra})`); return; }
@@ -3216,15 +3325,19 @@
     */
     const gases = [];
     const gasSkipped = [];
+    // A gas phase the calculation holds that no GAS_PHASE block gives as it is (a GAS_PHASE_MODIFY, a _RAW).
+    if (gasUnread) gasSkipped.push({ name: 'GAS_PHASE', why: 'the calculation holds one that no GAS_PHASE of the input gives' });
     let gasFixed = null;
     if (gasBlock && !carryGas) {
       gasSkipped.push({ name: 'GAS_PHASE', why: o.gas === false ? 'asked not to be carried'
         : 'a gas phase is carried when the relations are held exactly' });
     } else if (carryGas) {
-      const n = gasBlock.comps.length;
+      // The punch's: every gas a block names, GAS_P and the water's kilograms after them.
+      const n = gasNames.length;
       const kgw = Number(w.x[gasAt + 3 * n + 1]);
       const dropped = [];
-      gasBlock.comps.forEach((c, i) => {
+      gasBlock.comps.forEach((c) => {
+        const i = indexIn(gasNames, c.name);
         const r = db.phaseReaction.get(c.name);
         const moles = Number(w.x[gasAt + 3 * i]);
         const lk = Number(w.x[gasAt + 3 * i + 1]);
@@ -3275,19 +3388,19 @@
     */
     const solids = [];
     const solidsSkipped = [];
+    if (ssUnread) {
+      solidsSkipped.push({ name: 'SOLID_SOLUTIONS', why: 'the calculation holds some that no SOLID_SOLUTIONS of the input gives' });
+    }
     if (ssBlock && ssBlock.length && !carrySs) {
       solidsSkipped.push({ name: 'SOLID_SOLUTIONS', why: o.solids === false ? 'asked not to be carried'
         : 'a solid solution is carried when the relations are held exactly' });
     } else if (carrySs) {
-      const nComp = ssBlock.reduce((acc, ss) => acc + ss.comps.length, 0);
-      const kgw = Number(w.x[ssAt + 2 * nComp]);
-      let at = ssAt;
+      // The punch's: every member a block names, the water's kilograms after them.
+      const kgw = Number(w.x[ssAt + 2 * ssNames.length]);
       for (const ss of ssBlock) {
         const comps = ss.comps.map((c) => {
-          const moles = Number(w.x[at]);
-          const lk = Number(w.x[at + 1]);
-          at += 2;
-          return { phase: c.name, moles, lk, r: db.phaseReaction.get(c.name) };
+          const at = ssAt + 2 * indexIn(ssNames, c.name);
+          return { phase: c.name, moles: Number(w.x[at]), lk: Number(w.x[at + 1]), r: db.phaseReaction.get(c.name) };
         });
         let why = '';
         for (const c of comps) {
@@ -4091,6 +4204,10 @@
     if (phasesSkipped.length) {
       out.push(`# Phases not carried: ${phasesSkipped.map((ps) => `${ps.name}, ${ps.why}`).join('; ')}.`);
     }
+    if (otherCalcs.length) {
+      out.push(`# Not carried, as the calculation the water is from does not hold them: ${otherCalcs
+        .map((x) => `${x.block} ${x.names.join(', ')}`).join('; ')}.`);
+    }
     if (gases.length) {
       const list = gases.map((g) => `${g.name} ${fmtG(g.amount, 4)}`).join(', ');
       if (gases[0].crit) {
@@ -4788,6 +4905,8 @@
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target,
           alt: mn.alt ? mn.alt.formula : null, only: mn.only, forced: mn.forced })),
         phasesSkipped,
+        // What the input's other calculations hold and the water's does not, by block: not carried.
+        otherCalculations: otherCalcs,
         // An exchanger whose sites go with a phase or a kinetic reactant in PHREEQC: carried so (per, sites= per=), or
         // held here at what PHREEQC loaded at the start (linked), and why.
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),

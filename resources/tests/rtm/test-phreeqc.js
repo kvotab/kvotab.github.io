@@ -532,6 +532,54 @@ function withPhreeqc(engine) {
     && ph.report.phasesSkipped.length === 1 && ph.report.phasesSkipped[0].name === 'Pyrite'
     && /^Calcite +[0-9.e-]+ +mineral$/m.test(ph.text) && /^CO2\(g\) <=> CO2,/m.test(ph.text),
   `${worstP.toExponential(1)} (${whereP}); ${ph.report.minerals.map((mn) => `${mn.as} ${mn.amount.toExponential(3)}`).join(', ')}`);
+  /*
+    An input of several calculations: what the one the water is from holds is carried, and what the others hold
+    made the water and is not. A water put at a CO2 pressure and calcite saturation, mixed with another, dolomite
+    and calcite tried on the mixture, and then gypsum below saturation and calcite; a gas phase after phases of
+    the same gas; a solid solution after a phase that is one of its members; phases after a gas phase.
+  */
+  const sw1 = 'SOLUTION 1\n temp 20\n units mmol/kgw\n pH 7\n Na 5\n Cl 5 charge\n';
+  const sw3 = 'SOLUTION 3\n temp 20\n units mmol/kgw\n pH 8.2\n Na 40\n Mg 5\n Ca 2\n Cl 55 charge\n S(6) 3\n C(4) 2\n';
+  const several = [
+    { label: 'phases after phases', text: `${sw1}EQUILIBRIUM_PHASES 1\n CO2(g) -1.8 10\n Calcite 0 10\nSAVE solution 2\n`
+      + `END\n${sw3}END\nMIX 1\n 2 0.6\n 3 0.4\nSAVE solution 4\nEND\nUSE solution 4\nEQUILIBRIUM_PHASES 2\n Dolomite 0 1\n`
+      + ' Calcite 0 1\nEND\nUSE solution 4\nEQUILIBRIUM_PHASES 3\n Gypsum -0.5 1\n Calcite 0 1\nEND\n',
+    minerals: 'Calcite Gypsum', gas: '', solids: '', other: 'EQUILIBRIUM_PHASES CO2(g), Dolomite' },
+    { label: 'a gas phase after phases', text: `${sw1}EQUILIBRIUM_PHASES 1\n CO2(g) -1.5 10\n Calcite 0 10\nSAVE solution 2\n`
+      + 'END\nUSE solution 2\nGAS_PHASE 1\n -fixed_volume\n -volume 1\n CO2(g) 0.05\n N2(g) 0.9\nEND\n',
+    minerals: '', gas: 'CO2(g) N2(g)', solids: '', other: 'EQUILIBRIUM_PHASES CO2(g), Calcite' },
+    { label: 'a solid solution after a phase of its', text: `${sw1.replace(' Cl 5', ' Sr 0.05\n Cl 5')}EQUILIBRIUM_PHASES 1\n`
+      + ' Calcite 0 10\nSAVE solution 2\nEND\nUSE solution 2\nSOLID_SOLUTIONS 1\nCa(x)Sr(1-x)CO3\n -comp1 Calcite 0.01\n'
+      + ' -comp2 Strontianite 0.0001\nEND\n', minerals: '', gas: '', solids: 'Ca(x)Sr(1-x)CO3', other: 'EQUILIBRIUM_PHASES Calcite' },
+    { label: 'phases after a gas phase', text: `${sw1}GAS_PHASE 1\n -fixed_volume\n -volume 1\n CO2(g) 0.1\nSAVE solution 2\nEND\n`
+      + 'USE solution 2\nEQUILIBRIUM_PHASES 1\n Calcite 0 1\nEND\n', minerals: 'Calcite', gas: '', solids: '', other: 'GAS_PHASE CO2(g)' },
+  ].map((c) => {
+    try {
+      const res = P.waterToModel({ engine, database, water: { name: c.label, text: c.text }, activity: true, exact: true,
+        phases: true, redox: false });
+      const m = RtmModel.compile(res.text);
+      const back = new Map([...res.names].map(([k, v]) => [v, k]));
+      const y = m.toConcentrations(m.initialState());
+      let worst = 0;
+      m.speciesNames.forEach((n, i) => {
+        const ref = back.has(n) ? res.molal.get(back.get(n)) : res.amounts.get(n);
+        if (ref !== undefined) worst = Math.max(worst, Math.abs(y[i] - ref) / Math.max(Math.abs(ref), 1e-15));
+      });
+      const r = res.report;
+      return { ...c, worst, got: { minerals: r.minerals.map((x) => x.as).sort().join(' '),
+        gas: r.gas ? r.gas.species.map((g) => g.as).sort().join(' ') : '', solids: (r.solids || []).map((s) => s.name).join(' '),
+        other: (r.otherCalculations || []).map((x) => `${x.block} ${x.names.join(', ')}`).join('; ') },
+      said: /^# Not carried, as the calculation the water is from does not hold them: /m.test(res.text) };
+    } catch (e) { return { ...c, error: e.message }; }
+  });
+  check('an input of several calculations: what the one the water is from holds is carried, and what the others held '
+    + 'is not, and is named -- gypsum and calcite after a CO2 pressure and dolomite, a gas phase after phases of its '
+    + 'gas, a solid solution after a phase that is its member, phases after a gas phase; each start on PHREEQC\'s water',
+  // A gas phase in a fixed volume to PHREEQC's own convergence, 2e-8 in every species.
+  several.every((c) => !c.error && c.worst < (c.gas ? 1e-7 : 1e-8) && c.said
+    && ['minerals', 'gas', 'solids', 'other'].every((k) => c.got[k] === c[k])),
+  several.map((c) => (c.error ? `${c.label}: ${c.error}` : `${c.label}: ${c.worst.toExponential(1)}, carried `
+    + `[${c.got.minerals}|${c.got.gas}|${c.got.solids}], not [${c.got.other}]`)).join('; '));
   // Acid in: the calcite dissolves and the gas holds the CO2, as PHREEQC with the same phases has them.
   const coupled = (res) => {
     // Every species of an element the model keeps in more than one valence
