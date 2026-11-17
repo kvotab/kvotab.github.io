@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117m';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117o';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1285,7 +1285,8 @@
       }
       if (m.gas) {
         say.push(`${m.gas.species.join(', ')} in a gas phase ${m.gas.fixed === 'volume'
-          ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V`
+          ? `of ${fmtNumber(m.gas.volume)} L to each kg of water, each gas at n R T/V${m.gas.follows
+            ? ', the water at the pressure of them all as it goes' : ''}`
           : `at ${fmtNumber(m.gas.pressure)} atm, a bubble while the water holds its gases at that between them`}.`);
       }
       for (const ss of m.solidSolutions || []) {
@@ -13006,11 +13007,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117n';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117o';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261117n',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117n',
+    'resources/js/rtm-phreeqc.js?v=20261117o',
     'resources/js/rtm-phreeqc-engine.js?v=20261117n',
   ];
   /** "An example water": round numbers, nobody's sample. */

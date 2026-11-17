@@ -1100,16 +1100,17 @@ async def main():
             ongas = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
                                       f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
             gas_text = await page.ev("document.getElementById('rtmText').value")
-            check('a gas phase in the water is carried: a real gas in a fixed volume, the water at its pressure, and the '
-                  'report says so',
+            check('a gas phase in the water is carried: a real gas in a fixed volume, the water following its pressure with no '
+                  'PRESSURE of its own, and the report says so',
                   isinstance(ongas, str) and 'A gas phase in a fixed volume of ' in ongas and isinstance(gas_text, str)
                   and re.search(r'^GAS_VOLUME = 0\.(?:5|49999)[0-9]*$', gas_text, re.M) is not None
-                  and re.search(r'^PRESSURE = [0-9.e-]+$', gas_text, re.M) is not None
+                  and re.search(r'^PRESSURE = ', gas_text, re.M) is None
                   and re.search(r'^CO2\(g\) +[0-9.e-]+ +gas +Tc=304\.2 +Pc=72\.86 +omega=0\.225$', gas_text, re.M) is not None,
                   True)
             await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
-            check('and the model facts give the gas phase', await page.ev(
-                "/CO2\\(g\\) in a gas phase of 0\\.5 L to each kg of water/.test(document.getElementById('rtmFacts').textContent)"),
+            check('and the model facts give the gas phase, the water at its pressure as it goes', await page.ev(
+                "/CO2\\(g\\) in a gas phase of 0\\.5 L to each kg of water, each gas at n R T\\/V, the water at the pressure of "
+                "them all as it goes/.test(document.getElementById('rtmFacts').textContent)"),
                 True)
             await page.ev(CLICK % json.dumps('#rtmRun'))
             await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)

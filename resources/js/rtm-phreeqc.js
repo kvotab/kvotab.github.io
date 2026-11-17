@@ -4127,8 +4127,9 @@
         }
       }
     }
-    // A path whose gas phase, in a fixed volume, takes PHREEQC's water to another pressure, which the run does not follow.
-    const pathAtmMoved = !!path && !!gasFixed && gasFixed.fixed === 'volume' && Number.isFinite(path.p.atmEnd)
+    // A path whose gas phase, in a fixed volume, takes PHREEQC's water to another pressure, which under SIT and Pitzer
+    // the run does not follow.
+    const pathAtmMoved = !!path && !!gasFixed && gasFixed.fixed === 'volume' && (sit || pitz) && Number.isFinite(path.p.atmEnd)
       && Number.isFinite(atm) && Math.abs(path.p.atmEnd - atm) > 1e-3 * Math.max(1, atm);
     /*
       THE SOLID SOLUTIONS: each member a mineral at the moles PHREEQC left in
@@ -4240,6 +4241,27 @@
         let ex;
         try { ex = db.expand(sp); } catch (e) { continue; }
         if ([...ex.keys()].some((lb) => els.has(key(lb)))) { kept.add(sp); pulled.add(sp); }
+      }
+      /*
+        ...and those PHREEQC lists at none, below the 1e-30 MOL gives, but
+        still has at its log molality (FAINT): a species what comes in goes
+        into only as it builds up -- CO2's dimer, (CO2)2, in a water that
+        starts with next to no carbon, which at hundreds of atmospheres
+        holds a twentieth of it. In the valence states it brings, or with
+        the electrons it moves in any of its elements'.
+      */
+      const movesE = carryRedox && rx.some(([n]) => n === 'e-');
+      const exact = new Set();
+      for (const [n] of rx) {
+        if (n === 'e-' || n === 'H+') continue;
+        try { for (const [lb] of db.expand(n)) if (lb !== 'e-') exact.add(normLabel(lb)); } catch (e) { /* no terms */ }
+      }
+      for (const sp of faint.keys()) {
+        if (kept.has(sp) || molal.has(sp)) continue;
+        let ex;
+        try { ex = db.expand(sp); } catch (e) { continue; }
+        const hit = [...ex.keys()].some((lb) => (movesE ? els.has(key(lb)) : exact.has(normLabel(lb))));
+        if (hit && fromFaint(sp)) { kept.add(sp); pulled.add(sp); }
       }
       return { els, key };
     };
@@ -5108,8 +5130,13 @@
         out.push(`# A gas phase in a fixed volume of ${fmtG(gasFixed.volume, 6)} L to each kg of water (PHREEQC's GAS_PHASE), its gases`);
         out.push(`# at the moles PHREEQC left in it (${list}). Each gas's partial pressure is ${gases[0].crit ? 'its share of the'
           + " equation's pressure at V/N" : 'n R T/V'}.`);
-        out.push(`# PHREEQC puts the water at the gas phase's pressure, ${fmtG(gasFixed.atm, 6)} atm here, and so does PRESSURE: the run`);
-        out.push('# holds it there, where PHREEQC follows the pressure as the gas phase fills or empties.');
+        if (sit || pitz) {
+          out.push(`# PHREEQC puts the water at the gas phase's pressure, ${fmtG(gasFixed.atm, 6)} atm here, and so does PRESSURE: under`);
+          out.push(`# ${sit ? 'SIT' : 'Pitzer'} the run holds it there, where PHREEQC follows the pressure as the gas phase fills or empties.`);
+        } else {
+          out.push(`# PHREEQC puts the water at the gas phase's pressure, ${fmtG(gasFixed.atm, 6)} atm here, and follows it as the gas`);
+          out.push('# phase fills or empties; so does the run, in each cell as it goes, with no PRESSURE of its own.');
+        }
       }
     }
     if (gasSkipped.length) {
@@ -5394,8 +5421,12 @@
     if (gases.length) {
       out.push(gasFixed.fixed === 'pressure' ? `GAS_PRESSURE = ${fmtG(gasFixed.pressure, 12)}`
         : `GAS_VOLUME = ${fmtG(gasFixed.volume, 12)}`);
-      // The water at the gas phase's pressure, as PHREEQC puts it: its A, B and dielectric constant.
-      if (gasFixed.fixed === 'volume' && gasFixed.atm > 0 && Math.abs(gasFixed.atm - 1) > 1e-12) {
+      /*
+        The water at the gas phase's pressure, as PHREEQC puts it: in a
+        fixed volume the model follows it, PRESSURE not given; under SIT and
+        Pitzer, where it cannot, the water is held at the start's.
+      */
+      if (gasFixed.fixed === 'volume' && (sit || pitz) && gasFixed.atm > 0 && Math.abs(gasFixed.atm - 1) > 1e-12) {
         out.push(`PRESSURE = ${fmtG(gasFixed.atm, 15)}`);
       }
     }

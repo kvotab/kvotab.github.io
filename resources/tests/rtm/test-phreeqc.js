@@ -2121,14 +2121,15 @@ function againstGas(engine) {
     + `then pH within ${fpRa.pH.toExponential(1)}, the bubble's CO2 within ${fpRa.gas.toExponential(1)} (PHREEQC's water `
     + 'losing what CO2 hydrates)');
 
-  // In a fixed volume: the water at the gas phase's pressure, which then moves.
+  // In a fixed volume: the water at the gas phase's pressure, which then moves, and the run with it.
   const fvI = handOff(ideal, water('volume', '-volume 0.5', 'C(4) 40\n N(0) 1.2'));
   const fvIa = added(ideal, water('volume', '-volume 0.5', 'C(4) 40\n N(0) 1.2'), fvI.res, [4, 10, 20]);
   const fvR = handOff(database, water('volume', '-volume 0.2', 'C(4) 600\n N(0) 40'));
   const fvRa = added(database, water('volume', '-volume 0.2', 'C(4) 600\n N(0) 40'), fvR.res, [20, 60, 100]);
-  check('a fixed volume, ideal and real: the start PHREEQC\'s, the water at the gas phase\'s pressure; with CO2 '
-    + 'added, PHREEQC moves A and B with the pressure, and with the molar volumes its log K, which the run holds',
-  fvI.worst < 1e-8 && fvR.worst < 1e-8 && fvIa.pH < 1e-4 && fvRa.pH < 1e-3 && /^PRESSURE = 17.23854/m.test(fvR.res.text),
+  check('a fixed volume, ideal and real: the start PHREEQC\'s, the water at the gas phase\'s pressure, no PRESSURE '
+    + 'written; with CO2 added, the run moves A and B with the pressure, and with the molar volumes its log K, as PHREEQC does',
+  fvI.worst < 1e-8 && fvR.worst < 1e-8 && fvIa.pH < 1e-4 && fvRa.pH < 1e-6 && !/^PRESSURE = /m.test(fvR.res.text)
+    && fvR.m.act.gas.follow,
   `the start within ${fvI.worst.toExponential(1)} and ${fvR.worst.toExponential(1)}; with CO2 added pH within `
     + `${fvIa.pH.toExponential(1)} (ideal, 0.76 to 1.13 atm) and ${fvRa.pH.toExponential(1)} (real, 17 to 20 atm)`);
 
@@ -6894,6 +6895,24 @@ async function againstPathHandOff(engine, createPhreeqc) {
     && c.held < 1e-10,
   `pH within ${c.pH.toExponential(1)}, totals ${c.tot.toExponential(1)} (${c.totWhere}), on the exchanger `
     + `${c.held.toExponential(1)} mol (${c.heldWhere})`);
+
+  /*
+    4b. CO2 into a closed volume of gas at 80 C, to hundreds of atmospheres:
+    the water at the gas's pressure as it goes, as PHREEQC's is, and CO2's
+    dimer, (CO2)2, which the water starts with at none, written from the
+    start as a species of what the path brings.
+  */
+  const closed = 'SOLUTION 1\n units mmol/kgw\n temp 80\n pH 7 charge\n Na 10\n Cl 10\nGAS_PHASE 1\n -fixed_volume\n'
+    + ' -volume 0.5\n CO2(g) 0\n H2O(g) 0\nREACTION 1\n CO2 1\n 0 1 2 4 6 8 10 12 moles\nEND\n';
+  const cv = along(closed);
+  const cvFaint = (cv.res.report.faint || []).map((x) => x.species);
+  check('  CO2 into a closed volume of gas at 80 C (Peng and Robinson), to hundreds of atmospheres: no PRESSURE written, the '
+    + 'water at the gas\'s pressure as it goes, and CO2\'s dimer, at none in the water at the start, written as what the path '
+    + 'brings goes into it; at each of PHREEQC\'s steps the pH, the totals and the gases PHREEQC\'s',
+  !!cv.res.report.path && !/^PRESSURE = /m.test(cv.res.text) && cv.m.act.gas.follow && cvFaint.includes('(CO2)2')
+    && /^CO2_2\s/m.test(cv.res.text) && cv.pH < 1e-3 && cv.tot < 1e-2 && cv.held < 1e-2,
+  `pH within ${cv.pH.toExponential(1)}, totals ${cv.tot.toExponential(1)} (${cv.totWhere}), the gases ${cv.held.toExponential(1)} mol `
+    + `(${cv.heldWhere}); written at none: ${cvFaint.join(', ')}`);
 
   // 5. Not carried, and why; one step is no path.
   const why = (input, opts) => { const r = along(input, opts).res; return { r, w: r.report.pathSkipped ? r.report.pathSkipped.why : '' }; };

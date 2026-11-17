@@ -206,6 +206,8 @@ function rtmSummary(model) {
     // A gas phase: its gases, and the volume or the total pressure it is held at.
     gas: model.act && model.act.gas
       ? { fixed: model.act.gas.fixed, volume: model.act.gas.volume, pressure: model.act.gas.pressure,
+        // In a fixed volume, whether the water is at the gas's pressure as it goes (PRESSURE not given).
+        follows: !!model.act.gas.follow,
         species: model.act.gas.list.map((k) => model.speciesNames[k]) }
       : null,
     // The solid solutions: each one's name, its members and, for a binary one, a0 and a1 at 25 C and whether there is

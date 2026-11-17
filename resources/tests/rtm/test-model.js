@@ -6747,6 +6747,95 @@ X => CO2, k = 1e-5
     noGas.warnings.some((x) => /GAS_VOLUME is a gas phase's, and no species is a gas/.test(x))
     && !RtmModel.compile(vol.replace('GAS_VOLUME = 0.5', 'GAS_VOLUME = 0.5\nTEMPERATURE = 15')).warnings
       .some((x) => /TEMPERATURE sets/.test(x)));
+
+  /*
+    The water at the gas's pressure. In a fixed volume, with no PRESSURE of
+    its own, the water is at the gases' pressure in each cell as it goes, as
+    PHREEQC's is: A and B there and, with <VOLUMES>, each log K. CO2 into a
+    litre of gas at 50 C, ideal and real, to hundreds of atmospheres: at the
+    end the run's relations hold where those of the same water held at the
+    pressure its gas then has hold; the Jacobian, each relation reading each
+    gas through the pressure, against a central difference at the start and
+    at the end; a pressure past 1500 atm held there; PRESSURE given holding
+    the water instead; SIT holding it and saying so.
+  */
+  const followed = (gasLine, more = '', vol = 1) => `<SETTINGS>
+MODE = batch
+TEND = 20
+EQUILIBRATE = always
+ACTIVITY = debye-huckel
+TEMPERATURE = 50
+GAS_VOLUME = ${vol}
+${more}
+
+<SPECIES>
+H+      1e-4   a=9  b=0
+OH-     1e-10  a=3.5  b=0
+CO2     1e-3
+HCO3-   1e-6   a=5.4  b=0
+Na+     0.01   a=4.08  b=0.082
+Cl-     0.0099999   a=3.63  b=0.017
+CO2(g)  0      gas${gasLine}
+
+<EQUILIBRIUM>
+ <=> H+ + OH-,       logK = -14
+CO2 <=> H+ + HCO3-,  logK = -6.35
+CO2(g) <=> CO2,      logK = -1.468
+
+<REACTIONS>
+=> CO2, k = 1
+
+<VOLUMES>
+CO2    7.29 0.92 2.07 -1.23 -1.6 0 0 0 0 1
+HCO3-  8.54 0 -11.7 0 1.6 0 0 116 0 1
+Na+    2.28 -4.38 -4.1 -0.586 0.09 4 0.3 52 -3.33e-3 0.566
+Cl-    4.465 4.801 4.325 -2.847 1.748 0 -0.331 20.16 0 1
+`;
+  const fol = [['ideal', ''], ['real', '  Tc=304.2  Pc=72.86  omega=0.225']].map(([kind, line]) => {
+    const m = RtmModel.compile(followed(line));
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', tend: 20, rtol: 1e-9, atol: 1e-20, nonNegative: true, outputTimes: [20] });
+    const yEnd = r.grid.y[0];
+    const v = [RtmModel.verifyJacobian(m, 0, m.initialState()), RtmModel.verifyJacobian(m, 20, yEnd)];
+    // The gas's pressure at the end, as the last evaluation there leaves it, and the same water held at it.
+    const f = new Float64Array(yEnd.length);
+    m.rhs(20, yEnd, f);
+    const P = m.act.atmNow;
+    const apart = (more) => {
+      const h = RtmModel.compile(followed(line, more));
+      const g = new Float64Array(yEnd.length);
+      h.rhs(20, yEnd, g);
+      let d = 0;
+      for (let i = 0; i < g.length; i++) d = Math.max(d, Math.abs(g[i] - f[i]));
+      return d;
+    };
+    return { kind, m, r, v, P, held: apart(`PRESSURE = ${P}`), one: apart('PRESSURE = 1') };
+  });
+  check('the water at the pressure of a fixed volume of gas, ideal and real: CO2 into a litre at 50 C, the run\'s relations '
+    + 'at the end those of the same water held at the gas\'s pressure then, not at 1 atm; the Jacobian, every relation '
+    + 'reading every gas through the pressure, against a central difference at the start and at the end',
+  fol.every((l) => l.m.act.gas.follow && l.r.t[l.r.t.length - 1] === 20 && l.P > 150 && l.held < 1e-10 && l.one > 1e-3
+    && l.v.every((v) => v.discrepancies.length === 0)),
+  fol.map((l) => `${l.kind}: ${l.P.toFixed(1)} atm at the end, the run's residuals within ${l.held.toExponential(1)} of the water `
+    + `held there (${l.one.toExponential(1)} from it at 1 atm); ${l.v[0].checked} and ${l.v[1].checked} entries`).join('; '));
+  // 20 mol of N2, which hardly dissolves, into a quarter of a litre: past 1500 atm, where the water is held.
+  const capText = `<SETTINGS>\nMODE = batch\nTEND = 20\nEQUILIBRATE = always\nACTIVITY = debye-huckel\nTEMPERATURE = 50\n`
+    + 'GAS_VOLUME = 0.25\n\n<SPECIES>\nNa+ 0.01 a=4.08 b=0.082\nCl- 0.01 a=3.63 b=0.017\nN2 1e-6\nN2(g) 0 gas\n\n'
+    + '<EQUILIBRIUM>\nN2(g) <=> N2, logK = -3.18\n\n<REACTIONS>\n=> N2, k = 1\n\n<VOLUMES>\nN2  7 0 0 0 0 0 0 0 0 1\n'
+    + 'Na+ 2.28 -4.38 -4.1 -0.586 0.09 4 0.3 52 -3.33e-3 0.566\n';
+  const capM = RtmModel.compile(capText);
+  const capR = FacsimileODE.runModel(capM, { solver: 'ndf', tend: 20, rtol: 1e-8, atol: 1e-20, nonNegative: true, outputTimes: [20] });
+  const capF = new Float64Array(capR.grid.y[0].length);
+  capM.rhs(20, capR.grid.y[0], capF);
+  const capGas = capM.toConcentrations(capR.grid.y[0])[capM.speciesNames.indexOf('N2(g)')] * capM.act.gas.RT / 0.25;
+  const capV = RtmModel.verifyJacobian(capM, 20, capR.grid.y[0]);
+  const heldP = RtmModel.compile(followed('', 'PRESSURE = 30'));
+  const sitP = RtmModel.compile(followed('').replace('ACTIVITY = debye-huckel', 'ACTIVITY = sit').replace(/ +a=\S+ +b=\S+/g, '')
+    .replace(/\n<VOLUMES>[\s\S]*$/, '\n'));
+  check('  N2 into a quarter of a litre past 1500 atm: the water held at 1500, as PHREEQC holds it, and reading no gas; PRESSURE given holds the water '
+    + 'there; under SIT the water stays at PRESSURE, and the model says so',
+  capGas > 1500 && capM.act.atmNow === 1500 && capV.discrepancies.length === 0 && !heldP.act.gas.follow
+    && !sitP.act.gas.follow && sitP.warnings.some((x) => /Under ACTIVITY = sit the water stays at 1 atm/.test(x)),
+  `the gas at ${capGas.toFixed(0)} atm, the water at ${capM.act.atmNow} atm; ${sitP.warnings.find((x) => /Under ACTIVITY/.test(x))}`);
 }
 
 /* ======================================================================

@@ -3547,9 +3547,12 @@
       out.list.push(s);
     }
     out.list.sort((x, y) => x - y);
-    // Where nothing takes the water above one atmosphere, the volumes correct nothing: PHREEQC's rule.
+    // Where nothing takes the water above one atmosphere, the volumes correct nothing: PHREEQC's rule. A fixed volume
+    // of gas the water follows can (gasSetup).
     const P = act.wt ? act.wt.atmGiven : 1;
-    if (!(P > 1) && typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6) {
+    const given = settings.given || new Set();
+    const followsGas = given.has('GAS_VOLUME') && !given.has('PRESSURE') && species.some((sp) => sp.gas) && !act.sit && !act.pz;
+    if (!(P > 1) && !followsGas && typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6) {
       out.idle = true;
     }
     return out;
@@ -3568,14 +3571,15 @@
     const vo = act.vol;
     const wt = act.wtc ? act.wtc[cell] : act.wt;
     const aw = Math.exp(water.lnAw);
-    const ws = waterAt(wt, aw);
+    // At the pressure of a gas the water follows, where there is one (gasPressure).
+    const ws = waterAt(wt, aw, act.atmNow);
     const P = ws.atm;
     if (!(P > 1)) { water.pv = null; return; }
     const f = (1e-9 * (P * 101325 - 101325)) / (R_KJ * wt.T);
     const wv = molarVolumesAt(act, I, low, wt, ws);
     const { pv, pvI, pvA, V, VI, VA } = vo;
     // Where the water is at its vapour pressure times a(H2O), f goes with a(H2O): d ln f/d ln a = P/(P - 1).
-    const L = P > wt.atmGiven && aw <= 1 ? P / (P - 1) : 0;
+    const L = act.atmNow === undefined && P > wt.atmGiven && aw <= 1 ? P / (P - 1) : 0;
     for (const s of vo.list) {
       pv[s] = f * V[s];
       pvI[s] = f * VI[s];
@@ -3660,7 +3664,7 @@
     const ns = act.ns;
     const w = activityAt(act, C, off, new Float64Array(ns), new Float64Array(ns), cell);
     const wt = act.wtc ? act.wtc[cell] : act.wt;
-    const ws = waterAt(wt, Math.exp(w.lnAw));
+    const ws = waterAt(wt, Math.exp(w.lnAw), act.atmNow);
     act.vol.V.fill(0);
     const wv = molarVolumesAt(act, w.I, !(w.I > 1e-10), wt, ws);
     return { V: Float64Array.from(act.vol.V), VI: Float64Array.from(act.vol.VI), Vw: wv.Vw, P: ws.atm, water: w };
@@ -4029,6 +4033,48 @@
     const low = !(I > 1e-10);
     if (low) I = 1e-10;
     const at = cell === undefined ? Math.round(off / ns) : cell;
+    /*
+      A fixed volume of gas the water follows (gasSetup): the water at the
+      gas's pressure in this cell, and, by central differences in it, how
+      each coefficient, the water's activity and the molar volumes' part of
+      each log K go with that pressure -- what a relation then reads of each
+      gas through it (sitPartners). Taken before the evaluation itself,
+      whose results are kept in shared scratch.
+    */
+    const gas = act.gas;
+    let pd = null;
+    if (gas && gas.follow) {
+      const P = gasPressure(act, C, off, at);
+      if (gas.dPdn.some((v) => v !== 0)) {
+        const fd = gas.fd;
+        const h = 1e-6 * Math.max(P, 1);
+        const hi = P + h;
+        const lo = Math.max(P - h, 0);
+        act.atmNow = hi;
+        const r1 = activityEval(act, C, off, I, low, sum, fd.lnG1, fd.dG1, at);
+        // r1's molar volumes are in shared scratch, which r2's take: kept.
+        let pv1 = null;
+        if (r1.pv) { fd.pv1.set(r1.pv); pv1 = fd.pv1; }
+        const w1 = { lnAw: r1.lnAw, pvW: r1.pv ? r1.pvW : 0, pf: r1.pv ? r1.pf : 0 };
+        act.atmNow = lo;
+        const r2 = activityEval(act, C, off, I, low, sum, fd.lnG2, fd.dG2, at);
+        const span = hi - lo;
+        for (let s = 0; s < ns; s++) {
+          fd.dlnG[s] = (fd.lnG1[s] - fd.lnG2[s]) / span;
+          fd.dpv[s] = ((pv1 ? pv1[s] : 0) - (r2.pv ? r2.pv[s] : 0)) / span;
+        }
+        pd = { dlnG: fd.dlnG, dpv: fd.dpv, dlnAw: (w1.lnAw - r2.lnAw) / span,
+          dpvW: (w1.pvW - (r2.pv ? r2.pvW : 0)) / span, dpf: (w1.pf - (r2.pv ? r2.pf : 0)) / span, dPdn: gas.dPdn };
+      }
+      act.atmNow = P;
+    }
+    const res = activityEval(act, C, off, I, low, sum, lnG, dG, at);
+    if (pd) res.pd = pd;
+    return res;
+  }
+
+  /** activityAt's evaluation at the ionic strength I, the solutes' sum and the water's pressure act.atmNow. */
+  function activityEval(act, C, off, I, low, sum, lnG, dG, at) {
     let res;
     if (act.sit) res = sitAt(act, C, off, I, low, sum, lnG, dG, at);
     else if (act.pz) res = pitzerAt(act, C, off, I, low, sum, lnG, dG, at);
@@ -4046,6 +4092,54 @@
     // The molar volumes, for each relation's ln K at the pressure (volumesAt).
     if (act.vol && !act.vol.idle) volumesAt(act, res, I, low, at);
     return res;
+  }
+
+  /**
+   * The pressure of a fixed volume of gas in the cell at `off` of C, atm,
+   * which the water follows (gasSetup): PHREEQC's total_p, sum n R T/V of
+   * ideal gases, Peng and Robinson's P at V/N of real ones (prState), and
+   * dP/dn of each gas into gas.dPdn. Above gas.cap the water is held there,
+   * as PHREEQC holds patm_x, and the pressure reads no gas.
+   */
+  function gasPressure(act, C, off, cell) {
+    const gas = act.gas;
+    const K = gas.list.length;
+    const dPdn = gas.dPdn;
+    const n = new Float64Array(K);
+    let N = 0;
+    for (let q = 0; q < K; q++) { n[q] = Math.max(C[off + gas.list[q]], 0); N += n[q]; }
+    const RTV = Math.exp(gas.lnGc ? gas.lnGc[cell] : gas.lnG);
+    let P;
+    if (gas.pr && N > 0) {
+      const pr = gas.pr;
+      if (act.tk) prAt(pr, act.tk[cell]);
+      const at = (nn) => {
+        let tot = 0;
+        for (let q = 0; q < K; q++) tot += nn[q];
+        if (!(tot > 0)) return 0;
+        for (let q = 0; q < K; q++) pr.x[q] = nn[q] / tot;
+        return prState(pr, pr.x, 0, gas.volume / tot).P;
+      };
+      P = at(n);
+      for (let j = 0; j < K; j++) {
+        const h = 1e-6 * Math.max(n[j], 1e-6 * N, 1e-300);
+        const nj = n[j];
+        n[j] = nj + h;
+        const up = at(n);
+        n[j] = Math.max(nj - h, 0);
+        const dn = at(n);
+        dPdn[j] = (up - dn) / (nj + h - n[j]);
+        n[j] = nj;
+      }
+    } else {
+      P = N * RTV;
+      dPdn.fill(RTV);
+    }
+    if (P > gas.cap) {
+      P = gas.cap;
+      dPdn.fill(0);
+    }
+    return P;
   }
 
   /**
@@ -4180,14 +4274,16 @@
    * the zeros back. `net` is [species, nu] pairs; `water` activityAt's
    * result for the cell.
    */
-  function sitPartners(act, net, water) {
+  function sitPartners(act, net, water, eq) {
     const st = act && act.sit;
     const pz = act && act.pz;
     const gas = act && act.gas && act.gas.dln ? act.gas : null;
     const xp = act && act.ex && act.ex.perAny && water.exSum ? act.ex : null;
-    if (!st && !pz && !gas && !xp) return null;
+    // The water at the pressure of a gas in a fixed volume (activityAt): every relation reads every gas through it.
+    const pd = water && water.pd ? water.pd : null;
+    if (!st && !pz && !gas && !xp && !pd) return null;
     const I = water.I;
-    const d = st ? st.d : pz ? pz.d : gas ? gas.d : xp.d;
+    const d = st ? st.d : pz ? pz.d : (act.gas && act.gas.d) || xp.d;
     if (st) {
       for (const [s, nu] of net) {
         const r = st.rows[s];
@@ -4229,6 +4325,23 @@
         for (const j of xp.members[x]) d[j] -= (nu * xp.n[j]) / sum;
       }
     }
+    /*
+      The pressure: d/dP of the relation's residual -- its coefficients',
+      its molar volumes' part of ln K, its water's -- times dP/dn of each
+      gas. `eq`, where given, for the water and a phase's own volume.
+    */
+    if (pd) {
+      let t = 0;
+      for (const [s, nu] of net) t += nu * (pd.dlnG[s] + pd.dpv[s]);
+      if (eq) {
+        if (eq.water) t += eq.water * (pd.dlnAw + pd.dpvW);
+        if (eq.vm0) t -= eq.c0 * eq.vm0 * pd.dpf;
+      }
+      if (t) {
+        const gl = act.gas.list;
+        for (let j = 0; j < gl.length; j++) d[gl[j]] += t * pd.dPdn[j];
+      }
+    }
     return d;
   }
   function sitDone(act, net) {
@@ -4236,7 +4349,8 @@
     const pz = act.pz;
     const gas = act.gas && act.gas.dln ? act.gas : null;
     const xp = act.ex && act.ex.perAny ? act.ex : null;
-    const d = st ? st.d : pz ? pz.d : gas ? gas.d : xp.d;
+    const d = st ? st.d : pz ? pz.d : (act.gas && act.gas.d) || xp.d;
+    if (act.gas && act.gas.follow) for (const k of act.gas.list) d[k] = 0;
     if (xp) {
       for (const [s] of net) if (xp.site[s] === 1 && xp.per[xp.of[s]]) for (const j of xp.members[xp.of[s]]) d[j] = 0;
     }
@@ -4998,8 +5112,9 @@
     let dlnA = 0;
     let dlnB = 0;
     const dGw = act.dGw;
-    if (aw !== 1 && act.wt) {
-      const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, aw);
+    // At the pressure of a gas the water follows (gasPressure), always afresh.
+    if ((aw !== 1 || act.atmNow !== undefined) && act.wt) {
+      const w = waterAt(act.wtc ? act.wtc[cell] : act.wt, aw, act.atmNow);
       A = w.A * Math.LN10;
       B = w.B;
       dlnA = w.dlnA;
@@ -6273,6 +6388,22 @@
     } else if (pairLines.length) {
       throw new RtmError('<GAS_PAIRS> holds the binary parameters of real gases, and no gas is given Tc and Pc.', pairLines[0].line);
     }
+    /*
+      THE WATER AT THE GAS'S PRESSURE. In a fixed volume PHREEQC puts the
+      water at the gas phase's pressure as it goes, the sum of the partial
+      pressures (patm_x, held at 1500 atm outside LLNL's activity model): A
+      and B, the water's density and, with <VOLUMES>, every log K go with
+      it. So here, in each cell at each evaluation (gasPressure), unless
+      PRESSURE holds the water at a pressure of its own. Under SIT and
+      Pitzer the water stays at PRESSURE, 1 atm unless given, and the
+      warning says so.
+    */
+    const follow = hasV && !given.has('PRESSURE') && !!out.wt && !out.sit && !out.pz;
+    if (hasV && !given.has('PRESSURE') && (out.sit || out.pz)) {
+      warnings.push(`Under ACTIVITY = ${out.sit ? 'sit' : 'pitzer'} the water stays at ${+waterPressure(settings, species).toPrecision(6)} atm `
+        + '(PRESSURE), where PHREEQC puts it at the pressure of a gas phase in a fixed volume as that goes.');
+    }
+    const ns = species.length;
     out.gas = { list: gases, isGas, qOf, fixed: hasV ? 'volume' : 'pressure', volume: hasV ? V : 0, pressure: hasP ? P : 0,
       temperature: tc, RT: R_LITER_ATM * tk,
       // In a fixed volume of ideal gases, ln(R T/V): every gas's coefficient, in every cell.
@@ -6280,7 +6411,15 @@
       pr,
       // A real gas in a fixed volume: d(ln gamma_i)/dC_j between the gases, and the scratch their sums go into.
       dln: pr && hasV ? new Float64Array(gases.length * gases.length) : null,
-      d: pr && hasV ? (out.sit ? out.sit.d : out.pz ? out.pz.d : new Float64Array(species.length)) : null };
+      d: (pr && hasV) || follow ? (out.sit ? out.sit.d : out.pz ? out.pz.d : new Float64Array(ns)) : null,
+      // The water at the gas's pressure: dP/dn of each gas, where above it the water is held, and central differences'
+      // scratch.
+      follow,
+      dPdn: follow ? new Float64Array(gases.length) : null,
+      cap: out.llnl ? Infinity : 1500,
+      fd: follow ? { lnG1: new Float64Array(ns), dG1: new Float64Array(ns), lnG2: new Float64Array(ns),
+        dG2: new Float64Array(ns), pv1: new Float64Array(ns), pv2: new Float64Array(ns), dlnG: new Float64Array(ns),
+        dpv: new Float64Array(ns) } : null };
     // A bubble is a group (groupSystems): its relations come and go together, their total the pressure.
     if (hasP) {
       const def = { kind: 'gas', name: 'the bubble', lnP: Math.log(P), coef: pr ? 'pr' : null, gas: out.gas };
@@ -7787,7 +7926,7 @@
         if (wv) r += wv * water.lnAw;
         if (row) {
           // Under SIT a coefficient also reads the species it is paired with; the volumes go with I and the water.
-          const sd = sitPartners(act, eq.net, water);
+          const sd = sitPartners(act, eq.net, water, eq);
           G += pressureTermI(eq, water);
           const wd = waterCoef(eq, water);
           for (let k = 0; k < na; k++) {
@@ -8230,7 +8369,7 @@
     // the full speciation.
     // So does an exchanger whose sites go with a mineral, each species' fraction reading all that is on it; and a
     // mineral with bounds of its own (eq.bounds).
-    if (act && ((act.gas && act.gas.dln) || act.pz || (act.vol && !act.vol.idle)
+    if (act && ((act.gas && (act.gas.dln || act.gas.follow)) || act.pz || (act.vol && !act.vol.idle)
       || (act.pt && (act.pt.cd || act.pt.perM.some((m) => m >= 0))) || (act.ex && act.ex.perAny))) return null;
     if (eqs.some((eq) => eq.bounds)) return null;
     // A surface's potential is no component and worked out from none: an
@@ -9390,7 +9529,7 @@
       if (!act) continue;
       G += pressureTermI(eq, water);
       const wv = waterCoef(eq, water);
-      const sd = sitPartners(act, eq.net, water);
+      const sd = sitPartners(act, eq.net, water, eq);
       const d = (si) => G * 0.5 * act.z[si] * act.z[si] + (wv ? wv * awOf(act, water, si) : 0) + (sd ? sd[si] : 0);
       for (let k = 0; k < na; k++) {
         if (lin[k]) continue;
@@ -11270,7 +11409,9 @@
       const reac = side(eq.reactants);
       const prod = side(eq.products);
       // Under SIT a coefficient reads the species it is paired with, which may be neutral: every solute.
-      const realGas = act && act.gas && act.gas.dln && eq.net.some(([s]) => act.gas.isGas[s]) ? act.gas.list : [];
+      // A real gas reads every gas of its phase; at the pressure of a gas the water follows, every relation does.
+      const realGas = act && act.gas && ((act.gas.dln && eq.net.some(([s]) => act.gas.isGas[s])) || act.gas.follow)
+        ? act.gas.list : [];
       const colsOf = [...new Set([...reac.map(([k]) => k), ...prod.map(([k]) => k), ...(act && (act.sit || act.pz) ? solutes : ions),
         ...(eq.water || act.dGw || (act.vol && !act.vol.idle) ? solutes : []), ...realGas])].sort((x, y) => x - y);
       return { eq, reac, prod, cols: colsOf, at: new Map(colsOf.map((k, q) => [k, q])), net: eq.net,
@@ -12385,7 +12526,7 @@
             let G = pressureTermI(pr.eq, water);
             for (const [k, c] of pr.net) G += c * dG[k];
             if (pr.back !== 0) {
-              const sd = sitPartners(act, pr.net, water);
+              const sd = sitPartners(act, pr.net, water, pr.eq);
               const wd = waterCoef(pr.eq, water);
               pr.cols.forEach((k, q) => {
                 let g = G * 0.5 * act.z[k] * act.z[k];
@@ -12952,7 +13093,8 @@
     const propsOf = (c, b, cell) => {
       if (qPropsAt === qEval) return qProps;
       const wt = act.wtc ? act.wtc[cell] : act.wt;
-      const ws = waterAt(wt, Math.exp(qW.lnAw));
+      // The water at the pressure the evaluation left it at: a gas's it follows, where there is one (activityAt).
+      const ws = waterAt(wt, Math.exp(qW.lnAw), qAct.atmNow);
       const wv = waterVolume(wt, ws);
       qVm.fill(0);
       if (act.vol) {
@@ -13707,6 +13849,8 @@
       return [...Array(ns).keys()].filter((k) => act.z[k] !== 0
         || ((eq.water || act.sit || act.pz || act.dGw || (act.vol && !act.vol.idle)) && act.solute[k])
         || (act.gas && act.gas.dln && act.gas.isGas[k] && eq.net.some(([s]) => act.gas.isGas[s]))
+        // The water at the pressure of a gas in a fixed volume: every relation reads every gas (sitPartners).
+        || (act.gas && act.gas.follow && act.gas.isGas[k])
         || per.has(k));
     });
     const n = nBase + nc * nb;
@@ -14271,7 +14415,7 @@
           let G = pressureTermI(eqs[r], water);
           for (const [s, nu] of eqs[r].net) G += nu * dG[s];
           const w = waterCoef(eqs[r], water);
-          const sd = sitPartners(act, eqs[r].net, water);
+          const sd = sitPartners(act, eqs[r].net, water, eqs[r]);
           actCols[r].forEach((k, q) => {
             let d = G * 0.5 * act.z[k] * act.z[k];
             if (w) d += w * awOf(act, water, k);
@@ -14297,7 +14441,7 @@
               let Gd = pressureTermI(eq, water);
               for (const [s, nu] of eq.net) Gd += nu * dG[s];
               const w = waterCoef(eq, water);
-              const sd = sitPartners(act, eq.net, water);
+              const sd = sitPartners(act, eq.net, water, eq);
               for (const k of actCols[r]) {
                 let d = Gd * 0.5 * act.z[k] * act.z[k];
                 if (w) d += w * awOf(act, water, k);
