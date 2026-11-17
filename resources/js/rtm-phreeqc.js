@@ -2865,6 +2865,8 @@
    * @returns {{text, report, water}}
    */
   function waterToModel(o) {
+    // As given: a column's cell input stands for the water below, and the water taken again starts from the input.
+    const given = o;
     const floor = o.floor != null ? o.floor : 1e-20;
     if (o.exact && (o.relax || o.kf)) {
       throw new Error('The relations are held either exactly or as fast pairs with a kf, not both.');
@@ -3079,20 +3081,22 @@
       reactant that takes something the water has none of brings it when
       it runs the other way, and 1e-20 mol taken from none would leave it
       below nought, where PHREEQC stops. Where the input reacts already,
-      that is left as it is.
+      that is left as it is. The trace is of the reactants carried: where
+      one is left out, the water is taken again without its trace (below).
     */
     let traced = false;
-    if (carryKin) {
+    const traceComps = carryKin ? kinBlock.comps.filter((c) => !o.traceOf || o.traceOf.includes(c.name)) : [];
+    if (traceComps.length) {
       const has = new Set([...w.species].filter(([, [m]]) => m > 0).map(([n]) => n));
       const of = (c) => c.formula.flatMap(([f]) => {
         const pk = phaseKey.get(f.toLowerCase());
         if (pk) { const r = db.phaseReaction.get(pk); return [...r.left.slice(1), ...r.right].map((t) => t.n); }
         try { return [...formulaReaction(f, db).keys()]; } catch (e) { return []; }
       }).filter((n) => n !== 'H2O' && n !== 'e-');
-      const lacking = kinBlock.comps.some((c) => of(c).some((n) => !has.has(n)));
+      const lacking = traceComps.some((c) => of(c).some((n) => !has.has(n)));
       if (lacking && !/^\s*REACTION\b/im.test(waterText)) {
         // In the last simulation: before its END, where it has one.
-        const terms = kinBlock.comps.flatMap((c) => c.formula.filter(([, k]) => k !== 0).map(([f, k]) => ` ${f}  ${Math.abs(k)}`));
+        const terms = traceComps.flatMap((c) => c.formula.filter(([, k]) => k !== 0).map(([f, k]) => ` ${f}  ${Math.abs(k)}`));
         const trace = `REACTION 1\n${terms.join('\n')}\n 1e-20 moles\n`;
         const lines = waterText.split(/\r\n|\r|\n/);
         let at = lines.length;
@@ -3496,6 +3500,9 @@
       };
       for (const comp of kinBlock.comps) {
         const skip = (why) => kinSkipped.push({ name: comp.name, why });
+        // Left out where the water was taken with its trace: for the reason it was then (below).
+        const before = (o.leftOut || []).find((s) => s.name === comp.name);
+        if (before) { skip(before.why); continue; }
         const def = rateDefs.get(comp.name.toLowerCase());
         if (!def) { skip('the database and the input have no RATES for it'); continue; }
         // Its reaction, per mole of it.
@@ -3915,6 +3922,21 @@
           kinSkipped.push({ name: k.comp.name, why: e.message });
           kinetics.splice(i, 1);
         }
+      }
+    }
+    /*
+      A reactant left out grows nothing from its trace: its species would be
+      carried at 1e-20 with nothing to make them. Where the trace was of one
+      left out, the water is taken again with the trace of those carried
+      alone, and with none where none is, what was left out left out for the
+      reason it was here, where its trace was there to read; each time with
+      fewer, so it ends.
+    */
+    if (traced) {
+      const carried = new Set(kinetics.map((k) => k.comp.name));
+      const tracedOf = traceComps.map((c) => c.name);
+      if (tracedOf.some((n) => !carried.has(n))) {
+        return waterToModel({ ...given, traceOf: tracedOf.filter((n) => carried.has(n)), leftOut: kinSkipped.slice() });
       }
     }
     /*

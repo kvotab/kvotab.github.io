@@ -4040,10 +4040,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             (<code>PUT</code>, <code>GET</code>, <code>CALC_VALUE</code>) is not carried, and the report
             says why. The water the run starts from is the input's without its <code>KINETICS</code>:
             the run is what PHREEQC's kinetic steps are, <code>TEND</code> their sum. Where the reactants
-            bring what the water has none of, it is taken with 10<sup>−20</sup>&nbsp;mol of them in it, so
-            that there is something to grow from — every term of a formula added, one it takes away as
-            well, which it brings when it runs the other way; and every species of what they bring or take is
-            written, whatever the floor. A reaction that moves electrons needs the valence states held
+            carried bring what the water has none of, it is taken with 10<sup>−20</sup>&nbsp;mol of them in
+            it, so that there is something to grow from — every term of a formula added, one it takes away
+            as well, which it brings when it runs the other way, and nothing of a reactant not carried; and
+            every species of what the reactants bring or take is written, whatever the floor. A reaction
+            that moves electrons needs the valence states held
             at one pe; with them held, each species of the water's redox elements that PHREEQC finds
             none of is written as well, at none, with the database's log K — the sulphide of a sulphate
             water that organic carbon is to reduce, where the water has none yet — so that the
@@ -4918,6 +4919,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261116g"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117a"></script>
 </body>
 </html>

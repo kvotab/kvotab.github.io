@@ -6174,6 +6174,46 @@ function againstKineticsHandOff(engine) {
     + 'the formula, the KCl too, and the run against PHREEQC\'s KINETICS',
   !back.error && back.trace === 1e-20 && !back.skipped.length && back.worst < 1e-9 && Math.abs(back.K / 2e-4 - 1) < 1e-9,
   back.error || `potassium ${back.K.toExponential(6)} mol/kgw at the end, within ${back.worst.toExponential(1)}`);
+
+  /*
+    8. A reactant left out brings no trace: beside the salt of 7, a reactant
+    of the test's own whose rate PUTs, which a rate law here cannot be made
+    of, its formula SrCl2, and the water has no strontium. The salt is
+    carried with its trace, potassium; the other is left out, and no
+    strontium is carried. Alone, it is left out and the water is taken with
+    no trace at all: the species those of the input with its KINETICS left
+    out, and the pH PHREEQC's of it.
+  */
+  const dud = (() => {
+    const rt = 'RATES\nUptake\n-start\n10 rate = -PARM(1)\n20 SAVE rate * TIME\n-end\n'
+      + 'Dud\n-start\n10 PUT(1, 1)\n20 rate = 0\n30 SAVE rate * TIME\n-end\n';
+    const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n Na 10\n Cl 10\n';
+    const uptake = 'Uptake\n -formula NaCl 1 KCl -0.2\n -m 1\n -parms 1e-8\n';
+    const put = 'Dud\n -formula SrCl2 1\n -m 1\n';
+    const hand = (kin, kinetics) => {
+      engine.load(dbText);
+      const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+        water: { name: 'left out', text: `${KIN}${rt}${sw}KINETICS 1\n${kin} -steps 1e5 in 10\nEND\n` },
+        activity: true, exact: true, redox: false, floor: 0, kinetics });
+      return { report: res.report, names: RtmModel.compile(res.text).speciesNames };
+    };
+    try {
+      return { both: hand(`${uptake}${put}`, true), alone: hand(put, true), none: hand(put, false) };
+    } catch (e) { return { error: e.message }; }
+  })();
+  const strontium = (x) => x.names.filter((n) => /^Sr/.test(n));
+  const putWhy = (x) => (x.report.kineticsSkipped.find((s) => s.name === 'Dud') || {}).why || '';
+  check('  a reactant left out brings no trace: beside the salt, carried with its trace of potassium, a reactant whose '
+    + 'rate PUTs, its formula SrCl2 in a water with no strontium, is left out and no strontium is carried; alone, the '
+    + 'water is taken with no trace at all, its species and pH those of the input with its KINETICS left out',
+  !dud.error && /PUT/.test(putWhy(dud.both)) && !!dud.both.report.kinetics && dud.both.report.kinetics.trace === 1e-20
+    && dud.both.names.includes('K+') && !strontium(dud.both).length
+    && /PUT/.test(putWhy(dud.alone)) && !dud.alone.report.kinetics && !strontium(dud.alone).length
+    && dud.alone.names.join() === dud.none.names.join() && Math.abs(dud.alone.report.pH - dud.none.report.pH) < 1e-12,
+  dud.error || `with the salt: ${dud.both.names.length} species, strontium's ${strontium(dud.both).join(', ') || 'none'}; `
+    + `alone: ${dud.alone.names.length} species (${dud.none.names.length} with no KINETICS), strontium's `
+    + `${strontium(dud.alone).join(', ') || 'none'}, pH ${dud.alone.report.pH.toFixed(12)} `
+    + `(${dud.none.report.pH.toFixed(12)}); left out: ${putWhy(dud.alone)}`);
   engine.load(dbText);
 }
 
