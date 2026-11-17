@@ -24,6 +24,9 @@
      and declines what it cannot pivot on; `auto` takes it where the matrix
      falls into blocks, facsimile.html's and rtm.html's entry never; and the
      natural ordering's trial, stopped at the other's fill, decides as before.
+  9. A step the caller will not take (stepCheck answering false) is taken
+     again, shorter, and counted; one never taken stops the run at the
+     smallest step; the bundle and facsimile-solver.js refuse alike.
 
   The pages' own suites are what check the numbers against references:
   resources/tests/facsimile/, resources/tests/rtm/ and kompartment/test/.
@@ -341,6 +344,37 @@ function hash(rows) {
   check('the natural trial stopped early decides as two whole trials did',
     order(arrow) === whole(arrow) && order(reversed) === whole(reversed) && order(arrow) !== order(reversed),
     `${order(arrow)} ${whole(arrow)} ${order(reversed)} ${whole(reversed)}`);
+}
+
+// --- 9. a step the caller will not take ---------------------------------------------------
+{
+  const decay = (t, y, out) => { out[0] = -y[0]; return out; };
+  let shown = 0;
+  const res = core.ndf(decay, [0, 2], Float64Array.of(1), { rtol: 1e-8, abstol: 1e-12, stepCheck: () => shown++ >= 3 });
+  check('stepCheck answering false: the step taken again and counted, and the answer the same',
+    res.stats.nchecked === 3 && Math.abs(res.end.y[0] - Math.exp(-2)) < 2e-8,
+    `${res.stats.nchecked} refused, off by ${Math.abs(res.end.y[0] - Math.exp(-2))}`);
+  const never = throws(() => core.ndf(decay, [1, 3], Float64Array.of(1), { stepCheck: () => false }));
+  check('  a state never taken: the step cut to the smallest, and the run stops there, saying so',
+    never && never.code === 'tolerance' && never.t === 1 && never.stats.nchecked > 0 && never.stats.nsteps === 0,
+    never ? `${never.code} at ${never.t}` : 'no failure');
+  // Every fifth state the iteration settles on refused, through the modules and the bundle.
+  const fifth = () => { let n = 0; return () => ++n % 5 !== 0; };
+  const run = (api) => api.ndf(robertson.f, [0, 0.4, 40, 4e5], Float64Array.of(1, 0, 0), {
+    rtol: 1e-6, abstol: [1e-8, 1e-14, 1e-6], stepCheck: fifth(),
+  });
+  const a = run(core);
+  const b = run(bundle);
+  const y = a.y[a.y.length - 1];
+  const want = [4.9394e-3, 1.9854e-8, 0.99506];
+  check('  Robertson with every fifth step refused: the published answer, and the same bits from the bundle',
+    a.stats.nchecked > 0 && want.every((w, i) => Math.abs(y[i] / w - 1) < 2e-3) && hash(a.y) === hash(b.y)
+      && a.stats.nchecked === b.stats.nchecked,
+    `${a.stats.nchecked} and ${b.stats.nchecked} refused; ${Array.from(y).map((v) => v.toExponential(4)).join(' ')}`);
+  const jacobian = { pattern: { n: 1, nnz: 1, colPtr: Int32Array.of(0, 1), rowIdx: Int32Array.of(0) }, evaluate: () => Float64Array.of(-1) };
+  const w = FacsimileODE.ndf(decay, 0, 2, Float64Array.of(1), { rtol: 1e-8, atol: 1e-12, jacobian, stepCheck: fifth() });
+  check('  and facsimile-solver.js hands it on', w.stats.nchecked > 0 && Math.abs(w.y[0] - Math.exp(-2)) < 2e-8,
+    `${w.stats.nchecked} refused`);
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

@@ -6633,6 +6633,43 @@ async function againstPathHandOff(engine, createPhreeqc) {
     + `totals ${on.tot.toExponential(1)} (${on.totWhere}), the gases ${on.held.toExponential(1)} mol (${on.heldWhere})`
     : JSON.stringify(on.res.report.pathSkipped));
 
+  // The same into a fixed volume of gas, to a mole of organic matter. Near where ammonium gives way to N2 the solver's
+  // iteration can settle with the held species far from the speciation of the totals it has reached, the totals right
+  // and NH4+ and N2 orders of magnitude above all the nitrogen there is; such a step is taken again, shorter. Every
+  // point of the run as the page runs it has the nitrogen added in its species, the water's and the gas's.
+  const orgNv = 'SOLUTION 1\n units mmol/kgw\n pH 7 charge\n Na 2\n Cl 2\n C(4) 3\n Ca 1\nEQUILIBRIUM_PHASES 1\n Calcite 0 0.01\n'
+    + 'SAVE solution 1\nEND\nUSE solution 1\nGAS_PHASE 1\n -fixed_volume\n -volume 20\n CO2(g) 0\n CH4(g) 0\n N2(g) 0\n'
+    + ' -equilibrate 1\nREACTION 1\n CH2O(NH3)0.08 1.0\n 1 2 4 8 16 32 64 125 250 500 1000 mmol\nEND\n';
+  const ov = along(orgNv);
+  const ovp = ov.res.report.path;
+  let nOff = 0;
+  let nWhere = '';
+  let nPts = 0;
+  let cut = 0;
+  if (ovp) {
+    const pr = pageRun(ov.res.text, ovp.tend);
+    const nOf = ov.m.speciesNames.map((n) => (RtmModel.elementsOf(n) || new Map()).get('N') || 0);
+    nPts = pr.t.length;
+    cut = pr.stats.nchecked;
+    for (let k = 0; k < nPts; k++) {
+      let tot = 0;
+      nOf.forEach((a, j) => { if (a) tot += a * pr.states[k * pr.width + j]; });
+      // A mmol of reaction to each 1 on the clock, 0.08 of nitrogen in it, to the page's kilogram.
+      const added = (0.08e-3 * pr.t[k]) / ovp.kgw;
+      const d = Math.abs(tot - added) / (added + 1e-12);
+      if (!Number.isFinite(d)) { nOff = Infinity; nWhere = `${pr.t[k].toPrecision(4)} mmol`; } else if (d > nOff) { nOff = d; nWhere = `${pr.t[k].toPrecision(4)} mmol`; }
+    }
+  }
+  check('  ... and into a fixed volume of gas, to a mole of organic matter: every point of the run as the page runs it '
+    + 'with the nitrogen added in its species, the water\'s and the gas\'s, a step the solver settles on with its held '
+    + 'species far from the speciation of its totals taken again; at each of PHREEQC\'s steps the pH, the totals and the '
+    + 'gases PHREEQC\'s',
+  !!ovp && ovp.tend === 1000 && nPts > 50 && nOff < 1e-3 && ov.pq.length === 11 && ov.pH < 5e-4 && ov.tot < 5e-3
+    && ov.held < 1e-4,
+  ovp ? `${nPts} points, the nitrogen in the species within ${nOff.toExponential(1)} of the nitrogen added (${nWhere}), `
+    + `${cut} step${cut === 1 ? '' : 's'} taken again; pH within ${ov.pH.toExponential(1)}, totals ${ov.tot.toExponential(1)} `
+    + `(${ov.totWhere}), the gases ${ov.held.toExponential(1)} mol (${ov.heldWhere})` : JSON.stringify(ov.res.report.pathSkipped));
+
   // 6. PHREEQC's own steps beside the run, as the page asks for them.
   const handle = E.handler(createPhreeqc, { builtin: dbText });
   const ask = (msg) => new Promise((resolve) => { handle(msg, (m) => { if (m.type !== 'progress') resolve(m); }); });

@@ -2816,7 +2816,9 @@ SO4-2 + 9 H+ + 8 e- &lt;=&gt; HS- + 4 H2O,    logK = 33.65</pre>
             as PHREEQC speciates a water in its master species, and only the totals are held to the
             tolerance. That is what carries a run through the moment no couple buffers the pe — the last
             pyrite gone, the oxygen coming in not yet built up — where the pe moves by ten while what is
-            conserved moves by less than the arithmetic can tell.</p>
+            conserved moves by less than the arithmetic can tell. A step ends with each cell's species
+            on the speciation of the totals it has reached, each within a part in a thousand; a step
+            that ends further from it is taken again, shorter.</p>
 
           <h4 id="help-gas">A gas phase</h4>
           <pre>GAS_VOLUME = 0.5          # litres of gas to each kilogram of water
@@ -5021,11 +5023,11 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
       rtm-ui             this page
   -->
   <script src="./resources/js/facsimile-model.js?v=20261005"></script>
-  <script src="./resources/js/ode-core.js?v=20261107a"></script>
-  <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
+  <script src="./resources/js/ode-core.js?v=20261117l"></script>
+  <script src="./resources/js/facsimile-solver.js?v=20261117l"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261117k"></script>
+  <script src="./resources/js/rtm-model.js?v=20261117l"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261117k"></script>
@@ -5033,6 +5035,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117k"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117l"></script>
 </body>
 </html>

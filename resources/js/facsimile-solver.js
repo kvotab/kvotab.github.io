@@ -131,7 +131,8 @@
    *   nonNegative (bool[] or null), mass (diagonal: 1 differential, 0 algebraic),
    *   absolute (bool[] or null: logarithms, weighed against atol/rtol alone),
    *   weightScale ((y, ynew, inv) => void: lowers the weights of states that
-   *   matter less, step by step; see the NDF), suppressAlgebraic,
+   *   matter less, step by step; see the NDF), stepCheck ((t, ynew) => bool:
+   *   false cuts a step its Newton settled on; see the NDF), suppressAlgebraic,
    *   norm ('max'|'rms'), normControl, scaling, minNewton,
    *   stagnationTol, belowTolRun, autoAtol,
    *   jacobian: {pattern, evaluate(t,y), groups} -- `evaluate` optional (differenced through the pattern),
@@ -177,6 +178,7 @@
       nonNegative,
       absolute,
       weightScale: typeof opts.weightScale === 'function' ? opts.weightScale : undefined,
+      stepCheck: typeof opts.stepCheck === 'function' ? opts.stepCheck : undefined,
       mass: opts.mass,
       suppressAlgebraic: !!opts.suppressAlgebraic,
       jacobian: Jopt,
@@ -732,7 +734,7 @@
     };
 
     const eventLog = [];
-    const total = { nsteps: 0, nfailed: 0, nfevals: 0, npds: 0, ndecomps: 0, nsolves: 0, nbelowtol: 0, negative: 0, repivots: 0, fallbacks: 0, segments: 0, breaks: 0 };
+    const total = { nsteps: 0, nfailed: 0, nfevals: 0, npds: 0, ndecomps: 0, nsolves: 0, nbelowtol: 0, negative: 0, repivots: 0, fallbacks: 0, segments: 0, breaks: 0, nchecked: 0 };
     // What a solver may carry from one segment of the run to the next, the run
     // being restarted at every event: the switching solvers keep here whether
     // they ended stiff, and go on from there. One object for the whole run.
@@ -781,6 +783,8 @@
         absolute: model.absoluteMask && model.absoluteMask.length === n ? model.absoluteMask : null,
         // ...and step by step, those of them that count for less (see the NDF's weightScale).
         weightScale: typeof model.weightScale === 'function' ? model.weightScale : null,
+        // ...and a step the model will not take as it stands (see the NDF's stepCheck).
+        stepCheck: typeof model.stepCheck === 'function' ? model.stepCheck : null,
         maxSteps: opts.maxSteps,
         // The first step, at the start and at every restart after an event,
         // as Kompartment hands its solvers one; and the NDF's norm control.
@@ -806,7 +810,7 @@
         e.partial = partial();
         throw e;
       }
-      for (const key of ['nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'nbelowtol', 'negative', 'repivots', 'fallbacks']) total[key] += res.stats[key] || 0;
+      for (const key of ['nsteps', 'nfailed', 'nfevals', 'npds', 'ndecomps', 'nsolves', 'nbelowtol', 'negative', 'repivots', 'fallbacks', 'nchecked']) total[key] += res.stats[key] || 0;
       // The switching solvers' account: the steps each of their methods took,
       // and how often they changed between them, summed over the segments.
       if (res.stats.stepsBy) {

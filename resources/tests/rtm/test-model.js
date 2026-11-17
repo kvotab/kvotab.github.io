@@ -4385,6 +4385,18 @@ ${EQ}${FE}`);
   check('  read back saturated where there is calcite and none where not, and the Jacobian of the projected form at the end',
     feOff < 1e-12 && feOver < 1e-9 && feCrumbs === 0 && vf.discrepancies.length === 0,
     `|SI| ${feOff.toExponential(1)}, SI with none at most ${feOver.toExponential(1)}, ${feCrumbs} crumbs; ${vf.checked} entries`);
+  // A step the solver settles on, looked at against the speciation of each cell's totals (stepCheck): where the run
+  // ends is taken; the same with Fe+3 in one cell moved off its speciation, the totals as they were, is not. The column
+  // without the electron, whose species are not projected, has no such look.
+  const yEnd = Float64Array.from(rf6.y[rf6.y.length - 1]);
+  const moved = Float64Array.from(yEnd);
+  moved[7 * nsf + mf.speciesNames.indexOf('Fe+3')] += 1;
+  const takesEnd = typeof mf.stepCheck === 'function' && mf.stepCheck(4e6, yEnd);
+  const takesMoved = typeof mf.stepCheck === 'function' && mf.stepCheck(4e6, moved);
+  check('  a step with a held species off the speciation of its cell\'s totals refused, one with all of them on it taken; '
+    + 'without the electron nothing to look at',
+  takesEnd && !takesMoved && typeof ms.stepCheck === 'undefined',
+  `the end taken: ${takesEnd}; Fe+3 moved in cell 8 taken: ${takesMoved}; without the electron: ${typeof ms.stepCheck}`);
   // Held by events, projected: where the event a mineral just precipitated was watched against none, it never fired,
   // the calcite ran below none and drained its cell -- one at pH 4.1 at rtol 1e-6, the column another at each rtol.
   let dpFeEv = 0;

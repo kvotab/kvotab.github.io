@@ -696,6 +696,9 @@ class Differencer {
  *   weightScale        (y, ynew, inv) => void, called once the weights of a
  *                      step are set: it may lower inv[i], so that state i
  *                      counts for less, and never raise it; see where it is read
+ *   stepCheck          (t, ynew) => bool, called once a step's Newton iteration
+ *                      has settled: false and the step is cut, as one whose
+ *                      iteration did not settle; see where it is read
  *   iterationMatrix    (pattern, J, opts) => the matrix Newton iterates with,
  *                      in the shape ../core/sparse.js's `iterationMatrix`
  *                      gives it, which is used when this is left out
@@ -829,6 +832,12 @@ export function ndf(f, tspan, y0, options = {}) {
 		errorWeight.scale = o.weightScale;
 		newtonWeight.scale = o.weightScale;
 	}
+	// What the caller says of a state the iteration settled on that the
+	// weights cannot: states weighed at nothing -- an rtm.html species held by
+	// projection, the speciation of its cell's totals, which the iteration
+	// leaves at its last linear update -- may be far from what they stand for.
+	const stepCheck = typeof o.stepCheck === 'function' ? o.stepCheck : null;
+	let nchecked = 0;
 	// How many failing steps at the smallest step size may be taken in a row.
 	// Unset, this solver's own rule: up to MAX_BELOW_TOLERANCE steps that fail
 	// the error test, and none whose Newton iteration will not converge. Set,
@@ -885,7 +894,7 @@ export function ndf(f, tspan, y0, options = {}) {
 		e.trace = trace.slice();
 		e.lastT = t;
 		e.lastY = Float64Array.from(y);
-		e.stats = { nsteps, nfailed, nfevals, npds, ndecomps, nsolves };
+		e.stats = { nsteps, nfailed, nfevals, npds, ndecomps, nsolves, nchecked };
 		return e;
 	};
 
@@ -1292,6 +1301,20 @@ export function ndf(f, tspan, y0, options = {}) {
 				formW();
 				continue;
 			}
+			// A state the caller will not take (stepCheck) is a corrector that
+			// did not settle: a Jacobian from this step first, then a shorter
+			// step, and at the shortest the run stops and says so.
+			if (stepCheck && !stepCheck(tnew, ynew)) {
+				nfailed++;
+				nchecked++;
+				if (o.debug) o.debug({ t, h, k, stepCheck: true, ynew: Float64Array.from(ynew) });
+				if (!jacFresh) { evaluateJacobian(null); readHeld(); formW(); continue; }
+				if (Math.abs(h) <= hmin) throw fail(floorFailure(false));
+				changeStep(NEWTON_CUT);
+				last = false;
+				formW();
+				continue;
+			}
 			rate = rho;
 
 			// --- the error test ----------------------------------------------
@@ -1489,7 +1512,7 @@ export function ndf(f, tspan, y0, options = {}) {
 		end: { t, y: Float64Array.from(y) },
 		stopped,
 		stats: {
-			nsteps, nfailed, nfevals, npds, ndecomps, nsolves, nbelowtol, negative, held,
+			nsteps, nfailed, nfevals, npds, ndecomps, nsolves, nbelowtol, negative, held, nchecked,
 			sparse: info.sparse,
 			fill: info.fill,
 			ordering: info.ordering,

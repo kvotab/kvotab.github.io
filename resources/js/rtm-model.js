@@ -14837,6 +14837,43 @@
     });
     const partY = new Float64Array(nb);
     const partNew = new Float64Array(nb);
+    /*
+      A STEP'S HELD SPECIES, looked at once its Newton iteration has settled
+      (the NDF's stepCheck). Projected, each held species is the speciation of
+      its cell's totals, and the iteration weighs it at nothing (weightScale):
+      what a step ends with is the last iteration's linear update from that
+      speciation, which near a turn of a couple -- ammonium giving way to N2 as
+      organic matter comes in -- can be far from it while the totals are right,
+      ammonium and N2 orders of magnitude above all the nitrogen there is, and
+      the step was taken so. A step whose held species are where the
+      projection of its last iterate put them (xs, a correction short of the
+      step: the iteration's last evaluation), each within HELD_STEP_TOL (in
+      ln C, or of an amount, relative to its scale), is taken as it is: its
+      correction moved them no more than that. Any further, and each cell is
+      projected again from the totals the step settled on, at its time's
+      temperature: a held species further from that than HELD_STEP_TOL, or a
+      cell that does not settle, and the step is cut, as one whose iteration
+      did not settle.
+    */
+    const HELD_STEP_TOL = 1e-3;
+    const heldOff = (y) => {
+      for (let c = 0; c < nc; c++) {
+        const x = xs[c];
+        if (!x) return true;
+        for (let k = 0; k < na; k++) {
+          const s = c * ns + active[k];
+          const off = Math.abs(x[k] - y[s]) / (lin[s] ? Math.max(Math.abs(x[k]), compScaleOf(c, active[k])) : 1);
+          if (!(off <= HELD_STEP_TOL)) return true;
+        }
+      }
+      return false;
+    };
+    function stepCheck(t, y) {
+      if (!heldOff(y)) return true;
+      thermoAt(t);
+      if (!projectAll(y)) return false;
+      return !heldOff(y);
+    }
     function weightScale(y, ynew, inv) {
       for (let c = 0; c < nc; c++) {
         const b = c * ns;
@@ -15023,6 +15060,8 @@
       nonNegativeMask,
       absoluteMask,
       ...(projected || anySigned ? { weightScale } : {}),
+      // Projected, a step's held species looked at against its totals' speciation once its Newton has settled.
+      ...(projected ? { stepCheck } : {}),
       atolFor,
       stateWidth: nBase,
       toConcentrations,
