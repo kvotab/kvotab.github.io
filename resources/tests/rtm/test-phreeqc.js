@@ -89,6 +89,22 @@ console.log('\n--- reading ---');
   check('a leading group renamed', P.rtmName('(UO2)2(OH)2+2', taken) === 'UO2_2(OH)2+2');
   check('a dimer renamed', P.rtmName('(CO2)2', taken) === 'CO2_2');
   check('a plain name kept', P.rtmName('UO2(CO3)3-4', taken) === 'UO2(CO3)3-4');
+  // Every FOR of the punch PHREEQC runs for a water is jumped where its list is empty: PHREEQC's BASIC skipping an
+  // empty FOR spoils its memory, and a later load of a database falls over it -- a database with no phase for the
+  // water (the tests' own llnl-format one) did so at every hand-off.
+  {
+    const text = P.punchBlock(['TOT("Na")'], true);
+    const fors = [...text.matchAll(/^ *(\d+) FOR i = 1 TO (\w+)$/gm)];
+    const jumped = fors.filter(([, at, v]) => {
+      const g = new RegExp(`^ *(\\d+) IF ${v} < 1 THEN GOTO (\\d+)$`, 'm').exec(text);
+      const next = new RegExp(`^ *(\\d+) +NEXT i$`, 'gm');
+      let after = null;
+      for (const m of text.matchAll(next)) if (Number(m[1]) > Number(at)) { after = Number(m[1]); break; }
+      return g && Number(g[1]) < Number(at) && after !== null && Number(g[2]) > after;
+    });
+    check('every FOR of the punch PHREEQC runs for a water is jumped where its list is empty, past its NEXT',
+      fors.length === 8 && jumped.length === fors.length, `${jumped.length} of ${fors.length} jumped`);
+  }
   check('every renamed name is one rtm.html takes',
     ['(UO2)2(OH)2+2', '(CO2)2', 'Fe(OH)3-', 'CaCO3:H2O'].every((n) => RtmModel.speciesNameOk
       ? RtmModel.speciesNameOk(P.rtmName(n)) : /^[A-Za-z](?:[A-Za-z0-9_]|\([A-Za-z0-9_]+\))*(?:[+-][0-9]*)?$/

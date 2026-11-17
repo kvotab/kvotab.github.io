@@ -1359,29 +1359,32 @@
       `USER_PUNCH ${SEL}`,
       `  -headings aq phases elements mu pH mH cb aw tc pe ex sf${more.map((_, i) => ` x${i}`).join('')}${held ? ' ue ug us' : ''}`,
       '  -start',
+      // Every FOR over a list is jumped, not entered, where the list is empty: PHREEQC's BASIC skipping
+      // an empty FOR leaves its memory spoiled, and a later load of a database falls over it (WebAssembly:
+      // memory access out of bounds) -- a database with no phase for the water, at every hand-off.
       '  10 t = SYS("aq", n, nm$, ty$, mo)',
       '  20 s$ = ""',
+      '  25 IF n < 1 THEN GOTO 60',
       '  30 FOR i = 1 TO n',
       '  40   s$ = s$ + nm$(i) + "," + STR_E$(MOL(nm$(i)), 23, 15) + "," + STR_E$(LG(nm$(i)), 23, 15) + "|"',
       '  50 NEXT i',
       '  60 PUNCH s$',
       '  70 t = SYS("phases", n2, pn$, pt$, pv)',
       '  80 p$ = ""',
+      '  85 IF n2 < 1 THEN GOTO 120',
       '  90 FOR i = 1 TO n2',
       '  100   p$ = p$ + pn$(i) + "," + STR_E$(SI(pn$(i)), 23, 15) + "|"',
       '  110 NEXT i',
       '  120 PUNCH p$',
       '  130 t = SYS("elements", n3, en$, et$, ev)',
       '  140 e$ = ""',
+      '  145 IF n3 < 1 THEN GOTO 180',
       '  150 FOR i = 1 TO n3',
       '  160   e$ = e$ + en$(i) + "," + STR_E$(ev(i), 23, 15) + "|"',
       '  170 NEXT i',
       '  180 PUNCH e$, MU, -LA("H+"), MOL("H+"), CHARGE_BALANCE, ACT("H2O"), TC, -LA("e-")',
       // The species on an exchanger: mol/kgw, log activity and the log gamma
       // of its ion that the activity takes, the equivalent fraction left out.
-      // A FOR over no species at all is jumped, not entered: PHREEQC's BASIC
-      // skipping an empty FOR left its memory spoiled, and a later load of
-      // the database fell over it (WebAssembly: memory access out of bounds).
       '  182 t = SYS("ex", n4, xn$, xt$, xm)',
       '  183 x$ = ""',
       '  184 IF n4 < 1 THEN GOTO 188',
@@ -1390,8 +1393,7 @@
       '  187 NEXT i',
       '  188 PUNCH x$',
       // The species on a surface, as on an exchanger: mol/kgw, log activity
-      // (its fraction of the sites), log of what the fraction adds. Jumped
-      // over when there are none, for the same reason.
+      // (its fraction of the sites), log of what the fraction adds.
       '  190 t = SYS("surf", n5, sn$, st$, sm)',
       '  191 f$ = ""',
       '  192 IF n5 < 1 THEN GOTO 196',
