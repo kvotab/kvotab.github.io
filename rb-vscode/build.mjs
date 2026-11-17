@@ -47,7 +47,7 @@ const CACHE = path.join(HERE, '.cache');
   change with them: compare, then put the new hash here.
 */
 const READER_MIRRORS = {
-  'resources/js/rb-lazy-worker.js': 'sha256-erTgt6o4fr0u4R3N6p63bvGPclPAt8icf8vBfrP27Dk='
+  'resources/js/rb-lazy-worker.js': 'sha256-LZuk4BZOT1U8UaobsDkulXdv6goZe2JJVi/J55Uz3MA='
 };
 
 /* Files the site does not load but the extension ships, pinned here. */
@@ -100,8 +100,22 @@ function attr(tag, name) {
   return m ? m[1] : null;
 }
 
+// jsDelivr makes some files itself -- a .min.js the package does not have, a
+// +esm bundle -- and may make them again with another tool, which changes their
+// hash: on 2026-11-17 h5wasm.min.js came back from esbuild, and the page's pin
+// refused it. Such a file says so in its first comment. Pin the package's own.
+function madeByJsdelivr(bytes) {
+  return /^\/\*\*[\s\S]{0,300}?(?:Minified|Bundled) by jsDelivr/.test(bytes.subarray(0, 400).toString('latin1'));
+}
+
 /** A pinned file: from the cache, from the repo's own copy, or downloaded; always checked. */
 async function pinned(url, integrity) {
+  const bytes = await pinnedBytes(url, integrity);
+  if (madeByJsdelivr(bytes)) fail(`${url} is a file jsDelivr makes itself, and its hash can change: pin the package's own file`);
+  return bytes;
+}
+
+async function pinnedBytes(url, integrity) {
   const algorithm = integrity.split('-')[0];
   const cached = path.join(CACHE, url.replace(/^https:\/\//, ''));
   const candidates = [cached];
@@ -320,10 +334,10 @@ async function main() {
   for (const [name, integrity] of Object.entries(pluginPins)) vendored.push({ url: `${pluginBase}libH5Z${name}.so`, integrity });
 
   // Every h5wasm the scripts fetch must be the one the page's <script> pins.
-  const h5wasmTag = vendored.find(v => /\/h5wasm@[^/]+\/dist\/iife\/h5wasm\.min\.js$/.test(v.url));
+  const h5wasmTag = vendored.find(v => /\/h5wasm@[^/]+\/dist\/iife\/h5wasm\.js$/.test(v.url));
   if (!h5wasmTag) fail('rb.html no longer loads h5wasm from the CDN');
   for (const [rel, text] of Object.entries(sources)) {
-    for (const m of text.matchAll(/https:\/\/cdn\.jsdelivr\.net\/npm\/h5wasm@[^'"`\s]+h5wasm\.min\.js/g)) {
+    for (const m of text.matchAll(/https:\/\/cdn\.jsdelivr\.net\/npm\/h5wasm@[^'"`\s]+\/h5wasm(?:\.min)?\.js/g)) {
       if (m[0] !== h5wasmTag.url) fail(`${rel} fetches ${m[0]}, not the page's ${h5wasmTag.url}`);
       if (!text.includes(h5wasmTag.integrity)) fail(`${rel} fetches h5wasm without the page's pin`);
     }

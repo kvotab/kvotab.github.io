@@ -91,7 +91,7 @@ const _rbLazyPending = new Map();
 
 function rbLazyWorker() {
   if (_rbLazyWorker) return _rbLazyWorker;
-  _rbLazyWorker = new Worker('./resources/js/rb-lazy-worker.js?v=20261110');
+  _rbLazyWorker = new Worker('./resources/js/rb-lazy-worker.js?v=20261117a');
   _rbLazyWorker.onmessage = (event) => {
     const { id, ok, err } = event.data || {};
     const pending = _rbLazyPending.get(id);

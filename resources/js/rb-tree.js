@@ -733,7 +733,7 @@ function ensureTreeWorker() {
   if (treeWorker) return treeWorker;
   try {
     treeWorkerH5Ready = false;
-    treeWorker = new Worker('resources/js/tree-worker.js?v=20260926');
+    treeWorker = new Worker('resources/js/tree-worker.js?v=20261117a');
     treeWorker.onmessage = (ev) => {
       const d = ev.data || {};
       // handle generic notifications (no id) such as worker lifecycle messages

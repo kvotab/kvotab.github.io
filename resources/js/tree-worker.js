@@ -25,8 +25,8 @@ try { self.postMessage({ cmd: 'started' }); } catch (e) { /* ignore */ }
 // `integrity` -- the browser refuses anything else -- and run from those bytes.
 (async function loadH5wasm() {
   try {
-    const response = await fetch('https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.min.js',
-      { integrity: 'sha384-ddY2IJ7uyvBrG5FPTk2LGWBUTJBV+MchV38zJwXMPuFYM9YwIH4iN9RxvDe01UEW' });
+    const response = await fetch('https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.js',
+      { integrity: 'sha384-aTwh/FuQtcJd8ZKNGmoaUAXO8xDHXruMNlIXSL5FcavrkZ17sYyYy+oosr/yDsnf' });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const url = URL.createObjectURL(await response.blob());
     try { importScripts(url); } finally { URL.revokeObjectURL(url); }

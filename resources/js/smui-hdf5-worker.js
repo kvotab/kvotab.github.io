@@ -28,8 +28,8 @@
   the bytes are fetched with `integrity` -- the browser refuses anything but
   this build -- and run from those bytes.
 */
-const H5WASM_URL = 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.min.js';
-const H5WASM_INTEGRITY = 'sha384-ddY2IJ7uyvBrG5FPTk2LGWBUTJBV+MchV38zJwXMPuFYM9YwIH4iN9RxvDe01UEW';
+const H5WASM_URL = 'https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.js';
+const H5WASM_INTEGRITY = 'sha384-aTwh/FuQtcJd8ZKNGmoaUAXO8xDHXruMNlIXSL5FcavrkZ17sYyYy+oosr/yDsnf';
 
 /*
   Compression filters h5wasm has no decoder for, and the plugin that has

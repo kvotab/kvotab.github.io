@@ -432,11 +432,17 @@
   </script>
 
   <!--
-    h5wasm is 4.7 MB. Loading it synchronously blocked first paint even though
+    h5wasm is 5.7 MB. Loading it synchronously blocked first paint even though
     every caller already goes through waitForH5Wasm(), so it is deferred: the
     page renders immediately and the gate handles the rest.
+
+    It is the package's own dist/iife/h5wasm.js, which jsDelivr serves as npm
+    has it, never jsDelivr's h5wasm.min.js: jsDelivr minifies that file itself
+    and may do it again with another minifier, as it did on 17 November 2026,
+    and the integrity hash then refuses it -- every file failed to open. The
+    workers pin the same file and hash.
   -->
-  <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.min.js" integrity="sha384-ddY2IJ7uyvBrG5FPTk2LGWBUTJBV+MchV38zJwXMPuFYM9YwIH4iN9RxvDe01UEW" crossorigin="anonymous"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/h5wasm@0.10.3/dist/iife/h5wasm.js" integrity="sha384-aTwh/FuQtcJd8ZKNGmoaUAXO8xDHXruMNlIXSL5FcavrkZ17sYyYy+oosr/yDsnf" crossorigin="anonymous"></script>
   <!--
     Module layers, loaded in dependency order. Each file owns one concern and
     the ones below may use the ones above. The site-wide error contract
@@ -503,7 +509,7 @@
   <script src="./resources/js/rb-utils.js?v=20261031e"></script>
   <script src="./resources/js/rb-actions.js?v=20261111b"></script>
   <script src="./resources/js/rb-hdf5.js?v=20261031b"></script>
-  <script src="./resources/js/rb-lazy.js?v=20261110"></script>
+  <script src="./resources/js/rb-lazy.js?v=20261117a"></script>
   <script src="./resources/js/rb-file.js?v=20261102b"></script>
   <script src="./resources/js/rb-eas.js?v=20261102"></script>
   <script src="./resources/js/rb-mat.js?v=20261102"></script>
@@ -511,7 +517,7 @@
   <script src="./resources/js/rb-json.js?v=20261102"></script>
   <script src="./resources/js/rb-xml.js?v=20261102"></script>
   <script src="./resources/js/rb-tabs.js?v=20261009"></script>
-  <script src="./resources/js/rb-tree.js?v=20260926"></script>
+  <script src="./resources/js/rb-tree.js?v=20261117a"></script>
   <script src="./resources/js/rb-chart-axes.js?v=20261008b"></script>
   <script src="./resources/js/rb-chart-presets.js?v=20261008b"></script>
   <script src="./resources/js/rb-chart-export.js?v=20261031"></script>

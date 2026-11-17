@@ -370,11 +370,13 @@
   }
 
   /* ---------------------------------------------------------------------
-     HDF5, through h5wasm fetched on demand
+     HDF5, through h5wasm fetched on demand: the package's own
+     dist/iife/h5wasm.js, not jsDelivr's h5wasm.min.js, which jsDelivr makes
+     itself and may make again with a new hash (it did for 0.10.3)
      --------------------------------------------------------------------- */
   const H5WASM = {
-    src: 'https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.min.js',
-    integrity: 'sha384-0kPHehXdhwrXsjsY2cFREoF1T3bEwA7VXlpZGg3zE1DDnW294q/kakEEPAsA5JXW',
+    src: 'https://cdn.jsdelivr.net/npm/h5wasm@0.9.0/dist/iife/h5wasm.js',
+    integrity: 'sha384-pTiZgfrOCeRj4lTl61HKQuZJ0qTHIugWcYm4k+1wStIg4BpGcvOnys7ONo7kd4kg',
   };
   let h5Loading = null;
   function loadH5wasm() {
