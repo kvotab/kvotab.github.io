@@ -3403,11 +3403,11 @@
         pathSkipped = { why, reaction: p.reaction ? p.reaction.n : null, steps: p.steps.length };
       } else if (byT) {
         // The water at the first step's temperature, heated or cooled a degree a second from there.
-        path = { p, kind: 'temperature', reactants: [], traced: false, els: new Set(), from: tcs[0], to: tcs[tcs.length - 1],
+        path = { p, kind: 'temperature', reactants: [], traced: false, from: tcs[0], to: tcs[tcs.length - 1],
           sign: rising ? 1 : -1, clock: tcs.map((t) => Math.abs(t - tcs[0])) };
         waterText = pathStart(p, false, 'temperature');
       } else if (byAmount) {
-        path = { p, kind: 'reaction', reactants, traced: false, els: new Set(), clock: p.steps.map((st) => st.x) };
+        path = { p, kind: 'reaction', reactants, traced: false, clock: p.steps.map((st) => st.x) };
         waterText = pathStart(p, false);
       }
     }
@@ -3919,14 +3919,23 @@
       moves, the others staying where they are (a trace of Fe(2) beside the
       Fe(3) it brings, at 1e-29, is a total no factorisation resolves).
     */
+    /*
+      What the reactions carried bring or take themselves -- a kinetic
+      reactant's, a path's -- each element (or, with the valence states
+      apart, valence state): on an exchanger or a surface, what holds one is
+      kept whatever the floor, as the water's species of it are (brings).
+    */
+    const brought = new Set();
+    const elKey = (lb) => (carryRedox ? elementOf(lb) : normLabel(lb));
     const pullFor = (rx) => {
       for (const [n] of rx) if (n !== 'e-' && !kept.has(n)) { kept.add(n); pulled.add(n); }
-      const key = (lb) => (carryRedox ? elementOf(lb) : normLabel(lb));
+      const key = elKey;
       const els = new Set();
       for (const [n] of rx) {
         if (n === 'e-' || n === 'H+') continue;
         try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(key(lb)); } catch (e) { /* no terms */ }
       }
+      for (const el of els) brought.add(el);
       /*
         Electrons it brings or takes go to whatever couple takes them at
         the one pe: with the redox carried, every valence state of the
@@ -4068,21 +4077,19 @@
           return waterToModel({ ...given, path: false, pathWhy: `${r.name}${els.length ? `'s ${els.join(' and ')}` : ''} would come in as `
             + `${missing.join(' and ')}, which the water has none of` });
         }
-        const { els, key } = pullFor(rx);
-        for (const el of els) path.els.add(el);
-        path.key = key;
+        pullFor(rx);
         r.rx = rx;
         r.rate = (r.coef * path.p.reaction.factor) / path.W;
       }
     }
     /*
-      On an exchanger or a surface, the species of what a path's reactants
-      bring are kept whatever the floor, as the water's are: the cadmium of
-      an isotherm sorbs from the first step, though the water starts with a
-      trace of it.
+      On an exchanger or a surface, the species of what a kinetic reactant
+      or a path's reactants bring are kept whatever the floor, as the
+      water's are: cadmium coming into a water with a trace of it sorbs from
+      the first, its species there written though below the floor.
     */
-    const brings = (r) => !!path && !!r && [...r.left, ...r.right.slice(1)].some((t) => {
-      try { return [...db.expand(t.n).keys()].some((lb) => lb !== 'e-' && path.els.has(path.key(lb))); } catch (e) { return false; }
+    const brings = (r) => brought.size > 0 && !!r && [...r.left, ...r.right.slice(1)].some((t) => {
+      try { return [...db.expand(t.n).keys()].some((lb) => lb !== 'e-' && brought.has(elKey(lb))); } catch (e) { return false; }
     });
     /*
       THE EXCHANGERS: each species PHREEQC put on one, at its molality, with

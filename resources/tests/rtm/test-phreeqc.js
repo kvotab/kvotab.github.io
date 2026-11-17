@@ -6348,6 +6348,55 @@ function againstKineticsHandOff(engine) {
       + `${x.report.electron ? `tied to ${x.report.electron.tied.join(', ')}, at none ${x.report.electron.atNone.join(', ') || 'none'}` : 'not written'}`
       + `${x.stuck.length ? `; ${x.stuck[0]}` : ''}`;
   }).join('; ') + `; left out: ${organicWhy(noCouple.both)}`);
+
+  /*
+    11. What a reactant brings, on an exchanger: a cadmium salt of the tests'
+    own dissolving at a steady rate into a water with an exchanger and no
+    cadmium, at the panel's floor (1e-20). The water is taken with a trace
+    of the reactant; CdX2 is written though the trace puts less than the
+    floor on the exchanger, as the water's species of cadmium are -- left
+    out, the cadmium could not go onto the exchanger, and stayed in the
+    water at 8.6 times PHREEQC's.
+  */
+  const sorbs = (() => {
+    const water = 'SOLUTION 1\n units mmol/kgw\n pH 6.5\n Ca 1\n Cl 2\nEXCHANGE 1\n X 0.02\n -equilibrate 1\n';
+    const kin = 'KINETICS 1\nCdsalt\n -formula CdCl2 1\n -m 1e-3\n -tol 1e-12\n -steps 36000 in 6\n -runge_kutta 6\n'
+      + 'RATES\nCdsalt\n -start\n10 SAVE 1e-9 * TIME\n -end\n';
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+      water: { name: 'cadmium', text: `${KIN}${water}${kin}END\n` }, activity: true, exact: true, redox: true, floor: 1e-20 });
+    engine.load(dbText);
+    const rows = engine.run(`${KIN}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t cdx2 cd ca pH\n -start\n`
+      + `10 PUNCH TOTAL_TIME, MOL("CdX2") * TOT("water"), TOT("Cd") * TOT("water"), TOT("Ca") * TOT("water"), -LA("H+")\n`
+      + ` -end\n${water}${kin}END\n`);
+    const pq = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+    const mdl = RtmModel.compile(res.text);
+    const times = pq.map((r) => r[0]);
+    const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22, breaks: times });
+    const at = (n) => mdl.speciesNames.indexOf(n);
+    const ns = mdl.speciesNames.length;
+    const ofWater = (j) => { const sp = mdl.speciesList[j]; return !(sp.mineral || sp.gas || sp.exchange || sp.exchanger || sp.surface || sp.potential || sp.electron); };
+    const d = { cdx2: 0, cd: 0, ca: 0, pH: 0 };
+    for (const row of pq) {
+      const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+      const y = mdl.toConcentrations(run.y[k], run.t[k]);
+      const tot = (el) => mdl.speciesNames.reduce((a, n, j) => a + (ofWater(j) ? ((RtmModel.elementsOf(n) || new Map()).get(el) || 0) * y[j] : 0), 0);
+      const lnG = new Float64Array(ns);
+      RtmModel.activityAt(mdl.act, y, 0, lnG, new Float64Array(ns), 0);
+      d.cdx2 = Math.max(d.cdx2, Math.abs((at('CdX2') >= 0 ? y[at('CdX2')] : 0) - row[1]) / row[1]);
+      d.cd = Math.max(d.cd, Math.abs(tot('Cd') - row[2]) / row[2]);
+      d.ca = Math.max(d.ca, Math.abs(tot('Ca') - row[3]) / row[3]);
+      d.pH = Math.max(d.pH, Math.abs(-(Math.log(y[at('H+')]) + lnG[at('H+')]) / Math.LN10 - row[4]));
+    }
+    return { res, d, steps: pq.length, end: pq[pq.length - 1][1] };
+  })();
+  check('  what a reactant brings goes onto an exchanger from the start: a cadmium salt at a steady rate into a water with an '
+    + 'exchanger and no cadmium, at the floor of 1e-20 -- CdX2 written though the trace puts less than that on it, and '
+    + 'the cadmium shared between the water and the exchanger as PHREEQC shares it at each step',
+  /^CdX2\s/m.test(sorbs.res.text) && sorbs.res.report.kinetics && sorbs.res.report.kinetics.trace === 1e-20
+    && sorbs.steps === 6 && sorbs.d.cdx2 < 1e-7 && sorbs.d.cd < 1e-6 && sorbs.d.ca < 1e-8 && sorbs.d.pH < 1e-6,
+  `CdX2 within ${sorbs.d.cdx2.toExponential(1)} (${sorbs.end.toExponential(2)} mol at the end), the dissolved Cd `
+    + `${sorbs.d.cd.toExponential(1)}, Ca ${sorbs.d.ca.toExponential(1)}, pH ${sorbs.d.pH.toExponential(1)}, over ${sorbs.steps} steps`);
   engine.load(dbText);
 }
 

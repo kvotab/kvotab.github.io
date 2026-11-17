@@ -12951,11 +12951,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117g';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117i';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117g',
+    'resources/js/rtm-phreeqc.js?v=20261117i',
     'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
