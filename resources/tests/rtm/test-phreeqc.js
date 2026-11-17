@@ -5996,6 +5996,68 @@ function againstKineticsHandOff(engine) {
     && cols[1].Ca < 0.6 * cols[0].Ca,
   cols.map((x) => `${x.N} cells: pH within ${x.pH.toFixed(3)}, Ca ${(x.Ca * 1e3).toFixed(4)} mM, the calcite dissolved `
     + `${(x.dis * 100).toFixed(2)} %, PHREEQC ${x.pqMs} ms, the page ${x.ms} ms`).join('; '));
+
+  /*
+    6. A rate that reads the saturation of phases held at saturation indices
+    of their own: a salt of the test's own dissolving at a rate the CO2
+    pressure and the calcite saturation set, CO2(g) held at SI -1.5 and
+    calcite at 0.3 -- each by its relation, whose log K is the phase's plus
+    that index, or CO2(g) by HCl added or taken away as holds it (an
+    alternative reaction, the phase in <PHASES>). PHREEQC's SR and SI read
+    each phase against its own log K, so the rate is k 0.03 x 2.5 x 2, a
+    twenty-fifth of the k x 4 the phases at saturation would give, and the
+    run must be too.
+  */
+  const heldRun = (label, eqp) => {
+    const rt = 'RATES\nSalt\n-start\n10 rate = PARM(1) * SR("CO2(g)") * (4 + SI("CO2(g)")) * SR("Calcite")\n'
+      + '20 SAVE rate * TIME\n-end\n';
+    const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 6.5\n Na 1\n Ca 1\n Cl 3 charge\n C(4) 4\n';
+    const kn = 'KINETICS 1\nSalt\n -formula NaCl\n -m 1\n -parms 2e-7\n -tol 1e-12\n -steps 1e5 in 10\n -runge_kutta 6\n';
+    try {
+      engine.load(dbText);
+      const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+        water: { name: label, text: `${KIN}${rt}${sw}${eqp}${kn}END\n` }, activity: true, exact: true, phases: true, floor: 0 });
+      engine.load(dbText);
+      const rows = engine.run(`${KIN}${rt}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t M pH\n -start\n`
+        + `10 PUNCH TOTAL_TIME, KIN("Salt"), -LA("H+")\n -end\n${sw}${eqp}${kn}END\n`);
+      const pq = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+      const mdl = RtmModel.compile(res.text);
+      const times = pq.map((r) => r[0]);
+      const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22,
+        breaks: times });
+      const at = (n) => mdl.speciesNames.indexOf(n);
+      const ns = mdl.speciesNames.length;
+      const iS = at(res.report.kinetics.reactants[0].as);
+      // The salt per kilogram of PHREEQC's water, its 1 mol at the start: what is used, in moles, is 1 - y/y0.
+      const y0 = mdl.toConcentrations(run.y[0], run.t[0])[iS];
+      const d = { used: 0, pH: 0 };
+      for (const row of pq) {
+        const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+        const y = mdl.toConcentrations(run.y[k], run.t[k]);
+        const lnG = new Float64Array(ns);
+        RtmModel.activityAt(mdl.act, y, 0, lnG, new Float64Array(ns), 0);
+        d.used = Math.max(d.used, Math.abs((1 - y[iS] / y0) / (1 - row[1]) - 1));
+        d.pH = Math.max(d.pH, Math.abs(-(Math.log(y[at('H+')]) + lnG[at('H+')]) / Math.LN10 - row[2]));
+      }
+      const law = res.text.split('\n').find((l) => /^Salt => /.test(l)) || '';
+      return { label, d, used: 1 - pq[pq.length - 1][1], law, text: res.text, skipped: res.report.kineticsSkipped };
+    } catch (e) { return { label, error: e.message }; }
+  };
+  const held = [heldRun('by log K', 'EQUILIBRIUM_PHASES 1\n CO2(g) -1.5 10\n Calcite 0.3 0.01\n'),
+    heldRun('CO2(g) by HCl', 'EQUILIBRIUM_PHASES 1\n CO2(g) -1.5 HCl 10\n Calcite 0.3 0.01\n')];
+  const [byK, byHCl] = held;
+  check('  a rate that reads the saturation of phases held at saturation indices of their own -- a salt dissolving at a '
+    + 'rate the CO2 pressure and the calcite saturation set, CO2(g) held at SI -1.5 and calcite at 0.3, each by its '
+    + 'relation\'s log K, or CO2(g) by HCl added or taken away as holds it -- reads each phase against its own log K, as '
+    + 'PHREEQC\'s SR and SI do: the salt used and the pH against PHREEQC\'s KINETICS, the law as written, and why, beside it',
+  held.every((x) => !x.error && !x.skipped.length && x.d.used < 1e-9 && x.d.pH < 1e-7 && Math.abs(x.used / 3.154e-3 - 1) < 1e-3)
+    && /\(SR\(CO2\(g\)\)\*10\^-1\.5000\d+\)\*\(4 \+ \(SI\(CO2\(g\)\) - 1\.5000\d+\)\)\*\(SR\(Calcite\)\*10\^0\.3\d*\)$/.test(byK.law)
+    && /^# CO2\(g\) is held at SI -1\.50008, its relation's log K the phase's plus that: its SR and SI here are the phase's own/m
+      .test(byK.text)
+    && /\*SR\(CO2\(g\)\)\*\(4 \+ SI\(CO2\(g\)\)\)\*\(SR\(Calcite\)\*10\^0\.3\d*\)$/.test(byHCl.law)
+    && /^<PHASES>\nCO2\(g\) <=> CO2, /m.test(byHCl.text) && /,\s+SI\(CO2\(g\)\) = -1\.5000\d+\s/.test(byHCl.text),
+  held.map((x) => (x.error ? `${x.label}: ${x.error}` : `${x.label}: ${(x.used * 1e3).toFixed(4)} mmol used, within `
+    + `${x.d.used.toExponential(1)}, pH ${x.d.pH.toExponential(1)}; ${x.law.replace(/^.*?, rate = /, 'rate = ')}`)).join('; '));
   engine.load(dbText);
 }
 

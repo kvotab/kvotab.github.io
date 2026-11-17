@@ -6862,7 +6862,8 @@
       */
       let siOf = null;
       for (let i = parts.length - 1; i >= 0; i--) {
-        const m = /^SI\s*\(\s*([^()]+?)\s*\)\s*=\s*(.+)$/i.exec(parts[i]);
+        // The phase as written, brackets of its own name and all: SI(CO2(g)) = -1.5.
+        const m = /^SI\s*\(\s*((?:[^()]|\([^()]*\))+?)\s*\)\s*=\s*(.+)$/i.exec(parts[i]);
         if (!m) continue;
         if (siOf) throw new RtmError(`"${text}" is given SI( ) twice: a mineral holds one phase at its target.`, line);
         siOf = { phase: m[1], target: constValue(m[2], line, `SI(${m[1]})`) };

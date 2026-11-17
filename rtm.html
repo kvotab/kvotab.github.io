@@ -4025,7 +4025,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             element or a valence state, <code>SI</code> and <code>SR</code> of a phase (written in
             <code>&lt;PHASES&gt;</code> where it is no mineral), <code>MU</code>, <code>TK</code>,
             <code>TC</code> — an <code>IF</code> on those <code>step()</code>, and what it
-            <code>SAVE</code>s over <code>TIME</code> the rate. PHREEQC's own arithmetic is kept: x/0 is
+            <code>SAVE</code>s over <code>TIME</code> the rate. <code>SI</code> and <code>SR</code> read a
+            phase against its own log K, as PHREEQC's do: a phase held as a mineral at a saturation index
+            of its own, <code>Calcite 0.3</code>, has the phase's log K plus that index in its relation,
+            and is read as <code>SR(Calcite)*10^0.3</code> and <code>SI(Calcite) + 0.3</code>, with the
+            index PHREEQC holds it at; one held by an alternative reaction is read in
+            <code>&lt;PHASES&gt;</code>. PHREEQC's own arithmetic is kept: x/0 is
             0, 0^y is 0, and a minus binds before ^, so <code>10^-pk</code> is 10<sup>−pk</sup>. A
             program that loops, saves other than moles in a step, or reads what a rate law here cannot
             (<code>PUT</code>, <code>GET</code>, <code>CALC_VALUE</code>) is not carried, and the report
@@ -4428,7 +4433,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             to 3×10<sup>−10</sup>, 4×10<sup>−9</sup> and 2×10<sup>−7</sup>. The same host with an
             exchanger instead, 0.1 of NaX to each mole of it, in a water with calcium and sodium:
             the host, the ions in the water, CaX2 on the sites and the pH to 3×10<sup>−9</sup>, NaX, a
-            trace beside the calcium, to 10<sup>−7</sup>.</p>
+            trace beside the calcium, to 10<sup>−7</sup>. A salt of the tests' own dissolving at a rate
+            that the CO<sub>2</sub> pressure and the calcite saturation set, with CO<sub>2</sub>(g) held
+            at SI −1.5 and calcite at 0.3 — each by its relation's log K, or the CO<sub>2</sub>(g) by HCl
+            added or taken away as holds it — dissolves as it does in PHREEQC, a twenty-fifth as fast as
+            with both at saturation: over 10<sup>5</sup>&nbsp;s the salt used within
+            2×10<sup>−12</sup> and the pH 2×10<sup>−8</sup>.</p>
 
           <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
           <p>The <em>Batch</em> tab runs one PHREEQC input for every row of a table:
@@ -4893,7 +4903,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261107a"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261116a"></script>
+  <script src="./resources/js/rtm-model.js?v=20261116b"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261116b"></script>
@@ -4901,6 +4911,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261116b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261116c"></script>
 </body>
 </html>

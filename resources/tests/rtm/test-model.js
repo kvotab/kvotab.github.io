@@ -8285,14 +8285,15 @@ console.log('\n--- a mineral\'s bounds, and one held at another phase\'s saturat
     `"${said.join('", "')}" at ${r.events.map((e) => e.t.toFixed(0)).join(', ')} s; ${M[0].toFixed(5)} to ${M[19]}`);
   }
 
-  // A pH-stat: NaOH dissolving as much as holds SI(Fix_H+) = -8, acid coming in.
+  // A pH-stat: NaOH dissolving as much as holds SI(Fix_H+) = -8, acid coming in; the phase named o.phase, if given.
   const stat = (o = {}) => `<SETTINGS>\nMODE = batch\nTEND = ${o.tend || 1e4}\nEQUILIBRATE = always\n`
     + `${o.act ? 'ACTIVITY = davies\n' : ''}\n<SPECIES>\nH+ 1e-7\nOH- 1e-7\nCO2 1e-3\nHCO3- 1e-3\nCO3-2 1e-6\nNa+ 1e-3\n`
     + `Cl- 1e-6\n${o.species || 'NaOH_r 0.01 mineral'}\n\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\n`
     + 'CO2 + H2O <=> H+ + HCO3-, logK = -6.35\nHCO3- <=> H+ + CO3-2, logK = -10.33\n'
-    + `${o.rel || 'NaOH_r <=> Na+ + OH-, SI(Fix_H+) = -8'}\n\n<PHASES>\n${o.phases || 'Fix_H+ <=> H+, logK = 0'}\n\n`
+    + `${o.rel || `NaOH_r <=> Na+ + OH-, SI(${o.phase || 'Fix_H+'}) = -8`}\n\n<PHASES>\n`
+    + `${o.phases || `${o.phase || 'Fix_H+'} <=> H+, logK = 0`}\n\n`
     + `<REACTIONS>\n=> H+ + Cl-, r = 2e-7\n`;
-  const statRuns = [{}, { act: true }].map((o) => {
+  const statRuns = [{}, { act: true }, { act: true, phase: 'Fix_H(g)' }].map((o) => {
     const m = RtmModel.compile(stat(o));
     const r = run(m, { tend: 1e4, outputTimes: [0, 2500, 5000, 7500, 1e4] });
     const at = (n) => m.speciesNames.indexOf(n);
@@ -8323,9 +8324,10 @@ console.log('\n--- a mineral\'s bounds, and one held at another phase\'s saturat
   });
   check('  a pH-stat, NaOH dissolving as much as holds SI(Fix_H+) = -8 while acid comes in: the pH held, the NaOH used the '
     + 'acid that came in, the sodium the water gains what the reagent loses; without activity coefficients and under '
-    + 'Davies; the Jacobians against differences', statRuns.every((x) => x.pH < 1e-12 && Math.abs(x.used / 2e-3 - 1) < 1e-3
+    + 'Davies, and the phase named with brackets of its own, as a gas is (SI(Fix_H(g)) = -8); the Jacobians against '
+    + 'differences', statRuns.length === 3 && statRuns.every((x) => x.pH < 1e-12 && Math.abs(x.used / 2e-3 - 1) < 1e-3
     && x.na < 1e-14 && x.bad === 0),
-  statRuns.map((x, i) => `${i ? 'Davies' : 'none'}: pH within ${x.pH.toExponential(1)} of 8, NaOH used `
+  statRuns.map((x, i) => `${['none', 'Davies', 'Davies, Fix_H(g)'][i]}: pH within ${x.pH.toExponential(1)} of 8, NaOH used `
     + `${x.used.toExponential(6)} for 2e-3 of acid, sodium kept ${x.na.toExponential(1)}; the Jacobian ${x.bad} of `
     + `${x.checked} off`).join('; '));
 

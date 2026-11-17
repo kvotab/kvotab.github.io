@@ -3392,14 +3392,34 @@
         const missing = rx.filter(([n]) => n !== 'e-' && !molal.has(n)).map(([n]) => n);
         if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
         // Its rate, what the program reads in the model's words.
+        const heldRead = new Map();
         const ctx = {
           m: `${perW}ramp([${hole('kin', comp.name)}])`, m0: comp.m0, parms: comp.parms, W,
           solnVol: solnVol > 0 ? solnVol : null,
+          /*
+            A phase's saturation as PHREEQC's SR and SI read it, against the
+            phase's own log K. A mineral's relation holds it at the saturation
+            index it is held at, its log K the phase's plus that index: the
+            phase's saturation is then the relation's times 10^SI, and its SI
+            the relation's plus SI. One held by an alternative reaction has no
+            relation of its own dissolution, and is read in <PHASES>. The index
+            to 1e-12: PHREEQC holds a solid at its target to rounding, 4e-15,
+            and a gas at its partial pressure, its SI below that by its
+            fugacity coefficient, 5e-7 at 10^-3.5 atm.
+          */
           phase: (p, kind) => {
             const pk = phaseKey.get(p.toLowerCase());
             if (!pk) return null;
-            if (minerals.some((mn) => mn.phase === pk)) return `${kind}(${hole('mineral', pk)})`;
-            usePhase(pk);
+            const mn = minerals.find((x) => x.phase === pk);
+            if (mn && !mn.alt) {
+              const s = `${kind}(${hole('mineral', pk)})`;
+              const at = Math.round(mn.si * 1e12) / 1e12;
+              if (!at) return s;
+              heldRead.set(pk, at);
+              const si = fmtG(Math.abs(at), 15);
+              return kind === 'SR' ? `(${s}*10^${at < 0 ? '-' : ''}${si})` : `(${s} ${at < 0 ? '-' : '+'} ${si})`;
+            }
+            if (!mn) usePhase(pk);
             return `${kind}(${hole('phase', pk)})`;
           },
           act: (sp) => (sp === 'H2O' ? '{H2O}' : useSpecies(sp) ? `{${hole('sp', sp)}}` : null),
@@ -3452,7 +3472,7 @@
           try { ex = db.expand(sp); } catch (e) { continue; }
           if ([...ex.keys()].some((lb) => els.has(key(lb)))) { kept.add(sp); pulled.add(sp); }
         }
-        kinetics.push({ comp, rate: def, amount: Math.max(comp.m, 0) / W, rx, law, name: null });
+        kinetics.push({ comp, rate: def, amount: Math.max(comp.m, 0) / W, rx, law, name: null, held: heldRead });
       }
     }
     /*
@@ -4719,6 +4739,10 @@
       out.push(`# ${k.comp.name}: PHREEQC's RATES ${k.rate.name}, M its moles, M0 ${fmtG(k.comp.m0, 15)}`
         + `${k.comp.parms.length ? `, PARM ${k.comp.parms.join(' ')}` : ''}, a time step TIME:`);
       for (const ln of k.rate.lines) out.push(`#   ${ln}`);
+      for (const [pk, si] of k.held) {
+        out.push(`# ${minerals.find((x) => x.phase === pk).name} is held at SI ${fmtG(si, 6)}, its relation's log K the `
+          + 'phase\'s plus that: its SR and SI here are the phase\'s own, as PHREEQC reads them.');
+      }
       const reac = [{ c: 1, n: k.name }].concat(k.rx.filter(([, c]) => c < 0).map(([n, c]) => ({ c: -c, n })));
       const prod = k.rx.filter(([, c]) => c > 0).map(([n, c]) => ({ c, n }));
       out.push(`${side(reac)} => ${side(prod)}, r = ${k.r}${k.names.map(([n, v]) => `, ${n} = ${v}`).join('')}`);
