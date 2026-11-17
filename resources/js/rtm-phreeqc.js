@@ -354,6 +354,35 @@
     return out;
   }
 
+  /**
+   * The surface a site is on, as PHREEQC names it (read_surface): the first
+   * element of the site's formula, up to an underscore where it has one --
+   * Hfo of Hfo_wOH, Surf of SurfOH.
+   */
+  function surfaceName(site) {
+    const m = /^[A-Z][a-z_]*/.exec(String(site));
+    if (!m) return '';
+    const cut = m[0].indexOf('_');
+    return cut > 0 ? m[0].slice(0, cut) : m[0];
+  }
+
+  /**
+   * A species on a surface as the model writes it. The page ties a
+   * surface's species to its potential by the start of their names, up to
+   * an underscore (Hfo_psi, Hfo_wOH), so on a surface with a double layer
+   * one whose name does not start with its surface's and an underscore is
+   * written with them: SurfOH as Surf_OH, NaSu_fes as Su_NaSu_fes, a site
+   * named as its surface, Lin, as Lin_site. `site` the master species of
+   * the site it is on.
+   */
+  function sfName(sp, site, taken) {
+    const surface = surfaceName(site);
+    const n = String(sp);
+    if (!surface || n.startsWith(`${surface}_`)) return rtmName(n, taken);
+    const rest = n.startsWith(surface) ? n.slice(surface.length) : n;
+    return rtmName(`${surface}_${rest || 'site'}`, taken);
+  }
+
   /*
     A REACTION'S LOG K AND HOW IT GOES WITH TEMPERATURE, as PHREEQC reads it:
     the options of its read_species, read_phases, read_exchange_species,
@@ -3719,17 +3748,16 @@
     /*
       With a diffuse double layer, each surface's potential, in volts, and
       the water's mass, for the grams of the solid to each kilogram of it:
-      the surface is the part of a site's name before the underscore, and
-      its area and mass are on the first of its sites' lines that gives them.
+      the surface is named as PHREEQC names it (surfaceName), and its area
+      and mass are on the first of its sites' lines that gives them.
     */
     const layers = new Map();
     if (sfSpecies.length) {
       for (const b of sfBlocks.values()) {
         if (b.model !== 'ddl' && b.model !== 'cd') continue;
         for (const x of b.sites) {
-          const cut = x.master.indexOf('_');
-          if (cut < 1) continue;
-          const name = x.master.slice(0, cut);
+          const name = surfaceName(x.master);
+          if (!name) continue;
           const had = layers.get(name);
           if (!had || (had.area === null && Number.isFinite(x.area))) {
             // Sites that go with a phase: m2 to each mole of it, the phase in the grams' place.
@@ -4540,7 +4568,7 @@
         for (const [n, e] of w.surface) {
           if (!(e.m >= floor) && !(column && column.keepOn.has(n)) && !brings(db.sfReaction.get(n))) continue;
           const skip = (why) => sfSkipped.push({ name: n, why });
-          if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
+          if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m, site: n }); continue; }
           const r = db.sfReaction.get(n);
           if (!r) { skip('the database has no reaction for it'); continue; }
           const terms = [...r.left, ...r.right.slice(1)];
@@ -4554,7 +4582,7 @@
           if (!Number.isFinite(sfLk.get(n))) { skip('PHREEQC gave no log K for it'); continue; }
           const missing = terms.filter((t) => t.n !== 'H2O' && !sfMasters.has(t.n) && !molal.has(t.n)).map((t) => t.n);
           if (missing.length) { skip(`the water has no ${missing.join(', ')}`); continue; }
-          onSf.push({ species: n, master: false, m: e.m, left: r.left, right: r.right, lk: sfLk.get(n) });
+          onSf.push({ species: n, master: false, m: e.m, left: r.left, right: r.right, lk: sfLk.get(n), site: [...kinds][0] });
           for (const t of terms) {
             if (t.n !== 'H2O' && !sfMasters.has(t.n) && !kept.has(t.n)) { kept.add(t.n); pulled.add(t.n); }
           }
@@ -4626,7 +4654,7 @@
       const tk = w.tc + 273.15;
       const kgw = massAt >= 0 && Number(w.x[massAt]) > 0 ? Number(w.x[massAt]) : 1;
       [...layers].forEach(([surface, l]) => {
-        if (!onSf.some((e) => e.species.startsWith(`${surface}_`))) return;
+        if (!onSf.some((e) => surfaceName(e.site) === surface)) return;
         // CD-MUSIC: its three planes, Hfo_psi with the area and capacitances, Hfo_psib and Hfo_psid.
         layerCols.get(surface).forEach((col, plane) => {
           const psi = Number(w.x[col]);
@@ -4858,7 +4886,12 @@
     const exUsed = exMasters.filter((sp) => onEx.some((e) => e.master === sp));
     const exName = new Map(exUsed.map((sp) => [sp, rtmName(sp, taken)]));
     for (const e of onEx) { e.name = rtmName(e.species, taken); exName.set(e.species, e.name); }
-    for (const e of onSf) { e.name = rtmName(e.species, taken); exName.set(e.species, e.name); }
+    // On a surface with a double layer, each species under its surface's name, which ties it to the potential (sfName).
+    const layered = new Set(potentials.map((pp) => pp.surface));
+    for (const e of onSf) {
+      e.name = layered.has(surfaceName(e.site)) ? sfName(e.species, e.site, taken) : rtmName(e.species, taken);
+      exName.set(e.species, e.name);
+    }
     for (const pp of potentials) pp.name = rtmName(pp.species, taken);
     const renamed = order.filter((s) => name.get(s) !== s).map((s) => [s, name.get(s)])
       .concat(minerals.filter((mn) => mn.name !== mn.phase).map((mn) => [mn.phase, mn.name]))
@@ -5576,9 +5609,8 @@
       const amount = fmtG(e.m, 15);
       // A charge the page's name does not give, a half on a CD-MUSIC site; and what the species puts on each plane.
       const zq = chargeFraction(e.species);
-      const cut = e.species.indexOf('_');
-      const dz = cut > 0 && layers.has(e.species.slice(0, cut)) && layers.get(e.species.slice(0, cut)).cd
-        ? db.sfCd.get(e.species) : null;
+      const onLayer = layers.get(surfaceName(e.site));
+      const dz = onLayer && onLayer.cd ? db.sfCd.get(e.species) : null;
       out.push(`${e.name.padEnd(width)}${follow ? amount.padEnd(width2) : `${amount}  `}surface`
         + `${e.master && perOf.has(e.species) ? perOf.get(e.species) : ''}`
         + `${zq !== chargeOf(e.name) ? `  z=${fmtG(zq, 12)}` : ''}`
@@ -6501,7 +6533,15 @@
     // A species on a surface, likewise: the surface is looked at as PHREEQC
     // would load it from each water, with the sites the run has there.
     const sfMasterSet = new Set(db.sfMaster.values());
-    const sfBack = new Map([...db.sfReaction.keys(), ...sfMasterSet].map((sp) => [rtmName(sp), sp]));
+    // ...by the name the model writes for each (sfName): the site's own, or the site it is formed from.
+    const siteOfSf = (sp) => {
+      if (sfMasterSet.has(sp)) return sp;
+      const r = db.sfReaction.get(sp);
+      const t = r ? [...r.left, ...r.right.slice(1)].find((x) => sfMasterSet.has(x.n)) : null;
+      return t ? t.n : sp;
+    };
+    const sfBack = new Map([...db.sfReaction.keys(), ...sfMasterSet].flatMap((sp) => [[rtmName(sp), sp],
+      [sfName(sp, siteOfSf(sp)), sp]]));
     const onSurface = [];
     // And each surface's potential, with the area and grams PHREEQC's double layer is given.
     const potentials = modelPotentials(o.modelText);
@@ -6822,7 +6862,7 @@
         grams on the first of its sites' lines; and each potential the run
         has, against PHREEQC's (EDL "psi"), in volts.
       */
-      const surfaceOf = (site) => site.slice(0, Math.max(site.indexOf('_'), 0));
+      const surfaceOf = (site) => surfaceName(site);
       const surfaces = [...new Set(sfOf.map((e) => surfaceOf(e.site)))];
       const layered = surfaces.filter((sn) => potentials.has(sn));
       let error = null;

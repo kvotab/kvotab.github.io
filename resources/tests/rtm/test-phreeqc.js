@@ -1502,6 +1502,61 @@ function againstDoubleLayer(engine) {
     `within ${worst.toExponential(1)}; psi ${(psi * 1e3).toFixed(6)} mV, PHREEQC's ${(psiPq * 1e3).toFixed(6)}`);
   }
 
+  /*
+    A surface whose site's name has no underscore -- Fhy, its site FhyOH, the
+    tests' own -- which PHREEQC names by the whole of the site's first
+    element: its double layer carried as Fhy_psi, its species written under
+    the surface's name (Fhy_OH, Fhy_OZn+), which ties them to it, the start
+    PHREEQC's; without the layer (-no_edl) the names as PHREEQC writes them.
+  */
+  const fhy = (edl) => 'SURFACE_MASTER_SPECIES\n Fhy FhyOH\nSURFACE_SPECIES\n FhyOH = FhyOH\n log_k 0\n'
+    + ' FhyOH + H+ = FhyOH2+\n log_k 7.18\n FhyOH = FhyO- + H+\n log_k -8.82\n FhyOH + Zn+2 = FhyOZn+ + H+\n log_k 0.66\n'
+    + 'SOLUTION 1\n units mmol/kgw\n pH 6.8\n Zn 0.002\n Na 10 charge\n Cl 10\n'
+    + `SURFACE 1\n -equilibrate 1\n FhyOH 3e-4 600 0.12\n${edl ? '' : ' -no_edl\n'}END\n`;
+  const fhyOf = (edl) => {
+    engine.load(dbText);
+    const res = P.waterToModel({ engine, database, water: { name: 'Fhy', text: fhy(edl) }, activity: true, exact: true });
+    const m = RtmModel.compile(res.text);
+    const y = m.toConcentrations(m.initialState());
+    const back = new Map([...res.names].map(([k, n]) => [n, k]));
+    let worst = 0;
+    m.speciesNames.forEach((n, i) => {
+      const ref = back.has(n) ? res.molal.get(back.get(n)) : res.amounts.get(n);
+      if (ref !== undefined) worst = Math.max(worst, Math.abs(y[i] - ref) / Math.max(ref, 1e-15));
+    });
+    return { res, m, worst };
+  };
+  const fl = fhyOf(true);
+  const fn = fhyOf(false);
+  engine.load(dbText);
+  const fProbe = engine.run('SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings psi\n -start\n'
+    + `10 PUNCH EDL("psi", "Fhy")\n -end\n${fhy(true)}`);
+  const fPsiPq = Number(fProbe[fProbe.length - 1][0]);
+  const fPsi = fl.m.speciesNames.includes('Fhy_psi')
+    ? -Math.log(fl.m.toConcentrations(fl.m.initialState())[fl.m.speciesNames.indexOf('Fhy_psi')]) * Rg * 298.15 / F : NaN;
+  check('  a surface whose site has no underscore (Fhy, FhyOH), named as PHREEQC names it: its double layer carried, '
+    + 'Fhy_psi, its species under the surface\'s name (Fhy_OH, Fhy_OZn+), the page starting from PHREEQC\'s water, '
+    + 'surface and potential; without the layer, the names as PHREEQC writes them',
+  /^Fhy_psi\s+\S+\s+potential\s+area=600\s+grams=0\.12$/m.test(fl.res.text) && /^Fhy_OZn\+\s+\S+\s+surface$/m.test(fl.res.text)
+    && /^#\s+FhyOZn\+\s+->\s+Fhy_OZn\+$/m.test(fl.res.text) && /with its diffuse double layer/.test(fl.res.text)
+    && fl.worst < 1e-8 && Math.abs(fPsi - fPsiPq) < 1e-9
+    && /^FhyOZn\+\s+\S+\s+surface$/m.test(fn.res.text) && !/potential/.test(fn.res.text.split('<SPECIES>')[1].split('\n\n')[0])
+    && fn.worst < 1e-8,
+  `with the layer within ${fl.worst.toExponential(1)}, psi ${(fPsi * 1e3).toFixed(6)} mV, PHREEQC's ${(fPsiPq * 1e3).toFixed(6)}; `
+    + `without it within ${fn.worst.toExponential(1)}`);
+  // The PHREEQC tab on a run of it, acid coming in: the run's surface, read back under PHREEQC's names, the one PHREEQC loads.
+  const fText = `${fl.res.text.replace(/^TEND = .*$/m, 'TEND = 10000')}\n<REACTIONS>\n=> H+ + Cl-, k = 1e-9\n`;
+  engine.load(dbText);
+  const fView = P.viewRun({ engine, database, run: pageRun(fText, 1e4), modelText: fText, water: { name: 'Fhy', text: fhy(true) },
+    unit: 's', times: 6 });
+  const fSf = fView.report.surface;
+  check('  ... and the PHREEQC tab on a run of it, acid coming in: the run\'s surface, read back under PHREEQC\'s names, the '
+    + 'one PHREEQC loads from each water, and its potential PHREEQC\'s',
+  !!fSf && !fSf.error && fSf.species.includes('Fhy_OZn+') && fSf.potentials.includes('Fhy_psi') && Math.abs(fSf.gap) < 1e-6
+    && !!fSf.psiGap && Math.abs(fSf.psiGap.by) < 1e-6,
+  fSf ? `${fSf.error || `fractions within ${Math.abs(fSf.gap).toExponential(1)} (${fSf.worst}), the potential within `
+    + `${(Math.abs(fSf.psiGap ? fSf.psiGap.by : NaN) * 1e3).toExponential(1)} mV`}` : 'no surface read');
+
   // Sites loaded from PHREEQC's first water, then the whole speciated: the
   // page's two steps against PHREEQC's -equilibrate and its reaction step.
   // NaCl, so that no redox couple moves the pH in PHREEQC's reaction step.
