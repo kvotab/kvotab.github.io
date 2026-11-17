@@ -12,6 +12,47 @@
   'use strict';
 
   const $ = (id) => document.getElementById(id);
+  /*
+    PLOTLY, each chart's drawing and clearing kept in order. Plotly.react
+    can leave work to finish after it returns -- the margins its axes need,
+    worked out and the chart drawn again a moment later -- and a chart
+    purged in between leaves that work nothing to finish on: a TypeError
+    in the console, reading '_redrawFromAutoMarginCount' of undefined, as
+    when the last two species ticked on Against time are unticked at once.
+    Here a chart's purge waits for its last drawing to finish, and is
+    dropped if the chart is drawn again meanwhile. Undefined where the
+    page has no Plotly, as the global would be.
+  */
+  const Plotly = (() => {
+    const P = typeof window !== 'undefined' ? window.Plotly : undefined;
+    if (!P) return undefined;
+    // Each chart's last drawing still going, or the purge waiting on one.
+    const pending = new WeakMap();
+    const drawn = (gd, pr) => {
+      if (pr && typeof pr.then === 'function') {
+        pending.set(gd, pr);
+        const done = () => { if (pending.get(gd) === pr) pending.delete(gd); };
+        pr.then(done, done);
+      }
+      return pr;
+    };
+    return {
+      version: P.version,
+      Plots: P.Plots,
+      toImage: (...args) => P.toImage(...args),
+      react: (gd, ...args) => drawn(gd, P.react(gd, ...args)),
+      newPlot: (gd, ...args) => drawn(gd, P.newPlot(gd, ...args)),
+      purge: (gd) => {
+        const pr = pending.get(gd);
+        if (!pr) return P.purge(gd);
+        const wait = {};
+        pending.set(gd, wait);
+        const go = () => { if (pending.get(gd) === wait) { pending.delete(gd); P.purge(gd); } };
+        pr.then(go, go);
+        return gd;
+      },
+    };
+  })();
   const STORAGE_KEY = 'kvot-rtm-v1';
   const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261116c';
   const DEFAULT_WIDTH = 330;

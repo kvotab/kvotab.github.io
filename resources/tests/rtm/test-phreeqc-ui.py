@@ -580,11 +580,17 @@ async def main():
             check('  run, the path ends at 80 s, the 80 mmol of reaction added; Against time, calcite and gypsum ticked, draws '
                   'PHREEQC\'s six steps of each beside the run as points',
                   [ran_p] + (p_view if isinstance(p_view, list) else [p_view]), ['Done', 2, '6 6', 80])
-            # Untick them one at a time: the last unticked clears the chart, which must wait for the redraw before it.
-            for v in ['Calcite', 'Gypsum']:
-                await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="%s"]');
-                  if (el && el.checked) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""" % v)
-                await asyncio.sleep(0.8)
+            # Both unticked at once: the chart drawn with one and then cleared, the clearing waiting for the drawing to
+            # finish -- before, Plotly was left to finish on a chart already purged (a TypeError in the console).
+            errors_before = len(page.errors)
+            await page.ev("""(() => { for (const v of ['Calcite', 'Gypsum']) {
+              const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+              if (el && el.checked) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); } } })()""")
+            await asyncio.sleep(1.5)
+            cleared = await page.ev("[document.getElementById('rtmChartTime').hidden, "
+                                    "!!document.getElementById('rtmChartTime')._fullLayout]")
+            check('  both unticked at once: the chart cleared, Plotly left nothing to finish on a chart already gone',
+                  [cleared, [e[:90] for e in page.errors[errors_before:]]], [[True, False], []])
             await page.ev("(() => { const b = document.getElementById('rtmPqBesideP'); b.checked = false;"
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
