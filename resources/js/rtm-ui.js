@@ -11584,6 +11584,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
           'A cell of PHREEQC\'s after shift k is read as the model\'s cell of the same number half a time step later, at its centre — the two schemes meet there as the cells are refined. With no flow, at k times the time step. The run goes on half a time step past the last shift (`TEND` moved), so that PHREEQC\'s last cells are read too.',
           'With **KINETICS** in the input, the water of a table in distance is set at the cell\'s downstream face at the shift instead, the run read there between its cells: PHREEQC has carried it as many cells as it has reacted time steps, half a time step longer than the cell\'s own water, and what a rate makes on the way is measured against as much of it. Its minerals, which stay in the cell, in tables of their own at the centre.',
           'Stagnant cells of one layer, where punched, under `layer = 1`.',
+          'PHREEQC runs the input to the **END** of the TRANSPORT\'s own part: what the input does after it, which the model does not carry — a pulse of another water, the first water back after it — is not in the tables either.',
         ] },
         { heading: 'Then', list: [
           '**Run**: the points are drawn beside the run, Against distance and Against time; Against distance a table at a time shown under Times in that line\'s colour, the others faint.',
@@ -12891,11 +12892,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261116c';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261116d';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261116b',
+    'resources/js/rtm-phreeqc.js?v=20261116c',
     'resources/js/rtm-phreeqc-engine.js?v=20261114b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13355,7 +13356,8 @@ END
           + 'log K.</p>');
       }
       if (c.after) {
-        out.push('<p class="warn">The input goes on after this column; what it does then is not carried.</p>');
+        out.push(`<p class="warn">The input goes on after this column; what it does then is not carried${reply.beside
+          ? ', and PHREEQC\'s own column beside it stops there too' : ''}.</p>`);
       }
     }
     if (r.withTemperature) {

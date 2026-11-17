@@ -4266,9 +4266,11 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             page three; on 80, three and ten, PHREEQC's mixing steps growing as the cells shrink.</p>
           <p>For a column of your own, the panel's <em>PHREEQC's own column, to set beside the run</em>,
             there where the input has a <code>TRANSPORT</code> block: <em>Write the model</em> then
-            has PHREEQC run that column too, in the page, and puts its cells into the text under
-            <code>&lt;DATA&gt;</code> — each cell's pH, its element totals (<code>tot(Ca)</code>, or
-            the species where an element has one only; with the redox carried, the totals of its
+            has PHREEQC run that column too, in the page, to the <code>END</code> of the
+            <code>TRANSPORT</code>'s own part of the input, so that what the input does after it, which
+            the model does not carry — a pulse of another water, the first water back after it — is not in
+            it either. Its cells go into the text under <code>&lt;DATA&gt;</code> — each cell's pH, its
+            element totals (<code>tot(Ca)</code>, or the species where an element has one only; with the redox carried, the totals of its
             valence states, <code>tot(S(6))</code> and <code>tot(S(-2))</code>) and its minerals, a
             table in distance for each of up to twelve of the shifts the input punches, the first and
             the last always; or, where it punches one cell, that cell's water in a table in time. A
@@ -4914,6 +4916,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261116d"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261116e"></script>
 </body>
 </html>

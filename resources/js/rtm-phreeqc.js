@@ -5001,15 +5001,23 @@
       else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")`, total: true });
     }
     for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")`, mineral: true });
-    // The input as it is, the selected output put in front of its TRANSPORT.
+    /*
+      The input as it is, the selected output put in front of its TRANSPORT,
+      to the END of the TRANSPORT's own simulation: what the input does after
+      that the model does not carry -- a pulse of another water, the first
+      water back after it -- and PHREEQC's tables are of the column the
+      model is.
+    */
     const at = text.search(/^[ \t]*TRANSPORT\b/im);
     if (at < 0) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
+    const close = /^[ \t]*END\b[^\n]*(?:\n|$)/im.exec(text.slice(at));
+    const upTo = close ? at + close.index + close[0].length : text.length;
     const n = cols.length;
     const head = ['cell_', 'time_', ...cols.map((c, i) => `v${i}_`)];
     const punch = `SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings ${head.join(' ')}\n -start\n`
       + `10 PUNCH CELL_NO, TOTAL_TIME, ${cols.map((c) => c.punch).join(', ')}\n -end\n`;
     o.engine.load(o.database.text);
-    const rows = o.engine.run(`${text.slice(0, at)}${punch}${text.slice(at)}`, 98);
+    const rows = o.engine.run(`${text.slice(0, at)}${punch}${text.slice(at, upTo)}`, 98);
     const hd = rows[0].map((h) => String(h).trim());
     const ic = hd.indexOf('cell_');
     const it = hd.indexOf('time_');

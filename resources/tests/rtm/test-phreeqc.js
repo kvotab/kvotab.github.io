@@ -5049,6 +5049,16 @@ function againstTransportBeside(engine) {
     b2.tables === 1 && b2.rows === 80 && /^time {2}pH.* cell = 39$/m.test(b2.text) && m2.data.length === 1 && m2.data[0].kind === 'time'
     && m2.data[0].cell === 39 && Math.abs(m2.data[0].rows[0][0] - 1.5 * dt) < 1 && Math.abs(m2.data[0].rows[79][0] - 80.5 * dt) < 1,
     `${b2.tables} table, ${b2.rows} rows`);
+  // An input that goes on after its column, the column's own water flowing back in: what PHREEQC's tables are of.
+  const pulse = `${BESIDE_INPUT}SOLUTION 0\n units mmol/kgw\n pH 7.8\n Na 60\n Ca 2\n C(4) 1.5\n Cl 60 charge\nEND\n`
+    + 'TRANSPORT\n -shifts 40\nEND\n';
+  const wp = write(pulse);
+  const bp = P.transportBeside({ engine, database, water: wp.water, res: wp.res });
+  check('an input that goes on after its column, the column\'s own water flowing back in: the model carries the column, and '
+    + 'PHREEQC\'s tables beside it are of that column alone, the same as without what follows',
+  wp.res.report.transport.after === true && bp.tables === b.tables && bp.rows === b.rows && bp.text === b.text,
+  `${bp.tables} tables, the last at ${bp.times[bp.times.length - 1]} s, ${bp.rows} rows; the input goes on: `
+    + `${wp.res.report.transport.after}`);
   // Stagnant cells of one layer, punched: their own tables, under layer = 1.
   const stag = BESIDE_INPUT.replace('SOLUTION 1-40', 'SOLUTION 1-81').replace('EQUILIBRIUM_PHASES 1-40', 'EQUILIBRIUM_PHASES 1-81')
     .replace(' -punch_cells 1-40', ' -punch_cells 1-81\n -stagnant 1 1e-7 0.3 0.1').replace(' -shifts 80', ' -shifts 16');
