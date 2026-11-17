@@ -3060,7 +3060,11 @@
       into a water without calcium -- and a total at none cannot be held:
       the water is then taken again with 1e-20 mol of the reactants added
       (PHREEQC's REACTION), so that their species are there to grow from.
-      Where the input reacts already, that is left as it is.
+      Each term of a formula is added, one it takes away as well: a
+      reactant that takes something the water has none of brings it when
+      it runs the other way, and 1e-20 mol taken from none would leave it
+      below nought, where PHREEQC stops. Where the input reacts already,
+      that is left as it is.
     */
     let traced = false;
     if (carryKin) {
@@ -3073,8 +3077,8 @@
       const lacking = kinBlock.comps.some((c) => of(c).some((n) => !has.has(n)));
       if (lacking && !/^\s*REACTION\b/im.test(waterText)) {
         // In the last simulation: before its END, where it has one.
-        const trace = `REACTION 1\n${kinBlock.comps.flatMap((c) => c.formula.map(([f, k]) => ` ${f}  ${k}`)).join('\n')}`
-          + '\n 1e-20 moles\n';
+        const terms = kinBlock.comps.flatMap((c) => c.formula.filter(([, k]) => k !== 0).map(([f, k]) => ` ${f}  ${Math.abs(k)}`));
+        const trace = `REACTION 1\n${terms.join('\n')}\n 1e-20 moles\n`;
         const lines = waterText.split(/\r\n|\r|\n/);
         let at = lines.length;
         while (at > 0 && !lines[at - 1].trim()) at--;

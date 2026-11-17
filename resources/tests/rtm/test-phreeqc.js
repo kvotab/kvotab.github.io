@@ -6116,6 +6116,46 @@ function againstKineticsHandOff(engine) {
     && /^<PHASES>\nCO2\(g\) <=> CO2, /m.test(byHCl.text) && /,\s+SI\(CO2\(g\)\) = -1\.5000\d+\s/.test(byHCl.text),
   held.map((x) => (x.error ? `${x.label}: ${x.error}` : `${x.label}: ${(x.used * 1e3).toFixed(4)} mmol used, within `
     + `${x.d.used.toExponential(1)}, pH ${x.d.pH.toExponential(1)}; ${x.law.replace(/^.*?, rate = /, 'rate = ')}`)).join('; '));
+
+  /*
+    7. A reactant whose formula takes away what the water has none of, run
+    backwards: a salt of the test's own, NaCl 1 KCl -0.2, at a rate below
+    nought, so that the water, which has no potassium, gains it as the
+    reactant grows. The water is taken with a trace of every term of the
+    formula, the KCl as well -- 1e-20 mol of it taken from none would leave
+    it below nought, where PHREEQC stops -- and the run follows PHREEQC's.
+  */
+  const back = (() => {
+    const rt = 'RATES\nUptake\n-start\n10 rate = -PARM(1)\n20 SAVE rate * TIME\n-end\n';
+    const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n Na 10\n Cl 10\n';
+    const kn = 'KINETICS 1\nUptake\n -formula NaCl 1 KCl -0.2\n -m 1\n -parms 1e-8\n -tol 1e-12\n -steps 1e5 in 10\n -runge_kutta 6\n';
+    try {
+      engine.load(dbText);
+      const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+        water: { name: 'uptake', text: `${KIN}${rt}${sw}${kn}END\n` }, activity: true, exact: true, redox: false, floor: 0 });
+      engine.load(dbText);
+      const rows = engine.run(`${KIN}${rt}SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings t M K\n -start\n`
+        + `10 PUNCH TOTAL_TIME, KIN("Uptake"), TOT("K")\n -end\n${sw}${kn}END\n`);
+      const pq = rows.slice(1).map((r) => r.map(Number)).filter((r) => r[0] > 0);
+      const mdl = RtmModel.compile(res.text);
+      const times = pq.map((r) => r[0]);
+      const run = FacsimileODE.runModel(mdl, { solver: 'ndf', tend: times[times.length - 1], rtol: 1e-10, atol: 1e-22,
+        breaks: times });
+      const iK = mdl.speciesNames.indexOf('K+');
+      let worst = 0;
+      for (const row of pq) {
+        const k = run.t.findIndex((t) => Math.abs(t - row[0]) <= 1e-9 * row[0]);
+        worst = Math.max(worst, Math.abs(mdl.toConcentrations(run.y[k], run.t[k])[iK] / row[2] - 1));
+      }
+      return { worst, K: pq[pq.length - 1][2], trace: res.report.kinetics ? res.report.kinetics.trace : null,
+        skipped: res.report.kineticsSkipped };
+    } catch (e) { return { error: e.message }; }
+  })();
+  check('  a reactant whose formula takes away what the water has none of, run backwards so that the water gains it '
+    + '(NaCl 1 KCl -0.2 at a rate below nought, a water with no potassium): the water taken with a trace of every term of '
+    + 'the formula, the KCl too, and the run against PHREEQC\'s KINETICS',
+  !back.error && back.trace === 1e-20 && !back.skipped.length && back.worst < 1e-9 && Math.abs(back.K / 2e-4 - 1) < 1e-9,
+  back.error || `potassium ${back.K.toExponential(6)} mol/kgw at the end, within ${back.worst.toExponential(1)}`);
   engine.load(dbText);
 }
 
