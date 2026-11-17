@@ -38,6 +38,9 @@ EXPORTS+=,_GetSelectedOutputRowCount,_GetSelectedOutputColumnCount,_GetSelectedO
 EXPORTS+=,_VarInit,_VarClear,_GetVersionString,_malloc,_free
 # PHREEQC's printed output, for what it prints alone: its inverse models.
 EXPORTS+=,_SetOutputStringOn,_GetOutputString
+# The files an input writes to read back with INCLUDE$ (a SELECTED_OUTPUT -file, a DUMP -file): switched on
+# for such an input alone, written into the module's memory, which the page reaches through FS.
+EXPORTS+=,_SetSelectedOutputFileOn,_SetDumpFileOn
 
 # --- Emscripten ---------------------------------------------------------------
 if [ ! -x "$EMSDK_DIR/emsdk" ]; then
@@ -70,7 +73,7 @@ cmake --build obj -j8 --target IPhreeqc >/dev/null
 em++ -O2 -fwasm-exceptions -sWASM_LEGACY_EXCEPTIONS=1 obj/libIPhreeqc.a -o out/phreeqc.js \
   -sMODULARIZE=1 -sEXPORT_NAME=createPhreeqc \
   -sEXPORTED_FUNCTIONS="$EXPORTS" \
-  -sEXPORTED_RUNTIME_METHODS=UTF8ToString,stringToUTF8,lengthBytesUTF8,getValue \
+  -sEXPORTED_RUNTIME_METHODS=UTF8ToString,stringToUTF8,lengthBytesUTF8,getValue,FS \
   -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=33554432 -sSTACK_SIZE=8388608 \
   -sENVIRONMENT=web,worker,node -sSINGLE_FILE=1 -sSINGLE_FILE_BINARY_ENCODE=0
 

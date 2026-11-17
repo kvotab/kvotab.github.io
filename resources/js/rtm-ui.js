@@ -13006,12 +13006,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117m';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117n';
   const PQ_SCRIPTS = [
-    'vendors/phreeqc/phreeqc.js?v=20261109l',
+    'vendors/phreeqc/phreeqc.js?v=20261117n',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117m',
-    'resources/js/rtm-phreeqc-engine.js?v=20261117f',
+    'resources/js/rtm-phreeqc.js?v=20261117n',
+    'resources/js/rtm-phreeqc-engine.js?v=20261117n',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -13420,6 +13420,11 @@ END
       + `equilibria</strong>, the water at ${pqNum(r.temperature)} °C and ionic strength `
       + `${pqNum(r.ionicStrength)} mol/kgw, pH ${r.pH.toFixed(3)} as PHREEQC has it; from ${esc(reply.database)}, `
       + `PHREEQC ${esc(reply.version)}.</p>`);
+    // A file the input wrote and read back (INCLUDE$): its lines taken as PHREEQC read them.
+    if (r.included && r.included.length) {
+      out.push(`<p>The input reads back what it wrote itself: ${r.included.map((n) => `<code>INCLUDE$ ${esc(n)}</code>`).join(', ')}, `
+        + 'each taken as the lines PHREEQC read there.</p>');
+    }
     // The column of the input's TRANSPORT (or ADVECTION): what the water above starts every cell as.
     if (r.transport) {
       const c = r.transport;

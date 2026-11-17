@@ -3372,7 +3372,78 @@
    *   date        the date to stamp (default today)
    * @returns {{text, report, water}}
    */
+  /*
+    PRINT's options as PHREEQC lists them (read_print): an option with a dash
+    is the first of them it begins, one without is that word alone.
+  */
+  const PRINT_OPTS = ['reset', 'gas_phase', 'pure_phase', 'surface', 'exchange', 'totals', 'eh', 'species',
+    'saturation_indices', 'si', 'reaction', 'mix', 'use', 'selected_output', 'equilibrium_phases', 'equilibria',
+    'equilibrium', 'pure', 'other', 'status', 'inverse', 'kinetics', 'dump', 'user_print', 'user_pr', 'solid_solution',
+    'solid_solutions', 'inverse_modeling', 'headings', 'heading'];
+
+  /**
+   * The input with PHREEQC's selected output on all through: a PRINT
+   * -selected_output false (PHREEQC's pr.punch, which holds until set again)
+   * taken as true. Every reading here of what PHREEQC calculated goes
+   * through a selected output of its own, and PHREEQC with its selected
+   * output off punches none of them -- the water of an input that ends so
+   * would be one it calculated before. What PHREEQC calculates is the same.
+   * The line itself is rewritten, where it is in the text.
+   */
+  function punchOn(text) {
+    if (!/print/i.test(text)) return text;
+    const cuts = [];
+    let inPrint = false;
+    let at = 0;
+    for (const raw of text.split('\n')) {
+      // The logical lines of the physical line: split at ';' before any '#'.
+      const hash = raw.indexOf('#');
+      const code = hash < 0 ? raw : raw.slice(0, hash);
+      let from = 0;
+      for (const part of code.split(';')) {
+        const m = /^\s*(\S+)\s*(\S*)/.exec(part);
+        if (m) {
+          const word = usualKeyword(m[1]).toUpperCase();
+          if (KEYWORDS.has(word)) {
+            inPrint = word === 'PRINT';
+          } else if (inPrint) {
+            const w = m[1].toLowerCase();
+            const opt = w[0] === '-' ? PRINT_OPTS.find((o) => w.length > 1 && o.startsWith(w.slice(1))) : PRINT_OPTS.find((o) => o === w);
+            if (opt === 'selected_output' && /^f/i.test(m[2])) cuts.push([at + from, at + from + part.length]);
+          }
+        }
+        from += part.length + 1;
+      }
+      at += raw.length + 1;
+    }
+    let out = text;
+    for (const [a, b] of cuts.reverse()) out = `${out.slice(0, a)} -selected_output true${out.slice(b)}`;
+    return out;
+  }
+
+  /**
+   * The input as every reader here takes it: each INCLUDE$ of a file the
+   * input writes itself (a SELECTED_OUTPUT -file, a DUMP -file) given the
+   * lines PHREEQC read there (the engine's expand, one run of the input),
+   * their names in water.included; and PHREEQC's selected output on all
+   * through (punchOn). An input taken so once is not taken again.
+   */
+  function readBack(o) {
+    const w = o && o.water;
+    if (!w || typeof w.text !== 'string' || w.taken) return o;
+    let text = w.text;
+    let included = null;
+    if (o.engine && typeof o.engine.expand === 'function' && /include(\$|_file)/i.test(text)) {
+      const read = [];
+      text = o.engine.expand(text, read);
+      if (read.length) included = read.map((r) => r.name);
+    }
+    text = punchOn(text);
+    return { ...o, water: { ...w, text, included, taken: true } };
+  }
+
   function waterToModel(o) {
+    o = readBack(o);
     // As given: a column's cell input stands for the water below, and the water taken again starts from the input.
     const given = o;
     const floor = o.floor != null ? o.floor : 1e-20;
@@ -5770,6 +5841,8 @@
         .concat(kinetics.map((k) => [k.name, k.amount]))),
       report: {
         species: order.length, equilibria: eqs.length, temperature: tc, ionicStrength: w.mu,
+        // The files the input wrote and read back (INCLUDE$), read as PHREEQC read them.
+        included: o.water.included || null,
         // The relations written with the database's dH or analytic expression: their log K go with TEMPERATURE.
         withTemperature: lines.filter((l) => /^analytic = |, dH = /.test(l.k)).length, relations: lines.length,
         pH: w.pH, chargeBalance: w.cb,
@@ -5925,6 +5998,7 @@
   */
   function transportBeside(o) {
     const started = Date.now();
+    o = readBack(o);
     const text = String(o.water.text);
     const t = readTransport(text);
     if (!t || t.kind !== 'TRANSPORT') throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
@@ -6107,6 +6181,7 @@
   */
   function pathBeside(o) {
     const started = Date.now();
+    o = readBack(o);
     const text = String(o.water.text);
     const path = o.res.report && o.res.report.path;
     if (!path) throw new Error('the model was written with no path for PHREEQC\'s own to be set beside');
@@ -6314,6 +6389,7 @@
    *   onProgress  (done, total) as PHREEQC works through the waters
    */
   function viewRun(o) {
+    o = readBack(o);
     const db = readDatabase(o.database.text, o.water && o.water.text);
     const run = o.run;
     const model = run.model;
@@ -7225,5 +7301,6 @@
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
     readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
     rateLaw, readTransport, readInverse, inversePhases, transportBeside, readPath, pathStart, stepUnit, pathBeside,
+    readBack,
   };
 }));

@@ -10,12 +10,12 @@
    below changes -- a Worker does not inherit the page's cache-busting.
    ========================================================================== */
 importScripts(
-  '../../vendors/phreeqc/phreeqc.js?v=20261109l',
+  '../../vendors/phreeqc/phreeqc.js?v=20261117n',
   '../../vendors/phreeqc/phreeqc-dat.js?v=20261107',
   './facsimile-model.js?v=20261005',
   './rtm-model.js?v=20261117m',
-  './rtm-phreeqc.js?v=20261117m',
-  './rtm-phreeqc-engine.js?v=20261117f',
+  './rtm-phreeqc.js?v=20261117n',
+  './rtm-phreeqc-engine.js?v=20261117n',
 );
 
 const handlePhreeqc = self.RtmPhreeqcEngine.handler(self.createPhreeqc, { builtin: self.PHREEQC_DAT });

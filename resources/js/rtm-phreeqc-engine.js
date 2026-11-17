@@ -19,6 +19,18 @@
    every call.) A long input is copied into the module's memory rather than
    handed over on its stack, which is a few megabytes at most.
 
+   THE FILES AN INPUT WRITES TO READ BACK. PHREEQC reads `INCLUDE$ name` (or
+   INCLUDE_FILE) as the lines of that file, and an input can write the file
+   itself first: a SELECTED_OUTPUT -file whose USER_PUNCH punches PHREEQC
+   input into it, or a DUMP -file -- PHREEQC's Examples 8, 20B and 21 do. An
+   input that reads a file is run with the selected outputs and the dump it
+   defines written to files, in a folder of the module's memory of its own
+   that is emptied after the run: it reads what it wrote, and nothing a run
+   before it left. PHREEQC writes and reads them itself, exactly as on a
+   disk. Every other input runs as before and writes nothing.
+
+     const text = engine.expand(input);   // each INCLUDE$ as PHREEQC read it
+
    ONE GLOBAL: RtmPhreeqcEngine. Runs in a page, a Worker and Node.
    ========================================================================== */
 (function (root, factory) {
@@ -34,6 +46,93 @@
   const TT_STRING = 4;
   const VAR_BYTES = 16;
   const VAR_VALUE = 8;
+
+  /**
+   * The logical lines of a PHREEQC input as PHREEQC reads them
+   * (PHRQ_io::get_logical_line): a line ends at a newline, or at a ';' that
+   * is not in a comment, a comment running from '#' to the end of its line;
+   * a '\' with nothing but spaces after it on its line joins the next. Each
+   * { at, end, line }: the line's characters from `at` to `end` in the text,
+   * the comment and the joins taken out of `line`.
+   */
+  function logicalLines(text) {
+    const out = [];
+    const n = text.length;
+    let i = 0;
+    while (i < n) {
+      const at = i;
+      let line = '';
+      let comment = false;
+      for (; i < n; i++) {
+        const c = text[i];
+        if (c === '\n') break;
+        if (comment) continue;
+        if (c === '#') { comment = true; continue; }
+        if (c === ';') break;
+        if (c === '\\') {
+          let k = i + 1;
+          while (k < n && text[k] !== '\n' && /\s/.test(text[k])) k++;
+          if (k < n && text[k] === '\n') { i = k; continue; }
+        }
+        line += c;
+      }
+      out.push({ at, end: i, line });
+      i++;
+    }
+    return out;
+  }
+
+  /**
+   * The INCLUDE$ (or INCLUDE_FILE) lines of an input: the first word of a
+   * line, as PHREEQC takes it, starts with one of them, and the file's name
+   * is the rest of the line. [{ at, end, name }], at..end the line's.
+   */
+  function includeLines(text) {
+    if (!/include(\$|_file)/i.test(text)) return [];
+    const out = [];
+    for (const ln of logicalLines(String(text))) {
+      const m = /^\s*(\S+)(.*)$/.exec(ln.line);
+      if (!m) continue;
+      const word = m[1].toLowerCase();
+      if (!word.startsWith('include$') && !word.startsWith('include_file')) continue;
+      const name = m[2].trim();
+      if (name) out.push({ at: ln.at, end: ln.end, name });
+    }
+    return out;
+  }
+
+  /**
+   * What an input writes files of when they are on: the numbers of its
+   * SELECTED_OUTPUT blocks (1 unless numbered; under any of PHREEQC's names
+   * for the keyword), and whether it has a DUMP.
+   */
+  function writersOf(text) {
+    const selected = new Set();
+    let dump = false;
+    for (const ln of logicalLines(String(text))) {
+      const m = /^\s*(\S+)\s*(\S*)/.exec(ln.line);
+      if (!m) continue;
+      const word = m[1].toLowerCase();
+      if (/^select(ed)?_out(put)?$/.test(word)) {
+        const k = parseInt(m[2], 10);
+        selected.add(Number.isFinite(k) && k >= 0 ? k : 1);
+      } else if (word === 'dump') {
+        dump = true;
+      }
+    }
+    return { selected: [...selected], dump };
+  }
+
+  /** An absolute path, the folder `cwd` the run is in: '.' and '..' taken out. */
+  function resolvePath(cwd, name) {
+    const parts = [];
+    for (const p of `${name.startsWith('/') ? '' : cwd}/${name}`.split('/')) {
+      if (!p || p === '.') continue;
+      if (p === '..') parts.pop();
+      else parts.push(p);
+    }
+    return `/${parts.join('/')}`;
+  }
 
   /**
    * @param {function} createPhreeqc  the factory vendors/phreeqc/phreeqc.js defines
@@ -62,8 +161,95 @@
     }
 
     function errors(count, what) {
-      const msg = M.UTF8ToString(M._GetErrorString(id)).trim();
+      let msg = M.UTF8ToString(M._GetErrorString(id)).trim();
+      // A file to include that is not there: PHREEQC asks for its full path, which a page has none of.
+      msg = msg.replace(/\**\s*Could not open include file (.*?)\.\s*\n\s*Please, write the full path to this file\.\s*\**/g,
+        (m, name) => `Could not open the file ${name} the input includes (INCLUDE$): PHREEQC in the page has only the files `
+          + 'an input writes itself before it reads them, with a SELECTED_OUTPUT -file or a DUMP -file; it reads no '
+          + 'file from the disk.');
       return new Error(msg || `PHREEQC reported ${count} error${count === 1 ? '' : 's'} in ${what}`);
+    }
+
+    /*
+      The files an input writes to read back (see the head of this file).
+      `watch`, while such an input runs, records each file PHREEQC opens:
+      what it reads, as it is when it is opened, and where it writes. A
+      module built without the file switches runs such an input as any
+      other, and PHREEQC says it cannot open the file.
+    */
+    const FS = M.FS && typeof M._SetSelectedOutputFileOn === 'function' && typeof M._SetDumpFileOn === 'function'
+      ? M.FS : null;
+    let folders = 0;
+    let watch = null;
+    if (FS) {
+      const open = FS.open;
+      FS.open = function (path, flags) {
+        const stream = open.apply(this, arguments);
+        if (watch && !watch.busy) {
+          watch.busy = true;
+          try {
+            const at = resolvePath(FS.cwd(), String(typeof path === 'string' ? path : stream.path));
+            const reads = typeof flags === 'string' ? !/[wa+]/.test(flags) : (flags & 3) === 0;
+            if (!reads) watch.wrote.add(at);
+            else if (FS.isFile(FS.stat(at).mode)) watch.read.push({ path: at, text: FS.readFile(at, { encoding: 'utf8' }) });
+          } catch (e) {
+            // Not a file to read: PHREEQC says what it could not.
+          } finally {
+            watch.busy = false;
+          }
+        }
+        return stream;
+      };
+    }
+
+    function removeTree(dir) {
+      for (const name of FS.readdir(dir)) {
+        if (name === '.' || name === '..') continue;
+        const p = `${dir}/${name}`;
+        if (FS.isDir(FS.stat(p).mode)) removeTree(p);
+        else FS.unlink(p);
+      }
+      FS.rmdir(dir);
+    }
+
+    /**
+     * PHREEQC's RunString of an input; one that reads a file (INCLUDE$) with
+     * the selected outputs and the dump it defines written to files, in a
+     * folder of its own emptied after it. `reads`, if given, gets each file
+     * PHREEQC read, { path, text }, in the order it read them.
+     * -> PHREEQC's count of errors
+     */
+    function runString(text, reads) {
+      if (!FS || !includeLines(text).length) return withString(text, (p) => M._RunString(id, p));
+      const { selected, dump } = writersOf(text);
+      const files = (on) => {
+        for (const n of selected) {
+          M._SetCurrentSelectedOutputUserNumber(id, n);
+          M._SetSelectedOutputFileOn(id, on);
+        }
+        if (dump) M._SetDumpFileOn(id, on);
+      };
+      const home = FS.cwd();
+      const folder = `/phreeqc-run-${++folders}`;
+      FS.mkdir(folder);
+      FS.chdir(folder);
+      watch = { read: [], wrote: new Set(), busy: false };
+      const seen = watch;
+      files(1);
+      try {
+        const n = withString(text, (p) => M._RunString(id, p));
+        if (reads) reads.push(...seen.read);
+        return n;
+      } finally {
+        files(0);
+        watch = null;
+        FS.chdir(home);
+        removeTree(folder);
+        // A file written outside the folder, at a path of its own.
+        for (const p of seen.wrote) {
+          try { FS.unlink(p); } catch (e) { /* gone with the folder */ }
+        }
+      }
     }
 
     function alive() {
@@ -105,7 +291,7 @@
       run(text, user) {
         alive();
         if (loaded === null) throw new Error('Load a database into PHREEQC first');
-        const n = withString(String(text), (p) => M._RunString(id, p));
+        const n = runString(String(text));
         if (n) throw errors(n, 'the input');
         M._SetCurrentSelectedOutputUserNumber(id, user || 99);
         const nr = M._GetSelectedOutputRowCount(id);
@@ -140,12 +326,48 @@
         }
         M._SetOutputStringOn(id, 1);
         try {
-          const n = withString(String(text), (p) => M._RunString(id, p));
+          const n = runString(String(text));
           if (n) throw errors(n, 'the input');
           return M.UTF8ToString(M._GetOutputString(id));
         } finally {
           M._SetOutputStringOn(id, 0);
         }
+      },
+
+      /**
+       * The input as PHREEQC reads it: each INCLUDE$ (or INCLUDE_FILE) line
+       * given the lines PHREEQC read there, as the file was when PHREEQC
+       * opened it -- what the input had written into it by then -- and so on
+       * into what those lines include. One run of the input; one that reads
+       * no file comes back as it is, without a run. `read`, if given, gets
+       * each { name, text } read, in the order PHREEQC read them. Throws
+       * PHREEQC's message where it fails, a file it cannot open among them.
+       */
+      expand(text, read) {
+        alive();
+        text = String(text);
+        if (!includeLines(text).length) return text;
+        if (loaded === null) throw new Error('Load a database into PHREEQC first');
+        const reads = [];
+        const n = runString(text, reads);
+        if (n) throw errors(n, 'the input');
+        let k = 0;
+        const into = (t, cwd) => {
+          let out = '';
+          let from = 0;
+          for (const inc of includeLines(t)) {
+            const r = reads[k++];
+            if (!r || r.path !== resolvePath(cwd, inc.name)) {
+              throw new Error(`PHREEQC did not read ${inc.name} where the input includes it`);
+            }
+            if (read) read.push({ name: inc.name, text: r.text });
+            out += `${t.slice(from, inc.at)}\n${into(r.text, cwd)}\n`;
+            from = inc.end;
+          }
+          return out + t.slice(from);
+        };
+        // The folder the run was in: the one runString made last.
+        return into(text, `/phreeqc-run-${folders}`);
       },
       /** Hands the instance's memory back. */
       close() {
@@ -309,6 +531,8 @@
         if (!database.text) throw new Error('No database: the built-in one did not load');
         engine.load(database.text);
         const P = (typeof self !== 'undefined' && self.RtmPhreeqc) || globalThis.RtmPhreeqc;
+        // The input as PHREEQC reads it, read once for the job: each INCLUDE$ of a file it writes itself, expanded.
+        if (msg.water && msg.type !== 'load') msg = { ...msg, water: P.readBack({ engine, water: msg.water }).water };
         if (msg.type === 'load') {
           // A database just opened, read once to say now rather than later whether it can be.
           const db = P.readDatabase(database.text);
@@ -388,5 +612,5 @@
     };
   }
 
-  return { create, handler, compact, runBatch, runBatchOne };
+  return { create, handler, compact, runBatch, runBatchOne, includeLines };
 }));

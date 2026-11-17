@@ -3830,6 +3830,144 @@ function againstTransportHandOff(engine) {
    the whole on three grids, the two meeting as the cells halve; and where
    the column ends instead, each reason said. Inputs of the tests' own.
    ====================================================================== */
+/*
+  The files an input writes to read back (INCLUDE$): a water taken through
+  four CO2 pressures at calcite, each step written by a USER_PUNCH into a
+  file the input then includes; a solution kept by DUMP -file and brought
+  back; a file no input wrote; and an input that switches PHREEQC's selected
+  output off before its last water. The tests' own inputs.
+*/
+function againstIncludeHandOff(engine) {
+  const database = { name: 'phreeqc.dat', text: dbText };
+  const handOff = (text) => {
+    engine.load(dbText);
+    return P.waterToModel({ engine, database, water: { name: 'steps', text }, activity: true, exact: true, phases: true,
+      redox: false, floor: 1e-20 });
+  };
+  const head = `SOLUTION 1  a fresh water
+ units mmol/kgw
+ pH 7.0 charge
+ Ca 1.0
+ C(4) 2.0
+ Cl 0.4
+END
+`;
+  const step = (lg) => `USE solution 1\nEQUILIBRIUM_PHASES 1\n CO2(g) ${lg}\n Calcite 0\nEND\n`;
+  const written = `${head}SELECTED_OUTPUT 3
+ -file steps.pqi
+ -reset false
+USER_PUNCH 3
+ 10 FOR k = 1 TO 4
+ 20   PUNCH EOL$ + "USE solution 1" + EOL$ + "EQUILIBRIUM_PHASES 1" + EOL$ + " CO2(g) " + STR$(-4.0 + 0.5 * k)
+ 30   PUNCH EOL$ + " Calcite 0" + EOL$ + "END" + EOL$
+ 40 NEXT k
+SOLUTION 2  a water for the punch to run on
+END
+SELECTED_OUTPUT 3
+ -file done.txt
+ -reset false
+END
+INCLUDE$ steps.pqi
+END
+`;
+  // 1. PHREEQC writes the file and reads it back; expand gives the lines it read.
+  engine.load(dbText);
+  const read = [];
+  let text = '';
+  let err = '';
+  try { text = engine.expand(written, read); } catch (e) { err = e.message; }
+  const blocks = (text.match(/^EQUILIBRIUM_PHASES 1$/gm) || []).length;
+  check('INCLUDE$ of a file the input writes: PHREEQC writes it and reads it back',
+    !err && read.length === 1 && read[0].name === 'steps.pqi' && blocks === 4 && !/INCLUDE\$/.test(text)
+      && /CO2\(g\)\s+-2\s/.test(text) && /CO2\(g\)\s+-3\.5000e\+00\s/.test(text),
+    err || `${read.length} file read, ${blocks} steps in the input as PHREEQC read it`);
+
+  // 2. The hand-off reads the input as PHREEQC does: its last water, the fourth step, as the same steps written out.
+  let res = null;
+  let plain = null;
+  try {
+    res = handOff(written);
+    plain = handOff(`${head}${[-3.5, -3.0, -2.5, -2.0].map((lg) => step(lg)).join('')}`);
+  } catch (e) { err = e.message; }
+  // Each species' amount by name; PHREEQC's own convergence leaves the two a few parts in 1e10 apart.
+  const species = (t) => new Map(((/<SPECIES>[\s\S]*?\n\n/.exec(t) || [''])[0]).split('\n').slice(1)
+    .map((l) => l.trim().split(/\s+/)).filter((w) => w.length > 1 && Number.isFinite(Number(w[1]))).map((w) => [w[0], Number(w[1])]));
+  let apart = Infinity;
+  let names = '';
+  if (res && plain) {
+    const a = species(res.text);
+    const b = species(plain.text);
+    names = [...a.keys()].join(' ') === [...b.keys()].join(' ') ? `${a.size} species` : 'other species';
+    apart = 0;
+    for (const [n, v] of b) if (Math.abs(v) > 1e-10) apart = Math.max(apart, Math.abs(a.get(n) - v) / Math.abs(v));
+  }
+  check('the hand-off of an input that includes a file it wrote: its last water, as the steps written out give it',
+    !!res && JSON.stringify(res.report.included) === '["steps.pqi"]' && Math.abs(res.report.pH - plain.report.pH) < 1e-9
+      && names === '15 species' && apart < 1e-8,
+    res && plain ? `pH ${res.report.pH.toFixed(6)} and ${plain.report.pH.toFixed(6)}; ${names}, those above 1e-10 mol/kgw `
+      + `within ${apart.toExponential(1)}` : err);
+
+  // 3. A run leaves no file for the next: an input that includes steps.pqi without writing it is refused.
+  engine.load(dbText);
+  err = '';
+  try { engine.run(`${head}INCLUDE$ steps.pqi\nEND\n`); } catch (e) { err = e.message; }
+  check('a file no input of this run wrote is not there to read, and PHREEQC says so for the page',
+    /Could not open the file steps\.pqi/.test(err) && /reads no file from the disk/.test(err) && !/full path/.test(err),
+    err.split('\n')[0]);
+
+  // 4. DUMP -file and INCLUDE$: a water kept, deleted and brought back.
+  engine.load(dbText);
+  const kept = `SOLUTION 5  a salt water
+ units mmol/kgw
+ Na 10
+ Cl 10
+END
+DUMP
+ -file kept.dmp
+ -solution 5
+END
+DELETE
+ -solution 5
+END
+INCLUDE$ kept.dmp
+END
+USE solution 5
+SAVE solution 6
+END
+`;
+  let na = null;
+  err = '';
+  try {
+    const rows = engine.run(`SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings Na\n 10 PUNCH TOT("Na")\n${kept}`, 99);
+    na = rows[rows.length - 1][0];
+  } catch (e) { err = e.message; }
+  check('DUMP -file and INCLUDE$: the water kept is brought back', Math.abs(na - 0.01) < 1e-10, err || `Na ${na}`);
+
+  // 5. PRINT -selected_output false before the last water: the hand-off still takes the water PHREEQC calculated last.
+  const hidden = `SOLUTION 1  first
+ units mmol/kgw
+ Na 1
+ Cl 1
+END
+PRINT
+ -selected_output false
+END
+SOLUTION 2  last
+ units mmol/kgw
+ Na 5
+ Cl 5
+END
+`;
+  err = '';
+  let last = null;
+  try { last = handOff(hidden); } catch (e) { err = e.message; }
+  const naLast = last ? Number((/^Na\+\s+(\S+)/m.exec(last.text) || [])[1]) : NaN;
+  check('the input switches PHREEQC\'s selected output off: the water is still the one PHREEQC calculated last',
+    Math.abs(naLast - 5e-3) < 1e-4 && /-selected_output true/.test(P.readBack({ water: { text: hidden } }).water.text),
+    err || `Na+ ${naLast}`);
+  engine.load(dbText);
+}
+
 function againstPulseHandOff(engine) {
   const database = { name: 'phreeqc.dat', text: dbText };
   const handOff = (text) => {
@@ -6962,6 +7100,8 @@ async function againstPathHandOff(engine, createPhreeqc) {
   againstTransportHandOff(wasm);
   console.log('\n--- a pulse: the input\'s TRANSPORT blocks one after another, the water flowing in changing between them ---');
   againstPulseHandOff(wasm);
+  console.log('\n--- the files an input writes to read back: INCLUDE$, DUMP -file, and PRINT -selected_output false ---');
+  againstIncludeHandOff(wasm);
   console.log('\n--- PHREEQC\'s own column beside the model: its cells as <DATA>, the run against them, Nash-Sutcliffe ---');
   againstTransportBeside(wasm);
   console.log('\n--- an exchanger in a column beside PHREEQC\'s own: its last cell in time, the run against it ---');

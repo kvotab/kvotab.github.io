@@ -3873,7 +3873,15 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
             PHREEQC reads it by — <code>PURE_PHASES</code> or <code>EQUILIBRIUM</code> for
             <code>EQUILIBRIUM_PHASES</code>, <code>SOLID_SOLUTION</code> for
             <code>SOLID_SOLUTIONS</code>, <code>SELECTED_OUT</code> for <code>SELECTED_OUTPUT</code> — and
-            as in PHREEQC, a line that starts with one starts that block. PHREEQC calculates the water,
+            as in PHREEQC, a line that starts with one starts that block. An input may write a file and
+            read it back with <code>INCLUDE$</code>, as some of PHREEQC's own examples do: a
+            <code>SELECTED_OUTPUT</code> whose <code>-file</code> a <code>USER_PUNCH</code> writes PHREEQC
+            input into, or a <code>DUMP</code> with <code>-file</code>. PHREEQC in the page writes such a
+            file in its own memory, for that run alone, and the lines it read back are taken as part of
+            the input. It cannot read a file from your disk. Whatever the input prints, the water is
+            the last one PHREEQC calculated: a <code>PRINT</code> with
+            <code>-selected_output false</code>, which would hide it from the page, is read as true, which
+            changes nothing PHREEQC calculates. PHREEQC calculates the water,
             and <em>Write the model</em> turns it, as PHREEQC leaves it, into the model text:</p>
           <ul>
             <li>every aqueous species above the floor, at PHREEQC's molality, in
@@ -5077,6 +5085,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117m"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117n"></script>
 </body>
 </html>

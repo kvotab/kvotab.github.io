@@ -517,6 +517,25 @@ async def main():
                           " s.dispatchEvent(new Event('change', { bubbles: true })); })()")
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- a file the input writes and reads back: a USER_PUNCH writes a step of PHREEQC input, INCLUDE$ reads it ---
+            inc_input = ('SOLUTION 1\\n  units mmol/kgw\\n  pH 7 charge\\n  Ca 1\\n  C(4) 2\\nEND\\n'
+                         'SELECTED_OUTPUT 3\\n  -file step.pqi\\n  -reset false\\nUSER_PUNCH 3\\n'
+                         '  10 PUNCH EOL$ + "USE solution 1" + EOL$ + "EQUILIBRIUM_PHASES 1" + EOL$ + " Calcite 0" + EOL$ + "END" + EOL$\\n'
+                         'SOLUTION 2\\nEND\\nSELECTED_OUTPUT 3\\n  -file done.txt\\nEND\\nINCLUDE$ step.pqi\\nEND\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{inc_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            inc = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') || /INCLUDE/.test(t) ? t : ''; }})()")
+            inc_text = await page.ev("document.getElementById('rtmText').value")
+            check('a file the input writes and reads back with INCLUDE$: PHREEQC in the page writes it, the water is the step '
+                  'it read there, at calcite, and the report says so',
+                  isinstance(inc, str) and inc.startswith('Written')
+                  and 'The input reads back what it wrote itself: INCLUDE$ step.pqi, each taken as the lines PHREEQC read there.' in inc
+                  and isinstance(inc_text, str) and re.search(r'^Calcite +[0-9.e-]+ +mineral', inc_text, re.M) is not None, True)
+
             # --- PHREEQC's own column beside the run: the tick there only for an input with a TRANSPORT; ticked, PHREEQC
             # runs the input's column too and its cells go under <DATA>, a table in distance for each of the five shifts.
             # The built-in example of it, run: the Fit tab's table of the run against them, each column's Nash-Sutcliffe
