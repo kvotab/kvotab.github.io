@@ -3877,6 +3877,33 @@ function againstTransportHandOff(engine) {
     && /^VELOCITY = -0\.000277777777777778$/m.test(back.text) && /^RIGHT = robin$/m.test(back.text),
   `${wrongOpts.map(([what, o]) => `${what}: "${settings(o)}"`).join(' | ')}${wrongRef.map(([what, text]) => ` ${what}: `
     + `"${refused(text).slice(0, 160)}"`).join(' |')}`);
+
+  /*
+    An ADVECTION with no -time_step, which PHREEQC shifts with no time at
+    all: with nothing at a rate, the column moves a cell a second, the clock
+    counting the cells the water has moved -- the model the same, line for
+    line, as with -time_step 1 but for the clock and what the text says of
+    it; with KINETICS in the input, refused; and a column of one cell, a
+    stirred tank, said so.
+  */
+  const adv = (o, cells = 5) => 'SOLUTION 0\n units mmol/kgw\n pH 7 charge\n Na 1\n Cl 1\nSOLUTION 1-5\n units mmol/kgw\n'
+    + ' pH 7 charge\n K 1\n Br 1\nEXCHANGE 1-5\n -equilibrate 1\n X 0.002\nEND\n'
+    + `ADVECTION\n -cells ${cells}\n -shifts 8\n${o}END\n`;
+  const bare = handOff('advection', adv(''));
+  const timed = handOff('advection', adv(' -time_step 1\n'));
+  const lines = (t) => t.split('\n').filter((l) => !/^#/.test(l) && !/^CLOCK = /.test(l)).join('\n');
+  const oneCell = handOff('advection', adv('', 1));
+  const kinetic = refused(adv('').replace('END\nADVECTION', 'KINETICS 1\n Calcite\n -m 1e-3\nEND\nADVECTION'));
+  RtmModel.compile(bare.text);
+  RtmModel.compile(oneCell.text);
+  check('  an ADVECTION with no -time_step, which PHREEQC shifts with no time at all: a cell a second, the clock counting '
+    + 'the cells the water has moved (CLOCK = water moved on (cells)), the model the one -time_step 1 gives; with KINETICS '
+    + 'in the input refused, the rates needing the time; one cell a stirred tank, the text saying so',
+  /^CLOCK = water moved on \(cells\)$/m.test(bare.text) && /^VELOCITY = 1$/m.test(bare.text) && /^TEND = 8$/m.test(bare.text)
+    && lines(bare.text) === lines(timed.text) && !/^CLOCK = /m.test(timed.text) && bare.report.transport.byShift === true
+    && /^CELLS = 1$/m.test(oneCell.text) && /^# One cell is a stirred tank/m.test(oneCell.text)
+    && /gives no -time_step, which the input's KINETICS need/.test(kinetic),
+  `${lines(bare.text) === lines(timed.text) ? 'the same model' : 'another model'}; KINETICS: "${kinetic.slice(0, 120)}"`);
 }
 
 /* ======================================================================

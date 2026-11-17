@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117p';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117r';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -13019,11 +13019,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117q';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117r';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261117n',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117q',
+    'resources/js/rtm-phreeqc.js?v=20261117r',
     'resources/js/rtm-phreeqc-engine.js?v=20261117n',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13444,8 +13444,10 @@ END
       const end = (kind, s, where) => (kind === 'robin' ? `SOLUTION ${s} flows in at the ${where}`
         : kind === 'dirichlet' ? `SOLUTION ${s} holds the ${where} end` : kind === 'free'
           ? `the water leaves at the ${where}` : `the ${where} end is closed`);
-      out.push(`<p>A column, the input's <code>${esc(c.kind)}</code>: ${c.cells} cells, ${pqNum(c.length)} m, `
-        + (c.velocity ? `the water crossing a cell in ${pqNum(c.timeStep)} s (${pqNum(Math.abs(c.velocity))} m/s) for `
+      out.push(`<p>A column, the input's <code>${esc(c.kind)}</code>: ${c.cells} cell${c.cells === 1 ? '' : 's'}, ${pqNum(c.length)} m, `
+        + (c.byShift ? `the water moving a cell at each 1 on the clock for ${c.shifts} shifts — the input gives no time step, and `
+          + 'with nothing at a rate only how far the water has moved matters (<code>CLOCK</code>)'
+          : c.velocity ? `the water crossing a cell in ${pqNum(c.timeStep)} s (${pqNum(Math.abs(c.velocity))} m/s) for `
           + `${c.shifts} shifts` : `diffusing for ${c.shifts} periods of ${pqNum(c.timeStep)} s`)
         + `${c.dispersivity ? `, dispersivity ${pqNum(c.dispersivity)} m` : ''}`
         + `${c.correction !== 1 ? ` (times ${pqNum(c.correction)}, <code>-correct_disp</code>)` : ''}, `
@@ -13460,6 +13462,12 @@ END
           + `${c.zones.length} zones — ${c.zones.map((z) => `${z.cells[0]}-${z.cells[1]}`).join(', ')} — the first as the `
           + 'water above, the others in <code>&lt;INITIAL&gt;</code>.</p>'
           : 'Every cell starts as the water above, cell 1 as PHREEQC equilibrates it before the first shift.</p>'));
+      // One cell: a stirred tank, where PHREEQC's shift replaces the cell's water whole.
+      if (c.cells === 1 && c.velocity) {
+        out.push('<p class="warn">One cell is a stirred tank: the water flowing in mixes with what is there and flows out with '
+          + 'it, where PHREEQC\'s shift puts the water flowing in in place of the cell\'s, whole. The two part most while the '
+          + 'water the cell starts with is being flushed out, and meet again once it is gone.</p>');
+      }
       // Multicomponent diffusion: each species' Dw times the porosity to the n, the ions coupled, down their activities.
       if (c.multiD) {
         const md = c.multiD;

@@ -2368,9 +2368,23 @@
         + 'shift: write it as a rate in <REACTIONS> instead');
     }
     if (!(t.shifts >= 1)) no('it has no shifts');
+    /*
+      An ADVECTION with no -time_step: PHREEQC shifts the water a cell at a
+      time with no time at all, and with nothing in the column at a rate
+      only how far the water has moved matters. The column then moves a cell
+      a second, the clock counting the cells it has moved (CLOCK), which any
+      other time step would give the same. With KINETICS in the input, the
+      rates need the time PHREEQC does not give.
+    */
+    if (!(t.dt > 0) && t.kind === 'ADVECTION' && t.dir && readKinetics(o.water.text).size === 0) {
+      t.dt = 1;
+      t.byShift = true;
+    }
     if (!(t.dt > 0)) {
-      no(t.dir ? 'it gives no -time_step: the water moves a cell in each, and the page needs to know how fast that is'
-        : 'it gives no -time_step: the diffusion goes on for -shifts of them');
+      no(!t.dir ? 'it gives no -time_step: the diffusion goes on for -shifts of them'
+        : t.kind === 'ADVECTION' ? 'it gives no -time_step, which the input\'s KINETICS need: the water moves a cell in each, '
+          + 'and the rates go with how fast that is'
+          : 'it gives no -time_step: the water moves a cell in each, and the page needs to know how fast that is');
     }
     if (t.dir && t.bc[t.dir > 0 ? 0 : 1] === 2) no('the water comes in through an end that is closed');
     const alike = (a) => a.every((v) => Math.abs(v - a[0]) <= 1e-12 * Math.abs(a[0]));
@@ -5379,7 +5393,8 @@
         ...(column.stag ? ['MATRIX_CELLS = 1', 'MATRIX_DEPTH = 1', 'MATRIX_FIRST = 1',
           `MATRIX_POROSITY = ${fmtG(column.stag.thim, 15)}`, `WETTED_SURFACE = ${fmtG(1 / column.stag.thm, 15)}`] : [])];
       colReport = { kind: t.kind, cells: t.cells, length: L, lengths: even ? null : t.lengths, shifts: shiftsAll,
-        timeStep: t.dt, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
+        // byShift: an ADVECTION with no time step, a cell a second on a clock counting the cells moved.
+        timeStep: t.dt, byShift: !!t.byShift, velocity: v, dispersivity: t.dir ? t.disp[0] : 0, correction: corr, diffusion: t.diffc,
         multiD: mcd ? { porosity: mcd.porosity, n: mcd.n, factor: mcd.factor, defaultDw: mcd.dw,
           gradient: follow && !t.implicit ? 'activity' : 'concentration', implicit: t.implicit,
           withoutDw: order.filter((sp) => !db.dw.get(sp)) } : null,
@@ -5401,6 +5416,15 @@
         : `, ${fmtG(L, 6)} m in all`}, ${t.dir ? `the water moving a cell in each time step of ${fmtG(t.dt, 6)} s, `
         + `${fmtG(Math.abs(v), 6)} m/s ${t.dir > 0 ? 'to the right' : 'to the left'}, for ${shiftsAll} shifts`
         : `diffusing for ${shiftsAll} periods of ${fmtG(t.dt, 6)} s`}, ${fmtG(shiftsAll * t.dt, 6)} s;`);
+      if (t.byShift) {
+        out.push('# its ADVECTION gives no -time_step: PHREEQC shifts the water with no time at all, and with nothing at a',
+          '# rate only how far it has moved matters. A cell a second, the clock counting the cells it has moved (CLOCK).');
+      }
+      if (t.cells === 1 && t.dir) {
+        out.push('# One cell is a stirred tank: the water flowing in mixes with what is there and flows out with it, where',
+          "# PHREEQC's shift puts the water flowing in in place of the cell's, whole. The two part most while the water the",
+          '# cell starts with is being flushed out, and meet again once it is gone.');
+      }
       out.push(`# dispersivity ${fmtG(t.dir ? t.disp[0] : 0, 6)} m${corr !== 1 ? ` (times ${fmtG(corr, 6)}, -correct_disp)` : ''}, `
         + (mcd ? 'multicomponent diffusion (below). '
           : `diffusion coefficient ${fmtG(t.diffc, 6)} m2/s${corr !== 1 && t.diffc > 0 ? ` (times ${fmtG(corr, 6)})` : ''}. `)
@@ -5473,6 +5497,8 @@
         : 'below'} ${fmtG(path.from, 6)} °C)` : path.reactants.every((r) => r.water)
         ? `water ${path.evaporation > 0 ? 'taken away' : 'added'} (${path.p.reaction.unit})`
         : `reaction added (${path.p.reaction.unit})`}`] : []),
+      // A column whose ADVECTION gives no time step: the clock counts the cells the water has moved.
+      ...(column && column.t.byShift ? ['CLOCK = water moved on (cells)'] : []),
       // The water a path takes away or adds: kg of it to each kg at the start in each 1 on the clock.
       ...(path && path.evaporation ? [`EVAPORATION = ${fmtG(path.evaporation, 15)}`] : []),
       'TIME_UNIT = second', `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);

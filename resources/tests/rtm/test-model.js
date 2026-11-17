@@ -11312,7 +11312,7 @@ console.log('\n--- reading the model text ---');
     ['a reaction with no rate', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\n<REACTIONS>\nA => \n', /k = \.\.\.|rate law/],
     ['a bare name in a rate law', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\n<REACTIONS>\nA => , r = A\n', /brackets|\[name\]/],
     ['a power whose exponent is a concentration', '<SETTINGS>\nMODE=batch\n<SPECIES>\nA 1\nB 1\n<REACTIONS>\nA => , r = [A]**[B]\n', /may not depend on a concentration/],
-    ['transport with one cell', '<SETTINGS>\nMODE=transport\nCELLS=1\n<SPECIES>\nA 1\n<REACTIONS>\n', /at least 2/],
+    ['transport with no cells', '<SETTINGS>\nMODE=transport\nCELLS=0\n<SPECIES>\nA 1\n<REACTIONS>\n', /at least 1/],
     ['an initial patch past the end', '<SETTINGS>\nMODE=transport\nCELLS=5\n<SPECIES>\nA 1\n<REACTIONS>\n\n<INITIAL>\nA 9 1\n', /past the last/],
   ];
   for (const [label, text, pattern] of bad) {
@@ -11320,6 +11320,16 @@ console.log('\n--- reading the model text ---');
     try { RtmModel.compile(text); } catch (e) { message = e.message; }
     check(`${label} is refused, and says why`, pattern.test(message), message.slice(0, 90));
   }
+  // One cell is a stirred tank: what flows in mixes into it, c_in (1 - e^-t/tau), tau the time the water takes to cross it.
+  let tankOff = 0;
+  for (const scheme of ['limited', 'upwind']) {
+    const tank = RtmModel.compile(`<SETTINGS>\nMODE = transport\nCELLS = 1\nLENGTH = 2\nADVECTION = 1\nADVECTION_SCHEME = ${scheme}\n`
+      + 'VELOCITY = 0.5\nLEFT = robin\nRIGHT = free\nTEND = 20\n\n<SPECIES>\nNa+  0  left=1e-3\nCl-  0  left=1e-3\n');
+    const r = run(tank, { tend: 20, outputTimes: [1, 4, 10, 20] });
+    r.grid.t.forEach((t, i) => { tankOff = Math.max(tankOff, Math.abs(r.grid.y[i][0] / (1e-3 * (1 - Math.exp(-t / 4))) - 1)); });
+  }
+  check('one cell is a stirred tank: salt flowing into it at c_in (1 - e^-t/tau), tau the 4 s the water takes to cross it, '
+    + 'whatever the advection scheme', tankOff < 1e-8, `within ${tankOff.toExponential(1)}`);
 }
 {
   // Chemical names must survive, since they are what a chemist writes.

@@ -1464,7 +1464,7 @@
           <table class="rtm-table">
             <tbody>
               <tr><td><code>MODE</code></td><td><em>batch</em> stirs everything together — one cell, no transport. <em>transport</em> builds a one-dimensional column.</td></tr>
-              <tr><td><code>CELLS</code></td><td>How many cells across the column.</td></tr>
+              <tr><td><code>CELLS</code></td><td>How many cells across the column; one is a stirred tank.</td></tr>
               <tr><td><code>LENGTH</code></td><td>How long the column is, in metres.</td></tr>
               <tr><td><code>GRID</code></td><td>How the cells are laid out. <em>linear</em> spaces them evenly. <em>log</em> packs them against the left-hand boundary, which is where a dissolving surface puts the chemistry: each cell is a constant factor wider than the one before, the last <code>GRID_RATIO</code> times the first. <em>powerlaw</em> puts the faces at <em>L</em>·(<em>i</em>/<em>N</em>)<sup><code>GRID_POWER</code></sup>, skbrtm's grid. <em>faces</em> takes them from <code>FACES</code>.</td></tr>
               <tr><td><code>GRID_RATIO</code></td><td>For <em>log</em>: how many times wider the last cell is than the first. 1000 unless given.</td></tr>
@@ -4166,7 +4166,12 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             2×10<sup>−14</sup>. <code>-cells</code> and <code>-lengths</code> give
             <code>CELLS</code> and <code>LENGTH</code>. The time step is the time the water takes to cross
             a cell, which gives <code>VELOCITY</code>, to the left with <code>-flow_direction back</code>,
-            and <code>-shifts</code> of them give <code>TEND</code>. The dispersivity gives a
+            and <code>-shifts</code> of them give <code>TEND</code>. An <code>ADVECTION</code> with no
+            <code>-time_step</code>, which PHREEQC shifts with no time at all, moves a cell a second, the
+            clock counting the cells the water has moved, <code>CLOCK = water moved on (cells)</code>: with
+            nothing in it at a rate only how far the water has moved matters, and any time step would give
+            the same; with <code>KINETICS</code> in the input it is not carried, the rates needing the
+            time. The dispersivity gives a
             <code>PECLET</code> over the column, and <code>-diffusion_coefficient</code>, 0.3×10<sup>−9</sup>
             m²/s unless given, every species' <code>D</code> (each its own under <code>-multi_D</code>,
             below); with <code>-correct_disp</code> both are multiplied as PHREEQC multiplies them, by
@@ -4185,7 +4190,10 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             trace, with the database's log K, and the text names it. PHREEQC
             shifts each cell's water whole and then reacts it, where here the water moves through the
             cells as it reacts: a cell of PHREEQC's after shift <em>k</em> is the page's half a time step
-            later, and the two meet as the cells are refined.</p>
+            later, and the two meet as the cells are refined. A column of one cell is a stirred tank, the
+            water flowing in mixing with what is there, where PHREEQC's shift puts it in place of the cell's
+            whole: the two part most while the water the cell starts with is flushed out, and meet again
+            once it is gone.</p>
           <p>Where the input goes on with more <code>TRANSPORT</code> blocks, the column goes on through
             them, as PHREEQC goes on with its cells where the last left them, as long as nothing changes
             between one and the next but the water flowing in at the left and the number of shifts: a
@@ -5124,7 +5132,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261117l"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261117p"></script>
+  <script src="./resources/js/rtm-model.js?v=20261117r"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261117p"></script>
@@ -5132,6 +5140,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117q"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117r"></script>
 </body>
 </html>

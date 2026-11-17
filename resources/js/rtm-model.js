@@ -456,8 +456,9 @@
       throw new RtmError('GRID = faces needs FACES = ..., the face positions in metres: a list, '
         + 'or an expression in i for i = 0 to CELLS.');
     }
-    if (out.MODE === 'transport' && !(out.CELLS >= 2)) {
-      throw new RtmError('Transport needs CELLS of at least 2.');
+    // One cell is a stirred tank: what flows in mixes into it, and its water flows out (PHREEQC's ADVECTION of one cell).
+    if (out.MODE === 'transport' && !(out.CELLS >= 1)) {
+      throw new RtmError('Transport needs CELLS of at least 1.');
     }
     if (out.MODE === 'transport' && !(out.LENGTH > 0)) {
       throw new RtmError('Transport needs a LENGTH greater than zero.');
