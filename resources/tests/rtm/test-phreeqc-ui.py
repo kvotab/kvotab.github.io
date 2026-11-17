@@ -1256,6 +1256,11 @@ async def main():
                    and said.endswith('; 1 refused by PHREEQC, each with what it said.') else 'a status of 3 rows, 1 refused',
                    [['1', '7', '0.01'], ['2', 'ERROR: Concentration data error for ph in solution input.'], ['3', '8.5', '0.001502']],
                    '3 rows of waters.csv; 2 columns of selected output; 1 refused.', ['row', 'pH', 'mu']])
+            # The same with its output under another of PHREEQC's names for SELECTED_OUTPUT.
+            said = await batch(NACL.replace('SELECTED_OUTPUT 1', 'selected_out 1'))
+            check('  the same under another of PHREEQC\'s names for SELECTED_OUTPUT, selected_out: run as it is',
+                  [said.startswith('3 of 3 rows run through PHREEQC') if isinstance(said, str) else said, await page.ev(BATCH_ROWS)],
+                  [True, [['1', '7', '0.01'], ['2', 'ERROR: Concentration data error for ph in solution input.'], ['3', '8.5', '0.001502']]])
             said = await batch(NACL, '1, 3')
             check('  Rows 1, 3: those two run, the button saying so',
                   [said.startswith('2 of 2 rows run through PHREEQC') if isinstance(said, str) else said,

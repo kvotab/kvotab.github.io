@@ -553,7 +553,8 @@ function withPhreeqc(engine) {
       + ' -comp2 Strontianite 0.0001\nEND\n', minerals: '', gas: '', solids: 'Ca(x)Sr(1-x)CO3', other: 'EQUILIBRIUM_PHASES Calcite' },
     { label: 'phases after a gas phase', text: `${sw1}GAS_PHASE 1\n -fixed_volume\n -volume 1\n CO2(g) 0.1\nSAVE solution 2\nEND\n`
       + 'USE solution 2\nEQUILIBRIUM_PHASES 1\n Calcite 0 1\nEND\n', minerals: 'Calcite', gas: '', solids: '', other: 'GAS_PHASE CO2(g)' },
-  ].map((c) => {
+  ];
+  const handOff = (c) => {
     try {
       const res = P.waterToModel({ engine, database, water: { name: c.label, text: c.text }, activity: true, exact: true,
         phases: true, redox: false });
@@ -571,14 +572,37 @@ function withPhreeqc(engine) {
         other: (r.otherCalculations || []).map((x) => `${x.block} ${x.names.join(', ')}`).join('; ') },
       said: /^# Not carried, as the calculation the water is from does not hold them: /m.test(res.text) };
     } catch (e) { return { ...c, error: e.message }; }
-  });
+  };
+  const severalRun = several.map(handOff);
   check('an input of several calculations: what the one the water is from holds is carried, and what the others held '
     + 'is not, and is named -- gypsum and calcite after a CO2 pressure and dolomite, a gas phase after phases of its '
     + 'gas, a solid solution after a phase that is its member, phases after a gas phase; each start on PHREEQC\'s water',
   // A gas phase in a fixed volume to PHREEQC's own convergence, 2e-8 in every species.
-  several.every((c) => !c.error && c.worst < (c.gas ? 1e-7 : 1e-8) && c.said
+  severalRun.every((c) => !c.error && c.worst < (c.gas ? 1e-7 : 1e-8) && c.said
     && ['minerals', 'gas', 'solids', 'other'].every((k) => c.got[k] === c[k])),
-  several.map((c) => (c.error ? `${c.label}: ${c.error}` : `${c.label}: ${c.worst.toExponential(1)}, carried `
+  severalRun.map((c) => (c.error ? `${c.label}: ${c.error}` : `${c.label}: ${c.worst.toExponential(1)}, carried `
+    + `[${c.got.minerals}|${c.got.gas}|${c.got.solids}], not [${c.got.other}]`)).join('; '));
+  /*
+    The same inputs under the other names PHREEQC reads its keywords by
+    (Keywords.cpp), in any case: pure_phases, Equilibria, EQUILIBRIUM, PURE
+    and Equilibrium_Phase for EQUILIBRIUM_PHASES, solid_solution for
+    SOLID_SOLUTIONS, COMMENT for TITLE and eof for END. Each hands off what
+    it does under the usual names.
+  */
+  const otherNames = [
+    (t) => `COMMENT the test's own\n${t.replace('EQUILIBRIUM_PHASES 1', 'pure_phases 1').replace('EQUILIBRIUM_PHASES 2', 'Equilibria 2')
+      .replace('EQUILIBRIUM_PHASES 3', 'EQUILIBRIUM 3').replace('END\n', 'eof\n')}`,
+    (t) => t.replace('EQUILIBRIUM_PHASES 1', 'PURE 1'),
+    (t) => t.replace('EQUILIBRIUM_PHASES 1', 'Equilibrium_Phase 1').replace('SOLID_SOLUTIONS 1', 'solid_solution 1'),
+    (t) => t.replace('EQUILIBRIUM_PHASES 1', 'pure_phases 1').replace(/END\n$/, 'EOF\n'),
+  ];
+  const renamed = several.map((c, i) => handOff({ ...c, label: `${c.label}, other names`, text: otherNames[i](c.text) }));
+  check('the same inputs under the other names PHREEQC reads its keywords by -- pure_phases, Equilibria, EQUILIBRIUM, '
+    + 'PURE and Equilibrium_Phase for EQUILIBRIUM_PHASES, solid_solution for SOLID_SOLUTIONS, COMMENT for TITLE, eof '
+    + 'for END: each hands off what it does under the usual names',
+  renamed.every((c, i) => !c.error && c.text !== several[i].text && c.worst < (c.gas ? 1e-7 : 1e-8) && c.said
+    && ['minerals', 'gas', 'solids', 'other'].every((k) => c.got[k] === severalRun[i].got[k])),
+  renamed.map((c) => (c.error ? `${c.label}: ${c.error}` : `${c.label}: ${c.worst.toExponential(1)}, carried `
     + `[${c.got.minerals}|${c.got.gas}|${c.got.solids}], not [${c.got.other}]`)).join('; '));
   // Acid in: the calcite dissolves and the gas holds the CO2, as PHREEQC with the same phases has them.
   const coupled = (res) => {
@@ -6247,6 +6271,28 @@ function againstKineticsHandOff(engine) {
     + `alone: ${dud.alone.names.length} species (${dud.none.names.length} with no KINETICS), strontium's `
     + `${strontium(dud.alone).join(', ') || 'none'}, pH ${dud.alone.report.pH.toFixed(12)} `
     + `(${dud.none.report.pH.toFixed(12)}); left out: ${putWhy(dud.alone)}`);
+
+  /*
+    9. A block under another of PHREEQC's names after the KINETICS: the water
+    is taken without the KINETICS alone, the input read line by line, and
+    its phases under pure_phases are kept, held and carried.
+  */
+  const afterKin = (() => {
+    try {
+      engine.load(dbText);
+      const rt = 'RATES\nUptake\n-start\n10 rate = -PARM(1)\n20 SAVE rate * TIME\n-end\n';
+      const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7.5\n Na 10\n Cl 10\n Ca 1\n C(4) 2\n';
+      const kn = 'KINETICS 1\nUptake\n -formula NaCl 1 KCl -0.2\n -m 1\n -parms 1e-8\n -steps 1e5 in 10\n';
+      const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+        water: { name: 'after', text: `${KIN}${rt}${sw}${kn}pure_phases 1\n Calcite 0 0.001\nEND\n` },
+        activity: true, exact: true, redox: false, floor: 0, phases: true });
+      return { minerals: res.report.minerals.map((x) => x.as).join(), kinetics: !!res.report.kinetics };
+    } catch (e) { return { error: e.message }; }
+  })();
+  check('  phases under another of PHREEQC\'s names after the KINETICS, pure_phases: kept where the water is taken without '
+    + 'the KINETICS, the calcite held and carried beside the reactant',
+  !afterKin.error && afterKin.minerals === 'Calcite' && afterKin.kinetics,
+  afterKin.error || `minerals ${afterKin.minerals || 'none'}, the reactant ${afterKin.kinetics ? 'carried' : 'not carried'}`);
   engine.load(dbText);
 }
 

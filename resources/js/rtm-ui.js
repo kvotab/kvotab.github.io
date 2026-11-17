@@ -12892,11 +12892,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117b',
+    'resources/js/rtm-phreeqc.js?v=20261117c',
     'resources/js/rtm-phreeqc-engine.js?v=20261114b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -14216,7 +14216,8 @@ END
   }
   /** The selected output an input defines, the last of them; 1 where it gives no number; null where it has none. */
   function batchOutputOf(text) {
-    const all = [...String(text).matchAll(/^\s*SELECTED_OUTPUT\b[ \t]*(\d*)/gim)];
+    // PHREEQC's other names for it too: SELECTED_OUT, SELECT_OUTPUT, SELECT_OUT.
+    const all = [...String(text).matchAll(/^\s*(?:SELECTED_OUTPUT|SELECTED_OUT|SELECT_OUTPUT|SELECT_OUT)\b[ \t]*(\d*)/gim)];
     if (!all.length) return null;
     const n = all[all.length - 1][1];
     return n ? Number(n) : 1;

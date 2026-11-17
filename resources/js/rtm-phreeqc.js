@@ -74,22 +74,48 @@
     'SOLID_SOLUTIONS_MODIFY', 'REACTION_MODIFY', 'SOLUTION_RAW', 'EQUILIBRIUM_PHASES_RAW',
     'EXCHANGE_RAW', 'SURFACE_RAW', 'KINETICS_RAW', 'GAS_PHASE_RAW', 'SOLID_SOLUTIONS_RAW',
     'REACTION_RAW', 'MIX_RAW', 'REACTION_TEMPERATURE_RAW', 'REACTION_PRESSURE_RAW',
+    'REACTION_TEMPERATURE_MODIFY', 'REACTION_PRESSURE_MODIFY',
     'INCLUDE$', 'SOLUTION_MIX', 'EXCHANGE_MIX', 'GAS_PHASE_MIX', 'KINETICS_MIX',
-    'EQUILIBRIUM_PHASES_MIX', 'EQUILIBRIUM_PHASE_MIX', 'SOLID_SOLUTIONS_MIX', 'SOLID_SOLUTION_MIX', 'SURFACE_MIX',
-    'MIX_SOLUTION', 'MIX_EXCHANGE', 'MIX_GAS_PHASE', 'MIX_KINETICS', 'MIX_EQUILIBRIUM_PHASES', 'MIX_EQUILIBRIUM_PHASE',
-    'MIX_SOLID_SOLUTIONS', 'MIX_SOLID_SOLUTION', 'MIX_SURFACE', 'POLYMER', 'RATE_PARAMETERS_PK',
+    'EQUILIBRIUM_PHASES_MIX', 'SOLID_SOLUTIONS_MIX', 'SURFACE_MIX', 'POLYMER', 'RATE_PARAMETERS_PK',
     'RATE_PARAMETERS_SVD', 'RATE_PARAMETERS_HERMANSKA',
   ]);
   /*
-    What PHREEQC does in a simulation after its TRANSPORT's shifts, under
-    each name it reads: IPhreeqc runs a simulation's transport, then its
-    RUN_CELLS, its _MIX blocks (do_mixes), COPY, DUMP and DELETE, wherever
-    in the simulation they are written.
+    PHREEQC's other names for its keywords, each with the usual one
+    (Keywords.cpp): a line that starts with one starts that block, as PHREEQC
+    reads it -- a title line that starts with Pure too. logicalLines gives
+    such a line the usual name, which every reader here knows; a reader of
+    the input's own lines knows at least that a block starts there.
+  */
+  const KEYWORD_NAMES = new Map([
+    ['EOF', 'END'], ['PURE_PHASES', 'EQUILIBRIUM_PHASES'], ['PURE', 'EQUILIBRIUM_PHASES'],
+    ['EQUILIBRIUM', 'EQUILIBRIUM_PHASES'], ['EQUILIBRIA', 'EQUILIBRIUM_PHASES'], ['EQUILIBRIUM_PHASE', 'EQUILIBRIUM_PHASES'],
+    ['SOLID_SOLUTION', 'SOLID_SOLUTIONS'], ['SOLID_SOLUTION_MODIFY', 'SOLID_SOLUTIONS_MODIFY'],
+    ['SELECT_OUTPUT', 'SELECTED_OUTPUT'], ['SELECTED_OUT', 'SELECTED_OUTPUT'], ['SELECT_OUT', 'SELECTED_OUTPUT'],
+    ['DEBUG', 'KNOBS'], ['COMMENT', 'TITLE'], ['INCREMENTAL', 'INCREMENTAL_REACTIONS'],
+    ['SOLUTION_S', 'SOLUTION_SPREAD'], ['SPREAD_SOLUTION', 'SOLUTION_SPREAD'], ['REACTION_PRESSURES', 'REACTION_PRESSURE'],
+    ['LLNL_AQUEOUS_MODEL', 'LLNL_AQUEOUS_MODEL_PARAMETERS'], ['NAMED_ANALYTICAL_EXPRESSION', 'NAMED_EXPRESSIONS'],
+    ['NAMED_ANALYTICAL_EXPRESSIONS', 'NAMED_EXPRESSIONS'], ['NAMED_LOG_K', 'NAMED_EXPRESSIONS'],
+    ['MIX_SOLUTION', 'SOLUTION_MIX'], ['MIX_EXCHANGE', 'EXCHANGE_MIX'], ['MIX_GAS_PHASE', 'GAS_PHASE_MIX'],
+    ['MIX_KINETICS', 'KINETICS_MIX'], ['MIX_EQUILIBRIUM_PHASES', 'EQUILIBRIUM_PHASES_MIX'],
+    ['MIX_EQUILIBRIUM_PHASE', 'EQUILIBRIUM_PHASES_MIX'], ['EQUILIBRIUM_PHASE_MIX', 'EQUILIBRIUM_PHASES_MIX'],
+    ['MIX_SOLID_SOLUTIONS', 'SOLID_SOLUTIONS_MIX'], ['MIX_SOLID_SOLUTION', 'SOLID_SOLUTIONS_MIX'],
+    ['SOLID_SOLUTION_MIX', 'SOLID_SOLUTIONS_MIX'], ['MIX_SURFACE', 'SURFACE_MIX'],
+  ]);
+  for (const name of KEYWORD_NAMES.keys()) KEYWORDS.add(name);
+  /** A line that starts with another of PHREEQC's names for a keyword, with the usual one. */
+  function usualKeyword(line) {
+    const m = /^(\s*)(\S+)/.exec(line);
+    const usual = m && KEYWORD_NAMES.get(m[2].toUpperCase());
+    return usual ? `${m[1]}${usual}${line.slice(m[0].length)}` : line;
+  }
+  /*
+    What PHREEQC does in a simulation after its TRANSPORT's shifts: IPhreeqc
+    runs a simulation's transport, then its RUN_CELLS, its _MIX blocks
+    (do_mixes), COPY, DUMP and DELETE, wherever in the simulation they are
+    written.
   */
   const AFTER_SHIFTS = new Set(['RUN_CELLS', 'COPY', 'DUMP', 'DELETE', 'SOLUTION_MIX', 'EXCHANGE_MIX', 'GAS_PHASE_MIX',
-    'KINETICS_MIX', 'EQUILIBRIUM_PHASES_MIX', 'EQUILIBRIUM_PHASE_MIX', 'SOLID_SOLUTIONS_MIX', 'SOLID_SOLUTION_MIX',
-    'SURFACE_MIX', 'MIX_SOLUTION', 'MIX_EXCHANGE', 'MIX_GAS_PHASE', 'MIX_KINETICS', 'MIX_EQUILIBRIUM_PHASES',
-    'MIX_EQUILIBRIUM_PHASE', 'MIX_SOLID_SOLUTIONS', 'MIX_SOLID_SOLUTION', 'MIX_SURFACE']);
+    'KINETICS_MIX', 'EQUILIBRIUM_PHASES_MIX', 'SOLID_SOLUTIONS_MIX', 'SURFACE_MIX']);
 
   /** Never a species of the water: water itself, and PHREEQC's electron. */
   const NOT_A_SPECIES = new Set(['H2O', 'e-']);
@@ -100,7 +126,8 @@
 
   /**
    * PHREEQC's own lines: '#' starts a comment, ';' separates two lines, and
-   * a backslash at the end carries a line on to the next.
+   * a backslash at the end carries a line on to the next. A keyword under
+   * another of PHREEQC's names comes with the usual one (KEYWORD_NAMES).
    */
   function logicalLines(text) {
     const out = [];
@@ -113,9 +140,9 @@
       }
       line = buf + line;
       buf = '';
-      out.push(...line.split(';'));
+      out.push(...line.split(';').map(usualKeyword));
     }
-    if (buf) out.push(buf);
+    if (buf) out.push(usualKeyword(buf));
     return out;
   }
 
@@ -3131,7 +3158,7 @@
         const lines = waterText.split(/\r\n|\r|\n/);
         let at = lines.length;
         while (at > 0 && !lines[at - 1].trim()) at--;
-        if (at > 0 && /^END$/i.test(lines[at - 1].trim())) at--;
+        if (at > 0 && /^(END|EOF)$/i.test(lines[at - 1].trim())) at--;
         waterText = [...lines.slice(0, at), trace, ...lines.slice(at)].join('\n');
         w = takeWater(waterText);
         traced = true;
@@ -5081,7 +5108,7 @@
     */
     const at = text.search(/^[ \t]*TRANSPORT\b/im);
     if (at < 0) throw new Error('the input has no TRANSPORT block for PHREEQC to run beside the model');
-    const close = /^[ \t]*END\b[^\n]*(?:\n|$)/im.exec(text.slice(at));
+    const close = /^[ \t]*(?:END|EOF)\b[^\n]*(?:\n|$)/im.exec(text.slice(at));
     const upTo = close ? at + close.index + close[0].length : text.length;
     const n = cols.length;
     const head = ['cell_', 'time_', ...cols.map((c, i) => `v${i}_`)];

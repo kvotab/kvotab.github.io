@@ -3831,8 +3831,12 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
           <p><em>From PHREEQC…</em> on the Model tab opens a panel that takes PHREEQC input. That is a
             <code>SOLUTION</code>, and anything PHREEQC should do to it first:
             <code>EQUILIBRIUM_PHASES</code> to put it at calcite and a CO<sub>2</sub> pressure, a
-            <code>REACTION</code>, a <code>MIX</code>. PHREEQC calculates it, and <em>Write the
-            model</em> turns the water, as PHREEQC leaves it, into the model text:</p>
+            <code>REACTION</code>, a <code>MIX</code>. A keyword may be written under any of the names
+            PHREEQC reads it by — <code>PURE_PHASES</code> or <code>EQUILIBRIUM</code> for
+            <code>EQUILIBRIUM_PHASES</code>, <code>SOLID_SOLUTION</code> for
+            <code>SOLID_SOLUTIONS</code>, <code>SELECTED_OUT</code> for <code>SELECTED_OUTPUT</code> — and
+            as in PHREEQC, a line that starts with one starts that block. PHREEQC calculates the water,
+            and <em>Write the model</em> turns it, as PHREEQC leaves it, into the model text:</p>
           <ul>
             <li>every aqueous species above the floor, at PHREEQC's molality, in
               <code>&lt;SPECIES&gt;</code>;</li>
@@ -4924,6 +4928,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117c"></script>
 </body>
 </html>
