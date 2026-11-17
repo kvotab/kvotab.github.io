@@ -5054,6 +5054,24 @@ function againstTransportBeside(engine) {
     + 'TRANSPORT\n -shifts 40\nEND\n';
   const wp = write(pulse);
   const bp = P.transportBeside({ engine, database, water: wp.water, res: wp.res });
+  // A block numbered for no cell, the water flowing in made at a CO2 pressure with it: not carried into the column.
+  const inflowMade = BESIDE_INPUT.replace('EQUILIBRIUM_PHASES 100\n Calcite 0 1', 'EQUILIBRIUM_PHASES 100\n CO2(g) -2.5 10\n Calcite 0 1');
+  const wi = write(inflowMade);
+  const mi = RtmModel.compile(wi.res.text);
+  const backI = new Map([...wi.res.names].map(([k, v]) => [v, k]));
+  const yi = mi.toConcentrations(mi.initialState());
+  let worstI = 0;
+  mi.speciesNames.forEach((n, i) => {
+    const ref = backI.has(n) ? wi.res.molal.get(backI.get(n)) : wi.res.amounts.get(n);
+    if (ref !== undefined) worstI = Math.max(worstI, Math.abs(yi[i] - ref) / Math.max(Math.abs(ref), 1e-15));
+  });
+  const otherI = (wi.res.report.otherCalculations || []).map((x) => `${x.block} ${x.names.join(', ')}`).join('; ');
+  check('a column whose water flowing in is made at a CO2 pressure, the phase in a block numbered for no cell: the model '
+    + 'holds what the cells hold, calcite, and says the CO2(g) is not carried; cell 1 starts on PHREEQC\'s',
+  inflowMade !== BESIDE_INPUT && wi.res.report.minerals.map((x) => x.as).join() === 'Calcite'
+    && otherI === 'EQUILIBRIUM_PHASES CO2(g)' && worstI < 1e-8
+    && /^# Not carried, as none of the column's cells holds them: EQUILIBRIUM_PHASES CO2\(g\)\.$/m.test(wi.res.text),
+  `holds ${wi.res.report.minerals.map((x) => x.as).join(', ')}; not carried: ${otherI}; cell 1 within ${worstI.toExponential(1)}`);
   check('an input that goes on after its column, the column\'s own water flowing back in: the model carries the column, and '
     + 'PHREEQC\'s tables beside it are of that column alone, the same as without what follows',
   wp.res.report.transport.after === true && bp.tables === b.tables && bp.rows === b.rows && bp.text === b.text,

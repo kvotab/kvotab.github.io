@@ -1946,7 +1946,7 @@
       ...[...readSolidSolutions(t.before).values()].flatMap((b) => b.flatMap((ss) => ss.comps.map((c) => `S_S("${c.name}")`)))];
     let rows;
     try {
-      rows = runRows(o.engine, `${punchBlock(extras)}${equil}`);
+      rows = runRows(o.engine, `${punchBlock(extras, true)}${equil}`);
     } catch (e) {
       no(`PHREEQC could not equilibrate its cells before the first shift: ${String(e.message || e).split('\n')[0]}`);
     }
@@ -2037,6 +2037,21 @@
     }
     if (zones.length > 1 && (readGasPhases(t.before).size || readSolidSolutions(t.before).size)) {
       no('its cells start apart, and it has a gas phase or a solid solution, which the page does not write cell by cell');
+    }
+    /*
+      What the column's cells hold, as PHREEQC lists it for each: the phases,
+      gases and solid-solution members of any of them, which the model
+      carries -- and not a block numbered for no cell, such as one that made
+      the water flowing in (waterToModel).
+    */
+    const cellsHeld = { equi: [], gas: [], ss: [] };
+    for (let i = 1; i <= n; i++) {
+      for (const c of stag ? [i, stagOf(i)] : [i]) {
+        const h = last.get(c).held;
+        for (const k of ['equi', 'gas', 'ss']) {
+          for (const nm of h ? h[k] : []) if (!cellsHeld[k].some((x) => x.toLowerCase() === nm.toLowerCase())) cellsHeld[k].push(nm);
+        }
+      }
     }
     /*
       THE STAGNANT CELLS' ZONES, behind the cells: runs of them alike, each
@@ -2140,7 +2155,7 @@
     }
     const corr = t.correctDisp && t.dir ? 1 + (t.bc[0] === 3 ? 1 / n : 0) + (t.bc[1] === 3 ? 1 / n : 0) : 1;
     return { t, cellInput, left, right, leftSol, rightSol, keep, keepAt, keepOn, corr, tc: one.tc, trace: TRACE, zones,
-      stag: stag ? { ...stag, zones: szones } : null, mcd };
+      stag: stag ? { ...stag, zones: szones } : null, mcd, held: cellsHeld };
   }
 
   /*
@@ -3089,14 +3104,14 @@
       }
     }
     /*
-      What the water's calculation holds, as PHREEQC lists it: the block of
-      each kind whose names those are -- or where no block is (an
-      EQUILIBRIUM_PHASES_MODIFY), each phase's last line -- is carried, and
-      what the input's other calculations hold is named, and not. In a
-      column every cell holds the blocks numbered as it is, and all are
-      carried, as columnSetup reads them.
+      What the water's calculation holds, as PHREEQC lists it -- in a column,
+      what any of its cells holds (columnSetup): the block of each kind whose
+      names those are, or where no block is (an EQUILIBRIUM_PHASES_MODIFY;
+      cells holding different blocks) each phase's last line, is carried,
+      and what the input's other calculations hold is named, and not.
     */
-    const held = column ? null : (w.held || { equi: [], gas: [], ss: [] });
+    const held = column ? column.held : (w.held || { equi: [], gas: [], ss: [] });
+    const otherWhy = column ? 'none of the column\'s cells holds them' : 'the calculation the water is from does not hold them';
     const otherCalcs = [];
     const notHeld = (block, names, keep) => {
       const seen = new Set(keep);
@@ -4209,7 +4224,7 @@
       out.push(`# Phases not carried: ${phasesSkipped.map((ps) => `${ps.name}, ${ps.why}`).join('; ')}.`);
     }
     if (otherCalcs.length) {
-      out.push(`# Not carried, as the calculation the water is from does not hold them: ${otherCalcs
+      out.push(`# Not carried, as ${otherWhy}: ${otherCalcs
         .map((x) => `${x.block} ${x.names.join(', ')}`).join('; ')}.`);
     }
     if (gases.length) {
@@ -4909,8 +4924,8 @@
         minerals: minerals.map((mn) => ({ phase: mn.phase, as: mn.name, amount: mn.amount, si: mn.target,
           alt: mn.alt ? mn.alt.formula : null, only: mn.only, forced: mn.forced })),
         phasesSkipped,
-        // What the input's other calculations hold and the water's does not, by block: not carried.
-        otherCalculations: otherCalcs,
+        // What the input's other calculations hold and the water's does not, by block: not carried, and why.
+        otherCalculations: otherCalcs, otherWhy,
         // An exchanger whose sites go with a phase or a kinetic reactant in PHREEQC: carried so (per, sites= per=), or
         // held here at what PHREEQC loaded at the start (linked), and why.
         exchange: onEx.length ? { exchangers: exUsed.map((sp) => exName.get(sp)),

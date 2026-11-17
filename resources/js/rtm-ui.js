@@ -12892,11 +12892,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261116e';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261116f';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261116d',
+    'resources/js/rtm-phreeqc.js?v=20261116e',
     'resources/js/rtm-phreeqc-engine.js?v=20261114b',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13423,7 +13423,7 @@ END
       }
       // What the input's other calculations hold, and the water's does not: they made the water, and are not carried.
       if (r.otherCalculations && r.otherCalculations.length) {
-        out.push(`<p>Not carried, as the calculation the water is from does not hold them: ${r.otherCalculations
+        out.push(`<p>Not carried, as ${esc(r.otherWhy || 'the calculation the water is from does not hold them')}: ${r.otherCalculations
           .map((x) => `<code>${esc(x.block)}</code> ${x.names.map(esc).join(', ')}`).join('; ')}.</p>`);
       }
       if (r.exchange) {
