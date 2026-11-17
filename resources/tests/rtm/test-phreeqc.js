@@ -6309,6 +6309,45 @@ function againstKineticsHandOff(engine) {
     + 'the KINETICS, the calcite held and carried beside the reactant',
   !afterKin.error && afterKin.minerals === 'Calcite' && afterKin.kinetics,
   afterKin.error || `minerals ${afterKin.minerals || 'none'}, the reactant ${afterKin.kinetics ? 'carried' : 'not carried'}`);
+
+  /*
+    10. Species written at none for a reaction that moves electrons, and for
+    no other: the salt of 7, which moves none, in a water with no redox
+    element, the valence states held at one pe and the floor 1e-20 -- no
+    species written at none, no electron, and the start settles, where O2
+    at none was the electron's only couple and held nothing; beside it,
+    organic carbon whose rate PUTs, which would move electrons but is left
+    out: the same species, its reason kept.
+  */
+  const noCouple = (() => {
+    const rt = 'RATES\nUptake\n-start\n10 rate = -PARM(1)\n20 SAVE rate * TIME\n-end\n'
+      + 'Organic\n-start\n10 PUT(1, 1)\n20 rate = 0\n30 SAVE rate * TIME\n-end\n';
+    const sw = 'SOLUTION 1\n temp 25\n units mmol/kgw\n pH 7\n Na 10\n Cl 10\n';
+    const uptake = 'Uptake\n -formula NaCl 1 KCl -0.2\n -m 1\n -parms 1e-8\n';
+    const organic = 'Organic\n -formula CH2O 1\n -m 1\n';
+    const hand = (kin) => {
+      engine.load(dbText);
+      const res = P.waterToModel({ engine, database: { name: 'phreeqc.dat', text: dbText },
+        water: { name: 'no couple', text: `${KIN}${rt}${sw}KINETICS 1\n${kin} -steps 1e5 in 10\nEND\n` },
+        activity: true, exact: true, redox: true, floor: 1e-20 });
+      const mdl = RtmModel.compile(res.text);
+      return { report: res.report, names: mdl.speciesNames, stuck: mdl.warnings.filter((x) => /did not converge/.test(x)) };
+    };
+    try { return { salt: hand(uptake), both: hand(`${uptake}${organic}`) }; } catch (e) { return { error: e.message }; }
+  })();
+  const organicWhy = (x) => (x.report.kineticsSkipped.find((s) => s.name === 'Organic') || {}).why || '';
+  check('  species written at none for a reaction that moves electrons, and for no other: the salt, which moves none, in a '
+    + 'water with no redox element and the valence states held -- nothing at none, no electron, the start settled; beside '
+    + 'it, organic carbon that would move electrons, left out: the same species, its reason kept',
+  !noCouple.error && !noCouple.salt.report.electron && !noCouple.salt.names.includes('O2') && !noCouple.salt.stuck.length
+    && !!noCouple.salt.report.kinetics && !noCouple.both.report.electron && !noCouple.both.stuck.length
+    && noCouple.both.names.join() === noCouple.salt.names.join() && /PUT/.test(organicWhy(noCouple.both)),
+  noCouple.error || ['salt', 'both'].map((k) => {
+    const x = noCouple[k];
+    return `${k === 'salt' ? 'the salt' : 'with organic carbon'}: ${x.names.length} species, the electron `
+      + `${x.report.electron ? `tied to ${x.report.electron.tied.join(', ')}, at none ${x.report.electron.atNone.join(', ') || 'none'}` : 'not written'}`
+      + `${x.stuck.length ? `; ${x.stuck[0]}` : ''}`;
+  }).join('; ') + `; left out: ${organicWhy(noCouple.both)}`);
   engine.load(dbText);
 }
 

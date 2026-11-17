@@ -3024,6 +3024,30 @@
     let waterText = carryKin ? kineticSurfacesAtStart(withoutKinetics(o.water.text), kinBlock.comps) : o.water.text;
     const rateDefs = carryKin ? readRates(o.database.text, o.water.text) : new Map();
     const phaseKey = new Map([...db.phaseReaction.keys()].map((k) => [k.toLowerCase(), k]));
+    /*
+      A kinetic reactant's reaction, per mole of it: a phase's dissolution,
+      or a chemical formula's into the master species of its elements with
+      H+, the water and the electrons (formulaReaction); why there is none.
+    */
+    const reactionOf = (comp) => {
+      const terms = new Map();
+      const add = (n, c) => terms.set(n, (terms.get(n) || 0) + c);
+      for (const [f, coef] of comp.formula) {
+        const pk = phaseKey.get(f.toLowerCase());
+        if (pk) {
+          const r = db.phaseReaction.get(pk);
+          const c0 = r.left[0].c;
+          for (const t of r.left.slice(1)) add(t.n, (-t.c * coef) / c0);
+          for (const t of r.right) add(t.n, (t.c * coef) / c0);
+          continue;
+        }
+        try {
+          for (const [n, c] of formulaReaction(f, db)) add(n, c * coef);
+        } catch (e) { return { terms, why: e.message }; }
+      }
+      return { terms, why: null };
+    };
+    const movesElectrons = (comp) => { const r = reactionOf(comp); return !r.why && Math.abs(r.terms.get('e-') || 0) > 1e-12; };
     const kinPhases = [];
     if (carryKin) {
       const want = new Set();
@@ -3059,8 +3083,13 @@
     const carryRedox = !!o.exact && o.redox !== false;
     // With the floor at 0, every species' log K: one PHREEQC finds none of is written too (see atNone).
     const everything = carryRedox && floor === 0;
-    // With a kinetic reaction to run, every species of a redox element's: one PHREEQC finds none of may be needed (atNone).
-    const kineticRedox = carryRedox && !everything && !!kinBlock && kinBlock.comps.length > 0;
+    /*
+      With a kinetic reaction to run that moves electrons, every species of
+      a redox element's: one PHREEQC finds none of may be needed (atNone).
+      Not for one left out where the water was taken before (below).
+    */
+    const kineticRedox = carryRedox && !everything && carryKin
+      && kinBlock.comps.some((c) => !(o.leftOut || []).some((s) => s.name === c.name) && movesElectrons(c));
     const ofRedox = (n) => { try { return [...db.expand(n).keys()].some((lb) => /\(/.test(lb)); } catch (e) { return false; } };
     const lkSpecies = carryRedox ? [...db.reaction.keys()].filter((sp) => sp !== 'e-' && sp !== 'H2O'
       && (everything || db.isRedox(sp) || (kineticRedox && ofRedox(sp)))) : [];
@@ -3288,12 +3317,14 @@
     */
     const atNone = new Set();
     /*
-      The same, with the redox carried and a kinetic reaction to run, for
-      the valence states a reaction may push the water into: each species
-      of a redox element PHREEQC lists at none -- the sulphide of a sulphate
-      water that organic carbon is to reduce -- so that the electrons a
-      reaction brings or takes have a couple to go to, as in PHREEQC's own
-      next step.
+      The same, with the redox carried and a kinetic reaction to run that
+      moves electrons, for the valence states it may push the water into:
+      each species of a redox element PHREEQC lists at none -- the sulphide
+      of a sulphate water that organic carbon is to reduce -- so that the
+      electrons it brings or takes have a couple to go to, as in PHREEQC's
+      own next step. A reaction that moves none, calcite or a feldspar
+      dissolving, needs none of them, and a water with no couple but those
+      at none would have no pe to start from.
     */
     if (everything || kineticRedox) {
       const zero = [...w.species].filter(([n, [m]]) => !(m > 0) && !NOT_A_SPECIES.has(n) && db.reaction.has(n)
@@ -3565,22 +3596,7 @@
         const def = rateDefs.get(comp.name.toLowerCase());
         if (!def) { skip('the database and the input have no RATES for it'); continue; }
         // Its reaction, per mole of it.
-        const terms = new Map();
-        const add = (n, c) => terms.set(n, (terms.get(n) || 0) + c);
-        let why = null;
-        for (const [f, coef] of comp.formula) {
-          const pk = phaseKey.get(f.toLowerCase());
-          if (pk) {
-            const r = db.phaseReaction.get(pk);
-            const c0 = r.left[0].c;
-            for (const t of r.left.slice(1)) add(t.n, (-t.c * coef) / c0);
-            for (const t of r.right) add(t.n, (t.c * coef) / c0);
-            continue;
-          }
-          try {
-            for (const [n, c] of formulaReaction(f, db)) add(n, c * coef);
-          } catch (e) { why = e.message; break; }
-        }
+        const { terms, why } = reactionOf(comp);
         if (why) { skip(why); continue; }
         const rx = [...terms].filter(([n, c]) => n !== 'H2O' && Math.abs(c) > 1e-12);
         if (rx.some(([n]) => n === 'e-') && !carryRedox) {
@@ -3985,17 +4001,21 @@
     }
     /*
       A reactant left out grows nothing from its trace: its species would be
-      carried at 1e-20 with nothing to make them. Where the trace was of one
-      left out, the water is taken again with the trace of those carried
-      alone, and with none where none is, what was left out left out for the
-      reason it was here, where its trace was there to read; each time with
-      fewer, so it ends.
+      carried at 1e-20 with nothing to make them. Nor does one that moves
+      electrons need the species written at none for it (kineticRedox) when
+      it is left out. Where the trace was of one left out, or those species
+      were written for none carried, the water is taken again with the
+      trace of those carried alone, and with none where none is, what was
+      left out left out for the reason it was here, where its trace was
+      there to read; each time with more left out, so it ends.
     */
-    if (traced) {
+    {
       const carried = new Set(kinetics.map((k) => k.comp.name));
-      const tracedOf = traceComps.map((c) => c.name);
-      if (tracedOf.some((n) => !carried.has(n))) {
-        return waterToModel({ ...given, traceOf: tracedOf.filter((n) => carried.has(n)), leftOut: kinSkipped.slice() });
+      const retrace = traced && traceComps.some((c) => !carried.has(c.name));
+      const unneeded = kineticRedox && !kinetics.some((k) => movesElectrons(k.comp));
+      if (retrace || unneeded) {
+        return waterToModel({ ...given, traceOf: traceComps.filter((c) => carried.has(c.name)).map((c) => c.name),
+          leftOut: kinSkipped.slice() });
       }
     }
     /*
