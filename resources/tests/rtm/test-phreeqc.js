@@ -6829,7 +6829,7 @@ async function againstPathHandOff(engine, createPhreeqc) {
     const ns = m.speciesNames.length;
     const lnG = new Float64Array(ns);
     const iH = m.speciesNames.indexOf('H+');
-    const out = { res, m, pq, run, pH: 0, tot: 0, held: 0, kgw: 0, totWhere: '', heldWhere: '', pHs: [] };
+    const out = { res, m, pq, hd, held_: held, run, pH: 0, tot: 0, held: 0, kgw: 0, totWhere: '', heldWhere: '', pHs: [] };
     pq.forEach((r, i) => {
       // The run's state speciated at its time's temperature, which a path in temperature moves.
       const t = run.grid.t[i];
@@ -6839,17 +6839,19 @@ async function againstPathHandOff(engine, createPhreeqc) {
       out.pHs.push(Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - col(r, 'pH_')));
       out.pH = Math.max(out.pH, out.pHs[i]);
       const kgw = col(r, 'kgw_');
-      out.kgw = Math.max(out.kgw, Math.abs(kgw / pth.kgw - 1));
+      // The water the run has then, to each kg at the start: less where the path takes it away (EVAPORATION).
+      const wv = 1 - (pth.evaporation || 0) * t;
+      out.kgw = Math.max(out.kgw, Math.abs(kgw / (pth.kgw * wv) - 1));
       for (const e of els) {
         let tot = 0;
         m.speciesNames.forEach((n, j) => { if (ofWater(j)) tot += ((RtmModel.elementsOf(n) || new Map()).get(e) || 0) * c[j]; });
         // In moles: the page's kilogram is PHREEQC's at the start, PHREEQC's own kilogram moving as the reaction goes.
         const want = col(r, `t_${e}`) * kgw;
-        const d = Math.abs(tot * pth.kgw - want) / Math.max(Math.abs(want), 1e-10);
+        const d = Math.abs(tot * pth.kgw * wv - want) / Math.max(Math.abs(want), 1e-10);
         if (d > out.tot) { out.tot = d; out.totWhere = `${e}, step ${i + 1}`; }
       }
       held.forEach(([, as], k) => {
-        const d = Math.abs(c[m.speciesNames.indexOf(as)] * pth.kgw - col(r, `h${k}_`));
+        const d = Math.abs(c[m.speciesNames.indexOf(as)] * pth.kgw * wv - col(r, `h${k}_`));
         if (d > out.held) { out.held = d; out.heldWhere = `${as}, step ${i + 1}`; }
       });
     });
@@ -6914,9 +6916,34 @@ async function againstPathHandOff(engine, createPhreeqc) {
   `pH within ${cv.pH.toExponential(1)}, totals ${cv.tot.toExponential(1)} (${cv.totWhere}), the gases ${cv.held.toExponential(1)} mol `
     + `(${cv.heldWhere}); written at none: ${cvFaint.join(', ')}`);
 
+  /*
+    4c. Water taken away (REACTION of H2O): a water at saturation with
+    calcite, open to the air's CO2, evaporated nine tenths of the way --
+    EVAPORATION, the water left 1 - E t, everything in it concentrating;
+    gypsum forms on the way.
+  */
+  const dry = 'SOLUTION 1\n units mmol/kgw\n pH 7.5 charge\n Ca 12\n S(6) 10\n C(4) 2\n Na 20\n Cl 20\n'
+    + 'EQUILIBRIUM_PHASES 1\n Calcite 0 0\n Gypsum 0 0\n CO2(g) -3.5 10\nREACTION 1\n H2O -1\n 0 10 20 30 40 45 50 moles\nEND\n';
+  const ev = along(dry);
+  const evp = ev.res.report.path;
+  const gypAt = ev.hd ? ev.hd.indexOf(`h${(ev.held_ || []).findIndex(([, as]) => as === 'Gypsum')}_`) : -1;
+  const gypEnd = ev.pq && ev.pq.length && gypAt >= 0 ? Number(ev.pq[ev.pq.length - 1][gypAt]) : 0;
+  check('  water taken away (REACTION of H2O) from a water at calcite saturation open to the air: EVAPORATION, PHREEQC\'s '
+    + '18.016 g a mole to each kg in each mol on the clock (CLOCK = water taken away (mol)), TEND 50; at each of PHREEQC\'s '
+    + 'steps the pH, the totals and the minerals PHREEQC\'s, gypsum forming on the way, to what the gypsum\'s own water '
+    + 'moves PHREEQC\'s kilogram',
+  !!evp && Math.abs(evp.evaporation * evp.kgw - 0.018016) < 1e-12 && /^EVAPORATION = 0\.0180\d+$/m.test(ev.res.text)
+    && /^CLOCK = water taken away \(mol\)$/m.test(ev.res.text) && /^TEND = 50$/m.test(ev.res.text)
+    && !/^=> .*H2O/m.test(ev.res.text) && ev.pq.length === 7 && ev.pH < 1e-3 && ev.tot < 5e-3 && ev.held < 1e-5 && gypEnd > 0
+    && ev.kgw < 5e-3,
+  evp ? `pH within ${ev.pH.toExponential(1)}, totals in moles ${ev.tot.toExponential(1)} (${ev.totWhere}), minerals `
+    + `${ev.held.toExponential(1)} mol (${ev.heldWhere}); gypsum ${(gypEnd * 1e3).toFixed(2)} mmol at the end; PHREEQC's kilogram `
+    + `${ev.kgw.toExponential(1)} off the run's` : JSON.stringify(ev.res.report.pathSkipped));
+
   // 5. Not carried, and why; one step is no path.
   const why = (input, opts) => { const r = along(input, opts).res; return { r, w: r.report.pathSkipped ? r.report.pathSkipped.why : '' }; };
-  const evap = why('SOLUTION 1\n units mmol/kgw\n Na 10\n Cl 10\nREACTION 1\n H2O -1\n 10 20 30 moles\nEND\n');
+  const evap = why('SOLUTION 1\n units mmol/kgw\n Na 10\n Cl 10\nEXCHANGE 1\n X 0.001\n -equilibrate 1\n'
+    + 'REACTION 1\n H2O -1\n 10 20 30 moles\nEND\n');
   const heat = why('SOLUTION 1\n units mmol/kgw\n Ca 5\n S(6) 5\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.1\n'
     + 'REACTION_TEMPERATURE 1\n 25 60 40\nEND\n');
   const both = why('SOLUTION 1\n units mmol/kgw\n Ca 5\n S(6) 5\nREACTION 1\n NaCl 1\n 0.001 0.002 0.003\n'
@@ -6927,11 +6954,11 @@ async function againstPathHandOff(engine, createPhreeqc) {
   const loose = why(cd, { exact: true, phases: true, exchange: false });
   const one = why('SOLUTION 1\n units mmol/kgw\n Na 1\n Cl 1\nREACTION 1\n NaCl 1\n 0.002 moles\nEND\n');
   const notHeld = why(salt, { exact: false, phases: false });
-  check('  not carried, the model of the water at the path\'s end and the report saying why: water taken away (H2O), a '
+  check('  not carried, the model of the water at the path\'s end and the report saying why: water taken away (H2O) from a water with an exchanger, a '
     + 'temperature that goes up and down, the amounts and the temperature both changing, a sorbed species PHREEQC counts '
     + 'as another formula (-mole_balance), an exchanger left out that would take up what the path brings, the relations '
     + 'not held; a REACTION of one step is no path',
-  /H2O/.test(evap.w) && /goes up and down/.test(heat.w) && /both change/.test(both.w) && /LinCd\+2 as LinCdCl2/.test(mb.w)
+  /H2O\), and the page does not take an exchanger's or a surface's sites/.test(evap.w) && /goes up and down/.test(heat.w) && /both change/.test(both.w) && /LinCd\+2 as LinCdCl2/.test(mb.w)
     && /CdX2.*would take up what it brings/.test(loose.w) && /not held exactly/.test(notHeld.w)
     && !one.r.report.path && !one.r.report.pathSkipped && !evap.r.report.path
     && /^# Not carried: the path of the calculation the water is from, as it takes water away/m.test(evap.r.text),

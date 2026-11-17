@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117o';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117p';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -1294,6 +1294,16 @@
           ? `a0 ${fmtNumber(ss.binary.a0)} and a1 ${fmtNumber(ss.binary.a1)} at 25 °C${ss.binary.gap ? ', a miscibility gap' : ''}`
           : 'ideal'}, there while the water is saturated in it.`);
       }
+    }
+    // The water taken away, or added (EVAPORATION): what is left of it at the end, and what that does to the rest -- of a
+    // water with no relation at equilibrium as of one with them; the minerals named where the model has any.
+    if (m.evaporation) {
+      const E = m.evaporation;
+      const tu = timeUnit();
+      const left = 1 - E * ((m.settings && m.settings.TEND) || 0);
+      say.push(`The water ${E > 0 ? 'taken away' : 'added'} at ${fmtNumber(Math.abs(E))} kg to each kg there was at the start `
+        + `in each ${tu.name}, ${fmtNumber(left)} kg of it left at the end: everything in it ${E > 0 ? 'concentrates' : 'is diluted'} `
+        + `as it goes${m.minerals ? ', the minerals with it' : ''}.`);
     }
     // The temperature, where it goes with the cell or the time, and the log K that follow it.
     const T = m.temperature;
@@ -5071,7 +5081,9 @@
         + `${anyHeld ? td(x.held) : ''}`
         + `${td(x.rel, x.rel > 0 ? esc(x.rel.toExponential(1)) : '0')}<td>${x.closes ? 'closes' : 'made or taken by reactions'}</td></tr>`).join('')
       + '</tbody></table>'
-      + `<p>Amounts ${transport ? "per m² of the water's cross-section, concentration × m" : 'per kg of water'}. Off its balance: the most the `
+      + `<p>Amounts ${transport ? "per m² of the water's cross-section, concentration × m"
+        : state.compiled && state.compiled.evaporation ? 'per kg of the water there was at the start, the water going as it evaporates'
+          : 'per kg of water'}. Off its balance: the most the `
       + 'reactions made or took of it at any stored time, as a share of the most the column held or was given. Below 1e-4 the '
       + 'balance closes, to the solver\'s tolerance and the summing of the ends\' fluxes over the stored points; above, a reaction '
       + 'makes or takes it — a decay, a source.'
@@ -13007,11 +13019,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117o';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117p';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261117n',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117o',
+    'resources/js/rtm-phreeqc.js?v=20261117p',
     'resources/js/rtm-phreeqc-engine.js?v=20261117n',
   ];
   /** "An example water": round numbers, nobody's sample. */
@@ -13661,6 +13673,15 @@ END
       }
       if (r.path) {
         const pth = r.path;
+        // The water the path takes away or adds (EVAPORATION).
+        if (pth.evaporation) {
+          const E = pth.evaporation;
+          out.push(`<p>It takes the water ${E > 0 ? 'away' : 'in'}: ${pqNum(Math.abs(E))} kg to each kg the path starts with in each 1 on `
+            + `the clock, <code>EVAPORATION</code>, ${pqNum(1 - E * pth.tend)} kg of it left at the end. Everything in the water `
+            + `${E > 0 ? 'concentrates' : 'is diluted'} as it goes, the minerals with it, and what else the reaction brings comes to `
+            + 'each kilogram of the water there is. The water a mineral takes or gives as it forms or dissolves, which PHREEQC '
+            + 'counts, the page does not.</p>');
+        }
         if (pth.atmMoved) {
           out.push(`<p class="warn">PHREEQC's gas phase, in a fixed volume, takes the water from ${pqNum(pth.atmMoved.from)} to `
             + `${pqNum(pth.atmMoved.to)} atm along the path, where the run holds it at the first: the log K, A and B that go `

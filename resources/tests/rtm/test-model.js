@@ -6839,6 +6839,130 @@ Cl-    4.465 4.801 4.325 -2.847 1.748 0 -0.331 20.16 0 1
 }
 
 /* ======================================================================
+   2s'. Water taken away (EVAPORATION)
+
+   PHREEQC's REACTION of H2O: the water goes at a steady rate, 1 - E t of
+   it left, and what is in it concentrates. Against closed forms: a salt
+   water, c0/(1 - E t), and water added, c0/(1 + |E| t); gypsum forming
+   once the water is saturated, the calcium in moles the same all through,
+   the relation holding and the event where the closed form puts it; the
+   Jacobian; the worker's budget, in moles to each kg at the start, closed;
+   and the texts it refuses.
+   ====================================================================== */
+console.log('\n--- water taken away (EVAPORATION) ---');
+{
+  const salt = (E, tend) => `<SETTINGS>\nMODE = batch\nTEND = ${tend}\nEVAPORATION = ${E}\n\n<SPECIES>\nNa+ 0.01\nCl- 0.01\n`;
+  const dryR = run(RtmModel.compile(salt(1, 0.9)), { tend: 0.9, outputTimes: [0.5, 0.9] });
+  const wetR = run(RtmModel.compile(salt(-2, 4)), { tend: 4, outputTimes: [1, 4] });
+  let off = 0;
+  dryR.grid.t.forEach((t, i) => { off = Math.max(off, Math.abs(dryR.grid.y[i][0] / (0.01 / (1 - t)) - 1)); });
+  wetR.grid.t.forEach((t, i) => { off = Math.max(off, Math.abs(wetR.grid.y[i][0] / (0.01 / (1 + 2 * t)) - 1)); });
+  check('water taken away at a steady rate, and added: a salt water at c0/(1 - E t) to nine tenths of the water gone, and '
+    + 'at c0/(1 + 2 t) with twice the water added in each unit of time, to a ninth of the salt',
+  off < 1e-7, `within ${off.toExponential(1)}; ${dryR.grid.y[1][0].toPrecision(8)} at nine tenths gone`);
+
+  // Gypsum: a calcium sulphate water evaporated past saturation, Davies activity, the pair held.
+  const gyp = `<SETTINGS>
+MODE = batch
+TEND = 0.9
+EQUILIBRATE = always
+ACTIVITY = davies
+EVAPORATION = 1
+
+<SPECIES>
+Ca+2     0.004
+SO4-2    0.004
+CaSO4    0.001
+Na+      0.02
+Cl-      0.02
+Gypsum   0     mineral
+
+<EQUILIBRIUM>
+Ca+2 + SO4-2 <=> CaSO4,   logK = 2.3
+Gypsum <=> Ca+2 + SO4-2,  logK = -4.58
+`;
+  const gm = RtmModel.compile(gyp);
+  const gr = run(gm, { tend: 0.9, nonNegative: true, outputTimes: [0.3, 0.6, 0.9] });
+  const nm = gm.speciesNames;
+  let molesOff = 0;
+  let satOff = 0;
+  const lnG = new Float64Array(nm.length);
+  gr.grid.t.forEach((t, i) => {
+    const c = gm.toConcentrations(gr.grid.y[i], t);
+    const w = 1 - t;
+    molesOff = Math.max(molesOff, Math.abs((c[nm.indexOf('Ca+2')] + c[nm.indexOf('CaSO4')] + c[nm.indexOf('Gypsum')]) * w / 0.005 - 1),
+      Math.abs(c[nm.indexOf('Na+')] * w / 0.02 - 1));
+    if (c[nm.indexOf('Gypsum')] > 0) {
+      RtmModel.activityAt(gm.act, c, 0, lnG, new Float64Array(nm.length));
+      const lnIAP = Math.log(c[nm.indexOf('Ca+2')]) + lnG[nm.indexOf('Ca+2')] + Math.log(c[nm.indexOf('SO4-2')]) + lnG[nm.indexOf('SO4-2')];
+      satOff = Math.max(satOff, Math.abs(lnIAP / Math.LN10 + 4.58));
+    }
+  });
+  const gEv = gr.events.find((e) => /Gypsum precipitates/.test(e.expr));
+  // Where it forms, by the closed form: the water at the start's speciation concentrated until IAP = Ksp.
+  const st = gm.toConcentrations(gm.initialState(), 0);
+  const satAt = (w) => {
+    const cc = Float64Array.from(st, (v) => v / w);
+    // CaSO4 at its relation's share: Ca and SO4 total 0.005 each over w, held by the pair, Davies at I.
+    const tot = 0.005 / w;
+    let lo = 0;
+    let hi = tot;
+    for (let k = 0; k < 200; k++) {
+      const pair = 0.5 * (lo + hi);
+      const free = tot - pair;
+      cc[nm.indexOf('Ca+2')] = free; cc[nm.indexOf('SO4-2')] = free; cc[nm.indexOf('CaSO4')] = pair; cc[nm.indexOf('Gypsum')] = 0;
+      RtmModel.activityAt(gm.act, cc, 0, lnG, new Float64Array(nm.length));
+      const r = Math.log(pair) + lnG[nm.indexOf('CaSO4')] - 2.3 * Math.LN10 - (Math.log(free) + lnG[nm.indexOf('Ca+2')])
+        - (Math.log(free) + lnG[nm.indexOf('SO4-2')]);
+      if (r > 0) hi = pair; else lo = pair;
+    }
+    const free = tot - 0.5 * (lo + hi);
+    return (2 * Math.log(free) + lnG[nm.indexOf('Ca+2')] + lnG[nm.indexOf('SO4-2')]) / Math.LN10 + 4.58;
+  };
+  let wLo = 0.1;
+  let wHi = 1;
+  for (let k = 0; k < 80; k++) { const wm = 0.5 * (wLo + wHi); if (satAt(wm) > 0) wLo = wm; else wHi = wm; }
+  const tSat = 1 - 0.5 * (wLo + wHi);
+  const gv = RtmModel.verifyJacobian(gm, 0.6, gr.grid.y[1]);
+  check('  gypsum forming as a calcium sulphate water dries: the calcium and the sodium in moles the same all through, the '
+    + 'water at saturation once there is gypsum, the event where the closed form puts it, the Jacobian against a difference',
+  molesOff < 1e-7 && satOff < 1e-8 && !!gEv && Math.abs(gEv.t - tSat) < 1e-6 && gv.discrepancies.length === 0,
+  `moles within ${molesOff.toExponential(1)}, saturation ${satOff.toExponential(1)} in log; gypsum from t = `
+    + `${gEv ? gEv.t.toFixed(7) : '-'} (closed form ${tSat.toFixed(7)}); ${gv.checked} entries`);
+
+  // The worker's budget of calcium, in moles to each kg at the start: what the water and the gypsum hold, closed.
+  global.RtmModel = RtmModel;
+  global.FacsimileODE = FacsimileODE;
+  const { handleRtmMessage } = require(path.join(jsDir, 'rtm-worker.js'));
+  let ran = null;
+  handleRtmMessage({ type: 'run', id: 91, text: gyp, solver: { method: 'ndf', rtol: 1e-9, atol: 1e-20, nonNegative: true,
+    maxPoints: 2000 } }, (msg) => { if (msg.type === 'result') ran = msg; });
+  let bud = null;
+  if (ran) handleRtmMessage({ type: 'budget', id: 92, runKey: ran.runKey, of: { kind: 'element', name: 'Ca' } }, (msg) => { bud = msg; });
+  let open = Infinity;
+  if (bud && bud.total) {
+    open = 0;
+    for (let i = 0; i < bud.total.length; i++) open = Math.max(open, Math.abs(bud.byReactions[i]) / 0.005, Math.abs(bud.total[i] / 0.005 - 1));
+  }
+  check('  the budget of calcium in moles to each kg at the start: the same all through, nothing made or taken, the water '
+    + 'and the gypsum sharing it; the facts say how much water is left', open < 1e-6 && !!ran && ran.model.evaporation === 1,
+  `within ${open.toExponential(1)} of the calcium${bud && bud.bands ? `; its bands ${bud.bands.map((b) => b.name).join(', ')}` : ''}`);
+
+  const refuse = (t) => { try { RtmModel.compile(t); } catch (e) { return e.message; } return '(no error)'; };
+  const ecases = [
+    ['a column', salt(1, 0.5).replace('MODE = batch', 'MODE = transport\nCELLS = 3\nLENGTH = 1'), /a batch's, and this is a column/],
+    ['the water gone before TEND', salt(1, 1.2), /takes all the water away by t = 1, and TEND = 1\.2/],
+    ['an exchanger', `${salt(1, 0.5)}X- exchanger 0.001\nNaX exchange 0\n\n<EQUILIBRIUM>\nNa+ + X- <=> NaX, logK = 0\n`,
+      /its sites, so many to each kilogram of water, would grow/],
+    ['a fixed volume of gas', `${salt(1, 0.5).replace('EVAPORATION = 1', 'EVAPORATION = 1\nGAS_VOLUME = 1')}CO2 1e-3\nCO2(g) 0 gas\n\n`
+      + '<EQUILIBRIUM>\nCO2(g) <=> CO2, logK = -1.468\n', /the litres of gas to each kilogram of water would grow/],
+  ];
+  const ewrong = ecases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${ecases.map((c) => c[0]).join('; ')}`, !ewrong.length,
+    ewrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/* ======================================================================
    2r. The temperature (dH, analytic, TEMPERATURE that varies, TK and TC)
 
    A relation's log K at a temperature as PHREEQC's k_calc has it: van 't

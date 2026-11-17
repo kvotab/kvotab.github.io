@@ -536,6 +536,27 @@ async def main():
                   and 'The input reads back what it wrote itself: INCLUDE$ step.pqi, each taken as the lines PHREEQC read there.' in inc
                   and isinstance(inc_text, str) and re.search(r'^Calcite +[0-9.e-]+ +mineral', inc_text, re.M) is not None, True)
 
+            # --- water taken away along a path: a REACTION of H2O, carried as EVAPORATION ---
+            dry_input = ('SOLUTION 1\\n  units mmol/kgw\\n  pH 7 charge\\n  Na 10\\n  Cl 10\\n  Ca 2\\n  S(6) 2\\n'
+                         'REACTION 1\\n  H2O -1\\n  0 10 20 30 40 moles\\nEND\\n')
+            await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                          f" w.value = '{dry_input}';"
+                          " w.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            dry = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                    f"t.startsWith('PHREEQC could not') ? t : ''; }})()")
+            dry_text = await page.ev("document.getElementById('rtmText').value")
+            check('water taken away along a path (a REACTION of H2O): the report says how fast and how much is left, the text '
+                  'has EVAPORATION and the clock counting the water taken, and it compiles and runs',
+                  isinstance(dry, str) and 'It takes the water away: ' in dry and ', EVAPORATION, ' in dry
+                  and isinstance(dry_text, str) and re.search(r'^EVAPORATION = 0\.0180[0-9]*$', dry_text, re.M) is not None
+                  and re.search(r'^CLOCK = water taken away \(mol\)$', dry_text, re.M) is not None, True)
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_dry = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            check('  and the page runs it', ran_dry, 'Done')
+
             # --- PHREEQC's own column beside the run: the tick there only for an input with a TRANSPORT; ticked, PHREEQC
             # runs the input's column too and its cells go under <DATA>, a table in distance for each of the five shifts.
             # The built-in example of it, run: the Fit tab's table of the run against them, each column's Nash-Sutcliffe

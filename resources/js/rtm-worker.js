@@ -175,6 +175,10 @@ function rtmSummary(model) {
     timeUnit: model.timeUnit,
     // What the clock counts where it is no time (CLOCK): the page titles its time axes with it.
     clock: model.clock || null,
+    // The water taken away to each kg at the start in a unit of time (EVAPORATION), 0 for none.
+    evaporation: model.evaporation || 0,
+    // How many of the species are minerals (the facts name them where water taken away concentrates them too).
+    minerals: (model.speciesList || []).filter((sp) => sp.mineral).length,
     settings: model.settings,
     warnings: model.warnings,
     fixes: model.fixes || [],
@@ -441,6 +445,16 @@ function rtmFaceOver(f, a, b) {
   return sum;
 }
 
+/**
+ * The water a batch has at `time`, to each kg it had at the start: 1 - E t
+ * where EVAPORATION takes it away (or adds it), else 1. An amount to each
+ * kg of water times this is in moles to each kg at the start, which
+ * evaporation leaves as they are: the balances below are in those.
+ */
+function rtmWater(model, time) {
+  return model.evaporation ? 1 - model.evaporation * time : 1;
+}
+
 function rtmBudget(msg) {
   const run = rtmRunFor(msg);
   if (!run) return { type: 'budget', id: msg.id, missing: true };
@@ -479,8 +493,9 @@ function rtmBudget(msg) {
   const rockAt = bandAt.has('in the rock') ? bandAt.get('in the rock') : -1;
   for (let i = 0; i < n; i++) {
     const base = i * width;
+    const water = rtmWater(model, t[i]);
     for (let cell = 0; cell < nf; cell++) {
-      const w = widthOf(cell);
+      const w = widthOf(cell) * water;
       for (let j = 0; j < stride; j++) {
         const c = cell * stride + j;
         const scale = j === 0 ? w : w * mx.aw * mx.d[j - 1];
@@ -599,7 +614,9 @@ function rtmHolding(model, t, states, n, width, w, cells) {
   if (nl) {
     for (let i = 0; i < n; i++) {
       const c = states.subarray(i * width, (i + 1) * width);
-      for (const [cell, scale] of cells) {
+      const water = rtmWater(model, t[i]);
+      for (const [cell, cellScale] of cells) {
+        const scale = cellScale * water;
         model.lineTermsAt(c, t[i], cell, w, out, true);
         let v = 0;
         for (let l = 0; l < nl; l++) v += out[l];
@@ -706,7 +723,9 @@ function rtmFlows(msg) {
   for (let i = 0; i < n; i++) {
     const c = states.subarray(i * width, (i + 1) * width);
     cur.fill(0);
-    for (const [cell, scale] of cells) {
+    const water = rtmWater(model, t[i]);
+    for (const [cell, cellScale] of cells) {
+      const scale = cellScale * water;
       if (nl) {
         model.lineSpeciesAt(c, t[i], cell, slot, nk, buf);
         for (let q = 0; q < nk; q++) {
@@ -1037,7 +1056,9 @@ function rtmRelationsSolve(run) {
   const leftFace = (k) => (transport && model.faces ? model.faces.left[k] : null);
   for (let i = 0; i < n; i++) {
     const c = states.subarray(i * width, (i + 1) * width);
-    for (const [cell, scale] of cells) {
+    const water = rtmWater(model, t[i]);
+    for (const [cell, cellScale] of cells) {
+      const scale = cellScale * water;
       for (let k = 0; k < ns; k++) held[i * ns + k] += scale * model.massOf[cell * ns + k] * c[cell * ns + k];
       if (model.linesBySpeciesAt) {
         model.linesBySpeciesAt(c, t[i], cell, buf);

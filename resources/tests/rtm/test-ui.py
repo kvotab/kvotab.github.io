@@ -1111,6 +1111,42 @@ async def main():
                           " b.dispatchEvent(new Event('change', { bubbles: true })); })()" % ('true' if log_y else 'false'))
             await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
 
+            # --- water taken away (EVAPORATION): the facts, and the salt concentrating as c0/(1 - E t) -------
+            salt = '<SETTINGS>\nMODE = batch\nTEND = 0.9\nEVAPORATION = 1\n\n<SPECIES>\nNa+  0.01\nCl-  0.01\n'
+            await set_text(page, salt)
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('taken away at')", True, tries=40)
+            check('water taken away (EVAPORATION): the model facts say how fast, how much of it is left at the end, and that '
+                  'everything in it concentrates, of a water with no relation at all',
+                  await page.ev("/The water taken away at 1 kg to each kg there was at the start in each second, 0\\.1 kg of it "
+                                "left at the end: everything in it concentrates as it goes\\./"
+                                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await set_text(page, salt + 'Halite  0.5  mineral\n')
+            await settle(page, "document.getElementById('rtmFacts').textContent.includes('the minerals with it')", True, tries=40)
+            check('  with a mineral, the facts say it concentrates as well',
+                  await page.ev("/everything in it concentrates as it goes, the minerals with it\\./"
+                                ".test(document.getElementById('rtmFacts').textContent)"), True)
+            await page.ev("document.getElementById('rtmRun').click()")
+            run = await wait_run(page)
+            await page.ev("document.querySelector('[data-tab=\"time\"]').click()")
+            await page.ev("""(() => {
+              for (const el of document.querySelectorAll('#rtmSeries input')) {
+                const want = el.value === 'Na+' || el.value === 'Halite';
+                if (el.checked !== want) { el.checked = want; el.dispatchEvent(new Event('change', { bubbles: true })); }
+              }
+            })()""")
+            await asyncio.sleep(1.2)
+            dried = await page.ev("(() => { const d = document.getElementById('rtmChartTime').data;"
+                                  " return ['Na+', 'Halite'].map((name) => { const t = d.find((x) => x.name === name);"
+                                  " return t ? t.y[t.y.length - 1] : null; }); })()")
+            # Within the page's tolerance (rtol 1e-6 a step, 2.8e-5 at the end of the tenfold rise): the model's suite has
+            # c0/(1 - E t) to 1e-7 at 1e-10.
+            check(f'  it runs, and the salt and the mineral end at ten times what they started at, with a tenth of the water '
+                  f'left ({dried})',
+                  isinstance(run, str) and run.startswith('Done') and isinstance(dried, list) and len(dried) == 2
+                  and all(isinstance(v, (int, float)) for v in dried)
+                  and abs(dried[0] / 0.1 - 1) < 1e-4 and abs(dried[1] / 5 - 1) < 1e-4, True)
+            await page.ev("document.querySelector('[data-tab=\"model\"]').click()")
+
             # Back to the built-in model, which the checks below are about.
             await page.ev("(() => { const t = document.getElementById('rtmText');"
                           " t.value = RTM_DEFAULT_MODEL;"

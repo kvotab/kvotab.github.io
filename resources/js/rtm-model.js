@@ -216,9 +216,17 @@
       PRESSURE: the water's pressure in atm, 1 unless given, which the
       Debye-Hueckel A and B and a double layer's dielectric constant are
       worked out at (a logK is taken as written). A bubble at a fixed
-      pressure puts the water at its own, as PHREEQC does.
+      pressure puts the water at its own, as PHREEQC does, and a fixed
+      volume of gas its own as it goes, unless PRESSURE is given.
     */
     PRESSURE: { def: 1, kind: 'number' },
+    /*
+      EVAPORATION: the water taken away at a steady rate, kg of it to each
+      kg there was at the start in a unit of time -- added, below nought.
+      What is in the water, the solids with it, concentrates as it goes. See
+      the evaporation in compile.
+    */
+    EVAPORATION: { def: 0, kind: 'number' },
     /*
       DUAL POROSITY: a rock matrix beside the column.
 
@@ -10834,6 +10842,46 @@
     act = gasSetup(species, equilibria, act, settings, warnings, sections.GAS_PAIRS);
     const solids = solidSolutionSetup(species, equilibria, sections.SOLID_SOLUTIONS, settings);
     const electron = electronSetup(species, equilibria);
+    /*
+      EVAPORATION: water taken away at a steady rate E, kg to each kg there
+      was at the start in a unit of time (added, below nought), as PHREEQC
+      takes it with a REACTION of H2O. The water is then 1 - E t of the
+      kilogram it was, and every amount counted to each kilogram of it --
+      the species in the water, the minerals, a bubble's gases, and with
+      them what the relations conserve -- concentrates by as much: its rate
+      gains itself times E/(1 - E t) (rhs, jac). The electron is no amount,
+      and a fixed species is held. A batch only, and nothing whose own
+      measure is to each kilogram besides: an exchanger's or a surface's
+      sites, a fixed volume of gas's litres. TEND before the water is gone.
+      A rate law is the kilogram's of the water there is; something added
+      to the whole at a steady rate, as along a path, is written over
+      1 - E t.
+    */
+    const evaporation = settings.EVAPORATION || 0;
+    const evapList = [];
+    if (evaporation) {
+      const E = evaporation;
+      if (!Number.isFinite(E)) throw new RtmError(`EVAPORATION = ${E} is no number.`);
+      if (transport) {
+        throw new RtmError(`EVAPORATION = ${E}: water taken away or added is a batch's, and this is a column, whose water `
+          + 'moves with the flow.');
+      }
+      const sited = species.find((sp) => sp.exchanger || sp.exchange || sp.surface || sp.potential);
+      if (sited) {
+        throw new RtmError(`EVAPORATION = ${E} and ${sited.name}, ${sited.exchange || sited.exchanger ? 'on an exchanger' : 'on a surface'}: `
+          + 'its sites, so many to each kilogram of water, would grow as the water goes, which the page does not follow.',
+        sited.line);
+      }
+      if (act && act.gas && act.gas.fixed === 'volume') {
+        throw new RtmError(`EVAPORATION = ${E} and GAS_VOLUME: the litres of gas to each kilogram of water would grow as the `
+          + 'water goes, which the page does not follow; a bubble, GAS_PRESSURE, goes along.');
+      }
+      if (E * settings.TEND >= 1) {
+        throw new RtmError(`EVAPORATION = ${E} takes all the water away by t = ${+(1 / E).toPrecision(6)}, and TEND = `
+          + `${settings.TEND} is not before it.`);
+      }
+      species.forEach((sp, s) => { if (!sp.electron && !sp.fixed && sp.name !== 'H2O') evapList.push(s); });
+    }
     // The order the conserved totals are made in (conservationBasis): species
     // on an exchanger first, and last what is no amount, an exchanger or the
     // electron, which counts in no total. A surface's potential (3) is in
@@ -12419,6 +12467,13 @@
       return d;
     };
 
+    // EVAPORATION's states, every cell's amounts that are not held there, and their diagonal slots.
+    const evapRows = [];
+    if (evaporation) {
+      for (let i = 0; i < nc; i++) for (const s of evapList) if (!fixedAt[i * ns + s]) evapRows.push(i * ns + s);
+    }
+    const evapSlots = Int32Array.from(evapRows, (r) => slot(r, r));
+
     function rhs(t, y, out) {
       out.fill(0);
       if (thermo.clock) thermoAt(t);
@@ -12470,6 +12525,11 @@
       // M dC/dt = f, so every term on the right -- reaction, transport and
       // boundary alike -- is divided by the coefficient of that row.
       if (anyMass) for (let k = 0; k < n; k++) out[k] *= invMass[k];
+      // The water going (EVAPORATION): every amount to each kilogram concentrates as it goes.
+      if (evaporation) {
+        const g = evaporation / (1 - evaporation * t);
+        for (let k = 0; k < evapRows.length; k++) out[evapRows[k]] += g * y[evapRows[k]];
+      }
       return out;
     }
 
@@ -12549,6 +12609,10 @@
       if (nlim) limitedFlux(y, null, V);
       if (npFaces.length) npFlux(y, null, V);
       if (anyMass) for (let k = 0; k < nnz; k++) V[k] *= invMass[rowOfSlot[k]];
+      if (evaporation) {
+        const g = evaporation / (1 - evaporation * t);
+        for (let k = 0; k < evapSlots.length; k++) V[evapSlots[k]] += g;
+      }
       return V;
     }
 
@@ -13436,6 +13500,8 @@
       timeUnit: TIME_UNITS[settings.TIME_UNIT],
       // What the clock counts where it is no time (CLOCK): its words, and its unit, the brackets at their end.
       clock: settings.CLOCK ? { label: settings.CLOCK, unit: (/\(([^()]*)\)\s*$/.exec(settings.CLOCK) || [])[1] || '' } : null,
+      // The water taken away to each kg at the start in a unit of time (EVAPORATION), 0 for none: 1 - E t is left.
+      evaporation,
       grid,
       transport,
       cells: ncCol,            // every cell of the column, matrix layers and extra cells included

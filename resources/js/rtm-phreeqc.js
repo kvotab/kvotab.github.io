@@ -3628,8 +3628,9 @@
       return PATH_KINDS.includes(kind(t[0])) || (kind(t[0]) === 'USE' && PATH_KINDS.includes(kind(t[1])));
     });
     if (!column && o.path !== false && o.solution == null && hasPath) {
-      const rows = o.engine.run(`SELECTED_OUTPUT ${SEL}\n -reset false\nUSER_PUNCH ${SEL}\n -headings sim_ atm_\n -start\n`
-        + `10 PUNCH SIM_NO, PRESSURE\n -end\n${o.water.text}\nEND\n`);
+      // ...with what the calculation holds on an exchanger, on a surface and in a gas phase, for a path taking water.
+      const rows = o.engine.run(`SELECTED_OUTPUT ${SEL}\n -reset false\nUSER_PUNCH ${SEL}\n -headings sim_ atm_ ex_ surf_ gas_\n`
+        + ` -start\n10 PUNCH SIM_NO, PRESSURE, SYS("ex"), SYS("surf"), SYS("gas")\n -end\n${o.water.text}\nEND\n`);
       const p = rows.length > 1 ? readPath(o.water.text, Number(rows[rows.length - 1][0])) : null;
       // The water's pressure at the path's end, as PHREEQC has it: a gas phase in a fixed volume moves it.
       if (p) p.atmEnd = Number(rows[rows.length - 1][1]);
@@ -3664,7 +3665,15 @@
         const moving = reactants.find((r) => !r.why && Math.abs(r.terms.get('e-') || 0) > 1e-12);
         if (carryKin) why = 'the input\'s KINETICS are carried, and a path beside them is not';
         else if (!o.exact) why = 'it is a series of equilibria, and the relations are not held exactly';
-        else if (water) why = 'it takes water away or adds it (H2O), and the page holds a kilogram of water';
+        else if (water && water.coef && [...water.terms.keys()].some((n) => n !== 'H2O')) {
+          why = 'H2O is read as more than water';
+        } else if (water && (Number(rows[rows.length - 1][2]) > 0 || Number(rows[rows.length - 1][3]) > 0)) {
+          why = 'it takes water away or adds it (H2O), and the page does not take an exchanger\'s or a surface\'s sites, '
+            + 'so many to each kilogram of water, along as the water goes';
+        } else if (water && Number(rows[rows.length - 1][4]) > 0 && gasBlocks.some((g) => g.fixed === 'volume')) {
+          why = 'it takes water away or adds it (H2O), and the page does not take a fixed volume of gas, so many litres to '
+            + 'each kilogram of water, along as the water goes';
+        }
         else if (amounts[0] < 0 || amounts.some((a, i) => i > 0 && a < amounts[i - 1])) why = 'its amounts do not grow from step to step';
         else if (bad) why = `${bad.name}: ${bad.why}`;
         else if (moving && !carryRedox) why = `${moving.name} reacts with electrons, and the valence states are not held at one pe`;
@@ -4376,6 +4385,13 @@
       path.W = kgw > 0 && Math.abs(kgw - 1) > 1e-9 ? kgw : 1;
       for (const r of path.reactants) {
         const rx = [...r.terms].filter(([n, c]) => n !== 'H2O' && Math.abs(c) > 1e-12);
+        // The water itself (H2O): taken away or added, EVAPORATION below, and no source.
+        if (!rx.length && r.terms.has('H2O')) {
+          r.water = true;
+          r.rx = rx;
+          r.rate = (r.coef * path.p.reaction.factor) / path.W;
+          continue;
+        }
         const missing = rx.filter(([n]) => n !== 'e-' && !fromFaint(n)).map(([n]) => n);
         if (missing.length) {
           // As which species, of which element: organic matter's nitrogen as nitrate, where the water has none.
@@ -4388,6 +4404,16 @@
         r.rx = rx;
         r.rate = (r.coef * path.p.reaction.factor) / path.W;
       }
+      /*
+        EVAPORATION: a reactant that is the water itself takes it away, or
+        adds it, at its rate -- mol of H2O to each kg of the water the path
+        starts with, each weighing PHREEQC's gfw of water, the database's H
+        and O (compute_gfw) -- kg to each kg in each 1 on the clock, and
+        everything in the water concentrates as it goes.
+      */
+      const gfwW = gfwOf('H2O', db.elementGfw) / 1000;
+      path.evaporation = -path.reactants.filter((r) => r.water).reduce((a, r) => a + r.rate, 0) * gfwW;
+      path.gfw = gfwW;
     }
     /*
       On an exchanger or a surface, the species of what a kinetic reactant
@@ -5105,6 +5131,13 @@
           : ','} and the run adds the reactants at a steady rate (<REACTIONS>), ${path.reactants.map((r) => r.name).join(', ')}, `
         + `a ${rp.unit} of reaction to each 1 on its clock, to TEND: the clock counts the ${rp.unit} of reaction added `
         + '(CLOCK), and PHREEQC\'s steps are equilibria the run passes through.');
+      if (path.evaporation) {
+        say(`It takes the water ${path.evaporation > 0 ? 'away' : 'in'}, ${fmtG(Math.abs(path.evaporation), 6)} kg to each kg the path starts `
+          + `with in each 1 on the clock (EVAPORATION), ${fmtG(1 - path.evaporation * pathEnd, 6)} of it left at the end: `
+          + `everything in the water ${path.evaporation > 0 ? 'concentrates' : 'is diluted'} as it goes, the minerals with it, and `
+          + 'what else the reaction brings comes to each kilogram of the water there is. The water the minerals take or give '
+          + 'as they form or dissolve, which PHREEQC counts, the page does not.');
+      }
       if (pathAtmMoved) {
         say(`PHREEQC's gas phase, in a fixed volume, takes the water from ${fmtG(atm, 6)} to ${fmtG(path.p.atmEnd, 6)} atm along `
           + 'the path, where the run holds it at the first (PRESSURE): the log K, A and B that go with the pressure stay '
@@ -5404,7 +5437,11 @@
       ...(path ? [`MAX_STEP = ${fmtG(pathEnd / 100, 6)}`] : []),
       // What the clock of a path counts, which the charts are titled with: the reaction added, or the degrees.
       ...(path ? [`CLOCK = ${path.kind === 'temperature' ? `${path.sign > 0 ? 'heated' : 'cooled'} (°C ${path.sign > 0 ? 'above'
-        : 'below'} ${fmtG(path.from, 6)} °C)` : `reaction added (${path.p.reaction.unit})`}`] : []),
+        : 'below'} ${fmtG(path.from, 6)} °C)` : path.reactants.every((r) => r.water)
+        ? `water ${path.evaporation > 0 ? 'taken away' : 'added'} (${path.p.reaction.unit})`
+        : `reaction added (${path.p.reaction.unit})`}`] : []),
+      // The water a path takes away or adds: kg of it to each kg at the start in each 1 on the clock.
+      ...(path && path.evaporation ? [`EVAPORATION = ${fmtG(path.evaporation, 15)}`] : []),
       'TIME_UNIT = second', `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
@@ -5827,12 +5864,21 @@
       out.push(`# The path: PHREEQC's REACTION ${rp.n}, its reactants coming in at a steady rate, a ${unit} of reaction to each 1`,
         `# on the clock, to ${path.W === 1 ? 'each kilogram of water' : `PHREEQC's ${fmtG(path.W, 6)} kg of water`}: the clock `
         + `counts the ${unit} of reaction added (CLOCK), and r is in mol/kgw to each 1 on it.`);
+      // Where the water goes (EVAPORATION), what comes in comes to each kilogram of the water there is: over 1 - E t.
+      const E = path.evaporation;
+      const over = E ? `/(1 ${E > 0 ? '-' : '+'} ${fmtG(Math.abs(E), 15)}*t)` : '';
       for (const r of path.reactants) {
+        if (r.water) {
+          out.push(`# ${r.name}, ${fmtG(r.coef, 15)} ${unit} of it to the ${unit} of reaction: the water ${E > 0 ? 'taken away' : 'added'}, `
+            + `${fmtG(Math.abs(E), 6)} kg of it to each kg there was at the start in each 1 on the clock (EVAPORATION, `
+            + `${fmtG(path.gfw * 1000, 6)} g/mol): everything in the water ${E > 0 ? 'concentrates' : 'is diluted'} as it goes.`);
+          continue;
+        }
         const own = name.has(r.name) && db.reaction.has(r.name) && !phaseKey.has(r.name.toLowerCase());
         const terms = own ? [[r.name, 1]] : r.rx;
         const reac = terms.filter(([, c]) => c < 0).map(([n, c]) => ({ c: -c, n }));
         const prod = terms.filter(([, c]) => c > 0).map(([n, c]) => ({ c, n }));
-        r.line = `${[side(reac), '=>', side(prod)].filter(Boolean).join(' ')}, r = ${fmtG(r.rate, 15)}`;
+        r.line = `${[side(reac), '=>', side(prod)].filter(Boolean).join(' ')}, r = ${fmtG(r.rate, 15)}${over}`;
         out.push(`# ${r.name}, ${fmtG(r.coef, 15)} ${unit} of it to the ${unit} of reaction:`, r.line);
       }
     }
@@ -5943,7 +5989,9 @@
           block: (path.kind === 'reaction' ? path.p.reaction : path.p.temperature).n,
           use: (path.kind === 'reaction' ? path.p.reaction : path.p.temperature).use,
           reaction: path.kind === 'reaction' ? path.p.reaction.n : null,
-          reactants: path.reactants.map((r) => ({ name: r.name, coef: r.coef, rate: r.rate, line: r.line })),
+          reactants: path.reactants.map((r) => ({ name: r.name, coef: r.coef, rate: r.rate, line: r.line || null, water: !!r.water })),
+          // The water it takes away (EVAPORATION), kg to each kg at the start in each 1 on the clock; 0 for none.
+          evaporation: path.evaporation || 0,
           unit: path.kind === 'reaction' ? path.p.reaction.unit : null,
           factor: path.kind === 'reaction' ? path.p.reaction.factor : null,
           // The clock at each of PHREEQC's steps: the reaction's amount, or the degrees from the first step's.
@@ -6229,9 +6277,11 @@
     for (const ss of r.solids || []) {
       for (const mb of ss.members) if (m.speciesNames.includes(mb.as)) cols.push({ head: mb.as, punch: `S_S("${mb.phase}")`, mineral: true });
     }
-    const head = ['sim_', 'step_', ...cols.map((c, i) => `v${i}_`)];
+    // Where the path takes the water away, an amount is to each kilogram of the water there is then, as the run holds it.
+    const evap = !!path.evaporation;
+    const head = ['sim_', 'step_', ...cols.map((c, i) => `v${i}_`), ...(evap ? ['kgw_'] : [])];
     const punch = [`SELECTED_OUTPUT 98`, ' -reset false', 'USER_PUNCH 98', ` -headings ${head.join(' ')}`, ' -start',
-      `10 PUNCH SIM_NO, STEP_NO, ${cols.map((c) => c.punch).join(', ')}`, ' -end'];
+      `10 PUNCH SIM_NO, STEP_NO, ${cols.map((c) => c.punch).join(', ')}${evap ? ', TOT("water")' : ''}`, ' -end'];
     const input = [...p.lines.slice(0, p.from), ...punch, ...p.lines.slice(p.from, p.to), 'END'].join('\n');
     o.engine.load(o.database.text);
     const rows = o.engine.run(`${input}\n`, 98);
@@ -6244,7 +6294,8 @@
     for (const row of rows.slice(1)) {
       const k = Math.round(Number(row[ik]));
       if (Number(row[is]) !== p.sim || !(k >= 1 && k <= path.steps.length)) continue;
-      byStep.set(k, iv.map((j, i) => Number(row[j]) / (cols[i].mineral ? W : 1)));
+      const kg = evap ? Number(row[hd.indexOf('kgw_')]) : W;
+      byStep.set(k, iv.map((j, i) => Number(row[j]) / (cols[i].mineral ? kg : 1)));
     }
     const steps = [...byStep.keys()].sort((a, b) => a - b);
     if (!steps.length) throw new Error('PHREEQC calculated none of the path\'s steps');
@@ -6271,7 +6322,7 @@
         + `\n# has at its temperature, the degrees from ${fmtG(path.from, 6)} C; the totals as PHREEQC has them, the amounts per kilogram`
       : `# PHREEQC's own steps along the path, its REACTION ${path.block} run in the page: each step at the clock the run has`
         + `\n# when it has added as much, the ${path.unit} of reaction; the totals as PHREEQC has them, the amounts per kilogram`,
-    '# of the water the path starts with.'];
+    evap ? '# of the water there is at each step, as the path takes it away.' : '# of the water the path starts with.'];
     if (held.length) lines.push(`# Left out, PHREEQC's steps holding each at one value: ${held.join(', ')}.`);
     lines.push(`time  ${use.map((i) => cols[i].head).join('  ')}`);
     for (const k of shown) lines.push(`${gt(path.steps[k - 1])}  ${use.map((i) => g(byStep.get(k)[i])).join('  ')}`);
