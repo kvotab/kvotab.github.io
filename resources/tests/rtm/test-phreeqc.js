@@ -6351,6 +6351,226 @@ function againstKineticsHandOff(engine) {
   engine.load(dbText);
 }
 
+/*
+  A PATH: PHREEQC's batch reaction through steps -- a REACTION adding its
+  reactants in amounts -- carried as a run that adds them at a steady rate,
+  the clock counting what has gone in, PHREEQC's steps equilibria the run
+  passes through. With the tests' own waters:
+    1. the path read as PHREEQC reads and steps it: amounts, units,
+       repeats, equal increments, INCREMENTAL_REACTIONS, USE, temperatures
+       and pressures, against PHREEQC's own RXN, TC and PRESSURE;
+    2. salt and sulphate into a water at calcite saturation, gypsum forming
+       on the way;
+    3. oxygen into pyrite, goethite and calcite: the electrons;
+    4. cadmium into a water with an exchanger and none of it: the trace,
+       CdX2 written from the start, whatever the floor;
+    5. what is not carried, and why: water taken away (H2O), a path in
+       temperature, a sorbed species PHREEQC counts as another formula
+       (-mole_balance), a surface left out that would take up what the path
+       brings; one step is no path;
+    6. PHREEQC's own steps beside the run, as the page asks for them.
+*/
+async function againstPathHandOff(engine, createPhreeqc) {
+  // 1. The path read as PHREEQC reads it, each input run by PHREEQC and its steps punched.
+  const sel = 'SELECTED_OUTPUT 99\n -reset false\nUSER_PUNCH 99\n -headings sim_ step_ rxn_ tc_ p_\n -start\n'
+    + '10 PUNCH SIM_NO, STEP_NO, RXN, TC, PRESSURE\n -end\n';
+  const inputs = [
+    'SOLUTION 1\n Na 1\n Cl 1\nEND\nUSE solution 1\nREACTION 2\n NaCl 1.0 KBr 0.5\n 1 2 5 10 mmol\nEND\n',
+    'SOLUTION 1\n Na 1\n Cl 1\nREACTION\n NaCl\n 0.7e-6 in 20\nEND\n',
+    'SOLUTION 1\nGAS_PHASE 1\n -fixed_volume\n CO2(g) 0\n H2O(g) 0\nREACTION\n CO2 1; 0 31*0.01\nINCREMENTAL_REACTIONS true\nEND\n',
+    'SOLUTION 1\nREACTION 3\n HCl 1\n 0.001 0.002\nINCREMENTAL_REACTIONS true\nEND\nUSE solution 1\nUSE reaction 3\n'
+      + 'REACTION_TEMPERATURE 4\n 50\nEND\n',
+    'INCREMENTAL_REACTIONS\nSOLUTION 1\nREACTION 1\n NaCl 1\n 0.005 moles in 5 steps\nREACTION_TEMPERATURE\n 25 45 in 3\nEND\n',
+    'SOLUTION 1\nEQUILIBRIUM_PHASES 1\n Gypsum 0 1\nREACTION_TEMPERATURE 1\n 25.0 75.0 in 6 steps\nEND\n',
+    'SOLUTION 1\nEQUILIBRIUM_PHASES 1\n Gypsum 0 1\nREACTION_TEMPERATURE\n 30 90 in 4\nREACTION_PRESSURE 2\n 1 100 500\nEND\n'
+      + 'USE solution 1\nUSE equilibrium_phases 1\nUSE reaction_temperature 1\nUSE reaction_pressure 2\nEND\n',
+    'SOLUTION 1\nREACTION 1\n NaCl 1\n 2 umol in 4\nEND\nTITLE nothing to calculate\nEND\n',
+  ];
+  let worst = 0;
+  let read = 0;
+  let where = '';
+  for (const input of inputs) {
+    // INCREMENTAL_REACTIONS from one run stays with PHREEQC until a database is loaded again.
+    engine.load(dbText);
+    const rows = engine.run(`${sel}${input}`);
+    const hd = rows[0].map((h) => String(h).trim());
+    const col = (r, n) => Number(r[hd.indexOf(n)]);
+    const steps = rows.slice(1).filter((r) => col(r, 'step_') >= 1);
+    const sim = col(steps[steps.length - 1], 'sim_');
+    const p = P.readPath(input, sim);
+    const pq = steps.filter((r) => col(r, 'sim_') === sim);
+    if (!p || p.steps.length !== pq.length) { where = `${input.split('\n')[0]}: ${p ? p.steps.length : 'none'} steps`; worst = Infinity; continue; }
+    let sum = 0;
+    pq.forEach((r, i) => {
+      sum = p.incremental ? sum + col(r, 'rxn_') : col(r, 'rxn_');
+      const st = p.steps[i];
+      const d = Math.max(Math.abs(st.amount - sum) / Math.max(Math.abs(sum), 1e-30) * (sum ? 1 : 0) + (sum ? 0 : Math.abs(st.amount)),
+        st.tc === null ? 0 : Math.abs(st.tc - col(r, 'tc_')), st.atm === null ? 0 : Math.abs(st.atm - col(r, 'p_')));
+      if (d > worst) { worst = d; where = `${input.split('\n').slice(0, 4).join('; ')}, step ${i + 1}`; }
+    });
+    read++;
+  }
+  const r2 = P.readPath(inputs[2], 1);
+  const r3 = P.readPath(inputs[3], 2);
+  check('A path: REACTION, REACTION_TEMPERATURE and REACTION_PRESSURE read and stepped as PHREEQC does -- a list, '
+    + 'mmol and umol, 31*0.01, 0.7e-6 in 20, INCREMENTAL_REACTIONS, a REACTION brought in by USE from an earlier part, '
+    + 'temperatures and pressures by USE -- each step\'s amount, temperature and pressure PHREEQC\'s own',
+  read === inputs.length && worst < 1e-12 && r2.steps.length === 32 && r2.incremental && r3.reaction.use
+    && r3.reaction.n === 3 && r3.steps[0].tc === 50 && P.stepUnit('millimoles')[0] === 1e-3 && P.stepUnit('in') === null,
+  `${read} inputs, worst ${worst.toExponential(1)}${worst > 1e-12 ? ` (${where})` : ''}`);
+
+  // The hand-off of a path, and its run against PHREEQC at each of its steps (in moles, PHREEQC's kilogram moving).
+  const along = (input, opts = {}) => {
+    engine.load(dbText);
+    const water = { name: 'path', text: input };
+    const res = P.waterToModel({ engine, database, water, activity: true, exact: true, redox: true, phases: true,
+      floor: 1e-20, ...opts });
+    const pth = res.report.path;
+    if (!pth) return { res };
+    const m = RtmModel.compile(res.text);
+    const ofWater = (j) => { const sp = m.speciesList[j]; return !(sp.mineral || sp.gas || sp.exchange || sp.exchanger || sp.surface || sp.potential || sp.electron); };
+    const els = [...new Set(m.speciesNames.flatMap((n, j) => (ofWater(j) ? [...(RtmModel.elementsOf(n) || new Map()).keys()] : [])))]
+      .filter((e) => e !== 'H' && e !== 'O');
+    const held = (res.report.minerals || []).map((mn) => [`EQUI("${mn.phase}")`, mn.as])
+      .concat(((res.report.exchange && res.report.exchange.species) || []).map((x) => [`MOL("${x.species}")*TOT("water")`, x.as]));
+    engine.load(dbText);
+    const punch = `SELECTED_OUTPUT 98\n -reset false\nUSER_PUNCH 98\n -headings sim_ step_ pH_ kgw_ ${els.map((e) => `t_${e}`).join(' ')} `
+      + `${held.map((x, i) => `h${i}_`).join(' ')}\n -start\n10 PUNCH SIM_NO, STEP_NO, -LA("H+"), TOT("water")`
+      + `${els.map((e) => `, TOT("${e}")`).join('')}${held.map(([x]) => `, ${x}`).join('')}\n -end\n`;
+    const rows = engine.run(`${punch}${input}`, 98);
+    const hd = rows[0].map((h) => String(h).trim());
+    const col = (r, n) => Number(r[hd.indexOf(n)]);
+    const pq = rows.slice(1).filter((r) => col(r, 'sim_') === pth.sim && col(r, 'step_') >= 1);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: pth.tend, rtol: 1e-10, atol: 1e-22, nonNegative: true,
+      outputTimes: pth.steps, maxSteps: 200000, hmax: m.settings.MAX_STEP || 0 });
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const iH = m.speciesNames.indexOf('H+');
+    const out = { res, m, pq, run, pH: 0, tot: 0, held: 0, kgw: 0, totWhere: '', heldWhere: '' };
+    pq.forEach((r, i) => {
+      const c = m.toConcentrations(run.grid.y[i]);
+      RtmModel.activityAt(m.act, c, 0, lnG, new Float64Array(ns));
+      out.pH = Math.max(out.pH, Math.abs(-(Math.log(c[iH]) + lnG[iH]) / Math.LN10 - col(r, 'pH_')));
+      const kgw = col(r, 'kgw_');
+      out.kgw = Math.max(out.kgw, Math.abs(kgw / pth.kgw - 1));
+      for (const e of els) {
+        let tot = 0;
+        m.speciesNames.forEach((n, j) => { if (ofWater(j)) tot += ((RtmModel.elementsOf(n) || new Map()).get(e) || 0) * c[j]; });
+        // In moles: the page's kilogram is PHREEQC's at the start, PHREEQC's own kilogram moving as the reaction goes.
+        const want = col(r, `t_${e}`) * kgw;
+        const d = Math.abs(tot * pth.kgw - want) / Math.max(Math.abs(want), 1e-10);
+        if (d > out.tot) { out.tot = d; out.totWhere = `${e}, step ${i + 1}`; }
+      }
+      held.forEach(([, as], k) => {
+        const d = Math.abs(c[m.speciesNames.indexOf(as)] * pth.kgw - col(r, `h${k}_`));
+        if (d > out.held) { out.held = d; out.heldWhere = `${as}, step ${i + 1}`; }
+      });
+    });
+    return out;
+  };
+
+  // 2. Salt and sulphate into a water at calcite saturation; gypsum forms on the way.
+  const salt = 'SOLUTION 1\n units mmol/kgw\n pH 7.2 charge\n Ca 15\n Cl 30\n C(4) 3\nEQUILIBRIUM_PHASES 1\n'
+    + ' Calcite 0 0.02\n Gypsum 0 0\nREACTION 1\n Na2SO4 1.0\n NaCl 0.5\n 0 5 10 20 40 80 mmol\nEND\n';
+  const a = along(salt);
+  const ap = a.res.report.path;
+  const gypsum = a.pq.length ? Number(a.pq[a.pq.length - 1][a.pq[0].length - 1]) : 0;
+  check('  salt and sulphate into a water at calcite saturation (REACTION, mmol): the water before the path, its '
+    + 'reactants at a steady rate, a mmol of reaction a second, TEND the last step; at each of PHREEQC\'s steps the pH, '
+    + 'the totals and the minerals PHREEQC\'s, gypsum forming on the way, to what PHREEQC\'s kilogram of water moves '
+    + 'as the gypsum takes its water and the page\'s stays a kilogram',
+  !!ap && ap.unit === 'mmol' && ap.tend === 80 && ap.steps.join(' ') === '0 5 10 20 40 80' && ap.trace === 1e-20
+    && /^TEND = 80$/m.test(a.res.text) && /^MAX_STEP = 0\.8$/m.test(a.res.text)
+    && /^=> 2 Na\+ \+ SO4-2, r = 0\.00100/m.test(a.res.text) && /^=> Na\+ \+ Cl-, r = 0\.000500/m.test(a.res.text)
+    && a.pq.length === 6 && a.pH < 1e-4 && a.tot < 5e-4 && a.held < 1e-5 && gypsum > 1e-3 && a.kgw > 1e-4,
+  ap ? `pH within ${a.pH.toExponential(1)}, totals in moles ${a.tot.toExponential(1)} (${a.totWhere}), minerals `
+    + `${a.held.toExponential(1)} mol (${a.heldWhere}); gypsum ${(gypsum * 1e3).toFixed(2)} mmol at the end; PHREEQC's `
+    + `kilogram moving by ${a.kgw.toExponential(1)}` : JSON.stringify(a.res.report.pathSkipped));
+
+  // 3. Oxygen into pyrite, goethite and calcite: the electrons go to the iron and the sulphur.
+  const pyr = 'SOLUTION 1\n units mmol/kgw\n pH 7 charge\n Na 2\n Cl 2\nEQUILIBRIUM_PHASES 1\n Pyrite 0 0.005\n'
+    + ' Goethite 0 0\n Calcite 0 0.005\nREACTION 1\n O2 1.0\n 0 0.2 0.5 1 2 mmol\nEND\n';
+  const b = along(pyr);
+  check('  oxygen into pyrite, goethite and calcite: the oxygen as O2, tied to the electron, the pyrite oxidised and '
+    + 'goethite formed as in PHREEQC at each step',
+  !!b.res.report.path && /^=> O2, r = /m.test(b.res.text) && !!b.res.report.electron && b.pH < 1e-4 && b.tot < 1e-4 && b.held < 1e-8,
+  `pH within ${b.pH.toExponential(1)}, totals in moles ${b.tot.toExponential(1)} (${b.totWhere}), minerals `
+    + `${b.held.toExponential(1)} mol (${b.heldWhere}); PHREEQC's kilogram moving by ${b.kgw.toExponential(1)}`);
+
+  // 4. Cadmium into a water with an exchanger and none of it.
+  const cd = 'SOLUTION 1\n units mmol/kgw\n pH 6.5\n Ca 1\n Cl 2\nEXCHANGE 1\n X 0.02\n -equilibrate 1\n'
+    + 'REACTION 1\n CdCl2 1\n 0.2 mmol in 10 steps\nEND\n';
+  const c = along(cd);
+  check('  cadmium into a water with an exchanger and none of it: the water taken with 1e-20 mol of the reaction, CdX2 '
+    + 'written from the start whatever the floor, and the cadmium shared out between the water and the exchanger as '
+    + 'PHREEQC shares it at each step',
+  !!c.res.report.path && c.res.report.path.trace === 1e-20 && /^CdX2\s/m.test(c.res.text) && c.pH < 1e-6 && c.tot < 1e-7
+    && c.held < 1e-10,
+  `pH within ${c.pH.toExponential(1)}, totals ${c.tot.toExponential(1)} (${c.totWhere}), on the exchanger `
+    + `${c.held.toExponential(1)} mol (${c.heldWhere})`);
+
+  // 5. Not carried, and why; one step is no path.
+  const why = (input, opts) => { const r = along(input, opts).res; return { r, w: r.report.pathSkipped ? r.report.pathSkipped.why : '' }; };
+  const evap = why('SOLUTION 1\n units mmol/kgw\n Na 10\n Cl 10\nREACTION 1\n H2O -1\n 10 20 30 moles\nEND\n');
+  const heat = why('SOLUTION 1\n units mmol/kgw\n Ca 5\n S(6) 5\nEQUILIBRIUM_PHASES 1\n Gypsum 0 0.1\n'
+    + 'REACTION_TEMPERATURE 1\n 25 75 in 6 steps\nEND\n');
+  const mb = why('SURFACE_MASTER_SPECIES\n Lin Lin\nSURFACE_SPECIES\n Lin = Lin\n Lin + Cd+2 = LinCd+2\n -log_k 2\n'
+    + ' -mole_balance LinCdCl2\nSURFACE 1\n Lin 1e-3 1 1\n -no_edl\nSOLUTION 1\n units mmol/kgw\n pH 6\n Ca 1\n Cl 2\n'
+    + 'REACTION 1\n CdCl2 1\n 1e-6 in 5\nEND\n');
+  const loose = why(cd, { exact: true, phases: true, exchange: false });
+  const one = why('SOLUTION 1\n units mmol/kgw\n Na 1\n Cl 1\nREACTION 1\n NaCl 1\n 0.002 moles\nEND\n');
+  const notHeld = why(salt, { exact: false, phases: false });
+  check('  not carried, the model of the water at the path\'s end and the report saying why: water taken away (H2O), a '
+    + 'path in temperature, a sorbed species PHREEQC counts as another formula (-mole_balance), an exchanger left out '
+    + 'that would take up what the path brings, the relations not held; a REACTION of one step is no path',
+  /H2O/.test(evap.w) && /temperature goes from 25 to 75/.test(heat.w) && /LinCd\+2 as LinCdCl2/.test(mb.w)
+    && /CdX2.*would take up what it brings/.test(loose.w) && /not held exactly/.test(notHeld.w)
+    && !one.r.report.path && !one.r.report.pathSkipped && !evap.r.report.path
+    && /^# Not carried: the path of the calculation the water is from, as it takes water away/m.test(evap.r.text),
+  [evap.w, heat.w, mb.w, loose.w, notHeld.w].join(' | '));
+
+  // 6. PHREEQC's own steps beside the run, as the page asks for them.
+  const handle = E.handler(createPhreeqc, { builtin: dbText });
+  const ask = (msg) => new Promise((resolve) => { handle(msg, (m) => { if (m.type !== 'progress') resolve(m); }); });
+  const reply = await ask({ id: 1, type: 'toModel', database: null, water: { name: 'salt', text: salt },
+    options: { floor: 1e-20, activity: true, exact: true, phases: true, redox: true, besidePath: true } });
+  const bp = reply.besidePath;
+  let fit = 0;
+  let fitWhere = '';
+  if (reply.type === 'done' && bp) {
+    // The run as the page runs it, read at each row of the table against what PHREEQC gives there.
+    const m = RtmModel.compile(reply.text);
+    const tab = m.data[0];
+    const tOut = tab.rows.map((r) => r[0]);
+    const run = FacsimileODE.runModel(m, { solver: 'ndf', tend: Number(/^TEND = (.*)$/m.exec(reply.text)[1]), rtol: 1e-10,
+      atol: 1e-22, nonNegative: true, outputTimes: tOut, maxSteps: 200000, hmax: m.settings.MAX_STEP || 0 });
+    const q = new Map((m.quantities || []).map((x) => [x.key, x]));
+    tab.columns.forEach((name, k) => {
+      if (name === 'pH') return;
+      tab.rows.forEach((row, i) => {
+        const cc = m.toConcentrations(run.grid.y[i]);
+        let v;
+        if (m.speciesNames.includes(name)) v = cc[m.speciesNames.indexOf(name)];
+        else if (q.has(name) && /^tot\(/.test(name)) {
+          const el = name.slice(4, -1);
+          v = 0;
+          m.speciesNames.forEach((n, j) => { const sp = m.speciesList[j]; if (sp.mineral || sp.exchange || sp.surface || sp.gas) return; v += ((RtmModel.elementsOf(n) || new Map()).get(el) || 0) * cc[j]; });
+        } else return;
+        const want = row[k + 1];
+        const d = Math.abs(v - want) / Math.max(Math.abs(want), 1e-6);
+        if (d > fit) { fit = d; fitWhere = `${name} at ${tOut[i]}`; }
+      });
+    });
+  }
+  check('  PHREEQC\'s own steps beside the run, as the page asks for them: a table in time under <DATA>, each step at '
+    + 'the clock the run has when it has added as much -- the pH, the totals, the minerals -- and the run within a few '
+    + 'parts in 10^4 of it, PHREEQC\'s kilogram of water moving as gypsum takes its water',
+  reply.type === 'done' && !!bp && bp.rows === 6 && bp.steps === 6 && /^time  pH  tot\(C\)  tot\(Ca\)  tot\(Cl\)  tot\(Na\)  tot\(S\)  Calcite  Gypsum$/m.test(reply.text)
+    && /^80  /m.test(reply.text) && fit < 1e-3,
+  reply.type === 'done' && bp ? `${bp.rows} rows of ${bp.columns.join(', ')}; the run within ${fit.toExponential(1)} (${fitWhere})`
+    : reply.error || 'no steps beside');
+}
+
 (async () => {
   const createPhreeqc = require(path.join(vendors, 'phreeqc.js'));
   const wasm = await E.create(createPhreeqc);
@@ -6445,6 +6665,8 @@ function againstKineticsHandOff(engine) {
   againstCdMusic(wasm);
   console.log('\n--- KINETICS: RATES as rate laws against PHREEQC\'s BASIC, the hand-off, runs against KINETICS ---');
   againstKineticsHandOff(wasm);
+  console.log('\n--- a path: REACTION in steps, the run adding its reactants at a steady rate, against PHREEQC\'s steps ---');
+  await againstPathHandOff(wasm, createPhreeqc);
   const py = process.env.RTM_PHREEQC_PYTHON;
   if (py) {
     console.log(`\n--- against phreeqpython (${py}) ---`);

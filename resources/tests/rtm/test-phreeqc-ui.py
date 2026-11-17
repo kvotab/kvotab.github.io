@@ -534,6 +534,61 @@ async def main():
                   ['Done', True, 5, True, True, ''])
             await page.ev(CLICK % json.dumps('[data-tab="model"]'))
 
+            # --- PHREEQC's own steps beside a path: the tick only for an input with a REACTION; ticked, the model is of
+            # the water before the path, the run is the path, its reactants at a steady rate, and PHREEQC's steps go under
+            # <DATA>, a table in time. Run: Against time draws them beside the run as points.
+            path_input = ('SOLUTION 1\\n units mmol/kgw\\n pH 7.2 charge\\n Ca 15\\n Cl 30\\n C(4) 3\\nEQUILIBRIUM_PHASES 1\\n'
+                          ' Calcite 0 0.02\\n Gypsum 0 0\\nREACTION 1\\n Na2SO4 1.0\\n NaCl 0.5\\n 0 5 10 20 40 80 mmol\\nEND\\n')
+            hidden_pcol = await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                                        f" w.value = '{column_input}';"
+                                        " w.dispatchEvent(new Event('input', { bubbles: true }));"
+                                        " return document.getElementById('rtmPqBesidePWrap').hidden; })()")
+            hidden_path = await page.ev("(() => { const w = document.getElementById('rtmPqWater');"
+                                        f" w.value = '{path_input}';"
+                                        " w.dispatchEvent(new Event('input', { bubbles: true }));"
+                                        " return document.getElementById('rtmPqBesidePWrap').hidden; })()")
+            await page.ev("(() => { const b = document.getElementById('rtmPqBesideP'); b.checked = true;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true }));"
+                          " document.getElementById('rtmPqReport').innerHTML = '';"
+                          " document.getElementById('rtmPqWrite').click(); })()")
+            prep = await until(page, f"(() => {{ const t = {REPORT}; return t.startsWith('Written') || "
+                                     f"t.startsWith('PHREEQC could not') ? t : ''; }})()", tries=240)
+            ptext = await page.ev("document.getElementById('rtmText').value")
+            await settle(page, f"{STATUS}.slice(0, 9)", 'Compiled:')
+            check("PHREEQC's own steps along a path: the tick only for an input with a REACTION; ticked, the model is of the "
+                  'water before the path, its reactants at a steady rate to TEND, the last step, and PHREEQC\'s six steps go '
+                  'under <DATA>, a table in time; the report says so',
+                  [hidden_pcol, hidden_path, isinstance(prep, str) and "A path, PHREEQC's REACTION 1: 6 steps up to 80 mmol" in prep
+                   and "PHREEQC's own steps along the path, run beside it" in prep,
+                   isinstance(ptext, str) and re.search(r'^TEND = 80$', ptext, re.M) is not None
+                   and re.search(r'^=> 2 Na\+ \+ SO4-2, r = ', ptext, re.M) is not None,
+                   isinstance(ptext, str) and len(re.findall(r'^time {2}pH {2}', ptext, re.M))],
+                  [True, False, True, True, 1])
+            await page.ev(CLICK % json.dumps('#rtmRun'))
+            ran_p = await settle(page, f"{STATUS}.slice(0, 4)", 'Done', tries=600)
+            await page.ev(CLICK % json.dumps('[data-tab="time"]'))
+            # What is ticked is drawn, with what <DATA> measured of it: calcite and gypsum, two of the table's columns.
+            await page.ev("""(() => { for (const v of ['Calcite', 'Gypsum']) {
+              const el = document.querySelector(`#rtmSeries input[value="${v}"]`);
+              if (el && !el.checked) { el.checked = true; el.dispatchEvent(new Event('change', { bubbles: true })); } } })()""")
+            await asyncio.sleep(1.2)
+            p_view = await page.ev("""(() => { const c = document.getElementById('rtmChartTime'); const d = c.data || [];
+              const pts = d.filter((tr) => tr.mode === 'markers');
+              const lines = d.filter((tr) => tr.mode === 'lines');
+              return [pts.length, pts.map((tr) => tr.x.length).join(' '),
+                lines.length ? Math.round(Math.max(...lines.map((tr) => tr.x[tr.x.length - 1]))) : null]; })()""")
+            check('  run, the path ends at 80 s, the 80 mmol of reaction added; Against time, calcite and gypsum ticked, draws '
+                  'PHREEQC\'s six steps of each beside the run as points',
+                  [ran_p] + (p_view if isinstance(p_view, list) else [p_view]), ['Done', 2, '6 6', 80])
+            # Untick them one at a time: the last unticked clears the chart, which must wait for the redraw before it.
+            for v in ['Calcite', 'Gypsum']:
+                await page.ev("""(() => { const el = document.querySelector('#rtmSeries input[value="%s"]');
+                  if (el && el.checked) { el.checked = false; el.dispatchEvent(new Event('change', { bubbles: true })); } })()""" % v)
+                await asyncio.sleep(0.8)
+            await page.ev("(() => { const b = document.getElementById('rtmPqBesideP'); b.checked = false;"
+                          " b.dispatchEvent(new Event('change', { bubbles: true })); })()")
+            await page.ev(CLICK % json.dumps('[data-tab="model"]'))
+
             # An exchanger in a column beside PHREEQC's own: PHREEQC's last cell in time, the outlet in pore volumes.
             await page.ev("(() => { const s = document.getElementById('rtmExample');"
                           " s.value = 'exchangebeside'; s.dispatchEvent(new Event('change', { bubbles: true })); })()")

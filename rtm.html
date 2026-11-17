@@ -467,6 +467,10 @@
                 <div class="rtm-pq-field" id="rtmPqBesideWrap" hidden>
                   <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqBesideT" data-on-change="rtm:pqSettings"> PHREEQC's own column, to set beside the run</label><span class="kvot-info-slot" data-info-key="pq:besideT"></span></div>
                 </div>
+                <!-- Shown where the input adds a REACTION in steps: PHREEQC runs that path too, its steps under <DATA>. -->
+                <div class="rtm-pq-field" id="rtmPqBesidePWrap" hidden>
+                  <div class="rtm-check-line"><label class="rtm-check"><input type="checkbox" id="rtmPqBesideP" data-on-change="rtm:pqSettings"> PHREEQC's own steps along the path, to set beside the run</label><span class="kvot-info-slot" data-info-key="pq:besideP"></span></div>
+                </div>
                 <button type="button" class="rtm-btn small" id="rtmPqWrite" data-on-click="rtm:pqWrite">Write the model</button>
                 <input type="file" id="rtmPqDbFile" accept=".dat,.txt" hidden data-on-change="rtm:pqDbFileChosen">
               </div>
@@ -3848,6 +3852,9 @@ Calcite &lt;=&gt; Ca+2 + CO3-2,  analytic = 17.118 -0.046528 -3496</pre>
               that each valence state keeps its own total and electrons move only through the reactions
               you write.</li>
           </ul>
+          <p>Where that calculation is a path, a <code>REACTION</code> adding its reactants in steps, the
+            model is of the water before it and the run is the path: see <em>Along PHREEQC's path</em>
+            below.</p>
           <p>Held at one pe, the water is the one PHREEQC's next step makes. PHREEQC keeps the valence
             states a <code>SOLUTION</code> is given, whatever its pe says — sulfate given, there is no
             sulfide in it, however reducing — and any reaction then puts every couple on one pe, the
@@ -4458,6 +4465,63 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             with both at saturation: over 10<sup>5</sup>&nbsp;s the salt used within
             2×10<sup>−12</sup> and the pH 2×10<sup>−8</sup>.</p>
 
+          <h4 id="help-phreeqc-path">Along PHREEQC's path</h4>
+          <p>PHREEQC's batch reaction can go through steps: a <code>REACTION</code> adding its reactants in
+            amounts — <code>0 5 10 20 mmol</code>, <code>0.005 moles in 500 steps</code>,
+            <code>0 31*1</code> — each step added to the water as it was before the first, or, with
+            <code>INCREMENTAL_REACTIONS true</code>, to the step before. Where the calculation the water is
+            from, the input's last, is such a path, its own or one it brings in with <code>USE</code>,
+            the model is of the water before it, and the run is the path. Each reactant comes in at a
+            steady rate, so many moles of it to each mole of the reaction, a mole of reaction a second —
+            a millimole or a micromole where the input writes its steps in those — to each kilogram of
+            water, so that the clock, in seconds, counts what has gone in, and <code>TEND</code> is the
+            last step's amount, <code>MAX_STEP</code> a hundredth of it. A reactant whose formula is a
+            species the model has comes in as that species, <code>=&gt; CO2</code>, <code>=&gt; O2</code>;
+            any other as a phase's dissolution or its elements' master species, as a kinetic reactant's
+            formula does, what it takes on the left: pyrite's, as <code>phreeqc.dat</code> writes it,
+            <code>2 H+ + 2 e- =&gt; Fe+2 + 2 HS-</code>. With the relations held, each of PHREEQC's steps
+            is an equilibrium the run passes through, the minerals forming and going as PHREEQC's do. As
+            for kinetics, the water is taken with 10<sup>−20</sup>&nbsp;mol of the reaction in it where its
+            reactants bring what it has none of; every species of what they bring is written whatever the
+            floor, on an exchanger and a surface too, so that cadmium added to a water with none sorbs from
+            the first step; and with a reactant that moves electrons, oxygen into pyrite, each valence
+            state the water's redox elements could go to.</p>
+          <p>Not carried, the model then of the water at the path's end as PHREEQC leaves it and the panel
+            saying why: a path in temperature (<code>REACTION_TEMPERATURE</code>) or in pressure
+            (<code>REACTION_PRESSURE</code>); one that takes water away or adds it, <code>H2O</code> among
+            its reactants — evaporation — for the page holds a kilogram of water; one beside
+            <code>KINETICS</code>; one whose amounts do not grow from step to step; one where the relations
+            are not held exactly; a reactant that moves electrons where the valence states are not held at
+            one pe, or whose element would come in as a species the water has none of — organic matter's
+            nitrogen as nitrate, where PHREEQC finds none; a species of what it brings that PHREEQC counts
+            in its mole balances as another formula (<code>-mole_balance</code>, cadmium on a site counted
+            as CdCl<sub>2</sub>); and a surface, an exchanger or a phase that would take up what it brings
+            and is not carried. A reaction of one step, or of one amount at every step, is no path: the
+            water after it is taken, as of any reaction. A gas phase in a fixed volume holds the water at
+            the pressure it starts at, where PHREEQC's rises with the gas; the panel says how far
+            PHREEQC's goes along the path.</p>
+          <p>For a path of your own, the panel's <em>PHREEQC's own steps along the path, to set beside the
+            run</em>, there where the input has a <code>REACTION</code>: <em>Write the model</em> then has
+            PHREEQC run the input to the <code>END</code> of the path's part, and its steps go into the
+            text under <code>&lt;DATA&gt;</code> as a table in time — each step's pH, its element totals,
+            its minerals, the gases of a gas phase and the members of a solid solution, at the clock the run
+            has when it has added as much — for Run to draw beside the run and the Fit tab to set against
+            it. The totals are PHREEQC's, per kilogram of its water; the amounts per kilogram of the water
+            the path starts with.</p>
+          <p>Against PHREEQC, with the tests' own waters. Sodium sulphate and salt added to a water at
+            calcite saturation, 80&nbsp;mmol in six steps, gypsum forming on the way: at every step the pH
+            within 4×10<sup>−5</sup>, the totals within 2×10<sup>−4</sup> in moles and the minerals within
+            3×10<sup>−6</sup>&nbsp;mol, PHREEQC's kilogram of water moving by 2×10<sup>−4</sup> as the
+            gypsum takes its water, where the page's stays a kilogram. Oxygen into pyrite, goethite and
+            calcite, 2&nbsp;mmol: the pH within 1.3×10<sup>−5</sup>, the totals 4×10<sup>−5</sup> and the
+            minerals 4×10<sup>−9</sup>&nbsp;mol. Cadmium into a water with an exchanger and none of it,
+            0.2&nbsp;mmol in ten steps: the pH within 7×10<sup>−7</sup>, the cadmium in the water within
+            4×10<sup>−8</sup> and on the exchanger 2×10<sup>−12</sup>&nbsp;mol. Of PHREEQC's own examples,
+            the paths of 5 (oxygen into pyrite) and 10 (strontianite into a solid solution) are carried and
+            follow PHREEQC as closely; 22's too, until its gas phase, in a fixed volume, takes PHREEQC's
+            water to more than a thousand atmospheres; 7, 19 and 19B are not, for their nitrogen, their
+            <code>-mole_balance</code> and their Donnan layer.</p>
+
           <h4 id="help-phreeqc-batch">A batch over a table of waters</h4>
           <p>The <em>Batch</em> tab runs one PHREEQC input for every row of a table:
             a CSV file, or a sheet of an Excel workbook, a water a row and the names of its columns in
@@ -4929,6 +4993,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261117e"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261117f"></script>
 </body>
 </html>

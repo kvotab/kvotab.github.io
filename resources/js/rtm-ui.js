@@ -11595,6 +11595,24 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       more: more('Against PHREEQC\'s own transport', 'help-phreeqc-transport'),
     }),
 
+    'pq:besideP': () => ({
+      kicker: 'PHREEQC', title: 'PHREEQC\'s own steps along the path, to set beside the run',
+      lead: 'For an input whose last calculation adds a `REACTION` in steps: PHREEQC runs that path too, in the page, and its steps go into the model as what was measured, so that the run is drawn and measured against PHREEQC\'s own.',
+      facts: [['Now', pq.besideP ? 'ticked: Write the model runs PHREEQC\'s path as well' : 'not ticked']],
+      sections: [
+        { heading: 'What goes in', list: [
+          'Each step\'s **pH**, its **element totals** — `tot(Ca)`, or the species where the element has one only; with the redox carried, its valence states\' totals, `tot(S(6))` — its **minerals**, the **gases** of a gas phase and the **members** of a solid solution, under `<DATA>` at the end of the text, a table in time.',
+          'Each step at the clock the run has when it has added as much: the run adds the reactants at a mole, a millimole or a micromole of reaction a second, as the input writes its steps, so the clock counts what has gone in.',
+          'The totals as PHREEQC has them, per kilogram of its water, which a reaction may change a little; the minerals, gases and members per kilogram of the water the path starts with. A total PHREEQC\'s steps hold at one value is left out. Up to 200 steps, evenly through.',
+        ] },
+        { heading: 'Then', list: [
+          '**Run**: the points are drawn beside the run, Against time.',
+          '**Fit, Show: the run against what was measured, one to one**: each column\'s bias, spread and **Nash–Sutcliffe efficiency**, which is 1 where the two are the same.',
+        ] },
+      ],
+      more: more('A path', 'help-phreeqc-path'),
+    }),
+
     'pane:phreeqc': () => ({
       kicker: 'Tab', title: 'PHREEQC',
       lead: 'The run, seen through PHREEQC: every stored water is given to PHREEQC, which speciates it with its own constants, activity model and ion pairs.',
@@ -12892,12 +12910,12 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117e';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261117f';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261109l',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261117e',
-    'resources/js/rtm-phreeqc-engine.js?v=20261114b',
+    'resources/js/rtm-phreeqc.js?v=20261117f',
+    'resources/js/rtm-phreeqc-engine.js?v=20261117f',
   ];
   /** "An example water": round numbers, nobody's sample. */
   const PQ_EXAMPLE = `# An illustrative granitic groundwater: round numbers, not a sample.
@@ -12925,7 +12943,7 @@ END
   /** Whether their activity coefficients follow the ionic strength: see pq:activity. */
   const PQ_ACTS = ['follow', 'fixed'];
   const pq = {
-    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, redox: true, besideT: false, relax: '1e3', diff: 'none', D: '2e-9',
+    water: '', db: 'builtin', floor: '1e-20', act: 'follow', eq: 'exact', minerals: false, redox: true, besideT: false, besideP: false, relax: '1e3', diff: 'none', D: '2e-9',
     times: '100', cells: '', phases: '', fill: false, logT: true, open: false, cell: 0, mode: 'time', at: -1,
     opened: new Map(),       // databases opened this visit, name -> text; never stored
     missingDb: null,         // a database chosen on an earlier visit and not opened on this one
@@ -12968,6 +12986,7 @@ END
     try {
       localStorage.setItem(PQ_KEY, JSON.stringify({
         water: pq.water, db: pq.db, floor: pq.floor, act: pq.act, eq: pq.eq, minerals: pq.minerals, redox: pq.redox, besideT: pq.besideT,
+        besideP: pq.besideP,
         relax: pq.relax, diff: pq.diff,
         D: pq.D, times: pq.times, cells: pq.cells, phases: pq.phases, fill: pq.fill, logT: pq.logT,
         open: pq.open, inv: pq.inv, batch: pq.batch, mix: pq.mix, mixOpen: pq.mixOpen,
@@ -12982,7 +13001,7 @@ END
       for (const k of ['water', 'floor', 'relax', 'diff', 'D', 'times', 'cells', 'phases']) {
         if (typeof s[k] === 'string') pq[k] = s[k];
       }
-      for (const k of ['fill', 'logT', 'open', 'minerals', 'redox', 'besideT']) if (typeof s[k] === 'boolean') pq[k] = s[k];
+      for (const k of ['fill', 'logT', 'open', 'minerals', 'redox', 'besideT', 'besideP']) if (typeof s[k] === 'boolean') pq[k] = s[k];
       if (s.batch && typeof s.batch === 'object') {
         for (const k of ['text', 'rows', 'solids', 'lowest', 'uncertain', 'draws', 'seed', 'against', 'mapX', 'mapY', 'realisations', 'limit',
           'view', 'fit', 'sensTop', 'sfPh', 'sfWater', 'sfVersion', 'sfDrawn']) {
@@ -13015,6 +13034,7 @@ END
     $('rtmPqMinerals').checked = pq.minerals;
     $('rtmPqRedox').checked = pq.redox;
     $('rtmPqBesideT').checked = pq.besideT;
+    $('rtmPqBesideP').checked = pq.besideP;
     $('rtmPqRelax').value = pq.relax;
     $('rtmPqDiff').value = pq.diff;
     $('rtmPqD').value = pq.D;
@@ -13037,13 +13057,23 @@ END
     // so is the electron.
     $('rtmPqMinerals').disabled = pq.eq !== 'exact';
     $('rtmPqRedox').disabled = pq.eq !== 'exact';
-    // PHREEQC's own column means something only for an input with a column to run.
+    // PHREEQC's own column means something only for an input with a column to run; its own path, with a path.
     $('rtmPqBesideWrap').hidden = !pqHasTransport();
+    $('rtmPqBesidePWrap').hidden = !pqHasPath();
   }
 
   /** Whether the water in the panel has a TRANSPORT block: PHREEQC's own column can then be set beside the run. */
   function pqHasTransport() {
     return /^[ \t]*TRANSPORT\b/im.test(pq.water || '');
+  }
+
+  /**
+   * Whether the water in the panel may end on a path, a REACTION added in
+   * steps (or one it USEs): PHREEQC's own steps can then be set beside the
+   * run. The hand-off says whether the calculation the water is from has one.
+   */
+  function pqHasPath() {
+    return /^[ \t]*(?:REACTION|USE[ \t]+REACTION)(?![\w])/im.test(pq.water || '');
   }
 
   function pqReadControls() {
@@ -13054,6 +13084,7 @@ END
     pq.minerals = $('rtmPqMinerals').checked;
     pq.redox = $('rtmPqRedox').checked;
     pq.besideT = $('rtmPqBesideT').checked;
+    pq.besideP = $('rtmPqBesideP').checked;
     pq.relax = $('rtmPqRelax').value.trim();
     pq.diff = $('rtmPqDiff').value;
     pq.D = $('rtmPqD').value.trim();
@@ -13497,6 +13528,37 @@ END
         out.push(`<p class="warn">Not carried from the kinetics: ${r.kineticsSkipped
           .map((x) => `${esc(x.name)}, ${esc(x.why)}`).join('; ')}.</p>`);
       }
+      // The path the run is: PHREEQC's REACTION, its reactants at a steady rate, the clock counting what has gone in.
+      if (r.path) {
+        const pth = r.path;
+        const u = esc(pth.unit);
+        out.push(`<p>A path, PHREEQC's <code>REACTION ${pth.reaction}</code>: ${pth.steps.length} steps up to `
+          + `${pqNum(pth.tend)} ${u} of reaction, ${pth.reactants.map((x) => `<code>${esc(x.name)}</code>`).join(', ')}. The `
+          + 'model is of the water before it'
+          + (pth.trace ? `, with ${pqNum(pth.trace)} mol of the reaction in it, so that what its reactants bring that it had `
+            + 'none of is there to grow' : '')
+          + `, and the run is the path: the reactants come in at a steady rate, a ${u} of reaction a second, so that the `
+          + `clock, in seconds, counts the ${u} of reaction added. <code>TEND</code> is the last step's ${pqNum(pth.tend)}; `
+          + 'PHREEQC\'s steps are equilibria the run passes through.</p>');
+        if (pth.atmMoved) {
+          out.push(`<p class="warn">PHREEQC's gas phase, in a fixed volume, takes the water from ${pqNum(pth.atmMoved.from)} to `
+            + `${pqNum(pth.atmMoved.to)} atm along the path, where the run holds it at the first: the log K, A and B that go `
+            + 'with the pressure stay where they start, and the run leaves PHREEQC\'s as the pressure rises.</p>');
+        }
+        if (reply.besidePath) {
+          const b = reply.besidePath;
+          out.push(`<p>PHREEQC's own steps along the path, run beside it in ${pqNum(b.seconds)} s: ${b.rows} rows of `
+            + `${b.columns.map((col) => `<code>${esc(col)}</code>`).join(', ')}, under <code>&lt;DATA&gt;</code> at the end of `
+            + `the text, each at the clock the run has when it has added as much. Run draws them beside the run as points; `
+            + 'the Fit tab\'s <em>the run against what was measured</em> sets each against it.'
+            + (b.held && b.held.length ? ` Left out, PHREEQC's steps holding each at one value: `
+              + `${b.held.map((col) => `<code>${esc(col)}</code>`).join(', ')}.` : '') + '</p>');
+        }
+      }
+      if (r.pathSkipped) {
+        out.push(`<p class="warn">The calculation the water is from is a path, which is not carried: ${esc(r.pathSkipped.why)}. `
+          + 'The model is of the water at its end, as PHREEQC leaves it.</p>');
+      }
       if (r.electron) {
         const e = r.electron;
         const moved = e.settled && Math.abs(e.settled.to - e.settled.from) > 1e-6;
@@ -13553,14 +13615,16 @@ END
       return;
     }
     const beside = pq.besideT && pqHasTransport();
+    const besidePath = pq.besideP && pqHasPath();
     pqBusy(true, beside ? 'Writing the model through PHREEQC, and running its own TRANSPORT of the input beside it…'
-      : 'Writing the model through PHREEQC…');
+      : besidePath ? 'Writing the model through PHREEQC, and running its own steps along the path beside it…'
+        : 'Writing the model through PHREEQC…');
     try {
       const reply = await pqRequest({
         type: 'toModel', database: pqDatabase(), water: { name: 'The water', text: pq.water },
         options: { floor, activity: pq.act === 'follow', exact: pq.eq === 'exact',
           phases: pq.minerals && pq.eq === 'exact', redox: pq.redox && pq.eq === 'exact', relax, D, dw: pq.diff === 'dw',
-          date: new Date().toISOString().slice(0, 10), beside },
+          date: new Date().toISOString().slice(0, 10), beside, besidePath },
       });
       // As an example is loaded: the text replaced, the one there put aside, and said so below the panel.
       const kept = putAside(reply.text);

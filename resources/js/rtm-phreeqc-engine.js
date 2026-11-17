@@ -326,8 +326,17 @@
             res.text = beside.modelText;
             beside = { ...beside, text: undefined, modelText: undefined, warnings };
           }
-          answer({ type: 'done', text: res.text, report: res.report, warnings: beside ? beside.warnings : engine.warnings(),
-            check: checkModel(res), version: engine.version, database: database.name, beside });
+          // With options.besidePath, PHREEQC's own steps along the path the model runs, under <DATA> at its end.
+          let besidePath = null;
+          if (msg.options && msg.options.besidePath && res.report && res.report.path) {
+            const warnings = engine.warnings();
+            besidePath = P.pathBeside({ engine, database, water: msg.water, res });
+            res.text = besidePath.modelText;
+            besidePath = { ...besidePath, text: undefined, modelText: undefined, warnings };
+          }
+          const said = beside || besidePath;
+          answer({ type: 'done', text: res.text, report: res.report, warnings: said ? said.warnings : engine.warnings(),
+            check: checkModel(res), version: engine.version, database: database.name, beside, besidePath });
           return;
         }
         if (msg.type === 'view') {

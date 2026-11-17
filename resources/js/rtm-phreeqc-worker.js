@@ -14,8 +14,8 @@ importScripts(
   '../../vendors/phreeqc/phreeqc-dat.js?v=20261107',
   './facsimile-model.js?v=20261005',
   './rtm-model.js?v=20261116b',
-  './rtm-phreeqc.js?v=20261117e',
-  './rtm-phreeqc-engine.js?v=20261114b',
+  './rtm-phreeqc.js?v=20261117f',
+  './rtm-phreeqc-engine.js?v=20261117f',
 );
 
 const handlePhreeqc = self.RtmPhreeqcEngine.handler(self.createPhreeqc, { builtin: self.PHREEQC_DAT });

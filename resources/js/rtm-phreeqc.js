@@ -521,6 +521,8 @@
       this.phaseVm = new Map();
       // A surface species' -cd_music: the charges it puts on planes 0, 1 and 2 of a CD-MUSIC surface.
       this.sfCd = new Map();
+      // A species PHREEQC counts in its mole balances as another formula (-mole_balance, -mass_balance, -mb).
+      this.moleBalance = new Map();
       // GAS_BINARY_PARAMETERS: 'CO2(g) H2O(g)' (the pair, sorted) -> k.
       this.gasBinary = new Map();
       // Each reaction's log K as PHREEQC reads it, by 'kind name' -- s a solution species, p a phase, x a species on
@@ -688,7 +690,10 @@
               this.co2Gamma.delete(last);
               this.vm.delete(last);
               this.millero.delete(last);
+              this.moleBalance.delete(last);
             }
+          } else if (last && lkOption(block, line) && ['mb', 'mass_balance', 'mole_balance'].includes(lkOption(block, line).opt)) {
+            if (lkOption(block, line).words[0]) this.moleBalance.set(last, lkOption(block, line).words[0]);
           } else if (last && this.readLogKOption(block, line, this.lk.get(`s ${last}`))) {
             // log_k, delta_h, the analytic expression or a named one: read.
           } else if (last && lkOption(block, line) && lkOption(block, line).opt === 'viscosity') {
@@ -746,8 +751,11 @@
               if (identity) this.exReaction.delete(last); else this.exReaction.set(last, normalise(left, right));
               this.exGamma.delete(last);
               this.exLlnl.delete(last);
+              this.moleBalance.delete(last);
               this.lk.set(`x ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
             }
+          } else if (last && lkOption(block, line) && ['mb', 'mass_balance', 'mole_balance'].includes(lkOption(block, line).opt)) {
+            if (lkOption(block, line).words[0]) this.moleBalance.set(last, lkOption(block, line).words[0]);
           } else if (last && this.readLogKOption(block, line, this.lk.get(`x ${last}`))) {
             // log_k, delta_h, the analytic expression, an offset or a named one: read.
           } else if (last && /^-g(a(m(m(a)?)?)?)?$/i.test(tokens[0]) && tokens.length > 2) {
@@ -774,7 +782,10 @@
               if (identity) this.sfReaction.delete(last); else this.sfReaction.set(last, normalise(left, right));
               this.lk.set(`f ${last}`, { k: [0, 0, 0, 0, 0, 0, 0, 0], add: [] });
               this.sfCd.delete(last);
+              this.moleBalance.delete(last);
             }
+          } else if (last && lkOption(block, line) && ['mb', 'mass_balance', 'mole_balance'].includes(lkOption(block, line).opt)) {
+            if (lkOption(block, line).words[0]) this.moleBalance.set(last, lkOption(block, line).words[0]);
           } else if (last && lkOption(block, line) && ['cd_music', 'music'].includes(lkOption(block, line).opt)) {
             /*
               CD-MUSIC: the charges the species puts on the planes 0, 1 and 2,
@@ -1692,6 +1703,242 @@
         ratio: Number(tokens[3]) });
     }
     return out;
+  }
+
+  /*
+    A CALCULATION'S PATH: what PHREEQC's batch reaction adds or changes from
+    one step to the next -- a REACTION's reactants in amounts, the
+    temperature of a REACTION_TEMPERATURE, the pressure of a
+    REACTION_PRESSURE -- read as PHREEQC reads them (read_reaction,
+    cxxTemperature::read, cxxPressure::read) and stepped as its
+    run_reactions steps them.
+  */
+
+  /** A number as PHREEQC reads one among a REACTION's steps, or a temperature or pressure of one: 0.5, -1e-3, .25. */
+  const STEP_NUMBER = /^[-+]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][-+]?[0-9]+)?$/;
+
+  /**
+   * What PHREEQC takes a word after a REACTION's steps to be (check_units,
+   * the word with "/l" after it): moles, millimoles or micromoles, and the
+   * factor to moles; null for a word that is not one of them.
+   */
+  function stepUnit(word) {
+    let u = `${String(word).toLowerCase()}/l`.replace(/\s+/g, '');
+    for (const [a, b] of [['milli', 'm'], ['micro', 'u'], ['moles', 'Mol'], ['mole', 'Mol'], ['mol', 'Mol']]) u = u.replace(a, b);
+    u = u.slice(0, u.indexOf('/l') + 2);
+    return { 'Mol/l': [1, 'mol'], 'mMol/l': [1e-3, 'mmol'], 'uMol/l': [1e-6, 'µmol'] }[u] || null;
+  }
+
+  /**
+   * A REACTION block's lines as read_reaction reads them: a line that starts
+   * with a letter, ( or [ names reactants, each with its coefficient (1
+   * unless one follows it; a name given again takes the later); any other
+   * gives steps -- amounts, `31*1` thirty-one of 1, then a unit (moles
+   * unless said), and `in 20` (steps): one amount in so many equal
+   * increments. One mole where no step is given.
+   */
+  function readReactionBlock(data) {
+    const out = { reactants: [], steps: [], equal: false, count: 0, factor: 1, unit: 'mol' };
+    for (const line of data) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) continue;
+      if (/^[A-Za-z([]/.test(tokens[0])) {
+        let last = null;
+        for (const t of tokens) {
+          if (/^[A-Za-z([]/.test(t)) {
+            last = out.reactants.find((r) => r[0] === t) || null;
+            if (!last) { last = [t, 1]; out.reactants.push(last); } else last[1] = 1;
+          } else if (last && STEP_NUMBER.test(t)) last[1] = Number(t);
+        }
+        continue;
+      }
+      let i = 0;
+      for (; i < tokens.length; i++) {
+        const rep = /^([0-9]+)\*(.+)$/.exec(tokens[i]);
+        if (rep && STEP_NUMBER.test(rep[2])) {
+          for (let k = 0; k < Number(rep[1]); k++) out.steps.push(Number(rep[2]));
+        } else if (STEP_NUMBER.test(tokens[i])) out.steps.push(Number(tokens[i]));
+        else break;
+      }
+      if (i < tokens.length) {
+        const u = stepUnit(tokens[i]);
+        if (u) { [out.factor, out.unit] = u; i++; }
+      }
+      for (; i < tokens.length; i++) {
+        const n = /^[+-]?[0-9]+/.exec(tokens[i]);
+        if (n && Number(n[0]) > 0) { out.count = Number(n[0]); out.equal = true; break; }
+      }
+    }
+    if (!out.steps.length) out.steps.push(1);
+    if (out.equal && !out.count) out.count = 1;
+    return out;
+  }
+
+  /**
+   * A REACTION_TEMPERATURE or REACTION_PRESSURE block's lines as PHREEQC
+   * reads them: its values; or two of them and `in 51` (steps), from the
+   * first to the second in so many.
+   */
+  function readStepValues(data) {
+    const out = { values: [], equal: false, count: 0 };
+    let done = false;
+    for (const line of data) {
+      const tokens = line.trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length || done) continue;
+      if (/^-[A-Za-z]/.test(tokens[0])) break;
+      for (let i = 0; i < tokens.length && !done; i++) {
+        if (/^[-+.0-9]/.test(tokens[i])) {
+          if (STEP_NUMBER.test(tokens[i])) out.values.push(Number(tokens[i]));
+          continue;
+        }
+        const n = /^[+-]?[0-9]+/.exec(tokens[i + 1] || '');
+        if (out.values.length === 2 && n && Number(n[0]) > 0) { out.equal = true; out.count = Number(n[0]); }
+        done = true;
+      }
+    }
+    return out;
+  }
+
+  /** A step's temperature or pressure, as Temperature_for_step and Pressure_for_step have it: 1 where none is given. */
+  function valueForStep(v, i) {
+    if (!v.values.length) return 1;
+    if (v.equal) {
+      if (i > v.count) return v.values[1];
+      const d = v.count <= 1 ? 1 : v.count - 1;
+      return v.values[0] + ((v.values[1] - v.values[0]) * (i - 1)) / d;
+    }
+    return v.values[Math.min(i, v.values.length) - 1];
+  }
+
+  /** The kinds of block a batch reaction steps through. */
+  const PATH_KINDS = ['REACTION', 'REACTION_TEMPERATURE', 'REACTION_PRESSURE'];
+
+  /**
+   * The path of simulation `sim` of an input -- PHREEQC's SIM_NO, counted
+   * from its first line, each END closing one -- or null where it has none:
+   * the REACTION, REACTION_TEMPERATURE and REACTION_PRESSURE its batch
+   * reaction uses, each written in it (the first of its kind, as
+   * read_reaction takes one) or brought in by USE (the last, as read_use
+   * sets it), the last block of that number read by the simulation's END;
+   * INCREMENTAL_REACTIONS as the input last sets it by then (false unless
+   * it does); and its steps, as many as the longest of the three: each
+   * step's amount of reaction, in moles, added to the water as it was before
+   * the first step, or (incremental) to the step before -- a step past the
+   * end of a list its last, past equal increments all of them (or,
+   * incremental, nothing more) -- with each step's temperature and pressure
+   * (add_reaction, Temperature_for_step, Pressure_for_step).
+   * Returns { sim, lines (the input's logical lines), from, to (the
+   * simulation's first line and its END, or the end), reaction ({ n, use,
+   * at, reactants, steps, equal, count, factor, unit }), temperature,
+   * pressure ({ n, use, at, values, equal, count }), each null where the
+   * simulation has none, incremental, steps: [{ amount, x (the amount in the
+   * steps' own unit), tc, atm }] }, tc and atm null where nothing sets them.
+   */
+  function readPath(text, sim) {
+    const lines = logicalLines(text);
+    const first = (ln) => ln.trim().split(/\s+/)[0] || '';
+    const isKey = (ln) => { const w = first(ln); return !!w && !w.startsWith('-') && KEYWORDS.has(w.toUpperCase()); };
+    const bounds = [];
+    let from = 0;
+    lines.forEach((ln, i) => {
+      if (isKey(ln) && first(ln).toUpperCase() === 'END') { bounds.push([from, i]); from = i + 1; }
+    });
+    bounds.push([from, lines.length]);
+    if (!(Number.isInteger(sim) && sim >= 1 && sim <= bounds.length)) return null;
+    const [lo, hi] = bounds[sim - 1];
+    // The blocks read by the simulation's END, each with its lines.
+    const blocks = [];
+    for (let i = 0; i < Math.min(hi, lines.length); i++) {
+      if (isKey(lines[i])) blocks.push({ word: first(lines[i]).toUpperCase(), tokens: lines[i].trim().split(/\s+/), at: i, data: [] });
+      else if (blocks.length) blocks[blocks.length - 1].data.push(lines[i]);
+    }
+    const usual = (w) => KEYWORD_NAMES.get(String(w).toUpperCase()) || String(w).toUpperCase();
+    const numbers = (tokens) => {
+      const m = /^([0-9]+)(?:-([0-9]+))?$/.exec(tokens[1] || '');
+      if (!m) return [1, 1];
+      return [Number(m[1]), m[2] !== undefined ? Math.max(Number(m[1]), Number(m[2])) : Number(m[1])];
+    };
+    // USE's number: the first that is one, none (-2), or 1 where none is given.
+    const useNumber = (tokens) => {
+      for (const t of tokens) {
+        if (/^[0-9]/.test(t)) return parseInt(t, 10);
+        if (/^n/i.test(t)) return -2;
+      }
+      return 1;
+    };
+    const chosen = {};
+    for (const kind of PATH_KINDS) {
+      let inUse = false;
+      let n = null;
+      let at = -1;
+      let use = false;
+      for (const b of blocks) {
+        if (b.at < lo) continue;
+        if (b.word === kind) {
+          if (!inUse) { inUse = true; n = numbers(b.tokens)[0]; at = b.at; use = false; }
+        } else if (b.word === 'USE' && b.tokens[1] && usual(b.tokens[1]) === kind) {
+          n = useNumber(b.tokens.slice(2));
+          inUse = n >= 0;
+          at = b.at;
+          use = true;
+        }
+      }
+      const def = inUse ? [...blocks].reverse().find((b) => b.word === kind
+        && n >= numbers(b.tokens)[0] && n <= numbers(b.tokens)[1]) : null;
+      chosen[kind] = def ? { n, use, at, def: def.at,
+        ...(kind === 'REACTION' ? readReactionBlock(def.data) : readStepValues(def.data)) } : null;
+    }
+    const inc = [...blocks].reverse().find((b) => b.word === 'INCREMENTAL_REACTIONS');
+    const incremental = !!inc && !/^f/i.test(inc.tokens[1] || 't');
+    const rx = chosen.REACTION;
+    const tp = chosen.REACTION_TEMPERATURE;
+    const pr = chosen.REACTION_PRESSURE;
+    if (!rx && !tp && !pr) return null;
+    const count = (v) => (!v ? 0 : v.equal ? v.count : (v.steps || v.values).length);
+    const n = Math.max(1, count(rx), count(tp), count(pr));
+    const steps = [];
+    let sum = 0;
+    for (let i = 1; i <= n; i++) {
+      let x = 0;
+      if (rx && !incremental) {
+        x = rx.equal ? (i > rx.count ? rx.steps[0] : (rx.steps[0] * i) / rx.count) : rx.steps[Math.min(i, rx.steps.length) - 1];
+      } else if (rx) {
+        sum += rx.equal ? (i > rx.count ? 0 : rx.steps[0] / rx.count) : rx.steps[Math.min(i, rx.steps.length) - 1];
+        x = sum;
+      }
+      steps.push({ amount: rx ? x * rx.factor : 0, x, tc: tp ? valueForStep(tp, i) : null, atm: pr ? valueForStep(pr, i) : null });
+    }
+    return { sim, lines, from: lo, to: hi, reaction: rx, temperature: tp, pressure: pr, incremental, steps };
+  }
+
+  /**
+   * The input a path starts from: to the END of its simulation, without its
+   * REACTION -- the simulation's REACTION blocks, and its USE of one -- and,
+   * with `trace`, a REACTION of the same reactants, 1e-20 mol of each to the
+   * mole of reaction: a trace of what they bring, which a total at none
+   * would not have to grow from.
+   */
+  function pathStart(p, trace) {
+    const first = (ln) => ln.trim().split(/\s+/)[0] || '';
+    const isKey = (ln) => { const w = first(ln); return !!w && !w.startsWith('-') && KEYWORDS.has(w.toUpperCase()); };
+    const out = [];
+    let drop = false;
+    for (let i = 0; i < Math.min(p.to, p.lines.length); i++) {
+      const ln = p.lines[i];
+      if (isKey(ln)) {
+        const tokens = ln.trim().split(/\s+/);
+        const word = first(ln).toUpperCase();
+        if (i >= p.from && word === 'USE' && tokens[1]
+          && (KEYWORD_NAMES.get(tokens[1].toUpperCase()) || tokens[1].toUpperCase()) === 'REACTION') continue;
+        drop = i >= p.from && word === 'REACTION';
+      }
+      if (!drop) out.push(ln);
+    }
+    if (trace) {
+      out.push(`REACTION ${p.reaction.n}`, ...p.reaction.reactants.map(([nm, c]) => ` ${nm}  ${Math.abs(c)}`), ' 1e-20 moles');
+    }
+    out.push('END');
+    return `${out.join('\n')}\n`;
   }
 
   /*
@@ -3084,12 +3331,83 @@
     // With the floor at 0, every species' log K: one PHREEQC finds none of is written too (see atNone).
     const everything = carryRedox && floor === 0;
     /*
+      THE PATH (readPath). Where the calculation the water is from -- the
+      simulation of PHREEQC's last row -- adds a REACTION in steps, the model
+      is of the water before it, and the run is the path: each reactant comes
+      in at a steady rate, so many moles of it to each mole of the reaction,
+      the clock counting the reaction's moles in the unit its steps are
+      written in, and PHREEQC's steps are equilibria the run passes through.
+      Not carried, the model then of the water at the path's end, as PHREEQC
+      leaves it, and said why: a path in temperature or in pressure; one that
+      takes water away or adds it (H2O), which the page holds at a kilogram;
+      one beside KINETICS; one whose amounts do not grow from step to step;
+      a reactant whose formula is not read, or that moves electrons where
+      the valence states are not held at one pe; and any where the relations
+      are not held exactly, which the equilibria along it are. A reaction of
+      one step, or of one amount at every step, is no path: the water after
+      it is taken, as of any reaction.
+    */
+    let path = null;
+    let pathSkipped = o.pathWhy ? { why: o.pathWhy } : null;
+    const hasPath = logicalLines(o.water.text).some((ln) => {
+      const t = ln.trim().split(/\s+/);
+      const kind = (w) => KEYWORD_NAMES.get(String(w || '').toUpperCase()) || String(w || '').toUpperCase();
+      return PATH_KINDS.includes(kind(t[0])) || (kind(t[0]) === 'USE' && PATH_KINDS.includes(kind(t[1])));
+    });
+    if (!column && o.path !== false && o.solution == null && hasPath) {
+      const rows = o.engine.run(`SELECTED_OUTPUT ${SEL}\n -reset false\nUSER_PUNCH ${SEL}\n -headings sim_ atm_\n -start\n`
+        + `10 PUNCH SIM_NO, PRESSURE\n -end\n${o.water.text}\nEND\n`);
+      const p = rows.length > 1 ? readPath(o.water.text, Number(rows[rows.length - 1][0])) : null;
+      // The water's pressure at the path's end, as PHREEQC has it: a gas phase in a fixed volume moves it.
+      if (p) p.atmEnd = Number(rows[rows.length - 1][1]);
+      const varies = (xs) => xs.some((x) => x !== null && Math.abs(x - xs[0]) > 1e-12 * Math.max(1, Math.abs(xs[0])));
+      const amounts = p ? p.steps.map((s) => s.amount) : [];
+      const tcs = p ? p.steps.map((s) => s.tc) : [];
+      const atms = p ? p.steps.map((s) => s.atm) : [];
+      const byAmount = !!p && !!p.reaction && p.steps.length > 1 && varies(amounts);
+      const byT = !!p && varies(tcs);
+      const byP = !!p && varies(atms);
+      const reactants = byAmount ? p.reaction.reactants.map(([nm, coef]) => {
+        const { terms, why } = reactionOf({ name: nm, formula: [[nm, 1]] });
+        return { name: nm, coef, terms, why };
+      }) : [];
+      let why = null;
+      if (byP) {
+        why = `the pressure goes from ${fmtG(atms[0], 6)} to ${fmtG(atms[atms.length - 1], 6)} atm along it `
+          + '(REACTION_PRESSURE), and PRESSURE is one number';
+      } else if (byT) {
+        why = `the temperature goes from ${fmtG(tcs[0], 6)} to ${fmtG(tcs[tcs.length - 1], 6)} C along it `
+          + '(REACTION_TEMPERATURE), which is not carried';
+      } else if (byAmount) {
+        const water = reactants.find((r) => r.name === 'H2O');
+        const bad = reactants.find((r) => r.why);
+        const moving = reactants.find((r) => !r.why && Math.abs(r.terms.get('e-') || 0) > 1e-12);
+        if (carryKin) why = 'the input\'s KINETICS are carried, and a path beside them is not';
+        else if (!o.exact) why = 'it is a series of equilibria, and the relations are not held exactly';
+        else if (water) why = 'it takes water away or adds it (H2O), and the page holds a kilogram of water';
+        else if (amounts[0] < 0 || amounts.some((a, i) => i > 0 && a < amounts[i - 1])) why = 'its amounts do not grow from step to step';
+        else if (bad) why = `${bad.name}: ${bad.why}`;
+        else if (moving && !carryRedox) why = `${moving.name} reacts with electrons, and the valence states are not held at one pe`;
+      }
+      if (why && (byAmount || byT || byP)) {
+        pathSkipped = { why, reaction: p.reaction ? p.reaction.n : null, steps: p.steps.length };
+      } else if (byAmount) {
+        path = { p, reactants, traced: false, els: new Set() };
+        waterText = pathStart(p, false);
+      }
+    }
+    // A path's reactant that moves electrons wants them as a kinetic reaction does (below).
+    const pathRedox = !!path && path.reactants.some((r) => Math.abs(r.terms.get('e-') || 0) > 1e-12);
+    // Where the path ends, in the unit of its steps: the run's TEND.
+    const pathEnd = path ? path.p.steps[path.p.steps.length - 1].x : 0;
+    /*
       With a kinetic reaction to run that moves electrons, every species of
       a redox element's: one PHREEQC finds none of may be needed (atNone).
-      Not for one left out where the water was taken before (below).
+      Not for one left out where the water was taken before (below). The
+      same for a path's.
     */
-    const kineticRedox = carryRedox && !everything && carryKin
-      && kinBlock.comps.some((c) => !(o.leftOut || []).some((s) => s.name === c.name) && movesElectrons(c));
+    const kineticRedox = carryRedox && !everything && ((carryKin
+      && kinBlock.comps.some((c) => !(o.leftOut || []).some((s) => s.name === c.name) && movesElectrons(c))) || pathRedox);
     const ofRedox = (n) => { try { return [...db.expand(n).keys()].some((lb) => /\(/.test(lb)); } catch (e) { return false; } };
     const lkSpecies = carryRedox ? [...db.reaction.keys()].filter((sp) => sp !== 'e-' && sp !== 'H2O'
       && (everything || db.isRedox(sp) || (kineticRedox && ofRedox(sp)))) : [];
@@ -3147,6 +3465,9 @@
     // Under -multi_D, pure water's viscosity at the water's temperature, and the water's: each species' Dw there (fill_spec).
     const viscAt = column && column.mcd ? extras.length : -1;
     if (viscAt >= 0) extras.push('VISCOS_0', 'VISCOS');
+    // A path: the water's kilograms, which its reactants come in to.
+    const pathAt = path ? extras.length : -1;
+    if (path) extras.push('TOT("water")');
     // With what the calculation holds, PHREEQC's lists of it.
     const punch = punchBlock(extras, true);
     const takeWater = (text) => {
@@ -3160,6 +3481,21 @@
       return rows[rows.length - 1];
     };
     let w = takeWater(waterText);
+    /*
+      A path's reactant may bring what the water has none of -- cadmium
+      into a water without it -- and a total at none cannot be held: the
+      water is then taken with the path's REACTION at 1e-20 mol, a trace of
+      what its reactants bring, as for a kinetic reactant (below).
+    */
+    if (path) {
+      const has = new Set([...w.species].filter(([, [m]]) => m > 0).map(([n]) => n));
+      const lacking = path.reactants.some((r) => [...r.terms.keys()].some((n) => n !== 'H2O' && n !== 'e-' && !has.has(n)));
+      if (lacking) {
+        waterText = pathStart(path.p, true);
+        w = takeWater(waterText);
+        path.traced = true;
+      }
+    }
     /*
       A kinetic reactant may bring what the water has none of -- calcite
       into a water without calcium -- and a total at none cannot be held:
@@ -3491,6 +3827,9 @@
         }
       }
     }
+    // A path whose gas phase, in a fixed volume, takes PHREEQC's water to another pressure, which the run does not follow.
+    const pathAtmMoved = !!path && !!gasFixed && gasFixed.fixed === 'volume' && Number.isFinite(path.p.atmEnd)
+      && Number.isFinite(atm) && Math.abs(path.p.atmEnd - atm) > 1e-3 * Math.max(1, atm);
     /*
       THE SOLID SOLUTIONS: each member a mineral at the moles PHREEQC left in
       its solid solution, per kilogram of water, with its dissolution as the
@@ -3557,6 +3896,44 @@
       phases it reads the saturation of (written in <PHASES>), and an
       element's total, a sum over the species written (filled in below).
     */
+    /*
+      What a reaction brings or takes -- a kinetic reactant's, a path's --
+      `rx` its terms: each species of it kept, and every species of it,
+      whatever the floor: they grow, or go. Of the element, where the
+      valence states are held at one pe; else of the valence states it
+      moves, the others staying where they are (a trace of Fe(2) beside the
+      Fe(3) it brings, at 1e-29, is a total no factorisation resolves).
+    */
+    const pullFor = (rx) => {
+      for (const [n] of rx) if (n !== 'e-' && !kept.has(n)) { kept.add(n); pulled.add(n); }
+      const key = (lb) => (carryRedox ? elementOf(lb) : normLabel(lb));
+      const els = new Set();
+      for (const [n] of rx) {
+        if (n === 'e-' || n === 'H+') continue;
+        try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(key(lb)); } catch (e) { /* no terms */ }
+      }
+      /*
+        Electrons it brings or takes go to whatever couple takes them at
+        the one pe: with the redox carried, every valence state of the
+        water's redox elements, whatever the floor -- the sulphide of a
+        sulphate water that organic carbon reduces, though the water starts
+        with none, and without which no couple would hold the electron.
+      */
+      if (carryRedox && rx.some(([n]) => n === 'e-')) {
+        for (const sp of molal.keys()) {
+          let ex;
+          try { ex = db.expand(sp); } catch (e) { continue; }
+          for (const [lb] of ex) if (/\(/.test(lb)) els.add(elementOf(lb));
+        }
+      }
+      for (const sp of molal.keys()) {
+        if (kept.has(sp)) continue;
+        let ex;
+        try { ex = db.expand(sp); } catch (e) { continue; }
+        if ([...ex.keys()].some((lb) => els.has(key(lb)))) { kept.add(sp); pulled.add(sp); }
+      }
+      return { els, key };
+    };
     const kinetics = [];
     const kinSkipped = [];
     const kinPhaseUse = new Map();
@@ -3652,43 +4029,46 @@
         };
         let law;
         try { law = rateLaw(def, ctx); } catch (e) { skip(`its rate: ${e.message}`); continue; }
-        for (const [n] of rx) if (n !== 'e-' && !kept.has(n)) { kept.add(n); pulled.add(n); }
-        /*
-          Every species of what it brings or takes, whatever the floor: they
-          grow, or go. Of the element, where the valence states are held at one
-          pe; else of the valence states it moves, the others staying where
-          they are (a trace of Fe(2) beside the Fe(3) it brings, at 1e-29, is
-          a total no factorisation resolves).
-        */
-        const key = (lb) => (carryRedox ? elementOf(lb) : normLabel(lb));
-        const els = new Set();
-        for (const [n] of rx) {
-          if (n === 'e-' || n === 'H+') continue;
-          try { for (const [lb] of db.expand(n)) if (lb !== 'e-') els.add(key(lb)); } catch (e) { /* no terms */ }
-        }
-        /*
-          Electrons it brings or takes go to whatever couple takes them at
-          the one pe: with the redox carried, every valence state of the
-          water's redox elements, whatever the floor -- the sulphide of a
-          sulphate water that organic carbon reduces, though the water starts
-          with none, and without which no couple would hold the electron.
-        */
-        if (carryRedox && rx.some(([n]) => n === 'e-')) {
-          for (const sp of molal.keys()) {
-            let ex;
-            try { ex = db.expand(sp); } catch (e) { continue; }
-            for (const [lb] of ex) if (/\(/.test(lb)) els.add(elementOf(lb));
-          }
-        }
-        for (const sp of molal.keys()) {
-          if (kept.has(sp)) continue;
-          let ex;
-          try { ex = db.expand(sp); } catch (e) { continue; }
-          if ([...ex.keys()].some((lb) => els.has(key(lb)))) { kept.add(sp); pulled.add(sp); }
-        }
+        pullFor(rx);
         kinetics.push({ comp, rate: def, amount: Math.max(comp.m, 0) / W, rx, law, name: null, held: heldRead });
       }
     }
+    /*
+      THE PATH'S REACTANTS: what each brings or takes, kept as a kinetic
+      reactant's is (pullFor), each coming in at its own rate -- its moles to
+      the mole of reaction, times the unit of the steps, to each kilogram of
+      PHREEQC's water. One that brings what the water still has none of: the
+      path is not carried (taken again without it, and said why).
+    */
+    if (path) {
+      const kgw = Number(w.x[pathAt]);
+      path.W = kgw > 0 && Math.abs(kgw - 1) > 1e-9 ? kgw : 1;
+      for (const r of path.reactants) {
+        const rx = [...r.terms].filter(([n, c]) => n !== 'H2O' && Math.abs(c) > 1e-12);
+        const missing = rx.filter(([n]) => n !== 'e-' && !molal.has(n)).map(([n]) => n);
+        if (missing.length) {
+          // As which species, of which element: organic matter's nitrogen as nitrate, where the water has none.
+          const ofEl = (n) => { try { return [...new Set([...db.expand(n).keys()].map(elementOf).filter((e) => e !== 'H' && e !== 'O'))]; } catch (e) { return []; } };
+          const els = [...new Set(missing.flatMap(ofEl))];
+          return waterToModel({ ...given, path: false, pathWhy: `${r.name}${els.length ? `'s ${els.join(' and ')}` : ''} would come in as `
+            + `${missing.join(' and ')}, which the water has none of` });
+        }
+        const { els, key } = pullFor(rx);
+        for (const el of els) path.els.add(el);
+        path.key = key;
+        r.rx = rx;
+        r.rate = (r.coef * path.p.reaction.factor) / path.W;
+      }
+    }
+    /*
+      On an exchanger or a surface, the species of what a path's reactants
+      bring are kept whatever the floor, as the water's are: the cadmium of
+      an isotherm sorbs from the first step, though the water starts with a
+      trace of it.
+    */
+    const brings = (r) => !!path && !!r && [...r.left, ...r.right.slice(1)].some((t) => {
+      try { return [...db.expand(t.n).keys()].some((lb) => lb !== 'e-' && path.els.has(path.key(lb))); } catch (e) { return false; }
+    });
     /*
       THE EXCHANGERS: each species PHREEQC put on one, at its molality, with
       its relation as the database writes it, which a run holds exactly.
@@ -3704,7 +4084,7 @@
       } else {
         for (const [n, e] of w.exchange) {
           // In a column, whatever goes on the exchanger as the water at its ends comes in (columnSetup).
-          if (!(e.m >= floor) && !(column && column.keepOn.has(n))) continue;
+          if (!(e.m >= floor) && !(column && column.keepOn.has(n)) && !brings(db.exReaction.get(n))) continue;
           const skip = (why) => exSkipped.push({ name: n, why });
           const r = db.exReaction.get(n);
           if (!r) { skip('the database has no reaction for it'); continue; }
@@ -3803,7 +4183,7 @@
           .flatMap((b) => b.other).join('; ')})` });
       } else {
         for (const [n, e] of w.surface) {
-          if (!(e.m >= floor) && !(column && column.keepOn.has(n))) continue;
+          if (!(e.m >= floor) && !(column && column.keepOn.has(n)) && !brings(db.sfReaction.get(n))) continue;
           const skip = (why) => sfSkipped.push({ name: n, why });
           if (sfMasters.has(n)) { onSf.push({ species: n, master: true, m: e.m }); continue; }
           const r = db.sfReaction.get(n);
@@ -3841,6 +4221,44 @@
         const rank = (sp) => (listed.includes(sp) ? listed.indexOf(sp) : listed.length);
         onSf.sort((a, b) => rank(siteOf(a)) - rank(siteOf(b)) || (siteOf(a) < siteOf(b) ? -1 : siteOf(a) > siteOf(b) ? 1 : 0)
           || Number(b.master) - Number(a.master) || b.m - a.m);
+      }
+    }
+    /*
+      A species of what a path brings that PHREEQC counts in its mole
+      balances as another formula (-mole_balance) -- cadmium on a surface
+      counted as CdCl2, its chloride gone from the water with it -- moves the
+      water as the page's own formula for it does not: the path is not
+      carried. A valence written into the formula, S(-2)5 for S5-2, is the
+      same atoms.
+    */
+    if (path) {
+      const atomsSame = (a, b) => {
+        const x = atomsOf(String(a).replace(/\([+-]?[0-9.]+\)/g, ''));
+        const y = atomsOf(String(b).replace(/\([+-]?[0-9.]+\)/g, ''));
+        return x.size === y.size && [...x].every(([k, v]) => Math.abs((y.get(k) || 0) - v) < 1e-12);
+      };
+      const counted = [...[...kept].map((n) => [n, db.reaction.get(n)]), ...onEx.map((e) => [e.species, e]),
+        ...onSf.filter((e) => !e.master).map((e) => [e.species, e])]
+        .find(([n, r]) => db.moleBalance.has(n) && brings(r) && !atomsSame(db.moleBalance.get(n), n));
+      if (counted) {
+        return waterToModel({ ...given, path: false, pathWhy: `PHREEQC counts ${counted[0]} as ${db.moleBalance.get(counted[0])} `
+          + '(-mole_balance), which the page does not' });
+      }
+      /*
+        Nor where what takes up what it brings is not carried: a surface, an
+        exchanger or a phase left out (and said why) that PHREEQC puts it on.
+      */
+      const lost = [...(w.surface ? w.surface.keys() : [])]
+        .filter((n) => !onSf.some((e) => e.species === n) && brings(db.sfReaction.get(n)))
+        .concat([...(w.exchange ? w.exchange.keys() : [])]
+          .filter((n) => !onEx.some((e) => e.species === n) && brings(db.exReaction.get(n))))
+        .concat(phasesSkipped.map((ps) => ps.name).filter((n) => {
+          const r = db.phaseReaction.get(phaseKey.get(String(n).toLowerCase()));
+          return !!r && brings({ left: r.left.slice(1), right: [null, ...r.right] });
+        }));
+      if (lost.length) {
+        return waterToModel({ ...given, path: false, pathWhy: `${lost.slice(0, 3).join(', ')}${lost.length > 3
+          ? `, and ${lost.length - 3} more,` : ''} would take up what it brings, and ${lost.length > 1 ? 'are' : 'is'} not carried` });
       }
     }
     /*
@@ -4012,7 +4430,7 @@
     {
       const carried = new Set(kinetics.map((k) => k.comp.name));
       const retrace = traced && traceComps.some((c) => !carried.has(c.name));
-      const unneeded = kineticRedox && !kinetics.some((k) => movesElectrons(k.comp));
+      const unneeded = kineticRedox && !pathRedox && !kinetics.some((k) => movesElectrons(k.comp));
       if (retrace || unneeded) {
         return waterToModel({ ...given, traceOf: traceComps.filter((c) => carried.has(c.name)).map((c) => c.name),
           leftOut: kinSkipped.slice() });
@@ -4223,7 +4641,8 @@
       ...[...exName.values()].map((nm) => nm.length), ...onSf.map((e) => e.name.length),
       ...potentials.map((pp) => pp.name.length), ...kinetics.map((k) => k.name.length)) + 2;
     const out = [];
-    out.push(`# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
+    out.push(path ? `# ${o.water.name || 'The water'} where PHREEQC's path starts (below), written on ${date}.`
+      : `# ${o.water.name || 'The water'} as PHREEQC leaves it, written on ${date}.`);
     out.push(`# Database: ${o.database.name || 'unnamed'}.`);
     out.push(`# PHREEQC: ${fmtG(tc, 6)} C, ionic strength ${fmtG(w.mu, 4)} mol/kgw, pH ${w.pH.toFixed(4)} `
       + `(-log a), -log m(H+) ${(-log10(w.mH)).toFixed(4)}, pe ${w.pe.toFixed(3)}, `
@@ -4327,6 +4746,37 @@
     if (otherCalcs.length) {
       out.push(`# Not carried, as ${otherWhy}: ${otherCalcs
         .map((x) => `${x.block} ${x.names.join(', ')}`).join('; ')}.`);
+    }
+    /*
+      The path, as the run takes it, or why it is not carried and the water
+      is the one at its end.
+    */
+    // A paragraph of comment, its words carried on to lines of at most 100.
+    const say = (text) => {
+      let line = '#';
+      for (const word of text.split(' ')) {
+        if (line.length > 1 && line.length + 1 + word.length > 100) { out.push(line); line = '#'; }
+        line += ` ${word}`;
+      }
+      if (line.length > 1) out.push(line);
+    };
+    if (path) {
+      const rp = path.p.reaction;
+      say(`The path, PHREEQC's REACTION ${rp.n}: ${path.p.steps.length} steps, each ${path.p.incremental
+        ? 'added to the step before (INCREMENTAL_REACTIONS)' : 'added to the water as it was before the first'}, `
+        + `up to ${fmtG(pathEnd, 6)} ${rp.unit} of reaction. This water is the one before it${path.traced
+          ? ', with 1e-20 mol of the reaction in it, so that what its reactants bring that it had none of is there to grow,'
+          : ','} and the run adds the reactants at a steady rate (<REACTIONS>), ${path.reactants.map((r) => r.name).join(', ')}, `
+        + `a ${rp.unit} of reaction a second, to TEND: the clock, in seconds, counts the ${rp.unit} of reaction added, and `
+        + 'PHREEQC\'s steps are equilibria the run passes through.');
+      if (pathAtmMoved) {
+        say(`PHREEQC's gas phase, in a fixed volume, takes the water from ${fmtG(atm, 6)} to ${fmtG(path.p.atmEnd, 6)} atm along `
+          + 'the path, where the run holds it at the first (PRESSURE): the log K, A and B that go with the pressure stay '
+          + 'where they start, and the run leaves PHREEQC\'s as the pressure rises.');
+      }
+    } else if (pathSkipped) {
+      say(`Not carried: the path of the calculation the water is from, as ${pathSkipped.why}. The water is the one at `
+        + 'its end, as PHREEQC leaves it.');
     }
     if (gases.length) {
       const list = gases.map((g) => `${g.name} ${fmtG(g.amount, 4)}`).join(', ');
@@ -4573,10 +5023,16 @@
         out.push('# as the cells are refined, the velocity and the time kept.');
       }
     }
-    // A kinetic run goes as long as PHREEQC's steps; a column as long as its shifts.
+    /*
+      A kinetic run goes as long as PHREEQC's steps; a column as long as its
+      shifts; a path to its last step, the clock in the unit of its steps,
+      and no step of the run longer than a hundredth of it, that the run is
+      drawn along it.
+    */
     const kinTime = kinetics.length ? kinBlock.steps.reduce((a, b) => a + b, 0) : 0;
-    const tend = column ? column.t.shifts * column.t.dt : kinTime;
+    const tend = column ? column.t.shifts * column.t.dt : path ? pathEnd : kinTime;
     out.push('', '<SETTINGS>', ...(colSettings || ['MODE = batch']), `TEND = ${tend > 0 ? fmtG(tend, 15) : 1}`,
+      ...(path ? [`MAX_STEP = ${fmtG(pathEnd / 100, 6)}`] : []),
       'TIME_UNIT = second', `EQUILIBRATE = ${o.exact ? 'always' : '1'}`);
     // A relation whose log K goes with temperature reads it, without ACTIVITY too.
     const withT = (terms) => !!terms && (terms[1] !== 0 || terms.slice(2).some((v) => v !== 0));
@@ -4966,7 +5422,31 @@
       }
     }
     out.push('', '<REACTIONS>');
-    if (!kinetics.length) out.push('# Your kinetic reactions here, in the same species and units.');
+    if (!kinetics.length && !path) out.push('# Your kinetic reactions here, in the same species and units.');
+    /*
+      The path: each reactant at its steady rate, mol/kgw a second, a source
+      of what it brings and a sink of what it takes. A reactant whose
+      formula is a species the model has -- CO2, O2, CdCl2 -- comes in as
+      that species, which the relations held share out as they would its
+      parts; any other as its parts: a phase's dissolution, a formula's
+      master species with H+ and the electrons (reactionOf), the water
+      left out.
+    */
+    if (path) {
+      const rp = path.p.reaction;
+      const unit = rp.unit;
+      out.push(`# The path: PHREEQC's REACTION ${rp.n}, its reactants coming in at a steady rate, a ${unit} of reaction a second`,
+        `# to ${path.W === 1 ? 'each kilogram of water' : `PHREEQC's ${fmtG(path.W, 6)} kg of water`}: the clock, in seconds, `
+        + `counts the ${unit} of reaction added (r in mol/kgw a second).`);
+      for (const r of path.reactants) {
+        const own = name.has(r.name) && db.reaction.has(r.name) && !phaseKey.has(r.name.toLowerCase());
+        const terms = own ? [[r.name, 1]] : r.rx;
+        const reac = terms.filter(([, c]) => c < 0).map(([n, c]) => ({ c: -c, n }));
+        const prod = terms.filter(([, c]) => c > 0).map(([n, c]) => ({ c, n }));
+        r.line = `${[side(reac), '=>', side(prod)].filter(Boolean).join(' ')}, r = ${fmtG(r.rate, 15)}`;
+        out.push(`# ${r.name}, ${fmtG(r.coef, 15)} ${unit} of it to the ${unit} of reaction:`, r.line);
+      }
+    }
     /*
       Each kinetic reactant's dissolution at its rate, PHREEQC's program
       above it: M is the reactant (ramp, so never below none), each line's
@@ -5058,8 +5538,67 @@
           amount: k.amount, m0: k.comp.m0, parms: k.comp.parms })), phases: [...kinPhaseUse.keys()],
         steps: kinBlock.steps, tend: kinTime, trace: traced ? 1e-20 : 0 } : null,
         kineticsSkipped: kinSkipped,
+        /*
+          The path the run is (THE PATH): PHREEQC's REACTION, its simulation,
+          the reactants each with its coefficient, its rate (mol/kgw a second)
+          and the line written; the unit of its steps, and each step's amount
+          in it, the run's clock at that step; or, where there is a path not
+          carried, why.
+        */
+        path: path ? { reaction: path.p.reaction.n, use: path.p.reaction.use, sim: path.p.sim,
+          reactants: path.reactants.map((r) => ({ name: r.name, coef: r.coef, rate: r.rate, line: r.line })),
+          unit: path.p.reaction.unit, factor: path.p.reaction.factor, incremental: path.p.incremental,
+          steps: path.p.steps.map((st) => st.x), tend: pathEnd, kgw: path.W, trace: path.traced ? 1e-20 : 0,
+          temperature: path.p.steps[0].tc, pressure: path.p.steps[0].atm,
+          // PHREEQC's pressure at the path's end, where a gas phase in a fixed volume moves it and the run does not.
+          atmMoved: pathAtmMoved ? { from: atm, to: path.p.atmEnd } : null } : null,
+        pathSkipped,
       },
     };
+  }
+
+  /**
+   * The columns PHREEQC's own run is set beside a model in, each with what
+   * PHREEQC punches for it: the pH; each element's total the model works
+   * out, tot(Ca) -- with the redox carried its valence states', tot(S(6)),
+   * which move as it does where its total may not -- or the species, where
+   * the element is in one only; and each mineral, under the name the model
+   * gives it. `m` the model compiled, `res` waterToModel's.
+   */
+  function besideColumns(res, m, Rtm) {
+    const keys = new Set((m.quantities || []).map((q) => q.key));
+    /*
+      The model's dissolved species, each with its elements: where an element
+      is in one of them only, that one. In a column, those that move; in a
+      batch, where nothing moves, those of the water: no mineral, gas, nor
+      anything on an exchanger or a surface.
+    */
+    const ofWater = (i) => {
+      const sp = m.speciesList && m.speciesList[i];
+      return !sp || !(sp.mineral || sp.gas || sp.exchange || sp.exchanger || sp.surface || sp.potential || sp.electron);
+    };
+    const solutes = m.speciesNames.filter((n, i) => (m.transport && m.mobile ? m.mobile[i] : ofWater(i))
+      && !(m.mineral && m.mineral[i]));
+    const carriers = new Map();
+    for (const n of solutes) {
+      let els;
+      try { els = Rtm.elementsOf(n); } catch (e) { continue; }
+      for (const el of (els ? [...els.keys()] : [])) {
+        if (el === 'H' || el === 'O') continue;
+        if (!carriers.has(el)) carriers.set(el, []);
+        carriers.get(el).push(n);
+      }
+    }
+    const minerals = ((res.report && res.report.minerals) || []).filter((mn) => m.speciesNames.includes(mn.as));
+    const cols = [{ head: 'pH', punch: '-LA("H+")' }];
+    for (const [el, ns] of [...carriers].sort((a, b) => a[0].localeCompare(b[0]))) {
+      const states = [...keys].filter((k) => k.startsWith(`tot(${el}(`) && k.endsWith(')'));
+      if (states.length) for (const k of states) cols.push({ head: k, punch: `TOT("${k.slice(4, -1)}")`, total: true });
+      else if (keys.has(`tot(${el})`)) cols.push({ head: `tot(${el})`, punch: `TOT("${el}")`, total: true });
+      else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")`, total: true });
+    }
+    for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")`, mineral: true });
+    return cols;
   }
 
   /*
@@ -5098,29 +5637,7 @@
     const Rtm = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel);
     if (!Rtm) throw new Error('the model compiler is not loaded');
     const m = Rtm.compile(o.res.text);
-    const keys = new Set((m.quantities || []).map((q) => q.key));
-    // The model's dissolved species, each with its elements: where an element is in one of them only, that one.
-    const solutes = m.speciesNames.filter((n, i) => (m.mobile ? m.mobile[i] : true) && !(m.mineral && m.mineral[i]));
-    const carriers = new Map();
-    for (const n of solutes) {
-      let els;
-      try { els = Rtm.elementsOf(n); } catch (e) { continue; }
-      for (const el of (els ? [...els.keys()] : [])) {
-        if (el === 'H' || el === 'O') continue;
-        if (!carriers.has(el)) carriers.set(el, []);
-        carriers.get(el).push(n);
-      }
-    }
-    const minerals = ((o.res.report && o.res.report.minerals) || []).filter((mn) => m.speciesNames.includes(mn.as));
-    const cols = [{ head: 'pH', punch: '-LA("H+")' }];
-    for (const [el, ns] of [...carriers].sort((a, b) => a[0].localeCompare(b[0]))) {
-      // With the redox carried, an element's valence states, which move as it does, where its total may not.
-      const states = [...keys].filter((k) => k.startsWith(`tot(${el}(`) && k.endsWith(')'));
-      if (states.length) for (const k of states) cols.push({ head: k, punch: `TOT("${k.slice(4, -1)}")`, total: true });
-      else if (keys.has(`tot(${el})`)) cols.push({ head: `tot(${el})`, punch: `TOT("${el}")`, total: true });
-      else if (ns.length === 1) cols.push({ head: ns[0], punch: `TOT("${el}")`, total: true });
-    }
-    for (const mn of minerals) cols.push({ head: mn.as, punch: `EQUI("${mn.phase}")`, mineral: true });
+    const cols = besideColumns(o.res, m, Rtm);
     /*
       The input as it is, the selected output put in front of its TRANSPORT,
       to the END of the TRANSPORT's own simulation: what the input does after
@@ -5272,6 +5789,90 @@
     if (end > tend * (1 + 1e-12)) model = model.replace(/^TEND = .*$/m, `TEND = ${gt(end)}`);
     return { text: data, modelText: `${model}\n\n${data}\n`, end, tables, columns: use.map((i) => cols[i].head), held, faces: atFaces, rows: points,
       cells: cellsPunched.length, times, seconds: (Date.now() - started) / 1000 };
+  }
+
+  /*
+    PHREEQC'S OWN PATH, BESIDE THE MODEL WRITTEN FROM IT (THE PATH). The
+    input as it is, to the END of the path's simulation, with a selected
+    output of its own at the start of that simulation -- each step's pH,
+    its element totals, its minerals, the gases of its gas phase and the
+    members of its solid solutions -- and what that gives set out as a
+    <DATA> table in time: each step at the clock the run has when it has
+    added as much, the totals as PHREEQC has them, mol/kgw, the amounts per
+    kilogram of the water the path starts with. Under the columns
+    besideColumns gives and, for a gas or a member, the name the model gives
+    it. A total PHREEQC's steps hold at one value (within a ten-thousandth)
+    is left out (held). Up to maxRows steps, evenly through, the first and
+    the last always. o: { engine, database, water, res (waterToModel's),
+    maxRows } -> { text (the <DATA>), modelText, columns, held, rows, steps,
+    seconds }
+  */
+  function pathBeside(o) {
+    const started = Date.now();
+    const text = String(o.water.text);
+    const path = o.res.report && o.res.report.path;
+    if (!path) throw new Error('the model was written with no path for PHREEQC\'s own to be set beside');
+    const p = readPath(text, path.sim);
+    if (!p || !p.reaction) throw new Error('the input has no path where the model was written with one');
+    const Rtm = (typeof self !== 'undefined' && self.RtmModel) || (typeof globalThis !== 'undefined' && globalThis.RtmModel);
+    if (!Rtm) throw new Error('the model compiler is not loaded');
+    const m = Rtm.compile(o.res.text);
+    const cols = besideColumns(o.res, m, Rtm);
+    const r = o.res.report;
+    for (const g of (r.gas ? r.gas.species : [])) {
+      if (m.speciesNames.includes(g.as)) cols.push({ head: g.as, punch: `GAS("${g.phase}")`, mineral: true });
+    }
+    for (const ss of r.solids || []) {
+      for (const mb of ss.members) if (m.speciesNames.includes(mb.as)) cols.push({ head: mb.as, punch: `S_S("${mb.phase}")`, mineral: true });
+    }
+    const head = ['sim_', 'step_', ...cols.map((c, i) => `v${i}_`)];
+    const punch = [`SELECTED_OUTPUT 98`, ' -reset false', 'USER_PUNCH 98', ` -headings ${head.join(' ')}`, ' -start',
+      `10 PUNCH SIM_NO, STEP_NO, ${cols.map((c) => c.punch).join(', ')}`, ' -end'];
+    const input = [...p.lines.slice(0, p.from), ...punch, ...p.lines.slice(p.from, p.to), 'END'].join('\n');
+    o.engine.load(o.database.text);
+    const rows = o.engine.run(`${input}\n`, 98);
+    const hd = rows[0].map((h) => String(h).trim());
+    const is = hd.indexOf('sim_');
+    const ik = hd.indexOf('step_');
+    const iv = cols.map((c, i) => hd.indexOf(`v${i}_`));
+    const W = path.kgw > 0 ? path.kgw : 1;
+    const byStep = new Map();
+    for (const row of rows.slice(1)) {
+      const k = Math.round(Number(row[ik]));
+      if (Number(row[is]) !== p.sim || !(k >= 1 && k <= path.steps.length)) continue;
+      byStep.set(k, iv.map((j, i) => Number(row[j]) / (cols[i].mineral ? W : 1)));
+    }
+    const steps = [...byStep.keys()].sort((a, b) => a - b);
+    if (!steps.length) throw new Error('PHREEQC calculated none of the path\'s steps');
+    // A total PHREEQC's steps hold at one value is left out: there is nothing to set the run against.
+    const span = cols.map(() => [Infinity, -Infinity, 0]);
+    for (const v of byStep.values()) {
+      v.forEach((x, i) => {
+        if (!Number.isFinite(x)) return;
+        span[i][0] = Math.min(span[i][0], x);
+        span[i][1] = Math.max(span[i][1], x);
+        span[i][2] = Math.max(span[i][2], Math.abs(x));
+      });
+    }
+    const flat = cols.map((c, i) => !!c.total && !(span[i][1] - span[i][0] > 1e-4 * span[i][2]));
+    const use = cols.map((c, i) => i).filter((i) => !flat[i]);
+    const held = cols.filter((c, i) => flat[i]).map((c) => c.head);
+    const g = (v) => (Number.isFinite(v) ? String(Number(v.toPrecision(7))) : '-');
+    const gt = (v) => String(Number(v.toPrecision(12)));
+    const most = o.maxRows || 200;
+    const shown = steps.length <= most ? steps
+      : [...new Set(Array.from({ length: most }, (_, j) => steps[Math.round((j * (steps.length - 1)) / (most - 1))]))];
+    const lines = ['<DATA>',
+      `# PHREEQC's own steps along the path, its REACTION ${path.reaction} run in the page: each step at the clock the run has`,
+      `# when it has added as much, the ${path.unit} of reaction; the totals as PHREEQC has them, the amounts per kilogram`,
+      '# of the water the path starts with.'];
+    if (held.length) lines.push(`# Left out, PHREEQC's steps holding each at one value: ${held.join(', ')}.`);
+    lines.push(`time  ${use.map((i) => cols[i].head).join('  ')}`);
+    for (const k of shown) lines.push(`${gt(path.steps[k - 1])}  ${use.map((i) => g(byStep.get(k)[i])).join('  ')}`);
+    const data = lines.join('\n');
+    const model = o.res.text.replace(/\s*$/, '');
+    return { text: data, modelText: `${model}\n\n${data}\n`, columns: use.map((i) => cols[i].head), held, rows: shown.length,
+      steps: steps.length, seconds: (Date.now() - started) / 1000 };
   }
 
   /* ======================================================================
@@ -6323,6 +6924,6 @@
     readDatabase, readAssemblage, readSurfaces, Database, parseSide, normalise, countAtoms, rtmName, elementOf, normLabel,
     punchBlock, parseRows, modelEquilibria, modelElectron, modelPotentials, waterToModel, viewRun, fmtG, SEL, sitParam,
     readGasPhases, modelGas, kCalc, lkOption, readSolidSolutions, ssEnergies, readRates, readKinetics, withoutKinetics,
-    rateLaw, readTransport, readInverse, inversePhases, transportBeside,
+    rateLaw, readTransport, readInverse, inversePhases, transportBeside, readPath, pathStart, stepUnit, pathBeside,
   };
 }));
