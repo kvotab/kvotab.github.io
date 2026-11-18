@@ -247,7 +247,11 @@ function refuseNonFinite(evaluate, b) {
  * `algebraic`: the block owning every `X[<slot>` or `dX[<slot>` they name,
  * and for every `FARF[k]` call the path's release block, whose `needs` list
  * every setting the path reads (and, worked out semi-analytically, every rate
- * delivering into it). Null when the lines hand `X` over to anything else, or
+ * delivering into it). A slot reached through a loop is written as its block's
+ * first slot plus the loop's terms (`X[84 + n0]`), and a block whose first slot
+ * is 0 without it (`X[n0]`, `X[MAPS[2][n0] * 3 + n1]`: see `makeLocator` in
+ * ./builder.js, which leaves a constant 0 out): such a reference reads the
+ * block at slot 0. Null when the lines hand `X` over to anything else, or
  * name a slot no block owns: what they read cannot then be told from them.
  * Comments are left out, since they name blocks.
  *
@@ -267,9 +271,9 @@ export function blocksRead(lines, owner, releaseOf) {
 			read.add(k);
 		}
 		const rest = code.replace(/\bFARF\[\d+\]\.\w+\([^()]*\)/g, '');
-		for (const m of rest.matchAll(/\bd?X\b(?:\[(\d+))?/g)) {
+		for (const m of rest.matchAll(/\bd?X\b(?:\[(\d+|n\d+\b|MAPS\[))?/g)) {
 			if (m[1] == null) return null;
-			const k = owner[Number(m[1])];
+			const k = owner[/^\d/.test(m[1]) ? Number(m[1]) : 0];
 			if (!(k >= 0)) return null;
 			read.add(k);
 		}

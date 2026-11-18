@@ -52,7 +52,7 @@ import { walk, find } from '../src/io/xml.js';
 import {
 	emitWithTangent, makeTape, tapePrelude, NoDerivative,
 } from '../src/parser/compile.js';
-import { colouringIsValid, toCSC } from '../src/sim/jacobian.js';
+import { blocksRead, colouringIsValid, toCSC } from '../src/sim/jacobian.js';
 import {
 	CSC, SparseLU, cscFromTriplets, cscToDense, cscMulVec, makeMiterBuilder,
 	reverseCuthillMcKeeOrder,
@@ -26808,6 +26808,42 @@ test('the derivative and its Jacobian leave out what only results read, and the 
 	close(lastOf(r, 'Dose [I-129]'), lastOf(r, 'Conc_lake [I-129]') * 1.1e-7, 1e-15,
 		'the dose is the concentration times DC');
 	assert(lastOf(r, 'Dose [I-129]') > 0, 'the dose is empty');
+});
+
+test('a block at the first slot of X is followed like any other, so what only results read stays out of df/dy', () => {
+	// The locator leaves a constant 0 out of an offset: a block whose first slot
+	// is X[0] is read in a loop as `X[n0]`, not `X[0 + n0]`. Taken for something
+	// that cannot be followed, that put every block back into the derivative and
+	// its tangent -- here a percentile only the results read, with no derivative
+	// rule, so the model lost its exact Jacobian where the Python and Julia
+	// packages, which decide what the derivative reads from the model itself,
+	// keep one.
+	const model = {
+		nuclides: ['Cs-137', 'Sr-90'],
+		simulation: { start_time: 0, end_time: 10, output_points: 5 },
+		parameters: [{ name: 'k', value: 0.1, index_lists: [] }],
+		expressions: [
+			{ name: 'Rate', equation: 'k * (1 + A)', index_lists: ['Radionuclides'] },
+			{ name: 'Top', equation: 'A + B', index_lists: ['Radionuclides'] },
+		],
+		index_reductions: [{ name: 'P50', target: 'Top', operation: 'percentile', percentile: 50, index_lists: [] }],
+		compartments: [
+			{ name: 'A', initial: '1', index_lists: ['Radionuclides'] },
+			{ name: 'B', initial: '0', index_lists: ['Radionuclides'] },
+		],
+		transfers: [{ name: 'AB', from: 'A', to: 'B', rate: 'Rate', index_lists: ['Radionuclides'] }],
+	};
+	const sys = buildSystem(new Project(structuredClone(model)));
+	assert(sys.jacobian.available, `no exact Jacobian: ${sys.jacobian.reason}`);
+	assert(!/P50/.test(sys.source.dydt) && !/P50/.test(sys.source.jacobian),
+		'the derivative and its tangent still work out what only the results read');
+	assert(/P50/.test(sys.source.forResults), 'and the results no longer do');
+	// The same reading, line by line: a slot reached through a loop with no
+	// constant before it, a mapped one, and one after a constant.
+	const owner = Int32Array.from({ length: 90 }, (_, i) => (i < 2 ? 0 : i < 84 ? 1 : 2));
+	const read = blocksRead(['X[84 + n0] = X[n0];', 'X[3] = X[MAPS[2][n0] * 3 + n1];'], owner, () => -1);
+	assert(read && [...read].sort().join() === '0,1,2', `read as ${read && [...read]}`);
+	assert(blocksRead(['f(X);'], owner, () => -1) === null, 'X handed over whole can still not be followed');
 });
 
 test('N = 1 folds Begin and End into one compartment', () => {
