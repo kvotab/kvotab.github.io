@@ -21,7 +21,8 @@
 
 import { Results } from '../sim/runner.js';
 
-export const engineName = (handle) => (handle.engine?.name === 'julia' ? 'Julia' : 'Python');
+export const engineName = (handle) => (
+	handle.engine?.name === 'julia' ? 'Julia' : handle.engine?.name === 'cpp' ? 'C++' : 'Python');
 
 /**
  * What the server said went wrong, as an error the page shows: `gone` when the

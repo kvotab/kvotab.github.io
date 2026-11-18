@@ -901,7 +901,8 @@ async function runDesign(msg) {
  * A RUN ON AN ENGINE ON THIS MACHINE
  *
  * Served by serve.py, the page can hand a run -- Run, and a probabilistic run
- * -- to the Python engine or the Julia one instead of solving it here. The
+ * -- to the Python engine, the Julia one or the C++ one instead of solving it
+ * here. The
  * page says which with `msg.engine` ({name, token, client}); everything after
  * the answer is as it would be had the run been made here, because what comes
  * back is the archive *Save with results* writes, and this worker reads it the
@@ -917,7 +918,8 @@ const ENGINE_POLL = 150;
 /** The job on an engine, while there is one: what a Stop has to reach. */
 let remote = null;
 
-const engineLabel = (engine) => (engine?.name === 'julia' ? 'Julia' : engine?.name === 'python' ? 'Python' : 'the');
+const engineLabel = (engine) => (
+	engine?.name === 'julia' ? 'Julia' : engine?.name === 'python' ? 'Python' : engine?.name === 'cpp' ? 'C++' : 'the');
 
 /** A fault of the engine or the server, rather than of the model. */
 function engineFault(engine, text) {
@@ -1664,9 +1666,16 @@ self.onmessage = async (ev) => {
 		try {
 			// A sample on an engine, where the page asked for one. A tornado
 			// or a sensitivity design is drawn here: their analyses live here.
+			// Where that engine does not draw samples, here, which the bar says.
 			if (msg.engine && !msg.tornado && !msg.gsa) {
-				await probabilisticOnEngine(msg);
-				return;
+				try {
+					await probabilisticOnEngine(msg);
+					return;
+				} catch (e) {
+					if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+					self.postMessage({ type: 'loading', id, stage: 'engine-elsewhere', detail: msg.engine.name });
+					msg.engine = null;
+				}
 			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const designed = await runDesign(msg);
@@ -1969,8 +1978,14 @@ self.onmessage = async (ev) => {
 		try {
 			// On the engine the page chose, held there as a run is.
 			if (msg.engine) {
-				await replayOnEngine(msg);
-				return;
+				try {
+					await replayOnEngine(msg);
+					return;
+				} catch (e) {
+					if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+					self.postMessage({ type: 'loading', id, stage: 'engine-elsewhere', detail: msg.engine.name });
+					msg.engine = null;
+				}
 			}
 			self.postMessage({ type: 'loading', id, stage: 'building' });
 			const started = Date.now();
@@ -2763,9 +2778,17 @@ self.onmessage = async (ev) => {
 	try {
 		// On an engine on this machine, where the page asked for one: see
 		// `runOnEngine`.
+		// A model that engine does not build -- it says which of its blocks -- is
+		// solved here, which the bar says.
 		if (msg.engine) {
-			await runOnEngine(msg);
-			return;
+			try {
+				await runOnEngine(msg);
+				return;
+			} catch (e) {
+				if (e.name !== 'NotOnThisEngine' || cancelled) throw e;
+				self.postMessage({ type: 'loading', id, stage: 'engine-elsewhere', detail: msg.engine.name });
+				msg.engine = null;
+			}
 		}
 		if (isScipySolver(project?.simulation?.solver) && !scipyReady()) {
 			await loadScipy({

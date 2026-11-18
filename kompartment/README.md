@@ -14,9 +14,10 @@ python3 serve.py          # http://localhost:8080/
 (Do not open `index.html` by double-clicking. Browsers refuse to load ES
 modules from a `file://` page, so you get the toolbar and nothing behind it.)
 
-Served this way it can also solve runs on the Python engine in `python/` or the
-Julia one in `julia/`, chosen beside Run (`python3 serve.py --engine julia` to
-start on Julia): see *Solving on an engine on this machine* in the Guide. The
+Served this way it can also solve runs on the Python engine in `python/`, the
+Julia one in `julia/` or the C++ one in `cpp/`, chosen beside Run (`python3
+serve.py --engine julia` to start on Julia): see *Solving on an engine on this
+machine* in the Guide. The
 server says what an engine still needs, offers to set it up when started in a
 terminal, and `python3 serve.py --setup` does it without asking.
 

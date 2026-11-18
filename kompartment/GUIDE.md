@@ -72,27 +72,37 @@ reporting an unknown solver.
 
 ### Solving on an engine on this machine
 
-`serve.py` can also hand a run to the Python engine (`python/`) or the Julia one
-(`julia/`) on the same machine, instead of solving it in the browser. Where
-either can be started, a choice appears beside **Run** — *in the browser*, *on
-Python*, *on Julia* — and every Run, every probabilistic run, and every
-analysis that solves the model — a tornado, a sensitivity design, a replayed
-realisation, a calibration, dy/dp — after that is solved where it says:
+`serve.py` can also hand a run to the Python engine (`python/`), the Julia one
+(`julia/`) or the C++ one (`cpp/`) on the same machine, instead of solving it
+in the browser. Where one can be started, a choice appears beside **Run** — *in
+the browser*, *on Python*, *on Julia*, *on C++* — and every Run, every
+probabilistic run, and every analysis that solves the model — a tornado, a
+sensitivity design, a replayed realisation, a calibration, dy/dp — after that
+is solved where it says:
 
 ```sh
 python3 serve.py 8080 --engine julia     # the page starts on Julia
-python3 serve.py 8080 --no-julia         # the browser and Python only
+python3 serve.py 8080 --no-julia         # the browser, Python and C++ only
 ```
 
 `--engine` says which the page starts on; without it, the page starts on the one
 last chosen in this browser. `--python PATH` and `--julia PATH` say which
-interpreter to use. The Julia engine's package compiles the first time it
-starts after a change — about a minute, said on the bar as *Starting Julia…*.
+interpreter to use, `--cpp PATH` which built program. The Julia engine's package
+compiles the first time it starts after a change — about a minute, said on the
+bar as *Starting Julia…*.
+
+The C++ engine is the quickest to answer: it is a program already compiled, and
+it works a model's equations out without compiling them, so a run starts at
+once however large the model. It solves a run, with the `ndf`, `ros23` and
+`dp45` solvers. What it does not do — a probabilistic run and the analyses, the
+other solvers, a far-field path worked out semi-analytically — the page solves
+in the browser while *on C++* is chosen, and the bar says so as it does.
 
 **What the engines need is checked at every start.** The Python engine needs
 Python 3.9 or newer with NumPy and SciPy, and runs several times quicker with
 numba; the Julia engine needs Julia 1.10 or newer and the packages its project
-lists. The server's window says which engines it found, and for the others
+lists; the C++ engine needs to have been built, which takes CMake and a C++
+compiler. The server's window says which engines it found, and for the others
 what is missing and how to get it, and so does the choice beside **Run**.
 Started in a terminal, the server offers to set up what is missing:
 
@@ -108,6 +118,9 @@ Started in a terminal, the server offers to set up what is missing:
   `--python`.
 - **Julia**: its official installer, juliaup, which asks its own questions.
 - **Julia's packages**: installed and compiled once, a few minutes.
+- **The C++ engine**: built into `~/.kompartment/cpp`, about a minute, where
+  the machine has CMake and a C++ compiler; and built again, without a
+  question, when its source is newer than the program.
 
 A question answered no is not asked again. `python3 serve.py --setup` sets up
 whatever is missing without asking — the Julia installer still asks its own.

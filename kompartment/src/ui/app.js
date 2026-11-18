@@ -3231,7 +3231,8 @@ function fmtClock(t) {
  * Engines on this machine
  *
  * Served by serve.py, the page can solve a run -- Run, and a probabilistic
- * run -- on the Python engine or the Julia one instead of in the browser. The
+ * run -- on the Python engine, the Julia one or the C++ one instead of in the
+ * browser. The
  * server says so by writing a token into the page (`kompartment-engines`),
  * which every request to it carries. The choice sits beside Run, and is
  * remembered in this browser as a convenience (`kompartment.engine`): it is a
@@ -3243,10 +3244,10 @@ function fmtClock(t) {
 const ENGINE_KEY = 'kompartment.engine';
 
 /** What each engine is called in a sentence: `Solving on Julia…`. */
-const ENGINE_NAMES = { browser: 'the browser', python: 'Python', julia: 'Julia' };
+const ENGINE_NAMES = { browser: 'the browser', python: 'Python', julia: 'Julia', cpp: 'C++' };
 
 /** What each is called in the choice beside Run, which reads on from the button: Run on Julia. */
-const ENGINE_CHOICES = { browser: 'in the browser', python: 'on Python', julia: 'on Julia' };
+const ENGINE_CHOICES = { browser: 'in the browser', python: 'on Python', julia: 'on Julia', cpp: 'on C++' };
 
 const engines = {
 	token: null,

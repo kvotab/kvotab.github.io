@@ -675,6 +675,37 @@ class WhatTheEnginesNeed(unittest.TestCase):
             bare = E.python_state(E.venv_python(d))
             self.assertEqual(E.python_lacks(bare), 'needs NumPy and SciPy')
 
+    def test_the_cpp_engine_is_read_for_what_it_has_and_what_a_build_needs(self):
+        E = _enginesetup()
+        built = {'program': '/somewhere/kompartment-cpp', 'stale': False, 'cmake': '/usr/bin/cmake',
+                 'compiler': 'c++', 'source': True}
+        self.assertIsNone(E.cpp_lacks(built))
+        self.assertEqual(E.cpp_lacks({**built, 'stale': True}), 'is older than its source')
+        self.assertEqual(E.cpp_lacks({**built, 'program': None}), 'has not been built')
+        self.assertEqual(E.cpp_lacks({**built, 'program': None, 'cmake': None}),
+                         'has not been built, and building it needs CMake, which this machine does not have')
+        self.assertEqual(E.cpp_lacks({**built, 'program': None, 'cmake': None, 'compiler': None}),
+                         'has not been built, and building it needs CMake and a C++ compiler, '
+                         'which this machine does not have')
+        self.assertEqual(E.cpp_lacks({**built, 'program': None, 'source': False}),
+                         'needs its source in cpp/, which is not here')
+        # The engine's own source is read as it stands, and nothing is built for the asking.
+        state = E.cpp_state(str(APP / 'cpp'))
+        self.assertTrue(state['source'], state)
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(E.cpp_state(d)['source'])
+            # Switched off, or a program named that is not there: said, and never built.
+            self.assertEqual(E.prepare_cpp(d, use=False)[1], 'is switched off (--no-cpp)')
+            missing = os.path.join(d, 'kompartment-cpp')
+            self.assertEqual(E.prepare_cpp(d, asked=missing), (missing, f'has no program at {missing}'))
+            with open(missing, 'w', encoding='utf-8') as f:
+                f.write('')
+            self.assertEqual(E.prepare_cpp(d, asked=missing), (missing, None))
+            # No source, in a test (no terminal): why it cannot be used, and no question asked.
+            program, why = E.prepare_cpp(d)
+            if E.cpp_program() is None:
+                self.assertEqual(why, 'needs its source in cpp/, which is not here')
+
     def test_a_julia_is_asked_which_of_its_packages_it_lacks_without_installing_them(self):
         E = _enginesetup()
         julia = E.find_julia('julia')

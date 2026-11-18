@@ -5,9 +5,10 @@ getting what it lacks.
 The page solves its models in the browser and needs nothing. The engines need
 their languages: the Python engine a Python 3.9 or newer with NumPy and SciPy
 (numba makes it several times quicker, and is optional), the Julia engine
-Julia 1.10 or newer with the packages its project lists. serve.py checks at
-every start (`python_state`, `julia_state`), says what is missing and how to
-get it, and, at a terminal, offers to get it:
+Julia 1.10 or newer with the packages its project lists, the C++ engine its
+program built once. serve.py checks at every start (`python_state`,
+`julia_state`, `cpp_state`), says what is missing and how to get it, and, at a
+terminal, offers to get it:
 
 - Python: a Python of the engine's own, a virtual environment at
   ~/.kompartment/python made from the Python serve.py runs on, with NumPy,
@@ -20,6 +21,10 @@ get it, and, at a terminal, offers to get it:
 - Julia: its official installer (juliaup), which asks its own questions.
 - Julia's packages: the project's, resolved, installed and compiled once --
   which is the minute the engine's first start would otherwise take.
+- The C++ engine: one program, built from `cpp/` with CMake and this machine's
+  C++ compiler into ~/.kompartment/cpp (a minute, once, and again when its
+  source has changed). It needs nothing at run time; where CMake or a compiler
+  is missing, the engine says so and nothing is installed.
 
 A question answered no is remembered (~/.kompartment/serve.json) and not asked
 again; `python3 serve.py --setup` sets up whatever is missing without asking.
@@ -260,6 +265,107 @@ def install_julia_packages(julia, project, env=None):
         print("  They did not install: Julia's messages above say why")
         return False
     return True
+
+
+# --- the C++ engine ----------------------------------------------------------------
+
+#: Where the C++ engine is built, and its program there.
+CPP_BUILD = os.path.join(HOME, "cpp")
+CPP_PROGRAM = "kompartment-cpp.exe" if os.name == "nt" else "kompartment-cpp"
+
+
+def cpp_program():
+    """Where the built program is, whichever layout the generator gave the build."""
+    for folder in (CPP_BUILD, os.path.join(CPP_BUILD, "Release")):
+        path = os.path.join(folder, CPP_PROGRAM)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _newest(source):
+    """When the engine's source last changed: its CMake file and everything under src/."""
+    newest = 0.0
+    paths = [os.path.join(source, "CMakeLists.txt")]
+    for root, _, files in os.walk(os.path.join(source, "src")):
+        paths += [os.path.join(root, f) for f in files]
+    for p in paths:
+        try:
+            newest = max(newest, os.path.getmtime(p))
+        except OSError:
+            pass
+    return newest
+
+
+def cpp_state(source):
+    """What the C++ engine has here: its `program` (None: not built), whether it is
+    `stale` (older than its source), and the `cmake` and `compiler` a build needs."""
+    program = cpp_program()
+    stale = False
+    if program:
+        try:
+            stale = os.path.getmtime(program) < _newest(source)
+        except OSError:
+            stale = False
+    compiler = next((c for c in (os.environ.get("CXX"), "c++", "clang++", "g++", "cl") if c and shutil.which(c)), None)
+    return {"program": program, "stale": stale, "cmake": shutil.which("cmake"), "compiler": compiler,
+            "source": os.path.isfile(os.path.join(source, "CMakeLists.txt"))}
+
+
+def cpp_lacks(state):
+    """Why the C++ engine cannot be used as it stands, or None."""
+    if state["program"] and not state["stale"]:
+        return None
+    if not state["source"]:
+        return "needs its source in cpp/, which is not here"
+    what = "has not been built" if not state["program"] else "is older than its source"
+    need = [n for n, have in (("CMake", state["cmake"]), ("a C++ compiler", state["compiler"])) if not have]
+    if need:
+        return f"{what}, and building it needs {' and '.join(need)}, which this machine does not have"
+    return what
+
+
+def build_cpp(source):
+    """The C++ engine built: a minute, once. Its program, or None where it did not build."""
+    print(f"  Building the C++ engine into {CPP_BUILD}, a minute once")
+    os.makedirs(CPP_BUILD, exist_ok=True)
+    configure = ["cmake", "-S", source, "-B", CPP_BUILD, "-DCMAKE_BUILD_TYPE=Release"]
+    build = ["cmake", "--build", CPP_BUILD, "--target", "kompartment-cpp", "--config", "Release", "--parallel"]
+    for step in (configure, build):
+        if subprocess.run(step, stdout=subprocess.DEVNULL).returncode:
+            print("  It did not build: the compiler's messages above say why")
+            return None
+    return cpp_program()
+
+
+def prepare_cpp(source, asked=None, use=True, setup=False):
+    """The C++ engine's program and why it cannot be used, after checking it -- and,
+    at a terminal or with `setup`, building it where it is missing or older than its
+    source. `asked` is a program given outright (`--cpp PATH`): that one or none.
+    Returns `(program, why)`."""
+    if not use:
+        return asked or CPP_PROGRAM, "is switched off (--no-cpp)"
+    if asked:
+        return (asked, None) if os.path.isfile(asked) else (asked, f"has no program at {asked}")
+    state = cpp_state(source)
+    why = cpp_lacks(state)
+    if why is None:
+        return state["program"], None
+    said_no = declined()
+    can = state["source"] and state["cmake"] and state["compiler"]
+    # One already built and only out of date is built again without a question: it was said yes to once.
+    if can and (setup or state["program"] or (interactive() and "cpp" not in said_no)):
+        if not state["program"] or setup or state["stale"]:
+            print(f"The C++ engine {why}.")
+        if setup or state["program"] or ask("Build it now? A minute, once."):
+            if "cpp" in said_no:
+                remember_declined(said_no - {"cpp"})
+            program = build_cpp(source)
+            if program:
+                return program, None
+            return state["program"] or CPP_PROGRAM, "did not build (the compiler's messages say why)"
+        remember_declined(said_no | {"cpp"})
+    return state["program"] or CPP_PROGRAM, f"{why} ({SETUP} builds it)" if can else why
 
 
 # --- at serve.py's start -------------------------------------------------------

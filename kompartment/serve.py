@@ -12,8 +12,8 @@ where the page reports something the source on disk no longer says.
 This server sends `Cache-Control: no-store` for everything, so a plain refresh
 always picks up the current files.
 
-    python3 serve.py [port] [--engine browser|python|julia] [--python PATH] [--julia PATH]
-                     [--no-python] [--no-julia] [--setup]
+    python3 serve.py [port] [--engine browser|python|julia|cpp] [--python PATH] [--julia PATH]
+                     [--cpp PATH] [--no-python] [--no-julia] [--no-cpp] [--setup]
 
 Defaults to port 8080. Serves the directory the script lives in, to this
 machine only.
@@ -23,22 +23,28 @@ machine only.
 The page solves its models in the browser. Served from here, it can also hand
 a run -- Run, a probabilistic run, and the analyses that solve the model: a
 tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp --
-to the Python engine (`python/kompartment`) or the Julia one (`julia/`), chosen
-in the page beside Run; `--engine` says which the page starts on. What an engine
-does not do, it refuses at once, and the page does it itself.
+to the Python engine (`python/kompartment`), the Julia one (`julia/`) or the
+C++ one (`cpp/`), chosen in the page beside Run; `--engine` says which the page
+starts on. What an engine does not do, it refuses at once, and the page does it
+itself -- the C++ engine runs a model, and leaves the sampled runs and the
+analyses to the page.
 
 What each engine needs -- Python 3.9 or newer with NumPy and SciPy, numba for
-speed; Julia 1.10 or newer with the packages of `julia/` -- is checked at every
-start, and what is missing is said with how to get it. At a terminal the server
-offers to set it up: a Python of the engine's own (a virtual environment at
-~/.kompartment/python, nothing installed into anybody's own Python), Julia by
-its official installer, and Julia's packages installed and compiled. A question
+speed; Julia 1.10 or newer with the packages of `julia/`; the C++ engine's
+program, built once from `cpp/` with CMake and a C++ compiler -- is checked at
+every start, and what is missing is said with how to get it. At a terminal the
+server offers to set it up: a Python of the engine's own (a virtual environment
+at ~/.kompartment/python, nothing installed into anybody's own Python), Julia by
+its official installer, Julia's packages installed and compiled, and the C++
+engine built into ~/.kompartment/cpp (and built again when its source has
+changed). A question
 answered no is not asked again; `--setup` sets up whatever is missing without
 asking. See enginesetup.py. Each engine is a process of its
 own, started the first time it is asked for and kept: a line of JSON a message,
 jobs in and progress out (see python/kompartment/service.py) -- as many jobs at
-once as the engine says it takes, the rest queued (Julia takes one a thread, so
-scenarios run beside each other there; Python one at a time). A run comes back
+once as the engine says it takes, the rest queued (Julia and C++ take one a
+thread, so scenarios run beside each other there; Python one at a time). A run
+comes back
 as the archive *Save with results* writes, which the page reads the way it
 reads a file somebody opened.
 
@@ -853,6 +859,11 @@ def julia_engine(julia, why):
                             "using Kompartment; Kompartment.serve_stdio()"], dict(os.environ), why)
 
 
+def cpp_engine(program, why):
+    """The C++ engine: one program, built from this folder's `cpp/`; `why` it cannot be, where it cannot."""
+    return Engine("cpp", [program, "--serve"], dict(os.environ), why)
+
+
 def start_engines(opts):
     """The engines, after checking what each needs and -- at a terminal, or with
     `--setup` -- setting up what is missing (enginesetup.py); and the lines worth
@@ -865,7 +876,9 @@ def start_engines(opts):
         project, setup=opts["setup"])
     if opts["use_julia"] and not packaged:
         jl_why = f"needs its package in {project}"
-    engines = {"python": python_engine(python, py_why), "julia": julia_engine(julia, jl_why)}
+    cpp, cpp_why = enginesetup.prepare_cpp(os.path.join(ROOT, "cpp"), opts["cpp"], opts["use_cpp"], setup=opts["setup"])
+    engines = {"python": python_engine(python, py_why), "julia": julia_engine(julia, jl_why),
+               "cpp": cpp_engine(cpp, cpp_why)}
     found = Engines(engines, opts["engine"], tempfile.mkdtemp(prefix="kompartment-engines-"), opts["explicit"])
     first = engines.get(opts["engine"])
     if first is not None:
@@ -876,7 +889,7 @@ def start_engines(opts):
 
 def arguments(argv):
     opts = {"port": 8080, "engine": "browser", "explicit": False, "python": sys.executable, "python_asked": False,
-            "julia": "julia", "use_python": True, "use_julia": True, "setup": False}
+            "julia": "julia", "use_python": True, "use_julia": True, "setup": False, "cpp": None, "use_cpp": True}
     it = iter(argv)
     for a in it:
         if a == "--engine":
@@ -889,6 +902,10 @@ def arguments(argv):
             opts["setup"] = True
         elif a == "--julia":
             opts["julia"] = next(it, "julia")
+        elif a == "--cpp":
+            opts["cpp"] = next(it, None)
+        elif a == "--no-cpp":
+            opts["use_cpp"] = False
         elif a == "--no-python":
             opts["use_python"] = False
         elif a == "--no-julia":
@@ -897,8 +914,8 @@ def arguments(argv):
             opts["port"] = int(a)
         else:
             raise SystemExit(f"serve.py: what is '{a}'? See the notes at the top of serve.py.")
-    if opts["engine"] not in ("browser", "python", "julia"):
-        raise SystemExit("serve.py: --engine is browser, python or julia")
+    if opts["engine"] not in ("browser", "python", "julia", "cpp"):
+        raise SystemExit("serve.py: --engine is browser, python, julia or cpp")
     return opts
 
 

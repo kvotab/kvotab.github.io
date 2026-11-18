@@ -5511,7 +5511,8 @@ that says three owes the other six.
 ## Engines on this machine
 
 Served by `serve.py`, the page can solve Run and a probabilistic run on the
-Python engine or the Julia one instead of in the browser. The pieces:
+Python engine, the Julia one or the C++ one instead of in the browser. The
+pieces:
 
 - **The page** asks `/engine/info` when `index.html` carries the server's token
   (`<meta name="kompartment-engines">`, written in as the server serves it) and
@@ -5534,8 +5535,9 @@ Python engine or the Julia one instead of in the browser. The pieces:
   on. A new job from the same page and of the same kind cancels the older one;
   a job nobody has asked about for 30 s is cancelled (its page has gone); an
   archive is handed over once and kept at most ten minutes.
-- **The engines** are `python3 -m kompartment.service` and
-  `Kompartment.serve_stdio()`: a line of JSON a message, jobs and cancels in,
+- **The engines** are `python3 -m kompartment.service`,
+  `Kompartment.serve_stdio()` and `kompartment-cpp --serve`: a line of JSON a
+  message, jobs and cancels in,
   `ready`/`stage`/`progress`/`done`/`error`/`cancelled` out on a standard
   output that carries nothing else. A run is written as *Save with results*
   writes it (each package's `dataset_archive`), a sample with the new
@@ -5572,6 +5574,27 @@ consent to all of it. The engine's own Python is used once it is there, unless
 said before any setup, and writes a line at a time, so a log of it is read as it
 goes. Each engine's `why` ends with the command that fixes it, which the page
 shows beside the engine in the choice.
+
+**The C++ engine** (`cpp/`, its own README beside it) is a program, not a
+package: `cpp_state` looks for it in `~/.kompartment/cpp` and compares its date
+with the newest file of its source, and `prepare_cpp` builds it there with
+CMake -- asked first at a terminal where it has never been built, without a
+question where it has and is only out of date, never in a test or a pipe.
+It is a port of the Julia package, checked against it to the bit (fixtures
+written by Julia tools in `cpp/tools`, read by `cpp/tests`), with one
+difference in kind: no source code is written for a model and no compiler
+waited for. Each statement of a pass becomes a short program of vector
+instructions -- an operand a slot every element shares, a run of consecutive
+slots read where they lie, or slots gathered through an index vector -- run a
+block of 256 elements at a time; a statement whose conditional guards
+something that may refuse its arguments is worked out an element at a time,
+only the branch taken. It answers `run` jobs, kept or whole, and the
+questions about a kept run. Everything else it refuses by name
+(`NotOnThisEngine`) before anything runs, and so does a model it cannot build
+or a solver it has not; the worker hears the name, says on the bar that the
+engine does not do this, and does the same job itself (`runOnEngine`,
+`probabilisticOnEngine` and the replay each caught where they are called), so
+choosing the engine never leaves a button that fails.
 
 **Why an archive.** It is the one format the three code bases already write and
 read alike, and it carries its own check: an engine's run that did not describe

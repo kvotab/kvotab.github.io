@@ -28380,8 +28380,15 @@ test('a run can be solved on an engine on this machine, and comes back as a run 
 
 	// The worker: Run, and a probabilistic run that is not a tornado's or a
 	// sensitivity design's, go to the engine when the page names one.
-	assert(/if \(msg\.engine\) \{\n\t\t\tawait runOnEngine\(msg\);\n\t\t\treturn;\n\t\t\}/.test(worker), 'Run never reaches an engine');
-	assert(/if \(msg\.engine && !msg\.tornado && !msg\.gsa\) \{\n\t\t\t\tawait probabilisticOnEngine\(msg\);/.test(worker),
+	assert(/if \(msg\.engine\) \{\n\t\t\ttry \{\n\t\t\t\tawait runOnEngine\(msg\);\n\t\t\t\treturn;\n\t\t\t\}/.test(worker), 'Run never reaches an engine');
+	// A model the engine chosen does not build (the C++ engine says which block it has
+	// not got), a sample or a replay it does not do, is solved here instead, and the
+	// bar says so: the run is then the browser's, with no engine named on it.
+	const fellBack = worker.match(/if \(e\.name !== 'NotOnThisEngine' \|\| cancelled\) throw e;\n\t+self\.postMessage\(\{ type: 'loading', id, stage: 'engine-elsewhere', detail: msg\.engine\.name \}\);\n\t+msg\.engine = null;/g);
+	assert((fellBack ?? []).length === 3, 'a run, a sample and a replay an engine declines are not all done here instead');
+	assert(/cpp: 'C\+\+'/.test(app) && /cpp: 'on C\+\+'/.test(app), 'the C++ engine has no name in the page');
+	assert(/<option value="cpp">on C\+\+<\/option>/.test(html), 'the C++ engine cannot be chosen beside Run');
+	assert(/if \(msg\.engine && !msg\.tornado && !msg\.gsa\) \{\n\t\t\t\ttry \{\n\t\t\t\t\tawait probabilisticOnEngine\(msg\);/.test(worker),
 		'a probabilistic run never reaches an engine');
 	const ask = fn(worker, 'engineArchive');
 	assert(/fetch\('\/engine\/jobs', \{/.test(ask) && /'X-Kompartment-Token': engine\.token/.test(ask)
