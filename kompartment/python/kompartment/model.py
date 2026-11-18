@@ -61,6 +61,7 @@ from .indexlists import (
     clashing_dimensions_why, derive_elements, find_list, index_name, is_decay_dim, lineage,
     list_applies, list_applies_why, normalise_indices, shared_dims, split_material_roles,
 )
+from .io.csv import js_to_number
 from .jsonio import PathLike, dumps, js_number, js_text, read_model_file, write_model_file
 from .keys import COLLECTIONS, migrate_keys
 from .names import (
@@ -187,20 +188,15 @@ def _js_string(v: Any) -> str:
 
 
 def _js_number(v: Any) -> float:
-    """``Number(v)``: NaN where JavaScript would give NaN."""
+    """``Number(v)``: NaN where JavaScript would give NaN, text read by its grammar
+    (``1_000`` and ``inf`` are NaN, ``0x10`` is 16)."""
     if v is None:
         return math.nan
     if isinstance(v, bool):
         return 1.0 if v else 0.0
     if isinstance(v, (int, float)):
         return v
-    s = str(v).strip()
-    if not s:
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        return math.nan
+    return js_to_number(v)
 
 
 def _js_round(v: float) -> int:

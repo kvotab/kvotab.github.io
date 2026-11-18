@@ -120,13 +120,15 @@ js_number_of(v::Real) = Float64(v)
 function js_number_of(v::AbstractString)
     s = _js_strip(v)
     isempty(s) && return 0.0
-    low = lowercase(s)
-    (low == "infinity" || low == "+infinity") && return Inf
-    low == "-infinity" && return -Inf
+    # The word as JavaScript writes it, and no other case of it.
+    (s == "Infinity" || s == "+Infinity") && return Inf
+    s == "-Infinity" && return -Inf
     # Julia's parser takes "inf", "nan", "1_000", hex floats and so on, which
-    # JavaScript does not; take only what Number() would.
-    if occursin(r"^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$", s)
-        return parse(Float64, s)
+    # JavaScript does not; take only what Number() would (ASCII digits only).
+    if occursin(r"^[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?$", s)
+        # Past the range of a double JavaScript reads Infinity, where Julia's parser refuses.
+        x = tryparse(Float64, s)
+        return x === nothing ? Float64(parse(BigFloat, s)) : x
     elseif occursin(r"^0[xX][0-9a-fA-F]+$", s)
         return Float64(parse(BigInt, s[3:end]; base=16))
     elseif occursin(r"^0[oO][0-7]+$", s)

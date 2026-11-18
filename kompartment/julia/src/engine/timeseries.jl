@@ -8,6 +8,7 @@
 const SAME_TIME = 1e-9
 
 _ts_number(v::Nothing) = 0.0
+_ts_number(v::AbstractString) = js_number_of(v)      # JavaScript's grammar: blank is 0, `1_000` NaN
 _ts_number(v) = (f = py_float(v); f)
 
 function series_kind(spec)

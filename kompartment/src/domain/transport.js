@@ -266,7 +266,12 @@ export function constantValue(project, block, kind, seen = new Set()) {
 	if (!block) return null;
 	const dims = block.index_lists ?? [];
 	if (kind === 'parameter') {
-		const v = Number(constantEntry(project, block, 'value', dims));
+		// A value that is not there -- or a block indexed by a list other than the
+		// scenarios', which `constantEntry` answers null for -- is not known before
+		// the run: not the 0 `Number(null)` would make of it.
+		const raw = constantEntry(project, block, 'value', dims);
+		if (raw == null) return null;
+		const v = Number(raw);
 		return Number.isFinite(v) ? v : null;
 	}
 	if (kind !== 'expression') return null;

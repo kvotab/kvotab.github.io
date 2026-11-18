@@ -33,12 +33,7 @@ double lookup_number(const Json& v) {
     if (v.is_null()) return 0.0;
     if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
     if (v.is_number()) return v.as_double();
-    if (v.is_string()) {
-        double f = py_float_nan(v);
-        if (!std::isnan(f)) return f;
-        if (js_trim(v.as_string()).empty()) return 0.0;
-        return NaN;
-    }
+    if (v.is_string()) return js_number_of(v);      // JavaScript's grammar: `1_000` is NaN
     return NaN;
 }
 

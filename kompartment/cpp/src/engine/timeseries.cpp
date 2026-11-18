@@ -10,7 +10,8 @@
 namespace kompartment {
 
 namespace {
-double ts_number(const Json& v) { return v.is_null() ? 0.0 : py_float_nan(v); }
+// Text by JavaScript's grammar (blank is 0, `1_000` NaN); anything else as Python's `float`.
+double ts_number(const Json& v) { return v.is_null() ? 0.0 : v.is_string() ? js_number_of(v) : py_float_nan(v); }
 }  // namespace
 
 std::string series_kind(const Json& spec) {

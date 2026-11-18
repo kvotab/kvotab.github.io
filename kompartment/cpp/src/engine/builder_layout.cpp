@@ -306,20 +306,8 @@ std::shared_ptr<Stmt> make_stmt(const EntryPtr& a, int out, TNodePtr tree, int w
 }
 
 double builder_number(const Json& v) {
-    if (v.is_null()) return 0.0;
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    if (v.is_number()) return v.as_double();
-    std::string s(js_trim(js_str(v)));
-    if (s.empty()) return 0.0;
-    double f = py_float_nan(Json(s));
-    if (std::isnan(f)) {
-        std::string low = lowercase(s);
-        if (low == "nan" || low == "+nan" || low == "-nan") return f;
-        if (low == "infinity" || low == "+infinity") return std::numeric_limits<double>::infinity();
-        if (low == "-infinity") return -std::numeric_limits<double>::infinity();
-        return std::numeric_limits<double>::quiet_NaN();
-    }
-    return f;
+    // `Number(v)`, text by JavaScript's grammar (`1_000` and `inf` are NaN, `0x10` is 16).
+    return js_number_of(v);
 }
 
 }  // namespace detail

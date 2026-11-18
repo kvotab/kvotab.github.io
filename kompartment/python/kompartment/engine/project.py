@@ -20,6 +20,7 @@ import numpy as np
 
 from .. import decay as _decay
 from ..errors import KompartmentError
+from ..io.csv import js_to_number
 from ..jsonio import js_number as number_text
 from ..jsonio import js_text
 from ..indexlists import (
@@ -160,24 +161,16 @@ class ValidationError(KompartmentError):
 
 
 def js_number(v: Any) -> float:
-    """``Number(v)``."""
+    """``Number(v)``: text read by JavaScript's grammar (``io.csv.js_to_number``) --
+    ``1_000``, ``inf`` and ``infinity`` are NaN, ``0x10`` is 16, blank is 0 -- not by
+    Python's ``float``, which reads the first three as numbers and refuses the fourth."""
     if v is None:
         return 0.0
     if isinstance(v, bool):
         return 1.0 if v else 0.0
     if isinstance(v, (int, float)):
         return float(v)
-    s = str(v).strip()
-    if s == '':
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        if s.lower() in ('infinity', '+infinity'):
-            return math.inf
-        if s.lower() == '-infinity':
-            return -math.inf
-        return math.nan
+    return js_to_number(v)
 
 
 def js_truthy_switch(v: Any, default: bool) -> bool:

@@ -140,14 +140,9 @@ std::string_view js_trim(std::string_view s) {
 double js_number_of(std::string_view text) {
     std::string_view s = js_trim(text);
     if (s.empty()) return 0.0;
-    {
-        // (The other engines read the word whatever its case.)
-        std::string low(s);
-        for (char& c : low)
-            if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-        if (low == "infinity" || low == "+infinity") return std::numeric_limits<double>::infinity();
-        if (low == "-infinity") return -std::numeric_limits<double>::infinity();
-    }
+    // The word as JavaScript writes it, and no other case of it.
+    if (s == "Infinity" || s == "+Infinity") return std::numeric_limits<double>::infinity();
+    if (s == "-Infinity") return -std::numeric_limits<double>::infinity();
     // A decimal literal: [+-] (digits [. digits*] | . digits) [e [+-] digits]
     {
         std::size_t k = 0, m = s.size();

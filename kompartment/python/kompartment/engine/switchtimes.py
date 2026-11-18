@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Set
 import numpy as np
 
 from ..indexlists import parent_list_name
+from ..io.csv import js_to_number
 from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import Leaf
@@ -43,10 +44,11 @@ def declared_switch_times(project: Any) -> List[Any]:
 
 
 def _number(v: Any) -> float:
-    try:
-        return float(v)
-    except (TypeError, ValueError):
+    """``Number(v)`` of a value that is there, text by JavaScript's grammar
+    (``1_000`` is NaN, not Python's 1000); NaN for one that is not."""
+    if v is None:
         return math.nan
+    return js_to_number(v)
 
 
 def switch_times(project: Any) -> List[float]:

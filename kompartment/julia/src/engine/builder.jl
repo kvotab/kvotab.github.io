@@ -783,22 +783,8 @@ function _layout_parameters!(b::Builder)
     b.P = P
 end
 
-"""The Python engine's `_js_number`: `Number(v)` with Python's reading of text."""
-function _builder_number(v)
-    v === nothing && return 0.0
-    v isa Bool && return v ? 1.0 : 0.0
-    v isa Real && return Float64(v)
-    s = strip(js_str(v))
-    isempty(s) && return 0.0
-    f = py_float(s)
-    if isnan(f) && !(lowercase(s) in ("nan", "+nan", "-nan"))
-        low = lowercase(s)
-        (low == "infinity" || low == "+infinity") && return Inf
-        low == "-infinity" && return -Inf
-        return NaN
-    end
-    return f
-end
+"""The Python engine's `_js_number`: `Number(v)`, text by JavaScript's grammar."""
+_builder_number(v) = v === nothing ? 0.0 : js_number_of(v)
 
 function _layout_tables!(b::Builder)
     project, space = b.project, b.space

@@ -21,6 +21,21 @@ const K = Kompartment
     @test K.js_number_of("-Infinity") == -Inf
 end
 
+@testset "a value written as text, as JavaScript's Number() reads it" begin
+    # Every reader of a block's value: the project's, the builder's, a table's, a time
+    # series'. Not as Python's float() reads text: no underscore between digits, no `inf`
+    # and no other case of Infinity, no digits but ASCII ones; past a double, Infinity.
+    readers = (K.js_number_of, K._builder_number, K._lk_number, K._ts_number)
+    want = Dict(" 1 " => 1.0, "1e0" => 1.0, "0x10" => 16.0, "0o17" => 15.0, "0b101" => 5.0, "" => 0.0,
+                "1." => 1.0, ".5" => 0.5, "Infinity" => Inf, "+Infinity" => Inf, "-Infinity" => -Inf,
+                "1e400" => Inf, "-1e400" => -Inf, "1_0e-1" => NaN, "1_000" => NaN, "inf" => NaN,
+                "infinity" => NaN, "INFINITY" => NaN, "nan" => NaN, "-0x10" => NaN, "\u0661" => NaN,
+                "1e" => NaN, "abc" => NaN)
+    for (text, v) in want, f in readers
+        @test isequal(f(text), v)
+    end
+end
+
 @testset "JSON" begin
     v = K.parse_json("{\"b\": 1, \"a\": [1.5, -0, 1e400, \"x\\u00e9\\n\", null, true], \"c\": {}}")
     @test collect(keys(v)) == ["b", "a", "c"]

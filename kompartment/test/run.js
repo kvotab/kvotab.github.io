@@ -26930,6 +26930,25 @@ test('what a transport refuses, and why', () => {
 	const paramN = withN('kb * 40 + 1');
 	assert(buildSystem(new Project(paramN)).layout.states.filter((s) => s.system === 'Col').length === 3,
 		'N from parameters: 0.05 * 40 + 1 = 3');
+	// A parameter written as text is read as Number() reads it: spaces round it,
+	// an exponent, a hexadecimal -- and not an underscore between digits nor any
+	// case of Infinity but its own, which the Python and Julia packages read too.
+	const withP = (value, equation) => {
+		const m = withN(equation);
+		m.parameters.push({ name: 'p', value });
+		return m;
+	};
+	const elements = (m) => buildSystem(new Project(m)).layout.states.filter((s) => s.system === 'Col').length;
+	assert(elements(withP(' 0x2 ', 'p + 1')) === 3, 'N from a parameter written in hexadecimal: 0x2 + 1 = 3');
+	assert(elements(withP('2e0', 'p')) === 2, 'N from a parameter written with an exponent');
+	for (const value of ['1_0e-1', 'infinity', 'inf']) {
+		expectError(() => buildSystem(new Project(withP(value, 'p + 1'))),
+			/cannot be worked out before the run starts/, `N from a parameter written '${value}'`);
+	}
+	// A parameter with no value is not known before the run either -- not the 0
+	// Number(null) would make of it, a chain of one compartment.
+	expectError(() => buildSystem(new Project(withP(null, 'p + 1'))),
+		/cannot be worked out before the run starts/, 'N from a parameter with no value');
 	const twoBegins = columnModel();
 	twoBegins.compartments.push({ name: 'Begin2', system: 'Col', transport: 'begin', initial: '0' });
 	expectError(() => buildSystem(new Project(twoBegins)), /2 Begin compartments/, 'two Begins');

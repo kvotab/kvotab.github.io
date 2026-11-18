@@ -54,6 +54,17 @@ int main() {
     CHECK_EQ(js_number_of(Json()), 0.0);
     CHECK_EQ(js_number_of(Json(true)), 1.0);
     CHECK(std::isinf(js_number_of(std::string_view("-Infinity"))));
+    // As JavaScript reads text, not as Python's float(): Infinity in its own case only,
+    // no `inf`, no underscore between digits, a double's overflow Infinity.
+    CHECK(js_number_of(std::string_view("+Infinity")) == std::numeric_limits<double>::infinity());
+    CHECK(std::isnan(js_number_of(std::string_view("infinity"))));
+    CHECK(std::isnan(js_number_of(std::string_view("INFINITY"))));
+    CHECK(std::isnan(js_number_of(std::string_view("inf"))));
+    CHECK(std::isnan(js_number_of(std::string_view("1_0e-1"))));
+    CHECK(std::isnan(js_number_of(std::string_view("-0x10"))));
+    CHECK(js_number_of(std::string_view("1e400")) == std::numeric_limits<double>::infinity());
+    CHECK_EQ(js_number_of(std::string_view("0o17")), 15.0);
+    CHECK_EQ(js_number_of(std::string_view("0b101")), 5.0);
 
     // Reading: key order kept, integers apart from floats, escapes, sharing.
     Json v = parse_json("\xef\xbb\xbf {\"b\": 1, \"a\": [1.0, 2e3, -0, \"x\\u00e5\\n\\ud83d\\ude00\"], \"c\": {\"k\": null, \"t\": true}}");

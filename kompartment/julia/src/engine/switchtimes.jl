@@ -15,8 +15,8 @@ end
 
 function switch_times(project::Project)
     sim = project.simulation
-    start = py_float(something(get(sim, "start_time", nothing), 0))
-    end_ = py_float(something(get(sim, "end_time", nothing), 0))
+    start = js_number_of(something(get(sim, "start_time", nothing), 0))
+    end_ = js_number_of(something(get(sim, "end_time", nothing), 0))
     out = Set{Float64}()
     function consider(v)
         (v === nothing || !(v > start) || !(v < end_)) && return
@@ -114,7 +114,10 @@ function constant_value(project::Project, block, kind, seen=Set{String}())
     block === nothing && return nothing
     dims = something(get(block, "index_lists", nothing), String[])
     if kind == "parameter"
-        v = py_float(something(_constant_entry(project, block, "value", dims), NaN))
+        # `Number()` of a value that is there, its text by JavaScript's grammar; a value that
+        # is not -- or an index other than the scenarios' -- is not known before the run.
+        raw = _constant_entry(project, block, "value", dims)
+        v = raw === nothing ? NaN : js_number_of(raw)
         return isfinite(v) ? v : nothing
     end
     kind == "expression" || return nothing
@@ -164,8 +167,8 @@ function constant_value(project::Project, block, kind, seen=Set{String}())
     end
     ok[] || return nothing
     sim = project.simulation
-    start = py_float(something(get(sim, "start_time", nothing), 0))
-    end_ = py_float(something(get(sim, "end_time", nothing), 0))
+    start = js_number_of(something(get(sim, "start_time", nothing), 0))
+    end_ = js_number_of(something(get(sim, "end_time", nothing), 0))
     v = try
         evaluate_tree(tree, start, start, end_)
     catch

@@ -25,6 +25,8 @@ from typing import Any, List, Sequence, Tuple
 
 import numpy as np
 
+from ..io.csv import js_to_number
+
 INTERPOLATIONS = ('linear', 'extrapolate', 'below', 'above', 'nearest')
 
 INTERPOLATION_FROM_ECO = {
@@ -45,6 +47,8 @@ def _number(v: Any) -> float:
         return 0.0
     if isinstance(v, bool):
         return 1.0 if v else 0.0
+    if isinstance(v, str):
+        return js_to_number(v)          # JavaScript's grammar: `1_000` is NaN
     try:
         return float(v)
     except (TypeError, ValueError):

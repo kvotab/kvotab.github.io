@@ -639,10 +639,21 @@ with("refused: a number from a parameter with no value") do m
     add!(m, "parameters", """{"name":"p","value":null}""")
 end
 with("a number from parameters written as text") do m
+    # Read as JavaScript's Number() reads text: spaces round it, an exponent, a hexadecimal.
     number!(m, "p + q + r")
     add!(m, "parameters", """{"name":"p","value":" 1 "}""")
     add!(m, "parameters", """{"name":"q","value":"1e0"}""")
-    add!(m, "parameters", """{"name":"r","value":"1_0e-1"}""")
+    add!(m, "parameters", """{"name":"r","value":"0x2"}""")
+end
+with("refused: a number from a parameter written as only Python reads it") do m
+    # Number() does not read an underscore between digits; Python's float() does.
+    number!(m, "p + 1")
+    add!(m, "parameters", """{"name":"p","value":"1_0e-1"}""")
+end
+with("refused: a number from a parameter written infinity") do m
+    # Number() reads Infinity as written so and no other case of it.
+    number!(m, "p")
+    add!(m, "parameters", """{"name":"p","value":"infinity"}""")
 end
 with("refused: a number from an infinite parameter") do m
     number!(m, "p")

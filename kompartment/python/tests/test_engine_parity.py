@@ -578,6 +578,48 @@ class RunParity(unittest.TestCase):
 
 
 @needs_app
+class NumbersWrittenAsText(unittest.TestCase):
+    """A block's value written as text is read as the application reads it -- by JavaScript's
+    ``Number()`` -- by every reader the engine has for one, and not as Python's ``float()``
+    would: no underscore between digits, no ``inf`` nor any case of Infinity but its own, ASCII
+    digits only; blank is 0, and ``0x10`` 16."""
+
+    WANT = {' 1 ': 1.0, '1e0': 1.0, '0x10': 16.0, '0o17': 15.0, '0b101': 5.0, '': 0.0, '1.': 1.0, '.5': 0.5,
+            'Infinity': math.inf, '+Infinity': math.inf, '-Infinity': -math.inf, '1e400': math.inf,
+            '1_0e-1': math.nan, '1_000': math.nan, 'inf': math.nan, 'infinity': math.nan, 'INFINITY': math.nan,
+            'nan': math.nan, '-0x10': math.nan, '\u0661': math.nan, '1e': math.nan, 'abc': math.nan}
+
+    def test_every_reader_reads_text_as_number_does(self) -> None:
+        from kompartment import model
+        from kompartment.engine import builder, lookup, project, switchtimes, timeseries
+        readers = (project.js_number, builder._js_number, switchtimes._number, lookup._number,
+                   timeseries._number, model._js_number)
+        for text, want in self.WANT.items():
+            for read in readers:
+                with self.subTest(text=text, reader=f'{read.__module__}.{read.__name__}'):
+                    got = read(text)
+                    self.assertTrue(got == want or (math.isnan(got) and math.isnan(want)), got)
+
+    def test_a_transport_s_length_from_text_as_the_application_works_it_out(self) -> None:
+        # The cases of run.js's "what a transport refuses, and why".
+        def column(value: Any, equation: str) -> Dict[str, Any]:
+            return {'name': 'col', 'simulation': {'start_time': 0, 'end_time': 10, 'output_points': 5},
+                    'parameters': [{'name': 'k', 'value': 0.2}, {'name': 'p', 'value': value}],
+                    'transports': ['Col'],
+                    'compartments': [
+                        {'name': 'Begin', 'system': 'Col', 'transport': 'begin', 'initial': '1'},
+                        {'name': 'End', 'system': 'Col', 'transport': 'end', 'initial': '0'}],
+                    'expressions': [{'name': 'N', 'system': 'Col', 'transport': 'number', 'equation': equation}],
+                    'transfers': [{'name': 'Down', 'system': 'Col', 'from': 'Col.Begin', 'to': 'Col.End',
+                                   'rate': 'k'}]}
+        self.assertEqual(build_system(Project(column(' 0x2 ', 'p + 1'))).nstate, 3)
+        self.assertEqual(build_system(Project(column('2e0', 'p'))).nstate, 2)
+        for value in ('1_0e-1', 'infinity', 'inf', None):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(Exception, 'cannot be worked out before the run starts'):
+                    build_system(Project(column(value, 'p + 1')))
+
+
 class RefusalParity(unittest.TestCase):
     def test_what_cannot_be_is_refused_as_the_application_refuses_it(self) -> None:
         # As the model is loaded: an order that is not a whole number, and a

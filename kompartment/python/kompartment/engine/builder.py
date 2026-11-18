@@ -30,6 +30,7 @@ import numpy as np
 
 from ..errors import KompartmentError
 from ..indexlists import COMPARTMENT_LIST, SOURCE_INDEX, TARGET_INDEX, TRANSFER_LIST
+from ..io.csv import js_to_number
 from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import CodeWriter, Leaf, Tree
@@ -2371,24 +2372,14 @@ def _as_array(v: Any, width: int) -> np.ndarray:
 
 
 def _js_number(v: Any) -> float:
+    """``Number(v)``: text by JavaScript's grammar, as ``project.js_number`` reads it."""
     if v is None:
         return 0.0
     if isinstance(v, bool):
         return 1.0 if v else 0.0
     if isinstance(v, (int, float)):
         return float(v)
-    s = str(v).strip()
-    if not s:
-        return 0.0
-    try:
-        return float(s)
-    except ValueError:
-        low = s.lower()
-        if low in ('infinity', '+infinity'):
-            return math.inf
-        if low == '-infinity':
-            return -math.inf
-        return math.nan
+    return js_to_number(v)
 
 
 def _js_str(v: Any) -> str:

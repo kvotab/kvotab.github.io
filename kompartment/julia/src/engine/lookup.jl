@@ -15,12 +15,7 @@ Base.showerror(io::IO, e::LookupError) = print(io, e.message)
 _lk_number(v::Nothing) = 0.0
 _lk_number(v::Bool) = v ? 1.0 : 0.0
 _lk_number(v::Real) = Float64(v)
-function _lk_number(v::AbstractString)
-    f = py_float(v)
-    !isnan(f) && return f
-    isempty(strip(v)) && return 0.0
-    return NaN
-end
+_lk_number(v::AbstractString) = js_number_of(v)      # JavaScript's grammar: `1_000` is NaN
 _lk_number(v) = NaN
 
 """`[[x, y], ...]` or `[xs, ys]` as two vectors sorted by x (a stable sort)."""

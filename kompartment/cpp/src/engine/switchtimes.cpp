@@ -139,7 +139,9 @@ std::optional<double> constant_value(const Project& project, const Json& block, 
     std::vector<std::string> dims = strings_of(block.get("index_lists"));
     if (kind == "parameter") {
         Json raw = constant_entry(project, block, "value", dims);
-        double v = raw.is_null() ? std::numeric_limits<double>::quiet_NaN() : py_float_nan(raw);
+        // `Number()` of a value that is there, its text by JavaScript's grammar; a value that is
+        // not -- or an index other than the scenarios' -- is not known before the run.
+        double v = raw.is_null() ? std::numeric_limits<double>::quiet_NaN() : js_number_of(raw);
         return std::isfinite(v) ? std::optional<double>(v) : std::nullopt;
     }
     if (kind != "expression") return std::nullopt;
