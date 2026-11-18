@@ -75,15 +75,15 @@ end
 end
 
 @testset "one Newton iteration a step on a linear model" begin
-    m = example("biosphere")
-    counts = Dict{Bool,Tuple{Int,Int}}()
+    # ode15s takes two a step; here, as in the app and the Python package, one -- with parity
+    # on as well, since it is theirs too. A model whose rates follow the state takes what it needs.
     for exact in (true, false)
         K.set_parity!(exact)
-        r = run(m; split="off", solver="ndf")
-        counts[exact] = (r.stats["nsolves"], r.stats["nsteps"])
+        r = run(example("biosphere"); split="off", solver="ndf")
+        @test r.stats["nsolves"] <= 1.2 * r.stats["nsteps"]
+        r = run(example("van-der-pol-stiff"); split="off", solver="ndf")
+        @test r.stats["nsolves"] >= 1.5 * r.stats["nsteps"]
     end
-    @test counts[true][1] >= 1.9 * counts[true][2]      # ode15s: two a step
-    @test counts[false][1] <= 1.2 * counts[false][2]    # here: one
     K.set_parity!(false)
 end
 

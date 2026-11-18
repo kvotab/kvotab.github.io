@@ -136,14 +136,17 @@ tolerance:
   tightly solved reference. Should the NDF not finish a run, the model's own
   solver runs it; `res.stats["solver"]`, `res.stats["asked"]` and the run log
   say which ran.
-- A model whose Jacobian is constant -- a linear one -- takes one Newton
-  iteration a step where ode15s's rule takes two (and one whose Jacobian
-  moves with the clock alone keeps the rate it measured).
 - The derivative's terms are merged into one entry per state and column read,
   each worked out from the values it reads with fused multiply-adds, so a call
   is one sparse product over far fewer entries than there are terms.
 - A dense iteration matrix is factorised and solved by Julia's own LU, with
   vector instructions and fused multiply-adds.
+
+In both modes, as in the app and the Python package, a model whose Jacobian
+is constant -- a linear one -- takes one Newton iteration a step where
+ode15s's rule takes two, and one whose Jacobian moves with the clock alone
+keeps the rate it measured; not while the zero floor holds a state, where the
+system is linear only in pieces.
 
 `Kompartment.set_solver_policy!(:model)` (or `KOMPARTMENT_SOLVERS=model`)
 keeps every model to its own solver. With parity on --

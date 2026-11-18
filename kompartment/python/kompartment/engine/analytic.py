@@ -444,6 +444,10 @@ class _Analytic:
         self._plan_statements()
         self._plan_assembly()
         self.constant = self._is_constant()
+        # ...or at least at every state, moving with the clock alone: a linear model whose rates
+        # follow time. The NDF keeps the rate its Newton iteration measured on such a matrix,
+        # which on a linear model is round-off (``state_free`` in solvers/ndf.py).
+        self.state_free = self.constant or self._is_constant(clock=False)
 
     # --- positions ------------------------------------------------------------------------
 
@@ -798,7 +802,7 @@ class _Analytic:
         self.direct_spec = direct_spec
         self.chain_spec = chain_spec
 
-    def _is_constant(self) -> bool:
+    def _is_constant(self, clock: bool = True) -> bool:
         """True when df/dy moves with neither the clock nor the state, so it can
         be factorised once and reused (``isConstant`` in src/sim/jacobian.js):
         structural and deliberately conservative. A rate -- of a transfer, a
@@ -809,7 +813,10 @@ class _Analytic:
         derivative is a release out of a far-field path, or out of waste
         packages whose release does not follow the clock, written as a bare
         reference with ``multiply_by_donor`` off: a fixed weighted sum of the
-        path's own cells, whose tangent is those weights."""
+        path's own cells, whose tangent is those weights.
+
+        With ``clock`` false, whether it moves with the state alone: a rate that
+        follows the clock no longer counts against it (``state_free``)."""
         b = self.b
         if any(r.mem >= 0 for r in b.recorders):
             return False
@@ -817,7 +824,7 @@ class _Analytic:
         # being taken with a weight that changes from step to step.
         if any(p.farf.laplace for p in b.farf_layout):
             return False
-        moves = lambda a: a.name in b.on_state or a.name in b.on_clock  # noqa: E731
+        moves = lambda a: a.name in b.on_state or (clock and a.name in b.on_clock)  # noqa: E731
         paths = {p.name for p in b.farf_layout if not p.farf.laplace}
         paths |= {W.q for W in b.waste_layout if W.release_slot.name not in b.on_clock}
 
@@ -868,4 +875,5 @@ class _Analytic:
         return J
 
     def result(self) -> Dict[str, Any]:
-        return {'available': True, 'reason': None, 'constant': self.constant, 'evaluate': self.evaluate}
+        return {'available': True, 'reason': None, 'constant': self.constant, 'state_free': self.state_free,
+                'evaluate': self.evaluate}

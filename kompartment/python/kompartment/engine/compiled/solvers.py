@@ -42,6 +42,9 @@ NEWTON_MAX = 4
 NEWTON_TOL = 0.3
 RATE_LIMIT = 0.9
 RATE_FLOOR = 0.02
+#: The floor where the Jacobian is exact and constant, a linear model (``EXACT_RATE_FLOOR`` in
+#: ../solvers/ndf.py).
+EXACT_RATE_FLOOR = 1e-6
 CONVERGED_FLOOR = 1e-3
 SAFETY = 0.8
 SAFETY_LOWER = 0.75
@@ -576,6 +579,15 @@ def _form_w(mat_mode, form_cb, a, jac_mode, colptr, rowidx, jvals, jdense, held_
 
 
 @njit(**_OPTS)
+def _held_in(held_in_w, constrained):
+    """Whether the matrix just formed holds a row at zero (``any_held`` in ``_form_w``)."""
+    for c in range(constrained.size):
+        if held_in_w[constrained[c]] != 0:
+            return True
+    return False
+
+
+@njit(**_OPTS)
 def _snap(cols, constrained, atol, mark, below):
     """``snap_onto_bound``: the constrained states above zero but within
     their tolerance that ``mark`` picks -- held (1) or, with ``below``,
@@ -953,6 +965,9 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
     has_store = ipar[9] != 0
     has_progress = ipar[10] != 0
     mat_mode = ipar[11]
+    # A linear model, said so by the analytic Jacobian (``state_free`` in ../solvers/ndf.py).
+    state_free = ipar[12] != 0
+    exact_constant = state_free and constant
     for q in range(stats.size):
         stats[q] = 0
     counts = np.zeros(1, dtype=np.int64)
@@ -1070,6 +1085,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
     hW = h
     kW = k
     rate = -1.0
+    w_held = _held_in(held_in_w, constrained)
 
     consecutive = 0
     mask_reforms = 0
@@ -1136,7 +1152,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
             stats[3] += 1
             hW = h
             kW = k
-            rate = -1.0
+            # A new matrix converges at a rate of its own -- except an exact one (a constant
+            # Jacobian, no rows held), whose rate is round-off whatever the step.
+            w_held = _held_in(held_in_w, constrained)
+            if not (exact_constant and not w_held):
+                rate = -1.0
 
         err = 0.0
         first_failure = True
@@ -1166,8 +1186,13 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
             prev = 0.0
             rho = rate
             scale = 1 / leading[k]
+            # Whether the system iterated on is the linear one the matrix was formed for (no row
+            # held in the matrix, none in any evaluation of this attempt): ../solvers/ndf.py.
+            linear = not w_held
             for it in range(1, NEWTON_MAX + 1):
                 _proj(f, tnew, ynew, fv, P, X, W, IW, pycb, constrained, push, held_rows, pflags, counts)
+                if pflags[0] != 0:
+                    linear = False
                 for i in range(neq):
                     resid[i] = (h * fv[i] - hist[i]) * scale - d[i]
                 if mat_mode == MAT_KERNEL:
@@ -1186,9 +1211,13 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     d[i] = d[i] + delta[i]
                     ynew[i] = pred[i] + d[i]
                 if size <= roundoff or size <= CONVERGED_FLOOR * rtol:
+                    # A linear model's second correction down at round-off is the rate measured.
+                    if it >= 2 and state_free and linear:
+                        rho = _pymax(size / prev, EXACT_RATE_FLOOR if exact_constant else RATE_FLOOR)
                     break
                 if it == 1:
-                    if min_newton <= 1 and rate >= 0 and (rate / (1 - rate)) * size <= NEWTON_TOL * rtol:
+                    r = -1.0 if (rate < RATE_FLOOR and not linear) else rate
+                    if min_newton <= 1 and r >= 0 and (r / (1 - r)) * size <= NEWTON_TOL * rtol:
                         break
                     prev = size
                     continue
@@ -1198,7 +1227,7 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                         break
                     outcome = 2
                     break
-                rho = _pymax(ratio, RATE_FLOOR)
+                rho = _pymax(ratio, EXACT_RATE_FLOOR if (exact_constant and linear) else RATE_FLOOR)
                 remaining = (rho / (1 - rho)) * size
                 if remaining <= NEWTON_TOL * rtol and it >= min_newton:
                     break
@@ -1224,7 +1253,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                         stats[3] += 1
                         hW = h
                         kW = k
-                        rate = -1.0
+                        # A new matrix converges at a rate of its own -- except an exact one (a constant
+                        # Jacobian, no rows held), whose rate is round-off whatever the step.
+                        w_held = _held_in(held_in_w, constrained)
+                        if not (exact_constant and not w_held):
+                            rate = -1.0
                         continue
                 if not fresh:
                     stats[2] += 1
@@ -1253,7 +1286,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     stats[3] += 1
                     hW = h
                     kW = k
-                    rate = -1.0
+                    # A new matrix converges at a rate of its own -- except an exact one (a constant
+                    # Jacobian, no rows held), whose rate is round-off whatever the step.
+                    w_held = _held_in(held_in_w, constrained)
+                    if not (exact_constant and not w_held):
+                        rate = -1.0
                     continue
                 if abs(h) <= hmin:
                     if outcome == 1 or below_run >= floor_newton_run:
@@ -1281,7 +1318,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                 stats[3] += 1
                 hW = h
                 kW = k
-                rate = -1.0
+                # A new matrix converges at a rate of its own -- except an exact one (a constant
+                # Jacobian, no rows held), whose rate is round-off whatever the step.
+                w_held = _held_in(held_in_w, constrained)
+                if not (exact_constant and not w_held):
+                    rate = -1.0
                 continue
             if mask_reforms < 1 and projected:
                 released = False
@@ -1301,7 +1342,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     stats[3] += 1
                     hW = h
                     kW = k
-                    rate = -1.0
+                    # A new matrix converges at a rate of its own -- except an exact one (a constant
+                    # Jacobian, no rows held), whose rate is round-off whatever the step.
+                    w_held = _held_in(held_in_w, constrained)
+                    if not (exact_constant and not w_held):
+                        rate = -1.0
                     continue
             rate = rho
 
@@ -1343,7 +1388,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
                     stats[3] += 1
                     hW = h
                     kW = k
-                    rate = -1.0
+                    # A new matrix converges at a rate of its own -- except an exact one (a constant
+                    # Jacobian, no rows held), whose rate is round-off whatever the step.
+                    w_held = _held_in(held_in_w, constrained)
+                    if not (exact_constant and not w_held):
+                        rate = -1.0
                     continue
             if abs(h) <= hmin:
                 if below_run >= floor_run:
@@ -1381,7 +1430,11 @@ def ndf(f, store, jac_cb, progress, P, X, W, IW, pycb, tspan, y0, atol, constrai
             stats[3] += 1
             hW = h
             kW = k
-            rate = -1.0
+            # A new matrix converges at a rate of its own -- except an exact one (a constant
+            # Jacobian, no rows held), whose rate is round-off whatever the step.
+            w_held = _held_in(held_in_w, constrained)
+            if not (exact_constant and not w_held):
+                rate = -1.0
 
         # --- accepted
         stats[0] += 1

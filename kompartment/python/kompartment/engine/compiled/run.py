@@ -221,6 +221,7 @@ class CompiledRun:
         self.pattern = jac.get('pattern') if jac else None
         self.evaluate = jac.get('evaluate') if jac else None
         self.constant = bool(jac.get('constant')) if jac else False
+        self.state_free = bool(jac.get('state_free')) if jac else False
         groups = jac.get('groups') if jac else None
         if self.pattern is not None and groups is None:
             groups = colour_columns(self.pattern)
@@ -477,7 +478,7 @@ class CompiledRun:
         ipar = np.array([max_order, bool(opts.get('bdf')), bool(opts.get('norm_control')),
                          (opts.get('error_norm') or 'max') == 'rms', auto,
                          -1 if below is None else max(0, int(round(below))), 1, 2000, self.constant,
-                         cm.has_store, progress is not cs.no_callback, where], dtype=np.int64)
+                         cm.has_store, progress is not cs.no_callback, where, self.state_free], dtype=np.int64)
         yout = np.empty((tspan.size, n))
         held = np.zeros(n, dtype=np.int64)
         stats = np.zeros(9, dtype=np.int64)

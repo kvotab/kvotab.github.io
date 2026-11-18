@@ -3525,7 +3525,15 @@ time:
 **The corrector** is a simplified Newton iteration on the correction to the
 predictor, at most four iterations, with the contraction rate measured between
 corrections and remembered across steps at the same matrix, so that a step is
-usually taken on one iteration. A correction that has stopped shrinking ends
+usually taken on one iteration. On a linear model -- the analytic Jacobian
+constant, or moving with the clock alone (`stateFree`, from `isConstant` in
+`src/sim/jacobian.js`) -- the rate measured when a correction comes down to
+round-off is kept, and where the matrix is constant it is floored at 1e-6
+rather than ode15s's 0.02 and kept across a new matrix too, so such a model
+takes one iteration a step where ode15s takes two. Not while the zero floor
+holds a state, in the matrix or at an iterate: the system is then linear only
+in pieces, a rate under 0.02 is not believed, and none is recorded. The
+Python and Julia packages and the C++ engine take the same rule. A correction that has stopped shrinking ends
 the attempt: the matrix is re-formed if the Jacobian is from an earlier point,
 else the step is cut to a quarter. `stagnation_tol` lets a correction that has
 stopped shrinking be taken on its size alone, at a Jacobian for the current

@@ -3311,6 +3311,13 @@
   const RATE_LIMIT = 0.9;
   /** The smallest contraction rate believed, so one good step cannot vouch for every later one. */
   const RATE_FLOOR = 0.02;
+  /**
+   * The same floor where the Jacobian is exact and constant -- a linear model,
+   * said so by the caller (`stateFree` and `constant`): one iteration solves
+   * the step's equations to round-off, and the rate measured is round-off too,
+   * so a step stops after one iteration where the floor above would ask for two.
+   */
+  const EXACT_RATE_FLOOR = 1e-6;
   /** A correction this far under rtol is converged whatever its rate says. */
   const CONVERGED_FLOOR = 1e-3;
 
@@ -3790,21 +3797,27 @@
   function projectedDerivative(f, constrained, neq) {
   	const heldRows = new Uint8Array(neq);
   	const push = new Float64Array(constrained.length);
-  	const call = (t, y, out) => {
-  		const dy = f(t, y, out);
+  	// Whether the last evaluation held any row (the Newton iteration asks:
+  	// see `linear` in ndf).
+  	const out = { call: null, heldRows, push, held: false };
+  	out.call = (t, y, dy0) => {
+  		const dy = f(t, y, dy0);
+  		let any = false;
   		for (let m = 0; m < constrained.length; m++) {
   			const i = constrained[m];
   			if (y[i] <= 0 && dy[i] < 0) {
   				if (-dy[i] > push[m]) push[m] = -dy[i];
   				dy[i] = 0;
   				heldRows[i] = 1;
+  				any = true;
   			} else {
   				heldRows[i] = 0;
   			}
   		}
+  		out.held = any;
   		return dy;
   	};
-  	return { call, heldRows, push };
+  	return out;
   }
 
   /* ------------------------------------------------------------------------ *
@@ -3824,6 +3837,18 @@
    *
    * `evaluate` may answer null: no usable matrix at this point. The caller
    * differences that one call and asks again next time.
+   *
+   * `stateFree` on either object says the values are exact and do not move
+   * with the state (they may with the clock): the model is linear. The Newton
+   * iteration then keeps the rate it measures at round-off, so the next step
+   * can stop after one iteration, and with `constant` as well that rate
+   * survives a new matrix and is floored at EXACT_RATE_FLOOR. Only while the
+   * system is the linear one the matrix was formed for, though: where the zero
+   * floor holds a state -- in the matrix, or in the evaluation at an iterate --
+   * it is linear only in pieces, a rate under RATE_FLOOR is not believed and
+   * none is recorded, and the iteration goes as it would for any model.
+   * Without `stateFree` -- every caller but Kompartment's analytic Jacobian --
+   * nothing changes.
    */
   function jacobianSource(option, neq) {
   	if (option == null) return null;
@@ -3846,6 +3871,7 @@
   		return {
   			sparse: true,
   			constant: !!option.constant,
+  			stateFree: !!option.stateFree,
   			pattern: option.pattern,
   			groups: Array.isArray(option.groups) ? option.groups : null,
   			evaluate: evaluate ? (t, y) => evaluate(t, y) : () => null,
@@ -3857,6 +3883,7 @@
   		return {
   			sparse: false,
   			constant: !!option.constant,
+  			stateFree: !!option.stateFree,
   			evaluate: (t, y) => option.evaluateDense(t, y, rows),
   		};
   	}
@@ -4184,6 +4211,9 @@
   	// --- the Jacobian, and the matrix built from it ---------------------------
   	const jac = jacobianSource(o.jacobian, neq);
   	const pattern = jac?.sparse ? jac.pattern : null;
+  	// A linear model, said so by the caller: see `stateFree` at jacobianSource.
+  	const stateFree = !!jac?.stateFree;
+  	const exactConstant = stateFree && !!jac.constant;
   	// Differenced from the model's own derivative, not the projected one: the
   	// rows the projection holds are rows of the identity in the matrix anyway.
   	const differ = new Differencer(raw, neq, threshold, pattern, jac?.groups ?? null);
@@ -4283,7 +4313,10 @@
   		ndecomps++;
   		hW = h;
   		kW = k;
-  		rate = -1;
+  		// A new matrix converges at a rate of its own -- except an exact one
+  		// (a constant Jacobian, no rows held), whose rate is round-off
+  		// whatever the step.
+  		if (!(exactConstant && !anyHeld)) rate = -1;
   	};
 
   	// --- the first step -------------------------------------------------------
@@ -4480,8 +4513,13 @@
   			const scale = 1 / leading[k];
   			const newtonNorms = o.debug ? [] : null;
   			newtonIts = 0;
+  			// Whether the system iterated on is the linear one the matrix was
+  			// formed for: no row held in the matrix, none in any evaluation of
+  			// this attempt. Where one is, the rules of an exact matrix are off.
+  			let linear = !anyHeld;
   			for (let iter = 1; iter <= NEWTON_MAX; iter++) {
   				newtonResidual(resid, rhs(tnew, ynew, resid), hist, d, h, scale, mass);
+  				if (projected?.held) linear = false;
   				W.solve(resid, delta);
   				nsolves++;
   				newtonIts = iter;
@@ -4489,9 +4527,20 @@
   				if (newtonNorms) newtonNorms.push(size);
   				if (!Number.isFinite(size)) { outcome = 'nonfinite'; break; }
   				takeCorrection(d, delta, ynew, pred);
-  				if (size <= roundoff || size <= CONVERGED_FLOOR * rtol) break;
+  				if (size <= roundoff || size <= CONVERGED_FLOOR * rtol) {
+  					// On a linear model a second correction down at round-off
+  					// is the rate measured: ode15s keeps none, and so has every
+  					// next step iterate twice where once solves it -- with a
+  					// constant Jacobian, exact, at the floor of an exact one;
+  					// with one that moves with the clock, at the usual floor.
+  					// (Not on a nonlinear model, where the next step's rate can
+  					// be larger: it drifted an oscillator from the reference.)
+  					if (iter >= 2 && stateFree && linear) rho = Math.max(size / prev, exactConstant ? EXACT_RATE_FLOOR : RATE_FLOOR);
+  					break;
+  				}
   				if (iter === 1) {
-  					if (minNewton <= 1 && rate >= 0 && (rate / (1 - rate)) * size <= NEWTON_TOL * rtol) break;
+  					const r = rate < RATE_FLOOR && !linear ? -1 : rate;
+  					if (minNewton <= 1 && r >= 0 && (r / (1 - r)) * size <= NEWTON_TOL * rtol) break;
   					prev = size;
   					continue;
   				}
@@ -4508,7 +4557,7 @@
   					outcome = 'slow';
   					break;
   				}
-  				rho = Math.max(ratio, RATE_FLOOR);
+  				rho = Math.max(ratio, exactConstant && linear ? EXACT_RATE_FLOOR : RATE_FLOOR);
   				const remaining = (rho / (1 - rho)) * size;
   				if (remaining <= NEWTON_TOL * rtol && iter >= minNewton) break;
   				if (iter === NEWTON_MAX || remaining * rho ** (NEWTON_MAX - iter) > NEWTON_TOL * rtol) {

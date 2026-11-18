@@ -7,7 +7,6 @@
 
 #include "solvers/kernels.hpp"
 #include "util/jsnum.hpp"
-#include "util/parity.hpp"
 
 namespace kompartment {
 
@@ -37,9 +36,10 @@ constexpr int NDF_NEWTON_MAX = 4;
 constexpr double NDF_NEWTON_TOL = 0.3;
 constexpr double NDF_RATE_LIMIT = 0.9;
 constexpr double NDF_RATE_FLOOR = 0.02;
-// The floor on the Newton rate where the Jacobian is exact and constant (a linear model) and parity
-// is off: one iteration then solves the step's equations to round-off, and the rate measured is
-// round-off too, so a step stops after one iteration where ode15s's floor of 0.02 would ask for two.
+// The floor on the Newton rate where the Jacobian is exact and constant (a linear model: `constant`
+// and `state_free`): one iteration then solves the step's equations to round-off, and the rate
+// measured is round-off too, so a step stops after one iteration where ode15s's floor of 0.02 would
+// ask for two. The other engines do the same, so parity keeps it.
 constexpr double NDF_EXACT_RATE_FLOOR = 1e-6;
 constexpr double NDF_CONVERGED_FLOOR = 1e-3;
 constexpr double NDF_SAFETY = 0.8;
@@ -252,6 +252,7 @@ struct State {
     bool any_held = false;
     std::vector<std::uint8_t> held_now;
     std::vector<std::uint8_t> held_in_w;
+    bool w_held = false;                // a row held in the matrix as it was last formed
     // the Jacobian and the matrix
     const Pattern* pattern = nullptr;
     const ColumnGroups* groups = nullptr;
@@ -642,9 +643,10 @@ void form_w(State& s) {
     s.ndecomps += 1;
     s.hW = s.h;
     s.kW = s.k;
+    s.w_held = any_held;
     // A new matrix converges at a rate of its own -- except an exact one (a constant Jacobian,
     // no rows held), whose rate is round-off whatever the step.
-    if (!(s.constant && !any_held && !parity())) s.rate = -1.0;
+    if (!(s.constant && s.state_free && !any_held)) s.rate = -1.0;
 }
 
 void change_step(State& s, double factor) {
@@ -960,8 +962,14 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
                 double rho = s.rate;
                 const double scale = 1 / s.leading[k - 1];
                 newton_its = 0;
+                // Whether the system iterated on is the linear one the matrix was formed for: no
+                // row held in the matrix, none in any evaluation of this attempt. Where one is, the
+                // zero floor makes it linear only in pieces, and the rules of an exact matrix are
+                // off: a rate under the floor is not believed, and none is recorded.
+                bool linear = !s.w_held;
                 for (int it = 1; it <= NDF_NEWTON_MAX; it++) {
                     rhs(s, s.fv, tnew, ynew);
+                    if (s.any_held) linear = false;
                     const double* fv = s.fv.data();
                     // the residual, solved for in place: delta
                     if (mass != nullptr) {
@@ -986,13 +994,13 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
                         // one; with one that moves with the clock, at the usual floor. (Not on a
                         // nonlinear model, where the next step's rate can be larger: it drifted an
                         // oscillator from the reference.)
-                        if (it >= 2 && s.state_free && !parity()) {
+                        if (it >= 2 && s.state_free && linear) {
                             rho = py_max(size / prev, s.constant ? NDF_EXACT_RATE_FLOOR : NDF_RATE_FLOOR);
                         }
                         break;
                     }
                     if (it == 1) {
-                        const double rate = s.rate;
+                        const double rate = (s.rate < NDF_RATE_FLOOR && !linear) ? -1.0 : s.rate;
                         if (min_newton <= 1 && rate >= 0 && (rate / (1 - rate)) * size <= NDF_NEWTON_TOL * rtol) break;
                         prev = size;
                         continue;
@@ -1003,7 +1011,7 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
                         outcome = 2;
                         break;
                     }
-                    rho = py_max(ratio, (s.constant && !parity()) ? NDF_EXACT_RATE_FLOOR : NDF_RATE_FLOOR);
+                    rho = py_max(ratio, (s.constant && s.state_free && linear) ? NDF_EXACT_RATE_FLOOR : NDF_RATE_FLOOR);
                     const double remaining = (rho / (1 - rho)) * size;
                     if (remaining <= NDF_NEWTON_TOL * rtol && it >= min_newton) break;
                     if (it == NDF_NEWTON_MAX ||

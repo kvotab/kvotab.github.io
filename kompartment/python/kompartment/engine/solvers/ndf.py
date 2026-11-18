@@ -43,6 +43,11 @@ NEWTON_MAX = 4
 NEWTON_TOL = 0.3
 RATE_LIMIT = 0.9
 RATE_FLOOR = 0.02
+#: The same floor where the Jacobian is exact and constant -- a linear model, said so by the
+#: caller (``state_free`` and ``constant``): one iteration solves the step's equations to
+#: round-off, and the rate measured is round-off too, so a step stops after one iteration where
+#: the floor above would ask for two.
+EXACT_RATE_FLOOR = 1e-6
 CONVERGED_FLOOR = 1e-3
 SAFETY = 0.8
 SAFETY_LOWER = 0.75
@@ -427,6 +432,12 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
     pattern: Optional[Pattern] = jacobian.get('pattern') if jacobian else None
     evaluate = jacobian.get('evaluate') if jacobian else None
     constant = bool(jacobian.get('constant')) if jacobian else False
+    # The values exact and not moving with the state (they may with the clock): a linear model,
+    # said only by the model's analytic Jacobian. Its Newton iteration keeps the rate it measures
+    # at round-off, so the next step can stop after one iteration; with ``constant`` as well that
+    # rate survives a new matrix and is floored at EXACT_RATE_FLOOR (the app's ``stateFree``).
+    state_free = bool(jacobian.get('state_free')) if jacobian else False
+    exact_constant = state_free and constant
     groups = jacobian.get('groups') if jacobian else None
     if pattern is not None and groups is None:
         groups = colour_columns(pattern)
@@ -480,7 +491,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
             return True
         return False
 
-    cur = {'h': 0.0, 'k': 1, 'hW': 0.0, 'kW': 0, 'rate': -1.0, 'hTable': 0.0}
+    cur = {'h': 0.0, 'k': 1, 'hW': 0.0, 'kW': 0, 'rate': -1.0, 'hTable': 0.0, 'w_held': False}
 
     def form_w() -> None:
         any_held = False
@@ -494,7 +505,11 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         stats['ndecomps'] += 1
         cur['hW'] = cur['h']
         cur['kW'] = cur['k']
-        cur['rate'] = -1.0
+        cur['w_held'] = any_held
+        # A new matrix converges at a rate of its own -- except an exact one (a constant
+        # Jacobian, no rows held), whose rate is round-off whatever the step.
+        if not (exact_constant and not any_held):
+            cur['rate'] = -1.0
 
     # --- the first step ----------------------------------------------------------------
     yp = f0.copy()
@@ -623,8 +638,15 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
             scale = 1 / leading[k]
             newton_its = 0
             delta = np.zeros(neq)
+            # Whether the system iterated on is the linear one the matrix was formed for: no row
+            # held in the matrix, none in any evaluation of this attempt. Where one is, the zero
+            # floor makes it linear only in pieces, and the rules of an exact matrix are off: a
+            # rate under the floor is not believed, and none is recorded.
+            linear = not cur['w_held']
             for it in range(1, NEWTON_MAX + 1):
                 fv = rhs(tnew, ynew)
+                if projected is not None and projected._any_held:
+                    linear = False
                 if mass_arr is not None:
                     resid = (h * fv - mass_arr * hist) * scale - mass_arr * d
                 else:
@@ -639,9 +661,15 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
                 d = d + delta
                 ynew = pred + d
                 if size <= roundoff or size <= CONVERGED_FLOOR * rtol:
+                    # On a linear model a second correction down at round-off is the rate
+                    # measured: ode15s keeps none, and so has every next step iterate twice where
+                    # once solves it -- with a constant Jacobian, exact, at the floor of an exact
+                    # one; with one that moves with the clock, at the usual floor.
+                    if it >= 2 and state_free and linear:
+                        rho = max(size / prev, EXACT_RATE_FLOOR if exact_constant else RATE_FLOOR)
                     break
                 if it == 1:
-                    rate = cur['rate']
+                    rate = -1.0 if (cur['rate'] < RATE_FLOOR and not linear) else cur['rate']
                     if min_newton <= 1 and rate >= 0 and (rate / (1 - rate)) * size <= NEWTON_TOL * rtol:
                         break
                     prev = size
@@ -652,7 +680,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
                         break
                     outcome = 'slow'
                     break
-                rho = max(ratio, RATE_FLOOR)
+                rho = max(ratio, EXACT_RATE_FLOOR if (exact_constant and linear) else RATE_FLOOR)
                 remaining = (rho / (1 - rho)) * size
                 if remaining <= NEWTON_TOL * rtol and it >= min_newton:
                     break

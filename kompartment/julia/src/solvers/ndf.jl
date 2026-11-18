@@ -19,9 +19,10 @@ const _NDF_NEWTON_MAX = 4
 const _NDF_NEWTON_TOL = 0.3
 const _NDF_RATE_LIMIT = 0.9
 const _NDF_RATE_FLOOR = 0.02
-#: The floor on the Newton rate where the Jacobian is exact and constant (a linear model) and parity
-#: is off: one iteration then solves the step's equations to round-off, and the rate measured is
-#: round-off too, so a step stops after one iteration where ode15s's floor of 0.02 would ask for two.
+#: The floor on the Newton rate where the Jacobian is exact and constant (a linear model: `constant`
+#: and `state_free`): one iteration then solves the step's equations to round-off, and the rate
+#: measured is round-off too, so a step stops after one iteration where ode15s's floor of 0.02 would
+#: ask for two. The app and the Python package do the same, so parity keeps it.
 const _NDF_EXACT_RATE_FLOOR = 1e-6
 const _NDF_CONVERGED_FLOOR = 1e-3
 const _NDF_SAFETY = 0.8
@@ -44,12 +45,15 @@ struct JacobianSpec
     groups::Union{Nothing,Vector{Vector{Int}}}
     evaluate::Union{Nothing,JacobianEvaluate}
     constant::Bool
-    state_free::Bool      # the values do not move with the state (they may with the clock)
+    # The values are exact and do not move with the state (they may with the clock): the model
+    # is linear. Said only by the caller that knows it -- the model's analytic Jacobian -- so a
+    # matrix marked constant is not taken for one (the Python package and the app read it so).
+    state_free::Bool
 end
-JacobianSpec(pattern, groups, evaluate, constant::Bool) = JacobianSpec(pattern, groups, evaluate, constant, constant)
+JacobianSpec(pattern, groups, evaluate, constant::Bool) = JacobianSpec(pattern, groups, evaluate, constant, false)
 
 JacobianSpec(; pattern=nothing, groups=nothing, evaluate=nothing, constant::Bool=false,
-             state_free::Bool=constant) =
+             state_free::Bool=false) =
     JacobianSpec(pattern, groups, evaluate === nothing || evaluate isa JacobianEvaluate ? evaluate :
                                   JacobianEvaluate(evaluate), constant, state_free)
 
@@ -258,6 +262,7 @@ mutable struct _NDFState
     any_held::Bool
     held_now::Vector{UInt8}
     held_in_w::Vector{UInt8}
+    w_held::Bool            # a row held in the matrix as it was last formed
     # the Jacobian and the matrix
     pattern::Union{Nothing,Pattern}
     groups::Vector{Vector{Int}}
@@ -677,9 +682,10 @@ function _ndf_form_w!(s::_NDFState)
     s.ndecomps += 1
     s.hW = s.h
     s.kW = s.k
+    s.w_held = any_held
     # A new matrix converges at a rate of its own -- except an exact one (a constant Jacobian,
     # no rows held), whose rate is round-off whatever the step.
-    (s.constant && !any_held && !parity()) || (s.rate = -1.0)
+    (s.constant && s.state_free && !any_held) || (s.rate = -1.0)
     return nothing
 end
 
@@ -843,7 +849,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
     s = _NDFState(f, neq, rtol, atol, threshold, newton_threshold, error_weight, newton_weight, auto_abstol, mass,
                   algebraic, leading, error_const, max_order, direction,
                   constrained, projected, zeros(UInt8, neq), zeros(length(constrained)), false,
-                  zeros(UInt8, neq), zeros(UInt8, neq),
+                  zeros(UInt8, neq), zeros(UInt8, neq), false,
                   pattern, groups_v, evaluate, constant, state_free, zeros(Jlen), false,
                   DifferenceWork(pattern, groups, neq), IterationMatrix(0, nothing, Float64[]),
                   D, zeros(neq), zeros(max_order + 1, max_order + 1), zeros(max_order + 1, max_order + 1),
@@ -1025,8 +1031,14 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                 rho = s.rate
                 scale = 1 / s.leading[k]
                 newton_its = 0
+                # Whether the system iterated on is the linear one the matrix was formed for: no
+                # row held in the matrix, none in any evaluation of this attempt. Where one is,
+                # the zero floor makes it linear only in pieces, and the rules of an exact matrix
+                # are off: a rate under the floor is not believed, and none is recorded.
+                linear = !s.w_held
                 for it in 1:_NDF_NEWTON_MAX
                     fv = _ndf_rhs!(s, s.fv, tnew, ynew)
+                    s.any_held && (linear = false)
                     # the residual, solved for in place: delta
                     if mass !== nothing
                         @inbounds for i in 1:neq
@@ -1053,13 +1065,13 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                         # one; with one that moves with the clock, at the usual floor. (Not on a
                         # nonlinear model, where the next step's rate can be larger: it drifted an
                         # oscillator from the reference.)
-                        if it >= 2 && s.state_free && !parity()
+                        if it >= 2 && s.state_free && linear
                             rho = _pymax(size / prev, s.constant ? _NDF_EXACT_RATE_FLOOR : _NDF_RATE_FLOOR)
                         end
                         break
                     end
                     if it == 1
-                        rate = s.rate
+                        rate = (s.rate < _NDF_RATE_FLOOR && !linear) ? -1.0 : s.rate
                         if min_newton <= 1 && rate >= 0 && (rate / (1 - rate)) * size <= _NDF_NEWTON_TOL * rtol
                             break
                         end
@@ -1074,7 +1086,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                         outcome = 2
                         break
                     end
-                    rho = _pymax(ratio, (s.constant && !parity()) ? _NDF_EXACT_RATE_FLOOR : _NDF_RATE_FLOOR)
+                    rho = _pymax(ratio, (s.constant && s.state_free && linear) ? _NDF_EXACT_RATE_FLOOR : _NDF_RATE_FLOOR)
                     remaining = (rho / (1 - rho)) * size
                     if remaining <= _NDF_NEWTON_TOL * rtol && it >= min_newton
                         break

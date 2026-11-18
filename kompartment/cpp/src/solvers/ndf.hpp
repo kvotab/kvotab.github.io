@@ -37,7 +37,9 @@ struct JacobianSpec {
     std::optional<ColumnGroups> groups;
     JacobianEvaluate evaluate;
     bool constant = false;
-    /// The values do not move with the state (they may with the clock).
+    /// The values are exact and do not move with the state (they may with the clock): the model
+    /// is linear. Said only by the caller that knows it -- the model's analytic Jacobian -- so a
+    /// matrix marked constant is not taken for one.
     bool state_free = false;
 
     JacobianSpec() = default;
@@ -47,7 +49,7 @@ struct JacobianSpec {
           groups(std::move(groups_)),
           evaluate(std::move(evaluate_)),
           constant(constant_),
-          state_free(constant_) {}
+          state_free(false) {}
     JacobianSpec(std::optional<Pattern> pattern_, std::optional<ColumnGroups> groups_, JacobianEvaluate evaluate_,
                  bool constant_, bool state_free_)
         : pattern(std::move(pattern_)),

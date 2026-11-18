@@ -434,6 +434,11 @@ function generate(b) {
 
 	// --- is it the same matrix at every point? --------------------------------
 	const constant = isConstant(b, SX);
+	// ...or at least at every state, moving with the clock alone: a linear
+	// model whose rates follow time. The solver keeps the rate its Newton
+	// iteration measured on such a matrix (see `stateFree` in
+	// ../ode/solvers/ndf.js), which on a linear model is round-off.
+	const stateFree = constant || isConstant(b, SX, false);
 
 	// --- evaluation -----------------------------------------------------------
 	const {
@@ -527,6 +532,7 @@ function generate(b) {
 		pattern,
 		groups,
 		constant,
+		stateFree,
 		evaluate,
 		jvp,
 		evaluateDense,
@@ -1694,8 +1700,12 @@ function jvpSourceFor(b, opts = {}) {
  * factorised once and reused. The test is structural
  * and deliberately conservative: a rate that mentions a compartment might still
  * have a constant derivative, but saying so would mean proving it.
+ *
+ * With `clockMoves` false, whether it depends on the state alone: a rate that
+ * follows the clock no longer counts against it (the Python and Julia
+ * packages' `_is_constant(clock=False)`, their `state_free`).
  */
-function isConstant(b, SX) {
+function isConstant(b, SX, clockMoves = true) {
 	const { project, algebraic, algByName } = b;
 
 	// A block that remembers moves with what has happened, not only with the
@@ -1829,7 +1839,7 @@ function isConstant(b, SX) {
 	for (const D of b.disruptionLayout ?? []) rateBlocks.push(D.lambdaSlot, ...D.shares);
 	for (const a of rateBlocks) {
 		if (!a) continue;
-		if (clock.get(a.name)) return false;
+		if (clockMoves && clock.get(a.name)) return false;
 		for (let off = 0; off < a.width; off++) {
 			if (SX[a.base + off].size) return false;
 		}

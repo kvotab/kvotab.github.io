@@ -5,9 +5,12 @@ behind the application's local server, as fast as the machine allows. The
 engine is a port of the Julia package (`../julia`), which is a port of the
 Python package and the application: the same model file, the same equations in
 the same order, the same solvers taking the same steps. With parity on it gives
-the Julia package's run in parity mode -- and so the application's -- to the
-last bit; that is how it is checked. Without it (the default) the same run is
-taken the quickest way, and agrees to the run's tolerance.
+the Julia package's run in parity mode -- which is the Python package's -- to
+the last bit; that is how it is checked. (The application's own run differs in
+the last digits, as the Python package's does: V8's `Math.pow`, which chooses
+each step size, rounds differently from the C library's.) Without parity (the
+default) the same run is taken the quickest way, and agrees to the run's
+tolerance.
 
 Nothing waits for a compiler when a model is opened. Where the other engines
 write a model's equations out as source code and have it compiled -- a fraction
@@ -115,9 +118,9 @@ refused with a sentence saying which, and no number is made up for it.
 
 In fast mode a model whose derivative is linear in the state is assembled once
 into one matrix with the constant column beside it and applied with fused
-multiply-adds; a run of single-state blocks in the block LU is solved with
-reciprocal pivots; and a step of a linear model takes one Newton iteration
-where the rate of the iteration is known.
+multiply-adds, and a run of single-state blocks in the block LU is solved with
+reciprocal pivots. In both modes, as in the other engines, a step of a linear
+model takes one Newton iteration, the rate of the iteration being known.
 
 ## Speed
 
@@ -128,12 +131,12 @@ the time to solve, the model already built:
 
 | Engine | Seconds |
 |---|---|
-| The application, in Node | 4.9 |
-| Python, compiled | 2.2 |
-| Julia, parity | 1.45 |
-| C++, parity | 1.25 |
-| Julia | 0.97 |
-| C++ | 0.87 |
+| The application, in Node | 3.9 |
+| Python, compiled | 1.7 |
+| Julia, parity | 1.04 |
+| Julia | 1.0 |
+| C++, parity | 0.92 |
+| C++ | 0.83 |
 
 Building that model takes 0.1 s here. The bundled examples are each read, built
 and solved in 1 to 11 ms.
