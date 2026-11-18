@@ -95,8 +95,8 @@ The C++ engine is the quickest to answer: it is a program already compiled, and
 it works a model's equations out without compiling them, so a run starts at
 once however large the model. It solves a run, with the `ndf`, `ros23` and
 `dp45` solvers. What it does not do — a probabilistic run and the analyses, the
-other solvers, a far-field path worked out semi-analytically — the page solves
-in the browser while *on C++* is chosen, and the bar says so as it does.
+other solvers — the page solves in the browser while *on C++* is chosen, and
+the bar says so as it does.
 
 **What the engines need is checked at every start.** The Python engine needs
 Python 3.9 or newer with NumPy and SciPy, and runs several times quicker with

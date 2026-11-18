@@ -86,17 +86,17 @@ inflows, expressions, lookup tables and their interpolations, functions,
 reductions over indices and blocks, recorders, events and their jumps,
 snapshots, waste packages, disruptive events, decay and ingrowth, scenarios
 pinned, numbers written with a unit, transport sub-systems written out as their
-chains, far-field paths on cells -- with the `ndf`, `ros23` and `dp45` solvers, the exact Jacobian or the
-differenced one, the dense, sparse, kept-pivot and block-at-a-time LUs, the
-zero floor, the mass-balance audit, the derived outputs, and the archive *Save
-with results* writes.
+chains, far-field paths on cells and worked out semi-analytically -- with the
+`ndf`, `ros23` and `dp45` solvers, the exact Jacobian or the differenced one,
+the dense, sparse, kept-pivot and block-at-a-time LUs, the zero floor, the
+mass-balance audit, the derived outputs, and the archive *Save with results*
+writes.
 
-It does not do: far-field paths worked out semi-analytically (paths on cells,
-the default, it does); probabilistic runs, replays, calibrations and
-sensitivities (the page does these itself when the engine is chosen); the other
-solvers (`auto`, the DifferentialEquations.jl ports, SciPy's); HDF5 result
-files; Ecolego files; editing a model. A model that needs one of these is
-refused with a sentence saying which, and no number is made up for it.
+It does not do: probabilistic runs, replays, calibrations and sensitivities
+(the page does these itself when the engine is chosen); the other solvers
+(`auto`, the DifferentialEquations.jl ports, SciPy's); HDF5 result files;
+Ecolego files; editing a model. A model that needs one of these is refused with
+a sentence saying which, and no number is made up for it.
 
 ## How it is laid out
 
@@ -110,7 +110,7 @@ refused with a sentence saying which, and no number is made up for it.
 | `src/engine/vm.*` | The statements compiled to vector programs, and run |
 | `src/engine/system.*` | The passes (never changing, following the clock, following the state), the assembly `dy/dt = A(X)·[y; 1]`, recorders, events |
 | `src/engine/jacobian*` | The Jacobian's structure, the differenced one, the exact one |
-| `src/engine/farfield*` | A far-field path on cells: its geometry, its layers, its release |
+| `src/engine/farfield*` | A far-field path: on cells (its geometry, layers and release), or worked out semi-analytically (unit responses inverted from the Laplace domain, and their convolution with what flows in) |
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
 | `src/io/` | ZIP, the dataset archive |
@@ -164,7 +164,9 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_jacobian` | The exact Jacobian's plan and values | `tools/jacobian_fixtures.jl` |
 | `test_runs` | Every series of every run, and the step counts, to the bit, with the exact Jacobian and the differenced one | `tools/run_fixtures.jl` |
 | `test_farfield` | Far-field paths on cells: the helpers, 113 models laid out, differentiated and run, the refusals | `tools/farfield_fixtures.jl` |
-| `test_solvers`, `test_sparselu` | The solvers and the LUs on problems of their own | fixtures within; `KOMPARTMENT_SPARSE_FIXTURES` for the application's own matrices (see `../julia/README.md`) |
+| `test_laplace` | A semi-analytical path's Laplace-domain transfer functions and their inversion: 73 paths, their unit responses and evaluation counts, the complex arithmetic, 38 refusals | `tools/laplace_fixtures.jl` |
+| `test_farfield_semi` | Semi-analytical paths in a run: 53 models laid out, differentiated and run, their histories, restarts and balance warnings, the refusals | `tools/farfield_semi_fixtures.jl` |
+| `test_solvers`, `test_sparselu` | The solvers and the LUs on problems of their own, and on the problems the Python package's solvers were run on | `../julia/test/solvers/fixtures.json` (the Julia package's); `KOMPARTMENT_SPARSE_FIXTURES` for the application's own matrices (see `../julia/README.md`) |
 | `test_service` | The messages `serve.py` and the engine exchange | |
 | `test_util` | JSON and the number formats | |
 
@@ -172,7 +174,7 @@ To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```

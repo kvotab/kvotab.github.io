@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "engine/farfield.hpp"
+#include "engine/farfield_semi.hpp"
 #include "model/simulation.hpp"
 #include "util/jsnum.hpp"
 
@@ -64,9 +65,14 @@ std::unordered_map<int, std::vector<int>> state_dependencies(const System& sys) 
                 if (a->kind == "farfield") {
                     // A path's release reads the cells it is released from, and whatever its settings read.
                     const FarfieldPath& F = *b.FARF[static_cast<std::size_t>(a->farf_index)];
-                    // (A semi-analytical path's release reads what flows into it: not worked out here yet.)
-                    if (F.laplace) throw NotSupported("The C++ engine does not work out semi-analytical far-field paths yet.");
                     const std::vector<int>& release = F.release_slots();
+                    if (F.laplace) {
+                        // A semi-analytical path's release reads what flows into it.
+                        std::vector<std::vector<int>> cols =
+                            static_cast<const LaplaceFarfPath&>(F).release_dependencies([&](int x) -> const std::vector<int>& { return of_x(x); });
+                        for (std::size_t slot = 0; slot < cols.size(); slot++) deps[release[slot]] = std::move(cols[slot]);
+                        continue;
+                    }
                     for (int slot = 0; slot < F.slots(); slot++) {
                         std::vector<int> parts = F.rel_idx(slot);
                         for (int x : F.setting_slots_of(slot)) {

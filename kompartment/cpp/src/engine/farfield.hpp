@@ -358,6 +358,10 @@ struct FarfieldWarnings {
 };
 FarfieldWarnings farfield_warnings(const System& sys);
 
+/// What a semi-analytical path cannot be, found once the settings that never move are worked out:
+/// a setting that follows the clock or the state, and a path its method cannot solve.
+void semi_refusals(const Builder& b, const std::vector<double>& X);
+
 /// A combination of a path's other dimensions as one name (`layerKey`): its index names joined by NUL.
 std::string layer_key(const IndexSpace& space, const std::vector<std::string>& dims, int o);
 

@@ -262,11 +262,17 @@ RunSolution solve_with_events(System& sys, const RhsFunction& f, SolverFunction 
 
 }  // namespace
 
-RunState run_state(const System& sys) { return {sys.data.MEM, sys.data.DIS, sys.sampled_times, sys.min_change, sys.origin}; }
+RunState run_state(const System& sys) {
+    RunState state{sys.data.MEM, sys.data.DIS, sys.sampled_times, sys.min_change, sys.origin, {}};
+    for (int k : sys.laplace) state.laplace.push_back(static_cast<const LaplaceFarfPath&>(*sys.data.FARF[static_cast<std::size_t>(k)]).run_state());
+    return state;
+}
 
 void restore_run_state(System& sys, const RunState& state) {
     sys.data.MEM = state.mem;
     sys.data.DIS = state.dis;
+    for (std::size_t q = 0; q < sys.laplace.size() && q < state.laplace.size(); q++)
+        static_cast<LaplaceFarfPath&>(*sys.data.FARF[static_cast<std::size_t>(sys.laplace[q])]).restore_run_state(state.laplace[q]);
     sys.sampled_times = state.sampled;
     sys.use_clock_interpolation(state.min_change, state.origin);
 }
@@ -448,6 +454,7 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     RhsFunction f = [&sys](Vec& dy, double t, const Vec& y) { sys.rhs(dy.data(), t, y.data()); };
     auto solve_span = [&](const Vec& grid2, const Vec& start) -> RunSolution {
         sys.use_clock_interpolation(min_change, grid2.front());
+        sys.start_segment(grid2.front(), start.data());
         if (sys.has_events()) return solve_with_events(sys, f, solve_fn, grid2, start, opts);
         return as_run(solve_fn(f, grid2, start, opts));
     };

@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "engine/farfield.hpp"
+#include "engine/farfield_semi.hpp"
 #include "engine/project.hpp"
 #include "engine/system.hpp"
 #include "solvers/solvers.hpp"
@@ -30,6 +31,7 @@ struct RunState {
     std::vector<double> dis;
     std::vector<std::vector<double>> sampled;
     double min_change = 0, origin = 0;
+    std::vector<LaplaceRunState> laplace;   // the semi-analytical paths' histories
 };
 RunState run_state(const System& sys);
 void restore_run_state(System& sys, const RunState& state);

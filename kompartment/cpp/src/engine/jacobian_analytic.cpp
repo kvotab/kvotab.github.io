@@ -19,6 +19,7 @@
 
 #include "engine/farfield.hpp"
 #include "engine/farfield_domain.hpp"
+#include "engine/farfield_semi.hpp"
 #include "engine/lookup.hpp"
 #include "engine/tree.hpp"
 #include "lang/functions.hpp"
@@ -31,7 +32,6 @@ namespace {
 constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double LN10 = 0x1.26bb1bbb55516p+1;   // log(10)
 constexpr double TWO_OVER_SQRT_PI = 1.1283791670955126;
-const char* const FARFIELD_NOT_YET = "The C++ engine does not work out semi-analytical far-field paths yet.";
 
 using Tables = std::vector<std::shared_ptr<LookupTable>>;
 
@@ -838,10 +838,14 @@ SpecialPlan special_plan(const AnalyticPlan& an, const Builder& b, const EntryPt
     const auto& moving = b.slot_class;
     SpecialPlan plan;
     if (a->kind == "farfield") {
-        // A path's release: its weights on the cells it is released from. (A semi-analytical
-        // path's is the gradient its history gives, which this engine does not work out yet.)
+        // A path's release: its weights on the cells it is released from; a semi-analytical
+        // path's, the weight of each source's current inflow times that inflow's gradient.
         const FarfieldPath& F = *b.FARF[static_cast<std::size_t>(a->farf_index)];
-        if (F.laplace) throw NotSupported(FARFIELD_NOT_YET);
+        if (F.laplace) {
+            plan.kind = SpecialPlan::Kind::Laplace;
+            plan.path = a->farf_index;
+            return plan;
+        }
         for (int x : F.setting_slots())
             if (moving[static_cast<std::size_t>(x)] == 2) throw NoDerivative("a far-field path whose settings depend on the state");
         plan.kind = SpecialPlan::Kind::Farfield;
@@ -1317,11 +1321,58 @@ void statement_gradient_walked(Analytic& an, const StatementPlan& plan, const Re
     }
 }
 
+/// The release of a semi-analytical path along the state (`releaseTangent`): the weight of each
+/// source's current inflow times that inflow's gradient.
+void laplace_gradient(Analytic& an, LaplaceFarfPath& F, const Reads& rd) {
+    const std::vector<double>& cur = F.current_weights(rd.t);
+    if (std::all_of(cur.begin(), cur.end(), [](double w) { return w == 0.0; })) return;
+    const AnalyticPlan& P = *an.plan;
+    double* G = an.G.data();
+    const double* y = rd.y;
+    const double* X = rd.X;
+    int n = F.nnuc;
+    const auto& moving = an.sys->builder->slot_class;
+    for (int slot = 0; slot < F.nslots; slot++) {
+        int out = F.release_slots_[static_cast<std::size_t>(slot)];
+        I32 r_out = P.row_of(out);
+        if (r_out < 0) continue;
+        const I32* row_cols = P.row_cols(r_out);
+        std::size_t width = P.row_size(r_out);
+        if (width == 0) continue;
+        auto place = [&](I32 c) { return static_cast<std::size_t>(std::lower_bound(row_cols, row_cols + width, c) - row_cols); };
+        std::vector<double> acc(width, 0.0);
+        int o = slot / n;
+        for (int j = 0; j < n; j++) {
+            double w = cur[static_cast<std::size_t>(slot * n + j)];
+            if (w == 0) continue;
+            for (const auto& [x, d] : F.terms_into[static_cast<std::size_t>(o * n + j)]) {
+                double scale = w;
+                if (d >= 0) {
+                    acc[place(d)] += w * X[x];
+                    scale = w * y[d];
+                }
+                I32 r = P.row_of(x);
+                if (r >= 0 && moving[static_cast<std::size_t>(x)] == 2) {
+                    const I32* cols = P.row_cols(r);
+                    std::size_t count = P.row_size(r);
+                    if (count > 0) {
+                        I32 lo = P.g_ptr[static_cast<std::size_t>(r)];
+                        for (std::size_t q = 0; q < count; q++) acc[place(cols[q])] += scale * G[lo + static_cast<I32>(q)];
+                    }
+                }
+            }
+        }
+        I32 lo = P.g_ptr[static_cast<std::size_t>(r_out)];
+        for (std::size_t q = 0; q < width; q++) G[lo + static_cast<I32>(q)] += acc[q];
+    }
+}
+
 void special_gradient(Analytic& an, const SpecialPlan& plan, const Reads& rd) {
     double* G = an.G.data();
     switch (plan.kind) {
-        case SpecialPlan::Kind::Laplace:    // FARFIELD: the gradient a semi-analytical path's history gives
-            throw NotSupported(FARFIELD_NOT_YET);
+        case SpecialPlan::Kind::Laplace:
+            laplace_gradient(an, static_cast<LaplaceFarfPath&>(*rd.sys->data.FARF[static_cast<std::size_t>(plan.path)]), rd);
+            return;
         case SpecialPlan::Kind::Farfield: {
             // The path refreshed, its release weights added: the system's own path, so that a
             // copy of the system reads its own.

@@ -7,6 +7,7 @@
 #include <numeric>
 
 #include "engine/farfield.hpp"
+#include "engine/farfield_semi.hpp"
 #include "engine/jacobian.hpp"
 #include "util/fastmath.hpp"
 #include "util/jsnum.hpp"
@@ -409,11 +410,14 @@ System::System(std::shared_ptr<const Project> project_, bool with_jacobian) : pr
     lo_t = hi_t = clock_at = NaN;
     for (const auto& r : b.recorders)
         if (r->mem >= 0) remembering.push_back(r);
+    for (std::size_t k = 0; k < data.FARF.size(); k++)
+        if (data.FARF[k]->laplace) laplace.push_back(static_cast<int>(k));
     for (const auto& e : b.event_slots) event_slots.push_back(e.slot);
     sampled_times.assign(b.disruption_layout.size(), {});
     compile_ms = compiled - built;
     build_ms = built - t0;
     evaluate_invariant();
+    if (!laplace.empty()) semi_refusals(b, X);
     if (!with_jacobian) {
         jacobian = std::make_shared<JacobianInfo>();
         jacobian->reason = "not asked for";
@@ -660,7 +664,7 @@ void System::assemble(double* dy, const double* y) {
 // --- recorders, events and jumps ---------------------------------------------------------------------------
 
 void System::prime_recorders(double t0, const std::vector<double>& y0) {
-    if (remembering.empty()) return;
+    if (remembering.empty() && laplace.empty()) return;
     for (Recorder& r : data.MEM) r.prime(t0, 0.0);
     // A seed may read another block that remembers -- the peak of a dose worked out from a
     // delayed volume -- and the pass that works it out reads that block's history before it
@@ -685,16 +689,24 @@ void System::prime_recorders(double t0, const std::vector<double>& y0) {
         if (!moved) break;
         evaluate_algebraic(t0, y0.data());
     }
+    for (int k : laplace) static_cast<LaplaceFarfPath&>(*data.FARF[static_cast<std::size_t>(k)]).prime(t0, y0.data(), X.data());
 }
 
 void System::store_step(double t, const double* y) {
-    if (remembering.empty()) return;
+    if (remembering.empty() && laplace.empty()) return;
     evaluate_algebraic(t, y);
     for (const auto& rec : remembering) {
         const EntryPtr& from = rec->kind == "delay" ? rec->aux_at("target") : rec->entry;
         for (int off = 0; off < rec->width; off++)
             data.MEM[static_cast<std::size_t>(rec->mem + off)].store(t, X[static_cast<std::size_t>(from->base + off)]);
     }
+    for (int k : laplace) static_cast<LaplaceFarfPath&>(*data.FARF[static_cast<std::size_t>(k)]).store(t, y, X.data());
+}
+
+void System::start_segment(double t, const double* y) {
+    if (laplace.empty()) return;
+    evaluate_algebraic(t, y);
+    for (int k : laplace) static_cast<LaplaceFarfPath&>(*data.FARF[static_cast<std::size_t>(k)]).store(t, y, X.data());
 }
 
 void System::event_values(double* out, double t, const double* y) {

@@ -5,6 +5,7 @@
 #include <cstdlib>
 #include <tuple>
 
+#include "engine/farfield_semi.hpp"
 #include "engine/system.hpp"
 #include "model/names.hpp"
 #include "util/jsnum.hpp"
@@ -849,14 +850,34 @@ bool farfield_tangent(FarfTangent& T, FarfPath& F, const double* X, const double
 std::shared_ptr<FarfieldPath> make_farfield_path(Builder& b, const EntryPtr& p, const EntryPtr& rel,
                                                  const std::unordered_map<std::string, int>& setting_base, const std::vector<std::string>& keys) {
     const FarfLayout& farf = *p->farf;
-    if (farf.laplace)
-        throw NotSupported("'" + p->name +
-                           "' is a far-field path worked out semi-analytically, which the C++ engine does not work out yet. Run this model on "
-                           "another engine.");
     std::vector<std::string> single;
     const auto& per_nuclide = farf_nuclide_keys();
     for (const auto& k : keys)
         if (std::find(per_nuclide.begin(), per_nuclide.end(), k) == per_nuclide.end()) single.push_back(k);
+    if (farf.laplace) {
+        // A semi-analytical path's release reads what flows in at the same instant, so it is
+        // worked out after every rate that delivers into the path.
+        auto path_of = [&](const Json& to) -> EntryPtr {
+            if (!to.is_string()) return nullptr;
+            auto it = b.path_by_name.find(to.as_string());
+            return it == b.path_by_name.end() ? nullptr : it->second;
+        };
+        for (const Json& t : b.project->blocks_of("transfers")) {
+            const Json& to = t.get("to");
+            if (js_truthy(to) && !(to.is_string() && b.state_by_name.count(to.as_string())) && path_of(to) == p)
+                rel->needs.push_back(t.get("qname").as_string());
+        }
+        for (const Json& src : b.project->blocks_of("inflows")) {
+            const Json& to = src.get("to");
+            if (!(to.is_string() && b.state_by_name.count(to.as_string())) && path_of(to) == p) rel->needs.push_back(src.get("qname").as_string());
+        }
+        const Json& sim = b.project->simulation;
+        std::optional<std::vector<std::string>> names;
+        if (farf.list_name) names = b.space->index_names(*farf.list_name);
+        return std::make_shared<LaplaceFarfPath>(p->base, farf.nnuc, farf.other_width, farf.dim_off, farf.single_off, setting_base, keys, single,
+                                                 surface_of(p->block), rel->base,
+                                                 sim.get("end_time").as_double() - sim.get("start_time").as_double(), names, p->name);
+    }
     std::string grid = p->block.get("grid") == "matched" ? "matched" : "reference";
     return std::make_shared<FarfPath>(*farf.structure, p->base, farf.nnuc, farf.other_width, farf.dim_off, farf.single_off, setting_base, single,
                                       rel->base, keys, grid, surface_of(p->block), p->name);
@@ -936,10 +957,64 @@ std::vector<Json> farfield_outputs(const System& sys, const Entry& entry) {
 FarfieldWarnings farfield_warnings(const System& sys) {
     FarfieldWarnings out;
     for (const auto& F : sys.data.FARF) {
-        if (const auto* cells = dynamic_cast<const FarfPath*>(F.get()))
+        if (const auto* semi = dynamic_cast<const LaplaceFarfPath*>(F.get())) {
+            for (Json& w : semi->balance_warnings()) out.farfield.push_back(std::move(w));
+        } else if (const auto* cells = dynamic_cast<const FarfPath*>(F.get())) {
             for (Json& w : cells->layer_warnings()) out.layers.push_back(std::move(w));
+        }
     }
     return out;
+}
+
+namespace {
+
+/// What each setting is called in a message: the application's labels as text.
+std::string farf_text(const std::string& key) {
+    static const std::map<std::string, std::string> text = {{"tw", "Tw"},           {"f", "F"},         {"aw", "aw"},       {"aperture", "\u03b4"},
+                                                            {"kd_f", "Kd,f"},       {"kd_m", "Kd,m"},   {"de_m", "De,m"},   {"eps_m", "\u03b5m"},
+                                                            {"rho_m", "\u03c1m"},  {"pe", "Pe"},       {"pen_dep", "PENDEP"}, {"pen_dep_0", "PENDEP0"}};
+    auto it = text.find(key);
+    return it == text.end() ? key : it->second;
+}
+
+/// Julia's `strip`: the white space at either end gone.
+std::string stripped(const std::string& s) {
+    const char* ws = " \t\n\r\v\f";
+    std::size_t a = s.find_first_not_of(ws);
+    if (a == std::string::npos) return "";
+    std::size_t b = s.find_last_not_of(ws);
+    return s.substr(a, b - a + 1);
+}
+
+}  // namespace
+
+void semi_refusals(const Builder& b, const std::vector<double>& X) {
+    for (const auto& p : b.farf_layout) {
+        if (!p->farf->laplace) continue;
+        for (const auto& key : active_equation_keys(p->block)) {
+            auto it = b.alg_by_name.find(p->name + "#" + key);
+            if (it == b.alg_by_name.end() || key == "pen_dep_0") continue;
+            const EntryPtr& slot = it->second;
+            int cls = 0;
+            if (slot->width > 0)
+                for (int k = slot->base; k < slot->base + slot->width; k++) cls = std::max(cls, static_cast<int>(b.slot_class[static_cast<std::size_t>(k)]));
+            if (cls == 0) continue;
+            std::string said = stripped(ff_text(p->block.get(key)));
+            throw BuildError("'" + p->local_name.value_or(p->name) +
+                                 "' is worked out semi-analytically, which solves the path once for the whole run, so its settings have to be "
+                                 "constants -- and " +
+                                 farf_text(key) + " follows the " + (cls == 1 ? "clock" : "state of the model") +
+                                 (said.empty() ? "" : " ('" + said + "')") +
+                                 ". Give it a constant, or work the path out on cells, which reads its settings as they change.",
+                             p->name);
+        }
+        try {
+            auto* F = dynamic_cast<LaplaceFarfPath*>(b.FARF[static_cast<std::size_t>(p->farf_index)].get());
+            if (F) F->prepare(X.data());
+        } catch (const FarfError& e) {
+            throw BuildError("'" + p->local_name.value_or(p->name) + "' cannot be worked out semi-analytically: " + e.what(), p->name);
+        }
+    }
 }
 
 std::string layer_key(const IndexSpace& space, const std::vector<std::string>& dims, int o) {

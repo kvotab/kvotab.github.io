@@ -116,13 +116,14 @@ public:
     double origin = 0.0;
     double lo_t, hi_t, clock_at;
     std::vector<EntryPtr> remembering;
+    std::vector<int> laplace;            // the far-field paths worked out semi-analytically (in data.FARF)
     std::vector<int> event_slots;
     std::shared_ptr<JacobianInfo> jacobian;
     double compile_ms = 0, build_ms = 0;
     std::vector<std::vector<double>> sampled_times;   // per event: the occurrences drawn for this run
 
     bool has_events() const { return !event_slots.empty(); }
-    bool has_store_step() const { return !remembering.empty(); }
+    bool has_store_step() const { return !remembering.empty() || !laplace.empty(); }
 
     /// The distributed points of the lookup tables back into their tables.
     void refresh_tables();
@@ -145,6 +146,8 @@ public:
     void prime_recorders(double t0, const std::vector<double>& y0);
     /// Records a step the solver accepted.
     void store_step(double t, const double* y);
+    /// A segment starts at `t` from `y`: only semi-analytical paths are told.
+    void start_segment(double t, const double* y);
     /// The discrete events' functions at `(t, y)`, into `out`.
     void event_values(double* out, double t, const double* y);
     /// Fires the events `which` (from 0) at `(t, y)`.
