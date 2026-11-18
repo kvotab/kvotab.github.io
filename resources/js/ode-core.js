@@ -941,6 +941,54 @@
   		}
   		this.segStart = Int32Array.from(segStart);
   		this.segBlock = Int32Array.from(segBlock);
+  		// A run of blocks of one state each is solved level by level: first the
+  		// states that wait for no other of the run, then those waiting only for
+  		// these, and so on. Solved in the order the blocks come, a chain of
+  		// compartments is taken link after link, every division waiting for the
+  		// one before; by level it is every chain's first link, then every
+  		// chain's second, steps side by side that the processor works at once.
+  		// The steps of a run are numbered in that order here, and `runOrig`
+  		// keeps the order the blocks came in -- the step now at each place of
+  		// it -- because every sum is still taken in that order (see `solve`).
+  		this.runOrig = new Int32Array(n);
+  		{
+  			const { base, rowOfStep, colOfStep, stepOfRow, runOrig } = this;
+  			const level = new Int32Array(n);
+  			for (let r = 0; r < segBlock.length; r++) {
+  				const g0 = segStart[r], g1 = segStart[r + 1];
+  				if (segBlock[r] >= 0) continue;
+  				let deepest = 0;
+  				for (let g = g0; g < g1; g++) {
+  					const j = colOfStep[g], lv = level[g];
+  					if (lv > deepest) deepest = lv;
+  					for (let f = offPtr[j]; f < offPtr[j + 1]; f++) {
+  						const bi = block[offRow[f]];
+  						if (start[bi + 1] - start[bi] !== 1) continue;
+  						const t = base[bi];
+  						if (t > g && t < g1 && level[t] <= lv) level[t] = lv + 1;
+  					}
+  				}
+  				if (deepest === 0) {
+  					for (let g = g0; g < g1; g++) runOrig[g] = g;
+  					continue;
+  				}
+  				const place = new Int32Array(deepest + 2);
+  				for (let g = g0; g < g1; g++) place[level[g] + 1]++;
+  				for (let l = 0; l <= deepest; l++) place[l + 1] += place[l];
+  				const states = new Int32Array(g1 - g0);
+  				for (let g = g0; g < g1; g++) {
+  					const at = place[level[g]]++;
+  					states[at] = rowOfStep[g];
+  					runOrig[g] = g0 + at;
+  				}
+  				for (let g = g0; g < g1; g++) {
+  					const i = states[g - g0];
+  					base[block[i]] = g;
+  					rowOfStep[g] = colOfStep[g] = i;
+  					stepOfRow[i] = g;
+  				}
+  			}
+  		}
   		this.Lp = new Int32Array(n + 1);
   		this.Up = new Int32Array(n + 1);
   		this.Li = new Int32Array(0);
@@ -954,6 +1002,21 @@
   		this.offRowOf = new Int32Array(noff);	// its row and column, for the weights
   		this.offColOf = new Int32Array(noff);
   		this.offX = new Float64Array(noff);
+  		// The entries between the blocks of a run of blocks of one state, by the
+  		// step that pivots on their row -- what a step of the run waits for, in
+  		// the order the blocks came (`pull`) -- and the entries from a run to
+  		// the segments after it, by the place of their column in that order
+  		// (`push`): the step read or written, where `offX` holds the value, and
+  		// the value itself, copied after every factorisation.
+  		this.pullP = new Int32Array(n + 1);
+  		this.pullStep = new Int32Array(noff);
+  		this.pullAt = new Int32Array(noff);
+  		this.pullX = new Float64Array(noff);
+  		this.pushP = new Int32Array(n + 1);
+  		this.pushStep = new Int32Array(noff);
+  		this.pushAt = new Int32Array(noff);
+  		this.pushX = new Float64Array(noff);
+  		this.npull = 0;
   		this.zs = new Float64Array(n);
   		this.laidOut = -1;		// the blocks' choices the layout was made for (`repivots`)
   		this.valid = false;
@@ -1075,6 +1138,46 @@
   			}
   		}
   		offP[n] = e;
+  		// The runs of blocks of one state: an entry whose row is in the run goes
+  		// to that step's list, the lists filled in the order the blocks came, so
+  		// that a step's sum is taken in the order it always was; the others, to
+  		// the segments after the run, stay with their column.
+  		const { segStart, segBlock, runOrig, pullP, pullStep, pullAt, pushP, pushStep, pushAt } = this;
+  		pullP.fill(0);
+  		for (let r = 0; r < segBlock.length; r++) {
+  			if (segBlock[r] >= 0) continue;
+  			const g1 = segStart[r + 1];
+  			for (let g = segStart[r]; g < g1; g++) {
+  				for (let q = offP[g]; q < offP[g + 1]; q++) if (offStep[q] < g1) pullP[offStep[q] + 1]++;
+  			}
+  		}
+  		for (let g = 0; g < n; g++) pullP[g + 1] += pullP[g];
+  		this.npull = pullP[n];
+  		const next = pullP.slice(0, n);
+  		let np = 0;
+  		for (let r = 0; r < segBlock.length; r++) {
+  			const g0 = segStart[r], g1 = segStart[r + 1];
+  			if (segBlock[r] >= 0) {
+  				for (let g = g0; g < g1; g++) pushP[g] = np;
+  				continue;
+  			}
+  			for (let at = g0; at < g1; at++) {
+  				pushP[at] = np;
+  				const h = runOrig[at];
+  				for (let q = offP[h]; q < offP[h + 1]; q++) {
+  					const t = offStep[q];
+  					if (t < g1) {
+  						const p = next[t]++;
+  						pullStep[p] = h;
+  						pullAt[p] = q;
+  					} else {
+  						pushStep[np] = t;
+  						pushAt[np++] = q;
+  					}
+  				}
+  			}
+  		}
+  		pushP[n] = np;
   	}
 
   	/**
@@ -1100,6 +1203,9 @@
   			if (!Number.isFinite(v)) return false;
   			offX[e] = v;
   		}
+  		const { pullAt, pullX, pushAt, pushX, npull } = this;
+  		for (let p = 0; p < npull; p++) pullX[p] = offX[pullAt[p]];
+  		for (let p = 0, np = this.pushP[this.n]; p < np; p++) pushX[p] = offX[pushAt[p]];
   		return true;
   	}
 
@@ -1120,17 +1226,39 @@
   	 */
   	solve(b, out) {
   		const { n, rowOfStep, colOfStep, Lp, Li, Lx, Up, Ui, Ux, D, offP, offStep, offX, zs, segStart, segBlock } = this;
+  		const { runOrig, pullP, pullStep, pullX, pushP, pushStep, pushX } = this;
   		for (let g = 0; g < n; g++) zs[g] = b[rowOfStep[g]];
   		const x = out ?? new Float64Array(n);
   		for (let r = 0; r < segBlock.length; r++) {
   			const g0 = segStart[r], g1 = segStart[r + 1];
   			if (segBlock[r] < 0) {
+  				// A run of blocks of one state, level by level. A step's
+  				// right-hand side has had the earlier segments' entries taken
+  				// off it already; the run's own are taken off here, in the order
+  				// the blocks came, skipping an unknown that is zero -- the
+  				// operations, and their order, of taking each unknown's column
+  				// off as soon as it is known, so the same numbers to the bit.
   				for (let g = g0; g < g1; g++) {
-  					const xg = zs[g] / D[g];
+  					let acc = zs[g];
+  					for (let p = pullP[g], end = pullP[g + 1]; p < end; p++) {
+  						const xh = zs[pullStep[p]];
+  						if (xh !== 0) acc -= pullX[p] * xh;
+  					}
+  					const xg = acc / D[g];
   					zs[g] = xg;
   					x[colOfStep[g]] = xg;
-  					if (xg === 0) continue;
-  					for (let e = offP[g], end = offP[g + 1]; e < end; e++) zs[offStep[e]] -= offX[e] * xg;
+  				}
+  				// What the run hands the segments after it, in the order the
+  				// blocks came.
+  				if (pushP[g1] > pushP[g0]) {
+  					for (let at = g0; at < g1; at++) {
+  						const end = pushP[at + 1];
+  						let p = pushP[at];
+  						if (p === end) continue;
+  						const xh = zs[runOrig[at]];
+  						if (xh === 0) continue;
+  						for (; p < end; p++) zs[pushStep[p]] -= pushX[p] * xh;
+  					}
   				}
   				continue;
   			}

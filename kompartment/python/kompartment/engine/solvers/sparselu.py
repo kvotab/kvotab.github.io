@@ -162,7 +162,15 @@ BK_T = BlockLUType(fields=(
     ('base', _I), ('row_of_step', _I), ('col_of_step', _I), ('step_of_row', _I), ('seg_start', _I),
     ('seg_block', _I), ('Lp', _I), ('Up', _I), ('Li', _I), ('Lx', _A), ('Ui', _I), ('Ux', _A), ('D', _A),
     ('off_p', _I), ('off_step', _I), ('off_at', _I), ('off_x', _A), ('zs', _A),
-    ('laid_out', _i), ('valid', _i), ('ops', _i), ('limit', _f), ('nnz', _i)))
+    ('laid_out', _i), ('valid', _i), ('ops', _i), ('limit', _f), ('nnz', _i),
+    # A run of blocks of one state each, solved level by level (see bk_new and
+    # bk_solve): the step now at each place of the order the blocks came in; the
+    # entries a step of the run waits for, by step, in that order (pull); and
+    # the entries from a run to the segments after it, by the place of their
+    # column in that order (push) -- the step read or written, where off_x holds
+    # the value, and the value, copied after every factorisation.
+    ('run_orig', _I), ('pull_p', _I), ('pull_step', _I), ('pull_at', _I), ('pull_x', _A),
+    ('push_p', _I), ('push_step', _I), ('push_at', _I), ('push_x', _A), ('npull', _i)))
 
 #: ``iterationMatrix``: J's pattern, the structure of Mass - a*J in CSC
 #: (``makeMiterBuilder``), the Gilbert-Peierls LU and its column order, the
@@ -1408,6 +1416,65 @@ def bk_new(n, colptr, rowidx, nblocks, block):
             nseg += 1
             seg_start[nseg] = g + size
         g += size
+    # A run of blocks of one state each is solved level by level: first the
+    # states that wait for no other of the run, then those waiting only for
+    # these, and so on. Solved in the order the blocks come, a chain of
+    # compartments is taken link after link, every division waiting for the
+    # one before; by level it is every chain's first link, then every chain's
+    # second, steps side by side that the processor works at once. The steps
+    # of a run are numbered in that order here, and run_orig keeps the order
+    # the blocks came in, because every sum is still taken in that order.
+    run_orig = np.zeros(n, np.int64)
+    level = np.zeros(n, np.int64)
+    for r in range(nseg):
+        if seg_block[r] >= 0:
+            continue
+        g0 = seg_start[r]
+        g1 = seg_start[r + 1]
+        deepest = 0
+        for s in range(g0, g1):
+            j = col_of_step[s]
+            lv = level[s]
+            if lv > deepest:
+                deepest = lv
+            for f in range(off_ptr[j], off_ptr[j + 1]):
+                bi = block[off_row[f]]
+                if start[bi + 1] - start[bi] != 1:
+                    continue
+                t = base[bi]
+                if t > s and t < g1 and level[t] <= lv:
+                    level[t] = lv + 1
+        if deepest == 0:
+            for s in range(g0, g1):
+                run_orig[s] = s
+            continue
+        place = np.zeros(deepest + 2, np.int64)
+        for s in range(g0, g1):
+            place[level[s] + 1] += 1
+        for lev in range(deepest + 1):
+            place[lev + 1] += place[lev]
+        states = np.zeros(g1 - g0, np.int64)
+        for s in range(g0, g1):
+            at = place[level[s]]
+            place[level[s]] = at + 1
+            states[at] = row_of_step[s]
+            run_orig[s] = g0 + at
+        for s in range(g0, g1):
+            i = states[s - g0]
+            base[block[i]] = s
+            row_of_step[s] = i
+            col_of_step[s] = i
+            step_of_row[i] = s
+    bk.run_orig = run_orig
+    bk.pull_p = np.zeros(n + 1, np.int64)
+    bk.pull_step = np.zeros(noff, np.int64)
+    bk.pull_at = np.zeros(noff, np.int64)
+    bk.pull_x = np.zeros(noff)
+    bk.push_p = np.zeros(n + 1, np.int64)
+    bk.push_step = np.zeros(noff, np.int64)
+    bk.push_at = np.zeros(noff, np.int64)
+    bk.push_x = np.zeros(noff)
+    bk.npull = 0
     bk.base = base
     bk.row_of_step = row_of_step
     bk.col_of_step = col_of_step
@@ -1520,6 +1587,55 @@ def _bk_layout(bk):
             off_at[e] = off_pos[f]
             e += 1
     off_p[n] = e
+    # The runs of blocks of one state: an entry whose row is in the run goes
+    # to that step's list, the lists filled in the order the blocks came, so
+    # that a step's sum is taken in the order it always was; the others, to the
+    # segments after the run, stay with their column.
+    seg_start = bk.seg_start
+    seg_block = bk.seg_block
+    run_orig = bk.run_orig
+    pull_p = bk.pull_p
+    pull_step = bk.pull_step
+    pull_at = bk.pull_at
+    push_p = bk.push_p
+    push_step = bk.push_step
+    push_at = bk.push_at
+    pull_p[:] = 0
+    for r in range(seg_block.size):
+        if seg_block[r] >= 0:
+            continue
+        g1 = seg_start[r + 1]
+        for g in range(seg_start[r], g1):
+            for q in range(off_p[g], off_p[g + 1]):
+                if off_step[q] < g1:
+                    pull_p[off_step[q] + 1] += 1
+    for g in range(n):
+        pull_p[g + 1] += pull_p[g]
+    bk.npull = pull_p[n]
+    nxt = pull_p[:n].copy()
+    npush = 0
+    for r in range(seg_block.size):
+        g0 = seg_start[r]
+        g1 = seg_start[r + 1]
+        if seg_block[r] >= 0:
+            for g in range(g0, g1):
+                push_p[g] = npush
+            continue
+        for at in range(g0, g1):
+            push_p[at] = npush
+            h = run_orig[at]
+            for q in range(off_p[h], off_p[h + 1]):
+                t = off_step[q]
+                if t < g1:
+                    p = nxt[t]
+                    nxt[t] = p + 1
+                    pull_step[p] = h
+                    pull_at[p] = q
+                else:
+                    push_step[npush] = t
+                    push_at[npush] = q
+                    npush += 1
+    push_p[n] = npush
 
 
 @njit(**_OPTS)
@@ -1563,6 +1679,14 @@ def _bk_values(bk, a, values):
         if not math.isfinite(v):
             return False
         off_x[e] = v
+    pull_at = bk.pull_at
+    pull_x = bk.pull_x
+    for p in range(bk.npull):
+        pull_x[p] = off_x[pull_at[p]]
+    push_at = bk.push_at
+    push_x = bk.push_x
+    for p in range(bk.push_p[bk.n]):
+        push_x[p] = off_x[push_at[p]]
     return True
 
 
@@ -1649,20 +1773,46 @@ def bk_solve(bk, b, out):
     zs = bk.zs
     seg_start = bk.seg_start
     seg_block = bk.seg_block
+    run_orig = bk.run_orig
+    pull_p = bk.pull_p
+    pull_step = bk.pull_step
+    pull_x = bk.pull_x
+    push_p = bk.push_p
+    push_step = bk.push_step
+    push_x = bk.push_x
     for g in range(n):
         zs[g] = b[row_of_step[g]]
     for r in range(seg_block.size):
         g0 = seg_start[r]
         g1 = seg_start[r + 1]
         if seg_block[r] < 0:
+            # A run of blocks of one state, level by level. A step's right-hand
+            # side has had the earlier segments' entries taken off it already;
+            # the run's own are taken off here, in the order the blocks came,
+            # skipping an unknown that is zero -- the operations, and their
+            # order, of taking each unknown's column off as soon as it is known,
+            # so the same numbers to the bit.
             for g in range(g0, g1):
-                xg = zs[g] / D[g]
+                acc = zs[g]
+                for p in range(pull_p[g], pull_p[g + 1]):
+                    xh = zs[pull_step[p]]
+                    if xh != 0:
+                        acc -= pull_x[p] * xh
+                xg = acc / D[g]
                 zs[g] = xg
                 out[col_of_step[g]] = xg
-                if xg == 0:
-                    continue
-                for e in range(off_p[g], off_p[g + 1]):
-                    zs[off_step[e]] -= off_x[e] * xg
+            # What the run hands the segments after it, in the order the blocks came.
+            if push_p[g1] > push_p[g0]:
+                for at in range(g0, g1):
+                    p0 = push_p[at]
+                    p1 = push_p[at + 1]
+                    if p0 == p1:
+                        continue
+                    xh = zs[run_orig[at]]
+                    if xh == 0:
+                        continue
+                    for p in range(p0, p1):
+                        zs[push_step[p]] -= push_x[p] * xh
             continue
         for g in range(g0, g1):
             zg = zs[g]

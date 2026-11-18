@@ -1270,6 +1270,22 @@ mutable struct _SluBK
     ops::Int
     limit::Float64
     nnz::Int
+    # A run of blocks of one state each, solved level by level (see `_slu_bk_new`
+    # and `_slu_bk_solve!`): the step now at each place of the order the blocks
+    # came in; the entries a step of the run waits for, by step, in that order
+    # (`pull`); and the entries from a run to the segments after it, by the place
+    # of their column in that order (`push`) -- the step read or written, where
+    # `off_x` holds the value, and the value, copied after every factorisation.
+    run_orig::Vector{Int}
+    pull_p::Vector{Int}
+    pull_step::Vector{Int}
+    pull_at::Vector{Int}
+    pull_x::Vector{Float64}
+    push_p::Vector{Int}
+    push_step::Vector{Int}
+    push_at::Vector{Int}
+    push_x::Vector{Float64}
+    npull::Int
 end
 
 function _slu_bk_new(n::Int, colptr::Vector{Int}, rowidx::Vector{Int}, nblocks::Int, block::Vector{Int})
@@ -1406,11 +1422,69 @@ function _slu_bk_new(n::Int, colptr::Vector{Int}, rowidx::Vector{Int}, nblocks::
         end
         g += bsize
     end
+    # A run of blocks of one state each is solved level by level: first the
+    # states that wait for no other of the run, then those waiting only for
+    # these, and so on. Solved in the order the blocks come, a chain of
+    # compartments is taken link after link, every division waiting for the one
+    # before; by level it is every chain's first link, then every chain's
+    # second, steps side by side that the processor works at once. The steps of
+    # a run are numbered in that order here, and `run_orig` keeps the order the
+    # blocks came in, because every sum is still taken in that order.
+    run_orig = zeros(Int, n)
+    level = zeros(Int, n)
+    @inbounds for r in 0:nseg-1
+        seg_block[r+1] >= 0 && continue
+        g0 = seg_start[r+1]
+        g1 = seg_start[r+2]
+        deepest = 0
+        for s in g0:g1-1
+            j = col_of_step[s+1]
+            lv = level[s+1]
+            lv > deepest && (deepest = lv)
+            for f in off_ptr[j+1]:off_ptr[j+2]-1
+                bi = block[off_row[f+1]+1]
+                start[bi+2] - start[bi+1] == 1 || continue
+                t = base[bi+1]
+                if t > s && t < g1 && level[t+1] <= lv
+                    level[t+1] = lv + 1
+                end
+            end
+        end
+        if deepest == 0
+            for s in g0:g1-1
+                run_orig[s+1] = s
+            end
+            continue
+        end
+        place = zeros(Int, deepest + 2)
+        for s in g0:g1-1
+            place[level[s+1]+2] += 1
+        end
+        for l in 0:deepest
+            place[l+2] += place[l+1]
+        end
+        states = zeros(Int, g1 - g0)
+        for s in g0:g1-1
+            at = place[level[s+1]+1]
+            place[level[s+1]+1] = at + 1
+            states[at+1] = row_of_step[s+1]
+            run_orig[s+1] = g0 + at
+        end
+        for s in g0:g1-1
+            i = states[s-g0+1]
+            base[block[i+1]+1] = s
+            row_of_step[s+1] = i
+            col_of_step[s+1] = i
+            step_of_row[i+1] = s
+        end
+    end
     return _SluBK(n, nblocks, start, member, off_ptr, off_row, off_pos, diag_pos, lu_of, lus, pos_ptr, pos,
                   zeros(most_entries), zeros(most), base, row_of_step, col_of_step, step_of_row,
                   seg_start[1:nseg+1], seg_block[1:nseg], zeros(Int, n + 1), zeros(Int, n + 1), Int[], Float64[],
                   Int[], Float64[], zeros(n), zeros(Int, n + 1), zeros(Int, noff), zeros(Int, noff), zeros(noff),
-                  zeros(n), -1, false, 0, Inf, 0)
+                  zeros(n), -1, false, 0, Inf, 0,
+                  run_orig, zeros(Int, n + 1), zeros(Int, noff), zeros(Int, noff), zeros(noff),
+                  zeros(Int, n + 1), zeros(Int, noff), zeros(Int, noff), zeros(noff), 0)
 end
 
 """Times a block's pivots were chosen again, over every block."""
@@ -1507,6 +1581,64 @@ function _slu_bk_layout!(bk::_SluBK)
         end
     end
     off_p[n+1] = e
+    # The runs of blocks of one state: an entry whose row is in the run goes to
+    # that step's list, the lists filled in the order the blocks came, so that a
+    # step's sum is taken in the order it always was; the others, to the segments
+    # after the run, stay with their column.
+    seg_start = bk.seg_start
+    seg_block = bk.seg_block
+    run_orig = bk.run_orig
+    pull_p = bk.pull_p
+    pull_step = bk.pull_step
+    pull_at = bk.pull_at
+    push_p = bk.push_p
+    push_step = bk.push_step
+    push_at = bk.push_at
+    fill!(pull_p, 0)
+    @inbounds for r in 0:length(seg_block)-1
+        seg_block[r+1] >= 0 && continue
+        g1 = seg_start[r+2]
+        for g in seg_start[r+1]:g1-1
+            for q in off_p[g+1]:off_p[g+2]-1
+                t = off_step[q+1]
+                t < g1 && (pull_p[t+2] += 1)
+            end
+        end
+    end
+    @inbounds for g in 0:n-1
+        pull_p[g+2] += pull_p[g+1]
+    end
+    bk.npull = pull_p[n+1]
+    next = pull_p[1:n]
+    np = 0
+    @inbounds for r in 0:length(seg_block)-1
+        g0 = seg_start[r+1]
+        g1 = seg_start[r+2]
+        if seg_block[r+1] >= 0
+            for g in g0:g1-1
+                push_p[g+1] = np
+            end
+            continue
+        end
+        for at in g0:g1-1
+            push_p[at+1] = np
+            h = run_orig[at+1]
+            for q in off_p[h+1]:off_p[h+2]-1
+                t = off_step[q+1]
+                if t < g1
+                    p = next[t+1]
+                    next[t+1] = p + 1
+                    pull_step[p+1] = h
+                    pull_at[p+1] = q
+                else
+                    push_step[np+1] = t
+                    push_at[np+1] = q
+                    np += 1
+                end
+            end
+        end
+    end
+    push_p[n+1] = np
     return bk
 end
 
@@ -1551,6 +1683,16 @@ function _slu_bk_values!(bk::_SluBK, a::Float64, values::Vector{Float64})::Bool
         v = -a * values[off_at[e+1]+1]
         isfinite(v) || return false
         off_x[e+1] = v
+    end
+    pull_at = bk.pull_at
+    pull_x = bk.pull_x
+    @inbounds for p in 1:bk.npull
+        pull_x[p] = off_x[pull_at[p]+1]
+    end
+    push_at = bk.push_at
+    push_x = bk.push_x
+    @inbounds for p in 1:bk.push_p[bk.n+1]
+        push_x[p] = off_x[push_at[p]+1]
     end
     return true
 end
@@ -1637,6 +1779,13 @@ function _slu_bk_solve!(bk::_SluBK, b::Vector{Float64}, out::Vector{Float64})
     zs = bk.zs
     seg_start = bk.seg_start
     seg_block = bk.seg_block
+    run_orig = bk.run_orig
+    pull_p = bk.pull_p
+    pull_step = bk.pull_step
+    pull_x = bk.pull_x
+    push_p = bk.push_p
+    push_step = bk.push_step
+    push_x = bk.push_x
     @inbounds begin
         for g in 0:n-1
             zs[g+1] = b[row_of_step[g+1]+1]
@@ -1645,13 +1794,35 @@ function _slu_bk_solve!(bk::_SluBK, b::Vector{Float64}, out::Vector{Float64})
             g0 = seg_start[r+1]
             g1 = seg_start[r+2]
             if seg_block[r+1] < 0
+                # A run of blocks of one state, level by level. A step's
+                # right-hand side has had the earlier segments' entries taken off
+                # it already; the run's own are taken off here, in the order the
+                # blocks came, skipping an unknown that is zero -- the operations,
+                # and their order, of taking each unknown's column off as soon as
+                # it is known, so the same numbers to the bit.
                 for g in g0:g1-1
-                    xg = zs[g+1] / D[g+1]
+                    acc = zs[g+1]
+                    for p in pull_p[g+1]+1:pull_p[g+2]
+                        xh = zs[pull_step[p]+1]
+                        if xh != 0
+                            acc -= pull_x[p] * xh
+                        end
+                    end
+                    xg = acc / D[g+1]
                     zs[g+1] = xg
                     out[col_of_step[g+1]+1] = xg
-                    xg == 0 && continue
-                    for e in off_p[g+1]:off_p[g+2]-1
-                        zs[off_step[e+1]+1] -= off_x[e+1] * xg
+                end
+                # What the run hands the segments after it, in the order the blocks came.
+                if push_p[g1+1] > push_p[g0+1]
+                    for at in g0:g1-1
+                        p0 = push_p[at+1]
+                        p1 = push_p[at+2]
+                        p0 == p1 && continue
+                        xh = zs[run_orig[at+1]+1]
+                        xh == 0 && continue
+                        for p in p0+1:p1
+                            zs[push_step[p]+1] -= push_x[p] * xh
+                        end
                     end
                 end
                 continue
