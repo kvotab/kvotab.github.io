@@ -63,8 +63,12 @@ const BINARY_PRECEDENCE = Dict("||" => 1, "&&" => 2, "==" => 3, "~=" => 3, "<" =
                                ">=" => 4, "+" => 5, "-" => 5, "*" => 6, "/" => 6)
 const POWER_PRECEDENCE = 8
 
-"""JavaScript's reading of a number token (`Number("1e-5")`)."""
-_number_text(text::AbstractString) = parse(Float64, text)
+"""JavaScript's reading of a number token (`Number("1e-5")`): past the range of a double
+it is Infinity (`1e400`), which Julia's own parser refuses."""
+function _number_text(text::AbstractString)
+    v = tryparse(Float64, text)
+    return v === nothing ? Float64(parse(BigFloat, text)) : v
+end
 
 mutable struct _Parser
     tokens::Vector{Token}
