@@ -16713,8 +16713,9 @@ ${charts.length ? `<script>\n${charts.map((ch, i) => `Plotly.newPlot('chart${i}'
   const SF_SCRIPTS = [['SFData', 'resources/js/sf-data.js?v=20260925'], ['SFModel', 'resources/js/sf-model.js?v=20261114a'],
     ['RtmSfPhreeqc', 'resources/js/rtm-sf-phreeqc.js?v=20261114c']];
   const SF_TABLE = "Simple Functions' reference waters (TR-10-61)";
-  /** SimpleFunctions.html's file writer, for a batch's CSOL file. */
-  const SF_IO_SRC = 'resources/js/sf-io.js?v=20261114a';
+  /** SimpleFunctions.html's file reader and writer, for a batch's MATLAB or HDF5 reference and its CSOL file: at the
+      stamp SimpleFunctions.html loads it with, as SFData's and SFModel's are, so that a new copy reaches both pages. */
+  const SF_IO_SRC = 'resources/js/sf-io.js?v=20261117a';
   /** The elements SR-Site's and the PSAR's CSOL files gave no solubility limit, 1e17 in every realisation. */
   const CSOL_UNLIMITED = ['Ac', 'C', 'Ca', 'Cd', 'Cl', 'Cs', 'Eu', 'H', 'I', 'Mo', 'Rn'];
   /** What each column the Simple Functions read holds, in words. */
