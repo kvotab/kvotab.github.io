@@ -254,6 +254,18 @@ class DifferenceTable {
 	/** The order-k predictor, sum_{j=0..k} ∇^j y_n. */
 	predict(k, out) {
 		const c = this.cols;
+		const n = out.length;
+		// One pass over the states for the orders the formulas have, each sum
+		// taken in the order a pass per difference takes it.
+		const c0 = c[0], c1 = c[1], c2 = c[2], c3 = c[3], c4 = c[4], c5 = c[5];
+		switch (k) {
+		case 1: for (let i = 0; i < n; i++) out[i] = c0[i] + c1[i]; return out;
+		case 2: for (let i = 0; i < n; i++) out[i] = c0[i] + c1[i] + c2[i]; return out;
+		case 3: for (let i = 0; i < n; i++) out[i] = c0[i] + c1[i] + c2[i] + c3[i]; return out;
+		case 4: for (let i = 0; i < n; i++) out[i] = c0[i] + c1[i] + c2[i] + c3[i] + c4[i]; return out;
+		case 5: for (let i = 0; i < n; i++) out[i] = c0[i] + c1[i] + c2[i] + c3[i] + c4[i] + c5[i]; return out;
+		default:
+		}
 		out.set(c[0]);
 		for (let j = 1; j <= k; j++) {
 			const col = c[j];
@@ -270,6 +282,19 @@ class DifferenceTable {
 	 */
 	history(k, out) {
 		const c = this.cols;
+		const n = out.length;
+		// One pass, as in `predict`; the sum starts from 0, as a pass per
+		// difference starts it, which is what makes a first term of -0 a +0.
+		const c1 = c[1], c2 = c[2], c3 = c[3], c4 = c[4], c5 = c[5];
+		const g1 = GAMMA[0], g2 = GAMMA[1], g3 = GAMMA[2], g4 = GAMMA[3], g5 = GAMMA[4];
+		switch (k) {
+		case 1: for (let i = 0; i < n; i++) out[i] = 0 + g1 * c1[i]; return out;
+		case 2: for (let i = 0; i < n; i++) out[i] = 0 + g1 * c1[i] + g2 * c2[i]; return out;
+		case 3: for (let i = 0; i < n; i++) out[i] = 0 + g1 * c1[i] + g2 * c2[i] + g3 * c3[i]; return out;
+		case 4: for (let i = 0; i < n; i++) out[i] = 0 + g1 * c1[i] + g2 * c2[i] + g3 * c3[i] + g4 * c4[i]; return out;
+		case 5: for (let i = 0; i < n; i++) out[i] = 0 + g1 * c1[i] + g2 * c2[i] + g3 * c3[i] + g4 * c4[i] + g5 * c5[i]; return out;
+		default:
+		}
 		out.fill(0);
 		for (let j = 1; j <= k; j++) {
 			const col = c[j];
@@ -289,6 +314,30 @@ class DifferenceTable {
 		const c = this.cols;
 		const top = c[k + 1];
 		const above = c[k + 2];
+		if (k >= 1 && k <= 5) {
+			// One pass: a state's differences from the highest down, each the
+			// one above it added, as a pass per difference adds them.
+			const n = d.length;
+			const c0 = c[0], c1 = c[1], c2 = c[2], c3 = c[3], c4 = c[4], c5 = c[5];
+			for (let i = 0; i < n; i++) {
+				let v = d[i];
+				above[i] = v - top[i];
+				top[i] = v;
+				switch (k) {
+				case 5: v = c5[i] + v; c5[i] = v;
+				// falls through
+				case 4: v = c4[i] + v; c4[i] = v;
+				// falls through
+				case 3: v = c3[i] + v; c3[i] = v;
+				// falls through
+				case 2: v = c2[i] + v; c2[i] = v;
+				// falls through
+				default: v = c1[i] + v; c1[i] = v;
+				}
+				c0[i] += v;
+			}
+			return;
+		}
 		for (let i = 0; i < d.length; i++) {
 			above[i] = d[i] - top[i];
 			top[i] = d[i];
