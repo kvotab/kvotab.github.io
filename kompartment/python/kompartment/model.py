@@ -3465,7 +3465,10 @@ class Model:
             if is_within(system_of(b), path):
                 moved[qualified_name(b)] = qualify(reparent(system_of(b), path, target), b.get('name', ''))
         self._retarget_all(moved.get, lambda s, blk: reparent(s, path, target), moved.values())
-        self._retarget_layout(moved.get,
+        # The sub-systems inside it go along as well: each has a layout entry of its own,
+        # keyed by its path (its node on the diagram, its place on the transfer grid).
+        inside = {p for p in self.systems if p != path and is_within(p, path)}
+        self._retarget_layout(lambda q: moved.get(q) or (reparent(q, path, target) if q in inside else None),
                               lambda canvas: reparent(canvas, path, target) if is_within(canvas, path) else canvas)
         systems_before = self.systems
         for b in self._all_raw():

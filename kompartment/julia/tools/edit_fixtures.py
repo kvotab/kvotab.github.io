@@ -1475,8 +1475,26 @@ def case_check_shapes():
     return c
 
 
+def case_nested_layout():
+    """A sub-system renamed or moved takes along the layout entries of the sub-systems nested in it:
+    their nodes on the diagram and their places on the transfer grid."""
+    data = {'name': 'NestedLayout', 'systems': ['A', 'A.B', 'A.B.C', 'Y'],
+            'compartments': [{'name': 'X', 'system': 'A.B', 'initial': '1'},
+                             {'name': 'Z', 'system': 'A.B.C', 'initial': '0'},
+                             {'name': 'W', 'system': 'Y', 'initial': '0'}],
+            'layout': {'A': {'x': 1, 'y': 2, 'matrix': 1}, 'A.B': {'x': 3, 'y': 4, 'matrix': 0},
+                       'A.B.C': {'x': 5, 'y': 6}, 'A.B.X': {'x': 7, 'y': 8, 'matrix': 1},
+                       'Y': {'x': 9, 'y': 9, 'matrix': 0}}}
+    c = Case('nested-layout', data=data)
+    c.m('rename_system', 'A', 'Q').mget('layout')
+    c.m('move_system', 'Q', 'Y').mget('layout').mget('systems')
+    c.m('move_system', 'Y.Q.B', '').mget('layout')
+    c.m('rename_system', 'B', 'R').mget('layout').mget('systems')
+    return c
+
+
 MADE_UP += [case_elements, case_raw_edits, case_layout_edges, case_numbering, case_reduction_entries,
-            case_more_connections, case_check_shapes]
+            case_more_connections, case_check_shapes, case_nested_layout]
 
 
 # --- the bundled examples ------------------------------------------------------------------------------------------

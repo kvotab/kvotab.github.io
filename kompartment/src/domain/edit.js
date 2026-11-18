@@ -5248,7 +5248,14 @@ function relocateSystem(project, path, target) {
 	retargetAll(project, (n) => moved.get(n) ?? null,
 		(system) => reparent(system, path, target),
 		new Set(moved.values()));
-	retargetLayoutAll(project, (n) => moved.get(n) ?? null,
+	// The sub-systems inside it go along as well: each has a layout entry of
+	// its own, keyed by its path -- its node on the canvas it is drawn on, its
+	// place on the transfer grid. Followed for the blocks alone, those were
+	// left under paths that no longer exist, and the next prune threw them
+	// away: renaming a sub-system re-placed every node nested in it.
+	const inside = new Set(before.filter((p) => p !== path && isWithin(p, path)));
+	retargetLayoutAll(project,
+		(n) => moved.get(n) ?? (inside.has(n) ? reparent(n, path, target) : null),
 		(canvas) => (isWithin(canvas, path) ? reparent(canvas, path, target) : canvas));
 
 	for (const b of allBlocksLive(project)) {
@@ -5800,6 +5807,14 @@ export function copySelection(project, names) {
 			...structuredClone(sh),
 			rel: below(sh.system ?? '', path),
 		})),
+		// The nodes of the sub-systems nested in it, by their path relative to
+		// it: each is drawn on the canvas of the one around it, in its own
+		// coordinates, as a block is, and holds its place on the transfer
+		// grid among the others there. Left out, every one of them landed
+		// unplaced and was laid out again.
+		inner: systems(project)
+			.filter((p) => p !== path && isWithin(p, path) && ownEntry(project, p))
+			.map((p) => [below(p, path), structuredClone(ownEntry(project, p))]),
 	}));
 	const partOf = (system) => parts.findIndex((p) => isWithin(system, p.path));
 	const within = allBlocks(project)
@@ -6176,6 +6191,14 @@ export function pasteBlocks(project, payload, { system = null, at = null } = {})
 			delete project.layout[roots[i]][MATRIX_PLACE];
 		} else if (spot) {
 			project.layout[roots[i]] = { x: Math.round(spot.x), y: Math.round(spot.y) };
+		}
+		// The sub-systems nested in it land as they were: on canvases of the
+		// copy's own, which the offset does not touch. A clipboard is text
+		// another tab wrote, so only a sub-system this paste makes is placed.
+		for (const item of Array.isArray(part.inner) ? part.inner : []) {
+			const [rel, node] = Array.isArray(item) ? item : [];
+			if (!rel || !(part.subs ?? []).includes(rel) || !node || typeof node !== 'object') continue;
+			project.layout[under(roots[i], rel)] = { ...node };
 		}
 	});
 	for (const c of clones) {

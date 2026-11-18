@@ -417,6 +417,29 @@ class EditingAModel(unittest.TestCase):
                 self.assertEqual(len(systems), len(set(systems)), systems)
                 self.assertEqual(differences(m.to_dict(), js['model']), [])
 
+    def test_a_sub_system_renamed_or_moved_takes_the_layout_of_those_inside_it(self):
+        # A nested sub-system's layout entry -- its node on the diagram, its place on the
+        # transfer grid -- is keyed by its path, and goes where the path goes.
+        base = {'name': 'Nested', 'systems': ['Outer', 'Outer.Inner', 'Outer.Inner.Deep', 'Y'],
+                'compartments': [{'name': 'A', 'system': 'Outer.Inner', 'initial': '1'},
+                                 {'name': 'D', 'system': 'Outer.Inner.Deep', 'initial': '0'},
+                                 {'name': 'B', 'system': 'Y', 'initial': '0'}],
+                'layout': {'Outer': {'x': 1, 'y': 2, 'matrix': 1}, 'Outer.Inner': {'x': 3, 'y': 4, 'matrix': 0},
+                           'Outer.Inner.Deep': {'x': 5, 'y': 6}, 'Outer.Inner.A': {'x': 7, 'y': 8, 'matrix': 1},
+                           'Y': {'x': 9, 'y': 10, 'matrix': 0}}}
+        for what, ops, edit, inner in [
+                ('rename', [['renameSystem', 'Outer', 'Top']], lambda m: m.rename_system('Outer', 'Top'), 'Top.Inner'),
+                ('move', [['moveSystem', 'Outer', 'Y']], lambda m: m.move_system('Outer', 'Y'), 'Y.Outer.Inner')]:
+            with self.subTest(edit=what):
+                js = app('edit', model=base, ops=ops)
+                self.assertNotIn('error', js)
+                m = kp.Model(base)
+                edit(m)
+                layout = js['model']['layout']
+                self.assertEqual(layout.get(inner), {'x': 3, 'y': 4, 'matrix': 0}, layout)
+                self.assertEqual(layout.get(inner + '.Deep'), {'x': 5, 'y': 6}, layout)
+                self.assertEqual(differences(m.to_dict(), js['model']), [])
+
 
 @needs_app
 class TheSameArithmetic(unittest.TestCase):

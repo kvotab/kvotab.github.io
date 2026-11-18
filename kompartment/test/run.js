@@ -32316,7 +32316,7 @@ test('a block or a sub-system can be put anywhere among its neighbours on the gr
 
 	// The model's own order back, inside one sub-system -- its own place
 	// among its neighbours is theirs, and stays -- or everywhere.
-	assert(ed.hasMatrixOrder(raw, 'Near') && ed.clearMatrixOrder(raw, 'Near') >= 2, 'the places inside were not forgotten');
+	assert(ed.hasMatrixOrder(raw, 'Near') && ed.clearMatrixOrder(raw, 'Near') === 3, 'the places inside were not forgotten');
 	assert(ed.matrixOrder(raw, 'Near').join() === 'Near.Water,Near.Buffer,Near.Inner' && ed.matrixOrder(raw)[0] === 'Near',
 		`${ed.matrixOrder(raw, 'Near').join()} / ${ed.matrixOrder(raw).join()}`);
 	assert(!ed.hasMatrixOrder(raw, 'Near') && ed.hasMatrixOrder(raw), 'what was cleared is still arranged');
@@ -32382,6 +32382,46 @@ test('the diagram’s auto-layout keeps the grid’s order, and a copy or a move
 	g._moveInto(['A1'], 'B');
 	assert(ed.matrixOrder(raw, 'B').join() === 'B.V,B.U,B.Q,B.A1' && ed.matrixOrder(raw, 'B.A1').join() === 'B.A1.Y,B.A1.X',
 		`${ed.matrixOrder(raw, 'B').join()} / ${ed.matrixOrder(raw, 'B.A1').join()}`);
+});
+
+test('a sub-system renamed, moved or copied takes the layout of the sub-systems inside it along', () => {
+	// Each sub-system nested in another has a layout entry of its own, keyed
+	// by its path: its node on the canvas of the one around it, and its place
+	// on the transfer grid. Renaming or moving the outer one followed only its
+	// blocks, and a copy carried only its own node, so every nested node came
+	// out unplaced and was laid out again.
+	const raw = {
+		name: 'nested', systems: ['NF', 'NF.Inner', 'NF.Inner.Deep', 'FF'],
+		compartments: [
+			{ name: 'W', system: 'NF', initial: 0 }, { name: 'D', system: 'NF.Inner', initial: 0 },
+			{ name: 'E', system: 'NF.Inner.Deep', initial: 0 }, { name: 'G', system: 'FF', initial: 0 },
+		],
+		transfers: [], inflows: [],
+	};
+	ed.autoLayout(raw);
+	raw.layout['NF.Inner'] = { x: 333, y: 444, matrix: 0 };
+	raw.layout['NF.Inner.Deep'] = { x: 55, y: 66 };
+	const kept = (inner, deep) => {
+		ed.pruneLayout(raw);
+		return JSON.stringify([raw.layout[inner], raw.layout[deep]])
+			=== JSON.stringify([{ x: 333, y: 444, matrix: 0 }, { x: 55, y: 66 }]);
+	};
+	ed.renameSystem(raw, 'NF', 'Near');
+	assert(kept('Near.Inner', 'Near.Inner.Deep'), `renamed: ${JSON.stringify(raw.layout)}`);
+	ed.moveSystem(raw, 'Near', 'FF');
+	assert(kept('FF.Near.Inner', 'FF.Near.Inner.Deep'), `moved: ${JSON.stringify(raw.layout)}`);
+	// So the grid still draws Inner where it was put, inside its parent.
+	assert(ed.matrixOrder(raw, 'FF.Near').join() === 'FF.Near.Inner,FF.Near.W', ed.matrixOrder(raw, 'FF.Near').join());
+	// A copy lands with its nested nodes as they were, on canvases of its own.
+	ed.pasteBlocks(raw, ed.copySystem(raw, 'FF.Near'), {});
+	assert(kept('FF.Near1.Inner', 'FF.Near1.Inner.Deep'), `copied: ${JSON.stringify(raw.layout)}`);
+	// A clipboard is text another tab wrote: what is not a node of a
+	// sub-system the paste makes places nothing.
+	const payload = ed.copySystem(raw, 'FF.Near');
+	payload.parts[0].inner = [['Inner', 5], 7, ['Nowhere', { x: 1, y: 1 }], 'x'];
+	ed.pasteBlocks(raw, payload, {});
+	ed.pruneLayout(raw);
+	assert(raw.layout['FF.Near2.Inner'] === undefined && !('FF.Near2.Nowhere' in raw.layout), JSON.stringify(raw.layout));
 });
 
 

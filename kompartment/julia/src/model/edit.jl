@@ -2456,7 +2456,10 @@ function _ed_relocate_system!(m::Model, path, target)
             (moved[qualified_name(b)] = qualify(_ed_reparent(system_of(b), path, target), get(b, "name", "")))
     end
     _ed_retarget_all!(m, q -> get(moved, q, nothing), (s, blk) -> _ed_reparent(s, path, target), collect(values(moved)))
-    _ed_retarget_layout!(m, q -> get(moved, q, nothing),
+    # The sub-systems inside it go along as well: each has a layout entry of its own,
+    # keyed by its path (its node on the diagram, its place on the transfer grid).
+    inside = Set(p for p in systems(m) if p != path && is_within(p, path))
+    _ed_retarget_layout!(m, q -> haskey(moved, q) ? moved[q] : (q in inside ? _ed_reparent(q, path, target) : nothing),
                          canvas -> is_within(canvas, path) ? _ed_reparent(canvas, path, target) : canvas)
     systems_before = systems(m)
     for b in _ed_all_raw(m)

@@ -167,6 +167,19 @@ end
             @test m.simulation.output_series[1].points == want
         end
     end
+
+    @testset "a sub-system renamed or moved takes the layout of those nested in it along" begin
+        # Each nested sub-system has a layout entry of its own, keyed by its path -- its node on the
+        # diagram, its place on the transfer grid -- and it goes where the path goes.
+        m = K.Model(K.parse_json("""{"name": "Nested", "systems": ["A", "A.B", "A.B.C", "Y"],
+            "compartments": [{"name": "X", "system": "A.B", "initial": "1"}],
+            "layout": {"A.B": {"x": 3, "y": 4, "matrix": 0}, "A.B.C": {"x": 5, "y": 6}}}"""))
+        entry(name) = K.json_text(get(K.layout(m), name, nothing); indent=0)
+        @test K.rename_system!(m, "A", "Q") == "Q"
+        @test entry("Q.B") == """{"x":3,"y":4,"matrix":0}""" && entry("Q.B.C") == """{"x":5,"y":6}"""
+        @test K.move_system!(m, "Q", "Y") == "Y.Q"
+        @test entry("Y.Q.B") == """{"x":3,"y":4,"matrix":0}""" && entry("Y.Q.B.C") == """{"x":5,"y":6}"""
+    end
 end
 
 # --- the Python package's edits, replayed -----------------------------------------------------------------
