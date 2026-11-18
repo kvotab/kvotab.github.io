@@ -3272,7 +3272,10 @@ class Model:
             raise
         return moved
 
-    def _guard_transport_parts(self, going: Set[str]) -> None:
+    def _guard_transport_parts(self, going: Dict[str, None]) -> None:
+        # In the order the names were given, as the application walks them: a set's order
+        # follows the string hashes, which change from one process to the next, and a
+        # refusal over two parts named either of them by chance.
         for name in going:
             hit = self._find(name)
             if hit is None:
@@ -3310,7 +3313,7 @@ class Model:
                 if s.get('to') == n:
                     going.setdefault(qualified_name(s))
         gone = set(going)
-        self._guard_transport_parts(gone)
+        self._guard_transport_parts(going)
         graph = self.references_graph()
         blocked: Dict[str, List[str]] = {}
         for referrer, targets in graph.items():

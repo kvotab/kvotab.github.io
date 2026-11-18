@@ -311,6 +311,18 @@ class Building(unittest.TestCase):
         self.assertFalse(m['Nearfield.Soil'].effectively_enabled)
         self.assertEqual(m.check(), [])
 
+    def test_a_refusal_over_several_transport_parts_names_the_first_given(self):
+        # In the order given, as the application names it. A set's order follows the string
+        # hashes, which change from one process to the next, so the part named changed too.
+        from itertools import permutations
+        for order in permutations(['Begin', 'End', 'N']):
+            m = two_boxes()
+            m.add_transport('Tube')
+            with self.assertRaises(kp.EditError) as caught:
+                m.delete_blocks([f'Tube.{part}' for part in order])
+            self.assertTrue(str(caught.exception).startswith(f"'{order[0]}' is the transport"),
+                            (order, str(caught.exception)))
+
     def test_follows_availability_operands(self):
         # The application's own rename misses these; this package does not.
         m = two_boxes()
