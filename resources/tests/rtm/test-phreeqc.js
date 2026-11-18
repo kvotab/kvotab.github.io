@@ -3038,6 +3038,52 @@ function againstLlnl(engine) {
 }
 
 /* ======================================================================
+   THE WATER'S OWN ISOTOPES: species given -activity_water, which PHREEQC
+   counts as water (an isotope database's HDO, D2O), refused with the
+   coefficients following the ionic strength; fixed at the water, the
+   model starts on PHREEQC's
+   ====================================================================== */
+function againstWaterIsotopes(engine) {
+  // A heavy hydrogen of the tests' own, defined in the input: its two forms of water given -activity_water.
+  const defs = 'SOLUTION_MASTER_SPECIES\n D   D2O   0   D   2.014\nSOLUTION_SPECIES\n D2O = D2O\n  -activity_water\n'
+    + '  log_k 0\n 0.5 H2O + 0.5 D2O = HDO\n  -activity_water\n  log_k 0.25\n';
+  const water = `${KNOBS}${defs}SOLUTION 1\n temp 25\n units mol/kgw\n pH 7.2\n Na 0.1\n Cl 0.1 charge\n D 0.03\nEND\n`;
+  const handOff = (db, activity) => {
+    engine.load(db.text);
+    return P.waterToModel({ engine, database: db, water: { name: 'heavy', text: water }, activity, exact: true,
+      redox: false, floor: 1e-30 });
+  };
+  // (PHREEQC's own SIT model does not converge on such a water: its error comes first there.)
+  let dh = '';
+  try { handOff(database, true); } catch (e) { dh = e.message; }
+  check('the water\'s own isotopes: a water with species given -activity_water, which PHREEQC counts as water, is not '
+    + 'written with the coefficients following the ionic strength, and says why',
+  /^(HDO, D2O|D2O, HDO) are given -activity_water: PHREEQC counts them as water/.test(dh)
+    && /fixed at this water instead\.$/.test(dh), dh);
+
+  // Fixed at the water: PHREEQC's own coefficient, a(H2O) times 0.018, folded into each log K; the start PHREEQC's.
+  const res = handOff(database, false);
+  const m = RtmModel.compile(res.text);
+  const y = m.toConcentrations(m.initialState());
+  let start = 0;
+  let at = '';
+  for (const [p, n] of res.names) {
+    const want = res.molal.get(p);
+    if (!(want > 1e-25)) continue;
+    const d = Math.abs(y[m.speciesNames.indexOf(n)] / want - 1);
+    if (d > start) { start = d; at = n; }
+  }
+  const lgOf = (sp) => res.water.species.get(sp)[1];
+  const asWater = Math.max(...['HDO', 'D2O'].map((sp) => Math.abs(lgOf(sp) - Math.log10(0.018 * res.water.aw))));
+  check('  fixed at the water, the model written from it starts on PHREEQC\'s water, HDO and D2O with the rest, to the ten '
+    + 'decimals of each log K; PHREEQC\'s coefficient of each a(H2O) times 0.018', start < 1e-9 && asWater < 1e-12
+    && res.names.has('HDO')
+    && res.names.has('D2O') && /^HDO\s/m.test(res.text),
+  `the start within ${start.toExponential(1)} (${at}); log gamma of HDO and D2O against log(0.018 a(H2O)) `
+    + `${asWater.toExponential(1)}`);
+}
+
+/* ======================================================================
    MOLAR VOLUMES, log K at the pressure: PHREEQC's -Vm read, each species'
    volume against PHREEQC's VM(), waters at 100 to 500 atm and at 150 C on
    the vapour pressure handed off, the relations at PHREEQC's water after
@@ -7218,6 +7264,8 @@ async function againstPathHandOff(engine, createPhreeqc) {
   againstWaterActivity(wasm);
   console.log('\n--- LLNL: the reading, the coefficients, the hand-off, the PHREEQC tab, llnl.dat ---');
   againstLlnl(wasm);
+  console.log('\n--- the water\'s own isotopes: -activity_water refused following the ionic strength, carried fixed ---');
+  againstWaterIsotopes(wasm);
   console.log('\n--- molar volumes: log K at the pressure, VM(), the hand-off at 100 to 500 atm, REACTION, the PHREEQC tab ---');
   againstVolumes(wasm);
   console.log('\n--- sites that go with a phase: the hand-off, salt against REACTION ---');

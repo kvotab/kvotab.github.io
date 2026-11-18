@@ -4965,10 +4965,29 @@
       e.logk = sum(e.right, 'follow') - sum(e.left, 'follow') + nw * logAw;
     }
     // With activities: each species' -gamma, and a charge where a new name
-    // would read differently; and the species whose activity PHREEQC works
-    // out in a way this page does not.
+    // would read differently.
     // (Under SIT every solute has SIT's coefficient, whatever its line says.)
-    const unsupported = follow && !sitLike ? order.filter((sp) => db.otherGamma.has(sp)) : [];
+    /*
+      THE WATER'S OWN ISOTOPES: a species given -activity_water -- an isotope
+      database's forms of water, iso.dat's HDO, D2O, H2[18O] -- is water to
+      PHREEQC under every activity model, its activity the water's times its
+      moles to each mole of water: gamma = a(H2O) 0.018 (model.cpp, gflag 9).
+      The page has no such coefficient. Following the ionic strength, each
+      would take an ordinary solute's, some 55 times PHREEQC's, and it and
+      every species formed from it would start far from PHREEQC's water
+      (PHREEQC's Example 20A by a factor of 48, 20B of 2200): refused. Fixed
+      at this water, PHREEQC's own coefficient is folded into each log K, and
+      the model starts on PHREEQC's water.
+    */
+    const asWater = follow ? order.filter((sp) => db.otherGamma.get(sp) === 'activity_water') : [];
+    if (asWater.length) {
+      const one = asWater.length === 1;
+      throw new Error(`${asWater.slice(0, 4).join(', ')}${asWater.length > 4 ? ', ...' : ''} ${one ? 'is' : 'are'} given `
+        + `-activity_water: PHREEQC counts ${one ? 'it' : 'them'} as water, ${one ? 'its' : 'their'} activity the water's `
+        + `times ${one ? 'its' : 'their'} moles to each mole of water, a coefficient this page does not have, and following `
+        + `the ionic strength ${one ? 'it' : 'they'} would start far from PHREEQC's water: keep the coefficients fixed at `
+        + 'this water instead.');
+    }
     /*
       LLNL's: its tables, and every ion written with its -llnl_gamma: PHREEQC
       works out no coefficient of its own for one without (its A is not read
@@ -5297,11 +5316,6 @@
     }
     if (sfSkipped.length) {
       out.push(`# Not carried from the surface: ${sfSkipped.map((x) => `${x.name}, ${x.why}`).join('; ')}.`);
-    }
-    if (unsupported.length) {
-      out.push(`# PHREEQC works out the activity of ${unsupported.join(', ')} otherwise (${[...new Set(
-        unsupported.map((sp) => db.otherGamma.get(sp)))].join(', ')}); here ${unsupported.length > 1 ? 'they follow' : 'it follows'}`);
-      out.push('# the rule above.');
     }
     if (faintUsed.size) {
       const list = [...faintUsed].map((sp) => `${name.get(sp) || sp} (${fmtG(molal.get(sp), 3)})`);
@@ -5992,7 +6006,7 @@
           atNone: [...atNone].map((sp) => name.get(sp) || sp),
           // PHREEQC's next step, where the input ended on a water as given: the pe it was given, and the one it settles at.
           settled } : null,
-        activity: follow ? { kind: sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel', temperature: tc, unsupported,
+        activity: follow ? { kind: sit ? 'sit' : pitz ? 'pitzer' : llnl ? 'llnl' : 'debye-huckel', temperature: tc,
           pitzer: pitz ? pzLines.length : 0,
           sitPairs: sit ? sitPairs.length : 0 } : null,
         // The water's pressure, and the molar volumes written for each log K at it.
