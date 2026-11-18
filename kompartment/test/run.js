@@ -32252,6 +32252,138 @@ test('folding a sub-system keeps every flux in and out of it', async () => {
 	assert(/\.matrix-band \{/.test(css), 'an open group has no header band');
 });
 
+test('a block or a sub-system can be put anywhere among its neighbours on the grid’s diagonal', () => {
+	// Where something sits on the diagonal is the grid's arrangement, kept in
+	// the layout beside its place on the diagram: the model's own order until
+	// something is moved, and a sub-system's run never split.
+	const raw = {
+		name: 'order', systems: ['NF', 'NF.Inner', 'Bio'],
+		compartments: [
+			{ name: 'Src', initial: 0 }, { name: 'Two', initial: 0 },
+			{ name: 'Water', system: 'NF', initial: 0 }, { name: 'Buffer', system: 'NF', initial: 0 },
+			{ name: 'Deep', system: 'NF.Inner', initial: 0 },
+			{ name: 'Lake', system: 'Bio', initial: 0 },
+		],
+		parameters: [{ name: 'k', value: 1 }],
+		farfields: [], transfers: [], inflows: [{ name: 'In', to: 'Src', rate: '1' }],
+		layout: { Src: { x: 10, y: 20 } },
+	};
+	const shape = (open = []) => ed.matrixPlan(raw, new Set(open)).slots
+		.map((x) => (x.kind === 'block' ? x.local : x.kind === 'group' ? `[${x.local}]`
+			: x.kind === 'head' ? `<${x.local}>` : '~'))
+		.join(' ');
+	const refused = (fn) => {
+		try { fn(); } catch (e) { return e instanceof ed.EditError; }
+		return false;
+	};
+	assert(shape() === 'Src Two [Bio] [NF] ~', shape());
+	assert(!ed.hasMatrixOrder(raw), 'a model nobody arranged is arranged');
+
+	// A sub-system takes everything inside it along, and the world outside
+	// stays last, outside the hierarchy.
+	assert(ed.moveOnMatrix(raw, 'NF', 'Src') === true, 'NF did not move');
+	assert(shape() === '[NF] Src Two [Bio] ~', shape());
+	const open = ['NF', 'NF.Inner'];
+	assert(shape(open) === '<NF> Water Buffer <Inner> Deep Src Two [Bio] ~', shape(open));
+	assert(ed.matrixOrder(raw).join() === 'NF,Src,Two,Bio', ed.matrixOrder(raw).join());
+	// Every one of them is given its place, so the order holds, merged into
+	// what the entry held already; asked again, nothing moves, and it says so.
+	assert(raw.layout.NF.matrix === 0 && raw.layout.Bio.matrix === 3
+		&& raw.layout.Src.x === 10 && raw.layout.Src.matrix === 1, JSON.stringify(raw.layout));
+	assert(!ed.moveOnMatrix(raw, 'NF', 'Src') && !ed.moveOnMatrix(raw, 'NF', 'NF'),
+		'a move to where it already is counts as a move');
+	// To the end, and inside a sub-system among its own.
+	assert(ed.moveOnMatrix(raw, 'Src', null) && ed.moveOnMatrix(raw, 'NF.Buffer', 'NF.Water'), 'did not move');
+	assert(shape(open) === '<NF> Buffer Water <Inner> Deep Two [Bio] Src ~', shape(open));
+	// Among its neighbours only, and only what the diagonal draws.
+	assert(refused(() => ed.moveOnMatrix(raw, 'Src', 'NF.Water')), 'a block went into another sub-system’s run');
+	assert(refused(() => ed.moveOnMatrix(raw, 'k', null)), 'a parameter was put on the diagonal');
+	assert(refused(() => ed.moveOnMatrix(raw, 'Nowhere', null)), 'a block that is not there moved');
+
+	// A block added later goes after the ones that were put somewhere.
+	ed.addCompartment(raw, { name: 'Late' });
+	assert(ed.matrixOrder(raw).join() === 'NF,Two,Bio,Src,Late', ed.matrixOrder(raw).join());
+	// A place follows its block through a rename, of the block or of the
+	// sub-system around it, and goes with it when it is deleted.
+	ed.renameBlock(raw, 'Two', 'Second');
+	ed.renameSystem(raw, 'NF', 'Near');
+	assert(ed.matrixOrder(raw).join() === 'Near,Second,Bio,Src,Late', ed.matrixOrder(raw).join());
+	assert(ed.matrixOrder(raw, 'Near').join() === 'Near.Buffer,Near.Water,Near.Inner',
+		ed.matrixOrder(raw, 'Near').join());
+	ed.deleteBlock(raw, 'Late');
+	ed.pruneLayout(raw);
+	assert(!('Late' in raw.layout), 'a deleted block’s place stays behind');
+
+	// The model's own order back, inside one sub-system -- its own place
+	// among its neighbours is theirs, and stays -- or everywhere.
+	assert(ed.hasMatrixOrder(raw, 'Near') && ed.clearMatrixOrder(raw, 'Near') >= 2, 'the places inside were not forgotten');
+	assert(ed.matrixOrder(raw, 'Near').join() === 'Near.Water,Near.Buffer,Near.Inner' && ed.matrixOrder(raw)[0] === 'Near',
+		`${ed.matrixOrder(raw, 'Near').join()} / ${ed.matrixOrder(raw).join()}`);
+	assert(!ed.hasMatrixOrder(raw, 'Near') && ed.hasMatrixOrder(raw), 'what was cleared is still arranged');
+	ed.clearMatrixPlace(raw, 'Src');
+	assert(ed.matrixOrder(raw).join() === 'Near,Second,Bio,Src', `one forgotten place: ${ed.matrixOrder(raw).join()}`);
+	ed.clearMatrixOrder(raw);
+	assert(shape() === 'Src Second [Bio] [Near] ~' && !ed.hasMatrixOrder(raw), shape());
+	// An entry that held nothing but a place goes with it; one that held a
+	// position keeps the position.
+	assert(!('Bio' in raw.layout) && raw.layout.Src?.x === 10 && !('matrix' in raw.layout.Src), JSON.stringify(raw.layout));
+	// And a file's odd entries are read as nowhere in particular.
+	raw.layout.Second = 7;
+	raw.layout.Src = { x: 10, y: 20, matrix: 'first' };
+	assert(shape() === 'Src Second [Bio] [Near] ~', shape());
+	assert(ed.moveOnMatrix(raw, 'Src', null) && raw.layout.Second.matrix === 0, JSON.stringify(raw.layout));
+});
+
+test('the diagram’s auto-layout keeps the grid’s order, and a copy or a move goes to the end of its new neighbours', async () => {
+	const raw = {
+		name: 'kept', systems: ['A', 'B'],
+		compartments: [
+			{ name: 'P', initial: 0 }, { name: 'Q', initial: 0 },
+			{ name: 'X', system: 'A', initial: 0 }, { name: 'Y', system: 'A', initial: 0 },
+			{ name: 'U', system: 'B', initial: 0 }, { name: 'V', system: 'B', initial: 0 },
+		],
+		transfers: [{ name: 'T', from: 'P', to: 'Q', rate: '1' }], inflows: [],
+		layout: { P: { x: 1, y: 2, w: 200 }, 'edge:T': { x: 5, y: 5 } },
+	};
+	ed.moveOnMatrix(raw, 'Q', 'P');
+	ed.moveOnMatrix(raw, 'A.Y', 'A.X');
+	ed.moveOnMatrix(raw, 'B.V', 'B.U');
+	// An auto-layout starts the diagram from nothing and leaves the grid be.
+	ed.clearDiagramLayout(raw);
+	assert(raw.layout.P.matrix === 1 && !('x' in raw.layout.P) && !('w' in raw.layout.P) && !('edge:T' in raw.layout),
+		JSON.stringify(raw.layout));
+	assert(ed.matrixOrder(raw).join() === 'Q,P,A,B' && ed.matrixOrder(raw, 'A').join() === 'A.Y,A.X',
+		`${ed.matrixOrder(raw).join()} / ${ed.matrixOrder(raw, 'A').join()}`);
+	const { readFileSync } = await import('node:fs');
+	const graph = readFileSync(new URL('../src/ui/graph.js', import.meta.url), 'utf8');
+	assert(/relayout\(\) \{[\s\S]{0,300}?ed\.clearDiagramLayout\(this\.project\);\n\t\ted\.autoLayout\(this\.project\);/.test(graph),
+		'the diagram’s auto-layout throws the grid’s order away');
+
+	// A copy pasted lands at the end of its new neighbours; inside a copied
+	// sub-system the order it was copied in is kept.
+	ed.autoLayout(raw);
+	ed.pasteBlocks(raw, ed.copyBlocks(raw, ['Q']), { system: 'B' });
+	assert(ed.matrixOrder(raw, 'B').join() === 'B.V,B.U,B.Q', ed.matrixOrder(raw, 'B').join());
+	ed.pasteBlocks(raw, ed.copySystem(raw, 'A'), {});
+	assert(ed.matrixOrder(raw).join() === 'Q,P,A,B,A1' && ed.matrixOrder(raw, 'A1').join() === 'A1.Y,A1.X',
+		`${ed.matrixOrder(raw).join()} / ${ed.matrixOrder(raw, 'A1').join()}`);
+
+	// Moved into another sub-system, however the move was asked for, it goes
+	// after its new neighbours; a sub-system moved whole keeps its own order.
+	const { GraphEditor } = await import('../src/ui/graph.js');
+	const g = Object.assign(Object.create(GraphEditor.prototype), {
+		project: raw, picked: new Set(), pickedShapes: new Set(), hooks: {}, system: '',
+	});
+	g._pick = () => {};
+	g._changed = () => {};
+	g.render = () => {};
+	g._moveInto(['P'], 'A');
+	assert(ed.matrixOrder(raw, 'A').join() === 'A.Y,A.X,A.P', ed.matrixOrder(raw, 'A').join());
+	g._moveInto(['A1'], 'B');
+	assert(ed.matrixOrder(raw, 'B').join() === 'B.V,B.U,B.Q,B.A1' && ed.matrixOrder(raw, 'B.A1').join() === 'B.A1.Y,B.A1.X',
+		`${ed.matrixOrder(raw, 'B').join()} / ${ed.matrixOrder(raw, 'B.A1').join()}`);
+});
+
 
 section('Defects found in the second review, and the guards that close them');
 
@@ -42529,7 +42661,7 @@ test('the wheel zooms the grid at the diagram’s rate, and a drag on its empty 
 
 	// Wired once, whatever the number of redraws, and an edit's redraw leaves
 	// the grid where it was scrolled.
-	assert(/function wire\(host\) \{\n\tif \(wired\.has\(host\)\) return;\n\twired\.add\(host\);\n\twireWheel\(host\);\n\twirePan\(host\);\n\twireMenu\(host\);\n\}/.test(matrix),
+	assert(/function wire\(host\) \{\n\tif \(wired\.has\(host\)\) return;\n\twired\.add\(host\);\n\twireWheel\(host\);\n\twirePan\(host\);\n\twireArrange\(host\);\n\twireMenu\(host\);\n\}/.test(matrix),
 		'the gestures are wired with each drawing');
 	assert(/const scrolled = \{ left: host\.scrollLeft, top: host\.scrollTop \};\n\thost\.replaceChildren\(\);/.test(matrix)
 		&& /host\.scrollLeft = scrolled\.left;\n\thost\.scrollTop = scrolled\.top;\n\}/.test(matrix),
@@ -42590,7 +42722,7 @@ test('the grid’s right-click is the diagram’s menu on a block, and the place
 	// Where the click lands decides the menu: a block, a sub-system, the
 	// world outside, a band, a folded count, a transfer, an empty cell.
 	const menuAt = /function menuAt\(host, view, target\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
-	for (const re of [/if \(i === j\) \{/, /view\.hooks\.blockMenu\?\.\(row\.name, \[\]\)/, /systemMenu\(host, view, row\)/,
+	for (const re of [/if \(i === j\) \{/, /view\.hooks\.blockMenu\?\.\(row\.name, \[\]\)/, /systemMenu\(host, view, row, i\)/,
 		/outsideMenu\(host, view\)/, /placeMenu\(host, view, bandOf\(view\.frames, row, col, i, j\)\?\.path \?\? ''\)/,
 		/summaryMenu\(host, view, i, j\)/, /view\.hooks\.blockMenu\?\.\(tile\.dataset\.name, another\.disabled \? \[\] : \[another\]\)/,
 		/items: \[\{ heading: 'Add' \}, pairItem\(view, i, j\)/]) {
@@ -42599,6 +42731,80 @@ test('the grid’s right-click is the diagram’s menu on a block, and the place
 	assert(/host\.addEventListener\('contextmenu', \(ev\) => \{/.test(matrix), 'no right-click on the grid');
 	// Unfolding everything is refused where it would draw millions of squares.
 	assert(/const UNFOLD_MOST = \d+;/.test(matrix) && /disabled: big \|\| /.test(matrix), 'unfolding a large model hangs the tab');
+});
+
+test('a tile on the grid’s diagonal is dragged along it among its neighbours, a step to undo that runs nothing', async () => {
+	const { readFileSync } = await import('node:fs');
+	const matrix = readFileSync(new URL('../src/ui/matrix.js', import.meta.url), 'utf8');
+	const app = readFileSync(new URL('../src/ui/app.js', import.meta.url), 'utf8');
+	const css = readFileSync(new URL('../css/app.css', import.meta.url), 'utf8');
+	const { matrixGrid, arrangeUnits, arrangeTarget } = await import('../src/ui/matrix.js');
+	const raw = {
+		name: 'drag', systems: ['NF', 'NF.Inner', 'Bio'],
+		compartments: [
+			{ name: 'Src', initial: 0 }, { name: 'Two', initial: 0 },
+			{ name: 'Water', system: 'NF', initial: 0 }, { name: 'Deep', system: 'NF.Inner', initial: 0 },
+			{ name: 'Lake', system: 'Bio', initial: 0 },
+		],
+		transfers: [], inflows: [{ name: 'In', to: 'Src', rate: '1' }],
+	};
+	// Src Two [Bio] <NF> Water <Inner> Deep ~
+	const grid = matrixGrid(raw, new Set(['NF', 'NF.Inner']));
+	const spans = (plan) => plan.units.map((u) => `${u.id}:${u.from}-${u.to}`).join();
+	// What a tile moves among: the blocks and sub-systems of its own
+	// sub-system, an open one spanning its header and all that is framed in it.
+	const top = arrangeUnits(grid, 0);
+	assert(top.id === 'Src' && top.self === 0 && spans(top) === 'Src:0-0,Two:1-1,Bio:2-2,NF:3-6', JSON.stringify(top));
+	const nf = arrangeUnits(grid, 3);
+	assert(nf.id === 'NF' && nf.self === 3 && spans(nf) === spans(top), JSON.stringify(nf));
+	assert(spans(arrangeUnits(grid, 4)) === 'NF.Water:4-4,NF.Inner:5-6', spans(arrangeUnits(grid, 4)));
+	assert(arrangeUnits(grid, 7) === null, 'the world outside the model can be dragged');
+	// Past a neighbour once it is more than half way over it, either way,
+	// whatever either of them spans: Src's far edge has to pass the middle of
+	// NF's four slots, NF's near edge the middle of Bio's one.
+	const to = (plan, by) => arrangeTarget(plan.units, plan.self, by);
+	const seen = [0, 0.4, 0.6, 1.6, 3.9, 4.1, 40].map((by) => to(top, by)).join();
+	assert(seen === '0,0,2,3,3,4,4', seen);
+	const back = [0, -0.4, -0.6, -2.6, -40, 3].map((by) => to(nf, by)).join();
+	assert(back === '3,3,2,0,0,3', back);
+
+	// From a tile on the diagonal only, with the left button and not Ctrl,
+	// the Mac's right-click; a press that moves less than a pan's slack is a
+	// click, and the click a drag's release brings is swallowed, so a
+	// sub-system dragged somewhere does not fold as well.
+	const wire = /function wireArrange\(host\) \{([\s\S]*?)\n\}\n/.exec(matrix)?.[1] ?? '';
+	assert(/if \(drag \|\| ev\.button !== 0 \|\| ev\.ctrlKey \|\| ev\.pointerType === 'touch'\) return;/.test(wire)
+		&& /ev\.target\.closest\('\.matrix-self > button'\)/.test(wire), 'a drag starts from anywhere');
+	assert(/if \(Math\.hypot\(drag\.x - drag\.x0, drag\.y - drag\.y0\) < PAN_SLACK\) return;/.test(wire), 'a click is a drag');
+	assert(/if \(!d\.moving\) return;\n\t\tswallowClick\(\);/.test(wire), 'the click after a drag is answered too');
+	assert(/window\.addEventListener\('pointermove', move, true\);/.test(wire) && /host\.setPointerCapture\(d\.pointer\)/.test(wire),
+		'a drag that leaves the tile is lost');
+	// Escape puts it back, the grid scrolls near the edge, and a redraw under
+	// the drag lets it go.
+	assert(/if \(ev\.key !== 'Escape' \|\| !drag\.moving \|\| drag\.cancelled\) return;/.test(wire), 'Escape does not put it back');
+	assert(/scrollNear\(d\);\n\t\tshow\(d\);/.test(wire) && /if \(!d\.table\.isConnected\) \{/.test(wire), 'no scrolling, or a stale grid measured');
+	// The keyboard moves it a place at a time, and so does the right-click.
+	assert(/if \(!ev\.altKey \|\| ev\.ctrlKey \|\| ev\.metaKey \|\| ev\.shiftKey\) return;\n\t\tif \(ev\.key !== 'ArrowUp' && ev\.key !== 'ArrowDown'\) return;/.test(wire),
+		'no keyboard way to move one');
+	const menuAt = /function menuAt\(host, view, target\) \{([\s\S]*?)\n\}/.exec(matrix)?.[1] ?? '';
+	assert(/\.\.\.arrangeItems\(host, view, i\)/.test(menuAt), 'a block’s menu cannot move it');
+	assert(/items: \[fold, \.\.\.arrangeItems\(host, view, at\),/.test(matrix), 'a sub-system’s menu cannot move it');
+	assert(/\.\.\.orderItems\(host, view, system\),/.test(matrix) && /ed\.clearMatrixOrder\(view\.project, system\)/.test(matrix),
+		'there is no way back to the model’s order');
+
+	// A move is an edit of the layout -- a step to undo, no run, the results
+	// kept -- and the grid, which a layout edit leaves alone, is drawn again.
+	assert(/if \(!ed\.moveOnMatrix\(project, id, before\)\) return false;/.test(matrix)
+		&& /hooks\.onSelect\?\.\(\{ kind: found \? found\.kind : 'system', name: id \}\);/.test(matrix),
+		'a drop does not move it, or does not select it');
+	const draws = /function drawMatrix\(\) \{([\s\S]*?)\n\}/.exec(app)?.[1] ?? '';
+	assert(/onArrange: \(label\) => \{\n\t\t\tmodelChanged\(\{ layoutOnly: true, label \}\);\n\t\t\tdrawMatrix\(\);\n\t\t\},/.test(draws),
+		'an arrangement is not a layout edit, or is never drawn');
+	for (const rule of [/#panel-matrix\.is-arranging \* \{ cursor: grabbing; user-select: none; \}/,
+		/\.matrix-block\.is-dragged \{ opacity: [\d.]+; \}/, /\.matrix-drop \{\n\tposition: fixed;/,
+		/\.matrix-ghost \{\n\tposition: fixed;/]) {
+		assert(rule.test(css), `no ${rule}`);
+	}
 });
 
 test('the Information view lists what flows in and out of a compartment, and every list it cuts short can be shown whole', async () => {

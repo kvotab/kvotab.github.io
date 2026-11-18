@@ -159,7 +159,7 @@ import * as sitechrome from './sitechrome.js';
  * caused more than one "the code says otherwise" puzzle. Serve with serve.py,
  * which disables caching.
  */
-const BUILD = '2026-11-02';
+const BUILD = '2026-11-18';
 
 const EXAMPLES = [
 	{ file: 'four-compartment.json', title: 'Four-compartment test model' },
@@ -6931,6 +6931,15 @@ function drawMatrix() {
 		onUnfoldTo: (path) => {
 			let at = path;
 			while (at) { state.matrixOpen.add(at); at = ed.parentOf(at); }
+		},
+		// A block or a sub-system moved along the diagonal, or the model's own
+		// order put back. Where things sit on the grid is the model's layout,
+		// as where they sit on the diagram is: saved with it and a step to
+		// undo, and moving no number, so nothing runs again. An edit of the
+		// layout leaves the grid as it was drawn, so it is drawn here.
+		onArrange: (label) => {
+			modelChanged({ layoutOnly: true, label });
+			drawMatrix();
 		},
 		// A block on the grid is the block on the diagram, and its right-click
 		// is the diagram's menu -- see `blockMenu`, which the tree and the

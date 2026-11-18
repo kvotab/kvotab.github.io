@@ -17,11 +17,13 @@
  *
  * A click selects and a double-click opens, as everywhere else; nothing is
  * made by a click. What can be made, and done, is on the right-click, which
- * depends on where it lands -- see `wireMenu`.
+ * depends on where it lands -- see `wireMenu`. A tile on the diagonal can be
+ * dragged along it to another place among its neighbours -- see
+ * `wireArrange`.
  */
 
 import * as ed from '../domain/edit.js';
-import { qualifiedName, baseName } from '../domain/systems.js';
+import { qualifiedName, baseName, parentOf } from '../domain/systems.js';
 import { inkFor } from './ink.js';
 import { el } from './parts.js';
 import { openMenu } from './menu.js';
@@ -249,6 +251,7 @@ function wire(host) {
 	wired.add(host);
 	wireWheel(host);
 	wirePan(host);
+	wireArrange(host);
 	wireMenu(host);
 }
 
@@ -368,6 +371,393 @@ function isEmptySpace(host, ev) {
 	return true;
 }
 
+// --- arranging the diagonal ---------------------------------------------------
+//
+// A tile on the diagonal -- a block, or a sub-system folded or open -- can be
+// dragged along it to another place among the others in its own sub-system.
+// Its row and its column go there together, being the same thing, and an open
+// sub-system takes everything framed in it along: what is inside one sits
+// together on both axes, so the places it can go are between its neighbours.
+// Where it goes is kept with the model, as a position on the diagram is
+// (`moveOnMatrix` in ../domain/edit.js), and no number changes. The keyboard
+// does the same a place at a time, and so does the right-click.
+
+/** What a slot on the diagonal stands for when it moves; null for `outside`. */
+const movableId = (slot) => (slot?.kind === 'block' ? slot.name
+	: slot?.kind === 'group' || slot?.kind === 'head' ? slot.path : null);
+
+/**
+ * What moving the tile on the diagonal at slot `at` moves, and among what.
+ *
+ * `units` are the blocks and sub-systems of its sub-system as the grid has
+ * them, in order, each with the run of slots it spans: one for a block or a
+ * folded sub-system, and for an open one its header and everything framed
+ * under it. `self` is which of them is the tile's own. Null for a slot that
+ * nothing moves from: the world outside the model.
+ *
+ * @param {{slots: object[], frames: object[]}} grid  a `matrixGrid`
+ * @returns {{id: string, self: number,
+ *   units: {id: string, from: number, to: number}[]}|null}
+ */
+export function arrangeUnits(grid, at) {
+	const id = movableId(grid.slots[at]);
+	if (id == null) return null;
+	const parent = parentOf(id);
+	const units = [];
+	grid.slots.forEach((slot, i) => {
+		const of = movableId(slot);
+		if (of == null || parentOf(of) !== parent) return;
+		const to = slot.kind === 'head'
+			? (grid.frames.find((f) => f.path === slot.path)?.to ?? i) : i;
+		units.push({ id: of, from: i, to });
+	});
+	return { id, units, self: units.findIndex((u) => u.id === id) };
+}
+
+/**
+ * Where unit `self` of `units`, dragged `by` slots along the diagonal, would
+ * go: the index of the unit it would go just before -- `units.length` for
+ * after the last of them -- or `self` itself, where it would stay.
+ *
+ * As a list sorted by hand does it: going down, it passes each neighbour whose
+ * middle its far edge has passed, and going up, each whose middle its near
+ * edge has. So it goes past a neighbour once it is more than half way over it,
+ * whatever either of them spans. An open sub-system is many slots, and with
+ * the pointer alone to go by, a block dragged past one would have had to cross
+ * all of it before anything moved.
+ */
+export function arrangeTarget(units, self, by) {
+	const u = units[self];
+	const middle = (x) => (x.from + x.to + 1) / 2;
+	if (by > 0) {
+		let k = self + 1;
+		while (k < units.length && middle(units[k]) < u.to + 1 + by) k++;
+		return k === self + 1 ? self : k;
+	}
+	let k = self;
+	while (k > 0 && middle(units[k - 1]) > u.from + by) k--;
+	return k;
+}
+
+/** How near the panel's edge a drag has to come for the grid to scroll under it. */
+const EDGE = 36;
+
+/** How far the grid scrolls in a frame there, at most: at the edge, or past it. */
+const EDGE_STEP = 18;
+
+/**
+ * Dragging a tile along the diagonal, and Alt with an arrow key on one.
+ *
+ * Pointer events of its own rather than the browser's drag and drop, which
+ * has no say in where a drop may land, no scrolling of a panel under the
+ * pointer, and a picture of its own on the way. A press on a tile that moves
+ * less than `PAN_SLACK` is still a click: a block is selected, a sub-system
+ * folds. One that moves further is a drag, and the click that follows its
+ * release is swallowed, so that a sub-system dragged somewhere does not fold
+ * when it gets there as well.
+ *
+ * Followed on the window, which hears the pointer whether or not the capture
+ * asked for is given; the capture is asked of the panel, which outlives the
+ * drawing a drop replaces.
+ *
+ * On the way, the tile is left faint where it was -- with everything framed
+ * under it, for an open sub-system -- its name follows the pointer, and a line
+ * along a row boundary crosses one down the same column boundary at a dot on
+ * the diagonal, where it would go. How far it has gone is read along whichever
+ * axis the pointer has moved further along: dragged straight down, the tile
+ * follows the rows; along a row, the columns; along the diagonal, both, which
+ * then agree. In slots, so that a zoom by the wheel on the way changes
+ * nothing. Near the panel's edge the grid scrolls under it, and Escape puts it
+ * back.
+ */
+function wireArrange(host) {
+	let drag = null;
+
+	host.addEventListener('pointerdown', (ev) => {
+		if (drag || ev.button !== 0 || ev.ctrlKey || ev.pointerType === 'touch') return;
+		const tile = ev.target instanceof Element ? ev.target.closest('.matrix-self > button') : null;
+		const view = views.get(host);
+		const table = host.querySelector('table.matrix');
+		if (!tile || !view || !table?.contains(tile)) return;
+		const plan = arrangeUnits(view, tile.parentElement.cellIndex);
+		// Alone in its sub-system, it has nowhere to go: the press is a click.
+		if (!plan || plan.units.length < 2) return;
+		drag = {
+			pointer: ev.pointerId, plan, view, table,
+			x0: ev.clientX, y0: ev.clientY, x: ev.clientX, y: ev.clientY,
+			from: slotsAt(table, view, ev.clientX, ev.clientY),
+			moving: false, cancelled: false, target: plan.self, frame: 0,
+		};
+		window.addEventListener('pointermove', move, true);
+		window.addEventListener('pointerup', up, true);
+		window.addEventListener('pointercancel', cancel, true);
+		window.addEventListener('keydown', escape, true);
+	});
+
+	// A place at a time from the keyboard, on the tile that has the focus: up
+	// is before the neighbour above it, down after the one below.
+	host.addEventListener('keydown', (ev) => {
+		if (!ev.altKey || ev.ctrlKey || ev.metaKey || ev.shiftKey) return;
+		if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') return;
+		const tile = ev.target instanceof Element ? ev.target.closest('.matrix-self > button') : null;
+		const view = views.get(host);
+		if (!tile || !view || !host.contains(tile) || drag) return;
+		ev.preventDefault();
+		const plan = arrangeUnits(view, tile.parentElement.cellIndex);
+		const k = plan ? plan.self + (ev.key === 'ArrowUp' ? -1 : 2) : -1;
+		if (!plan || k < 0 || k > plan.units.length) return;
+		if (arrange(host, view, plan.id, plan.units[k]?.id ?? null)) refocus(host, plan.id);
+	});
+
+	function move(ev) {
+		if (ev.pointerId !== drag.pointer || drag.cancelled) return;
+		drag.x = ev.clientX;
+		drag.y = ev.clientY;
+		if (!drag.moving) {
+			if (Math.hypot(drag.x - drag.x0, drag.y - drag.y0) < PAN_SLACK) return;
+			begin(drag);
+		}
+		ev.preventDefault();
+	}
+
+	function up(ev) {
+		if (ev.pointerId !== drag.pointer) return;
+		const d = drag;
+		// Drawn again under the drag -- by an edit made some other way -- and
+		// what it was measured against is gone with the grid it was on.
+		if (d.moving && !d.table.isConnected) d.cancelled = true;
+		if (d.moving && !d.cancelled) {
+			d.x = ev.clientX;
+			d.y = ev.clientY;
+			show(d);
+		}
+		stop();
+		if (!d.moving) return;
+		swallowClick();
+		if (d.cancelled || d.target === d.plan.self) return;
+		arrange(host, d.view, d.plan.id, d.plan.units[d.target]?.id ?? null);
+	}
+
+	// A cancelled pointer is followed by no click, so there is nothing to swallow.
+	function cancel(ev) {
+		if (ev.pointerId === drag.pointer) stop();
+	}
+
+	// Escape puts it back. The release still to come is not a click either,
+	// so it is waited for.
+	function escape(ev) {
+		if (ev.key !== 'Escape' || !drag.moving || drag.cancelled) return;
+		ev.preventDefault();
+		ev.stopPropagation();
+		drag.cancelled = true;
+		unshow(drag);
+	}
+
+	function stop() {
+		window.removeEventListener('pointermove', move, true);
+		window.removeEventListener('pointerup', up, true);
+		window.removeEventListener('pointercancel', cancel, true);
+		window.removeEventListener('keydown', escape, true);
+		if (drag) unshow(drag);
+		drag = null;
+	}
+
+	function begin(d) {
+		d.moving = true;
+		try { host.setPointerCapture(d.pointer); } catch { /* already let go */ }
+		host.classList.add('is-arranging');
+		const unit = d.plan.units[d.plan.self];
+		d.faint = [];
+		for (let i = unit.from; i <= unit.to; i++) {
+			const tile = d.table.rows[i]?.cells[i]?.querySelector(':scope > .matrix-block');
+			if (!tile) continue;
+			tile.classList.add('is-dragged');
+			d.faint.push(tile);
+		}
+		d.ghost = ghostOf(d.view, d.view.slots[unit.from]);
+		const mark = (extra = '') => el('div', {
+			className: `matrix-drop${extra}`, 'aria-hidden': 'true', hidden: true,
+		});
+		d.across = mark();
+		d.down = mark();
+		d.point = mark(' is-point');
+		document.body.append(d.ghost, d.across, d.down, d.point);
+		// Placed now, not a frame from now: until then the name would sit in
+		// the window's corner.
+		show(d);
+		d.frame = requestAnimationFrame(() => tick(d));
+	}
+
+	function tick(d) {
+		if (drag !== d || d.cancelled) return;
+		if (!d.table.isConnected) {
+			d.cancelled = true;
+			unshow(d);
+			return;
+		}
+		scrollNear(d);
+		show(d);
+		d.frame = requestAnimationFrame(() => tick(d));
+	}
+
+	function unshow(d) {
+		cancelAnimationFrame(d.frame);
+		d.frame = 0;
+		for (const n of [d.ghost, d.across, d.down, d.point]) n?.remove();
+		d.ghost = d.across = d.down = d.point = null;
+		for (const t of d.faint ?? []) t.classList.remove('is-dragged');
+		d.faint = null;
+		host.classList.remove('is-arranging');
+		try {
+			if (host.hasPointerCapture(d.pointer)) host.releasePointerCapture(d.pointer);
+		} catch { /* the pointer is gone */ }
+	}
+
+	/** The panel's inside, on the window: what of the grid can be seen. */
+	function seen() {
+		const r = host.getBoundingClientRect();
+		const left = r.left + host.clientLeft;
+		const top = r.top + host.clientTop;
+		return { left, top, right: left + host.clientWidth, bottom: top + host.clientHeight };
+	}
+
+	/**
+	 * Near an edge the grid scrolls, faster the nearer -- towards an edge the
+	 * pointer has moved towards since the press, so that a tile picked up
+	 * near the edge does not set the grid off on its own.
+	 */
+	function scrollNear(d) {
+		const s = seen();
+		const step = (gap) => Math.ceil(EDGE_STEP * Math.min(1, (EDGE - Math.max(0, gap)) / EDGE));
+		const dx = d.x < s.left + EDGE && d.x < d.x0 ? -step(d.x - s.left)
+			: d.x > s.right - EDGE && d.x > d.x0 ? step(s.right - d.x) : 0;
+		const dy = d.y < s.top + EDGE && d.y < d.y0 ? -step(d.y - s.top)
+			: d.y > s.bottom - EDGE && d.y > d.y0 ? step(s.bottom - d.y) : 0;
+		if (dx) host.scrollLeft += dx;
+		if (dy) host.scrollTop += dy;
+	}
+
+	/** Where the drag would land, worked out and drawn. */
+	function show(d) {
+		const t = d.table.getBoundingClientRect();
+		const n = d.view.slots.length;
+		if (!(t.width > 0 && t.height > 0)) return;
+		const at = slotsAt(d.table, d.view, d.x, d.y, t);
+		const bx = at.x - d.from.x;
+		const by = at.y - d.from.y;
+		d.target = arrangeTarget(d.plan.units, d.plan.self, Math.abs(by) >= Math.abs(bx) ? by : bx);
+		if (d.ghost) d.ghost.style.transform = `translate(${Math.round(d.x + 14)}px, ${Math.round(d.y + 12)}px)`;
+		if (!d.across) return;
+		d.across.hidden = true;
+		d.down.hidden = true;
+		d.point.hidden = true;
+		if (d.target === d.plan.self) return;
+		const { units } = d.plan;
+		const slot = d.target < units.length ? units[d.target].from : units[units.length - 1].to + 1;
+		const x = t.left + (slot / n) * t.width;
+		const y = t.top + (slot / n) * t.height;
+		// On the window and over everything, so cut to what of the panel can
+		// be seen: the grid runs on under the panel's edges.
+		const s = seen();
+		const left = Math.max(t.left, s.left);
+		const right = Math.min(t.right, s.right);
+		const top = Math.max(t.top, s.top);
+		const bottom = Math.min(t.bottom, s.bottom);
+		const rowSeen = y >= s.top - 1 && y <= s.bottom + 1;
+		const columnSeen = x >= s.left - 1 && x <= s.right + 1;
+		if (rowSeen && right > left) put(d.across, left, y - 1, right - left, 2);
+		if (columnSeen && bottom > top) put(d.down, x - 1, top, 2, bottom - top);
+		// And a dot where they cross, on the diagonal: at the grid's corner,
+		// for the first place, the two lines alone run along its edges.
+		if (rowSeen && columnSeen) put(d.point, x - 5, y - 5, 10, 10);
+	}
+}
+
+/** Where a point on the window is on the grid, in slots along each axis. */
+function slotsAt(table, view, x, y, rect = table.getBoundingClientRect()) {
+	const n = view.slots.length;
+	return { x: ((x - rect.left) / rect.width) * n, y: ((y - rect.top) / rect.height) * n };
+}
+
+/** A line of the drop's cross, put on the window. */
+function put(line, x, y, w, h) {
+	line.hidden = false;
+	line.style.left = `${x}px`;
+	line.style.top = `${y}px`;
+	line.style.width = `${w}px`;
+	line.style.height = `${h}px`;
+}
+
+/** What follows the pointer while a tile is dragged: its name, painted as it is. */
+function ghostOf(view, slot) {
+	const name = slot.kind === 'head' ? `\u25be ${slot.local}`
+		: slot.kind === 'group' ? `\u25b8 ${slot.local}` : slot.local;
+	const g = el('div', {
+		className: `matrix-ghost${slot.kind === 'block' ? '' : ' is-system'}`,
+		'aria-hidden': 'true',
+	}, name);
+	const own = slot.kind === 'block' ? colorOf(view.project, slot.name) : null;
+	if (own) paint(g, own);
+	return g;
+}
+
+/**
+ * Swallows the click a drag's release is about to be followed by, wherever it
+ * lands: the tile it started on, or whatever the drawing put there since.
+ * Dropped again straight after, in case none comes.
+ */
+function swallowClick() {
+	const swallow = (e) => {
+		e.stopPropagation();
+		e.preventDefault();
+	};
+	window.addEventListener('click', swallow, { capture: true, once: true });
+	setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
+}
+
+/**
+ * Puts the block or sub-system `id` just before `before` on the diagonal --
+ * after the last of its neighbours for null -- as a step of its own, and
+ * selects it, as a drag on the diagram selects what it moves.
+ *
+ * @returns {boolean} whether anything moved
+ */
+function arrange(host, view, id, before) {
+	const { project, hooks } = view;
+	try {
+		if (!ed.moveOnMatrix(project, id, before)) return false;
+	} catch (e) {
+		hooks.onStatus?.(e.message, 'warn');
+		return false;
+	}
+	arranged(host, view, `Move ${baseName(id)} on the grid`);
+	const found = ed.findBlock(project, id);
+	hooks.onSelect?.({ kind: found ? found.kind : 'system', name: id });
+	return true;
+}
+
+/**
+ * An arrangement made: a step to undo, and the grid drawn again -- an edit of
+ * the layout alone leaves it as it was drawn, since nothing else about the
+ * layout is on it.
+ */
+function arranged(host, view, label) {
+	if (view.hooks.onArrange) {
+		view.hooks.onArrange(label);
+		return;
+	}
+	view.hooks.onChange?.({ layoutOnly: true, label });
+	renderMatrix(host, view.project, view.selection, view.hooks, { open: view.open });
+}
+
+/** The keyboard back on the tile for `id`, in sight: the one it was on is gone with the grid. */
+function refocus(host, id) {
+	const tile = [...host.querySelectorAll('.matrix-self > button')].find((b) => b.dataset.name === id);
+	if (!tile) return;
+	tile.focus({ preventScroll: true });
+	tile.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+}
+
 /**
  * The right-click, which offers what can be done where it lands.
  *
@@ -413,10 +803,17 @@ function menuAt(host, view, target) {
 	const col = view.slots[j];
 	if (!row || !col) return placeMenu(host, view, '');
 
-	// The diagonal: the thing itself, wherever in its square the click was.
+	// The diagonal: the thing itself, wherever in its square the click was --
+	// and its place on the diagonal, which only the grid has.
 	if (i === j) {
-		if (row.kind === 'block') return view.hooks.blockMenu?.(row.name, []) ?? null;
-		if (row.kind === 'group' || row.kind === 'head') return systemMenu(host, view, row);
+		if (row.kind === 'block') {
+			const shared = view.hooks.blockMenu?.(row.name, []) ?? null;
+			return {
+				title: shared?.title ?? row.name,
+				items: [...arrangeItems(host, view, i), ...(shared ? [{ separator: true }, ...shared.items] : [])],
+			};
+		}
+		if (row.kind === 'group' || row.kind === 'head') return systemMenu(host, view, row, i);
 		return outsideMenu(host, view);
 	}
 	// An open sub-system's band, which is a place in it rather than a pair.
@@ -495,8 +892,8 @@ function addFlux(view, kind, a, b) {
 	}
 }
 
-/** A sub-system's tile: the fold, and the menu the diagram gives it. */
-function systemMenu(host, view, slot) {
+/** A sub-system's tile, at slot `at`: the fold, its place, and the menu the diagram gives it. */
+function systemMenu(host, view, slot, at) {
 	const open = slot.kind === 'head';
 	const fold = {
 		label: open ? `Fold ${slot.local} up` : `Unfold ${slot.local}`,
@@ -509,8 +906,43 @@ function systemMenu(host, view, slot) {
 	const shared = view.hooks.blockMenu?.(slot.path, addItems(host, view, slot.path)) ?? null;
 	return {
 		title: shared?.title ?? `sub-system ${slot.path}`,
-		items: [fold, ...(shared ? [{ separator: true }, ...shared.items] : [])],
+		items: [fold, ...arrangeItems(host, view, at), ...(shared ? [{ separator: true }, ...shared.items] : [])],
 	};
+}
+
+/**
+ * Moving the tile on the diagonal at slot `at` a place along it: what a drag
+ * does, for the menu, as Alt and an arrow key does it for the keyboard.
+ */
+function arrangeItems(host, view, at) {
+	const plan = arrangeUnits(view, at);
+	if (!plan) return [];
+	const { id, units, self } = plan;
+	const system = parentOf(id);
+	const where = system ? baseName(system) : 'the top level';
+	const prev = units[self - 1];
+	const next = units[self + 1];
+	const alone = units.length < 2
+		? `Nothing else is in ${where} to move it past: a block or sub-system moves among those beside it`
+		: '';
+	return [
+		{
+			label: 'Move up',
+			hint: 'Alt+\u2191',
+			disabled: !prev,
+			title: prev ? `Before ${baseName(prev.id)}: its row goes up and its column left, on the grid alone`
+				: alone || `It is first in ${where} already`,
+			onPick: () => { if (arrange(host, view, id, prev.id)) refocus(host, id); },
+		},
+		{
+			label: 'Move down',
+			hint: 'Alt+\u2193',
+			disabled: !next,
+			title: next ? `After ${baseName(next.id)}: its row goes down and its column right, on the grid alone`
+				: alone || `It is last in ${where} already`,
+			onPick: () => { if (arrange(host, view, id, units[self + 2]?.id ?? null)) refocus(host, id); },
+		},
+	];
 }
 
 /** Several fluxes folded into one cell: the fold, and a way to each of them. */
@@ -599,9 +1031,39 @@ function placeMenu(host, view, system) {
 			...addItems(host, view, system),
 			...(paste ? [{ separator: true }, paste] : []),
 			...foldItems(view),
+			...orderItems(host, view, system),
 			...(host.querySelector('table.matrix') ? [{ separator: true }, ...viewItems(host)] : []),
 		],
 	};
+}
+
+/**
+ * The model's own order put back on the diagonal, inside the sub-system whose
+ * band was pointed at -- or everywhere, from the margin. Offered, if off, on
+ * a grid nobody has arranged too: it is where the menu says that tiles can be
+ * dragged at all.
+ */
+function orderItems(host, view, system) {
+	if (!host.querySelector('table.matrix')) return [];
+	const inside = system ? ` inside ${baseName(system)}` : '';
+	const moved = ed.hasMatrixOrder(view.project, system);
+	return [
+		{ separator: true },
+		{
+			label: 'Back to the model\u2019s order',
+			disabled: !moved,
+			title: moved
+				? `Every block and sub-system${inside} on the diagonal in the order the model lists them: `
+					+ 'compartments, far-field pathways and waste packages, then sub-systems'
+				: `Nothing${inside} has been moved along the diagonal. Drag a block or a sub-system there `
+					+ 'to put it somewhere else among its neighbours.',
+			onPick: () => {
+				if (ed.clearMatrixOrder(view.project, system)) {
+					arranged(host, view, `Put the grid${inside} back in the model\u2019s order`);
+				}
+			},
+		},
+	];
 }
 
 /**
@@ -795,11 +1257,13 @@ export function markSelection(host, selection) {
  * @param {{kind: string, name: string}|null} selection
  * @param {{onChange: Function, onSelect: Function, onStatus: Function,
  *          onOpenSettings: Function, onToggleSystem: Function,
- *          onFoldAll: Function, onUnfoldTo: Function,
+ *          onFoldAll: Function, onUnfoldTo: Function, onArrange: Function,
  *          blockMenu: Function, pasteItem: Function}} hooks
  *   `blockMenu(name, adds)` is the diagram's menu for a block or a
  *   sub-system as items, with the grid's own `adds` in it; `pasteItem` its
  *   Paste, aimed at a sub-system. See `menuAbout` in ./graph.js.
+ *   `onArrange(label)` is told that the diagonal has been arranged -- an edit
+ *   of the layout alone, named `label` -- and draws the grid again.
  * @param {{open?: Set<string>}} [opts]  the sub-systems unfolded
  */
 export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
@@ -972,11 +1436,16 @@ export function renderMatrix(host, project, selection, hooks = {}, opts = {}) {
 		+ 'can be done where you click: on an empty cell, add the transfer between '
 		+ 'its two blocks \u2014 a pair may hold more than one, and their fluxes add '
 		+ '\u2014 and on the margin, add a block. The wheel zooms about the pointer, '
-		+ 'and dragging the empty grid moves it.'
+		+ 'and dragging the empty grid moves it. Drag a block on the diagonal along '
+		+ 'it to put it somewhere else among its neighbours, its row and its column '
+		+ 'together, or press Alt+\u2191 or Alt+\u2193 on it; the order is saved with '
+		+ 'the model and changes no number, and the margin\u2019s right-click puts the '
+		+ 'model\u2019s own order back.'
 		+ (frames.length || slots.some((x) => x.kind === 'group')
 			? ' A sub-system folds up into a single row and column, with every '
 				+ 'flux in and out of it landing there; a click on its tile unfolds '
-				+ 'it, to show the blocks inside framed together, and selects it.'
+				+ 'it, to show the blocks inside framed together, and selects it. '
+				+ 'Dragged along the diagonal, it takes everything inside it along.'
 			: '')
 		+ (paths.length
 			? ' A far-field path sits on the diagonal like any other block: a flux '
@@ -1028,7 +1497,8 @@ function diagonalCell(slot, ctx) {
 			type: 'button',
 			title: `${slot.path} \u2014 ${isOpen
 				? 'unfolded: the blocks inside it are framed here. A click folds it up and selects it.'
-				: `folded up, holding ${held}. A click unfolds it and selects it.`}`,
+				: `folded up, holding ${held}. A click unfolds it and selects it.`}`
+				+ ' Drag it along the diagonal to move it, with everything inside it.',
 		});
 		btn.dataset.name = slot.path;
 		// Drawn selected when it is: folding draws the grid again, and a tile
@@ -1066,7 +1536,7 @@ function diagonalCell(slot, ctx) {
 				? ' A far-field path: a flux goes into its first fracture cell and '
 					+ 'its release comes out of its last.'
 				: ''}\nClick to select it, double-click to open its settings, right-click `
-			+ 'for its menu.',
+			+ 'for its menu, drag it along the diagonal to move it.',
 	}, label);
 	// What it is shown as, in brackets after its name, as the tree has it.
 	const named = ed.findBlock(project, slot.name)?.block;

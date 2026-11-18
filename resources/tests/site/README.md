@@ -1354,3 +1354,36 @@ way; in a grid with a column of values at the start the row that is off has a
 dash there and lines up with the rest; and the Information view counts and
 marks the values the same way. Against the code before the grid and the counts
 changed, 15 of its checks fail.
+
+## test-chrome-kompartment-matrix-arrange.py
+
+Kompartment's transfer grid, arranged by hand.
+
+    SITE_HTTP_PORT=8765 SITE_CDP_PORT=9222 python3 test-chrome-kompartment-matrix-arrange.py    # expect 16/16
+
+A block's tile on the Matrix tab's diagonal, or a sub-system's, is dragged
+along the diagonal to another place among the blocks and sub-systems of its
+own sub-system, its row and column with it (`wireArrange` in
+`kompartment/src/ui/matrix.js`); the place is kept in the model's layout and
+changes no number (`moveOnMatrix` in `kompartment/src/domain/edit.js`). With
+real presses, drags and keys, on a model of its own pasted into the JSON tab:
+a press that does not move selects and moves nothing; a drag of a block up the
+diagonal shows a line along a row boundary and one down a column boundary,
+meeting in a dot at the corner of the square it would go to, with the tile
+faint and its name following the pointer, and the drop puts it there, selected,
+with a transfer still between the same two blocks and nothing of the drag left
+on the page; Undo puts the order back; a folded sub-system dragged to the top
+goes whole and is not unfolded by the release; Escape during a drag puts the
+tile back; Alt+Down and Alt+Up move the focused tile a place, the focus staying
+on it; a tile's right-click starts with Move up (off on the first tile) and
+Move down, which moves it; inside an unfolded sub-system a block moves among
+its own neighbours and a drag towards the top of the grid leaves it first among
+them; the places are in the model's JSON under `layout`; the margin's
+right-click puts the model's own order back; and on a grid of thirty
+compartments a drag held near the panel's bottom edge scrolls it. Against the
+code before the grid could be arranged, 11 of its 15 checks fail (the check of
+where the cross is drawn needs a cross to look at).
+
+A model is pasted into the JSON tab with the tab open, and Apply clicked only
+once it is on: it stays off until the text has been checked, and a click
+before then does nothing, leaving the example the page opened with.

@@ -4332,6 +4332,58 @@ textarea.is-suspect {
 #panel-matrix.is-panning,
 #panel-matrix.is-panning * { cursor: grabbing; }
 
+/* A tile dragged along the diagonal (see `wireArrange` in ./src/ui/matrix.js):
+   the hand closes over the whole panel, nothing in it is picked up as text on
+   the way, and the tile -- with everything framed under it, for an open
+   sub-system -- is left faint where it was. */
+#panel-matrix.is-arranging,
+#panel-matrix.is-arranging * { cursor: grabbing; user-select: none; }
+
+.matrix-block.is-dragged { opacity: 0.4; }
+
+/* Where it would go: a line along a row boundary and one down the column
+   boundary of the same slot, crossing on the diagonal at a dot, since its row
+   and its column both move there. On the window and over everything -- the
+   name following the pointer too, which would otherwise sit on the crossing
+   -- cut by the code to what of the panel can be seen. */
+.matrix-drop {
+	position: fixed;
+	z-index: 96;
+	pointer-events: none;
+	border-radius: 1px;
+	background: var(--accent);
+	box-shadow: 0 0 0 1px color-mix(in oklab, var(--surface-1) 75%, transparent);
+}
+
+.matrix-drop.is-point {
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px var(--surface-1);
+}
+
+/* Its name, following the pointer: a tile like the one on the diagonal, in
+   the colour it was given there, if it was given one. */
+.matrix-ghost {
+	position: fixed;
+	left: 0;
+	top: 0;
+	z-index: 95;
+	pointer-events: none;
+	max-width: 200px;
+	padding: 4px 9px;
+	border: 1px solid var(--accent);
+	border-radius: 4px;
+	background: var(--surface-2);
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+	font: 650 11.5px/1.25 var(--sans);
+	color: var(--text-primary);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+/* A sub-system's, squarer, as its tile is. */
+.matrix-ghost.is-system { border-radius: 2px; }
+
 /* Every cell one square, `--cell` on a side, so the grid reads as the matrix
    it is -- the pattern of who feeds whom, the shape a Jacobian is drawn in --
    rather than as a table whose columns are as wide as their longest rate.

@@ -4689,8 +4689,9 @@ export function addTransportOperation(project, {
  * The grid is square -- row i and column i are the same thing -- and the
  * blocks are on its diagonal, so a sub-system has to be a *contiguous run* of
  * slots or it cannot be drawn as a group at all. That is what this arranges: a
- * system's own blocks, then each of its children, depth first, so everything
- * inside a sub-system sits together on both axes.
+ * system's own blocks and its children, in the order `matrixOrder` gives them,
+ * each child with everything inside it, depth first, so everything inside a
+ * sub-system sits together on both axes.
  *
  * A **closed** sub-system is one slot. Everything inside it is represented by
  * it, so a flux from a block outside into any block within lands on that one
@@ -4713,21 +4714,17 @@ export function matrixPlan(project, open = new Set()) {
 	const paths = new Set(systems(project));
 	const isPath = new Set([...(project.farfields ?? []), ...(project.waste_packages ?? [])]
 		.map((f) => qualifiedName(f)));
-	const ownBlocks = (system) => [
-		...(project.compartments ?? []),
-		...(project.farfields ?? []),
-		...(project.waste_packages ?? []),
-	].filter((b) => systemOf(b) === system).map((b) => qualifiedName(b));
 
 	const slots = [];
 	const frames = [];
 	const walk = (system, depth) => {
-		for (const name of ownBlocks(system)) {
-			slots.push({
-				kind: 'block', name, local: baseName(name), isPath: isPath.has(name), depth,
-			});
-		}
-		for (const child of childSystems(project, system)) {
+		for (const { id, child } of diagonalOf(project, system)) {
+			if (!child) {
+				slots.push({
+					kind: 'block', name: id, local: baseName(id), isPath: isPath.has(id), depth,
+				});
+				continue;
+			}
 			if (open.has(child)) {
 				const from = slots.length;
 				slots.push({ kind: 'head', path: child, local: baseName(child), depth });
@@ -4791,6 +4788,177 @@ export function matrixPlan(project, open = new Set()) {
 	};
 
 	return { slots, frames, index, representative };
+}
+
+// --- the grid's diagonal, arranged by hand ------------------------------------
+//
+// Where a block or a sub-system sits on the transfer grid's diagonal, among the
+// others in its own sub-system, is the `matrix` of its layout entry. Kept with
+// its place on the diagram because it is the same kind of fact -- where
+// something is drawn, saved with the model, changing no number -- and the
+// layout already follows a block through every rename, move and deletion. A
+// sub-system's run on the grid cannot be split, so a place is only ever among
+// siblings: the blocks of one sub-system and the sub-systems directly in it.
+
+/** The key a place on the grid's diagonal is kept under, in a layout entry. */
+const MATRIX_PLACE = 'matrix';
+
+/**
+ * One layout entry, when the map really holds one: a plain map answers for
+ * `__proto__` and its kin too (see `layoutOf`), and a file can hold anything.
+ */
+function ownEntry(project, id) {
+	const layout = project.layout;
+	if (!layout || !Object.prototype.hasOwnProperty.call(layout, id)) return null;
+	const entry = layout[id];
+	return entry && typeof entry === 'object' ? entry : null;
+}
+
+/** Where `id` was put on the diagonal; `Infinity` for nowhere in particular. */
+function matrixPlace(project, id) {
+	const place = ownEntry(project, id)?.[MATRIX_PLACE];
+	return Number.isFinite(place) ? place : Infinity;
+}
+
+/**
+ * What the grid draws on its diagonal for one sub-system (`''`: the top level),
+ * in order: each block as `{id}`, each sub-system directly inside it as `{id,
+ * child}` with `child` its path.
+ *
+ * What has been put somewhere goes by its place. What has not comes after it,
+ * in the model's own order: compartments, far-field paths and waste packages as
+ * the model lists them, then the sub-systems. So a model nobody has arranged is
+ * drawn as it always was, and a block added to a run that has been arranged
+ * arrives at its end.
+ */
+function diagonalOf(project, system) {
+	const items = [
+		...(project.compartments ?? []),
+		...(project.farfields ?? []),
+		...(project.waste_packages ?? []),
+	].filter((b) => systemOf(b) === system).map((b) => ({ id: qualifiedName(b) }));
+	for (const child of childSystems(project, system)) items.push({ id: child, child });
+	// A stable sort, so what has no place keeps the model's order among itself.
+	const place = new Map(items.map((x) => [x, matrixPlace(project, x.id)]));
+	return items.sort((a, b) => {
+		const pa = place.get(a);
+		const pb = place.get(b);
+		return pa === pb ? 0 : pa < pb ? -1 : 1;
+	});
+}
+
+/**
+ * The blocks and sub-systems on the grid's diagonal inside one sub-system
+ * (`''`: the top level), in the order the grid draws them: a block by its
+ * qualified name, a sub-system by its path.
+ */
+export function matrixOrder(project, system = '') {
+	return diagonalOf(project, system).map((x) => x.id);
+}
+
+/**
+ * Puts a block or a sub-system somewhere else on the transfer grid's
+ * diagonal: just before `before`, another of those in the same sub-system, or
+ * after the last of them when `before` is null. A sub-system takes its whole
+ * run with it, since what is inside one sits together on both axes.
+ *
+ * Each of them is given its place, so that the order holds whatever is added
+ * later: that goes at the end. An arrangement of a view, as a position on the
+ * diagram is, so no number changes.
+ *
+ * @returns {boolean} whether the order changed
+ */
+export function moveOnMatrix(project, id, before = null) {
+	const system = parentOf(id);
+	const order = matrixOrder(project, system);
+	if (!order.includes(id)) {
+		throw new EditError(`'${id}' is not drawn on the diagonal of the grid`);
+	}
+	if (before === id) return false;
+	if (before != null && !order.includes(before)) {
+		throw new EditError(`'${before}' is not beside '${id}' on the grid: it moves among the other `
+			+ `blocks and sub-systems of ${system ? `'${system}'` : 'the top level'}`);
+	}
+	const next = order.filter((x) => x !== id);
+	next.splice(before == null ? next.length : next.indexOf(before), 0, id);
+	if (next.every((x, i) => x === order[i])) return false;
+	const layout = layoutOf(project);
+	next.forEach((x, i) => {
+		const entry = ownEntry(project, x) ?? {};
+		entry[MATRIX_PLACE] = i;
+		layout[x] = entry;
+	});
+	return true;
+}
+
+/**
+ * Forgets where `id` was put on the grid's diagonal. What a block or a
+ * sub-system wants when it moves into another sub-system: its place was among
+ * the neighbours it has left, and it goes after its new ones.
+ *
+ * @returns {boolean} whether it had a place
+ */
+export function clearMatrixPlace(project, id) {
+	const entry = ownEntry(project, id);
+	if (!entry || !Object.prototype.hasOwnProperty.call(entry, MATRIX_PLACE)) return false;
+	delete entry[MATRIX_PLACE];
+	if (!Object.keys(entry).length) delete project.layout[id];
+	return true;
+}
+
+/**
+ * What can hold a place on the diagonal inside `system`, however deep: every
+ * block the grid draws and every sub-system, `system` itself apart -- where it
+ * sits is among its own neighbours, outside it.
+ */
+function placesWithin(project, system) {
+	if (!project.layout) return [];
+	return [
+		...[
+			...(project.compartments ?? []),
+			...(project.farfields ?? []),
+			...(project.waste_packages ?? []),
+		].filter((b) => isWithin(systemOf(b), system)).map((b) => qualifiedName(b)),
+		...systems(project).filter((p) => p !== system && isWithin(p, system)),
+	];
+}
+
+/** Whether anything inside `system` (`''`: the model) has been put somewhere on the diagonal. */
+export function hasMatrixOrder(project, system = '') {
+	return placesWithin(project, system).some((id) => {
+		const entry = ownEntry(project, id);
+		return !!entry && Object.prototype.hasOwnProperty.call(entry, MATRIX_PLACE);
+	});
+}
+
+/**
+ * Forgets every place on the grid's diagonal inside `system` -- however deep,
+ * and in the whole model for `''` -- so that the grid draws it in the model's
+ * own order again.
+ *
+ * @returns {number} how many places were forgotten
+ */
+export function clearMatrixOrder(project, system = '') {
+	let n = 0;
+	for (const id of placesWithin(project, system)) if (clearMatrixPlace(project, id)) n++;
+	return n;
+}
+
+/**
+ * Forgets the diagram's layout -- every position, size and bend -- so that an
+ * auto-layout starts from nothing, and keeps each place on the grid's
+ * diagonal: that is the grid's arrangement, not the diagram's, and tidying one
+ * is no reason to lose the other.
+ */
+export function clearDiagramLayout(project) {
+	if (!project.layout) return project;
+	const layout = layoutOf(project);
+	for (const key of Object.keys(layout)) {
+		const place = ownEntry(project, key)?.[MATRIX_PLACE];
+		if (place !== undefined) layout[key] = { [MATRIX_PLACE]: place };
+		else delete layout[key];
+	}
+	return project;
 }
 
 /**
@@ -5994,6 +6162,10 @@ export function pasteBlocks(project, payload, { system = null, at = null } = {})
 		dx = spot.x - Math.min(...nodes.map((n) => n.x));
 		dy = spot.y - Math.min(...nodes.map((n) => n.y));
 	}
+	// A copy is new among whatever it lands beside, and on the grid's diagonal
+	// it goes after them: the place it was copied with was among the
+	// neighbours of the original. What is inside a copied sub-system keeps its
+	// order, being among the same neighbours as before.
 	parts.forEach((part, i) => {
 		if (part.node && Number.isFinite(part.node.x)) {
 			project.layout[roots[i]] = {
@@ -6001,6 +6173,7 @@ export function pasteBlocks(project, payload, { system = null, at = null } = {})
 				x: Math.round(part.node.x + dx),
 				y: Math.round(part.node.y + dy),
 			};
+			delete project.layout[roots[i]][MATRIX_PLACE];
 		} else if (spot) {
 			project.layout[roots[i]] = { x: Math.round(spot.x), y: Math.round(spot.y) };
 		}
@@ -6018,6 +6191,7 @@ export function pasteBlocks(project, payload, { system = null, at = null } = {})
 			project.layout[c.now] = {
 				...src, x: Math.round(src.x + ox), y: Math.round(src.y + oy),
 			};
+			if (c.item.part < 0) delete project.layout[c.now][MATRIX_PLACE];
 		}
 		if (c.item.bend) {
 			project.layout[EDGE_PREFIX + c.now] = {

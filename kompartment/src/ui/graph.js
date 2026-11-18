@@ -3027,6 +3027,13 @@ export class GraphEditor {
 			const r = ed.moveSelection(this.project, names, system);
 			const landed = [...r.systems.values(), ...r.moved.values()];
 			if (forget) for (const to of landed) ed.clearPosition(this.project, to);
+			// A place on the transfer grid's diagonal was a place among the
+			// neighbours left behind, whichever way the move was asked for:
+			// what arrives goes after its new ones. A sub-system moved whole
+			// keeps the order inside it, which is among the same neighbours.
+			for (const [was, now] of [...r.systems, ...r.moved]) {
+				if (parentOf(was) !== parentOf(now)) ed.clearMatrixPlace(this.project, now);
+			}
 			// Where a paste was aimed. The blocks keep the shape they were in
 			// -- their offsets from each other -- so a group that was cut
 			// arrives looking like the group that was cut, with its top-left
@@ -5854,10 +5861,9 @@ export class GraphEditor {
 	}
 
 	relayout() {
-		// Drop bend points too: they were placed against the old positions.
-		for (const key of Object.keys(this.project.layout ?? {})) {
-			delete this.project.layout[key];
-		}
+		// Bend points go too: they were placed against the old positions. Where
+		// each block sits on the transfer grid stays, being the grid's.
+		ed.clearDiagramLayout(this.project);
 		ed.autoLayout(this.project);
 		this._placeLooseNodes();
 		this._changed({ layoutOnly: true });
