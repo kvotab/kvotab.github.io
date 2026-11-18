@@ -54,7 +54,7 @@
     };
   })();
   const STORAGE_KEY = 'kvot-rtm-v1';
-  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261117r';
+  const WORKER_URL = 'resources/js/rtm-worker-entry.js?v=20261118c';
   const DEFAULT_WIDTH = 330;
 
   /* ---------------------------------------------------------------------
@@ -11627,7 +11627,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
       sections: [{ choices: [
         ['following the ionic strength', 'The relations hold between activities, as PHREEQC’s do, and each species’ activity coefficient follows the ionic strength of its cell as the run goes on: `ACTIVITY = debye-huckel` at the water’s `TEMPERATURE`, by the database’s `-gamma` (`a=` and `b=`) where it gives one and Davies for any other ion; with a SIT database `ACTIVITY = sit`, the database’s interaction coefficients between the species written in `<SIT>`; with a Pitzer database `ACTIVITY = pitzer`, its parameters between them in `<PITZER>`, each with its terms in the temperature; with an LLNL database (`llnl.dat`) `ACTIVITY = llnl`, each species’ `-llnl_gamma` as `a=` and the database’s tables in `<LLNL>`. Each relation is written with its water and the database’s own log K, as it goes with temperature, and the comment on it gives the conditional log K at this water.', pq.act === 'follow'],
         ['fixed at this water', 'Each log K is conditional: the activity coefficients at this water, and the activity of water, are folded into it, and the relations hold between concentrations. Exact at this water; a run that moves the ionic strength moves away from it, and the PHREEQC tab says how far. The database’s temperature terms stay with it, and the coefficients folded in are this water’s at any temperature.', pq.act === 'fixed'],
-      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again, and under Pitzer every solute of its cell, so a cell is speciated whole. An isotope database’s forms of water, `iso.dat`’s HDO, D2O and H2[18O], are water to PHREEQC (`-activity_water`), with a coefficient the page does not have: following the ionic strength such a water is refused, and fixed at this water it starts on PHREEQC’s.' }],
+      ] }, { heading: 'Keep in mind', text: 'Following costs a little: one ionic strength a cell each time the rates are worked out, and a fuller Jacobian within a cell. Under SIT each coefficient reads the species it is paired with as well, so more again, and under Pitzer every solute of its cell, so a cell is speciated whole. An isotope database’s forms of water, `iso.dat`’s HDO, D2O and H2[18O], are water to PHREEQC (`-activity_water`): following, each is written with `activity_water`, its coefficient the water’s activity times 0.018 as PHREEQC’s is, under Debye–Hückel and LLNL’s model; under SIT and Pitzer such a water is refused, and fixed at this water it starts on PHREEQC’s under any model.' }],
       more: more('A water from PHREEQC', 'help-phreeqc-water'),
     }),
 
@@ -12173,7 +12173,7 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
     VOLUMES: new Set(['millero']),
     CONDUCTANCE: new Set(['gfw', 'dw', 'viscosity', 'vm']),
     SPECIES: new Set(['fixed', 'immobile', 'mineral', 'exchange', 'exchanger', 'electron', 'surface', 'potential', 'gas',
-      'drummond']),
+      'drummond', 'activity_water']),
     INITIAL: new Set(['all', 'matrix', 'fixed']),
     // The first line's word: the times the water at the left end changes at.
     INFLOW: new Set(['t']),
@@ -13019,11 +13019,11 @@ Plotly.newPlot('chart', ${data}, ${layout}, ${config});
      and shows what it did.
      --------------------------------------------------------------------- */
   const PQ_KEY = 'kvot-rtm-phreeqc-v1';
-  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261118b';
+  const PQ_WORKER_URL = 'resources/js/rtm-phreeqc-worker.js?v=20261118c';
   const PQ_SCRIPTS = [
     'vendors/phreeqc/phreeqc.js?v=20261117n',
     PHREEQC_DAT_SRC,
-    'resources/js/rtm-phreeqc.js?v=20261118b',
+    'resources/js/rtm-phreeqc.js?v=20261118c',
     'resources/js/rtm-phreeqc-engine.js?v=20261117n',
   ];
   /** "An example water": round numbers, nobody's sample. */

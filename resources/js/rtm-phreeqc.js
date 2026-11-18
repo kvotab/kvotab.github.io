@@ -749,22 +749,34 @@
             const a = Number(tokens[1]);
             const b = Number(tokens[2]);
             if (Number.isFinite(a) && Number.isFinite(b)) {
-              // The last of -gamma, -llnl_gamma and -co2_llnl_gamma is the species' rule, as PHREEQC's gflag.
+              // The last of -gamma, -llnl_gamma, -co2_llnl_gamma and -activity_water is the species' rule, as PHREEQC's gflag.
               this.gamma.set(last, { a, b });
               this.llnlGamma.delete(last);
               this.co2Gamma.delete(last);
+              this.otherGamma.delete(last);
             }
           } else if (last && lkOption(block, line) && ['llnl_gamma', 'co2_llnl_gamma', 'activity_water']
             .includes(lkOption(block, line).opt)) {
             const { opt, words } = lkOption(block, line);
             if (opt === 'llnl_gamma') {
               const a = Number(words[0]);
-              if (Number.isFinite(a)) { this.llnlGamma.set(last, a); this.co2Gamma.delete(last); this.gamma.delete(last); }
+              if (Number.isFinite(a)) {
+                this.llnlGamma.set(last, a);
+                this.co2Gamma.delete(last);
+                this.gamma.delete(last);
+                this.otherGamma.delete(last);
+              }
             } else if (opt === 'co2_llnl_gamma') {
               this.co2Gamma.add(last);
               this.llnlGamma.delete(last);
               this.gamma.delete(last);
-            } else this.otherGamma.set(last, opt);
+              this.otherGamma.delete(last);
+            } else {
+              this.otherGamma.set(last, opt);
+              this.gamma.delete(last);
+              this.llnlGamma.delete(last);
+              this.co2Gamma.delete(last);
+            }
           }
         } else if (block === 'EXCHANGE_MASTER_SPECIES' && tokens.length >= 2) {
           this.exMaster.set(tokens[0], tokens[1]);
@@ -4972,21 +4984,22 @@
       database's forms of water, iso.dat's HDO, D2O, H2[18O] -- is water to
       PHREEQC under every activity model, its activity the water's times its
       moles to each mole of water: gamma = a(H2O) 0.018 (model.cpp, gflag 9).
-      The page has no such coefficient. Following the ionic strength, each
-      would take an ordinary solute's, some 55 times PHREEQC's, and it and
-      every species formed from it would start far from PHREEQC's water
-      (PHREEQC's Example 20A by a factor of 48, 20B of 2200): refused. Fixed
-      at this water, PHREEQC's own coefficient is folded into each log K, and
-      the model starts on PHREEQC's water.
+      Following the ionic strength it is written with activity_water, which
+      the page has under Debye-Hueckel and LLNL's model (rtm-model.js's form
+      9); under SIT and Pitzer it does not, and with an ordinary solute's
+      coefficient, some 55 times PHREEQC's, it and every species formed from
+      it would start far from PHREEQC's water: refused there. (PHREEQC's own
+      SIT model does not converge on such a water.) Fixed at this water,
+      PHREEQC's own coefficient is folded into each log K, under any model.
     */
     const asWater = follow ? order.filter((sp) => db.otherGamma.get(sp) === 'activity_water') : [];
-    if (asWater.length) {
+    if (asWater.length && sitLike) {
       const one = asWater.length === 1;
       throw new Error(`${asWater.slice(0, 4).join(', ')}${asWater.length > 4 ? ', ...' : ''} ${one ? 'is' : 'are'} given `
         + `-activity_water: PHREEQC counts ${one ? 'it' : 'them'} as water, ${one ? 'its' : 'their'} activity the water's `
-        + `times ${one ? 'its' : 'their'} moles to each mole of water, a coefficient this page does not have, and following `
-        + `the ionic strength ${one ? 'it' : 'they'} would start far from PHREEQC's water: keep the coefficients fixed at `
-        + 'this water instead.');
+        + `times ${one ? 'its' : 'their'} moles to each mole of water, a coefficient this page has under Debye-Hueckel and `
+        + `LLNL's model but not under ${sit ? 'SIT' : 'Pitzer'}, and with another ${one ? 'it' : 'they'} would start far `
+        + 'from PHREEQC\'s water: keep the coefficients fixed at this water instead.');
     }
     /*
       LLNL's: its tables, and every ion written with its -llnl_gamma: PHREEQC
@@ -5000,7 +5013,8 @@
         throw new Error(`${o.database.name || 'This database'} gives LLNL's activity model without its tables at each `
           + 'temperature (-temperatures, -dh_a, -dh_b, -bdot).');
       }
-      const bare = order.filter((sp) => chargeOf(sp) && !db.llnlGamma.has(sp) && !db.co2Gamma.has(sp));
+      const bare = order.filter((sp) => chargeOf(sp) && !db.llnlGamma.has(sp) && !db.co2Gamma.has(sp)
+        && db.otherGamma.get(sp) !== 'activity_water');
       if (bare.length) {
         throw new Error(`${o.database.name || 'This database'} gives ${bare.slice(0, 4).join(', ')}${bare.length > 4 ? ', ...' : ''} `
           + 'no -llnl_gamma, and under LLNL\'s model PHREEQC has no coefficient for such an ion: keep the coefficients '
@@ -5103,6 +5117,14 @@
       out.push("# where PHREEQC's hold between activities. The comment gives the database's own log K at");
       out.push(`# ${fmtG(tc, 6)} C. If a run moves the ionic strength far from ${fmtG(w.mu, 3)}, look at it through`);
       out.push('# PHREEQC afterwards: the drift of the activity coefficients says how far off this gets.');
+    }
+    // The forms of water (activity_water), followed as PHREEQC follows them, under Debye-Hueckel and LLNL's model.
+    if (asWater.length) {
+      const one = asWater.length === 1;
+      const list = `${asWater.slice(0, 4).map((sp) => name.get(sp) || sp).join(', ')}${asWater.length > 4 ? ', ...' : ''}`;
+      out.push(`# ${list} ${one ? 'is a form' : `are ${asWater.length} forms`} of water to PHREEQC (activity_water): the`);
+      out.push(`# coefficient of ${one ? 'it' : 'each'} is the water's activity times 0.018, ${one ? 'its' : 'each one\'s'} activity the water's times its`);
+      out.push('# moles to each mole of water, whatever the ionic strength.');
     }
     if (volumes) {
       out.push(`# The water is at ${fmtG(atm, 6)} atm${atVapour ? ', its vapour pressure times a(H2O)' : ''}: PHREEQC corrects each log K for the`);
@@ -5572,9 +5594,11 @@
       }
       const bits = [];
       if (chargeOf(name.get(s)) !== chargeOf(s)) bits.push(`z=${chargeOf(s)}`);
-      // SIT and Pitzer take no a or b; LLNL's model the database's -llnl_gamma a, or drummond for -co2_llnl_gamma.
+      // SIT and Pitzer take no a or b; LLNL's model the database's -llnl_gamma a, or drummond for -co2_llnl_gamma;
+      // a form of water, -activity_water, its own word under either model (refused above under SIT and Pitzer).
       const g = sitLike || llnl ? null : db.gamma.get(s);
-      if (llnl) {
+      if (db.otherGamma.get(s) === 'activity_water') bits.push('activity_water');
+      else if (llnl) {
         if (db.co2Gamma.has(s)) bits.push('drummond');
         else if (db.llnlGamma.has(s)) bits.push(`a=${fmtG(db.llnlGamma.get(s), 15)}`);
       } else if (g) {

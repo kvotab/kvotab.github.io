@@ -1524,7 +1524,9 @@ UO2                      # no number: starts at zero, does not move</pre>
             <em>A rock matrix</em> below. With <code>ACTIVITY</code> it takes <code>z=</code>,
             <code>a=</code> and <code>b=</code>: see <em>Activity</em> below; under
             <code>ACTIVITY = sit</code> and <code>pitzer</code>, <code>z=</code> alone; under <code>llnl</code>,
-            <code>a=</code>, or <code>drummond</code> for Drummond's coefficient of CO2 (see <em>LLNL</em>).</p>
+            <code>a=</code>, or <code>drummond</code> for Drummond's coefficient of CO2 (see <em>LLNL</em>); under
+            <em>davies</em>, <em>debye-huckel</em> and <em>llnl</em>, <code>activity_water</code> for a form of
+            water itself (see <em>Activity</em>).</p>
           <p><code>fixed</code> is a statement about the equation, not a nudge: that species' row
             in the right-hand side and in the Jacobian is set to exactly zero, so nothing —
             reaction, diffusion, advection, a Dirichlet face, an equilibrium — can move it. It
@@ -2310,6 +2312,12 @@ X-      1e-3     z=0 b=0   # a surface site, no ion in the water</pre>
               in kg/mol, a database's <code>-gamma</code>;</li>
             <li>a neutral species: log&nbsp;γ = <em>b</em>&nbsp;<em>I</em>, with <em>b</em> 0.1
               unless <code>b=</code> gives it;</li>
+            <li>a species given <code>activity_water</code>, a form of water itself, as an isotope database
+              gives HDO, D<sub>2</sub>O and H<sub>2</sub>[<sup>18</sup>O]: γ&nbsp;=&nbsp;0.018&nbsp;<em>a</em>(H<sub>2</sub>O)
+              whatever the ionic strength, its activity the water's times its moles to each mole of water —
+              PHREEQC's <code>-activity_water</code>, 0.018&nbsp;kg/mol being the weight of water PHREEQC
+              takes for its isotopes; under <em>davies</em>, <em>debye-huckel</em> and <em>llnl</em>, and
+              refused under SIT and Pitzer;</li>
             <li>a species named <code>H2O</code>: γ = 1.</li>
           </ul>
           <p>That is PHREEQC's rule, and on the same water the page's activity coefficients are
@@ -2467,7 +2475,8 @@ SiO2    1e-4   a=3</pre>
             with <code>CO2</code>'s coefficients. A neutral species given neither has 0.1&nbsp;<em>I</em>, or
             <code>b=</code>'s, PHREEQC's default; an ion given no <code>a=</code> is refused, as PHREEQC
             has no coefficient for it under this model. A species on an exchanger given <code>a=</code> takes
-            its ion's form. The water's activity is 1&nbsp;−&nbsp;0.017&nbsp;ΣC, as under Debye–Hückel.</p>
+            its ion's form, and one given <code>activity_water</code> the water's activity times 0.018, as under
+            Debye–Hückel (see <em>Activity</em>). The water's activity is 1&nbsp;−&nbsp;0.017&nbsp;ΣC, as under Debye–Hückel.</p>
 
           <h4 id="help-pressure">Pressure</h4>
           <pre>ACTIVITY = debye-huckel
@@ -3979,13 +3988,13 @@ Fe+2 + Cl- &lt;=&gt; FeCl+,      logK = 0.1400000000                            
             <code>drummond</code> where it has <code>-co2_llnl_gamma</code>, and the database's tables in
             <code>&lt;LLNL&gt;</code>. A water with an ion the database gives no <code>-llnl_gamma</code> is
             not written that way, as PHREEQC has no coefficient for such an ion; the coefficients fixed at
-            the water are. Nor, under any of the models, is a water with species PHREEQC counts as water:
-            an isotope database's forms of water, <code>iso.dat</code>'s HDO, D<sub>2</sub>O and
-            H<sub>2</sub>[<sup>18</sup>O], given <code>-activity_water</code>, whose activity PHREEQC takes
-            as the water's times their moles to each mole of water. The page has no such coefficient, and
-            with an ordinary solute's they and every species formed from them would start far from
-            PHREEQC's water; fixed at the water, PHREEQC's own coefficients are folded into each log K, and
-            the model starts on PHREEQC's water. A water at another pressure than one atmosphere has it written,
+            the water are. Species PHREEQC counts as water — an isotope database's forms of water,
+            <code>iso.dat</code>'s HDO, D<sub>2</sub>O and H<sub>2</sub>[<sup>18</sup>O], given
+            <code>-activity_water</code>, whose activity PHREEQC takes as the water's times their moles to
+            each mole of water — are written with <code>activity_water</code> (see <em>Activity</em>
+            above), under Debye–Hückel and LLNL's model; under SIT and Pitzer a water with them is not
+            written that way, the page having no such coefficient there, and the coefficients fixed at the
+            water are. A water at another pressure than one atmosphere has it written,
             <code>PRESSURE</code>, PHREEQC's: the pressure given, or above 100&nbsp;°C the vapour pressure times
             <em>a</em>(H<sub>2</sub>O), which PHREEQC then keeps with the water. Above one atmosphere, with a
             database that gives molar volumes — <code>phreeqc.dat</code>, <code>pitzer.dat</code> — each
@@ -5138,7 +5147,7 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/facsimile-solver.js?v=20261117l"></script>
   <script src="./resources/js/ode-julia.js?v=20260923e"></script>
   <script src="./resources/js/facsimile-ode-julia.js?v=20261005"></script>
-  <script src="./resources/js/rtm-model.js?v=20261117r"></script>
+  <script src="./resources/js/rtm-model.js?v=20261118c"></script>
   <script src="./resources/js/rtm-default.js?v=20261112c"></script>
   <script src="./resources/js/rtm-examples.js?v=20261115d"></script>
   <script src="./resources/js/rtm-worker.js?v=20261117p"></script>
@@ -5146,6 +5155,6 @@ DOSE  all  0.64*exp(-x/3.0E-5)</pre>
   <script src="./resources/js/rtm-hdf5.js?v=20261108c"></script>
   <script src="./resources/js/rtm-import.js?v=20261111j"></script>
   <script src="./resources/js/kvot-info.js?v=20261004a"></script>
-  <script src="./resources/js/rtm-ui.js?v=20261118b"></script>
+  <script src="./resources/js/rtm-ui.js?v=20261118c"></script>
 </body>
 </html>

@@ -7888,6 +7888,104 @@ console.log('\n--- LLNL ---');
 }
 
 /*
+   A FORM OF WATER (activity_water), PHREEQC's -activity_water, as an
+   isotope database gives HDO, D2O and H2[18O]: its coefficient a(H2O)
+   times 0.018 under davies, debye-huckel and llnl, against the closed form
+   at the water's own a(H2O); a held water with salt coming in, whole and
+   speciated in its components (an iron couple tied to the electron), the
+   same run, its relations held in activities at the end, and its Jacobian
+   against differences, under llnl as well; and the texts it refuses. The
+   waters and constants are the tests' own; against PHREEQC itself in
+   test-phreeqc.js.
+*/
+console.log('\n--- a form of water (activity_water) ---');
+{
+  const tables = 'TEMPERATURES 0 25 60 100\nDH_A 0.49 0.51 0.55 0.60\nDH_B 0.325 0.329 0.335 0.342\nBDOT 0.037 0.041 0.044 0.046\n'
+    + 'CO2 -1.03 0.00128 256 0.44 -0.0016';
+  let worst = 0;
+  for (const act of ['davies', 'debye-huckel', 'llnl']) {
+    const ll = act === 'llnl';
+    const m = RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = ${act}\nTEMPERATURE = 25\n\n<SPECIES>\n`
+      + `Na+ 2${ll ? ' a=4' : ''}\nCl- 2${ll ? ' a=3' : ''}\nHDO 0.02 activity_water\nD2O 1e-4 activity_water\nCO2 1e-3\n`
+      + `${ll ? `\n<LLNL>\n${tables}\n` : ''}`);
+    const ns = m.speciesNames.length;
+    const lnG = new Float64Array(ns);
+    const w = RtmModel.activityAt(m.act, m.initialState(), 0, lnG, new Float64Array(ns), 0);
+    const aw = 1 - 0.017 * (2 + 2 + 0.02 + 1e-4 + 1e-3);
+    worst = Math.max(worst, Math.abs(w.lnAw - Math.log(aw)),
+      ...['HDO', 'D2O'].map((n) => Math.abs(lnG[m.speciesNames.indexOf(n)] - Math.log(aw * 0.018))));
+  }
+  check('a form of water (activity_water): its coefficient a(H2O) times 0.018 under davies, debye-huckel and llnl, in '
+    + '2 mol/kgw of NaCl, the water\'s activity 1 - 0.017 times the sum of C', worst < 1e-15,
+  `within ${worst.toExponential(1)} in ln gamma`);
+
+  // A held water, salt coming in: whole, and speciated in its components (an iron couple tied to the electron).
+  const heavy = (elec, tend, act = 'debye-huckel') => RtmModel.compile(`<SETTINGS>\nMODE = batch\nTEND = ${tend}\n`
+    + `ACTIVITY = ${act}\nEQUILIBRATE = always\nTEMPERATURE = 25\n\n<SPECIES>\nH+ 1e-7 a=9\nOH- 1e-7 a=3.5\n`
+    + `Na+ 0.5 a=4.08${act === 'llnl' ? '' : ' b=0.082'}\nCl- 0.5 a=3.63${act === 'llnl' ? '' : ' b=0.017'}\n`
+    + 'HDO 0.02 activity_water\nD2O 1e-4 activity_water\nD+ 1e-11 a=9\nFe+2 1e-4 a=6\nFe+3 1e-6 a=9\n'
+    + `${elec ? 'e- electron\n' : ''}\n<EQUILIBRIUM>\nH2O <=> H+ + OH-, logK = -14\n`
+    + '0.5 H2O + 0.5 D2O <=> HDO, logK = 0.25\nHDO <=> D+ + OH-, logK = -14.6\n'
+    + `${elec ? 'Fe+2 <=> Fe+3 + e-, logK = -13\n' : ''}\n<REACTIONS>\n=> Na+ + Cl-, k = 1e-4\n`
+    + `${act === 'llnl' ? `\n<LLNL>\n${tables}\n` : ''}`);
+  const times = [10, 3000, 9999];
+  const ends = [false, true].map((elec) => {
+    const m = heavy(elec, 1e4);
+    const r = FacsimileODE.runModel(m, { solver: 'ndf', rtol: 1e-10, atol: 1e-18, tend: 1e4, outputTimes: times });
+    return { m, c: times.map((t, k) => m.toConcentrations(r.grid.y[k], t)) };
+  });
+  let same = 0;
+  for (let k = 0; k < times.length; k++) {
+    for (const n of ['H+', 'OH-', 'Na+', 'HDO', 'D2O', 'D+']) {
+      const i0 = ends[0].m.speciesNames.indexOf(n);
+      const i1 = ends[1].m.speciesNames.indexOf(n);
+      same = Math.max(same, Math.abs(ends[1].c[k][i1] / ends[0].c[k][i0] - 1));
+    }
+  }
+  // At the end, each relation in activities, a form of water's coefficient a(H2O) times 0.018 at the water's own.
+  const m1 = ends[1].m;
+  const c1 = ends[1].c[2];
+  const n1 = m1.speciesNames.length;
+  const lg = new Float64Array(n1);
+  const w1 = RtmModel.activityAt(m1.act, c1, 0, lg, new Float64Array(n1), 0);
+  const la = (n) => { const i = m1.speciesNames.indexOf(n); return Math.log(c1[i]) + lg[i]; };
+  const rel = Math.max(Math.abs(la('HDO') - 0.5 * la('D2O') - 0.5 * w1.lnAw - 0.25 * Math.LN10),
+    Math.abs(la('D+') + la('OH-') - la('HDO') + 14.6 * Math.LN10),
+    Math.abs(lg[m1.speciesNames.indexOf('HDO')] - (w1.lnAw + Math.log(0.018))));
+  let bad = 0;
+  let measured = 0;
+  for (const [elec, act] of [[false, 'debye-huckel'], [true, 'debye-huckel'], [true, 'llnl']]) {
+    for (const tend of times) {
+      const m = heavy(elec, tend, act);
+      const r = run(m, { tend, rtol: 1e-9 });
+      const v = RtmModel.verifyJacobian(m, tend, last(r));
+      bad += v.discrepancies.length + (v.outsidePattern ? 1 : 0);
+      measured += v.checked;
+    }
+  }
+  check('  a held water with salt coming in, whole and speciated in its components, the same run; at the end each '
+    + 'relation holds in activities, a form of water at a(H2O) times 0.018 of the water\'s own; and the Jacobian, whole, '
+    + 'in components and under llnl, against differences', same < 1e-9 && rel < 1e-9 && bad === 0,
+  `the two within ${same.toExponential(1)}; the relations within ${rel.toExponential(1)}; the Jacobian ${bad} of `
+    + `${measured} entries off`);
+
+  // What it refuses.
+  const refuse = (tx) => { try { RtmModel.compile(tx); return '(compiled)'; } catch (e) { return e.message; } };
+  const base = (act, sp) => `<SETTINGS>\nMODE = batch\nTEND = 1\nACTIVITY = ${act}\nTEMPERATURE = 25\n\n<SPECIES>\n${sp}\n`;
+  const cases = [
+    ['under ACTIVITY = none', base('none', 'Na+ 1\nHDO 0.02 activity_water'),
+      /HDO is given activity_water, PHREEQC's coefficient of a form of water: it is read under ACTIVITY = davies, debye-huckel or llnl\.$/],
+    ['under sit', base('sit', 'Na+ 1\nHDO 0.02 activity_water'), /read under ACTIVITY = davies, debye-huckel or llnl, not sit\.$/],
+    ['under pitzer', base('pitzer', 'Na+ 1\nHDO 0.02 activity_water'), /, not pitzer\.$/],
+    ['with b=', base('debye-huckel', 'Na+ 1\nHDO 0.02 activity_water b=0.1'), /HDO is given activity_water and a or b/],
+    ['on a mineral', base('debye-huckel', 'Na+ 1\nIce 1 mineral activity_water'), /Ice is given activity_water.*no species dissolved in it/],
+  ];
+  const wrong = cases.filter(([, tx, re]) => !re.test(refuse(tx)));
+  check(`  refused, each with its reason: ${cases.map((c) => c[0]).join('; ')}`, !wrong.length,
+    wrong.map(([what, tx]) => `${what}: "${refuse(tx)}"`).join(' | '));
+}
+
+/*
    MOLAR VOLUMES AND LOG K AT THE PRESSURE (<VOLUMES>), against PHREEQC's
    formulas written out here from its calc_rho_0, calc_dielectrics and
    calc_vm: each species' volume at the temperature, pressure and ionic

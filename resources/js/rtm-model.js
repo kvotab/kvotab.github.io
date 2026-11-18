@@ -499,7 +499,7 @@
         mass: null, Dm: 0, Rm: null, Kd: null, Kdf: null, z: null, dha: null, dhb: null, pe: null, sites: null,
         area: null, grams: null, per: null, dz: null, c0: null, c1: null, tc: null, pc: null, omega: null,
         mineral: false, immobile: false, exchange: false, exchanger: false, electron: false, surface: false,
-        potential: false, gas: false, drummond: false, line };
+        potential: false, gas: false, drummond: false, asWater: false, line };
       let first = true;
       for (const part of parts) {
         const kv = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+)$/.exec(part);
@@ -593,6 +593,8 @@
         if (/^gas$/i.test(part)) { entry.gas = true; entry.immobile = true; continue; }
         // Under ACTIVITY = llnl, Drummond's coefficient of CO2: PHREEQC's -co2_llnl_gamma.
         if (/^drummond$/i.test(part)) { entry.drummond = true; continue; }
+        // A form of water, as an isotope database's HDO: its coefficient the water's, PHREEQC's -activity_water.
+        if (/^activity_water$/i.test(part)) { entry.asWater = true; continue; }
         /*
           A mineral held at saturation that only dissolves -- it never grows
           past what its cell starts with -- or only precipitates -- it never
@@ -2586,7 +2588,7 @@
 
   // The words a species line may carry besides its numbers and key=value pairs (readSpecies).
   const SPECIES_WORDS = new Set(['fixed', 'immobile', 'mineral', 'exchanger', 'exchange', 'electron', 'surface', 'potential',
-    'gas', 'drummond', 'dissolve_only', 'precipitate_only', 'force_equality']);
+    'gas', 'drummond', 'activity_water', 'dissolve_only', 'precipitate_only', 'force_equality']);
 
   /**
    * The model text with one number changed, as a sweep varies it: a
@@ -3742,6 +3744,14 @@
    *   2  an ion, Davies: log gamma = -A z^2 (sqrt(I)/(1 + sqrt(I)) - 0.3 I)
    *   3  an ion given a= under debye-huckel, the WATEQ form:
    *      log gamma = -A z^2 sqrt(I)/(1 + B a sqrt(I)) + b I
+   *   9  a form of water, a species given activity_water, as an isotope
+   *      database gives HDO, D2O and H2[18O]: gamma = a(H2O) 0.018, its
+   *      activity the water's times its moles to each mole of water --
+   *      PHREEQC's -activity_water (model.cpp, gflag 9), whose 0.018 is the
+   *      gram formula weight of water it takes for its isotopes, kg/mol.
+   *      Under davies, debye-huckel and llnl; its derivative goes into dGw,
+   *      1 in ln a(H2O), and the water's ln a is an unknown of the reduced
+   *      speciation wherever there is one (reducedSystem's useL).
    *
    * which is PHREEQC's rule, a= and b= being a database's -gamma. I is half
    * the sum of z^2 C over the cell, and the water's activity 1 - 0.017 times
@@ -3768,6 +3778,12 @@
     if (drummond.length && !isLlnl) {
       throw new RtmError(`${drummond[0].name} is given drummond, Drummond's coefficient of CO2 in LLNL's activity model: it is `
         + 'read under ACTIVITY = llnl.', drummond[0].line);
+    }
+    const asWater = species.find((sp) => sp.asWater);
+    if (asWater && (isSit || isPz || settings.ACTIVITY === 'none')) {
+      throw new RtmError(`${asWater.name} is given activity_water, PHREEQC's coefficient of a form of water: it is read under `
+        + `ACTIVITY = davies, debye-huckel or llnl${settings.ACTIVITY === 'none' ? '' : `, not ${settings.ACTIVITY}`}.`,
+      asWater.line);
     }
     if (sitLines.length && !isSit) {
       throw new RtmError(`<SIT> holds the interaction coefficients of the specific ion interaction theory, and is read `
@@ -3807,10 +3823,23 @@
       // species on a surface, whose activity is its fraction of the sites (surfaceSetup).
       if (sp.name === 'H2O' || sp.mineral || sp.exchange || sp.exchanger || sp.electron || sp.surface || sp.potential
         || sp.gas) {
+        if (sp.asWater) {
+          throw new RtmError(`${sp.name} is given activity_water, the coefficient of a form of water dissolved in the water, `
+            + `and is ${sp.name === 'H2O' ? 'the water itself' : 'no species dissolved in it'}.`, sp.line);
+        }
         solute[s] = 0;
         return;
       }
       z[s] = sp.z !== null ? sp.z : chargeOf(sp.name);
+      // A form of water (activity_water, refused above under SIT and Pitzer): the water's activity times 0.018.
+      if (sp.asWater) {
+        if (sp.dha !== null || sp.dhb !== null || sp.drummond) {
+          throw new RtmError(`${sp.name} is given activity_water and ${sp.drummond ? 'drummond' : 'a or b'}: the water's `
+            + 'activity sets its coefficient, which takes nothing else.', sp.line);
+        }
+        form[s] = 9;
+        return;
+      }
       if (isSit || isPz) {
         form[s] = isSit ? 4 : 6;
         if (sp.dha !== null || sp.dhb !== null) ignored.push(sp.name);
@@ -3877,8 +3906,9 @@
       every solute; under Pitzer A_phi's and the pressure's (pitzerAt).
     */
     const hot = !llnl && (isSit || isPz || !(typeof settings.TEMPERATURE === 'number' && settings.TEMPERATURE < 99.6));
+    // A form of water's coefficient is the water's activity's at any temperature (form 9): there too.
     return { kind: settings.ACTIVITY, temperature: tc, A, B, wt, wtc: null, ns, z, zg: Float64Array.from(z), form, a, b,
-      dGw: hot ? new Float64Array(ns) : null,
+      dGw: hot || form.includes(9) ? new Float64Array(ns) : null,
       solute, ex: null, sf: null, pt: null, gas: null, sit: isSit ? readSit(sitLines, species, solute) : null, pz,
       llnl, bdot: llnl ? llnlAt(llnl, tc).bdot : 0, bdotc: null };
   }
@@ -5097,6 +5127,13 @@
   }
 
   /**
+   * ln 0.018: the gram formula weight of water, kg/mol, PHREEQC takes for a
+   * form of water's coefficient (prep.cpp sets gfw_water to 18.0/1000 once
+   * the model has one: "for isotopes, activity of water is for 1H and 16O").
+   */
+  const LN_GFW_WATER_ISOTOPES = Math.log(18.0 / 1000.0);
+
+  /**
    * Every species' ln gamma and d(ln gamma)/dI at the ionic strength I of
    * cell `cell` (activityAt, which works I out first; the reduced
    * speciation, which solves for it). `low`: I is the floor, and the
@@ -5174,12 +5211,18 @@
           dG[s] = k1 - k2 / ((I + 1) * (I + 1));
           break;
         }
+        case 9:
+          // A form of water (activity_water): gamma = a(H2O) 0.018, nothing of I.
+          lnG[s] = Math.log(aw) + LN_GFW_WATER_ISOTOPES;
+          dG[s] = 0;
+          if (dGw) dGw[s] = 1;
+          break;
         default:
           lnG[s] = 0;
           dG[s] = 0;
       }
       if (low) dG[s] = 0;
-      if (dGw && act.form[s] !== 2 && act.form[s] !== 3) dGw[s] = 0;
+      if (dGw && act.form[s] !== 2 && act.form[s] !== 3 && act.form[s] !== 9) dGw[s] = 0;
     }
     onSites(act, lnG, dG, cell);
   }
@@ -8448,10 +8491,11 @@
     });
     // The ionic strength is an unknown wherever a coefficient or a potential reads it.
     const useI = !!act && ([...act.form].some((f) => (f >= 1 && f <= 5) || f === 7 || f === 8) || np > 0);
-    // ...and the water's ln a where a relation has the water in it, or a Debye-Hueckel A and B read it (coefficientsAt).
+    // ...and the water's ln a where a relation has the water in it, or a Debye-Hueckel A and B read it (coefficientsAt),
+    // or a form of water's coefficient is the water's (9).
     const useL = !!act && act.kind !== 'none'
       && (aqRel.some((j) => eqs[j].water) || minRel.some((j) => eqs[j].water)
-        || [...act.form].some((f) => f === 2 || f === 3 || f === 4));
+        || [...act.form].some((f) => f === 2 || f === 3 || f === 4 || f === 9));
     const nK = K.length;
     const nm = mins.length;
     const M = A.map((rw) => rw.slice(naq));
@@ -9125,6 +9169,8 @@
         for (let pp = 0; pp < np; pp++) g[iP + pp] = -v * mPot[r][pp];
       }
       if (useI && !low) g[iI] -= v * dG[s];
+      // A form of water's coefficient is the water's activity's: ln gamma goes with L one for one.
+      if (useL && act.form[s] === 9) g[iL] -= v;
       for (const [q, u] of tl) {
         const f = u * (w ? w[k] : 1);
         const Jq = J[q];
@@ -9233,6 +9279,7 @@
               for (let p = 0; p < np; p++) J[iL][iP + p] -= f * v * mPot[r][p];
             }
             if (useI && !low) J[iL][iI] -= f * v * dG[s];
+            if (act.form[s] === 9) J[iL][iL] -= f * v;
           }
         }
       }
@@ -9433,6 +9480,7 @@
           for (let p = 0; p < np; p++) d -= mPot[r][p] * dz[iP + p];
         }
         if (useI && !low) d -= dG[s] * dz[iI];
+        if (useL && act.form[s] === 9) d -= dz[iL];
         out[k][col] = d;
       }
       for (let p = 0; p < nm; p++) out[mins[p].k][col] = dz[nK + p];
