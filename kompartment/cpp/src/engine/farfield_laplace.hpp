@@ -35,6 +35,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/libm.hpp"
+
 namespace kompartment::lp {
 
 /// A path this method cannot solve, and why.
@@ -73,10 +75,11 @@ inline const Cx LP_CNAN{std::numeric_limits<double>::quiet_NaN(), std::numeric_l
 
 // --- the C library's functions, as Julia's ccalls have them ----------------------------------------
 //
-// Called through pointers the compiler cannot see through: on Darwin it would make a sin and a cos of
-// the same number one call of __sincos_stret, whose bits are not always theirs.
-double lm_sin(double x);
-double lm_cos(double x);
+// sin and cos are util/libm.hpp's, called through pointers the compiler cannot see through: on Darwin
+// it would make a sin and a cos of the same number one call of __sincos_stret, whose bits are not
+// always theirs.
+using kompartment::lm_cos;
+using kompartment::lm_sin;
 double lm_exp(double x);
 double lm_log(double x);
 double lm_log10(double x);

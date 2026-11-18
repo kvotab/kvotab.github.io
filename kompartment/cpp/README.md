@@ -106,7 +106,7 @@ a sentence saying which, and no number is made up for it.
 
 | | |
 |---|---|
-| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch |
+| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch, the Julia package's errors, the C library's `sin`, `cos` and `asin` |
 | `src/lang/` | The equation language: tokens, the parser, the functions, V8's `exp`, `log` and `pow` to the bit |
 | `src/model/` | Names, the decay data (ICRP 107 as the application carries it, compiled in by `tools/embed_data.py`), index lists, the simulation's settings |
 | `src/engine/project.*` | A model file read and checked, refusals word for word |
@@ -118,6 +118,8 @@ a sentence saying which, and no number is made up for it.
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit |
 | `src/engine/runlog.*` | The run log, in the application's words |
 | `src/engine/nonfinite.*` | Where a value that is not a number came from, followed back through the equations at the state the solver held |
+| `src/engine/probabilistic.*` | A probabilistic run's design: the sampling plan, every realisation's values (a sample, a tornado or a sensitivity design), and what a realisation sets into a system |
+| `src/stats/` | The statistics a probabilistic run draws with: the normal distribution, the distributions and their draws under JavaScript's rules, named streams and Latin hypercube columns, correlations put in by Iman-Conover, every sensitivity method's design |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
 | `src/io/` | ZIP, the dataset archive |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
@@ -175,6 +177,8 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_solvers`, `test_sparselu` | The solvers and the LUs on problems of their own, and on the problems the Python package's solvers were run on | `../julia/test/solvers/fixtures.json` (the Julia package's); `KOMPARTMENT_SPARSE_FIXTURES` for the application's own matrices (see `../julia/README.md`) |
 | `test_runlog` | The run log: 780 numbers written as the page writes them, and the logs of 370 runs, word for word | `tools/runlog_fixtures.jl` |
 | `test_nonfinite` | 56 models that make a value that is not a number, run on each solver: where it is said to start, the warnings before a run, equations written back out | `tools/nonfinite_fixtures.jl` |
+| `test_stats` | The statistics: JavaScript's reading of values, named streams and columns of uniforms, the normal functions, 105 distributions at 42 probabilities and 61 values, correlations and Iman-Conover, every sensitivity method's settings, runs, refusals and design; 1,786 cases | `tools/stats_fixtures.jl` |
+| `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
 | `test_service` | The messages `serve.py` and the engine exchange, a run's log in its archive, a run that stops on a value that is not a number | |
 | `test_util` | JSON and the number formats | |
 
@@ -182,7 +186,7 @@ To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```

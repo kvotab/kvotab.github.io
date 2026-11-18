@@ -18,10 +18,6 @@ namespace {
 constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double Inf = std::numeric_limits<double>::infinity();
 
-using Fn1 = double (*)(double);
-Fn1 volatile p_sin = static_cast<Fn1>(&std::sin);
-Fn1 volatile p_cos = static_cast<Fn1>(&std::cos);
-
 /// Julia's `sqrt` of a Float64: a DomainError below zero (never the NaN the C library gives).
 struct JlSqrtDomainError : std::domain_error {
     JlSqrtDomainError() : std::domain_error("sqrt was called with a negative real argument") {}
@@ -74,8 +70,6 @@ const double LP_LN2 = lm_log(2.0);
 
 // --- the C library's functions ----------------------------------------------------------------------
 
-double lm_sin(double x) { return p_sin(x); }
-double lm_cos(double x) { return p_cos(x); }
 double lm_exp(double x) { return std::exp(x); }
 double lm_log(double x) { return std::log(x); }
 double lm_log10(double x) { return std::log10(x); }
