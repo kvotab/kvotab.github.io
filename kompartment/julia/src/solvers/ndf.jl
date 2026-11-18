@@ -342,8 +342,9 @@ function _ndf_rhs!(s::_NDFState, out::Vector{Float64}, t::Float64, y::Vector{Flo
     @inbounds for q in eachindex(c)
         i = c[q]
         hold = (y[i] <= 0) & (out[i] < 0)
-        push[q] = max(push[q], hold ? -out[i] : 0.0)
+        # A push is +0 or above, so its maximum with +0 is itself: only a held state's is taken.
         if hold
+            push[q] = max(push[q], -out[i])
             out[i] = 0.0
             anyh = true
         end
@@ -1124,7 +1125,8 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     throw(_ndf_fail(s, _ndf_error_nonfinite(s.t)))
                 end
                 for_constraint = false
-                if projected
+                # With no state below zero every term of the maximum is +0, and so is the maximum.
+                if projected && _any_below_zero(ynew, constrained)
                     worst = 0.0
                     @inbounds for (q, i) in enumerate(constrained)
                         v = ynew[i] < 0 ? -ynew[i] / threshold[i] : 0.0
