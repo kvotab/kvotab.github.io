@@ -2,6 +2,7 @@
 
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <limits>
 
@@ -195,6 +196,108 @@ bool js_truthy_switch(const Json& v, bool fallback) {
 }
 
 double round_half_up(double x) { return std::floor(x + 0.5); }
+
+namespace {
+
+// Every significant digit of the positive finite x's binary value -- a double has at most
+// 767 of them, so the 801 asked for are all there, the rest zeros -- and the exponent e
+// with x = d.ddd × 10^e.
+std::pair<std::string, int> exact_digits(double x) {
+    char buf[840];
+    std::snprintf(buf, sizeof buf, "%.800e", x);
+    std::string digits;
+    const char* c = buf;
+    for (; *c && *c != 'e'; c++)
+        if (*c >= '0' && *c <= '9') digits.push_back(*c);
+    return {digits, std::atoi(c + 1)};
+}
+
+// The first n (from 1) of the digits, rounded half up at the next one; a carry past the
+// first makes one digit more.
+std::string rounded_digits(const std::string& digits, std::size_t n) {
+    std::string m = digits.substr(0, n);
+    if (m.size() < n) m.append(n - m.size(), '0');
+    if (n < digits.size() && digits[n] >= '5') {
+        std::size_t k = n;
+        while (k > 0 && m[k - 1] == '9') m[--k] = '0';
+        if (k > 0) m[k - 1]++;
+        else m.insert(m.begin(), '1');
+    }
+    return m;
+}
+
+}  // namespace
+
+std::string js_to_precision(double x, int p) {
+    if (std::isnan(x)) return "NaN";
+    std::string s;
+    if (x < 0) {
+        s = "-";
+        x = -x;
+    }
+    if (std::isinf(x)) return s + "Infinity";
+    std::string m;
+    int e = 0;
+    if (x == 0) {
+        m.assign(static_cast<std::size_t>(p), '0');
+    } else {
+        auto [digits, e10] = exact_digits(x);
+        e = e10;
+        m = rounded_digits(digits, static_cast<std::size_t>(p));
+        if (m.size() > static_cast<std::size_t>(p)) {
+            m.pop_back();
+            e += 1;
+        }
+        if (e < -6 || e >= p) {
+            std::string out = s + m.substr(0, 1);
+            if (p != 1) out += "." + m.substr(1);
+            return out + "e" + (e >= 0 ? "+" : "-") + std::to_string(std::abs(e));
+        }
+    }
+    if (e == p - 1) return s + m;
+    if (e >= 0) return s + m.substr(0, static_cast<std::size_t>(e + 1)) + "." + m.substr(static_cast<std::size_t>(e + 1));
+    return s + "0." + std::string(static_cast<std::size_t>(-(e + 1)), '0') + m;
+}
+
+std::string js_to_fixed(double x, int digits) {
+    if (std::isnan(x)) return "NaN";
+    if (std::fabs(x) >= 1e21) return js_text(x);
+    std::string sign = x < 0 ? "-" : "";
+    double v = std::fabs(x);
+    // floor(|x| × 10^digits + 1/2), exactly: the integer digits of |x| × 10^digits, rounded at the next.
+    std::string n = "0";
+    if (v != 0) {
+        auto [all, e] = exact_digits(v);
+        int whole = e + digits + 1;
+        if (whole > 0) n = rounded_digits(all, static_cast<std::size_t>(whole));
+        else if (whole == 0 && all[0] >= '5') n = "1";
+    }
+    if (digits == 0) return sign + n;
+    if (n.size() <= static_cast<std::size_t>(digits)) n = std::string(static_cast<std::size_t>(digits) - n.size() + 1, '0') + n;
+    return sign + n.substr(0, n.size() - static_cast<std::size_t>(digits)) + "." + n.substr(n.size() - static_cast<std::size_t>(digits));
+}
+
+std::string js_to_exponential(double x, int f) {
+    if (std::isnan(x)) return "NaN";
+    std::string sign = x < 0 ? "-" : "";
+    double v = std::fabs(x);
+    if (std::isinf(v)) return sign + "Infinity";
+    std::string m;
+    int e = 0;
+    if (v == 0) {
+        m.assign(static_cast<std::size_t>(f + 1), '0');
+    } else {
+        auto [digits, e10] = exact_digits(v);
+        e = e10;
+        m = rounded_digits(digits, static_cast<std::size_t>(f + 1));
+        if (m.size() > static_cast<std::size_t>(f + 1)) {
+            m.pop_back();
+            e += 1;
+        }
+    }
+    if (f != 0) m = m.substr(0, 1) + "." + m.substr(1);
+    return sign + m + "e" + (e >= 0 ? "+" : "-") + std::to_string(std::abs(e));
+}
 
 std::string py_repr(double x) {
     if (std::isnan(x)) return "nan";

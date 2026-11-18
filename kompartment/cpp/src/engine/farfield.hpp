@@ -30,6 +30,7 @@
 #include <vector>
 
 #include "engine/builder.hpp"
+#include "util/jsnum.hpp"   // js_to_precision, which a path's messages write numbers with
 
 namespace kompartment {
 
@@ -83,9 +84,6 @@ inline double js_div(double a, double b) {
 
 /// A number as the Python engine's messages write it (JavaScript's integers, Python's repr).
 std::string num_text(double x);
-
-/// `x.toPrecision(p)`: the exact binary value rounded to p digits, a tie going up.
-std::string js_to_precision(double x, int p);
 
 // --- errors ----------------------------------------------------------------------------------
 

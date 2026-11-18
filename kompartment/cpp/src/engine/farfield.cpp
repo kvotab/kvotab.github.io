@@ -194,50 +194,6 @@ std::string num_text(double f) {
     return py_repr(f);
 }
 
-std::string js_to_precision(double x, int p) {
-    if (std::isnan(x)) return "NaN";
-    std::string s;
-    if (x < 0) {
-        s = "-";
-        x = -x;
-    }
-    if (std::isinf(x)) return s + "Infinity";
-    std::string m;
-    int e = 0;
-    if (x == 0) {
-        m.assign(static_cast<std::size_t>(p), '0');
-    } else {
-        // Every digit of the binary value (a double has at most 767 of them), then rounded
-        // at p digits, half going up.
-        char buf[840];
-        std::snprintf(buf, sizeof buf, "%.800e", x);
-        std::string digits;
-        const char* c = buf;
-        for (; *c && *c != 'e'; c++)
-            if (*c >= '0' && *c <= '9') digits.push_back(*c);
-        e = std::atoi(c + 1);
-        m = digits.substr(0, static_cast<std::size_t>(p));
-        if (digits[static_cast<std::size_t>(p)] >= '5') {
-            int k = p - 1;
-            while (k >= 0 && m[static_cast<std::size_t>(k)] == '9') m[static_cast<std::size_t>(k--)] = '0';
-            if (k >= 0) {
-                m[static_cast<std::size_t>(k)]++;
-            } else {
-                m = "1" + m.substr(0, static_cast<std::size_t>(p - 1));
-                e += 1;
-            }
-        }
-        if (e < -6 || e >= p) {
-            std::string out = s + m.substr(0, 1);
-            if (p != 1) out += "." + m.substr(1);
-            return out + "e" + (e >= 0 ? "+" : "-") + std::to_string(std::abs(e));
-        }
-    }
-    if (e == p - 1) return s + m;
-    if (e >= 0) return s + m.substr(0, static_cast<std::size_t>(e + 1)) + "." + m.substr(static_cast<std::size_t>(e + 1));
-    return s + "0." + std::string(static_cast<std::size_t>(-(e + 1)), '0') + m;
-}
-
 // --- the geometry ------------------------------------------------------------------------------
 
 void layer_depths(double* d, double pen_dep, int nm, double aw, double first) {

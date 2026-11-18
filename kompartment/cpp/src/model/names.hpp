@@ -80,6 +80,9 @@ std::vector<std::string> system_paths(const Json& declared, const Json& transpor
 std::string lowercase(std::string_view s);
 std::string uppercase(std::string_view s);
 
+/// The code point of the UTF-8 character starting at byte `i`; `len` says how many bytes it takes.
+char32_t utf8_at(std::string_view s, std::size_t i, std::size_t& len);
+
 /// Whether `s` starts or ends with `what`.
 inline bool starts_with(std::string_view s, std::string_view what) { return s.substr(0, what.size()) == what; }
 inline bool ends_with(std::string_view s, std::string_view what) {

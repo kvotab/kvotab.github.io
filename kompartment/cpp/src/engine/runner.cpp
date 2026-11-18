@@ -11,6 +11,7 @@
 #include "engine/jacobian.hpp"
 #include "engine/landing.hpp"
 #include "engine/massbalance.hpp"
+#include "engine/nonfinite.hpp"
 #include "engine/switchtimes.hpp"
 #include "model/names.hpp"
 #include "model/simulation.hpp"
@@ -391,11 +392,22 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     opts.below_tol_run = number("below_tol_run");
     opts.matrix = sim.get("matrix").is_string() ? sim.get("matrix").as_string() : "";
     bool store = sys.has_store_step();
-    if (store || steps) {
+    // The last step the solver accepted, should the run fail on a value that is not a
+    // number: the equations are looked at there to say where it came from
+    // (engine/nonfinite). The NDF hands back its own with its error, and is spared the
+    // copy; the others say only when, so the runner keeps it.
+    std::optional<HeldStep> held;
+    if (solver_id != "ndf") held.emplace(HeldStep{std::numeric_limits<double>::quiet_NaN(), Vec(y0.size(), 0.0)});
+    if (store || steps || held) {
         StepCollector* collector = steps ? &*steps : nullptr;
-        opts.on_accepted = [&sys, store, collector](double t, const Vec& y) {
+        HeldStep* hold = held ? &*held : nullptr;
+        opts.on_accepted = [&sys, store, collector, hold](double t, const Vec& y) {
             if (store) sys.store_step(t, y.data());
             if (collector) collector->collect(t, y);
+            if (hold) {
+                hold->t = t;
+                hold->y.assign(y.begin(), y.end());
+            }
         };
     }
     if (store) opts.on_output = [&sys](double t, const Vec& y) { sys.store_step(t, y.data()); };
@@ -452,7 +464,12 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     double min_change = sim.get("min_change_time").is_null() ? 0.0 : py_float_nan(sim.get("min_change_time"));
     if (!std::isfinite(min_change)) min_change = 0.0;
     RhsFunction f = [&sys](Vec& dy, double t, const Vec& y) { sys.rhs(dy.data(), t, y.data()); };
+    // Where the stretch being solved began: a solver that fails at its first instant has
+    // nothing later to say where, and this is where.
+    std::optional<StretchStart> stretch;
+    stretch.emplace(span.front(), y0);
     auto solve_span = [&](const Vec& grid2, const Vec& start) -> RunSolution {
+        stretch.emplace(grid2.front(), start);
         sys.use_clock_interpolation(min_change, grid2.front());
         sys.start_segment(grid2.front(), start.data());
         if (sys.has_events()) return solve_with_events(sys, f, solve_fn, grid2, start, opts);
@@ -484,6 +501,10 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
             hints.push_back("If a compartment reaches zero at this time, its \"cannot go negative\" setting is the likely cause: \"" +
                             solver_label("ndf") + "\" carries a binding constraint, and turning the setting off on that compartment shows what "
                             "the model is really doing.");
+        // A value that is not a number is the model's, whatever the solver made of it, and
+        // no hint about solvers is the answer to it: said instead, where it starts and what
+        // it reaches (the application's runner).
+        if (explain_non_finite(e, sys, stretch, held ? &*held : nullptr, span.back())) hints.clear();
         if (!hints.empty()) e.hint = join(hints, " ");
         throw;
     }

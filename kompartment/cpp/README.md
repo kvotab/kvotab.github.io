@@ -90,7 +90,11 @@ chains, far-field paths on cells and worked out semi-analytically -- with the
 `ndf`, `ros23` and `dp45` solvers, the exact Jacobian or the differenced one,
 the dense, sparse, kept-pivot and block-at-a-time LUs, the zero floor, the
 mass-balance audit, the derived outputs, and the archive *Save with results*
-writes.
+writes, with the run log the page shows under *Run log* (the Julia package's,
+word for word, its build line saying *C++ engine*). A run that stops on a value
+that is not a number says, as the page does, where that value started: the
+compartment it reached, the transfer that carried it, the one operation that
+made it and the values that operation read.
 
 It does not do: probabilistic runs, replays, calibrations and sensitivities
 (the page does these itself when the engine is chosen); the other solvers
@@ -102,7 +106,7 @@ a sentence saying which, and no number is made up for it.
 
 | | |
 |---|---|
-| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them, the parity switch |
+| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch |
 | `src/lang/` | The equation language: tokens, the parser, the functions, V8's `exp`, `log` and `pow` to the bit |
 | `src/model/` | Names, the decay data (ICRP 107 as the application carries it, compiled in by `tools/embed_data.py`), index lists, the simulation's settings |
 | `src/engine/project.*` | A model file read and checked, refusals word for word |
@@ -112,6 +116,8 @@ a sentence saying which, and no number is made up for it.
 | `src/engine/jacobian*` | The Jacobian's structure, the differenced one, the exact one |
 | `src/engine/farfield*` | A far-field path: on cells (its geometry, layers and release), or worked out semi-analytically (unit responses inverted from the Laplace domain, and their convolution with what flows in) |
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit |
+| `src/engine/runlog.*` | The run log, in the application's words |
+| `src/engine/nonfinite.*` | Where a value that is not a number came from, followed back through the equations at the state the solver held |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
 | `src/io/` | ZIP, the dataset archive |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
@@ -167,14 +173,16 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_laplace` | A semi-analytical path's Laplace-domain transfer functions and their inversion: 73 paths, their unit responses and evaluation counts, the complex arithmetic, 38 refusals | `tools/laplace_fixtures.jl` |
 | `test_farfield_semi` | Semi-analytical paths in a run: 53 models laid out, differentiated and run, their histories, restarts and balance warnings, the refusals | `tools/farfield_semi_fixtures.jl` |
 | `test_solvers`, `test_sparselu` | The solvers and the LUs on problems of their own, and on the problems the Python package's solvers were run on | `../julia/test/solvers/fixtures.json` (the Julia package's); `KOMPARTMENT_SPARSE_FIXTURES` for the application's own matrices (see `../julia/README.md`) |
-| `test_service` | The messages `serve.py` and the engine exchange | |
+| `test_runlog` | The run log: 780 numbers written as the page writes them, and the logs of 370 runs, word for word | `tools/runlog_fixtures.jl` |
+| `test_nonfinite` | 56 models that make a value that is not a number, run on each solver: where it is said to start, the warnings before a run, equations written back out | `tools/nonfinite_fixtures.jl` |
+| `test_service` | The messages `serve.py` and the engine exchange, a run's log in its archive, a run that stops on a value that is not a number | |
 | `test_util` | JSON and the number formats | |
 
 To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```

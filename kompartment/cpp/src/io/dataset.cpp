@@ -3,8 +3,8 @@
 #include <algorithm>
 #include <chrono>
 #include <cstring>
-#include <ctime>
 
+#include "engine/runlog.hpp"
 #include "io/zip.hpp"
 #include "util/jsnum.hpp"
 
@@ -16,22 +16,6 @@ std::string f64_bytes(const std::vector<double>& v) {
     std::string out(v.size() * 8, '\0');
     if (!v.empty()) std::memcpy(out.data(), v.data(), out.size());   // little-endian, as every machine this builds for
     return out;
-}
-
-std::string now_iso() {
-    using namespace std::chrono;
-    auto now = system_clock::now();
-    std::time_t secs = system_clock::to_time_t(now);
-    long ms = static_cast<long>(duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000);
-    std::tm tm{};
-#if defined(_WIN32)
-    gmtime_s(&tm, &secs);
-#else
-    gmtime_r(&secs, &tm);
-#endif
-    char buf[40];
-    std::snprintf(buf, sizeof buf, "%04d-%02d-%02dT%02d:%02d:%02d.%03ldZ", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour, tm.tm_min, tm.tm_sec, ms);
-    return buf;
 }
 
 // The run's statistics and timings as the application names them.
@@ -130,7 +114,7 @@ std::string dataset_archive(Results& res, const ArchiveOptions& options) {
         {"kind", Json("ecolego-results")},
         {"model", Json(inner)},
         {"name", name.is_null() ? Json("") : name},
-        {"stamp", Json(now_iso())},
+        {"stamp", Json(iso_utc(std::chrono::system_clock::now()))},
         {"times", Json(static_cast<long long>(res.t.size()))},
         {"states", Json(static_cast<long long>(nstate))},
         {"outputs", Json(static_cast<long long>(res.outputs().size()))},

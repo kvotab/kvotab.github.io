@@ -50,6 +50,15 @@ bool js_truthy_switch(const Json& v, bool fallback);
 /// `Math.floor(x + 0.5)`.
 double round_half_up(double x);
 
+/// `x.toPrecision(p)`: the exact binary value rounded to p digits, a tie going up.
+std::string js_to_precision(double x, int p);
+
+/// `x.toFixed(digits)`: the exact value rounded half up; `String(x)` from 1e21.
+std::string js_to_fixed(double x, int digits);
+
+/// `x.toExponential(f)`: the exact value rounded to f + 1 digits, a tie going up.
+std::string js_to_exponential(double x, int f);
+
 /// A float as Python's `repr` writes it: fixed between 1e-4 and 1e16 (`0.0001`, `1.0`),
 /// `1e-05` / `1.5e+16` outside, `nan`, `inf`.
 std::string py_repr(double x);

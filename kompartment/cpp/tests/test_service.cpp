@@ -1,6 +1,8 @@
 // The engine as the application's local server talks to it (src/service.cpp): the
 // messages of a run, of a run it is asked to keep and of the questions asked about
-// that run afterwards, and what it says to what it does not do.
+// that run afterwards, and what it says to what it does not do; the run's log in the
+// archive it writes; and a run that meets a value that is not a number, said where it
+// starts.
 //
 // The service is driven here as serve.py drives it -- a line in, the lines that
 // answer it out -- through two streams of the test's own, so that a question is
@@ -8,26 +10,64 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <deque>
 #include <filesystem>
 #include <iostream>
 #include <mutex>
+#include <regex>
 #include <streambuf>
 #include <string>
 #include <thread>
 #include <vector>
 
+#if defined(KOMPARTMENT_HAVE_ZLIB)
+#include <zlib.h>
+#endif
+
 #include "check.hpp"
 #include "engine/project.hpp"
+#include "engine/runlog.hpp"
 #include "engine/runner.hpp"
+#include "model/names.hpp"
 #include "service.hpp"
 #include "util/json.hpp"
 
 using namespace kompartment;
 
 namespace {
+
+/// One entry of a ZIP archive, by name, as the engine writes them (stored or deflated); empty
+/// when it is not there.
+std::string zip_entry(const std::string& zip, const std::string& name) {
+    auto u16 = [&](std::size_t at) { return static_cast<std::uint32_t>(static_cast<unsigned char>(zip[at]) | static_cast<unsigned char>(zip[at + 1]) << 8); };
+    auto u32 = [&](std::size_t at) { return u16(at) | u16(at + 2) << 16; };
+    for (std::size_t at = 0; at + 30 <= zip.size() && u32(at) == 0x04034b50;) {
+        const std::uint32_t method = u16(at + 8), packed = u32(at + 18), size = u32(at + 22), name_len = u16(at + 26), extra = u16(at + 28);
+        const std::size_t data = at + 30 + name_len + extra;
+        if (zip.compare(at + 30, name_len, name) == 0) {
+            if (method == 0) return zip.substr(data, size);
+#if defined(KOMPARTMENT_HAVE_ZLIB)
+            std::string out(size, '\0');
+            z_stream zs{};
+            if (inflateInit2(&zs, -MAX_WBITS) != Z_OK) return "";
+            zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(zip.data() + data));
+            zs.avail_in = packed;
+            zs.next_out = reinterpret_cast<Bytef*>(out.data());
+            zs.avail_out = size;
+            const int done = inflate(&zs, Z_FINISH);
+            inflateEnd(&zs);
+            return done == Z_STREAM_END ? out : "";
+#else
+            return "";
+#endif
+        }
+        at = data + packed;
+    }
+    return "";
+}
 
 /// What the service reads: lines handed over one at a time, the reader waiting for the next.
 class Lines : public std::streambuf {
@@ -170,6 +210,52 @@ int main() {
         CHECK(!events.empty() && events.back().get("ms").is_number());
         const std::string zip = fs::exists(whole) ? check::read_file(whole) : "";
         CHECK(zip.size() > 4 && zip.compare(0, 2, "PK") == 0);
+
+        // The run's log in it, a line an entry, as the Julia engine's service writes it: this
+        // engine named as the build, then when, the model, its settings and how it went --
+        // what a run made here says, line for line, but for the date and the timings.
+        const std::string meta_text = zip_entry(zip, "results/meta.json");
+        CHECK_MSG(!meta_text.empty(), "the archive holds results/meta.json");
+        const Json meta = meta_text.empty() ? Json::object() : parse_json(meta_text);
+        const Json& log = meta.get("log");
+        CHECK_MSG(log.is_array() && log.size() > 10, "the archive holds the run's log");
+        if (log.is_array() && log.size() > 10) {
+            CHECK_EQ(log[std::size_t{0}].as_string(), "Kompartment run log \xe2\x80\x94 build C++ engine " + std::string(ENGINE_VERSION));
+            CHECK_MSG(std::regex_match(log[std::size_t{1}].as_string(), std::regex(R"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z)")),
+                      "the second line says when, as toISOString writes it: " + log[std::size_t{1}].as_string());
+            CHECK_EQ(log[std::size_t{2}].as_string(), "model: " + parse_json(model_text).get("name").as_string());
+            auto project = std::make_shared<const Project>(parse_json(model_text));
+            Results here = run_project(project, nullptr, RunOptions{});
+            RunLogOptions options;
+            options.build = "C++ engine " + std::string(ENGINE_VERSION);
+            const std::vector<std::string> lines = split(run_log(here, options), '\n');
+            CHECK_EQ(lines.size(), log.size());
+            for (std::size_t i = 0; i < lines.size() && i < log.size(); i++) {
+                if (i == 1 || starts_with(lines[i], "  compile: ")) continue;
+                CHECK_MSG(log[i].as_string() == lines[i], "the log's line " + std::to_string(i) + ": " + log[i].as_string() + ", here " + lines[i]);
+            }
+        }
+    }
+
+    // A run that meets a value that is not a number: where it starts, and the block it starts in.
+    {
+        Json bad = parse_json(model_text);
+        bad.set("parameters", Json::array({Json::object({{"name", Json("N")}, {"value", Json(0)}})}));
+        bad.set("expressions", Json::array({Json::object({{"name", Json("C")}, {"equation", Json("N/N")}})}));
+        Json first = bad.get("compartments")[std::size_t{0}].copy();
+        Json transfers = Json::array({Json::object({{"name", Json("Leak")}, {"from", first.get("name")}, {"to", Json()}, {"rate", Json("C")},
+                                                    {"multiply_by_donor", Json(false)}})});
+        bad.set("transfers", transfers);
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("nan")}, {"kind", Json("run")}, {"model", bad},
+                                              {"out", Json((scratch / "nan.zip").string())}}), 0));
+        const auto events = out_buffer.until_ended("nan");
+        CHECK_MSG(name_of(events) == "SolverError", "a value that is not a number stops the run: " + name_of(events) + " " + message_of(events));
+        CHECK_MSG(message_of(events).rfind("The simulation produced a value that is not a number at t=0. It starts in C [Radionuclides=Pu-241] (and 4 more of its "
+                                           "indices): N/N comes to 0/0, with N = 0. It reaches the compartment ",
+                                           0) == 0,
+                  "and says where it starts: " + message_of(events));
+        CHECK(!events.empty() && events.back().get("block") == "C");
+        CHECK(!events.empty() && events.back().get("hint").is_null());
     }
 
     // A run kept: its archive has no states, and its series are asked for afterwards --

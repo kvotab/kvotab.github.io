@@ -203,6 +203,8 @@ std::string mapped(std::string_view s, F f) {
 std::string lowercase(std::string_view s) { return mapped(s, lower_of); }
 std::string uppercase(std::string_view s) { return mapped(s, upper_of); }
 
+char32_t utf8_at(std::string_view s, std::size_t i, std::size_t& len) { return decode(s, i, len); }
+
 std::pair<std::string, std::string> locale_key(std::string_view s) {
     std::string swapped = mapped(s, [](char32_t u) {
         char32_t lo = lower_of(u), up = upper_of(u);

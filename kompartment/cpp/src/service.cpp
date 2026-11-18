@@ -14,6 +14,7 @@
 
 #include "engine/farfield.hpp"
 #include "engine/jacobian.hpp"
+#include "engine/runlog.hpp"
 #include "engine/runner.hpp"
 #include "io/dataset.hpp"
 #include "model/names.hpp"
@@ -140,14 +141,13 @@ struct Service {
                              {"heldAtZero", held}});
     }
 
-    Json run_log(Results& res) {
-        // The run in a few words (the application's own log says more).
+    // The run's log as the archive keeps it, a line an entry: the Julia engine's, with this
+    // engine named as the build.
+    Json run_log_of(Results& res) {
+        RunLogOptions options;
+        options.build = "C++ engine " + std::string(ENGINE_VERSION);
         Json lines = Json::array();
-        lines.push(Json("Solved by the C++ engine " + std::string(ENGINE_VERSION) + ": " + res.summary()));
-        const auto& j = res.system->jacobian;
-        if (j && j->pattern)
-            lines.push(Json(std::string("Jacobian: ") + (j->available ? (j->constant ? "exact, constant" : "exact") : "differenced through its pattern") + ", " +
-                            std::to_string(j->nnz) + " entries, " + std::to_string(j->colours) + " colours"));
+        for (const auto& line : split(run_log(res, options), '\n')) lines.push(Json(line));
         return lines;
     }
 
@@ -183,7 +183,7 @@ struct Service {
             }
             say(Json::object({{"id", Json(id)}, {"event", Json("stage")}, {"stage", Json("writing")}}));
             ArchiveOptions archive;
-            archive.log = run_log(res);
+            archive.log = run_log_of(res);
             std::string out_path = js_str(job.get("out"));
             if (options.get("keep") == Json(true)) {
                 archive.states = false;
@@ -264,7 +264,7 @@ struct Service {
                 write_file(js_str(q.get("out")), data);
             } else if (op == "archive") {
                 ArchiveOptions archive;
-                archive.log = run_log(res);
+                archive.log = run_log_of(res);
                 write_file(js_str(q.get("out")), dataset_archive(res, archive));
             } else if (op == "bands" || op == "realisations" || op == "column" || op == "realisation") {
                 throw std::invalid_argument("That run is not a probabilistic run: it has no realisations to ask about.");
