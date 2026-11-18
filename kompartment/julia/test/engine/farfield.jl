@@ -210,4 +210,40 @@ end
     end
 end
 
+@testset "a path whose settings follow the state has an exact Jacobian" begin
+    # A travel time that follows a compartment, a Kd that follows another: the path's matrix moves
+    # with the state, and df/dy is worked out exactly -- each cell's rate and the release along the
+    # setting, chained along its gradient -- where it used to be differenced. The columns of the
+    # states the setting reads, against central differences of the derivative.
+    for (key, equation, grid) in (("tw", "50 * (1 + Vault[U-238] / 1e3)", "reference"),
+                                  ("kd_m", "Kd_matrix * (1 + Well / (1e3 + Well))", "matched"))
+        m = K.parse_json(read(joinpath(EXAMPLES, "farfield.json"), String))
+        path = m["farfields"][1]
+        path[key] = equation
+        path["grid"] = grid
+        sys = K.build_system(K.Project(m))
+        j = sys.jacobian
+        @test j.available && j.analytic !== nothing
+        n = sys.nstate
+        y = abs.(K.initial_state(sys)) .+ 1 .+ ((0:n-1) .% 5) .* 0.37
+        t = 3e5
+        f(z) = (out = zeros(n); K.rhs!(sys, out, t, z); out)
+        f(y)
+        vals = zeros(length(j.pattern.rowval))
+        K.analytic_evaluate!(vals, j.analytic, t, y)
+        J = zeros(n, n)
+        for c in 1:n, q in j.pattern.colptr[c]:j.pattern.colptr[c+1]-1
+            J[j.pattern.rowval[q], c] = vals[q]
+        end
+        base(name) = sys.builder.states[findfirst(s -> s.name == name, sys.builder.states)].base
+        for c in (key == "tw" ? [base("Vault") + 1] : [base("Well") + k for k in 1:3])
+            h = 1e-6 * max(1.0, abs(y[c]))
+            e = zeros(n)
+            e[c] = h
+            fd = (f(y .+ e) .- f(y .- e)) ./ (2h)
+            @test maximum(abs.(fd .- J[:, c])) <= 1e-5 * maximum(abs.(fd))
+        end
+    end
+end
+
 end # module

@@ -712,13 +712,23 @@ struct StatementPlan
     own::Vector{Tuple{Int,Int,Int}}        # (element, G lo, G hi) of the slot's own gradient, 1-based
 end
 
+"""A far-field setting that follows the state, as the release's gradient reads it: the setting's
+slot (0-based) and, for every slot of the path reading it, the release's gradient positions over
+the setting's columns and the setting's own gradient there (1-based)."""
+struct FarfSettingTerm
+    x::Int
+    parts::Vector{Tuple{Int,Vector{Int},Vector{Int}}}
+end
+
 """What a statement of special code contributes."""
 struct SpecialPlan
     kind::Symbol           # :farfield, :laplace, :zero, :recorder
     entry::Entry
     path::Any
     dst::Vector{Int}
+    terms::Vector{FarfSettingTerm}   # :farfield: the settings that follow the state
 end
+SpecialPlan(kind, entry, path, dst) = SpecialPlan(kind, entry, path, dst, FarfSettingTerm[])
 
 """A direct term group: J[pos] += value, value from `kind`."""
 struct DirectTerm
@@ -735,7 +745,8 @@ struct ChainTerm
     elem::Vector{Int}
     src::Vector{Int}
     dst::Vector{Int}
-    kind::Symbol           # :signdonor, :ones, :negy, :y, :negone, :negxsy, :negxly, :xsy, :xly, :recording
+    kind::Symbol           # :signdonor, :ones, :negy, :y, :negone, :negxsy, :negxly, :xsy, :xly, :recording,
+                           # :farfsettings (`idx` the (setting, slot) pairs, `s1` the path, 0-based)
     sign::Vector{Float64}
     idx::Vector{Int}       # 1-based states (or recorders)
     s1::Int                # 1-based slot
@@ -880,12 +891,22 @@ function _special_plan(an::Analytic, a::Entry)
     if a.kind == "farfield"
         F = b.FARF[a[:farf_index]+1]
         farfield_is_laplace(F) && return SpecialPlan(:laplace, a, F, Int[])
-        for x in vec(farfield_setting_slots(F))
-            moving[x+1] == 2 && throw(NoDerivative("a far-field path whose settings depend on the state"))
-        end
         rel = farfield_rel_idx(F)
         dst = reduce(vcat, [_g_pos(an, farfield_release_slots(F)[s], rel[s]) for s in 1:farfield_slots(F)]; init=Int[])
-        return SpecialPlan(:farfield, a, F, dst)
+        # A setting that follows the state moves the release's weights (see `_special_gradient!`).
+        terms = FarfSettingTerm[]
+        for x in _settings_moving(an, F)
+            g = an.g_row_of[x]
+            cols = an.g_cols[g]
+            src = collect(an.g_ptr[g] .+ (0:length(cols)-1))
+            parts = Tuple{Int,Vector{Int},Vector{Int}}[]
+            for slot in 1:farfield_slots(F)
+                x in view(farfield_setting_slots(F), slot, :) || continue
+                push!(parts, (slot, _g_pos(an, farfield_release_slots(F)[slot], cols), src))
+            end
+            push!(terms, FarfSettingTerm(x, parts))
+        end
+        return SpecialPlan(:farfield, a, F, dst, terms)
     end
     rec = get(a, :recorder, nothing)
     rec === nothing && throw(NoDerivative(a.kind))
@@ -1012,6 +1033,20 @@ function _special_gradient!(an::Analytic, plan::SpecialPlan, G, y, X, t)
         for q in eachindex(plan.dst)
             G[plan.dst[q]] += w[q]
         end
+        # A setting that follows the state: the release's own tangent along it -- its weights'
+        # tangent times the cells, as `releaseTangent` has it -- chained along the setting's gradient.
+        for term in plan.terms
+            _, drel = _setting_partials(F, X, term.x)
+            for (slot, pos, src) in term.parts
+                dq = 0.0
+                for r in 1:F.nrel
+                    dq += drel[r, slot] * y[F.rel_at[r, slot]]
+                end
+                for q in eachindex(pos)
+                    G[pos[q]] += dq * G[src[q]]
+                end
+            end
+        end
         return
     elseif plan.kind === :zero
         return
@@ -1128,6 +1163,18 @@ function _plan_assembly!(an::Analytic)
             F = b.FARF[ph.s1+1]
             rf, cf = farfield_row_col(F)
             push!(direct, DirectTerm(:farf, _pat_pos(an, rf, cf), Int[], Float64[], ph.s1, 0))
+            # A setting that follows the state moves the matrix: each cell's rate through it -- the
+            # matrix's tangent along it times the state, as `jvp` has it in src/sim/farfield.js --
+            # chained along the setting's gradient.
+            parts, rows, slots = Int[], Int[], Int[]
+            for x in _settings_moving(an, F), slot in 1:farfield_slots(F)
+                x in view(farfield_setting_slots(F), slot, :) || continue
+                push!(parts, x, slot)
+                o, m = divrem(slot - 1, F.nnuc)
+                append!(rows, F.base + o * F.ncells * F.nnuc .+ (0:F.ncells-1) .* F.nnuc .+ m)
+                append!(slots, fill(x, F.ncells))
+            end
+            isempty(parts) || add_chain!(rows, slots, :farfsettings; idx=parts, s1=ph.s1)
         end
     end
 end
@@ -1220,10 +1267,58 @@ function analytic_evaluate!(J::Vector{Float64}, an::Analytic, t::Float64, y::Vec
         end
     end
     for c in an.chain
-        _chain_add!(J, c, G, sys, y, X)
+        if c.kind === :farfsettings
+            # Each cell's rate along the setting, worked out once for every element.
+            rate = _settings_rates(sys.data.FARF[c.s1+1], c.idx, y, X)
+            @inbounds for q in eachindex(c.dst)
+                J[c.dst[q]] += rate[c.elem[q]] * G[c.src[q]]
+            end
+        else
+            _chain_add!(J, c, G, sys, y, X)
+        end
     end
     all(isfinite, J) || return false
     return true
+end
+
+"""A path's setting slots (0-based) that follow the state and have a gradient, each once, in order."""
+function _settings_moving(an::Analytic, F)
+    moving = an.sys.builder.slot_class
+    out = Int[]
+    for x in sort!(unique(vec(farfield_setting_slots(F))))
+        if moving[x+1] == 2 && haskey(an.g_row_of, x) && !isempty(an.g_cols[an.g_row_of[x]])
+            push!(out, x)
+        end
+    end
+    return out
+end
+
+"""The tangents of a path's rates and release weights along its setting slot `x` (0-based):
+`farfield_tangent!` along that slot alone (Python's `_setting_partials`)."""
+function _setting_partials(F::FarfPath, X::Vector{Float64}, x::Int)
+    T = FarfTangent(F)
+    dX = zeros(length(X))
+    dX[x+1] = 1.0
+    farfield_tangent!(T, F, X, dX) || return zeros(F.slots * F.nnz), zeros(F.nrel, F.slots)
+    return T.dvals, T.drel
+end
+
+"""For each (setting, slot) pair of `parts` (flat, the slot 1-based), each cell's rate along the
+setting: the tangent of the slot's matrix entries times the state, added up entry by entry."""
+function _settings_rates(F::FarfPath, parts::Vector{Int}, y::Vector{Float64}, X::Vector{Float64})
+    nc, nnz = F.ncells, F.nnz
+    out = zeros((length(parts) ÷ 2) * nc)
+    partials = Dict{Int,Vector{Float64}}()
+    for i in 1:length(parts)÷2
+        x, slot = parts[2i-1], parts[2i]
+        dvals = get!(() -> copy(_setting_partials(F, X, x)[1]), partials, x)
+        base = (i - 1) * nc
+        off = (slot - 1) * nnz
+        @inbounds for e in 1:nnz
+            out[base+F.rows[e]+1] += dvals[off+e] * y[F.col_flat[off+e]+1]
+        end
+    end
+    return out
 end
 
 """A chain term into `J`: each element's coefficient times the gradient it scales."""

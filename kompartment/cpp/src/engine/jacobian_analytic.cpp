@@ -766,10 +766,22 @@ struct SpecialPlan {
         I32 own = 0;             // a running mean: its summed state's place in the slot's gradient
         I32 mem = 0;             // its recorder
     };
+    /// A far-field setting that follows the state, as the release's gradient reads it: the
+    /// setting's slot and, for every slot of the path reading it, the release's gradient
+    /// positions over the setting's columns and the setting's own gradient there.
+    struct SettingPart {
+        I32 slot = 0;
+        std::vector<I32> pos, src;
+    };
+    struct SettingTerm {
+        I32 x = 0;
+        std::vector<SettingPart> parts;
+    };
     Kind kind = Kind::Zero;
     std::vector<Item> items;
     std::vector<I32> pos;
     I32 path = -1;             // a far-field path's release: which path (`pos` is where its weights go)
+    std::vector<SettingTerm> terms;   // ... and the settings of it that follow the state
 };
 
 /// A direct term group: J[pos] += value, value from `kind`.
@@ -785,12 +797,13 @@ struct DirectTerm {
 /// A chain term group: J[dst] += coefficient * G[src], the coefficient its element's
 /// (`sign` and `idx` are spread out here over the entries of each element's gradient).
 struct ChainTerm {
-    enum class Kind : unsigned char { SignDonor, Ones, NegY, Y, NegOne, NegXY, XY, Recording };
+    enum class Kind : unsigned char { SignDonor, Ones, NegY, Y, NegOne, NegXY, XY, Recording, FarfSettings };
     Kind kind;
     std::vector<I32> src, dst;
     std::vector<double> sign;
-    std::vector<I32> idx;      // states (or recorders); -1: none
-    I32 s1 = 0;                // a slot
+    std::vector<I32> idx;      // states (or recorders); -1: none. FarfSettings: the element
+    I32 s1 = 0;                // a slot. FarfSettings: the path
+    std::vector<I32> parts;    // FarfSettings: the (setting, slot) pairs, flat
 };
 
 /// Everything worked out once for a model: shared by every copy of its system.
@@ -834,6 +847,55 @@ I32 pat_pos(const Pattern& p, int row, int col) {
     return static_cast<I32>(at - p.rowval.data());
 }
 
+/// A path's setting slots that follow the state and have a gradient, each once, in order.
+std::vector<int> settings_moving(const AnalyticPlan& an, const FarfieldPath& F, const std::vector<unsigned char>& moving) {
+    std::vector<int> all = F.setting_slots();
+    std::sort(all.begin(), all.end());
+    all.erase(std::unique(all.begin(), all.end()), all.end());
+    std::vector<int> out;
+    for (int x : all) {
+        if (moving[static_cast<std::size_t>(x)] != 2) continue;
+        I32 g = an.row_of(x);
+        if (g < 0 || an.row_size(g) == 0) continue;
+        out.push_back(x);
+    }
+    return out;
+}
+
+/// The tangents of a path's rates and release weights along its setting slot `x`:
+/// `farfield_tangent` along that slot alone, into `T` (Python's `_setting_partials`).
+void setting_partials(FarfTangent& T, FarfPath& F, const double* X, std::size_t nalg, int x) {
+    std::vector<double> dX(nalg, 0.0);
+    dX[static_cast<std::size_t>(x)] = 1.0;
+    if (!farfield_tangent(T, F, X, dX.data())) {
+        std::fill(T.dvals.begin(), T.dvals.end(), 0.0);
+        std::fill(T.drel.begin(), T.drel.end(), 0.0);
+    }
+}
+
+/// For each (setting, slot) pair of `parts`, each cell's rate along the setting: the tangent
+/// of the slot's matrix entries times the state, added up entry by entry.
+std::vector<double> settings_rates(FarfPath& F, const std::vector<I32>& parts, const double* y, const double* X,
+                                   std::size_t nalg) {
+    const std::size_t nc = static_cast<std::size_t>(F.ncells), nnz = static_cast<std::size_t>(F.nnz);
+    std::vector<double> out(parts.size() / 2 * nc, 0.0);
+    std::unordered_map<int, std::vector<double>> partials;
+    for (std::size_t i = 0; i < parts.size() / 2; i++) {
+        const int x = parts[2 * i], slot = parts[2 * i + 1];
+        auto it = partials.find(x);
+        if (it == partials.end()) {
+            FarfTangent T(F);
+            setting_partials(T, F, X, nalg, x);
+            it = partials.emplace(x, std::move(T.dvals)).first;
+        }
+        const std::vector<double>& dvals = it->second;
+        const std::size_t base = i * nc, off = static_cast<std::size_t>(slot) * nnz;
+        for (std::size_t e = 0; e < nnz; e++)
+            out[base + static_cast<std::size_t>(F.rows[e])] += dvals[off + e] * y[F.col_flat_[off + e]];
+    }
+    return out;
+}
+
 SpecialPlan special_plan(const AnalyticPlan& an, const Builder& b, const EntryPtr& a) {
     const auto& moving = b.slot_class;
     SpecialPlan plan;
@@ -846,13 +908,31 @@ SpecialPlan special_plan(const AnalyticPlan& an, const Builder& b, const EntryPt
             plan.path = a->farf_index;
             return plan;
         }
-        for (int x : F.setting_slots())
-            if (moving[static_cast<std::size_t>(x)] == 2) throw NoDerivative("a far-field path whose settings depend on the state");
         plan.kind = SpecialPlan::Kind::Farfield;
         plan.path = a->farf_index;
         const std::vector<int>& release = F.release_slots();
         for (int slot = 0; slot < F.slots(); slot++)
             for (int c : F.rel_idx(slot)) plan.pos.push_back(an.g_pos(release[static_cast<std::size_t>(slot)], c));
+        // A setting that follows the state moves the release's weights (see `special_gradient`).
+        for (int x : settings_moving(an, F, moving)) {
+            I32 g = an.row_of(x);
+            std::size_t ncols = an.row_size(g);
+            const I32* cols = an.row_cols(g);
+            SpecialPlan::SettingTerm term;
+            term.x = x;
+            for (int slot = 0; slot < F.slots(); slot++) {
+                std::vector<int> mine = F.setting_slots_of(slot);
+                if (std::find(mine.begin(), mine.end(), x) == mine.end()) continue;
+                SpecialPlan::SettingPart part;
+                part.slot = slot;
+                for (std::size_t q = 0; q < ncols; q++) {
+                    part.pos.push_back(an.g_pos(release[static_cast<std::size_t>(slot)], cols[q]));
+                    part.src.push_back(an.g_ptr[static_cast<std::size_t>(g)] + static_cast<I32>(q));
+                }
+                term.parts.push_back(std::move(part));
+            }
+            plan.terms.push_back(std::move(term));
+        }
         return plan;
     }
     const EntryPtr& rec = a->recorder;
@@ -1098,6 +1178,34 @@ void plan_assembly(AnalyticPlan& an, const Builder& b, const Pattern& pattern, c
                 d.pos.reserve(rf.size());
                 for (std::size_t i = 0; i < rf.size(); i++) d.pos.push_back(pat_pos(pattern, rf[i], cf[i]));
                 an.direct.push_back(std::move(d));
+                // A setting that follows the state moves the matrix: each cell's rate through it --
+                // the matrix's tangent along it times the state, as `jvp` has it in
+                // src/sim/farfield.js -- chained along the setting's gradient.
+                if (!F.laplace) {
+                    const FarfPath& path = static_cast<const FarfPath&>(F);
+                    std::vector<int> rows, slots;
+                    std::vector<I32> parts, element;
+                    for (int x : settings_moving(an, F, moving)) {
+                        for (int slot = 0; slot < path.slots(); slot++) {
+                            std::vector<int> mine = path.setting_slots_of(slot);
+                            if (std::find(mine.begin(), mine.end(), x) == mine.end()) continue;
+                            const I32 i = static_cast<I32>(parts.size() / 2);
+                            parts.push_back(x);
+                            parts.push_back(slot);
+                            const int o = slot / path.nnuc, m = slot % path.nnuc;
+                            for (int cell = 0; cell < path.ncells; cell++) {
+                                rows.push_back(path.base + o * path.ncells * path.nnuc + cell * path.nnuc + m);
+                                slots.push_back(x);
+                                element.push_back(i * path.ncells + cell);
+                            }
+                        }
+                    }
+                    if (!parts.empty()) {
+                        const std::size_t before = an.chain.size();
+                        add_chain(rows, slots, ChainTerm::Kind::FarfSettings, nullptr, &element, ph.s1);
+                        if (an.chain.size() > before) an.chain.back().parts = parts;
+                    }
+                }
                 break;
             }
         }
@@ -1381,6 +1489,23 @@ void special_gradient(Analytic& an, const SpecialPlan& plan, const Reads& rd) {
             const double* w = F.release_weights().data();
             const I32* pos = plan.pos.data();
             for (std::size_t q = 0; q < plan.pos.size(); q++) G[pos[q]] += w[q];
+            // A setting that follows the state: the release's own tangent along it -- its
+            // weights' tangent times the cells, as `releaseTangent` has it -- chained along the
+            // setting's gradient.
+            if (!plan.terms.empty()) {
+                FarfPath& path = static_cast<FarfPath&>(F);
+                for (const SpecialPlan::SettingTerm& term : plan.terms) {
+                    FarfTangent T(path);
+                    setting_partials(T, path, rd.X, rd.sys->X.size(), term.x);
+                    for (const SpecialPlan::SettingPart& part : term.parts) {
+                        const std::size_t off = static_cast<std::size_t>(part.slot) * static_cast<std::size_t>(path.nrel);
+                        double dq = 0.0;
+                        for (int r = 0; r < path.nrel; r++)
+                            dq += T.drel[off + static_cast<std::size_t>(r)] * rd.y[path.rel_at[off + static_cast<std::size_t>(r)]];
+                        for (std::size_t q = 0; q < part.pos.size(); q++) G[part.pos[q]] += dq * G[part.src[q]];
+                    }
+                }
+            }
             return;
         }
         case SpecialPlan::Kind::Zero: return;
@@ -1425,6 +1550,13 @@ void chain_add(double* J, const ChainTerm& c, const double* G, const System& sys
     const I32* src = c.src.data();
     const I32* idx = c.idx.data();
     switch (c.kind) {
+        case ChainTerm::Kind::FarfSettings: {
+            // Each cell's rate along the setting, worked out once for every element.
+            FarfPath& path = static_cast<FarfPath&>(*sys.data.FARF[static_cast<std::size_t>(c.s1)]);
+            std::vector<double> rate = settings_rates(path, c.parts, y, X, sys.X.size());
+            for (std::size_t q = 0; q < count; q++) J[dst[q]] += rate[static_cast<std::size_t>(idx[q])] * G[src[q]];
+            break;
+        }
         case ChainTerm::Kind::SignDonor: {
             const double* sign = c.sign.data();
             for (std::size_t q = 0; q < count; q++) J[dst[q]] += (idx[q] >= 0 ? sign[q] * y[idx[q]] : sign[q]) * G[src[q]];

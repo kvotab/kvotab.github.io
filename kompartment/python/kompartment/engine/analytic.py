@@ -535,11 +535,18 @@ class _Analytic:
             return ('laplace', b.FARF[a.farf_index])
         if a.kind == 'farfield':
             F = b.FARF[a.farf_index]
-            for x in F.setting_idx.ravel():
-                if self.moving[x] == 2:
-                    raise NoDerivative('a far-field path whose settings depend on the state')
             dst = np.concatenate([self.g_pos(int(F.release_slots[s]), F.rel_idx[s]) for s in range(F.slots)])
-            return ('farfield', F, dst)
+            # A setting that follows the state moves the release's weights: for each one,
+            # every slot reading it, the release's gradient positions over the setting's
+            # columns and the setting's own gradient there (see `_special_gradient`).
+            terms = []
+            for x in self._settings_moving(F):
+                g = self.g_row_of[x]
+                cols = self.g_cols[g]
+                src = self.g_ptr[g] + np.arange(cols.size, dtype=np.int64)
+                terms.append((x, [(slot, self.g_pos(int(F.release_slots[slot]), cols), src)
+                                  for slot in range(F.slots) if x in F.setting_idx[slot]]))
+            return ('farfield', F, dst, terms)
         rec = a.get('recorder')
         if rec is None:
             raise NoDerivative(a.kind)
@@ -552,6 +559,46 @@ class _Analytic:
         if rec.kind == 'snapshot':
             return ('zero', a)
         return ('recorder', a, rec)
+
+    def _settings_moving(self, F: Any) -> List[int]:
+        """A path's setting slots that follow the state and have a gradient, each once, in order."""
+        out = []
+        for x in np.unique(F.setting_idx.ravel()):
+            x = int(x)
+            if self.moving[x] == 2 and x in self.g_row_of and self.g_cols[self.g_row_of[x]].size:
+                out.append(x)
+        return out
+
+    @staticmethod
+    def _setting_partials(F: Any, X: np.ndarray, x: int) -> Tuple[np.ndarray, np.ndarray]:
+        """The tangents of a path's rates and release weights along its setting slot ``x``
+        (``refresh_tangent`` along that slot alone)."""
+        dX = np.zeros(X.size)
+        dX[x] = 1.0
+        got = F.refresh_tangent(X, dX)
+        if got is None:
+            return np.zeros_like(F.vals), np.zeros_like(F.rel_w)
+        return got
+
+    @staticmethod
+    def _cell_rows(F: Any, slot: int) -> np.ndarray:
+        """The states of a slot's cells, in the cells' order."""
+        o, m = divmod(slot, F.nnuc)
+        return F.base + o * F.ncells * F.nnuc + np.arange(F.ncells, dtype=np.int64) * F.nnuc + m
+
+    def _settings_rates(self, F: Any, parts: List[Tuple[int, int]], y: np.ndarray, X: np.ndarray) -> np.ndarray:
+        """For each (setting, slot) of ``parts``, each cell's rate along the setting: the
+        tangent of the slot's matrix entries times the state, added up entry by entry."""
+        out = np.zeros(len(parts) * F.ncells)
+        partials: Dict[int, np.ndarray] = {}
+        for i, (x, slot) in enumerate(parts):
+            if x not in partials:
+                partials[x] = self._setting_partials(F, X, x)[0]
+            dvals = partials[x]
+            base = i * F.ncells
+            for e in range(F.nnz):
+                out[base + int(F.rows[e])] += dvals[slot, e] * y[F.col_idx[slot, e]]
+        return out
 
     def _gradients(self, y: np.ndarray, X: np.ndarray, t: float) -> np.ndarray:
         G = np.zeros(self.g_nnz)
@@ -601,6 +648,17 @@ class _Analytic:
             F, dst = plan[1], plan[2]
             F.refresh(X)
             G[dst] += F.rel_w.ravel()
+            # A setting that follows the state: the release's own tangent along it -- its
+            # weights' tangent times the cells, as `releaseTangent` has it -- chained along the
+            # setting's gradient.
+            for x, terms in plan[3]:
+                _, drel = self._setting_partials(F, X, x)
+                for slot, pos, src in terms:
+                    dq = 0.0
+                    for r in range(F.nrel):
+                        dq += drel[slot, r] * y[F.rel_idx[slot, r]]
+                    for q in range(pos.size):
+                        G[pos[q]] += dq * G[src[q]]
             return
         if kind == 'zero':
             return
@@ -797,6 +855,16 @@ class _Analytic:
                 F = self.system.FARF[ph[1]]
                 pos = self.pat_pos(F.row_flat, F.col_flat)
                 add_direct(pos, lambda y, X, F=F: (F.refresh(X), F.vals.ravel())[1], 'farf', s1=ph[1])
+                # A setting that follows the state moves the matrix: each cell's rate through
+                # it -- the matrix's tangent along it times the state, as `jvp` has it in
+                # src/sim/farfield.js -- chained along the setting's gradient.
+                parts = [(x, slot) for x in self._settings_moving(F)
+                         for slot in range(F.slots) if x in F.setting_idx[slot]]
+                if parts:
+                    rows = np.concatenate([self._cell_rows(F, slot) for _, slot in parts])
+                    slots = np.concatenate([np.full(F.ncells, x, dtype=np.int64) for x, _ in parts])
+                    add_chain(rows, slots, lambda y, X, F=F, parts=parts: self._settings_rates(F, parts, y, X),
+                              'farf_settings', s1=ph[1])
         self.direct = direct
         self.chain = chain
         self.direct_spec = direct_spec

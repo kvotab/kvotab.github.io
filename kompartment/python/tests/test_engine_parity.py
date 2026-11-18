@@ -357,6 +357,38 @@ class BuildParity(unittest.TestCase):
             scale = np.max(np.abs(b)) if b.size else 0.0
             self.assertLess(float(np.max(np.abs(a - b)) / scale) if scale > 0 else 0.0, 1e-6, label)
 
+    def test_a_path_whose_settings_follow_the_state_has_the_applications_exact_jacobian(self) -> None:
+        # A travel time that follows a compartment, a Kd that follows another: the path's matrix
+        # moves with the state, and df/dy is worked out exactly, as the application works it out
+        # -- each cell's rate and the release along the setting, chained along its gradient.
+        for key, equation, grid in (('tw', '50 * (1 + Vault[U-238] / 1e12)', 'reference'),
+                                    ('kd_m', 'Kd_matrix * (1 + Well / (1e3 + Well))', 'matched')):
+            with self.subTest(setting=key):
+                model = example('farfield')
+                path = model['farfields'][0]
+                path[key] = equation
+                path['grid'] = grid
+                s = build_system(Project(copy.deepcopy(model)))
+                j = s.jacobian
+                self.assertTrue(j.get('available'), j.get('reason'))
+                n = s.nstate
+                y = np.abs(s.initial_state()) + 1 + (np.arange(n) % 5) * 0.37
+                t = 3e5
+                js = engine('matrix', model=model, points=[{'t': t, 'y': y.tolist()}])
+                self.assertTrue(js['available'], js.get('reason'))
+
+                def dense(col_ptr: Any, row_idx: Any, values: Any) -> np.ndarray:
+                    M = np.zeros((n, n))
+                    for c in range(n):
+                        for q in range(col_ptr[c], col_ptr[c + 1]):
+                            M[row_idx[q], c] = values[q]
+                    return M
+                mine = dense(j['pattern'].col_ptr, j['pattern'].row_idx, j['evaluate'](t, y))
+                theirs = dense(js['colPtr'], js['rowIdx'], numbers(js['values'][0]))
+                gap = np.abs(mine - theirs)
+                bound = 1e-12 * np.maximum(np.abs(mine), np.abs(theirs)) + 1e-14 * float(np.max(np.abs(theirs)))
+                self.assertTrue(np.all(gap <= bound), float(np.max(gap / np.maximum(bound, 1e-300))))
+
     def test_the_derivative_is_the_applications(self) -> None:
         for name in EXAMPLES:
             model = example(name)

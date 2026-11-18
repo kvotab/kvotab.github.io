@@ -828,7 +828,7 @@ function _pb_clone(sys::System)
     any(farf, an.plans) || return c
     own(p) = c.data.FARF[p.entry[:farf_index]+1]
     an.plans = Any[farf(p) && p.path === sys.data.FARF[p.entry[:farf_index]+1] ?
-                   SpecialPlan(p.kind, p.entry, own(p), p.dst) : p for p in an.plans]
+                   SpecialPlan(p.kind, p.entry, own(p), p.dst, p.terms) : p for p in an.plans]
     return c
 end
 

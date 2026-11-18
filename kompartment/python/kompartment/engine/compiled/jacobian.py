@@ -1059,6 +1059,8 @@ def _build(an: Any, cm: Any) -> Any:
             bd.ints['pl_ref'].append(0)
             bd.ints['pl_n'].append(0)
         elif kind == 'farfield':
+            if len(plan) > 3 and plan[3]:
+                raise Unsupported('a far-field path whose settings follow the state')
             F, dst = plan[1], np.asarray(plan[2], dtype=np.int64)
             k = farf_index[id(F)]
             if F.rel_w.size != dst.size:
