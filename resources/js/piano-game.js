@@ -322,7 +322,8 @@ const PN_GAME = (() => {
     { id: 'perfect', title: 'Felfri konsert', how: 'Spela en konsert utan en enda miss', icon: 'trophy', test: c => !!c.store.flags.perfect },
     { id: 'xmas1', title: 'Julsångare', how: 'Spela en julsång på konsert', icon: 'tree', test: c => c.xmas >= 1 },
     { id: 'xmas3', title: 'Julkonsert', how: 'Spela tre julsånger på konsert', icon: 'tree', test: c => c.xmas >= 3 },
-    { id: 'xmas6', title: 'Hela julen', how: 'Spela alla sex julsångerna på konsert', icon: 'tree', test: c => c.xmas >= 6 },
+    { id: 'xmas6', title: 'Julstjärna', how: 'Spela sex julsånger på konsert', icon: 'tree', test: c => c.xmas >= 6 },
+    { id: 'xmas9', title: 'Hela julen', how: 'Spela alla nio julsångerna på konsert', icon: 'tree', test: c => c.xmas >= 9 },
     { id: 'own', title: 'Egen låt', how: 'Skriv in en egen låt', icon: 'pen', test: c => c.store.own.length >= 1 },
   ];
 

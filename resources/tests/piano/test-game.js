@@ -113,6 +113,6 @@ check('rubbish stored is a clean start', G.validate({ xp: -5, days: 'x', lessons
 }
 check('levels: 60 points more for each', [0, 59, 60, 179, 180, 360].map(x => G.level(x).level), [1, 1, 2, 2, 3, 4]);
 check('level: how far into it', G.level(100), { level: 2, into: 40, need: 120 });
-check('nineteen badges, each with a name, a way to it and a picture', [G.BADGES.length, G.BADGES.every(b => b.title && b.how && b.icon && typeof b.test === 'function'), new Set(G.BADGES.map(b => b.id)).size], [19, true, 19]);
+check('twenty badges, each with a name, a way to it and a picture', [G.BADGES.length, G.BADGES.every(b => b.title && b.how && b.icon && typeof b.test === 'function'), new Set(G.BADGES.map(b => b.id)).size], [20, true, 20]);
 
 done();

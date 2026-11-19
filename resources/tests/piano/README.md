@@ -2,7 +2,7 @@
 
 Four suites. The first three run in Node and need nothing else:
 
-    node resources/tests/piano/test-songs.js    # the notes, the songs, the 49 lessons
+    node resources/tests/piano/test-songs.js    # the notes, the songs, the 64 lessons
     node resources/tests/piano/test-game.js     # right and wrong, stars, points, days in a row
     node resources/tests/piano/test-ear.js      # what the microphone hears
 

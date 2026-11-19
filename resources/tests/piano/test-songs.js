@@ -40,7 +40,7 @@ check('a decimal comma is a decimal point', S.fromUser('C1,5 D0,5', 'h').text, '
 
 /* ── The songs ─────────────────────────────────────────────────────────── */
 
-check('eight songs, six of them for Christmas', [S.SONGS.length, S.SONGS.filter(s => s.xmas).length], [8, 6]);
+check('eleven songs, nine of them for Christmas', [S.SONGS.length, S.SONGS.filter(s => s.xmas).length], [11, 9]);
 check('song ids are unique', new Set(S.SONGS.map(s => s.id)).size, S.SONGS.length);
 for (const song of S.SONGS) {
   const p = S.songNotes(song);
@@ -50,7 +50,7 @@ for (const song of S.SONGS) {
   check(`${song.id}: the bar lines written are where the beats put them`, p.barMarks.filter(m => ((m - pickup) % per + per) % per !== 0), []);
   check(`${song.id}: whole bars in all (a pickup is taken from the last bar)`, p.total % per, 0);
   const keys = midis(p.notes);
-  check(`${song.id}: within the keys the page listens for and draws (C4 to F5)`, [Math.min(...keys) >= 60, Math.max(...keys) <= 77], [true, true]);
+  check(`${song.id}: within the keys the page listens for and draws (low A to high F)`, [Math.min(...keys) >= 57, Math.max(...keys) <= 77], [true, true]);
   if (song.fingers) {
     const thumb = S.pitch(song.fingers).step;
     check(`${song.id}: lies under five fingers`, p.notes.every(n => n.step - thumb >= 0 && n.step - thumb <= 4), true);
@@ -69,6 +69,9 @@ const SHAPE = {
   wewish: ['C F F G F E D D D G G A G F E C C', 'C C D G E F'],
   stilla: ['G A G E G A G E D D B C C G', 'C G E G F D C'],
   lucia: ['G G C C B B F F A A G', 'D A B D C'],
+  raven: ['G F E D E F A G R G F E D E F A G R G G C G', 'G F E F D D C R'],
+  tomtegubbar: ['C G A G F E F G C C B C D C B C C R', 'B C D C B C C R'],
+  juligen: ['F F F C A C F F F C A C F E F G A B C C', 'G A B G F E G F R'],
 };
 for (const song of S.SONGS) {
   const all = S.songNotes(song).notes.map(n => n.letter);
@@ -77,14 +80,21 @@ for (const song of S.SONGS) {
 }
 check('Nu tändas tusen juleljus has its two B flats, Sankta Lucia its two F sharps',
   [S.songNotes(S.songById('juleljus')).notes.filter(n => n.acc < 0).length, S.songNotes(S.songById('lucia')).notes.filter(n => n.acc > 0).length], [2, 2]);
-check('the other songs are on white keys only', S.SONGS.filter(s => !['juleljus', 'wewish', 'lucia'].includes(s.id)).every(s => S.songNotes(s).notes.every(n => n.acc === 0)), true);
+check('the other songs are on white keys only', S.SONGS.filter(s => !['juleljus', 'wewish', 'lucia', 'juligen'].includes(s.id)).every(s => S.songNotes(s).notes.every(n => n.acc === 0)), true);
+{
+  const jul = S.songNotes(S.songById('juligen')).notes.filter(n => !n.rest);
+  check('Nu är det jul igen: twelve B flats, and the only song under middle C, at the low A four times',
+    [jul.filter(n => n.acc < 0).length, S.SONGS.filter(s => midis(S.songNotes(s).notes).some(m => m < 60)).map(s => s.id), jul.filter(n => n.midi < 60).map(n => n.midi).join()],
+    [12, ['juligen'], '57,57,57,57']);
+}
 
 /* ── The path ──────────────────────────────────────────────────────────── */
 
 check('lesson ids are unique', new Set(S.ORDER.map(e => e.id)).size, S.ORDER.length);
-check('eight units, 49 lessons', [S.UNITS.length, S.ORDER.length], [8, 49]);
+check('eleven units, 64 lessons', [S.UNITS.length, S.ORDER.length], [11, 64]);
 check('the first Christmas song comes in the second unit', S.UNITS[1].lessons[0].song, 'bjallerklang');
-check('every song has its concert', S.SONGS.filter(s => s.id !== 'noak').map(s => S.ORDER.some(e => e.lesson.kind === 'concert' && e.lesson.song === s.id)), [true, true, true, true, true, true, true]);
+check('every song has its concert', S.SONGS.filter(s => s.id !== 'noak').every(s => S.ORDER.some(e => e.lesson.kind === 'concert' && e.lesson.song === s.id)), true);
+check('the low A is taught before the song that needs it', S.ORDER.findIndex(e => e.lesson.kind === 'notes' && e.lesson.fresh.includes('A3')) < S.ORDER.findIndex(e => e.lesson.song === 'juligen'), true);
 const TYPES = ['info', 'find', 'name', 'echo', 'play', 'tempo'];
 let known = new Set();
 for (const e of S.ORDER) {

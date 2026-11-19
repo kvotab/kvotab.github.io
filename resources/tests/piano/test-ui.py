@@ -46,7 +46,7 @@ SYNTH = (open(os.path.join(HERE, '..', 'gitarr', 'synth.js'), encoding='utf-8').
 
 failures = []
 checks = 0
-LESSONS = SONGS = XMAS = 0      # read from the page by main_suite
+LESSONS = SONGS = XMAS = BADGES = 0      # read from the page by main_suite
 
 
 def check(label, got, want=True):
@@ -259,8 +259,8 @@ async def main_suite(page):
     check('home: the page opens on the path', [g['view'], g['tab'], await page.ev('document.title')], ['home', 'path', 'Pianoskolan — kvot ab'])
     # How many lessons and songs there are is piano-songs.js's to say (its own
     # test pins the numbers): here the page is checked against it.
-    global LESSONS, SONGS, XMAS
-    LESSONS, SONGS, XMAS = await page.js('[PN_SONGS.ORDER.length, PN_SONGS.SONGS.length, PN_SONGS.SONGS.filter(s => s.xmas).length]')
+    global LESSONS, SONGS, XMAS, BADGES
+    LESSONS, SONGS, XMAS, BADGES = await page.js('[PN_SONGS.ORDER.length, PN_SONGS.SONGS.length, PN_SONGS.SONGS.filter(s => s.xmas).length, PN_GAME.BADGES.length]')
     check('home: there are lessons and songs to show', [LESSONS >= 49, SONGS >= 8, XMAS >= 6], [True, True, True])
     nodes = await page.js("[...document.querySelectorAll('.pn-node')].map(b => [b.dataset.id, b.dataset.state, b.disabled])")
     check('home: every lesson, the first one waiting, the rest locked',
@@ -275,8 +275,8 @@ async def main_suite(page):
           [False, SONGS, XMAS, True])
     await page.shot('songs.png')
     await page.click('#pn-tab-badges')
-    check('home: nineteen badges, none earned',
-          await page.js("[document.querySelectorAll('.pn-badge').length, document.querySelectorAll('.pn-badge.is-got').length]"), [19, 0])
+    check('home: every badge, none earned',
+          await page.js("[document.querySelectorAll('.pn-badge').length, document.querySelectorAll('.pn-badge.is-got').length]"), [BADGES, 0])
     await page.shot('badges.png')
     await page.click('#pn-tab-path')
     check('home: the site lists the page in its menu', await page.ev("[...document.querySelectorAll('#menu [aria-current], #menu a')].some(e => e.textContent.includes('Pianoskolan'))"), True)

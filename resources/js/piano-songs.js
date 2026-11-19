@@ -269,6 +269,54 @@ const PN_SONGS = (() => {
              E' D' C' | B- A- D'2 | D' C' A | F#- G- C'2 //
              E'- C'- C'- G- G- E- | F- D'- D'2 | D' A. B- | D' C'2`,
     },
+    {
+      id: 'raven',
+      title: 'Räven raskar över isen',
+      by: 'Svensk sånglek, 1600-talet',
+      xmas: true,
+      time: 3, bpm: 100, level: 2,
+      // Checked against John Chambers' ABC "Räven raskar över isen"
+      // (trillian.mit.edu, there in D and in A; here a tone lower, in C). Its
+      // "får vi lov" leaps and the fall to the end are as two singers sing
+      // them in Svenskt visarkiv's recordings of 1959 and 1960 (Wikimedia
+      // Commons). The dotted pair it opens with is two even eighths here.
+      text: `G- F- E- D- E- F- | A G R | G- F- E- D- E- F- | A G R //
+             G- G- C'. G- | G- G- C'. G- | G- F- E F- D- | D C R- //
+             G- | G- F- E E- E- | D- E- F. F- | F- E- D D- D- | C- D- E R //
+             G- G- C'. G- | G- G- C'. G- | G- F- E F- D- | D C R`,
+    },
+    {
+      id: 'tomtegubbar',
+      title: 'Hej tomtegubbar',
+      by: 'Svensk polska, tryckt 1815',
+      xmas: true,
+      time: 3, bpm: 100, level: 2,
+      // Checked against two arrangements that agree on the tune: "Hej
+      // tomtegubbar" for choir (cryner.se, the tune in the men's voices, in
+      // B flat) and FolkWiki's "Hej tomtegubbar, spela polska", four fiddle
+      // variations on it (in D); here in C. Both have its pairs dotted; here
+      // they are even eighths.
+      text: `C' G- A- G- F- | E- F- G C'- C'- | B- C'- D' C'- B- | C' C' R //
+             C' G- A- G- F- | E- F- G C'- C'- | B- C'- D' C'- B- | C' C' R- //
+             B- | C'- E'- D'. B- | C'- E'- D'. B- | C'- E'- D' D'- C'- | B- A- G R //
+             C' G- A- G- F- | E- F- G C'- C'- | B- C'- D' C'- B- | C' C' R`,
+    },
+    {
+      id: 'juligen',
+      title: 'Nu är det jul igen',
+      by: 'Dansk och svensk julsång',
+      xmas: true,
+      time: 3, bpm: 100, level: 3,
+      // Checked against the score "Nu er det jul igen.png", Wikimedia Commons
+      // (from Danish Wikisource, "Svensk/dansk folkemelodi"), in its own key,
+      // F. John Chambers' ABC "Nå er det jul igjen" agrees but for one note
+      // and the notes the Danish words split. Twice a line it dips to the A
+      // below middle C, the one key here under it.
+      text: `F- F- F- C- A,- C- | F- F- F- C- A,- C- | F- E- F- G- A- Bb- | C' C'2 //
+             F- F- F- C- A,- C- | F- F- F- C- A,- C- | F- E- F- G- A- Bb- | C' C'2 //
+             Bb- Bb- D'- Bb- Bb | A- A- C'- A- A- A- | G- A- Bb- G- F- E- | G F R //
+             Bb- Bb- D'- Bb- Bb | A- A- C'- A- A- A- | G- A- Bb- G- F- E- | G F R`,
+    },
   ];
 
   const parsed = new Map();
@@ -533,6 +581,58 @@ const PN_SONGS = (() => {
         { id: 'lu4', title: 'Sankta Lucia, slutet', kind: 'phrase', song: 'lucia', parts: [3] },
         { id: 'lu5', title: 'Hela Sankta Lucia', kind: 'song', song: 'lucia' },
         { id: 'lu6', title: 'Konsert: Sankta Lucia', kind: 'concert', song: 'lucia' },
+      ],
+    },
+    {
+      id: 'u9', title: 'Räven raskar över isen', sub: 'En sånglek runt granen', stage: 2, xmas: true,
+      lessons: [
+        { id: 'ra1', title: 'Räven raskar över isen, början', kind: 'phrase', song: 'raven', parts: [0] },
+        { id: 'ra2', title: 'Räven raskar över isen, mitten', kind: 'phrase', song: 'raven', parts: [1] },
+        { id: 'ra3', title: 'Räven raskar över isen, slutet', kind: 'phrase', song: 'raven', parts: [2] },
+        { id: 'ra4', title: 'Hela Räven raskar över isen', kind: 'song', song: 'raven' },
+        { id: 'ra5', title: 'Konsert: Räven raskar över isen', kind: 'concert', song: 'raven' },
+      ],
+    },
+    {
+      id: 'u10', title: 'Hej tomtegubbar', sub: 'En polska till jul', stage: 2, xmas: true,
+      lessons: [
+        { id: 'ht1', title: 'Hej tomtegubbar, början', kind: 'phrase', song: 'tomtegubbar', parts: [0] },
+        { id: 'ht2', title: 'Hej tomtegubbar, mitten', kind: 'phrase', song: 'tomtegubbar', parts: [2] },
+        { id: 'ht3', title: 'Hela Hej tomtegubbar', kind: 'song', song: 'tomtegubbar' },
+        { id: 'ht4', title: 'Konsert: Hej tomtegubbar', kind: 'concert', song: 'tomtegubbar' },
+      ],
+    },
+    {
+      id: 'u11', title: 'Nu är det jul igen', sub: 'Ner under mellersta C', stage: 2, xmas: true,
+      lessons: [
+        {
+          id: 'laga', title: 'Låga A', kind: 'notes', staff: true, fresh: ['A3'], known: ['C4', 'D4', 'E4'],
+          info: {
+            title: 'Under mellersta C',
+            text: 'Tangenterna fortsätter till vänster om mellersta C också: först kommer {H} och sedan A. Det är låga A, en oktav under det A du redan kan. I noterna sitter låga A under C, på ett andra litet streck.',
+            keys: ['A3'], staff: ['A3', 'C4'],
+          },
+        },
+        {
+          id: 'hopp', title: 'Ner och upp igen', kind: 'patterns', time: 3,
+          info: {
+            title: 'Ett hopp nedåt',
+            text: 'Nu är det jul igen börjar på F och hoppar ner till C och låga A – och sedan upp till C igen. Låt handen följa med, eller ta de låga tonerna med vänster hand.',
+            keys: ['A3', 'C4', 'F4'],
+          },
+          items: [
+            ['echo', 'C A, C'],
+            ['play', 'F C A, | C F2'],
+            ['echo', 'F- F- F- C- A,- C-'],
+            ['play', 'F- F- F- C- A,- C- | F3'],
+            ['play', "F- E- F- G- A- Bb- | C'3"],
+            ['tempo', "F- F- F- C- A,- C- | F- E- F- G- A- Bb- | C'3", { bpm: 72 }],
+          ],
+        },
+        { id: 'nj1', title: 'Nu är det jul igen, början', kind: 'phrase', song: 'juligen', parts: [0] },
+        { id: 'nj2', title: 'Nu är det jul igen, slutet', kind: 'phrase', song: 'juligen', parts: [2] },
+        { id: 'nj3', title: 'Hela Nu är det jul igen', kind: 'song', song: 'juligen' },
+        { id: 'nj4', title: 'Konsert: Nu är det jul igen', kind: 'concert', song: 'juligen' },
       ],
     },
   ];
