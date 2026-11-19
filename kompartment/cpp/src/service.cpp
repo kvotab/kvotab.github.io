@@ -15,6 +15,7 @@
 #include <thread>
 
 #include "engine/analysis.hpp"
+#include "engine/calibrate.hpp"
 #include "engine/errorinfo.hpp"
 #include "engine/farfield.hpp"
 #include "engine/jacobian.hpp"
@@ -307,13 +308,17 @@ struct Service {
         };
         auto stage = [&](const char* what) { say(Json::object({{"id", Json(id)}, {"event", Json("stage")}, {"stage", Json(what)}})); };
         try {
-            const Json& model = job.get("model");
+            // A job with no model reads the empty text (`get(job, "model", "")`).
+            const Json model = job.has("model") ? job.get("model") : Json("");
             Json raw = model.is_string() ? parse_json(model.as_string()) : model;
-            if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity")) {
-                if (kind == "calibrate") throw NotOnThisEngine("The C++ engine runs a model; a calibration is not something it does yet.");
+            // (`from_json`, before anything else is said.)
+            if (!raw.is_object()) throw ArgumentError("A model is one JSON object");
+            if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity" || kind == "calibrate"))
                 throw ArgumentError("'" + julia_string(kind) + "' is not a kind of job this engine runs");
-            }
-            auto project = std::make_shared<const Project>(raw);
+            // The model is read as a project where the Julia engine's job reads it -- after its
+            // stage is said and its options are taken -- so that a model it refuses is refused at
+            // the same point.
+            auto project_of = [&] { return std::make_shared<const Project>(raw); };
             std::string out_path = js_str(job.get("out"));
             if (kind == "run") {
                 stage("solving");
@@ -322,10 +327,31 @@ struct Service {
                     tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
                     return !stopped(id);
                 };
-                Results res = run_project(project, nullptr, run_options);
+                Results res = run_project(project_of(), nullptr, run_options);
                 if (stopped(id)) throw ServiceStopped();
                 stage("writing");
                 write_run(std::move(res), id, options, out_path);
+            } else if (kind == "calibrate") {
+                stage("solving");
+                CalibrateOptions calibration;
+                calibration.targets = option(options, "targets");
+                calibration.variables = option(options, "variables");
+                calibration.method = option(options, "method");
+                calibration.max_evals = option(options, "maxEvals");
+                calibration.seed = option(options, "seed");
+                // Each step's best, as JSON carries it to the page: a misfit that is not a number is null.
+                calibration.on_progress = [&](const CalibrateStep& p) {
+                    tell(Json::object({{"id", Json(id)},
+                                       {"event", Json("progress")},
+                                       {"detail", Json::object({{"evals", Json(p.evals)},
+                                                                {"fx", Json(p.fx)},
+                                                                {"best", Json(p.best)},
+                                                                {"values", p.values ? Json::array(*p.values) : Json()}})}}));
+                };
+                calibration.signal = [&] { return stopped(id); };
+                Json result = calibrate(project_of(), calibration);
+                if (stopped(id)) throw ServiceStopped();
+                write_file(out_path, json_text(result, 0));
             } else if (kind == "local-sensitivity") {
                 stage("solving");
                 SensitivityOptions sensitivity;
@@ -333,7 +359,7 @@ struct Service {
                     tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
                     return !stopped(id);
                 };
-                SensitivityRun r = run_sensitivity(project, option(options, "parameters"), sensitivity);
+                SensitivityRun r = run_sensitivity(project_of(), option(options, "parameters"), sensitivity);
                 if (stopped(id)) throw ServiceStopped();
                 stage("writing");
                 // Every state the page shows, by its name, with its derivatives.
@@ -358,7 +384,7 @@ struct Service {
                 design.latin = !(option(options, "latin", Json(true)) == Json(false));
                 if (!varied.is_null()) design.varied = option_strings(varied);
                 design.tornado = unless_false(tornado);
-                Replay r = run_realisation(project, number, design);
+                Replay r = run_realisation(project_of(), number, design);
                 stage("writing");
                 Json values = Json::array();
                 for (const auto& v : r.values)
@@ -394,7 +420,7 @@ struct Service {
                     if (stopped(id)) throw ServiceStopped();
                     tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"done", Json(done)}, {"total", Json(total)}}));
                 };
-                auto prob = std::make_shared<ProbabilisticResults>(run_probabilistic(project, po));
+                auto prob = std::make_shared<ProbabilisticResults>(run_probabilistic(project_of(), po));
                 stage("writing");
                 // A sample the page asked the engine to keep goes without its series.
                 SampleArchiveOptions archive;

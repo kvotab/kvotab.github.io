@@ -2,8 +2,10 @@
 // messages of a run, of a run it is asked to keep and of the questions asked about
 // that run afterwards, and what it says to what it does not do; the run's log in the
 // archive it writes; a run that meets a value that is not a number, said where it
-// starts; and local sensitivities answered as the Julia engine's service answers them
-// (tools/localsens_fixtures.jl keeps what that said and wrote), refused, and stopped.
+// starts; local sensitivities answered as the Julia engine's service answers them
+// (tools/localsens_fixtures.jl keeps what that said and wrote), refused, and stopped; and
+// calibrations the same way (tools/calibrate_fixtures.jl): each step's best said as a
+// progress detail, the answer written, the refusals -- and a search stopped part way.
 //
 // The service is driven here as serve.py drives it -- a line in, the lines that
 // answer it out -- through two streams of the test's own, so that a question is
@@ -358,16 +360,8 @@ int main() {
         CHECK(message_of(gone).rfind("This engine no longer holds that run", 0) == 0);
     }
 
-    // What it does not do, it says before anything runs, by the name the page falls back on.
-    for (const char* kind : {"calibrate"}) {
-        const std::string id = std::string("n-") + kind;
-        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", Json(model_text)},
-                                              {"out", Json((scratch / "never.zip").string())}}), 0));
-        const auto events = out_buffer.until_ended(id);
-        CHECK_MSG(name_of(events) == "NotOnThisEngine", std::string(kind) + " is the page's to do: " + name_of(events));
-        CHECK(message_of(events).rfind("The C++ engine runs a model; ", 0) == 0);
-    }
-    // A solver the other engines have and this one does not: a run, a probabilistic run and a replay.
+    // A solver the other engines have and this one does not: a run, a probabilistic run, a replay and
+    // a calibration -- said before anything runs, by the name the page falls back on.
     {
         Json other = parse_json(check::read_file(examples + "biosphere.json"));
         other["simulation"].set("solver", Json("auto"));
@@ -381,6 +375,18 @@ int main() {
                                                                 " " + message_of(events));
             CHECK(message_of(events).rfind("'auto' is not one of the C++ engine's solvers", 0) == 0);
         }
+        Json targets = Json::array({Json::object({{"output", Json("Dose")}, {"when", Json("peak")}, {"value", Json(1e-6)}})});
+        Json variables = Json::array({Json::object({{"key", Json("geoTransit")}, {"lower", Json(100)}, {"upper", Json(1000)}})});
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("auto-calibrate")}, {"kind", Json("calibrate")}, {"model", other},
+                                              {"options", Json::object({{"targets", targets}, {"variables", variables}})},
+                                              {"out", Json((scratch / "never.zip").string())}}), 0));
+        const auto events = out_buffer.until_ended("auto-calibrate");
+        CHECK_MSG(name_of(events) == "NotOnThisEngine", "a calibration with a solver this engine lacks is the page's to do: " + name_of(events) + " " +
+                                                            message_of(events));
+        CHECK(message_of(events).rfind("'auto' is not one of the C++ engine's solvers", 0) == 0);
+        bool progressed = false;
+        for (const Json& e : events) progressed = progressed || e.get("event") == "progress";
+        CHECK_MSG(!progressed, "and says no step of a search first");
     }
     CHECK(!fs::exists(scratch / "never.zip"));
 
@@ -692,6 +698,70 @@ int main() {
         std::printf("dy/dp stopped after %.2f s\n", took);
     }
 
+    // Calibrations, answered as the Julia engine's service answers them: what is said as the job
+    // goes -- each step's best as a progress detail, every one said that of the step its count
+    // names, the first always --, the refusals named as Julia names them, and the answer written,
+    // to the bit, its time taken aside. With parity on, as the fixtures were written.
+    {
+        const Json fx = parse_json(check::read_file(std::string(KOMPARTMENT_CPP_DIR) + "/tests/fixtures/calibrate.json"));
+        set_parity(true);
+        for (const Json& s : fx.get("service").arr()) {
+            const std::string id = s.get("id").as_string();
+            const std::string out = (scratch / (id + ".json")).string();
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json("calibrate")}, {"model", s.get("model")},
+                                                  {"options", s.get("options")}, {"out", Json(out)}}), 0));
+            const auto events = out_buffer.until_ended(id);
+            Json said = Json::array();
+            const Json& steps = s.get("steps");
+            int details = 0;
+            bool first = false;
+            for (const Json& e : events) {
+                if (e.get("event") == "progress") {
+                    const Json& d = e.get("detail");
+                    const long long k = d.get("evals").is_int() ? d.get("evals").as_int() : 0;
+                    const bool same = k >= 1 && static_cast<std::size_t>(k) <= steps.size() &&
+                                      kept_text(json_text(d, 0)) == steps[static_cast<std::size_t>(k - 1)].as_string();
+                    CHECK_MSG(same, id + ": the detail said for step " + std::to_string(k) + " is not Julia's: " + json_text(d, 0));
+                    first = first || k == 1;
+                    details++;
+                    continue;
+                }
+                said.push(e.get("event") == "stage" ? Json("stage:" + e.get("stage").as_string()) : e.get("event"));
+            }
+            CHECK_MSG(said == s.get("events"), id + ": the engine says " + json_text(said, 0) + ", Julia's " + json_text(s.get("events"), 0));
+            CHECK_MSG(steps.empty() || (first && details >= 1), id + ": the first step is said");
+            const Json last = events.empty() ? Json::object() : events.back();
+            for (const char* key : {"name", "message", "hint"})
+                CHECK_MSG(last.get(key) == s.get(key), id + ": its " + key + " is " + json_text(last.get(key), 0) + ", Julia's " + json_text(s.get(key), 0));
+            const std::string text = fs::exists(out) ? without_ms(check::read_file(out)) : "";
+            CHECK_MSG((text.empty() ? std::string() : kept_text(text)) == s.get("out").as_string(), id + ": the answer written is not Julia's");
+        }
+        set_parity(false);
+
+        // Stopped while it searches: it says it was cancelled, writes nothing, and goes on
+        // answering. The biosphere example, with a budget that would take a minute.
+        const std::string stopped = (scratch / "cal-stopped.json").string();
+        Json targets = Json::array({Json::object({{"output", Json("Well [I-129]")}, {"when", Json("peak")}, {"value", Json(2e7)}, {"scale", Json("log")}})});
+        Json variables = Json::array({Json::object({{"key", Json("leachRate[I-129]")}, {"lower", Json(1e-6)}, {"upper", Json(1e-3)}, {"space", Json("log")}}),
+                                      Json::object({{"key", Json("geoTransit")}, {"lower", Json(1e-5)}, {"upper", Json(1e-2)}, {"space", Json("log")}})});
+        const auto started = std::chrono::steady_clock::now();
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("cal-stop")}, {"kind", Json("calibrate")}, {"model", Json(bio_text)},
+                                              {"options", Json::object({{"targets", targets}, {"variables", variables}, {"method", Json("de")},
+                                                                        {"maxEvals", Json(100000)}})},
+                                              {"out", Json(stopped)}}), 0));
+        for (int tries = 0; tries < 2000; tries++) {
+            if (out_buffer.has_event("cal-stop", "progress")) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK_MSG(out_buffer.has_event("cal-stop", "progress"), "the search says how far it has come");
+        in_buffer.put(json_text(Json::object({{"op", Json("cancel")}, {"id", Json("cal-stop")}}), 0));
+        const auto events = out_buffer.until_ended("cal-stop");
+        const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        CHECK_MSG(name_of(events) == "cancelled", "a calibration stopped while it searches says so: " + name_of(events) + " " + message_of(events));
+        CHECK_MSG(!fs::exists(stopped), "and writes nothing");
+        std::printf("calibration stopped after %.2f s\n", took);
+    }
+
     // A model that cannot be read, or built, or solved, says which and about what.
     {
         Json bad = parse_json(model_text);
@@ -703,6 +773,36 @@ int main() {
         in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("j")}, {"kind", Json("run")}, {"model", Json("{not json")},
                                               {"out", Json((scratch / "j.zip").string())}}), 0));
         CHECK(name_of(out_buffer.until_ended("j")) == "JSONError");
+
+        // As the Julia engine's job reads it: a model that is no JSON object refused before anything
+        // is said, one it cannot read after the job's stage -- whatever the kind of job.
+        const std::pair<const char*, const char*> stages[] = {
+            {"run", "solving"}, {"calibrate", "solving"}, {"local-sensitivity", "solving"}, {"replay", "solving"}, {"probabilistic", "building"}};
+        for (const auto& [kind, first] : stages) {
+            const std::string id = std::string("v-") + kind;
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", bad},
+                                                  {"options", Json::object({{"targets", Json::array({Json::object({{"output", Json("A")}, {"value", Json(1)}})})},
+                                                                            {"variables", Json::array({Json::object({{"key", Json("k")}})})}})},
+                                                  {"out", Json((scratch / "v.zip").string())}}), 0));
+            const auto events = out_buffer.until_ended(id);
+            CHECK_MSG(events.size() == 2 && events[0].get("event") == "stage" && events[0].get("stage") == first && name_of(events) == "ValidationError" &&
+                          message_of(events) == "A: Duplicate block name 'A'",
+                      std::string(kind) + ": a model that cannot be read is refused after the stage " + first + ": " + name_of(events) + " " +
+                          message_of(events));
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id + "-list")}, {"kind", Json(kind)}, {"model", Json("[1, 2]")},
+                                                  {"out", Json((scratch / "v.zip").string())}}), 0));
+            const auto listed = out_buffer.until_ended(id + "-list");
+            CHECK_MSG(listed.size() == 1 && name_of(listed) == "ArgumentError" && message_of(listed) == "A model is one JSON object",
+                      std::string(kind) + ": a model that is no JSON object: " + name_of(listed) + " " + message_of(listed));
+        }
+        // A job with no model reads the empty text; one whose model is null, no object.
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("no-model")}, {"kind", Json("calibrate")}, {"out", Json((scratch / "v.zip").string())}}), 0));
+        const auto none = out_buffer.until_ended("no-model");
+        CHECK_MSG(none.size() == 1 && name_of(none) == "JSONError" && message_of(none) == "Unexpected end of JSON", "no model: " + name_of(none) + " " + message_of(none));
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("null-model")}, {"kind", Json("run")}, {"model", Json()},
+                                              {"out", Json((scratch / "v.zip").string())}}), 0));
+        const auto null_model = out_buffer.until_ended("null-model");
+        CHECK_MSG(name_of(null_model) == "ArgumentError" && message_of(null_model) == "A model is one JSON object", "a null model: " + name_of(null_model));
     }
 
     // A line that is no message is passed over, and the engine goes on answering.

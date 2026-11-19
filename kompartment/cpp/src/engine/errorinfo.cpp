@@ -19,6 +19,7 @@
 #include "lang/functions.hpp"
 #include "solvers/matrix.hpp"
 #include "solvers/types.hpp"
+#include "stats/optimise.hpp"
 #include "util/errors.hpp"
 #include "util/json.hpp"
 
@@ -54,6 +55,8 @@ ErrorInfo error_info(const std::exception_ptr& e) {
         return plain("NotSupported", x.what());
     } catch (const SensitivityError& x) {
         return plain("SensitivityError", x.what());
+    } catch (const OptimiseError& x) {
+        return plain("OptimiseError", x.what());
     } catch (const JsonError& x) {
         // Shown with where it is (`(at byte n)`); its message is what is wrong.
         std::string shown = x.what();

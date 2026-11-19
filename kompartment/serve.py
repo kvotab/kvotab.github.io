@@ -26,8 +26,8 @@ tornado, a sensitivity design, a replayed realisation, a calibration, dy/dp --
 to the Python engine (`python/kompartment`), the Julia one (`julia/`) or the
 C++ one (`cpp/`), chosen in the page beside Run; `--engine` says which the page
 starts on. What an engine does not do, it refuses at once, and the page does it
-itself -- the C++ engine runs a model, and leaves the sampled runs and the
-analyses to the page.
+itself -- the C++ engine does all of these, and leaves to the page a model
+whose solver it does not have.
 
 What each engine needs -- Python 3.9 or newer with NumPy and SciPy, numba for
 speed; Julia 1.10 or newer with the packages of `julia/`; the C++ engine's

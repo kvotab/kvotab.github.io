@@ -78,7 +78,8 @@ run, a run kept on the engine with its series, its whole archive and its
 letting go asked for afterwards; a probabilistic run, a tornado or a
 sensitivity design's runs, a sample kept on the engine and asked for its bands,
 its realisations, a time across them or one of them; one realisation replayed;
-dy/dp for the parameters a job names; a job cancelled. Errors are named as the Julia engine names them. What it does
+dy/dp for the parameters a job names; a calibration, each step's best said as
+it goes and its answer written as JSON; a job cancelled. Errors are named as the Julia engine names them. What it does
 not do it refuses before anything runs, by a name the page knows, and the page
 then does that piece itself, in the browser, and says so.
 
@@ -122,8 +123,15 @@ the rates read, a semi-analytical path, a parameter that places a corner of the
 run -- is refused in the Julia package's words, and a differenced solve that
 gives up says why.
 
-It does not do: calibrations (the page does these itself when the engine is
-chosen); the other solvers (`auto`, the
+It calibrates: Nelder-Mead, Levenberg-Marquardt or differential evolution
+search the parameter slots a job names, in their values or their logarithms,
+between their bounds, for the values that put the endpoints where the targets
+say -- at the peak, at the end, or at the output time nearest. Each evaluation
+is a run of the system built once, and a corner that will not solve counts as
+a miss of 1e6 per target. Each step is said as it goes; the steps and the
+answer are the Julia package's to the bit.
+
+It does not do: the other solvers (`auto`, the
 DifferentialEquations.jl ports, SciPy's); HDF5 result files; Ecolego files;
 splitting a model into the parts that do not interact and solving them apart;
 editing a model. A model that needs one of these is refused with a sentence
@@ -145,6 +153,7 @@ it.
 | `src/engine/jacobian*` | The Jacobian's structure, the differenced one, the exact one |
 | `src/engine/farfield*` | A far-field path: on cells (its geometry, layers and release), or worked out semi-analytically (unit responses inverted from the Laplace domain, and their convolution with what flows in) |
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit; equations standing over the model's own (dy/dp's) |
+| `src/engine/calibrate.*` | A calibration: an endpoint read off a run, the variables a model offers, the search against the system built once |
 | `src/engine/localsens.*` | dy/dp: the parameter slots and states as the page names them, what the forward equations cannot carry, the augmented system with its Jacobian and block iteration matrix, the run, its failures said again, elasticities |
 | `src/engine/paramtangent.*` | df/dp differentiated: the statements' tangents seeded on the parameters, through the blocks that remember and far-field rates, and why it is refused where it is |
 | `src/engine/runlog.*` | The run log, in the application's words |
@@ -152,7 +161,7 @@ it.
 | `src/engine/probabilistic*` | A probabilistic run: the sampling plan, every realisation's values (a sample, a tornado or a sensitivity design), what a realisation sets into a system, the realisations run on threads and kept, one replayed |
 | `src/engine/analysis.*` | A probabilistic run's bands: the quantiles, mean, standard deviation and the median's intervals of every series at every time, over the realisations a mask keeps |
 | `src/engine/errorinfo.*` | An error as the Julia package names and shows it |
-| `src/stats/` | The statistics a probabilistic run draws with: the normal distribution, the distributions and their draws under JavaScript's rules, named streams and Latin hypercube columns, correlations put in by Iman-Conover, every sensitivity method's design |
+| `src/stats/` | The statistics a probabilistic run draws with: the normal distribution, the distributions and their draws under JavaScript's rules, named streams and Latin hypercube columns, correlations put in by Iman-Conover, every sensitivity method's design, and the optimisers a calibration searches with |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
 | `src/io/` | ZIP, the dataset archive, the sample archive (`results/sample/`) |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
@@ -189,7 +198,9 @@ and 0.70 s (Julia: 5.7 and 0.82 s).
 
 dy/dp of the biosphere example to five parameters takes 7 ms (Julia 51 ms); of
 the far-field example to two, 3,832 steps of 4,743 equations, 0.96 s (Julia
-9.3 s), in the same steps.
+9.3 s), in the same steps. A calibration of the biosphere example takes 21 ms
+by Nelder-Mead (59 runs), and 0.10-0.12 s by Levenberg-Marquardt or
+differential evolution (300 runs each); Julia takes 27, 134 and 149 ms.
 
 ## Tests
 
@@ -222,15 +233,16 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_stats` | The statistics: JavaScript's reading of values, named streams and columns of uniforms, the normal functions, 105 distributions at 42 probabilities and 61 values, correlations and Iman-Conover, every sensitivity method's settings, runs, refusals and design; 1,786 cases | `tools/stats_fixtures.jl` |
 | `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
 | `test_probabilistic` | Probabilistic runs of 22 made-up models (7 of them bundled examples given a spread) and every bundled example: every realisation of every series kept, to the bit (float32 too), the samples, inputs, statistics and log, the sample archive's entries, bands under 5 lists of percentiles and 6 masks, the service's answers and refusals; 12 replays; every run again on 2 and 8 threads, the same bits | `tools/probabilistic_fixtures.jl` |
+| `test_calibrate` | The three optimisers on 114 made-up problems (every step, budgets, stopped searches, refusals), the objective, the elimination, the keys and lookups; endpoints read off 32 models' runs, the variables they offer; 103 calibrations of bundled examples and made-up models (each method, seeds, budgets, log space, a corner that will not solve, 27 refusals word for word), every step and answer to the bit | `tools/calibrate_fixtures.jl` |
 | `test_localsens` | dy/dp of every builder model, the bundled examples and 49 made-up models, differentiated and differenced: the problem, the run to the bit, the refusals word for word; 181 models' parameter slots, what cannot be carried per slot and df/dp at three points; 108 failures said again; 385 cases | `tools/localsens_fixtures.jl` |
-| `test_service` | The messages `serve.py` and the engine exchange: a run's log in its archive, a run that stops on a value that is not a number, a probabilistic run kept and asked every question, a tornado, a sensitivity design, a replay, dy/dp answered, refused and stopped (the answer byte for byte the Julia engine's), a cancel, errors named as the Julia engine names them | |
+| `test_service` | The messages `serve.py` and the engine exchange: a run's log in its archive, a run that stops on a value that is not a number, a probabilistic run kept and asked every question, a tornado, a sensitivity design, a replay, dy/dp answered, refused and stopped (the answer byte for byte the Julia engine's), a calibration answered (every progress detail and its answer the Julia engine's), refused and stopped, a model refused where the Julia engine's job refuses it, a cancel, errors named as the Julia engine names them | |
 | `test_util` | JSON and the number formats | |
 
 To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```

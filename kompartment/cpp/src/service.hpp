@@ -16,15 +16,17 @@
 // a probabilistic run, as a run; a `local-sensitivity` one integrates dy/dp for the
 // parameters its options name (`run_sensitivity`) and writes the times, the
 // parameters, the run's counts and every state the page shows with its
-// derivatives, as JSON. A run asked to be kept (`"keep": true`) is held
+// derivatives, as JSON; a `calibrate` one searches for the values that meet its
+// targets (`calibrate`), saying each step's best as a progress `detail`, and writes
+// its answer as JSON. A run asked to be kept (`"keep": true`) is held
 // here, its archive without the states, and `series`, `archive` and `forget` ask
 // about it; a sample asked to be kept is held the same way, its archive without
 // the kept series, and `bands`, `realisations`, `column`, `realisation`,
 // `archive` and `forget` ask about it -- answered on a thread of their own beside
 // the jobs. Each job is a thread of its own, as many at once as the machine has
 // cores (`concurrent` in `ready`). Errors are named as the Julia engine names
-// them. What this engine does not do -- a calibration, a solver it does not have,
-// a model it cannot build yet -- it refuses before anything runs
+// them. What this engine does not do -- a solver it does not have, a model it
+// cannot build yet -- it refuses before anything runs
 // (`NotOnThisEngine`), and the page does it itself.
 
 #pragma once
