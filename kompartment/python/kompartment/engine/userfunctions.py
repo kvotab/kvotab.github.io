@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from ..io.csv import JS_WHITESPACE
 from ..names import qualified_name, resolve_reference
 from .lang import Binary, Call, Cond, Node, ParseError, Ref, Unary, parse
 
@@ -77,7 +78,7 @@ class UserFunctions:
                 continue
             name = qualified_name(f)
             parameters = [str(p) for p in f.get('parameters') or []]
-            text = str(f.get('equation') if f.get('equation') is not None else '').strip()
+            text = str(f.get('equation') if f.get('equation') is not None else '').strip(JS_WHITESPACE)
             if not text:
                 what = f'its parameters ({", ".join(parameters)})' if parameters else \
                     'numbers and the built-in functions'

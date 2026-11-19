@@ -86,8 +86,6 @@ bool is_case_ignorable(char32_t c);
 std::string py_upper(std::string_view s);
 std::string py_lower(std::string_view s);
 
-/// Julia's `strip(s)`: its white space (`isspace`) off both ends.
-std::string julia_strip(std::string_view s);
 
 /// The code point of the UTF-8 character at byte `i` of valid text, and its length.
 char32_t char_at(std::string_view s, std::size_t i, std::size_t& len);

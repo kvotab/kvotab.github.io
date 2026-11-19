@@ -46,7 +46,7 @@ function resolve_switch_time(project::Project, entry)
     if entry isa Real && !(entry isa Bool)
         return isfinite(entry) ? Float64(entry) : nothing
     end
-    name = strip(js_str(something(entry, "")))
+    name = js_trim(js_str(something(entry, "")))
     isempty(name) && return nothing
     occursin(_SWITCH_NUMBER, name) && return parse(Float64, name)
     found = _find_by_name(project, name)

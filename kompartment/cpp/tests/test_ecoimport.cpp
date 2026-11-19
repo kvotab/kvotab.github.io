@@ -2,7 +2,7 @@
 // tests/fixtures/ecoimport.json), byte for byte: the pieces on their own -- bytes decoded as
 // CPython decodes them, `Number()` as JavaScript and pdf.py read it, `toPrecision`,
 // `toExponential` and dates, trimming, UTF-16 lengths and positions, identifiers, Python's
-// `lower()` and `upper()` on every code point, Julia's `strip`, `localeCompare`, entities, the XML
+// `lower()` and `upper()` on every code point, `localeCompare`, entities, the XML
 // reader on every element of every document, distributions, `.version` files, deflate streams
 // inflated within limits, archives read entry by entry -- and whole imports: model.xml texts made
 // up to reach every branch, bare files in every encoding, and archives stored, deflated and damaged
@@ -335,7 +335,6 @@ int main() {
         CHECK_MSG(eco::js_identifier(in) == c.get("identifier").as_string(), "identifier of '" + in + "'");
         CHECK_MSG(eco::py_lower(in) == c.get("lower").as_string(), "lower '" + in + "': " + eco::py_lower(in));
         CHECK_MSG(eco::py_upper(in) == c.get("upper").as_string(), "upper '" + in + "': " + eco::py_upper(in));
-        CHECK_MSG(eco::julia_strip(in) == c.get("strip").as_string(), "strip '" + in + "'");
         const JArray& pos = c.get("pos").arr();
         bool same = pos.size() == in.size() + 1;
         for (std::size_t i = 0; same && i < pos.size(); i++) same = static_cast<long long>(eco::utf16_pos(in, i)) == pos[i].as_int();

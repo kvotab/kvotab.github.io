@@ -1204,7 +1204,7 @@ function semi_refusals(b, X::Vector{Float64})
             (slot === nothing || key == "pen_dep_0") && continue
             cls = slot.width > 0 ? Int(maximum(b.slot_class[slot.base+1:slot.base+slot.width])) : 0
             cls == 0 && continue
-            said = strip(_ff_text(get(p.block, key, nothing)))
+            said = js_trim(_ff_text(get(p.block, key, nothing)))
             throw(BuildError("'$(p.local_name)' is worked out semi-analytically, which solves the path once for the " *
                              "whole run, so its settings have to be constants -- and " *
                              "$(get(FARF_TEXT, key, key)) follows the $(cls == 1 ? "clock" : "state of the model")" *

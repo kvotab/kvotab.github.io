@@ -15,7 +15,7 @@ from typing import Any, Dict, List, Optional, Set
 import numpy as np
 
 from ..indexlists import parent_list_name
-from ..io.csv import js_to_number
+from ..io.csv import JS_WHITESPACE, js_to_number
 from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import Leaf
@@ -83,7 +83,7 @@ def switch_times(project: Any) -> List[float]:
 def resolve_switch_time(project: Any, entry: Any) -> Optional[float]:
     if isinstance(entry, (int, float)) and not isinstance(entry, bool):
         return float(entry) if math.isfinite(entry) else None
-    name = str(entry if entry is not None else '').strip()
+    name = str(entry if entry is not None else '').strip(JS_WHITESPACE)
     if not name:
         return None
     if _NUMBER.match(name):

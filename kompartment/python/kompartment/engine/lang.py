@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 from ..equations import EquationSyntaxError, Token, tokenize
+from ..io.csv import JS_WHITESPACE
 from .functions import lookup_function
 
 
@@ -143,7 +144,7 @@ def parse(src: object, calls: Optional[Callable[[str], bool]] = None) -> Node:
     call the model itself defines (a lookup table read at an argument, a
     user-defined function); without it such a call is an error.
     """
-    if src is None or str(src).strip() == '':
+    if src is None or str(src).strip(JS_WHITESPACE) == '':
         return Num(0.0)
     text = str(src)
     try:
@@ -194,7 +195,7 @@ def parse(src: object, calls: Optional[Callable[[str], bool]] = None) -> Node:
             advance()
             if peek()[0] == 'lbracket':
                 advance()
-                unit = advance()[1].strip() if peek()[0] == 'index' else ''
+                unit = advance()[1].strip(JS_WHITESPACE) if peek()[0] == 'index' else ''
                 expect('rbracket', "']'")
                 return Num(_js_number_text(value), unit)
             return Num(_js_number_text(value))
@@ -236,7 +237,7 @@ def parse(src: object, calls: Optional[Callable[[str], bool]] = None) -> Node:
             indices: List[Optional[str]] = []
             while peek()[0] == 'lbracket':
                 advance()
-                idx = advance()[1].strip() if peek()[0] == 'index' else ''
+                idx = advance()[1].strip(JS_WHITESPACE) if peek()[0] == 'index' else ''
                 expect('rbracket', "']'")
                 indices.append(None if idx == '' else idx)
             return Ref(name, indices)

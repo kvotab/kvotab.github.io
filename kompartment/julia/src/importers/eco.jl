@@ -2454,7 +2454,7 @@ function _eco_read_entries(el::EcoXMLNode, dim_lists::Vector{_EcoList}, report::
             # The discrete event that makes this a discrete transfer: settled
             # into an event of this tool's by `_eco_settle_transfer_events!`.
             event = _eco_child_text(entry_el, "transfer-event")
-            (event !== nothing && !isempty(strip(event))) && (rec["transfer_event"] = String(strip(event)))
+            (event !== nothing && !isempty(_eco_js_trim(event))) && (rec["transfer_event"] = _eco_js_trim(event))
         elseif type_ == "expression"
             _eco_assign_if!(rec, "equation", _eco_child_text(entry_el, "equation"))
         elseif type_ == "parameter"

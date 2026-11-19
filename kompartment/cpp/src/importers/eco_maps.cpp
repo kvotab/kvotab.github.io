@@ -317,35 +317,6 @@ std::string py_lower(std::string_view s) {
     return out;
 }
 
-namespace {
-
-// Julia's `isspace`: ' ', \t to \r, U+0085, and the space separators (Zs) from U+00A0.
-bool julia_space(char32_t c) {
-    if (c == ' ' || (c >= '\t' && c <= '\r') || c == 0x85) return true;
-    return c == 0xA0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200A) || c == 0x202F || c == 0x205F || c == 0x3000;
-}
-
-}  // namespace
-
-std::string julia_strip(std::string_view s) {
-    std::size_t a = 0, b = s.size();
-    while (a < b) {
-        std::size_t k = 1;
-        const char32_t c = char_at(s, a, k);
-        if (!julia_space(c)) break;
-        a += k;
-    }
-    while (b > a) {
-        std::size_t s0 = b - 1;
-        while (s0 > a && (at(s, s0) & 0xc0) == 0x80) s0--;
-        std::size_t k = 1;
-        const char32_t c = char_at(s, s0, k);
-        if (!julia_space(c)) break;
-        b = s0;
-    }
-    return std::string(s.substr(a, b - a));
-}
-
 // --- numbers ---------------------------------------------------------------------------------
 
 bool is_js_decimal(std::string_view cu) {

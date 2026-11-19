@@ -104,6 +104,15 @@ with(m -> (m["simulation"] = K.JDict("startTime" => 1, "endTime" => 50, "outputP
 with(m -> (m["simulation"]["max_order"] = 3; m["simulation"]["min_order"] = "2"; m["simulation"]["max_step"] = ""), "orders")
 with(m -> (m["simulation"]["time_unit"] = "day"), "days")
 with(m -> (m["decay_unit"] = "mol"), "mol")
+# Text with white space at an end, trimmed as JavaScript trims it: a byte-order mark and the line
+# separator are white space there, U+0085 and U+001C are not.
+for (tag, c) in (("a byte-order mark", "\ufeff"), ("a line separator", "\u2028"), ("U+0085", "\u0085"), ("U+001C", "\x1c"))
+    with(m -> (m["decay_unit"] = "mol" * c), "decay unit, $tag")
+    with(m -> (m["compartments"][1]["unit"] = c * "kg"), "a unit, $tag")
+    with(m -> (m["half_lives"] = K.JDict("Cs-137" => c * "stable", "Sr-90" => 30)), "stable, $tag")
+    with(m -> (for x in m["compartments"]; x["system"] = "Near"; end; for t in m["transfers"]; t["system"] = "Near"; end;
+               m["disabled_systems"] = Any["Near" * c]), "a disabled system, $tag")
+end
 with(m -> (m["half_lives"] = K.JDict("Cs-137" => "stable", "Sr-90" => 30)), "own half-lives")
 with(m -> (m["chains"] = Any[Any["Cs-137", "Sr-90"], Any["Sr-90", "Cs-137", 0.5]]), "own chains")
 with(m -> (m["chains"] = Any[]), "no chains")

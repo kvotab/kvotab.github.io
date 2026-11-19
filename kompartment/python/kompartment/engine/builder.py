@@ -30,7 +30,7 @@ import numpy as np
 
 from ..errors import KompartmentError
 from ..indexlists import COMPARTMENT_LIST, SOURCE_INDEX, TARGET_INDEX, TRANSFER_LIST
-from ..io.csv import js_to_number
+from ..io.csv import JS_WHITESPACE, js_to_number
 from ..names import qualified_name, resolve_reference
 from . import codegen
 from .codegen import CodeWriter, Leaf, Tree
@@ -66,16 +66,21 @@ SLOT_WORDS = {
 }
 
 
+# `'Block#setting'` in a builder message, with JavaScript's white space and digits (Python's
+# `\s` and `\d` take more).
+_SETTING_NAMED = re.compile("'([^'#" + ''.join(re.escape(c) for c in JS_WHITESPACE) + "]+)#([A-Za-z_]+[0-9]*)'")
+
+
 def in_words(message: str) -> str:
     """A builder message with its ``'Block#setting'`` names said in words."""
     def slot(block: str, key: str) -> str:
-        words = SLOT_WORDS.get(key) or SLOT_WORDS.get(re.sub(r'\d+$', '', key)) or f'setting {key}'
+        words = SLOT_WORDS.get(key) or SLOT_WORDS.get(re.sub(r'[0-9]+$', '', key)) or f'setting {key}'
         return f'{block}’s {words}'
 
     text = str(message if message is not None else '')
     text = re.sub(r"add '([^']+)' to '([^'#]+)#[^']*'", lambda m: f"add '{m.group(1)}' to the lists {m.group(2)} is "
                   'indexed by', text)
-    return re.sub(r"'([^'#\s]+)#([A-Za-z_]+\d*)'", lambda m: slot(m.group(1), m.group(2)), text)
+    return re.sub(_SETTING_NAMED, lambda m: slot(m.group(1), m.group(2)), text)
 
 
 class BuildError(KompartmentError):
@@ -642,7 +647,7 @@ class _Builder:
                 cls = int(self.slot_class[slot.base:slot.base + slot.width].max()) if slot.width else 0
                 if cls == 0:
                     continue
-                said = str(p.block.get(key) if p.block.get(key) is not None else '').strip()
+                said = str(p.block.get(key) if p.block.get(key) is not None else '').strip(JS_WHITESPACE)
                 raise BuildError(f"'{p.local}' is worked out semi-analytically, which solves the path once for the "
                                  f'whole run, so its settings have to be constants -- and '
                                  f"{FARF_TEXT.get(key, key)} follows the {'clock' if cls == 1 else 'state of the model'}"
@@ -935,7 +940,7 @@ class _Builder:
         for D in self.disruption_layout:
             D.setting = {}
             for key in TIMING_KEYS[D.timing]:
-                if not str(D.block.get(key) if D.block.get(key) is not None else '').strip():
+                if not str(D.block.get(key) if D.block.get(key) is not None else '').strip(JS_WHITESPACE):
                     continue
                 slot = add(f'{D.q}#{key}', f'event:{key}', D.block, key, [])
                 slot.hidden = True
@@ -1027,8 +1032,8 @@ class _Builder:
                     for off in range(entry.width):
                         tup = self.entry_tuple(blk, entry.dims, off)
                         start = value_at(blk, 'start_trigger', tup)
-                        self.MEM.append(Recorder(kind, operation=blk.get('operation') or 'max',
-                                                 recording=not (start is not None and str(start).strip() != '')))
+                        recording = not (start is not None and str(start).strip(JS_WHITESPACE) != '')
+                        self.MEM.append(Recorder(kind, operation=blk.get('operation') or 'max', recording=recording))
                 self.recorders.append(rec)
                 entry.recorder = rec
         self.alg_by_name = {a.name: a for a in self.algebraic}
@@ -1341,7 +1346,7 @@ class _Builder:
                 for off in range(rec.width):
                     tup = self.entry_tuple(rec.block, rec.dims, off)
                     written = value_at(rec.block, field, tup)
-                    text = '' if written is None else str(written).strip()
+                    text = '' if written is None else str(written).strip(JS_WHITESPACE)
                     if not text:
                         continue
                     try:
@@ -1369,7 +1374,7 @@ class _Builder:
             if D.timing != 'trigger':
                 continue
             local = D.block['name']
-            text = str(D.block.get('trigger') if D.block.get('trigger') is not None else '').strip()
+            text = str(D.block.get('trigger') if D.block.get('trigger') is not None else '').strip(JS_WHITESPACE)
             if not text:
                 raise BuildError(f"'{local}' is set off by a trigger, and names none.", D.q)
             try:
@@ -1617,7 +1622,7 @@ class _Builder:
         own = [{'off': base, 'factor': 1.0, 'when': None}]
         if scheme.get('scheme') not in ('shared_limit', 'shared_langmuir'):
             return own
-        over = str(scheme.get('over') if scheme.get('over') is not None else '').strip()
+        over = str(scheme.get('over') if scheme.get('over') is not None else '').strip(JS_WHITESPACE)
         dims = src.dims or []
         which = dims.index(over) if over in dims else -1
         groups = None

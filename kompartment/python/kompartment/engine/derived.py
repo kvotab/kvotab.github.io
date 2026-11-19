@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..io.csv import JS_WHITESPACE
+
 DERIVED_KINDS = ('max', 'min', 'time_of_max', 'at_time', 'integral', 'period_mean', 'period_sum', 'period_change',
                  'period_rate')
 PERIOD_KINDS = ('period_mean', 'period_sum', 'period_change', 'period_rate')
@@ -23,8 +25,8 @@ def is_series(kind: str) -> bool:
 
 
 def derived_unit(kind: str, source_unit: Optional[str], time_unit: Optional[str]) -> str:
-    u = str(source_unit if source_unit is not None else '').strip()
-    tu = str(time_unit if time_unit is not None else '').strip()
+    u = str(source_unit if source_unit is not None else '').strip(JS_WHITESPACE)
+    tu = str(time_unit if time_unit is not None else '').strip(JS_WHITESPACE)
     if kind == 'time_of_max':
         return tu
     if kind in ('integral', 'period_sum'):
@@ -152,8 +154,8 @@ def by_period(kind: str, t: Sequence[float], values: Sequence[float], n: int, pe
 
 def derived_blocks(project: Any) -> List[Dict[str, Any]]:
     derived = project.derived if hasattr(project, 'derived') else (project or {}).get('derived')
-    return [b for b in derived or [] if isinstance(b, dict) and str(b.get('name') or '').strip()
-            and b.get('kind') in DERIVED_KINDS and str(b.get('of') or '').strip()]
+    return [b for b in derived or [] if isinstance(b, dict) and str(b.get('name') or '').strip(JS_WHITESPACE)
+            and b.get('kind') in DERIVED_KINDS and str(b.get('of') or '').strip(JS_WHITESPACE)]
 
 
 def derived_outputs(project: Any, known_outputs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

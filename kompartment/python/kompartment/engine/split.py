@@ -83,6 +83,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 
 import numpy as np
 
+from ..io.csv import JS_WHITESPACE
 from ..simulation import add_method_steps
 from .partition import partition_of
 
@@ -1021,7 +1022,7 @@ _ENGINE_STAMP: List[str] = []
 def memory_path() -> Optional[Path]:
     """Where what auto learns is kept: ``split-memory.json`` in the cache
     directory, or nowhere when ``KOMPARTMENT_SPLIT_MEMORY`` is ``0``."""
-    if os.environ.get('KOMPARTMENT_SPLIT_MEMORY', '').strip() == '0':
+    if os.environ.get('KOMPARTMENT_SPLIT_MEMORY', '').strip(JS_WHITESPACE) == '0':
         return None
     from .compiled import cache_root
     return cache_root() / MEMORY_FILE

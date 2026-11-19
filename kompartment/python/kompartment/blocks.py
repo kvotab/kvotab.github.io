@@ -38,6 +38,7 @@ from typing import (TYPE_CHECKING, Any, ClassVar, Dict, Iterator, List, Mapping,
 
 from .distributions import make_pdf, pdf_problems
 from .errors import EditError
+from .io.csv import JS_WHITESPACE
 from .jsonio import js_number
 from .names import NAME_RE, qualify
 
@@ -125,7 +126,7 @@ def farfield_extra_cells(block: Dict[str, Any]) -> int:
     ((2 NF - Pe)/(2 NF + Pe))**NB under a tenth, a Peclet number that is not a
     number being taken as 10."""
     nb = block.get('n_b')
-    if nb is None or (isinstance(nb, str) and not nb.strip()):
+    if nb is None or (isinstance(nb, str) and not nb.strip(JS_WHITESPACE)):
         if _count_number(block.get('o_b')) != 4:
             return 0
         n = _count_number(block.get('n_f'))
@@ -201,7 +202,7 @@ def equation_text(value: Any) -> str:
 def _written_number(text: str) -> Optional[float]:
     """The number an equation is when it is one written out, as JavaScript's
     ``Number`` reads it; None for anything else."""
-    t = text.strip()
+    t = text.strip(JS_WHITESPACE)
     if not t or '_' in t:
         return None
     try:
@@ -276,7 +277,7 @@ class Field:
             return str(value)
         if self.kind == 'bool':
             return bool(value)
-        if self.kind == 'count' and (value == '' or (isinstance(value, str) and not value.strip())):
+        if self.kind == 'count' and (value == '' or (isinstance(value, str) and not value.strip(JS_WHITESPACE))):
             return ''
         if self.kind in ('int', 'number', 'count'):
             try:
@@ -1278,7 +1279,8 @@ class WastePackage(Block):
         self.failure = failure
         for k, v in settings.items():
             setattr(self, k, v)
-        missing = [k for k in FAILURE_KEYS[failure] if str(self._raw.get(k, WASTE_DEFAULTS[k])).strip() == '']
+        missing = [k for k in FAILURE_KEYS[failure]
+                   if str(self._raw.get(k, WASTE_DEFAULTS[k])).strip(JS_WHITESPACE) == '']
         if missing:
             raise EditError(f"'{failure}' needs {', '.join(missing)}")
 

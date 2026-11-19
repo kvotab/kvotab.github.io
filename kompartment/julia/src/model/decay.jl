@@ -37,14 +37,14 @@ end
 
 """Whether a half-life as a file may write it means "does not decay"."""
 means_stable(v::AbstractFloat) = isinf(v)
-means_stable(v::AbstractString) = occursin(r"^(stable|inf(inity)?)$"i, strip(v))
+means_stable(v::AbstractString) = occursin(r"^(stable|inf(inity)?)$"i, js_trim(v))
 means_stable(v) = false
 
-const _SYMBOL = r"^([A-Za-z]{1,3})(?=$|[-\s0-9])"
+const _SYMBOL = Regex("^([A-Za-z]{1,3})(?=\$|[-" * JS_SPACE_CLASS * "0-9])")
 
 """The element symbol of a nuclide's name (`Cs-137` -> `Cs`), or `nothing`."""
 function element_of(nuclide)
-    m = match(_SYMBOL, strip(string(something(nuclide, ""))))
+    m = match(_SYMBOL, js_trim(string(something(nuclide, ""))))
     m === nothing && return nothing
     s = m.captures[1]
     return uppercase(s[1:1]) * lowercase(s[2:end])

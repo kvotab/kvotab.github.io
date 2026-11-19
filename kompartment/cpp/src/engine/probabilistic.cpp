@@ -327,7 +327,7 @@ std::optional<std::string> sample_group(const PlanEntry& entry) {
     const Json& g = spec.is_object() ? spec.get("group") : Json::null_value;
     if (g.is_null()) return std::nullopt;
     std::string text = pb_py_str(g);
-    std::string_view t = jl_strip(text);
+    std::string_view t = js_trim(text);
     if (t.empty()) return std::nullopt;
     return std::string(t);
 }

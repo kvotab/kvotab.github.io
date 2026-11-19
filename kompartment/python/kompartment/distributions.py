@@ -43,6 +43,8 @@ from __future__ import annotations
 import math
 from typing import Any, Dict, List, Optional, Sequence
 
+from .io.csv import JS_WHITESPACE
+
 #: kind -> (label, [(param, must be positive)], only defined above zero, is a list)
 KINDS: Dict[str, Any] = {
     'unif': ('Uniform', [('min', False), ('max', False)], False, False),
@@ -113,8 +115,8 @@ def make_pdf(kind: str, *, values: Optional[Sequence[float]] = None,
     for key, v in (('pmin', pmin), ('pmax', pmax)):
         if v is not None:
             spec[key] = _num(v)
-    if group is not None and str(group).strip():
-        spec['group'] = str(group).strip()
+    if group is not None and str(group).strip(JS_WHITESPACE):
+        spec['group'] = str(group).strip(JS_WHITESPACE)
     spec['inorder'] = bool(inorder)
     spec['pos'] = int(pos)
     if check:

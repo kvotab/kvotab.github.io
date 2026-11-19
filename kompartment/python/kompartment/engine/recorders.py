@@ -11,6 +11,8 @@ from __future__ import annotations
 import math
 from typing import List
 
+from ..io.csv import JS_WHITESPACE
+
 RECORDER_KINDS = ('min_max', 'running_mean', 'snapshot', 'delay', 'trigger')
 REMEMBERING_KINDS = ('min_max', 'running_mean', 'snapshot', 'delay')
 RECORDER_COLLECTION = {
@@ -40,12 +42,12 @@ EQUATION_FIELDS = {
 
 
 def extreme_from_eco(name: object) -> str:
-    s = str(name if name is not None else '').strip().upper()
+    s = str(name if name is not None else '').strip(JS_WHITESPACE).upper()
     return 'min' if s == 'MIN' else ('max' if s == 'MAX' else '')
 
 
 def direction_from_eco(name: object) -> str:
-    s = str(name if name is not None else '').strip()
+    s = str(name if name is not None else '').strip(JS_WHITESPACE)
     return DIRECTION_FROM_ECO.get(s.upper()) or DIRECTION_FROM_ECO.get(s) or ''
 
 

@@ -15,17 +15,20 @@ const SLOT_WORDS = merge(
          "bottom" => "availability denominator", "hazard" => "failure hazard", "lambda" => "rate", "share" => "share"),
 )
 
+# `'Block#setting'` in a builder message, with JavaScript's white space and digits.
+const _SETTING_NAMED = Regex("'([^'#" * JS_SPACE_CLASS * "]+)#([A-Za-z_]+[0-9]*)'")
+
 """A builder message with its `'Block#setting'` names said in words."""
 function in_words(message)
     text = message === nothing ? "" : string(message)
     text = replace(text, r"add '([^']+)' to '([^'#]+)#[^']*'" =>
                          s -> (m = match(r"add '([^']+)' to '([^'#]+)#[^']*'", s);
                                "add '$(m.captures[1])' to the lists $(m.captures[2]) is indexed by"))
-    return replace(text, r"'([^'#\s]+)#([A-Za-z_]+\d*)'" => function (s)
-        m = match(r"'([^'#\s]+)#([A-Za-z_]+\d*)'", s)
+    return replace(text, _SETTING_NAMED => function (s)
+        m = match(_SETTING_NAMED, s)
         block, key = m.captures[1], m.captures[2]
         words = get(SLOT_WORDS, key, nothing)
-        words === nothing && (words = get(SLOT_WORDS, replace(key, r"\d+$" => ""), nothing))
+        words === nothing && (words = get(SLOT_WORDS, replace(key, r"[0-9]+$" => ""), nothing))
         words === nothing && (words = "setting $key")
         return "$(block)’s $words"
     end)

@@ -28,6 +28,7 @@ from .engine.farfield import rock_problem
 from .equations import EquationSyntaxError, _reference_tokens, tokenize
 from .errors import ValidationError
 from .indexlists import clashing_dimensions, clashing_dimensions_why, find_list, index_name, list_applies
+from .io.csv import JS_WHITESPACE
 from .keys import COLLECTIONS
 from .names import RESERVED, name_problem, qualified_name, resolve_reference, system_of
 from .simulation import SOLVERS, SPACINGS, TIME_UNITS
@@ -56,7 +57,7 @@ TRIGGER_FIELDS = {
 
 def _equation_problem(text: Any, system: str, known: Any, locals_: Optional[Set[str]] = None) -> Optional[str]:
     """What is wrong with one equation's characters and names, or ``None``."""
-    if not isinstance(text, str) or not text.strip():
+    if not isinstance(text, str) or not text.strip(JS_WHITESPACE):
         return None
     try:
         tokens = tokenize(text)
@@ -147,7 +148,7 @@ def check_model(model: 'Model') -> List[str]:
                     problem = _equation_problem(holder.get(field), system, known, locals_)
                     if problem:
                         out.append(f'{q}: its {field.replace("_", " ")} {problem}')
-            if kind == 'function' and not str(b.get('equation') or '').strip():
+            if kind == 'function' and not str(b.get('equation') or '').strip(JS_WHITESPACE):
                 out.append(f"{q} has no body yet")
 
             if kind in ('transfer', 'inflow'):
@@ -217,7 +218,7 @@ def check_model(model: 'Model') -> List[str]:
                 for field in TRIGGER_FIELDS[kind]:
                     v = b.get(field)
                     if v:
-                        t = resolve_reference(str(v).strip(), system, known)
+                        t = resolve_reference(str(v).strip(JS_WHITESPACE), system, known)
                         if t is None or model._kind_of(t) != 'trigger':
                             out.append(f"{q}: its {field.replace('_', ' ')} '{v}' is not a trigger")
             if kind == 'min_max' and b.get('operation', 'max') not in EXTREMES:
@@ -230,9 +231,9 @@ def check_model(model: 'Model') -> List[str]:
                 if b.get('timing', 'at') not in TIMINGS:
                     out.append(f"{q}: '{b.get('timing')}' is not a timing")
                 # What sets it off is a trigger, named whole or at one index.
-                trigger = str(b.get('trigger') or '').strip()
+                trigger = str(b.get('trigger') or '').strip(JS_WHITESPACE)
                 if b.get('timing') == 'trigger' and trigger:
-                    t = resolve_reference(trigger.split('[', 1)[0].strip(), system, known)
+                    t = resolve_reference(trigger.split('[', 1)[0].strip(JS_WHITESPACE), system, known)
                     if t is None or model._kind_of(t) != 'trigger':
                         out.append(f"{q}: its trigger '{trigger}' is not a trigger")
                 for a in b.get('actions') or []:
@@ -256,7 +257,7 @@ def check_model(model: 'Model') -> List[str]:
         idx = [index_name(i) for i in lst.get('indices') or []]
         if len(set(idx)) != len(idx):
             out.append(f"Index list '{n}' has an index twice")
-        if any(not str(i or '').strip() for i in idx):
+        if any(not str(i or '').strip(JS_WHITESPACE) for i in idx):
             out.append(f"Index list '{n}' has an index with no name")
         if lst.get('sub_set_of'):
             parent = find_list(lists, lst['sub_set_of'])

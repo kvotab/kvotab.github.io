@@ -62,6 +62,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 import numpy as np
 
 from ..errors import KompartmentError
+from ..io.csv import JS_WHITESPACE
 from ..stats.pdf import _MISSING, _js_str, _jmax, _to_number, _to_precision
 from .builder import build_system, tuple_by_list
 from .jacobian import SQRT_EPS, Pattern
@@ -234,7 +235,7 @@ def _switched_by_event(system: Any, rec: Any) -> bool:
         tup = space.pin_scenario(rec.block.get('index_lists') or [], tup)
         for field in EVENT_FIELDS.get(rec.kind, ()):
             v = value_at(rec.block, field, tup)
-            if v is not None and str(v).strip() != '':
+            if v is not None and str(v).strip(JS_WHITESPACE) != '':
                 return True
     return False
 
@@ -243,7 +244,8 @@ def _with_block_moved(block: Dict[str, Any], fn: Callable[[], Any]) -> Any:
     """``fn()`` with every value of a parameter block moved a little, then put back."""
     def move(v: Any) -> Any:
         x = _to_number(v)
-        return x * (1 + 1e-6) + 1e-9 if math.isfinite(x) and str('' if v is None else v).strip() != '' else v
+        said = str('' if v is None else v).strip(JS_WHITESPACE) != ''
+        return x * (1 + 1e-6) + 1e-9 if math.isfinite(x) and said else v
 
     had_value = block.get('value', _MISSING)
     entries = block.get('entries') or []

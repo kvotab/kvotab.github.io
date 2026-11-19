@@ -157,7 +157,7 @@ function _material_dimension(N::_ModelNorm)
 end
 
 function _decay_unit(N::_ModelNorm)
-    u = strip(_js_string(get(N.raw, "decay_unit", nothing)))
+    u = js_trim(_js_string(get(N.raw, "decay_unit", nothing)))
     return u in ("Bq", "mol") ? String(u) : "Bq"
 end
 
@@ -409,7 +409,7 @@ function _material_unit(N::_ModelNorm, name)
     lists = _stored_lists(N)
     catalogue = findfirst_value(l -> py_truthy(get(l, "for_contaminants", nothing)), lists)
     own = findfirst_value(i -> i isa AbstractDict && get(i, "name", nothing) == name, _py_iter(jget(catalogue, "indices")))
-    stated = strip(_js_string(jget(own, "unit")))
+    stated = js_trim(_js_string(jget(own, "unit")))
     isempty(stated) || return String(stated)
     nuclides = findfirst_value(l -> py_truthy(get(l, "for_nuclides", nothing)), lists)
     nuclides === nothing && (nuclides = catalogue)
@@ -450,7 +450,7 @@ function _sync_inventory_units!(N::_ModelNorm)
     for c in _norm_list(N.raw, "compartments")
         c isa AbstractDict || continue
         on = findfirst_value(d -> haskey(want, d), _effective_dims(N, c))
-        (on === nothing || !isempty(strip(_js_string(get(c, "unit", nothing))))) && continue
+        (on === nothing || !isempty(js_trim(_js_string(get(c, "unit", nothing))))) && continue
         u = want[on]
         isempty(u) && continue
         c["unit"] = u
@@ -492,14 +492,14 @@ function _sync_flux_units!(N::_ModelNorm)
         name === nothing && return ""
         c = get(comp_q, name, nothing)
         c === nothing && (c = get(comp_n, name, nothing))
-        return c === nothing ? "" : String(strip(_js_string(get(c, "unit", nothing))))
+        return c === nothing ? "" : String(js_trim(_js_string(get(c, "unit", nothing))))
     end
     function transfer_unit(b)
         get(b, "multiply_by_donor", nothing) !== false && return "1/$t"
         fr = get(b, "from", nothing)
         path = fr === nothing ? nothing : get(path_q, fr, nothing)
         path === nothing && (path = get(path_n, fr, nothing))
-        path !== nothing && return String(strip(_js_string(get(path, "unit", nothing))))
+        path !== nothing && return String(js_trim(_js_string(get(path, "unit", nothing))))
         u = unit_of_compartment(fr !== nothing ? fr : get(b, "to", nothing))
         return isempty(u) ? "" : _per(u, t)
     end

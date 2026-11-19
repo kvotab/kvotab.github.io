@@ -11,8 +11,8 @@ const PERIOD_KINDS = ("period_mean", "period_sum", "period_change", "period_rate
 is_series_kind(kind) = kind == "integral" || kind in PERIOD_KINDS
 
 function derived_unit(kind, source_unit, time_unit)
-    u = strip(js_str(something(source_unit, "")))
-    tu = strip(js_str(something(time_unit, "")))
+    u = js_trim(js_str(something(source_unit, "")))
+    tu = js_trim(js_str(something(time_unit, "")))
     kind == "time_of_max" && return String(tu)
     kind in ("integral", "period_sum") && return isempty(u) ? "" : "$u $tu"
     kind == "period_rate" && return isempty(u) ? "" : "$u/$tu"
@@ -124,9 +124,9 @@ function derived_blocks(project::Project)
     out = Any[]
     for b in project.derived
         b isa AbstractDict || continue
-        isempty(strip(js_str(something(get(b, "name", nothing), "")))) && continue
+        isempty(js_trim(js_str(something(get(b, "name", nothing), "")))) && continue
         get(b, "kind", nothing) in DERIVED_KINDS || continue
-        isempty(strip(js_str(something(get(b, "of", nothing), "")))) && continue
+        isempty(js_trim(js_str(something(get(b, "of", nothing), "")))) && continue
         push!(out, b)
     end
     return out

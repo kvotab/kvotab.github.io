@@ -20,7 +20,7 @@ const _CHECK_TRIGGER_FIELDS = Dict{String,Tuple{Vararg{String}}}(
 
 """What is wrong with one equation's characters and names, or `nothing`."""
 function _equation_problem(text, system, known, locals_=nothing)
-    (text isa AbstractString && !isempty(strip(text))) || return nothing
+    (text isa AbstractString && !isempty(js_trim(text))) || return nothing
     tokens = try
         tokenize(text)
     catch e
@@ -123,7 +123,7 @@ function check_model(m::Model)
                     problem === nothing || push!(out, "$q: its $(_spaced(field)) $problem")
                 end
             end
-            (kind == "function" && isempty(strip(_py_or_text(get(b, "equation", nothing))))) && push!(out, "$q has no body yet")
+            (kind == "function" && isempty(js_trim(_py_or_text(get(b, "equation", nothing))))) && push!(out, "$q has no body yet")
 
             if kind in ("transfer", "inflow")
                 for end_ in (kind == "transfer" ? ("from", "to") : ("to",))
@@ -199,7 +199,7 @@ function check_model(m::Model)
                 for field in _CHECK_TRIGGER_FIELDS[kind]
                     v = get(b, field, nothing)
                     py_truthy(v) || continue
-                    t = resolve_reference(String(strip(_py_str(v))), system, known)
+                    t = resolve_reference(String(js_trim(_py_str(v))), system, known)
                     (t === nothing || _ed_kind_of(m, t) != "trigger") &&
                         push!(out, "$q: its $(_spaced(field)) '$(_py_str(v))' is not a trigger")
                 end
@@ -213,9 +213,9 @@ function check_model(m::Model)
             if kind == "event"
                 get(b, "timing", "at") in TIMINGS || push!(out, "$q: '$(_py_str(get(b, "timing", nothing)))' is not a timing")
                 # What sets it off is a trigger, named whole or at one index.
-                trig = String(strip(_py_str(something(get(b, "trigger", nothing), ""))))
+                trig = String(js_trim(_py_str(something(get(b, "trigger", nothing), ""))))
                 if get(b, "timing", nothing) == "trigger" && !isempty(trig)
-                    t = resolve_reference(String(strip(split(trig, '['; limit=2)[1])), system, known)
+                    t = resolve_reference(String(js_trim(split(trig, '['; limit=2)[1])), system, known)
                     (t === nothing || _ed_kind_of(m, t) != "trigger") &&
                         push!(out, "$q: its trigger '$trig' is not a trigger")
                 end
@@ -243,7 +243,7 @@ function check_model(m::Model)
         push!(seen_lists, n)
         idx = _ed_index_names(lst)
         length(Set(idx)) != length(idx) && push!(out, "Index list '$(_py_str(n))' has an index twice")
-        any(i -> isempty(strip(_py_or_text(i))), idx) && push!(out, "Index list '$(_py_str(n))' has an index with no name")
+        any(i -> isempty(js_trim(_py_or_text(i))), idx) && push!(out, "Index list '$(_py_str(n))' has an index with no name")
         if py_truthy(get(lst, "sub_set_of", nothing))
             parent = find_list(lists, lst["sub_set_of"])
             if parent === nothing

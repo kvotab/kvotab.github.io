@@ -20,7 +20,7 @@ import numpy as np
 
 from .. import decay as _decay
 from ..errors import KompartmentError
-from ..io.csv import js_to_number
+from ..io.csv import JS_WHITESPACE, js_to_number
 from ..jsonio import js_number as number_text
 from ..jsonio import js_text
 from ..indexlists import (
@@ -259,7 +259,7 @@ def entry_lookup(block: Dict[str, Any], key: str) -> Callable[[Dict[str, str]], 
 
 def has_dydt(block: Dict[str, Any]) -> bool:
     def is_set(v: Any) -> bool:
-        return isinstance(v, str) and v.strip() != ''
+        return isinstance(v, str) and v.strip(JS_WHITESPACE) != ''
     return is_set(block.get('dydt')) or any(is_set(e.get('dydt')) for e in block.get('entries') or [])
 
 
@@ -291,7 +291,7 @@ def build_decay_model(names: Sequence[str], time_unit: str, half_lives: Dict[str
 
 def _check_index_name(name: Any, list_name: str) -> str:
     text = '' if name is None else str(name)
-    if not text.strip():
+    if not text.strip(JS_WHITESPACE):
         raise ValidationError(f"An index of '{list_name}' has no name", list_name)
     if INDEX_NAME_BAD.search(text):
         shown = INDEX_NAME_BAD.sub('?', text)
@@ -364,8 +364,8 @@ def normalise_index_lists(raw_lists: Sequence[Dict[str, Any]]) -> List[Dict[str,
                 idx.append({'name': i, 'enabled': True})
             else:
                 e = {'name': i.get('name'), 'enabled': i.get('enabled') is not False}
-                if str(i.get('unit') or '').strip():
-                    e['unit'] = str(i['unit']).strip()
+                if str(i.get('unit') or '').strip(JS_WHITESPACE):
+                    e['unit'] = str(i['unit']).strip(JS_WHITESPACE)
                 idx.append(e)
         d['indices'] = idx
         out.append(d)
@@ -443,7 +443,7 @@ def normalise_targets(targets: Any, block_name: str) -> List[str]:
         lst = targets
     else:
         raise ValidationError('Aggregate targets must be a list of block names', block_name)
-    return [str(t).strip() for t in lst if str(t).strip() != '']
+    return [str(t).strip(JS_WHITESPACE) for t in lst if str(t).strip(JS_WHITESPACE) != '']
 
 
 def normalise_entry_index(index: Any, material_list_name: Optional[str], dims: Sequence[str]) -> Dict[str, str]:
@@ -598,7 +598,7 @@ class Project:
         self.solver_points = self.output_mode != 'grid'
 
         self.nuclides = list(raw.get('nuclides') or [])
-        self.decay_unit = str(raw.get('decay_unit') if raw.get('decay_unit') is not None else 'Bq').strip()
+        self.decay_unit = str(raw.get('decay_unit') if raw.get('decay_unit') is not None else 'Bq').strip(JS_WHITESPACE)
         ceiling = js_number(sim.get('decay_ceiling')) if sim.get('decay_ceiling') is not None else math.nan
         self.decay_ceiling = ceiling if math.isfinite(ceiling) and ceiling > 0 else math.inf
         if self.decay_unit not in DECAY_UNITS:
@@ -608,7 +608,7 @@ class Project:
         for nuc, v in self.half_lives_override.items():
             if v is None:
                 continue
-            if re.fullmatch(r'stable|inf(inity)?', str(v).strip(), re.I):
+            if re.fullmatch(r'stable|inf(inity)?', str(v).strip(JS_WHITESPACE), re.I):
                 self.half_lives[nuc] = math.inf
                 continue
             years = js_number(v)
@@ -625,7 +625,8 @@ class Project:
             parent = pair[0] if len(pair) > 0 else None
             daughter = pair[1] if len(pair) > 1 else None
             named = '[' + ', '.join(_json(x) for x in pair) + ']'
-            if not isinstance(parent, str) or not parent.strip() or not isinstance(daughter, str) or not daughter.strip():
+            if (not isinstance(parent, str) or not parent.strip(JS_WHITESPACE)
+                    or not isinstance(daughter, str) or not daughter.strip(JS_WHITESPACE)):
                 raise ValidationError(f'A decay pair is [parent, daughter, branching]; {named} does not name two '
                                       'nuclides.')
             ratio = pair[2] if len(pair) > 2 else None
@@ -663,8 +664,9 @@ class Project:
             self.blocks[collection] = [self._block(b, kind) for b in raw.get(collection) or [] if isinstance(b, dict)]
 
         self.disabled: Set[str] = set()
-        self.disabled_systems = [str(p).strip() for p in (raw.get('disabled_systems') or []) if p is not None
-                                 and str(p).strip()] if isinstance(raw.get('disabled_systems'), list) else []
+        self.disabled_systems = [str(p).strip(JS_WHITESPACE) for p in (raw.get('disabled_systems') or [])
+                                 if p is not None and str(p).strip(JS_WHITESPACE)] \
+            if isinstance(raw.get('disabled_systems'), list) else []
 
         def off_by_system(block: Dict[str, Any]) -> Optional[str]:
             home = block.get('system') or ''
@@ -693,8 +695,8 @@ class Project:
                                     (b.get('system') or '' for c in COLLECTIONS for b in raw.get(c) or []
                                      if isinstance(b, dict)))
         self.transports = list(dict.fromkeys(
-            str(p if p is not None else '').strip() for p in raw.get('transports') or []
-            if str(p if p is not None else '').strip())) if isinstance(raw.get('transports'), list) else []
+            str(p if p is not None else '').strip(JS_WHITESPACE) for p in raw.get('transports') or []
+            if str(p if p is not None else '').strip(JS_WHITESPACE))) if isinstance(raw.get('transports'), list) else []
         for p in self.disabled_systems:
             if p not in self.systems:
                 raise ValidationError(f"'{p}' is listed as a disabled sub-system, but there is no sub-system of that "
@@ -788,22 +790,23 @@ class Project:
         if kind == 'lookup':
             interp = raw.get('interpolation')
             base['interpolation'] = 'linear' if interp is None or interp == '' else (
-                INTERPOLATION_FROM_ECO.get(str(interp).strip()) or interp)
+                INTERPOLATION_FROM_ECO.get(str(interp).strip(JS_WHITESPACE)) or interp)
             base['cyclic'] = bool(raw.get('cyclic'))
             base['argument'] = str(raw['argument']) if raw.get('argument') else None
             base['points'] = normalise_points(raw.get('points'), raw.get('name', ''))
         if kind in ('index_reduction', 'block_reduction'):
             op = raw.get('operation')
-            base['operation'] = 'sum' if op is None or op == '' else (OPERATION_FROM_ECO.get(str(op).strip()) or op)
+            base['operation'] = 'sum' if op is None or op == '' \
+                else (OPERATION_FROM_ECO.get(str(op).strip(JS_WHITESPACE)) or op)
         if kind == 'index_reduction':
             base['target'] = None if raw.get('target') is None else str(raw['target'])
             base['percentile'] = None if raw.get('percentile') is None else js_number(raw['percentile'])
         if kind == 'block_reduction':
             base['targets'] = normalise_targets(raw.get('targets'), raw.get('name', ''))
         if kind == 'function':
-            base['parameters'] = [str(p).strip() for p in (raw.get('parameters') if isinstance(raw.get('parameters'),
-                                                                                           list) else [])
-                                  if p is not None and str(p).strip()]
+            given = raw.get('parameters') if isinstance(raw.get('parameters'), list) else []
+            base['parameters'] = [str(p).strip(JS_WHITESPACE) for p in given
+                                  if p is not None and str(p).strip(JS_WHITESPACE)]
             base['equation'] = '' if raw.get('equation') is None else str(raw['equation'])
             base['system'] = raw.get('system') or ''
             base['index_lists'] = []
@@ -817,7 +820,7 @@ class Project:
             for key in FARF_STRUCTURE_KEYS:
                 given = raw[key] if raw.get(key) is not None else DEFAULTS['farfield'][key]
                 # Extra cells left empty are worked out, and kept empty.
-                if key == 'n_b' and (given is None or (isinstance(given, str) and given.strip() == '')):
+                if key == 'n_b' and (given is None or (isinstance(given, str) and given.strip(JS_WHITESPACE) == '')):
                     base[key] = ''
                     continue
                 v = js_number(given)
@@ -847,7 +850,7 @@ class Project:
         if kind == 'trigger':
             d = raw.get('direction')
             base['direction'] = 'rising' if d is None or d == '' else (
-                DIRECTION_FROM_ECO.get(str(d).strip().upper()) or d)
+                DIRECTION_FROM_ECO.get(str(d).strip(JS_WHITESPACE).upper()) or d)
         base['index_lists'] = self._dimensions_for(raw, kind)
         if kind == 'event':
             base['index_lists'] = []
@@ -886,7 +889,7 @@ class Project:
             for holder in [base, *base['entries']]:
                 if 'dydt' not in holder:
                     continue
-                if holder['dydt'] is None or str(holder['dydt']).strip() == '':
+                if holder['dydt'] is None or str(holder['dydt']).strip(JS_WHITESPACE) == '':
                     del holder['dydt']
                 else:
                     holder['dydt'] = str(holder['dydt'])
@@ -905,10 +908,10 @@ class Project:
                 return ''
             cs = self.blocks.get('compartments', []) if hasattr(self, 'blocks') else []
             c = next((x for x in cs if x['qname'] == name), None) or next((x for x in cs if x['name'] == name), None)
-            return str(c.get('unit') or '').strip() if c else ''
+            return str(c.get('unit') or '').strip(JS_WHITESPACE) if c else ''
 
         def per(q: str) -> str:
-            return f'({q})/{t}' if re.search(r'[/\s]', q) else f'{q}/{t}'
+            return f'({q})/{t}' if any(c == '/' or c in JS_WHITESPACE for c in q) else f'{q}/{t}'
 
         if kind == 'inflow':
             u = unit_of(block.get('to'))
@@ -932,7 +935,7 @@ class Project:
         lists = self.index_lists
         catalogue = next((l for l in lists if l.get('for_contaminants')), None)
         own = next((i for i in (catalogue or {}).get('indices') or [] if i.get('name') == name), None)
-        stated = str((own or {}).get('unit') or '').strip()
+        stated = str((own or {}).get('unit') or '').strip(JS_WHITESPACE)
         if stated:
             return stated
         nuclides = next((l for l in lists if l.get('for_nuclides')), None) or catalogue
@@ -967,7 +970,7 @@ class Project:
                 is_nuclide = name in names if names is not None else name in own
             except TypeError:
                 return self.material_unit(name)
-            stated = str((index or {}).get('unit') or '').strip()
+            stated = str((index or {}).get('unit') or '').strip(JS_WHITESPACE)
             if stated:
                 return stated
             return unit if is_nuclide else ''
@@ -1327,7 +1330,7 @@ def _json(x: Any) -> str:
 
 
 def _transport_operation(op: Any) -> Optional[str]:
-    v = str(op if op is not None else '').strip().lower()
+    v = str(op if op is not None else '').strip(JS_WHITESPACE).lower()
     if not v:
         return None
     if v in ('sum', 'mean'):
@@ -1338,14 +1341,14 @@ def _transport_operation(op: Any) -> Optional[str]:
 
 
 def _transport_argument(arg: Any) -> Optional[str]:
-    v = str(arg if arg is not None else '').strip().lower()
+    v = str(arg if arg is not None else '').strip(JS_WHITESPACE).lower()
     if not v:
         return None
     return v if v in ('all', 'point', 'range') else None
 
 
 def _extreme(name: Any) -> Optional[str]:
-    s = str(name if name is not None else '').strip().upper()
+    s = str(name if name is not None else '').strip(JS_WHITESPACE).upper()
     return 'min' if s == 'MIN' else ('max' if s == 'MAX' else None)
 
 
@@ -1369,14 +1372,14 @@ def waste_problems(project: Project) -> List[Dict[str, Any]]:
                         'message': f"'{f}' is not a way for packages to fail ({', '.join(FAILURES)})."})
             continue
         for key in FAILURE_KEYS[f]:
-            if not str(b.get(key) if b.get(key) is not None else '').strip():
+            if not str(b.get(key) if b.get(key) is not None else '').strip(JS_WHITESPACE):
                 out.append({'name': name, 'field': key,
                             'message': f'Packages that fail {FAILURE_LABEL[f]} need {WASTE_LABEL[key].lower()}: a '
                                        'number or an equation.'})
 
         def num(key: str) -> Optional[float]:
             # Number('') is 0, so an empty field reads as 0 here, as in the application.
-            v = js_number(str(b.get(key) if b.get(key) is not None else '').strip())
+            v = js_number(str(b.get(key) if b.get(key) is not None else '').strip(JS_WHITESPACE))
             return v if math.isfinite(v) else None
 
         if f == 'uniform':
@@ -1397,7 +1400,7 @@ def waste_problems(project: Project) -> List[Dict[str, Any]]:
                             'message': f"'{b['packages']}' is not a number of packages: a whole number, at least 1."})
         for values, where in [(b, None), *((e, e.get('index')) for e in b.get('entries') or [])]:
             def at(key: str) -> Optional[float]:
-                text = str(values.get(key) if values.get(key) is not None else '').strip()
+                text = str(values.get(key) if values.get(key) is not None else '').strip(JS_WHITESPACE)
                 v = js_number(text)
                 return v if text != '' and math.isfinite(v) else None
             cell = f" (at {' · '.join(where.values())})" if where else ''
@@ -1422,17 +1425,17 @@ def disruption_problems(project: Project) -> List[Dict[str, Any]]:
             out.append({'name': name, 'field': 'timing',
                         'message': f"'{timing}' is not a way for an event to happen ({', '.join(TIMINGS)})."})
             continue
-        if timing == 'at' and not str(b.get('at') or '').strip():
+        if timing == 'at' and not str(b.get('at') or '').strip(JS_WHITESPACE):
             out.append({'name': name, 'field': 'at', 'message': 'An event at a time needs the time: a number or an equation.'})
-        if timing == 'poisson' and not str(b.get('rate') or '').strip():
+        if timing == 'poisson' and not str(b.get('rate') or '').strip(JS_WHITESPACE):
             out.append({'name': name, 'field': 'rate', 'message': 'A random event needs its rate: occurrences per unit time.'})
         # Whether the name is a trigger is the build's to say, as for a snapshot's.
-        if timing == 'trigger' and not str(b.get('trigger') or '').strip():
+        if timing == 'trigger' and not str(b.get('trigger') or '').strip(JS_WHITESPACE):
             out.append({'name': name, 'field': 'trigger',
                         'message': 'An event set off by a trigger needs the trigger: name one.'})
 
         def num(text: Any) -> Optional[float]:
-            t = str(text if text is not None else '').strip()
+            t = str(text if text is not None else '').strip(JS_WHITESPACE)
             if not t:
                 return None
             v = js_number(t)

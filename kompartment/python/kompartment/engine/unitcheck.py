@@ -14,6 +14,7 @@ import math
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from ..io.csv import JS_WHITESPACE
 from .lang import Node
 
 _NONE = {'', '-', '[-]', '1', 'unitless', 'dimensionless', 'none', 'n/a', '[]'}
@@ -162,7 +163,7 @@ def _prefixed(name: str) -> Optional[Dim]:
 
 
 def _symbol_dim(raw: str) -> Dim:
-    sym = raw.strip()
+    sym = raw.strip(JS_WHITESPACE)
     if not sym:
         return Dim.one()
     if sym.lower() in _NONE:
@@ -180,11 +181,11 @@ def _symbol_dim(raw: str) -> Dim:
 
 def parse_unit(text: Any) -> Optional[Dim]:
     """A unit's text as a :class:`Dim`, or None when it cannot be read."""
-    src = str(text if text is not None else '').strip()
+    src = str(text if text is not None else '').strip(JS_WHITESPACE)
     if src.lower() in _NONE:
         return Dim.one()
     if re.match(r'^\[.*\]$', src, re.S):
-        src = src[1:-1].strip()
+        src = src[1:-1].strip(JS_WHITESPACE)
     if src.lower() in _NONE:
         return Dim.one()
     max_depth = 32

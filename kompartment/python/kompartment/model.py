@@ -61,7 +61,7 @@ from .indexlists import (
     clashing_dimensions_why, derive_elements, find_list, index_name, is_decay_dim, lineage,
     list_applies, list_applies_why, normalise_indices, shared_dims, split_material_roles,
 )
-from .io.csv import js_to_number
+from .io.csv import JS_WHITESPACE, js_to_number
 from .jsonio import PathLike, dumps, js_number, js_text, read_model_file, write_model_file
 from .keys import COLLECTIONS, migrate_keys
 from .names import (
@@ -475,7 +475,7 @@ class Shape:
             if key not in Shape.ALLOWED:
                 raise EditError(f"A shape has no '{key}'")
             if key in ('fill', 'line'):
-                v = _js_string(value).strip()
+                v = _js_string(value).strip(JS_WHITESPACE)
                 if v != 'none' and v not in SHAPE_COLORS:
                     raise EditError(f"'{value}' is not a shape colour ({', '.join(SHAPE_COLORS)}, none)")
                 self._raw[key] = v
@@ -494,7 +494,7 @@ class Shape:
                 continue
             if key == 'text':
                 text = _js_string(value)
-                if text.strip():
+                if text.strip(JS_WHITESPACE):
                     self._raw['text'] = text
                 else:
                     self._raw.pop('text', None)
@@ -875,7 +875,7 @@ class Model:
             if not isinstance(c, dict):
                 continue
             on = next((d for d in self._effective_dims(c) if d in want), None)
-            if on is None or _js_string(c.get('unit')).strip():
+            if on is None or _js_string(c.get('unit')).strip(JS_WHITESPACE):
                 continue
             u = want[on]
             if not u:
@@ -889,7 +889,7 @@ class Model:
         catalogue = next((l for l in lists if l.get('for_contaminants')), None)
         own = next((i for i in (catalogue or {}).get('indices') or []
                     if isinstance(i, dict) and i.get('name') == name), None)
-        stated = _js_string((own or {}).get('unit')).strip()
+        stated = _js_string((own or {}).get('unit')).strip(JS_WHITESPACE)
         if stated:
             return stated
         nuclides = next((l for l in lists if l.get('for_nuclides')), None) or catalogue
@@ -928,7 +928,7 @@ class Model:
         cs = [c for c in self._raw.get('compartments') or [] if isinstance(c, dict)]
         c = next((x for x in cs if qualified_name(x) == name), None) \
             or next((x for x in cs if x.get('name') == name), None)
-        return _js_string(c.get('unit')).strip() if c else ''
+        return _js_string(c.get('unit')).strip(JS_WHITESPACE) if c else ''
 
     def _transfer_unit(self, raw: Dict[str, Any]) -> str:
         t = self._time_unit()
@@ -938,7 +938,7 @@ class Model:
         path = next((f for f in paths if qualified_name(f) == raw.get('from')), None) \
             or next((f for f in paths if f.get('name') == raw.get('from')), None)
         if path is not None:
-            return _js_string(path.get('unit')).strip()
+            return _js_string(path.get('unit')).strip(JS_WHITESPACE)
         u = self._unit_of_compartment(raw.get('from') if raw.get('from') is not None else raw.get('to'))
         return _per(u, t) if u else ''
 
@@ -1168,11 +1168,11 @@ class Model:
     @property
     def name(self) -> str:
         """The model's name: shown in the header and used for the file name."""
-        return str(self._raw.get('name') or '').strip() or 'Untitled model'
+        return str(self._raw.get('name') or '').strip(JS_WHITESPACE) or 'Untitled model'
 
     @name.setter
     def name(self, value: str) -> None:
-        self._raw['name'] = str(value or '').strip()
+        self._raw['name'] = str(value or '').strip(JS_WHITESPACE)
 
     @property
     def description(self) -> str:
@@ -1187,11 +1187,11 @@ class Model:
     def author(self) -> str:
         """Who wrote the model, or ``''``. An Ecolego project's author comes in
         as this, and goes out as it."""
-        return str(self._raw.get('author') or '').strip()
+        return str(self._raw.get('author') or '').strip(JS_WHITESPACE)
 
     @author.setter
     def author(self, value: str) -> None:
-        text = str(value or '').strip()
+        text = str(value or '').strip(JS_WHITESPACE)
         if text:
             self._raw['author'] = text
         else:
@@ -1366,7 +1366,7 @@ class Model:
     @staticmethod
     def _check_index_name(name: Any, list_name: str) -> None:
         text = str(name if name is not None else '')
-        if not text.strip():
+        if not text.strip(JS_WHITESPACE):
             raise EditError(f"An index of '{list_name}' has no name")
         if any(c in text for c in '\r\n  <>'):
             raise EditError(f"'{text}' is not a usable index name: an index may not contain a line "
@@ -1627,7 +1627,7 @@ class Model:
         lst = self._editable(list_name)
         if old not in [i['name'] for i in lst['indices']]:
             raise EditError(f"'{old}' is not in '{list_name}'")
-        to = str(new if new is not None else '').strip()
+        to = str(new if new is not None else '').strip(JS_WHITESPACE)
         if not to:
             raise EditError('An index needs a name')
         if to == old:
@@ -1818,7 +1818,7 @@ class Model:
             raise EditError(f"'{name}' is a radionuclide, and an inventory of one is measured in "
                             f"{' or '.join(DECAY_UNITS)} for the whole model -- set decay_unit instead. "
                             'A material with a unit of its own is one that does not decay.')
-        u = str(unit or '').strip()
+        u = str(unit or '').strip(JS_WHITESPACE)
         if u:
             idx['unit'] = u
         else:
@@ -1837,19 +1837,19 @@ class Model:
         Changing it relabels the compartments that carried the other unit, as
         the application does; no number is converted.
         """
-        u = _js_string(self._raw.get('decay_unit')).strip()
+        u = _js_string(self._raw.get('decay_unit')).strip(JS_WHITESPACE)
         return u if u in DECAY_UNITS else 'Bq'
 
     @decay_unit.setter
     def decay_unit(self, unit: str) -> None:
-        want = _js_string(unit).strip()
+        want = _js_string(unit).strip(JS_WHITESPACE)
         if want not in DECAY_UNITS:
             raise EditError(f"'{unit}' is not a unit an inventory can be held in ({' or '.join(DECAY_UNITS)})")
         was = self.decay_unit
         self._raw['decay_unit'] = want
         if was != want:
             for c in self._raw.get('compartments') or []:
-                if _js_string(c.get('unit')).strip() == was:
+                if _js_string(c.get('unit')).strip(JS_WHITESPACE) == was:
                     c['unit'] = want
         self._sync_derived_units()
 
@@ -2703,7 +2703,7 @@ class Model:
         taken = self._idx()
         out: List[str] = []
         for p in parameters:
-            p = str(p if p is not None else '').strip()
+            p = str(p if p is not None else '').strip(JS_WHITESPACE)
             if not p:
                 continue
             if not NAME_RE.fullmatch(p):
@@ -2727,8 +2727,8 @@ class Model:
             dims = self._check_dims(kind, list(index_lists))
         else:
             dims = []
-            if watched is not None and str(watched).strip():
-                q = resolve_reference(str(watched).strip(), system, self._known()) or str(watched)
+            if watched is not None and str(watched).strip(JS_WHITESPACE):
+                q = resolve_reference(str(watched).strip(JS_WHITESPACE), system, self._known()) or str(watched)
                 hit = self._find(q)
                 dims = self._effective_dims(hit[1]) if hit else []
         raw: Dict[str, Any] = {'name': n, 'index_lists': dims, 'unit': unit, **fields}
@@ -3027,7 +3027,7 @@ class Model:
         self._each_equation(equation)  # type: ignore[arg-type]
 
         def target(ref: str, system: str, block: Dict[str, Any]) -> str:
-            note(qualified_name(block), resolve_reference(ref.strip(), system, known))
+            note(qualified_name(block), resolve_reference(ref.strip(JS_WHITESPACE), system, known))
             return ref
 
         self._each_target(target)
@@ -3040,8 +3040,8 @@ class Model:
             for a in d.get('actions') or []:
                 for end in ('block', 'from', 'to'):
                     v = a.get(end)
-                    if isinstance(v, str) and v.strip():
-                        note(qualified_name(d), resolve_reference(v.strip(), system_of(d), known))
+                    if isinstance(v, str) and v.strip(JS_WHITESPACE):
+                        note(qualified_name(d), resolve_reference(v.strip(JS_WHITESPACE), system_of(d), known))
         return reads
 
     def reads(self, name: str) -> List[str]:
@@ -3593,7 +3593,8 @@ class Model:
         return parent
 
     def _disabled_systems(self) -> List[str]:
-        return [str(p).strip() for p in self._raw.get('disabled_systems') or [] if p is not None and str(p).strip()]
+        return [str(p).strip(JS_WHITESPACE) for p in self._raw.get('disabled_systems') or []
+                if p is not None and str(p).strip(JS_WHITESPACE)]
 
     def system_enabled(self, path: str) -> bool:
         """Whether a sub-system takes part in the run: neither it nor any
@@ -3714,7 +3715,7 @@ class Model:
         application's figures, ``(x, y)`` its top-left corner. ``style`` sets
         ``fill``, ``line``, ``line_width``, ``dash``, ``text`` and the rest of
         :attr:`Shape.ALLOWED`."""
-        name = str(figure or '').strip()
+        name = str(figure or '').strip(JS_WHITESPACE)
         if not name:
             raise EditError('A shape needs a figure to draw')
         self._check_system(system)
@@ -3764,11 +3765,11 @@ class Model:
         :data:`DERIVED_KINDS`, ``of`` the series' label as the chart spells it
         (``'Soil [Cs-137]'``); ``at`` for ``at_time``, ``period`` for the
         period kinds (in the run's time unit)."""
-        if not str(name or '').strip():
+        if not str(name or '').strip(JS_WHITESPACE):
             raise EditError('A derived output needs a name')
         if kind not in DERIVED_KINDS:
             raise EditError(f"'{kind}' is not one of {', '.join(DERIVED_KINDS)}.")
-        if not str(of or '').strip():
+        if not str(of or '').strip(JS_WHITESPACE):
             raise EditError('It does not say which series it is of.')
         d: Dict[str, Any] = {'name': name, 'kind': kind, 'of': of}
         if kind == 'at_time':
@@ -3827,8 +3828,8 @@ class Model:
             qa = b.raw['qa'] = {'history': []}
         entry = {
             'status': 'approved' if status == 'approved' else 'review',
-            'by': str(by or '').strip(), 'reviewer': str(reviewer or '').strip(),
-            'comment': str(comment or '').strip(),
+            'by': str(by or '').strip(JS_WHITESPACE), 'reviewer': str(reviewer or '').strip(JS_WHITESPACE),
+            'comment': str(comment or '').strip(JS_WHITESPACE),
             'at': at or _dt.datetime.now(_dt.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
         }
         qa['status'] = entry['status']

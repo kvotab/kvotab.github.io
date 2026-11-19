@@ -121,8 +121,8 @@ function make_pdf(kind; values=nothing, trmin=nothing, trmax=nothing, pmin=nothi
     spec["trmax"] = _num(trmax)
     pmin === nothing || (spec["pmin"] = _num(pmin))
     pmax === nothing || (spec["pmax"] = _num(pmax))
-    if group !== nothing && !isempty(strip(_py_str(group)))
-        spec["group"] = String(strip(_py_str(group)))
+    if group !== nothing && !isempty(js_trim(_py_str(group)))
+        spec["group"] = String(js_trim(_py_str(group)))
     end
     spec["inorder"] = py_truthy(inorder)
     spec["pos"] = _int(pos)

@@ -113,7 +113,7 @@ function _rl_settings_lines(sim::AbstractDict, raw::AbstractDict)
     js_truthy(get(sim, "auto_abstol", nothing)) &&
         put("tolerance follows the solution", "each component’s absolute tolerance rises with it")
     unit = something(get(raw, "decay_unit", nothing), get(raw, "decayUnit", nothing), "")
-    put("decay unit", strip(js_text(unit)) == "mol" ? "mol" : "Bq")
+    put("decay unit", js_trim(js_text(unit)) == "mol" ? "mol" : "Bq")
     ceiling = get(sim, "decay_ceiling", nothing)
     (ceiling isa Real && ceiling > 0) && put("decay chains stop above", "$(js_text(ceiling)) years")
     return out
@@ -134,7 +134,7 @@ function _rl_one_space(text::AbstractString)
     io = IOBuffer()
     gap = false
     for c in text
-        if isspace(c) || c in ('\u00a0', '\ufeff', '\u2028', '\u2029', '\u1680', '\u202f', '\u205f', '\u3000')
+        if js_space(c)
             gap = true
         else
             gap && print(io, ' ')

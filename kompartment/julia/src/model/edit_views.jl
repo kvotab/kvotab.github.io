@@ -121,7 +121,7 @@ function update!(sh::Shape; patch...)
         key = String(k)
         key in _SHAPE_ALLOWED || throw(EditError("A shape has no '$key'"))
         if key in ("fill", "line")
-            v = String(strip(_js_string(value)))
+            v = String(js_trim(_js_string(value)))
             (v != "none" && !(v in _ED_SHAPE_COLORS)) &&
                 throw(EditError("'$(_py_str(value))' is not a shape colour ($(join(_ED_SHAPE_COLORS, ", ")), none)"))
             raw[key] = v
@@ -138,7 +138,7 @@ function update!(sh::Shape; patch...)
         end
         if key == "text"
             text = _js_string(value)
-            isempty(strip(text)) ? delete!(raw, "text") : (raw["text"] = text)
+            isempty(js_trim(text)) ? delete!(raw, "text") : (raw["text"] = text)
             continue
         end
         raw[key] = value

@@ -120,7 +120,7 @@ _is_unit_letter(c::Char) = ('A' <= c <= 'Z') || ('a' <= c <= 'z') || c == 'µ' |
 _is_ascii_digit(c::Char) = '0' <= c <= '9'
 
 function _symbol_dim(raw::AbstractString)
-    sym = String(strip(raw))
+    sym = String(js_trim(raw))
     isempty(sym) && return Dim()
     lowercase(sym) in _UNIT_NONE && return Dim()
     # `m3`, `km2`: a length with a power written after it.
@@ -144,10 +144,10 @@ A unit's text as a `Dim`, or `nothing` when it cannot be read: `kg/m3`,
 `m^2/year`, `mol per kg`, `1/(m*s)`, `[Bq]`.
 """
 function parse_unit(text)
-    src = String(strip(text === nothing ? "" : _norm_str(text)))
+    src = String(js_trim(text === nothing ? "" : _norm_str(text)))
     lowercase(src) in _UNIT_NONE && return Dim()
     if length(src) >= 2 && first(src) == '[' && last(src) == ']'
-        src = String(strip(src[nextind(src, 1):prevind(src, lastindex(src))]))
+        src = String(js_trim(src[nextind(src, 1):prevind(src, lastindex(src))]))
     end
     lowercase(src) in _UNIT_NONE && return Dim()
     s = collect(src)

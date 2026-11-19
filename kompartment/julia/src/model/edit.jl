@@ -197,19 +197,19 @@ events(m::Model) = _collection_views(m, "events")
 
 """The model's name: shown in the header and used for the file name."""
 function model_name(m::Model)
-    s = strip(_py_or_text(get(m.raw, "name", nothing)))
+    s = js_trim(_py_or_text(get(m.raw, "name", nothing)))
     return isempty(s) ? "Untitled model" : String(s)
 end
-set_model_name!(m::Model, value) = (m.raw["name"] = String(strip(_py_or_text(value))); m)
+set_model_name!(m::Model, value) = (m.raw["name"] = String(js_trim(_py_or_text(value))); m)
 
 """Free text: what the model is and where it came from."""
 model_description(m::Model) = _py_or_text(get(m.raw, "description", nothing))
 set_model_description!(m::Model, value) = (m.raw["description"] = _py_or_text(value); m)
 
 """Who wrote the model, or `""`."""
-model_author(m::Model) = String(strip(_py_or_text(get(m.raw, "author", nothing))))
+model_author(m::Model) = String(js_trim(_py_or_text(get(m.raw, "author", nothing))))
 function set_model_author!(m::Model, value)
-    text = String(strip(_py_or_text(value)))
+    text = String(js_trim(_py_or_text(value)))
     isempty(text) ? delete!(m.raw, "author") : (m.raw["author"] = text)
     header_first!(m.raw)
     return m
@@ -243,7 +243,7 @@ function _ed_unit_of_compartment(m::Model, name)
     cs = Any[c for c in _py_iter(get(m.raw, "compartments", nothing)) if c isa AbstractDict]
     c = findfirst_value(x -> qualified_name(x) == name, cs)
     c === nothing && (c = findfirst_value(x -> get(x, "name", nothing) == name, cs))
-    return c === nothing ? "" : String(strip(_js_string(get(c, "unit", nothing))))
+    return c === nothing ? "" : String(js_trim(_js_string(get(c, "unit", nothing))))
 end
 
 function _ed_transfer_unit(m::Model, raw::AbstractDict)
@@ -253,7 +253,7 @@ function _ed_transfer_unit(m::Model, raw::AbstractDict)
     fr = get(raw, "from", nothing)
     path = findfirst_value(f -> qualified_name(f) == fr, paths)
     path === nothing && (path = findfirst_value(f -> get(f, "name", nothing) == fr, paths))
-    path !== nothing && return String(strip(_js_string(get(path, "unit", nothing))))
+    path !== nothing && return String(js_trim(_js_string(get(path, "unit", nothing))))
     u = _ed_unit_of_compartment(m, fr !== nothing ? fr : get(raw, "to", nothing))
     return isempty(u) ? "" : _per(u, t)
 end
@@ -290,7 +290,7 @@ end
 
 function _ed_check_index_name(name, list_name)
     text = _py_str(name === nothing ? "" : name)
-    isempty(strip(text)) && throw(EditError("An index of '$(_py_str(list_name))' has no name"))
+    isempty(js_trim(text)) && throw(EditError("An index of '$(_py_str(list_name))' has no name"))
     occursin(INDEX_NAME_BAD, text) &&
         throw(EditError("'$text' is not a usable index name: an index may not contain a line break or angle brackets"))
     return
@@ -649,7 +649,7 @@ mappings, the live scenario, half-lives, decay pairs, an app's indices and
 function rename_index!(m::Model, list_name, old, new)
     lst = _ed_editable(m, list_name)
     old in Any[i["name"] for i in lst["indices"]] || throw(EditError("'$(_py_str(old))' is not in '$(_py_str(list_name))'"))
-    to = String(strip(_py_str(new === nothing ? "" : new)))
+    to = String(js_trim(_py_str(new === nothing ? "" : new)))
     isempty(to) && throw(EditError("An index needs a name"))
     to == old && return nothing
     _ed_check_index_name(to, list_name)
@@ -876,7 +876,7 @@ function set_material_unit!(m::Model, name, unit)
                         "$(join(DECAY_UNITS, " or ")) for the whole model -- set decay_unit instead. A material " *
                         "with a unit of its own is one that does not decay."))
     end
-    u = String(strip(_py_or_text(unit)))
+    u = String(js_trim(_py_or_text(unit)))
     isempty(u) ? delete!(idx, "unit") : (idx["unit"] = u)
     _ed_sync_derived_units!(m)
     return nothing
@@ -895,14 +895,14 @@ decay_unit(m::Model) = _decay_unit(_N(m))
 the application does; no number is converted.
 """
 function set_decay_unit!(m::Model, unit)
-    want = String(strip(_js_string(unit)))
+    want = String(js_trim(_js_string(unit)))
     want in DECAY_UNITS ||
         throw(EditError("'$(_py_str(unit))' is not a unit an inventory can be held in ($(join(DECAY_UNITS, " or ")))"))
     was = decay_unit(m)
     m.raw["decay_unit"] = want
     if was != want
         for c in _py_iter(get(m.raw, "compartments", nothing))
-            strip(_js_string(get(c, "unit", nothing))) == was && (c["unit"] = want)
+            js_trim(_js_string(get(c, "unit", nothing))) == was && (c["unit"] = want)
         end
     end
     _ed_sync_derived_units!(m)
@@ -1575,7 +1575,7 @@ function _ed_function_parameters(m::Model, parameters)
     taken = _ed_idx(m)
     out = Any[]
     for p in parameters
-        p = String(strip(_py_str(p === nothing ? "" : p)))
+        p = String(js_trim(_py_str(p === nothing ? "" : p)))
         isempty(p) && continue
         occursin(NAME_RE, p) ||
             throw(EditError("'$p' is not a valid parameter name: letters, digits and underscore, not starting with a digit."))
@@ -1594,8 +1594,8 @@ function _ed_recorder!(m::Model, kind, name, watched, fields::Vector, unit, syst
         dims = _ed_check_dims(m, kind, collect(Any, index_lists))
     else
         dims = Any[]
-        if watched !== nothing && !isempty(strip(_py_str(watched)))
-            r = resolve_reference(String(strip(_py_str(watched))), system, _ed_known(m))
+        if watched !== nothing && !isempty(js_trim(_py_str(watched)))
+            r = resolve_reference(String(js_trim(_py_str(watched))), system, _ed_known(m))
             q = r !== nothing ? r : _py_str(watched)
             hit = _ed_find(m, q)
             dims = hit === nothing ? Any[] : _effective_dims(_N(m), hit[2])
@@ -1957,7 +1957,7 @@ function references_graph(m::Model)
         return nothing
     end
     _each_target(m) do ref, system, blk
-        note(qualified_name(blk), resolve_reference(strip(ref), system, known))
+        note(qualified_name(blk), resolve_reference(js_trim(ref), system, known))
         return ref
     end
     for t in _py_iter(get(m.raw, "transfers", nothing))
@@ -1971,8 +1971,8 @@ function references_graph(m::Model)
         for a in _py_iter(get(d, "actions", nothing))
             for end_ in ("block", "from", "to")
                 v = get(a, end_, nothing)
-                (v isa AbstractString && !isempty(strip(v))) &&
-                    note(qualified_name(d), resolve_reference(strip(v), system_of(d), known))
+                (v isa AbstractString && !isempty(js_trim(v))) &&
+                    note(qualified_name(d), resolve_reference(js_trim(v), system_of(d), known))
             end
         end
     end
@@ -2443,7 +2443,7 @@ function _ed_disabled_systems(m::Model)
     out = String[]
     for p in _py_iter(get(m.raw, "disabled_systems", nothing))
         p === nothing && continue
-        s = String(strip(_py_str(p)))
+        s = String(js_trim(_py_str(p)))
         isempty(s) || push!(out, s)
     end
     return out
@@ -2717,7 +2717,7 @@ its top-left corner. `style` sets `fill`, `line`, `line_width`, `dash`,
 `text` and the rest of what a shape has.
 """
 function add_shape!(m::Model, figure, x=0, y=0, w=180, h=120; system="", style...)
-    name = String(strip(_py_or_text(figure)))
+    name = String(js_trim(_py_or_text(figure)))
     isempty(name) && throw(EditError("A shape needs a figure to draw"))
     _ed_check_system(m, system)
     taken = Set{Any}(get(s, "id", nothing) for s in _py_iter(get(m.raw, "shapes", nothing)) if s isa AbstractDict)
@@ -2776,9 +2776,9 @@ Adds a number read off a finished curve: `kind` is one of `max`, `min`,
 it (`"Soil [Cs-137]"`); `at` for `at_time`, `period` for the period kinds.
 """
 function add_derived!(m::Model, name, kind, of; at=nothing, period=nothing)
-    isempty(strip(_py_or_text(name))) && throw(EditError("A derived output needs a name"))
+    isempty(js_trim(_py_or_text(name))) && throw(EditError("A derived output needs a name"))
     kind in _ED_DERIVED_KINDS || throw(EditError("'$(_py_str(kind))' is not one of $(join(_ED_DERIVED_KINDS, ", "))."))
-    isempty(strip(_py_or_text(of))) && throw(EditError("It does not say which series it is of."))
+    isempty(js_trim(_py_or_text(of))) && throw(EditError("It does not say which series it is of."))
     d = JDict("name" => name, "kind" => kind, "of" => of)
     if kind == "at_time"
         (at === nothing || !isfinite(_model_js_number(at))) &&
@@ -2861,8 +2861,8 @@ function record_review!(m::Model, name, status="approved"; by="", reviewer="", c
         b.raw["qa"] = qa
     end
     entry = JDict("status" => status == "approved" ? "approved" : "review",
-                  "by" => String(strip(_py_or_text(by))), "reviewer" => String(strip(_py_or_text(reviewer))),
-                  "comment" => String(strip(_py_or_text(comment))),
+                  "by" => String(js_trim(_py_or_text(by))), "reviewer" => String(js_trim(_py_or_text(reviewer))),
+                  "comment" => String(js_trim(_py_or_text(comment))),
                   "at" => py_truthy(at) ? at : model_stamp())
     qa["status"] = entry["status"]
     qa["stamp"] = review_stamp(b)
@@ -2943,7 +2943,7 @@ _ed_count_number(v) = (f = _ed_pyfloat(v); f === nothing ? NaN : f)
 
 function _ed_farfield_extra_cells(block)
     nb = get(block, "n_b", nothing)
-    if nb === nothing || (nb isa AbstractString && isempty(strip(nb)))
+    if nb === nothing || (nb isa AbstractString && isempty(js_trim(nb)))
         _ed_count_number(get(block, "o_b", nothing)) != 4 && return 0
         n = _ed_count_number(get(block, "n_f", nothing))
         p = _ed_count_number(get(block, "pe", nothing))

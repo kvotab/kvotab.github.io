@@ -910,7 +910,7 @@ function _layout_algebraic!(b::Builder)
         setting = OrderedDict{String,Entry}()
         D[:setting] = setting
         for key in TIMING_KEYS[D[:timing]]
-            isempty(strip(js_str(something(get(D.block, key, nothing), "")))) && continue
+            isempty(js_trim(js_str(something(get(D.block, key, nothing), "")))) && continue
             slot = add("$(D[:q])#$key", "event:$key", D.block, key, String[])
             slot.hidden = true
             slot[:single] = true
@@ -983,7 +983,7 @@ function _layout_algebraic!(b::Builder)
                     start = value_at(blk, "start_trigger", tup)
                     op = get(blk, "operation", nothing)
                     push!(b.MEM, Recorder(kind, js_truthy(op) ? string(op) : "max",
-                                          !(start !== nothing && !isempty(strip(js_str(start))))))
+                                          !(start !== nothing && !isempty(js_trim(js_str(start))))))
                 end
             end
             push!(b.recorders, rec)
@@ -1342,7 +1342,7 @@ function _events!(b::Builder)
             for off in 0:rec.width-1
                 tup = entry_tuple(b, rec.block, rec.dims, off)
                 written = value_at(rec.block, field, tup)
-                text = written === nothing ? "" : strip(js_str(written))
+                text = written === nothing ? "" : js_trim(js_str(written))
                 isempty(text) && continue
                 ast = try
                     parse_equation(text)
@@ -1372,7 +1372,7 @@ function _events!(b::Builder)
         D[:timing] == "trigger" || continue
         local_ = D.block["name"]
         written = get(D.block, "trigger", nothing)
-        text = written === nothing ? "" : strip(js_str(written))
+        text = written === nothing ? "" : js_trim(js_str(written))
         isempty(text) && throw(BuildError("'$local_' is set off by a trigger, and names none.", D[:q]))
         ast = try
             parse_equation(text)
@@ -1652,7 +1652,7 @@ function _availability_terms(b::Builder, transfer, scheme, src::Entry, alg::Entr
     base = state_offsets(b, alg.dims, pos, src, transfer["name"], alg.width)
     own = Any[(off=base, factor=1.0, when=nothing)]
     get(scheme, "scheme", nothing) in ("shared_limit", "shared_langmuir") || return own
-    over = strip(js_str(something(get(scheme, "over", nothing), "")))
+    over = js_trim(js_str(something(get(scheme, "over", nothing), "")))
     dims = src.dims
     which = something(findfirst(==(over), dims), 0) - 1
     groups = nothing

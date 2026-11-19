@@ -27,6 +27,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Iterable, List, Optional, Set
 
+from .io.csv import JS_WHITESPACE
 from .names import RESERVED, resolve_reference
 
 
@@ -266,7 +267,7 @@ def rewrite_written_indices(equation: object,
     for tok in tokens:
         if tok.type != 'index':
             continue
-        was = tok.text.strip()
+        was = tok.text.strip(JS_WHITESPACE)
         to = mapping(was)
         if to is None or to == was:
             continue

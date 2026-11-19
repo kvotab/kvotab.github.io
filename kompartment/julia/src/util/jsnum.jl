@@ -104,9 +104,30 @@ js_str(v::Real) = js_number(v)
 js_str(::Nothing) = "null"
 js_str(v) = string(v)
 
-const _JS_SPACE = (' ', '\t', '\n', '\r', '\v', '\f', ' ', '﻿', ' ', ' ')
+"""
+    js_space(c) -> Bool
 
-_js_strip(s::AbstractString) = strip(c -> c in _JS_SPACE || isspace(c), s)
+Whether `c` is white space as JavaScript's `trim()`, `Number()` and a regular
+expression's `\\s` take it: its WhiteSpace and LineTerminator characters. Not
+Julia's `isspace`, which takes U+0085 as well and leaves U+2028, U+2029 and
+U+FEFF.
+"""
+js_space(c::AbstractChar) = c == ' ' || '\t' <= c <= '\r' || c == '\u00a0' || c == '\u1680' ||
+                            '\u2000' <= c <= '\u200a' || c == '\u2028' || c == '\u2029' || c == '\u202f' ||
+                            c == '\u205f' || c == '\u3000' || c == '\ufeff'
+
+"""
+    js_trim(s) -> SubString
+
+JavaScript's `s.trim()`: `s` without its white space ([`js_space`](@ref)) at
+either end -- where Julia's `strip` would take its own.
+"""
+js_trim(s::AbstractString) = strip(js_space, s)
+
+# JavaScript's `\\s`, to stand in a character class of a regular expression here,
+# where `\\s` takes U+0085 and leaves U+FEFF (and `\\v` is a class of its own;
+# Julia reads `\\uHHHH` in a pattern as JavaScript does).
+const JS_SPACE_CLASS = "\\t\\n\\x0b\\f\\r \\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000\\ufeff"
 
 """
     js_number_of(v) -> Float64
@@ -118,7 +139,7 @@ js_number_of(::Nothing) = 0.0
 js_number_of(v::Bool) = v ? 1.0 : 0.0
 js_number_of(v::Real) = Float64(v)
 function js_number_of(v::AbstractString)
-    s = _js_strip(v)
+    s = js_trim(v)
     isempty(s) && return 0.0
     # The word as JavaScript writes it, and no other case of it.
     (s == "Infinity" || s == "+Infinity") && return Inf

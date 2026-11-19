@@ -94,6 +94,45 @@ class ProjectParity(unittest.TestCase):
                     self.assertEqual(mine[key], js[key], key)
                 self.assertTrue(close(p.time_grid(), numbers(js['timeGrid']), 1e-15))
 
+    def test_text_is_trimmed_as_the_application_trims_it(self) -> None:
+        # JavaScript's white space at the ends of a model's text, not Python's: U+001C to U+001F
+        # and U+0085 are none there, a byte-order mark is. A trigger, a target, an operation, a
+        # unit, a list of systems and an equation, each with one of them before or after it.
+        places = [('bouncing-ball', ('snapshots', 0, 'trigger')), ('landscape', ('block_reductions', 0, 'targets', 1)),
+                  ('scenarios', ('min_maxes', 0, 'operation')), ('decay-chain', ('compartments', 0, 'unit')),
+                  ('four-compartment', ('expressions', 0, 'equation')), ('scenarios', ('decay_unit',))]
+        models, said = [], []
+        for name, path in places:
+            for c in ('\x1c', '\x1f', '\x85', '\ufeff', '\u2028', '\xa0'):
+                for before in (True, False):
+                    model = example(name)
+                    at = model
+                    for k in path[:-1]:
+                        at = at[k]
+                    text = str(at.get(path[-1], 'Bq') if isinstance(at, dict) else at[path[-1]])
+                    at[path[-1]] = c + text if before else text + c
+                    models.append(model)
+                    said.append((name, path, hex(ord(c)), before))
+        theirs = engine('projects', models=models)['projects']
+        for model, what, js in zip(models, said, theirs):
+            with self.subTest(case=what):
+                try:
+                    p = Project(model)
+                except ValidationError as e:
+                    self.assertEqual(str(e), js.get('error'))
+                    continue
+                self.assertNotIn('error', js)
+                mine = fix({'index_lists': p.index_lists, 'disabled': sorted(p.disabled), 'systems': p.systems,
+                            'blocks': {c: p.blocks[c] for c in BLOCK_COLLECTIONS}})
+                for key in mine:
+                    self.assertEqual(mine[key], js['project'][key], key)
+                try:
+                    build_system(p, jacobian=False)
+                    built = None
+                except Exception as e:  # noqa: BLE001 -- whatever the build says, the application says it too
+                    built = str(e)
+                self.assertEqual(built, js['built'])
+
     def test_output_points_are_asked_of_the_two_shorthands_alone(self) -> None:
         # A list of series, the solver's own points and the two together carry their own times, so a
         # count left in the field from a shorthand is refused only where a grid is spread over it; where

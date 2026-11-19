@@ -72,7 +72,7 @@ function py_float(v::AbstractString)
 end
 py_float(v) = NaN
 
-_farf_empty(v) = v === nothing || (v isa AbstractString && isempty(strip(v)))
+_farf_empty(v) = v === nothing || (v isa AbstractString && isempty(js_trim(v)))
 _is_whole(v) = (f = py_float(v); isfinite(f) && isinteger(f))
 
 """Whether a path is worked out on cells, which is what gives it states."""
@@ -229,7 +229,7 @@ function rock_problem(block)
         holder isa AbstractDict || continue
         for key in ROCK_KEYS
             v = get(holder, key, nothing)
-            (v === nothing || isempty(strip(js_str(v)))) && continue
+            (v === nothing || isempty(js_trim(js_str(v)))) && continue
             n = py_float(v)
             (!isfinite(n) || n >= 0) && continue
             at = holder === block ? "" :

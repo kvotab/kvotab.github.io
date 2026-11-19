@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 import numpy as np
 
+from ..io.csv import JS_WHITESPACE
 from ..stats.correlate import correlation_pairs, iman_conover
 from ..stats.gsa import build_design, cholesky
 from ..stats.pdf import _MISSING, _to_number
@@ -47,7 +48,7 @@ def can_be_endpoint(kind: Optional[str]) -> bool:
 
 def group_of(entry: Dict[str, Any]) -> Optional[str]:
     g = (entry.get('spec') or {}).get('group') if isinstance(entry.get('spec'), dict) else None
-    t = '' if g is None else str(g).strip()
+    t = '' if g is None else str(g).strip(JS_WHITESPACE)
     return None if t == '' else t
 
 

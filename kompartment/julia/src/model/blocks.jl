@@ -251,7 +251,7 @@ function _field_coerce(f::_Field, value, b::Union{Nothing,Block}=nothing)
     elseif f.kind === :bool
         return py_truthy(value)
     end
-    if f.kind === :count && value isa AbstractString && isempty(strip(value))
+    if f.kind === :count && value isa AbstractString && isempty(js_trim(value))
         return ""
     end
     if f.kind in (:int, :number, :count)
@@ -914,7 +914,7 @@ function set_failure!(w::WastePackage, failure; settings...)
         setproperty!(w, k, v)
     end
     raw = getfield(w, :raw)
-    missing_ = [k for k in FAILURE_KEYS[failure] if isempty(strip(_py_str(get(raw, k, WASTE_DEFAULTS[k]))))]
+    missing_ = [k for k in FAILURE_KEYS[failure] if isempty(js_trim(_py_str(get(raw, k, WASTE_DEFAULTS[k]))))]
     isempty(missing_) || throw(EditError("'$failure' needs $(join(missing_, ", "))"))
     return nothing
 end

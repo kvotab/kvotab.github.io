@@ -62,7 +62,7 @@ _pb_pymin(a::Float64, b::Float64) = b < a ? b : a
 function sample_group(entry::AbstractDict)
     spec = get(entry, "spec", nothing)
     g = spec isa AbstractDict ? get(spec, "group", nothing) : nothing
-    t = g === nothing ? "" : strip(_pb_py_str(g))
+    t = g === nothing ? "" : js_trim(_pb_py_str(g))
     return isempty(t) ? nothing : String(t)
 end
 

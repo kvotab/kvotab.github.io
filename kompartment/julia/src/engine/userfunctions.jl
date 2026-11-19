@@ -72,7 +72,7 @@ function UserFunctions(functions::Vector{JDict}, callable_=nothing)
         name = qualified_name(f)
         parameters = String[string(p) for p in something(get(f, "parameters", nothing), Any[])]
         eq = get(f, "equation", nothing)
-        text = strip(js_str(eq === nothing ? "" : eq))
+        text = js_trim(js_str(eq === nothing ? "" : eq))
         if isempty(text)
             what = isempty(parameters) ? "numbers and the built-in functions" : "its parameters ($(join(parameters, ", ")))"
             throw(FunctionError("'$name' has no body yet. Write what it works out to in terms of $what, or delete it " *

@@ -1344,13 +1344,10 @@ private:
                 const OptStr mult = child_text(entry_el, "multiply-with-donor");
                 if (mult && !mult->empty()) rec.set("multiply_by_donor", Json(py_lower(*mult) == "true"));
                 // The discrete event that makes this a discrete transfer: settled into an event of
-                // this tool's by settle_transfer_events. Julia's `strip`, as the Julia package has
-                // it: it takes U+0085 off the ends but not U+001C to U+001F, which the Python
-                // package's `str.strip()` takes off too (and the application's `trim()` neither), so
-                // `Fire\x1c` names no event here and in Julia where the Python package makes one.
+                // this tool's by settle_transfer_events.
                 const OptStr event = child_text(entry_el, "transfer-event");
                 if (event) {
-                    std::string stripped = julia_strip(*event);
+                    std::string stripped = js_trim(*event);
                     if (!stripped.empty()) rec.set("transfer_event", Json(stripped));
                 }
             } else if (t == "expression") {

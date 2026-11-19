@@ -622,6 +622,11 @@ def run_js_cases() -> List[Case]:
             '<transfer-event><![CDATA[Gone]]></transfer-event>\n\t\t\t\t<multiply-with-donor><![CDATA[false]]>',
             '<transfer-equation><![CDATA[0.5]]></transfer-equation>\n\t\t\t\t'
             '<transfer-event><![CDATA[Gone]]></transfer-event>\n\t\t\t\t<multiply-with-donor><![CDATA[true]]>')),
+        # an event's name with white space at an end: trimmed as JavaScript trims, which takes
+        # neither U+001C nor U+0085 and does take a byte-order mark and a line separator
+        *[xml(f'transfer events, the name with {what}', fx('TRANSFER_EVENT_XML').replace('<![CDATA[Gone]]>', ref))
+          for what, ref in (('U+001C after it', 'Gone&#28;'), ('U+0085 after it', 'Gone&#x85;'),
+                            ('a byte-order mark before it', '&#xFEFF;Gone'), ('a line separator after it', 'Gone&#x2028;'))],
         # Ecolego's three material lists
         xml('material lists marked', material_lists(True)),
         xml('material lists unmarked', material_lists(False)),

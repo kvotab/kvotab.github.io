@@ -127,7 +127,7 @@ function _parse_primary!(p::_Parser)
             _advance!(p)
             if _peek(p).type === :lbracket
                 _advance!(p)
-                unit = _peek(p).type === :index ? String(strip(_advance!(p).text)) : ""
+                unit = _peek(p).type === :index ? String(js_trim(_advance!(p).text)) : ""
                 _expect!(p, :rbracket, "']'")
                 return ENum(_number_text(value), unit)
             end
@@ -173,7 +173,7 @@ function _parse_primary!(p::_Parser)
             indices = Union{Nothing,String}[]
             while _peek(p).type === :lbracket
                 _advance!(p)
-                idx = _peek(p).type === :index ? String(strip(_advance!(p).text)) : ""
+                idx = _peek(p).type === :index ? String(js_trim(_advance!(p).text)) : ""
                 _expect!(p, :rbracket, "']'")
                 push!(indices, idx == "" ? nothing : idx)
             end
@@ -258,7 +258,7 @@ itself defines (a lookup table read at an argument, a user-defined
 function); without it such a call is an error.
 """
 function parse_equation(src; calls=nothing)
-    (src === nothing || isempty(strip(js_str(src)))) && return ENum(0.0)
+    (src === nothing || isempty(js_trim(js_str(src)))) && return ENum(0.0)
     text = js_str(src)
     raw = try
         tokenize(text)

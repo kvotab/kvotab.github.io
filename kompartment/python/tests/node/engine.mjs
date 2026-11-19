@@ -5,6 +5,8 @@
 // A request is { task, ... } and the answer one JSON object on stdout:
 //
 //   project  { model }                 -> the Project the application builds from it
+//   projects { models: [...] }         -> the same for each model, and what building its system
+//                                        refused (null where it built)
 //   grid     { model }                 -> the output times
 //   layout   { model }                 -> the built system's states, slots and flags
 //   jacobian { model }                 -> whether df/dy is generated, and whether it is constant
@@ -121,6 +123,26 @@ switch (req.task) {
 		} catch (e) {
 			out = { error: e.message, kind: e.name };
 		}
+		break;
+	}
+	case 'projects': {
+		out = {
+			projects: req.models.map((model) => {
+				let p;
+				try {
+					p = new Project(model);
+				} catch (e) {
+					return { error: e.message, kind: e.name };
+				}
+				let built = null;
+				try {
+					buildSystem(p);
+				} catch (e) {
+					built = e.message;
+				}
+				return { project: plain(projectDump(p)), built };
+			}),
+		};
 		break;
 	}
 	case 'parse': {

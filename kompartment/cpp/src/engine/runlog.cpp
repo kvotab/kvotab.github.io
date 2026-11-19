@@ -36,10 +36,11 @@ std::string audit_num(double v) {
     return js_to_exponential(v, 3);
 }
 
-// Julia's `isspace`: the ASCII white space, U+0085, and the space separators (Zs).
-bool julia_space(char32_t c) {
-    return (c >= 0x09 && c <= 0x0d) || c == 0x20 || c == 0x85 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) || c == 0x202f ||
-           c == 0x205f || c == 0x3000;
+// JavaScript's white space, as `trim()` and `\s` take it: the ASCII white space, the no-break
+// space, the line and paragraph separators, the Unicode space separators and the byte-order mark.
+bool js_white(char32_t c) {
+    return (c >= 0x09 && c <= 0x0d) || c == 0x20 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) || c == 0x2028 ||
+           c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000 || c == 0xfeff;
 }
 
 // One character at byte `i`, never past the end.
@@ -56,7 +57,7 @@ std::string one_space(std::string_view text) {
     for (std::size_t i = 0; i < text.size();) {
         std::size_t len;
         char32_t c = char_at(text, i, len);
-        if (julia_space(c) || c == 0xa0 || c == 0xfeff || c == 0x2028 || c == 0x2029 || c == 0x1680 || c == 0x202f || c == 0x205f || c == 0x3000) {
+        if (js_white(c)) {
             gap = true;
         } else {
             if (gap) out.push_back(' ');
@@ -80,25 +81,6 @@ std::string utf16_prefix(std::string_view s, int units) {
         i += len;
     }
     return std::string(s);
-}
-
-/// Julia's `strip`: its white space off both ends.
-std::string julia_strip(std::string_view s) {
-    std::size_t a = 0;
-    while (a < s.size()) {
-        std::size_t len;
-        if (!julia_space(char_at(s, a, len))) break;
-        a += len;
-    }
-    std::size_t b = s.size();
-    while (b > a) {
-        std::size_t start = b - 1;
-        while (start > a && (static_cast<unsigned char>(s[start]) & 0xc0) == 0x80) start--;
-        std::size_t len;
-        if (!julia_space(char_at(s, start, len))) break;
-        b = start;
-    }
-    return std::string(s.substr(a, b - a));
 }
 
 // What `"$(v)"` makes of a value Julia reads from a file: text as it is, every other value
@@ -127,7 +109,7 @@ std::vector<std::string> settings_lines(const Json& sim, const Json& raw) {
     if (js_truthy(sim.get("auto_abstol")))
         put("tolerance follows the solution", Json("each component" + RSQUO + "s absolute tolerance rises with it"));
     Json unit = or_else(raw.get("decay_unit"), or_else(raw.get("decayUnit"), Json("")));
-    put("decay unit", Json(julia_strip(js_text(unit)) == "mol" ? "mol" : "Bq"));
+    put("decay unit", Json(js_trim(js_text(unit)) == "mol" ? "mol" : "Bq"));
     const Json& ceiling = sim.get("decay_ceiling");
     // `ceiling isa Real && ceiling > 0`: a number, or `true`.
     if ((ceiling.is_number() && ceiling.as_double() > 0) || (ceiling.is_bool() && ceiling.as_bool()))

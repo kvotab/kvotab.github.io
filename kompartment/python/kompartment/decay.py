@@ -24,6 +24,8 @@ from functools import lru_cache
 from importlib import resources
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from .io.csv import JS_WHITESPACE
+
 Pair = Tuple[str, str, float]
 
 # What a stable nuclide is written as in a project file. JSON has no infinity,
@@ -68,10 +70,11 @@ def means_stable(value: object) -> bool:
     """Whether a half-life as a file may write it means "does not decay"."""
     if isinstance(value, float) and math.isinf(value):
         return True
-    return isinstance(value, str) and re.fullmatch(r'stable|inf(inity)?', value.strip(), re.I) is not None
+    return isinstance(value, str) and re.fullmatch(r'stable|inf(inity)?', value.strip(JS_WHITESPACE), re.I) is not None
 
 
-_SYMBOL = re.compile(r'^([A-Za-z]{1,3})(?=$|[-\s0-9])')
+# JavaScript's `\s`: Python's takes U+001C to U+001F and U+0085, and leaves U+FEFF.
+_SYMBOL = re.compile(r'^([A-Za-z]{1,3})(?=$|[-0-9' + ''.join(re.escape(c) for c in JS_WHITESPACE) + '])')
 
 
 def element_of(nuclide: str) -> Optional[str]:
@@ -80,7 +83,7 @@ def element_of(nuclide: str) -> Optional[str]:
     ``Cs-137`` -> ``Cs``, ``c-14`` -> ``C``. ``None`` when the name does not
     start with one -- such a material is its own element in Kompartment.
     """
-    m = _SYMBOL.match(str(nuclide or '').strip())
+    m = _SYMBOL.match(str(nuclide or '').strip(JS_WHITESPACE))
     if not m:
         return None
     s = m.group(1)

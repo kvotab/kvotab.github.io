@@ -25,7 +25,7 @@ from typing import Any, List, Sequence, Tuple
 
 import numpy as np
 
-from ..io.csv import js_to_number
+from ..io.csv import JS_WHITESPACE, js_to_number
 
 INTERPOLATIONS = ('linear', 'extrapolate', 'below', 'above', 'nearest')
 
@@ -52,7 +52,7 @@ def _number(v: Any) -> float:
     try:
         return float(v)
     except (TypeError, ValueError):
-        s = str(v).strip()
+        s = str(v).strip(JS_WHITESPACE)
         if s == '':
             return 0.0
         return math.nan

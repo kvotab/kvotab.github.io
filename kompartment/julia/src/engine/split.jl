@@ -1113,8 +1113,8 @@ when that is set, else in the package's scratch space in the first Julia
 depot; `nothing` when `KOMPARTMENT_SPLIT_MEMORY` is `0`.
 """
 function split_memory_path()
-    strip(get(ENV, "KOMPARTMENT_SPLIT_MEMORY", "")) == "0" && return nothing
-    root = strip(get(ENV, "KOMPARTMENT_CACHE", ""))
+    js_trim(get(ENV, "KOMPARTMENT_SPLIT_MEMORY", "")) == "0" && return nothing
+    root = js_trim(get(ENV, "KOMPARTMENT_CACHE", ""))
     dir = isempty(root) ? joinpath(first(DEPOT_PATH), "scratchspaces", string(Base.PkgId(@__MODULE__).uuid)) : root
     return joinpath(dir, "split-memory-julia.json")
 end

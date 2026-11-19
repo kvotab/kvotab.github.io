@@ -470,7 +470,7 @@ function rewrite_written_indices(equation, mapping)
     cursor = 0
     for tok in tokens
         tok.type === :index || continue
-        was = String(strip(tok.text))
+        was = String(js_trim(tok.text))
         to = mapping(was)
         (to === nothing || to == was) && continue
         write(io, String(chars[cursor+1:tok.pos]))

@@ -182,8 +182,8 @@ function _ls_read_by_derivative(sys::System)
     return [a for a in algebraic if a.name in reached]
 end
 
-"""Python's `str(v).strip() != ''`."""
-_ls_said(v) = v !== nothing && v !== _PD_MISSING && !(v isa AbstractString && isempty(strip(v)))
+"""Something given: not null, and not text that is all white space (JavaScript's)."""
+_ls_said(v) = v !== nothing && v !== _PD_MISSING && !(v isa AbstractString && isempty(js_trim(v)))
 
 function _ls_switched_by_event(sys::System, rec::Entry)
     space = sys.builder.space

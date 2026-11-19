@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..io.csv import JS_WHITESPACE
 from ..jsonio import js_text
 from ..stats.pdf import _to_precision
 
@@ -538,7 +539,7 @@ def auto_extra_cells(nf: Any, pe: Any) -> int:
 
 
 def _empty(v: Any) -> bool:
-    return v is None or (isinstance(v, str) and v.strip() == '')
+    return v is None or (isinstance(v, str) and v.strip(JS_WHITESPACE) == '')
 
 
 def extra_cells(block: Dict[str, Any]) -> int:
@@ -815,7 +816,7 @@ def rock_problem(block: Dict[str, Any]) -> Optional[str]:
             continue
         for key in ROCK_KEYS:
             v = holder.get(key)
-            if v is None or str(v).strip() == '':
+            if v is None or str(v).strip(JS_WHITESPACE) == '':
                 continue
             n = _num(v)
             if not math.isfinite(n) or n >= 0:

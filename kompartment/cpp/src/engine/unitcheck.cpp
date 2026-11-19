@@ -65,11 +65,11 @@ std::string text_of(const std::u32string& s, std::size_t a, std::size_t b) {
     return out;
 }
 
-/// White space as Julia's `strip` takes it: the space, tab to carriage return, the next
-/// line character and the spaces of Unicode's category Zs.
+/// White space as JavaScript's `trim()` takes it: the space, tab to carriage return, the no-break
+/// space, the line and paragraph separators, the Unicode space separators and the byte-order mark.
 bool is_space(char32_t c) {
-    return c == ' ' || (c >= '\t' && c <= '\r') || c == 0x85 || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
-           c == 0x202f || c == 0x205f || c == 0x3000;
+    return c == ' ' || (c >= '\t' && c <= '\r') || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) || c == 0x2028 ||
+           c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000 || c == 0xfeff;
 }
 
 std::u32string stripped(const std::u32string& s) {

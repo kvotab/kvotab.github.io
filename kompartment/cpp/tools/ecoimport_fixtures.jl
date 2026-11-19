@@ -8,7 +8,7 @@
 # strictly, UTF-16 either way, XML bytes by their byte-order mark), JavaScript's `Number()` and
 # pdf.py's, `toPrecision` and `toExponential`, dates, trimming, lengths and positions in UTF-16,
 # identifiers, Python's `lower()` and `upper()` (on every code point and around a capital
-# sigma), Julia's `strip`, `localeCompare`, entities, the XML reader (every element of every
+# sigma), `localeCompare`, entities, the XML reader (every element of every
 # document, or the refusal and where), distributions, `.version` files, raw deflate streams
 # inflated within limits, and archives read entry by entry. Then whole imports: model.xml texts
 # made up here to reach every branch the importer has, bare files in every encoding, and
@@ -828,7 +828,7 @@ strings = Any[]
 for s in string_texts
     pos = Int[K._eco_utf16_pos(s, i) for i in 1:ncodeunits(s)+1]
     push!(strings, J("in" => s, "trim" => K._eco_js_trim(s), "len" => K._eco_js_len(s), "identifier" => K._eco_js_identifier(s),
-                     "lower" => K._eco_py_lower(s), "upper" => K._eco_py_upper(s), "strip" => String(strip(s)), "pos" => pos))
+                     "lower" => K._eco_py_lower(s), "upper" => K._eco_py_upper(s), "pos" => pos))
 end
 
 # Every code point on its own, through each mapping: a hash of them all.

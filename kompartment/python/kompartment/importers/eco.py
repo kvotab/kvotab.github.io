@@ -2313,8 +2313,8 @@ def _read_entries(el: Node, dim_lists: List[Dict[str, Any]], report: ImportRepor
             # The discrete event that makes this a discrete transfer: settled
             # into an event of this tool's by `_settle_transfer_events`.
             event = child_text(entry_el, 'transfer-event')
-            if event is not None and event.strip():
-                rec['transfer_event'] = event.strip()
+            if event is not None and js_trim(event):
+                rec['transfer_event'] = js_trim(event)
         elif type_ == 'expression':
             _assign_if(rec, 'equation', child_text(entry_el, 'equation'))
         elif type_ == 'parameter':

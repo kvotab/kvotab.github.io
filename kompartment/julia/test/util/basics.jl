@@ -75,3 +75,28 @@ end
     @test K.js_pow(10.0, -6.0) == 1e-6
     @test K.js_log10(1e11) == 11.0
 end
+
+@testset "white space as JavaScript takes it" begin
+    # `trim()`, `Number()` and `\s` take a byte-order mark and the line and paragraph separators,
+    # and neither U+0085 nor U+001C to U+001F -- which Julia's `isspace` and Python's `strip()`
+    # do the other way round in part.
+    for c in ('﻿', ' ', ' ', ' ', '　', '\t', '\v')
+        @test K.js_space(c) && K.js_trim("$(c)mol$(c)") == "mol"
+    end
+    for c in ('\u0085', '\x1c', '\x1f', '​')
+        @test !K.js_space(c) && K.js_trim("$(c)mol") == "$(c)mol"
+    end
+    @test K.js_number_of("﻿ 1 ") == 1.0 && isnan(K.js_number_of("\u0085 1"))
+    @test K.element_of("Cs﻿137") == "Cs" && K.element_of("Cs\u0085137") === nothing
+    # A model's text, as the application reads it: a snapshot's trigger, and a min/max's
+    # operation, with each kind at an end.
+    examples = joinpath(@__DIR__, "..", "..", "..", "examples")
+    ball(trigger) = (m = K.read_model_file(joinpath(examples, "bouncing-ball.json"));
+                     m["snapshots"][1]["trigger"] = trigger; K.build_system(K.Project(m)))
+    @test ball("﻿Bounce") isa K.System && ball("Bounce ") isa K.System
+    @test_throws "is not the name of a discrete event" ball("\x1cBounce")
+    @test_throws "is not the name of a discrete event" ball("Bounce\u0085")
+    peak(op) = (m = K.read_model_file(joinpath(examples, "scenarios.json")); m["min_maxes"][1]["operation"] = op; K.Project(m))
+    @test peak("max﻿") isa K.Project
+    @test_throws "is not a min/max operation" peak("max\u0085")
+end

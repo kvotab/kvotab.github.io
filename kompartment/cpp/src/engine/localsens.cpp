@@ -101,8 +101,8 @@ const Json* effective_value(const Json& block, std::string_view key, const Json&
 
 // --- what the forward equations cannot carry -----------------------------------------------------------
 
-/// Python's `str(v).strip() != ''`.
-bool said(const Json& v) { return !v.is_null() && !(v.is_string() && jl_strip(v.as_string()).empty()); }
+/// Something given: not null, and not text that is all white space.
+bool said(const Json& v) { return !v.is_null() && !(v.is_string() && js_trim(v.as_string()).empty()); }
 
 /// The algebraic blocks the derivative reads, directly or through others (`readByDerivative`).
 std::vector<EntryPtr> read_by_derivative(const System& sys) {

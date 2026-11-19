@@ -186,7 +186,7 @@ function entry_lookup(block, key)
 end
 
 function has_dydt(block)
-    is_set(v) = v isa AbstractString && !isempty(strip(v))
+    is_set(v) = v isa AbstractString && !isempty(js_trim(v))
     return is_set(get(block, "dydt", nothing)) || any(e -> is_set(get(e, "dydt", nothing)), something(get(block, "entries", nothing), Any[]))
 end
 
@@ -222,7 +222,7 @@ end
 
 function _check_index_name(name, list_name)
     text = name === nothing ? "" : string(name)
-    isempty(strip(text)) && throw(ValidationError("An index of '$list_name' has no name", list_name))
+    isempty(js_trim(text)) && throw(ValidationError("An index of '$list_name' has no name", list_name))
     if occursin(INDEX_NAME_BAD, text)
         shown = replace(text, INDEX_NAME_BAD => "?")
         throw(ValidationError("'$shown' is not a usable index name: an index may not contain a line break or " *
@@ -283,7 +283,7 @@ function normalise_index_lists(raw_lists)
                 push!(idx, JDict("name" => i, "enabled" => true))
             else
                 e = JDict("name" => get(i, "name", nothing), "enabled" => get(i, "enabled", nothing) !== false)
-                u = strip(js_str(something(get(i, "unit", nothing), "")))
+                u = js_trim(js_str(something(get(i, "unit", nothing), "")))
                 isempty(u) || (e["unit"] = String(u))
                 push!(idx, e)
             end
@@ -363,7 +363,7 @@ function normalise_targets(targets, block_name)
     else
         throw(ValidationError("Aggregate targets must be a list of block names", block_name))
     end
-    return String[strip(js_str(t)) for t in lst if !isempty(strip(js_str(t)))]
+    return String[js_trim(js_str(t)) for t in lst if !isempty(js_trim(js_str(t)))]
 end
 
 function normalise_entry_index(index, material_list_name, dims)
@@ -461,11 +461,11 @@ function summed_dims_why(flux, end_, end_name, dims, size_of=nothing)
            "\"sum extra indices\" on '$flux' to ask for that total on purpose."
 end
 
-_transport_operation(op) = (v = lowercase(strip(js_str(something(op, "")))); isempty(v) ? nothing :
+_transport_operation(op) = (v = lowercase(js_trim(js_str(something(op, "")))); isempty(v) ? nothing :
                             v in ("sum", "mean") ? v : v == "point" ? "sum" : nothing)
-_transport_argument(arg) = (v = lowercase(strip(js_str(something(arg, "")))); isempty(v) ? nothing :
+_transport_argument(arg) = (v = lowercase(js_trim(js_str(something(arg, "")))); isempty(v) ? nothing :
                             v in ("all", "point", "range") ? v : nothing)
-_extreme(name) = (s = uppercase(strip(js_str(something(name, "")))); s == "MIN" ? "min" : s == "MAX" ? "max" : nothing)
+_extreme(name) = (s = uppercase(js_trim(js_str(something(name, "")))); s == "MIN" ? "min" : s == "MAX" ? "max" : nothing)
 
 const _ICRP_HALF_LIVES = Dict{String,Float64}(n => r.half_life for (n, r) in ICRP107)
 
@@ -591,7 +591,7 @@ function Project(raw0::AbstractDict)
 
     p.nuclides = collect(Any, something(get(raw, "nuclides", nothing), Any[]))
     du = get(raw, "decay_unit", nothing)
-    p.decay_unit = String(strip(js_str(du !== nothing ? du : "Bq")))
+    p.decay_unit = String(js_trim(js_str(du !== nothing ? du : "Bq")))
     ceiling = get(sim, "decay_ceiling", nothing) !== nothing ? js_number_of(sim["decay_ceiling"]) : NaN
     p.decay_ceiling = isfinite(ceiling) && ceiling > 0 ? ceiling : Inf
     p.decay_unit in DECAY_UNITS || throw(ValidationError("Unknown decay unit '$(p.decay_unit)' ($(join(DECAY_UNITS, " or ")))"))
@@ -599,7 +599,7 @@ function Project(raw0::AbstractDict)
     p.half_lives = copy(_ICRP_HALF_LIVES)
     for (nuc, v) in p.half_lives_override
         v === nothing && continue
-        if occursin(r"^(stable|inf(inity)?)$"i, strip(js_str(v)))
+        if occursin(r"^(stable|inf(inity)?)$"i, js_trim(js_str(v)))
             p.half_lives[nuc] = Inf
             continue
         end
@@ -616,7 +616,7 @@ function Project(raw0::AbstractDict)
         parent = length(pair) > 0 ? pair[1] : nothing
         daughter = length(pair) > 1 ? pair[2] : nothing
         named = "[" * join((json_text(x; indent=0) for x in pair), ", ") * "]"
-        if !(parent isa AbstractString) || isempty(strip(parent)) || !(daughter isa AbstractString) || isempty(strip(daughter))
+        if !(parent isa AbstractString) || isempty(js_trim(parent)) || !(daughter isa AbstractString) || isempty(js_trim(daughter))
             throw(ValidationError("A decay pair is [parent, daughter, branching]; $named does not name two nuclides."))
         end
         ratio = length(pair) > 2 ? pair[3] : nothing
@@ -666,7 +666,7 @@ function Project(raw0::AbstractDict)
     p.disabled = Set{String}()
     ds = get(raw, "disabled_systems", nothing)
     p.disabled_systems = ds isa AbstractVector ?
-                         String[strip(js_str(x)) for x in ds if x !== nothing && !isempty(strip(js_str(x)))] : String[]
+                         String[js_trim(js_str(x)) for x in ds if x !== nothing && !isempty(js_trim(js_str(x)))] : String[]
     function off_by_system(block)
         home = js_truthy(get(block, "system", nothing)) ? block["system"] : ""
         home == "" && return nothing
@@ -698,7 +698,7 @@ function Project(raw0::AbstractDict)
                              block_systems)
     tr = get(raw, "transports", nothing)
     p.transports = tr isa AbstractVector ?
-                   unique(String[strip(js_str(something(x, ""))) for x in tr if !isempty(strip(js_str(something(x, ""))))]) :
+                   unique(String[js_trim(js_str(something(x, ""))) for x in tr if !isempty(js_trim(js_str(something(x, ""))))]) :
                    String[]
     for q in p.disabled_systems
         q in p.systems || throw(ValidationError("'$q' is listed as a disabled sub-system, but there is no sub-system of that name", q))
@@ -745,14 +745,14 @@ function _normalise_block(p::Project, raw::AbstractDict, kind::String)
     if kind == "lookup"
         interp = get(raw, "interpolation", nothing)
         base["interpolation"] = (interp === nothing || interp == "") ? "linear" :
-                                something(get(INTERPOLATION_FROM_ECO, strip(js_str(interp)), nothing), interp)
+                                something(get(INTERPOLATION_FROM_ECO, js_trim(js_str(interp)), nothing), interp)
         base["cyclic"] = js_truthy(get(raw, "cyclic", nothing))
         base["argument"] = js_truthy(get(raw, "argument", nothing)) ? js_str(raw["argument"]) : nothing
         base["points"] = normalise_points(get(raw, "points", nothing), get(raw, "name", ""))
     end
     if kind in ("index_reduction", "block_reduction")
         op = get(raw, "operation", nothing)
-        base["operation"] = (op === nothing || op == "") ? "sum" : something(get(OPERATION_FROM_ECO, strip(js_str(op)), nothing), op)
+        base["operation"] = (op === nothing || op == "") ? "sum" : something(get(OPERATION_FROM_ECO, js_trim(js_str(op)), nothing), op)
     end
     if kind == "index_reduction"
         base["target"] = get(raw, "target", nothing) === nothing ? nothing : js_str(raw["target"])
@@ -761,8 +761,8 @@ function _normalise_block(p::Project, raw::AbstractDict, kind::String)
     kind == "block_reduction" && (base["targets"] = normalise_targets(get(raw, "targets", nothing), get(raw, "name", "")))
     if kind == "function"
         params = get(raw, "parameters", nothing)
-        base["parameters"] = String[strip(js_str(x)) for x in (params isa AbstractVector ? params : Any[])
-                                    if x !== nothing && !isempty(strip(js_str(x)))]
+        base["parameters"] = String[js_trim(js_str(x)) for x in (params isa AbstractVector ? params : Any[])
+                                    if x !== nothing && !isempty(js_trim(js_str(x)))]
         base["equation"] = get(raw, "equation", nothing) === nothing ? "" : js_str(raw["equation"])
         base["system"] = js_truthy(get(raw, "system", nothing)) ? raw["system"] : ""
         base["index_lists"] = String[]
@@ -777,7 +777,7 @@ function _normalise_block(p::Project, raw::AbstractDict, kind::String)
     if kind == "farfield"
         for key in FARF_STRUCTURE_KEYS
             given = get(raw, key, nothing) !== nothing ? raw[key] : BLOCK_DEFAULTS["farfield"][key]
-            if key == "n_b" && (given === nothing || (given isa AbstractString && isempty(strip(given))))
+            if key == "n_b" && (given === nothing || (given isa AbstractString && isempty(js_trim(given))))
                 base[key] = ""
                 continue
             end
@@ -810,7 +810,7 @@ function _normalise_block(p::Project, raw::AbstractDict, kind::String)
     if kind == "trigger"
         d = get(raw, "direction", nothing)
         base["direction"] = (d === nothing || d == "") ? "rising" :
-                            something(get(DIRECTION_FROM_ECO, uppercase(strip(js_str(d))), nothing), d)
+                            something(get(DIRECTION_FROM_ECO, uppercase(js_trim(js_str(d))), nothing), d)
     end
     base["index_lists"] = _dimensions_for(p, raw, kind)
     kind == "event" && (base["index_lists"] = String[])
@@ -846,7 +846,7 @@ function _normalise_block(p::Project, raw::AbstractDict, kind::String)
     if kind == "compartment"
         for holder in Any[base, base["entries"]...]
             haskey(holder, "dydt") || continue
-            if holder["dydt"] === nothing || isempty(strip(js_str(holder["dydt"])))
+            if holder["dydt"] === nothing || isempty(js_trim(js_str(holder["dydt"])))
                 delete!(holder, "dydt")
             else
                 holder["dydt"] = js_str(holder["dydt"])
@@ -871,9 +871,9 @@ function _derived_unit(p::Project, block, kind)
         cs = isdefined(p, :blocks) ? get(p.blocks, "compartments", JDict[]) : JDict[]
         c = findfirst_value(x -> x["qname"] == name, cs)
         c === nothing && (c = findfirst_value(x -> get(x, "name", nothing) == name, cs))
-        return c === nothing ? "" : String(strip(js_str(something(get(c, "unit", nothing), ""))))
+        return c === nothing ? "" : String(js_trim(js_str(something(get(c, "unit", nothing), ""))))
     end
-    per(q) = occursin(r"[/\s]", q) ? "($q)/$t" : "$q/$t"
+    per(q) = any(c -> c == '/' || js_space(c), q) ? "($q)/$t" : "$q/$t"
     if kind == "inflow"
         u = unit_of(get(block, "to", nothing))
         return isempty(u) ? "" : per(u)
@@ -901,7 +901,7 @@ function material_unit(p::Project, name)
     lists = p.index_lists
     catalogue = findfirst_value(l -> js_truthy(get(l, "for_contaminants", nothing)), lists)
     own = catalogue === nothing ? nothing : findfirst_value(i -> get(i, "name", nothing) == name, catalogue["indices"])
-    stated = own === nothing ? "" : strip(js_str(something(get(own, "unit", nothing), "")))
+    stated = own === nothing ? "" : js_trim(js_str(something(get(own, "unit", nothing), "")))
     isempty(stated) || return String(stated)
     nuclides = findfirst_value(l -> js_truthy(get(l, "for_nuclides", nothing)), lists)
     nuclides === nothing && (nuclides = catalogue)
@@ -1251,13 +1251,13 @@ function waste_problems(p::Project)
             continue
         end
         for key in FAILURE_KEYS[f]
-            if isempty(strip(js_str(something(get(b, key, nothing), ""))))
+            if isempty(js_trim(js_str(something(get(b, key, nothing), ""))))
                 push!(out, (name=name, field=key, message="Packages that fail $(FAILURE_LABEL[f]) need " *
                                                           "$(lowercase(WASTE_LABEL[key])): a number or an equation."))
             end
         end
         function num(key)
-            v = js_number_of(strip(js_str(something(get(b, key, nothing), ""))))
+            v = js_number_of(js_trim(js_str(something(get(b, key, nothing), ""))))
             return isfinite(v) ? v : nothing
         end
         if f == "uniform"
@@ -1284,7 +1284,7 @@ function waste_problems(p::Project)
         end
         for (values_, where_) in Any[(b, nothing), ((e, get(e, "index", nothing)) for e in something(get(b, "entries", nothing), Any[]))...]
             function at(key)
-                text = strip(js_str(something(get(values_, key, nothing), "")))
+                text = js_trim(js_str(something(get(values_, key, nothing), "")))
                 v = js_number_of(text)
                 return (!isempty(text) && isfinite(v)) ? v : nothing
             end
@@ -1313,18 +1313,18 @@ function disruption_problems(p::Project)
             push!(out, (name=name, field="timing", message="'$(js_text(timing))' is not a way for an event to happen ($(join(TIMINGS, ", ")))."))
             continue
         end
-        if timing == "at" && isempty(strip(js_str(something(get(b, "at", nothing), ""))))
+        if timing == "at" && isempty(js_trim(js_str(something(get(b, "at", nothing), ""))))
             push!(out, (name=name, field="at", message="An event at a time needs the time: a number or an equation."))
         end
-        if timing == "poisson" && isempty(strip(js_str(something(get(b, "rate", nothing), ""))))
+        if timing == "poisson" && isempty(js_trim(js_str(something(get(b, "rate", nothing), ""))))
             push!(out, (name=name, field="rate", message="A random event needs its rate: occurrences per unit time."))
         end
         # Whether the name is a trigger is the build's to say, as for a snapshot's.
-        if timing == "trigger" && isempty(strip(js_str(something(get(b, "trigger", nothing), ""))))
+        if timing == "trigger" && isempty(js_trim(js_str(something(get(b, "trigger", nothing), ""))))
             push!(out, (name=name, field="trigger", message="An event set off by a trigger needs the trigger: name one."))
         end
         function num(text)
-            t = strip(js_str(something(text, "")))
+            t = js_trim(js_str(something(text, "")))
             isempty(t) && return nothing
             v = js_number_of(t)
             return isfinite(v) ? v : nothing
