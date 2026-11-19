@@ -269,10 +269,11 @@ double pd_string_to_number(std::string_view s) {
         if (body == "Infinity") return t[0] == '-' ? -Inf : Inf;
         std::string text(t);
         std::optional<double> v = jl_tryparse_float(text);
-        // Julia's `parse(Float64, ...)` refuses a decimal that overflows, or underflows to zero,
-        // where JavaScript reads Infinity or 0: the Julia package raises that, and so does this.
-        if (!v) throw ArgumentError("cannot parse \"" + text + "\" as Float64");
-        return *v;
+        if (v) return *v;
+        // Out of a double's range, where Julia's `tryparse` refuses what JavaScript rounds: to
+        // the infinities, or to zero -- the C library's strtod, correctly rounded, as the Julia
+        // package's BigFloat is.
+        return std::strtod(text.c_str(), nullptr);
     }
     return NaN;
 }
@@ -343,8 +344,28 @@ double jl_py_float(const Json& v) {
     clean.reserve(s.size());
     for (char c : s)
         if (c != '_') clean.push_back(c);
+    // A decimal and nothing else (`_PY_DECIMAL`): what strtod reads besides -- hexadecimal, the
+    // words -- Python's float() refuses.
+    std::size_t k = 0, n = clean.size(), digits = 0;
+    if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
+    while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, digits++;
+    if (k < n && clean[k] == '.') {
+        k++;
+        while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, digits++;
+    }
+    if (digits == 0) return NaN;
+    if (k < n && (clean[k] == 'e' || clean[k] == 'E')) {
+        k++;
+        if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
+        std::size_t ex = 0;
+        while (k < n && clean[k] >= '0' && clean[k] <= '9') k++, ex++;
+        if (ex == 0) return NaN;
+    }
+    if (k != n) return NaN;
     std::optional<double> x = jl_tryparse_float(clean);
-    return x ? *x : NaN;
+    // Out of a double's range, where Julia's `tryparse` refuses what Python rounds: to the
+    // infinities, or to zero.
+    return x ? *x : std::strtod(clean.c_str(), nullptr);
 }
 
 // --- the kinds -------------------------------------------------------------------------------------

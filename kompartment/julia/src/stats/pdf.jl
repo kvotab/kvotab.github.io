@@ -87,7 +87,13 @@ function _pd_string_to_number(s::AbstractString)
     if occursin(_PD_DECIMAL, t)
         body = lstrip(t, ['+', '-'])
         body == "Infinity" && return startswith(t, "-") ? -Inf : Inf
-        return parse(Float64, t)
+        x = tryparse(Float64, t)
+        x === nothing || return x
+        # Out of a double's range, where Julia's parser refuses what JavaScript
+        # (and Python) round: to the infinities, or to zero.
+        return setprecision(BigFloat, 4096) do
+            Float64(parse(BigFloat, t))
+        end
     end
     return NaN
 end

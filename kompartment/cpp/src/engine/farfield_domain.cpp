@@ -5,6 +5,7 @@
 #include <limits>
 
 #include "model/names.hpp"
+#include "stats/pdf.hpp"
 #include "util/jsnum.hpp"
 
 namespace kompartment {
@@ -80,36 +81,8 @@ std::string farf_surface_default(std::string_view key) {
 }
 
 double py_float_nan(const Json& v) {
-    if (v.is_bool()) return v.as_bool() ? 1.0 : 0.0;
-    if (v.is_number()) return v.as_double();
-    if (!v.is_string()) return NaN;
-    std::string s(js_trim(v.as_string()));
-    if (s.empty()) return NaN;
-    std::string low = lowercase(s);
-    if (low == "inf" || low == "+inf" || low == "infinity" || low == "+infinity") return std::numeric_limits<double>::infinity();
-    if (low == "-inf" || low == "-infinity") return -std::numeric_limits<double>::infinity();
-    if (low == "nan" || low == "+nan" || low == "-nan") return NaN;
-    std::string clean;
-    for (char c : s)
-        if (c != '_') clean.push_back(c);
-    // A decimal number and nothing else: what strtod takes beyond that (hex, "infinity") is not one.
-    std::size_t k = 0, n = clean.size(), whole = 0, frac = 0;
-    if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
-    while (k < n && clean[k] >= '0' && clean[k] <= '9') { k++; whole++; }
-    if (k < n && clean[k] == '.') {
-        k++;
-        while (k < n && clean[k] >= '0' && clean[k] <= '9') { k++; frac++; }
-    }
-    if (whole == 0 && frac == 0) return NaN;
-    if (k < n && (clean[k] == 'e' || clean[k] == 'E')) {
-        k++;
-        if (k < n && (clean[k] == '+' || clean[k] == '-')) k++;
-        std::size_t ex = 0;
-        while (k < n && clean[k] >= '0' && clean[k] <= '9') { k++; ex++; }
-        if (ex == 0) return NaN;
-    }
-    if (k != n) return NaN;
-    return std::strtod(clean.c_str(), nullptr);
+    // The Julia package's `py_float`, one function for the engine and the statistics.
+    return jl_py_float(v);
 }
 
 bool uses_cells(const Json& block) {

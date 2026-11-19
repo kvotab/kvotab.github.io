@@ -49,9 +49,7 @@ inline bool pd_truthy(const Json& v) { return pd_truthy(&v); }
 /// `String.prototype.trim`.
 std::string_view pd_js_trim(std::string_view s);
 
-/// `Number(s)` for a string: JavaScript's StringToNumber. (A decimal Julia's `parse` cannot
-/// read -- one that overflows, or underflows to zero -- raises its `ArgumentError`, as the
-/// Julia package does: JavaScript reads `1e400` as Infinity.)
+/// `Number(s)` for a string: JavaScript's StringToNumber (`1e400` is Infinity, `1e-400` 0).
 double pd_string_to_number(std::string_view s);
 
 /// `String(x)` for a number: NaN and the infinities included.
@@ -79,7 +77,8 @@ double pd_sqrt(double x);
 std::string_view jl_strip(std::string_view s);
 
 /// Julia's `py_float` (engine/farfield_domain.jl): Python's `float()` of a value, NaN for
-/// what it cannot read -- text by Julia's `tryparse`, hexadecimal and `inf` included.
+/// what it cannot read -- text a decimal (underscores dropped) or Python's words for the
+/// infinities and NaN, trimmed as Julia's `strip` trims, past a double's range Infinity or 0.
 double jl_py_float(const Json& v);
 
 // --- the kinds -----------------------------------------------------------------------------------

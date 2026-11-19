@@ -50,6 +50,7 @@ checks read a setting as (an empty string is NaN, not 0).
 """
 py_float(v::Bool) = v ? 1.0 : 0.0
 py_float(v::Real) = Float64(v)
+const _PY_DECIMAL = r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?\z"
 function py_float(v::AbstractString)
     s = strip(v)
     isempty(s) && return NaN
@@ -57,8 +58,17 @@ function py_float(v::AbstractString)
     low in ("inf", "+inf", "infinity", "+infinity") && return Inf
     low in ("-inf", "-infinity") && return -Inf
     low in ("nan", "+nan", "-nan") && return NaN
-    x = tryparse(Float64, replace(s, '_' => ""))
-    return x === nothing ? NaN : x
+    t = replace(s, '_' => "")
+    # A decimal and nothing else: Julia's parser also reads hexadecimal
+    # (`0x1p3`), which Python's float() refuses.
+    occursin(_PY_DECIMAL, t) || return NaN
+    x = tryparse(Float64, t)
+    x === nothing || return x
+    # Out of a double's range, where Julia's parser refuses what Python rounds:
+    # to the infinities, or to zero.
+    return setprecision(BigFloat, 4096) do
+        Float64(parse(BigFloat, t))
+    end
 end
 py_float(v) = NaN
 
