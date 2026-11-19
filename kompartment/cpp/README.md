@@ -55,7 +55,9 @@ and across the engines.
 ## Running a model
 
 ```
-kompartment-cpp model.json [--csv out.csv] [--repeat n] [--split auto|on|off] [--threads n] [--parity]
+kompartment-cpp model.json [--csv out.csv] [--h5 out.h5] [--repeat n] [--split auto|on|off] [--threads n] [--parity]
+kompartment-cpp model.json --probabilistic n [--seed s] [--h5 out.h5 [--want all|mean|k]] [--threads n] [--parity]
+kompartment-cpp model.json --scenarios [--h5 out.h5] [--threads n] [--parity]
 kompartment-cpp --serve
 kompartment-cpp --version
 ```
@@ -65,7 +67,14 @@ The model is a Kompartment model file (`.json`). The program says what it ran
 what a split did -- and with `--csv` writes every output as the application's
 results table has them. `--repeat` runs it again, for timing. `--split` sets
 the model's *Split into parts* for the run, and `--threads` the most threads a
-split uses (the machine's cores by default). `--parity` (or `KOMPARTMENT_PARITY=1`)
+split, a probabilistic run or scenarios use (the machine's cores by default).
+`--h5` writes the HDF5 result file the application's *Export to HDF5* writes,
+byte for byte the other engines' for the same run. `--probabilistic n` runs n
+realisations over the model's distributions and says how it went; its file is
+*Save → Realisations*: every realisation as float32, their mean, or one by
+number (`--want`). `--scenarios` runs the model once for each of its scenarios,
+side by side, and `--h5` writes them all. `--stamp` fixes the file's
+`created_time`, so that the same run gives the same bytes. `--parity` (or `KOMPARTMENT_PARITY=1`)
 gives the other engines' numbers to the bit. Without it a model that asks for
 the Rosenbrock 2-3 is run with the NDF where that finishes, as the Julia
 package runs it; `KOMPARTMENT_SOLVERS=model` keeps every model to its own
@@ -151,8 +160,13 @@ what runs of a model cost: `split-memory-cpp.json` in `KOMPARTMENT_CACHE`, else
 in `~/.kompartment/cpp/`, kept by the model's layout and this build's stamp
 (`KOMPARTMENT_SPLIT_MEMORY=0` keeps it in the process only).
 
+It writes the application's HDF5 result files, byte for byte the other
+engines': a run's, a probabilistic run's (every realisation, their mean or one
+of them), several scenarios' side by side; and saves a run by the name's ending
+(`.h5`, `.csv`, `.zip`).
+
 It does not do: the other solvers (`auto`, the DifferentialEquations.jl ports,
-SciPy's); HDF5 result files; Ecolego files; editing a model. A model that needs one of these is refused with a sentence
+SciPy's); Ecolego files; editing a model. A model that needs one of these is refused with a sentence
 saying which, and no number is made up for it. The model an archive carries is
 the file as it was given, where the other engines write it as they normalised
 it.
@@ -182,7 +196,8 @@ it.
 | `src/engine/errorinfo.*` | An error as the Julia package names and shows it |
 | `src/stats/` | The statistics a probabilistic run draws with: the normal distribution, the distributions and their draws under JavaScript's rules, named streams and Latin hypercube columns, correlations put in by Iman-Conover, every sensitivity method's design, and the optimisers a calibration searches with |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
-| `src/io/` | ZIP, the dataset archive, the sample archive (`results/sample/`) |
+| `src/io/` | ZIP, the dataset archive, the sample archive (`results/sample/`), HDF5 written byte for byte (groups, datasets, attributes, the global heap, lookup3) and the result files on it |
+| `src/engine/scenarios.*` | A model run once per scenario, side by side on threads |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
 
 In fast mode a model whose derivative is linear in the state is assembled once
@@ -233,6 +248,9 @@ The benchmark model above falls apart into its 16 chains, and split into parts
 A split run agrees with the whole one to within 7e-9 of the peak. Auto splits
 it on eight threads from its first run here.
 
+A result file of 300,000 series of 250 values (799 MB) is built and written in
+0.88 s (Julia 0.97 s).
+
 ## Tests
 
 ```sh
@@ -265,6 +283,7 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
 | `test_probabilistic` | Probabilistic runs of 22 made-up models (7 of them bundled examples given a spread) and every bundled example: every realisation of every series kept, to the bit (float32 too), the samples, inputs, statistics and log, the sample archive's entries, bands under 5 lists of percentiles and 6 masks, the service's answers and refusals; 12 replays; every run again on 2 and 8 threads, the same bits | `tools/probabilistic_fixtures.jl` |
 | `test_calibrate` | The three optimisers on 114 made-up problems (every step, budgets, stopped searches, refusals), the objective, the elimination, the keys and lookups; endpoints read off 32 models' runs, the variables they offer; 103 calibrations of bundled examples and made-up models (each method, seeds, budgets, log space, a corner that will not solve, 27 refusals word for word), every step and answer to the bit | `tools/calibrate_fixtures.jl` |
+| `test_hdf5` | HDF5 files byte for byte: 23 trees built step by step, lookup3 on 107 byte strings, 1,249 strings as `TextEncoder` writes them; 26 made-up result trees, every bundled example's run and 7 made-up models, 57 files of 13 probabilistic runs (each again on four threads) and 17 of results made by hand, 12 scenario files, 13 saves; 30 refusals word for word; the files read back as libhdf5 begins to | `tools/hdf5_fixtures.jl` |
 | `test_split` | The partition, the states' names and materials, the jobs, 4,950 plans and the layers of every bundled example and 27 made-up models; 33 split runs at 2 and 4 threads and on bins fixed by hand (every state, series, count, account and run log to the bit), again on 1, 2, 3 and 8 threads with the same bits; a split solved whole; the formulas; parts assembled and refused; progress, a stop, what auto learns and its file | `tools/split_fixtures.jl` |
 | `test_localsens` | dy/dp of every builder model, the bundled examples and 49 made-up models, differentiated and differenced: the problem, the run to the bit, the refusals word for word; 181 models' parameter slots, what cannot be carried per slot and df/dp at three points; 108 failures said again; 385 cases | `tools/localsens_fixtures.jl` |
 | `test_service` | The messages `serve.py` and the engine exchange: a run's log in its archive, a run that stops on a value that is not a number, a probabilistic run kept and asked every question, a tornado, a sensitivity design, a replay, dy/dp answered, refused and stopped (the answer byte for byte the Julia engine's), a calibration answered (every progress detail and its answer the Julia engine's), refused and stopped, a model refused where the Julia engine's job refuses it, a cancel, errors named as the Julia engine names them | |
@@ -274,7 +293,7 @@ To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate split; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate split hdf5; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```
