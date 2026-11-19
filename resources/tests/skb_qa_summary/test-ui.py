@@ -23,9 +23,13 @@ and real directory entries. Checked:
 - calculation cases from TOML files: a config folder alone, then with its
   Excel folder; each case's input set, data files, workbooks and QC; the case
   filter; a description that carries markup and a script; broken TOML;
+- input-set exports: each value traced to its QC row (by row, or along a time
+  series whose rows the export gives wrongly), raw data, workbooks not read,
+  sheets without QC columns and rows no longer there; the Input set filter;
+  the Files view under a filter; the same with the page reading without workers;
 - the SheetJS loaded is the vendored copy, 0.20.2 or later;
 - no sideways scroll at 1280 px or on a 375 px phone, whose fields are 16 px
-  (smaller ones make iOS zoom), and the summary cards read in the dark theme.
+  (smaller ones make iOS zoom), and the summary tiles read in the dark theme.
 
 Serve the repository root and start headless Chrome, by default on ports 8765
 and 9222 (QC_HTTP_PORT and QC_CDP_PORT choose others):
@@ -89,7 +93,7 @@ def build_tree(base, xls_bytes):
     })
     book(os.path.join(root, 'PSAR 2025', 'params.xlsx'), {
         'Data': data_sheet,
-        'Params': [QC_HEAD, ['p1', 1, 'revA', '', 'OK-FSAR']] + [['p3', 3, 'revC', '', 'In review']] * 2,
+        'Params': [QC_HEAD, ['p1', 1, 'revA', '', 'OK-FSAR'], ['p3', 3, 'revC', '', 'In review'], ['p3', 3, 'revD', '', 'OK-PSAR']],
     })
     book(os.path.join(root, 'PSAR 2025', 'äldre', 'legacy.xlsm'), {
         'QA': [['ID', 'QA reviewer', 'QA comment', 'QA status'], ['p4', 'revD', 'old heading', 'OK-UPSAR']],
@@ -124,7 +128,7 @@ def build_tree(base, xls_bytes):
         + [(f25, 'gammal.xls', 'Gammal', 2, 'p5', 'revB', 'OK-PSAR', 'old format')]
         + [(f25, 'offset.xlsx', 'Lower', 4, 'p6', 'revA', 'OK-PSAR', ''), (f25, 'offset.xlsx', 'Lower', 5, 'p7', 'revA', 'Preliminary', '')]
         + [(f25, 'params.xlsx', 'Params', 2, 'p1', 'revA', 'OK-FSAR', '')]
-        + [(f25, 'params.xlsx', 'Params', r, 'p3', 'revC', 'In review', '') for r in (3, 4)]
+        + [(f25, 'params.xlsx', 'Params', 3, 'p3', 'revC', 'In review', ''), (f25, 'params.xlsx', 'Params', 4, 'p3', 'revD', 'OK-PSAR', '')]
     )
     return expected
 
@@ -161,6 +165,45 @@ def build_config(base):
                                                          'extra': [CC_HEAD, ['b9', 'revC', '', 'Preliminary']]})
     book(os.path.join(excel, 'other', 'delta.xlsx'), {'Params': [CC_HEAD, ['d1', 'revA', '', 'OK-PSAR']]})
     return config, excel
+
+
+EXPORT_HEAD = ['id', 'time', 'value', 'type', 'linked_file', 'file', 'sheet', 'row', 'reference', 'sample_mean']
+
+
+def build_exports(base):
+    """An Excel folder and a QC folder of two input-set exports, as the calculation-case code writes them.
+
+    set1 holds a value traced by its row, a time series whose rows the export
+    gives wrongly (as it does for a lookup table), a value from raw data, one
+    with no source, one from a workbook not read, one from a sheet without QC
+    columns and one whose row is no longer in its workbook. set2 holds one
+    value of the same workbook."""
+    root = os.path.join(base, 'Exp')
+    excel = os.path.join(root, 'excel')
+    book(os.path.join(excel, 'base_case', 'alpha.xlsx'), {'nearfield': [
+        ['ID', 'Time', 'Value', 'QC reviewer', 'QC comment', 'QC status'],
+        ['a.one', None, 1, 'revA', '', 'OK-PSAR'],
+        ['a.ts', 0, 1, 'revB', '', 'Preliminary'], ['a.ts', 100, 2, 'revB', '', 'Preliminary'], ['a.ts', 200, 3, 'revB', '', 'Preliminary'],
+        ['a.two', None, 5, 'revC', '', 'In review'],
+    ]})
+    book(os.path.join(excel, 'base_case', 'noqc.xlsx'), {'Sheet1': [['ID', 'Value', 'revX', 'PSAR', 'OK-PSAR'], ['n.one', 1, 'x', 'y', 'z']]})
+    src = '/Users/someone/data/excel/base_case/alpha.xlsx'
+    rows1 = [
+        ['nearfield.a.one', None, 1, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 2],
+        # The time series: the export gives rows 2, 3 and 4, its own rows are 3, 4 and 5.
+        ['nearfield.a.ts', 0, 1, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 2],
+        ['nearfield.a.ts', 100, 2, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 3],
+        ['nearfield.a.ts', 200, 3, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 4],
+        ['nearfield.a.two', None, 5, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 6],
+        ['nearfield.flow', None, 7, 'raw', '../hydro/NCC1_v1.h5', '/Volumes/raw/HYDRO/NCC1/flow.csv', '', None],
+        ['nearfield.computed', None, 8, 'const', '../hydro/NCC1_v1.h5', None, None, None],
+        ['nearfield.gone', None, 9, 'const', '../other/gone_v1.h5', '/Users/someone/data/excel/other/gone.xlsx', 'nearfield', 2],
+        ['Sheet1.n.one', None, 1, 'const', '../base_case/noqc_v1.h5', '/Users/someone/data/excel/base_case/noqc.xlsx', 'Sheet1', 2],
+        ['nearfield.a.removed', None, 9, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 99],
+    ]
+    book(os.path.join(root, 'qc', 'set1.xlsx'), {'Data': [EXPORT_HEAD] + [r + [None, None] for r in rows1]})
+    book(os.path.join(root, 'qc', 'set2.xlsx'), {'Data': [EXPORT_HEAD, ['nearfield.a.two', None, 5, 'const', '../base_case/alpha_v3.h5', src, 'nearfield', 6, None, None]]})
+    return root
 
 
 class Page:
@@ -232,7 +275,7 @@ ROWS = 'rows.map(r => [r.folder, r.file, r.sheet, r.row, String(r.id), String(r.
 STATUS = "({text: $('status-text').textContent, error: $('status').classList.contains('error'), shown: $('status').classList.contains('show'),"\
     " files: [...$('status-files').querySelectorAll('li')].map(li => li.textContent), listed: !$('status-files').hidden,"\
     " stop: !$('stop-btn').hidden, busy: $('status').hasAttribute('aria-busy')})"
-OPTIONS = "(id => [...$(id).options].map(o => [o.value, o.textContent]))"
+OPTIONS = "(key => facetOptions(key).map(o => key === 'folder' ? [o.value, o.label, o.depth || 0] : [o.value, o.label, o.sub || '']))"
 
 
 async def main():
@@ -287,7 +330,7 @@ async def main():
         st = await page.ev(STATUS)
         check(st['text'] == '6 workbook(s) read from 4 folder(s), 12 data point(s) added. 1 gave no data.' and not st['error'],
               'the status counts workbooks and folders, and is no error', st)
-        check(st['files'] == [f'{ROOT}/notes.xlsx: no sheet with ID and the three QC columns'] and st['listed'],
+        check(st['files'] == [f'{ROOT}/notes.xlsx: no sheet with ID and the three QC columns, and not an input-set export'] and st['listed'],
               'the workbook without QC columns is listed with its reason', st['files'])
         check(not st['stop'] and not st['busy'], 'Stop is hidden and the status not busy once reading is done', st)
         check(await page.ev("loadedFiles.some(p => /secret|~\\$|\\._/.test(p))") is False,
@@ -295,25 +338,33 @@ async def main():
         check(await page.ev("$('workspace').classList.contains('no-folders')") is False
               and await page.ev("getComputedStyle(document.querySelector('th.folder')).display") != 'none',
               'the Folder column is shown')
-        cells = await page.ev("[...document.querySelector('#data-body tr').children].slice(0, 4).map(td => td.textContent)")
+        cells = await page.ev("(showTab('rows'), [...document.querySelector('#data-body tr').children].slice(0, 4).map(td => td.textContent))")
         check(cells == [f'{ROOT}/PSAR 2024', 'params.xlsx', 'Params', '2'], 'the table row starts with folder, file, sheet, row', cells)
 
-        folders = await page.ev(OPTIONS + "('folder-filter')")
-        check(folders == [[ROOT, ROOT], [f'{ROOT}/PSAR 2024', ' PSAR 2024'], [f'{ROOT}/PSAR 2025', ' PSAR 2025'],
-                          [f'{ROOT}/PSAR 2025/äldre', '  äldre']],
-              'the Folders filter lists the tree, indented', folders)
-        files = await page.ev(OPTIONS + "('file-filter')")
-        check([v for v, _ in files] == [f'{ROOT}/PSAR 2024/params.xlsx', f'{ROOT}/PSAR 2025/äldre/legacy.xlsm', f'{ROOT}/PSAR 2025/gammal.xls',
-                                        f'{ROOT}/PSAR 2025/offset.xlsx', f'{ROOT}/PSAR 2025/params.xlsx']
-              and files[0][1] == f'params.xlsx ({ROOT}/PSAR 2024)',
-              'two workbooks of one name in two folders are two files, labelled name first', files)
-        p1 = await page.ev("(() => { const e = parameterIndex(rows).get('p1'); return [e.files.size, e.why]; })()")
-        check(p1 == [2, ['rows disagree on status', '2 files']], 'p1 is flagged as in two files', p1)
+        folders = await page.ev(OPTIONS + "('folder')")
+        check(folders == [[ROOT, ROOT, 0], [f'{ROOT}/PSAR 2024', 'PSAR 2024', 1], [f'{ROOT}/PSAR 2025', 'PSAR 2025', 1],
+                          [f'{ROOT}/PSAR 2025/äldre', 'äldre', 2]],
+              'the Folder filter lists the tree, each folder at its depth', folders)
+        files = await page.ev(OPTIONS + "('file')")
+        check([v for v, _, _ in files] == [f'{ROOT}/PSAR 2024/params.xlsx', f'{ROOT}/PSAR 2025/äldre/legacy.xlsm', f'{ROOT}/PSAR 2025/gammal.xls',
+                                           f'{ROOT}/PSAR 2025/offset.xlsx', f'{ROOT}/PSAR 2025/params.xlsx']
+              and files[0][1:] == ['params.xlsx', f'{ROOT}/PSAR 2024'],
+              'two workbooks of one name in two folders are two files, named first and their folder after', files)
+        p1 = await page.ev("[...parameterIndex(rows).values()].filter(e => e.id === 'p1').map(e => [e.path, e.flagged])")
+        check(p1 == [[f'{ROOT}/PSAR 2024/params.xlsx', False], [f'{ROOT}/PSAR 2025/params.xlsx', False]],
+              'an ID in two workbooks is two parameters, and that alone is no flag', p1)
+        p3 = await page.ev("[...parameterIndex(rows).values()].filter(e => e.id === 'p3').map(e => [e.status, e.why])")
+        check(p3 == [['Mixed', ['rows disagree on status', '2 reviewers']]], 'a parameter whose rows disagree, under two reviewers, is flagged', p3)
+        counts = await page.ev("[...facetCounts('status')].sort()")
+        check(counts == [['In review', 1], ['OK-FSAR', 1], ['OK-PSAR', 4], ['OK-UPSAR', 1], ['Preliminary', 2]],
+              'each status in the filter counts the parameters it would keep', counts)
 
-        await page.ev(f"(() => {{ const s = $('folder-filter'); [...s.options].forEach(o => o.selected = o.value === {json.dumps(ROOT + '/PSAR 2025')});"
-                      " s.dispatchEvent(new Event('change')); })()")
+        await page.ev(f"setFilter('folder', [{json.dumps(ROOT + '/PSAR 2025')}])")
         picked = await page.ev("filtered().map(r => r.id)")
         check(sorted(picked) == ['p1', 'p3', 'p3', 'p4', 'p5', 'p6', 'p7'], 'a folder chosen takes its subfolders along', picked)
+        listed = await page.ev("(showTab('files'), [...document.querySelectorAll('#books-body tr[data-book]')].map(tr => tr.dataset.book))")
+        check(listed == [f'{ROOT}/PSAR 2025/äldre/legacy.xlsm', f'{ROOT}/PSAR 2025/gammal.xls', f'{ROOT}/PSAR 2025/offset.xlsx', f'{ROOT}/PSAR 2025/params.xlsx'],
+              'the Files view lists the workbooks with rows that match, not their rows', listed)
         csv_text = await page.ev(
             "(() => { const oc = URL.createObjectURL, orv = URL.revokeObjectURL, ock = HTMLAnchorElement.prototype.click; let blob = null;"
             " URL.createObjectURL = b => { blob = b; return 'blob:stub'; }; URL.revokeObjectURL = () => {}; HTMLAnchorElement.prototype.click = function () {};"
@@ -323,7 +374,7 @@ async def main():
         check(table[0] == ['Folder', 'File', 'Sheet', 'Excel row', 'ID', 'QC reviewer', 'QC status', 'QC comment']
               and [f'{ROOT}/PSAR 2025', 'offset.xlsx', 'Lower', '4', 'p6', 'revA', 'OK-PSAR', ''] in table and len(table) == 8,
               'the CSV export starts with the Folder column and follows the filter', table[:3])
-        await page.ev("(() => { [...$('folder-filter').options].forEach(o => o.selected = false); $('folder-filter').dispatchEvent(new Event('change')); })()")
+        await page.ev("setFilter('folder', [])")
 
         # 2. The same folder dropped again, and 3. chosen with the folder picker.
         await page.drop([root])
@@ -337,10 +388,10 @@ async def main():
         # 4. A workbook added on its own.
         await page.drop([os.path.join(base, 'Lös', 'params.xlsx')])
         lone = await page.ev("rows.filter(r => r.reviewer === 'revE').map(r => [r.folder, r.path])")
-        cell = await page.ev("[...document.querySelectorAll('#data-body tr')].find(tr => tr.textContent.includes('revE')).children[0].textContent")
+        cell = await page.ev("(showTab('rows'), [...document.querySelectorAll('#data-body tr')].find(tr => tr.textContent.includes('revE')).children[0].textContent)")
         check(lone == [['', 'params.xlsx']] and cell == '—', 'a workbook dropped on its own has no folder, shown as a dash', [lone, cell])
-        p1 = await page.ev("parameterIndex(rows).get('p1').files.size")
-        check(p1 == 3, 'and is a third file named params.xlsx', p1)
+        p1 = await page.ev("[...parameterIndex(rows).values()].filter(e => e.id === 'p1').length")
+        check(p1 == 3, 'and is a third file named params.xlsx, with a parameter of its own', p1)
 
         # 5. A folder with a broken workbook, and 6. one with no workbook.
         await page.drop([os.path.join(base, 'Trasig')])
@@ -429,9 +480,9 @@ async def main():
         check(st['text'].startswith('6 TOML file(s) read: 3 calculation case(s), link.toml, data.toml.') and st['error']
               and any(f.startswith('config/broken.toml: could not be read as TOML') for f in st['files']),
               'a config folder is read, and a broken TOML file is named', st)
-        shown = await page.ev("[!$('cases').hidden, $('workspace').classList.contains('no-rows'), getComputedStyle($('qc-part')).display,"
+        shown = await page.ev("[!$('cases').hidden, activeTab, $('tab-btn-overview').hidden, $('tab-btn-rows').hidden,"
                               " [...document.querySelectorAll('#cases-body .case-name')].map(b => b.textContent)]")
-        check(shown == [True, True, 'none', ['CC001', 'CC002', 'CC003']], 'TOML files alone show the cases, and no QC part', shown)
+        check(shown == [True, 'cases', True, True, ['CC001', 'CC002', 'CC003']], 'TOML files alone show the cases, and no view of rows', shown)
         info = await page.ev("(() => { const el = document.querySelector('#cases-body [data-info=\"0\"]');"
                              " return [el.textContent, !!el.querySelector('b'), !!el.querySelector('img, script'), String(window.__pwned)]; })()")
         check(info == ['The base case ', True, False, 'undefined'], 'a description keeps <b> and runs nothing', info)
@@ -446,15 +497,15 @@ async def main():
 
         await page.drop([excel])
         cells = await page.ev("[...document.querySelectorAll('#cases-body tr[data-case]')].map(tr => [...tr.children].slice(2, 4).map(td => td.innerText.replace(/\\s+/g, ' ').trim()))")
-        check(cells[0] == ['base.h5 → base 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 approved Show rows']
-              and cells[1] == ['variant.h5 → variant 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 approved Show rows'],
+        check(cells[0] == ['base.h5 → base 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 parameters approved by data.toml, whole sheets Filter to this case']
+              and cells[1] == ['variant.h5 → variant 3 data file(s), 2 workbook(s) read, 1 from raw data only', '2 of 3 parameters approved by data.toml, whole sheets Filter to this case'],
               'with its Excel folder, each case finds its workbooks and counts its QC', cells)
-        await page.ev("(() => { const s = $('case-filter'); [...s.options].forEach(o => o.selected = o.textContent === 'CC001'); s.dispatchEvent(new Event('change')); })()")
+        await page.ev("setFilter('case', [cases.list.find(c => c.name === 'CC001').key])")
         ids = await page.ev("filtered().map(r => r.id).sort()")
         check(ids == ['a1', 'a2', 'b1'], 'the case filter keeps the rows of its data files, and only the sheets data.toml names', ids)
         await page.ev("document.querySelector('#cases-body tr[data-case=\"1\"] [data-show]').click()")
-        ids = await page.ev("[filtered().map(r => r.id).sort(), [...$('case-filter').selectedOptions].map(o => o.textContent)]")
-        check(ids == [['a1', 'a2', 'd1'], ['CC002']], 'Show rows sets the case filter to that case', ids)
+        ids = await page.ev("[filtered().map(r => r.id).sort(), [...filters.case].map(k => cases.list.find(c => c.key === k).name), activeTab]")
+        check(ids == [['a1', 'a2', 'd1'], ['CC002'], 'files'], 'Filter to this case sets the case filter to it, and shows its files', ids)
         await page.ev("document.querySelector('#cases-body tr[data-case=\"1\"] .case-name').click()")
         detail = await page.ev("(() => { const d = document.querySelector('tr.case-detail'); return [d.innerText.includes('base_cc: CC001'),"
                                " d.innerText.includes('[farfield] source_cc: CC001'), d.innerText.includes('101 values, 0 … 1000'),"
@@ -464,7 +515,7 @@ async def main():
         await page.ev("document.querySelector('tr.case-detail [data-goto]').click()")
         opened = await page.ev("[...document.querySelectorAll('.case-name[aria-expanded=true]')].map(b => b.textContent)")
         check(opened == ['CC001', 'CC002'], 'a case named in another opens from it', opened)
-        sets = await page.ev("[...document.querySelectorAll('#sets-body tr')].map(tr => [...tr.children].slice(0, 4).map(td => td.textContent))")
+        sets = await page.ev("[...document.querySelectorAll('#link-sets-body tr')].map(tr => [...tr.children].slice(0, 4).map(td => td.textContent))")
         check(sets == [['base', '3 listed', '3', 'CC001'], ['variant', 'base, without beta, with delta', '3', 'CC002']], 'the input sets, with the cases using them', sets)
         gamma = await page.ev("[...document.querySelectorAll('#data-files-body tr')].map(tr => [...tr.children].map(td => td.textContent)).find(r => r[0] === 'gamma')")
         check(gamma[1] == 'none: raw data only' and gamma[3] == 'HYDRO' and gamma[4] == 'flows Inflow, Outflow', 'a data file from raw data says so', gamma)
@@ -472,10 +523,55 @@ async def main():
         again = await page.ev("[document.querySelectorAll('#cases-body tr[data-case]').length, $('status-text').textContent]")
         check(again[0] == 3 and '6 had been read before' in again[1], 'a config folder read again replaces its cases', again)
         await page.ev("$('reset-btn').click()")
-        check(await page.ev("$('cases').hidden && !$('case-filter').options.length"), 'Clear all clears the cases too')
+        check(await page.ev("$('cases').hidden && !cases && !facetOptions('case').length && !filters.case.size"), 'Clear all clears the cases and their filter too')
+
+        # 14. Input-set exports, traced to the rows of the source workbooks.
+        exp_root = build_exports(base)
+        trace_js = ("exportFiles.map(e => [e.set, e.values, e.trace.traced, e.trace.raw, e.trace.none, e.trace.missing, e.trace.noQc, e.trace.notFound, e.stale,"
+                    " [...e.rowIdx].map(i => rows[i].id + '@' + rows[i].row)])")
+        want = [['set1', 10, 5, 1, 1, 1, 1, 1, True, ['a.one@2', 'a.ts@3', 'a.ts@4', 'a.ts@5', 'a.two@6']],
+                ['set2', 1, 1, 0, 0, 0, 0, 0, False, ['a.two@6']]]
+        await page.drop([exp_root])
+        st = await page.ev(STATUS)
+        traced = await page.ev(trace_js)
+        check(traced == want, 'each value of an export is traced to its QC row, along a time series whose rows it gives wrongly;'
+              ' the rest counted as raw data, no source, a workbook not read, a sheet without QC columns, or a row no longer there', traced)
+        check(st['text'] == '4 workbook(s) read from 2 folder(s), 5 data point(s) added and 2 input-set export(s) of 11 value(s). 1 gave no data.',
+              'the status counts the exports and their values', st['text'])
+        await page.ev("setFilter('set', ['set1'])")
+        ids = await page.ev("filtered().map(r => r.id)")
+        check(ids == ['a.one', 'a.ts', 'a.ts', 'a.ts', 'a.two'], 'the Input set filter keeps the rows the set uses', ids)
+        await page.ev("setFilter('set', []); setFilter('reviewer', ['revB']); showTab('files')")
+        files_view = await page.ev("[[...document.querySelectorAll('#books-body tr[data-book]')].map(tr => tr.dataset.book),"
+                                   " [...document.querySelectorAll('#sets-body tr[data-set]')].map(tr => [tr.dataset.set, tr.children[3].textContent]),"
+                                   " $('sets-hidden').textContent, $('files-count').textContent]")
+        check(files_view == [['Exp/excel/base_case/alpha.xlsx'], [['Exp/qc/set1.xlsx', '1']], '1 export not listed: no value that matches the filters.', '2'],
+              'under a filter, the Files view lists the workbooks and the input sets that use the rows that match', files_view)
+        flags = await page.ev("[...document.querySelectorAll('#sets-body tr[data-set] .flag')].map(f => f.textContent)")
+        check(flags == ['1 from workbooks not read', '1 rows not in their workbook', '1 from sheets without QC columns'], 'an export says what keeps its values from their rows', flags)
+        await page.ev("document.querySelector('#sets-body [data-open-set]').click()")
+        sources = await page.ev("[...document.querySelectorAll('#sets-body tr.detail .sub-table tbody tr')].map(tr => [tr.children[0].textContent, tr.children[2].textContent])")
+        check(len(sources) == 5 and ['Exp/excel/base_case/alpha.xlsx', '5 traced, 1 not found'] in sources and ['/Volumes/raw/HYDRO/NCC1/flow.csv', 'raw data'] in sources,
+              'an export opens to its sources, each with what was traced of it', sources)
+        await page.ev("clearFilters()")
+        csv_files = await page.ev(
+            "(() => { const oc = URL.createObjectURL, orv = URL.revokeObjectURL, ock = HTMLAnchorElement.prototype.click; let blob = null;"
+            " URL.createObjectURL = b => { blob = b; return 'blob:stub'; }; URL.revokeObjectURL = () => {}; HTMLAnchorElement.prototype.click = function () {};"
+            " try { $('export-files-btn').click(); } finally { URL.createObjectURL = oc; URL.revokeObjectURL = orv; HTMLAnchorElement.prototype.click = ock; }"
+            " return blob.text(); })()")
+        table = list(csv.reader(io.StringIO(csv_files.lstrip('\ufeff')), delimiter=';'))
+        check(table[0][:3] == ['Kind', 'Folder', 'File'] and [r[0] for r in table[1:]].count('Input set') == 2 and table[-2][2] == 'set1.xlsx' and table[-2][10:15] == ['5', '2', '1', '1', '1'],
+              'the file list exports as CSV, the input sets with what was traced', table)
+        # The same, read on the page itself, as where there are no workers.
+        await page.ev("$('reset-btn').click(); window.__Worker = window.Worker; window.Worker = undefined")
+        await page.drop([exp_root])
+        again = await page.ev(trace_js)
+        await page.ev("window.Worker = window.__Worker")
+        check(again == want, 'read without workers, the exports trace the same', again)
+        await page.ev("$('reset-btn').click()")
         await page.drop([root])
 
-        # 14. No sideways scroll, at a desktop width and on a phone (where fields under 16px make iOS zoom).
+        # 15. No sideways scroll, at a desktop width and on a phone (where fields under 16px make iOS zoom).
         wide = "[document.documentElement.scrollWidth, document.documentElement.clientWidth]"
         check((lambda w: w[0] <= w[1])(await page.ev(wide)), 'no sideways scroll at 1280 px', await page.ev(wide))
         await page.send('Emulation.setDeviceMetricsOverride', {'width': 375, 'height': 548, 'deviceScaleFactor': 2, 'mobile': True})
@@ -486,18 +582,18 @@ async def main():
                 break
             await asyncio.sleep(0.05)
         await page.drop([root])
-        phone = await page.ev(wide + ".concat(['id-search', 'folder-filter'].map(id => parseFloat(getComputedStyle($(id)).fontSize)))")
+        phone = await page.ev(wide + ".concat(['id-search'].map(id => parseFloat(getComputedStyle($(id)).fontSize)))")
         check(phone[0] <= phone[1] == 375 and min(phone[2:]) >= 16, 'no sideways scroll on a 375 px phone, and its fields are 16 px', phone)
 
-        # 15. In the dark theme every summary card's number stands out from its card (4.5:1 or more).
+        # 16. In the dark theme every summary tile's number stands out from its tile (4.5:1 or more).
         contrast = await page.ev(
             "(() => { document.documentElement.setAttribute('data-theme', 'dark');"
             " const c = document.createElement('canvas').getContext('2d', {willReadFrequently: true});"
             " const rgb = s => { c.clearRect(0, 0, 1, 1); c.fillStyle = '#000'; c.fillStyle = s; c.fillRect(0, 0, 1, 1); return [...c.getImageData(0, 0, 1, 1).data].slice(0, 3); };"
             " const lum = a => a.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);"
-            " return [...document.querySelectorAll('.card')].map(card => { const [x, y] = [lum(rgb(getComputedStyle(card.querySelector('.card-value')).color)),"
+            " return [...document.querySelectorAll('.tile')].filter(t => !t.hidden).map(card => { const [x, y] = [lum(rgb(getComputedStyle(card.querySelector('.tile-value')).color)),"
             " lum(rgb(getComputedStyle(card).backgroundColor))].sort((p, q) => q - p); return Math.round((x + 0.05) / (y + 0.05) * 10) / 10; }); })()")
-        check(len(contrast) == 5 and min(contrast) >= 4.5, 'in the dark theme every summary card reads (contrast 4.5:1 or more)', contrast)
+        check(len(contrast) == 4 and min(contrast) >= 4.5, 'in the dark theme every summary tile reads (contrast 4.5:1 or more)', contrast)
 
         check(not page.errors, 'no exception or console error', page.errors)
     finally:

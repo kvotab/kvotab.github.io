@@ -83,6 +83,22 @@ check(C.setSources(link, 'loop_a').errors[0] === 'loop_a → loop_b → loop_a c
 check(same(C.setSources(link, 'odd').errors, ['odd is built on constructor, which link.toml does not define']),
   'a set called "constructor" is a name, not the object\'s constructor');
 
+// A set built on a list of data files at the top of link.toml
+const LISTED = parse(`common = ['alpha', 'beta']\n[listed]\n    init_file = 'common'\n    skip = ['beta']\n    add = ['gamma']\n    groups = ['global', 'biosphere']\n[shadow]\n    init_file = 'listed'\n`);
+const listedDefs = C.definitions(LISTED), listedLists = C.lists(LISTED);
+check(same(Object.keys(listedLists), ['common']) && !('common' in listedDefs) && same(Object.keys(listedDefs), ['listed', 'shadow']),
+  'a list at the top of link.toml is a list of data files, not a set', [Object.keys(listedLists), Object.keys(listedDefs)]);
+const listed = C.setSources(listedDefs, 'listed', listedLists);
+check(same(listed.sources, ['alpha', 'gamma']) && !listed.errors.length && listed.steps[0].baseList === true && same(listed.steps[0].groups, ['global', 'biosphere']),
+  'init_file may name such a list, then skip and add as for a set; its groups are kept', listed);
+check(same(C.setSources(listedDefs, 'shadow', listedLists).sources, ['alpha', 'gamma']), 'a set built on that set follows it down to the list');
+check(C.setSources(listedDefs, 'listed').errors[0] === 'listed is built on common, which link.toml does not define', 'without the lists the set does not resolve');
+const listedConfig = C.buildConfigs([{ path: 'l/link.toml', name: 'link.toml', data: LISTED }, { path: 'l/data.toml', name: 'data.toml', data: parse(DATA) },
+  { path: 'l/CC020.toml', name: 'CC020.toml', data: parse(`parameter_files = 'shadow.h5'`) }])[0];
+check(same(C.caseInputs(listedConfig, listedConfig.cases[0]).data.map((d) => d.source), ['alpha', 'gamma'])
+  && !C.configChecks(listedConfig, null).some((c) => c.level === 'error'),
+  'a configuration keeps link.toml\'s lists, and its cases and checks follow them');
+
 // Data files
 const alpha = C.dataSource(data, 'alpha');
 check(alpha.workbook === 'base_case/alpha.xlsx' && alpha.sheets === null && alpha.raw === null, 'a data file is <path>/<name>.xlsx, all sheets', alpha);

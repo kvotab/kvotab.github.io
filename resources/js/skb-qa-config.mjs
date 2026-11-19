@@ -4,9 +4,11 @@
 
   A configuration is the TOML files of one folder. Two of them are special.
   link.toml defines the input sets, each the parameter file <set>.h5 built
-  from data files: listed under 'files', or taken from the set named in
-  'init_file', then without those in 'skip' and with those in 'add'. A name
-  ending in '_det' is the deterministic copy of a data file. data.toml
+  from data files: listed under 'files', or taken from what 'init_file'
+  names - a list of data files at the top of link.toml, or another set -
+  then without those in 'skip' and with those in 'add'. 'groups' links only
+  those top-level groups of the data files. A name ending in '_det' is the
+  deterministic copy of a data file. data.toml
   defines the data files: the workbook of one is <path>/<name>.xlsx under the
   Excel folder, and 'sheet_names' narrows it to those sheets. One with a
   'raw_path' also has raw data, which may stand in for the workbook. Every
@@ -28,6 +30,16 @@ export function asList(value) {
 }
 
 const isTable = (value) => value != null && typeof value === 'object' && !Array.isArray(value) && !(value instanceof Date);
+
+/*
+  The lists of data files at the top of link.toml, which a set can start
+  from. Kept without a prototype, as the definitions are.
+*/
+export function lists(parsed) {
+  const out = Object.create(null);
+  for (const [name, value] of Object.entries(parsed || {})) if (Array.isArray(value) && value.every((v) => typeof v === 'string')) out[name] = value.slice();
+  return out;
+}
 
 /*
   The tables of link.toml or data.toml; top-level values such as 'info' are
@@ -68,7 +80,7 @@ export function buildConfigs(files) {
     if (file.error) { config.errors.push(file); continue; }
     const kind = kindOf(file.name);
     if (kind === 'case') config.cases.push({ name: stem(file.name), path: file.path, toml: file.data || {} });
-    else config[kind] = { path: file.path, defs: definitions(file.data), info: file.data?.info ?? '' };
+    else config[kind] = { path: file.path, defs: definitions(file.data), lists: lists(file.data), info: file.data?.info ?? '' };
   }
   const configs = [...byFolder.values()];
   for (const kind of ['link', 'data']) {
@@ -84,11 +96,14 @@ export function buildConfigs(files) {
   The data files of an input set, and how they came about: each step is a set
   with what it started from, what it skipped and what it added. Errors are a
   set that is not defined, and a set that comes back round to itself.
+  `linkLists` are link.toml's top-level lists, which an init_file names
+  before it names a set.
 */
-export function setSources(linkDefs, setName) {
+export function setSources(linkDefs, setName, linkLists = null) {
   const steps = [];
   const errors = [];
   const resolve = (name, seen) => {
+    if (seen.length && linkLists && Object.prototype.hasOwnProperty.call(linkLists, name)) return linkLists[name].map(String);
     const definition = linkDefs?.[name];
     if (!definition) {
       errors.push(seen.length ? `${seen[seen.length - 1]} is built on ${name}, which link.toml does not define`
@@ -100,9 +115,10 @@ export function setSources(linkDefs, setName) {
       return [];
     }
     let sources;
-    let base = null;
+    let base = null, baseList = false;
     if (definition.init_file != null) {
       base = String(definition.init_file);
+      baseList = !!(linkLists && Object.prototype.hasOwnProperty.call(linkLists, base));
       sources = resolve(base, [...seen, name]);
     } else {
       sources = asList(definition.files).map(String);
@@ -111,7 +127,7 @@ export function setSources(linkDefs, setName) {
     const add = asList(definition.add).map(String);
     const kept = sources.filter((source) => !skip.includes(source));
     steps.push({
-      set: name, base, files: base ? [] : sources.slice(), skip, add,
+      set: name, base, baseList, files: base ? [] : sources.slice(), skip, add,
       skipAbsent: base ? skip.filter((s) => !sources.includes(s)) : [],
       addPresent: add.filter((a) => kept.includes(a)),
       groups: asList(definition.groups).map(String)
@@ -190,11 +206,12 @@ const setOfFile = (file) => file.replace(/\.h5$/i, '');
 */
 export function caseInputs(config, caseFile) {
   const linkDefs = config.link?.defs || Object.create(null);
+  const linkLists = config.link?.lists || null;
   const dataDefs = config.data?.defs || Object.create(null);
   const files = parameterFiles(caseFile.toml).map((pf) => {
     const set = setOfFile(pf.file);
     const known = Object.prototype.hasOwnProperty.call(linkDefs, set);
-    return { ...pf, set: known ? set : null, ...(known ? setSources(linkDefs, set) : { sources: [], steps: [], errors: [] }) };
+    return { ...pf, set: known ? set : null, ...(known ? setSources(linkDefs, set, linkLists) : { sources: [], steps: [], errors: [] }) };
   });
   const seen = new Set();
   const data = [];
@@ -256,7 +273,7 @@ export function configChecks(config, loadedPaths) {
   if (linkDefs) {
     const usedData = new Set();
     for (const set of Object.keys(linkDefs)) {
-      const { sources, steps, errors } = setSources(linkDefs, set);
+      const { sources, steps, errors } = setSources(linkDefs, set, config.link?.lists);
       for (const error of errors) add('error', `Input set ${set}: ${error}.`);
       const own = steps[steps.length - 1];
       if (own && own.set === set) {

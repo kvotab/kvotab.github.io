@@ -93,7 +93,7 @@ const KVOT = (() => {
       href: './skb_qa_summary.html',
       label: 'SKB QC Summary',
       group: 'documents',
-      desc: 'Summarise QC review status across Excel workbooks, with filters and CSV export.',
+      desc: 'How far the QC review has come: by workbook, input set and calculation case.',
     },
     {
       href: './dose_coefficients.html',
