@@ -1445,6 +1445,9 @@ class _Context:
         comment = js_trim(_str(_or(b.get('comment', _UNDEF), '')))
         if comment:
             block['comment'] = comment
+        # The path's colour, on the block that answers to its name there.
+        if _has_colour(b.get('color', _UNDEF)):
+            block['color'] = b['color']
         self.generate('expressions', block)
 
         inlet = at(cell_name[0])
@@ -2553,7 +2556,7 @@ def _write_discrete_transfer(w: _XmlWriter, ctx: _Context, plan: Dict[str, Any])
                           ('target', plan['sink'] if plan['to'] is None else plan['to']),
                           *_dim_attrs(ctx, plan['dims'])])
     _write_common(w, ctx, {'system': system, 'enabled': event.get('enabled'), 'unit': 'unitless',
-                           'comment': event.get('comment', _UNDEF)}, tid)
+                           'comment': event.get('comment', _UNDEF), 'color': event.get('color', _UNDEF)}, tid)
     if event.get('enabled') is not False:
         ctx.result_ids.append(tid)
     w.open('entry', [('type', 'transfer')])
@@ -2589,6 +2592,33 @@ def _write_common(w: _XmlWriter, ctx: _Context, block: Dict[str, Any], q: str,
     comment = _trim(_or(block.get('comment', _UNDEF), ''))
     if comment:
         w.cdata('property', comment, [('name', 'comment'), ('type', 'string')])
+    # Its colour, as the `color` property Ecolego keeps a block's in; one
+    # Ecolego cannot hold is counted in the report (``writeCommon``).
+    colour = block.get('color', _UNDEF)
+    written = _eco_colour(colour) if _has_colour(colour) else None
+    if written is not None:
+        w.text('property', written, [('name', 'color'), ('type', 'color')])
+
+
+_HEX_COLOUR = re.compile('#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})')
+
+
+def _has_colour(v: Any) -> bool:
+    """``v != null && v !== ''``: a colour given, whatever it says."""
+    return not _nullish(v) and not (isinstance(v, str) and v == '')
+
+
+def _eco_colour(value: Any) -> Optional[str]:
+    """A colour as Ecolego holds one, Java's packed RGB, opaque (``-65536`` for
+    ``#ff0000``), or ``None`` for one not written ``#rrggbb`` or ``#rgb``
+    (``ecoColour``)."""
+    m = _HEX_COLOUR.fullmatch(_trim(value))
+    if not m:
+        return None
+    h = m.group(1)
+    if len(h) == 3:
+        h = ''.join(c + c for c in h)
+    return str((0xFF000000 | int(h, 16)) - (1 << 32))
 
 
 def _row_key(ctx: _Context, dims: Sequence[Any], combo: Sequence[Any]) -> str:
@@ -3196,13 +3226,16 @@ def _write_simulation(w: _XmlWriter, raw: Dict[str, Any], ctx: _Context) -> None
     def drawn(v: Any) -> bool:
         return isinstance(v, (dict, list)) and len(v) > 0
 
-    colours = sum(1 for c in _list(raw.get('compartments'))
-                  if isinstance(c, dict) and _truthy(c.get('color')) and _qname_of(c) not in ctx.skipped_blocks)
+    # Block colours go out as Ecolego's own (``_write_common``); only one
+    # written some other way than #rrggbb, which Ecolego cannot hold, is said.
+    colours = sum(1 for collection in ALL_COLLECTIONS for b in _list(raw.get(collection))
+                  if isinstance(b, dict) and _qname_of(b) not in ctx.skipped_blocks
+                  and _has_colour(b.get('color', _UNDEF)) and _eco_colour(b['color']) is None)
     diagram = [part for part in (
         'its layout' if drawn(raw.get('layout')) else None,
         'the shapes drawn on it' if drawn(raw.get('shapes')) else None,
         'what it shows' if drawn(raw.get('view')) else None,
-        f"{colours} compartment colour{'' if colours == 1 else 's'}" if colours else None,
+        f"{colours} colour{'' if colours == 1 else 's'} not given as #rrggbb" if colours else None,
     ) if part]
     if diagram:
         report.warn(f"The diagram is this tool’s own and is not written ({', '.join(diagram)}): Ecolego lays a "

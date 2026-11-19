@@ -705,4 +705,47 @@ export const DISCRETE = {
 	parameters: [], inflows: [],
 };
 
-export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING, DISCRETE };
+/**
+ * Block colours, as Ecolego keeps them: Java's packed RGB in a block's `color`
+ * property. Given as `#rrggbb` in either case, or `#rgb`, a colour goes out;
+ * a name (`tomato`) has no Ecolego spelling and is counted in the report. A
+ * transfer's and an inflow's go on its connection; an event's on each
+ * discrete transfer it is written as; a far-field path's on the expression
+ * that carries its name. `Plain` is in the green Ecolego gives a compartment
+ * of its own accord, so it goes out and an import takes it for no colour.
+ */
+export const COLOURS = {
+	name: 'Colours',
+	nuclides: ['Cs-137', 'I-129'],
+	index_lists: [{ name: 'RN', for_contaminants: true, indices: [{ name: 'Cs-137', enabled: true }, { name: 'I-129', enabled: true }] }],
+	simulation: { start_time: 0, end_time: 40, output_points: 9, spacing: 'linear', solver: 'ndf', rtol: 1e-8, abstol: 1e-12, time_unit: 'year' },
+	systems: ['Basin'],
+	parameters: [{ name: 'k', value: 0.1, unit: '1/year', color: '#8a6d3b' }],
+	compartments: [
+		{ name: 'Lake', system: 'Basin', index_lists: ['RN'], initial: '1000', handle_decay: false, color: '#E34948' },
+		{ name: 'Soil', index_lists: ['RN'], initial: '0', handle_decay: false, color: '#4b83c7' },
+		{ name: 'Deep', index_lists: ['RN'], initial: '0', handle_decay: false, color: '#abc' },
+		{ name: 'Store', index_lists: ['RN'], initial: '100', handle_decay: false, color: 'tomato' },
+		{ name: 'Plain', index_lists: ['RN'], initial: '0', handle_decay: false, color: '#c0ffc0' },
+	],
+	expressions: [{ name: 'V', system: 'Basin', index_lists: [], equation: 'max(20 - time, 0)', color: ' #00ff00 ' }],
+	triggers: [{ name: 'Gone', system: 'Basin', index_lists: [], first: '0', second: 'V', direction: 'rising', color: '#c08080' }],
+	farfields: [
+		{ name: 'Rock', index_lists: ['RN'], tw: '20', surface: 'aperture', aperture: '0.002',
+			kd_f: '0', kd_m: '0.01', de_m: '3e-5', eps_m: '0.003', rho_m: '2650', pe: '20', pen_dep: '2', pen_dep_0: '0.001',
+			n_f: 4, n_m: 3, o_b: 1, n_b: 0, grid: 'reference', handle_decay: true, unit: 'Bq/year', color: '#123456' },
+	],
+	transfers: [
+		{ name: 'Outflow', system: 'Basin', from: 'Basin.Lake', to: null, index_lists: ['RN'], rate: 'k', color: '#ffff00' },
+		{ name: 'Leak', from: 'Soil', to: 'Plain', index_lists: ['RN'], rate: '0.01' },
+		{ name: 'Into_rock', from: 'Store', to: 'Rock', index_lists: ['RN'], rate: '1e-3' },
+		{ name: 'Out_of_rock', from: 'Rock', to: 'Deep', index_lists: ['RN'], rate: 'Rock', multiply_by_donor: false, color: '#0000FF' },
+	],
+	inflows: [{ name: 'Rain', to: 'Soil', index_lists: ['RN'], rate: '1', unit: 'Bq/year', color: '#00ffff' }],
+	events: [
+		{ name: 'Dried', timing: 'trigger', trigger: 'Basin.Gone', color: '#ff00ff',
+			actions: [{ kind: 'move', from: 'Basin.Lake', to: 'Soil', fraction: '0.5' }, { kind: 'move', from: 'Deep', to: null, fraction: '0.25' }] },
+	],
+};
+
+export const EXPORT_MODELS = { EVERY_KIND, TRANSPORT, SWITCHES, SCENARIO_ONLY, NO_EQUIVALENT, PER_INDEX_DIRECTION, FARFIELD_PATHS, SPELLING, DISCRETE, COLOURS };

@@ -24364,6 +24364,48 @@ await (async () => {
 		assert(childText(byId(parseXML(cyclic.xml), 'Sorption'), 'lookup-cyclic') === 'true', 'a time table lost its repeating');
 	});
 
+	test('a block’s colour goes out as Ecolego keeps one, and an import brings it back', async () => {
+		// Java's packed RGB, opaque, in the block's `color` property: what it is
+		// drawn in in Ecolego, and what the importer reads. A transfer's and an
+		// inflow's go on the connection, an event's on each discrete transfer it
+		// becomes, a far-field path's on the expression that carries its name.
+		// A colour given as a name has no Ecolego spelling, and is said.
+		const out = await eco.exportEco(fx.COLOURS);
+		const root = parseXML(out.xml);
+		const colourOf = (id) => {
+			const p = children(byId(root, id), 'property').find((x) => x.attrs.name === 'color');
+			return p ? `${p.attrs.type} ${p.text.trim()}` : null;
+		};
+		const written = {
+			k: 'color -7705285', 'Basin.Lake': 'color -1881784', Soil: 'color -11828281', Deep: 'color -5588020',
+			Store: null, Plain: 'color -4128832', 'Basin.V': 'color -16711936', 'Basin.Gone': 'color -4161408',
+			Rock: 'color -15584170', 'Basin.Outflow': 'color -256', Leak: null, Out_of_rock: 'color -16776961',
+			Rain: 'color -16711681', Dried_1: 'color -65281', Dried_2: 'color -65281',
+		};
+		sameText(Object.fromEntries(Object.keys(written).map((id) => [id, colourOf(id)])), written, 'the colours written');
+		assert(out.report.warnings.some((w) => w.startsWith('The diagram is this tool’s own and is not written '
+			+ '(1 colour not given as #rrggbb)')), JSON.stringify(out.report.warnings));
+		// Read back, each is the block's colour again, as the colour picker
+		// writes one. The colours Ecolego gives a compartment and a discrete
+		// event of its own accord come back as none, as from any Ecolego file.
+		const back = (await importEcoFile(out.bytes)).project;
+		const colours = {};
+		for (const [kind, blocks] of Object.entries(back)) {
+			if (!Array.isArray(blocks)) continue;
+			for (const b of blocks) if (b?.color) colours[`${kind}:${ed.qualifiedName(b)}`] = b.color;
+		}
+		sameText(colours, {
+			'parameters:k': '#8a6d3b', 'compartments:Basin.Lake': '#e34948', 'compartments:Soil': '#4b83c7',
+			'compartments:Deep': '#aabbcc', 'expressions:Basin.V': '#00ff00', 'expressions:Rock': '#123456',
+			'transfers:Basin.Outflow': '#ffff00', 'transfers:Out_of_rock': '#0000ff', 'transfers:Rain': '#00ffff',
+			'events:Dried_1': '#ff00ff', 'events:Dried_2': '#ff00ff',
+		}, 'the colours read back');
+		// A model whose colours all go out says nothing about them.
+		const allHex = (await eco.exportEco({ ...fx.COLOURS, compartments: fx.COLOURS.compartments.filter((c) => c.name !== 'Store'),
+			transfers: fx.COLOURS.transfers.filter((t) => t.name !== 'Into_rock') })).report;
+		assert(!allHex.warnings.some((w) => /colour/.test(w)), JSON.stringify(allHex.warnings));
+	});
+
 	test('multiplying by the donor is one setting of a transfer: a file that says it row by row comes back as two', async () => {
 		// A hand-made model that says otherwise at one index, which nothing
 		// used to read: a run here refuses it now, and the file says it row by

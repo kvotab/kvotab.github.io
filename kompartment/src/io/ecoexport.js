@@ -1269,6 +1269,8 @@ class Context {
 			equation: this.referenceFrom(at(release), system),
 			...(String(b.unit ?? '').trim() ? { unit: String(b.unit).trim() } : {}),
 			...(String(b.comment ?? '').trim() ? { comment: String(b.comment).trim() } : {}),
+			// The path's colour, on the block that answers to its name there.
+			...(b.color != null && b.color !== '' ? { color: b.color } : {}),
 		});
 
 		const inlet = at(cellName[0]);
@@ -2521,7 +2523,9 @@ function writeDiscreteTransfer(w, ctx, plan) {
 		['source', plan.from], ['target', plan.to ?? plan.sink],
 		...dimAttrs(ctx, plan.dims),
 	]);
-	writeCommon(w, ctx, { system: plan.system, enabled: plan.event.enabled, unit: 'unitless', comment: plan.event.comment }, id);
+	writeCommon(w, ctx, {
+		system: plan.system, enabled: plan.event.enabled, unit: 'unitless', comment: plan.event.comment, color: plan.event.color,
+	}, id);
 	if (plan.event.enabled !== false) ctx.resultIds.push(id);
 	w.open('entry', [['type', 'transfer']]);
 	w.cdata('transfer-equation', ctx.equation(equationText(plan.share, '1'), plan.q, 'events'));
@@ -2550,6 +2554,25 @@ function writeCommon(w, ctx, block, q, collection = null) {
 	// and writes; it has no `<comment>` element, and passed over one.
 	const comment = String(block.comment ?? '').trim();
 	if (comment) w.cdata('property', comment, [['name', 'comment'], ['type', 'string']]);
+	// Its colour, as the `color` property Ecolego keeps a block's in: what the
+	// block is drawn in there, and what an import reads back. One with no
+	// colour of its own is left to Ecolego's for its type; one Ecolego cannot
+	// hold is counted in the report with the rest of the diagram.
+	const colour = block.color == null || block.color === '' ? null : ecoColour(block.color);
+	if (colour != null) w.text('property', colour, [['name', 'color'], ['type', 'color']]);
+}
+
+/**
+ * A colour as Ecolego holds one: Java's packed RGB, opaque, so the top byte is
+ * set and the number negative -- `#ff0000` is -65536. Only `#rrggbb` and
+ * `#rgb`, in either case, say a colour Ecolego can hold; a name or a function
+ * (`tomato`, `rgb(…)`) gives null.
+ */
+function ecoColour(value) {
+	const m = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.exec(String(value).trim());
+	if (!m) return null;
+	const hex = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1];
+	return String((0xff000000 | Number.parseInt(hex, 16)) | 0);
 }
 
 /** The key of an entry row: the ids of its indices, in the block's order. */
@@ -3196,14 +3219,18 @@ function writeSimulation(w, raw, ctx) {
 		report.skip('derived numbers', `${raw.derived.length} number(s)`, 'numbers read off finished curves have no Ecolego equivalent');
 	}
 	// The diagram is not the model -- the importer does not read Ecolego's
-	// either -- so it is a line in the report rather than a loss.
+	// layout either -- so it is a line in the report rather than a loss. Block
+	// colours go out as Ecolego's own (`writeCommon`); only one written some
+	// other way than `#rrggbb`, which Ecolego cannot hold, is said here.
 	const drawn = (v) => !!v && typeof v === 'object' && (Array.isArray(v) ? v.length > 0 : Object.keys(v).length > 0);
-	const colours = (raw.compartments ?? []).filter((c) => c?.color && !ctx.skippedBlocks.has(qnameOf(c))).length;
+	const colours = ALL_COLLECTIONS.reduce((n, collection) => n + (Array.isArray(raw[collection]) ? raw[collection] : [])
+		.filter((b) => b && typeof b === 'object' && !ctx.skippedBlocks.has(qnameOf(b))
+			&& b.color != null && b.color !== '' && ecoColour(b.color) == null).length, 0);
 	const diagram = [
 		drawn(raw.layout) ? 'its layout' : null,
 		drawn(raw.shapes) ? 'the shapes drawn on it' : null,
 		drawn(raw.view) ? 'what it shows' : null,
-		colours ? `${colours} compartment colour${colours === 1 ? '' : 's'}` : null,
+		colours ? `${colours} colour${colours === 1 ? '' : 's'} not given as #rrggbb` : null,
 	].filter(Boolean);
 	if (diagram.length) {
 		report.warn(`The diagram is this tool’s own and is not written (${diagram.join(', ')}): Ecolego lays a model out itself.`);

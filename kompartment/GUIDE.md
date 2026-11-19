@@ -5194,9 +5194,15 @@ else:
 - numbers read off finished curves, and the solver and analysis settings an
   Ecolego project has no field for.
 
-The diagram — layout, shapes, colours — is not written either: it is this
-tool's own, and Ecolego lays a model out itself. The report says so in a line
-rather than counting it as a loss. So is an app laid out on the model (see
+The diagram's layout and the shapes drawn on it are not written either: they
+are this tool's own, and Ecolego lays a model out itself. The report says so in
+a line rather than counting it as a loss. **Block colours are written**, as
+Ecolego keeps a colour, so Ecolego draws each block in it and an import brings
+it back: a node's on the block, a transfer's and an inflow's on the connection,
+an event's on each discrete transfer it becomes, and a far-field pathway's on
+the expression that carries its name. A colour is written when it is given as
+`#rrggbb` or `#rgb`, which is how the colour picker gives one; one given any
+other way (a colour name, say) is left out and counted in the same line. So is an app laid out on the model (see
 [Apps on a model](#apps-on-a-model)): an Ecolego project has nothing to hold
 it, and the report says how many parts were left out.
 
