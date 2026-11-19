@@ -363,7 +363,11 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
 .pn-prompt h2 { margin: 0; font-size: 1.55rem; font-weight: 600; line-height: 1.2; }
 .pn-prompt p { margin: 3px 0 0; min-height: 1.4em; font-size: 1.02rem; line-height: 1.4; color: var(--text-secondary); }
 
-.pn-card { flex: 1 1 auto; min-height: 0; display: flex; align-items: center; justify-content: center; }
+/* What is shown - a card, the notes, or both - and under it what is
+   pressed: the keys and the buttons. */
+.pn-stage { flex: 1 1 0; min-height: 0; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.pn-bottom { flex: none; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+.pn-card { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; align-items: center; justify-content: center; }
 .pn-info { display: flex; align-items: center; gap: 16px; max-width: 760px; }
 .pn-bubble {
   position: relative;
@@ -437,8 +441,18 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   background: var(--pn-paper);
 }
 /* The notes grow with the box, but only so far - beyond that the paper
-   does - and never so large that a narrow screen shows only a few of them. */
-.pn-staff { flex: none; height: min(100%, 300px, 46vw); width: auto; max-width: none; will-change: transform; overflow: visible; }
+   does - and never so large that a narrow screen shows only a few of them.
+   The drawing is as tall as its notes need (--pn-h, in the staff's own
+   units, set by piano.js), so the limits are per unit: a note is the same
+   size whether or not letters and finger numbers stand around it. */
+.pn-staff {
+  flex: none;
+  height: min(100%, calc(var(--pn-h, 140) * 2.3px), calc(var(--pn-h, 140) * 0.36vw));
+  width: auto;
+  max-width: none;
+  will-change: transform;
+  overflow: visible;
+}
 .pn-staffline { stroke: var(--pn-rule); stroke-width: 1; }
 .pn-ledger { stroke: currentColor; stroke-width: 1.3; }
 .pn-clef { fill: none; stroke: var(--pn-ink); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
@@ -749,33 +763,96 @@ body.pn-body { position: fixed; inset: 0; overflow: hidden; overscroll-behavior:
   .pn-ownrow .pn-field { flex: 1 1 28%; }
 }
 
-/* A phone on its side, or any short window: the prompt gives way first. */
+/* A phone on its side, or any short window. Height is what there is
+   least of, and the notes are what must be read from the music stand, so
+   everything else makes room for them:
+
+     - one row on top: close, what to do, how far, what was heard, the
+       microphone (the bar's parts and the prompt become cells of one grid);
+     - the notes take all the height that is left, beside the card when
+       there is one;
+     - the keys are a low strip - on a phone at the piano they are there to
+       show which key, not to be played - with the buttons beside them;
+     - what the page says back lies over the top row, where it hides nothing
+       that is being read. */
 @media (max-height: 520px) {
   :root.pn-deep .pn { padding-top: 6px; padding-bottom: calc(6px + env(safe-area-inset-bottom, 0px)); gap: 6px; }
-  .pn-lesson { gap: 6px; }
-  .pn-prompt { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
-  .pn-prompt h2 { font-size: 1.15rem; }
-  .pn-prompt p { margin: 0; font-size: .92rem; min-height: 0; }
-  .pn-lbar .pn-iconbtn { width: 34px; height: 34px; }
-  .pn-lbar .pn-micbtn { min-height: 34px; padding-top: 2px; padding-bottom: 2px; }
-  .pn-staffbox { min-height: 78px; }
-  .pn-staff { height: min(100%, 300px); }
-  .pn-keysbox { height: clamp(64px, 23vh, 120px); }
+  .pn-lesson {
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, auto) minmax(60px, 1fr) auto auto;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 6px 10px;
+    align-items: center;
+  }
+  .pn-lbar { display: contents; }
+  .pn-lbar > .pn-iconbtn { grid-area: 1 / 1; width: 36px; height: 36px; }
+  .pn-prompt { grid-area: 1 / 2; display: flex; align-items: baseline; gap: 10px; min-width: 0; max-width: 58vw; white-space: nowrap; }
+  .pn-prompt h2 { flex: none; max-width: 100%; font-size: 1.2rem; overflow: hidden; text-overflow: ellipsis; }
+  .pn-prompt p { flex: 0 1 auto; min-width: 0; min-height: 0; margin: 0; font-size: 1rem; overflow: hidden; text-overflow: ellipsis; }
+  .pn-progress { grid-area: 1 / 3; }
+  .pn-heard { grid-area: 1 / 4; }
+  .pn-lbar > .pn-micbtn { grid-area: 1 / 5; min-height: 36px; padding: 2px 10px; }
+  .pn-lbar .pn-miclabel { display: none; }
+
+  .pn-stage { grid-area: 2 / 1 / 3 / -1; align-self: stretch; flex-direction: row; gap: 8px; }
+  .pn-card { flex: 1 1 0; }
+  .pn-staffbox { flex: 1.5 1 0; min-height: 0; }
+  .pn-staff { height: min(100%, calc(var(--pn-h, 140) * 2.3px)); }
+  .pn-count { font-size: 2.4rem; }
+  .pn-info { gap: 10px; }
+  .pn-mascot svg { width: 54px; }
+  .pn-bubble { font-size: 1.02rem; padding: 10px 14px; line-height: 1.4; }
+  .pn-bigname { font-size: clamp(3.5rem, 34vh, 8rem); }
+  .pn-choices { gap: 10px; }
+  .pn-choice { min-width: 72px; min-height: 54px; padding: 6px 16px; font-size: 1.35rem; border-bottom-width: 4px; }
+
+  .pn-bottom { grid-area: 3 / 1 / 4 / -1; flex-direction: row; align-items: stretch; gap: 8px; }
+  .pn-keysbox { flex: 1 1 0; min-width: 0; height: clamp(70px, 25vh, 108px); }
   .pn-key { padding-bottom: 4px; }
-  .pn-foot { min-height: 50px; padding: 4px 8px 4px 14px; flex-wrap: nowrap; }
-  .pn-feedback { flex-basis: 0; font-size: .98rem; }
-  .pn-btn { min-height: 40px; }
-  .pn-mascot svg { width: 48px; }
-  .pn-bubble { font-size: .95rem; padding: 8px 12px; line-height: 1.35; }
-  .pn-bigname { font-size: 3.2rem; }
-  .pn-choice { min-height: 46px; font-size: 1.15rem; border-bottom-width: 3px; }
-  .pn-count { font-size: 2.2rem; }
+  .pn-foot, .pn-foot[data-state] {
+    flex: 0 0 148px;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+    background: none;
+    flex-direction: column;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+  }
+  .pn-footbtns { flex-direction: column; gap: 6px; width: 100%; margin: 0; }
+  .pn-foot .pn-btn { width: 100%; min-height: 0; height: calc((clamp(70px, 25vh, 108px) - 6px) / 2); padding: 2px 8px; font-size: 1rem; }
+  .pn-feedback {
+    position: absolute;
+    z-index: 3;
+    left: 50%;
+    top: 0;
+    transform: translateX(-50%);
+    flex: none;
+    box-sizing: border-box;
+    width: max-content;
+    max-width: 88%;
+    min-height: 36px;
+    padding: 6px 16px;
+    border: 2px solid var(--border-color);
+    border-radius: 18px;
+    background: var(--modal-bg);
+    box-shadow: 0 4px 14px var(--shadow-color);
+    font-size: 1.02rem;
+    text-align: center;
+    pointer-events: none;
+  }
+  .pn-feedback:empty { display: none; }
+  .pn-feedback[data-state="good"] { border-color: var(--pn-ok); }
+  .pn-feedback[data-state="bad"] { border-color: var(--pn-bad); }
+
   .pn-finish { gap: 6px; }
   .pn-finish .pn-mascot { display: none; }
   .pn-finish h2 { font-size: 1.4rem; }
   .pn-finish-stars .pn-star svg, .pn-finish-stars .pn-star:nth-child(2) svg { width: 40px; height: 40px; }
   .pn-finish-tiles .pn-tile { padding: 6px 14px; }
-  .pn-tile-big { font-size: 1.3rem; }
+  .pn-finish .pn-tile-big { font-size: 1.3rem; }
+  .pn-finish .pn-btn { min-height: 40px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

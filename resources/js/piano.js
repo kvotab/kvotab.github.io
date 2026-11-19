@@ -189,11 +189,16 @@ const PN = (() => {
 
   /* ── The staff ────────────────────────────────────────────────────────── */
 
-  const STAFF_H = 140;
   const yOf = step => 80 - (step - 30) * 5;
 
   /* The G clef, drawn as one line: staff's top line at y 0, the G line at 30. */
   const CLEF = 'M-5.5 47.5c-.3 5.4 7.9 6.3 8.3.3.2-3-1-9.5-2.3-17.8C-1 20.5-3.2 8.5-3 1.5-2.8-5.5 0-11.5 3-12.5c2.3-.8 3.8 3 3.3 7.5C5.5 2.5-9.5 10-9.5 22.5c0 7 4.7 12.3 10.8 12.3 5 0 8.5-3.5 8.5-7.8 0-4.3-3.3-7.2-7-7.2-3.5 0-6 2.5-6 5.6 0 2.3 1.5 4.1 3.4 4.6';
+
+  /* A box of notes whose size changes - a card appears beside it, the phone
+     is turned - puts its notes back in sight. */
+  const fitWatch = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(entries => {
+    for (const e of entries) if (e.target.pnFit) e.target.pnFit();
+  });
 
   function shape(beats) {
     if (beats >= 4) return { open: true, stem: false, flags: 0, dot: beats >= 6 };
@@ -215,6 +220,11 @@ const PN = (() => {
    * key under the thumb), fing (a finger per sounding note, as a string),
    * plain (whole notes with no rhythm, for explaining).
    *
+   * The drawing is only as tall as what is on it - the staff and its clef,
+   * the highest and the lowest note, the rows of fingers and letters where
+   * there are any - so that a low box (a phone on its side) is filled with
+   * notes and not with empty paper.
+   *
    * Returns { now, mark, shake, clear, playhead, fit }.
    */
   function drawStaff(host, notes, opts) {
@@ -230,19 +240,6 @@ const PN = (() => {
       x += o.plain ? 46 : 18 + 16 * Math.min(4, n.beats);
     });
     const W = x + (o.plain ? 14 : 20);
-    const root = sv('svg', { class: 'pn-staff', viewBox: `0 0 ${W} ${STAFF_H}`, role: 'img', 'aria-label': o.label || 'Noter' });
-    root.style.aspectRatio = `${W} / ${STAFF_H}`;
-    const cursor = sv('rect', { class: 'pn-cursor', x: -14, y: 20, width: 28, height: 104, rx: 9, visibility: 'hidden' });
-    root.append(cursor);
-    for (let k = 0; k < 5; k++) root.append(sv('line', { x1: 4, x2: W - 4, y1: 40 + 10 * k, y2: 40 + 10 * k, class: 'pn-staffline' }));
-    root.append(sv('path', { d: CLEF, transform: 'translate(24 40)', class: 'pn-clef' }));
-    if (!o.plain) {
-      root.append(sv('text', { x: 56, y: 59, class: 'pn-timesig', text: String(per) }));
-      root.append(sv('text', { x: 56, y: 79, class: 'pn-timesig', text: '4' }));
-      for (const bx of barXs) root.append(sv('line', { x1: bx, x2: bx, y1: 40, y2: 80, class: 'pn-barline' }));
-      root.append(sv('line', { x1: W - 10, x2: W - 10, y1: 40, y2: 80, class: 'pn-barline' }));
-      root.append(sv('line', { x1: W - 5.5, x2: W - 5.5, y1: 40, y2: 80, class: 'pn-barline pn-barline-end' }));
-    }
 
     // Two eighth notes that share a beat share a beam.
     const beamWith = new Map();
@@ -258,7 +255,52 @@ const PN = (() => {
       }
     }
 
+    // Each note's shape, and where its stem ends.
+    const geo = notes.map((n, i) => {
+      if (n.rest) return null;
+      const y = yOf(n.step);
+      const sh = o.plain ? { open: true, stem: false, flags: 0, dot: false } : shape(n.beats);
+      const beam = beamWith.get(i) || null;
+      const up = beam ? beam.up : n.step < 34;
+      const end = !sh.stem ? y : beam ? beam.y : up ? y - 31 : y + 31;
+      return { y, sh, beam, up, end };
+    });
+
+    // How high and how low the drawing reaches: the clef, then the notes.
     const thumb = o.fingers ? S.fromMidi(o.fingers).step : null;
+    let top = 26;
+    let bottom = 97;
+    notes.forEach((n, i) => {
+      const q = geo[i];
+      if (!q) return;
+      top = Math.min(top, q.y - (n.acc < 0 ? 14 : n.acc > 0 ? 11 : 6), q.end - 1);
+      bottom = Math.max(bottom, q.y + (n.acc > 0 ? 10 : 6), q.end + 1);
+    });
+    const fingerY = o.fing || thumb !== null ? top - 5 : null;
+    if (fingerY !== null) top = fingerY - 10;
+    const letterY = o.letters ? bottom + 14 : null;
+    if (letterY !== null) bottom = letterY + 3;
+    top -= 4;
+    bottom += 4;
+    const H = bottom - top;
+
+    const root = sv('svg', { class: 'pn-staff', viewBox: `0 ${top} ${W} ${H}`, role: 'img', 'aria-label': o.label || 'Noter' });
+    root.style.aspectRatio = `${W} / ${H}`;
+    // The stylesheet sizes the drawing by its own height, so that a note is
+    // as large in a tall drawing as in a low one.
+    root.style.setProperty('--pn-h', String(H));
+    const cursor = sv('rect', { class: 'pn-cursor', x: -14, y: top + 2, width: 28, height: H - 4, rx: 9, visibility: 'hidden' });
+    root.append(cursor);
+    for (let k = 0; k < 5; k++) root.append(sv('line', { x1: 4, x2: W - 4, y1: 40 + 10 * k, y2: 40 + 10 * k, class: 'pn-staffline' }));
+    root.append(sv('path', { d: CLEF, transform: 'translate(24 40)', class: 'pn-clef' }));
+    if (!o.plain) {
+      root.append(sv('text', { x: 56, y: 59, class: 'pn-timesig', text: String(per) }));
+      root.append(sv('text', { x: 56, y: 79, class: 'pn-timesig', text: '4' }));
+      for (const bx of barXs) root.append(sv('line', { x1: bx, x2: bx, y1: 40, y2: 80, class: 'pn-barline' }));
+      root.append(sv('line', { x1: W - 10, x2: W - 10, y1: 40, y2: 80, class: 'pn-barline' }));
+      root.append(sv('line', { x1: W - 5.5, x2: W - 5.5, y1: 40, y2: 80, class: 'pn-barline pn-barline-end' }));
+    }
+
     let sounding = 0;
     const groups = notes.map((n, i) => {
       const g = sv('g', { class: 'pn-n' });
@@ -268,22 +310,18 @@ const PN = (() => {
         root.append(g);
         return g;
       }
-      const y = yOf(n.step);
+      const { y, sh, beam, up, end } = geo[i];
       for (let e = 28; e >= n.step; e -= 2) g.append(sv('line', { x1: nx - 10, x2: nx + 10, y1: yOf(e), y2: yOf(e), class: 'pn-staffline pn-ledger' }));
       for (let e = 40; e <= n.step; e += 2) g.append(sv('line', { x1: nx - 10, x2: nx + 10, y1: yOf(e), y2: yOf(e), class: 'pn-staffline pn-ledger' }));
       if (n.acc < 0) g.append(sv('path', { d: `M${nx - 15.5} ${y - 13}v17c4-2 6.5-4.5 6.5-7.5 0-3.5-4.5-3.5-6.5-.5`, class: 'pn-line' }));
       if (n.acc > 0) g.append(sv('path', { d: `M${nx - 16} ${y - 8}v17M${nx - 11.5} ${y - 9.5}v17M${nx - 18.5} ${y - 1.5}l9.5-3M${nx - 18.5} ${y + 5}l9.5-3`, class: 'pn-line pn-sharp' }));
-      const sh = o.plain ? { open: true, stem: false, flags: 0, dot: false } : shape(n.beats);
       const wide = !sh.stem;
       g.append(sv('ellipse', {
         cx: nx, cy: y, rx: wide ? 7.2 : 6.4, ry: 4.6, transform: `rotate(-22 ${nx} ${y})`,
         class: sh.open ? 'pn-head pn-head-open' : 'pn-head',
       }));
-      const beam = beamWith.get(i);
-      const up = beam ? beam.up : n.step < 34;
       const sx = up ? nx + 5.7 : nx - 5.7;
       if (sh.stem) {
-        const end = beam ? beam.y : up ? y - 31 : y + 31;
         g.append(sv('line', { x1: sx, x2: sx, y1: up ? y - 1.5 : y + 1.5, y2: end, class: 'pn-stem' }));
         if (beam && beam.first) {
           const ox = beam.up ? xs[beam.other] + 5.7 : xs[beam.other] - 5.7;
@@ -300,17 +338,17 @@ const PN = (() => {
         }
       }
       if (sh.dot) g.append(sv('circle', { cx: nx + 11.5, cy: n.step % 2 === 0 ? y - 5 : y, r: 1.9, class: 'pn-ink' }));
-      if (o.letters) g.append(sv('text', { x: nx, y: 134, class: 'pn-letter', text: nameOf(n) }));
+      if (o.letters) g.append(sv('text', { x: nx, y: letterY, class: 'pn-letter', text: nameOf(n) }));
       let finger = null;
       if (o.fing) finger = o.fing[sounding] || null;
       else if (thumb !== null && n.step - thumb >= 0 && n.step - thumb <= 4) finger = String(n.step - thumb + 1);
-      if (finger) g.append(sv('text', { x: nx, y: 13, class: 'pn-finger', text: finger }));
+      if (finger) g.append(sv('text', { x: nx, y: fingerY, class: 'pn-finger', text: finger }));
       sounding++;
       root.append(g);
       return g;
     });
 
-    const head = sv('line', { class: 'pn-playhead', x1: 0, x2: 0, y1: 22, y2: 122, visibility: 'hidden' });
+    const head = sv('line', { class: 'pn-playhead', x1: 0, x2: 0, y1: top + 4, y2: bottom - 4, visibility: 'hidden' });
     root.append(head);
     host.append(root);
 
@@ -320,7 +358,7 @@ const PN = (() => {
     /* Keep x in sight: the notes scroll under the window of the box. */
     function follow(fx, smooth) {
       lastX = fx;
-      const scale = root.getBoundingClientRect().height / STAFF_H;
+      const scale = root.getBoundingClientRect().height / H;
       if (!(scale > 0)) return;
       const total = W * scale;
       const room = host.clientWidth;
@@ -340,6 +378,8 @@ const PN = (() => {
     }
 
     follow(lastX, false);
+    host.pnFit = () => follow(lastX, false);
+    if (fitWatch) fitWatch.observe(host);
     return {
       now(i) {
         for (const g of groups) g.classList.remove('is-now');
@@ -1183,13 +1223,17 @@ const PN = (() => {
     name(ex) {
       const target = ex.note;
       setPrompt('Vilken ton är det?', ex.from === 'staff' ? 'Titta på noten och välj namn.' : 'Titta på tangenten som lyser och välj namn.');
+      // The card first: beside it the notes' box has the size it will keep,
+      // and the note is drawn in the middle of that.
+      const row = h('div', { class: 'pn-choices', role: 'group', 'aria-label': 'Välj tonens namn' });
+      dom.card.hidden = false;
+      dom.card.append(row);
       if (ex.from === 'staff') showStaff([Object.assign({}, target, { beats: 4, start: 0, bar: 0, beat: 0, rest: false })], { plain: true, letters: false });
       else hideStaff();
       showKeys(ex.choices.map(n => n.midi), { named: false, spell: ex.choices });
       if (ex.from === 'key') keys.hint(target.midi);
       let wrong = 0;
       let done = false;
-      const row = h('div', { class: 'pn-choices', role: 'group', 'aria-label': 'Välj tonens namn' });
       function answer(n, button) {
         if (done) return;
         if (n.midi === target.midi) {
@@ -1215,8 +1259,8 @@ const PN = (() => {
         b.addEventListener('click', () => answer(n, b));
         row.append(b);
       }
-      dom.card.hidden = false;
-      dom.card.append(row);
+      // The choices are in now, and may have changed the boxes' sizes.
+      staff.fit();
       return {
         // The note may be answered on the piano too, where that says something.
         hear(ev) {

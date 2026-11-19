@@ -25,7 +25,7 @@
     })();
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
-  <link rel="stylesheet" href="./resources/css/piano.css?v=20261119">
+  <link rel="stylesheet" href="./resources/css/piano.css?v=20261119b">
   <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
   <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
 </head>
@@ -88,14 +88,21 @@
       <h2 id="pn-prompt"></h2>
       <p id="pn-sub"></p>
     </div>
-    <div class="pn-card" id="pn-card" hidden></div>
-    <div class="pn-staffbox" id="pn-staff" hidden></div>
-    <div class="pn-keysbox" id="pn-keys"></div>
-    <div class="pn-foot" id="pn-foot">
-      <p class="pn-feedback" id="pn-feedback" role="status" aria-live="polite"></p>
-      <div class="pn-footbtns">
-        <button type="button" class="pn-btn pn-btn-quiet" id="pn-alt" data-on-click="pn:alt" hidden></button>
-        <button type="button" class="pn-btn pn-btn-go" id="pn-go" data-on-click="pn:go" hidden></button>
+    <!-- Two boxes, so that a phone on its side can lay each out sideways:
+         what is shown (a card, the notes), and what is pressed (the keys,
+         the buttons). -->
+    <div class="pn-stage">
+      <div class="pn-card" id="pn-card" hidden></div>
+      <div class="pn-staffbox" id="pn-staff" hidden></div>
+    </div>
+    <div class="pn-bottom">
+      <div class="pn-keysbox" id="pn-keys"></div>
+      <div class="pn-foot" id="pn-foot">
+        <p class="pn-feedback" id="pn-feedback" role="status" aria-live="polite"></p>
+        <div class="pn-footbtns">
+          <button type="button" class="pn-btn pn-btn-quiet" id="pn-alt" data-on-click="pn:alt" hidden></button>
+          <button type="button" class="pn-btn pn-btn-go" id="pn-go" data-on-click="pn:go" hidden></button>
+        </div>
       </div>
     </div>
   </section>
@@ -270,7 +277,7 @@
 <script src="./resources/js/piano-game.js?v=20261119"></script>
 <script src="./resources/js/piano-ear.js?v=20261119"></script>
 <script src="./resources/js/piano-sound.js?v=20261119"></script>
-<script src="./resources/js/piano.js?v=20261119"></script>
+<script src="./resources/js/piano.js?v=20261119b"></script>
 <script>
   KVOT.renderHeader('Pianoskolan');
   KVOT.renderNav('piano.html');

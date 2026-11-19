@@ -46,6 +46,7 @@ SYNTH = (open(os.path.join(HERE, '..', 'gitarr', 'synth.js'), encoding='utf-8').
 
 failures = []
 checks = 0
+LESSONS = SONGS = XMAS = 0      # read from the page by main_suite
 
 
 def check(label, got, want=True):
@@ -256,9 +257,14 @@ async def main_suite(page):
     await page.load()
     g = await page.state()
     check('home: the page opens on the path', [g['view'], g['tab'], await page.ev('document.title')], ['home', 'path', 'Pianoskolan — kvot ab'])
+    # How many lessons and songs there are is piano-songs.js's to say (its own
+    # test pins the numbers): here the page is checked against it.
+    global LESSONS, SONGS, XMAS
+    LESSONS, SONGS, XMAS = await page.js('[PN_SONGS.ORDER.length, PN_SONGS.SONGS.length, PN_SONGS.SONGS.filter(s => s.xmas).length]')
+    check('home: there are lessons and songs to show', [LESSONS >= 49, SONGS >= 8, XMAS >= 6], [True, True, True])
     nodes = await page.js("[...document.querySelectorAll('.pn-node')].map(b => [b.dataset.id, b.dataset.state, b.disabled])")
-    check('home: 49 lessons, the first one waiting, the rest locked',
-          [len(nodes), nodes[0], sum(1 for n in nodes if n[1] == 'locked' and n[2])], [49, ['u1-cde', 'current', False], 48])
+    check('home: every lesson, the first one waiting, the rest locked',
+          [len(nodes), nodes[0], sum(1 for n in nodes if n[1] == 'locked' and n[2])], [LESSONS, ['u1-cde', 'current', False], LESSONS - 1])
     check('home: no days, no points, no stars yet',
           await page.js("['streak', 'goal', 'stars'].map(k => document.getElementById('pn-stat-' + k).textContent)"), ['0', '0/40', '0'])
     check('home: a locked lesson does not start', [await page.click('.pn-node[data-id="u1-fg"]'), (await page.state())['view']], [None, 'home'])
@@ -266,7 +272,7 @@ async def main_suite(page):
     await page.click('#pn-tab-songs')
     check('home: the songs, and a card for an own one',
           await page.js("[document.getElementById('pn-songs').hidden, document.querySelectorAll('article.pn-song').length, document.querySelectorAll('.pn-song.is-xmas').length, !!document.querySelector('.pn-song-new')]"),
-          [False, 8, 6, True])
+          [False, SONGS, XMAS, True])
     await page.shot('songs.png')
     await page.click('#pn-tab-badges')
     check('home: nineteen badges, none earned',
@@ -484,7 +490,7 @@ async def settings_suite(page):
     await page.ev('PN.test.reload()')
     await page.click('[data-on-click="pn:settings"]')
     await page.click('#pn-settings input[name="openAll"]')
-    check('settings: lessons lock again, one at a time', await page.ev("document.querySelectorAll('.pn-node:disabled').length"), 48)
+    check('settings: lessons lock again, one at a time', await page.ev("document.querySelectorAll('.pn-node:disabled').length"), LESSONS - 1)
     await page.click('[data-on-click="pn:reset"]')
     check('settings: starting over asks first', await page.js("[document.getElementById('pn-ask').open, document.getElementById('pn-ask-yes').textContent]"), [True, 'Börja om'])
     await page.click('#pn-ask-no')
@@ -506,7 +512,7 @@ async def settings_suite(page):
     await page.shot('own.png')
     await page.click('#pn-own-save')
     g = await page.state()
-    check('own: saved, with its badge', [g['store']['own'], 'own' in g['store']['badges'], await page.ev("document.querySelectorAll('article.pn-song').length")], [1, True, 9])
+    check('own: saved, with its badge', [g['store']['own'], 'own' in g['store']['badges'], await page.ev("document.querySelectorAll('article.pn-song').length")], [1, True, SONGS + 1])
     own = await page.ev("document.querySelector('article.pn-song:last-of-type').dataset.song")
     await page.click(f'article[data-song="{own}"] [data-mode="play"]')
     await settle(page, 'PN.inspect().view', 'lesson')
@@ -522,7 +528,7 @@ async def settings_suite(page):
     await page.click('#pn-own-delete')
     await page.click('#pn-ask-yes')
     g = await page.state()
-    check('own: deleted', [g['store']['own'], await page.ev("document.querySelectorAll('article.pn-song').length"), await page.ev("document.getElementById('pn-own').open")], [0, 8, False])
+    check('own: deleted', [g['store']['own'], await page.ev("document.querySelectorAll('article.pn-song').length"), await page.ev("document.getElementById('pn-own').open")], [0, SONGS, False])
 
     # A song in time, from the list.
     await page.ev('PN.test.hurry(4)')
@@ -631,16 +637,26 @@ FIT = """(() => {
   const inside = s => { const e = document.querySelector(s); if (!e || !e.checkVisibility()) return null; const b = e.getBoundingClientRect();
     return b.top >= -0.5 && b.left >= -0.5 && b.bottom <= innerHeight + 0.5 && b.right <= innerWidth + 0.5 && b.height > 20; };
   return { header: shown('body > header'), footer: shown('body > footer'), brand: shown('.pn-brand'), theme: shown('.pn-top-end .theme-toggle'),
-    wide: document.documentElement.scrollWidth > innerWidth, bar: inside('.pn-lbar'), prompt: inside('.pn-prompt'), staff: inside('#pn-staff'),
+    wide: document.documentElement.scrollWidth > innerWidth, bar: inside('.pn-lbar .pn-iconbtn') && inside('.pn-lbar .pn-micbtn'), prompt: inside('.pn-prompt'), staff: inside('#pn-staff'),
     card: inside('#pn-card'), keys: inside('#pn-keys'), foot: inside('#pn-foot'),
     staffH: (e => (e ? Math.round(e.getBoundingClientRect().height) : 0))(document.querySelector('.pn-staff')),
+    // How large the notes are: from one line of the staff to the next, and the letters under them.
+    gap: (l => (l.length === 2 ? Math.round((l[1] - l[0]) * 10) / 10 : 0))([...document.querySelectorAll('.pn-staff > .pn-staffline')].slice(0, 2).map(e => e.getBoundingClientRect().top)),
+    letter: (e => (e ? Math.round(e.getBoundingClientRect().height) : 0))(document.querySelector('.pn-letter')),
+    centred: (e => { if (!e) return null; const s = e.getBoundingClientRect(), b = e.parentElement.getBoundingClientRect();
+      return s.width > b.width || Math.abs((s.left + s.right) - (b.left + b.right)) < 6; })(document.querySelector('.pn-staff')),
     key: Math.round(document.querySelector('.pn-white') ? document.querySelector('.pn-white').getBoundingClientRect().width : 0) };
 })()"""
 
 
 async def phones_suite(page):
-    for name, w, h in (('iPhone', 390, 664), ('iPhone SE', 375, 548), ('small Android', 360, 560), ('iPhone on its side', 844, 340), ('SE on its side', 667, 325), ('iPad', 820, 1050)):
+    # An iPhone with a notch gives a page the screen less the notch on both
+    # sides: 734 of an iPhone 16's 852 points, and 340 of its 393 under
+    # Safari's bar.
+    for name, w, h in (('iPhone', 390, 664), ('iPhone SE', 375, 548), ('small Android', 360, 560), ('iPhone 16 on its side', 734, 340),
+                       ('iPhone 13 on its side', 844, 340), ('SE on its side', 667, 325), ('iPad', 820, 1050)):
         phone = name != 'iPad'
+        side = 'on its side' in name
         await page.load(width=w, height=h, mobile=True, store=OPEN, theme='dark' if name == 'iPhone' else 'light')
         f = await page.js(FIT)
         check(f'{name}: home without the site\'s header and footer, with its own mark and theme switch',
@@ -653,16 +669,31 @@ async def phones_suite(page):
         f = await page.js(FIT)
         check(f'{name}: a melody fits the screen - bar, prompt, notes, keys and foot',
               [f['bar'], f['prompt'], f['staff'], f['keys'], f['foot'], f['wide']], [True, True, True, True, True, False])
-        check(f'{name}: the notes are large enough to read ({f["staffH"]}px) and the keys to see ({f["key"]}px)', [f['staffH'] >= 78, f['key'] >= 38], [True, True])
-        if name in ('iPhone', 'iPhone on its side'):
+        # Read from a music stand: a staff's lines at least 13 px apart, 16 on a
+        # phone on its side (they were 8 there, and a child could not read
+        # them: the user's daughter, 2026-11-19), the letters as tall as text.
+        check(f'{name}: the notes are large enough to read from the piano (lines {f["gap"]}px apart, letters {f["letter"]}px) and the keys to see ({f["key"]}px)',
+              [f['gap'] >= (16 if side else 13), f['letter'] >= 16, f['key'] >= 38], [True, True, True])
+        if name in ('iPhone', 'iPhone 16 on its side'):
             await page.shot(f'phone-play-{w}.png')
+        if side:
+            await page.ev('PN.test.hear(60)')
+            over = await page.js("(r => [document.getElementById('pn-feedback').textContent, r('#pn-feedback').top >= 0, r('#pn-feedback').bottom <= r('#pn-staff').top + 1, r('#pn-feedback').right <= innerWidth])(s => document.querySelector(s).getBoundingClientRect())")
+            check(f'{name}: what the page says back lies over the top row, off the notes', over, ['Det var C. Prova igen!', True, True, True])
+            check(f'{name}: the keys and the buttons share the bottom row',
+                  await page.js("(r => [Math.abs(r('#pn-keys').top - r('#pn-foot').top) < 1, r('#pn-keys').right <= r('#pn-foot').left, r('#pn-alt').bottom <= innerHeight])(s => document.querySelector(s).getBoundingClientRect())"), [True, True, True])
         await page.tap('.pn-key[data-midi="65"]')
         g2 = await page.state()
         check(f'{name}: a finger on a key plays it', [g2['last'], g2['staff'][0]], [{'midi': 65, 'source': 'screen', 'answer': 'right'}, 'is-right'])
         await page.ev('PN.test.reload()')
         await walk(page, 'u3-r1', lambda ex: ex['type'] == 'name')
         f = await page.js(FIT)
-        check(f'{name}: a question with its choices fits too', [f['card'], f['staff'], f['keys'], f['foot'], f['wide']], [True, True, True, True, False])
+        check(f'{name}: a question with its choices fits too, the note in the middle of its box', [f['card'], f['staff'], f['keys'], f['foot'], f['wide'], f['centred']], [True, True, True, True, False, True])
+        if side:
+            check(f'{name}: the choices stand beside the note, not over it',
+                  await page.js("(r => r('#pn-card').right <= r('#pn-staff').left && Math.abs(r('#pn-card').top - r('#pn-staff').top) < 1)(s => document.querySelector(s).getBoundingClientRect())"), True)
+        if name == 'iPhone 16 on its side':
+            await page.shot('phone-name-734.png')
         if name == 'iPhone SE':
             await page.shot('phone-name-se.png')
     await page.load(width=1280, height=800, theme='dark', store=OPEN)
