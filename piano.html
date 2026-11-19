@@ -26,8 +26,17 @@
   </script>
   <link rel="stylesheet" href="./resources/css/kvot.css?v=20261031a">
   <link rel="stylesheet" href="./resources/css/piano.css?v=20261119b">
-  <link rel="icon" type="image/x-icon" href="./resources/images/favicon.ico">
-  <link rel="apple-touch-icon" href="./resources/images/kvot-icon-180.png">
+  <!-- The page's own mark, in the kvot mark's language (see piano-icon.svg):
+       two eighth notes on one beam. The 32 px PNG comes first, for a browser
+       that will not take an SVG (Safari before version 26); Chrome and Firefox
+       take the SVG, which stays sharp on a high-density screen, and the PNG's
+       size keeps Chrome from fetching the PNG as well. The 180 px PNG is what
+       an iPhone puts on its home screen, added from Safari or from Chrome, and
+       the title the name it suggests there. -->
+  <link rel="icon" href="./resources/images/piano-icon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="./resources/images/piano-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="./resources/images/piano-icon-180.png">
+  <meta name="apple-mobile-web-app-title" content="Pianoskolan">
 </head>
 <body class="pn-body">
 <header></header>
