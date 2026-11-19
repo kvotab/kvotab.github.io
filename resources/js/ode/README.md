@@ -100,6 +100,7 @@ in both.
 | `hmax`, `h0` | a tenth of the span, chosen | |
 | `maxSteps` | 1e6 | |
 | `nonNegative` | none | state indices integrated as the projected system |
+| `heldWith` | none | per state, the `nonNegative` state it is held with, or -1: held where that one is held, and put onto zero, its history forgotten, wherever that one is put there (Kompartment's sensitivities, with their states) |
 | `mass`, `suppressAlgebraic` | identity, off | the diagonal of M: 1 differential, 0 algebraic |
 | `jacobian` | differenced densely | an array of rows, a function, `{pattern, evaluate, groups, constant}`, `{evaluateDense}` |
 | `matrix` | `'auto'` | `'refactor'`, `'sparse'` (the searching Gilbert-Peierls LU) or `'dense'` |

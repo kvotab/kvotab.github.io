@@ -35,7 +35,8 @@ names: a Rosenbrock method uses the whole Jacobian inside its formula.
 runner's own machinery (``equations`` in :func:`kompartment.engine.runner.run`):
 restarted at every switch time, through the discrete events, with the blocks
 that remember primed and fed, the model's solver settings, each compartment's
-own floor, the clock interpolation, and progress and stop.
+own floor -- each sensitivity held with its state, zero while the floor holds
+it -- the clock interpolation, and progress and stop.
 
 **What the forward equations cannot carry is refused, by name** (see
 :func:`uncarried`): a jump in the state, a block that remembers the path of the
@@ -300,12 +301,18 @@ def uncarried(project: Project, system: Any, wanted: Sequence[Mapping[str, Any]]
             name = a.get('local') or a.name
             return (f"'{name}' remembers the path of the run, and the model's rates read it: dy/dp through a "
                     'history is not carried by the sensitivity equations, which see only the present.')
-    corners = switch_times(project)
+    # Asked of the project the system was laid out from, whose block is the one
+    # moved: in a model with transports that is the builder's own copy, the
+    # transports written out, and moving its block left the switch times of the
+    # project handed in where they were -- the corner was never seen, and dy/dp
+    # was integrated across it.
+    built = system.builder.project
+    corners = switch_times(built)
     for e in wanted:
         entry = next((p for p in system.layout.parameters if p.base <= e['slot'] < p.base + p.width), None)
         if entry is None or entry.block is None:
             continue
-        moved = _with_block_moved(entry.block, lambda: switch_times(project))
+        moved = _with_block_moved(entry.block, lambda: switch_times(built))
         if list(moved) != list(corners):
             return (f"'{slot_label(e)}' places a corner of the run (a switch time, or when something starts or "
                     'stops): moving it moves a discontinuity, and dy/dp with respect to it is an impulse the '
@@ -386,12 +393,18 @@ class _BlockMatrix:
     (``blockMatrix`` in the application). It is block lower triangular -- A =
     I - a·J on the diagonal, -a·C_j under the states' block, C_j = d(S_j')/dy --
     so the states' block is solved first and each sensitivity's after it, the
-    coupling carried to its right-hand side: one factorisation of A, two while
-    the floor holds a state (whose row is the identity in the states' block
-    alone), and never a pivot taken across blocks. An LU of the whole matrix
-    pivots a state's column on a sensitivity's row wherever the coupling is the
-    larger entry, and mixes that row's rounding into the state's correction,
-    which for a state near zero is all of it."""
+    coupling carried to its right-hand side: one factorisation of A, and never a
+    pivot taken across blocks. An LU of the whole matrix pivots a state's column
+    on a sensitivity's row wherever the coupling is the larger entry, and mixes
+    that row's rounding into the state's correction, which for a state near zero
+    is all of it.
+
+    A state the floor holds is a row of the identity in the states' block, and
+    the sensitivities are held with their states (``held_with``): the same row
+    is the identity in every sensitivity's block, with nothing of the coupling
+    under it, so the one factorisation serves them all. The rows held are read
+    off the states' (``held`` up to ``n``): the solver marks a sensitivity's with
+    its state's."""
 
     def __init__(self, base: Pattern, n: int, m: int, state_at: List[np.ndarray], values: Any, mode: str,
                  hints: Any) -> None:
@@ -401,8 +414,7 @@ class _BlockMatrix:
         self.mode, self.hints = mode, hints
         J, self.C = self._extract(values)
         self.states = IterationMatrix(n, base, J, mode, None, hints)
-        self.apart: Optional[IterationMatrix] = None
-        self.sens = self.states
+        self.held: Optional[np.ndarray] = None
         self.a = 0.0
 
     @property
@@ -420,13 +432,7 @@ class _BlockMatrix:
         if held is not None and np.any(np.asarray(held)[:self.n]):
             held_y = np.asarray(held)[:self.n]
         self.states.form(a, Jb, held_y)
-        if held_y is not None:
-            if self.apart is None:
-                self.apart = IterationMatrix(self.n, self.base, Jb, self.mode, None, self.hints)
-            self.apart.form(a, Jb, None)
-            self.sens = self.apart
-        else:
-            self.sens = self.states
+        self.held = None if held_y is None else held_y != 0
 
     def solve(self, rhs: np.ndarray) -> np.ndarray:
         n = self.n
@@ -434,9 +440,14 @@ class _BlockMatrix:
         xy = np.asarray(self.states.solve(np.array(rhs[:n], dtype=float)), dtype=float)
         out[:n] = xy
         for j in range(self.m):
-            # The coupling's part: C_j times the states' correction, column by column.
+            # The coupling's part: C_j times the states' correction, column by column...
             cd = np.bincount(self.rows, weights=self.C[j] * xy[self.cols], minlength=n)
-            out[n * (j + 1):n * (j + 2)] = self.sens.solve(rhs[n * (j + 1):n * (j + 2)] + self.a * cd)
+            r = rhs[n * (j + 1):n * (j + 2)]
+            rs = r + self.a * cd
+            # ...and none of it on a held row.
+            if self.held is not None:
+                rs[self.held] = r[self.held]
+            out[n * (j + 1):n * (j + 2)] = self.states.solve(rs)
         return out
 
 
@@ -538,10 +549,11 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
     solved: for a caller that wants to look at it or hand it elsewhere.
 
     Returns ``{'dydt', 'jacobian', 'y0', 'rtol', 'abstol', 'non_negative',
-    'grid', 'n', 'm', 'chosen', 'system', 'project', 'equations'}``:
+    'held_with', 'grid', 'n', 'm', 'chosen', 'system', 'project', 'equations'}``:
     ``dydt(t, Y)`` the right-hand side of ``Y = [y, S_1, ..., S_m]``;
     ``jacobian`` the model's own repeated down the diagonal; ``non_negative``
-    the floor the run applies (each compartment's own); ``equations`` what
+    the floor the run applies (each compartment's own), and ``held_with`` the
+    state each sensitivity is held with there; ``equations`` what
     :func:`run_sensitivity` hands the runner. Refuses as it refuses.
     """
     project = _as_project(model)
@@ -777,9 +789,17 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
     weight_floor = (floor_from, floor_factor)
 
     # The floor the run applies -- each compartment's own -- on the states and
-    # nothing after them.
+    # nothing after them: a sensitivity may perfectly well be negative. But each
+    # is held with its state (``held_with`` in .solvers.ndf): while the floor
+    # holds a compartment at zero it is zero for every value of the parameter
+    # near this one, so its dy/dp is zero -- put there the moment the hold
+    # begins, a moment that moves with the parameter, and kept there while it
+    # lasts -- and what the compartment feeds takes nothing of it.
     from .runner import non_negative_states
     non_negative = non_negative_states(project, system) + [False] * (N - n)
+    held_with = np.full(N, -1, dtype=np.int64)
+    for j in range(m):
+        held_with[n * (j + 1):n * (j + 2)] = np.arange(n)
 
     return {
         'dydt': dydt,
@@ -796,8 +816,10 @@ def sensitivity_problem(model: Any, parameters: Optional[Sequence[str]] = None, 
         'system': system,
         'project': project,
         'equations': {'dydt': dydt, 'y0': Y0, 'abstol': atol, 'jacobian': big_jacobian, 'solver': 'ndf',
-                      'on_segment': on_segment, 'weight_floor': weight_floor, 'iteration_matrix': block_matrix},
+                      'on_segment': on_segment, 'weight_floor': weight_floor, 'held_with': held_with,
+                      'iteration_matrix': block_matrix},
         'weight_floor': weight_floor,
+        'held_with': held_with,
         'compiled': model_compiled,
         'wanted': wanted,
         'tangent': tangent,

@@ -127,7 +127,8 @@ function variable_order(f::RHSFunction, tspan_in::AbstractVector{<:Real}, y0::Ab
             rows=_opt(opts, "rows"),
             landing=_landing_opt(opts),
             weight_floor=_opt(opts, "weight_floor"),
-            iteration_matrix=_opt(opts, "iteration_matrix"))
+            iteration_matrix=_opt(opts, "iteration_matrix"),
+            held_with=_opt(opts, "held_with"))
     catch e
         e isa SolverError || rethrow()
         failure = variable_order_failure(e, t0)

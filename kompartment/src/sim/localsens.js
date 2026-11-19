@@ -44,7 +44,9 @@
  * runner's own machinery (`equations` in ./runner.js): restarted at every
  * switch time, through the discrete events, with the blocks that remember
  * primed and fed, the model's solver settings, its floor on each compartment
- * as the compartment sets it, the clock interpolation, and progress and Stop.
+ * as the compartment sets it -- each sensitivity held with its compartment,
+ * zero while the floor holds it -- the clock interpolation, and progress and
+ * Stop.
  * It used to call the solver directly, with none of that -- so a model with a
  * switch time, a compartment allowed below zero or a step limit gave states
  * that were not the run's, and the dialog could be neither followed nor
@@ -271,11 +273,17 @@ export function uncarried(project, system, wanted) {
 				+ 'the present.';
 		}
 	}
-	const corners = switchTimes(project);
+	// Asked of the project the system was laid out from, whose block is the one
+	// moved: in a model with transports that is the builder's own copy, the
+	// transports written out, and moving its block left the switch times of the
+	// project handed in where they were -- the corner was never seen, and dy/dp
+	// was integrated across it.
+	const built = system.builtFrom ?? project;
+	const corners = switchTimes(built);
 	for (const e of wanted) {
 		const entry = (system.layout.parameters ?? []).find((p) => e.slot >= p.base && e.slot < p.base + p.width);
 		if (!entry?.block) continue;
-		const moved = withBlockMoved(entry.block, () => switchTimes(project));
+		const moved = withBlockMoved(entry.block, () => switchTimes(built));
 		if (moved.length !== corners.length || moved.some((v, i) => v !== corners[i])) {
 			return `'${slotLabel(e)}' places a corner of the run (a switch time, or when something `
 				+ 'starts or stops): moving it moves a discontinuity, and dy/dp with respect to it is an '
@@ -610,9 +618,18 @@ export function runSensitivity(input, opts = {}) {
 
 	// --- and the solve, as a run of the model: see `equations` in ./runner.js.
 	// The floor there is the run's -- each compartment as it sets it -- and
-	// applies to the states and to nothing after them: a sensitivity may
-	// perfectly well be negative. Progress and Stop are read through one hook,
-	// so a caller with only a Stop to offer still has one read.
+	// applies to the states: a sensitivity may perfectly well be negative, and
+	// nothing floors it. But each is held with its state (`heldWith` in
+	// ../ode/solvers/ndf.js). While the floor holds a compartment at zero it is
+	// zero for every value of the parameter near this one, so its dy/dp is zero:
+	// put there the moment the hold begins -- a moment that moves with the
+	// parameter -- and kept there while it lasts, and what the compartment feeds
+	// then takes nothing of it. Integrated as if the floor were not there, it
+	// went on: A = max(0, 1 - k·t) empties at t = 1/k, and its dA/dk went on
+	// from -1/k to -t where it is 0. Progress and Stop are read through one
+	// hook, so a caller with only a Stop to offer still has one read.
+	const heldWith = new Int32Array(N).fill(-1);
+	for (let j = 0; j < m; j++) for (let i = 0; i < n; i++) heldWith[n * (j + 1) + i] = i;
 	let results;
 	try {
 		results = run(project, {
@@ -628,6 +645,7 @@ export function runSensitivity(input, opts = {}) {
 				solver: 'ndf',
 				onSegment,
 				weightFloor,
+				heldWith,
 				iterationMatrix: blockMatrix(pat, n, m, stateAt),
 			},
 		});
@@ -677,14 +695,21 @@ export function runSensitivity(input, opts = {}) {
  *     [ -a·C_2        A    ]  ...
  *
  * so the states' block is solved first and each sensitivity's after it, the
- * coupling carried to its right-hand side: one factorisation of A -- two while
- * the floor holds a state, whose row is the identity in the states' block
- * alone -- where the whole matrix took 1 + m, and never a pivot taken across
- * blocks. An LU of the whole matrix pivots a state's column on a
- * sensitivity's row wherever the coupling is the larger entry, and mixes that
- * row's rounding into the state's correction, which for a state near zero is
- * all of it: on the far-field example the emptied vault's corrections came
- * out hundreds of times their size, and Newton stopped converging on them.
+ * coupling carried to its right-hand side: one factorisation of A where the
+ * whole matrix took 1 + m, and never a pivot taken across blocks. An LU of
+ * the whole matrix pivots a state's column on a sensitivity's row wherever
+ * the coupling is the larger entry, and mixes that row's rounding into the
+ * state's correction, which for a state near zero is all of it: on the
+ * far-field example the emptied vault's corrections came out hundreds of
+ * times their size, and Newton stopped converging on them.
+ *
+ * A state the floor holds is a row of the identity in the states' block, and
+ * the sensitivities are held with their states (`heldWith`): the same row is
+ * the identity in every sensitivity's block, with nothing of the coupling
+ * under it, so the one factorisation serves them all. Held, the row's
+ * correction is its right-hand side alone. The rows held are read off the
+ * states' (`held` up to `n`): the solver marks a sensitivity's with its
+ * state's.
  *
  * @param {{n: number, nnz: number, colPtr: Int32Array, rowIdx: Int32Array}} base  J's pattern
  * @param {number} n  the states
@@ -711,9 +736,8 @@ function blockMatrix(base, n, m, stateAt) {
 	return (pattern, values, opts) => {
 		extract(values);
 		const states = iterationMatrix(base, J, { ...opts, n });
-		let apart = null; // the sensitivities' own, while the floor holds a state
-		let sens = states;
 		let a = 0;
+		let any = false; // a row held as the matrix was last formed
 		return {
 			get info() { return states.info; },
 			get sparse() { return states.sparse; },
@@ -725,14 +749,9 @@ function blockMatrix(base, n, m, stateAt) {
 				if (w) throw new Error('the sensitivity equations are not solved in scaled variables');
 				extract(valuesNow);
 				a = aNow;
-				let any = false;
+				any = false;
 				if (held) for (let i = 0; i < n; i++) { heldY[i] = held[i]; if (held[i]) any = true; }
 				states.form(a, J, null, any ? heldY : null);
-				if (any) {
-					apart ??= iterationMatrix(base, J, { ...opts, n });
-					apart.form(a, J, null, null);
-					sens = apart;
-				} else sens = states;
 			},
 			solve(rhs, out) {
 				const x = out ?? new Float64Array(n * (1 + m));
@@ -750,7 +769,9 @@ function blockMatrix(base, n, m, stateAt) {
 					}
 					const off = n * (j + 1);
 					for (let i = 0; i < n; i++) rs[i] = rhs[off + i] + a * cd[i];
-					const sx = sens.solve(rs, xs);
+					// ...and none of it on a held row.
+					if (any) for (let i = 0; i < n; i++) if (heldY[i]) rs[i] = rhs[off + i];
+					const sx = states.solve(rs, xs);
 					for (let i = 0; i < n; i++) x[off + i] = sx[i];
 				}
 				return x;

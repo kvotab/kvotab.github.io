@@ -115,6 +115,7 @@ Solution variable_order(const RhsFunction& f, const Vec& tspan, const Vec& y0, c
     n.landing = o.landing;
     n.weight_floor = o.weight_floor;
     n.iteration_matrix = o.iteration_matrix;
+    n.held_with = o.held_with;
     Solution result;
     try {
         result = ndf(fun, tspan, y0, n);

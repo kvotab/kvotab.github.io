@@ -393,9 +393,11 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
         if (jac) opts.jacobian = &*jac;
     } else {
         opts.jacobian = equations->jacobian;
-        // Some of the equations' entries weighed against others as well, and the matrix Newton
-        // iterates with, solved a block at a time.
+        // Some of the equations' entries weighed against others as well, some held with the
+        // model's states the floor holds, and the matrix Newton iterates with, solved a block at
+        // a time.
         opts.weight_floor = equations->weight_floor;
+        opts.held_with = equations->held_with;
         opts.iteration_matrix = equations->iteration_matrix;
     }
     opts.non_negative = non_negative;

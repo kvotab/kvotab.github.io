@@ -8,7 +8,8 @@ three things the application adds beyond the published method are here too:
 
 * ``non_negative`` states are integrated as the projected system -- a state
   at zero whose equation pushes it lower is held there, its Jacobian row with
-  it -- and every hold is counted;
+  it -- and every hold is counted; the rows a caller holds with such a state
+  (``held_with``) are held, and put onto zero, with it;
 * a Jacobian that declines a point is differenced there instead;
 * a run that accepts steps but covers none of the interval stops, saying so.
 
@@ -178,7 +179,8 @@ class DifferenceTable:
                 tmp += w * c[j]
             c[m] = tmp
 
-    def value_at(self, k: int, s: float, clamp: Optional[np.ndarray]) -> np.ndarray:
+    def value_at(self, k: int, s: float, clamp: Optional[np.ndarray],
+                 followers: Optional['_Followers'] = None) -> np.ndarray:
         b = basis_at(s, k)
         out = self.cols[0].copy()
         for j in range(1, k + 1):
@@ -186,6 +188,9 @@ class DifferenceTable:
         if clamp is not None and clamp.size:
             sub = out[clamp]
             out[clamp] = np.where(sub < 0, 0.0, sub)
+            # ...and the rows held with a state put onto zero, put there with it.
+            if followers is not None:
+                out[followers.rows_of(sub < 0)] = 0.0
         return out
 
     def forget(self, i: Any) -> None:
@@ -274,10 +279,52 @@ def _weight_floor(option: Any, neq: int) -> Optional[Tuple[np.ndarray, np.ndarra
     return which, frm[which], factor[which]
 
 
-class _Projected:
-    """The right-hand side of the projected system (``projectedDerivative``)."""
+class _Followers:
+    """The rows held with a constrained state (``heldWith``): ``rows``, and for
+    each the place in ``constrained`` of the state it is held with (``of``),
+    by state and then by row."""
 
-    def __init__(self, f: Callable[[float, np.ndarray], np.ndarray], constrained: np.ndarray, neq: int) -> None:
+    def __init__(self, rows: np.ndarray, of: np.ndarray) -> None:
+        self.rows = rows
+        self.of = of
+
+    def rows_of(self, which: np.ndarray) -> np.ndarray:
+        """The rows held with the constrained states ``which`` (a mask over ``constrained``) picks."""
+        return self.rows[which[self.of]]
+
+
+def _held_with(option: Any, neq: int, constrained: np.ndarray) -> Optional[_Followers]:
+    """``held_with`` checked (``heldWithOf``): None, or the rows held with each
+    constrained state; a row held with a state the floor never holds is held
+    never, and left out."""
+    if option is None:
+        return None
+    option = np.asarray(option)
+    if option.shape != (neq,):
+        raise SolverError('heldWith', f'heldWith needs an entry for each of the {neq} equations')
+    for r in range(neq):
+        i = option[r]
+        if not (float(i).is_integer() and -1 <= i < neq and i != r):
+            raise SolverError('heldWith', f"heldWith's entry {r} is not another state: {js_text(float(i))}")
+    place = np.full(neq, -1, dtype=np.int64)
+    place[constrained] = np.arange(constrained.size, dtype=np.int64)
+    option = option.astype(np.int64)
+    of = np.where(option >= 0, place[np.maximum(option, 0)], -1)
+    keep = np.nonzero(of >= 0)[0]
+    if not keep.size:
+        return None
+    # By state, then by row, as the application keeps them.
+    order = np.lexsort((keep, of[keep]))
+    return _Followers(keep[order], of[keep][order])
+
+
+class _Projected:
+    """The right-hand side of the projected system (``projectedDerivative``).
+    The rows held with a constrained state (``followers``) are held whenever it
+    is: their derivatives zero, their rows marked."""
+
+    def __init__(self, f: Callable[[float, np.ndarray], np.ndarray], constrained: np.ndarray, neq: int,
+                 followers: Optional[_Followers] = None) -> None:
         self.f = f
         self.constrained = constrained
         self.held_rows = np.zeros(neq, dtype=np.uint8)
@@ -285,6 +332,7 @@ class _Projected:
         self._c64 = np.asarray(constrained, dtype=np.int64)
         self._above = kernels.kernel('all_above_zero')
         self._any_held = False
+        self.followers = followers
 
     def __call__(self, t: float, y: np.ndarray) -> np.ndarray:
         # Every constrained state above zero, which is nearly always: nothing
@@ -294,6 +342,8 @@ class _Projected:
             dy = self.f(t, y)
             if self._any_held:
                 self.held_rows[self.constrained] = 0
+                if self.followers is not None:
+                    self.held_rows[self.followers.rows] = 0
                 self._any_held = False
             return dy
         dy = np.array(self.f(t, y), dtype=float)
@@ -305,6 +355,11 @@ class _Projected:
         np.maximum(self.push, push, out=self.push)
         dy[c[hold]] = 0.0
         self.held_rows[c] = hold
+        fol = self.followers
+        if fol is not None:
+            held = hold[fol.of]
+            dy[fol.rows[held]] = 0.0
+            self.held_rows[fol.rows] = held
         self._any_held = bool(hold.any())
         return dy
 
@@ -322,7 +377,8 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         ends_only: bool = False, mass: Optional[np.ndarray] = None,
         landing: Optional[Callable[[float, float], float]] = None,
         weight_floor: Optional[Tuple[Sequence[int], Sequence[float]]] = None,
-        iteration_matrix: Optional[Callable[..., Any]] = None) -> Dict[str, Any]:
+        iteration_matrix: Optional[Callable[..., Any]] = None,
+        held_with: Optional[Sequence[int]] = None) -> Dict[str, Any]:
     """Integrates y' = f(t, y) over ``tspan``, answering at every time in it.
 
     ``landing(t, t_next)``, where given, says where a step from t to t_next is
@@ -335,6 +391,14 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
     itself (``from[i]`` -1: not), and the error it is held to is rtol of the
     larger (``weightFloor``). The sensitivities of :mod:`..localsens` are
     weighed against their states over |p|. Not under norm control.
+
+    ``held_with``, given, is one entry per state: the ``non_negative`` state it
+    is held with, or -1 (``heldWith``). Such a row's derivative is held at zero
+    wherever its state's is, its row of the iteration matrix held with its
+    state's, and it is put onto zero, its history forgotten, wherever its state
+    is put there. The sensitivities of :mod:`..localsens` are held with their
+    states: a state held at zero is zero for every nearby value of a parameter,
+    so its sensitivity is zero, from the moment the hold begins.
 
     ``iteration_matrix``, given, makes the matrix Newton iterates with from
     :class:`.matrix.IterationMatrix`'s arguments, in its shape (``form``,
@@ -385,7 +449,10 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
 
     constrained = np.array([i for i in non_negative if not (mass_arr is not None and not mass_arr[i])],
                            dtype=np.int64)
-    projected = _Projected(raw, constrained, neq) if constrained.size else None
+    # Rows held with a constrained state (``held_with``): held where it is held,
+    # put onto zero where it is put there.
+    followers = _held_with(held_with, neq, constrained)
+    projected = _Projected(raw, constrained, neq, followers) if constrained.size else None
     rhs = projected if projected is not None else raw
     clamp = constrained if constrained.size else None
 
@@ -488,6 +555,9 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         rel = (held_in_w[constrained] == 1) & (projected.held_rows[constrained] == 0)  # type: ignore[index]
         if rel.any():
             held_now[constrained[rel]] = 0  # type: ignore[index]
+            # ...and the rows held with them, released with them.
+            if followers is not None:
+                held_now[followers.rows_of(rel)] = 0  # type: ignore[index]
             return True
         return False
 
@@ -560,7 +630,7 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
     d = np.zeros(neq)
 
     def dense_at(tq: float) -> np.ndarray:
-        return table.value_at(cur['k'], (tq - tnew) / cur['h'], clamp)
+        return table.value_at(cur['k'], (tq - tnew) / cur['h'], clamp, followers)
 
     def change_step(factor: float) -> None:
         nonlocal consecutive, mask_reforms
@@ -581,6 +651,10 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         idx = c[sel]
         yv[idx] = 0.0
         table.forget(idx)
+        if followers is not None:
+            rows = followers.rows_of(sel)
+            yv[rows] = 0.0
+            table.forget(rows)
         stats['negative'] += int(idx.size)
         rhs(t, yv)
         read_held()
@@ -777,11 +851,16 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
         y = table.y
         if projected is not None:
             c = constrained
-            negs = c[y[c] < 0]
+            below = y[c] < 0
+            negs = c[below]
             if negs.size:
                 y[negs] = 0.0
                 stats['negative'] += int(negs.size)
                 table.forget(negs)
+                if followers is not None:
+                    rows = followers.rows_of(below)
+                    y[rows] = 0.0
+                    table.forget(rows)
             held[c] += (projected.push * abs(cur['h']) > atol[c]).astype(np.int64)  # type: ignore[index]
 
         if events is not None:
@@ -797,6 +876,8 @@ def ndf(f: Callable[[float, np.ndarray], np.ndarray], tspan: Sequence[float], y0
                 if clamp is not None:
                     sub = y[clamp]
                     y[clamp] = np.where(sub < 0, 0.0, sub)
+                    if followers is not None:
+                        y[followers.rows_of(sub < 0)] = 0.0
                 vr[:] = hit['values']
                 stopped = {'t': t_e, 'y': y.copy(), 'which': hit['which']}
                 last = True

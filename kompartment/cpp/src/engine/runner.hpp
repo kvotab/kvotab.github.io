@@ -98,7 +98,7 @@ using ProgressFunction = std::function<bool(double fraction, double t)>;
 /// `y0` as long as it; `abstol` one per element; `jacobian` the solver's; `solver` the one
 /// it is kept to whatever happens; `on_segment(from, interval)` told where each stretch
 /// between restarts starts and the clock's interpolation interval. Nothing after the states
-/// is held at zero.
+/// is floored at zero, but `held_with`, given, holds some with the states the floor holds.
 struct Equations {
     RhsFunction dydt;
     Vec y0;
@@ -110,6 +110,8 @@ struct Equations {
     const WeightFloor* weight_floor = nullptr;
     /// The matrix Newton iterates with, made a block at a time (`iteration_matrix` of the NDF).
     IterationMatrixFactory iteration_matrix;
+    /// Some entries held with the model's states the floor holds (`held_with` of the NDF).
+    const Vec* held_with = nullptr;
 };
 
 struct RunOptions {

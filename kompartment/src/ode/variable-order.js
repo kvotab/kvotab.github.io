@@ -120,6 +120,9 @@ export function variableOrder(f, tspan, y0, opts = {}) {
 			// A state weighed against another's size as well: the sensitivities
 			// of ../sim/localsens.js against their states.
 			...(opts.weightFloor ? { weightFloor: opts.weightFloor } : {}),
+			// ...and held with one the floor holds: the same sensitivities with
+			// their states.
+			...(opts.heldWith ? { heldWith: opts.heldWith } : {}),
 			// ...and the matrix Newton iterates with, where the caller's system
 			// can be solved a block at a time.
 			...(opts.iterationMatrix ? { iterationMatrix: opts.iterationMatrix } : {}),

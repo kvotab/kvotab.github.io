@@ -160,7 +160,7 @@ async function augmentedModule() {
 		(_, rel) => `from '${pathToFileURL(path.join(dir, rel)).href}'`);
 	const anchor = '\tlet results;\n\ttry {\n\t\tresults = run(project, {';
 	if (!text.includes(anchor)) throw new Error('localsens.js has changed: no place for the hook');
-	text = text.replace(anchor, '\tif (opts.expose) return opts.expose({ dydt, bigJacobian, Y0, atol, n, m, weightFloor });\n'
+	text = text.replace(anchor, '\tif (opts.expose) return opts.expose({ dydt, bigJacobian, Y0, atol, n, m, weightFloor, heldWith });\n'
 		+ anchor);
 	return import(`data:text/javascript;base64,${Buffer.from(text).toString('base64')}`);
 }
@@ -210,9 +210,10 @@ switch (req.task) {
 		const mod = await augmentedModule();
 		out = guarded(() => mod.runSensitivity(req.model, {
 			...(req.opts ?? {}),
-			expose: ({ dydt, bigJacobian, Y0, atol, n, m, weightFloor }) => ({
+			expose: ({ dydt, bigJacobian, Y0, atol, n, m, weightFloor, heldWith }) => ({
 				y0: Y0, atol, n, m,
 				weightFloor: { from: Array.from(weightFloor.from), factor: Array.from(weightFloor.factor) },
+				heldWith: Array.from(heldWith),
 				pattern: { n: bigJacobian.pattern.n, colPtr: bigJacobian.pattern.colPtr, rowIdx: bigJacobian.pattern.rowIdx },
 				groups: bigJacobian.groups,
 				points: req.points.map(({ t, Y }) => {

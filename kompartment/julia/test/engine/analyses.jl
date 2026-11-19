@@ -202,6 +202,80 @@ end
     @test_throws ArgumentError K.run_sensitivity(m, "k")
 end
 
+const _FLOOR_SIM = """{"start_time": 0, "end_time": 10, "output_points": 11, "spacing": "linear", "solver": "ndf",
+                       "rtol": 1e-9, "abstol": ABSTOL, "time_unit": "year"}"""
+
+@testset "dy/dp of a compartment the floor holds" begin
+    # A loses a fixed k a year and feeds B in proportion to itself: A' = -k - lam A, B' = lam A, so
+    # A = (1 + k/lam) e^(-lam t) - k/lam until it empties at t* = ln(1 + lam/k)/lam, and the floor holds it at
+    # zero from then on, for every k near this one. Its dA/dk is zero there, and B, fed nothing, keeps what it
+    # had: B = 1 - k t*, so dB/dk = -t* + 1/(k + lam) and dB/dlam = -k dt*/dlam. The sensitivity was integrated
+    # as if the floor were not there: dA/dk went on falling past t*, and B took lam times it.
+    k, lam = 0.2, 0.1
+    emptied() = K.parse_json("""{"name": "emptied", "simulation": $(replace(_FLOOR_SIM, "ABSTOL" => "1e-10")),
+        "parameters": [{"name": "k", "value": $k, "index_lists": []}, {"name": "lam", "value": $lam, "index_lists": []}],
+        "compartments": [{"name": "A", "initial": "1", "index_lists": []}, {"name": "B", "initial": "0", "index_lists": []}],
+        "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false, "index_lists": []},
+                      {"name": "AB", "from": "A", "to": "B", "rate": "lam", "index_lists": []}]}""")
+    t_star = log(1 + lam / k) / lam
+    dt_dlam = -t_star / lam + 1 / (lam * (k + lam))
+    for differenced in (false, true), jacobian in ("analytic", "numeric")
+        m = emptied()
+        m["simulation"]["jacobian"] = jacobian
+        r = K.run_sensitivity(K.Model(m), ["k", "lam"]; differenced)
+        held = r.t .> t_star
+        @test maximum(abs.(r.sens[1][1][.!held] .- (exp.(-lam .* r.t[.!held]) .- 1) ./ lam)) < 1e-6
+        @test maximum(abs.(r.y[1][held])) < 1e-12
+        @test maximum(abs.(r.sens[1][1][held])) < 1e-9 && maximum(abs.(r.sens[2][1][held])) < 1e-9
+        @test maximum(abs.(r.sens[1][2][held] ./ (-t_star + 1 / (k + lam)) .- 1)) < 1e-6
+        @test maximum(abs.(r.sens[2][2][held] ./ (-k * dt_dlam) .- 1)) < 1e-5
+    end
+    # Held and released again: A' = c t - k empties A, holds it while c t < k, and lets it go at t2 = k/c, from
+    # when A = c (t - t2)^2/2 and dA/dk = -(t - t2). Integrated through the hold as if the floor were not there,
+    # dA/dk was -t.
+    released = K.parse_json("""{"name": "released", "simulation": $(replace(_FLOOR_SIM, "ABSTOL" => "1e-12")),
+        "parameters": [{"name": "k", "value": 0.5, "index_lists": []}, {"name": "c", "value": 0.1, "index_lists": []}],
+        "compartments": [{"name": "A", "initial": "1", "index_lists": []}],
+        "inflows": [{"name": "In", "to": "A", "rate": "c * time()", "index_lists": []}],
+        "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false, "index_lists": []}]}""")
+    r = K.run_sensitivity(K.Model(released), ["k", "c"])
+    t1 = 5 - sqrt(5)
+    before, held, after = r.t .< t1, (r.t .>= t1) .& (r.t .<= 5), r.t .> 5
+    @test maximum(abs.(r.sens[1][1][before] .+ r.t[before])) < 1e-6
+    @test maximum(abs.(r.sens[1][1][held])) < 1e-9 && maximum(abs.(r.sens[2][1][held])) < 1e-9
+    @test maximum(abs.(r.sens[1][1][after] ./ .-(r.t[after] .- 5) .- 1)) < 1e-5
+    @test maximum(abs.(r.sens[2][1][after] ./ ((r.t[after] .- 5) .^ 2 ./ 2 .+ 5 .* (r.t[after] .- 5)) .- 1)) < 1e-4
+end
+
+@testset "a parameter that places a switch time beside a transport is refused" begin
+    # The builder writes the transports out into a project of its own, whose blocks are copies: the parameter was
+    # moved there and the switch times asked of the project handed in, so the corner it places was never seen.
+    model(transport) = K.parse_json("""{"name": "corner", "simulation": {"start_time": 0, "end_time": 100,
+        "output_points": 5, "spacing": "linear", "solver": "ndf", "rtol": 1e-8, "abstol": 1e-12, "time_unit": "year",
+        "switch_times": ["t_on"]},
+        "parameters": [{"name": "k", "value": 0.01, "index_lists": []}, {"name": "t_on", "value": 40, "index_lists": []}],
+        $(transport ? "\"transports\": [\"Col\"]," : "")
+        "compartments": [{"name": "A", "initial": "1", "index_lists": []}, {"name": "B", "initial": "0", "index_lists": []}
+                         $(transport ? """, {"name": "Top", "system": "Col", "transport": "begin", "initial": "0", "index_lists": []},
+                         {"name": "Bottom", "system": "Col", "transport": "end", "initial": "0", "index_lists": []}""" : "")],
+        $(transport ? """"expressions": [{"name": "N", "system": "Col", "transport": "number", "equation": "3", "index_lists": []},
+                         {"name": "Counter", "system": "Col", "transport": "counter", "index_lists": []}],""" : "")
+        "transfers": [{"name": "a2b", "from": "A", "to": "B", "rate": "k", "index_lists": []}
+                      $(transport ? """, {"name": "Down", "system": "Col", "from": "Col.Top", "to": "Col.Bottom", "rate": "k", "index_lists": []}""" : "")],
+        "inflows": [{"name": "In", "to": "$(transport ? "Col.Top" : "A")", "rate": "if(time() >= t_on, 1, 0)", "index_lists": []}]}""")
+    for transport in (false, true)
+        e = try
+            K.run_sensitivity(K.Model(model(transport)), ["t_on"])
+            nothing
+        catch err
+            err
+        end
+        @test e isa K.SensitivityError && startswith(e.message, "'t_on' places a corner of the run")
+        @test length(K.run_sensitivity(K.Model(model(transport)), ["k"]).t) ==
+              length(K.run_project(K.project(K.Model(model(transport)))).t)
+    end
+end
+
 """The far-field example on two cells of each kind, its matrix layers laid out `grid`; with `surface` ("f" or
 "aperture"), the path's own settings as parameters too -- its travel time, Peclet number, depth and wetted surface."""
 function farfield_model(grid="matched", surface=nothing)

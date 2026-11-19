@@ -2191,6 +2191,121 @@ test('what the sensitivity equations cannot carry is refused, by name', async ()
 	// with the switch time as a row of its own, as the run reports it.
 	assert(runSensitivity(corner, { parameters: ['k'] }).t.length === run(corner).t.length,
 		'refused for the wrong parameter');
+	// A switch time in a model with transports. The builder writes the
+	// transports out into a project of its own, whose blocks are copies, and
+	// the parameter was moved there while the switch times were asked of the
+	// project handed in: the corner was never seen, and dy/dp was integrated
+	// across it.
+	const column = base();
+	column.simulation.switch_times = ['t_on'];
+	column.transports = ['Col'];
+	column.compartments.push(
+		{ name: 'Top', system: 'Col', transport: 'begin', initial: '0', index_lists: [] },
+		{ name: 'Bottom', system: 'Col', transport: 'end', initial: '0', index_lists: [] },
+	);
+	column.expressions = [
+		{ name: 'N', system: 'Col', transport: 'number', equation: '3', index_lists: [] },
+		{ name: 'Counter', system: 'Col', transport: 'counter', index_lists: [] },
+	];
+	column.transfers.push({ name: 'Down', system: 'Col', from: 'Col.Top', to: 'Col.Bottom', rate: 'k', index_lists: [] });
+	column.inflows = [{ name: 'In', to: 'Col.Top', rate: 'if(time() >= t_on, 1, 0)', index_lists: [] }];
+	refused(column, ['t_on'], /'t_on' places a corner of the run/, 'a switch time beside a transport');
+	assert(runSensitivity(column, { parameters: ['k'] }).t.length === run(column).t.length,
+		'a model with transports refused for the wrong parameter');
+});
+
+test('dy/dp of a compartment the floor holds at zero is zero while it is held', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// A loses a fixed k a year and feeds B in proportion to itself:
+	// A' = -k - lam*A, B' = lam*A, so A = (1 + k/lam)e^(-lam*t) - k/lam until
+	// it empties at t* = ln(1 + lam/k)/lam, and the floor holds it at zero
+	// from then on, for every k near this one. Its dA/dk is zero there, and B,
+	// fed nothing, keeps what it had: B = 1 - k*t*, so dB/dk = -t* + 1/(k + lam).
+	// The sensitivity was integrated as if the floor were not there: dA/dk went
+	// on falling past t*, and B took lam times it.
+	// (An absolute tolerance of 1e-10: at 1e-12, what the difference of df/dp
+	// along lam loses to rounding is more than dy/dp is held to, and that
+	// solve gives up where A empties, as it did before.)
+	const k = 0.2;
+	const lam = 0.1;
+	const model = {
+		name: 'emptied',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-10, time_unit: 'year',
+		},
+		parameters: [
+			{ name: 'k', value: k, index_lists: [] },
+			{ name: 'lam', value: lam, index_lists: [] },
+		],
+		compartments: [
+			{ name: 'A', initial: '1', index_lists: [] },
+			{ name: 'B', initial: '0', index_lists: [] },
+		],
+		transfers: [
+			{ name: 'Out', from: 'A', to: null, rate: 'k', multiply_by_donor: false, index_lists: [] },
+			{ name: 'AB', from: 'A', to: 'B', rate: 'lam', index_lists: [] },
+		],
+	};
+	const tStar = Math.log(1 + lam / k) / lam;
+	for (const differenced of [false, true]) {
+		for (const jacobian of ['analytic', 'numeric']) {
+			const m = structuredClone(model);
+			m.simulation.jacobian = jacobian;
+			const r = runSensitivity(m, { parameters: ['k', 'lam'], differenced });
+			const what = `${differenced ? 'differenced' : 'generated'} df/dp, ${jacobian} Jacobian`;
+			for (let j = 0; j < r.t.length; j++) {
+				const t = r.t[j];
+				if (t < tStar) {
+					const e = Math.exp(-lam * t);
+					close(r.sens[0][0][j], (e - 1) / lam, 1e-6, `${what}: dA/dk at ${t}`);
+					continue;
+				}
+				close(r.y[0][j], 0, 1e-12, `${what}: A at ${t}`);
+				close(r.sens[0][0][j], 0, 1e-9, `${what}: dA/dk at ${t}, held`);
+				close(r.sens[1][0][j], 0, 1e-9, `${what}: dA/dlam at ${t}, held`);
+				close(r.sens[0][1][j], -tStar + 1 / (k + lam), 1e-6, `${what}: dB/dk at ${t}`);
+				// t* moves with lam as well: dB/dlam = -k*dt*/dlam.
+				const dt = -tStar / lam + 1 / (lam * (k + lam));
+				close(r.sens[1][1][j], -k * dt, 1e-5, `${what}: dB/dlam at ${t}`);
+			}
+		}
+	}
+});
+
+test('dy/dp of a compartment released by the floor starts again from zero', async () => {
+	const { runSensitivity } = await import('../src/sim/localsens.js');
+	// A' = c*t - k: A empties, is held at zero while c*t < k, and is released
+	// at t2 = k/c, from when A = c(t - t2)^2/2 and dA/dk = -(t - t2). Integrated
+	// through the hold as if the floor were not there, dA/dk was -t.
+	const model = {
+		name: 'released',
+		simulation: {
+			start_time: 0, end_time: 10, output_points: 11, spacing: 'linear',
+			solver: 'ndf', rtol: 1e-9, abstol: 1e-12, time_unit: 'year',
+		},
+		parameters: [{ name: 'k', value: 0.5, index_lists: [] }, { name: 'c', value: 0.1, index_lists: [] }],
+		compartments: [{ name: 'A', initial: '1', index_lists: [] }],
+		inflows: [{ name: 'In', to: 'A', rate: 'c * time()', index_lists: [] }],
+		transfers: [{ name: 'Out', from: 'A', to: null, rate: 'k', multiply_by_donor: false, index_lists: [] }],
+	};
+	const r = runSensitivity(model, { parameters: ['k', 'c'] });
+	const t1 = 5 - Math.sqrt(25 - 20);
+	for (let j = 0; j < r.t.length; j++) {
+		const t = r.t[j];
+		if (t < t1) {
+			close(r.sens[0][0][j], -t, 1e-6, `dA/dk at ${t}`);
+			close(r.sens[1][0][j], t * t / 2, 1e-6, `dA/dc at ${t}`);
+		} else if (t <= 5) {
+			close(r.sens[0][0][j], 0, 1e-9, `dA/dk at ${t}, held`);
+			close(r.sens[1][0][j], 0, 1e-9, `dA/dc at ${t}, held`);
+		} else {
+			close(r.y[0][j], 0.05 * (t - 5) ** 2, 1e-6, `A at ${t}`);
+			close(r.sens[0][0][j], -(t - 5), 1e-5, `dA/dk at ${t}, released`);
+			// dt2/dc = -k/c^2 = -50: dA/dc = (t - t2)^2/2 + c(t - t2)*50.
+			close(r.sens[1][0][j], (t - 5) ** 2 / 2 + 5 * (t - 5), 1e-4, `dA/dc at ${t}, released`);
+		}
+	}
 });
 
 test('the sensitivity dialog gets one series per state, named as the chart names it', async () => {

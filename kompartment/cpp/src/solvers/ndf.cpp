@@ -204,6 +204,26 @@ Floor weight_floor_of(const WeightFloor* option, int neq) {
     return fl;
 }
 
+/// `held_with` checked (`heldWithOf`): one entry per state, the state (counted from zero) it is held
+/// with or -1; as the state each row is held with, -1 for none -- empty where the option is not given.
+std::vector<I32> held_with_of(const Vec* option, int neq) {
+    std::vector<I32> out;
+    if (option == nullptr) return out;
+    if (static_cast<int>(option->size()) != neq) {
+        throw SolverError("heldWith", "heldWith needs an entry for each of the " + std::to_string(neq) + " equations");
+    }
+    out.assign(static_cast<std::size_t>(neq), -1);
+    for (int r = 0; r < neq; r++) {
+        const double i = (*option)[static_cast<std::size_t>(r)];
+        const bool whole = std::isfinite(i) && i == std::floor(i);
+        if (!(whole && -1 <= i && i < neq && i != r)) {
+            throw SolverError("heldWith", "heldWith's entry " + std::to_string(r) + " is not another state: " + js_text(i));
+        }
+        out[static_cast<std::size_t>(r)] = static_cast<I32>(i);
+    }
+    return out;
+}
+
 double norm_of(const Weighting& w, const Vec& v) {
     const Vec& inv = w.inv;
     if (w.norm_control) return std::sqrt(sv::seq_sum_squares(v)) * inv[0];
@@ -253,6 +273,12 @@ struct State {
     std::vector<std::uint8_t> held_now;
     std::vector<std::uint8_t> held_in_w;
     bool w_held = false;                // a row held in the matrix as it was last formed
+    // The rows held with each constrained state (`held_with`), by its place in `constrained`: those
+    // of the q-th are fol_rows[fol_start[q]] up to fol_rows[fol_start[q + 1]]; none where
+    // `followers` is false.
+    bool followers = false;
+    std::vector<I32> fol_start;
+    std::vector<I32> fol_rows;
     // the Jacobian and the matrix
     const Pattern* pattern = nullptr;
     const ColumnGroups* groups = nullptr;
@@ -319,7 +345,8 @@ inline void raw(State& s, Vec& out, double t, const Vec& y) {
 }
 
 /// The derivative of the projected system (`projectedDerivative`): a
-/// constrained state at or below zero whose equation pushes it lower is held.
+/// constrained state at or below zero whose equation pushes it lower is held,
+/// and the rows held with it (`held_with`) with it.
 void rhs(State& s, Vec& out, double t, const Vec& y) {
     if (!s.projected) {
         raw(s, out, t, y);
@@ -330,6 +357,8 @@ void rhs(State& s, Vec& out, double t, const Vec& y) {
         raw(s, out, t, y);
         if (s.any_held) {
             for (I32 i : c) s.held_rows[i] = 0;
+            if (s.followers)
+                for (I32 r : s.fol_rows) s.held_rows[r] = 0;
             s.any_held = false;
         }
         return;
@@ -347,6 +376,16 @@ void rhs(State& s, Vec& out, double t, const Vec& y) {
             anyh = true;
         }
         s.held_rows[i] = hold ? 1 : 0;
+    }
+    if (s.followers) {
+        for (std::size_t q = 0; q < c.size(); q++) {
+            const std::uint8_t h = s.held_rows[c[q]];
+            for (I32 p = s.fol_start[q]; p < s.fol_start[q + 1]; p++) {
+                const I32 r = s.fol_rows[p];
+                s.held_rows[r] = h;
+                if (h == 1) out[r] = 0.0;
+            }
+        }
     }
     s.any_held = anyh;
     if (anyh) s.pushed = true;
@@ -550,15 +589,57 @@ void value_at(Vec& out_, State& s, int k, double sq, bool clamp) {
         for (int i = 0; i < n; i++) out[i] += bj * c[i];
     }
     if (clamp) {
-        for (I32 i : s.constrained) {
+        for (std::size_t q = 0; q < s.constrained.size(); q++) {
+            const I32 i = s.constrained[q];
             const double v = out[i];
             out[i] = v < 0 ? 0.0 : v;
+            // ...and the rows held with a state put onto zero, put there with it.
+            if (v < 0 && s.followers)
+                for (I32 p = s.fol_start[q]; p < s.fol_start[q + 1]; p++) out[s.fol_rows[p]] = 0.0;
         }
     }
 }
 
 inline void forget(std::vector<Vec>& D, I32 i) {
     for (std::size_t j = 1; j < D.size(); j++) D[j][i] = 0.0;
+}
+
+/// The rows held with the q-th constrained state, put onto zero with it -- and, `forget_them`, their
+/// history forgotten as its is.
+void follow_onto_zero(State& s, std::size_t q, bool forget_them) {
+    Vec& y = s.D[0];
+    for (I32 p = s.fol_start[q]; p < s.fol_start[q + 1]; p++) {
+        const I32 r = s.fol_rows[p];
+        y[r] = 0.0;
+        if (forget_them) forget(s.D, r);
+    }
+}
+
+/// The rows held with each constrained state, by its place in `constrained` (`heldWithOf`): a row held
+/// with a state the floor never holds is held never, and left out.
+void build_followers(State& s, const std::vector<I32>& held_with) {
+    s.followers = false;
+    if (held_with.empty()) return;
+    const std::vector<I32>& c = s.constrained;
+    std::vector<I32> place(held_with.size(), -1);
+    for (std::size_t q = 0; q < c.size(); q++) place[static_cast<std::size_t>(c[q])] = static_cast<I32>(q);
+    s.fol_start.assign(c.size() + 1, 0);
+    for (std::size_t r = 0; r < held_with.size(); r++) {
+        const I32 l = held_with[r];
+        if (l >= 0 && place[static_cast<std::size_t>(l)] >= 0) s.fol_start[static_cast<std::size_t>(place[static_cast<std::size_t>(l)]) + 1] += 1;
+    }
+    for (std::size_t q = 0; q < c.size(); q++) s.fol_start[q + 1] += s.fol_start[q];
+    if (s.fol_start[c.size()] == 0) return;
+    s.fol_rows.assign(static_cast<std::size_t>(s.fol_start[c.size()]), 0);
+    std::vector<I32> next(s.fol_start.begin(), s.fol_start.end() - 1);
+    for (std::size_t r = 0; r < held_with.size(); r++) {
+        const I32 l = held_with[r];
+        if (l >= 0 && place[static_cast<std::size_t>(l)] >= 0) {
+            const std::size_t q = static_cast<std::size_t>(place[static_cast<std::size_t>(l)]);
+            s.fol_rows[static_cast<std::size_t>(next[q]++)] = static_cast<I32>(r);
+        }
+    }
+    s.followers = true;
 }
 
 // --- the Jacobian and the matrix ----------------------------------------------------------------------
@@ -617,10 +698,14 @@ bool held_moved(const State& s) {
 bool released_in_w(State& s) {
     if (!s.projected) return false;
     bool any = false;
-    for (I32 i : s.constrained) {
+    for (std::size_t q = 0; q < s.constrained.size(); q++) {
+        const I32 i = s.constrained[q];
         if (s.held_in_w[i] == 1 && s.held_rows[i] == 0) {
             s.held_now[i] = 0;
             any = true;
+            // ...and the rows held with it, released with it.
+            if (s.followers)
+                for (I32 p = s.fol_start[q]; p < s.fol_start[q + 1]; p++) s.held_now[s.fol_rows[p]] = 0;
         }
     }
     return any;
@@ -676,11 +761,13 @@ bool snap_onto_bound(State& s, bool by_held) {
     }
     if (!any) return false;
     long long count = 0;
-    for (I32 i : s.constrained) {
+    for (std::size_t q = 0; q < s.constrained.size(); q++) {
+        const I32 i = s.constrained[q];
         const bool should = by_held ? s.held_rows[i] == 1 : s.ynew[i] < 0;
         if ((yv[i] > 0) && (yv[i] <= atol[i]) && should) {
             yv[i] = 0.0;
             forget(s.D, i);
+            if (s.followers) follow_onto_zero(s, q, true);
             count += 1;
         }
     }
@@ -710,7 +797,8 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
                    int min_newton, long stall_window, const EventFunctions* events, double t_start_in,
                    const Hints* hints, const StepCallback& on_accepted, const StepCallback& on_output,
                    const StepProgress& on_step, bool auto_abstol, bool ends_only, const Vec* mass, RowPool* rows,
-                   const StepLanding& landing, Floor floor_in, const IterationMatrixFactory& iteration_matrix) {
+                   const StepLanding& landing, Floor floor_in, const IterationMatrixFactory& iteration_matrix,
+                   const std::vector<I32>& held_with) {
     const int neq = static_cast<int>(y0.size());
     const std::size_t N = y0.size();
     const std::size_t npts = tspan.size();
@@ -767,6 +855,9 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
     for (I32 i : constrained) s.atol_below_zero |= atol[i] < 0;
     s.held_now.assign(N, 0);
     s.held_in_w.assign(N, 0);
+    // Rows held with a constrained state (`held_with`): held where it is held, put onto zero where
+    // it is put there.
+    build_followers(s, held_with);
 
     const Pattern* pattern = (jacobian != nullptr && jacobian->pattern) ? &*jacobian->pattern : nullptr;
     s.pattern = pattern;
@@ -1134,11 +1225,13 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
             advance(D, k, s.d);
             Vec& y = D[0];
             if (projected) {
-                for (I32 i : constrained) {
+                for (std::size_t q = 0; q < constrained.size(); q++) {
+                    const I32 i = constrained[q];
                     if (y[i] < 0) {
                         y[i] = 0.0;
                         s.negative += 1;
                         forget(D, i);
+                        if (s.followers) follow_onto_zero(s, q, true);
                     }
                 }
                 const double ah = std::fabs(s.h);
@@ -1162,9 +1255,11 @@ Solution ndf_solve(const RhsFunction& f, const Vec& tspan, const Vec& y0, double
                     s.tnew = t_e;
                     s.consecutive = 0;
                     if (projected) {
-                        for (I32 i : constrained) {
+                        for (std::size_t q = 0; q < constrained.size(); q++) {
+                            const I32 i = constrained[q];
                             const double v = y[i];
                             y[i] = v < 0 ? 0.0 : v;
+                            if (v < 0 && s.followers) follow_onto_zero(s, q, false);
                         }
                     }
                     if (event_work.values != &vr) vr = *event_work.values;
@@ -1280,13 +1375,16 @@ Solution ndf(const RhsFunction& f, const Vec& tspan, const Vec& y0, const NdfOpt
                                ? std::max(0L, static_cast<long>(std::nearbyint(*o.below_tol_run)))
                                : NDF_MAX_BELOW_TOLERANCE;
     const long floor_newton_run = o.below_tol_run ? floor_run : 0;
+    // Checked in the Julia package's order: the weight floor, then the rows held with a state.
+    Floor floor = weight_floor_of(o.weight_floor, neq);
+    const std::vector<I32> held_with = held_with_of(o.held_with, neq);
     return ndf_solve(f, tspan, y0, o.rtol, *atol, o.non_negative, mo, o.bdf, o.hmax, o.h0, o.max_steps,
                      o.error_norm.empty() ? std::string("max") : o.error_norm, o.norm_control, o.jacobian,
                      o.matrix.empty() ? std::string("auto") : o.matrix, floor_run, floor_newton_run,
                      o.stagnation_tol, o.min_newton, o.stall_window, o.events,
                      o.t_start ? *o.t_start : sv::NOT_A_NUMBER, o.hints, o.on_accepted, o.on_output, o.on_step,
-                     o.auto_abstol, o.ends_only, mass, o.rows, o.landing, weight_floor_of(o.weight_floor, neq),
-                     o.iteration_matrix);
+                     o.auto_abstol, o.ends_only, mass, o.rows, o.landing, std::move(floor), o.iteration_matrix,
+                     held_with);
 }
 
 }  // namespace kompartment

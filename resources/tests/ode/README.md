@@ -17,9 +17,10 @@ out as it always did; that the four iteration-matrix modes give the LU they
 name and that `auto` follows each page's measurements; that every shape of
 Jacobian is accepted; that each failure has its code; that an event switched
 off is not reported; that a floating absolute tolerance handed over as a
-`Float64Array` keeps its high-water mark there; and that a step the caller
+`Float64Array` keeps its high-water mark there; that a step the caller
 will not take (`stepCheck` answering false) is taken again, shorter, and
-counted, and one it never takes stops the run.
+counted, and one it never takes stops the run; and that a row held with a
+constrained state (`heldWith`) is held, put onto zero and released with it.
 
 `test-build` runs `node scripts/build-solvers.mjs --check`: the modules, the two
 single-file builds and Kompartment's copies are the same code. The numbers

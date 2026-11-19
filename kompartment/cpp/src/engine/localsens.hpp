@@ -24,7 +24,7 @@
 // **The iteration matrix** is the original Jacobian repeated down the diagonal, and
 // under it how each sensitivity's equations move with the state (`C_j = d(S_j')/dy`,
 // J's own derivative along `(S_j, e_j)`), solved a block at a time: the states' block
-// factorised once -- twice while the zero floor holds a state -- and each
+// factorised once, a row the zero floor holds the identity in every block, and each
 // sensitivity's solved after it, never a pivot taken across blocks. The solve is the
 // NDF whatever solver the model names: a Rosenbrock method uses the whole Jacobian
 // inside its formula.
@@ -32,7 +32,8 @@
 // **It is a run of the model**: the augmented system is integrated by the runner's own
 // machinery (`Equations` in engine/runner), restarted at every switch time, through the
 // discrete events, with the blocks that remember primed and fed, each compartment's
-// own floor and the clock's interpolation. What the forward equations cannot carry is
+// own floor -- each sensitivity held with its state, zero while the floor holds it --
+// and the clock's interpolation. What the forward equations cannot carry is
 // refused, by name (`uncarried`): a jump in the state, a block that remembers the path
 // of the run where the derivative reads it, a semi-analytical far-field path, and a
 // parameter that places a corner of the run.
@@ -115,12 +116,15 @@ struct SensitivityProblem {
     double rtol = 0.0;
     /// What `run_sensitivity` hands the runner: `dydt(out, t, Y)` the right-hand side of
     /// `Y = [y, S_1, ..., S_m]`, `Y0`, the absolute tolerances, the Jacobian below, the NDF, the
-    /// clock's anchors, the weight floor and the block iteration matrix.
+    /// clock's anchors, the weight floor, the rows held with the states and the block iteration matrix.
     Equations equations;
     /// The model's Jacobian repeated down the diagonal, the coupling under the states' block.
     JacobianSpec jacobian;
     /// Each sensitivity weighed against its state over |p| as well.
     WeightFloor weight_floor;
+    /// The state each sensitivity is held with where the floor holds it (`held_with` of the NDF):
+    /// -1 for the states.
+    Vec held_with;
     /// What the closures share.
     std::shared_ptr<void> work;
 

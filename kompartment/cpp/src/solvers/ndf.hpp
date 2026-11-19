@@ -5,7 +5,8 @@
 // Reichelt, "The MATLAB ODE Suite", 1997), with the backward differentiation
 // formulas as the case of every kappa zero, in backward-difference form with
 // a quasi-constant step; `non_negative` states integrated as the projected
-// system, a Jacobian that declines a point differenced there instead, and a
+// system (the rows a caller holds with one, `held_with`, held and put onto zero
+// with it), a Jacobian that declines a point differenced there instead, and a
 // run that accepts steps but covers none of the interval stopped, saying so.
 //
 // Every per-state operation is the Python engine's, in its order; every work
@@ -126,6 +127,13 @@ struct NdfOptions {
     const WeightFloor* weight_floor = nullptr;
     /// Makes the matrix Newton iterates with, in place of `IterationMatrix`.
     IterationMatrixFactory iteration_matrix;
+    /// One entry per state: the `non_negative` state (counted from zero) it is held with, or -1
+    /// (`heldWith`). Such a row's derivative is held at zero wherever its state's is, its row of the
+    /// iteration matrix held with its state's, and it is put onto zero, its history forgotten,
+    /// wherever its state is put there -- the sensitivities of engine/localsens with their states: a
+    /// state held at zero is zero for every nearby value of a parameter, so its sensitivity is zero,
+    /// from the moment the hold begins. None: no row is.
+    const Vec* held_with = nullptr;
 };
 
 /// Integrates y' = f(t, y) over `tspan`, answering at every time in it (the
@@ -167,6 +175,7 @@ struct SolverOptions {
     StepLanding landing;
     const WeightFloor* weight_floor = nullptr;
     IterationMatrixFactory iteration_matrix;
+    const Vec* held_with = nullptr;
 };
 
 namespace sv {

@@ -28,7 +28,8 @@
 # **It is a run of the model**: the augmented system is integrated by the
 # runner's own machinery (`equations` in `run_project`), restarted at every
 # switch time, through the discrete events, with the blocks that remember
-# primed and fed, each compartment's own floor and the clock's interpolation.
+# primed and fed, each compartment's own floor -- each sensitivity held with its
+# state, zero while the floor holds it -- and the clock's interpolation.
 # What the forward equations cannot carry is refused, by name (`uncarried`): a
 # jump in the state, a block that remembers the path of the run where the
 # derivative reads it, a semi-analytical far-field path, and a parameter that
@@ -261,14 +262,18 @@ function uncarried(proj::Project, sys::System, wanted)
                    "present."
         end
     end
-    corners = switch_times(proj)
+    # Asked of the project the system was laid out from, whose block is the one moved: in a model with transports
+    # that is the builder's own copy, the transports written out, and moving its block left the switch times of the
+    # project handed in where they were -- the corner was never seen, and dy/dp was integrated across it.
+    built = sys.builder.project
+    corners = switch_times(built)
     for e in wanted
         slot = e["slot"]
         i = findfirst(p -> p.base <= slot < p.base + p.width, sys.builder.param_layout)
         i === nothing && continue
         entry = sys.builder.param_layout[i]
         entry.block === nothing && continue
-        moved = _ls_with_block_moved(() -> switch_times(proj), entry.block)
+        moved = _ls_with_block_moved(() -> switch_times(built), entry.block)
         if moved != corners
             return "'$(slot_label(e))' places a corner of the run (a switch time, or when something starts or " *
                    "stops): moving it moves a discontinuity, and dy/dp with respect to it is an impulse the " *
@@ -561,14 +566,23 @@ function sensitivity_problem(m, parameters=nothing; most=nothing, differenced::B
         end
     end
     weight_floor = (floor_from, floor_factor)
+    # The floor the run applies -- each compartment's own -- is on the states and nothing after them: a sensitivity
+    # may perfectly well be negative. But each is held with its state (`held_with` in solvers/ndf.jl): while the floor
+    # holds a compartment at zero it is zero for every value of the parameter near this one, so its dy/dp is zero --
+    # put there the moment the hold begins, a moment that moves with the parameter, and kept there while it lasts --
+    # and what the compartment feeds takes nothing of it.
+    held_with = fill(-1, N)
+    for j in 1:mm, i in 1:n
+        held_with[n*j+i] = i - 1
+    end
 
     chosen = [JDict("label" => slot_label(e), "name" => e["name"], "index" => e["index"], "value" => e["value"])
               for e in wanted]
     equations = (dydt=dydt!, y0=Y0, abstol=atol, jacobian=big_jacobian, solver="ndf", on_segment=on_segment,
-                 weight_floor=weight_floor, iteration_matrix=block_matrix)
+                 weight_floor=weight_floor, held_with=held_with, iteration_matrix=block_matrix)
     return (dydt! = dydt!, jacobian=big_jacobian, y0=Y0, rtol=Float64(proj.simulation["rtol"]), abstol=atol, n=n,
             m=mm, chosen=chosen, system=sys, project=proj, equations=equations, tangent=plan !== nothing,
-            wanted=wanted, why=tangent, weight_floor=weight_floor)
+            wanted=wanted, why=tangent, weight_floor=weight_floor, held_with=held_with)
 end
 
 """
@@ -616,10 +630,14 @@ end
 The matrix Newton iterates with for [y, S_1, ..., S_m], a block at a time (`blockMatrix` in the application). It is
 block lower triangular -- A = I - a·J on the diagonal, -a·C_j under the states' block, C_j = d(S_j')/dy -- so the
 states' block is solved first and each sensitivity's after it, the coupling carried to its right-hand side: one
-factorisation of A, two while the floor holds a state (whose row is the identity in the states' block alone), and
-never a pivot taken across blocks. An LU of the whole matrix pivots a state's column on a sensitivity's row wherever
-the coupling is the larger entry, and mixes that row's rounding into the state's correction, which for a state near
-zero is all of it.
+factorisation of A, and never a pivot taken across blocks. An LU of the whole matrix pivots a state's column on a
+sensitivity's row wherever the coupling is the larger entry, and mixes that row's rounding into the state's
+correction, which for a state near zero is all of it.
+
+A state the floor holds is a row of the identity in the states' block, and the sensitivities are held with their
+states (`held_with`): the same row is the identity in every sensitivity's block, with nothing of the coupling under
+it, so the one factorisation serves them all. The rows held are read off the states' (`held` up to `n`): the solver
+marks a sensitivity's with its state's.
 """
 mutable struct _LSBlockMatrix <: AbstractIterationMatrix
     n::Int
@@ -631,9 +649,8 @@ mutable struct _LSBlockMatrix <: AbstractIterationMatrix
     J::Vector{Float64}
     C::Vector{Vector{Float64}}
     states::IterationMatrix
-    apart::Union{Nothing,IterationMatrix}
-    sens::IterationMatrix
     a::Float64
+    any_held::Bool          # a row held as the matrix was last formed
     held_y::Vector{UInt8}
     xy::Vector{Float64}
     rs::Vector{Float64}
@@ -647,7 +664,7 @@ function _LSBlockMatrix(base::Pattern, n::Int, m::Int, state_at::Vector{Vector{I
     C = [zeros(nnz_) for _ in 1:m]
     _ls_extract!(J, C, state_at, values)
     states = IterationMatrix(n, base, J, mode, nothing, hints)
-    return _LSBlockMatrix(n, m, base, state_at, mode, hints, J, C, states, nothing, states, 0.0, zeros(UInt8, n),
+    return _LSBlockMatrix(n, m, base, state_at, mode, hints, J, C, states, 0.0, false, zeros(UInt8, n),
                           zeros(n), zeros(n), zeros(n))
 end
 
@@ -679,18 +696,8 @@ function _mat_form!(W::_LSBlockMatrix, a::Float64, J::Vector{Float64},
             held[i] != 0 && (any_ = true)
         end
     end
-    msg = _mat_form!(W.states, a, W.J, any_ ? W.held_y : nothing)
-    msg === nothing || return msg
-    if any_
-        W.apart === nothing && (W.apart = IterationMatrix(W.n, W.base, W.J, W.mode, nothing, W.hints))
-        apart = W.apart::IterationMatrix
-        msg = _mat_form!(apart, a, W.J, nothing)
-        msg === nothing || return msg
-        W.sens = apart
-    else
-        W.sens = W.states
-    end
-    return nothing
+    W.any_held = any_
+    return _mat_form!(W.states, a, W.J, any_ ? W.held_y : nothing)
 end
 
 function _mat_solve_inplace!(W::_LSBlockMatrix, x::Vector{Float64})
@@ -715,7 +722,13 @@ function _mat_solve_inplace!(W::_LSBlockMatrix, x::Vector{Float64})
         @inbounds for i in 1:n
             rs[i] = x[off+i] + W.a * cd[i]
         end
-        _mat_solve_inplace!(W.sens, rs)
+        # ...and none of it on a held row.
+        if W.any_held
+            @inbounds for i in 1:n
+                W.held_y[i] != 0 && (rs[i] = x[off+i])
+            end
+        end
+        _mat_solve_inplace!(W.states, rs)
         @inbounds for i in 1:n
             x[off+i] = rs[i]
         end
@@ -725,7 +738,6 @@ end
 
 function _mat_release!(W::_LSBlockMatrix)
     _mat_release!(W.states)
-    W.apart === nothing || _mat_release!(W.apart::IterationMatrix)
     return nothing
 end
 

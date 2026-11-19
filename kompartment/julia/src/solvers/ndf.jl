@@ -5,7 +5,8 @@
 # Reichelt, "The MATLAB ODE Suite", 1997), with the backward differentiation
 # formulas as the case of every kappa zero, in backward-difference form with
 # a quasi-constant step; `non_negative` states integrated as the projected
-# system, a Jacobian that declines a point differenced there instead, and a
+# system (the rows a caller holds with one, `held_with`, held and put onto zero
+# with it), a Jacobian that declines a point differenced there instead, and a
 # run that accepts steps but covers none of the interval stopped, saying so.
 #
 # Every per-state operation is the Python engine's, in its order; every work
@@ -218,6 +219,57 @@ function _ndf_weight_floor(option, neq::Int)
     return (at, frm, fac)
 end
 
+const _NDF_NO_HELD_WITH = Int[]
+
+"""`held_with` checked (`heldWithOf`): one entry per state, the state (0-based) it is held with or -1; as the state
+each row is held with, 1-based, 0 for none -- empty where the option is not given."""
+function _ndf_held_with(option, neq::Int)::Vector{Int}
+    option === nothing && return _NDF_NO_HELD_WITH
+    length(option) == neq ||
+        throw(SolverError("heldWith", "heldWith needs an entry for each of the $neq equations"))
+    out = zeros(Int, neq)
+    for r in 1:neq
+        i = option[r]
+        if !(isinteger(i) && -1 <= i < neq && i != r - 1)
+            throw(SolverError("heldWith", "heldWith's entry $(r - 1) is not another state: $(js_text(Float64(i)))"))
+        end
+        out[r] = Int(i) + 1
+    end
+    return out
+end
+
+"""The rows held with each constrained state, by its place in `constrained`: those of the q-th are
+`rows[start[q]:start[q+1]-1]`, ascending; a row held with a state the floor never holds is held never, and left out.
+Two empty vectors where there are none."""
+function _ndf_followers(held_with::Vector{Int}, constrained::Vector{Int}, neq::Int)
+    isempty(held_with) && return (Int[], Int[])
+    place = zeros(Int, neq)
+    for (q, i) in enumerate(constrained)
+        place[i] = q
+    end
+    start = zeros(Int, length(constrained) + 1)
+    start[1] = 1
+    for r in 1:neq
+        l = held_with[r]
+        (l > 0 && place[l] > 0) && (start[place[l]+1] += 1)
+    end
+    for q in 1:length(constrained)
+        start[q+1] += start[q]
+    end
+    start[end] == 1 && return (Int[], Int[])
+    rows = zeros(Int, start[end] - 1)
+    next = start[1:end-1]
+    for r in 1:neq
+        l = held_with[r]
+        if l > 0 && place[l] > 0
+            q = place[l]
+            rows[next[q]] = r
+            next[q] += 1
+        end
+    end
+    return (start, rows)
+end
+
 function _ndf_norm(w::_NDFWeighting, v::Vector{Float64})::Float64
     inv = w.inv
     if w.norm_control
@@ -263,6 +315,11 @@ mutable struct _NDFState
     held_now::Vector{UInt8}
     held_in_w::Vector{UInt8}
     w_held::Bool            # a row held in the matrix as it was last formed
+    # the rows held with each constrained state (`held_with`), by its place in `constrained`: those of
+    # the q-th are fol_rows[fol_start[q]:fol_start[q+1]-1]; none where `followers` is false
+    followers::Bool
+    fol_start::Vector{Int}
+    fol_rows::Vector{Int}
     # the Jacobian and the matrix
     pattern::Union{Nothing,Pattern}
     groups::Vector{Vector{Int}}
@@ -326,7 +383,8 @@ end
 end
 
 """The derivative of the projected system (`projectedDerivative`): a
-constrained state at or below zero whose equation pushes it lower is held."""
+constrained state at or below zero whose equation pushes it lower is held,
+and the rows held with it (`held_with`) with it."""
 function _ndf_rhs!(s::_NDFState, out::Vector{Float64}, t::Float64, y::Vector{Float64})
     s.projected || return _ndf_raw!(s, out, t, y)
     c = s.constrained
@@ -335,6 +393,11 @@ function _ndf_rhs!(s::_NDFState, out::Vector{Float64}, t::Float64, y::Vector{Flo
         if s.any_held
             @inbounds for i in c
                 s.held_rows[i] = 0x00
+            end
+            if s.followers
+                @inbounds for r in s.fol_rows
+                    s.held_rows[r] = 0x00
+                end
             end
             s.any_held = false
         end
@@ -355,8 +418,31 @@ function _ndf_rhs!(s::_NDFState, out::Vector{Float64}, t::Float64, y::Vector{Flo
         end
         held_rows[i] = hold ? 0x01 : 0x00
     end
+    if s.followers
+        start, rows = s.fol_start, s.fol_rows
+        @inbounds for q in eachindex(c)
+            h = held_rows[c[q]]
+            for p in start[q]:start[q+1]-1
+                r = rows[p]
+                held_rows[r] = h
+                h == 0x01 && (out[r] = 0.0)
+            end
+        end
+    end
     s.any_held = anyh
     return out
+end
+
+"""The rows held with the q-th constrained state, put onto zero with it -- and, `forget`, their history forgotten
+as its is."""
+function _ndf_follow_onto_zero!(s::_NDFState, q::Int, forget::Bool)
+    y = s.D[1]
+    @inbounds for p in s.fol_start[q]:s.fol_start[q+1]-1
+        r = s.fol_rows[p]
+        y[r] = 0.0
+        forget && _ndf_forget!(s.D, r)
+    end
+    return nothing
 end
 
 function _ndf_stats(s::_NDFState)::Dict{String,Any}
@@ -580,9 +666,16 @@ function _ndf_value_at!(out::Vector{Float64}, s::_NDFState, k::Int, sq::Float64,
         end
     end
     if clamp
-        @inbounds for i in s.constrained
+        @inbounds for q in eachindex(s.constrained)
+            i = s.constrained[q]
             v = out[i]
             out[i] = v < 0 ? 0.0 : v
+            # ...and the rows held with a state put onto zero, put there with it.
+            if v < 0 && s.followers
+                for p in s.fol_start[q]:s.fol_start[q+1]-1
+                    out[s.fol_rows[p]] = 0.0
+                end
+            end
         end
     end
     return out
@@ -654,10 +747,17 @@ end
 function _ndf_released_in_w!(s::_NDFState)::Bool
     s.projected || return false
     any = false
-    @inbounds for i in s.constrained
+    @inbounds for q in eachindex(s.constrained)
+        i = s.constrained[q]
         if s.held_in_w[i] == 1 && s.held_rows[i] == 0
             s.held_now[i] = 0x00
             any = true
+            # ...and the rows held with it, released with it.
+            if s.followers
+                for p in s.fol_start[q]:s.fol_start[q+1]-1
+                    s.held_now[s.fol_rows[p]] = 0x00
+                end
+            end
         end
     end
     return any
@@ -717,11 +817,13 @@ function _ndf_snap_onto_bound!(s::_NDFState, by_held::Bool)::Bool
     end
     any || return false
     count = 0
-    @inbounds for i in s.constrained
+    @inbounds for q in eachindex(s.constrained)
+        i = s.constrained[q]
         should = by_held ? s.held_rows[i] == 1 : s.ynew[i] < 0
         if (yv[i] > 0) & (yv[i] <= atol[i]) & should
             yv[i] = 0.0
             _ndf_forget!(s.D, i)
+            s.followers && _ndf_follow_onto_zero!(s, q, true)
             count += 1
         end
     end
@@ -740,7 +842,7 @@ end
         matrix="auto", below_tol_run=nothing, stagnation_tol=0.0, min_newton=1, stall_window=2000,
         events=nothing, t_start=nothing, hints=nothing, on_accepted=nothing, on_output=nothing,
         on_step=nothing, auto_abstol=false, ends_only=false, mass=nothing, rows=nothing,
-        landing=nothing, weight_floor=nothing, iteration_matrix=nothing) -> Solution
+        landing=nothing, weight_floor=nothing, iteration_matrix=nothing, held_with=nothing) -> Solution
 
 Integrates y' = f(t, y) over `tspan`, answering at every time in it (the
 Python engine's `ndf`). `non_negative` holds 1-based state indices; `abstol`
@@ -753,6 +855,13 @@ a step about to be tried is to end instead (NaN for where it would).
 sensitivities of engine/localsens.jl against their states over |p|), and
 `iteration_matrix(n, pattern, J, matrix, mass, hints)` makes the matrix Newton
 iterates with, an `AbstractIterationMatrix`, in place of `IterationMatrix`.
+`held_with`, one entry per state, is the `non_negative` state (0-based) it is
+held with, or -1: such a row's derivative is held at zero wherever its state's
+is, its row of the iteration matrix held with its state's, and it is put onto
+zero, its history forgotten, wherever its state is put there -- the
+sensitivities of engine/localsens.jl with their states: a state held at zero is
+zero for every nearby value of a parameter, so its sensitivity is zero, from the
+moment the hold begins.
 """
 function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<:Real};
              rtol::Real=1e-3, abstol::Union{Real,AbstractVector{<:Real}}=1e-6,
@@ -766,7 +875,8 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
              on_accepted::Union{Nothing,StepCallback}=nothing, on_output::Union{Nothing,StepCallback}=nothing,
              on_step::Union{Nothing,StepProgress}=nothing, auto_abstol::Bool=false, ends_only::Bool=false,
              mass::Union{Nothing,AbstractVector{<:Real}}=nothing, rows::Union{Nothing,RowPool}=nothing,
-             landing::Union{Nothing,StepLanding}=nothing, weight_floor=nothing, iteration_matrix=nothing)::Solution
+             landing::Union{Nothing,StepLanding}=nothing, weight_floor=nothing, iteration_matrix=nothing,
+             held_with=nothing)::Solution
     neq = length(y0)
     atol_in = if auto_abstol && abstol isa Vector{Float64} && length(abstol) == neq
         abstol                      # raised in place, as the caller's array is in Python
@@ -787,7 +897,7 @@ function ndf(f::RHSFunction, tspan::AbstractVector{<:Real}, y0::AbstractVector{<
                       floor_newton_run, Float64(stagnation_tol), Int(min_newton), Int(stall_window), events,
                       t_start === nothing ? NaN : Float64(t_start), hints, on_accepted, on_output, on_step,
                       auto_abstol, ends_only, mass_v, rows, landing, _ndf_weight_floor(weight_floor, neq),
-                      iteration_matrix)
+                      _ndf_held_with(held_with, neq), iteration_matrix)
 end
 
 # Not specialised on which of its optional arguments a run has: one compiled solver, in the
@@ -807,7 +917,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     @nospecialize(rows::Union{Nothing,RowPool}),
                     @nospecialize(landing::Union{Nothing,StepLanding}),
                     floor::Tuple{Vector{Int},Vector{Int},Vector{Float64}}=_NDF_NO_FLOOR,
-                    @nospecialize(iteration_matrix=nothing))::Solution
+                    held_with::Vector{Int}=_NDF_NO_HELD_WITH, @nospecialize(iteration_matrix=nothing))::Solution
     neq = length(y0)
     npts = length(tspan)
     t0 = tspan[1]
@@ -832,6 +942,9 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
 
     constrained = Int[i for i in non_negative if !(mass !== nothing && mass[i] == 0)]
     projected = !isempty(constrained)
+    # Rows held with a constrained state (`held_with`): held where it is held, put onto zero where it
+    # is put there.
+    fol_start, fol_rows = _ndf_followers(held_with, constrained, neq)
 
     pattern = jacobian === nothing ? nothing : jacobian.pattern
     evaluate = jacobian === nothing ? nothing : jacobian.evaluate
@@ -849,7 +962,7 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
     s = _NDFState(f, neq, rtol, atol, threshold, newton_threshold, error_weight, newton_weight, auto_abstol, mass,
                   algebraic, leading, error_const, max_order, direction,
                   constrained, projected, zeros(UInt8, neq), zeros(length(constrained)), false,
-                  zeros(UInt8, neq), zeros(UInt8, neq), false,
+                  zeros(UInt8, neq), zeros(UInt8, neq), false, !isempty(fol_rows), fol_start, fol_rows,
                   pattern, groups_v, evaluate, constant, state_free, zeros(Jlen), false,
                   DifferenceWork(pattern, groups, neq), IterationMatrix(0, nothing, Float64[]),
                   D, zeros(neq), zeros(max_order + 1, max_order + 1), zeros(max_order + 1, max_order + 1),
@@ -1221,11 +1334,13 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
             _ndf_advance!(D, k, d)
             y = D[1]
             if projected
-                @inbounds for i in constrained
+                @inbounds for q in eachindex(constrained)
+                    i = constrained[q]
                     if y[i] < 0
                         y[i] = 0.0
                         s.negative += 1
                         _ndf_forget!(D, i)
+                        s.followers && _ndf_follow_onto_zero!(s, q, true)
                     end
                 end
                 ah = abs(s.h)
@@ -1246,9 +1361,11 @@ function _ndf_solve(f::RHSFunction, tspan::Vector{Float64}, y0::Vector{Float64},
                     s.consecutive = 0
                     y = D[1]
                     if projected
-                        @inbounds for i in constrained
+                        @inbounds for q in eachindex(constrained)
+                            i = constrained[q]
                             v = y[i]
                             y[i] = v < 0 ? 0.0 : v
+                            (v < 0 && s.followers) && _ndf_follow_onto_zero!(s, q, false)
                         end
                     end
                     vr === values || copyto!(vr, values)

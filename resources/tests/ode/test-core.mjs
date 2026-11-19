@@ -27,6 +27,9 @@
   9. A step the caller will not take (stepCheck answering false) is taken
      again, shorter, and counted; one never taken stops the run at the
      smallest step; the bundle and facsimile-solver.js refuse alike.
+ 10. A row held with a constrained state (heldWith) is held where it is held,
+     put onto zero where it is put there, and released with it; the option
+     is checked.
 
   The pages' own suites are what check the numbers against references:
   resources/tests/facsimile/, resources/tests/rtm/ and kompartment/test/.
@@ -375,6 +378,41 @@ function hash(rows) {
   const w = FacsimileODE.ndf(decay, 0, 2, Float64Array.of(1), { rtol: 1e-8, atol: 1e-12, jacobian, stepCheck: fifth() });
   check('  and facsimile-solver.js hands it on', w.stats.nchecked > 0 && Math.abs(w.y[0] - Math.exp(-2)) < 2e-8,
     `${w.stats.nchecked} refused`);
+}
+
+// --- 10. rows held with a constrained state ---------------------------------------------
+{
+  // A' = -k, held at zero from t = 1/k; S = dA/dk beside it, S' = -1, held with A:
+  // -t until A empties, and zero from then on, put there when the hold begins.
+  // Without heldWith the same S runs on to -t.
+  const k = 0.4;
+  const f = (t, y, out) => { out[0] = -k; out[1] = -1; return out; };
+  const tspan = [0, 1, 2, 2.4, 3, 4, 5];
+  const opts = { rtol: 1e-9, abstol: [1e-12, 1e-12], nonNegative: [0] };
+  const held = core.ndf(f, tspan, Float64Array.of(1, 0), { ...opts, heldWith: [-1, 0] });
+  const free = core.ndf(f, tspan, Float64Array.of(1, 0), opts);
+  const sOf = (r) => r.y.map((row) => row[1]);
+  const want = tspan.map((t) => (t < 1 / k ? -t : 0));
+  const err = Math.max(...sOf(held).map((s, j) => Math.abs(s - want[j])));
+  check('heldWith: a row held with a state the floor holds is put onto zero with it and held there',
+    err < 1e-9 && held.y.every((row) => row[0] >= 0), `off by ${err}: ${sOf(held).join(' ')}`);
+  check('  without it the row runs on, and the state itself comes out the same either way',
+    Math.abs(sOf(free)[6] + 5) < 1e-9 && held.y.every((row, j) => row[0] === free.y[j][0]),
+    `${sOf(free).join(' ')}`);
+  const bundled = bundle.ndf(f, tspan, Float64Array.of(1, 0), { ...opts, heldWith: [-1, 0] });
+  check('  the same bits from the bundle', hash(held.y) === hash(bundled.y));
+  // Released again: A' = c*t - k, held while c*t < k; S = dA/dk starts again from zero.
+  const c = 0.1;
+  const g = (t, y, out) => { out[0] = c * t - 0.5; out[1] = -1; return out; };
+  const r = core.ndf(g, [0, 2, 4, 6, 8, 10], Float64Array.of(1, 0), { rtol: 1e-9, abstol: 1e-12, nonNegative: [0], heldWith: [-1, 0] });
+  const s = r.y.map((row) => row[1]);
+  const wantR = [0, -2, 0, -1, -3, -5];
+  const errR = Math.max(...s.map((v, j) => Math.abs(v - wantR[j])));
+  check('  released with its state, and from zero', errR < 1e-6, `${s.join(' ')}`);
+  // The option checked.
+  const bad = [[0, 0], [-1], [-1, 2], [-1, 0.5], [-2, 0]].map((hw) => throws(() => core.ndf(f, [0, 1], Float64Array.of(1, 0), { ...opts, heldWith: hw })));
+  check('  an entry that is no other state, or a list of the wrong length, refused',
+    bad.every((e) => e && e.code === 'heldWith'), bad.map((e) => e?.message ?? 'accepted').join(' | '));
 }
 
 console.log(`\n${checks - failures.length} of ${checks} checks passed`);

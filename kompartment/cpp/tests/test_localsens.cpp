@@ -2,7 +2,8 @@
 // tests/fixtures/localsens.json), with parity on: for every model the builder's fixtures
 // build, the bundled examples as the Julia package's own tests take them, and models made up
 // to reach each branch -- the problem (the parameters chosen, the slots, the steps, the
-// initial state with dy0/dp, the tolerances and the weight floor, the big Jacobian's pattern
+// initial state with dy0/dp, the tolerances, the weight floor and the state each sensitivity is
+// held with, the big Jacobian's pattern
 // and colouring, the right-hand side and the big Jacobian's values at three points, the block
 // iteration matrix formed and solved with and without a state held), then the run (its
 // progress, the times, every series of y and dy/dp to the bit, the counts, the states as the
@@ -172,6 +173,7 @@ std::vector<std::string> problem_lines(SensitivityProblem& pr, const Project& pr
     lines.push_back("y0=" + nums(pr.equations.y0));
     lines.push_back("abstol=" + nums(pr.equations.abstol));
     lines.push_back("floor=" + ints(pr.weight_floor.from) + "|" + nums(pr.weight_floor.factor));
+    lines.push_back("held=" + ints(pr.held_with));
     const Pattern& big = *pr.jacobian.pattern;
     lines.push_back("pattern=" + ints(big.colptr) + "|" + ints(big.rowval));
     std::string groups = "none";
@@ -207,7 +209,8 @@ std::vector<std::string> problem_lines(SensitivityProblem& pr, const Project& pr
                         }));
         if (!(k == 1 && ok)) continue;
         // The block iteration matrix, formed and solved as the NDF forms and solves it: with no
-        // state held, with the first held (the states' block factorised twice), and with none again.
+        // state held, with the first held (its row the identity in every block, nothing of the
+        // coupling under it), and with none again.
         lines.push_back("matrix=" + said([&] {
                             std::unique_ptr<AbstractIterationMatrix> W =
                                 pr.equations.iteration_matrix(static_cast<int>(N), &big, vals, "auto", nullptr, &solver_hints());

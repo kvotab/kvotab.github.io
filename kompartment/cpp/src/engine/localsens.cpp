@@ -343,10 +343,15 @@ struct Work {
 /// the application). It is block lower triangular -- A = I - a·J on the diagonal, -a·C_j under
 /// the states' block, C_j = d(S_j')/dy -- so the states' block is solved first and each
 /// sensitivity's after it, the coupling carried to its right-hand side: one factorisation of
-/// A, two while the floor holds a state (whose row is the identity in the states' block
-/// alone), and never a pivot taken across blocks. An LU of the whole matrix pivots a state's
+/// A, and never a pivot taken across blocks. An LU of the whole matrix pivots a state's
 /// column on a sensitivity's row wherever the coupling is the larger entry, and mixes that
 /// row's rounding into the state's correction, which for a state near zero is all of it.
+///
+/// A state the floor holds is a row of the identity in the states' block, and the
+/// sensitivities are held with their states (`held_with`): the same row is the identity in
+/// every sensitivity's block, with nothing of the coupling under it, so the one factorisation
+/// serves them all. The rows held are read off the states' (`held` up to `n`): the solver marks
+/// a sensitivity's with its state's.
 class BlockMatrix final : public AbstractIterationMatrix {
 public:
     BlockMatrix(const Pattern* base, int n, int m, std::shared_ptr<const std::vector<std::vector<I32>>> state_at, const Vec& values, std::string mode,
@@ -357,7 +362,6 @@ public:
         C_.assign(static_cast<std::size_t>(m), Vec(nnz, 0.0));
         extract(values);
         states_ = std::make_unique<IterationMatrix>(n, base, J_, mode_, nullptr, hints_);
-        sens_ = states_.get();
         held_y_.assign(static_cast<std::size_t>(n), 0);
         xy_.assign(static_cast<std::size_t>(n), 0.0);
         rs_.assign(static_cast<std::size_t>(n), 0.0);
@@ -374,17 +378,8 @@ public:
                 if ((*held)[static_cast<std::size_t>(i)] != 0) any = true;
             }
         }
-        std::optional<std::string> msg = states_->form(a, J_, any ? &held_y_ : nullptr);
-        if (msg) return msg;
-        if (any) {
-            if (!apart_) apart_ = std::make_unique<IterationMatrix>(n_, base_, J_, mode_, nullptr, hints_);
-            msg = apart_->form(a, J_, nullptr);
-            if (msg) return msg;
-            sens_ = apart_.get();
-        } else {
-            sens_ = states_.get();
-        }
-        return std::nullopt;
+        any_held_ = any;
+        return states_->form(a, J_, any ? &held_y_ : nullptr);
     }
 
     void solve_inplace(Vec& x) override {
@@ -402,15 +397,16 @@ public:
             for (std::size_t q = 0; q < nnz; q++) cd_[rows[q]] = cd_[rows[q]] + c[q] * xy_[cols[q]];
             const std::size_t off = n * static_cast<std::size_t>(j + 1);
             for (std::size_t i = 0; i < n; i++) rs_[i] = x[off + i] + a_ * cd_[i];
-            sens_->solve_inplace(rs_);
+            // ...and none of it on a held row.
+            if (any_held_)
+                for (std::size_t i = 0; i < n; i++)
+                    if (held_y_[i] != 0) rs_[i] = x[off + i];
+            states_->solve_inplace(rs_);
             for (std::size_t i = 0; i < n; i++) x[off + i] = rs_[i];
         }
     }
 
-    void release() override {
-        states_->release();
-        if (apart_) apart_->release();
-    }
+    void release() override { states_->release(); }
 
     const Json& info() override { return states_->info(); }
 
@@ -433,9 +429,9 @@ private:
     const Hints* hints_;
     Vec J_;
     std::vector<Vec> C_;
-    std::unique_ptr<IterationMatrix> states_, apart_;
-    IterationMatrix* sens_ = nullptr;
+    std::unique_ptr<IterationMatrix> states_;
     double a_ = 0.0;
+    bool any_held_ = false;   // a row held as the matrix was last formed
     std::vector<std::uint8_t> held_y_;
     Vec xy_, rs_, cd_;
 };
@@ -564,14 +560,13 @@ std::optional<std::string> uncarried(const Project& project, System& sys, const 
                    "' remembers the path of the run, and the model's rates read it: dy/dp through a history is not carried by the sensitivity "
                    "equations, which see only the present.";
     }
-    // A parameter that places a corner, found by moving its block's values and asking the
-    // project for its switch times again. NOTE: a fault of the Julia package, kept here. In a
-    // model with transports the builder works from a project of its own, the transports written
-    // out, whose blocks are copies: the values moved are the copy's, the switch times asked are
-    // the project's, and the corner such a parameter places is never seen -- its dy/dp is
-    // integrated as if it placed none (tools/localsens_fixtures.jl, "a transport, a parameter its
-    // switch time").
-    const std::vector<double> corners = switch_times(project);
+    // A parameter that places a corner, found by moving its block's values and asking for the
+    // switch times again -- of the project the system was laid out from, whose block is the one
+    // moved: in a model with transports that is the builder's own copy, the transports written
+    // out, and moving its block left the switch times of the project handed in where they were,
+    // so the corner was never seen and dy/dp was integrated across it.
+    const Project& built = *b.project;
+    const std::vector<double> corners = switch_times(built);
     for (const Json& e : wanted) {
         const long long slot = e.get("slot").as_int();
         const Entry* entry = nullptr;
@@ -581,7 +576,7 @@ std::optional<std::string> uncarried(const Project& project, System& sys, const 
                 break;
             }
         if (!entry || entry->block.is_null()) continue;
-        const std::vector<double> moved = with_block_moved([&]() { return switch_times(project); }, entry->block);
+        const std::vector<double> moved = with_block_moved([&]() { return switch_times(built); }, entry->block);
         if (moved != corners)
             return "'" + slot_label(e) +
                    "' places a corner of the run (a switch time, or when something starts or stops): moving it moves a discontinuity, and "
@@ -775,12 +770,15 @@ std::unique_ptr<SensitivityProblem> sensitivity_problem(std::shared_ptr<const Pr
     pr->tangent = w.plan != nullptr;
     pr->rtol = project->simulation.get("rtol").as_double();
     pr->work = work;
-    // NOTE: a fault of the Julia package (and of the Python package's and the application's,
-    // which it ports), kept here. Nothing after the states is held at zero: where the floor holds
-    // a state its sensitivity's equation goes on as if the floor were not there, so dy/dp of a
-    // compartment that has emptied -- and of what it fed -- drifts on past the time it emptied
-    // (tools/localsens_fixtures.jl, "the zero floor": A = max(0, 1 - k·t) empties at t = 5, and its
-    // dA/dk goes on to -10 at t = 10 where it is 0).
+    // The floor the run applies -- each compartment's own -- is on the states and nothing after
+    // them: a sensitivity may perfectly well be negative. But each is held with its state
+    // (`held_with` of the NDF): while the floor holds a compartment at zero it is zero for every
+    // value of the parameter near this one, so its dy/dp is zero -- put there the moment the hold
+    // begins, a moment that moves with the parameter, and kept there while it lasts -- and what
+    // the compartment feeds takes nothing of it.
+    pr->held_with.assign(N, -1.0);
+    for (int j = 1; j <= mm; j++)
+        for (std::size_t i = 0; i < nn; i++) pr->held_with[nn * static_cast<std::size_t>(j) + i] = static_cast<double>(i);
     Equations& eq = pr->equations;
     eq.dydt = [work](Vec& out, double t, const Vec& Y) { work->dydt(out, t, Y); };
     eq.y0 = std::move(Y0);
@@ -794,6 +792,7 @@ std::unique_ptr<SensitivityProblem> sensitivity_problem(std::shared_ptr<const Pr
         work->clock_interval = interval;
     };
     eq.weight_floor = &pr->weight_floor;
+    eq.held_with = &pr->held_with;
     // The matrix Newton iterates with, a block at a time.
     eq.iteration_matrix = [work](int, const Pattern*, const Vec& values, const std::string& mode, const Vec*, const Hints* hints) {
         return std::unique_ptr<AbstractIterationMatrix>(new BlockMatrix(work->pattern, work->n, work->mm, work->state_at, values, mode, hints));

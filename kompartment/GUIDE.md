@@ -7829,7 +7829,11 @@ will be before you start. It shows its progress, and **Stop** stops it.
 **It is a run of the model.** The solve goes through the same machinery as a
 run: it restarts at the switch times, stops at the discrete events, feeds the
 blocks that remember, keeps each compartment's own *cannot go negative*, and
-takes the model's solver settings. It is always the NDF, whichever solver the
+takes the model's solver settings. While *cannot go negative* holds a
+compartment at zero, its `dy/dp` is zero too: at zero it stays zero whatever the
+parameter does, so its sensitivity drops to zero the moment it empties and
+stays there until it fills again, and what it feeds takes nothing of it. It is
+always the NDF, whichever solver the
 model names — a Rosenbrock method needs the whole Jacobian of the combined
 system, which is not formed — and of the settings it takes those the NDF reads.
 

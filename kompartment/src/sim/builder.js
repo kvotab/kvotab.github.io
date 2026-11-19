@@ -2945,6 +2945,14 @@ export function buildSystem(project, { jacobian: wantJacobian = true } = {}) {
 	};
 
 	return {
+		/**
+		 * The project this was laid out from: the one handed in, or -- in a
+		 * model with transports -- the copy with every transport written out,
+		 * whose blocks are the ones `layout` holds. A block of the layout is
+		 * moved, and its effect read, in this one (`uncarried` in
+		 * ./localsens.js asks it for its switch times).
+		 */
+		builtFrom: project,
 		dydt,
 		evaluateAlgebraic,
 		initialState,

@@ -188,7 +188,10 @@ solver, on_segment)` -- `dydt(out, t, Y)`, `Y` starting with the model's
 states and `y0` as long as it; the absolute tolerance per element; the
 `JacobianSpec`; the solver, kept to whatever happens; and `on_segment(from,
 interval)`, told where each stretch between restarts starts and the clock's
-interpolation interval. Nothing after the states is held at zero.
+interpolation interval. Nothing after the states is floored at zero, but
+`held_with`, given, holds some with the states the floor holds (as
+`weight_floor` weighs some against others and `iteration_matrix` makes the
+matrix Newton iterates with: see solvers/ndf.jl).
 """
 function run_project(project::Project; system::Union{Nothing,System}=nothing, on_progress=nothing, on_grid::Bool=false,
                      threads=nothing, nest::Bool=true, layers=nothing, solver::Union{Nothing,String}=nothing,
@@ -262,6 +265,8 @@ function run_project(project::Project; system::Union{Nothing,System}=nothing, on
         # ...and the matrix Newton iterates with, solved a block at a time.
         "iteration_matrix" => (equations !== nothing && hasproperty(equations, :iteration_matrix)) ?
                               equations.iteration_matrix : nothing,
+        # ...and some held with the model's states the floor holds (`held_with` in solvers/ndf.jl).
+        "held_with" => (equations !== nothing && hasproperty(equations, :held_with)) ? equations.held_with : nothing,
         "non_negative" => collect(non_negative),
         "auto_abstol" => get(sim, "auto_abstol", false) === true,
         "hmax" => (something(get(sim, "max_step", nothing), 0) > 0) ? Float64(sim["max_step"]) : nothing,

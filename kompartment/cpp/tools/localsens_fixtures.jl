@@ -12,14 +12,17 @@
 # up to reach each branch -- linear and nonlinear, parameters read by the derivative
 # and by the initial state only, invariant algebra and the clock's interpolation,
 # indexed parameters, decay chains, switch times and the corners a parameter places,
-# events (timed, expected, set off by triggers), the zero floor holding a state, the
+# events (timed, expected, set off by triggers), the zero floor holding a state (and with
+# it its dy/dp: alone, feeding another, held and released, released at a switch time, by
+# index, with the Jacobian differenced, an event while it holds), the
 # analytic Jacobian declining mid-run, blocks that remember, availabilities, explicit
 # terms and sources, the mass-balance audit, the differenced Jacobian, every refusal of
 # `uncarried` and of the problem, a differenced solve that fails and its rewording, a
 # run stopped by its progress.
 #
 # For each case: the problem -- the parameters chosen, the slots, the steps, the initial
-# state with dy0/dp, the tolerances and the weight floor, the big Jacobian's pattern and
+# state with dy0/dp, the tolerances, the weight floor and the state each sensitivity is held
+# with, the big Jacobian's pattern and
 # colouring, the right-hand side and the big Jacobian's values at three points, the
 # block iteration matrix formed and solved with and without a state held -- then the run:
 # its progress, the times, every series of y and dy/dp, the counts (without "ms"), the
@@ -178,6 +181,45 @@ model("the zero floor", """{"name": "floor", "simulation": $SIM,
  "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}, {"name": "C", "initial": "1"}],
  "transfers": [{"name": "AB", "from": "A", "to": "B", "rate": "k", "multiply_by_donor": false},
                {"name": "CB", "from": "C", "to": "B", "rate": "k2", "multiply_by_donor": false}]}""")
+
+# The floor holding a state, and dy/dp held with it: zero while the hold lasts, put there the moment it begins.
+const FLOOR_CHAIN = """
+ "parameters": [{"name": "k", "value": 0.2}, {"name": "lam", "value": 0.1}, {"name": "mu", "value": 0.05}, {"name": "a0", "value": 1}],
+ "compartments": [{"name": "A", "initial": "a0"}, {"name": "B", "initial": "0"}],
+ "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false},
+               {"name": "AB", "from": "A", "to": "B", "rate": "lam"}, {"name": "Bout", "from": "B", "to": null, "rate": "mu"}]"""
+model("the zero floor, feeding another", """{"name": "floor chain", "simulation": $SIM, $FLOOR_CHAIN}""")
+model("the zero floor, the differenced Jacobian", """{"name": "floor chain numeric", "simulation": $(sim("\"jacobian\": \"numeric\"")), $FLOOR_CHAIN}""")
+model("the zero floor, held and released", """{"name": "floor released", "simulation": $SIM,
+ "parameters": [{"name": "k", "value": 0.5}, {"name": "c", "value": 0.1}, {"name": "lam", "value": 0.2}],
+ "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}],
+ "inflows": [{"name": "In", "to": "A", "rate": "c * time()"}],
+ "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false},
+               {"name": "AB", "from": "A", "to": "B", "rate": "lam"}]}""")
+model("the zero floor, released at a switch time", """{"name": "floor switched", "simulation": $(sim("\"switch_times\": [7]")),
+ "parameters": [{"name": "k", "value": 0.2}, {"name": "s", "value": 0.5}],
+ "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}],
+ "inflows": [{"name": "In", "to": "A", "rate": "if(time() >= 7, s, 0)"}],
+ "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false},
+               {"name": "AB", "from": "A", "to": "B", "rate": "0.3"}]}""")
+model("the zero floor, by index", """{"name": "floor indexed", "simulation": $SIM,
+ "index_lists": [{"name": "Zone", "indices": ["a", "b"]}],
+ "parameters": [{"name": "q", "value": 0.3, "index_lists": ["Zone"], "entries": [{"index": {"Zone": "b"}, "value": 0.05}]},
+                {"name": "lam", "value": 0.1, "index_lists": []}],
+ "compartments": [{"name": "A", "initial": "1", "index_lists": ["Zone"]}, {"name": "B", "initial": "0", "index_lists": ["Zone"]}],
+ "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "q", "multiply_by_donor": false, "index_lists": ["Zone"]},
+               {"name": "AB", "from": "A", "to": "B", "rate": "lam", "index_lists": ["Zone"]}]}""")
+# An event while the floor holds A: a trigger on C, which only resets a peak nothing reads, stops the
+# solver at t = 7 and starts it again from there, A held at zero and its dy/dp with it.
+model("the zero floor, an event while it holds", """{"name": "floor event", "simulation": $SIM,
+ "parameters": [{"name": "k", "value": 0.2}, {"name": "lam", "value": 0.1}],
+ "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}, {"name": "C", "initial": "0"}],
+ "inflows": [{"name": "Feed", "to": "C", "rate": "0.1"}],
+ "triggers": [{"name": "Tr", "first": "C", "second": "0.7", "direction": "rising"}],
+ "min_maxes": [{"name": "Peak", "target": "B", "operation": "max", "reset_trigger": "Tr"}],
+ "expressions": [{"name": "Report", "equation": "Peak * 2"}],
+ "transfers": [{"name": "Out", "from": "A", "to": null, "rate": "k", "multiply_by_donor": false},
+               {"name": "AB", "from": "A", "to": "B", "rate": "lam"}]}""")
 
 model("the Jacobian declines", """{"name": "declines", "simulation": $SIM,
  "parameters": [{"name": "k", "value": 0.5}],
@@ -348,9 +390,9 @@ push!(models, ("far field, f, a budget of steps", small_farfield("matched", "f";
 push!(models, ("far field, semi-analytical", small_farfield(; method="semi-analytical")))
 
 # A model with a transport, a parameter its switch time: the builder writes the transport out into a project of its
-# own, whose blocks are copies, and moving the parameter there leaves the switch times of the project asked about
-# where they were -- so the corner it places is not seen, and its dy/dp is integrated (a fault of the Julia package
-# the C++ engine keeps: see `uncarried` there).
+# own, whose blocks are copies, and the switch times are asked of that project, whose block is the one moved -- so the
+# corner it places is seen, and refused as it is in a model without transports (it was not: the switch times were
+# asked of the project handed in, which moving the copy's block left where they were).
 builder_cases = [c for c in K.parse_json(read(joinpath(ROOT, "cpp", "tests", "fixtures", "builder.json"), String))["cases"] if haskey(c, "sections")]
 let col = K.jcopy(only(c for c in builder_cases if c["name"] == "transport: column")["model"])
     col["simulation"]["switch_times"] = Any["kb_sw"]
@@ -414,6 +456,15 @@ case("an expected event", Any["lam", "share", "k"])
 case("an event a trigger sets off", Any["k"])
 case("the zero floor", Any["k", "k2"])
 case("the zero floor", Any["k"]; differenced=true)
+case("the zero floor, feeding another", Any["k", "lam", "mu", "a0"])
+case("the zero floor, feeding another", Any["k", "lam"]; differenced=true)
+case("the zero floor, the differenced Jacobian", Any["k", "lam"])
+case("the zero floor, the differenced Jacobian", Any["k", "lam"]; differenced=true)
+case("the zero floor, held and released", Any["k", "c", "lam"])
+case("the zero floor, held and released", Any["k", "c"]; differenced=true)
+case("the zero floor, released at a switch time", Any["k", "s"])
+case("the zero floor, by index", Any["q[a]", "q[b]", "lam"])
+case("the zero floor, an event while it holds", Any["k", "lam"])
 case("the Jacobian declines", Any["k"])
 case("the Jacobian declines", Any["k"]; differenced=true)
 case("a running mean the rates read", Any["k", "k2"])
@@ -522,7 +573,7 @@ function problem_lines(pr, project)
                    "chosen=" * tdump(pr.chosen), "wanted=" * tdump(pr.wanted),
                    "steps=" * nums([K.step_for(sys.P[e["slot"]+1]) for e in pr.wanted]),
                    "y0=" * nums(pr.y0), "abstol=" * nums(pr.abstol),
-                   "floor=" * ints(pr.weight_floor[1]) * "|" * nums(pr.weight_floor[2])]
+                   "floor=" * ints(pr.weight_floor[1]) * "|" * nums(pr.weight_floor[2]), "held=" * ints(pr.held_with)]
     big = pr.jacobian.pattern
     push!(lines, "pattern=" * ints(big.colptr .- 1) * "|" * ints(big.rowval .- 1))
     push!(lines, "groups=" * (pr.jacobian.groups === nothing ? "none" : join((ints(g .- 1) for g in pr.jacobian.groups), "|")))
@@ -544,7 +595,7 @@ function problem_lines(pr, project)
         push!(lines, "jac $k=" * said(() -> (ok = pr.jacobian.evaluate(vals, t, Y); "$(ok ? 1 : 0):" * nums(vals))))
         (k == 1 && ok) || continue
         # The block iteration matrix, formed and solved as the NDF forms and solves it: with no state held, with the
-        # first held (the states' block factorised twice), and with none again.
+        # first held (its row the identity in every block, nothing of the coupling under it), and with none again.
         push!(lines, "matrix=" * said(() -> begin
             W = pr.equations.iteration_matrix(N, big, vals, "auto", nothing, K.SOLVER_HINTS)
             held = zeros(UInt8, N)

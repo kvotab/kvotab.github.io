@@ -3268,6 +3268,9 @@
    *                             is held at zero and its row of the Jacobian
    *                             with it. The run reports every projection and,
    *                             per state, every step it was held through.
+   *                             Rows the caller holds with such a state
+   *                             (`heldWith`) are held with it and put onto zero
+   *                             with it.
    *   a Jacobian that declines  a supplied df/dy may answer null at a point --
    *                             an entry that is not finite there -- and that
    *                             one evaluation is differenced instead.
@@ -3605,9 +3608,11 @@
   	/**
   	 * The interpolant: the degree-k polynomial through the last k+1 points,
   	 * read `s` steps past the current end (so s in [-1, 0] is the last step).
-  	 * States the caller names are held at or above zero, as the solution is.
+  	 * States the caller names are held at or above zero, as the solution is,
+  	 * and where one is put onto zero the rows held with it (`heldWith`) are put
+  	 * there with it.
   	 */
-  	valueAt(k, s, out, clampAtZero) {
+  	valueAt(k, s, out, clampAtZero, followers = null) {
   		const c = this.cols;
   		const b = basisAt(s, k, this._basis);
   		out.set(c[0]);
@@ -3619,7 +3624,10 @@
   		if (clampAtZero) {
   			for (let m = 0; m < clampAtZero.length; m++) {
   				const i = clampAtZero[m];
-  				if (out[i] < 0) out[i] = 0;
+  				if (out[i] < 0) {
+  					out[i] = 0;
+  					if (followers) for (let q = followers.start[m]; q < followers.start[m + 1]; q++) out[followers.rows[q]] = 0;
+  				}
   			}
   		}
   		return out;
@@ -3793,8 +3801,11 @@
    * and the iteration matrix has to say so; and the largest derivative held
    * back per constrained state, which is what a step's report of "held at zero"
    * is judged by -- a hold against round-off is not a hold.
+   *
+   * The rows held with a constrained state (`followers`, from the `heldWith`
+   * option) are held whenever it is: their derivatives zero, their rows marked.
    */
-  function projectedDerivative(f, constrained, neq) {
+  function projectedDerivative(f, constrained, neq, followers = null) {
   	const heldRows = new Uint8Array(neq);
   	const push = new Float64Array(constrained.length);
   	// Whether the last evaluation held any row (the Newton iteration asks:
@@ -3814,10 +3825,51 @@
   				heldRows[i] = 0;
   			}
   		}
+  		if (followers) {
+  			const { start, rows } = followers;
+  			for (let m = 0; m < constrained.length; m++) {
+  				const h = heldRows[constrained[m]];
+  				for (let q = start[m]; q < start[m + 1]; q++) {
+  					const r = rows[q];
+  					heldRows[r] = h;
+  					if (h) dy[r] = 0;
+  				}
+  			}
+  		}
   		out.held = any;
   		return dy;
   	};
   	return out;
+  }
+
+  /**
+   * The `heldWith` option checked: null, or one entry per state, the index of
+   * the constrained state it is held with or -1. Given as the rows held with
+   * each constrained state, in the order `constrained` has them: those of the
+   * m-th are `rows[start[m]]` up to `rows[start[m + 1]]`, ascending; a row held
+   * with a state the floor never holds is held never, and left out.
+   */
+  function heldWithOf(option, neq, constrained) {
+  	if (option == null) return null;
+  	if (option.length !== neq) {
+  		throw new SolverError('heldWith', `heldWith needs an entry for each of the ${neq} equations`);
+  	}
+  	for (let r = 0; r < neq; r++) {
+  		const i = option[r];
+  		if (!(Number.isInteger(i) && i >= -1 && i < neq && i !== r)) {
+  			throw new SolverError('heldWith', `heldWith's entry ${r} is not another state: ${i}`);
+  		}
+  	}
+  	const place = new Int32Array(neq).fill(-1);
+  	for (let m = 0; m < constrained.length; m++) place[constrained[m]] = m;
+  	const start = new Int32Array(constrained.length + 1);
+  	for (let r = 0; r < neq; r++) if (option[r] >= 0 && place[option[r]] >= 0) start[place[option[r]] + 1]++;
+  	for (let m = 0; m < constrained.length; m++) start[m + 1] += start[m];
+  	if (start[constrained.length] === 0) return null;
+  	const rows = new Int32Array(start[constrained.length]);
+  	const next = start.slice(0, constrained.length);
+  	for (let r = 0; r < neq; r++) if (option[r] >= 0 && place[option[r]] >= 0) rows[next[place[option[r]]]++] = r;
+  	return { start, rows };
   }
 
   /* ------------------------------------------------------------------------ *
@@ -3983,6 +4035,9 @@
    *   weightFloor        {from, factor}, one entry per state: state i is also
    *                      weighed against factor[i]·|y[from[i]]| (from[i] -1:
    *                      not); see where it is read
+   *   heldWith           one entry per state: the `nonNegative` state it is
+   *                      held with, or -1 -- held where that one is held, and
+   *                      put onto zero where it is; see where it is read
    *   absolute           state indices weighed against abstol/rtol alone, their
    *                      size left out, and whose abstol never floats: a
    *                      logarithm; see where it is read
@@ -4154,7 +4209,16 @@
   		return f(tt, yy, out);
   	};
   	const constrained = Int32Array.from(o.nonNegative ?? []).filter((i) => !(mass && !mass[i]));
-  	const projected = constrained.length ? projectedDerivative(raw, constrained, neq) : null;
+  	// Rows held with a constrained state (`heldWith`): its derivative held at
+  	// zero where its state's is, its row of the iteration matrix held with its
+  	// state's, and put onto zero with its history forgotten wherever its state
+  	// is put there. A row whose value is a derivative of its state's -- the
+  	// sensitivities of Kompartment's ../sim/localsens.js, each held with the
+  	// state it is the sensitivity of -- is zero wherever its state is held at
+  	// zero, since the state is zero there for every nearby value of what it is
+  	// taken with respect to, and it becomes so the moment the hold begins.
+  	const followers = heldWithOf(o.heldWith, neq, constrained);
+  	const projected = constrained.length ? projectedDerivative(raw, constrained, neq, followers) : null;
   	const rhs = projected ? projected.call : raw;
   	const clampList = constrained.length ? constrained : null;
 
@@ -4183,6 +4247,14 @@
   	y.set(y0);
   	record(t0, y);
   	let t = t0;
+  	/** The m-th constrained state put onto zero: the rows held with it go there with it, their history forgotten as its is. */
+  	const followOntoZero = (m, forget) => {
+  		for (let q = followers.start[m]; q < followers.start[m + 1]; q++) {
+  			const r = followers.rows[q];
+  			y[r] = 0;
+  			if (forget) table.forget(r);
+  		}
+  	};
   	const fail = (e) => {
   		e.trace = trace.slice();
   		e.lastT = t;
@@ -4280,7 +4352,12 @@
   		let any = false;
   		for (let m = 0; m < constrained.length; m++) {
   			const i = constrained[m];
-  			if (heldInW[i] && !projected.heldRows[i]) { heldNow[i] = 0; any = true; }
+  			if (heldInW[i] && !projected.heldRows[i]) {
+  				heldNow[i] = 0;
+  				any = true;
+  				// ...and the rows held with it, released with it.
+  				if (followers) for (let q = followers.start[m]; q < followers.start[m + 1]; q++) heldNow[followers.rows[q]] = 0;
+  			}
   		}
   		return any;
   	};
@@ -4387,7 +4464,7 @@
   	let stepFails = 0;
 
   	/** The interpolant over the step just taken, for events and output. */
-  	const denseAt = (tq) => table.valueAt(k, (tq - tnew) / h, interp, clampList);
+  	const denseAt = (tq) => table.valueAt(k, (tq - tnew) / h, interp, clampList, followers);
 
   	/** Cuts (or grows) the step by `factor`, rescaling the table to match. */
   	const changeStep = (factor) => {
@@ -4417,6 +4494,7 @@
   			if (y[i] > 0 && y[i] <= atol[i] && should(i)) {
   				y[i] = 0;
   				table.forget(i);
+  				if (followers) followOntoZero(m, true);
   				negative++;
   				snapped = true;
   			}
@@ -4735,6 +4813,7 @@
   					y[i] = 0;
   					negative++;
   					table.forget(i);
+  					if (followers) followOntoZero(m, true);
   				}
   				// Held through this step: the derivative held back would have
   				// moved the state by more than its tolerance over the step. A
@@ -4755,7 +4834,15 @@
   				hTable = h;
   				tnew = tE;
   				consecutive = 0;
-  				if (clampList) for (const i of clampList) if (y[i] < 0) y[i] = 0;
+  				if (clampList) {
+  					for (let m = 0; m < clampList.length; m++) {
+  						const i = clampList[m];
+  						if (y[i] < 0) {
+  							y[i] = 0;
+  							if (followers) followOntoZero(m, false);
+  						}
+  					}
+  				}
   				vR.set(hit.values);
   				stopped = { t: tE, y: Float64Array.from(y), which: hit.which };
   				last = true;

@@ -284,10 +284,24 @@ def REFUSAL_MODELS() -> List[Any]:  # noqa: N802 - a constant, made fresh each t
     corner = base()
     corner['simulation']['switch_times'] = ['t_on']
     corner['inflows'] = [{'name': 'In', 'to': 'A', 'rate': 'if(time() >= t_on, 1, 0)', 'index_lists': []}]
+    # The same corner in a model with transports, which the builder writes out
+    # into a project of its own: the parameter was moved there and the switch
+    # times asked of the project handed in, and the corner was never seen.
+    column = json.loads(json.dumps(corner))
+    column['transports'] = ['Col']
+    column['compartments'] += [{'name': 'Top', 'system': 'Col', 'transport': 'begin', 'initial': '0', 'index_lists': []},
+                               {'name': 'Bottom', 'system': 'Col', 'transport': 'end', 'initial': '0',
+                                'index_lists': []}]
+    column['expressions'] = [{'name': 'N', 'system': 'Col', 'transport': 'number', 'equation': '3', 'index_lists': []},
+                             {'name': 'Counter', 'system': 'Col', 'transport': 'counter', 'index_lists': []}]
+    column['transfers'].append({'name': 'Down', 'system': 'Col', 'from': 'Col.Top', 'to': 'Col.Bottom', 'rate': 'k',
+                                'index_lists': []})
+    column['inflows'][0]['to'] = 'Col.Top'
     return [(jump, ['k'], "'Flood' makes the state jump at t=50"),
             (path, ['k'], "'Top' remembers the path of the run"),
             (lagged, ['k'], "'Lagged' remembers the path of the run"),
-            (corner, ['t_on'], "'t_on' places a corner of the run")]
+            (corner, ['t_on'], "'t_on' places a corner of the run"),
+            (column, ['t_on'], "'t_on' places a corner of the run")]
 
 
 class _Stop:
@@ -703,6 +717,65 @@ class Standalone(unittest.TestCase):
                    'transfers': [{'name': 'out', 'from': 'A', 'to': None, 'rate': 'k', 'index_lists': []}]}
         self.assertGreaterEqual(L.run_sensitivity(limited, ['k'])['stats']['nsteps'], 100)
 
+    def test_dy_dp_of_a_compartment_the_floor_holds_is_zero_while_it_is_held(self) -> None:
+        # A loses a fixed k a year and feeds B in proportion to itself: A' = -k - lam A, B' = lam A, so
+        # A = (1 + k/lam) e^(-lam t) - k/lam until it empties at t* = ln(1 + lam/k)/lam, and the floor holds
+        # it at zero from then on, for every k near this one. Its dA/dk is zero there, and B, fed nothing,
+        # keeps what it had: B = 1 - k t*, so dB/dk = -t* + 1/(k + lam) and dB/dlam = -k dt*/dlam. The
+        # sensitivity was integrated as if the floor were not there: dA/dk went on falling past t*, and B
+        # took lam times it.
+        k, lam = 0.2, 0.1
+        model = {'name': 'emptied',
+                 'simulation': {'start_time': 0, 'end_time': 10, 'output_points': 11, 'spacing': 'linear',
+                                'solver': 'ndf', 'rtol': 1e-9, 'abstol': 1e-10, 'time_unit': 'year'},
+                 'parameters': [{'name': 'k', 'value': k, 'index_lists': []},
+                                {'name': 'lam', 'value': lam, 'index_lists': []}],
+                 'compartments': [{'name': 'A', 'initial': '1', 'index_lists': []},
+                                  {'name': 'B', 'initial': '0', 'index_lists': []}],
+                 'transfers': [{'name': 'Out', 'from': 'A', 'to': None, 'rate': 'k', 'multiply_by_donor': False,
+                                'index_lists': []},
+                               {'name': 'AB', 'from': 'A', 'to': 'B', 'rate': 'lam', 'index_lists': []}]}
+        t_star = math.log(1 + lam / k) / lam
+        dt_dlam = -t_star / lam + 1 / (lam * (k + lam))
+        for differenced in (False, True):
+            for jacobian in ('analytic', 'numeric'):
+                with self.subTest(differenced=differenced, jacobian=jacobian):
+                    m = json.loads(json.dumps(model))
+                    m['simulation']['jacobian'] = jacobian
+                    r = L.run_sensitivity(m, ['k', 'lam'], differenced=differenced)
+                    t = np.asarray(r['t'])
+                    held = t > t_star
+                    expect = (np.exp(-lam * t[~held]) - 1) / lam
+                    self.assertLess(float(np.max(np.abs(r['sens'][0][0][~held] - expect))), 1e-6)
+                    self.assertLess(float(np.max(np.abs(r['y'][0][held]))), 1e-12)
+                    self.assertLess(float(np.max(np.abs(r['sens'][0][0][held]))), 1e-9)
+                    self.assertLess(float(np.max(np.abs(r['sens'][1][0][held]))), 1e-9)
+                    self.assertLess(float(np.max(np.abs(r['sens'][0][1][held] / (-t_star + 1 / (k + lam)) - 1))),
+                                    1e-6)
+                    self.assertLess(float(np.max(np.abs(r['sens'][1][1][held] / (-k * dt_dlam) - 1))), 1e-5)
+        # Held and released again: A' = c t - k empties A, holds it while c t < k, and lets it go at
+        # t2 = k/c, from when A = c (t - t2)^2/2 and dA/dk = -(t - t2). Integrated through the hold as if
+        # the floor were not there, dA/dk was -t.
+        released = {'name': 'released',
+                    'simulation': {'start_time': 0, 'end_time': 10, 'output_points': 11, 'spacing': 'linear',
+                                   'solver': 'ndf', 'rtol': 1e-9, 'abstol': 1e-12, 'time_unit': 'year'},
+                    'parameters': [{'name': 'k', 'value': 0.5, 'index_lists': []},
+                                   {'name': 'c', 'value': 0.1, 'index_lists': []}],
+                    'compartments': [{'name': 'A', 'initial': '1', 'index_lists': []}],
+                    'inflows': [{'name': 'In', 'to': 'A', 'rate': 'c * time()', 'index_lists': []}],
+                    'transfers': [{'name': 'Out', 'from': 'A', 'to': None, 'rate': 'k', 'multiply_by_donor': False,
+                                   'index_lists': []}]}
+        r = L.run_sensitivity(released, ['k', 'c'])
+        t = np.asarray(r['t'])
+        t1 = 5 - math.sqrt(5)
+        before, held, after = t < t1, (t >= t1) & (t <= 5), t > 5
+        self.assertLess(float(np.max(np.abs(r['sens'][0][0][before] + t[before]))), 1e-6)
+        self.assertLess(float(np.max(np.abs(r['sens'][0][0][held]))), 1e-9)
+        self.assertLess(float(np.max(np.abs(r['sens'][1][0][held]))), 1e-9)
+        self.assertLess(float(np.max(np.abs(r['sens'][0][0][after] / -(t[after] - 5) - 1))), 1e-5)
+        expect = (t[after] - 5) ** 2 / 2 + 5 * (t[after] - 5)
+        self.assertLess(float(np.max(np.abs(r['sens'][1][0][after] / expect - 1))), 1e-4)
+
     def test_sensitivity_refusals(self) -> None:
         with self.assertRaisesRegex(L.SensitivityError, 'no compartments to differentiate'):
             L.run_sensitivity(example('post-processing'), ['Dilution'])
@@ -976,6 +1049,8 @@ class SensitivityParity(unittest.TestCase):
                 floor_from, floor_factor = problem['weight_floor']
                 self.assertEqual(floor_from.tolist(), js['weightFloor']['from'])
                 self.assertTrue(same(floor_factor.tolist(), js['weightFloor']['factor']))
+                # ...and held with it where the floor holds it.
+                self.assertEqual(problem['held_with'].tolist(), js['heldWith'])
                 pattern = problem['jacobian']['pattern']
                 self.assertEqual(pattern.col_ptr.tolist(), js['pattern']['colPtr'])
                 self.assertEqual(pattern.row_idx.tolist(), js['pattern']['rowIdx'])
@@ -1063,6 +1138,51 @@ class SensitivityParity(unittest.TestCase):
                 for k, c in enumerate(js['chosen']):
                     for i, (yr, sr) in enumerate(zip(js['y'], js['sens'][k])):
                         self.assertTrue(same(L.elasticity(yr, sr, c['value']).tolist(), js['elasticity'][k][i]))
+
+    def test_a_compartment_the_floor_holds(self) -> None:
+        """dy/dp where the floor holds a compartment at zero for part of the run, and releases it
+        again: held with it -- zero while it is held -- in both, and the same to 10 x rtol."""
+        sim = {'start_time': 0, 'end_time': 10, 'output_points': 11, 'spacing': 'linear', 'solver': 'ndf',
+               'rtol': 1e-8, 'abstol': 1e-12, 'time_unit': 'year'}
+        chain = {'name': 'chain', 'simulation': sim,
+                 'parameters': [{'name': 'k', 'value': 0.2, 'index_lists': []},
+                                {'name': 'lam', 'value': 0.1, 'index_lists': []},
+                                {'name': 'mu', 'value': 0.05, 'index_lists': []}],
+                 'compartments': [{'name': 'A', 'initial': '1', 'index_lists': []},
+                                  {'name': 'B', 'initial': '0', 'index_lists': []}],
+                 'transfers': [{'name': 'Out', 'from': 'A', 'to': None, 'rate': 'k', 'multiply_by_donor': False,
+                                'index_lists': []},
+                               {'name': 'AB', 'from': 'A', 'to': 'B', 'rate': 'lam', 'index_lists': []},
+                               {'name': 'Bout', 'from': 'B', 'to': None, 'rate': 'mu', 'index_lists': []}]}
+        release = {'name': 'release', 'simulation': sim,
+                   'parameters': [{'name': 'k', 'value': 0.5, 'index_lists': []},
+                                  {'name': 'c', 'value': 0.1, 'index_lists': []}],
+                   'compartments': [{'name': 'A', 'initial': '1', 'index_lists': []},
+                                    {'name': 'B', 'initial': '0', 'index_lists': []}],
+                   'inflows': [{'name': 'In', 'to': 'A', 'rate': 'c * time()', 'index_lists': []}],
+                   'transfers': [{'name': 'Out', 'from': 'A', 'to': None, 'rate': 'k', 'multiply_by_donor': False,
+                                  'index_lists': []},
+                                 {'name': 'AB', 'from': 'A', 'to': 'B', 'rate': '0.2', 'index_lists': []}]}
+        # (Not mu, whose dB/dmu each engine has to about 10 x rtol at this rtol -- 15.6 and 7.7, against a run
+        # at 1e-11 -- and nothing of which the floor holds.)
+        for name, model, parameters in (('chain', chain, ['k', 'lam']), ('release', release, ['k', 'c'])):
+            for differenced in (False, True):
+                with self.subTest(model=name, differenced=differenced):
+                    js = app('sensitivity', model=model, opts={'parameters': parameters, 'differenced': differenced})
+                    mine = L.run_sensitivity(model, parameters, differenced=differenced)
+                    rtol = float(model['simulation']['rtol'])
+                    worst_y = series_difference(mine['y'], js['y'])
+                    worst_s = max(series_difference(mine['sens'][k], js['sens'][k]) for k in range(len(parameters)))
+                    _note('sensitivity: a compartment the floor holds, states over the peak, in rtol', worst_y / rtol)
+                    _note('sensitivity: a compartment the floor holds, dy/dp over the peak, in rtol', worst_s / rtol)
+                    self.assertLess(worst_y, 10 * rtol)
+                    self.assertLess(worst_s, 10 * rtol)
+                    # Where A is held, its dy/dp is zero in both.
+                    held = [j for j in range(len(mine['t'])) if mine['y'][0][j] == 0 and js['y'][0][j] == 0]
+                    self.assertTrue(held)
+                    for k in range(len(parameters)):
+                        self.assertLess(max(abs(mine['sens'][k][0][j]) for j in held), 1e-12)
+                        self.assertLess(max(abs(js['sens'][k][0][j]) for j in held), 1e-12)
 
     def test_refusals(self) -> None:
         cases = [

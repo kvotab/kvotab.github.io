@@ -98,6 +98,8 @@ def variable_order(f: Callable[[float, np.ndarray], np.ndarray], tspan: Any, y0:
         kw['below_tol_run'] = opts['below_tol_run']
     if opts.get('weight_floor') is not None:
         kw['weight_floor'] = opts['weight_floor']
+    if opts.get('held_with') is not None:
+        kw['held_with'] = opts['held_with']
     if opts.get('iteration_matrix') is not None:
         kw['iteration_matrix'] = opts['iteration_matrix']
     try:

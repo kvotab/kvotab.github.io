@@ -6115,10 +6115,11 @@ model is once a run; the budget rows take none, as `df/dp` writes them nothing.
 
 The matrix is then block lower triangular, and it is not handed to an LU whole
 (`blockMatrix` in `src/sim/localsens.js`, the NDF's `iterationMatrix` option):
-`A = I - a·J` is factorised once -- twice while the floor holds a state, whose
-row is the identity in the states' block alone -- the states' block is solved
-first, and each sensitivity's after it with `a·C_j` times the states' correction
-on its right-hand side. Besides doing one factorisation where the whole matrix
+`A = I - a·J` is factorised once -- a row the floor holds is the identity in it,
+and in every sensitivity's block too, each sensitivity being held with its state
+(below) -- the states' block is solved first, and each sensitivity's after it
+with `a·C_j` times the states' correction on its right-hand side, none of it on
+a held row. Besides doing one factorisation where the whole matrix
 took `1 + m`, it never takes a pivot across blocks. An LU of the whole matrix
 pivots a state's column on a sensitivity's row wherever the coupling is the
 larger entry, and mixes that row's rounding into the state's correction: on the
@@ -6140,7 +6141,7 @@ came out floored. Now `run` takes `equations` -- `{ dydt, y0, abstol,
 jacobian, solver, onSegment }`, a system standing over the model's own whose
 first `nstate` entries are the states -- and integrates it with everything a run
 does. The floor is sized by the vector, so it covers the states and nothing
-after them. `onSegment` tells the equations where each segment starts, because
+after them; each sensitivity is held with its state instead (below). `onSegment` tells the equations where each segment starts, because
 under `min_change_time` the clock slots are interpolated between two ends
 anchored there, and those ends were worked out from the parameter as it was:
 they are dropped around each difference. The tangents write the clock slots
@@ -6151,14 +6152,38 @@ them at the exact instant -- a difference second order in the interval.
 Interpolating the tangents between the same two ends, as the values are, would
 close it; that has not been done.
 
+**A compartment the floor holds has a sensitivity of zero.** While *cannot go
+negative* holds a state at zero, it is zero for every value of the parameter
+near this one, so its `dy/dp` is zero: put there the moment the hold begins --
+a moment that moves with the parameter, the jump `S⁺ = S⁻ + (f⁻ - f⁺)·dt*/dp` of
+a switching system, which is zero in every row but the held one -- kept there
+while the hold lasts, and taken up again from zero when the state is released,
+where there is no jump (the push changes sign continuously). The NDF's
+`heldWith` option says which rows go with which constrained state, the
+sensitivity `n·(j+1)+i` with state `i`: such a row's derivative is held at zero
+wherever its state's is, it is put onto zero with its history forgotten
+wherever its state is put there (`snapOntoBound`, the projection after an
+accepted step, the clamp at an event crossing, the interpolant), and its row of
+the iteration matrix is held with its state's, so that in `blockMatrix` the
+sensitivities' blocks share the states' held pattern. Integrated as if the floor
+were not there, as it was, `A' = -k` from `A(0) = 1` emptied at `t = 1/k` and
+its `dA/dk` went on from `-1/k` to `-t` where it is 0, and what `A` fed took
+`J·S` of that drift: against central differences of whole runs, an error of
+the order of the sensitivity itself, now the differences' own (4e-6 of its
+scale at worst on the made-up models, every engine). No other caller of the
+NDF passes `heldWith`, and their runs are what they were, bit for bit.
+
 **What cannot be carried is refused** (`uncarried`), since each puts a term in
 `dy/dp` that `J·S + df/dp` does not have: a jump inside the run (`jumpsOf`); a
 min/max, snapshot or delay -- or a running mean an event switches -- that the
 derivative reads, found by walking `readsAlg` back from every transfer, source,
 dy/dt term, running-mean target and waste, event and far-field setting; and a
 chosen parameter that places a corner, found by moving the parameter's block a
-little and asking `switchTimes` again. A recorder no rate reads is a report and
-is run.
+little and asking `switchTimes` again -- of the project the system was laid out
+from (`builtFrom`), whose block the layout holds: in a model with transports
+that is the builder's own copy, the transports written out, and asked of the
+project handed in, which moving the copy's block leaves where it was, the
+corner was never seen. A recorder no rate reads is a report and is run.
 
 **The dialog's series are per state.** `r.y` and each block of `r.sens` are one
 row per state; the worker used to walk `r.states`, which is one entry per
