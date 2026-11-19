@@ -41,19 +41,18 @@ predefined entities, with names kept as written (``r:id``, not a namespace URI).
 from __future__ import annotations
 
 import datetime as _dt
-import io
 import math
 import numbers
 import os
 import re
 import struct
-import zipfile
 import zlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple, Union
 
 from ..errors import KompartmentError
 from .csv import JS_WHITESPACE, is_js_boolean, js_string, js_to_number
+from .zipread import ZipError, unzip
 
 __all__ = ['XLSXError', 'XMLError', 'CELL_LIMIT', 'xml_escape', 'sheet_title', 'column_of', 'column_name',
            'read_workbook', 'write_workbook']
@@ -438,65 +437,19 @@ def _sheet_grid(xml: str, strings: List[str]) -> List[List[Any]]:
 
 
 class _Entries:
-    """The entries of an archive, read when asked for, as the application's
-    ``unzip`` hands them over: names as UTF-8, directories left out, and what
-    comes out of the archive held to one allowance for the whole of it."""
+    """The entries of a workbook's archive, as the application's ``unzip``
+    hands them over (:mod:`kompartment.io.zipread`): what the archive will not
+    give up as it is read is said as ``readWorkbook`` says it, "This is not a
+    readable .xlsx file: " and the reader's words."""
 
     def __init__(self, data: bytes) -> None:
         try:
-            self.zf = zipfile.ZipFile(io.BytesIO(data))
-        except zipfile.BadZipFile as e:
-            if str(e) != 'File is not a zip file':
-                raise
-            # No end record: the application's own sentence for it.
-            raise XLSXError(
-                'This is not a readable .xlsx file: This does not look like a ZIP archive. An '
-                'Ecolego project (.eco) is a zipped project folder; a bare model.xml should be '
-                'opened directly instead.') from None
-        self.infos: Dict[str, zipfile.ZipInfo] = {}
-        self.spent = 0
-        for info in self.zf.infolist():
-            name = info.orig_filename
-            if not info.flag_bits & 0x800:
-                name = name.encode('cp437').decode('utf-8', 'replace')
-            if info.flag_bits & 0x01:
-                raise ValueError(f"'{name}' is encrypted. Ecolego can obfuscate a project on save; "
-                                 're-save it without that option, or export the model, before importing.')
-            if name.endswith('/'):
-                continue
-            if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
-                raise ValueError(f"'{name}' uses compression method {info.compress_type}, which is not "
-                                 'supported (only stored and deflate are).')
-            # The XML is inflated on the way past in the application, and so
-            # spends its allowance first.
-            if info.compress_type == zipfile.ZIP_DEFLATED and name.lower().endswith('.xml'):
-                self._spend(name, info.file_size)
-            self.infos[name] = info
-
-    def _spend(self, name: str, size: int) -> None:
-        def mb(x: float) -> int:
-            return math.floor(x / 1048576 + 0.5)
-        if size > MAX_INFLATED:
-            raise ValueError(f"'{name}' says it expands to {mb(size)} MB, past the {mb(MAX_INFLATED)} MB "
-                             'this reader will decompress. No real model is that large.')
-        if size > MAX_INFLATED - self.spent:
-            raise ValueError(
-                f"'{name}' takes this archive past the {mb(MAX_INFLATED)} MB this reader will decompress "
-                f'in total: {mb(self.spent)} MB have come out already and this entry adds {mb(size)} '
-                'more. No real project expands that far, so the archive is either damaged or built to '
-                'exhaust memory.')
-        self.spent += size
+            self.entries = unzip(data)
+        except ZipError as e:
+            raise XLSXError(f'This is not a readable .xlsx file: {e}') from None
 
     def get(self, name: str) -> Optional[bytes]:
-        info = self.infos.get(name)
-        if info is None:
-            return None
-        if info.compress_type == zipfile.ZIP_DEFLATED and not name.lower().endswith('.xml'):
-            self._spend(name, info.file_size)
-        try:
-            return self.zf.read(info)
-        except Exception as e:  # noqa: BLE001 -- a damaged entry, whatever zipfile calls it
-            raise XLSXError(f'This is not a readable .xlsx file: {e}') from None
+        return self.entries[name] if name in self.entries else None
 
 
 def read_workbook(data: Union[bytes, bytearray, memoryview, str, 'os.PathLike[str]']) -> Dict[str, Any]:
@@ -514,16 +467,7 @@ def read_workbook(data: Union[bytes, bytearray, memoryview, str, 'os.PathLike[st
     """
     if isinstance(data, (str, os.PathLike)):
         data = Path(data).read_bytes()
-    try:
-        entries = _Entries(bytes(data))
-    except XLSXError:
-        raise
-    except Exception as e:  # noqa: BLE001 -- as the JavaScript wraps whatever unzip threw
-        raise XLSXError(f'This is not a readable .xlsx file: {e}') from None
-    try:
-        return _read_parts(entries)
-    finally:
-        entries.zf.close()
+    return _read_parts(_Entries(bytes(data)))
 
 
 def _read_parts(entries: _Entries) -> Dict[str, Any]:

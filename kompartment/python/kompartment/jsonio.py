@@ -143,14 +143,22 @@ def read_model_file(path: PathLike) -> dict:
     if data[:2] == b'\x1f\x8b':
         data = gzip.decompress(data)
     elif data[:4] == b'PK\x03\x04':
-        with zipfile.ZipFile(io.BytesIO(data)) as z:
-            names = [n for n in z.namelist()
-                     if not n.startswith('results/') and n.lower().endswith('.json')]
-            if not names:
-                raise ValueError(f"'{p.name}' is a ZIP archive with no model in it: it holds "
-                                 f"{', '.join(z.namelist()[:4])}")
-            data = z.read(names[0])
-    text = data.decode('utf-8-sig')
+        # As the application opens one: the archive read as its `unzip` reads it, the model the
+        # first `.json` outside `results/`, and an Ecolego project (a model.xml in it) imported
+        # rather than opened.
+        from .io.zipread import unzip
+        entries = unzip(data)
+        if any(re.search(r'(^|/)model\.xml$', n, re.I | re.A) for n in entries):
+            raise ValueError(f"'{p.name}' is an Ecolego project (it holds a model.xml); import it with "
+                             'Model.from_eco rather than opening it as a model.')
+        name = next((n for n in entries if not n.startswith('results/') and n.lower().endswith('.json')), None)
+        if name is None:
+            raise ValueError(f"'{p.name}' is a ZIP archive with no model in it \u2014 no .json file and no "
+                             f"model.xml. It holds {', '.join(list(entries)[:4])}.")
+        data = entries[name]
+    # UTF-8 as the application decodes a file: a byte-order mark dropped, what is not UTF-8 U+FFFD.
+    text = data.decode('utf-8', 'replace')
+    text = text[1:] if text.startswith('\ufeff') else text
     model = json.loads(text)
     if not isinstance(model, dict):
         raise ValueError(f"'{p.name}' does not hold a model: a model is one JSON object")

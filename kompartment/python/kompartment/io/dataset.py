@@ -49,8 +49,6 @@ import json
 import math
 import numbers
 import re
-import struct
-import zlib
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Union
@@ -61,6 +59,7 @@ from ..errors import KompartmentError
 from ..jsonio import dumps, slug
 from .csv import is_js_boolean, js_string, js_to_number
 from .xlsx import _zip
+from .zipread import unzip as _read_zip
 
 __all__ = ['FORMAT', 'DIR', 'META', 'DatasetError', 'layout_signature', 'dataset_entries', 'is_dataset',
            'read_dataset', 'rows_of', 'restore_results', 'describe_dataset', 'unzip', 'dataset_archive',
@@ -611,122 +610,17 @@ def describe_dataset(meta: Any) -> str:
 
 # --- the archive -----------------------------------------------------------------------------
 
-def _zip_error(message: str) -> DatasetError:
-    return DatasetError(message)
-
-
-def unzip(data: Union[bytes, bytearray, memoryview], inflate_limit: int = MAX_INFLATED) -> Dict[str, bytes]:
+def unzip(data: Union[bytes, bytearray, memoryview], inflate_limit: int = MAX_INFLATED) -> Mapping[str, bytes]:
     """The entries of a ZIP archive, by name, in the order its directory lists
-    them, as the application's ``unzip`` reads one: names as UTF-8, directories
-    left out, stored and deflated entries only, no encrypted ones, and what
-    comes out held to one allowance for the whole archive (``inflate_limit``,
-    the application's 256 MB unless a test says otherwise). Checksums are not
-    checked, as the application does not check them. The writer here keeps to
-    the same allowance (see :func:`dataset_archive`), so an archive written
-    here always opens."""
-    b = bytes(data)
-    size = len(b)
-    u16 = struct.Struct('<H').unpack_from
-    u32 = struct.Struct('<I').unpack_from
-    eocd = -1
-    for p in range(size - 22, max(0, size - 0x10000 - 22) - 1, -1):
-        if u32(b, p)[0] == 0x06054B50:
-            eocd = p
-            break
-    if eocd < 0:
-        raise _zip_error('This does not look like a ZIP archive. An Ecolego project (.eco) is a zipped project '
-                         'folder; a bare model.xml should be opened directly instead.')
-    count = u16(b, eocd + 10)[0]
-    at = u32(b, eocd + 16)[0]
-    if count == 0xFFFF or at == 0xFFFFFFFF:
-        loc = eocd - 20
-        if loc >= 0 and u32(b, loc)[0] == 0x07064B50:
-            z64 = struct.unpack_from('<Q', b, loc + 8)[0]
-            if z64 + 56 > size:
-                raise _zip_error(f'This archive says its ZIP64 directory is at byte {z64}, which is outside its own '
-                                 f'{size} bytes.')
-            if u32(b, z64)[0] == 0x06064B50:
-                count = struct.unpack_from('<Q', b, z64 + 32)[0]
-                at = struct.unpack_from('<Q', b, z64 + 48)[0]
-    out: Dict[str, bytes] = {}
-    spent = 0
-
-    def mb(n: float) -> int:
-        return math.floor(n / 1048576 + 0.5)
-
-    for _ in range(count):
-        if at < 0 or at + 46 > size or u32(b, at)[0] != 0x02014B50:
-            raise _zip_error('The central directory is damaged')
-        flags, method = u16(b, at + 8)[0], u16(b, at + 10)[0]
-        csize, usize = u32(b, at + 20)[0], u32(b, at + 24)[0]
-        nlen, xlen, clen = u16(b, at + 28)[0], u16(b, at + 30)[0], u16(b, at + 32)[0]
-        local = u32(b, at + 42)[0]
-        if at + 46 + nlen + xlen + clen > size:
-            raise _zip_error(f'The central directory runs past the end of this {size}-byte archive')
-        name = b[at + 46:at + 46 + nlen].decode('utf-8', 'replace')
-        if flags & 0x01:
-            raise _zip_error(f"'{name}' is encrypted. Ecolego can obfuscate a project on save; re-save it without "
-                             'that option, or export the model, before importing.')
-        if 0xFFFFFFFF in (csize, usize, local):
-            p, end = at + 46 + nlen, min(at + 46 + nlen + xlen, size)
-            while p + 4 <= end:
-                tag, length = u16(b, p)[0], u16(b, p + 2)[0]
-                if tag == 0x0001:
-                    q = p + 4
-                    for field in ('usize', 'csize', 'local'):
-                        if {'usize': usize, 'csize': csize, 'local': local}[field] != 0xFFFFFFFF:
-                            continue
-                        if q + 8 > min(p + 4 + length, end):
-                            raise _zip_error(f"The ZIP64 record for '{name}' says it is {length} bytes long but "
-                                             'does not hold the sizes it promises; the archive looks damaged.')
-                        v = struct.unpack_from('<Q', b, q)[0]
-                        q += 8
-                        if field == 'usize':
-                            usize = v
-                        elif field == 'csize':
-                            csize = v
-                        else:
-                            local = v
-                    break
-                p += 4 + length
-        at += 46 + nlen + xlen + clen
-        if name.endswith('/'):
-            continue
-        if local + 30 > size:
-            raise _zip_error(f"'{name}' says its data begins at byte {local}, which is outside this {size}-byte "
-                             'archive.')
-        if u32(b, local)[0] != 0x04034B50:
-            raise _zip_error(f"The local header for '{name}' is damaged")
-        start = local + 30 + u16(b, local + 26)[0] + u16(b, local + 28)[0]
-        if start > size or start + csize > size:
-            raise _zip_error(f"'{name}' claims {csize} bytes from {start}, which runs past the end of this "
-                             f'{size}-byte archive.')
-        raw = b[start:start + csize]
-        if method == 0:
-            out[name] = raw
-            continue
-        if method != 8:
-            raise _zip_error(f"'{name}' uses compression method {method}, which is not supported (only stored "
-                             'and deflate are).')
-        if usize > MAX_INFLATED:
-            raise _zip_error(f"'{name}' says it expands to {mb(usize)} MB, past the {mb(MAX_INFLATED)} MB this "
-                             'reader will decompress. No real model is that large.')
-        if usize > inflate_limit - spent:
-            raise _zip_error(f"'{name}' takes this archive past the {mb(inflate_limit)} MB this reader will "
-                             f'decompress in total: {mb(spent)} MB have come out already and this entry adds '
-                             f'{mb(usize)} more. No real project expands that far, so the archive is either '
-                             'damaged or built to exhaust memory.')
-        try:
-            d = zlib.decompressobj(-15)
-            body = d.decompress(raw, max(0, inflate_limit - spent) + 1)
-        except zlib.error as e:
-            raise _zip_error(f"Could not decompress '{name}': {e}") from None
-        spent += len(body)
-        if usize and len(body) != usize:
-            raise _zip_error(f"'{name}' inflated to {len(body)} bytes but the directory says {usize}; the archive "
-                             'looks damaged.')
-        out[name] = body
-    return out
+    them, as the application's ``unzip`` reads one (:mod:`kompartment.io.zipread`):
+    names as UTF-8, directories left out, stored and deflated entries only, no
+    encrypted ones, checksums not checked, a deflated entry inflated when it is
+    first asked for, and what comes out held to one allowance for the whole
+    archive (``inflate_limit``, the application's 256 MB unless a test says
+    otherwise). What cannot be read is a :class:`DatasetError`, as the archive
+    is read or as an entry is. The writer here keeps to the same allowance (see
+    :func:`dataset_archive`), so an archive written here always opens."""
+    return _read_zip(data, inflate_limit=inflate_limit, error=DatasetError)
 
 
 def _iso_now() -> str:

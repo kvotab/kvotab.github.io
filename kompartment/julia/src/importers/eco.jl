@@ -407,7 +407,7 @@ end
 
 # Which Ecolego wrote the archive: `.version` at its root is a properties
 # file, `version=6.5 track-changes=false ...`.
-function _eco_ecolego_version(entries::_EcoArchive)
+function _eco_ecolego_version(entries::ZipEntries)
     for name in _eco_names(entries)
         _eco_last_part(name) == ".version" || continue
         text = try

@@ -1353,8 +1353,11 @@ class ArchiveAllowance(unittest.TestCase):
         self.assertEqual([e['method'] for e in zip_layout(mine)['entries']], [8, 8, 0])
         back = dataset.unzip(mine, inflate_limit=100000)
         self.assertEqual(list(back.items()), entries)
+        # Deflated, the three are more than the allowance: refused as the last is read, as the
+        # application refuses it (an entry is inflated when it is first asked for).
+        late = dataset.unzip(_zip(entries), inflate_limit=100000)
         with self.assertRaises(dataset.DatasetError):
-            dataset.unzip(_zip(entries), inflate_limit=100000)
+            dict(late.items())
         got = js({'task': 'zip', 'entries': [[n, b64(b)] for n, b in entries], 'inflateLimit': 100000},
                  {'task': 'zip', 'entries': [[n, b64(b)] for n, b in entries], 'inflateLimit': 100000, 'store': True})
         theirs = zip_layout(unb64(got[0]['data']))

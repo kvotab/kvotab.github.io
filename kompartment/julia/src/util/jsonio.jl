@@ -142,11 +142,18 @@ function read_model_file(path::AbstractString)
     if is_gzip(data)
         data = gunzip(data)
     elseif is_zip(data)
+        # As the application opens one: the archive read as its `unzip` reads it, the model the
+        # first `.json` outside `results/`, and an Ecolego project (a model.xml in it) imported
+        # rather than opened.
         z = read_zip(data)
-        names = [n for n in zip_names(z) if !startswith(n, "results/") && endswith(lowercase(n), ".json")]
-        isempty(names) && error("'$name' is a ZIP archive with no model in it: it holds " *
-                                join(first(zip_names(z), 4), ", "))
-        data = zip_read(z, names[1])
+        names = zip_names(z)
+        any(n -> occursin(r"(^|/)model\.xml$", _js_ascii_lower(n)), names) &&
+            error("'$name' is an Ecolego project (it holds a model.xml); import it with " *
+                  "import_eco_file rather than opening it as a model.")
+        found = findfirst(n -> !startswith(n, "results/") && endswith(_js_ascii_lower(n), ".json"), names)
+        found === nothing && error("'$name' is a ZIP archive with no model in it \u2014 no .json file and no " *
+                                   "model.xml. It holds $(join(first(names, 4), ", ")).")
+        data = zip_read(z, names[found])
     end
     model = parse_json(data)
     model isa AbstractDict || error("'$name' does not hold a model: a model is one JSON object")

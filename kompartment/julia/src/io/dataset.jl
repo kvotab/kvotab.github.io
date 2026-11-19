@@ -249,26 +249,12 @@ function _ds_read(::Type{T}, bytes::Vector{UInt8}) where {T}
     return T[ltoh(x) for x in reinterpret(T, view(bytes, 1:n*sizeof(T)))]
 end
 
-"""The entries of an archive, by name, in the order its directory lists them; directories left out."""
-function _ds_unzip(bytes::Vector{UInt8})
-    z = try
-        read_zip(bytes)
-    catch e
-        throw(DatasetError("This does not look like a ZIP archive: $(sprint(showerror, e))"))
-    end
-    out = OrderedDict{String,Vector{UInt8}}()
-    spent = 0
-    for e in z.entries
-        endswith(e.name, "/") && continue
-        e.size > _DS_MAX_INFLATED - spent &&
-            throw(DatasetError("'$(e.name)' takes this archive past the $(_DS_MAX_INFLATED ÷ 1048576) MB a reader " *
-                               "will decompress."))
-        data = zip_read(z, e)
-        spent += e.method == 0 ? 0 : length(data)
-        out[e.name] = data
-    end
-    return out
-end
+"""
+The entries of an archive, by name, in the order its directory lists them; directories left out --
+read as the application's `unzip` reads one (`read_zip`), each entry inflated when it is first asked
+for, what cannot be read a `DatasetError` in its words.
+"""
+_ds_unzip(bytes::Vector{UInt8}) = read_zip(bytes; error=DatasetError)
 
 """
     read_dataset(entries) -> NamedTuple or nothing
