@@ -1633,7 +1633,10 @@ std::vector<double> Project::time_grid() const {
     const Json& sim = simulation;
     std::string key = compact(sim.get("start_time")) + "|" + compact(sim.get("end_time")) + "|" + compact(sim.get("output_points")) + "|" +
                       js_str(sim.get("spacing")) + "|" + (output_times.empty() ? std::string() : compact(output_times));
-    if (!grid_.empty() && grid_key_ == key) return grid_;
+    {
+        std::lock_guard<std::mutex> hold(grid_lock_.get());
+        if (!grid_.empty() && grid_key_ == key) return grid_;
+    }
     double start = sim.get("start_time").as_double(), end = sim.get("end_time").as_double();
     const Json& spacing = sim.get("spacing");
     std::vector<double> t;
@@ -1652,6 +1655,7 @@ std::vector<double> Project::time_grid() const {
             for (int i = 0; i < n; i++) t[static_cast<std::size_t>(i)] = start + ((end - start) * i) / (n - 1);
         }
     }
+    std::lock_guard<std::mutex> hold(grid_lock_.get());
     grid_key_ = key;
     grid_ = t;
     return t;

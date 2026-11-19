@@ -45,4 +45,15 @@ std::vector<std::string> run_log_lines(Results& res, const RunLogOptions& option
 /// archive keeps it split at them again.
 std::string run_log(Results& res, const RunLogOptions& options = {});
 
+struct ProbabilisticResults;
+
+/// The log of a probabilistic run or a tornado, as lines (`probabilisticLogLines`): how many
+/// realisations (or design points), the seed and the sampling (or where a tornado swung its
+/// inputs to), the inputs sampled and correlated, the correlations ignored, the threads, the
+/// wall clock, the realisations that failed.
+std::vector<std::string> probabilistic_log_lines(const ProbabilisticResults& prob);
+
+/// That log as one text (`run_log(prob)`).
+std::string run_log(const ProbabilisticResults& prob);
+
 }  // namespace kompartment

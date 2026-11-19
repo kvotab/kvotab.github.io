@@ -270,11 +270,15 @@ const IndexList* IndexSpace::nuclide_list() const {
 }
 
 const std::vector<int>& IndexSpace::strides(const std::vector<std::string>& dims) const {
-    auto hit = stride_cache_.find(dims);
-    if (hit != stride_cache_.end()) return hit->second;
+    {
+        std::lock_guard<std::mutex> hold(cache_lock_.get());
+        auto hit = stride_cache_.find(dims);
+        if (hit != stride_cache_.end()) return hit->second;
+    }
     std::vector<int> st(dims.size(), 1);
     for (std::size_t i = dims.size(); i-- > 1;) st[i - 1] = st[i] * list_size(dims[i]);
     for (const auto& d : dims) get_list(d);   // an unknown list is refused even when its size is not read
+    std::lock_guard<std::mutex> hold(cache_lock_.get());
     return stride_cache_.emplace(dims, std::move(st)).first->second;
 }
 
@@ -328,11 +332,14 @@ std::vector<std::vector<int>> IndexSpace::positions(const std::vector<std::strin
 std::optional<Relation> IndexSpace::relate(const std::string& from_list, const std::string& to_list) const {
     if (from_list == to_list) return Relation{Relation::Kind::Same, nullptr, false};
     auto key = std::make_pair(from_list, to_list);
-    auto found = relate_cache_.find(key);
-    if (found != relate_cache_.end()) return found->second;
+    {
+        std::lock_guard<std::mutex> hold(cache_lock_.get());
+        auto found = relate_cache_.find(key);
+        if (found != relate_cache_.end()) return found->second;
+    }
     std::optional<Relation> rel = relate_uncached(from_list, to_list);
-    relate_cache_.emplace(key, rel);
-    return rel;
+    std::lock_guard<std::mutex> hold(cache_lock_.get());
+    return relate_cache_.emplace(key, rel).first->second;
 }
 
 std::optional<Relation> IndexSpace::relate_uncached(const std::string& from_list, const std::string& to_list) const {

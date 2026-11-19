@@ -154,8 +154,11 @@ private:
 
     std::unordered_map<std::string, double> half_lives_;   // the model's own
     std::optional<std::unordered_map<std::string, Json>> ends_by_name_;
+    // The output times last worked out, under `grid_lock_`: every realisation of a
+    // probabilistic run asks for them, from whichever thread runs it.
     mutable std::string grid_key_;
     mutable std::vector<double> grid_;
+    CacheLock grid_lock_;
 };
 
 /// Normalised pieces, as the application reads them.

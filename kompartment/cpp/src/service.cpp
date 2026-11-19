@@ -1,7 +1,9 @@
 #include "service.hpp"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <condition_variable>
 #include <cstring>
 #include <deque>
@@ -12,13 +14,18 @@
 #include <set>
 #include <thread>
 
+#include "engine/analysis.hpp"
+#include "engine/errorinfo.hpp"
 #include "engine/farfield.hpp"
 #include "engine/jacobian.hpp"
+#include "engine/probabilistic.hpp"
 #include "engine/runlog.hpp"
 #include "engine/runner.hpp"
 #include "io/dataset.hpp"
+#include "io/sample.hpp"
 #include "model/names.hpp"
 #include "model/simulation.hpp"
+#include "util/errors.hpp"
 #include "util/jsnum.hpp"
 
 namespace kompartment {
@@ -35,6 +42,97 @@ void write_file(const std::string& path, const std::string& bytes) {
     if (!out) throw std::runtime_error("Cannot write " + path);
     out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
 }
+
+/// Little-endian doubles, as every machine this builds for holds them.
+std::string f64_bytes(const std::vector<double>& v) {
+    std::string out(v.size() * 8, '\0');
+    if (!v.empty()) std::memcpy(out.data(), v.data(), out.size());
+    return out;
+}
+
+/// A run the page has stopped, raised out of a progress report (`_ServiceStopped`).
+struct ServiceStopped : std::exception {
+    const char* what() const noexcept override { return "stopped"; }
+};
+
+/// What a job's options say of `key` (`_service_option`): its value, or `fallback` where the
+/// options do not say or say null.
+Json option(const Json& options, const char* key, const Json& fallback = Json()) {
+    if (!options.is_object()) return fallback;
+    const Json& v = options.get(key);
+    return v.is_null() ? fallback : v;
+}
+
+/// Julia's type name of a value a job's JSON holds, for a `MethodError` about it.
+std::string julia_type_name(const Json& v) {
+    switch (v.type()) {
+        case Json::Type::Null: return "Nothing";
+        case Json::Type::Bool: return "Bool";
+        case Json::Type::Int: return "Int64";
+        case Json::Type::Float: return "Float64";
+        case Json::Type::String: return "String";
+        case Json::Type::Array: return "Vector{Any}";
+        case Json::Type::Object: return "OrderedCollections.OrderedDict{String, Any}";
+    }
+    return "Any";
+}
+
+/// Julia's `Int(v)` of an option: a whole number as it is, a Boolean as 0 or 1, any other
+/// number refused where it is not a whole one (`InexactError`), and anything else a `MethodError`.
+long long int_of(const Json& v) {
+    if (v.is_int()) return v.as_int();
+    if (v.is_bool()) return v.as_bool() ? 1 : 0;
+    if (v.is_float()) return jl_to_int(v.as_double());
+    throw JuliaError("MethodError", "MethodError: no method matching Int64(::" + julia_type_name(v) + ")");
+}
+
+/// A dictionary's entry as Julia shows it, iterating a dictionary a job's JSON holds: a
+/// `Pair{String, Any}`, its type said since its values' types do not say it.
+std::string julia_pair(const std::string& key, const Json& value) {
+    return "Pair{String, Any}(" + julia_quote(key) + ", " + julia_show(value) + ")";
+}
+
+/// What Julia's `String[string(v) for v in list]` makes of a list an option gives: each
+/// item as `string()` writes it -- a text's characters, a number once, a dictionary's pairs.
+std::vector<std::string> option_strings(const Json& list) {
+    std::vector<std::string> out;
+    switch (list.type()) {
+        case Json::Type::Array:
+            for (const Json& v : list.arr()) out.push_back(julia_string(v));
+            break;
+        case Json::Type::String: {
+            const std::string& s = list.as_string();
+            for (std::size_t i = 0; i < s.size();) {
+                std::size_t n = 1;
+                while (i + n < s.size() && (static_cast<unsigned char>(s[i + n]) & 0xc0) == 0x80) n++;
+                out.push_back(s.substr(i, n));
+                i += n;
+            }
+            break;
+        }
+        case Json::Type::Object:
+            for (const auto& [k, v] : list.obj()) out.push_back(julia_pair(k, v));
+            break;
+        default: out.push_back(julia_string(list));
+    }
+    return out;
+}
+
+/// Julia's `isempty` of an option: an empty list, text or dictionary (a number never is).
+bool empty_option(const Json& v) {
+    return (v.is_array() || v.is_object() || v.is_string()) && v.size() == 0;
+}
+
+/// `v in (nothing, false)`, as Julia's `==` compares: null, false, or a number equal to 0.
+bool none_or_false(const Json& v) {
+    return v.is_null() || (v.is_bool() && !v.as_bool()) || (v.is_number() && v.as_double() == 0);
+}
+
+/// `v === false ? nothing : v`.
+Json unless_false(const Json& v) { return v.is_bool() && !v.as_bool() ? Json() : v; }
+
+/// `x + 1` as Julia's `Int` adds: wrapping.
+long long plus_one(long long x) { return static_cast<long long>(static_cast<unsigned long long>(x) + 1u); }
 
 // A queue a thread waits on; closed, it gives nothing more.
 class Inbox {
@@ -69,13 +167,18 @@ private:
     bool closed_ = false;
 };
 
-// A run the page asked the engine to keep, and what it is asked one question at a time.
+// A run the page asked the engine to keep -- a run's results or a probabilistic run's
+// sample -- and what it is asked, one question at a time.
 struct Kept {
     std::mutex mutex;
-    Results results;
+    std::optional<Results> results;
+    std::shared_ptr<const ProbabilisticResults> sample;
     std::set<std::string> labels;
     bool listed = false;
 };
+
+/// What a kept sample is asked, besides `archive` and `forget`.
+bool sample_query(const Json& op) { return op == "bands" || op == "realisations" || op == "column" || op == "realisation"; }
 
 struct Service {
     std::ostream& out;
@@ -84,6 +187,7 @@ struct Service {
     std::set<std::string> cancelled;
     std::mutex kept_mutex;
     std::map<std::string, std::shared_ptr<Kept>> kept;
+    int cores = 1;
 
     void say(const Json& event) {
         std::lock_guard<std::mutex> hold(say_mutex);
@@ -95,10 +199,22 @@ struct Service {
         return cancelled.count(id) != 0;
     }
 
-    Json error_event(const std::string& id, const char* name, const std::string& message, const std::optional<std::string>& block = std::nullopt,
-                     const std::optional<std::string>& hint = std::nullopt) {
-        return Json::object({{"id", Json(id)}, {"event", Json("error")}, {"name", Json(name)}, {"message", Json(message)},
-                             {"block", block ? Json(*block) : Json()}, {"hint", hint ? Json(*hint) : Json()}});
+    // An error as the Julia engine's service says it (`_service_error`): named by its type,
+    // its message without the name in front, the block of a build's or a solver's, a solver's
+    // hint. What this engine does not do -- a model it cannot build yet, a solver it does not
+    // have -- is `NotOnThisEngine`, which the page does itself.
+    Json error_event(const std::string& id, const std::exception_ptr& e) {
+        ErrorInfo info;
+        try {
+            std::rethrow_exception(e);
+        } catch (const NotOnThisEngine& x) {
+            info = {"NotOnThisEngine", x.what(), x.what(), std::nullopt, std::nullopt};
+        } catch (...) {
+            info = error_info(e);
+            if (info.name == "NotSupported") info.name = "NotOnThisEngine";
+        }
+        return Json::object({{"id", Json(id)}, {"event", Json("error")}, {"name", Json(info.name)}, {"message", Json(info.message)},
+                             {"block", info.block ? Json(*info.block) : Json()}, {"hint", info.hint ? Json(*info.hint) : Json()}});
     }
 
     // How df/dy was had, as the page's `Results.jacobian` says it.
@@ -151,72 +267,155 @@ struct Service {
         return lines;
     }
 
+    // A run's archive -- without its states, and the run kept, when the page asked for that
+    // -- with which realisation it replays, if it replays one (`_service_write_run`).
+    void write_run(Results res, const std::string& id, const Json& options, const std::string& out_path, const Json& replayed = Json()) {
+        ArchiveOptions archive;
+        archive.log = run_log_of(res);
+        Json extra = Json::object();
+        if (!replayed.is_null()) extra.set("replayed", replayed);
+        if (option(options, "keep") == Json(true)) {
+            archive.states = false;
+            extra.set("massBalance", res.mass_balance());
+            extra.set("page", page_of(res));
+            archive.extra = extra;
+            write_file(out_path, dataset_archive(res, archive));
+            auto held = std::make_shared<Kept>();
+            held->results = std::move(res);
+            std::lock_guard<std::mutex> hold(kept_mutex);
+            kept[id] = held;
+        } else {
+            if (!extra.empty()) archive.extra = extra;
+            write_file(out_path, dataset_archive(res, archive));
+        }
+    }
+
     void job(const Json& job) {
         std::string id = js_str(job.get("id").is_null() ? Json("") : job.get("id"));
         const Json& kind = job.get("kind");
         const Json& options = job.get("options");
         double started = now_s();
         double last = 0.0;
+        // Progress said at most every tenth of a second.
+        auto tell = [&](Json event) {
+            double now = now_s();
+            if (now - last >= 0.1) {
+                last = now;
+                say(event);
+            }
+        };
+        auto stage = [&](const char* what) { say(Json::object({{"id", Json(id)}, {"event", Json("stage")}, {"stage", Json(what)}})); };
         try {
             const Json& model = job.get("model");
             Json raw = model.is_string() ? parse_json(model.as_string()) : model;
-            if (!(kind == "run")) {
-                std::string what = kind == "probabilistic" ? "a probabilistic run" : kind == "replay" ? "one realisation of a probabilistic run"
-                                   : kind == "calibrate" ? "a calibration" : kind == "local-sensitivity" ? "a local sensitivity" : "'" + js_text(kind) + "'";
-                throw NotOnThisEngine("The C++ engine runs a model; " + what + " is not something it does yet.");
+            if (!(kind == "run" || kind == "probabilistic" || kind == "replay")) {
+                if (kind == "calibrate" || kind == "local-sensitivity")
+                    throw NotOnThisEngine(std::string("The C++ engine runs a model; ") + (kind == "calibrate" ? "a calibration" : "a local sensitivity") +
+                                          " is not something it does yet.");
+                throw ArgumentError("'" + julia_string(kind) + "' is not a kind of job this engine runs");
             }
-            say(Json::object({{"id", Json(id)}, {"event", Json("stage")}, {"stage", Json("solving")}}));
             auto project = std::make_shared<const Project>(raw);
-            RunOptions run_options;
-            run_options.on_progress = [&](double fraction, double at) {
-                double now = now_s();
-                if (now - last >= 0.1) {
-                    last = now;
-                    say(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
-                }
-                return !stopped(id);
-            };
-            Results res = run_project(project, nullptr, run_options);
-            if (stopped(id)) {
-                say(Json::object({{"id", Json(id)}, {"event", Json("cancelled")}}));
-                return;
-            }
-            say(Json::object({{"id", Json(id)}, {"event", Json("stage")}, {"stage", Json("writing")}}));
-            ArchiveOptions archive;
-            archive.log = run_log_of(res);
             std::string out_path = js_str(job.get("out"));
-            if (options.get("keep") == Json(true)) {
-                archive.states = false;
-                archive.extra = Json::object({{"massBalance", res.mass_balance()}, {"page", page_of(res)}});
-                write_file(out_path, dataset_archive(res, archive));
-                auto held = std::make_shared<Kept>();
-                held->results = std::move(res);
-                std::lock_guard<std::mutex> hold(kept_mutex);
-                kept[id] = held;
+            if (kind == "run") {
+                stage("solving");
+                RunOptions run_options;
+                run_options.on_progress = [&](double fraction, double at) {
+                    tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
+                    return !stopped(id);
+                };
+                Results res = run_project(project, nullptr, run_options);
+                if (stopped(id)) throw ServiceStopped();
+                stage("writing");
+                write_run(std::move(res), id, options, out_path);
+            } else if (kind == "replay") {
+                stage("solving");
+                const Json varied = option(options, "varied");
+                const Json iterations = option(options, "iterations");
+                const Json tornado = option(options, "tornado");
+                long long number = plus_one(int_of(option(options, "index", Json(0))));
+                DesignOptions design;
+                design.seed = Json(int_of(option(options, "seed", Json(1))));
+                if (!iterations.is_null()) design.iterations = static_cast<double>(int_of(iterations));
+                design.latin = !(option(options, "latin", Json(true)) == Json(false));
+                if (!varied.is_null()) design.varied = option_strings(varied);
+                design.tornado = unless_false(tornado);
+                Replay r = run_realisation(project, number, design);
+                stage("writing");
+                Json values = Json::array();
+                for (const auto& v : r.values)
+                    values.push(Json::object({{"name", Json(v.name)}, {"value", Json(v.value)}, {"held", Json(v.held)}}));
+                Json replayed = Json::object({{"index", Json(r.number - 1)}, {"iterations", Json(r.iterations)}, {"values", values}});
+                write_run(std::move(r.results), id, options, out_path, replayed);
             } else {
-                write_file(out_path, dataset_archive(res, archive));
+                stage("building");
+                const Json blocks = option(options, "blocks");
+                const Json varied = option(options, "varied");
+                const Json tornado = option(options, "tornado");
+                const Json gsa = option(options, "gsa");
+                // A sample the page asked the engine to keep is this machine's to hold, and may
+                // come to what the page drew from its memory rather than a tab's limits.
+                const bool keeping = option(options, "keep") == Json(true) && none_or_false(tornado) && none_or_false(gsa);
+                const Json most = option(options, "most");
+                const Json asked = option(options, "asked");
+                ProbabilisticOptions po;
+                po.iterations = static_cast<double>(int_of(option(options, "iterations", Json(100))));
+                po.most_bytes = keeping && (most.is_number() || most.is_bool()) ? int_of(most) : PROB_MOST_BYTES;
+                po.asked_bytes = keeping && (asked.is_number() || asked.is_bool()) ? int_of(asked) : PROB_MOST_BYTES_ASKED;
+                po.seed = Json(int_of(option(options, "seed", Json(1))));
+                po.latin = !(option(options, "latin", Json(true)) == Json(false));
+                if (!varied.is_null()) po.varied = option_strings(varied);
+                if (!(blocks.is_null() || empty_option(blocks))) po.keep = option_strings(blocks);
+                po.threads = static_cast<int>(std::clamp(int_of(option(options, "workers", Json(static_cast<long long>(cores)))), 1LL,
+                                                         static_cast<long long>(cores)));
+                po.large = option(options, "large") == Json(true);
+                // A tornado, or a sensitivity design, in place of a sample.
+                po.tornado = unless_false(tornado);
+                po.gsa = unless_false(gsa);
+                po.on_progress = [&](long long done, long long total) {
+                    if (stopped(id)) throw ServiceStopped();
+                    tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"done", Json(done)}, {"total", Json(total)}}));
+                };
+                auto prob = std::make_shared<ProbabilisticResults>(run_probabilistic(project, po));
+                stage("writing");
+                // A sample the page asked the engine to keep goes without its series.
+                SampleArchiveOptions archive;
+                archive.series = !keeping;
+                write_file(out_path, sample_archive(*prob, archive));
+                if (keeping) {
+                    auto held = std::make_shared<Kept>();
+                    held->sample = prob;
+                    std::lock_guard<std::mutex> hold(kept_mutex);
+                    kept[id] = held;
+                }
             }
             say(Json::object({{"id", Json(id)}, {"event", Json("done")}, {"out", Json(out_path)},
-                              {"ms", Json(static_cast<long long>(std::llround((now_s() - started) * 1000)))}}));
-        } catch (const SolverError& e) {
-            if (stopped(id) || e.kind == "aborted") say(Json::object({{"id", Json(id)}, {"event", Json("cancelled")}}));
-            else say(error_event(id, "SolverError", e.message, e.block_name, e.hint));
-        } catch (const BuildError& e) {
-            say(error_event(id, "BuildError", e.what(), e.block_name));
-        } catch (const ValidationError& e) {
-            say(error_event(id, "ValidationError", e.what(), e.block));
-        } catch (const NotOnThisEngine& e) {
-            say(error_event(id, "NotOnThisEngine", e.what()));
-        } catch (const NotSupported& e) {
-            // A model this engine cannot build yet is the page's to solve, as what it does not do is.
-            say(error_event(id, "NotOnThisEngine", e.what()));
-        } catch (const FarfError& e) {
-            say(error_event(id, "FarfError", e.what()));
-        } catch (const JsonError& e) {
-            say(error_event(id, "JSONError", e.what()));
-        } catch (const std::exception& e) {
-            say(error_event(id, "Error", e.what()));
+                              {"ms", Json(static_cast<long long>(std::nearbyint((now_s() - started) * 1000)))}}));
+        } catch (...) {
+            std::exception_ptr e = std::current_exception();
+            bool aborted = false;
+            try {
+                std::rethrow_exception(e);
+            } catch (const ServiceStopped&) {
+                aborted = true;
+            } catch (const SolverError& x) {
+                aborted = x.kind == "aborted";
+            } catch (...) {
+            }
+            if (aborted || stopped(id)) say(Json::object({{"id", Json(id)}, {"event", Json("cancelled")}}));
+            else say(error_event(id, e));
         }
+    }
+
+    // A question about a kept sample, its answer written to `q["out"]` as little-endian
+    // doubles, laid out as the other engines lay them out (`_service_sample_answer`): a series
+    // numbered from 0 as the sample's meta lists them, the kept series and then each varied
+    // parameter.
+    void sample_answer(const Json& op, const ProbabilisticResults& prob, const Json& q) {
+        if (op == "archive") {
+            write_file(js_str(q.get("out")), sample_archive(prob));
+            return;
+        }
+        write_file(js_str(q.get("out")), sample_answer_bytes(op, prob, q));
     }
 
     void query(const Json& q) {
@@ -238,44 +437,43 @@ struct Service {
                 auto it = kept.find(run_id);
                 if (it != kept.end()) held = it->second;
             }
-            if (!held)
-                throw std::invalid_argument("This engine no longer holds that run: it may have been restarted since, or the run let go of. Run it again.");
+            if (!held) throw ArgumentError("This engine no longer holds that run: it may have been restarted since, or the run let go of. Run it again.");
             std::lock_guard<std::mutex> hold(held->mutex);
-            Results& res = held->results;
-            if (op == "series") {
-                std::vector<std::string> labels;
-                if (q.get("labels").is_array())
-                    for (const Json& x : q.get("labels").arr()) labels.push_back(js_str(x));
-                if (!held->listed) {
-                    for (const Json& o : res.outputs()) held->labels.insert(o.get("label").as_string());
-                    held->listed = true;
-                }
-                std::vector<std::string> missing;
-                for (const auto& l : labels)
-                    if (!held->labels.count(l)) missing.push_back(l);
-                if (!missing.empty())
-                    throw std::invalid_argument("The engine's run has no series called '" + missing[0] + "'" +
-                                                (missing.size() > 1 ? " (nor " + std::to_string(missing.size() - 1) + " more)" : "") + ".");
-                std::vector<Json> outs;
-                for (const auto& l : labels) outs.push_back(res.find_output(l));
-                std::string data;
-                if (!outs.empty())
-                    for (const auto& col : res.series_many(outs)) data.append(reinterpret_cast<const char*>(col.data()), col.size() * 8);
-                write_file(js_str(q.get("out")), data);
-            } else if (op == "archive") {
-                ArchiveOptions archive;
-                archive.log = run_log_of(res);
-                write_file(js_str(q.get("out")), dataset_archive(res, archive));
-            } else if (op == "bands" || op == "realisations" || op == "column" || op == "realisation") {
-                throw std::invalid_argument("That run is not a probabilistic run: it has no realisations to ask about.");
+            if (held->sample) {
+                sample_answer(op, *held->sample, q);
             } else {
-                throw std::invalid_argument("'" + js_text(op) + "' is not something this engine is asked");
+                Results& res = *held->results;
+                if (op == "series") {
+                    const Json& asked = q.get("labels");
+                    std::vector<std::string> labels = asked.is_null() ? std::vector<std::string>{} : option_strings(asked);
+                    if (!held->listed) {
+                        for (const Json& o : res.outputs()) held->labels.insert(o.get("label").as_string());
+                        held->listed = true;
+                    }
+                    std::vector<std::string> missing;
+                    for (const auto& l : labels)
+                        if (!held->labels.count(l)) missing.push_back(l);
+                    if (!missing.empty())
+                        throw ArgumentError("The engine's run has no series called '" + missing[0] + "'" +
+                                            (missing.size() > 1 ? " (nor " + std::to_string(missing.size() - 1) + " more)" : "") + ".");
+                    std::vector<Json> outs;
+                    for (const auto& l : labels) outs.push_back(res.find_output(l));
+                    std::string data;
+                    if (!outs.empty())
+                        for (const auto& col : res.series_many(outs)) data += f64_bytes(col);
+                    write_file(js_str(q.get("out")), data);
+                } else if (op == "archive") {
+                    ArchiveOptions archive;
+                    archive.log = run_log_of(res);
+                    write_file(js_str(q.get("out")), dataset_archive(res, archive));
+                } else if (sample_query(op)) {
+                    throw ArgumentError("That run is not a probabilistic run: it has no realisations to ask about.");
+                } else {
+                    throw ArgumentError("'" + julia_string(op) + "' is not something this engine is asked");
+                }
             }
-        } catch (const SolverError& e) {
-            say(error_event(id, "SolverError", e.message, e.block_name, e.hint));
-            return;
-        } catch (const std::exception& e) {
-            say(error_event(id, "ArgumentError", e.what()));
+        } catch (...) {
+            say(error_event(id, std::current_exception()));
             return;
         }
         say(Json::object({{"id", Json(id)}, {"event", Json("done")}, {"out", q.get("out")}}));
@@ -284,10 +482,89 @@ struct Service {
 
 }  // namespace
 
+std::string sample_answer_bytes(const Json& op, const ProbabilisticResults& prob, const Json& q) {
+    if (!sample_query(op)) throw ArgumentError("'" + julia_string(op) + "' is not something this engine is asked of a probabilistic run");
+    const long long n = prob.iterations;
+    const std::size_t count = an_count(prob);
+    std::vector<double> data;
+    if (op == "bands") {
+        const Json& mask = q.get("mask");
+        if (!mask.is_null() && mask_length(mask) != n)
+            throw ArgumentError("The mask has " + std::to_string(mask_length(mask)) + " entries for " + std::to_string(n) + " realisations.");
+        for (const Band& band : bands(prob, q.get("percentiles"), mask.is_null() ? nullptr : &mask)) {
+            for (const auto& y : band.q) data.insert(data.end(), y.begin(), y.end());
+            data.insert(data.end(), band.mean.begin(), band.mean.end());
+            data.insert(data.end(), band.sd.sd.begin(), band.sd.sd.end());
+            for (long long c : band.sd.n) data.push_back(static_cast<double>(c));
+            for (const auto* part : {&band.med.err_lo, &band.med.err_hi, &band.med.body_lo, &band.med.body_hi})
+                data.insert(data.end(), part->begin(), part->end());
+        }
+        return f64_bytes(data);
+    }
+    // The series asked for, as Julia goes through `something(q["series"], [])`: a list's
+    // items, a number once, a text's characters, a dictionary's pairs.
+    const Json& asked = q.get("series");
+    std::vector<Json> ks;
+    std::vector<std::string> shown;   // what is not a series number, as Julia's `repr` shows it
+    switch (asked.type()) {
+        case Json::Type::Null: break;
+        case Json::Type::Array:
+            for (const Json& k : asked.arr()) {
+                ks.push_back(k);
+                shown.push_back(julia_show(k));
+            }
+            break;
+        case Json::Type::String:
+            for (const std::string& c : option_strings(asked)) {
+                ks.push_back(Json(c));
+                shown.push_back("'" + (c == "'" ? std::string("\\'") : c == "\\" ? std::string("\\\\") : c) + "'");
+            }
+            break;
+        case Json::Type::Object:
+            for (const auto& [k, v] : asked.obj()) {
+                ks.push_back(Json());
+                shown.push_back(julia_pair(k, v));
+            }
+            break;
+        default:
+            ks.push_back(asked);
+            shown.push_back(julia_show(asked));
+    }
+    for (std::size_t a = 0; a < ks.size(); a++) {
+        const Json& k = ks[a];
+        bool ok = k.is_int() && !asked.is_object() && !asked.is_string() && k.as_int() >= 0 && static_cast<unsigned long long>(k.as_int()) < count;
+        if (!ok) throw ArgumentError("The probabilistic run has no series " + shown[a] + ": it has " + std::to_string(count) + ", from 0.");
+    }
+    for (const Json& kj : ks) {
+        // Realisations down, the times (one for a varied parameter) across, in the precision
+        // they are held in until what was asked is taken out.
+        const std::size_t k = static_cast<std::size_t>(kj.as_int());
+        SeriesMatrix M = an_matrix(prob, k + 1);
+        if (op == "realisations") {
+            for (long long i = 0; i < M.rows; i++)
+                for (std::size_t j = 0; j < M.cols; j++) data.push_back(M(i, j));
+        } else if (op == "column") {
+            const Json& at = q.get("at");
+            long long j = std::clamp(int_of(at.is_null() ? Json(0) : at), 0LL, static_cast<long long>(M.cols) - 1);
+            for (long long i = 0; i < M.rows; i++) data.push_back(M(i, static_cast<std::size_t>(j)));
+        } else {
+            const Json& index = q.get("index");
+            long long i = std::clamp(int_of(index.is_null() ? Json(0) : index), 0LL, n - 1);
+            // (Brought into the design's realisations: a part of a run holds fewer.)
+            if (i >= M.rows)
+                throw JuliaError("BoundsError", "BoundsError: attempt to access " + std::to_string(M.rows) + "x" + std::to_string(M.cols) +
+                                                    " Matrix{Float64} at index [" + std::to_string(i + 1) + ", :]");
+            for (std::size_t j = 0; j < M.cols; j++) data.push_back(M(i, j));
+        }
+    }
+    return f64_bytes(data);
+}
+
 void serve_stdio(std::istream& input, std::ostream& output) {
     Service service{output, {}, {}, {}, {}, {}};
+    service.cores = static_cast<int>(std::max(1u, std::thread::hardware_concurrency()));
     Inbox jobs, queries;
-    unsigned cores = std::max(1u, std::thread::hardware_concurrency());
+    const long long cores = service.cores;
     std::thread reader([&] {
         std::string line;
         while (std::getline(input, line)) {
@@ -305,8 +582,7 @@ void serve_stdio(std::istream& input, std::ostream& output) {
                 service.cancelled.insert(js_str(msg.get("id").is_null() ? Json("") : msg.get("id")));
             } else if (op == "job") {
                 jobs.put(msg);
-            } else if (op == "series" || op == "archive" || op == "forget" || op == "bands" || op == "realisations" || op == "column" ||
-                       op == "realisation") {
+            } else if (op == "series" || op == "archive" || op == "forget" || sample_query(op)) {
                 queries.put(msg);
             }
         }
@@ -318,8 +594,8 @@ void serve_stdio(std::istream& input, std::ostream& output) {
         Json q;
         while (queries.take(q)) service.query(q);
     });
-    service.say(Json::object({{"event", Json("ready")}, {"engine", Json("cpp")}, {"version", Json(ENGINE_VERSION)}, {"threads", Json(static_cast<long long>(cores))},
-                              {"cores", Json(static_cast<long long>(cores))}, {"concurrent", Json(static_cast<long long>(cores))}}));
+    service.say(Json::object({{"event", Json("ready")}, {"engine", Json("cpp")}, {"version", Json(ENGINE_VERSION)}, {"threads", Json(cores)},
+                              {"cores", Json(cores)}, {"concurrent", Json(cores)}}));
     // Each job a thread of its own, as many at once as the server sends -- which is as many
     // as `concurrent` says.
     std::vector<std::thread> running;

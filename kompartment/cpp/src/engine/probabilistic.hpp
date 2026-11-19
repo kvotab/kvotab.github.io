@@ -1,19 +1,32 @@
 // Running a model many times over its distributions: the Julia package's
 // engine/probabilistic.jl (the Python package's `kompartment/engine/probabilistic.py`,
-// the application's `src/sim/probabilistic.js`). Here, the part a run draws before
-// any realisation runs: the sampling plan, the design and how a realisation is set
-// into a system.
+// the application's `src/sim/probabilistic.js`), with the realisations shared out
+// between threads.
 //
-// **The design is drawn whole** before any realisation runs: Latin hypercube is a
-// statement about a whole column, and each input draws from a stream named after
-// it, so any number of threads gives the same answer, to the last bit, as one; each
-// realisation's numbers are those it has in a serial run, and in the other engines.
+// A probabilistic run draws a value for every distributed parameter (and every
+// lookup point that carries a spread) per realisation, integrates the model again,
+// and keeps the series asked for -- every realisation of them, because a band is
+// read off all of them.
+//
+// **Built once, integrated many times.** The model is built and compiled once;
+// each thread runs its share of the realisations on a copy of the built system of
+// its own (`System::clone`, which shares the compiled passes), setting the
+// parameters and working the invariant algebra out again for each. **The design is
+// drawn whole** before any realisation runs: Latin hypercube is a statement about a
+// whole column, and each input draws from a stream named after it, so any number of
+// threads gives the same answer, to the last bit, as one; each realisation's
+// numbers are those it has in a serial run, and in the other engines.
 //
 // Besides a sample, a *tornado* (every input swung alone to a low and a high
 // probability) and a global sensitivity design (`gsa`, the points of one of the
 // methods in stats/gsa_design.hpp) run the same way.
 //
-// A run uses it so:
+//     ProbabilisticOptions options;                  // seed, iterations, keep, threads...
+//     options.iterations = 1000;
+//     ProbabilisticResults prob = run_probabilistic(project, options);
+//     Replay one = run_realisation(project, 17, options);   // realisation 17 as a run
+//
+// The parts, as a run uses them:
 //
 //     auto sys = std::make_shared<System>(project);
 //     SampleDesign design = design_for(*project, *sys, options);   // seed, iterations, tornado, gsa...
@@ -28,12 +41,15 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
+#include "engine/runner.hpp"
 #include "stats/gsa_design.hpp"
 #include "stats/sample.hpp"
 #include "util/json.hpp"
@@ -53,6 +69,17 @@ bool can_be_endpoint(const Json& kind);
 /// `True`/`False`, `None`, a float as Python's `repr`; a list or a dictionary as Julia's
 /// `string()` writes it.
 std::string pb_py_str(const Json& v);
+
+/// Julia's `show` (`repr`) of a value a model file holds, as it shows one inside a list:
+/// `nothing`, `true`, `5`, `1.0` and `1.0e-5`, text in quotes and escaped, `Any[1, 2]`,
+/// `OrderedCollections.OrderedDict{String, Any}("a" => 1)`.
+std::string julia_show(const Json& v);
+/// Julia's `string(v)`: text as it is, any other value as `julia_show` writes it.
+std::string julia_string(const Json& v);
+/// Julia's `show` of a Float64: Ryu's shortest digits laid out as Julia lays them out.
+std::string julia_float(double x);
+/// Julia's `show` of a String: in quotes, escaped as Julia escapes it.
+std::string julia_quote(const std::string& s);
 
 /// The correlation group a plan entry's distribution belongs to, or none.
 std::optional<std::string> sample_group(const PlanEntry& entry);
@@ -167,5 +194,143 @@ void apply_realisation(System& sys, const SampleDesign& design, const ValueTable
 /// This realisation's occurrences (`i` from 0) of every random event that draws them; with
 /// `sample` false (a designed run) every event keeps its deterministic form.
 void draw_disruptions(System& sys, const Json& seed, long long i, bool sample = true);
+
+// --- what a run keeps ------------------------------------------------------------------------
+
+/// What a probabilistic run kept (`ProbabilisticResults`): every realisation of each kept
+/// series, the value each input took in each, and the statistics read off them. The
+/// realisations held are those numbered `first` to `last` (from 1): all of them unless a
+/// range was asked for. Realisation `i` here (from 0) is realisation `first + i` of the
+/// design.
+struct ProbabilisticResults {
+    /// The output times every realisation was reported on.
+    std::vector<double> t;
+    /// The kept series' descriptors (`"label"`, `"block"`, `"kind"`, ...).
+    std::vector<Json> outputs;
+    /// `"double"`, or `"float32"` when a run of this shape would hold more than `most_bytes`
+    /// as doubles (`hold_precision`): which of `values` and `values32` holds the series.
+    std::string precision = "double";
+    /// One per kept series: realisation i's value at time j (both from 0) at `i * t.size() + j`
+    /// -- a realisation's times together, as the sample archive lays them out. A failed
+    /// realisation's row is NaN.
+    std::vector<std::vector<double>> values;
+    std::vector<std::vector<float>> values32;
+    /// Inputs x realisations held: the value each sampled input took -- the value drawn, or
+    /// where that was no number, the one held over from a realisation before (`effective_values`).
+    ValueTable samples;
+    /// The sampled inputs and their names as the application spells them (`Kd[I-129]`).
+    std::vector<PlanEntry> plan;
+    std::vector<std::string> names;
+    /// The varied parameters as series: `{"output": descriptor, "k": its row of `samples`, from 1}`.
+    std::vector<Json> inputs;
+    /// 1 per realisation held that ran, 0 where it failed.
+    std::vector<std::uint8_t> ran;
+    long long iterations = 0;
+    long long first = 1, last = 0;
+    /// `"failed"`, `"trouble"`, `"ms"`, the design's (`"seed"`, `"latin"`, `"sampled"`, ...: see
+    /// `SampleDesign::stats`), `"threads"`; inputs counted from 1, as the Julia package counts them.
+    Json stats;
+    /// The project the run was made from.
+    std::shared_ptr<const Project> project;
+    /// A sensitivity design's own (`build_design`), or none.
+    std::shared_ptr<const GsaDesign> gsa_design;
+
+    bool single() const { return precision == "float32"; }
+    /// How many realisations are held.
+    long long held() const { return last - first + 1; }
+    std::size_t times() const { return t.size(); }
+    /// Series `w`'s value (from 0) in realisation `i` at time `j`.
+    double value(std::size_t w, long long i, std::size_t j) const {
+        std::size_t at = static_cast<std::size_t>(i) * t.size() + j;
+        return single() ? static_cast<double>(values32[w][at]) : values[w][at];
+    }
+    /// Every realisation of series `w` (from 0), or of the series a label names, as doubles, a
+    /// realisation's times together.
+    std::vector<double> realisations(std::size_t w) const;
+    std::vector<double> realisations(const std::string& label) const { return realisations(index_of(label)); }
+    /// The kept series' labels.
+    std::vector<std::string> labels() const;
+    /// Which kept series a label names (from 0); Julia's `KeyError` where none does.
+    std::size_t index_of(const std::string& label) const;
+    /// The values one sampled input took, by its name (`Kd[Cs-137]`); a `KeyError` for a name
+    /// that is not sampled.
+    std::vector<double> sample(const std::string& name) const;
+};
+
+/// `(name, descriptor) -> keep it?`: which series a run keeps, by a test of its own.
+using KeepFunction = std::function<bool(const std::string& name, const Json& descriptor)>;
+/// `on_progress(done, total)`: called after every realisation, one call at a time, `done`
+/// rising. What it throws stops the run (every thread finishes the realisation it is on) and
+/// comes out of `run_probabilistic` once every thread has stopped.
+using RealisationProgress = std::function<void(long long done, long long total)>;
+
+/// What a probabilistic run is asked for: the design's settings (seed, iterations, Latin
+/// hypercube or not, the inputs varied, a tornado or a sensitivity design), and these.
+struct ProbabilisticOptions : DesignOptions {
+    /// The series kept, by block name or label: none for every endpoint (anything but an
+    /// input). `keep_by`, where given, decides instead.
+    std::optional<std::vector<std::string>> keep;
+    KeepFunction keep_by;
+    /// How many threads share the realisations (at most the machine's cores, at least one);
+    /// 0 for every core.
+    int threads = 0;
+    RealisationProgress on_progress;
+    /// A run that would hold more than `most_bytes` even as float32 is refused, unless `large`
+    /// asks for up to `asked_bytes` -- a tab's limits by default (a gigabyte, four), the
+    /// application's own, drawn from this machine's memory, for a sample the engine holds.
+    bool large = false;
+    long long most_bytes = PROB_MOST_BYTES;
+    long long asked_bytes = PROB_MOST_BYTES_ASKED;
+    /// Only these realisations of the whole design, by their numbers from 1 (first, last).
+    std::optional<std::pair<double, double>> range;
+};
+
+/// Runs `options.iterations` realisations of a model over its distributions (100 when none
+/// is given; a tornado's or a sensitivity design's own count) and keeps the series asked
+/// for (`run_probabilistic`).
+///
+/// The model is built once. `threads` threads share the realisations, each on a copy of
+/// the built system of its own; the design is drawn whole first, so the answer does not
+/// depend on how many. A failure in the first realisation fails the run (the others stop);
+/// any other that fails is recorded -- its row NaN, `ran` 0, `stats["failed"]` counted and
+/// the first five in `stats["trouble"]`, in the Julia package's words -- and the run goes
+/// on. A run that would hold more than `most_bytes` of doubles keeps float32; past that even
+/// so it is refused (a Julia `ErrorException`), unless `large` lets it come to `asked_bytes`.
+ProbabilisticResults run_probabilistic(std::shared_ptr<const Project> project, const ProbabilisticOptions& options = {});
+
+/// The realisations a run holds, `frm` to `to - 1` counted from 0: all of them, or those
+/// `range` numbers (from 1, rounded as Julia rounds, a tie to the even one) (`_pb_slice`).
+std::pair<long long, long long> realisation_slice(const std::optional<std::pair<double, double>>& range, long long iterations);
+
+/// One realisation's kept series, as a probabilistic run takes them out of its run
+/// (`_pb_take!`): the states read once per time for every series that reads them, the
+/// algebraic slots worked out once per time with the run's histories, a parameter's value,
+/// a derived series from its curve; for a run reported at times besides the grid's, every
+/// series over every row, read at the first row at or after each grid time
+/// (`_pb_take_rows!`). Each as doubles, over `grid`. (A run takes them into the matrices it
+/// holds; this is for looking at one.)
+std::vector<std::vector<double>> take_realisation(Results& res, const std::vector<Json>& kept, const std::vector<double>& grid);
+
+/// One realisation of a probabilistic run as an ordinary run (`run_realisation`).
+struct Replay {
+    Results results;
+    /// Which realisation, from 1, and of how many.
+    long long number = 0;
+    long long iterations = 0;
+    /// Each input's name, the value it was run with, and whether it was held: not varied, at
+    /// the model's value in a tornado's point, or held over from a realisation before, the
+    /// draw being no number.
+    struct Value {
+        std::string name;
+        double value = 0;
+        bool held = false;
+    };
+    std::vector<Value> values;
+};
+
+/// Realisation `number` (from 1, brought into the design's range) of a probabilistic run,
+/// as an ordinary run on a system built for it, set as the whole run sets it (an input whose
+/// draw is not a number holding the value drawn before it, `effective_values`).
+Replay run_realisation(std::shared_ptr<const Project> project, long long number, const DesignOptions& options = {});
 
 }  // namespace kompartment

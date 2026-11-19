@@ -358,9 +358,11 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     SolverFunction solve_fn = solver_by_id(solver_id);
     if (!solve_fn) {
         std::string here = "dp45, ndf, ros23";
+        // A solver the other engines have: theirs to run (the service says so by the name the
+        // page falls back on).
         if (std::find(solver_ids().begin(), solver_ids().end(), solver_id) != solver_ids().end())
-            throw std::invalid_argument("'" + solver_id + "' is not one of the C++ engine's solvers. Run it with one of its own: " + here +
-                                        "; or on an engine that has it.");
+            throw NotSupported("'" + solver_id + "' is not one of the C++ engine's solvers. Run it with one of its own: " + here +
+                               "; or on an engine that has it.");
         throw std::invalid_argument("Unknown solver '" + solver_id + "'. Available here: " + here + ".");
     }
     sys.prime_recorders(grid.front(), y0);
@@ -649,14 +651,19 @@ std::vector<Json> outputs_of(System& sys, const Project& project) {
     return out;
 }
 
-const std::vector<Json>& Results::outputs() {
-    if (!described_) {
-        outputs_ = outputs_of(*system, *project);
-        for (std::size_t i = 0; i < outputs_.size(); i++) by_label_.emplace(outputs_[i].get("label").as_string(), i);
-        described_ = true;
-    }
-    return outputs_;
+std::shared_ptr<const OutputIndex> index_outputs(std::vector<Json> outputs) {
+    auto index = std::make_shared<OutputIndex>();
+    index->outputs = std::move(outputs);
+    for (std::size_t i = 0; i < index->outputs.size(); i++) index->by_label.emplace(index->outputs[i].get("label").as_string(), i);
+    return index;
 }
+
+const OutputIndex& Results::described() {
+    if (!described_) described_ = index_outputs(outputs_of(*system, *project));
+    return *described_;
+}
+
+const std::vector<Json>& Results::outputs() { return described().outputs; }
 
 std::vector<std::string> Results::labels() {
     std::vector<std::string> out;
@@ -664,16 +671,13 @@ std::vector<std::string> Results::labels() {
     return out;
 }
 
-bool Results::has(const std::string& label) {
-    outputs();
-    return by_label_.count(label) != 0;
-}
+bool Results::has(const std::string& label) { return described().by_label.count(label) != 0; }
 
 const Json& Results::find_output(const std::string& label) {
-    outputs();
-    auto it = by_label_.find(label);
-    if (it == by_label_.end()) throw std::out_of_range("No output labelled '" + label + "'");
-    return outputs_[it->second];
+    const OutputIndex& index = described();
+    auto it = index.by_label.find(label);
+    if (it == index.by_label.end()) throw std::out_of_range("No output labelled '" + label + "'");
+    return index.outputs[it->second];
 }
 
 std::vector<double> Results::series(const std::string& label) { return series_many({find_output(label)})[0]; }
@@ -714,13 +718,15 @@ std::vector<std::vector<double>> Results::series_many(const std::vector<Json>& o
         } else if (source == "D") {
             // A value read off another series' finished curve.
             const Json& d = o.get("derived");
-            outputs();
-            auto from = d.get("of").is_string() ? by_label_.find(d.get("of").as_string()) : by_label_.end();
-            if (from == by_label_.end()) {
+            const OutputIndex& index = described();
+            auto from = d.get("of").is_string() ? index.by_label.find(d.get("of").as_string()) : index.by_label.end();
+            if (from == index.by_label.end()) {
                 std::fill(cols[k].begin(), cols[k].end(), std::numeric_limits<double>::quiet_NaN());
             } else {
-                std::vector<double> src = series_many({outputs_[from->second]})[0];
-                std::vector<double> v = derived_reduce(d.get("kind").as_string(), t, src, d.get("at").as_double(), d.get("period").as_double());
+                std::vector<double> src = series_many({index.outputs[from->second]})[0];
+                // `py_float(something(at, NaN))`, as the Julia package reads them: a descriptor read
+                // back from JSON holds null where the time or period was no number.
+                std::vector<double> v = derived_reduce(d.get("kind").as_string(), t, src, py_float_nan(d.get("at")), py_float_nan(d.get("period")));
                 for (std::size_t i = 0; i < n && i < v.size(); i++) cols[k][i] = v[i];
             }
         } else {

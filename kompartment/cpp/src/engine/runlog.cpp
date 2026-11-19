@@ -6,6 +6,7 @@
 #include <ctime>
 
 #include "engine/jacobian.hpp"
+#include "engine/probabilistic.hpp"
 #include "model/names.hpp"
 #include "util/jsnum.hpp"
 
@@ -308,5 +309,47 @@ std::vector<std::string> run_log_lines(Results& res, const RunLogOptions& option
 }
 
 std::string run_log(Results& res, const RunLogOptions& options) { return join(run_log_lines(res, options), "\n"); }
+
+std::vector<std::string> probabilistic_log_lines(const ProbabilisticResults& prob) {
+    const Json& s = prob.stats;
+    const bool tornado = s.has("tornado") && !s.get("tornado").is_null();
+    std::vector<std::string> out = {"", tornado ? "tornado" : "probabilistic run",
+                                    std::string("  ") + (tornado ? "design points" : "realisations") + ": " + std::to_string(prob.iterations)};
+    if (!tornado) {
+        const Json& latin = s.get("latin");
+        out.push_back("  seed: " + js_text(s.get("seed")) + ", sampling: " + (latin.is_bool() && !latin.as_bool() ? "independent draws" : "Latin hypercube"));
+    } else {
+        const Json& t = s.get("tornado");
+        std::string low = js_text(round_half_up(100 * t.get("low").as_double()));
+        std::string high = js_text(round_half_up(100 * t.get("high").as_double()));
+        out.push_back("  swung to the " + low + "th and " + high + "th percentiles");
+    }
+    // `"$(v)"` of what the statistics hold: a count, or what the design said.
+    auto text = [](const Json& v) { return v.is_string() ? v.as_string() : js_text(v); };
+    out.push_back("  sampled inputs: " + (s.get("sampled").is_null() ? std::to_string(prob.plan.size()) : text(s.get("sampled"))));
+    if (js_truthy(s.get("correlated"))) {
+        const Json& adjusted = s.get("correlationAdjusted");
+        // `adjusted isa Real && adjusted > 0`: a number, or `true`.
+        bool moved = (adjusted.is_number() && adjusted.as_double() > 0) || (adjusted.is_bool() && adjusted.as_bool());
+        out.push_back("  correlated inputs: " + text(s.get("correlated")) +
+                      (moved ? ", target matrix moved by up to " + js_to_fixed(adjusted.is_bool() ? 1.0 : adjusted.as_double(), 3) + " to be achievable"
+                             : std::string()));
+    }
+    const Json& problems = s.get("correlationProblems");
+    if (problems.is_array())
+        for (const Json& p : problems.arr()) out.push_back("  correlation ignored: " + text(p));
+    const Json& threads = s.has("threads") ? s.get("threads") : Json(1);
+    if (threads.is_int() && threads.as_int() > 1) out.push_back("  over " + std::to_string(threads.as_int()) + " threads");
+    out.push_back("  wall clock: " + js_to_fixed(number_or(s.has("ms") ? s.get("ms") : Json(0.0), 0.0) / 1000, 1) + " s");
+    if (js_truthy(s.get("failed"))) {
+        out.push_back("  failed realisations: " + text(s.get("failed")));
+        const Json& trouble = s.get("trouble");
+        if (trouble.is_array())
+            for (const Json& line : trouble.arr()) out.push_back("    " + text(line));
+    }
+    return out;
+}
+
+std::string run_log(const ProbabilisticResults& prob) { return join(probabilistic_log_lines(prob), "\n"); }
 
 }  // namespace kompartment

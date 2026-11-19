@@ -36,6 +36,14 @@ struct RunState {
 RunState run_state(const System& sys);
 void restore_run_state(System& sys, const RunState& state);
 
+/// The series a run of a system can report, and where each label first comes among them.
+struct OutputIndex {
+    std::vector<Json> outputs;
+    std::unordered_map<std::string, std::size_t> by_label;
+};
+/// `outputs` indexed by label (a label listed twice is found as the first).
+std::shared_ptr<const OutputIndex> index_outputs(std::vector<Json> outputs);
+
 /// What a run produced: the states at every output time, and every other series worked
 /// out from them on demand.
 class Results {
@@ -51,6 +59,10 @@ public:
     /// Every series the run can report, as descriptors (label, block, kind, index, unit,
     /// source, offset...), in the application's order.
     const std::vector<Json>& outputs();
+    /// The series this run reports, described once for its build and handed to every run of
+    /// it (a probabilistic run's realisations: Julia's `outputs_cache` and `label_index`),
+    /// so that each does not describe them again.
+    void share_outputs(std::shared_ptr<const OutputIndex> index) { described_ = std::move(index); }
     std::vector<std::string> labels();
     bool has(const std::string& label);
     const Json& find_output(const std::string& label);
@@ -71,9 +83,8 @@ public:
     std::string to_csv(const std::vector<Json>* outputs = nullptr, double time_origin = 0.0);
 
 private:
-    std::vector<Json> outputs_;
-    bool described_ = false;
-    std::unordered_map<std::string, std::size_t> by_label_;
+    const OutputIndex& described();
+    std::shared_ptr<const OutputIndex> described_;
 };
 
 /// `on_progress(fraction, t)` is called as the run goes; returning false stops the run.

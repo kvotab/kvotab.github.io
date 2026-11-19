@@ -94,9 +94,10 @@ bar as *Starting Julia…*.
 The C++ engine is the quickest to answer: it is a program already compiled, and
 it works a model's equations out without compiling them, so a run starts at
 once however large the model. It solves a run, with the `ndf`, `ros23` and
-`dp45` solvers. What it does not do — a probabilistic run and the analyses, the
-other solvers — the page solves in the browser while *on C++* is chosen, and
-the bar says so as it does.
+`dp45` solvers; a probabilistic run, a tornado and a sensitivity design's runs,
+its threads sharing the realisations; and a replayed realisation. What it does
+not do — a calibration, dy/dp, the other solvers — the page solves in the
+browser while *on C++* is chosen, and the bar says so as it does.
 
 **What the engines need is checked at every start.** The Python engine needs
 Python 3.9 or newer with NumPy and SciPy, and runs several times quicker with
@@ -165,8 +166,8 @@ seconds, the engine is ended, and started again for the next run.
 A tornado's or a sensitivity design's runs are made on the engine, and their
 tables worked out in the page from what comes back, the inputs of every run
 checked against the design first. A calibration searches on the engine, its
-best so far shown as it goes, and dy/dp is integrated there; both engines do
-all of these.
+best so far shown as it goes, and dy/dp is integrated there; the Python and
+Julia engines do all of these.
 
 What stays in the browser: the statistics of a sample already drawn, such as
 *What drove it*, worked out from what the engine sends of it; and an edit that

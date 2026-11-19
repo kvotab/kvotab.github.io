@@ -28,9 +28,12 @@
 #endif
 
 #include "check.hpp"
+#include "engine/analysis.hpp"
+#include "engine/probabilistic.hpp"
 #include "engine/project.hpp"
 #include "engine/runlog.hpp"
 #include "engine/runner.hpp"
+#include "engine/system.hpp"
 #include "model/names.hpp"
 #include "service.hpp"
 #include "util/json.hpp"
@@ -126,6 +129,13 @@ public:
         std::unique_lock<std::mutex> hold(mutex_);
         arrived_.wait_for(hold, std::chrono::seconds(60), [&] { return !events_.empty(); });
         return events_.empty() ? Json() : events_[0];
+    }
+    /// Whether an event of this kind has been said under `id`.
+    bool has_event(const std::string& id, const char* what) {
+        std::lock_guard<std::mutex> hold(mutex_);
+        for (const Json& e : events_)
+            if (e.get("id") == Json(id) && e.get("event") == what) return true;
+        return false;
     }
     bool every_line_json() {
         std::lock_guard<std::mutex> hold(mutex_);
@@ -327,7 +337,7 @@ int main() {
     }
 
     // What it does not do, it says before anything runs, by the name the page falls back on.
-    for (const char* kind : {"probabilistic", "replay", "calibrate", "local-sensitivity"}) {
+    for (const char* kind : {"calibrate", "local-sensitivity"}) {
         const std::string id = std::string("n-") + kind;
         in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", Json(model_text)},
                                               {"out", Json((scratch / "never.zip").string())}}), 0));
@@ -335,7 +345,265 @@ int main() {
         CHECK_MSG(name_of(events) == "NotOnThisEngine", std::string(kind) + " is the page's to do: " + name_of(events));
         CHECK(message_of(events).rfind("The C++ engine runs a model; ", 0) == 0);
     }
+    // A solver the other engines have and this one does not: a run, a probabilistic run and a replay.
+    {
+        Json other = parse_json(check::read_file(examples + "biosphere.json"));
+        other["simulation"].set("solver", Json("auto"));
+        for (const char* kind : {"run", "probabilistic", "replay"}) {
+            const std::string id = std::string("auto-") + kind;
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", other},
+                                                  {"options", Json::object({{"iterations", Json(4)}, {"workers", Json(2)}})},
+                                                  {"out", Json((scratch / "never.zip").string())}}), 0));
+            const auto events = out_buffer.until_ended(id);
+            CHECK_MSG(name_of(events) == "NotOnThisEngine", std::string(kind) + " with a solver this engine lacks is the page's to do: " + name_of(events) +
+                                                                " " + message_of(events));
+            CHECK(message_of(events).rfind("'auto' is not one of the C++ engine's solvers", 0) == 0);
+        }
+    }
     CHECK(!fs::exists(scratch / "never.zip"));
+
+    // --- probabilistic runs -------------------------------------------------------------------
+    const std::string bio_text = check::read_file(examples + "biosphere.json");
+    auto bio = std::make_shared<const Project>(parse_json(bio_text));
+    auto job_line = [&](const std::string& id, const char* kind, const Json& model, const Json& options) {
+        return json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", model}, {"options", options},
+                                       {"out", Json((scratch / (id + ".zip")).string())}}),
+                         0);
+    };
+    auto read_doubles = [&](const std::string& path) {
+        const std::string data = fs::exists(path) ? check::read_file(path) : "";
+        std::vector<double> v(data.size() / 8);
+        if (!v.empty()) std::memcpy(v.data(), data.data(), v.size() * 8);
+        return v;
+    };
+    auto same_doubles = [](const std::vector<double>& a, const std::vector<double>& b) {
+        if (a.size() != b.size()) return false;
+        for (std::size_t i = 0; i < a.size(); i++)
+            if (!check::same_bits(a[i], b[i])) return false;
+        return true;
+    };
+    auto bytes_doubles = [](const std::string& bytes) {
+        std::vector<double> v(bytes.size() / 8);
+        if (!v.empty()) std::memcpy(v.data(), bytes.data(), v.size() * 8);
+        return v;
+    };
+    auto sample_meta = [&](const std::string& id) {
+        const std::string zip = fs::exists(scratch / (id + ".zip")) ? check::read_file((scratch / (id + ".zip")).string()) : "";
+        const std::string text = zip_entry(zip, "results/sample/meta.json");
+        return text.empty() ? Json::object() : parse_json(text);
+    };
+
+    // A sample kept: its archive without the series, and every question asked of it answered
+    // as a run here answers it, to the bit.
+    {
+        ProbabilisticOptions here;
+        here.iterations = 10;
+        here.seed = Json(4);
+        here.threads = 1;
+        ProbabilisticResults prob = run_probabilistic(bio, here);
+        const long long n = prob.iterations;
+        const long long kept_series = static_cast<long long>(prob.outputs.size());
+        const long long count = static_cast<long long>(an_count(prob));
+        in_buffer.put(job_line("p1", "probabilistic", Json(bio_text),
+                               Json::object({{"iterations", Json(10)}, {"seed", Json(4)}, {"keep", Json(true)}, {"workers", Json(2)}})));
+        const auto events = out_buffer.until_ended("p1");
+        CHECK_MSG(name_of(events) == "done", "a kept sample ends done: " + name_of(events) + " " + message_of(events));
+        bool building = false, writing = false, rising = true;
+        long long last_done = 0;
+        for (const Json& e : events) {
+            if (e.get("event") == "stage" && e.get("stage") == "building") building = true;
+            if (e.get("event") == "stage" && e.get("stage") == "writing") writing = true;
+            if (e.get("event") == "progress") {
+                rising = rising && e.get("done").as_int() > last_done && e.get("total").as_int() == n;
+                last_done = e.get("done").as_int();
+            }
+        }
+        CHECK(building && writing && rising && last_done >= 1);
+        const std::string zip = check::read_file((scratch / "p1.zip").string());
+        const Json meta = sample_meta("p1");
+        CHECK(meta.get("onEngine") == Json(true));
+        CHECK(zip_entry(zip, "results/sample/series.f64").empty() && zip_entry(zip, "results/sample/series.f32").empty());
+        CHECK(!zip_entry(zip, "results/sample/draws.f64").empty() && !zip_entry(zip, "results/sample/ran.u8").empty());
+        CHECK(meta.get("iterations").as_int() == n && meta.get("times").as_int() == static_cast<long long>(prob.t.size()) &&
+              static_cast<long long>(meta.get("outputs").size()) == count);
+        CHECK(meta.get("stats").get("seed") == Json(4) && meta.get("stats").get("threads") == Json(2));
+        CHECK(bytes_doubles(zip_entry(zip, "results/sample/draws.f64")).size() == prob.samples.data.size());
+
+        auto ask = [&](const std::string& id, const char* op, Json q) {
+            q.set("op", Json(op));
+            q.set("id", Json(id));
+            q.set("run", Json("p1"));
+            q.set("out", Json((scratch / id).string()));
+            in_buffer.put(json_text(q, 0));
+            return out_buffer.until_ended(id);
+        };
+        // Per series, a run per percentile, the mean, the deviation and its count, the median's
+        // two intervals.
+        Json mask = Json::array();
+        for (int b : {1, 1, 0, 1, 0, 1, 1, 1, 0, 1}) mask.push(Json(b));
+        std::vector<std::pair<std::string, Json>> asked = {
+            {"bands", Json::object({{"percentiles", Json::array({Json(0.05), Json(0.5), Json(0.95)})}, {"mask", Json()}})},
+            {"bands", Json::object({{"percentiles", Json::array({Json(0.25), Json(0.75)})}, {"mask", mask}})},
+            {"realisations", Json::object({{"series", Json::array({Json(1), Json(kept_series)})}})},
+            {"column", Json::object({{"series", Json::array({Json(0), Json(kept_series)})}, {"at", Json(7)}})},
+            {"realisation", Json::object({{"series", Json::array({Json(2), Json(kept_series + 1)})}, {"index", Json(3)}})},
+        };
+        int k = 0;
+        for (const auto& [op, q] : asked) {
+            const std::string id = "q-" + std::to_string(k++);
+            const auto answered = ask(id, op.c_str(), q);
+            CHECK_MSG(name_of(answered) == "done", op + " is answered: " + name_of(answered) + " " + message_of(answered));
+            CHECK_MSG(same_doubles(read_doubles((scratch / id).string()), bytes_doubles(sample_answer_bytes(Json(op), prob, q))),
+                      op + ": the engine's answer is a run's here, to the bit");
+        }
+        CHECK(read_doubles((scratch / "q-1").string()).size() == static_cast<std::size_t>(2 + 1 + 7) * static_cast<std::size_t>(kept_series * static_cast<long long>(prob.t.size()) + (count - kept_series)));
+        // Asked wrongly, or what a run is asked: said so.
+        auto wrong = ask("q-w1", "column", Json::object({{"series", Json::array({Json(count)})}, {"at", Json(0)}}));
+        CHECK(name_of(wrong) == "ArgumentError" && message_of(wrong) == "The probabilistic run has no series " + std::to_string(count) + ": it has " +
+                                                                            std::to_string(count) + ", from 0.");
+        wrong = ask("q-w2", "bands", Json::object({{"percentiles", Json::array({Json(0.5)})}, {"mask", Json::array({Json(1), Json(0)})}}));
+        CHECK(name_of(wrong) == "ArgumentError" && message_of(wrong) == "The mask has 2 entries for 10 realisations.");
+        wrong = ask("q-w3", "series", Json::object({{"labels", Json::array({Json("Dose")})}}));
+        CHECK(name_of(wrong) == "ArgumentError" && message_of(wrong) == "'series' is not something this engine is asked of a probabilistic run");
+        wrong = ask("q-w4", "column", Json::object({{"series", Json::array({Json(0)})}, {"at", Json(2.5)}}));
+        CHECK(name_of(wrong) == "InexactError");
+        // The whole sample, series and all.
+        CHECK(name_of(ask("q-a", "archive", Json::object())) == "done");
+        const std::string whole_sample = check::read_file((scratch / "q-a").string());
+        std::vector<double> series_f64 = bytes_doubles(zip_entry(whole_sample, "results/sample/series.f64"));
+        std::vector<double> mine;
+        for (const auto& v : prob.values) mine.insert(mine.end(), v.begin(), v.end());
+        CHECK_MSG(same_doubles(series_f64, mine), "the whole sample's series are a run's here, to the bit");
+        // Let go of, and then said to be gone.
+        in_buffer.put(json_text(Json::object({{"op", Json("forget")}, {"id", Json("q-f")}, {"run", Json("p1")}}), 0));
+        CHECK(name_of(out_buffer.until_ended("q-f")) == "done");
+        const auto gone = ask("q-g", "column", Json::object({{"series", Json::array({Json(0)})}, {"at", Json(0)}}));
+        CHECK(name_of(gone) == "ArgumentError" && message_of(gone).rfind("This engine no longer holds that run", 0) == 0);
+
+        // The page's limits for a sample the engine holds: taken for a kept sample, and not for
+        // one that goes back whole, which a tab must hold.
+        const long long size = n * kept_series * static_cast<long long>(prob.t.size()) * 8;
+        auto limited = [&](const std::string& id, bool keep, long long most) {
+            in_buffer.put(job_line(id, "probabilistic", Json(bio_text),
+                                   Json::object({{"iterations", Json(10)}, {"seed", Json(4)}, {"keep", Json(keep)}, {"workers", Json(1)},
+                                                 {"most", Json(most)}, {"asked", Json(size)}})));
+            return out_buffer.until_ended(id);
+        };
+        CHECK(name_of(limited("k1", true, size - 1)) == "done" && sample_meta("k1").get("precision") == "float32");
+        const auto too_large = limited("k2", true, size / 4);
+        CHECK(name_of(too_large) == "ErrorException" && message_of(too_large).find("large=true") != std::string::npos &&
+              message_of(too_large).find("even held as float32") != std::string::npos);
+        CHECK(name_of(limited("w1", false, size - 1)) == "done" && sample_meta("w1").get("precision") == "double");
+    }
+
+    // A tornado and a sensitivity design: their runs go back whole, the inputs counted from 0, the
+    // points the design's.
+    {
+        Json tornado = Json::object({{"low", Json(0.05)}, {"high", Json(0.95)}});
+        in_buffer.put(job_line("t1", "probabilistic", Json(bio_text), Json::object({{"seed", Json(3)}, {"tornado", tornado}, {"keep", Json(true)}})));
+        CHECK(name_of(out_buffer.until_ended("t1")) == "done");
+        const Json meta = sample_meta("t1");
+        CHECK(meta.get("iterations").as_int() == 31 && !meta.has("onEngine"));
+        Json swung = Json::array();
+        for (int k = 0; k < 15; k++) swung.push(Json(k));
+        CHECK(meta.get("stats").get("tornado").get("swung") == swung);
+        CHECK(!zip_entry(check::read_file((scratch / "t1.zip").string()), "results/sample/series.f64").empty());
+
+        Json gsa = Json::object({{"method", Json("morris")}, {"options", Json::object({{"trajectories", Json(2)}, {"points", Json(3)}})}});
+        in_buffer.put(job_line("g1", "probabilistic", Json(bio_text),
+                               Json::object({{"seed", Json(4)}, {"blocks", Json::array({Json("Dose")})}, {"gsa", gsa}})));
+        CHECK(name_of(out_buffer.until_ended("g1")) == "done");
+        const Json gmeta = sample_meta("g1");
+        CHECK(gmeta.get("stats").get("gsa").get("method") == "morris");
+        bool from_zero = gmeta.get("stats").get("gsa").get("factors").size() == 15;
+        for (std::size_t k = 0; from_zero && k < 15; k++)
+            from_zero = gmeta.get("stats").get("gsa").get("factors")[k].get("members") == Json::array({Json(static_cast<long long>(k))});
+        CHECK_MSG(from_zero, "each factor's inputs counted from 0");
+        auto sys = std::make_shared<System>(bio);
+        DesignOptions d;
+        d.seed = Json(4);
+        d.gsa = gsa;
+        SampleDesign design = design_for(*bio, *sys, d);
+        CHECK(gmeta.get("iterations").as_int() == design.iterations);
+        std::vector<double> draws;
+        for (std::size_t k = 0; k < design.plan.size(); k++)
+            for (long long i = 0; i < design.iterations; i++) draws.push_back(design.values(k, i));
+        CHECK_MSG(same_doubles(bytes_doubles(zip_entry(check::read_file((scratch / "g1.zip").string()), "results/sample/draws.f64")), draws),
+                  "the design's points, as the design draws them");
+    }
+
+    // A realisation replayed, kept, its series asked for: realisation 6 as a run here makes it.
+    {
+        in_buffer.put(job_line("r1", "replay", Json(bio_text),
+                               Json::object({{"index", Json(5)}, {"seed", Json(11)}, {"iterations", Json(20)}, {"keep", Json(true)}})));
+        const auto events = out_buffer.until_ended("r1");
+        CHECK_MSG(name_of(events) == "done", "a replay ends done: " + name_of(events) + " " + message_of(events));
+        const std::string zip = check::read_file((scratch / "r1.zip").string());
+        const Json meta = parse_json(zip_entry(zip, "results/meta.json"));
+        const Json& replayed = meta.get("replayed");
+        CHECK(replayed.get("index") == Json(5) && replayed.get("iterations") == Json(20) && replayed.get("values").size() == 15);
+        CHECK(meta.get("onEngine") == Json(true) && meta.has("page") && meta.has("massBalance"));
+        DesignOptions d;
+        d.seed = Json(11);
+        d.iterations = 20;
+        Replay here = run_realisation(bio, 6, d);
+        bool same_values = replayed.get("values").size() == here.values.size();
+        for (std::size_t k = 0; same_values && k < here.values.size(); k++) {
+            const Json& v = replayed.get("values")[k];
+            same_values = v.get("name") == here.values[k].name && v.get("held") == Json(here.values[k].held) &&
+                          check::same_bits(v.get("value").as_double(), here.values[k].value);
+        }
+        CHECK_MSG(same_values, "the replayed inputs are those a replay here sets");
+        const std::string series = (scratch / "r1-series").string();
+        const std::string label = here.results.outputs().back().get("label").as_string();
+        in_buffer.put(json_text(Json::object({{"op", Json("series")}, {"id", Json("r1-q")}, {"run", Json("r1")}, {"labels", Json::array({Json(label)})},
+                                              {"out", Json(series)}}), 0));
+        CHECK(name_of(out_buffer.until_ended("r1-q")) == "done");
+        CHECK_MSG(same_doubles(read_doubles(series), here.results.series(label)), "the replay's series are a replay's here, to the bit: " + label);
+    }
+
+    // Refusals, named as the Julia engine names them.
+    {
+        in_buffer.put(job_line("e1", "probabilistic", Json(model_text), Json::object({{"iterations", Json(3)}})));
+        auto e = out_buffer.until_ended("e1");
+        CHECK(name_of(e) == "ArgumentError" && message_of(e).rfind("No parameter in this model has a distribution, so every realisation", 0) == 0);
+        in_buffer.put(job_line("e2", "probabilistic", Json(bio_text), Json::object({{"iterations", Json(2.5)}})));
+        e = out_buffer.until_ended("e2");
+        CHECK(name_of(e) == "InexactError" && message_of(e) == "Int64(2.5)");
+        in_buffer.put(job_line("e3", "replay", Json(bio_text), Json::object({{"seed", Json("abc")}})));
+        CHECK(name_of(out_buffer.until_ended("e3")) == "MethodError");
+        Json bad = parse_json(bio_text);
+        bad.set("parameters", Json::array({Json::object({{"name", Json("k")}, {"value", Json(1)},
+                                                         {"pdf", Json::object({{"kind", Json("pg")}, {"values", Json::array({Json(0), Json(1)})}})}})}));
+        bad.set("compartments", Json::array({Json::object({{"name", Json("A")}, {"initial", Json("1 / k")}})}));
+        for (const char* key : {"transfers", "expressions", "inflows", "index_reductions", "lookups"}) bad.set(key, Json::array());
+        bad.set("nuclides", Json::array());
+        in_buffer.put(job_line("e4", "probabilistic", bad, Json::object({{"iterations", Json(4)}})));
+        e = out_buffer.until_ended("e4");
+        CHECK_MSG(name_of(e) == "SolverError" && message_of(e).rfind("A starts at Infinity", 0) == 0,
+                  "a first realisation that fails fails the run: " + name_of(e) + " " + message_of(e));
+        in_buffer.put(job_line("e5", "draw", Json(bio_text), Json::object()));
+        e = out_buffer.until_ended("e5");
+        CHECK(name_of(e) == "ArgumentError" && message_of(e) == "'draw' is not a kind of job this engine runs");
+    }
+
+    // Stopped while it runs: it says it was cancelled, and goes on answering.
+    {
+        // One series kept, so that many realisations fit.
+        Results one = run_project(bio, nullptr, RunOptions{});
+        const Json label = one.outputs().front().get("label");
+        in_buffer.put(job_line("c1", "probabilistic", Json(bio_text),
+                               Json::object({{"iterations", Json(20000)}, {"workers", Json(2)}, {"blocks", Json::array({label})}})));
+        // Wait for the first realisation to be said, then stop it.
+        for (int tries = 0; tries < 2000; tries++) {
+            if (out_buffer.has_event("c1", "progress")) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        in_buffer.put(json_text(Json::object({{"op", Json("cancel")}, {"id", Json("c1")}}), 0));
+        const auto events = out_buffer.until_ended("c1");
+        CHECK_MSG(name_of(events) == "cancelled", "a run stopped while it runs says so: " + name_of(events) + " " + message_of(events));
+        CHECK(!fs::exists(scratch / "c1.zip"));
+    }
 
     // A model that cannot be read, or built, or solved, says which and about what.
     {

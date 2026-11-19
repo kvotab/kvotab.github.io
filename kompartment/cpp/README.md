@@ -75,9 +75,12 @@ offers *on C++* beside **Run**. `--cpp PATH` names a program built elsewhere,
 
 The engine speaks the Python and Julia engines' protocol (`src/service.cpp`): a
 run, a run kept on the engine with its series, its whole archive and its
-letting go asked for afterwards. What it does not do it refuses before anything
-runs, by a name the page knows, and the page then does that piece itself, in
-the browser, and says so.
+letting go asked for afterwards; a probabilistic run, a tornado or a
+sensitivity design's runs, a sample kept on the engine and asked for its bands,
+its realisations, a time across them or one of them; one realisation replayed;
+a job cancelled. Errors are named as the Julia engine names them. What it does
+not do it refuses before anything runs, by a name the page knows, and the page
+then does that piece itself, in the browser, and says so.
 
 ## What it does, and what it leaves to the other engines
 
@@ -96,17 +99,32 @@ that is not a number says, as the page does, where that value started: the
 compartment it reached, the transfer that carried it, the one operation that
 made it and the values that operation read.
 
-It does not do: probabilistic runs, replays, calibrations and sensitivities
-(the page does these itself when the engine is chosen); the other solvers
-(`auto`, the DifferentialEquations.jl ports, SciPy's); HDF5 result files;
-Ecolego files; editing a model. A model that needs one of these is refused with
-a sentence saying which, and no number is made up for it.
+It runs a model probabilistically: a sample (Latin hypercube or independent
+draws, correlations put in by Iman-Conover, any inputs held), a tornado, or the
+runs of a global sensitivity design (Morris, radial, Sobol, eFAST, RBD-FAST,
+fractional factorial, DGSM, Shapley), the realisations shared out between
+threads, each on a copy of the built system of its own, with the same bits on
+any number of them as on one. Every realisation of the series kept is held, as
+float32 past what the page says the machine can hold as doubles; the run is
+written as the application's sample archive (`results/sample/`), or kept on the
+engine and asked for its bands, its realisations, a time across them or one of
+them. One realisation is replayed as a run of its own, and a probabilistic run
+has its log.
+
+It does not do: calibrations and local sensitivities (the page does these
+itself when the engine is chosen); the other solvers (`auto`, the
+DifferentialEquations.jl ports, SciPy's); HDF5 result files; Ecolego files;
+splitting a model into the parts that do not interact and solving them apart;
+editing a model. A model that needs one of these is refused with a sentence
+saying which, and no number is made up for it. The model an archive carries is
+the file as it was given, where the other engines write it as they normalised
+it.
 
 ## How it is laid out
 
 | | |
 |---|---|
-| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch, the Julia package's errors, the C library's `sin`, `cos` and `asin` |
+| `src/util/` | An ordered JSON value, numbers written and read as JavaScript writes and reads them (`toFixed`, `toExponential` and `toPrecision` too, to the exact digit), the parity switch, the Julia package's errors, the C library's `sin`, `cos` and `asin`, the lock for caches threads share |
 | `src/lang/` | The equation language: tokens, the parser, the functions, V8's `exp`, `log` and `pow` to the bit |
 | `src/model/` | Names, the decay data (ICRP 107 as the application carries it, compiled in by `tools/embed_data.py`), index lists, the simulation's settings |
 | `src/engine/project.*` | A model file read and checked, refusals word for word |
@@ -118,10 +136,12 @@ a sentence saying which, and no number is made up for it.
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit |
 | `src/engine/runlog.*` | The run log, in the application's words |
 | `src/engine/nonfinite.*` | Where a value that is not a number came from, followed back through the equations at the state the solver held |
-| `src/engine/probabilistic.*` | A probabilistic run's design: the sampling plan, every realisation's values (a sample, a tornado or a sensitivity design), and what a realisation sets into a system |
+| `src/engine/probabilistic*` | A probabilistic run: the sampling plan, every realisation's values (a sample, a tornado or a sensitivity design), what a realisation sets into a system, the realisations run on threads and kept, one replayed |
+| `src/engine/analysis.*` | A probabilistic run's bands: the quantiles, mean, standard deviation and the median's intervals of every series at every time, over the realisations a mask keeps |
+| `src/engine/errorinfo.*` | An error as the Julia package names and shows it |
 | `src/stats/` | The statistics a probabilistic run draws with: the normal distribution, the distributions and their draws under JavaScript's rules, named streams and Latin hypercube columns, correlations put in by Iman-Conover, every sensitivity method's design |
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
-| `src/io/` | ZIP, the dataset archive |
+| `src/io/` | ZIP, the dataset archive, the sample archive (`results/sample/`) |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
 
 In fast mode a model whose derivative is linear in the state is assembled once
@@ -148,6 +168,11 @@ the time to solve, the model already built:
 
 Building that model takes 0.1 s here. The bundled examples are each read, built
 and solved in 1 to 11 ms.
+
+A probabilistic run of the bundled biosphere example, 1,000 realisations of 40
+series at 400 times, takes 0.40 s on one thread and 0.07 s on eight (Julia:
+0.50 and 0.11 s); 40 realisations of the far-field example given a spread, 5.2
+and 0.70 s (Julia: 5.7 and 0.82 s).
 
 ## Tests
 
@@ -179,14 +204,15 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_nonfinite` | 56 models that make a value that is not a number, run on each solver: where it is said to start, the warnings before a run, equations written back out | `tools/nonfinite_fixtures.jl` |
 | `test_stats` | The statistics: JavaScript's reading of values, named streams and columns of uniforms, the normal functions, 105 distributions at 42 probabilities and 61 values, correlations and Iman-Conover, every sensitivity method's settings, runs, refusals and design; 1,786 cases | `tools/stats_fixtures.jl` |
 | `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
-| `test_service` | The messages `serve.py` and the engine exchange, a run's log in its archive, a run that stops on a value that is not a number | |
+| `test_probabilistic` | Probabilistic runs of 22 made-up models (7 of them bundled examples given a spread) and every bundled example: every realisation of every series kept, to the bit (float32 too), the samples, inputs, statistics and log, the sample archive's entries, bands under 5 lists of percentiles and 6 masks, the service's answers and refusals; 12 replays; every run again on 2 and 8 threads, the same bits | `tools/probabilistic_fixtures.jl` |
+| `test_service` | The messages `serve.py` and the engine exchange: a run's log in its archive, a run that stops on a value that is not a number, a probabilistic run kept and asked every question, a tornado, a sensitivity design, a replay, a cancel, errors named as the Julia engine names them | |
 | `test_util` | JSON and the number formats | |
 
 To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```

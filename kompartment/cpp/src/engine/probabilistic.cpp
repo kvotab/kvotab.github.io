@@ -29,10 +29,13 @@ constexpr double NaN = std::numeric_limits<double>::quiet_NaN();
 constexpr double PB_MIN_VALUE = 5e-324;
 constexpr double PB_PI = 3.141592653589793;
 
+/// Whether Julia prints a character beyond ASCII as itself (`isprint`): see below.
+bool julia_printable(std::uint32_t cp);
+
+}  // namespace
+
 // --- Julia's `string()` of what a model file holds, for a group given as a list or a dictionary ---------
 
-/// Julia's `show` of a Float64 (Ryu's shortest digits, laid out as Julia lays them out:
-/// `1.0`, `100000.0`, `1.234567e6`, `1.0e-5`).
 std::string julia_float(double x) {
     if (std::isnan(x)) return "NaN";
     if (std::isinf(x)) return x > 0 ? "Inf" : "-Inf";
@@ -62,6 +65,8 @@ std::string julia_float(double x) {
     return sign + mant + "e" + std::to_string(pt - 1);
 }
 
+namespace {
+
 /// Whether Julia prints a character beyond ASCII as itself (`isprint`: the letters, marks,
 /// numbers, punctuation, symbols and space separators). The other categories as far as a model's
 /// text meets them: the C1 controls, the line and paragraph separators, the formatting
@@ -81,10 +86,8 @@ bool julia_printable(std::uint32_t cp) {
     return true;
 }
 
-/// Julia's `show` of a String (`print_quoted`, `escape_string`): in quotes, `"` and `$` and `\`
-/// escaped, the ASCII controls by name or as `\x..`, a character beyond ASCII that does not
-/// print as `\u..` (`\U..` beyond the first plane) with as few digits as are clear before what
-/// follows, and bytes that are not UTF-8 as `\x..` each.
+}  // namespace
+
 std::string julia_quote(const std::string& s) {
     struct Char {
         bool ok;
@@ -143,7 +146,6 @@ std::string julia_quote(const std::string& s) {
     return out + "\"";
 }
 
-/// Julia's `show` of a value a model file holds, as it shows one inside a list.
 std::string julia_show(const Json& v) {
     switch (v.type()) {
         case Json::Type::Null: return "nothing";
@@ -168,6 +170,10 @@ std::string julia_show(const Json& v) {
     }
     return "";
 }
+
+std::string julia_string(const Json& v) { return v.is_string() ? v.as_string() : julia_show(v); }
+
+namespace {
 
 /// Python's `max(a, b)` and `min(a, b)`: the first unless the second is strictly beyond it.
 double pb_pymax(double a, double b) { return b > a ? b : a; }

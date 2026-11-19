@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/cachelock.hpp"
 #include "util/json.hpp"
 
 namespace kompartment {
@@ -170,10 +171,14 @@ private:
 
     std::unordered_map<std::string, IndexList> lists_;
     std::vector<std::string> order_;
+    // Filled as they are read, under `cache_lock_`: the copies of a system a probabilistic
+    // run's threads run on share their build, and this space with it. (A map, so that a
+    // reference `strides` hands out stays good as others are added.)
     mutable std::map<std::vector<std::string>, std::vector<int>> stride_cache_;
     std::optional<std::string> scenario_root_;
     std::optional<std::string> scenario_;
     mutable std::map<std::pair<std::string, std::string>, std::optional<Relation>> relate_cache_;
+    CacheLock cache_lock_;
 };
 
 /// A block's dimensions as written, each used once.
