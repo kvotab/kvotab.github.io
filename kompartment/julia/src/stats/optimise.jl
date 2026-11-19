@@ -133,10 +133,14 @@ mutable struct _OpBudget
     best_x::Union{Nothing,Vector{Float64}}
     seen::Dict{String,Tuple{Float64,Any}}
     kept::Any
+    # Answers from memory in a row: a search answered from memory as many times running
+    # as it may evaluate at all has stopped moving, and would otherwise go round for ever
+    # (a remembered point costs no budget).
+    repeats::Int
 end
 _OpBudget(f, max_evals, on_step, signal; keep=nothing) =
     _OpBudget(f, _pd_to_number(max_evals), on_step, signal, keep, 0, Inf, nothing, Dict{String,Tuple{Float64,Any}}(),
-              nothing)
+              nothing, 0)
 
 function _op_call!(b::_OpBudget, x::Vector{Float64})
     _op_aborted(b.signal) && throw(OptimiseError("stopped"))
@@ -146,9 +150,12 @@ function _op_call!(b::_OpBudget, x::Vector{Float64})
     key = join((js_to_precision(v, 12) for v in x), ",")
     had = get(b.seen, key, nothing)
     if had !== nothing
+        b.repeats += 1
+        b.repeats >= b.max_evals && throw(OptimiseError("stalled"))
         b.kept = had[2]
         return had[1]
     end
+    b.repeats = 0
     b.evals += 1
     fx = b.f(copy(x))
     use = _op_is_finite_num(fx) ? Float64(fx) : Inf

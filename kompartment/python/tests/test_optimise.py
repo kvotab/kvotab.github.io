@@ -462,6 +462,30 @@ class Standalone(unittest.TestCase):
         out = O.differential_evolution(_rosenbrock, lower=[-2, -2], upper=[2, 2], signal={'aborted': True})
         self.assertEqual((out['reason'], out['evals'], out['x']), ('stopped', 0, None))
 
+    def test_a_search_answered_only_from_memory_stops(self) -> None:
+        # A remembered point costs nothing from the budget, so a search whose every new
+        # point was one it had tried went round for ever. It stops, and says it stalled.
+        out = O.nelder_mead(lambda x: math.nan, [math.nan, math.nan], lower=[0, 0], upper=[1, 1], max_evals=50)
+        self.assertEqual((out['reason'], out['evals']), ('stalled', 1))
+        out = O.nelder_mead(lambda x: math.inf, [0, 0], lower=[-math.inf, -math.inf], upper=[math.inf, math.inf],
+                            max_evals=50)
+        self.assertEqual((out['reason'], out['evals']), ('stalled', 5))
+        out = O.differential_evolution(lambda x: math.nan, lower=[0, 0], upper=[0, 0], seed=2, max_evals=40)
+        self.assertEqual((out['reason'], out['evals']), ('stalled', 1))
+        out = O.nelder_mead(lambda x: (x[0] - 0.3) ** 2 + (x[1] - 0.6) ** 2, [0.5, 0.5], lower=[0, 0], upper=[1, 1],
+                            max_evals=300)
+        self.assertEqual(out['reason'], 'converged')
+
+    def test_a_calibration_range_that_does_not_end_is_refused(self) -> None:
+        from kompartment.engine.calibrate import calibrate
+        post = {'name': 'post', 'simulation': {'start_time': 0, 'end_time': 10, 'output_points': 3, 'spacing': 'linear'},
+                'parameters': [{'name': 'd', 'value': 2, 'unit': '', 'index_lists': []}],
+                'expressions': [{'name': 'Dose', 'equation': 'd * 3', 'index_lists': []}]}
+        with self.assertRaises(O.OptimiseError) as caught:
+            calibrate(post, targets=[{'output': 'Dose', 'when': 'end', 'value': 9}],
+                      variables=[{'key': 'd', 'lower': '-Infinity', 'upper': 'Infinity'}])
+        self.assertEqual(str(caught.exception), "'d' needs finite bounds: -Infinity to Infinity.")
+
     def test_nothing_to_vary(self) -> None:
         with self.assertRaisesRegex(O.OptimiseError, 'Nothing to vary'):
             O.nelder_mead(_rosenbrock, [], lower=[], upper=[])

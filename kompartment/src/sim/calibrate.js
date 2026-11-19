@@ -120,6 +120,10 @@ export function calibrate(input, opts = {}) {
 		const lo = Number(v.lower);
 		const hi = Number(v.upper);
 		if (!(hi > lo)) throw new OptimiseError(`'${v.key}' has no range: ${lo} to ${hi}.`);
+		// A range that does not end gives a search no size to start from.
+		if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+			throw new OptimiseError(`'${v.key}' needs finite bounds: ${lo} to ${hi}.`);
+		}
 		if (!space.ok(lo, hi)) {
 			throw new OptimiseError(`'${v.key}' is searched in the logarithm, so both bounds `
 				+ 'have to be above zero.');

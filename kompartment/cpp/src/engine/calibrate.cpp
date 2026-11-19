@@ -123,11 +123,11 @@ Json calibrate(std::shared_ptr<const Project> project, const CalibrateOptions& o
         const OptimiseSpace space = optimise_space(pd_prop(v, "space")).value_or(OptimiseSpace::Linear);
         const double lo = pd_to_number(pd_prop(v, "lower"));
         const double hi = pd_to_number(pd_prop(v, "upper"));
-        // (Bounds written "-Infinity" and "Infinity" are a range: Nelder-Mead then steps to
-        // Infinity and on to points that are no number, and searches until it is stopped --
-        // the Julia package's fault, kept; see the budget in stats/optimise.cpp.)
         if (!(hi > lo))
             throw OptimiseError("'" + pd_js_str(key) + "' has no range: " + pd_js_number_str(lo) + " to " + pd_js_number_str(hi) + ".");
+        // A range that does not end gives a search no size to start from.
+        if (!std::isfinite(lo) || !std::isfinite(hi))
+            throw OptimiseError("'" + pd_js_str(key) + "' needs finite bounds: " + pd_js_number_str(lo) + " to " + pd_js_number_str(hi) + ".");
         if (!space_ok(space, lo, hi))
             throw OptimiseError("'" + pd_js_str(key) + "' is searched in the logarithm, so both bounds have to be above zero.");
         const double s = pd_to_number(pd_prop(v, "start"));

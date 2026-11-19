@@ -102,17 +102,18 @@ public:
             if (i) key.push_back(',');
             key += js_to_precision(x[i], 12);
         }
-        // A point answered from memory is not counted against the budget. So a Nelder-Mead
-        // simplex whose every new point is the same key -- no number in any coordinate, which
-        // a start that is no number or infinite bounds come to -- and whose values hold an
-        // Infinity, so that they never agree, goes on until its signal stops it: the Julia
-        // package's fault, and the application's, kept (tools/calibrate_fixtures.jl has such
-        // searches, stopped).
+        // A point answered from memory is not counted against the budget, so a search answered
+        // from memory as many times running as it may evaluate at all -- every point it tries
+        // one it has tried, as a simplex of points that are no numbers does -- has stopped
+        // moving, and would otherwise go round for ever.
         auto had = seen_.find(key);
         if (had != seen_.end()) {
+            repeats_ += 1;
+            if (static_cast<double>(repeats_) >= max_evals_) throw OptimiseError("stalled");
             kept = had->second.second;
             return had->second.first;
         }
+        repeats_ = 0;
         evals += 1;
         const double fx = f_(x);
         const double use = std::isfinite(fx) ? fx : Inf;
@@ -151,6 +152,7 @@ private:
     const std::function<bool()>& signal_;
     std::function<std::optional<std::vector<double>>()> keep_;
     std::unordered_map<std::string, std::pair<double, std::optional<std::vector<double>>>> seen_;
+    long long repeats_ = 0;   // answers from memory in a row
 };
 
 /// `something(v, fallback)` of a budget: the value, or the method's own where none is given.

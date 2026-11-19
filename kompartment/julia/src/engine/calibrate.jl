@@ -123,6 +123,9 @@ function calibrate(m; targets=nothing, variables=nothing, method=nothing, max_ev
         lo = _pd_to_number(_pd_prop(v, "lower"))
         hi = _pd_to_number(_pd_prop(v, "upper"))
         hi > lo || throw(OptimiseError("'$(_pd_js_str(key))' has no range: $(_pd_js_str(lo)) to $(_pd_js_str(hi))."))
+        # A range that does not end gives a search no size to start from.
+        (isfinite(lo) && isfinite(hi)) ||
+            throw(OptimiseError("'$(_pd_js_str(key))' needs finite bounds: $(_pd_js_str(lo)) to $(_pd_js_str(hi))."))
         space.ok(lo, hi) || throw(OptimiseError("'$(_pd_js_str(key))' is searched in the logarithm, so both bounds have " *
                                                 "to be above zero."))
         s = _pd_to_number(_pd_prop(v, "start"))

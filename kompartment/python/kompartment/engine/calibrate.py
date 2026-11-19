@@ -165,6 +165,9 @@ def calibrate(model: Any, *, targets: Optional[Sequence[Mapping[str, Any]]] = No
         hi = _to_number(_prop(v, 'upper'))
         if not (hi > lo):
             raise OptimiseError(f"'{_js_str(key)}' has no range: {_js_str(lo)} to {_js_str(hi)}.")
+        # A range that does not end gives a search no size to start from.
+        if not (math.isfinite(lo) and math.isfinite(hi)):
+            raise OptimiseError(f"'{_js_str(key)}' needs finite bounds: {_js_str(lo)} to {_js_str(hi)}.")
         if not _member(space, 'ok', 'space')(lo, hi):
             raise OptimiseError(f"'{_js_str(key)}' is searched in the logarithm, so both bounds have to be above "
                                 'zero.')

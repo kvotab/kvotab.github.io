@@ -160,6 +160,12 @@ function budgeted(f, { maxEvals, onStep, signal, keep = null }) {
 	let best = Infinity;
 	let bestX = null;
 	let kept = null;
+	// Answers from memory in a row. A search that has been answered from
+	// memory as many times running as it may evaluate at all has stopped
+	// moving -- every point it tries is one it has tried, as a simplex of
+	// points that are no numbers does -- and it would otherwise go round for
+	// ever, since a remembered point costs nothing from the budget.
+	let repeats = 0;
 	const seen = new Map();
 	const call = (x) => {
 		if (signal?.aborted) throw new OptimiseError('stopped');
@@ -169,9 +175,12 @@ function budgeted(f, { maxEvals, onStep, signal, keep = null }) {
 		const key = Array.from(x, (v) => v.toPrecision(12)).join(',');
 		const had = seen.get(key);
 		if (had !== undefined) {
+			repeats += 1;
+			if (repeats >= maxEvals) throw new OptimiseError('stalled');
 			kept = had.kept;
 			return had.use;
 		}
+		repeats = 0;
 		evals += 1;
 		const fx = f(x);
 		const use = Number.isFinite(fx) ? fx : Infinity;

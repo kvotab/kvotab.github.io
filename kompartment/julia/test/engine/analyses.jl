@@ -151,7 +151,24 @@ end
     @test err(variables=[Dict("key" => "k", "lower" => 2, "upper" => 1)]) == "'k' has no range: 2 to 1."
     @test err(variables=[Dict("key" => "k", "lower" => 0, "upper" => 1, "space" => "log")]) ==
           "'k' is searched in the logarithm, so both bounds have to be above zero."
+    # A range that does not end passed the range check and started a search that never ended.
+    @test err(variables=[Dict("key" => "k", "lower" => "-Infinity", "upper" => "Infinity")]) ==
+          "'k' needs finite bounds: -Infinity to Infinity."
     @test [v["key"] for v in K.variables_of(m)] == ["k", "y0"]
+end
+
+@testset "a search answered only from memory stops" begin
+    # A remembered point costs nothing from the budget, so a search whose every new point
+    # was one it had tried went round for ever. It stops, and says it stalled.
+    nan = K.nelder_mead(x -> NaN, [NaN, NaN]; lower=[0.0, 0.0], upper=[1.0, 1.0], max_evals=50)
+    @test (nan.reason, nan.evals) == ("stalled", 1)
+    wide = K.nelder_mead(x -> Inf, [0.0, 0.0]; lower=[-Inf, -Inf], upper=[Inf, Inf], max_evals=50)
+    @test (wide.reason, wide.evals) == ("stalled", 5)
+    de = K.differential_evolution(x -> NaN; lower=[0.0, 0.0], upper=[0.0, 0.0], seed=2, max_evals=40)
+    @test (de.reason, de.evals) == ("stalled", 1)
+    fine = K.nelder_mead(x -> (x[1] - 0.3)^2 + (x[2] - 0.6)^2, [0.5, 0.5]; lower=[0.0, 0.0], upper=[1.0, 1.0],
+                         max_evals=300)
+    @test fine.reason == "converged"
 end
 
 @testset "dy/dp" begin

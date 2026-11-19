@@ -40609,6 +40609,42 @@ test('an optimiser option given as null takes its default', async () => {
 		'a null budget is not the default');
 });
 
+test('a search answered only from memory stops, and a range that does not end is refused', async () => {
+	const O = await import('../src/domain/optimise.js');
+	const { calibrate } = await import('../src/sim/calibrate.js');
+	// A remembered point costs nothing from the budget, so a simplex whose every
+	// new point was one it had tried -- points that are no numbers, or a range
+	// that does not end -- went round for ever. It stops, and says it stalled.
+	const nan = O.nelderMead(() => NaN, [NaN, NaN], { lower: [0, 0], upper: [1, 1], maxEvals: 50 });
+	assert(nan.reason === 'stalled' && nan.evals === 1, JSON.stringify(nan));
+	const wide = O.nelderMead(() => Infinity, [0, 0],
+		{ lower: [-Infinity, -Infinity], upper: [Infinity, Infinity], maxEvals: 50 });
+	assert(wide.reason === 'stalled' && wide.evals === 5, JSON.stringify(wide));
+	// So did a population in a box of no width: every trial the one point.
+	const de = O.differentialEvolution(() => NaN, { lower: [0, 0], upper: [0, 0], seed: 2, maxEvals: 40 });
+	assert(de.reason === 'stalled' && de.evals === 1, JSON.stringify(de));
+	// A search that moves is not stopped by it.
+	const bowl = (x) => (x[0] - 0.3) ** 2 + (x[1] - 0.6) ** 2;
+	const fine = O.nelderMead(bowl, [0.5, 0.5], { lower: [0, 0], upper: [1, 1], maxEvals: 300 });
+	assert(fine.reason === 'converged', JSON.stringify(fine));
+	// A calibration's bounds of -Infinity and Infinity passed the range check
+	// and started that search.
+	const post = {
+		name: 'post',
+		simulation: { start_time: 0, end_time: 10, output_points: 3, spacing: 'linear' },
+		parameters: [{ name: 'd', value: 2, unit: '', index_lists: [] }],
+		expressions: [{ name: 'Dose', equation: 'd * 3', index_lists: [] }],
+	};
+	let said = '';
+	try {
+		calibrate(post, {
+			targets: [{ output: 'Dose', when: 'end', value: 9 }],
+			variables: [{ key: 'd', lower: '-Infinity', upper: 'Infinity' }],
+		});
+	} catch (e) { said = e.message; }
+	assert(said === "'d' needs finite bounds: -Infinity to Infinity.", said);
+});
+
 test('a scale, space or method named like a property every object has falls back', async () => {
 	const O = await import('../src/domain/optimise.js');
 	const { calibrate } = await import('../src/sim/calibrate.js');

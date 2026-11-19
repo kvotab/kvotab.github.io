@@ -233,6 +233,10 @@ class _Budget:
         self.best_x: Optional[List[float]] = None
         self.seen: Dict[str, Any] = {}
         self._kept: Any = None
+        # Answers from memory in a row: a search answered from memory as many
+        # times running as it may evaluate at all has stopped moving, and would
+        # otherwise go round for ever (a remembered point costs no budget).
+        self.repeats = 0
 
     def call(self, x: Sequence[float]) -> float:
         if _aborted(self.signal):
@@ -244,8 +248,12 @@ class _Budget:
         key = ','.join(_to_precision(v, 12) for v in x)
         had = self.seen.get(key)
         if had is not None:
+            self.repeats += 1
+            if self.repeats >= self.max_evals:
+                raise OptimiseError('stalled')
             self._kept = had[1]
             return had[0]
+        self.repeats = 0
         self.evals += 1
         fx = self.f(list(x))
         use = float(fx) if _is_finite_num(fx) else math.inf

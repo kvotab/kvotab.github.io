@@ -168,8 +168,8 @@ opt("nelder", "sphere", Any[0.5, 0.5], "lower" => Any[0], "upper" => Any[1])
 opt("nelder", "sphere", Any[0.5, 0.5], "lower" => Any["0", "-0.5"], "upper" => Any["1", "abc"])
 opt("nelder", "sphere", Any[0.5, 0.5], "lower" => Any[nothing, true], "upper" => Any[1, 2])
 # A start with no number in it: every point the simplex makes is "NaN,NaN", answered from memory and never counted
-# against the budget, so the search goes on until it is stopped (a fault of the Julia package's, and the
-# application's, kept here: only the signal ends these).
+# against the budget; the search stops as stalled once it has been answered from memory as many times running as it
+# may evaluate (before, only the signal ended these).
 opt("nelder", "sphere", "ab", BOX2..., "abort" => 3000)
 opt("nelder", "sphere", J("a" => 1, "b" => 2), BOX2..., "abort" => 2000)
 opt("nelder", "sphere", "é1", BOX2..., "abort" => 1000)
@@ -573,10 +573,11 @@ for (name, vars) in (("no variables", Any[]), ("variables null", nothing), ("var
     cal("refused: $name", "decay", "variables" => vars, "targets" => DT)
 end
 cal("refused: no targets before no variables", "decay", "variables" => Any[], "targets" => Any[])
-# Infinite bounds are a range (Infinity is above -Infinity): the simplex steps to Infinity, then to points that are no
-# number, each answered from memory, and the search would go on until stopped (the fault above).
+# Infinite bounds passed the range check (Infinity is above -Infinity) and started a search that went on until
+# stopped; they are refused.
 cal("decay infinite bounds", "decay", "maxEvals" => 30, "abort" => 4000, "variables" => [V("k"; lower="-Infinity", upper="Infinity")],
     "targets" => DT)
+cal("decay a bound of Infinity", "decay", "variables" => [V("k"; lower=0.1, upper="Infinity")], "targets" => DT)
 cal("refused: a model that will not build", "decay", "variables" => [V("k"; lower=0, upper=1)], "targets" => DT, "break" => true)
 
 # --- the service --------------------------------------------------------------------------------------------------
