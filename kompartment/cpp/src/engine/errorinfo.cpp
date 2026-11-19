@@ -8,6 +8,7 @@
 #include "engine/farfield_laplace.hpp"
 #include "engine/indexspace.hpp"
 #include "engine/jacobian.hpp"
+#include "engine/localsens.hpp"
 #include "engine/lookup.hpp"
 #include "engine/probabilistic.hpp"
 #include "engine/project.hpp"
@@ -51,6 +52,8 @@ ErrorInfo error_info(const std::exception_ptr& e) {
         return plain("ValidationError", x.what());
     } catch (const NotSupported& x) {
         return plain("NotSupported", x.what());
+    } catch (const SensitivityError& x) {
+        return plain("SensitivityError", x.what());
     } catch (const JsonError& x) {
         // Shown with where it is (`(at byte n)`); its message is what is wrong.
         std::string shown = x.what();

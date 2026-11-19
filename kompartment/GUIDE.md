@@ -95,8 +95,8 @@ The C++ engine is the quickest to answer: it is a program already compiled, and
 it works a model's equations out without compiling them, so a run starts at
 once however large the model. It solves a run, with the `ndf`, `ros23` and
 `dp45` solvers; a probabilistic run, a tornado and a sensitivity design's runs,
-its threads sharing the realisations; and a replayed realisation. What it does
-not do — a calibration, dy/dp, the other solvers — the page solves in the
+its threads sharing the realisations; a replayed realisation; and dy/dp. What
+it does not do — a calibration, the other solvers — the page solves in the
 browser while *on C++* is chosen, and the bar says so as it does.
 
 **What the engines need is checked at every start.** The Python engine needs

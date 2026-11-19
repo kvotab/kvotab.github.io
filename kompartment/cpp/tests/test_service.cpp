@@ -1,8 +1,9 @@
 // The engine as the application's local server talks to it (src/service.cpp): the
 // messages of a run, of a run it is asked to keep and of the questions asked about
 // that run afterwards, and what it says to what it does not do; the run's log in the
-// archive it writes; and a run that meets a value that is not a number, said where it
-// starts.
+// archive it writes; a run that meets a value that is not a number, said where it
+// starts; and local sensitivities answered as the Julia engine's service answers them
+// (tools/localsens_fixtures.jl keeps what that said and wrote), refused, and stopped.
 //
 // The service is driven here as serve.py drives it -- a line in, the lines that
 // answer it out -- through two streams of the test's own, so that a question is
@@ -37,10 +38,31 @@
 #include "model/names.hpp"
 #include "service.hpp"
 #include "util/json.hpp"
+#include "util/parity.hpp"
 
 using namespace kompartment;
 
 namespace {
+
+std::string fnv(const std::string& text) {
+    std::uint64_t h = 0xcbf29ce484222325ULL;
+    for (unsigned char b : text) h = (h ^ b) * 0x100000001b3ULL;
+    char buf[20];
+    std::snprintf(buf, sizeof buf, "%016llx", static_cast<unsigned long long>(h));
+    return buf;
+}
+std::string kept_text(const std::string& text) { return text.size() <= 300 ? "=" + text : "#" + fnv(text); }
+
+/// The answer with its time taken (`"ms":` and digits) said as 0, as the fixtures keep it.
+std::string without_ms(std::string text) {
+    const std::string key = "\"ms\":";
+    for (std::size_t at = text.find(key); at != std::string::npos; at = text.find(key, at + key.size())) {
+        std::size_t end = at + key.size();
+        while (end < text.size() && text[end] >= '0' && text[end] <= '9') end++;
+        text.replace(at + key.size(), end - (at + key.size()), "0");
+    }
+    return text;
+}
 
 /// One entry of a ZIP archive, by name, as the engine writes them (stored or deflated); empty
 /// when it is not there.
@@ -337,7 +359,7 @@ int main() {
     }
 
     // What it does not do, it says before anything runs, by the name the page falls back on.
-    for (const char* kind : {"calibrate", "local-sensitivity"}) {
+    for (const char* kind : {"calibrate"}) {
         const std::string id = std::string("n-") + kind;
         in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json(kind)}, {"model", Json(model_text)},
                                               {"out", Json((scratch / "never.zip").string())}}), 0));
@@ -603,6 +625,71 @@ int main() {
         const auto events = out_buffer.until_ended("c1");
         CHECK_MSG(name_of(events) == "cancelled", "a run stopped while it runs says so: " + name_of(events) + " " + message_of(events));
         CHECK(!fs::exists(scratch / "c1.zip"));
+    }
+
+    // Local sensitivities, answered as the Julia engine's service answers them: what is said as
+    // the job goes, the refusals named as Julia names them, and the answer written -- the times,
+    // the parameters, the counts and every state the page shows with its derivatives -- to the bit,
+    // its time taken aside. With parity on, as the fixtures were written.
+    {
+        const Json fx = parse_json(check::read_file(std::string(KOMPARTMENT_CPP_DIR) + "/tests/fixtures/localsens.json"));
+        set_parity(true);
+        for (const Json& s : fx.get("service").arr()) {
+            const std::string id = s.get("id").as_string();
+            const std::string out = (scratch / (id + ".json")).string();
+            in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json(id)}, {"kind", Json("local-sensitivity")}, {"model", s.get("model")},
+                                                  {"options", s.get("options")}, {"out", Json(out)}}), 0));
+            const auto events = out_buffer.until_ended(id);
+            Json said = Json::array();
+            for (const Json& e : events) {
+                if (e.get("event") == "progress") continue;
+                said.push(e.get("event") == "stage" ? Json("stage:" + e.get("stage").as_string()) : e.get("event"));
+            }
+            CHECK_MSG(said == s.get("events"), id + ": the engine says " + json_text(said, 0) + ", Julia's " + json_text(s.get("events"), 0));
+            const Json last = events.empty() ? Json::object() : events.back();
+            for (const char* key : {"name", "message", "hint"})
+                CHECK_MSG(last.get(key) == s.get(key), id + ": its " + key + " is " + json_text(last.get(key), 0) + ", Julia's " + json_text(s.get(key), 0));
+            const std::string text = fs::exists(out) ? without_ms(check::read_file(out)) : "";
+            CHECK_MSG((text.empty() ? std::string() : kept_text(text)) == s.get("out").as_string(), id + ": the answer written is not Julia's");
+        }
+        set_parity(false);
+
+        // Stopped while it integrates: it says it was cancelled, writes nothing, and goes on
+        // answering. 300 cells by twelve parameters: seconds of work, stopped once it is under way.
+        Json indices = Json::array(), parameters = Json::array(), names = Json::array();
+        std::string rate;
+        for (int i = 0; i < 300; i++) indices.push(Json("c" + std::to_string(i)));
+        for (int k = 1; k <= 12; k++) {
+            parameters.push(Json::object({{"name", Json("k" + std::to_string(k))}, {"value", Json(0.01 * k)}}));
+            names.push(Json("k" + std::to_string(k)));
+            rate += (k > 1 ? " + " : "") + std::string("k") + std::to_string(k) + " * 0.01";
+        }
+        const Json cell = Json::array({Json("Cell")});
+        const Json cells = Json::object(
+            {{"name", Json("cells")},
+             {"simulation", parse_json(R"({"start_time": 0, "end_time": 1000, "output_points": 400, "spacing": "linear", "solver": "ndf", "rtol": 1e-10, "abstol": 1e-14})")},
+             {"index_lists", Json::array({Json::object({{"name", Json("Cell")}, {"indices", indices}})})},
+             {"parameters", parameters},
+             {"compartments", Json::array({Json::object({{"name", Json("A")}, {"initial", Json("1")}, {"index_lists", cell}}),
+                                           Json::object({{"name", Json("B")}, {"initial", Json("0")}, {"index_lists", cell}})})},
+             {"transfers", Json::array({Json::object({{"name", Json("AB")}, {"from", Json("A")}, {"to", Json("B")}, {"rate", Json("(" + rate + ") * (1 + 0.5 * sin(time / 7))")},
+                                                      {"index_lists", cell}}),
+                                        Json::object({{"name", Json("Bout")}, {"from", Json("B")}, {"to", Json()}, {"rate", Json("k12 * B")}, {"index_lists", cell}})})}});
+        const std::string stopped = (scratch / "ls-stopped.json").string();
+        const auto started = std::chrono::steady_clock::now();
+        in_buffer.put(json_text(Json::object({{"op", Json("job")}, {"id", Json("ls-stop")}, {"kind", Json("local-sensitivity")}, {"model", cells},
+                                              {"options", Json::object({{"parameters", names}})}, {"out", Json(stopped)}}), 0));
+        for (int tries = 0; tries < 2000; tries++) {
+            if (out_buffer.has_event("ls-stop", "progress")) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        CHECK_MSG(out_buffer.has_event("ls-stop", "progress"), "the integration says how far it has come");
+        in_buffer.put(json_text(Json::object({{"op", Json("cancel")}, {"id", Json("ls-stop")}}), 0));
+        const auto events = out_buffer.until_ended("ls-stop");
+        const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count();
+        CHECK_MSG(name_of(events) == "cancelled", "dy/dp stopped while it integrates says so: " + name_of(events) + " " + message_of(events));
+        CHECK_MSG(!fs::exists(stopped), "and writes nothing");
+        std::printf("dy/dp stopped after %.2f s\n", took);
     }
 
     // A model that cannot be read, or built, or solved, says which and about what.

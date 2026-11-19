@@ -90,6 +90,28 @@ private:
 /// `on_progress(fraction, t)` is called as the run goes; returning false stops the run.
 using ProgressFunction = std::function<bool(double fraction, double t)>;
 
+/// A system of equations standing over the model's own, integrated by a run's machinery in
+/// its place -- restarted at every switch time, through the discrete events, with the
+/// blocks that remember primed and fed, each compartment's own floor and the clock's
+/// interpolation (the Julia package's `equations` in `run_project`; the local sensitivity's,
+/// engine/localsens). `dydt(out, t, Y)` writes every element, `Y` the model's states first and
+/// `y0` as long as it; `abstol` one per element; `jacobian` the solver's; `solver` the one
+/// it is kept to whatever happens; `on_segment(from, interval)` told where each stretch
+/// between restarts starts and the clock's interpolation interval. Nothing after the states
+/// is held at zero.
+struct Equations {
+    RhsFunction dydt;
+    Vec y0;
+    Vec abstol;
+    const JacobianSpec* jacobian = nullptr;
+    std::string solver = "ndf";
+    std::function<void(double from, double interval)> on_segment;
+    /// Some entries weighed against others as well (`weight_floor` of the NDF).
+    const WeightFloor* weight_floor = nullptr;
+    /// The matrix Newton iterates with, made a block at a time (`iteration_matrix` of the NDF).
+    IterationMatrixFactory iteration_matrix;
+};
+
 struct RunOptions {
     ProgressFunction on_progress;
     bool on_grid = false;
@@ -98,6 +120,9 @@ struct RunOptions {
     /// Far-field layers to hold instead of laying them out, as a split run's parts are given
     /// the whole model's (`whole_layers`); none: every path lays out its own.
     const FarfLayerMap* layers = nullptr;
+    /// Equations integrated in place of the model's own (see `Equations`), the caller's for
+    /// the length of the run; none: the model's.
+    const Equations* equations = nullptr;
 };
 
 /// Runs a project, on the system given or one built here.
@@ -105,6 +130,14 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
 
 /// Every series a run of this system can report.
 std::vector<Json> outputs_of(System& sys, const Project& project);
+
+/// Every material's unit, by its name (`material_units`).
+std::unordered_map<std::string, std::string> material_units(const System& sys);
+
+/// The series one layout entry stands for (`describe_entry`), added to `out`: one per index
+/// tuple, or one -- its kind, block, nuclide, index, label, unit, source and offset.
+void describe_entry(std::vector<Json>& out, const System& sys, const Entry& entry, const std::string& kind, const char* source,
+                    const std::unordered_map<std::string, std::string>& units);
 
 /// The absolute tolerance per state (empty when nothing asked for more than the model's
 /// own), and the states that cannot go negative.

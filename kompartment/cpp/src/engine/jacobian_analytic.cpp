@@ -1678,4 +1678,15 @@ std::size_t analytic_gradient_rows(const Analytic& an) { return an.plan->g_ptr.s
 std::size_t analytic_gradient_entries(const Analytic& an) { return an.plan->g_nnz; }
 const Vec& analytic_gradients(const Analytic& an) { return an.G; }
 
+TreeTangent tree_tangent(const TNode& tree, const std::vector<std::shared_ptr<LookupTable>>& tables, const double* values, int seed) {
+    Tangent tg{&tables, values, seed, 0};
+    auto [value, d] = tangent_run(tg, tree, values, seed);
+    return TreeTangent{value, d.some, d.v};
+}
+
+void check_tree_differentiable(const TNode& tree, const std::vector<char>& live) {
+    std::size_t pos = 0;
+    check_differentiable(tree, live, pos);
+}
+
 }  // namespace kompartment

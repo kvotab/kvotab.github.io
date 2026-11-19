@@ -315,6 +315,9 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     if (!system) system = std::make_shared<System>(project);
     double t0 = now_s();
     System& sys = *system;
+    // Equations standing over the model's own (the local sensitivity's): integrated by this
+    // run's machinery in their place.
+    const Equations* equations = options.equations;
     // Layers handed in are held instead of laid out: a part of a split run is given the whole
     // model's. Any other run lays out its own, so a system handed from run to run lets go of
     // the last one's.
@@ -324,11 +327,16 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     for (const auto& F : sys.data.FARF) F->restart();
     double build_ms = 1000 * (now_s() - t0);
     Vec grid = project->time_grid();
-    Vec y0 = sys.initial_state();
+    Vec y0 = equations ? equations->y0 : sys.initial_state();
     check_initial_state(sys, y0);
     int nstate = sys.nstate;
     Vec abstol = absolute_tolerance(*project, sys);
     std::vector<std::uint8_t> non_negative = non_negative_states(*project, sys);
+    if (equations) {
+        // The equations' own tolerance per element; nothing after the states held at zero.
+        abstol = equations->abstol;
+        if (non_negative.size() < y0.size()) non_negative.resize(y0.size(), 0);
+    }
     std::optional<StepCollector> steps;
     if (project->solver_points && !options.on_grid) steps.emplace();
     Vec span = (steps && project->output_mode == "solver") ? Vec{grid.front(), grid.back()} : grid;
@@ -352,9 +360,10 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
         return res;
     }
     const Json& sim = project->simulation;
-    std::string asked = sim.get("solver").is_null() ? "ndf" : js_str(sim.get("solver"));
-    // The quickest solver for what the model asks, unless the policy says to keep to its own.
-    std::string solver_id = options.solver ? *options.solver : quicker_solver(asked);
+    std::string asked = equations ? equations->solver : sim.get("solver").is_null() ? "ndf" : js_str(sim.get("solver"));
+    // The quickest solver for what the model asks, unless the policy says to keep to its own;
+    // equations keep to theirs whatever happens.
+    std::string solver_id = equations ? asked : options.solver ? *options.solver : quicker_solver(asked);
     SolverFunction solve_fn = solver_by_id(solver_id);
     if (!solve_fn) {
         std::string here = "dp45, ndf, ros23";
@@ -371,8 +380,17 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     if (!abstol.empty()) opts.abstol_vector = &abstol;
     else opts.abstol = sim.get("abstol").as_double();
     bool numeric = sim.get("jacobian") == "numeric";
-    std::optional<JacobianSpec> jac = jacobian_spec(sys, numeric);
-    if (jac) opts.jacobian = &*jac;
+    std::optional<JacobianSpec> jac;
+    if (!equations) {
+        jac = jacobian_spec(sys, numeric);
+        if (jac) opts.jacobian = &*jac;
+    } else {
+        opts.jacobian = equations->jacobian;
+        // Some of the equations' entries weighed against others as well, and the matrix Newton
+        // iterates with, solved a block at a time.
+        opts.weight_floor = equations->weight_floor;
+        opts.iteration_matrix = equations->iteration_matrix;
+    }
     opts.non_negative = non_negative;
     opts.auto_abstol = sim.get("auto_abstol") == Json(true);
     auto positive = [&](const char* key) -> std::optional<double> {
@@ -465,7 +483,7 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
         };
     double min_change = sim.get("min_change_time").is_null() ? 0.0 : py_float_nan(sim.get("min_change_time"));
     if (!std::isfinite(min_change)) min_change = 0.0;
-    RhsFunction f = [&sys](Vec& dy, double t, const Vec& y) { sys.rhs(dy.data(), t, y.data()); };
+    RhsFunction f = equations ? equations->dydt : RhsFunction([&sys](Vec& dy, double t, const Vec& y) { sys.rhs(dy.data(), t, y.data()); });
     // Where the stretch being solved began: a solver that fails at its first instant has
     // nothing later to say where, and this is where.
     std::optional<StretchStart> stretch;
@@ -473,6 +491,7 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
     auto solve_span = [&](const Vec& grid2, const Vec& start) -> RunSolution {
         stretch.emplace(grid2.front(), start);
         sys.use_clock_interpolation(min_change, grid2.front());
+        if (equations && equations->on_segment) equations->on_segment(grid2.front(), min_change);
         sys.start_segment(grid2.front(), start.data());
         if (sys.has_events()) return solve_with_events(sys, f, solve_fn, grid2, start, opts);
         return as_run(solve_fn(f, grid2, start, opts));
@@ -562,6 +581,14 @@ Json descriptor(const std::string& kind, const std::string& block, const Json& n
                          {"unit", Json(unit)}, {"source", Json(source)}, {"offset", Json(offset)}});
 }
 
+}  // namespace
+
+std::unordered_map<std::string, std::string> material_units(const System& sys) {
+    std::unordered_map<std::string, std::string> units;
+    for (const auto& n : sys.project->material_names()) units[n] = sys.project->material_unit(n);
+    return units;
+}
+
 // The series one layout entry stands for: one per index tuple, or one.
 void describe_entry(std::vector<Json>& out, const System& sys, const Entry& entry, const std::string& kind, const char* source,
                     const std::unordered_map<std::string, std::string>& units) {
@@ -605,11 +632,8 @@ void describe_entry(std::vector<Json>& out, const System& sys, const Entry& entr
     }
 }
 
-}  // namespace
-
 std::vector<Json> outputs_of(System& sys, const Project& project) {
-    std::unordered_map<std::string, std::string> units;
-    for (const auto& n : sys.project->material_names()) units[n] = sys.project->material_unit(n);
+    std::unordered_map<std::string, std::string> units = material_units(sys);
     std::vector<Json> out;
     const Builder& b = *sys.builder;
     for (const auto& s : b.states) {

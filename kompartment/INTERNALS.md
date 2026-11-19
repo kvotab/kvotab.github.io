@@ -5596,8 +5596,9 @@ instructions -- an operand a slot every element shares, a run of consecutive
 slots read where they lie, or slots gathered through an index vector -- run a
 block of 256 elements at a time; a statement whose conditional guards
 something that may refuse its arguments is worked out an element at a time,
-only the branch taken. It answers `run`, `probabilistic` and `replay` jobs,
-kept or whole, and the questions about a kept run or a kept sample; a
+only the branch taken. It answers `run`, `probabilistic`, `replay` and
+`local-sensitivity` jobs, kept or whole, and the questions about a kept run or
+a kept sample; a
 probabilistic run's realisations are shared out between threads, each on a
 clone of the built system, and give the same bits on any number of them.
 Everything else it refuses by name

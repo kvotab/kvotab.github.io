@@ -23,4 +23,19 @@ std::size_t analytic_gradient_entries(const Analytic& an);
 /// slot's along the states it depends on, in their order (Julia's `an.G`).
 const Vec& analytic_gradients(const Analytic& an);
 
+/// One element of a statement's tree and its forward-mode tangent along one leaf, by the walk
+/// (`tangent_run!`): `values` the element's leaves in `tree_leaves` order (a table's leaf: the
+/// table's index), `seed` the leaf the tangent is taken along, counted from 0 (-1: none, for
+/// the value alone). `has` is false where the walk finds no tangent.
+struct TreeTangent {
+    double value = 0.0;
+    bool has = false;
+    double tangent = 0.0;
+};
+TreeTangent tree_tangent(const TNode& tree, const std::vector<std::shared_ptr<LookupTable>>& tables, const double* values, int seed);
+
+/// Refuses (`NoDerivative`), before anything is worked out, a tree whose derivative along a live
+/// leaf would need a rule nobody wrote (`_check_differentiable`): `live` by leaf position.
+void check_tree_differentiable(const TNode& tree, const std::vector<char>& live);
+
 }  // namespace kompartment

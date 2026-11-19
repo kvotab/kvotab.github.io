@@ -18,6 +18,7 @@
 #include "engine/errorinfo.hpp"
 #include "engine/farfield.hpp"
 #include "engine/jacobian.hpp"
+#include "engine/localsens.hpp"
 #include "engine/probabilistic.hpp"
 #include "engine/runlog.hpp"
 #include "engine/runner.hpp"
@@ -308,10 +309,8 @@ struct Service {
         try {
             const Json& model = job.get("model");
             Json raw = model.is_string() ? parse_json(model.as_string()) : model;
-            if (!(kind == "run" || kind == "probabilistic" || kind == "replay")) {
-                if (kind == "calibrate" || kind == "local-sensitivity")
-                    throw NotOnThisEngine(std::string("The C++ engine runs a model; ") + (kind == "calibrate" ? "a calibration" : "a local sensitivity") +
-                                          " is not something it does yet.");
+            if (!(kind == "run" || kind == "probabilistic" || kind == "replay" || kind == "local-sensitivity")) {
+                if (kind == "calibrate") throw NotOnThisEngine("The C++ engine runs a model; a calibration is not something it does yet.");
                 throw ArgumentError("'" + julia_string(kind) + "' is not a kind of job this engine runs");
             }
             auto project = std::make_shared<const Project>(raw);
@@ -327,6 +326,26 @@ struct Service {
                 if (stopped(id)) throw ServiceStopped();
                 stage("writing");
                 write_run(std::move(res), id, options, out_path);
+            } else if (kind == "local-sensitivity") {
+                stage("solving");
+                SensitivityOptions sensitivity;
+                sensitivity.on_progress = [&](double fraction, double at) {
+                    tell(Json::object({{"id", Json(id)}, {"event", Json("progress")}, {"fraction", Json(fraction)}, {"at", Json(at)}}));
+                    return !stopped(id);
+                };
+                SensitivityRun r = run_sensitivity(project, option(options, "parameters"), sensitivity);
+                if (stopped(id)) throw ServiceStopped();
+                stage("writing");
+                // Every state the page shows, by its name, with its derivatives.
+                Json states = Json::array();
+                for (const Json& s : r.series) {
+                    if (s.get("hidden") == Json(true)) continue;
+                    const std::size_t at = static_cast<std::size_t>(s.get("offset").as_int());
+                    Json sens = Json::array();
+                    for (const auto& block : r.sens) sens.push(Json::array(block[at]));
+                    states.push(Json::object({{"name", s.get("label")}, {"y", Json::array(r.y[at])}, {"sens", sens}}));
+                }
+                write_file(out_path, json_text(Json::object({{"t", Json::array(r.t)}, {"chosen", r.chosen}, {"stats", r.stats}, {"states", states}}), 0));
             } else if (kind == "replay") {
                 stage("solving");
                 const Json varied = option(options, "varied");
