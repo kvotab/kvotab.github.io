@@ -43,6 +43,10 @@ Build somewhere outside this folder -- the line above uses the place
 | `KOMPARTMENT_SANITIZE` | `OFF` | The address and undefined-behaviour sanitizers, for the tests. |
 | `KOMPARTMENT_EXCLUDE` | | A regular expression: sources and tests whose paths match are left out. |
 
+The build writes a stamp of the engine's sources and of how they were compiled
+(`tools/build_stamp.cmake`): what auto learns about splitting a model is kept
+by it, so that what one build measured is not taken to hold for another.
+
 The arithmetic is never the compiler's to rearrange: nothing is contracted into
 a fused multiply-add unless the code asks for one, and no flag lets a sum be
 reordered. That is what makes a run reproducible to the bit across compilers
@@ -51,15 +55,17 @@ and across the engines.
 ## Running a model
 
 ```
-kompartment-cpp model.json [--csv out.csv] [--repeat n] [--parity]
+kompartment-cpp model.json [--csv out.csv] [--repeat n] [--split auto|on|off] [--threads n] [--parity]
 kompartment-cpp --serve
 kompartment-cpp --version
 ```
 
 The model is a Kompartment model file (`.json`). The program says what it ran
--- the states, the time to read, build and solve, the solver and its steps --
-and with `--csv` writes every output as the application's results table has
-them. `--repeat` runs it again, for timing. `--parity` (or `KOMPARTMENT_PARITY=1`)
+-- the states, the time to read, build and solve, the solver and its steps, and
+what a split did -- and with `--csv` writes every output as the application's
+results table has them. `--repeat` runs it again, for timing. `--split` sets
+the model's *Split into parts* for the run, and `--threads` the most threads a
+split uses (the machine's cores by default). `--parity` (or `KOMPARTMENT_PARITY=1`)
 gives the other engines' numbers to the bit. Without it a model that asks for
 the Rosenbrock 2-3 is run with the NDF where that finishes, as the Julia
 package runs it; `KOMPARTMENT_SOLVERS=model` keeps every model to its own
@@ -131,10 +137,22 @@ is a run of the system built once, and a corner that will not solve counts as
 a miss of 1e6 per target. Each step is said as it goes; the steps and the
 answer are the Julia package's to the bit.
 
-It does not do: the other solvers (`auto`, the
-DifferentialEquations.jl ports, SciPy's); HDF5 result files; Ecolego files;
-splitting a model into the parts that do not interact and solving them apart;
-editing a model. A model that needs one of these is refused with a sentence
+It solves a model in its independent parts, side by side, as *Split into
+parts* says (`simulation.split`: auto, on, off). The parts are read off the
+Jacobian's pattern; the jobs -- sets of materials whose states reach no
+other's -- are packed into a bin per thread, and each bin, the model with every
+other material switched off, is built and solved on the output grid at its own
+steps on a thread of its own, holding the whole model's far-field layers. Its
+states and its recorders' histories are filed back by name, and a split that
+does not add up is solved whole. The plan, its refusals and its words are the
+Julia package's, and the bins are its runs of them to the bit, on any number of
+threads. Auto weighs a split by this engine's own measured numbers and learns
+what runs of a model cost: `split-memory-cpp.json` in `KOMPARTMENT_CACHE`, else
+in `~/.kompartment/cpp/`, kept by the model's layout and this build's stamp
+(`KOMPARTMENT_SPLIT_MEMORY=0` keeps it in the process only).
+
+It does not do: the other solvers (`auto`, the DifferentialEquations.jl ports,
+SciPy's); HDF5 result files; Ecolego files; editing a model. A model that needs one of these is refused with a sentence
 saying which, and no number is made up for it. The model an archive carries is
 the file as it was given, where the other engines write it as they normalised
 it.
@@ -154,6 +172,7 @@ it.
 | `src/engine/farfield*` | A far-field path: on cells (its geometry, layers and release), or worked out semi-analytically (unit responses inverted from the Laplace domain, and their convolution with what flows in) |
 | `src/engine/runner.*` | A run: segments between switch times, events, the outputs, the audit; equations standing over the model's own (dy/dp's) |
 | `src/engine/calibrate.*` | A calibration: an endpoint read off a run, the variables a model offers, the search against the system built once |
+| `src/engine/split.*` | A model solved in its independent parts: the partition, the jobs, the plan and what auto learns, a bin's model, the bins run on threads and filed back into one run |
 | `src/engine/localsens.*` | dy/dp: the parameter slots and states as the page names them, what the forward equations cannot carry, the augmented system with its Jacobian and block iteration matrix, the run, its failures said again, elasticities |
 | `src/engine/paramtangent.*` | df/dp differentiated: the statements' tangents seeded on the parameters, through the blocks that remember and far-field rates, and why it is refused where it is |
 | `src/engine/runlog.*` | The run log, in the application's words |
@@ -202,6 +221,18 @@ the far-field example to two, 3,832 steps of 4,743 equations, 0.96 s (Julia
 by Nelder-Mead (59 runs), and 0.10-0.12 s by Levenberg-Marquardt or
 differential evolution (300 runs each); Julia takes 27, 134 and 149 ms.
 
+The benchmark model above falls apart into its 16 chains, and split into parts
+(the whole run, build and solve, in seconds):
+
+| Engine | Whole | 2 threads | 4 threads | 8 threads |
+|---|---|---|---|---|
+| C++ | 0.83 | 0.47 | 0.27 | 0.15 |
+| C++, parity | 0.93 | 0.52 | 0.29 | 0.16 |
+| Julia | 1.23 | 0.87 | 0.63 | 0.50 |
+
+A split run agrees with the whole one to within 7e-9 of the peak. Auto splits
+it on eight threads from its first run here.
+
 ## Tests
 
 ```sh
@@ -234,6 +265,7 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
 | `test_probabilistic` | Probabilistic runs of 22 made-up models (7 of them bundled examples given a spread) and every bundled example: every realisation of every series kept, to the bit (float32 too), the samples, inputs, statistics and log, the sample archive's entries, bands under 5 lists of percentiles and 6 masks, the service's answers and refusals; 12 replays; every run again on 2 and 8 threads, the same bits | `tools/probabilistic_fixtures.jl` |
 | `test_calibrate` | The three optimisers on 114 made-up problems (every step, budgets, stopped searches, refusals), the objective, the elimination, the keys and lookups; endpoints read off 32 models' runs, the variables they offer; 103 calibrations of bundled examples and made-up models (each method, seeds, budgets, log space, a corner that will not solve, 27 refusals word for word), every step and answer to the bit | `tools/calibrate_fixtures.jl` |
+| `test_split` | The partition, the states' names and materials, the jobs, 4,950 plans and the layers of every bundled example and 27 made-up models; 33 split runs at 2 and 4 threads and on bins fixed by hand (every state, series, count, account and run log to the bit), again on 1, 2, 3 and 8 threads with the same bits; a split solved whole; the formulas; parts assembled and refused; progress, a stop, what auto learns and its file | `tools/split_fixtures.jl` |
 | `test_localsens` | dy/dp of every builder model, the bundled examples and 49 made-up models, differentiated and differenced: the problem, the run to the bit, the refusals word for word; 181 models' parameter slots, what cannot be carried per slot and df/dp at three points; 108 failures said again; 385 cases | `tools/localsens_fixtures.jl` |
 | `test_service` | The messages `serve.py` and the engine exchange: a run's log in its archive, a run that stops on a value that is not a number, a probabilistic run kept and asked every question, a tornado, a sensitivity design, a replay, dy/dp answered, refused and stopped (the answer byte for byte the Julia engine's), a calibration answered (every progress detail and its answer the Julia engine's), refused and stopped, a model refused where the Julia engine's job refuses it, a cancel, errors named as the Julia engine names them | |
 | `test_util` | JSON and the number formats | |
@@ -242,7 +274,7 @@ To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate split; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```
@@ -250,3 +282,8 @@ done
 With `KOMPARTMENT_FIXTURE_DUMPS=DIR` set, the tools and the tests both write
 the full text they hash into `DIR`, one file a case, so that a difference can
 be read with `diff`.
+
+A test's runs are not this machine's runs of a model: every test program keeps
+what auto learns about splitting to itself (`KOMPARTMENT_SPLIT_MEMORY=0`, set
+by CTest and by the tests' own helpers when a test is run on its own), and
+`test_split` points it at a folder of its own where it tests it.

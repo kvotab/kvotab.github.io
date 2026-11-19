@@ -123,10 +123,26 @@ struct RunOptions {
     /// Equations integrated in place of the model's own (see `Equations`), the caller's for
     /// the length of the run; none: the model's.
     const Equations* equations = nullptr;
+    /// A run that builds its own system: how many bins a split packs the model's parts into,
+    /// one per thread -- none: the machine's cores (engine/split, `run_whole_or_split`).
+    std::optional<int> threads;
+    /// False for a run that is itself one of several side by side, which is not split.
+    bool nest = true;
 };
 
-/// Runs a project, on the system given or one built here.
+/// Runs a project, on the system given or one built here. A run that builds its own system
+/// is solved in its independent parts on several threads when `simulation.split` says so and
+/// the plan agrees (`run_whole_or_split`, engine/split), and `stats["split"]` says what was
+/// done; `solver`, `rows` and `layers` are then not asked for.
 Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<System> system = nullptr, const RunOptions& options = {});
+
+/// The dimension of `dims` that is the model's material list, or a sub-set of it (never a
+/// mapping onto it); none when there is none (`_material_dim`).
+std::optional<std::string> material_dim(const System& sys, const std::vector<std::string>& dims);
+
+/// A solver's steps per method (`steps_by`) and its switches between them, added to `into`
+/// (`add_method_steps!`).
+void add_method_steps(Json& into, const Json& from);
 
 /// Every series a run of this system can report.
 std::vector<Json> outputs_of(System& sys, const Project& project);

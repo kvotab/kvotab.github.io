@@ -3,6 +3,8 @@
 //   kompartment-cpp model.json                 run it and say how it went
 //   kompartment-cpp model.json --csv out.csv   ... and write every series as the application's table
 //   kompartment-cpp model.json --repeat 3      run it several times over (timing)
+//   kompartment-cpp model.json --split on      solve it in its independent parts (auto, on, off)
+//   kompartment-cpp model.json --threads 4     ... on at most four threads (the machine's cores)
 //   kompartment-cpp --parity ...               the other engines' arithmetic to the bit
 //   kompartment-cpp --serve                    the engine behind the application's local server (serve.py)
 
@@ -18,6 +20,7 @@
 #include "engine/runner.hpp"
 #include "service.hpp"
 #include "util/json.hpp"
+#include "util/jsnum.hpp"
 #include "util/parity.hpp"
 
 using namespace kompartment;
@@ -34,11 +37,12 @@ std::string read_file(const std::string& path) {
     ss << in.rdbuf();
     return ss.str();
 }
+const char* USAGE = "usage: kompartment-cpp model.json [--csv out.csv] [--repeat n] [--split auto|on|off] [--threads n] [--parity]\n";
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string model_path, csv_path;
-    int repeat = 1;
+    std::string model_path, csv_path, split;
+    int repeat = 1, threads = 0;
     for (int i = 1; i < argc; i++) {
         std::string a = argv[i];
         if (a == "--serve") {
@@ -53,28 +57,42 @@ int main(int argc, char** argv) {
         if (a == "--parity") set_parity(true);
         else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
         else if (a == "--repeat" && i + 1 < argc) repeat = std::atoi(argv[++i]);
+        else if (a == "--split" && i + 1 < argc) split = argv[++i];
+        else if (a == "--threads" && i + 1 < argc) threads = std::atoi(argv[++i]);
         else if (a == "--help" || a == "-h") {
-            std::printf("usage: kompartment-cpp model.json [--csv out.csv] [--repeat n] [--parity]\n");
+            std::printf("%s", USAGE);
             return 0;
         } else model_path = a;
     }
     if (model_path.empty()) {
-        std::fprintf(stderr, "usage: kompartment-cpp model.json [--csv out.csv] [--repeat n] [--parity]\n");
+        std::fprintf(stderr, "%s", USAGE);
         return 2;
     }
     try {
         double t0 = now_s();
         Json raw = parse_json(read_file(model_path));
+        if (!split.empty()) {
+            if (!raw.get("simulation").is_object()) raw.set("simulation", Json::object());
+            raw["simulation"].set("split", Json(split));
+        }
         double t1 = now_s();
+        RunOptions options;
+        if (threads > 0) options.threads = threads;
         for (int r = 0; r < repeat; r++) {
-            double a = now_s();
             auto project = std::make_shared<const Project>(raw);
-            auto system = std::make_shared<System>(project);
-            double b = now_s();
-            Results res = run_project(project, system);
-            double c = now_s();
+            // Built here and solved -- in its independent parts on several threads, where the
+            // model's `split` setting says so and the plan agrees.
+            Results res = run_project(project, nullptr, options);
+            auto ms = [&](const char* key) { return res.timing.get(key).is_number() ? res.timing.get(key).as_double() / 1000 : 0.0; };
             std::printf("%s: %d states, read %.3f s, build %.3f s, solve %.3f s  %s\n", model_path.substr(model_path.find_last_of('/') + 1).c_str(),
-                        system->nstate, t1 - t0, b - a, c - b, res.summary().c_str());
+                        res.system->nstate, t1 - t0, ms("build_ms"), ms("solve_ms"), res.summary().c_str());
+            // What the split did, or why it was not used where it was asked for.
+            const Json& account = res.stats.get("split");
+            if (account.get("used") == Json(true))
+                std::printf("  split: %s parts on %s threads -- %s\n", js_text(account.get("parts")).c_str(), js_text(account.get("workers")).c_str(),
+                            js_text(account.get("why")).c_str());
+            else if (account.get("mode") == "on")
+                std::printf("  not split: %s\n", js_text(account.get("why")).c_str());
             if (r + 1 == repeat && !csv_path.empty()) {
                 double w0 = now_s();
                 std::ofstream(csv_path) << res.to_csv();

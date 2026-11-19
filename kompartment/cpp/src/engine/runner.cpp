@@ -12,6 +12,7 @@
 #include "engine/landing.hpp"
 #include "engine/massbalance.hpp"
 #include "engine/nonfinite.hpp"
+#include "engine/split.hpp"
 #include "engine/switchtimes.hpp"
 #include "model/names.hpp"
 #include "model/simulation.hpp"
@@ -107,6 +108,8 @@ void add_held(Json& stats, const Json& s) {
     Json& mine = stats["held"];
     for (std::size_t i = 0; i < held.size() && i < mine.size(); i++) mine[i] = Json(static_cast<long long>(mine[i].as_double() + held[i].as_double()));
 }
+}  // namespace
+
 void add_method_steps(Json& into, const Json& from) {
     const Json& by = from.get("steps_by");
     if (!by.is_object()) return;
@@ -115,6 +118,8 @@ void add_method_steps(Json& into, const Json& from) {
     for (const auto& [name, n] : by.obj()) acc.set(name, Json(static_cast<long long>(number_at(acc, name.c_str()) + n.as_double())));
     add_to(into, "switches", number_at(from, "switches"));
 }
+
+namespace {
 
 RunSolution from_steps(const StepCollector& steps, const RunSolution& solution) {
     RunSolution out;
@@ -312,6 +317,8 @@ std::vector<std::uint8_t> non_negative_states(const Project& project, const Syst
 }
 
 Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<System> system, const RunOptions& options) {
+    // A run that builds its own system is split where the model and the plan say so.
+    if (!system && !options.equations) return run_whole_or_split(project, options);
     if (!system) system = std::make_shared<System>(project);
     double t0 = now_s();
     System& sys = *system;
@@ -550,8 +557,6 @@ Results run_project(std::shared_ptr<const Project> project, std::shared_ptr<Syst
 
 // --- what a run reports ------------------------------------------------------------------------------------
 
-namespace {
-
 std::optional<std::string> material_dim(const System& sys, const std::vector<std::string>& dims) {
     const IndexSpace& space = *sys.builder->space;
     const auto& material = sys.builder->material_list;
@@ -564,6 +569,8 @@ std::optional<std::string> material_dim(const System& sys, const std::vector<std
     }
     return std::nullopt;
 }
+
+namespace {
 
 bool history_kind(const std::string& kind) {
     return kind == "min_max" || kind == "running_mean" || kind == "snapshot" || kind == "delay" || kind == "trigger" || kind == "event";

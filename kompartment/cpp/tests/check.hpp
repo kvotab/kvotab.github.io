@@ -3,6 +3,7 @@
 #pragma once
 
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <sstream>
@@ -13,6 +14,19 @@ namespace check {
 
 inline int& passed() { static int n = 0; return n; }
 inline int& failed() { static int n = 0; return n; }
+
+// A test's runs are not this machine's runs of a model: what auto learns about splitting
+// one (src/engine/split.cpp) is not kept from them, however the program is started -- CTest
+// says the same, but a test run on its own would otherwise write into the home folder. A test
+// that looks at that memory points it at a folder of its own first.
+inline const bool keeps_no_split_memory = [] {
+#if defined(_WIN32)
+    if (!std::getenv("KOMPARTMENT_SPLIT_MEMORY")) _putenv_s("KOMPARTMENT_SPLIT_MEMORY", "0");
+#else
+    setenv("KOMPARTMENT_SPLIT_MEMORY", "0", 0);
+#endif
+    return true;
+}();
 
 inline void that(bool ok, const std::string& what, const char* file, int line) {
     if (ok) { passed()++; return; }

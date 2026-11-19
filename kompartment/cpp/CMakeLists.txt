@@ -30,6 +30,20 @@ endif()
 add_library(kompartment_core STATIC ${KOMPARTMENT_SOURCES})
 target_include_directories(kompartment_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
+# The engine's build stamp: a hash of its sources and of how they are compiled, which what
+# auto learns about splitting a model is kept by (src/engine/split.cpp).
+file(GLOB_RECURSE KOMPARTMENT_STAMPED CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hpp)
+set(KOMPARTMENT_STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+set(KOMPARTMENT_HOW "${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION} ${CMAKE_BUILD_TYPE} native=${KOMPARTMENT_NATIVE} sanitize=${KOMPARTMENT_SANITIZE} ${CMAKE_CXX_FLAGS}")
+add_custom_command(OUTPUT ${KOMPARTMENT_STAMP_DIR}/build_stamp.hpp
+  COMMAND ${CMAKE_COMMAND} -DSOURCE_DIR=${CMAKE_CURRENT_SOURCE_DIR} -DOUT=${KOMPARTMENT_STAMP_DIR}/build_stamp.hpp
+          -DHOW=${KOMPARTMENT_HOW} -P ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_stamp.cmake
+  DEPENDS ${KOMPARTMENT_STAMPED} ${CMAKE_CURRENT_SOURCE_DIR}/tools/build_stamp.cmake
+  COMMENT "The engine's build stamp"
+  VERBATIM)
+target_sources(kompartment_core PRIVATE ${KOMPARTMENT_STAMP_DIR}/build_stamp.hpp)
+target_include_directories(kompartment_core PRIVATE ${KOMPARTMENT_STAMP_DIR})
+
 if(MSVC)
   target_compile_options(kompartment_core PUBLIC /fp:precise /W3 /utf-8)
 else()
@@ -77,4 +91,7 @@ foreach(test_source ${KOMPARTMENT_TESTS})
     KOMPARTMENT_REPO="${CMAKE_CURRENT_SOURCE_DIR}/.."
     KOMPARTMENT_CPP_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
   add_test(NAME ${test_name} COMMAND ${test_name})
+  # What auto learns about splitting a model is not kept from the tests' runs: they are not
+  # this machine's runs of a model (test_split points it elsewhere where it tests it).
+  set_tests_properties(${test_name} PROPERTIES ENVIRONMENT "KOMPARTMENT_SPLIT_MEMORY=0")
 endforeach()
