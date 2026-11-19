@@ -1,6 +1,11 @@
 // kompartment-cpp: opens a Kompartment model, builds it, runs it and writes what it produced.
 //
 //   kompartment-cpp model.json                 run it and say how it went
+//   kompartment-cpp project.eco                an Ecolego project (.eco), assessment (.eas) or model
+//                                              XML (.xml), imported as the Julia package imports one,
+//                                              what the import left out said, and run
+//   kompartment-cpp project.eco --import out.json   write the imported model as JSON, and say what
+//                                              the import did, without running it
 //   kompartment-cpp model.json --csv out.csv   ... and write every series as the application's table
 //   kompartment-cpp model.json --h5 out.h5     ... and as the application's HDF5 result file
 //   kompartment-cpp model.json --repeat 3      run it several times over (timing)
@@ -28,6 +33,7 @@
 #include "engine/probabilistic.hpp"
 #include "engine/runner.hpp"
 #include "engine/scenarios.hpp"
+#include "importers/eco.hpp"
 #include "io/resultfile.hpp"
 #include "service.hpp"
 #include "util/json.hpp"
@@ -62,8 +68,14 @@ const char* USAGE =
     "usage: kompartment-cpp model.json [--csv out.csv] [--h5 out.h5] [--repeat n] [--split auto|on|off] [--threads n] [--parity]\n"
     "       kompartment-cpp model.json --probabilistic n [--seed s] [--h5 out.h5 [--want all|mean|k]] [--threads n] [--parity]\n"
     "       kompartment-cpp model.json --scenarios [--h5 out.h5] [--threads n] [--parity]\n"
+    "       kompartment-cpp project.eco --import out.json\n"
     "       kompartment-cpp --serve | --version\n"
     "\n"
+    "  model.json           a Kompartment model; an Ecolego project (.eco), assessment (.eas) or model\n"
+    "                       XML (.xml) is imported as the application imports one, and what the import\n"
+    "                       left out, renamed or switched off is said before the run\n"
+    "  --import out.json    write the Ecolego file's imported model as JSON, say what the import did,\n"
+    "                       and run nothing\n"
     "  --csv out.csv        every series of the run, as the application's results table\n"
     "  --h5 out.h5          the HDF5 result file the application's Export to HDF5 writes (every series);\n"
     "                       of a probabilistic run, its realisations (--want); of --scenarios, every\n"
@@ -84,7 +96,7 @@ const char* USAGE =
 }  // namespace
 
 int main(int argc, char** argv) {
-    std::string model_path, csv_path, h5_path, split, stamp_text_given;
+    std::string model_path, csv_path, h5_path, split, stamp_text_given, import_path;
     int repeat = 1, threads = 0;
     long long realisations = 0;
     bool probabilistic = false, scenarios = false;
@@ -103,6 +115,7 @@ int main(int argc, char** argv) {
         if (a == "--parity") set_parity(true);
         else if (a == "--csv" && i + 1 < argc) csv_path = argv[++i];
         else if (a == "--h5" && i + 1 < argc) h5_path = argv[++i];
+        else if (a == "--import" && i + 1 < argc) import_path = argv[++i];
         else if (a == "--stamp" && i + 1 < argc) stamp_text_given = argv[++i];
         else if (a == "--repeat" && i + 1 < argc) repeat = std::atoi(argv[++i]);
         else if (a == "--split" && i + 1 < argc) split = argv[++i];
@@ -136,9 +149,43 @@ int main(int argc, char** argv) {
         stamp = *s;
     }
     const std::string shown = model_path.substr(model_path.find_last_of('/') + 1);
+    const bool ecolego = eco::is_ecolego_path(model_path);
+    if (!import_path.empty() && (!ecolego || probabilistic || scenarios || !csv_path.empty() || !h5_path.empty())) {
+        std::fprintf(stderr, "--import writes an Ecolego file (.eco, .eas or .xml) as a Kompartment model, and runs nothing\n");
+        return 2;
+    }
     try {
         double t0 = now_s();
-        Json raw = parse_json(read_file(model_path));
+        Json raw;
+        if (ecolego) {
+            // Opened as the Julia package's `load` opens one: imported, what the import left out said.
+            eco::EcoImport imported = eco::import_eco_path(model_path);
+            std::printf("%s: imported from Ecolego in %.3f s\n", shown.c_str(), now_s() - t0);
+            const std::string summary = imported.report.summary();
+            std::size_t at = 0;
+            while (at <= summary.size()) {
+                const std::size_t end = summary.find('\n', at);
+                const std::string line = summary.substr(at, end == std::string::npos ? std::string::npos : end - at);
+                std::fputs("  ", stdout);
+                std::fwrite(line.data(), 1, line.size(), stdout);   // whole, a NUL byte from the file included
+                std::fputc('\n', stdout);
+                if (end == std::string::npos) break;
+                at = end + 1;
+            }
+            std::fflush(stdout);   // said before whatever the run says, on a pipe too
+            if (!import_path.empty()) {
+                // The imported model as the Julia package writes it (`write_model_file`).
+                std::ofstream out(import_path, std::ios::binary);
+                const std::string text = json_text(imported.project, 2);
+                out.write(text.data(), static_cast<std::streamsize>(text.size()));
+                if (!out) throw std::runtime_error("Cannot write " + import_path);
+                std::printf("wrote %s\n", import_path.c_str());
+                return 0;
+            }
+            raw = imported.project;
+        } else {
+            raw = parse_json(read_file(model_path));
+        }
         if (!split.empty()) {
             if (!raw.get("simulation").is_object()) raw.set("simulation", Json::object());
             raw["simulation"].set("split", Json(split));
@@ -224,6 +271,11 @@ int main(int argc, char** argv) {
         }
     } catch (const SolverError& e) {
         std::fprintf(stderr, "%s%s%s\n", e.message.c_str(), e.hint ? " " : "", e.hint ? e.hint->c_str() : "");
+        return 1;
+    } catch (const eco::EcoImportError& e) {
+        // Whole: a file's own text, quoted in the words, may hold a NUL byte.
+        std::fwrite(e.message.data(), 1, e.message.size(), stderr);
+        std::fputc('\n', stderr);
         return 1;
     } catch (const std::exception& e) {
         std::fprintf(stderr, "%s\n", e.what());

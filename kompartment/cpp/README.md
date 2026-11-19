@@ -58,11 +58,17 @@ and across the engines.
 kompartment-cpp model.json [--csv out.csv] [--h5 out.h5] [--repeat n] [--split auto|on|off] [--threads n] [--parity]
 kompartment-cpp model.json --probabilistic n [--seed s] [--h5 out.h5 [--want all|mean|k]] [--threads n] [--parity]
 kompartment-cpp model.json --scenarios [--h5 out.h5] [--threads n] [--parity]
+kompartment-cpp project.eco --import out.json
 kompartment-cpp --serve
 kompartment-cpp --version
 ```
 
-The model is a Kompartment model file (`.json`). The program says what it ran
+The model is a Kompartment model file (`.json`), or an Ecolego project
+(`.eco`), assessment (`.eas`) or model XML (`.xml`), imported as the Julia
+package's `load` imports one: what the import left out, renamed or switched off
+is said before the run. `--import out.json` writes the imported model instead
+-- the importer's project, byte for byte the Julia package's -- says what the
+import did, and runs nothing. The program says what it ran
 -- the states, the time to read, build and solve, the solver and its steps, and
 what a split did -- and with `--csv` writes every output as the application's
 results table has them. `--repeat` runs it again, for timing. `--split` sets
@@ -165,11 +171,23 @@ engines': a run's, a probabilistic run's (every realisation, their mean or one
 of them), several scenarios' side by side; and saves a run by the name's ending
 (`.h5`, `.csv`, `.zip`).
 
+It imports Ecolego projects, assessments and Ecolego 4/5 model XML as the Julia
+package does: the same project, key order included, the same report of what
+was skipped, noted, renamed, switched off and warned about, and every refusal
+in the same words. The archive is read as Python's zipfile reads it, the text
+decoded as CPython decodes it, the XML by the same small reader; archives are
+inflated by the engine's own inflater, written to zlib's 1.3.1, whatever zlib
+the build has (Apple's words its errors otherwise).
+
 It does not do: the other solvers (`auto`, the DifferentialEquations.jl ports,
-SciPy's); Ecolego files; editing a model. A model that needs one of these is refused with a sentence
-saying which, and no number is made up for it. The model an archive carries is
-the file as it was given, where the other engines write it as they normalised
-it.
+SciPy's); editing a model; the normalisation the other engines put a model
+through as they open it. A model that needs a solver it lacks is refused with a
+sentence saying which, and no number is made up for it. Without the
+normalisation, an Ecolego import runs as the importer gives it, where the Julia
+package's `load` normalises it first: a few models the normalisation mends are
+refused here, and a refusal may name a list it would have renamed; and the
+model an archive carries is the file as it was given, where the other engines
+write it as they normalised it.
 
 ## How it is laid out
 
@@ -198,6 +216,7 @@ it.
 | `src/solvers/` | NDF/BDF, Rosenbrock 2-3, Dormand-Prince 4-5, event location, the LUs |
 | `src/io/` | ZIP, the dataset archive, the sample archive (`results/sample/`), HDF5 written byte for byte (groups, datasets, attributes, the global heap, lookup3) and the result files on it |
 | `src/engine/scenarios.*` | A model run once per scenario, side by side on threads |
+| `src/importers/` | The Ecolego importer: the project and its report (`eco.*`), the archive as Python's zipfile reads it (`eco_zip.*`) and its inflater (`inflate.*`), the XML reader (`xml.*`), text as CPython decodes it (`eco_text.*`), distributions as Ecolego writes them (`eco_pdf.*`), JavaScript's and Python's rules and the small maps (`eco_maps.*`), Python's case tables (`eco_unicode.*`, written by `tools/eco_unicode.jl`) |
 | `src/service.*`, `src/main.cpp` | The engine behind `serve.py`, and the command line |
 
 In fast mode a model whose derivative is linear in the state is assembled once
@@ -283,6 +302,7 @@ to a tolerance where the two are meant to agree to the bit.
 | `test_design` | Designs on 13 made-up models and every bundled example under many settings, every value drawn, ranges of realisations, 1,239 realisations set into systems (parameters, invariant slots, tables, events and their occurrence times), 160 refusals word for word | `tools/design_fixtures.jl` |
 | `test_probabilistic` | Probabilistic runs of 22 made-up models (7 of them bundled examples given a spread) and every bundled example: every realisation of every series kept, to the bit (float32 too), the samples, inputs, statistics and log, the sample archive's entries, bands under 5 lists of percentiles and 6 masks, the service's answers and refusals; 12 replays; every run again on 2 and 8 threads, the same bits | `tools/probabilistic_fixtures.jl` |
 | `test_calibrate` | The three optimisers on 114 made-up problems (every step, budgets, stopped searches, refusals), the objective, the elimination, the keys and lookups; endpoints read off 32 models' runs, the variables they offer; 103 calibrations of bundled examples and made-up models (each method, seeds, budgets, log space, a corner that will not solve, 27 refusals word for word), every step and answer to the bit | `tools/calibrate_fixtures.jl` |
+| `test_ecoimport` | The Ecolego importer: 185 byte strings decoded, numbers, roundings and dates as JavaScript and Python read them, every code point through Python's case mappings, 146 XML documents element by element, 28 distributions, 87 deflate streams under 7 limits, 99 archives entry by entry, 225 imports (126 model texts reaching every branch, 99 files -- every encoding, every damage the reader names, two past the 256 MB allowance); the build's zlib against the engine's inflater on them and on 3,000 damaged streams; with `KOMPARTMENT_ECO_FIXTURES`, 1,329 synthetic cases against the Julia and the Python package | `tools/ecoimport_fixtures.jl`; `KOMPARTMENT_ECO_FIXTURES` for the synthetic cases |
 | `test_hdf5` | HDF5 files byte for byte: 23 trees built step by step, lookup3 on 107 byte strings, 1,249 strings as `TextEncoder` writes them; 26 made-up result trees, every bundled example's run and 7 made-up models, 57 files of 13 probabilistic runs (each again on four threads) and 17 of results made by hand, 12 scenario files, 13 saves; 30 refusals word for word; the files read back as libhdf5 begins to | `tools/hdf5_fixtures.jl` |
 | `test_split` | The partition, the states' names and materials, the jobs, 4,950 plans and the layers of every bundled example and 27 made-up models; 33 split runs at 2 and 4 threads and on bins fixed by hand (every state, series, count, account and run log to the bit), again on 1, 2, 3 and 8 threads with the same bits; a split solved whole; the formulas; parts assembled and refused; progress, a stop, what auto learns and its file | `tools/split_fixtures.jl` |
 | `test_localsens` | dy/dp of every builder model, the bundled examples and 49 made-up models, differentiated and differenced: the problem, the run to the bit, the refusals word for word; 181 models' parameter slots, what cannot be carried per slot and df/dp at three points; 108 failures said again; 385 cases | `tools/localsens_fixtures.jl` |
@@ -293,10 +313,16 @@ To write the fixtures again, after a change to the Julia package or to a tool
 (from `../julia`, in this order -- each reads the one before):
 
 ```sh
-for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate split hdf5; do
+for t in lang project transport unit builder system jacobian run farfield laplace farfield_semi runlog nonfinite stats design probabilistic localsens calibrate split hdf5 ecoimport; do
   julia --project=. ../cpp/tools/${t}_fixtures.jl
 done
 ```
+
+The importer's synthetic cases come from the Python package's tool --
+`python3 tools/eco_fixtures.py DIR --synthetic --more 400` from `../julia`
+(Python and Node; `DIR` outside the repository) -- and `ecoimport` keeps the
+cases already in its file unless `KOMPARTMENT_ECO_FIXTURES=DIR` names them
+again; the same variable lets `test_ecoimport` read them.
 
 With `KOMPARTMENT_FIXTURE_DUMPS=DIR` set, the tools and the tests both write
 the full text they hash into `DIR`, one file a case, so that a difference can
