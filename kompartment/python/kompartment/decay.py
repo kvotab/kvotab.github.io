@@ -70,7 +70,7 @@ def means_stable(value: object) -> bool:
     """Whether a half-life as a file may write it means "does not decay"."""
     if isinstance(value, float) and math.isinf(value):
         return True
-    return isinstance(value, str) and re.fullmatch(r'stable|inf(inity)?', value.strip(JS_WHITESPACE), re.I) is not None
+    return isinstance(value, str) and re.fullmatch(r'stable|inf(inity)?', value.strip(JS_WHITESPACE), re.I | re.A) is not None
 
 
 # JavaScript's `\s`: Python's takes U+001C to U+001F and U+0085, and leaves U+FEFF.

@@ -37,7 +37,11 @@ end
 
 """Whether a half-life as a file may write it means "does not decay"."""
 means_stable(v::AbstractFloat) = isinf(v)
-means_stable(v::AbstractString) = occursin(r"^(stable|inf(inity)?)$"i, js_trim(v))
+means_stable(v::AbstractString) = _js_ascii_lower(js_trim(v)) in ("stable", "inf", "infinity")
+
+"""What JavaScript's `/i` folds a word to: its ASCII capitals lowered, and nothing else touched (Julia's
+case-insensitive patterns also fold the long s, the Kelvin sign and the like into ASCII letters)."""
+_js_ascii_lower(s::AbstractString) = map(c -> 'A' <= c <= 'Z' ? c + 32 : c, s)
 means_stable(v) = false
 
 const _SYMBOL = Regex("^([A-Za-z]{1,3})(?=\$|[-" * JS_SPACE_CLASS * "0-9])")

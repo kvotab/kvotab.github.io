@@ -608,7 +608,7 @@ class Project:
         for nuc, v in self.half_lives_override.items():
             if v is None:
                 continue
-            if re.fullmatch(r'stable|inf(inity)?', str(v).strip(JS_WHITESPACE), re.I):
+            if re.fullmatch(r'stable|inf(inity)?', str(v).strip(JS_WHITESPACE), re.I | re.A):
                 self.half_lives[nuc] = math.inf
                 continue
             years = js_number(v)

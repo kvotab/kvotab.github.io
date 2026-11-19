@@ -816,16 +816,9 @@ std::string text_of(const ENode& node) {
 
 // --- the run's side ---------------------------------------------------------------------------
 
-// Whether a character is a letter, a digit or `_`, as Julia's regular expressions read `\w`
-// (Unicode's letters and numbers): what is not -- white space, punctuation, symbols -- in
-// the blocks text holds them in.
-bool word_character(char32_t c) {
-    if (c < 0x80) return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-    if (c < 0xc0) return c == 0xaa || c == 0xb2 || c == 0xb3 || c == 0xb5 || c == 0xb9 || c == 0xba || c == 0xbc || c == 0xbd || c == 0xbe;
-    if (c == 0xd7 || c == 0xf7) return false;
-    if (c == 0x1680 || (c >= 0x2000 && c <= 0x206f) || (c >= 0x2190 && c <= 0x2bff) || (c >= 0x3000 && c <= 0x3003) || c == 0xfeff) return false;
-    return true;
-}
+// Whether a character goes on with a word, as JavaScript's `\w` reads one: an ASCII letter, digit
+// or underscore, and nothing else.
+bool word_character(char32_t c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; }
 
 // `/not a number|non-finite|not-a-number|infinite|\bNaN\b/i`
 bool about_non_numbers(const SolverError& e) {

@@ -21,7 +21,23 @@ const _NF_MOST_NAMED = 3
 const _NF_MOST_READS = 6
 const _NF_LONGEST_PART = 240
 const _NF_ASSEMBLY_PREFIX = r"^(waste_package|event|farfield):"
-const _NF_NON_NUMBERS = r"not a number|non-finite|not-a-number|infinite|\bNaN\b"i
+"""
+Whether a message says a value is no number: `/not a number|non-finite|not-a-number|infinite|\bNaN\b/i`
+read as JavaScript reads it -- its `/i` folds ASCII letters and only them, and its `\b` sees a word
+only in ASCII letters, digits and underscores (Julia's patterns take more of both).
+"""
+function _nf_says_no_number(message::AbstractString)
+    m = _js_ascii_lower(message)
+    any(w -> occursin(w, m), ("not a number", "non-finite", "not-a-number", "infinite")) && return true
+    word(c) = 'a' <= c <= 'z' || 'A' <= c <= 'Z' || '0' <= c <= '9' || c == '_'
+    for r in findall("nan", m)
+        a, b = first(r), last(r)
+        before = a > firstindex(m) && word(m[prevind(m, a)])
+        after = b < lastindex(m) && word(m[nextind(m, b)])
+        (before || after) || return true
+    end
+    return false
+end
 
 _nf_read_by_assembly(a::Entry) =
     a.kind in ("transfer", "inflow", "compartment:dydt", "waste_package", "farfield", "running_mean:target") ||
@@ -634,7 +650,7 @@ end
 
 # --- the run's side ----------------------------------------------------------------------
 
-_nf_about_non_numbers(e::SolverError) = e.kind == "nonfinite" || occursin(_NF_NON_NUMBERS, e.message)
+_nf_about_non_numbers(e::SolverError) = e.kind == "nonfinite" || _nf_says_no_number(e.message)
 
 """Explicit steps past the last state the solver held, from the shortest the
 clock tells apart and four times longer each time, up to `up_to` or the first

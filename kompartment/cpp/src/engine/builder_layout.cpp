@@ -38,25 +38,66 @@ std::optional<std::string> slot_words(const std::string& key) {
 
 }  // namespace
 
+namespace {
+
+// How many bytes JavaScript's `\s` takes at byte `i` of UTF-8 text: its WhiteSpace and
+// LineTerminator characters, 0 for anything else (a byte inside a character among it).
+std::size_t js_space_len(std::string_view s, std::size_t i) {
+    std::size_t len;
+    const char32_t c = utf8_at(s, i, len);
+    const bool space = c == ' ' || (c >= '\t' && c <= '\r') || c == 0xa0 || c == 0x1680 || (c >= 0x2000 && c <= 0x200a) ||
+                       c == 0x2028 || c == 0x2029 || c == 0x202f || c == 0x205f || c == 0x3000 || c == 0xfeff;
+    return space ? len : 0;
+}
+
+struct SettingNamed {
+    std::size_t end;   // past the closing quote
+    std::string block, key;
+};
+
+// `'([^'#\s]+)#([A-Za-z_]+\d*)'` at the quote at `at`, matched as JavaScript matches it -- its `\s`
+// JavaScript's white space, its `\d` ASCII -- or none.
+std::optional<SettingNamed> setting_named_at(std::string_view s, std::size_t at) {
+    const std::size_t n = s.size(), name_from = at + 1;
+    std::size_t i = name_from;
+    while (i < n && s[i] != '#' && s[i] != '\'') {
+        if (js_space_len(s, i)) return std::nullopt;
+        i++;
+    }
+    if (i == name_from || i >= n || s[i] != '#') return std::nullopt;
+    const std::size_t name_to = i++, key_from = i;
+    while (i < n && ((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= 'a' && s[i] <= 'z') || s[i] == '_')) i++;
+    if (i == key_from) return std::nullopt;
+    while (i < n && s[i] >= '0' && s[i] <= '9') i++;
+    if (i >= n || s[i] != '\'') return std::nullopt;
+    return SettingNamed{i + 1, std::string(s.substr(name_from, name_to - name_from)), std::string(s.substr(key_from, i - key_from))};
+}
+
+}  // namespace
+
 std::string in_words(const std::string& message) {
     static const std::regex add_to("add '([^']+)' to '([^'#]+)#[^']*'");
-    static const std::regex setting("'([^'#\\s]+)#([A-Za-z_]+\\d*)'");
     std::string text = std::regex_replace(message, add_to, "add '$1' to the lists $2 is indexed by");
+    // Every `'Block#setting'` said in words: where one does not match at a quote, the next quote is
+    // tried, and after one that does, the text past it.
     std::string out;
-    auto begin = std::sregex_iterator(text.begin(), text.end(), setting);
     std::size_t last = 0;
-    for (auto it = begin; it != std::sregex_iterator(); ++it) {
-        const std::smatch& m = *it;
-        out.append(text, last, static_cast<std::size_t>(m.position()) - last);
-        std::string block = m[1], key = m[2];
-        std::optional<std::string> words = slot_words(key);
+    for (std::size_t at = text.find('\''); at != std::string::npos;) {
+        std::optional<SettingNamed> m = setting_named_at(text, at);
+        if (!m) {
+            at = text.find('\'', at + 1);
+            continue;
+        }
+        out.append(text, last, at - last);
+        std::optional<std::string> words = slot_words(m->key);
         if (!words) {
-            std::string bare = key;
+            std::string bare = m->key;
             while (!bare.empty() && bare.back() >= '0' && bare.back() <= '9') bare.pop_back();
             words = slot_words(bare);
         }
-        out += block + "\xe2\x80\x99s " + (words ? *words : "setting " + key);
-        last = static_cast<std::size_t>(m.position() + m.length());
+        out += m->block + "\xe2\x80\x99s " + (words ? *words : "setting " + m->key);
+        last = m->end;
+        at = text.find('\'', last);
     }
     out.append(text, last, std::string::npos);
     return out;

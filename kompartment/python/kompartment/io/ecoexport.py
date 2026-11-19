@@ -283,7 +283,7 @@ VALUE_DEFAULTS = {
 
 _IDENTIFIER_PATH = re.compile(r'[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*')
 _SPACED_PATH = re.compile(f'[{JS_SPACE_CLASS}]*[A-Za-z_][A-Za-z0-9_]*(\\.[A-Za-z_][A-Za-z0-9_]*)*[{JS_SPACE_CLASS}]*')
-_INFINITY_WORD = re.compile(f'[{JS_SPACE_CLASS}]*[+-]?infinity[{JS_SPACE_CLASS}]*', re.I)
+_INFINITY_WORD = re.compile(f'[{JS_SPACE_CLASS}]*[+-]?infinity[{JS_SPACE_CLASS}]*', re.I | re.A)
 _NUCLIDE = re.compile(r'([A-Za-z]{1,3})-?([0-9]+)')
 _XML_BAD = re.compile('[\x00-\x08\x0b\x0c\x0e-\x1f\ufffe\uffff]')
 

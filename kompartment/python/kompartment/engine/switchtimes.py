@@ -21,7 +21,7 @@ from . import codegen
 from .codegen import Leaf
 from .lang import ParseError, parse
 
-_NUMBER = re.compile(r'^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$')
+_NUMBER = re.compile(r'^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$', re.A)
 FAILURE_TIME_KEYS = {'never': [], 'at': ['fail_at'], 'uniform': ['fail_from', 'fail_to'],
                      'exponential': ['fail_start'], 'weibull': ['fail_start']}
 

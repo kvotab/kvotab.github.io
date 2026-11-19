@@ -168,7 +168,7 @@ def _symbol_dim(raw: str) -> Dim:
         return Dim.one()
     if sym.lower() in _NONE:
         return Dim.one()
-    packed = re.match(r'^([A-Za-zµμ]+)(\d)$', sym)
+    packed = re.match(r'^([A-Za-zµμ]+)([0-9])$', sym)
     if packed:
         base = _symbol_dim(packed.group(1))
         if len(base.powers) == 1 and 'm' in base.powers:
@@ -196,7 +196,7 @@ def parse_unit(text: Any) -> Optional[Dim]:
             state['at'] += 1
 
     def number() -> Optional[float]:
-        m = re.match(r'^[+-]?\d+(\.\d+)?', src[state['at']:])
+        m = re.match(r'^[+-]?\d+(\.\d+)?', src[state['at']:], re.A)
         if not m:
             return None
         state['at'] += len(m.group(0))
@@ -223,7 +223,7 @@ def parse_unit(text: Any) -> Optional[Dim]:
             if m.group(0) == 'per':
                 return None
             dim: Optional[Dim] = _symbol_dim(m.group(0))
-            bare = re.match(r'^-\d+', src[state['at']:])
+            bare = re.match(r'^-\d+', src[state['at']:], re.A)
             if bare:
                 state['at'] += len(bare.group(0))
                 dim = dim.pow(float(bare.group(0))) if dim else None
@@ -286,7 +286,7 @@ def parse_unit(text: Any) -> Optional[Dim]:
                 if nxt is None:
                     return None
                 out = out.over(nxt)
-            elif re.match(r'^per\b', src[state['at']:]):
+            elif re.match(r'^per\b', src[state['at']:], re.A):
                 state['at'] += 3
                 rest = expr()
                 if rest is None:

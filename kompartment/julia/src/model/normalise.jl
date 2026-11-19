@@ -863,7 +863,7 @@ once a `Z` is read as `+00:00`, after a `YYYY-MM-DDT` start.
 """
 function read_model_stamp(value)
     value isa AbstractString || return nothing
-    occursin(r"^\d{4}-\d{2}-\d{2}T", value) || return nothing
+    occursin(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T", value) || return nothing
     text = replace(String(value), "Z" => "+00:00")
     b = Vector{UInt8}(codeunits(text))
     len = length(b)

@@ -309,7 +309,7 @@ def _raw_of(attr: Any) -> Optional[Dict[str, bool]]:
 
 def _flagged(v: Any) -> bool:
     """``True``/``true``/1, however the file wrote it."""
-    return not _nullish(v) and re.fullmatch(r'(false|0|)', js_string(v), re.I) is None
+    return not _nullish(v) and re.fullmatch(r'(false|0|)', js_string(v), re.I | re.A) is None
 
 
 def pdf_from_columns(at: Callable[[str], Any]) -> Optional[Dict[str, Any]]:

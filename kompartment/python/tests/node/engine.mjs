@@ -8,6 +8,8 @@
 //   projects { models: [...] }         -> the same for each model, and what building its system
 //                                        refused (null where it built)
 //   grid     { model }                 -> the output times
+//   units    { texts: [...] }          -> parseUnit of each: its powers and scale, or null
+//   switch_times { models: [...] }     -> switchTimes of each model
 //   layout   { model }                 -> the built system's states, slots and flags
 //   jacobian { model }                 -> whether df/dy is generated, and whether it is constant
 //   matrix   { model, points: [{t, y}] } -> the generated Jacobian: its pattern (colPtr, rowIdx),
@@ -126,6 +128,23 @@ switch (req.task) {
 		} catch (e) {
 			out = { error: e.message, kind: e.name };
 		}
+		break;
+	}
+	case 'units': {
+		const unitcheck = await load('domain/unitcheck.js');
+		out = {
+			units: req.texts.map((t) => {
+				const d = unitcheck.parseUnit(t);
+				return d == null ? null : { powers: Object.fromEntries(d.powers), scale: d.scale };
+			}),
+		};
+		break;
+	}
+	case 'switch_times': {
+		const st = await load('domain/switchtimes.js');
+		out = {
+			models: req.models.map((m) => st.switchTimes(m)),
+		};
 		break;
 	}
 	case 'projects': {

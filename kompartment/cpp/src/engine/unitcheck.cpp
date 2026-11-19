@@ -258,10 +258,9 @@ struct UnitParser {
         if (!(at + 2 < len && s[at] == 'p' && s[at + 1] == 'e' && s[at + 2] == 'r')) return false;
         if (at + 3 >= len) return true;
         char32_t c = s[at + 3];
-        // A letter, a digit or an underscore goes on with the word. Of the characters past
-        // ASCII only the two a unit is written with matter: after any other, the text is
-        // not a unit whichever way this is answered.
-        return !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || is_ascii_digit(c) || c == '_' || c >= 0x80);
+        // JavaScript's `\b`: a word goes on only with an ASCII letter, digit or underscore, so
+        // "perµg" is per µg.
+        return !((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || is_ascii_digit(c) || c == '_');
     }
 
     std::optional<UnitDim> expr() {

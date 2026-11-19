@@ -599,7 +599,7 @@ function Project(raw0::AbstractDict)
     p.half_lives = copy(_ICRP_HALF_LIVES)
     for (nuc, v) in p.half_lives_override
         v === nothing && continue
-        if occursin(r"^(stable|inf(inity)?)$"i, js_trim(js_str(v)))
+        if means_stable(js_str(v))
             p.half_lives[nuc] = Inf
             continue
         end

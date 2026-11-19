@@ -48,7 +48,7 @@ EPS = 2.0 ** -52
 
 _ARRAY_OF = {'state': 'y', 'param': 'P', 'alg': 'X'}
 _ASSEMBLY_PREFIX = re.compile(r'^(waste_package|event|farfield):')
-_NON_NUMBERS = re.compile(r'not a number|non-finite|not-a-number|infinite|\bNaN\b', re.IGNORECASE)
+_NON_NUMBERS = re.compile(r'not a number|non-finite|not-a-number|infinite|\bNaN\b', re.IGNORECASE | re.ASCII)
 
 
 def _finite(v: Any) -> bool:

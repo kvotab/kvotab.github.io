@@ -546,7 +546,7 @@ def restore_results(project: Any, system: Any, data: Mapping[str, Any], results_
 # --- a date, as the page shows one -----------------------------------------------------------
 
 _ISO = re.compile(r'([+-]\d{6}|\d{4})(?:-(\d{2})(?:-(\d{2}))?)?'
-                  r'(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?)?')
+                  r'(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?)?', re.A)
 
 
 def _parse_date(value: Any) -> Optional[_dt.datetime]:
@@ -899,7 +899,7 @@ def read_archive(source: Any) -> Dict[str, Any]:
     read here.
     """
     entries = unzip(_source_bytes(source))
-    if any(re.search(r'(^|/)model\.xml$', n, re.I) for n in entries):
+    if any(re.search(r'(^|/)model\.xml$', n, re.I | re.A) for n in entries):
         raise DatasetError('This is an Ecolego project (it holds a model.xml); import it with '
                            'kompartment.importers rather than opening it as a model archive.')
     name = next((n for n in entries if not n.startswith(DIR) and n.lower().endswith('.json')), None)

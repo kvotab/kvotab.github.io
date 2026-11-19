@@ -157,7 +157,7 @@ def _stamp(when: Optional[_dt.datetime] = None) -> str:
 
 def _read_stamp(value: Any) -> Optional[_dt.datetime]:
     """A stamp read back as a time (UTC), or None for one that is not a date and time."""
-    if not isinstance(value, str) or not re.match(r'^\d{4}-\d{2}-\d{2}T', value):
+    if not isinstance(value, str) or not re.match(r'^\d{4}-\d{2}-\d{2}T', value, re.A):
         return None
     try:
         at = _dt.datetime.fromisoformat(value.replace('Z', '+00:00'))

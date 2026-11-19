@@ -118,6 +118,10 @@ let ff = models["farfield"]
         record("far field, $tag", m)
     end
 end
+# "stable" read as JavaScript's /i reads it: the long s and the dotted capital I are no letters of it.
+for (tag, v) in (("a long s", "\u017ftable"), ("a dotted capital I", "\u0130nf"), ("capitals", "STABLE"))
+    with(m -> (m["half_lives"] = K.JDict("Cs-137" => v, "Sr-90" => 30)), "stable, $tag")
+end
 # A percentile left out is the 0th, as `null >= 0` holds in JavaScript.
 let m = K.jcopy(models["post-processing"])
     m["index_reductions"][1]["operation"] = "percentile"

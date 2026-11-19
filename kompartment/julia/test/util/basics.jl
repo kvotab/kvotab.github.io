@@ -80,23 +80,36 @@ end
     # `trim()`, `Number()` and `\s` take a byte-order mark and the line and paragraph separators,
     # and neither U+0085 nor U+001C to U+001F -- which Julia's `isspace` and Python's `strip()`
     # do the other way round in part.
-    for c in ('﻿', ' ', ' ', ' ', '　', '\t', '\v')
+    for c in ('\ufeff', '\u2028', '\u2029', '\u00a0', '\u3000', '\t', '\v')
         @test K.js_space(c) && K.js_trim("$(c)mol$(c)") == "mol"
     end
-    for c in ('\u0085', '\x1c', '\x1f', '​')
+    for c in ('\u0085', '\x1c', '\x1f', '\u200b')
         @test !K.js_space(c) && K.js_trim("$(c)mol") == "$(c)mol"
     end
-    @test K.js_number_of("﻿ 1 ") == 1.0 && isnan(K.js_number_of("\u0085 1"))
-    @test K.element_of("Cs﻿137") == "Cs" && K.element_of("Cs\u0085137") === nothing
+    @test K.js_number_of("\ufeff 1\u2028") == 1.0 && isnan(K.js_number_of("\u0085 1"))
+    @test K.element_of("Cs\ufeff137") == "Cs" && K.element_of("Cs\u0085137") === nothing
     # A model's text, as the application reads it: a snapshot's trigger, and a min/max's
     # operation, with each kind at an end.
     examples = joinpath(@__DIR__, "..", "..", "..", "examples")
     ball(trigger) = (m = K.read_model_file(joinpath(examples, "bouncing-ball.json"));
                      m["snapshots"][1]["trigger"] = trigger; K.build_system(K.Project(m)))
-    @test ball("﻿Bounce") isa K.System && ball("Bounce ") isa K.System
+    @test ball("\ufeffBounce") isa K.System && ball("Bounce\u2028") isa K.System
     @test_throws "is not the name of a discrete event" ball("\x1cBounce")
     @test_throws "is not the name of a discrete event" ball("Bounce\u0085")
     peak(op) = (m = K.read_model_file(joinpath(examples, "scenarios.json")); m["min_maxes"][1]["operation"] = op; K.Project(m))
-    @test peak("max﻿") isa K.Project
+    @test peak("max\ufeff") isa K.Project
     @test_throws "is not a min/max operation" peak("max\u0085")
+end
+
+@testset "patterns as JavaScript matches them" begin
+    # Its `\d`, `\b` and `/i` know ASCII alone -- Julia's patterns take Unicode's digits, letters and
+    # case foldings as well.
+    @test !K.means_stable("\u017ftable") && K.means_stable("STABLE") && !K.means_stable("\u0130nf") && K.means_stable(" Infinity ")
+    @test string(K.parse_unit("m per\u00b5g")) == "1e+9 m/kg"
+    @test string(K.parse_unit("m pers")) != string(K.parse_unit("m per s"))
+    @test K._nf_says_no_number("\u00e9NaN") && !K._nf_says_no_number("xNaN") && K._nf_says_no_number("Not a Number")
+    examples = joinpath(@__DIR__, "..", "..", "..", "examples")
+    switches(entries) = (m = K.read_model_file(joinpath(examples, "four-compartment.json"));
+                         m["simulation"]["switch_times"] = entries; K.switch_times(K.Project(m)))
+    @test isempty(switches(Any["\u0661\u0662"])) && switches(Any["12"]) == [12.0]
 end

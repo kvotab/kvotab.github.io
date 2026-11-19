@@ -4,7 +4,7 @@
 # expression that comes to one before the run starts), plus the times waste
 # packages fail at and events happen at.
 
-const _SWITCH_NUMBER = r"^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$"
+const _SWITCH_NUMBER = r"^[-+]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][-+]?[0-9]+)?$"   # ASCII digits, as JavaScript's \d
 const FAILURE_TIME_KEYS = Dict("never" => String[], "at" => ["fail_at"], "uniform" => ["fail_from", "fail_to"],
                                "exponential" => ["fail_start"], "weibull" => ["fail_start"])
 

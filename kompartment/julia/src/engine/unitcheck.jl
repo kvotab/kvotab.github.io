@@ -251,7 +251,8 @@ function parse_unit(text)
         (at + 2 <= len && s[at] == 'p' && s[at+1] == 'e' && s[at+2] == 'r') || return false
         at + 3 > len && return true
         c = s[at+3]
-        return !(isletter(c) || isdigit(c) || c == '_' || isnumeric(c))
+        # JavaScript's `\b`: a word goes on only with an ASCII letter, digit or underscore.
+        return !('A' <= c <= 'Z' || 'a' <= c <= 'z' || '0' <= c <= '9' || c == '_')
     end
     expr = function ()
         out = term()

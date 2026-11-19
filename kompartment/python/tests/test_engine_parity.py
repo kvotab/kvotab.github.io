@@ -168,6 +168,41 @@ class ProjectParity(unittest.TestCase):
                     built = str(e)
                 self.assertEqual(built, js['built'])
 
+    def test_a_pattern_matches_as_the_application_s_does(self) -> None:
+        # JavaScript's `\\d`, `\\b` and `/i` know ASCII alone: Arabic-Indic digits are no number,
+        # "perµg" is per µg, and the long s, the dotted capital I and the Kelvin sign are no
+        # letters of "stable" or "inf".
+        from kompartment.engine.switchtimes import switch_times
+        from kompartment.engine.unitcheck import parse_unit
+        texts = ['m perµg', 'perµg', 'm peré', 'm perµ', 'm per2', 'm perish', 'm per_s', 'perm', 'm\u0662', 'm2',
+                 'kg per s', 'm per s', 'm^\u0662', 'm-\u0661']
+        for t, ref in zip(texts, engine('units', texts=texts)['units']):
+            with self.subTest(unit=t):
+                d = parse_unit(t)
+                self.assertEqual(None if d is None else {'powers': dict(d.powers), 'scale': d.scale}, ref)
+        models = []
+        for entries in (['\u0661\u0662'], ['12'], ['\uff11\uff12', '30'], ['1\u0662']):
+            model = example('four-compartment')
+            model['simulation'] = {**model['simulation'], 'switch_times': entries}
+            models.append(model)
+        for model, ref in zip(models, engine('switch_times', models=models)['models']):
+            with self.subTest(switch_times=model['simulation']['switch_times']):
+                self.assertEqual(switch_times(model), ref)
+        models = []
+        for v in ('\u017ftable', 'STABLE', '\u0130nf', 'Infinity', 'inf', 'INF', '\u212afoo'):
+            model = example('decay-chain')
+            model['half_lives'] = {**(model.get('half_lives') or {}), 'Cs-137': v}
+            models.append(model)
+        for model, js in zip(models, engine('projects', models=models)['projects']):
+            with self.subTest(half_life=model['half_lives']['Cs-137']):
+                try:
+                    p = Project(model)
+                except ValidationError as e:
+                    self.assertEqual(str(e), js.get('error'))
+                    continue
+                self.assertNotIn('error', js)
+                self.assertEqual(fix(p.decay_model()), js['project']['decayModel'])
+
     def test_output_points_are_asked_of_the_two_shorthands_alone(self) -> None:
         # A list of series, the solver's own points and the two together carry their own times, so a
         # count left in the field from a shorthand is refused only where a grid is spread over it; where
