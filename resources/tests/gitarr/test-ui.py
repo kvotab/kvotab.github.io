@@ -474,10 +474,14 @@ async def phones_suite(page):
 # a MediaStreamAudioDestinationNode. Chrome's own fake microphone
 # (--use-fake-device-for-media-stream, with or without a WAV file) is no use
 # here: in headless Chrome on macOS getUserMedia never settles, even with the
-# permission granted, the devices listed and the page focused.
+# permission granted, the devices listed and the page focused. The track says
+# its rate is __rate (not the speaker's 48 kHz), as a real microphone's does;
+# with __silent the stream is exact zeros until its gain is turned up.
 MIC_STUB = """(() => {
   const x = GT_SYNTH.pluck({ sr: 48000, f0: %f, dur: 2.5, hp: 120, noise: 0.001 });
   window.__gum = [];
+  window.__rate = 44100;
+  window.__silent = false;
   const AC0 = window.AudioContext;   // the page's may be swapped later
   navigator.mediaDevices.getUserMedia = async constraints => {
     const ctx = new AC0({ sampleRate: 48000 });
@@ -486,15 +490,27 @@ MIC_STUB = """(() => {
     const src = ctx.createBufferSource();
     src.buffer = buf;
     src.loop = true;
+    const gain = ctx.createGain();
+    gain.gain.value = window.__silent ? 0 : 1;
     const dest = ctx.createMediaStreamDestination();
-    src.connect(dest);
+    src.connect(gain).connect(dest);
     src.start();
     await ctx.resume();
-    window.__gum.push({ constraints, track: dest.stream.getAudioTracks()[0] });
+    const track = dest.stream.getAudioTracks()[0];
+    const own = track.getSettings.bind(track);
+    const rate = window.__rate;
+    track.getSettings = () => Object.assign(own(), { sampleRate: rate, echoCancellation: false, noiseSuppression: false, autoGainControl: false });
+    window.__gum.push({ constraints, track, gain });
     return dest.stream;
   };
   return true;
 })()"""
+SILENT = 'Mikrofonen ger inget ljud än. Stäng andra appar som använder den.'
+
+
+def plain(text):
+    """Text with the no-break spaces of Swedish numbers as plain ones."""
+    return (text or '').replace(' ', ' ').replace(' ', ' ')
 
 
 async def mic_suite(page):
@@ -516,7 +532,13 @@ async def mic_suite(page):
           [g['active'], cents is not None and abs(cents + 20) <= 3, g['turn']],
           [0, True, {'front': 'up', 'post': 'ccw', 'side': 'left'}])
     check('microphone: the button now says Stoppa', await page.ev("document.getElementById('gt-start-label').textContent"), 'Stoppa')
+    check("microphone: heard at the rate the microphone gives, not the speaker's", g['sampleRate'], 44100)
     await page.shot('mic-lowE.png')
+    await page.click('[data-on-click="gt:settings"]')
+    info = await page.js("(e => [!e.hidden, e.textContent])(document.getElementById('gt-micinfo'))")
+    check('microphone: the settings say how its sound comes in',
+          [info[0], 'Mikrofonen: 44 100 Hz · lyssnar i 44 100 Hz · nivå ' in plain(info[1])], [True, True])
+    await page.click('#gt-settings [data-on-click="gt:close"].gt-btn')
     # Leaving the page closes the microphone; coming back opens it again.
     await page.ev("Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange'))")
     g = await page.js('GT.inspect()')
@@ -559,6 +581,22 @@ async def mic_suite(page):
           [g['running'], g['starting'], g['stopped'], await page.ev('window.__gum[window.__gum.length - 1].track.readyState')],
           [False, False, 'tap', 'ended'])
     check('microphone: no errors', page.errors + page.console, [])
+
+    # A microphone that gives nothing at all: the page says so, and listens
+    # on until sound comes.
+    await page.load(width=390, height=664, mobile=True)
+    await page.ev(MIC_STUB % at(0, -20))
+    await page.ev('window.__silent = true')
+    await page.click('#gt-start')
+    await settle(page, 'GT.inspect().running', True, tries=50)
+    ok = await settle(page, 'GT.inspect().silent', True, tries=60)
+    g = await page.js('GT.inspect()')
+    check('microphone: nothing coming in: the page says so, and listens on', [ok, g['running'], g['msg'], g['msgState']], [True, True, SILENT, 'error'])
+    await page.shot('mic-silent.png')
+    await page.ev('window.__gum[0].gain.gain.value = 1')
+    ok = await settle(page, 'GT.inspect().active', 0, tries=60)
+    check('microphone: sound comes after all: the note goes, and the string is heard', [ok, (await page.js('GT.inspect()'))['silent']], [0, False])
+    check('microphone: no errors with a silent microphone', page.errors + page.console, [])
 
 
 async def main():

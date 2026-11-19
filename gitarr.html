@@ -141,6 +141,7 @@
     <h3>Mikrofonen</h3>
     <p>Ljudet analyseras bara här i webbläsaren. Inget spelas in och inget skickas någonstans. Mikrofonen stängs när du trycker på Stoppa,
       när du byter flik eller app, och efter tre minuter utan gitarrljud.</p>
+    <p>Hör sidan ingenting? Medan mikrofonen är på står det under inställningarna hur ljudet kommer in.</p>
   </div>
 </dialog>
 
@@ -154,6 +155,8 @@
       <span>Mina skruvar går åt andra hållet<small>Vänder pilen runt skruven, för gitarrer där skruven spänner strängen medurs.</small></span></label>
     <label class="gt-check"><input type="checkbox" name="lefty" data-on-change="gt:setting">
       <span>Vänsterhänt gitarr<small>Spegelvänder gitarrhuvudet: E, A och D till höger.</small></span></label>
+    <!-- While the microphone is on: how its sound comes in. -->
+    <p class="gt-small" id="gt-micinfo" hidden></p>
     <div class="gt-dialog-foot">
       <button type="button" class="gt-btn gt-btn-go" data-on-click="gt:close">Klar</button>
     </div>
@@ -170,7 +173,7 @@
 <script src="./resources/js/kvot-icons.js?v=20260902"></script>
 <script src="./resources/js/site.js?v=20261119"></script>
 <script src="./resources/js/gitarr-pitch.js?v=20261003"></script>
-<script src="./resources/js/gitarr.js?v=20261003"></script>
+<script src="./resources/js/gitarr.js?v=20261119"></script>
 <script>
   KVOT.renderHeader('Gitarrstämmare');
   KVOT.renderNav('gitarr.html');

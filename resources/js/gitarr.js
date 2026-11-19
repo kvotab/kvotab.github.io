@@ -24,6 +24,7 @@ const GT = (() => {
   const IDLE_STOP_MS = 3 * 60 * 1000;   // the microphone closes after this long with no string heard
   const FRAME_MS = 28;                  // a reading at most this often
   const MARK_TAU = 90;                  // ms; how fast the meter's mark follows
+  const DEAD_MS = 2500;                 // only exact zeros this long after opening: no sound comes in
 
   /* The strings in running text: the two E strings must be told apart. */
   const NAMES = ['låga E', 'A', 'D', 'G', 'B', 'höga E'];
@@ -133,6 +134,7 @@ const GT = (() => {
     settings: { lefty: false, reverse: false },
     snap: null,           // GT_PITCH's tracker, as of the last reading
     level: 0,             // the last window's rms
+    silent: false,        // nothing but exact zeros since the microphone opened
     heardAt: 0,           // when a string was last heard
     mark: 0,              // the meter mark's position in cents, eased
     markAt: 0,
@@ -444,6 +446,7 @@ const GT = (() => {
       if (state.stopped === 'tap') return { text: 'Tryck på Starta för att börja lyssna.', state: 'info' };
       return { text: 'Tryck på Starta och tillåt mikrofonen.', state: 'info' };
     }
+    if (state.silent) return { text: 'Mikrofonen ger inget ljud än. Stäng andra appar som använder den.', state: 'error' };
     if (!snap || !snap.shown) {
       if (state.picked !== null) return { text: `Slå an ${stringLabel(state.picked)}.`, state: 'info' };
       return { text: 'Slå an en sträng i taget och låt den klinga.', state: 'info' };
@@ -541,11 +544,30 @@ const GT = (() => {
     const lit = state.running ? [-60, -50, -40, -30, -20].filter(x => db >= x).length : 0;
     put('level', lit, v => dom.levelBars.forEach((b, k) => b.classList.toggle('is-lit', k < v)));
     put('levelOn', String(state.running), v => dom.level.classList.toggle('is-on', v === 'true'));
+    if (dom.settings.open) put('micInfo', micInfo(), v => { dom.micInfo.hidden = !v; dom.micInfo.textContent = v; });
 
     const all = !!(snap && snap.tuned.every(Boolean));
     put('done', String(all), v => { dom.done.hidden = v !== 'true'; });
 
     announce(active, t, cents, snap);
+  }
+
+  /* How the sound comes in, shown in the settings while the microphone is
+     on: its rate and what the browser does to it, the rate listened at, and
+     the level - the line to read out when the page hears nothing. */
+  function micInfo() {
+    if (!audio || !audio.stream) return '';
+    const track = audio.stream.getAudioTracks()[0];
+    const s = track && track.getSettings ? track.getSettings() : {};
+    const hz = v => `${Math.round(v).toLocaleString('sv-SE')} Hz`;
+    const done = [s.echoCancellation && 'ekosläckning', s.noiseSuppression && 'brusdämpning', s.autoGainControl && 'nivåreglering'].filter(Boolean);
+    const parts = [
+      `Mikrofonen: ${s.sampleRate ? hz(s.sampleRate) : 'okänd samplingsfrekvens'}${done.length ? `, med ${done.join(' och ')}` : ''}`,
+      `lyssnar i ${hz(audio.ctx.sampleRate)}`,
+      `nivå ${state.level > 0 ? Math.round(20 * Math.log10(state.level)) : -120} dB`,
+    ];
+    if (audio.ctx.state !== 'running') parts.push(`ljudet: ${audio.ctx.state}`);
+    return parts.join(' · ');
   }
 
   /* What a screen reader hears: the string when it changes, and when it is
@@ -615,6 +637,12 @@ const GT = (() => {
     if (now - lastRead >= FRAME_MS) {
       lastRead = now;
       audio.analyser.getFloatTimeDomainData(audio.buf);
+      // Every real microphone hisses a little: exact zeros are no sound at
+      // all. The page says so, and listens on until sound comes.
+      if (!audio.alive) {
+        audio.alive = audio.buf.some(v => v !== 0);
+        state.silent = !audio.alive && !audio.player && now - audio.startedAt > DEAD_MS;
+      }
       step(now, audio.buf, audio.det);
       if (now - state.heardAt > idleStopMs) {
         stop('idle');
@@ -677,9 +705,10 @@ const GT = (() => {
     // for ever - it does when the microphone reopens by itself after the
     // page was hidden - so the wait is bounded and a tap on Starta is asked.
     await Promise.race([resumed, new Promise(r => setTimeout(r, 1500))]);
-    if (!state.starting || ctx.state !== 'running') {
+    const listen = state.starting ? await listenAt(stream, ctx) : ctx;
+    if (!state.starting || listen.state !== 'running') {
       stream.getTracks().forEach(t => t.stop());
-      ctx.close().catch(() => {});
+      listen.close().catch(() => {});
       if (state.starting) {
         state.starting = false;
         state.stopped = 'tap';
@@ -687,7 +716,39 @@ const GT = (() => {
       }
       return;
     }
-    connect(ctx, ctx.createMediaStreamSource(stream), stream);
+    connect(listen, listen.createMediaStreamSource(stream), stream);
+  }
+
+  /* THE MICROPHONE IS HEARD AT ITS OWN RATE. The context made in the tap
+     runs at the speaker's rate, and a microphone of another rate fed into it
+     is converted on the way in. That conversion has garbled the sound on iOS
+     (an iPhone with AirPods: the context at 24 kHz, the microphone at 48),
+     and an iPad heard nothing on piano.html, whose listening was made the
+     same way. WebKit leaves the sound as it is where the two rates are equal
+     (MediaStreamAudioSourceNode::setFormat). So where the microphone says
+     its rate and it is not the context's, or the context has not started, a
+     context at the microphone's rate is made - Safari lets a page that is
+     listening start sound without a tap - and takes over if it starts within
+     a second; otherwise the context made in the tap goes on. Returns the
+     context to listen in, and closes the other. */
+  async function listenAt(stream, ctx) {
+    const track = stream.getAudioTracks()[0];
+    const rate = track && track.getSettings ? Number(track.getSettings().sampleRate) : 0;
+    const AC = window.AudioContext;
+    if (!AC || !(rate > 0) || (rate === ctx.sampleRate && ctx.state === 'running')) return ctx;
+    let own;
+    try {
+      own = new AC({ sampleRate: rate });
+    } catch (e) {
+      return ctx;
+    }
+    await Promise.race([own.resume().catch(() => {}), new Promise(r => setTimeout(r, 1000))]);
+    if (own.state === 'running') {
+      ctx.close().catch(() => {});
+      return own;
+    }
+    own.close().catch(() => {});
+    return ctx;
   }
 
   /* source → high-pass at 50 Hz (rumble, handling) → analyser. The analyser
@@ -709,7 +770,8 @@ const GT = (() => {
     hp.connect(analyser);
     analyser.connect(sink);
     sink.connect(ctx.destination);
-    audio = { ctx, stream, source, analyser, buf: new Float32Array(size), det };
+    audio = { ctx, stream, source, analyser, buf: new Float32Array(size), det, startedAt: performance.now(), alive: false };
+    state.silent = false;
     gate = P.createGate();
     freshStart();
     state.starting = false;
@@ -735,6 +797,7 @@ const GT = (() => {
     state.running = false;
     state.stopped = why || 'user';
     state.level = 0;
+    state.silent = false;
     freshStart();
     sleepOK();
     render();
@@ -792,6 +855,7 @@ const GT = (() => {
     }
     if (typeof d.showModal === 'function') d.showModal();
     else d.setAttribute('open', '');
+    if (id === 'gt-settings') render();
   }
 
   function closeDialog(e, elem) {
@@ -868,6 +932,8 @@ const GT = (() => {
       levelBars: [...document.querySelectorAll('#gt-level i')],
       done: document.getElementById('gt-done'),
       say: document.getElementById('gt-say'),
+      settings: document.getElementById('gt-settings'),
+      micInfo: document.getElementById('gt-micinfo'),
     };
     loadSettings();
     registerActions(actions);
@@ -908,6 +974,7 @@ const GT = (() => {
       mark: Math.round(state.mark * 10) / 10,
       done: !dom.done.hidden,
       level: state.level,
+      silent: state.silent,
       sampleRate: audio ? audio.ctx.sampleRate : null,
     }));
   }
