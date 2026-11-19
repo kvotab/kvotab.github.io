@@ -172,12 +172,13 @@ public:
 
 private:
     std::ptrdiff_t position(std::string_view key) const noexcept;
-    void index_all() const;
+    void index_all();
 
     std::vector<Item> items_;
-    // Past a handful of keys a lookup goes through a table, made on first use.
-    mutable std::unordered_map<std::string, std::size_t> index_;
-    mutable bool indexed_ = false;
+    // Past a handful of keys a lookup goes through a table, kept up as keys are set and
+    // erased: a lookup never writes, so threads may share a dictionary they only read.
+    std::unordered_map<std::string, std::size_t> index_;
+    bool indexed_ = false;
 };
 
 /// JSON text as values. A byte-order mark is not part of the text.

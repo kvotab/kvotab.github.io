@@ -196,7 +196,7 @@ JObject::JObject(std::initializer_list<Item> items) {
     for (const auto& it : items) set(it.first, it.second);
 }
 
-void JObject::index_all() const {
+void JObject::index_all() {
     index_.clear();
     index_.reserve(items_.size() * 2);
     for (std::size_t i = 0; i < items_.size(); i++) index_.emplace(items_[i].first, i);
@@ -204,12 +204,11 @@ void JObject::index_all() const {
 }
 
 std::ptrdiff_t JObject::position(std::string_view key) const noexcept {
-    if (items_.size() < kScanBelow) {
+    if (!indexed_) {
         for (std::size_t i = 0; i < items_.size(); i++)
             if (items_[i].first == key) return static_cast<std::ptrdiff_t>(i);
         return -1;
     }
-    if (!indexed_) index_all();
     auto it = index_.find(std::string(key));
     return it == index_.end() ? -1 : static_cast<std::ptrdiff_t>(it->second);
 }
@@ -236,6 +235,7 @@ Json& JObject::operator[](std::string_view key) {
     if (Json* v = find(key)) return *v;
     items_.emplace_back(std::string(key), Json());
     if (indexed_) index_.emplace(items_.back().first, items_.size() - 1);
+    else if (items_.size() >= kScanBelow) index_all();
     return items_.back().second;
 }
 void JObject::set(std::string_view key, Json value) { (*this)[key] = std::move(value); }
@@ -245,6 +245,7 @@ bool JObject::erase(std::string_view key) {
     items_.erase(items_.begin() + p);
     indexed_ = false;
     index_.clear();
+    if (items_.size() >= kScanBelow) index_all();
     return true;
 }
 void JObject::clear() {
