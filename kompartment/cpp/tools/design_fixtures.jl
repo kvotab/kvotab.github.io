@@ -182,6 +182,16 @@ for p in scen["parameters"]
     end
 end
 push!(models, ("scenarios with distributions", scen))
+# The same in another scenario, and with the distribution a scenario's own only: a realisation
+# draws from the distribution of the scenario that runs.
+scen_drier = K.jcopy(scen)
+scen_drier["scenario"] = "Drier"
+push!(models, ("scenarios with distributions, the drier one", scen_drier))
+scen_own = K.jcopy(scen)
+for p in scen_own["parameters"]
+    p["name"] == "Runoff" && delete!(p, "pdf")
+end
+push!(models, ("scenarios with a distribution of one scenario's own", scen_own))
 
 kinds = models[1][2]
 for (what, varied) in (("varied in the settings", Any["k_unif", "Kd[b]", "nope", 5, "Q@0"]), ("varied naming nothing there", Any["nope"]),

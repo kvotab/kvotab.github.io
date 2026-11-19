@@ -297,6 +297,19 @@ model("a mean by nuclide switched at one", """{"name": "mean switched at one", $
  "triggers": [{"name": "Tr", "first": "A", "second": "0.5", "direction": "falling"}],
  "running_means": [{"name": "Avg", "target": "A", "entries": [{"index": {"Radionuclides": "Sr-90"}, "stop_trigger": "Tr"}]}]}""")
 
+# A parameter and a running mean per scenario: dy/dp reads the value the run reads (the cold one's,
+# not the block's), and a running mean an event resets in the scenario that runs is one the
+# equations cannot carry.
+const SCENARIO_LISTS = """ "index_lists": [{"name": "Climate", "for_scenarios": true, "indices": ["warm", "cold"]}], "scenario": "cold" """
+model("a scenario's own value", """{"name": "scenario value", "simulation": $SIM, $SCENARIO_LISTS,
+ "parameters": [{"name": "k", "value": 0.2, "index_lists": ["Climate"], "entries": [{"index": {"Climate": "cold"}, "value": 0.5}]},
+                {"name": "k2", "value": 0.1}],
+ "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}],
+ "transfers": [{"name": "AB", "from": "A", "to": "B", "rate": "k"}, {"name": "Bout", "from": "B", "to": null, "rate": "k2"}]}""")
+model("a mean switched in the scenario that runs", """{"name": "scenario mean", "simulation": $SIM, $SCENARIO_LISTS, $REMEMBER_BASE,
+ "transfers": [{"name": "AB", "from": "A", "to": "B", "rate": "k"}, {"name": "BC", "from": "B", "to": "C", "rate": "Avg * k2", "multiply_by_donor": false}],
+ "running_means": [{"name": "Avg", "target": "A", "index_lists": ["Climate"], "entries": [{"index": {"Climate": "cold"}, "reset_trigger": "Tr"}]}]}""")
+
 model("no parameters", """{"name": "bare", "simulation": $SIM,
  "compartments": [{"name": "A", "initial": "1"}, {"name": "B", "initial": "0"}],
  "transfers": [{"name": "AB", "from": "A", "to": "B", "rate": "0.1"}]}""")
@@ -393,6 +406,8 @@ case("switch times", Any["k", "t_sw"])
 case("switch times", Any["u"])
 case("a scenario's corner", Any["k"])
 case("a scenario's corner", Any["T_sw"])
+case("a scenario's own value", Any["k", "k2"])
+case("a mean switched in the scenario that runs", Any["k"])
 case("an event inside the run", Any["k"])
 case("an event past the run", Any["k", "t_ev"])
 case("an expected event", Any["lam", "share", "k"])

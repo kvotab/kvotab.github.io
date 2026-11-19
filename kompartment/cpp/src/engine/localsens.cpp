@@ -134,8 +134,11 @@ std::vector<EntryPtr> read_by_derivative(const System& sys) {
 }
 
 bool switched_by_event(const System& sys, const Entry& rec) {
+    const IndexSpace& space = *sys.builder->space;
     for (int off = 0; off < rec.width; off++) {
-        Tup tup = rec.dims.empty() ? Tup() : tuple_by_list(*sys.builder->space, rec.dims, off);
+        Tup tup = rec.dims.empty() ? Tup() : tuple_by_list(space, rec.dims, off);
+        // At the scenario that runs, as the builder reads the event fields.
+        tup = space.pin_scenario(strings_of(rec.block.get("index_lists")), tup);
         for (const std::string& field : event_fields(rec.kind))
             if (said(value_at(rec.block, field, tup))) return true;
     }
@@ -453,9 +456,12 @@ std::vector<Json> parameter_slots(const System& sys) {
         std::vector<Json> described;
         describe_entry(described, sys, *entry, "parameter", "P", units);
         for (int off = 0; off < entry->width; off++) {
-            Json tup = dims.empty() ? Json::object() : js_ordered(tuple_by_list(space, dims, off));
+            const Tup at_tuple = dims.empty() ? Tup() : tuple_by_list(space, dims, off);
+            Json tup = dims.empty() ? Json::object() : js_ordered(at_tuple);
             Json unit = static_cast<std::size_t>(off) < described.size() ? described[static_cast<std::size_t>(off)].get("unit", Json("")) : Json("");
-            const Json* value = effective_value(entry->block, "value", tup);
+            // Read as the builder reads it: at the scenario that runs.
+            const Json at = js_ordered(space.pin_scenario(strings_of(entry->block.get("index_lists")), at_tuple));
+            const Json* value = effective_value(entry->block, "value", at);
             out.push_back(Json::object({{"slot", Json(entry->base + off)},
                                         {"name", Json(entry->name)},
                                         {"index", tup},

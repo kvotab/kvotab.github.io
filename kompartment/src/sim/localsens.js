@@ -88,16 +88,18 @@ const stepFor = (p) => EPS * Math.max(Math.abs(p), 1);
  */
 export function parameterSlots(system) {
 	const out = [];
+	const space = system.layout.indexSpace;
 	for (const entry of system.layout.parameters ?? []) {
 		const { block, dims, base, width } = entry;
 		const described = describeEntry(system.layout, entry, 'parameter', 'P');
 		for (let off = 0; off < width; off++) {
-			const tuple = dims.length ? tupleByList(system.layout.indexSpace, dims, off) : {};
+			const tuple = dims.length ? tupleByList(space, dims, off) : {};
 			out.push({
 				slot: base + off,
 				name: entry.name,
 				index: tuple,
-				value: Number(effectiveValue(block, 'value', tuple)),
+				// Read as the builder reads it: at the scenario that runs.
+				value: Number(effectiveValue(block, 'value', space.pinScenario(block.index_lists, tuple))),
 				unit: described[off]?.unit ?? '',
 			});
 		}
@@ -179,10 +181,12 @@ function readByDerivative(system) {
 
 /** Whether a recording block is started, stopped or reset by a discrete event. */
 function switchedByEvent(system, rec) {
+	const space = system.layout.indexSpace;
 	for (let off = 0; off < rec.width; off++) {
-		const tuple = rec.dims.length ? tupleByList(system.layout.indexSpace, rec.dims, off) : {};
+		const tuple = rec.dims.length ? tupleByList(space, rec.dims, off) : {};
 		for (const field of EVENT_FIELDS[rec.kind] ?? []) {
-			const v = valueAt(rec.block, field, tuple);
+			// At the scenario that runs, as the builder reads the event fields.
+			const v = valueAt(rec.block, field, space.pinScenario(rec.block.index_lists, tuple));
 			if (v != null && String(v).trim() !== '') return true;
 		}
 	}

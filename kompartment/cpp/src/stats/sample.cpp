@@ -306,7 +306,11 @@ std::vector<PlanEntry> distributed_slots(const System& sys) {
         const std::vector<std::string>& dims = entry->dims;
         for (int off = 0; off < entry->width; off++) {
             Tup tup = dims.empty() ? Tup() : tuple_by_list(space, dims, off);
-            Json spec = value_at(entry->block, "pdf", tup);
+            // Read where the value is read: with the active scenario put back in, so that a
+            // parameter given a distribution per scenario draws from the one of the scenario
+            // that runs. Named without it, as the slot is.
+            Tup at = space.pin_scenario(strings_of(entry->block.get("index_lists")), tup);
+            Json spec = value_at(entry->block, "pdf", at);
             if (!(pd_truthy(&spec) && pdf_complete(spec))) continue;
             out.push_back(PlanEntry{entry->base + off, entry->name, tup, spec});
         }

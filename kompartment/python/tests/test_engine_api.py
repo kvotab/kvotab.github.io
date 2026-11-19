@@ -113,6 +113,45 @@ class Probabilistic(unittest.TestCase):
             b = np.array([number(v) for v in np.ravel(js['values'][js['labels'].index(label)])])
             self.assertLess(float(np.max(np.abs(a - b)) / np.max(np.abs(b))), 1e-9, label)
 
+    def test_a_parameter_given_a_distribution_per_scenario_draws_from_the_scenario_that_runs(self) -> None:
+        # A run reads the scenario's value, so a realisation draws from the
+        # scenario's distribution -- with a spread of the block's own or without
+        # one -- and dy/dp and a calibration read the value the run reads.
+        from kompartment.engine.builder import build_system
+        from kompartment.engine.calibrate import variables_of
+        from kompartment.engine.localsens import parameter_slots
+        from kompartment.engine.probabilistic import design_for, sampling_plan
+        per = {
+            'Present': {'kind': 'unif', 'params': {'min': 0.01, 'max': 0.03}},
+            'Warmer and wetter': {'kind': 'triang', 'params': {'min': 0.04, 'max': 0.06, 'mode': 0.05}},
+            'Drier': {'kind': 'logu', 'params': {'min': 0.001, 'max': 0.009}},
+        }
+        values = {'Present': 0.02, 'Warmer and wetter': 0.05, 'Drier': 0.005}
+        for own in (True, False):
+            for scenario, spec in per.items():
+                raw = example('scenarios')
+                runoff = next(p for p in raw['parameters'] if p['name'] == 'Runoff')
+                runoff['entries'] = [{'index': {'Climate': c}, 'value': values[c], 'pdf': per[c]} for c in per]
+                if own:
+                    runoff['pdf'] = {'kind': 'unif', 'params': {'min': 0.1, 'max': 0.2}}
+                else:
+                    runoff.pop('pdf', None)
+                raw['scenario'] = scenario
+                proj = kp.Model.from_dict(raw).project()
+                sys_ = build_system(proj)
+                plan = sampling_plan(proj, sys_)
+                k = next(i for i, e in enumerate(plan) if e['name'] == 'Runoff')
+                self.assertEqual(plan[k]['spec'], spec, scenario)
+                self.assertEqual(plan[k]['index'], {}, scenario)
+                d = design_for(proj, sys_, seed=4, iterations=20)
+                lo, hi = spec['params']['min'], spec['params']['max']
+                for i in range(20):
+                    self.assertTrue(lo <= d.value_for(k, i) <= hi, (scenario, i, d.value_for(k, i)))
+                slot = next(e for e in parameter_slots(sys_) if e['name'] == 'Runoff')
+                self.assertEqual(slot['value'], values[scenario], scenario)
+                variable = next(e for e in variables_of(raw) if e['key'] == 'Runoff')
+                self.assertEqual(variable['value'], values[scenario], scenario)
+
     def test_a_chunk_starts_as_one_process_would(self) -> None:
         # A word in the list is no number: that realisation keeps the value the last one
         # left, as one process running them in order holds it -- in whichever process,

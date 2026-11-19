@@ -213,6 +213,41 @@ end
 
 const PROB_EXAMPLES = joinpath(@__DIR__, "..", "..", "..", "examples")
 
+@testset "a parameter given a distribution per scenario draws from the scenario that runs" begin
+    # A run reads the scenario's value, so a realisation draws from the scenario's
+    # distribution -- with a spread of the block's own or without one -- and dy/dp and a
+    # calibration read the value the run reads.
+    per = K.OrderedDict{String,Any}(
+        "Present" => K.parse_json("""{"kind": "unif", "params": {"min": 0.01, "max": 0.03}}"""),
+        "Warmer and wetter" => K.parse_json("""{"kind": "triang", "params": {"min": 0.04, "max": 0.06, "mode": 0.05}}"""),
+        "Drier" => K.parse_json("""{"kind": "logu", "params": {"min": 0.001, "max": 0.009}}"""))
+    values = Dict("Present" => 0.02, "Warmer and wetter" => 0.05, "Drier" => 0.005)
+    for own in (true, false), (scenario, spec) in per
+        raw = K.parse_json(read(joinpath(PROB_EXAMPLES, "scenarios.json"), String))
+        runoff = only(filter(p -> p["name"] == "Runoff", raw["parameters"]))
+        runoff["entries"] = Any[K.OrderedDict{String,Any}("index" => K.OrderedDict{String,Any}("Climate" => c),
+                                                          "value" => values[c], "pdf" => per[c]) for c in keys(per)]
+        own ? (runoff["pdf"] = K.parse_json("""{"kind": "unif", "params": {"min": 0.1, "max": 0.2}}""")) :
+              delete!(runoff, "pdf")
+        raw["scenario"] = scenario
+        p = K.project(K.from_json(K.json_text(raw)))
+        sys = K.build_system(p)
+        plan = K.sampling_plan(p, sys)
+        k = findfirst(e -> e["name"] == "Runoff", plan)
+        @test k !== nothing
+        k === nothing && continue
+        @test K.json_text(plan[k]["spec"]; indent=0) == K.json_text(spec; indent=0)
+        @test isempty(plan[k]["index"])
+        d = K.design_for(p, sys; seed=4, iterations=20)
+        lo, hi = Float64(spec["params"]["min"]), Float64(spec["params"]["max"])
+        @test all(lo <= d.values[k, i] <= hi for i in 1:20)
+        slot = only(filter(e -> e["name"] == "Runoff", K.parameter_slots(sys)))
+        @test slot["value"] == values[scenario]
+        variable = only(filter(e -> e["key"] == "Runoff", K.variables_of(K.from_json(K.json_text(raw)))))
+        @test variable["value"] == values[scenario]
+    end
+end
+
 @testset "probabilistic runs: progress, slices, refusals" begin
     m = K.load(joinpath(PROB_EXAMPLES, "biosphere.json"))
     heard = Tuple{Int,Int}[]

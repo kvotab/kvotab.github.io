@@ -400,7 +400,12 @@ def distributed_slots(layout: Any, effective: Callable[[Any, str, Dict[str, str]
         width = _field(entry, 'width') or 0
         for off in range(int(width)):
             tup = tuple_at(space, dims, off) if len(dims) else {}
-            spec = effective(block, 'pdf', tup)
+            # Read where the value is read: with the active scenario put back
+            # in, so that a parameter given a distribution per scenario draws
+            # from the one of the scenario that runs. Named without it.
+            pin = getattr(space, 'pin_scenario', None)
+            at = pin(_field(block, 'index_lists') or [], tup) if pin is not None else tup
+            spec = effective(block, 'pdf', at)
             if not _truthy(spec) or not complete(spec):
                 continue
             out.append({'slot': base + off, 'name': _field(entry, 'name'), 'index': tup, 'spec': spec})

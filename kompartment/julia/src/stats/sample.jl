@@ -299,7 +299,11 @@ function distributed_slots(sys::System)
         dims = entry.dims
         for off in 0:entry.width-1
             tup = isempty(dims) ? Tup() : tuple_by_list(space, dims, off)
-            spec = value_at(entry.block, "pdf", tup)
+            # Read where the value is read: with the active scenario put back in, so that a
+            # parameter given a distribution per scenario draws from the one of the scenario
+            # that runs. Named without it, as the slot is.
+            at = pin_scenario(space, something(jget(entry.block, "index_lists"), String[]), tup)
+            spec = value_at(entry.block, "pdf", at)
             (_pd_truthy(spec) && pdf_complete(spec)) || continue
             push!(out, JDict("slot" => entry.base + off, "name" => entry.name, "index" => tup, "spec" => spec))
         end

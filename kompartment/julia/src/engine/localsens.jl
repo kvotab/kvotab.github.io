@@ -113,8 +113,10 @@ function parameter_slots(sys::System)
         for off in 0:entry.width-1
             tup = isempty(dims) ? JDict() : _ls_js_ordered(tuple_by_list(space, dims, off))
             unit = off < length(described) ? get(described[off+1], "unit", "") : ""
+            # Read as the builder reads it: at the scenario that runs.
+            at = pin_scenario(space, something(jget(entry.block, "index_lists"), String[]), tup)
             push!(out, JDict("slot" => entry.base + off, "name" => entry.name, "index" => tup,
-                             "value" => _pd_to_number(_ls_effective_value(entry.block, "value", tup)),
+                             "value" => _pd_to_number(_ls_effective_value(entry.block, "value", at)),
                              "unit" => unit === nothing ? "" : unit))
         end
     end
@@ -183,8 +185,11 @@ end
 _ls_said(v) = v !== nothing && v !== _PD_MISSING && !(v isa AbstractString && isempty(strip(v)))
 
 function _ls_switched_by_event(sys::System, rec::Entry)
+    space = sys.builder.space
     for off in 0:rec.width-1
-        tup = isempty(rec.dims) ? Tup() : tuple_by_list(sys.builder.space, rec.dims, off)
+        tup = isempty(rec.dims) ? Tup() : tuple_by_list(space, rec.dims, off)
+        # At the scenario that runs, as the builder reads the event fields.
+        tup = pin_scenario(space, something(jget(rec.block, "index_lists"), String[]), tup)
         for field in get(EVENT_FIELDS, rec.kind, ())
             _ls_said(value_at(rec.block, field, tup)) && return true
         end

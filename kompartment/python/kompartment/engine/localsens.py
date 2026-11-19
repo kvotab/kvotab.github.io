@@ -151,8 +151,10 @@ def parameter_slots(system: Any) -> List[Dict[str, Any]]:
         described = describe_entry(layout, entry, 'parameter', 'P')
         for off in range(width):
             tup = _js_ordered(tuple_by_list(layout.index_space, dims, off)) if dims else {}
+            # Read as the builder reads it: at the scenario that runs.
+            at = layout.index_space.pin_scenario(block.get('index_lists') or [], tup)
             out.append({'slot': base + off, 'name': entry.name, 'index': tup,
-                        'value': _to_number(_effective_value(block, 'value', tup)),
+                        'value': _to_number(_effective_value(block, 'value', at)),
                         'unit': described[off].get('unit', '') if off < len(described) else ''})
     return out
 
@@ -224,8 +226,11 @@ def _read_by_derivative(system: Any) -> List[Any]:
 
 
 def _switched_by_event(system: Any, rec: Any) -> bool:
+    space = system.layout.index_space
     for off in range(rec.width):
-        tup = tuple_by_list(system.layout.index_space, rec.dims, off) if rec.dims else {}
+        tup = tuple_by_list(space, rec.dims, off) if rec.dims else {}
+        # At the scenario that runs, as the builder reads the event fields.
+        tup = space.pin_scenario(rec.block.get('index_lists') or [], tup)
         for field in EVENT_FIELDS.get(rec.kind, ()):
             v = value_at(rec.block, field, tup)
             if v is not None and str(v).strip() != '':

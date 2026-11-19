@@ -212,11 +212,17 @@ export function distributedSlots(layout, effective, tupleAt) {
 			spec: pt.spec,
 		});
 	}
+	const space = layout.indexSpace;
 	for (const entry of layout.parameters ?? []) {
 		const { block, dims, base, width } = entry;
 		for (let off = 0; off < width; off++) {
-			const tuple = dims.length ? tupleAt(layout.indexSpace, dims, off) : {};
-			const spec = effective(block, 'pdf', tuple);
+			const tuple = dims.length ? tupleAt(space, dims, off) : {};
+			// Read where the value is read: with the active scenario put back
+			// in, so that a parameter given a distribution per scenario draws
+			// from the one of the scenario that runs. Named without it, as the
+			// slot is.
+			const at = space?.pinScenario ? space.pinScenario(block.index_lists, tuple) : tuple;
+			const spec = effective(block, 'pdf', at);
 			if (!spec || !complete(spec)) continue;
 			out.push({ slot: base + off, name: entry.name, index: tuple, spec });
 		}

@@ -2657,6 +2657,53 @@ test('a columns reply survives the run id moving on', async () => {
 		'columns are matched by acceptColumns, not here');
 });
 
+test('a parameter given a distribution per scenario draws from the scenario that runs', async () => {
+	const { samplingPlan, designFor } = await import('../src/sim/probabilistic.js');
+	const { parameterSlots } = await import('../src/sim/localsens.js');
+	const { variablesOf } = await import('../src/sim/calibrate.js');
+	const { readFileSync } = await import('node:fs');
+
+	// The scenarios example, its runoff given a spread of its own and one per
+	// climate. A run reads the scenario's value, so a realisation must draw
+	// from the scenario's distribution: the block's own stood in for every
+	// scenario's, and without one the model was said to have none at all.
+	// dy/dp and a calibration read the value the run reads too.
+	const raw = JSON.parse(readFileSync(new URL('../examples/scenarios.json', import.meta.url), 'utf8'));
+	const runoff = raw.parameters.find((p) => p.name === 'Runoff');
+	const per = {
+		Present: { kind: 'unif', params: { min: 0.01, max: 0.03 } },
+		'Warmer and wetter': { kind: 'triang', params: { min: 0.04, max: 0.06, mode: 0.05 } },
+		Drier: { kind: 'logu', params: { min: 0.001, max: 0.009 } },
+	};
+	const values = { Present: 0.02, 'Warmer and wetter': 0.05, Drier: 0.005 };
+	runoff.entries = Object.keys(per).map((c) => ({ index: { Climate: c }, value: values[c], pdf: per[c] }));
+	for (const own of [true, false]) {
+		if (own) runoff.pdf = { kind: 'unif', params: { min: 0.1, max: 0.2 } };
+		else delete runoff.pdf;
+		for (const scenario of Object.keys(per)) {
+			raw.scenario = scenario;
+			const p = new Project(structuredClone(raw));
+			const sys = buildSystem(p);
+			const plan = samplingPlan(p, sys);
+			const k = plan.findIndex((e) => e.name === 'Runoff');
+			assert(k >= 0, `${scenario}: Runoff is not sampled${own ? '' : ' without a spread of its own'}`);
+			assert(JSON.stringify(plan[k].spec) === JSON.stringify(per[scenario]),
+				`${scenario}: Runoff drew from ${JSON.stringify(plan[k].spec)}`);
+			assert(JSON.stringify(plan[k].index) === '{}', `${scenario}: the input is named with its scenario`);
+			const d = designFor(p, sys, { iterations: 20, seed: 4 });
+			const { min, max } = per[scenario].params;
+			for (let i = 0; i < 20; i++) {
+				const v = d.valueFor(k, i);
+				assert(v >= min && v <= max, `${scenario}: realisation ${i} drew ${v}, outside ${min} to ${max}`);
+			}
+			const slot = parameterSlots(sys).find((e) => e.name === 'Runoff');
+			assert(slot.value === values[scenario], `${scenario}: dy/dp reads Runoff as ${slot.value}`);
+			const variable = variablesOf(p).find((e) => e.key === 'Runoff');
+			assert(variable.value === values[scenario], `${scenario}: a calibration starts Runoff at ${variable.value}`);
+		}
+	}
+});
+
 test('the probabilistic run is reachable, and priced honestly', async () => {
 	const { samplingPlan } = await import('../src/sim/probabilistic.js');
 	const { howLong } = await import('../src/ui/probdialog.js');
